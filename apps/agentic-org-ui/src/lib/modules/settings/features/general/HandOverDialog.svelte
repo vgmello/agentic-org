@@ -96,16 +96,16 @@
 				</DialogDescription>
 			</DialogHeader>
 			{#if general.handOverCandidates.length === 0}
-				<p class="text-sm/6 text-gray-300" data-testid="no-candidates">
+				<p class="text-sm/6 text-fg-secondary" data-testid="no-candidates">
 					Nobody else has an account yet. Invite a person to sign in under <a
 						href={resolve('/settings/access')}
-						class="font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-indigo-400"
+						class="font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-focus"
 						>Members and access</a
 					> first.
 				</p>
 			{:else}
 				<div>
-					<Label for="handover-person" class="block text-sm/6 font-medium text-white"
+					<Label for="handover-person" class="block text-sm/6 font-medium text-fg"
 						>New administrator</Label
 					>
 					<div class="mt-2">
@@ -126,7 +126,7 @@
 					</p>
 				</div>
 				<div>
-					<Label for="handover-password" class="block text-sm/6 font-medium text-white"
+					<Label for="handover-password" class="block text-sm/6 font-medium text-fg"
 						>Your password</Label
 					>
 					<div class="mt-2">

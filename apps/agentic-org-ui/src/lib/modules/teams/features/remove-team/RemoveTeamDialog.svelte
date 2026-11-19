@@ -109,20 +109,20 @@
 		{#if blockers}
 			<TeamBlockers {name} {blockers} onleave={close} />
 		{:else if check.state === 'checking'}
-			<p id="remove-team-check" role="status" class="text-sm/6 text-gray-400">
+			<p id="remove-team-check" role="status" class="text-sm/6 text-fg-muted">
 				Checking what's still in {name}…
 			</p>
 		{:else if check.state === 'failed'}
 			<div id="remove-team-check" role="alert" class="text-sm/6">
-				<p class="text-red-300 [overflow-wrap:anywhere]">
+				<p class="text-danger-text [overflow-wrap:anywhere]">
 					Couldn't check what's still in {name}: {check.message}
 				</p>
-				<p class="mt-1 text-gray-400">
+				<p class="mt-1 text-fg-muted">
 					Check again, or go ahead: HQ refuses while anything still points at {name}.
 				</p>
 			</div>
 		{/if}
-		{#if error}<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">
+		{#if error}<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">
 				{error}
 			</p>{/if}
 		<DialogFooter>

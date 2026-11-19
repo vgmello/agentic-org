@@ -25,7 +25,7 @@
 		{#snippet action()}
 			<a
 				href={resolve(tabHref(ctx.profile.id, 'overview') as '/')}
-				class="rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+				class="rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 				>Open {ctx.profile.name}'s overview</a
 			>
 		{/snippet}

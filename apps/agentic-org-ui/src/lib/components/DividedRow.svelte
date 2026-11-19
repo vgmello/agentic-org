@@ -7,6 +7,6 @@
 </script>
 
 <!-- A native list row, using the prototype's flat dividers and roomy spacing. -->
-<li class={cn('relative min-w-0 border-b border-white/5 px-4 py-4 last:border-b-0 sm:px-6 lg:px-8', className)} {...attributes}>
+<li class={cn('relative min-w-0 border-b border-line-subtle px-4 py-4 last:border-b-0 sm:px-6 lg:px-8', className)} {...attributes}>
 	{@render children()}
 </li>

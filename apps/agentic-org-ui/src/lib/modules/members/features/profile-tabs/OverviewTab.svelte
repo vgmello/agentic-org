@@ -32,7 +32,7 @@
 		unknown: { word: 'Unknown', class: tone.neutral }
 	};
 	const linkClass =
-		'rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400';
+		'rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
 	const STALE_MS = 5 * 60_000;
 	const stale = (iso: string | undefined) => !iso || Date.now() - Date.parse(iso) > STALE_MS;
 
@@ -95,7 +95,7 @@
 	{@const o = p.execution?.office}
 	{#if o}
 		{o.name} · placement generation {o.generation} · {reportedText(o.observedAt)}
-		{#if stale(o.observedAt)}<span class="block text-xs/5 text-gray-400"
+		{#if stale(o.observedAt)}<span class="block text-xs/5 text-fg-muted"
 				>Last observed state: the office hasn't reported recently, so this may be out of date.</span
 			>{/if}
 	{:else if p.office === null}Unplaced{:else}Not reported{/if}
@@ -105,14 +105,14 @@
 		{@const word = healthWord(p.supervision)}
 		<span class="flex flex-wrap items-center gap-x-2 gap-y-1">
 			{#if word}<StatusPill label={word} class={HEALTH[p.supervision.tone].class} />{/if}
-			<span class="text-gray-300 [overflow-wrap:anywhere]">{p.supervision.health}</span>
+			<span class="text-fg-secondary [overflow-wrap:anywhere]">{p.supervision.health}</span>
 		</span>
 	{:else}Not reported by the office{/if}
 {/snippet}
 {#snippet holds()}
 	{#if p.supervision?.holds.length}
 		<ul role="list" class="space-y-1">
-			{#each p.supervision.holds as hold (hold)}<li class="text-gray-300">{hold}</li>{/each}
+			{#each p.supervision.holds as hold (hold)}<li class="text-fg-secondary">{hold}</li>{/each}
 		</ul>
 	{:else}None{/if}
 {/snippet}
@@ -122,7 +122,7 @@
 	{:else if r.reasons.length === 0}Ready to run
 	{:else}
 		<ul role="list" class="space-y-1">
-			{#each r.reasons as reason (reason)}<li class="text-gray-300">{reason}</li>{/each}
+			{#each r.reasons as reason (reason)}<li class="text-fg-secondary">{reason}</li>{/each}
 		</ul>
 	{/if}
 {/snippet}
@@ -130,14 +130,14 @@
 <Section level={3} title="Current work">
 	<div class="px-4 text-sm/6 min-[640px]:px-6 min-[1024px]:px-8">
 		{#if p.currentTask}
-			<p class="text-gray-300 [overflow-wrap:anywhere]">
+			<p class="text-fg-secondary [overflow-wrap:anywhere]">
 				Working on
 				<a href={resolve(`/work/${encodeURIComponent(p.currentTask.ref)}` as '/')} class={linkClass}
 					><span class="font-mono font-normal">{p.currentTask.ref}</span> {p.currentTask.title}</a
 				>{p.currentTask.project ? ` · ${p.currentTask.project}` : ''}
 			</p>
 		{:else}
-			<p class="text-gray-400">Not working on anything right now.</p>
+			<p class="text-fg-muted">Not working on anything right now.</p>
 		{/if}
 	</div>
 </Section>
@@ -148,7 +148,7 @@
 		level={3}
 		title="Supervision"
 		description="What the office observes, outside the model. Monitoring an idle or paused agent uses no turns."
-		class="border-t border-white/5"
+		class="border-t border-line-subtle"
 	>
 		{#snippet actions()}
 			{#if p.viewer.isOwnerOrAdmin && ctx.snapshot.members.some((m) => m.id === p.id)}
@@ -190,7 +190,7 @@
 		level={3}
 		title="How it runs"
 		description="Separate from who it is. Configuration lives in Agent setup."
-		class="border-t border-white/5"
+		class="border-t border-line-subtle"
 	>
 		{#snippet actions()}
 			<a href={resolve(agentSetupHref(p.id) as '/')} class="{linkClass} text-sm/6"
@@ -201,12 +201,12 @@
 	</Section>
 {/if}
 
-<Section level={3} title="Details" class="border-t border-white/5">
+<Section level={3} title="Details" class="border-t border-line-subtle">
 	<DescriptionList items={details} />
 </Section>
 
 {#if p.kind === 'person'}
-	<div class="border-t border-white/5">
+	<div class="border-t border-line-subtle">
 		<SignInAccess
 			organizationId={ctx.organizationId}
 			organizationName={ctx.organizationName}

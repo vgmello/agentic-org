@@ -29,9 +29,9 @@
 	data-testid="recovery-row"
 	data-state={general.recovery.state}
 >
-	<p class="max-w-3xl text-sm/6 text-gray-300 [overflow-wrap:anywhere]">
+	<p class="max-w-3xl text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">
 		{#each message.segments as segment, index (index)}{#if typeof segment === 'string'}{segment}{:else}<code
-					class="rounded-sm bg-black/30 px-1.5 py-0.5 font-mono text-xs/5 text-white [overflow-wrap:anywhere]"
+					class="rounded-sm bg-shade/30 px-1.5 py-0.5 font-mono text-xs/5 text-fg [overflow-wrap:anywhere]"
 					>{segment.code}</code
 				>{/if}{/each}
 		{NOT_SUPPORTED}

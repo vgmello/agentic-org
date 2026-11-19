@@ -18,11 +18,11 @@
 		todo: { word: 'To do', class: '' },
 		in_progress: {
 			word: 'In progress',
-			class: 'bg-indigo-400/10 text-indigo-300 ring-indigo-400/30'
+			class: 'bg-brand/10 text-brand-text ring-brand/30'
 		},
-		in_review: { word: 'In review', class: 'bg-indigo-400/10 text-indigo-300 ring-indigo-400/30' },
-		blocked: { word: 'Blocked', class: 'bg-red-400/10 text-red-300 ring-red-400/20' },
-		done: { word: 'Done', class: 'bg-green-400/10 text-green-300 ring-green-400/20' }
+		in_review: { word: 'In review', class: 'bg-brand/10 text-brand-text ring-brand/30' },
+		blocked: { word: 'Blocked', class: 'bg-danger/10 text-danger-text ring-danger/20' },
+		done: { word: 'Done', class: 'bg-success/10 text-success-text ring-success/20' }
 	};
 	const PRIORITY = {
 		urgent: 'Urgent',
@@ -32,28 +32,28 @@
 	} as const;
 </script>
 
-<ul role="list" class="divide-y divide-white/5">
+<ul role="list" class="divide-y divide-line-subtle">
 	{#each rows as row (row.ref)}
 		<li
 			class="relative flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8"
 		>
 			<div class="min-w-0 flex-1 basis-60">
-				<p class="text-sm/6 font-semibold text-white">
+				<p class="text-sm/6 font-semibold text-fg">
 					{#if linked}
 						<a
 							href={resolve(`/work/${row.ref}` as '/')}
-							class="rounded-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
+							class="rounded-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
 							><span class="absolute inset-0" aria-hidden="true"></span><span
-								class="font-mono font-normal text-gray-400">{row.ref}</span
+								class="font-mono font-normal text-fg-muted">{row.ref}</span
 							>
 							<span class="[overflow-wrap:anywhere]">{row.title}</span></a
 						>
 					{:else}
-						<span class="font-mono font-normal text-gray-400">{row.ref}</span>
+						<span class="font-mono font-normal text-fg-muted">{row.ref}</span>
 						<span class="[overflow-wrap:anywhere]">{row.title}</span>
 					{/if}
 				</p>
-				<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-gray-400">
+				<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-fg-muted">
 					{#each [row.project, hideAssignee ? undefined : (row.assignee ?? 'Unassigned'), row.priority && PRIORITY[row.priority]].filter(Boolean) as part, i (i)}
 						{#if i > 0}<span aria-hidden="true">·</span>{/if}<span>{part}</span>
 					{/each}

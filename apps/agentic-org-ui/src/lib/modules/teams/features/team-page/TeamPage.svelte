@@ -121,7 +121,7 @@
 <div class="px-4 pt-6 min-[640px]:px-6 min-[1024px]:px-8">
 	<a
 		href={resolve('/teams')}
-		class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+		class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 		>Teams</a
 	>
 </div>
@@ -132,32 +132,33 @@
 	<Loaded resource={team} label="the team" error="Couldn't load this team">
 		{#snippet children(lookup)}
 			{#if !lookup.found}
-				<header class="border-b border-white/5 px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8">
-					<h2
-						id="team-heading"
-						class="text-base/7 font-semibold text-white [overflow-wrap:anywhere]"
-					>
+				<header
+					class="border-b border-line-subtle px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8"
+				>
+					<h2 id="team-heading" class="text-base/7 font-semibold text-fg [overflow-wrap:anywhere]">
 						Team not found
 					</h2>
-					<p class="mt-1 max-w-3xl text-sm/6 text-gray-400">{lookup.message}</p>
+					<p class="mt-1 max-w-3xl text-sm/6 text-fg-muted">{lookup.message}</p>
 				</header>
 			{:else}
 				{@const d = lookup.detail}
 				{@const archived = d.team.status === 'archived'}
 				{@const parent = d.path.at(-1)}
-				<header class="border-b border-white/5 px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8">
+				<header
+					class="border-b border-line-subtle px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8"
+				>
 					<div class="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
 						<!-- Wide enough that the facts don't wrap one at a time: the actions move below first. -->
 						<div class="min-w-0 flex-1 basis-80">
 							<h2
 								id="team-heading"
-								class="flex flex-wrap items-baseline gap-x-2 text-base/7 font-semibold text-white [overflow-wrap:anywhere]"
+								class="flex flex-wrap items-baseline gap-x-2 text-base/7 font-semibold text-fg [overflow-wrap:anywhere]"
 							>
 								{d.team.name}
 							</h2>
 							<div class="mt-1">
 								<div class={factsWrap}>
-									<ul role="list" class="{factsList} items-baseline text-sm/6 text-gray-400">
+									<ul role="list" class="{factsList} items-baseline text-sm/6 text-fg-muted">
 										{#if d.team.ref}<li class="{fact} font-mono text-xs/5">{d.team.ref}</li>{/if}
 										<li class={fact}>
 											{#if d.team.lead}Led by <a
@@ -180,7 +181,9 @@
 									</ul>
 								</div>
 							</div>
-							{#if d.purpose}<p class="mt-2 max-w-3xl text-sm/6 text-gray-300">{d.purpose}</p>{/if}
+							{#if d.purpose}<p class="mt-2 max-w-3xl text-sm/6 text-fg-secondary">
+									{d.purpose}
+								</p>{/if}
 						</div>
 						{#if !archived}
 							<div class="flex flex-wrap items-center gap-3">

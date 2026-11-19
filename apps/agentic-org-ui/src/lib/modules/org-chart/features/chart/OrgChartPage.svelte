@@ -249,7 +249,7 @@
 						}}
 					/>
 				{:else}
-					<p class="text-sm/6 text-red-300">
+					<p class="text-sm/6 text-danger-text">
 						The owner's record isn't in this read, so the owner bar can't be shown. Everyone who is
 						here is listed below.
 					</p>
@@ -257,15 +257,15 @@
 
 				{#if tree}
 					<section aria-labelledby="no-manager-heading" class="mt-8 max-w-4xl">
-						<h3 id="no-manager-heading" class="text-sm/6 font-semibold text-white">
+						<h3 id="no-manager-heading" class="text-sm/6 font-semibold text-fg">
 							No explicit manager
-							<span class="font-normal text-gray-400"
+							<span class="font-normal text-fg-muted"
 								><span aria-hidden="true">· {roots}</span><span class="sr-only"
 									>, {roots} {roots === 1 ? 'member' : 'members'}</span
 								></span
 							>
 						</h3>
-						<p class="text-xs/5 text-gray-400">
+						<p class="text-xs/5 text-fg-muted">
 							Everyone with no recorded manager. No manager is assumed for them.
 						</p>
 						<!-- The keys move between the nodes' links; each node's own controls stay in the Tab order. -->

@@ -50,7 +50,7 @@
 	} = $props();
 
 	const attachmentFocus =
-		'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400';
+		'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
 	const drafts: Record<string, string> = {};
 	let attached = $state<HTMLUListElement>();
 	let attachButton = $state<HTMLButtonElement>();
@@ -230,9 +230,9 @@
 	const typedNote = $derived(canWrite ? liveNote?.(text) : undefined);
 </script>
 
-<div class="border-t border-white/10 px-4 py-3">
+<div class="border-t border-line px-4 py-3">
 	{#if note ?? typedNote}<p
-			class="mb-2 text-sm/6 {canWrite ? 'text-sky-200' : 'text-gray-300'}"
+			class="mb-2 text-sm/6 {canWrite ? 'text-info-text-strong' : 'text-fg-secondary'}"
 			data-testid="composer-note"
 			aria-live="polite"
 		>
@@ -245,7 +245,7 @@
 					id="composer-popup-{resetKey}"
 					role="listbox"
 					aria-label={popup === 'mention' ? 'Mention' : 'Commands'}
-					class="absolute bottom-full z-20 mb-1 max-h-56 w-72 max-w-full overflow-y-auto rounded-md bg-gray-900 py-1 shadow-lg ring-1 ring-white/10"
+					class="absolute bottom-full z-20 mb-1 max-h-56 w-72 max-w-full overflow-y-auto rounded-md bg-surface-sunken py-1 shadow-lg ring-1 ring-line"
 					data-testid="composer-popup"
 				>
 					{#if popup === 'mention'}
@@ -259,11 +259,11 @@
 									type="button"
 									class="flex w-full items-baseline gap-x-2 px-3 py-1.5 text-left text-sm/6 {i ===
 									picked % mentions.length
-										? 'bg-white/10'
-										: 'hover:bg-white/5'}"
+										? 'bg-surface-overlay'
+										: 'hover:bg-surface-raised'}"
 									onmousedown={(e) => (e.preventDefault(), pickMention(o.handle))}
 								>
-									<span class="font-semibold text-white">{o.name}</span><span class="text-gray-400"
+									<span class="font-semibold text-fg">{o.name}</span><span class="text-fg-muted"
 										>@{o.handle}</span
 									>
 								</button>
@@ -280,12 +280,12 @@
 									type="button"
 									class="flex w-full flex-col px-3 py-1.5 text-left text-sm/6 {i ===
 									picked % slashes.length
-										? 'bg-white/10'
-										: 'hover:bg-white/5'}"
+										? 'bg-surface-overlay'
+										: 'hover:bg-surface-raised'}"
 									onmousedown={(e) => (e.preventDefault(), pickSlash(c.name))}
 								>
-									<span class="font-mono font-semibold text-white">{c.usage}</span><span
-										class="text-xs/5 text-gray-400">{c.help}</span
+									<span class="font-mono font-semibold text-fg">{c.usage}</span><span
+										class="text-xs/5 text-fg-muted">{c.help}</span
 									>
 								</button>
 							</li>
@@ -318,10 +318,10 @@
 				}}
 				onclick={track}
 				onkeyup={(e) => (e.key.startsWith('Arrow') && popup ? undefined : track())}
-				class="w-full resize-none rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400"
+				class="w-full resize-none rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus"
 				data-testid="composer"></textarea>
 		</div>
-		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-red-400" role="alert">
+		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-danger" role="alert">
 				<span>{error}</span>{#if unknownCommand}{' '}<button
 						type="button"
 						class="font-semibold underline"
@@ -337,14 +337,14 @@
 			>
 				{#each attachments as a (a)}
 					<li
-						class="flex min-w-0 max-w-full items-center gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200"
+						class="flex min-w-0 max-w-full items-center gap-x-1 rounded bg-surface-overlay px-2 py-0.5 text-xs/5 text-fg-body"
 					>
 						<HeroIcon variant="micro" name="paper-clip" />
 						<span class="min-w-0 truncate" title={a}>{a}</span>
 						<button
 							type="button"
 							data-attachment={a}
-							class="shrink-0 text-gray-400 hover:text-white {attachmentFocus}"
+							class="shrink-0 text-fg-muted hover:text-fg {attachmentFocus}"
 							aria-label="Remove {a}"
 							title="Remove {a}"
 							onclick={() => void removeAttachment(a)}
@@ -355,12 +355,12 @@
 			</ul>
 		{/if}
 		<div class="mt-2 flex flex-wrap items-center justify-between gap-2">
-			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs/5 text-gray-400">
+			<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs/5 text-fg-muted">
 				<span><kbd class="font-mono">@</kbd> mention · <kbd class="font-mono">/</kbd> command</span>
 				<button
 					type="button"
 					bind:this={attachButton}
-					class="inline-flex items-center gap-x-1 hover:text-white {attachmentFocus}"
+					class="inline-flex items-center gap-x-1 hover:text-fg {attachmentFocus}"
 					onclick={() => files?.click()}
 					><HeroIcon class="text-current" variant="mini" name="paper-clip" /> Attach</button
 				>
@@ -382,12 +382,12 @@
 						type="checkbox"
 						checked={enterSends}
 						onchange={(e) => setEnterSends(e.currentTarget.checked)}
-						class="accent-indigo-500"
+						class="accent-primary"
 					/> Enter sends</label
 				>
-				{#if alsoIn}<label class="inline-flex items-center gap-x-1 text-gray-300"
-						><input type="checkbox" bind:checked={alsoInChannel} class="accent-indigo-500" /> Also
-						send to {alsoIn}</label
+				{#if alsoIn}<label class="inline-flex items-center gap-x-1 text-fg-secondary"
+						><input type="checkbox" bind:checked={alsoInChannel} class="accent-primary" /> Also send
+						to {alsoIn}</label
 					>{/if}
 			</div>
 			<Button

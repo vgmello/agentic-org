@@ -40,13 +40,13 @@
 	data-chat-panel
 	class="absolute inset-y-0 right-0 {sidebarInline
 		? 'left-[256px]'
-		: 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-white/10 bg-gray-800"
+		: 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-line bg-surface"
 	aria-label="Pinned"
 	data-testid="pins-panel"
 >
-	<div class="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-white">
-			Pinned <span class="font-normal text-gray-400"
+	<div class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-fg">
+			Pinned <span class="font-normal text-fg-muted"
 				>in {titleOf(conversation, ctx, ctx.owner)}</span
 			>
 		</h2>
@@ -60,11 +60,11 @@
 			onclick={onclose}><X aria-hidden="true" /></Button
 		>
 	</div>
-	<ul role="list" class="min-h-0 flex-1 divide-y divide-white/5 overflow-y-auto">
+	<ul role="list" class="min-h-0 flex-1 divide-y divide-line-subtle overflow-y-auto">
 		{#each pins as m (m.id)}
 			<li class="px-4 py-3" data-testid="pin-row">
-				<p class="text-xs/5 text-gray-400">
-					<span class="font-semibold text-white">{nameOf(ctx, m.from)}</span> · {dayLabel(
+				<p class="text-xs/5 text-fg-muted">
+					<span class="font-semibold text-fg">{nameOf(ctx, m.from)}</span> · {dayLabel(
 						m.created_at,
 						now
 					)}
@@ -74,19 +74,19 @@
 				<div class="mt-1 flex flex-wrap gap-x-3">
 					<button
 						type="button"
-						class="text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200"
+						class="text-xs/5 font-semibold text-brand-text hover:text-brand-text-strong"
 						onclick={() => onshow(m)}>Show in conversation</button
 					>
 					<button
 						type="button"
-						class="text-xs/5 text-gray-400 hover:text-white disabled:opacity-50"
+						class="text-xs/5 text-fg-muted hover:text-fg disabled:opacity-50"
 						disabled={!officeRunning}
 						onclick={() => onunpin(m)}>Unpin</button
 					>
 				</div>
 			</li>
 		{:else}
-			<li class="px-4 py-8 text-center text-sm/6 text-gray-400">
+			<li class="px-4 py-8 text-center text-sm/6 text-fg-muted">
 				Nothing is pinned here. Pin a message from its actions menu.
 			</li>
 		{/each}

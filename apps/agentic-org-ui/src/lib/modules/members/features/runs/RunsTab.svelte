@@ -40,7 +40,7 @@
 
 	const STATE_TONE: Record<TurnState, string> = {
 		accepted: tone.info,
-		running: 'bg-indigo-400/10 text-indigo-300 ring-indigo-400/30',
+		running: 'bg-brand/10 text-brand-text ring-brand/30',
 		switching: tone.info,
 		blocked: tone.bad,
 		recovery_required: tone.bad,
@@ -92,29 +92,29 @@
 		</div>
 		{#if shown.length === 0}
 			<p
-				class="border-t border-white/5 px-4 py-8 text-sm/6 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8"
+				class="border-t border-line-subtle px-4 py-8 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8"
 			>
 				No runs match this filter. <button
 					type="button"
-					class="rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+					class="rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 					onclick={() => (filter = 'all')}>Show all runs</button
 				>
 			</p>
 		{:else}
-			<ul role="list" class="divide-y divide-white/5 border-t border-white/5">
+			<ul role="list" class="divide-y divide-line-subtle border-t border-line-subtle">
 				{#each shown as t (t.id)}
 					{@const cost = costText(t)}
 					<li class="px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
 						<div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
 							<p
-								class="min-w-0 flex-1 basis-60 text-sm/6 font-semibold text-white [overflow-wrap:anywhere]"
+								class="min-w-0 flex-1 basis-60 text-sm/6 font-semibold text-fg [overflow-wrap:anywhere]"
 							>
 								{outcomeText(t)}
 							</p>
 							<StatusPill label={TURN_STATE[t.state]} class={STATE_TONE[t.state]} />
 						</div>
 						<div class="mt-1 {factsWrap}">
-							<ul role="list" class="{factsList} text-xs/5 text-gray-400">
+							<ul role="list" class="{factsList} text-xs/5 text-fg-muted">
 								<li class={fact}><time datetime={t.startedAt}>{whenText(t.startedAt)}</time></li>
 								<li class={fact}>{startedByText(t.startedBy)}</li>
 								<li class={fact}>{durationFact(t)}</li>
@@ -123,19 +123,19 @@
 						</div>
 						<div class="mt-3 flex flex-wrap items-start gap-x-6 gap-y-2">
 							{#if t.attempts.length === 0}
-								<p class="min-w-0 flex-1 basis-72 text-sm/6 text-gray-400">
+								<p class="min-w-0 flex-1 basis-72 text-sm/6 text-fg-muted">
 									No attempt yet: the office hasn't started this turn.
 								</p>
 							{:else}
 								<details class="group min-w-0 flex-1 basis-72">
 									<summary
-										class="inline-flex min-h-6 cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden gap-x-1 rounded-sm text-sm/6 font-semibold text-gray-300 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+										class="inline-flex min-h-6 cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden gap-x-1 rounded-sm text-sm/6 font-semibold text-fg-secondary hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 									>
 										<svg
 											viewBox="0 0 20 20"
 											fill="currentColor"
 											aria-hidden="true"
-											class="size-5 shrink-0 text-gray-400 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+											class="size-5 shrink-0 text-fg-muted transition-transform group-open:rotate-90 motion-reduce:transition-none"
 											><path
 												fill-rule="evenodd"
 												d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z"
@@ -147,9 +147,9 @@
 									<ol role="list" class="mt-2 space-y-2">
 										{#each t.attempts as a (a.n)}
 											<li
-												class="rounded-md bg-white/[0.03] px-3 py-2 text-xs/5 text-gray-400 ring-1 ring-white/10 ring-inset [overflow-wrap:anywhere]"
+												class="rounded-md bg-tint/[0.03] px-3 py-2 text-xs/5 text-fg-muted ring-1 ring-line ring-inset [overflow-wrap:anywhere]"
 											>
-												<p class="text-sm/6 text-gray-300">
+												<p class="text-sm/6 text-fg-secondary">
 													{a.n}. {a.connection} · <span class="font-mono">{a.model}</span>
 												</p>
 												<p>
@@ -165,13 +165,13 @@
 							{#if t.hasLog}
 								<a
 									href={resolve(logHref(t) as '/')}
-									class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+									class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 									>Open session log<span class="sr-only">, run of {whenText(t.startedAt)}</span></a
 								>
 							{:else if isOpen(t)}
-								<p class="text-xs/5 text-gray-400">Session log appears when the turn writes one</p>
+								<p class="text-xs/5 text-fg-muted">Session log appears when the turn writes one</p>
 							{:else}
-								<p class="text-xs/5 text-gray-400">No session log kept</p>
+								<p class="text-xs/5 text-fg-muted">No session log kept</p>
 							{/if}
 						</div>
 					</li>

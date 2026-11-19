@@ -45,13 +45,13 @@
 
 <div
 	data-shell-header
-	class="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-x-3 border-b border-white/5 bg-gray-800 px-4 min-[640px]:h-16 min-[640px]:gap-x-6 min-[640px]:px-6 min-[1024px]:px-8"
+	class="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-x-3 border-b border-line-subtle bg-surface px-4 min-[640px]:h-16 min-[640px]:gap-x-6 min-[640px]:px-6 min-[1024px]:px-8"
 >
 	{@render children()}
 	<h1
 		id="shell-page-title"
 		tabindex="-1"
-		class="min-w-0 flex-1 truncate text-base/7 font-semibold text-white focus:outline-none min-[640px]:flex-none min-[640px]:shrink"
+		class="min-w-0 flex-1 truncate text-base/7 font-semibold text-fg focus:outline-none min-[640px]:flex-none min-[640px]:shrink"
 	>
 		{heading}
 	</h1>

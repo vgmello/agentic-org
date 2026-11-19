@@ -51,7 +51,7 @@
 				{/snippet}
 			</EmptyState>
 		{:else}
-			<ul role="list" class="divide-y divide-white/5">
+			<ul role="list" class="divide-y divide-line-subtle">
 				{#each rows as p (p.id)}
 					<li
 						class="relative flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8"
@@ -60,15 +60,15 @@
 							<p class="flex flex-wrap items-baseline gap-x-2 text-sm/6">
 								<a
 									href={resolve(`/projects/${encodeURIComponent(p.id)}` as '/')}
-									class="rounded-sm font-semibold text-white focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]"
+									class="rounded-sm font-semibold text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 									><span class="absolute inset-0" aria-hidden="true"></span>{p.name}</a
 								>
-								{#if p.key}<span class="font-mono text-xs/5 text-gray-400">{p.key}</span>{/if}
+								{#if p.key}<span class="font-mono text-xs/5 text-fg-muted">{p.key}</span>{/if}
 							</p>
 							<div class="mt-1">
 								<div class={factsWrap}>
-									<ul role="list" class="{factsList} text-xs/5 text-gray-400">
-										<li class="{fact} font-medium text-gray-300">
+									<ul role="list" class="{factsList} text-xs/5 text-fg-muted">
+										<li class="{fact} font-medium text-fg-secondary">
 											{p.role === 'owner' ? 'Owner' : 'Contributor'}
 										</li>
 										{#if p.ownerTeam}

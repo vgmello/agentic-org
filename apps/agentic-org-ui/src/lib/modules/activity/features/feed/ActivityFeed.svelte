@@ -280,7 +280,7 @@
 			<Label for="{uid}-search" class="sr-only">Search activity</Label>
 			<MiniIcon
 				name="search"
-				class="pointer-events-none absolute top-1/2 left-3 size-5 -translate-y-1/2 text-gray-400"
+				class="pointer-events-none absolute top-1/2 left-3 size-5 -translate-y-1/2 text-fg-muted"
 			/>
 			<Input
 				id="{uid}-search"
@@ -289,15 +289,17 @@
 				autocomplete="off"
 				value={typed}
 				oninput={(event) => typing(event.currentTarget.value)}
-				class="max-[639px]:h-11 border-0 bg-white/5 px-3 py-1.5 text-base text-white shadow-none outline-1 outline-solid -outline-offset-1 outline-gray-500 sm:text-sm/6 md:text-sm/6 dark:bg-white/5 placeholder:text-gray-400 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 pl-10"
+				class="max-[639px]:h-11 border-0 bg-surface-raised px-3 py-1.5 text-base text-fg shadow-none outline-1 outline-solid -outline-offset-1 outline-field-border sm:text-sm/6 md:text-sm/6 dark:bg-surface-raised placeholder:text-fg-muted focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus pl-10"
 			/>
 		</div>
-		<label class="flex min-h-9 items-center gap-x-2 text-sm/6 text-gray-300 max-[639px]:min-h-11">
+		<label
+			class="flex min-h-9 items-center gap-x-2 text-sm/6 text-fg-secondary max-[639px]:min-h-11"
+		>
 			<input
 				type="checkbox"
 				checked={!!filters.includeStatus}
 				onchange={(event) => changed({ includeStatus: event.currentTarget.checked || undefined })}
-				class="size-4 accent-indigo-500"
+				class="size-4 accent-primary"
 			/>
 			Include status changes
 		</label>
@@ -323,7 +325,7 @@
 					<p>Messages aren't connected yet, so agents' conversations don't show here.</p>
 					<a
 						href={resolve('/settings/offices')}
-						class="mt-1 inline-block rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+						class="mt-1 inline-block rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 						>How to connect</a
 					>
 				</Callout>
@@ -331,7 +333,7 @@
 		{/if}
 		{#if result.sources.git === 'paused'}
 			<p
-				class="border-y border-white/5 px-4 py-3 text-xs/5 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8"
+				class="border-y border-line-subtle px-4 py-3 text-xs/5 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8"
 				data-testid="git-paused"
 			>
 				Git activity paused: the project's repository isn't reachable.
@@ -354,7 +356,7 @@
 					<button
 						type="button"
 						onclick={jump}
-						class="pointer-events-auto inline-flex min-h-9 items-center gap-x-2 rounded-full bg-indigo-500 px-4 text-sm/6 font-semibold text-white hover:bg-indigo-500/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+						class="pointer-events-auto inline-flex min-h-9 items-center gap-x-2 rounded-full bg-primary px-4 text-sm/6 font-semibold text-on-emphasis hover:bg-primary/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 						data-testid="jump-latest"
 					>
 						{pending.length} new · Jump to latest
@@ -372,7 +374,7 @@
 					class="px-4 py-12 text-center min-[640px]:px-6 min-[1024px]:px-8"
 					data-testid="no-match"
 				>
-					<p class="text-sm/6 text-gray-300">No activity matches these filters.</p>
+					<p class="text-sm/6 text-fg-secondary">No activity matches these filters.</p>
 					{#if filtered}
 						<Button
 							variant="outline"
@@ -392,16 +394,16 @@
 					{/if}
 				</div>
 			{:else}
-				<div bind:this={list} class="border-t border-white/5">
+				<div bind:this={list} class="border-t border-line-subtle">
 					{#each blocks as block (block.key)}
 						<svelte:element
 							this={H}
-							class="border-b border-white/5 bg-white/[0.02] px-4 py-2 text-xs/5 font-semibold text-gray-300 min-[640px]:px-6 min-[1024px]:px-8"
+							class="border-b border-line-subtle bg-tint/[0.02] px-4 py-2 text-xs/5 font-semibold text-fg-secondary min-[640px]:px-6 min-[1024px]:px-8"
 							>{block.label}</svelte:element
 						>
 						<ul
 							role="list"
-							class="divide-y divide-white/5 border-b border-white/5"
+							class="divide-y divide-line-subtle border-b border-line-subtle"
 							aria-label={block.label}
 						>
 							{#each block.entries as entry (entry.type === 'row' ? entry.row.id : entry.id)}
@@ -424,15 +426,15 @@
 												if (openGroups[entry.id]) delete openGroups[entry.id];
 												else openGroups[entry.id] = true;
 											}}
-											class="flex min-h-9 w-full items-center gap-x-2 rounded-sm text-left text-sm/6 text-gray-300 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+											class="flex min-h-9 w-full items-center gap-x-2 rounded-sm text-left text-sm/6 text-fg-secondary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 										>
 											<span class="min-w-0 flex-1 [overflow-wrap:anywhere]">{entry.summary}</span>
-											<span class="shrink-0 font-semibold text-indigo-400"
+											<span class="shrink-0 font-semibold text-link"
 												>{openGroups[entry.id] ? 'Hide' : 'Show'}</span
 											>
 											<MiniIcon
 												name="chevronDown"
-												class="size-4 shrink-0 text-gray-400 transition-transform motion-reduce:transition-none {openGroups[
+												class="size-4 shrink-0 text-fg-muted transition-transform motion-reduce:transition-none {openGroups[
 													entry.id
 												]
 													? 'rotate-180'
@@ -442,7 +444,7 @@
 										{#if openGroups[entry.id]}
 											<ul
 												role="list"
-												class="mt-2 -mx-4 divide-y divide-white/5 border-t border-white/5 min-[640px]:-mx-6 min-[1024px]:-mx-8"
+												class="mt-2 -mx-4 divide-y divide-line-subtle border-t border-line-subtle min-[640px]:-mx-6 min-[1024px]:-mx-8"
 											>
 												{#each entry.rows as row (row.id)}
 													<ActivityRowItem {row} {now} onopenthread={openThread} />
@@ -456,7 +458,7 @@
 					{/each}
 					{#if result.more > 0}
 						<div
-							class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-4 text-sm/6 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8"
+							class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-4 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8"
 							data-testid="earlier"
 						>
 							<span>Earlier: {result.more} more</span>

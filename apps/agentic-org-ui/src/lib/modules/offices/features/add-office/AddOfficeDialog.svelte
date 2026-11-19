@@ -209,7 +209,7 @@
 		{#if stage === 'invitation' && issued}
 			<InvitationPanel {issued} ondone={() => (open = false)} />
 		{:else if stage === 'refused'}
-			<p class="text-sm/6 text-red-300" role="alert">{error}</p>
+			<p class="text-sm/6 text-danger-text" role="alert">{error}</p>
 			<DialogFooter>
 				<Button type="button" variant="outline" class={mobileButton} onclick={() => (open = false)}
 					>Close</Button
@@ -219,7 +219,7 @@
 				>
 			</DialogFooter>
 		{:else if stage === 'failed'}
-			<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">{error}</p>
+			<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">{error}</p>
 			<DialogFooter>
 				<Button type="button" variant="outline" class={mobileButton} onclick={() => (open = false)}
 					>Close</Button
@@ -231,8 +231,7 @@
 		{:else}
 			<form class="grid gap-5" onsubmit={submit} novalidate>
 				<div>
-					<Label for="office-name" class="block text-sm/6 font-medium text-white">Office name</Label
-					>
+					<Label for="office-name" class="block text-sm/6 font-medium text-fg">Office name</Label>
 					<div class="mt-2">
 						<Input
 							bind:ref={nameInput}
@@ -253,37 +252,37 @@
 				</div>
 				{#if canAddOnInstance}
 					<fieldset class="space-y-2" disabled={readOnly}>
-						<legend class="text-sm/6 font-medium text-white">Where it runs</legend>
+						<legend class="text-sm/6 font-medium text-fg">Where it runs</legend>
 						<label
-							class="flex min-h-9 items-start gap-x-3 text-sm/6 text-gray-300 max-[639px]:min-h-11"
+							class="flex min-h-9 items-start gap-x-3 text-sm/6 text-fg-secondary max-[639px]:min-h-11"
 						>
 							<input
 								type="radio"
 								name="where"
 								value="instance"
 								bind:group={where}
-								class="mt-1.5 size-4 accent-indigo-500"
+								class="mt-1.5 size-4 accent-primary"
 							/>
 							<span
-								><span class="block font-medium text-white">On this instance</span><span
-									class="block text-xs/5 text-gray-400"
+								><span class="block font-medium text-fg">On this instance</span><span
+									class="block text-xs/5 text-fg-muted"
 									>A new office on the machine that runs HQ.</span
 								></span
 							>
 						</label>
 						<label
-							class="flex min-h-9 items-start gap-x-3 text-sm/6 text-gray-300 max-[639px]:min-h-11"
+							class="flex min-h-9 items-start gap-x-3 text-sm/6 text-fg-secondary max-[639px]:min-h-11"
 						>
 							<input
 								type="radio"
 								name="where"
 								value="machine"
 								bind:group={where}
-								class="mt-1.5 size-4 accent-indigo-500"
+								class="mt-1.5 size-4 accent-primary"
 							/>
 							<span
-								><span class="block font-medium text-white">On another machine</span><span
-									class="block text-xs/5 text-gray-400"
+								><span class="block font-medium text-fg">On another machine</span><span
+									class="block text-xs/5 text-fg-muted"
 									>An invitation you send to it. You approve the join here.</span
 								></span
 							>
@@ -299,10 +298,10 @@
 							{@const mine = order.indexOf(phase)}
 							<li
 								class={mine < at
-									? 'text-gray-300'
+									? 'text-fg-secondary'
 									: mine === at
-										? 'font-semibold text-white'
-										: 'text-gray-500'}
+										? 'font-semibold text-fg'
+										: 'text-fg-subtle'}
 								aria-current={mine === at ? 'step' : undefined}
 							>
 								{label}{mine < at ? ' · done' : mine === at ? '…' : ''}
@@ -315,10 +314,10 @@
 				{/if}
 				{#if stage === 'waiting'}
 					<div
-						class="space-y-2 rounded-lg bg-white/5 p-4 text-sm/6 text-gray-300 outline-1 -outline-offset-1 outline-white/10"
+						class="space-y-2 rounded-lg bg-surface-raised p-4 text-sm/6 text-fg-secondary outline-1 -outline-offset-1 outline-line"
 						data-testid="add-waiting"
 					>
-						<p class="font-medium text-white" role="status">
+						<p class="font-medium text-fg" role="status">
 							{waitingText(progress?.waitingFor ?? resume?.waitingFor ?? [])}.
 						</p>
 						<p>
@@ -327,10 +326,10 @@
 						</p>
 					</div>
 				{/if}
-				{#if note}<p class="text-sm/6 text-gray-300" role="status" data-testid="add-note">
+				{#if note}<p class="text-sm/6 text-fg-secondary" role="status" data-testid="add-note">
 						{note}
 					</p>{/if}
-				{#if error}<p class="text-sm/6 text-red-300" role="alert">{error}</p>{/if}
+				{#if error}<p class="text-sm/6 text-danger-text" role="alert">{error}</p>{/if}
 
 				<DialogFooter>
 					{#if readOnly}

@@ -62,7 +62,7 @@
 
 <div class="max-w-2xl space-y-6">
 	<div>
-		<Label for="hire-need" class="text-sm/6 font-medium text-white">What do you need?</Label>
+		<Label for="hire-need" class="text-sm/6 font-medium text-fg">What do you need?</Label>
 		<textarea
 			id="hire-need"
 			rows="4"
@@ -79,7 +79,7 @@
 	</div>
 
 	<div>
-		<Label for="hire-team" class="text-sm/6 font-medium text-white">Home team</Label>
+		<Label for="hire-team" class="text-sm/6 font-medium text-fg">Home team</Label>
 		<select
 			id="hire-team"
 			class="mt-2 {selectClass}"
@@ -99,7 +99,7 @@
 				{full}
 				<a
 					href={resolve(`/teams/${encodeURIComponent(team.id)}` as '/')}
-					class="rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+					class="rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 					>Open {team.name}</a
 				>
 			</p>
@@ -112,10 +112,10 @@
 	</div>
 
 	{#if error}
-		<p role="alert" class="text-sm/6 text-red-300 [overflow-wrap:anywhere]">{error}</p>
+		<p role="alert" class="text-sm/6 text-danger-text [overflow-wrap:anywhere]">{error}</p>
 	{/if}
 
-	<div class="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-white/5 pt-6">
+	<div class="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line-subtle pt-6">
 		<Button
 			class="min-w-28 {mobileButton}"
 			disabled={!!blocked}
@@ -125,7 +125,7 @@
 			>{cantRun ? 'Fill in the details yourself' : busy ? 'Asking the HR lead…' : 'Next'}</Button
 		>
 		{#if blocked}
-			<p id="hire-describe-blocked" class="text-xs/5 text-gray-400">{blocked}</p>
+			<p id="hire-describe-blocked" class="text-xs/5 text-fg-muted">{blocked}</p>
 		{/if}
 	</div>
 </div>

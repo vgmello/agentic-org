@@ -99,13 +99,13 @@
 	data-chat-panel
 	class="absolute inset-y-0 right-0 {sidebarInline
 		? 'left-[256px]'
-		: 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-white/10 bg-gray-800"
+		: 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-line bg-surface"
 	aria-label="Thread"
 	data-testid="thread-panel"
 >
-	<div class="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-white">
-			Thread <span class="font-normal text-gray-400">in {title}</span>
+	<div class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-fg">
+			Thread <span class="font-normal text-fg-muted">in {title}</span>
 		</h2>
 		<Button
 			type="button"
@@ -149,7 +149,7 @@
 					{onhandback}
 					{onwithdraw}
 				/>
-				<p class="px-2 pt-2 text-xs/5 text-gray-400" aria-live="off" data-testid="thread-count">
+				<p class="px-2 pt-2 text-xs/5 text-fg-muted" aria-live="off" data-testid="thread-count">
 					{replies.length}
 					{replies.length === 1 ? 'reply' : 'replies'}
 				</p>

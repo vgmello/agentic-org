@@ -162,7 +162,7 @@
 
 		{#if alert}
 			<p
-				class="px-4 pt-6 text-sm/6 text-red-300 [overflow-wrap:anywhere] min-[640px]:px-6 min-[1024px]:px-8"
+				class="px-4 pt-6 text-sm/6 text-danger-text [overflow-wrap:anywhere] min-[640px]:px-6 min-[1024px]:px-8"
 				role="alert"
 			>
 				{alert}
@@ -177,7 +177,7 @@
 		{#snippet ownerAction()}
 			<a
 				href={resolve('/teams/org-chart' as '/')}
-				class="text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+				class="text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 				>Hand over ownership on the org chart</a
 			>
 		{/snippet}
@@ -188,16 +188,16 @@
 		{#snippet adminAction()}
 			<a
 				href={resolve('/settings' as '/')}
-				class="text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+				class="text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 				>Hand over the administrator role in General</a
 			>
 		{/snippet}
 
 		{#snippet list(people: AccessPerson[], empty: string)}
 			{#if people.length === 0}
-				<p class="px-4 py-4 text-sm/6 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8">{empty}</p>
+				<p class="px-4 py-4 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">{empty}</p>
 			{:else}
-				<ul role="list" class="divide-y divide-white/5 border-y border-white/5">
+				<ul role="list" class="divide-y divide-line-subtle border-y border-line-subtle">
 					{#each people as person (person.memberId)}
 						<AccessRow
 							{person}
@@ -232,7 +232,7 @@
 		</Section>
 
 		{#if !canManage}
-			<p class="px-4 pt-6 text-sm/6 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8">
+			<p class="px-4 pt-6 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
 				{MANAGERS_ONLY}
 			</p>
 		{/if}

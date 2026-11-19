@@ -34,9 +34,9 @@
 			<svelte:element
 				this={level === 2 ? 'h2' : 'h3'}
 				{id}
-				class="text-base/7 font-semibold text-white">{title}</svelte:element
+				class="text-base/7 font-semibold text-fg">{title}</svelte:element
 			>
-			{#if description}<p class="mt-1 max-w-3xl text-sm/6 text-gray-400">{description}</p>{/if}
+			{#if description}<p class="mt-1 max-w-3xl text-sm/6 text-fg-muted">{description}</p>{/if}
 		</div>
 		{#if actions}<div class="flex flex-wrap items-center gap-3">{@render actions()}</div>{/if}
 	</div>

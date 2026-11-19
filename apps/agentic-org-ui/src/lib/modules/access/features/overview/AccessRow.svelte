@@ -49,21 +49,21 @@
 	<div class="flex min-w-0 flex-1 items-start gap-3">
 		<Avatar name={person.name} size="md" />
 		<div class="min-w-0">
-			<p class="flex flex-wrap items-center gap-2 text-sm/6 font-semibold text-white">
+			<p class="flex flex-wrap items-center gap-2 text-sm/6 font-semibold text-fg">
 				<a
 					href={resolve(`/members/${person.memberId}` as '/')}
-					class="min-w-0 rounded-sm [overflow-wrap:anywhere] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+					class="min-w-0 rounded-sm [overflow-wrap:anywhere] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 					>{person.name}</a
 				>
 				{#if person.owner}
-					<StatusPill label="Owner" class="bg-indigo-400/10 text-indigo-300 ring-indigo-400/30" />
+					<StatusPill label="Owner" class="bg-brand/10 text-brand-text ring-brand/30" />
 				{/if}
 				{#if person.administrator}<StatusPill label="Administrator" />{/if}
 			</p>
-			<p class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]">
+			<p class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
 				<span class="font-mono">@{person.handle}</span> · {person.homeTeam}
 			</p>
-			<p class="mt-1 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">{stateLine}</p>
+			<p class="mt-1 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">{stateLine}</p>
 		</div>
 	</div>
 	{#if canManage}
@@ -93,10 +93,10 @@
 				{/if}
 			</div>
 			{#if person.owner && person.state === 'signed_in'}
-				<p class="text-xs/5 text-gray-400 min-[1024px]:text-right">Hand over ownership first.</p>
+				<p class="text-xs/5 text-fg-muted min-[1024px]:text-right">Hand over ownership first.</p>
 			{/if}
 			{#if person.state === 'invited'}
-				<p class="text-xs/5 text-gray-400 min-[1024px]:text-right">
+				<p class="text-xs/5 text-fg-muted min-[1024px]:text-right">
 					Inviting again cancels the previous link.
 				</p>
 			{/if}

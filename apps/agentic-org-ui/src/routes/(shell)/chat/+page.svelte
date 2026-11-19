@@ -1011,9 +1011,9 @@
 	class="chat-frame relative flex min-h-0 min-w-0"
 >
 	{#if loadError}
-		<p class="m-8 text-sm/6 text-red-400" role="alert">{loadError}</p>
+		<p class="m-8 text-sm/6 text-danger" role="alert">{loadError}</p>
 	{:else if !chatState || !bar}
-		<p class="m-8 text-sm/6 text-gray-400" role="status">Loading chat…</p>
+		<p class="m-8 text-sm/6 text-fg-muted" role="status">Loading chat…</p>
 	{:else}
 		<ChatSidebar
 			bind:this={conversationNavigation}
@@ -1040,7 +1040,7 @@
 			aria-label="Conversation"
 		>
 			<div
-				class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3 max-[640px]:px-[8px]"
+				class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3 max-[640px]:px-[8px]"
 			>
 				<div class="min-w-0 max-w-full">
 					<div class="flex min-w-0 flex-wrap items-center gap-2">
@@ -1061,7 +1061,7 @@
 							>
 								Conversations
 								{#if bar.needsYou.length}<span
-										class="rounded-full bg-amber-400 px-1.5 text-xs/5 font-semibold text-gray-900"
+										class="rounded-full bg-warning px-1.5 text-xs/5 font-semibold text-on-warning"
 										aria-hidden="true">{bar.needsYou.length}</span
 									>{/if}
 							</Button>
@@ -1071,13 +1071,13 @@
 							tabindex="-1"
 							class="min-w-0 max-w-full whitespace-normal {conversation && !searching
 								? '[overflow-wrap:anywhere]'
-								: ''} text-base/7 font-semibold text-white focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+								: ''} text-base/7 font-semibold text-fg focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
 							data-testid="conversation-title"
 						>
 							{viewTitle}
 						</h2>
 					</div>
-					{#if conversation && !searching}<p class="text-xs/5 text-gray-400">
+					{#if conversation && !searching}<p class="text-xs/5 text-fg-muted">
 							{subtitle}{#if conversation.archived}{' · Archived'}{/if}
 						</p>{/if}
 				</div>
@@ -1095,7 +1095,7 @@
 					{/if}
 					<div class="relative min-w-0 max-w-full max-[640px]:w-full">
 						<Search
-							class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-gray-400"
+							class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-fg-muted"
 							aria-hidden="true"
 						/>
 						<label class="sr-only" for="chat-search">Search chat</label>
@@ -1105,7 +1105,7 @@
 							value={query}
 							oninput={(event) => changeQuery(event.currentTarget.value)}
 							placeholder="Search · from:@ada in:#atlas has:ask"
-							class="w-56 max-w-full rounded-md bg-gray-800 py-1.5 pr-3 pl-8 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400 max-[640px]:w-full"
+							class="w-56 max-w-full rounded-md bg-surface py-1.5 pr-3 pl-8 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus max-[640px]:w-full"
 							data-testid="chat-search"
 						/>
 					</div>
@@ -1139,18 +1139,18 @@
 			>
 				{#if searching}
 					<div class="px-2 pb-3">
-						<p class="text-sm/6 text-gray-300" data-testid="search-count">
+						<p class="text-sm/6 text-fg-secondary" data-testid="search-count">
 							{results.length}
 							{results.length === 1 ? 'result' : 'results'}
 						</p>
 						<ul
-							class="mt-1 flex flex-wrap items-center gap-1.5 text-xs/5 text-gray-400"
+							class="mt-1 flex flex-wrap items-center gap-1.5 text-xs/5 text-fg-muted"
 							aria-label="Search filters"
 							data-testid="search-help"
 						>
 							<li>Filter by</li>
 							{#each ['from:@name', 'in:#channel', 'member:@name', 'has:ask', 'has:thread', 'has:attachment', 'kind:announcement', 'kind:handoff', 'before:2026-11-08', 'after:2026-11-01'] as f (f)}
-								<li class="rounded bg-white/10 px-1.5 py-0.5 font-mono text-gray-200">{f}</li>
+								<li class="rounded bg-surface-overlay px-1.5 py-0.5 font-mono text-fg-body">{f}</li>
 							{/each}
 						</ul>
 					</div>
@@ -1159,7 +1159,7 @@
 							{@const c = chatState.conversations.find((x) => x.id === m.conversation_id)}
 							{@render rowFor(m, { where: c ? titleOf(c, ctx, ctx.owner) : undefined, open: true })}
 						{:else}
-							<p class="px-2 text-sm/6 text-gray-400" data-testid="no-results">Nothing matches.</p>
+							<p class="px-2 text-sm/6 text-fg-muted" data-testid="no-results">Nothing matches.</p>
 						{/each}
 					</div>
 				{:else if view.type === 'needs'}
@@ -1180,13 +1180,13 @@
 								/>
 								<button
 									type="button"
-									class="px-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200"
+									class="px-1 text-xs/5 font-semibold text-brand-text hover:text-brand-text-strong"
 									onclick={() => openMessage(m)}>Open in conversation</button
 								>
 							</div>
 						{:else}
 							<p
-								class="px-2 py-8 text-center text-sm/6 text-gray-400"
+								class="px-2 py-8 text-center text-sm/6 text-fg-muted"
 								data-testid="nothing-needs-you"
 								tabindex="-1"
 							>
@@ -1200,7 +1200,7 @@
 							{@const c = chatState.conversations.find((x) => x.id === m.conversation_id)}
 							{@render rowFor(m, { where: c ? titleOf(c, ctx, ctx.owner) : undefined, open: true })}
 						{:else}
-							<p class="px-2 py-8 text-center text-sm/6 text-gray-400">Nobody has mentioned you.</p>
+							<p class="px-2 py-8 text-center text-sm/6 text-fg-muted">Nobody has mentioned you.</p>
 						{/each}
 					</div>
 				{:else if view.type === 'threads'}
@@ -1209,16 +1209,16 @@
 							<li>
 								<button
 									type="button"
-									class="w-full rounded-lg border border-white/10 bg-white/[0.03] p-3 text-left hover:bg-white/5"
+									class="w-full rounded-lg border border-line bg-tint/[0.03] p-3 text-left hover:bg-surface-raised"
 									onclick={(event) => openThread(t.root, event.currentTarget)}
 								>
-									<span class="block text-xs/5 text-gray-400"
+									<span class="block text-xs/5 text-fg-muted"
 										>{titleOf(t.conversation, ctx, ctx.owner)} · {nameOf(ctx, t.root.from)}</span
 									>
-									<span class="mt-0.5 block truncate text-sm/6 text-white"
+									<span class="mt-0.5 block truncate text-sm/6 text-fg"
 										>{t.root.body.split('\n')[0]}</span
 									>
-									<span class="mt-1 block text-xs/5 text-indigo-300"
+									<span class="mt-1 block text-xs/5 text-brand-text"
 										>{t.replies}
 										{t.replies === 1 ? 'reply' : 'replies'}{#if t.new_replies}{' · ' +
 												t.new_replies +
@@ -1227,7 +1227,7 @@
 								</button>
 							</li>
 						{:else}
-							<li class="px-2 py-8 text-center text-sm/6 text-gray-400">
+							<li class="px-2 py-8 text-center text-sm/6 text-fg-muted">
 								No threads with you in them.
 							</li>
 						{/each}
@@ -1237,7 +1237,7 @@
 						<div role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions">
 							{#if !conversation.members.includes(ctx.owner)}
 								<p
-									class="mb-2 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300"
+									class="mb-2 rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-secondary"
 									data-testid="reading-as-owner"
 								>
 									You're reading as the owner. You can reply here.
@@ -1246,27 +1246,28 @@
 							{#each convView.shown as m, i (m.id)}
 								{#if dayChange(convView.shown, i)}
 									<div
-										class="my-2 flex items-center gap-x-3 px-2 text-xs/5 text-gray-400"
+										class="my-2 flex items-center gap-x-3 px-2 text-xs/5 text-fg-muted"
 										aria-live="off"
 									>
-										<span class="h-px flex-1 bg-white/10"></span>{dayLabel(m.created_at, now)}<span
-											class="h-px flex-1 bg-white/10"
-										></span>
+										<span class="h-px flex-1 bg-surface-overlay"></span>{dayLabel(
+											m.created_at,
+											now
+										)}<span class="h-px flex-1 bg-surface-overlay"></span>
 									</div>
 								{/if}
 								{#if m.id === newAt}
 									<div
-										class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-indigo-300"
+										class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-brand-text"
 										aria-live="off"
 										data-testid="new-divider"
 									>
-										<span class="h-px flex-1 bg-indigo-400/40"></span>New<span
-											class="h-px flex-1 bg-indigo-400/40"
+										<span class="h-px flex-1 bg-brand/40"></span>New<span
+											class="h-px flex-1 bg-brand/40"
 										></span>
 									</div>
 								{/if}
 								<div
-									class={highlight === m.id ? 'rounded-md ring-2 ring-indigo-400' : ''}
+									class={highlight === m.id ? 'rounded-md ring-2 ring-brand' : ''}
 									aria-live={channelRowLive(m)}
 								>
 									{@render rowFor(m)}
@@ -1274,28 +1275,28 @@
 							{:else}
 								{#if conversation.auto?.type === 'general'}
 									<div
-										class="mx-auto my-8 max-w-md rounded-lg border border-white/10 bg-white/[0.03] p-5 text-center"
+										class="mx-auto my-8 max-w-md rounded-lg border border-line bg-tint/[0.03] p-5 text-center"
 										data-testid="welcome-card"
 									>
-										<h3 class="text-sm/6 font-semibold text-white">Welcome to #general</h3>
-										<p class="mt-1 text-sm/6 text-gray-300">
+										<h3 class="text-sm/6 font-semibold text-fg">Welcome to #general</h3>
+										<p class="mt-1 text-sm/6 text-fg-secondary">
 											Agents and people talk here. Agents post questions and updates that need
 											someone. Everything else stays in Activity.
 										</p>
 									</div>
 								{:else}
-									<p class="px-2 py-8 text-center text-sm/6 text-gray-400">No messages yet.</p>
+									<p class="px-2 py-8 text-center text-sm/6 text-fg-muted">No messages yet.</p>
 								{/if}
 							{/each}
 
 							{#each convView.digests as g (g.member_id)}
 								<div
-									class="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2"
+									class="mt-2 rounded-md border border-line bg-tint/[0.03] px-3 py-2"
 									data-testid="digest-row"
 								>
 									<button
 										type="button"
-										class="text-sm/6 font-semibold text-indigo-300"
+										class="text-sm/6 font-semibold text-brand-text"
 										aria-expanded={openDigest === g.member_id}
 										onclick={() =>
 											(openDigest = openDigest === g.member_id ? undefined : g.member_id)}
@@ -1319,19 +1320,19 @@
 							{/each}
 							{#if convView.muted.length}
 								<div
-									class="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2"
+									class="mt-2 rounded-md border border-line bg-tint/[0.03] px-3 py-2"
 									data-testid="muted-row"
 								>
 									<button
 										type="button"
-										class="text-sm/6 font-semibold text-indigo-300"
+										class="text-sm/6 font-semibold text-brand-text"
 										aria-expanded={showMuted}
 										onclick={() => (showMuted = !showMuted)}
 										>{convView.muted.length} muted {convView.muted.length === 1
 											? 'message'
 											: 'messages'} · {showMuted ? 'Hide' : 'Show'}</button
 									>
-									<span class="text-xs/5 text-gray-400"> They still reach Activity.</span>
+									<span class="text-xs/5 text-fg-muted"> They still reach Activity.</span>
 									{#if showMuted}<div class="mt-1 space-y-1">
 											{#each convView.muted as m (m.id)}<div aria-live={channelRowLive(m)}>
 													<MessageRow
@@ -1352,7 +1353,7 @@
 			</div>
 
 			{#if conversation && !searching}
-				<div class="px-5 pb-1 text-xs/5 text-gray-400" aria-live="polite" data-testid="typing">
+				<div class="px-5 pb-1 text-xs/5 text-fg-muted" aria-live="polite" data-testid="typing">
 					{typing ?? ' '}
 				</div>
 				<Composer

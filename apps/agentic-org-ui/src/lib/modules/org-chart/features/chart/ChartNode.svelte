@@ -60,7 +60,7 @@
 	);
 	const pill =
 		'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs/5 font-medium whitespace-nowrap ring-1 ring-inset';
-	const meta = 'text-xs/5 text-gray-400 [overflow-wrap:anywhere]';
+	const meta = 'text-xs/5 text-fg-muted [overflow-wrap:anywhere]';
 </script>
 
 <li data-node={e.id} data-kind={e.kind}>
@@ -72,15 +72,15 @@
 	  margins, so a hidden column leaves no gap. The row tints on hover and keyboard focus, tying the menu to it.
 	-->
 	<div
-		class="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-start rounded-md px-1 py-3 transition-colors duration-150 has-focus-visible:bg-white/5 hover:bg-white/5 motion-reduce:transition-none @max-[16rem]:pt-1 @max-[16rem]:pb-4 {highlight ===
+		class="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-start rounded-md px-1 py-3 transition-colors duration-150 has-focus-visible:bg-surface-raised hover:bg-surface-raised motion-reduce:transition-none @max-[16rem]:pt-1 @max-[16rem]:pb-4 {highlight ===
 		e.id
-			? 'bg-indigo-500/10'
+			? 'bg-primary/10'
 			: ''}"
 	>
 		{#if hasReports}
 			<button
 				type="button"
-				class="col-start-1 row-start-1 mr-3 -my-0.5 flex size-7 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-white/5 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:-my-2.5 max-[639px]:size-11"
+				class="col-start-1 row-start-1 mr-3 -my-0.5 flex size-7 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:-my-2.5 max-[639px]:size-11"
 				aria-expanded={open}
 				aria-controls="reports-{e.id}"
 				aria-label="{open ? 'Collapse' : 'Expand'} {e.name}'s reports"
@@ -120,14 +120,14 @@
 					href={resolve(`/members/${encodeURIComponent(e.id)}` as '/')}
 					data-node-link={e.id}
 					aria-label="{e.name}, {kindWord(e.kind).toLowerCase()}"
-					class="inline-flex min-h-6 items-center rounded-sm font-semibold text-white hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11 [overflow-wrap:anywhere]"
+					class="inline-flex min-h-6 items-center rounded-sm font-semibold text-fg hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 [overflow-wrap:anywhere]"
 					>{e.name}</a
 				>
-				{#if e.id === ownerId}<span
-						class="{pill} bg-indigo-400/10 text-indigo-300 ring-indigo-400/30">Owner</span
+				{#if e.id === ownerId}<span class="{pill} bg-brand/10 text-brand-text ring-brand/30"
+						>Owner</span
 					>{/if}
-				{#if e.status === 'paused'}<span
-						class="{pill} bg-gray-400/10 text-gray-300 ring-gray-400/20">Paused</span
+				{#if e.status === 'paused'}<span class="{pill} bg-quiet/10 text-fg-secondary ring-quiet/20"
+						>Paused</span
 					>{/if}
 			</p>
 		</div>
@@ -139,7 +139,7 @@
 						variant="ghost"
 						size="icon"
 						data-node-menu={e.id}
-						class="col-start-4 row-start-1 ml-3 -my-0.5 size-7 shrink-0 text-gray-400 hover:text-white max-[639px]:-my-2.5 max-[639px]:size-11"
+						class="col-start-4 row-start-1 ml-3 -my-0.5 size-7 shrink-0 text-fg-muted hover:text-fg max-[639px]:-my-2.5 max-[639px]:size-11"
 						aria-label="Actions for {e.name}"
 					>
 						<svg viewBox="0 0 20 20" fill="currentColor" class="size-5" aria-hidden="true"
@@ -167,7 +167,7 @@
 		>
 			<p class={meta}>
 				{kindWord(e.kind)} · @{e.handle} ·
-				{#if e.homeTeam}{e.homeTeam.name}{:else}<span class="text-red-300"
+				{#if e.homeTeam}{e.homeTeam.name}{:else}<span class="text-danger-text"
 						>No home team on record</span
 					>{/if}
 			</p>
@@ -179,7 +179,7 @@
 						.join(' · ')}
 				</p>
 			{/if}
-			{#if node.problem}<p class="text-xs/5 text-red-300 [overflow-wrap:anywhere]">
+			{#if node.problem}<p class="text-xs/5 text-danger-text [overflow-wrap:anywhere]">
 					{node.problem}
 				</p>{/if}
 		</div>
@@ -190,7 +190,7 @@
 			role="list"
 			aria-label="{e.name}'s reports"
 			hidden={!open}
-			class="ml-[0.875rem] border-l border-white/10 pl-2 max-[639px]:ml-[1.375rem] @max-[16rem]:ml-1 @max-[16rem]:pl-[8px] {node.level >=
+			class="ml-[0.875rem] border-l border-line pl-2 max-[639px]:ml-[1.375rem] @max-[16rem]:ml-1 @max-[16rem]:pl-[8px] {node.level >=
 			2
 				? '@max-[30rem]:ml-0 @max-[30rem]:border-l-0 @max-[30rem]:pl-0'
 				: ''}"

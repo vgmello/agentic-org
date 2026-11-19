@@ -81,11 +81,11 @@
 
 <div class="max-w-2xl space-y-6">
 	{#if current.reason}
-		<figure class="rounded-md border border-white/10 px-4 py-3">
-			<figcaption class="text-xs/5 text-gray-400">
+		<figure class="rounded-md border border-line px-4 py-3">
+			<figcaption class="text-xs/5 text-fg-muted">
 				You asked for, into {current.homeTeam.name}
 			</figcaption>
-			<blockquote class="mt-1 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">
+			<blockquote class="mt-1 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">
 				{current.reason}
 			</blockquote>
 		</figure>
@@ -93,10 +93,10 @@
 
 	{#if phase === 'stopped'}
 		<div role="alert" class="space-y-1">
-			<p class="text-sm/6 font-semibold text-red-300 [overflow-wrap:anywhere]">
+			<p class="text-sm/6 font-semibold text-danger-text [overflow-wrap:anywhere]">
 				The HR lead stopped: {current.drafting?.stoppedReason ?? 'no reason was given'}.
 			</p>
-			<p class="text-sm/6 text-gray-300">
+			<p class="text-sm/6 text-fg-secondary">
 				Nothing has been created. Fill in the details yourself, or ask the HR lead again.
 			</p>
 		</div>
@@ -113,13 +113,13 @@
 		<div role="status" class="flex items-start gap-x-3">
 			<span
 				aria-hidden="true"
-				class="mt-1 size-4 shrink-0 rounded-full border-2 border-sky-300/30 border-t-sky-300 motion-safe:animate-spin"
+				class="mt-1 size-4 shrink-0 rounded-full border-2 border-info-text/30 border-t-info-text motion-safe:animate-spin"
 			></span>
 			<div>
-				<p class="text-sm/6 font-semibold text-white">
+				<p class="text-sm/6 font-semibold text-fg">
 					{phase === 'still_starting' ? 'HR lead is still starting…' : 'HR lead is reading…'}
 				</p>
-				<p class="text-sm/6 text-gray-300">
+				<p class="text-sm/6 text-fg-secondary">
 					It drafts a proposal for you to check. Nothing is created until you confirm it.
 				</p>
 			</div>
@@ -138,7 +138,7 @@
 			<Button variant="outline" class={mobileButton} onclick={onback}>Back</Button>
 		</div>
 		{#if phase === 'still_starting'}
-			<div id="hire-hr-details" hidden={!showDetails} class="text-sm/6 text-gray-300">
+			<div id="hire-hr-details" hidden={!showDetails} class="text-sm/6 text-fg-secondary">
 				{#if current.drafting}
 					<p>
 						Asked at <time datetime={current.drafting.startedAt}
@@ -155,7 +155,7 @@
 		{/if}
 	{/if}
 	{#if pollError}
-		<p class="text-xs/5 text-red-300 [overflow-wrap:anywhere]">
+		<p class="text-xs/5 text-danger-text [overflow-wrap:anywhere]">
 			Couldn't check on the HR lead: {pollError} Checking again.
 		</p>
 	{/if}

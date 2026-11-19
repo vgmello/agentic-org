@@ -18,7 +18,7 @@
 
 <span
 	aria-hidden="true"
-	class="inline-flex shrink-0 items-center justify-center rounded-full bg-indigo-500/20 font-semibold text-indigo-200 {sizes[
+	class="inline-flex shrink-0 items-center justify-center rounded-full bg-primary/20 font-semibold text-brand-text-strong {sizes[
 		size
 	]} {className}">{initialsOf(name)}</span
 >

@@ -142,7 +142,7 @@
 
 <Sheet bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<SheetContent side="right" class="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-md">
-		<SheetHeader class="border-b border-white/10">
+		<SheetHeader class="border-b border-line">
 			<SheetTitle>Add person</SheetTitle>
 			<SheetDescription>
 				Once added, agents in {organization.name} can reach them as a participant.
@@ -171,7 +171,7 @@
 				<div>
 					<Label for="team-person-handle">Handle</Label>
 					<div class="mt-2 flex items-center gap-x-2">
-						<span aria-hidden="true" class="text-sm/6 text-gray-400">@</span>
+						<span aria-hidden="true" class="text-sm/6 text-fg-muted">@</span>
 						<Input
 							id="team-person-handle"
 							bind:value={handle}
@@ -204,7 +204,7 @@
 
 				<div>
 					<Label for="team-person-contact"
-						>Contact <span class="font-normal text-gray-400">(optional)</span></Label
+						>Contact <span class="font-normal text-fg-muted">(optional)</span></Label
 					>
 					<Input
 						id="team-person-contact"
@@ -240,7 +240,7 @@
 
 				<div>
 					<Label for="team-person-manager"
-						>Reports to <span class="font-normal text-gray-400">(optional)</span></Label
+						>Reports to <span class="font-normal text-fg-muted">(optional)</span></Label
 					>
 					<select
 						id="team-person-manager"
@@ -254,16 +254,16 @@
 				</div>
 
 				{#if failure}
-					<div role="alert" class="rounded-md border border-white/10 p-3 text-sm/6">
-						<p class="font-semibold text-red-300">Couldn't add the person</p>
-						<p class="mt-1 text-gray-300 [overflow-wrap:anywhere]">{failure}</p>
+					<div role="alert" class="rounded-md border border-line p-3 text-sm/6">
+						<p class="font-semibold text-danger-text">Couldn't add the person</p>
+						<p class="mt-1 text-fg-secondary [overflow-wrap:anywhere]">{failure}</p>
 					</div>
 				{/if}
 			</div>
 			<!-- Outside the scrolling fields, so Cancel and Add person stay in view. -->
 			<div
 				data-sheet-footer
-				class="flex flex-wrap justify-end gap-3 border-t border-white/10 p-4 max-[639px]:[&>*]:flex-1"
+				class="flex flex-wrap justify-end gap-3 border-t border-line p-4 max-[639px]:[&>*]:flex-1"
 			>
 				<Button
 					type="button"

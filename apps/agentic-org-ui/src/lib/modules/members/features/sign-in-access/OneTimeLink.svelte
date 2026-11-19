@@ -25,7 +25,7 @@
 </script>
 
 <div class="space-y-3">
-	<p class="text-sm/6 text-gray-300">
+	<p class="text-sm/6 text-fg-secondary">
 		Send this link to {who}. It works once and expires in 24 hours ({expires}).
 		{link.kind === 'invite'
 			? `${who} opens it and chooses a username and password.`
@@ -37,12 +37,12 @@
 			readonly
 			aria-label={link.kind === 'invite' ? 'Registration link' : 'Set-new-password link'}
 			value={link.url}
-			class="min-w-0 flex-1 basis-56 rounded-md bg-white/5 px-3 py-1.5 font-mono text-xs/6 text-white outline-1 -outline-offset-1 outline-gray-500 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11 max-[639px]:text-base"
+			class="min-w-0 flex-1 basis-56 rounded-md bg-surface-raised px-3 py-1.5 font-mono text-xs/6 text-fg outline-1 -outline-offset-1 outline-field-border focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 max-[639px]:text-base"
 			onfocus={(e) => e.currentTarget.select()}
 		/>
 		<CopyButton text={link.url} label="Copy link" />
 	</div>
-	<p class="text-xs/5 text-gray-400">
+	<p class="text-xs/5 text-fg-muted">
 		It's shown only now. If it's lost, {link.kind === 'invite' ? 'invite' : 'make a new link for'}
 		{who} again.
 	</p>

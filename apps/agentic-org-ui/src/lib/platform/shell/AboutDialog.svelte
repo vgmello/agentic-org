@@ -25,18 +25,18 @@
 			<DialogTitle>About Agentic Org</DialogTitle>
 			<DialogDescription>This app and the office it is connected to.</DialogDescription>
 		</DialogHeader>
-		<dl class="divide-y divide-white/5 text-sm/6">
+		<dl class="divide-y divide-line-subtle text-sm/6">
 			<div class="flex flex-wrap justify-between gap-x-4 py-3">
-				<dt class="text-gray-400">Version</dt>
-				<dd class="font-mono text-white">{pkg.version}</dd>
+				<dt class="text-fg-muted">Version</dt>
+				<dd class="font-mono text-fg">{pkg.version}</dd>
 			</div>
 			<div class="flex flex-wrap justify-between gap-x-4 py-3">
-				<dt class="text-gray-400">Organization</dt>
-				<dd class="min-w-0 text-white wrap-break-word">{connection.organization.name}</dd>
+				<dt class="text-fg-muted">Organization</dt>
+				<dd class="min-w-0 text-fg wrap-break-word">{connection.organization.name}</dd>
 			</div>
 			<div class="flex flex-wrap justify-between gap-x-4 py-3">
-				<dt class="text-gray-400">Office</dt>
-				<dd class="min-w-0 text-white wrap-break-word">
+				<dt class="text-fg-muted">Office</dt>
+				<dd class="min-w-0 text-fg wrap-break-word">
 					{connection.office.name} office on {connection.office.host}
 				</dd>
 			</div>

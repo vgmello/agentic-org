@@ -19,7 +19,7 @@
 	const Icon = $derived(LEVEL_ICON[level]);
 </script>
 
-<span class="inline-flex max-w-full items-center gap-x-1 rounded-md bg-white/5 px-1.5 py-0.5 text-xs/5 text-gray-200 outline-1 -outline-offset-1 outline-white/10 [overflow-wrap:anywhere]" data-testid="level-badge">
+<span class="inline-flex max-w-full items-center gap-x-1 rounded-md bg-surface-raised px-1.5 py-0.5 text-xs/5 text-fg-body outline-1 -outline-offset-1 outline-line [overflow-wrap:anywhere]" data-testid="level-badge">
 	<Icon class="size-3.5 shrink-0" aria-hidden="true" />
 	{placeLabel(level, scopeName)}{version !== undefined ? ` v${version}` : ''}
 </span>

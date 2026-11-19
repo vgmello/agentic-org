@@ -95,7 +95,7 @@
 				>{issuing === 'reset' ? 'Making link…' : 'New sign-in link'}</Button
 			>
 			{#if person.owner}
-				<p class="text-sm/6 text-gray-400 [overflow-wrap:anywhere]">
+				<p class="text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
 					Remove access isn't available for the owner. Hand over ownership first.
 				</p>
 			{:else}
@@ -106,10 +106,10 @@
 		{/if}
 	</div>
 	{#if person.invitePending && !person.canSignIn}
-		<p class="text-xs/5 text-gray-400">Inviting again cancels the previous link.</p>
+		<p class="text-xs/5 text-fg-muted">Inviting again cancels the previous link.</p>
 	{/if}
 	{#if refusal}
-		<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">{refusal}</p>
+		<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">{refusal}</p>
 	{/if}
 </div>
 

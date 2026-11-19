@@ -12,29 +12,29 @@
 
 <nav
 	aria-label="Hire steps"
-	class="border-b border-white/5 px-4 py-3 min-[640px]:px-6 min-[1024px]:px-8"
+	class="border-b border-line-subtle px-4 py-3 min-[640px]:px-6 min-[1024px]:px-8"
 >
-	<p class="text-xs/5 text-gray-400 min-[640px]:hidden">
+	<p class="text-xs/5 text-fg-muted min-[640px]:hidden">
 		{#if current === 4}
-			<span class="font-semibold text-white">Done</span> · every step finished
+			<span class="font-semibold text-fg">Done</span> · every step finished
 		{:else}
 			Step {current + 1} of {STEPS.length} ·
-			<span class="font-semibold text-white">{STEPS[current]}</span>
+			<span class="font-semibold text-fg">{STEPS[current]}</span>
 		{/if}
 	</p>
 	<ol role="list" class="hidden flex-wrap items-center gap-x-2 gap-y-1 min-[640px]:flex">
 		{#each STEPS as label, i (label)}
 			<li class="flex items-center gap-x-2 text-sm/6">
-				{#if i > 0}<span aria-hidden="true" class="h-px w-6 bg-white/10"></span>{/if}
+				{#if i > 0}<span aria-hidden="true" class="h-px w-6 bg-surface-overlay"></span>{/if}
 				<span
 					aria-current={i === current ? 'step' : undefined}
 					class={[
 						'inline-flex items-center gap-x-2',
 						i === current
-							? 'font-semibold text-white'
+							? 'font-semibold text-fg'
 							: i < current
-								? 'text-gray-300'
-								: 'text-gray-400'
+								? 'text-fg-secondary'
+								: 'text-fg-muted'
 					]}
 				>
 					<span
@@ -42,10 +42,10 @@
 						class={[
 							'flex size-6 shrink-0 items-center justify-center rounded-full text-xs/5 tabular-nums',
 							i === current
-								? 'bg-indigo-500 text-white'
+								? 'bg-primary text-on-emphasis'
 								: i < current
-									? 'bg-white/10 text-gray-300'
-									: 'outline-1 -outline-offset-1 outline-white/20'
+									? 'bg-surface-overlay text-fg-secondary'
+									: 'outline-1 -outline-offset-1 outline-line-strong'
 						]}>{i + 1}</span
 					>
 					{label}{#if i < current}<span class="sr-only">, done</span>{/if}

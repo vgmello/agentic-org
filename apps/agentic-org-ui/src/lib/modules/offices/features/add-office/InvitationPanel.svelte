@@ -20,7 +20,7 @@
 </script>
 
 <div class="space-y-4" data-testid="invitation-panel">
-	<ol class="list-decimal space-y-1 pl-5 text-sm/6 text-gray-300">
+	<ol class="list-decimal space-y-1 pl-5 text-sm/6 text-fg-secondary">
 		<li>On the other machine, start Agentic Org's office setup.</li>
 		<li>
 			Paste this invitation when it asks. It's a protected prompt: the invitation never goes on the
@@ -33,12 +33,12 @@
 			readonly
 			aria-label="Invitation"
 			value={issued.secret}
-			class="min-w-0 flex-1 basis-56 rounded-md bg-white/5 px-3 py-1.5 font-mono text-xs/6 text-white outline-1 -outline-offset-1 outline-gray-500 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11 max-[639px]:text-base"
+			class="min-w-0 flex-1 basis-56 rounded-md bg-surface-raised px-3 py-1.5 font-mono text-xs/6 text-fg outline-1 -outline-offset-1 outline-field-border focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 max-[639px]:text-base"
 			onfocus={(e) => e.currentTarget.select()}
 		/>
 		<CopyButton text={issued.secret} label="Copy invitation" copiedLabel="Copied invitation" />
 	</div>
-	<p class="text-xs/5 text-gray-400">
+	<p class="text-xs/5 text-fg-muted">
 		It works once and expires in 24 hours ({expires}). It's shown only now. If it's lost, make a new
 		invitation: that cancels this one.
 	</p>

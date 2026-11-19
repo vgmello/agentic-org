@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { heroicons, type HeroIconProps } from './heroicons';
 
-	let { name, variant, class: className = 'text-gray-400' }: HeroIconProps = $props();
+	let { name, variant, class: className = 'text-fg-muted' }: HeroIconProps = $props();
 	// The props union allows only combinations present in this typed icon subset.
 	const icon = $derived(heroicons[`${variant}-${name}` as keyof typeof heroicons]);
 </script>

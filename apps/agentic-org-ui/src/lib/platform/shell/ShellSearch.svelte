@@ -153,7 +153,7 @@
 	aria-label="Search"
 	aria-keyshortcuts={shortcutHint ? '/' : undefined}
 	onclick={openNarrow}
-	class="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-white/5 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 min-[640px]:hidden"
+	class="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus min-[640px]:hidden"
 >
 	<MiniIcon name="search" class="size-5" />
 </button>
@@ -162,14 +162,14 @@
 	bind:this={container}
 	onfocusout={focusout}
 	class="relative min-w-0 flex-1 min-[640px]:max-w-md {narrowOpen
-		? 'max-[639px]:fixed max-[639px]:inset-x-0 max-[639px]:top-0 max-[639px]:z-50 max-[639px]:flex max-[639px]:h-14 max-[639px]:items-center max-[639px]:gap-x-2 max-[639px]:border-b max-[639px]:border-white/5 max-[639px]:bg-gray-800 max-[639px]:px-4'
+		? 'max-[639px]:fixed max-[639px]:inset-x-0 max-[639px]:top-0 max-[639px]:z-50 max-[639px]:flex max-[639px]:h-14 max-[639px]:items-center max-[639px]:gap-x-2 max-[639px]:border-b max-[639px]:border-line-subtle max-[639px]:bg-surface max-[639px]:px-4'
 		: 'max-[639px]:hidden'}"
 >
 	<form role="search" class="relative min-w-0 flex-1" onsubmit={(event) => event.preventDefault()}>
 		<label for="{id}-input" class="sr-only">Search</label>
 		<MiniIcon
 			name="search"
-			class="pointer-events-none absolute top-1/2 left-2.5 size-5 -translate-y-1/2 text-gray-400"
+			class="pointer-events-none absolute top-1/2 left-2.5 size-5 -translate-y-1/2 text-fg-muted"
 		/>
 		<input
 			bind:this={input}
@@ -188,12 +188,12 @@
 			oninput={changed}
 			onfocus={() => (open = true)}
 			onkeydown={keydown}
-			class="block h-9 w-full rounded-md bg-white/5 pr-9 pl-9 text-base text-white outline-1 -outline-offset-1 outline-gray-500 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-400 min-[640px]:text-sm/6 max-[639px]:h-11 [&::-webkit-search-cancel-button]:hidden"
+			class="block h-9 w-full rounded-md bg-surface-raised pr-9 pl-9 text-base text-fg outline-1 -outline-offset-1 outline-field-border placeholder:text-fg-muted focus:outline-2 focus:-outline-offset-2 focus:outline-focus min-[640px]:text-sm/6 max-[639px]:h-11 [&::-webkit-search-cancel-button]:hidden"
 		/>
 		{#if shortcutHint && !query}
 			<kbd
 				aria-hidden="true"
-				class="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 rounded border border-white/10 px-1.5 font-sans text-xs/5 text-gray-400 max-[639px]:hidden"
+				class="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 rounded border border-line px-1.5 font-sans text-xs/5 text-fg-muted max-[639px]:hidden"
 				>/</kbd
 			>
 		{/if}
@@ -203,7 +203,7 @@
 			type="button"
 			aria-label="Close search"
 			onclick={closeNarrow}
-			class="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-gray-400 hover:bg-white/5 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 min-[640px]:hidden"
+			class="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus min-[640px]:hidden"
 		>
 			<MiniIcon name="xMark" class="size-5" />
 		</button>
@@ -211,16 +211,16 @@
 
 	<div
 		hidden={!expanded}
-		class="absolute top-full right-0 left-0 z-50 mt-2 max-h-[min(28rem,calc(100dvh-5rem))] overflow-y-auto rounded-md bg-gray-800 py-2 ring-1 ring-white/10 max-[639px]:fixed max-[639px]:top-14 max-[639px]:mt-0 max-[639px]:rounded-none"
+		class="absolute top-full right-0 left-0 z-50 mt-2 max-h-[min(28rem,calc(100dvh-5rem))] overflow-y-auto rounded-md bg-surface py-2 ring-1 ring-line max-[639px]:fixed max-[639px]:top-14 max-[639px]:mt-0 max-[639px]:rounded-none"
 	>
 		{#if phase === 'searching' && !results}
-			<p class="px-3 py-1.5 text-sm/6 text-gray-400">Searching…</p>
+			<p class="px-3 py-1.5 text-sm/6 text-fg-muted">Searching…</p>
 		{:else if phase === 'done' && total === 0}
-			<p class="px-3 py-1.5 text-sm/6 text-gray-400">
+			<p class="px-3 py-1.5 text-sm/6 text-fg-muted">
 				No projects, work or members match “{trimmed}”.
 			</p>
 		{:else if phase === 'failed'}
-			<p class="px-3 py-1.5 text-sm/6 text-gray-300">
+			<p class="px-3 py-1.5 text-sm/6 text-fg-secondary">
 				Search isn't available right now. Try again in a moment, or open all results.
 			</p>
 		{/if}
@@ -231,7 +231,7 @@
 					<div role="group" aria-labelledby="{id}-{group.key}-label">
 						<div
 							id="{id}-{group.key}-label"
-							class="px-3 pt-2 pb-1 text-xs/5 font-semibold text-gray-400"
+							class="px-3 pt-2 pb-1 text-xs/5 font-semibold text-fg-muted"
 						>
 							{group.label}
 						</div>
@@ -247,11 +247,11 @@
 								onclick={() => choose(hit.href)}
 								onkeydown={() => {}}
 								class="mx-1 flex cursor-default flex-col rounded-sm px-2 py-1.5 text-sm/6 max-[639px]:min-h-11 {selected
-									? 'bg-white/10 text-white'
-									: 'text-gray-200 hover:bg-white/5'}"
+									? 'bg-surface-overlay text-fg'
+									: 'text-fg-body hover:bg-surface-raised'}"
 							>
 								<span class="min-w-0 truncate">{hit.title}</span>
-								{#if hit.meta}<span class="text-xs/5 text-gray-400">{hit.meta}</span>{/if}
+								{#if hit.meta}<span class="text-xs/5 text-fg-muted">{hit.meta}</span>{/if}
 							</div>
 						{/each}
 					</div>
@@ -259,7 +259,7 @@
 			{/each}
 			{#if trimmed}
 				{@const selected = options[active]?.id === `${id}-all`}
-				<div class="mt-1 border-t border-white/5 pt-1">
+				<div class="mt-1 border-t border-line-subtle pt-1">
 					<div
 						id="{id}-all"
 						role="option"
@@ -268,9 +268,9 @@
 						onmousedown={(event) => event.preventDefault()}
 						onclick={() => choose(seeAllHref)}
 						onkeydown={() => {}}
-						class="mx-1 flex min-h-9 cursor-default items-center rounded-sm px-2 text-sm/6 font-semibold text-indigo-300 max-[639px]:min-h-11 {selected
-							? 'bg-white/10'
-							: 'hover:bg-white/5'}"
+						class="mx-1 flex min-h-9 cursor-default items-center rounded-sm px-2 text-sm/6 font-semibold text-brand-text max-[639px]:min-h-11 {selected
+							? 'bg-surface-overlay'
+							: 'hover:bg-surface-raised'}"
 					>
 						See all results
 					</div>

@@ -76,17 +76,17 @@
 		<div data-testid="zone-status">
 			{#if accountZone.status === 'unsaved-utc'}
 				<Callout>
-					<p class="text-sm/6 text-white">
+					<p class="text-sm/6 text-fg">
 						Times show in <strong class="font-semibold">unsaved UTC</strong>.
 					</p>
-					<p class="text-sm/6 text-gray-400">
+					<p class="text-sm/6 text-fg-muted">
 						Time zone not detected. Choose yours below and save it.
 					</p>
 				</Callout>
 			{:else}
-				<p class="text-sm/6 text-gray-300">
+				<p class="text-sm/6 text-fg-secondary">
 					Showing times in
-					<strong class="font-semibold text-white [overflow-wrap:anywhere]"
+					<strong class="font-semibold text-fg [overflow-wrap:anywhere]"
 						>{current.id.replaceAll('_', ' ')}</strong
 					>{#if current.id !== 'UTC'}, {current.offset}{/if}. It is
 					<time datetime={now.toISOString()} title={formatFull(now, accountZone.zone)}
@@ -100,44 +100,42 @@
 		</div>
 
 		<div class="max-w-xl">
-			<Label for="zone-query" class="block text-sm/6 font-medium text-white"
-				>Search time zones</Label
-			>
+			<Label for="zone-query" class="block text-sm/6 font-medium text-fg">Search time zones</Label>
 			<Input
 				id="zone-query"
 				type="search"
 				autocomplete="off"
 				bind:value={query}
 				aria-describedby="zone-query-help"
-				class="mt-2 max-[639px]:h-11 border-0 bg-white/5 px-3 py-1.5 text-base text-white shadow-none outline-1 outline-solid -outline-offset-1 outline-gray-500 sm:text-sm/6 md:text-sm/6 dark:bg-white/5 placeholder:text-gray-400 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
+				class="mt-2 max-[639px]:h-11 border-0 bg-surface-raised px-3 py-1.5 text-base text-fg shadow-none outline-1 outline-solid -outline-offset-1 outline-field-border sm:text-sm/6 md:text-sm/6 dark:bg-surface-raised placeholder:text-fg-muted focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus"
 			/>
-			<p id="zone-query-help" class="mt-2 text-xs/5 text-gray-400">
+			<p id="zone-query-help" class="mt-2 text-xs/5 text-fg-muted">
 				A city, a region or an offset, for example Kolkata, Europe or +05:30
 			</p>
 		</div>
 
 		<fieldset class="max-w-2xl">
-			<legend class="text-sm/6 font-medium text-white">Choose a time zone</legend>
+			<legend class="text-sm/6 font-medium text-fg">Choose a time zone</legend>
 			<p class="sr-only" role="status">
 				{matches.length === 0
 					? 'No time zones match.'
 					: `${matches.length} ${matches.length === 1 ? 'time zone matches' : 'time zones match'}.`}
 			</p>
 			{#if matches.length === 0}
-				<p class="mt-3 text-sm/6 text-gray-400" data-testid="zone-none">
+				<p class="mt-3 text-sm/6 text-fg-muted" data-testid="zone-none">
 					No time zone matches “{query.trim()}”. Try a city, or an offset such as +01:00.
 				</p>
 			{:else}
 				<ul
 					role="list"
 					tabindex="-1"
-					class="mt-3 max-h-80 divide-y divide-white/5 overflow-y-auto border-y border-white/10"
+					class="mt-3 max-h-80 divide-y divide-line-subtle overflow-y-auto border-y border-line"
 					data-testid="zone-list"
 				>
 					{#each listed as option (option.id)}
 						<li>
 							<label
-								class="flex min-h-11 cursor-pointer items-center gap-x-3 px-2 py-2 hover:bg-white/5 has-checked:bg-indigo-500/10 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-indigo-400"
+								class="flex min-h-11 cursor-pointer items-center gap-x-3 px-2 py-2 hover:bg-surface-raised has-checked:bg-primary/10 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-focus"
 							>
 								<input
 									type="radio"
@@ -145,14 +143,14 @@
 									value={option.id}
 									checked={choice === option.id}
 									onchange={() => (picked = option.id)}
-									class="size-4 shrink-0 accent-indigo-500"
+									class="size-4 shrink-0 accent-primary"
 								/>
-								<span class="min-w-0 flex-1 text-sm/6 text-white [overflow-wrap:anywhere]">
+								<span class="min-w-0 flex-1 text-sm/6 text-fg [overflow-wrap:anywhere]">
 									{option.city}
-									{#if option.region}<span class="text-xs/5 text-gray-400">{option.region}</span
+									{#if option.region}<span class="text-xs/5 text-fg-muted">{option.region}</span
 										>{/if}
 								</span>
-								<span class="shrink-0 text-right text-xs/5 text-gray-400">
+								<span class="shrink-0 text-right text-xs/5 text-fg-muted">
 									<span class="block">{option.offset}</span>
 									<span class="block"><span class="sr-only">Local time </span>{option.local}</span>
 								</span>
@@ -161,7 +159,7 @@
 					{/each}
 				</ul>
 				{#if matches.length > SHOWN}
-					<p class="mt-2 text-xs/5 text-gray-400">
+					<p class="mt-2 text-xs/5 text-fg-muted">
 						Showing {SHOWN} of {matches.length}. Keep typing to narrow the list.
 					</p>
 				{/if}
@@ -176,7 +174,7 @@
 				aria-describedby="zone-save-help"
 				class="min-w-36 max-[639px]:min-h-11">{saving ? 'Saving…' : 'Save time zone'}</Button
 			>
-			<p id="zone-save-help" class="text-xs/5 text-gray-400">
+			<p id="zone-save-help" class="text-xs/5 text-fg-muted">
 				{#if unchanged}This is your saved time zone.{:else}Will show times as {choice.replaceAll(
 						'_',
 						' '
@@ -184,11 +182,11 @@
 			</p>
 		</div>
 		{#if failure}
-			<p role="alert" class="text-sm/6 text-red-300">
+			<p role="alert" class="text-sm/6 text-danger-text">
 				Couldn't save the time zone. {failure} Your choice is still selected: try again.
 			</p>
 		{:else if confirmed}
-			<p role="status" class="text-sm/6 text-gray-300">
+			<p role="status" class="text-sm/6 text-fg-secondary">
 				Saved. Times now show in {confirmed.replaceAll('_', ' ')}.
 			</p>
 		{/if}

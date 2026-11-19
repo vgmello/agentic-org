@@ -96,9 +96,8 @@
 	}
 
 	const option =
-		'flex cursor-pointer items-start gap-x-3 px-3 py-2 text-sm/6 has-disabled:cursor-default has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-indigo-400 max-[639px]:min-h-11 max-[639px]:items-center';
-	const radio =
-		'mt-1 size-4 shrink-0 accent-indigo-500 focus-visible:outline-none max-[639px]:mt-0';
+		'flex cursor-pointer items-start gap-x-3 px-3 py-2 text-sm/6 has-disabled:cursor-default has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-focus max-[639px]:min-h-11 max-[639px]:items-center';
+	const radio = 'mt-1 size-4 shrink-0 accent-primary focus-visible:outline-none max-[639px]:mt-0';
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
@@ -132,8 +131,8 @@
 			{/if}
 
 			<fieldset disabled={busy} aria-describedby={error ? `${ids}-error` : undefined}>
-				<legend class="text-sm/6 font-medium text-white">Reports to</legend>
-				<ul role="list" class="mt-2 divide-y divide-white/5 rounded-md ring-1 ring-white/10">
+				<legend class="text-sm/6 font-medium text-fg">Reports to</legend>
+				<ul role="list" class="mt-2 divide-y divide-line-subtle rounded-md ring-1 ring-line">
 					<li>
 						<label class={option}>
 							<input
@@ -144,8 +143,8 @@
 								class={radio}
 							/>
 							<span class="min-w-0">
-								<span class="block text-white">No explicit manager</span>
-								<span class="block text-xs/5 text-gray-400">Shown under the owner bar</span>
+								<span class="block text-fg">No explicit manager</span>
+								<span class="block text-xs/5 text-fg-muted">Shown under the owner bar</span>
 							</span>
 						</label>
 					</li>
@@ -162,17 +161,17 @@
 									class={radio}
 								/>
 								<span class="min-w-0">
-									<span class="block text-white [overflow-wrap:anywhere]"
+									<span class="block text-fg [overflow-wrap:anywhere]"
 										>{c.employee.name}{c.employee.id === current ? ' (current)' : ''}</span
 									>
-									<span class="block text-xs/5 text-gray-400 [overflow-wrap:anywhere]"
+									<span class="block text-xs/5 text-fg-muted [overflow-wrap:anywhere]"
 										>{kindWord(c.employee.kind)} · @{c.employee.handle}{c.employee.homeTeam
 											? ` · ${c.employee.homeTeam.name}`
 											: ''}</span
 									>
 									{#if c.disabled}<span
 											id="{ids}-why-{c.employee.id}"
-											class="block text-xs/5 text-gray-400">{c.disabled}</span
+											class="block text-xs/5 text-fg-muted">{c.disabled}</span
 										>{/if}
 								</span>
 							</label>

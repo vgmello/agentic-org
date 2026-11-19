@@ -19,7 +19,7 @@
 </script>
 
 <!-- Live updates are off: say so, and say how old what is shown is, instead of looking current. -->
-<div role="status" data-testid="live-paused" class="flex items-center gap-x-3 border-b border-amber-400/20 bg-amber-400/10 px-8 py-2 text-sm/6 text-amber-200">
+<div role="status" data-testid="live-paused" class="flex items-center gap-x-3 border-b border-warning/20 bg-warning/10 px-8 py-2 text-sm/6 text-warning-text-strong">
 	<CircleAlert class="size-4 shrink-0" aria-hidden="true" />
 	<p class="min-w-0 flex-1">{text}</p>
 	<Button size="sm" variant="outline" disabled={retrying} onclick={onretry}>{retrying ? 'Retrying…' : 'Retry'}</Button>

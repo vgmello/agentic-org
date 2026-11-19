@@ -139,14 +139,14 @@
 			</DialogHeader>
 
 			<fieldset disabled={busy}>
-				<legend class="text-sm/6 font-medium text-white">Model profile</legend>
-				<p class="mt-1 text-xs/5 text-gray-400">
+				<legend class="text-sm/6 font-medium text-fg">Model profile</legend>
+				<p class="mt-1 text-xs/5 text-fg-muted">
 					A profile is an ordered pool of connections. The runtime comes from its connections.
 				</p>
 				<div class="mt-2 grid gap-2">
 					{#each agent.profiles as p (p.id)}
 						<label
-							class="flex min-h-11 cursor-pointer items-start gap-x-3 rounded-md px-3 py-2 ring-1 ring-white/10 ring-inset has-checked:bg-white/5 has-checked:ring-indigo-400 has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-indigo-400 min-[640px]:min-h-9"
+							class="flex min-h-11 cursor-pointer items-start gap-x-3 rounded-md px-3 py-2 ring-1 ring-line ring-inset has-checked:bg-surface-raised has-checked:ring-brand has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-focus min-[640px]:min-h-9"
 						>
 							<input
 								type="radio"
@@ -154,9 +154,9 @@
 								value={p.id}
 								checked={form.profileId === p.id}
 								onchange={() => pickProfile(p.id)}
-								class="mt-1 size-4 shrink-0 accent-indigo-500 focus-visible:outline-none"
+								class="mt-1 size-4 shrink-0 accent-primary focus-visible:outline-none"
 							/>
-							<span class="min-w-0 text-sm/6 text-white [overflow-wrap:anywhere]"
+							<span class="min-w-0 text-sm/6 text-fg [overflow-wrap:anywhere]"
 								>{profileLabel(p)}</span
 							>
 						</label>
@@ -185,8 +185,8 @@
 					</div>
 				{:else}
 					<fieldset disabled={busy} aria-describedby="{ids}-models-help">
-						<legend class="text-sm/6 font-medium text-white">Model</legend>
-						<p id="{ids}-models-help" class="mt-1 text-xs/5 text-gray-400">
+						<legend class="text-sm/6 font-medium text-fg">Model</legend>
+						<p id="{ids}-models-help" class="mt-1 text-xs/5 text-fg-muted">
 							As the agent's office last reported them. Ready connections aren't a promise of
 							capacity.
 						</p>
@@ -194,20 +194,19 @@
 							{#each options as option (option.id)}
 								{@const m = profile.models?.find((x) => x.id === option.id)}
 								<label
-									class="flex min-h-11 cursor-pointer items-start gap-x-3 rounded-md px-3 py-2 ring-1 ring-white/10 ring-inset has-checked:bg-white/5 has-checked:ring-indigo-400 has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-indigo-400 min-[640px]:min-h-9"
+									class="flex min-h-11 cursor-pointer items-start gap-x-3 rounded-md px-3 py-2 ring-1 ring-line ring-inset has-checked:bg-surface-raised has-checked:ring-brand has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-focus min-[640px]:min-h-9"
 								>
 									<input
 										type="radio"
 										name="{ids}-model"
 										value={option.id}
 										bind:group={form.modelId}
-										class="mt-1 size-4 shrink-0 accent-indigo-500 focus-visible:outline-none"
+										class="mt-1 size-4 shrink-0 accent-primary focus-visible:outline-none"
 									/>
 									<span class="min-w-0 text-sm/6">
-										<span class="block font-mono text-white [overflow-wrap:anywhere]"
-											>{option.id}</span
+										<span class="block font-mono text-fg [overflow-wrap:anywhere]">{option.id}</span
 										>
-										<span class="block text-xs/5 text-gray-400"
+										<span class="block text-xs/5 text-fg-muted"
 											>{m
 												? modelNote(m)
 												: "Saved, but the office doesn't report it for this profile"}</span
@@ -217,7 +216,7 @@
 							{/each}
 						</div>
 						{#if options.length === 0}
-							<p class="mt-2 text-sm/6 text-gray-400">
+							<p class="mt-2 text-sm/6 text-fg-muted">
 								The office reports no models for this profile. Choose another profile.
 							</p>
 						{/if}
@@ -234,8 +233,10 @@
 					bind:this={alertElement}
 					class="text-sm/6 [overflow-wrap:anywhere] focus:outline-hidden"
 				>
-					<p class="text-red-300">{error}</p>
-					{#if nowSaved}<p class="mt-1 text-gray-300" data-testid="now-saved">{nowSaved}</p>{/if}
+					<p class="text-danger-text">{error}</p>
+					{#if nowSaved}<p class="mt-1 text-fg-secondary" data-testid="now-saved">
+							{nowSaved}
+						</p>{/if}
 				</div>{/if}
 			<DialogFooter>
 				<Button

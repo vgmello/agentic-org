@@ -118,8 +118,8 @@
 					bind:this={alertElement}
 					class="text-sm/6 [overflow-wrap:anywhere] focus:outline-hidden"
 				>
-					<p class="text-red-300">{error}</p>
-					{#if nowSaved}<p class="mt-1 text-gray-300">{nowSaved}</p>{/if}
+					<p class="text-danger-text">{error}</p>
+					{#if nowSaved}<p class="mt-1 text-fg-secondary">{nowSaved}</p>{/if}
 				</div>{/if}
 			<DialogFooter>
 				<Button

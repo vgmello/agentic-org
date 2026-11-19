@@ -187,7 +187,7 @@
 	<div class="px-4 pt-6 pb-8 min-[640px]:px-6" data-testid="inbox-detail">
 		<a
 			href={resolve(href({ item: undefined }) as '/')}
-			class="mb-4 inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+			class="mb-4 inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 			>Inbox</a
 		>
 		{#key selected.id}
@@ -203,7 +203,7 @@
 	/>
 
 	<div
-		class="flex items-start gap-x-4 border-b border-white/10 pr-4 min-[640px]:pr-6 min-[1024px]:pr-8"
+		class="flex items-start gap-x-4 border-b border-line pr-4 min-[640px]:pr-6 min-[1024px]:pr-8"
 	>
 		<div
 			role="tablist"
@@ -220,14 +220,14 @@
 					tabindex={tab === t.id ? 0 : -1}
 					onclick={() => choose(t.id)}
 					onkeydown={tabKey}
-					class="-mb-px flex min-h-11 items-center gap-x-2 border-b-2 py-3 text-sm/6 font-semibold whitespace-nowrap focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 {tab ===
+					class="-mb-px flex min-h-11 items-center gap-x-2 border-b-2 py-3 text-sm/6 font-semibold whitespace-nowrap focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {tab ===
 					t.id
-						? 'border-indigo-400 text-white'
-						: 'border-transparent text-gray-400 hover:border-white/20 hover:text-white'}"
+						? 'border-brand text-fg'
+						: 'border-transparent text-fg-muted hover:border-line-strong hover:text-fg'}"
 				>
 					{t.label}
 					{#if phase === 'ready'}<span
-							class="rounded-full bg-white/10 px-2 text-xs/5 font-medium text-gray-300"
+							class="rounded-full bg-surface-overlay px-2 text-xs/5 font-medium text-fg-secondary"
 							><span class="sr-only">, </span>{counts[t.id]}</span
 						>{/if}
 				</button>
@@ -246,10 +246,10 @@
 								: 'Show'}
 						>
 							Show{#if filtersOn}<span
-									class="rounded-full bg-indigo-500/20 px-1.5 text-xs/5 text-indigo-200"
+									class="rounded-full bg-primary/20 px-1.5 text-xs/5 text-brand-text-strong"
 									>{filtersOn}</span
 								>{/if}
-							<MiniIcon name="chevronDown" class="size-5 text-gray-400" />
+							<MiniIcon name="chevronDown" class="size-5 text-fg-muted" />
 						</Button>
 					{/snippet}
 				</DropdownMenuTrigger>
@@ -314,7 +314,7 @@
 					class="px-4 py-12 text-center min-[640px]:px-6 min-[1024px]:px-8"
 					data-testid="no-match"
 				>
-					<p class="text-sm/6 text-gray-300">
+					<p class="text-sm/6 text-fg-secondary">
 						Nothing in {TABS.find((t) => t.id === tab)?.label} matches the Show filters.
 					</p>
 					<Button
@@ -333,7 +333,7 @@
 				<ul
 					role="list"
 					aria-label={TABS.find((t) => t.id === tab)?.label}
-					class="divide-y divide-white/5 border-white/5 min-[960px]:border-r"
+					class="divide-y divide-line-subtle border-line-subtle min-[960px]:border-r"
 				>
 					{#each list as item (item.id)}
 						<InboxListRow

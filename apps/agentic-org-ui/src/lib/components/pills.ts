@@ -1,8 +1,8 @@
 // Status pill tones for the settings screens: every pill also carries words (app-shell-ux §6a). Amber means waiting on the owner.
 export const tone = {
-	ok: 'bg-green-500/10 text-green-300 ring-green-500/20',
-	owner: 'bg-amber-400/10 text-amber-200 ring-amber-400/30',
+	ok: 'bg-success-emphasis/10 text-success-text ring-success-emphasis/20',
+	owner: 'bg-warning/10 text-warning-text-strong ring-warning/30',
 	neutral: '',
-	info: 'bg-sky-400/10 text-sky-300 ring-sky-400/20',
-	bad: 'bg-red-500/10 text-red-300 ring-red-500/20'
+	info: 'bg-info/10 text-info-text ring-info/20',
+	bad: 'bg-danger-emphasis/10 text-danger-text ring-danger-emphasis/20'
 } as const;

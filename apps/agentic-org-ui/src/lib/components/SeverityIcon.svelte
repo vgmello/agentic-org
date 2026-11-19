@@ -9,7 +9,7 @@
 </script>
 
 <!-- The icon beside a severity word (the word is always there too). -->
-{#if severity === 'critical'}<TriangleAlert class="inline size-3.5 text-amber-300" aria-hidden="true" />
-{:else if severity === 'major'}<CircleAlert class="inline size-3.5 text-gray-200" aria-hidden="true" />
-{:else if severity === 'minor'}<Info class="inline size-3.5 text-gray-400" aria-hidden="true" />
-{:else}<Minus class="inline size-3.5 text-gray-500" aria-hidden="true" />{/if}
+{#if severity === 'critical'}<TriangleAlert class="inline size-3.5 text-warning-text" aria-hidden="true" />
+{:else if severity === 'major'}<CircleAlert class="inline size-3.5 text-fg-body" aria-hidden="true" />
+{:else if severity === 'minor'}<Info class="inline size-3.5 text-fg-muted" aria-hidden="true" />
+{:else}<Minus class="inline size-3.5 text-fg-subtle" aria-hidden="true" />{/if}

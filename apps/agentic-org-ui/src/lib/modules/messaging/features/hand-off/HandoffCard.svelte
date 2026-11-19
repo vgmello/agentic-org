@@ -74,30 +74,30 @@
 <div
 	data-ask-id={message.id}
 	class="rounded-lg border {closed
-		? 'border-white/10 bg-white/[0.03]'
-		: 'border-indigo-400/30 bg-indigo-400/5'} p-4 max-[640px]:px-[8px] max-[640px]:py-3"
+		? 'border-line bg-tint/[0.03]'
+		: 'border-brand/30 bg-brand/5'} p-4 max-[640px]:px-[8px] max-[640px]:py-3"
 	data-testid="handoff-card"
 	data-answered={closed ? 'true' : 'false'}
 >
-	<p class="text-xs/5 font-semibold text-indigo-200">
+	<p class="text-xs/5 font-semibold text-brand-text-strong">
 		<HeroIcon variant="micro" name="arrows-right-left" />
 		Hand-off: {nameOf(ctx, message.from)} → {whoOf(ctx, message.addressed_to ?? '')}
-		{#if where}<span class="font-normal text-gray-400">{' · in ' + where}</span>{/if}
+		{#if where}<span class="font-normal text-fg-muted">{' · in ' + where}</span>{/if}
 	</p>
 	<div class="mt-2">
 		<Rich body={expanded ? message.body : long.shown} />
 		{#if long.hidden > 0}<button
 				type="button"
-				class="mt-1 text-sm/6 font-semibold text-indigo-300 hover:text-indigo-200"
+				class="mt-1 text-sm/6 font-semibold text-brand-text hover:text-brand-text-strong"
 				aria-expanded={expanded}
 				onclick={() => (expanded = !expanded)}
 				>{expanded ? 'Show less' : `Show more (${long.hidden} more lines)`}</button
 			>{/if}
 	</div>
 	{#if message.linked_ref}
-		<p class="mt-2 text-xs/5 text-gray-400" data-testid="linked-ref">
+		<p class="mt-2 text-xs/5 text-fg-muted" data-testid="linked-ref">
 			Linked to <span
-				class="rounded bg-white/10 px-1.5 py-0.5 font-mono font-semibold text-gray-100"
+				class="rounded bg-surface-overlay px-1.5 py-0.5 font-mono font-semibold text-fg-bright"
 				>{message.linked_ref}</span
 			>
 		</p>
@@ -105,7 +105,7 @@
 
 	{#if closed}
 		<p
-			class="mt-3 text-sm/6 {message.accepted_by ? 'text-emerald-300' : 'text-gray-300'}"
+			class="mt-3 text-sm/6 {message.accepted_by ? 'text-positive-text' : 'text-fg-secondary'}"
 			data-testid="answered"
 		>
 			{outcome}
@@ -151,7 +151,7 @@
 					maxlength={20000}
 					disabled={busy}
 					placeholder="Why do you hand it back?"
-					class="min-w-0 flex-1 rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400 max-[639px]:text-base"
+					class="min-w-0 flex-1 rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus max-[639px]:text-base"
 				></textarea>
 				<Button
 					type="submit"
@@ -163,5 +163,5 @@
 			</form>
 		{/if}
 	{/if}
-	{#if error}<p class="mt-2 text-sm/6 text-red-400" role="alert">{error}</p>{/if}
+	{#if error}<p class="mt-2 text-sm/6 text-danger" role="alert">{error}</p>{/if}
 </div>

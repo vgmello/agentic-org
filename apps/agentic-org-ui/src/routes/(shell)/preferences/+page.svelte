@@ -10,7 +10,7 @@
 <svelte:head><title>{pageTitle('Your preferences')}</title></svelte:head>
 
 <PageHeader title="Your preferences" description="Settings for you, not for the organization." />
-<div class="divide-y divide-white/5">
+<div class="divide-y divide-line-subtle">
 	<KeyboardSection />
 	<TimeZoneSection organizationId={data.connection.organization.id} />
 </div>

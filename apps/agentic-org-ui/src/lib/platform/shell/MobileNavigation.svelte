@@ -150,7 +150,7 @@
 	<Sheet.Trigger
 		bind:ref={trigger}
 		aria-controls={menuId}
-		class="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-md text-white hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 min-[640px]:hidden"
+		class="-ml-2 inline-flex size-11 shrink-0 items-center justify-center rounded-md text-fg hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus min-[640px]:hidden"
 	>
 		<MenuIcon class="size-6" aria-hidden="true" strokeWidth={1.5} /><span class="sr-only">Menu</span
 		>
@@ -161,7 +161,7 @@
 		side="left"
 		onOpenAutoFocus={focusCurrent}
 		onCloseAutoFocus={restoreFocus}
-		class="gap-0 border-0 bg-gray-800 p-0 data-[side=left]:w-72 data-[side=left]:max-w-[calc(100vw-56px)] [&_[data-slot=sheet-close]]:size-11"
+		class="gap-0 border-0 bg-surface p-0 data-[side=left]:w-72 data-[side=left]:max-w-[calc(100vw-56px)] [&_[data-slot=sheet-close]]:size-11"
 	>
 		<Sheet.Title class="sr-only">Main navigation</Sheet.Title>
 		<Sheet.Description class="sr-only">Choose an area of the organization.</Sheet.Description>

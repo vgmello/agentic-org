@@ -100,18 +100,18 @@
 	<!-- At 1024 px and wider the facts line up in columns, so teams can be compared down the page. -->
 	<div
 		aria-hidden="true"
-		class="hidden border-b border-white/10 px-8 py-3 text-xs/5 font-semibold text-gray-400 min-[1024px]:grid {GRID}"
+		class="hidden border-b border-line px-8 py-3 text-xs/5 font-semibold text-fg-muted min-[1024px]:grid {GRID}"
 	>
 		<span>Team</span><span>Lead</span><span class="text-right">People</span><span class="text-right"
 			>Agents</span
 		><span>Projects</span><span></span>
 	</div>
-	<ul role="list" class="divide-y divide-white/5" aria-label="Teams, as a tree">
+	<ul role="list" class="divide-y divide-line-subtle" aria-label="Teams, as a tree">
 		{#each rows as { team, depth, children } (team.id)}
 			<li
 				class="relative flex flex-wrap items-start gap-x-3 px-4 py-4 transition-colors duration-150 min-[640px]:px-6 min-[1024px]:grid min-[1024px]:px-8 {GRID} {justAdded ===
 				team.id
-					? 'bg-indigo-500/10'
+					? 'bg-primary/10'
 					: ''}"
 				data-team={team.id}
 				style:--indent={depth > 0 ? `${Math.min(depth, 6) * 1.5 + 0.75}rem` : '0rem'}
@@ -121,13 +121,13 @@
 							aria-hidden="true"
 							class="flex shrink-0 justify-end self-center"
 							style:width="{Math.min(depth, 6) * 1.5}rem"
-							><span class="h-px w-3 bg-white/20"></span></span
+							><span class="h-px w-3 bg-tint/20"></span></span
 						>{/if}
 					<p class="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm/6">
 						<a
 							href={resolve(`/teams/${team.id}` as '/')}
 							data-team-link={team.id}
-							class="rounded-sm font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]"
+							class="rounded-sm font-semibold text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 							><span class="absolute inset-0" aria-hidden="true"></span>{team.name}<span
 								class="sr-only"
 								>, level {depth + 1}{children
@@ -135,7 +135,7 @@
 									: ''}</span
 							></a
 						>
-						{#if team.ref}<span class="font-mono text-xs/5 text-gray-400">{team.ref}</span>{/if}
+						{#if team.ref}<span class="font-mono text-xs/5 text-fg-muted">{team.ref}</span>{/if}
 					</p>
 				</div>
 				<div
@@ -144,23 +144,23 @@
 					<TeamMenu {team} onaction={(action, t) => dialogs?.open(action, t)} />
 				</div>
 				<p
-					class="-mt-2 flex w-full flex-wrap gap-x-2 pl-(--indent) text-xs/5 text-gray-400 min-[1024px]:contents min-[1024px]:text-sm/6"
+					class="-mt-2 flex w-full flex-wrap gap-x-2 pl-(--indent) text-xs/5 text-fg-muted min-[1024px]:contents min-[1024px]:text-sm/6"
 				>
 					<!-- The spaces must be mustaches: Svelte trims an element's leading whitespace. -->
 					<!-- eslint-disable svelte/no-useless-mustaches -->
-					<span class="min-[1024px]:text-gray-300 [overflow-wrap:anywhere]"
+					<span class="min-[1024px]:text-fg-secondary [overflow-wrap:anywhere]"
 						>{team.lead ? team.lead.name : 'No lead'}<span class="sr-only">{' '}leads it</span><span
 							class="min-[1024px]:hidden">{' '}leads</span
 						></span
 					>
 					<span aria-hidden="true" class="min-[1024px]:hidden">·</span>
-					<span class="tabular-nums min-[1024px]:text-right min-[1024px]:text-gray-300"
+					<span class="tabular-nums min-[1024px]:text-right min-[1024px]:text-fg-secondary"
 						>{team.people}<span class="min-[1024px]:sr-only"
 							>{' '}{team.people === 1 ? 'person' : 'people'}</span
 						></span
 					>
 					<span aria-hidden="true" class="min-[1024px]:hidden">·</span>
-					<span class="tabular-nums min-[1024px]:text-right min-[1024px]:text-gray-300"
+					<span class="tabular-nums min-[1024px]:text-right min-[1024px]:text-fg-secondary"
 						>{team.agents}<span class="min-[1024px]:sr-only"
 							>{' '}{team.agents === 1 ? 'agent' : 'agents'}</span
 						></span
@@ -177,8 +177,8 @@
 							<li>
 								<a
 									href={resolve(`/projects/${p.id}` as '/')}
-									class="relative inline-flex min-h-6 items-center gap-x-1.5 rounded-md bg-white/5 px-2 text-xs/5 text-gray-300 ring-1 ring-white/10 ring-inset hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
-									>{p.name}<span class="text-gray-400"
+									class="relative inline-flex min-h-6 items-center gap-x-1.5 rounded-md bg-surface-raised px-2 text-xs/5 text-fg-secondary ring-1 ring-line ring-inset hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
+									>{p.name}<span class="text-fg-muted"
 										>· {p.role === 'owner' ? 'Owner' : 'Contributor'}</span
 									></a
 								>
@@ -186,27 +186,27 @@
 						{/each}
 					</ul>
 				{:else}
-					<span class="hidden text-sm/6 text-gray-400 min-[1024px]:block">None</span>
+					<span class="hidden text-sm/6 text-fg-muted min-[1024px]:block">None</span>
 				{/if}
 			</li>
 		{/each}
 	</ul>
 	{#if archived.length > 0}
-		<details class="border-t border-white/5 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
+		<details class="border-t border-line-subtle px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
 			<summary
-				class="cursor-pointer rounded-sm text-sm/6 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+				class="cursor-pointer rounded-sm text-sm/6 font-semibold text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 			>
-				Archived teams <span class="font-normal text-gray-400">{archived.length}</span>
+				Archived teams <span class="font-normal text-fg-muted">{archived.length}</span>
 			</summary>
 			<ul role="list" class="mt-2 space-y-2">
 				{#each archived as team (team.id)}
-					<li class="flex flex-wrap items-center gap-x-2 text-sm/6 text-gray-300">
+					<li class="flex flex-wrap items-center gap-x-2 text-sm/6 text-fg-secondary">
 						<a
 							href={resolve(`/teams/${team.id}` as '/')}
-							class="rounded-sm hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400"
+							class="rounded-sm hover:text-fg focus-visible:outline-2 focus-visible:outline-focus"
 							>{team.name}</a
 						>
-						{#if team.ref}<span class="font-mono text-xs/5 text-gray-400">{team.ref}</span>{/if}
+						{#if team.ref}<span class="font-mono text-xs/5 text-fg-muted">{team.ref}</span>{/if}
 						<StatusPill label="Archived" />
 					</li>
 				{/each}
