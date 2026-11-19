@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use super::{
     changed, invalid,
-    shared::{admit, id_in_use, reject},
+    shared::{admit, id_in_use, profile_file, reject},
     stable, Feature, Op, RejectCode,
 };
 use crate::organization::{
@@ -87,6 +87,10 @@ where
     E::Tx: OrganizationRead,
 {
     stable(&command.id, "the person's ID")?;
+    stable(&command.home_team, "the home team's ID")?;
+    if let Some(role) = &command.role {
+        stable(role, "the role's ID")?;
+    }
     let admitted = admit(uow, here, owner, by)?;
     let view = uow.view();
     let Some(team) = view.team(&command.home_team)? else {
@@ -145,7 +149,7 @@ where
         meta: Meta::created(&admitted.by, admitted.now),
         body: String::new(),
     };
-    let path = records::employee_path(&chain, EmployeeKind::Person, &person.id)?;
+    let path = profile_file(&chain, EmployeeKind::Person, &person.id)?;
     let reply = changed(&person.id, person.meta.revision, admitted.generation);
     Ok(Change::new(Op::AddPerson.ack())
         .put(path, records::encode_employee(&person))

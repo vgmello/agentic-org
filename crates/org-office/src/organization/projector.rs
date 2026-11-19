@@ -200,6 +200,14 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
             return Err(refuse(&records::office_codes_path(), reason));
         }
     }
+    // Roles: a key names one role of the organization.
+    let mut role_keys = BTreeSet::new();
+    for role in &roles {
+        if role.key.as_ref().is_some_and(|key| !role_keys.insert(key)) {
+            let path = records::role_path(&role.id);
+            return Err(refuse(&path, "another role has this key"));
+        }
+    }
 
     // Teams: a tree, numbered once each, led from inside.
     let by_id: BTreeMap<&Id, &Team> = teams.iter().map(|team| (&team.id, team)).collect();

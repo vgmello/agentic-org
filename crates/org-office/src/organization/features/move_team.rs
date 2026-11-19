@@ -9,7 +9,7 @@ use serde::Serialize;
 use super::{
     changed, invalid,
     shared::{admit, check_revision, reject, relocate, sibling_named, team_file, touched},
-    Feature, Op, RejectCode,
+    stable, Feature, Op, RejectCode,
 };
 use crate::organization::{
     ports::OrganizationRead,
@@ -51,6 +51,8 @@ pub fn decide<E: Engine>(
 where
     E::Tx: OrganizationRead,
 {
+    stable(&command.id, "the team's ID")?;
+    stable(&command.parent, "the parent team's ID")?;
     let admitted = admit(uow, here, owner, by)?;
     let view = uow.view();
     let Some(team) = view.team(&command.id)? else {

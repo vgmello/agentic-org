@@ -8,8 +8,8 @@ use serde::Serialize;
 
 use super::{
     changed, invalid,
-    shared::{admit, check_revision, led_by, named, reject, touched},
-    Feature, Op, RejectCode,
+    shared::{admit, check_revision, led_by, named, profile_file, reject, touched},
+    stable, Feature, Op, RejectCode,
 };
 use crate::organization::{
     ports::OrganizationRead,
@@ -50,6 +50,8 @@ pub fn decide<E: Engine>(
 where
     E::Tx: OrganizationRead,
 {
+    stable(&command.id, "the person's ID")?;
+    stable(&command.home_team, "the home team's ID")?;
     let admitted = admit(uow, here, owner, by)?;
     let view = uow.view();
     let Some(person) = view.employee(&command.id)? else {
@@ -92,7 +94,7 @@ where
     };
 
     let from = records::employee_path(&old, person.kind, &person.id)?;
-    let to = records::employee_path(&new, person.kind, &person.id)?;
+    let to = profile_file(&new, person.kind, &person.id)?;
     let moved = Employee {
         home_team_id: team.id,
         meta: touched(&person.meta, &admitted.by, admitted.now),

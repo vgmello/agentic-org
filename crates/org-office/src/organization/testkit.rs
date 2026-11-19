@@ -273,6 +273,10 @@ impl OrganizationWrite for MemoryTx {
 pub use suite::*;
 
 mod suite {
+    // The rules of the structure changes after creation (B2 plan, section 4, R2-R21).
+    mod structure;
+    pub use structure::*;
+
     use std::{
         collections::BTreeMap,
         path::{Path, PathBuf},
@@ -294,13 +298,16 @@ mod suite {
 
     use crate::organization::{
         features::{
-            create_organization, ArchiveTeam, Changed, CreateOrganization, CreateTeam, Creator,
-            Feature, MoveTeam, Op, OrgRejection, OrganizationCreated, RejectCode, TeamCreated,
-            NOT_AUTHORIZED,
+            create_organization, AddPerson, ArchiveTeam, Changed, CreateOrganization, CreateTeam,
+            Creator, DeactivatePerson, Edit, Feature, MovePerson, MoveTeam, Op, OrgRejection,
+            OrganizationCreated, RejectCode, TeamCreated, UpdatePerson, UpdateTeam, NOT_AUTHORIZED,
         },
         ports::{OrganizationEngine, OrganizationRead},
         projector::OrganizationFiles,
-        records::{self, EmployeeKind, EmployeeStatus, OfficeRole, TeamCounter, TeamStatus},
+        records::{
+            self, BuiltinKey, By, EmployeeKind, EmployeeStatus, Meta, OfficeRole, Role,
+            TeamCounter, TeamStatus,
+        },
     };
 
     /// The instant of every suite operation, and of the golden creation files.
@@ -434,6 +441,35 @@ mod suite {
                     id: team.clone(),
                     expected_revision: revision,
                     parent: parent.clone(),
+                };
+                command.decide(uow, here, &id(CREATOR), &Actor::Employee(id(CREATOR)))
+            })
+        }
+
+        /// The owner moves `person` to `team` at whatever revision it has when decided.
+        fn move_person<E: OrganizationEngine>(&self, person: &Id, team: &Id) -> Decision<E> {
+            let (person, team) = (person.clone(), team.clone());
+            self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
+                let revision = uow.view().employee(&person)?.map_or(1, |e| e.meta.revision);
+                let command = MovePerson {
+                    id: person.clone(),
+                    expected_revision: revision,
+                    home_team: team.clone(),
+                };
+                command.decide(uow, here, &id(CREATOR), &Actor::Employee(id(CREATOR)))
+            })
+        }
+
+        /// The owner appoints `lead` to `team` (none: clears it) at whatever revision the
+        /// team has when decided.
+        fn set_lead<E: OrganizationEngine>(&self, team: &Id, lead: Option<Id>) -> Decision<E> {
+            let team = team.clone();
+            self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
+                let revision = uow.view().team(&team)?.map_or(1, |t| t.meta.revision);
+                let command = UpdateTeam {
+                    lead: lead.clone(),
+                    clear_lead: lead.is_none(),
+                    ..UpdateTeam::new(team.clone(), revision)
                 };
                 command.decide(uow, here, &id(CREATOR), &Actor::Employee(id(CREATOR)))
             })
@@ -586,6 +622,87 @@ mod suite {
             self.done(op, &command);
         }
 
+        /// The owner adds `person` to `team`, under operation `op`.
+        fn add_person(&self, op: u64, person: u64, team: u64) -> Changed {
+            self.done(op, &person_command(person, team))
+        }
+
+        /// The owner appoints `lead` to `team`, or clears its lead (`None`).
+        fn set_lead(&self, op: u64, team: u64, lead: Option<u64>) -> Changed {
+            let command = UpdateTeam {
+                lead: lead.map(id),
+                clear_lead: lead.is_none(),
+                ..UpdateTeam::new(id(team), self.team(team).meta.revision)
+            };
+            self.done(op, &command)
+        }
+
+        /// The owner names `manager` as the one `person` reports to, or clears it (`None`).
+        fn set_manager(&self, op: u64, person: u64, manager: Option<u64>) -> Changed {
+            let command = UpdatePerson {
+                manager: manager.map_or(Edit::Clear, |m| Edit::Set(id(m))),
+                ..UpdatePerson::new(id(person), self.employee(person).meta.revision)
+            };
+            self.done(op, &command)
+        }
+
+        fn deactivate(&self, op: u64, person: u64) -> Changed {
+            let command = DeactivatePerson {
+                id: id(person),
+                expected_revision: self.employee(person).meta.revision,
+            };
+            self.done(op, &command)
+        }
+
+        fn move_person(&self, person: u64, team: u64) -> MovePerson {
+            MovePerson {
+                id: id(person),
+                expected_revision: self.employee(person).meta.revision,
+                home_team: id(team),
+            }
+        }
+
+        fn move_team(&self, team: u64, parent: u64) -> MoveTeam {
+            MoveTeam {
+                id: id(team),
+                expected_revision: self.team(team).meta.revision,
+                parent: id(parent),
+            }
+        }
+
+        fn archive(&self, team: u64) -> ArchiveTeam {
+            ArchiveTeam {
+                id: id(team),
+                expected_revision: self.team(team).meta.revision,
+            }
+        }
+
+        /// Files no operation of the family writes (a role), or that break a rule, written
+        /// as one entry by a writer outside the family.
+        fn write(&self, change: Change) -> Result<Reply, StoreError> {
+            let decide = self.decisions.write(change);
+            self.store.submit(None, false, decide)
+        }
+
+        /// Puts a role record: no command writes one (roles are read-only in v1).
+        fn put_role(&self, role: u64, key: &str) {
+            let record = role_record(role, key);
+            let change = Change::new(Op::CreateTeam.ack())
+                .put(records::role_path(&id(role)), records::encode_role(&record));
+            let reply = self.write(change).expect("written");
+            assert_eq!(reply.outcome, Outcome::Completed);
+        }
+
+        /// `command` from `by` is refused before admission: nothing recorded, no generation.
+        fn unrecorded<C: Feature>(&self, op: u64, by: &Actor, command: &C) -> StoreError {
+            let generation = self.generation();
+            let error = self.submit(op, by, command).expect_err("refused");
+            assert!(matches!(error, StoreError::Invalid(_)), "{error:?}");
+            assert!(!self.has_receipt(op));
+            assert_eq!(self.generation(), generation);
+            error
+        }
+
         fn team(&self, team: u64) -> records::Team {
             let found = self.read(|snapshot| snapshot.team(&id(team)));
             found.expect("the team")
@@ -652,6 +769,22 @@ mod suite {
             id: id(team),
             name: format!("Team {team:x}"),
             parent: Some(id(parent)),
+        }
+    }
+
+    /// A person with only what a person must have: handle `p<hex>`.
+    fn person_command(person: u64, team: u64) -> AddPerson {
+        let (handle, name) = (format!("p{person:x}"), format!("Person {person:x}"));
+        AddPerson::new(id(person), &handle, &name, id(team))
+    }
+
+    fn role_record(role: u64, key: &str) -> Role {
+        Role {
+            id: id(role),
+            key: Some(key.into()),
+            name: key.to_uppercase(),
+            meta: Meta::created(&By::Employee(id(CREATOR)), CREATION_AT),
+            body: String::new(),
         }
     }
 
@@ -725,6 +858,12 @@ mod suite {
             );
             assert_eq!(hr.home_team_id, id(TEAM));
             assert!(!hr.may_hire);
+            // The HR lead is the one built-in employee; teams take six by hiring.
+            assert_eq!(hr.builtin_key, Some(BuiltinKey::Hr));
+            assert_eq!(creator.builtin_key, None);
+            let top = snapshot.team(&id(TEAM))?.expect("the top-level team");
+            assert_eq!(top.max_members, records::DEFAULT_MAX_MEMBERS);
+            assert_eq!(records::DEFAULT_MAX_MEMBERS, 6);
             assert!(snapshot.handle_in_use("ana")? && snapshot.handle_in_use("hr")?);
             assert!(!snapshot.handle_in_use("bo")?);
 
@@ -984,6 +1123,7 @@ mod suite {
                 snapshot.repositories()?,
                 snapshot.offices()?,
                 snapshot.office_codes()?,
+                snapshot.roles()?,
                 snapshot.teams()?,
                 snapshot.employees()?,
                 snapshot.team_counter()?,
@@ -1180,7 +1320,8 @@ mod suite {
 
     /// Generates the family's commands for `org_store::testkit::rebuild_equivalence`:
     /// creations (valid, invalid and repeated), teams under known, unknown and archived
-    /// parents with colliding IDs, archivals and subtree moves.
+    /// parents with colliding IDs, archivals and subtree moves, and people added, moved
+    /// and appointed to lead, so subtree moves carry profiles.
     pub struct OrganizationScript {
         decisions: Decisions,
     }
@@ -1205,10 +1346,28 @@ mod suite {
             team: u64,
             parent: u64,
         },
+        Person {
+            op: Option<u64>,
+            person: u64,
+            team: u64,
+        },
+        MovePerson {
+            op: Option<u64>,
+            person: u64,
+            team: u64,
+        },
+        /// `None`: the lead is cleared.
+        Lead {
+            op: Option<u64>,
+            team: u64,
+            person: Option<u64>,
+        },
     }
 
     /// The few teams a script creates, so IDs collide and parents exist.
     const POOL: u64 = 6;
+    /// The few people a script adds.
+    const PEOPLE: u64 = 4;
 
     impl OrganizationScript {
         pub fn new() -> Self {
@@ -1236,11 +1395,13 @@ mod suite {
         fn generate(&self, rng: &mut Rng, step: u64) -> Step {
             let op = (!rng.chance(4)).then_some(step + 1);
             let pooled = |rng: &mut Rng| 0x100 + rng.below(POOL);
+            let person = |rng: &mut Rng| 0x200 + rng.below(PEOPLE);
+            let home = |rng: &mut Rng| if rng.chance(3) { TEAM } else { pooled(rng) };
             // Most sequences begin with the organization; some never have one.
             if step == 0 && !rng.chance(8) {
                 return Step::Organization { op, valid: true };
             }
-            match rng.below(12) {
+            match rng.below(16) {
                 0 => Step::Organization {
                     op,
                     valid: !rng.chance(3),
@@ -1254,10 +1415,25 @@ mod suite {
                     team: pooled(rng),
                     parent: if rng.chance(3) { TEAM } else { pooled(rng) },
                 },
+                3 => Step::Person {
+                    op,
+                    person: person(rng),
+                    team: home(rng),
+                },
+                4 => Step::MovePerson {
+                    op,
+                    person: person(rng),
+                    team: home(rng),
+                },
+                5 => Step::Lead {
+                    op,
+                    team: home(rng),
+                    person: (!rng.chance(3)).then(|| person(rng)),
+                },
                 kind => {
                     let parent = match kind {
-                        3 => 0x1ff,
-                        4..=6 => TEAM,
+                        6 => 0x1ff,
+                        7..=9 => TEAM,
                         _ => pooled(rng),
                     };
                     let team = pooled(rng);
@@ -1293,6 +1469,22 @@ mod suite {
                 Step::Move { op, team, parent } => Command {
                     op: op.map(|n| test_operation(n, "test.move_team", &id(*team))),
                     decide: self.decisions.move_team(&id(*team), &id(*parent)),
+                },
+                Step::Person { op, person, team } => {
+                    let command = person_command(*person, *team);
+                    let by = Actor::Employee(id(CREATOR));
+                    Command {
+                        op: op.map(|n| command.operation(id(n), &by)),
+                        decide: self.decisions.feature(&by, &command),
+                    }
+                }
+                Step::MovePerson { op, person, team } => Command {
+                    op: op.map(|n| test_operation(n, "test.move_person", &id(*person))),
+                    decide: self.decisions.move_person(&id(*person), &id(*team)),
+                },
+                Step::Lead { op, team, person } => Command {
+                    op: op.map(|n| test_operation(n, "test.set_lead", &id(*team))),
+                    decide: self.decisions.set_lead(&id(*team), person.map(id)),
                 },
             }
         }
@@ -1352,6 +1544,110 @@ macro_rules! organization_conformance_tests {
         #[test]
         fn organization_rebuild_validation() {
             $crate::organization_family::testkit::rebuild_validation(&$open);
+        }
+        #[test]
+        fn organization_archive_and_move_keep_the_number() {
+            $crate::organization_family::testkit::archive_and_move_keep_the_number(&$open);
+        }
+        #[test]
+        fn organization_moving_a_team_cannot_make_a_loop() {
+            $crate::organization_family::testkit::moving_a_team_cannot_make_a_loop(&$open);
+        }
+        #[test]
+        fn organization_a_move_past_the_depth_limit_is_refused() {
+            $crate::organization_family::testkit::a_move_past_the_depth_limit_is_refused(&$open);
+        }
+        #[test]
+        fn organization_a_subtree_move_rewrites_every_path_once() {
+            $crate::organization_family::testkit::a_subtree_move_rewrites_every_path_once(&$open);
+        }
+        #[test]
+        fn organization_the_first_team_stays_top_level() {
+            $crate::organization_family::testkit::the_first_team_stays_top_level(&$open);
+        }
+        #[test]
+        fn organization_sibling_team_names_clash_ignoring_case_but_not_across_parents() {
+            $crate::organization_family::testkit::sibling_team_names_clash_ignoring_case_but_not_across_parents(&$open);
+        }
+        #[test]
+        fn organization_archived_teams_take_nothing_new() {
+            $crate::organization_family::testkit::archived_teams_take_nothing_new(&$open);
+        }
+        #[test]
+        fn organization_archive_needs_an_empty_team() {
+            $crate::organization_family::testkit::archive_needs_an_empty_team(&$open);
+        }
+        #[test]
+        fn organization_a_teams_lead_is_a_direct_active_employee() {
+            $crate::organization_family::testkit::a_teams_lead_is_a_direct_active_employee(&$open);
+        }
+        #[test]
+        fn organization_moving_a_lead_is_refused_until_the_appointment_is_cleared() {
+            $crate::organization_family::testkit::moving_a_lead_is_refused_until_the_appointment_is_cleared(&$open);
+        }
+        #[test]
+        fn organization_a_person_needs_an_active_home_team() {
+            $crate::organization_family::testkit::a_person_needs_an_active_home_team(&$open);
+        }
+        #[test]
+        fn organization_people_share_one_handle_namespace() {
+            $crate::organization_family::testkit::people_share_one_handle_namespace(&$open);
+        }
+        #[test]
+        fn organization_an_inactive_persons_handle_stays_taken() {
+            $crate::organization_family::testkit::an_inactive_persons_handle_stays_taken(&$open);
+        }
+        #[test]
+        fn organization_deactivate_sets_inactive_and_offboarded_at_and_keeps_the_handle() {
+            $crate::organization_family::testkit::deactivate_sets_inactive_and_offboarded_at_and_keeps_the_handle(&$open);
+        }
+        #[test]
+        fn organization_reporting_lines_have_no_loops() {
+            $crate::organization_family::testkit::reporting_lines_have_no_loops(&$open);
+        }
+        #[test]
+        fn organization_nobody_new_reports_to_an_inactive_person() {
+            $crate::organization_family::testkit::nobody_new_reports_to_an_inactive_person(&$open);
+        }
+        #[test]
+        fn organization_the_owner_cannot_be_deactivated() {
+            $crate::organization_family::testkit::the_owner_cannot_be_deactivated(&$open);
+        }
+        #[test]
+        fn organization_deactivating_refuses_a_lead_or_a_manager() {
+            $crate::organization_family::testkit::deactivating_refuses_a_lead_or_a_manager(&$open);
+        }
+        #[test]
+        fn organization_a_new_person_may_hire() {
+            $crate::organization_family::testkit::a_new_person_may_hire(&$open);
+        }
+        #[test]
+        fn organization_team_member_limit() {
+            $crate::organization_family::testkit::team_member_limit(&$open);
+        }
+        #[test]
+        fn organization_a_role_reference_must_exist() {
+            $crate::organization_family::testkit::a_role_reference_must_exist(&$open);
+        }
+        #[test]
+        fn organization_only_the_owner_changes_structure() {
+            $crate::organization_family::testkit::only_the_owner_changes_structure(&$open);
+        }
+        #[test]
+        fn organization_every_write_raises_the_revision_by_one_and_is_receipted() {
+            $crate::organization_family::testkit::every_write_raises_the_revision_by_one_and_is_receipted(&$open);
+        }
+        #[test]
+        fn organization_a_domain_rule_is_told_before_a_stale_revision() {
+            $crate::organization_family::testkit::a_domain_rule_is_told_before_a_stale_revision(&$open);
+        }
+        #[test]
+        fn organization_one_builtin_hr_lead() {
+            $crate::organization_family::testkit::one_builtin_hr_lead(&$open);
+        }
+        #[test]
+        fn organization_roles_are_checked_by_the_projection() {
+            $crate::organization_family::testkit::roles_are_checked_by_the_projection(&$open);
         }
         #[test]
         fn organization_rebuild_equivalence() {

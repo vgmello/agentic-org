@@ -8,7 +8,7 @@ use serde::Serialize;
 use super::{
     changed, invalid,
     shared::{admit, check_revision, reject, touched},
-    Feature, Op, RejectCode,
+    stable, Feature, Op, RejectCode,
 };
 use crate::organization::{
     ports::OrganizationRead,
@@ -113,6 +113,13 @@ pub fn decide<E: Engine>(
 where
     E::Tx: OrganizationRead,
 {
+    stable(&command.id, "the person's ID")?;
+    if let Some(role) = command.role.set() {
+        stable(role, "the role's ID")?;
+    }
+    if let Some(manager) = command.manager.set() {
+        stable(manager, "the manager's ID")?;
+    }
     let admitted = admit(uow, here, owner, by)?;
     let view = uow.view();
     let Some(person) = view.employee(&command.id)? else {

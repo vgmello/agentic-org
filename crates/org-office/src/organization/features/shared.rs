@@ -127,12 +127,31 @@ pub(super) fn sibling_named(
 pub(super) const TOO_DEEP: &str = "the team tree would be too deep";
 
 /// The file of the team at the end of `chain`, or the rule's refusal when the tree is too
-/// deep for the limit or for a path.
+/// deep for the limit or for a path. A team is only where an employee's profile also fits
+/// (its path is the longer), so every team can take a person or an agent.
 pub(super) fn team_file(chain: &[Id]) -> Result<DurablePath, Refusal> {
-    if chain.len() > MAX_TEAM_DEPTH {
+    let Some(last) = chain.last() else {
+        return invalid("a team path names a team");
+    };
+    // Every stable ID has the same length: the team's own stands in for any employee's.
+    let profiles_fit = [EmployeeKind::Person, EmployeeKind::Agent]
+        .into_iter()
+        .all(|kind| records::employee_path(chain, kind, last).is_ok());
+    if chain.len() > MAX_TEAM_DEPTH || !profiles_fit {
         return reject(RejectCode::InvalidRequest, TOO_DEEP);
     }
     records::team_path(chain).or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))
+}
+
+/// The profile of `employee` homed at the end of `chain`. A team is only made where its
+/// profiles fit ([`team_file`]); a tree on record deeper than that is refused by the rule.
+pub(super) fn profile_file(
+    chain: &[Id],
+    kind: EmployeeKind,
+    employee: &Id,
+) -> Result<DurablePath, Refusal> {
+    records::employee_path(chain, kind, employee)
+        .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))
 }
 
 /// How one file moves: from where, to where, with what bytes.
@@ -176,7 +195,7 @@ pub(super) fn relocate(
         let profile = |chain: &[Id]| records::employee_path(chain, employee.kind, &employee.id);
         moved.push(Moved {
             from: profile(from)?,
-            to: profile(to).or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
+            to: profile_file(to, employee.kind, &employee.id)?,
             bytes: records::encode_employee(&employee),
         });
     }

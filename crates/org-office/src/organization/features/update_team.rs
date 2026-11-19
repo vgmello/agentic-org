@@ -7,7 +7,7 @@ use serde::Serialize;
 use super::{
     changed, invalid,
     shared::{admit, check_revision, reject, sibling_named, team_file, touched},
-    Feature, Op, RejectCode,
+    stable, Feature, Op, RejectCode,
 };
 use crate::organization::{
     ports::OrganizationRead,
@@ -67,6 +67,10 @@ where
 {
     if command.lead.is_some() && command.clear_lead {
         return invalid("a lead is appointed or cleared, not both");
+    }
+    stable(&command.id, "the team's ID")?;
+    if let Some(lead) = &command.lead {
+        stable(lead, "the lead's ID")?;
     }
     let admitted = admit(uow, here, owner, by)?;
     let view = uow.view();

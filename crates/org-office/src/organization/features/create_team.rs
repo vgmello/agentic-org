@@ -63,6 +63,9 @@ where
     E::Tx: OrganizationRead,
 {
     stable(&command.id, "the team's ID")?;
+    if let Some(parent) = &command.parent {
+        stable(parent, "the parent team's ID")?;
+    }
     let admitted = admit(uow, here, owner, by)?;
     let view = uow.view();
     let mut chain = Vec::new();
