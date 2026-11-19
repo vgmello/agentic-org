@@ -110,11 +110,6 @@
       "count": 2
     }
   },
-  "src/lib/offices/OfficeRepairLocation.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
   "src/lib/org/reducer.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -213,11 +208,6 @@
   "src/routes/(shell)/projects/[id]/+page.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 2
-    }
-  },
-  "src/routes/(shell)/settings/offices/+page.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
     }
   },
   "src/routes/(shell)/work/+page.svelte": {

@@ -7,6 +7,7 @@
 	import CopyButton from '$lib/components/CopyButton.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { mobileButton } from '$lib/components/classes';
+	import { expiresText } from '../../time';
 	import type { Issued } from '../../types';
 
 	let { issued, ondone }: { issued: Issued; ondone: () => void } = $props();
@@ -14,7 +15,8 @@
 		new Intl.DateTimeFormat(undefined, {
 			weekday: 'short',
 			hour: '2-digit',
-			minute: '2-digit'
+			minute: '2-digit',
+			hourCycle: 'h23'
 		}).format(new Date(issued.invitation.expiresAt))
 	);
 </script>
@@ -39,8 +41,8 @@
 		<CopyButton text={issued.secret} label="Copy invitation" copiedLabel="Copied invitation" />
 	</div>
 	<p class="text-xs/5 text-fg-muted">
-		It works once and expires in 24 hours ({expires}). It's shown only now. If it's lost, make a new
-		invitation: that cancels this one.
+		It works once and {expiresText(issued.invitation.expiresAt, Date.now())} ({expires}). It's shown
+		only now. If it's lost, make a new invitation: that cancels this one.
 	</p>
 	<div class="flex justify-end">
 		<Button type="button" class={mobileButton} onclick={ondone}>Done</Button>

@@ -72,7 +72,7 @@
 				size="sm"
 				class="max-[639px]:min-h-11"
 				aria-busy={busy}
-				aria-disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button
+				aria-disabled={busy}>{busy ? 'Renaming…' : 'Save'}</Button
 			>
 			<Button
 				type="button"

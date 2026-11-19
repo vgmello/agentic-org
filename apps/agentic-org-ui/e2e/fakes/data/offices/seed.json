@@ -8,7 +8,9 @@
 			"status": "active",
 			"where": "from 192.168.1.31",
 			"lastSeenMinutesAgo": 0,
-			"sync": { "kind": "up_to_date" },
+			"sync": {
+				"kind": "up_to_date"
+			},
 			"version": "0.1.0",
 			"follows": ["Atlas", "Beacon"],
 			"tasks": 5,
@@ -20,12 +22,30 @@
 			"host": "build-box.local",
 			"status": "offline",
 			"where": "build-box.local",
-			"lastSeenMinutesAgo": 120,
-			"sync": { "kind": "behind", "changes": 34 },
+			"lastSeenMinutesAgo": 125,
+			"sync": {
+				"kind": "behind",
+				"changes": 34
+			},
 			"version": "0.1.0",
 			"follows": ["Atlas"],
 			"tasks": 1,
 			"agents": ["pax"]
+		},
+		{
+			"key": "lab",
+			"name": "Lab mini",
+			"host": "lab-mini.local",
+			"status": "update_needed",
+			"where": "lab-mini.local",
+			"lastSeenMinutesAgo": 5,
+			"sync": {
+				"kind": "up_to_date"
+			},
+			"version": "0.0.9",
+			"follows": ["Atlas"],
+			"tasks": 0,
+			"agents": []
 		}
 	],
 	"joinRequests": [
