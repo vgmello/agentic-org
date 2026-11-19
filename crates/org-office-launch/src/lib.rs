@@ -3,6 +3,8 @@
 //! The private contract between `org-host` (the login service) and `agentic-org-office` (one
 //! process per office). The app never uses it. `agent-os` uses only [`OfficeFile`], to read
 //! `office.json` (never by hand: the type checks the version, the ids, the names and `created_at`).
+//! `org-office` uses only [`writer::marker`], to recognise the host's custody marker in an
+//! office folder.
 //! The app and `agent-os` speak `org-proto` to the servers. See
 //! `docs/design/offices-hq-and-satellites.md` ("Processes on one Mac") and the host/server boundary
 //! design (`docs/design/office-host-boundary.md`).
@@ -14,7 +16,7 @@
 //! address) arrives with a role or op that older servers refuse, never as a field they would
 //! silently ignore. `v` is reserved in every line: no op or event has a field named `v`.
 //!
-//! The types check their own rules (plain ids, a role this version can create) whenever they
+//! The types check their own rules (UUIDv7 ids, a role this version can create) whenever they
 //! are decoded or encoded, by any serde path. The `"v"` of a launch line is checked by
 //! [`read_first_line`] and [`read_server_event`], so read and write lines only through
 //! these functions. Launch version 1 ([`LAUNCH_VERSION`]) is the only one: the earlier
@@ -719,9 +721,9 @@ pub use contract::{
     decode_handoff, decode_transfer_record, encode_create_handoff, encode_discard_handoff,
     encode_handoff, encode_start_handoff, encode_transfer_record, read_first_line,
     read_server_event, write_first_line, write_rendezvous_event, write_server_event, ChannelKind,
-    CreateLine, Handoff, HandoffFd, HostFirstLine, HqCreationV1, IdProfile, OfficeLine,
-    ReadyForSecrets, RecoveryCode, RefusalReason, RendezvousEvent, TransferRecord, CHANNEL_PROFILE,
-    FD_MARKER, LAUNCH_VERSION, MAX_CHANNELS, MAX_WEB_CHANNELS, TRANSFER_HEADER_MAX_BYTES,
+    CreateLine, Handoff, HandoffFd, HostFirstLine, HqCreationV1, OfficeLine, ReadyForSecrets,
+    RecoveryCode, RefusalReason, RendezvousEvent, TransferRecord, CHANNEL_PROFILE, FD_MARKER,
+    LAUNCH_VERSION, MAX_CHANNELS, MAX_WEB_CHANNELS, TRANSFER_HEADER_MAX_BYTES,
     TRANSFER_SOCKET_BUFFER_BYTES,
 };
 pub mod writer;

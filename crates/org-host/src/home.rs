@@ -45,8 +45,9 @@ impl Layout {
         }
     }
 
-    /// Every office socket in a home has the same length (12-character handles), so checking
-    /// `host.sock` and one sample office socket up front means no create can fail on it later.
+    /// Every office socket and every launch rendezvous in a home has the same length, so
+    /// checking `host.sock` and one sample of each up front means no create or start fails on
+    /// it later.
     pub(crate) fn check_socket_paths(&self) -> Result<(), HostError> {
         let sample_id = "X".repeat(OFFICE_SOCKET_HANDLE_CHARS);
         let sample =
@@ -55,7 +56,10 @@ impl Layout {
             context: "finding this system's socket path limit",
             source,
         })?;
-        for path in [&self.host_socket, &sample] {
+        // A spawn's rendezvous, `<run>/r/<16 hex>` (`supervisor::channels::Broker::bind`), is
+        // one byte longer than an office socket.
+        let rendezvous = self.run.join("r").join("0".repeat(16));
+        for path in [&self.host_socket, &sample, &rendezvous] {
             location::check_socket_path(path, limit).map_err(|e| HostError::SocketPathTooLong {
                 path: path.clone(),
                 len: e.len,
@@ -639,12 +643,12 @@ mod tests {
 
     #[test]
     fn socket_paths_are_checked_against_the_systems_limit() {
-        // The limit is 103 bytes on macOS and 107 on Linux; run/<12>.sock adds 22 bytes to
-        // the home.
+        // The limit is 103 bytes on macOS and 107 on Linux; run/r/<16 hex>, the longest,
+        // adds 23 bytes to the home (run/<12>.sock 22).
         let limit = socket_path_limit().unwrap();
-        let ok = PathBuf::from(format!("/{}", "a".repeat(limit - 23)));
+        let ok = PathBuf::from(format!("/{}", "a".repeat(limit - 24)));
         assert!(Layout::new(&ok).check_socket_paths().is_ok());
-        let long = PathBuf::from(format!("/{}", "a".repeat(limit - 22)));
+        let long = PathBuf::from(format!("/{}", "a".repeat(limit - 23)));
         match Layout::new(&long).check_socket_paths() {
             Err(HostError::SocketPathTooLong {
                 len, limit: told, ..

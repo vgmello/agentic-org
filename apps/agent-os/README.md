@@ -41,11 +41,14 @@ a run binding.
   checks that the office exists under the office home (`$ORG_OFFICE_HOME`, else the
   default under `$HOME`), connects to its socket, binds
   as the agent and makes the call (`src/office.rs`). With `$ORG_SESSION_TOKEN` set
-  (an agent run by the office), it never falls back to the file queue. Only `who`
-  answers there today: the office does not serve messaging until increment B6 rebuilds
-  it on the office store, so the four `msg` commands are refused with the office's
-  `unsupported` error (exit 4, nothing on standard output, no fallback to the file
-  queue).
+  (an agent run by the office), it never falls back to the file queue. No call answers
+  there today, and none can until two things land: the office store places agents
+  through HR (increment B2; before it no agent of an office can bind), and `agent-os`
+  addresses a selected office, its UUIDv7 ID and its socket (increment A5; today it
+  takes plain office IDs only). Then `who` answers through the office; the four `msg`
+  commands are refused with the office's `unsupported` error (exit 4, nothing on
+  standard output, no fallback to the file queue) until increment B6 rebuilds
+  messaging on the office store.
 - **A file queue.** Every other command, and those five when no office is named, read
   and write a file queue under `$ORG_HOME/spool` (default `~/.agency/spool`), through
   `crates/org-spool`. It hard-codes an owner id and delivers through the relay.
@@ -59,5 +62,6 @@ also moves every command to the office. Do not build on them.
 cargo test -p agent-os
 ```
 
-`tests/office.rs` runs the office route against a real office worker in temporary
-homes. Tests never use a real organization or a real home directory.
+`tests/office.rs` runs the office route against an office that is on this Mac but not
+running (a send is refused, nothing is spooled), in temporary homes; the cases against a
+running office return with B2 and A5. Tests never use a real organization or a real home directory.

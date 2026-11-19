@@ -12,12 +12,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agent-os"
 version = "0.0.0"
 dependencies = [
- "agentic-org-office",
  "org-client",
- "org-office",
  "org-office-launch",
  "org-proto",
- "org-socket",
  "org-spool",
  "serde",
  "serde_json",
@@ -30,9 +27,9 @@ version = "0.0.0"
 dependencies = [
  "agentic-org",
  "libc",
+ "org-client",
  "org-host",
  "org-host-control",
- "org-office",
  "org-office-launch",
  "org-platform",
  "org-proto",
@@ -58,6 +55,7 @@ dependencies = [
  "org-platform",
  "org-proto",
  "org-socket",
+ "org-store",
  "org-sync",
  "org-work",
  "proc-macro2",
@@ -704,21 +702,17 @@ dependencies = [
 name = "org-office"
 version = "0.0.0"
 dependencies = [
- "libc",
  "org-docs",
- "org-mailbox",
+ "org-office-launch",
  "org-platform",
  "org-proto",
  "org-store",
- "org-sync",
- "org-sync-proto",
- "org-work",
+ "proc-macro2",
  "rusqlite",
  "serde",
  "serde_json",
- "sha2",
+ "syn 2.0.119",
  "tempfile",
- "zeroize",
 ]
 
 [[package]]
@@ -728,6 +722,7 @@ dependencies = [
  "org-proto",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

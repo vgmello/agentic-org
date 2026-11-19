@@ -113,3 +113,28 @@ impl ReadOp for DirectorySnapshot {
         Ok(snapshot::project(read, &self.owner)?)
     }
 }
+
+/// Where an office stands in the organization its projection holds.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Standing {
+    /// The organization's ID, when there is an organization.
+    pub organization: Option<Id>,
+    /// Whether the office is on record as the organization's HQ.
+    pub hq: bool,
+}
+
+/// What an opening checks before it serves: the organization and the office's role.
+pub struct OfficeStanding {
+    pub office: Id,
+}
+
+impl ReadOp for OfficeStanding {
+    type Out = Standing;
+
+    fn read<S: OrganizationRead>(self, read: &S) -> Result<Standing, StoreError> {
+        let organization = read.organization()?.map(|record| record.id);
+        let office = read.office(&self.office)?;
+        let hq = office.is_some_and(|office| office.role == records::OfficeRole::Hq);
+        Ok(Standing { organization, hq })
+    }
+}

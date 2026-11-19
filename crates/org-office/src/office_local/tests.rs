@@ -108,3 +108,24 @@ fn a_key_record_out_of_its_form_is_named_by_its_path() {
         "{read:?}"
     );
 }
+
+#[test]
+fn a_ca_file_that_cannot_be_read_is_a_files_error() {
+    let office = identity().office_id;
+    // The key record's place holds a folder; then the escrow package's holds a link.
+    let (dir, files) = files_with(false, true);
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(root.join(records::ca_key_path(&office).as_str())).unwrap();
+    let read = read_ca(&files, &office);
+    assert!(matches!(read, Err(CaError::Files(_))), "{read:?}");
+
+    let (dir, files) = files_with(true, false);
+    let root = dir.path().canonicalize().unwrap();
+    let outside = root.join("outside");
+    std::fs::write(&outside, records().package).unwrap();
+    let escrow = root.join(organization::ca_escrow_path().as_str());
+    std::fs::create_dir_all(escrow.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&outside, &escrow).unwrap();
+    let read = read_ca(&files, &office);
+    assert!(matches!(read, Err(CaError::Files(_))), "{read:?}");
+}

@@ -24,6 +24,13 @@ mod spike;
 #[cfg(test)]
 mod tests;
 
+/// One more index than this build's schema: the DDL of "another build", for the store
+/// tests that check a projection made from other DDL is replaced (STORE-3). It lives here
+/// because SQL is written only in this adapter (ENG-1, `tests/engine_boundary.rs`).
+#[cfg(test)]
+pub(crate) const ANOTHER_BUILDS_DDL: &str =
+    "CREATE INDEX teams_by_name ON teams(organization_id, name);";
+
 use std::{
     fs,
     path::{Path, PathBuf},

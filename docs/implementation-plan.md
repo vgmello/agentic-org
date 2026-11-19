@@ -299,7 +299,22 @@ Three things to know about the order:
   office only when one is named and otherwise writes to a file queue, which B6 deletes.
 - **Done when:** SES-8 passes; a signed-in person runs a read command and a write
   command against the office from a terminal; the same commands are refused without a
-  session.
+  session. `agent-os` addresses a selected office: a UUIDv7 office ID and that office's
+  socket (`org_proto::location::selected_office_socket_in`), where today
+  `crates/org-client/src/agent.rs` takes plain office IDs only. With it, the cases B1b
+  removed from `apps/agent-os/tests/office.rs` return there against a running office
+  (their agent comes from B2): an agent the office does not know is refused at its bind
+  (exit 1, naming the office and the agent, nothing spooled); an office named by mistake
+  is still told at once. With A5's client, two B1b checks that ran short of the real
+  host return through it (row FC-146): (a) create, `team.create`, stop, delete
+  `runtime/<office-id>/`, restart, then an equal `org.snapshot` and the same
+  `team.create` command ID returns its original answer, where B1b proves this at worker
+  level and through the host only without office calls; (b) a flipped journal byte at
+  or below the confirmed head, an older segment copy behind the host checkpoint and a
+  closed custody channel are each refused through the real host (the flipped byte
+  naming its ordinal; the closed channel failing closed), where B1b proves them at the
+  worker's custody adapter with a fake writer, and of these refusals the host's custody
+  unit tests prove only the confirmation rule that adapter relies on.
 - **Needs:** A4, K1.
 
 ---
@@ -406,11 +421,31 @@ onto it and deletes the old store; B1c measures and guards it.
   (opening, loss boundaries); [ADR-0007](adr/0007-hq-creation-escrow.md),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md),
   [host boundary design](design/office-host-boundary.md).
-- **Code today:** `crates/org-office/src/office.rs` opens `org.db` and `office.db` and
-  writes `meta` rows; `office/hq_creation.rs` and `store/hq_creation.rs` hold the
-  creation record; `apps/agentic-org-office/src/transfer/writer.rs` is the host custody
-  channel, called twice per write and once per read today; `apps/agentic-org-office/src/lib.rs`
-  wired the mailbox to the old tables until B1b's first merge, which unplugged it (`unsupported`).
+- **Code today:** `org_office::Office` (`crates/org-office/src/office/`) opens through
+  `open_store` (`crates/org-office/src/store/open.rs`) on the organization's data roots `<instance-root>/<org-id>/{durable,runtime}`, which the host
+  gives it in its writer admission. HQ creation is the journal's first entry
+  (`CreateOrganizationOp`, `store/open/operations.rs`): the organization's files under
+  `durable/state/`, the escrow package `state/security/ca-escrow.v1.bin` and the CA key
+  record `local/offices/<office-id>/security/ca-key.v1.json`, wrapped by the office
+  secrets key (`office_local/`). `apps/agentic-org-office/src/transfer/writer.rs`
+  implements `org_store::WriterAuthority` over writer-control wire version 2: the head is
+  read once at opening and confirmed once per flush, and the host checks it
+  (`crates/org-host/src/writer.rs`); no office starts without custody. The clean-stop
+  marker is `local/offices/<office-id>/clean-stop`. `org.snapshot`, `who`, `inbox.list`,
+  `msg.bind`'s lookup (`apps/agentic-org-office/src/directory.rs`) and `team.create`
+  answer from the store; work, operation lookup, the other organization commands,
+  messaging, status lines and `subscribe` answer `unsupported`. The old store and every
+  SQL statement outside `src/store/sqlite/` are deleted;
+  `crates/org-office/tests/engine_boundary.rs` parses the crate with `syn` and fails on a `rusqlite` path or SQL outside it (empty
+  allowlist). `TestOffice` opens on the memory engine by default and the office's tests
+  run on both engines. Done-when evidence: deleting `runtime/<office-id>/` rebuilds with
+  no loss in process (`office/tests.rs`), through the real worker
+  (`apps/agentic-org-office/tests/launch/activation/owner.rs`) and through the real host
+  (`crates/org-host/src/web_process_tests/organizations.rs`, ignored real-process); an
+  answered team survives a `SIGKILL` (`owner.rs`
+  `a_committed_team_survives_killing_the_worker_after_its_answer`); STORE-6 on the
+  production path (`office/tests.rs` `creation_writes_exactly_the_golden_files_and_the_ca_records`).
+  An organization created before B1b is refused, not migrated.
 - **Done when:** with an organization created through the host, deleting
   `runtime/<office-id>/` and restarting rebuilds the projection with no loss; a
   committed organization write survives killing the office right after its answer; the
@@ -420,7 +455,7 @@ onto it and deletes the old store; B1c measures and guards it.
 - **Needs:** B1a; A1 (the store it deletes is the one A1 changes); A4 (the creation path
   it moves).
 - **Paths:** the data-root contract paths (`<data-root>/<org-id>/durable/state/…`) are
-  B1b's. A4 writes `<instance-root>/durable/state/<org-id>/`.
+  B1b's; since B1b the office writes there (A4 wrote `<instance-root>/durable/state/<org-id>/`).
 
 ### B1c · The store measured and guarded
 
@@ -466,13 +501,33 @@ on the offers of design section 10.
   [agent structure](design/organization-data/04-agent-structure.md),
   [identity and numbering](design/organization-data/06-identity-and-numbering.md),
   [teams design](design/teams-and-org-chart.md). Rows FC-025 to FC-029.
-- **Code today:** `crates/org-office/src/organization` and `employees` implement members
-  with several memberships (a `memberships` table in `store/org.rs`); the rules in
-  `crates/org-office/src/rules` carry tests worth keeping where the rule is unchanged.
+- **Code today:** the organization family on the office store
+  (`crates/org-office/src/organization/{records,ports,projector,features}`) holds
+  organizations, offices, teams, employees and the HQ counters, and serves `team.create`
+  and the directory reads (B1a, B1b). B1b deleted the old store, including its
+  `memberships` table (`store/org.rs`), and left `crates/org-office/src/rules/**`,
+  `employees/**` and `organization/{structure,people,policy,view,directory,apply}.rs`
+  in place: pure rules over `OrgView`, with `rules/memory.rs` as their only
+  implementation, still modelling several memberships per member. Outside its own tests,
+  the office uses only `rules::OrgCommand` (the wire command `Office::submit_org` takes)
+  and `organization::directory::resolve_member` (`msg.bind`). B2 deletes or replaces
+  them: it owns the move from many-to-many membership to one home team, keeping the
+  tests worth keeping where a rule is unchanged.
 - **Done when:** every rule the three data documents state for teams, employees and
   roles is enforced by the office and covered by the engine-independent organization
   suite; each action in the outcome works from the command line and through `/api/v1`
   and is in the history. The screen criteria (TEAM, PEOPLE, REPORT) are finished in U1.
+  Since B1b no agent binds on an office's socket: the creation's HR lead has no office
+  and no agent profile, and agents come only through a hire (C2). Once an agent is placed
+  in an office and A5 lets `agent-os` address a selected office,
+  `apps/agent-os/tests/office.rs` regains the cases B1b removed: `agent-os who` through
+  the office for a placed agent (everyone, one by name, the owner by kind,
+  the plain-text card), and an offboarded agent refused at its next bind; the messaging
+  cases (send, inbox, read and wait answered `unsupported` with no body shown) return
+  with B6. LNX-2 (`deploy/container/lnx2.sh`) likewise regains `agent-os` inside the
+  container (an agent's directory read of another through the office, after a restart
+  and in a replacement container); B1b's LNX-2 creates the organization through the web
+  API and checks the worker serving under custody instead.
   `operation.get` for organization commands answers from the store's receipts,
   replacing the `unsupported` B1b left (a client learns a committed command's answer
   without resending it).
@@ -741,8 +796,9 @@ on the offers of design section 10.
   when one is named.
 - **Done when:** the CHAT criteria for sending, reading and channels pass; the
   engine-independent messaging suite passes; ACK-1 is measured on a Mac and recorded.
-  B6 also restores LNX-1's send and read through the office in
-  `apps/agentic-org/tests/lnx1.rs`, which B1b reduced to a directory read and a refused send.
+  B6 also brings `agent-os` send and read through the office back to LNX-1
+  (`apps/agentic-org/tests/lnx1.rs`), once B2 places agents and A5 lets `agent-os`
+  address a selected office; B1b took `agent-os` out of LNX-1.
   B6 serves again what B1b switched off with the old tables, through the office or A3's
   `/events`, each with its scenario as a test: `subscribe` (a caller without a grant or
   binding is refused `not_authorized`; another caller's committed `team.create` arrives as
@@ -1265,7 +1321,10 @@ browser over plain HTTP (X5), and the documented run command publishes that port
   [offices and teams UX](specs/offices-and-teams-ux.md) (OFC criteria for a second
   office), [recovery contract](design/organization-data/16-recovery-and-office-continuity.md).
   Rows FC-020, FC-145; the replication suite of ADR-0018 (ENG-3).
-- **Code today:** `crates/org-sync` is the replication core; nothing enrols an office.
+- **Code today:** `crates/org-sync` is the replication core; nothing enrols an office. Since
+  B1b a second office of one organization on one instance is refused: the host reserves writer
+  custody only into empty per-organization roots (`crates/org-host/src/writer.rs`
+  `empty_reservation_root`); S1 decides per-office roots.
 - **Needs:** milestone one. It starts with its own short plan.
 
 ---

@@ -5,12 +5,9 @@
 use super::*;
 use agentic_org_office::test_support::{signed_grant, ChannelCaller};
 use org_office_launch::{ChannelKind, TransferRecord};
-use org_proto::org::{
-    AgentProfile, AgentRuntime, AgentStatus, MemberAddAgent, MemberAddAgentParams,
-};
 use org_proto::{ApiError, Call};
 
-/// A worker started by the host (it adopts the library-stored office on its first start).
+/// A worker started by the host on the office the worker created.
 pub(super) struct Live {
     pub(super) session: Session,
     channels: u32,
@@ -90,47 +87,15 @@ impl Caller {
     }
 }
 
-/// Stores the office with the library and returns its owner's member id.
+/// Creates the office through the worker and returns its owner's member id.
 fn seeded(world: &World) -> String {
     seed(world);
-    let office = org_office::Office::open(
-        world.folder(OFFICE),
-        org_office::Key::from_office_secrets_key(office_secrets_key()),
-    )
-    .unwrap();
-    let owner = office
-        .org_snapshot()
-        .unwrap()
-        .members
-        .into_iter()
-        .find(|member| member.owner)
-        .expect("a stored office has its owner")
-        .id;
-    drop(office);
-    owner
+    OWNER.into()
 }
 
-/// Hiring `member_id` as the agent `handle` into this office.
-pub(super) fn hire(n: u8, member_id: &str, name: &str, handle: &str) -> MemberAddAgentParams {
-    MemberAddAgentParams {
-        command_id: command_id(n),
-        member_id: member_id.into(),
-        name: name.into(),
-        office_id: OFFICE.into(),
-        profile: AgentProfile {
-            role: "engineer".into(),
-            title: "Engineer".into(),
-            focus: None,
-            runtime: AgentRuntime::ClaudeCode,
-            model: None,
-            run_mode: None,
-            schedule: None,
-            home: None,
-            messaging_name: handle.into(),
-            status: AgentStatus::Active,
-            offboarded_at: None,
-        },
-    }
+/// The HR lead: the agent the creation made in the top team.
+fn hr() -> String {
+    plan().hr_employee_id
 }
 
 fn snapshot(caller: &mut Caller) -> org_proto::org::OrgSnapshot {
@@ -139,6 +104,7 @@ fn snapshot(caller: &mut Caller) -> org_proto::org::OrgSnapshot {
         .unwrap()
 }
 
+/// `team.create` of the team `TEAM` under the top team.
 fn team(
     caller: &mut Caller,
     command: &str,
@@ -146,71 +112,18 @@ fn team(
 ) -> Result<org_proto::org::CommandAccepted, ApiError> {
     caller.call::<org_proto::org::TeamCreate>(&org_proto::org::TeamCreateParams {
         command_id: command.into(),
-        team_id: "T1".into(),
+        team_id: TEAM.into(),
         name: name.into(),
-        owner_team_id: None,
+        owner_team_id: Some(TOP_TEAM.into()),
     })
 }
 
-/// An initial replica has no organization yet, so it has no owner a grant could name: the real
-/// worker refuses the owner's grant as it refuses an unbound connection. (A bound caller's
-/// snapshot answering `unavailable` is covered in process, `serve.rs` tests.)
-#[test]
-fn initial_replica_refuses_the_snapshot_to_an_unbound_connection_and_to_an_owner_grant() {
-    let _process = process_isolation();
-    let world = World::new();
-    let owner = seeded(&world);
-    let source = org_office::Office::create(
-        world.folder("SOURCE"),
-        &org_office::NewOffice {
-            office_id: "SOURCE".into(),
-            office_name: "Source".into(),
-            role: org_office::OfficeRole::Hq,
-            org_id: ORG.into(),
-            org_name: "Acme".into(),
-        },
-        org_office::Key::from_office_secrets_key(office_secrets_key()),
-    )
-    .unwrap();
-    source
-        .bind_replication_hq(Default::default(), 1024 * 1024)
-        .unwrap();
-    let pin = source.replication_checkpoint().unwrap();
-    drop(source);
-    let office = org_office::Office::open(
-        world.folder(OFFICE),
-        org_office::Key::from_office_secrets_key(office_secrets_key()),
-    )
-    .unwrap();
-    office
-        .bind_replication_satellite(pin.hq_office, pin.ca, pin.highest_epoch, Default::default())
-        .unwrap();
-    drop(office);
-
-    let mut live = live(&world);
-    let client = Client::connect(socket(&world)).unwrap();
-    assert_eq!(
-        api_code(
-            client
-                .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-                .unwrap_err()
-        ),
-        org_proto::ErrorCode::NotAuthorized
-    );
-    let mut owner = live.caller(Some(&owner));
-    assert_eq!(
-        owner
-            .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-            .unwrap_err()
-            .code,
-        org_proto::ErrorCode::NotAuthorized
-    );
-    drop((client, owner));
-    live.stop();
+fn platform(snapshot: &org_proto::org::OrgSnapshot) -> Option<&org_proto::org::Team> {
+    snapshot.teams.iter().find(|team| team.id == TEAM)
 }
 
 #[test]
-fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
+fn the_snapshot_has_the_creation_at_position_1_1_and_survives_a_restart() {
     let _process = process_isolation();
     let world = World::new();
     let owner_id = seeded(&world);
@@ -239,12 +152,17 @@ fn the_snapshot_has_the_owner_at_position_1_1_and_survives_a_restart() {
         snapshot.position,
         org_proto::org::Position { epoch: 1, seq: 1 }
     );
-    let [owner] = &snapshot.members[..] else {
-        panic!("{:?}", snapshot.members)
-    };
-    assert!(owner.owner && org_proto::is_valid_member_id(&owner.id));
+    // The creation: the owner and the HR lead in one top team named after the organization.
+    let owner = snapshot.members.iter().find(|m| m.owner).unwrap();
     assert_eq!(owner.id, owner_id);
-    assert!(snapshot.teams.is_empty() && snapshot.memberships.is_empty());
+    assert!(snapshot.members.iter().any(|m| m.id == hr()));
+    let [top] = &snapshot.teams[..] else {
+        panic!("{:?}", snapshot.teams)
+    };
+    assert_eq!(
+        (top.id.as_str(), top.owner_team_id.as_deref()),
+        (TOP_TEAM, None)
+    );
     drop(client);
     first.stop();
 
@@ -288,9 +206,10 @@ fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_resta
     let mut owner = first.caller(Some(&owner_id));
     let before = snapshot(&mut owner);
     let page = owner.call::<InboxList>(&params).unwrap();
+    // Nothing waits on the owner: the HR lead is not an agent waiting to be placed (B2).
     assert_eq!(page.counts, InboxCounts::default());
     assert!(page.items.is_empty() && page.next_cursor.is_none() && page.degraded.is_empty());
-    // The position is the organization's committed head, the snapshot's position.
+    // The position is the organization's committed directory generation.
     assert_eq!(page.as_of.seq, before.position.seq);
     assert_eq!(page.as_of.epoch.len(), 32);
     assert_eq!(snapshot(&mut owner), before);
@@ -351,15 +270,25 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
     assert_eq!(team(&mut owner, &command, "Platform").unwrap(), accepted);
     assert_eq!(
         team(&mut owner, &command, "Other").unwrap_err().code,
-        org_proto::ErrorCode::OperationReused,
+        org_proto::ErrorCode::InvalidRequest,
         "the same id with other params"
     );
+    // A top-level team arrives with B2: never reinterpreted.
+    let top_level = owner
+        .call::<org_proto::org::TeamCreate>(&org_proto::org::TeamCreateParams {
+            command_id: command_id(3),
+            team_id: "019a8928-1337-7456-8456-0123456789b2".into(),
+            name: "Elsewhere".into(),
+            owner_team_id: None,
+        })
+        .unwrap_err();
+    assert_eq!(top_level.code, org_proto::ErrorCode::InvalidRequest);
+    // Operation lookup is `unsupported` until B2 maps the store's receipts. What is refused
+    // before the lookup is unchanged.
     let get = |id: &str| org_proto::OperationGetParams {
         kind: org_proto::OperationKind::Org,
         id: id.into(),
     };
-    // Operation lookup read the old tables: the owner's lookup is `unsupported` until B2 maps
-    // the store's receipts. What is refused before the lookup is unchanged.
     let unsupported = |caller: &mut Caller, id: &str| {
         caller
             .call::<org_proto::OperationGet>(&get(id))
@@ -368,7 +297,6 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
             == org_proto::ErrorCode::Unsupported
     };
     assert!(unsupported(&mut owner, &command));
-    // Owner/NULL rows are private even to a legacy-first unbound connection.
     let reader = Client::connect(socket(&world)).unwrap();
     let lookup = |client: &Client, id: &str| client.call::<org_proto::OperationGet>(&get(id));
     assert_eq!(
@@ -379,125 +307,88 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
         api_code(lookup(&reader, "bad").unwrap_err()),
         org_proto::ErrorCode::InvalidRequest
     );
-    assert_eq!(
-        api_code(lookup(&reader, &command_id(9)).unwrap_err()),
-        org_proto::ErrorCode::NotFound
-    );
     let refusal_id = command_id(2);
     team(&mut owner, &refusal_id, " ").unwrap_err();
-    assert_eq!(
-        api_code(lookup(&reader, &refusal_id).unwrap_err()),
-        org_proto::ErrorCode::NotFound
-    );
-    reader.hello().unwrap();
-    assert_eq!(
-        api_code(lookup(&reader, &command).unwrap_err()),
-        org_proto::ErrorCode::NotFound
-    );
-    let mut other = first.caller(Some(&owner_id));
-    assert!(unsupported(&mut other, &refusal_id));
-    assert!(unsupported(&mut other, &command));
     let after = snapshot(&mut owner);
-    assert_eq!(after.teams.len(), 1);
-    assert_eq!(after.teams[0].name, "Platform");
-    drop((client, reader, owner, other));
+    assert_eq!(platform(&after).unwrap().name, "Platform");
+    assert_eq!(after.teams.len(), 2);
+    drop((client, reader, owner));
     first.stop();
 
     // After a restart the team is there, and the old command id still gets its answer.
     let mut again = live(&world);
-    let client = Client::connect(socket(&world)).unwrap();
-    assert_eq!(
-        api_code(lookup(&client, &command).unwrap_err()),
-        org_proto::ErrorCode::NotFound
-    );
     let mut owner = again.caller(Some(&owner_id));
     assert!(unsupported(&mut owner, &command));
     assert_eq!(snapshot(&mut owner), after);
     assert_eq!(team(&mut owner, &command, "Platform").unwrap(), accepted);
     assert_eq!(snapshot(&mut owner), after);
-    drop((client, owner));
+    drop(owner);
     again.stop();
 }
 
+/// Done-when 2: a `team.create` answered on a grant channel survives killing the worker right
+/// after the answer (SIGKILL: no orderly stop), and the restart serves the team.
 #[test]
-fn the_owner_hires_an_agent_into_the_office_and_it_survives_a_restart() {
+fn a_committed_team_survives_killing_the_worker_after_its_answer() {
     let _process = process_isolation();
-    use org_proto::org::{MemberOffboard, MemberOffboardParams};
     let world = World::new();
     let owner_id = seeded(&world);
     let mut first = live(&world);
     let mut owner = first.caller(Some(&owner_id));
-    let member_id = "AGENT00000000000000000000A";
-    let elsewhere = |n: u8, office: &str| MemberAddAgentParams {
-        office_id: office.into(),
-        ..hire(n, member_id, "Pixel", "pixel")
-    };
+    let command = command_id(1);
+    let accepted = team(&mut owner, &command, "Platform").unwrap();
+    assert_eq!(accepted.status, org_proto::org::CommandStatus::Committed);
+    let confirmed = world.writer.head().unwrap();
+    first.session.run.child.kill().unwrap();
+    assert!(!first.session.run.wait().success());
+    drop((owner, first));
 
-    // An office this organization does not have: not_found, nothing added.
-    let nowhere = owner
-        .call::<MemberAddAgent>(&elsewhere(1, "NOSUCHOFFICE"))
-        .unwrap_err();
-    assert_eq!(nowhere.code, org_proto::ErrorCode::NotFound);
-    // Its own office: hired.
-    let hired = owner
-        .call::<MemberAddAgent>(&hire(2, member_id, "Pixel", "pixel"))
-        .unwrap();
-    assert_eq!(
-        hired.position,
-        Some(org_proto::org::Position { epoch: 1, seq: 2 })
-    );
-    // Its handle is taken, in any case.
-    let again = owner
-        .call::<MemberAddAgent>(&hire(3, member_id, "Pixel", "PIXEL"))
-        .unwrap_err();
-    assert_eq!(again.code, org_proto::ErrorCode::AlreadyExists);
-    let agent = snapshot(&mut owner)
-        .members
-        .into_iter()
-        .find(|m| m.id == member_id)
-        .unwrap();
-    assert_eq!(agent.office_id.as_deref(), Some(OFFICE));
+    let mut again = live(&world);
+    let mut owner = again.caller(Some(&owner_id));
+    let after = snapshot(&mut owner);
+    assert_eq!(platform(&after).unwrap().name, "Platform");
+    assert_eq!(team(&mut owner, &command, "Platform").unwrap(), accepted);
+    assert!(world.writer.head().unwrap().ordinal >= confirmed.ordinal);
+    drop(owner);
+    again.stop();
+    // The orderly stop after the restart leaves a clean-stop marker (the in-process test checks
+    // that a drop without `close` leaves none).
+    assert!(world.office().stopped_cleanly());
+}
+
+/// Done-when 1, through the real worker: the projection deleted after a team and an orderly
+/// stop, the restart rebuilds it from the files and serves the same organization; the same
+/// command id gets its original answer.
+#[test]
+fn deleting_the_runtime_folder_rebuilds_the_same_organization_on_restart() {
+    let _process = process_isolation();
+    let world = World::new();
+    let owner_id = seeded(&world);
+    let mut first = live(&world);
+    let mut owner = first.caller(Some(&owner_id));
+    let command = command_id(1);
+    let accepted = team(&mut owner, &command, "Platform").unwrap();
+    let before = snapshot(&mut owner);
     drop(owner);
     first.stop();
+    let projection = world.data.join("runtime").join(OFFICE);
+    assert!(projection.join("office.db").is_file());
+    std::fs::remove_dir_all(&projection).unwrap();
 
-    // After a restart: still there; offboarded, and its handle stays taken.
-    let mut later = live(&world);
-    let mut owner = later.caller(Some(&owner_id));
-    let offboarded = owner
-        .call::<MemberOffboard>(&MemberOffboardParams {
-            command_id: command_id(4),
-            member_id: member_id.into(),
-            expected_version: 1,
-        })
-        .unwrap();
-    assert_eq!(
-        offboarded.position,
-        Some(org_proto::org::Position { epoch: 1, seq: 3 })
-    );
-    let clash = owner
-        .call::<MemberAddAgent>(&hire(5, "AGENT00000000000000000000B", "Pixel", "pixel"))
-        .unwrap_err();
-    assert_eq!(clash.code, org_proto::ErrorCode::AlreadyExists);
-    let agent = snapshot(&mut owner)
-        .members
-        .into_iter()
-        .find(|m| m.id == member_id)
-        .unwrap();
-    let profile = agent.agent.as_ref().unwrap();
-    assert_eq!(profile.status, AgentStatus::Offboarded);
-    assert!(profile.offboarded_at.is_some());
+    let mut again = live(&world);
+    let mut owner = again.caller(Some(&owner_id));
+    assert_eq!(snapshot(&mut owner), before);
+    assert_eq!(team(&mut owner, &command, "Platform").unwrap(), accepted);
     drop(owner);
-    later.stop();
+    again.stop();
+    assert!(projection.join("office.db").is_file());
 }
 
 #[test]
 fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_connection() {
     let _process = process_isolation();
     use org_proto::directory::{MemberPresence, Who, WhoParams};
-    use org_proto::org::{
-        MemberKind, MemberOffboard, MemberOffboardParams, RunMode, TeamAddMember,
-        TeamAddMemberParams,
-    };
+    use org_proto::org::MemberKind;
     let world = World::new();
     let owner_id = seeded(&world);
     let mut live = live(&world);
@@ -508,56 +399,24 @@ fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_conne
     assert_eq!(api_code(unbound), org_proto::ErrorCode::NotBound);
     let mut owner = live.caller(Some(&owner_id));
 
-    // The owner alone to begin with: their handle is `owner`, not their name.
-    let first = owner.call::<Who>(&WhoParams::default()).unwrap();
-    let [card] = &first.members[..] else {
-        panic!("{:?}", first.members)
-    };
-    assert!(card.owner);
+    // The owner, whose handle is `owner`, and the HR lead; everyone offline, no status line.
+    let everyone = owner.call::<Who>(&WhoParams::default()).unwrap();
+    let card = everyone.members.iter().find(|c| c.owner).unwrap();
+    assert_eq!(card.id, owner_id);
     assert_eq!(card.handle.as_deref(), Some("owner"));
-
-    // A team, an agent in it (placed in this office), and what the card then says.
+    let lead = everyone.members.iter().find(|c| c.id == hr()).unwrap();
+    assert_eq!(lead.kind, MemberKind::Agent);
+    assert_eq!(lead.presence, MemberPresence::Offline);
+    assert_eq!(lead.status, None);
+    // Filters: by team name, by kind, by member.
     team(&mut owner, &command_id(1), "Platform").unwrap();
-    let agent_id = "AGENT00000000000000000000A";
-    let mut add = hire(2, agent_id, "Pixel the engineer", "pixel");
-    add.profile.title = "Senior Engineer".into();
-    add.profile.run_mode = Some(RunMode::OnCall);
-    owner.call::<MemberAddAgent>(&add).unwrap();
-    owner
-        .call::<TeamAddMember>(&TeamAddMemberParams {
-            command_id: command_id(3),
-            membership_id: "m1".into(),
-            team_id: "T1".into(),
-            member_id: agent_id.into(),
-            title_in_team: Some("Lead".into()),
-        })
-        .unwrap();
-
-    let by_handle = owner
-        .call::<Who>(&WhoParams {
-            member: Some("PIXEL".into()),
-            ..WhoParams::default()
-        })
-        .unwrap();
-    let [pixel] = &by_handle.members[..] else {
-        panic!("{:?}", by_handle.members)
-    };
-    assert_eq!(pixel.id, agent_id);
-    assert_eq!(pixel.kind, MemberKind::Agent);
-    assert_eq!(pixel.presence, MemberPresence::Offline);
-    assert_eq!(pixel.status, None);
-    assert_eq!(pixel.role_title.as_deref(), Some("Senior Engineer"));
-    assert_eq!(pixel.office.as_ref().map(|o| o.name.as_str()), Some("HQ"));
-    assert_eq!(pixel.teams[0].name, "Platform");
-    assert_eq!(pixel.teams[0].title_in_team.as_deref(), Some("Lead"));
-    // Filters: by team name, and by kind.
     let in_team = owner
         .call::<Who>(&WhoParams {
             team: Some("platform".into()),
             ..WhoParams::default()
         })
         .unwrap();
-    assert_eq!(in_team.members.len(), 1);
+    assert!(in_team.members.is_empty(), "{:?}", in_team.members);
     let people = owner
         .call::<Who>(&WhoParams {
             kind: Some(MemberKind::Person),
@@ -565,6 +424,14 @@ fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_conne
         })
         .unwrap();
     assert!(people.members.iter().all(|c| c.kind == MemberKind::Person));
+    assert!(people.members.iter().any(|c| c.id == owner_id));
+    let by_id = owner
+        .call::<Who>(&WhoParams {
+            member: Some(hr()),
+            ..WhoParams::default()
+        })
+        .unwrap();
+    assert_eq!(by_id.members.len(), 1);
     let nobody = owner
         .call::<Who>(&WhoParams {
             member: Some("nobody".into()),
@@ -572,61 +439,47 @@ fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_conne
         })
         .unwrap_err();
     assert_eq!(nobody.code, org_proto::ErrorCode::NotFound);
-
-    // Offboarded: gone from the directory, and naming it is not_found.
-    owner
-        .call::<MemberOffboard>(&MemberOffboardParams {
-            command_id: command_id(4),
-            member_id: agent_id.into(),
-            expected_version: 1,
-        })
-        .unwrap();
-    let after = owner.call::<Who>(&WhoParams::default()).unwrap();
-    assert!(after.members.iter().all(|c| c.id != agent_id));
-    let gone = owner
-        .call::<Who>(&WhoParams {
-            member: Some("pixel".into()),
-            ..WhoParams::default()
-        })
-        .unwrap_err();
-    assert_eq!(gone.code, org_proto::ErrorCode::NotFound);
     drop((client, owner));
     live.stop();
 }
 
-/// Messaging, status lines, work writes, `subscribe` and operation lookup lived only in the old
-/// tables. Until their families are rebuilt on the office store (work B4, messaging and status
-/// B6, operation lookup B2) the real worker answers each of them `unsupported`, for an agent and
-/// for the owner alike, while binding, the directory and organization commands keep working.
+/// Messaging, status lines, work writes, `subscribe`, operation lookup and every organization
+/// command but `team.create` lived only in the old tables. Until their families are rebuilt
+/// on the office store (work B4, messaging and status B6, the rest B2) the real worker answers
+/// each of them `unsupported` to the owner, while the directory and `team.create` keep working.
 #[test]
 fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker() {
     let _process = process_isolation();
-    use org_proto::directory::{StatusSet, StatusSetParams, Who, WhoParams};
+    use org_proto::directory::{Who, WhoParams};
     use org_proto::msg::{
         MsgInbox, MsgInboxParams, MsgRead, MsgReadParams, MsgSend, MsgSendParams, MsgWait,
         MsgWaitParams, KIND_MSG,
     };
-    use org_proto::work::{
-        TaskCreate, TaskCreateParams, WorkDelete, WorkDeleteParams, WorkGet, WorkGetParams,
-    };
+    use org_proto::org::{TeamRename, TeamRenameParams};
+    use org_proto::work::{TaskCreate, TaskCreateParams, WorkDelete, WorkDeleteParams};
     use org_proto::{ErrorCode, OperationGet, OperationGetParams, OperationKind};
     let world = World::new();
     let owner_id = seeded(&world);
     let mut live = live(&world);
     let mut owner = live.caller(Some(&owner_id));
-    // Hiring is an organization command: it still commits on the office's organization data.
-    let agent_id = "AGENT00000000000000000000A";
-    let hired = owner
-        .call::<MemberAddAgent>(&hire(1, agent_id, "Pixel", "pixel"))
-        .unwrap();
-    assert_eq!(hired.status, org_proto::org::CommandStatus::Committed);
+    assert_eq!(
+        team(&mut owner, &command_id(1), "Platform").unwrap().status,
+        org_proto::org::CommandStatus::Committed
+    );
 
-    // The agent binds with no token, through the directory.
-    let agent = Client::connect(socket(&world)).unwrap();
-    let bound = agent
-        .call::<MsgBind>(&MsgBindParams::member("pixel"))
-        .unwrap();
-    assert_eq!(bound.member_id.as_deref(), Some(agent_id));
+    // No agent of this office can bind until agents are hired through HR (B2): the
+    // creation's HR lead has no office yet. The agent's side of these calls is covered in
+    // process (`serve.rs` tests); here the office socket is unbound.
+    let refused = Client::connect(socket(&world)).unwrap();
+    assert_eq!(
+        api_code(
+            refused
+                .call::<MsgBind>(&MsgBindParams::member(hr()))
+                .unwrap_err()
+        ),
+        ErrorCode::NotAuthorized
+    );
+    drop(refused);
 
     let message = |n: u8, to: &str| MsgSendParams {
         id: command_id(n),
@@ -661,47 +514,12 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
         expected_version: 1,
     };
 
-    // The agent, on the office socket.
-    let unsupported = |error: org_client::ClientError| api_code(error) == ErrorCode::Unsupported;
-    assert!(unsupported(
-        agent.call::<MsgSend>(&message(10, "owner")).unwrap_err()
-    ));
-    assert!(unsupported(agent.call::<MsgInbox>(&inbox).unwrap_err()));
-    assert!(unsupported(
-        agent
-            .call::<MsgRead>(&MsgReadParams { id: None })
-            .unwrap_err()
-    ));
-    // Answered at once, not held for 30 s.
-    assert!(unsupported(agent.call::<MsgWait>(&wait).unwrap_err()));
-    assert!(unsupported(
-        agent
-            .call::<StatusSet>(&StatusSetParams {
-                text: Some("Wiring the broker".into()),
-                ttl_ms: None,
-            })
-            .unwrap_err()
-    ));
-    assert!(unsupported(agent.call::<TaskCreate>(&task).unwrap_err()));
-    assert_eq!(
-        api_code(
-            agent
-                .call::<WorkGet>(&WorkGetParams {
-                    item: task.item_id.clone(),
-                })
-                .unwrap_err()
-        ),
-        ErrorCode::UnknownMethod
-    );
-    // `subscribe` on the office socket, bound or not. (Host channels refuse it by their own
-    // policy, before the office is asked.)
+    // `subscribe` on the office socket.
     let subscribe = org_proto::SubscribeParams {
         from_position: None,
         from_work_position: None,
     };
-    assert!(unsupported(
-        agent.call::<org_proto::Subscribe>(&subscribe).unwrap_err()
-    ));
+    let unsupported = |error: org_client::ClientError| api_code(error) == ErrorCode::Unsupported;
     let unbound = Client::connect(socket(&world)).unwrap();
     assert!(unsupported(
         unbound
@@ -712,10 +530,22 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
     // The owner, through its grant on a host channel.
     let owner_unsupported = |error: ApiError| error.code == ErrorCode::Unsupported;
     assert!(owner_unsupported(
-        owner.call::<MsgSend>(&message(11, "pixel")).unwrap_err()
+        owner.call::<MsgSend>(&message(11, "owner")).unwrap_err()
     ));
     assert!(owner_unsupported(
         owner.call::<MsgInbox>(&inbox).unwrap_err()
+    ));
+    assert!(owner_unsupported(
+        owner
+            .call::<MsgRead>(&MsgReadParams { id: None })
+            .unwrap_err()
+    ));
+    // A person never waits on the office: refused at once, not held for 30 s.
+    let started = std::time::Instant::now();
+    owner.call::<MsgWait>(&wait).unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(owner_unsupported(
+        owner.call::<TaskCreate>(&task).unwrap_err()
     ));
     assert!(owner_unsupported(
         owner.call::<WorkDelete>(&delete).unwrap_err()
@@ -728,23 +558,68 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
             })
             .unwrap_err()
     ));
+    // Another organization command (B2).
+    assert!(owner_unsupported(
+        owner
+            .call::<TeamRename>(&TeamRenameParams {
+                command_id: command_id(7),
+                team_id: TEAM.into(),
+                name: "Renamed".into(),
+                expected_version: 1,
+            })
+            .unwrap_err()
+    ));
 
     // The directory read still answers: no status line, everyone offline.
     let who = owner
         .call::<Who>(&WhoParams {
-            member: Some("pixel".into()),
+            member: Some(hr()),
             ..WhoParams::default()
         })
         .unwrap();
-    let [pixel] = &who.members[..] else {
+    let [lead] = &who.members[..] else {
         panic!("{:?}", who.members)
     };
-    assert_eq!(pixel.id, agent_id);
-    assert_eq!(pixel.status, None);
-    assert_eq!(
-        pixel.presence,
-        org_proto::directory::MemberPresence::Offline
-    );
-    drop((agent, unbound, owner));
+    assert_eq!(lead.status, None);
+    assert_eq!(lead.presence, org_proto::directory::MemberPresence::Offline);
+    drop((unbound, owner));
     live.stop();
+}
+
+/// A store that stops (here: the host refuses the confirmation of a flushed write) is fatal
+/// for the worker: the write is not answered as committed, the worker logs the store's fixed
+/// text and exits 1, so the host restarts it from what is on the drive.
+#[test]
+fn a_store_that_stops_exits_the_worker_1() {
+    let _process = process_isolation();
+    let world = World::new();
+    let owner_id = seeded(&world);
+    let mut first = live(&world);
+    let mut owner = first.caller(Some(&owner_id));
+    let held = world.writer.head().unwrap();
+    // The host now holds a head this office never wrote: it refuses the next confirmation.
+    let mut elsewhere = held.clone();
+    elsewhere.ordinal += 100;
+    world.writer.set_head(Some(elsewhere));
+    let refused = team(&mut owner, &command_id(1), "Platform");
+    assert!(
+        !matches!(&refused, Ok(accepted) if accepted.status == org_proto::org::CommandStatus::Committed),
+        "{refused:?}"
+    );
+    drop(owner);
+    let mut session = first.session;
+    assert_eq!(session.run.wait().code(), Some(1));
+    let log = session.run.stderr();
+    assert!(
+        log.contains("agentic-org-office: the office store stopped"),
+        "{log}"
+    );
+    session.no_stdout();
+    drop(session);
+    // With its custody back, the office starts again from the drive.
+    world.writer.set_head(Some(held));
+    let mut again = live(&world);
+    let snapshot = snapshot(&mut again.caller(Some(&owner_id)));
+    assert!(snapshot.members.iter().any(|m| m.id == owner_id));
+    again.stop();
 }

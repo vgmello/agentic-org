@@ -1,0 +1,191 @@
+// Each function holds one violation of the engine boundary. The guard in
+// `tests/engine_boundary.rs` checks that every function here is reported.
+// This file is not compiled; it is read as text by the guard.
+
+fn use_of_the_engine() {
+    use rusqlite::Connection;
+}
+
+fn use_of_the_engine_in_a_group() {
+    use rusqlite::{params, Connection};
+}
+
+fn use_of_the_engine_alone() {
+    use rusqlite;
+}
+
+fn use_of_the_engine_renamed() {
+    use rusqlite as engine;
+}
+
+fn absolute_path_through_the_engine() {
+    let _ = ::rusqlite::Connection::open_in_memory();
+}
+
+fn type_through_the_engine(_db: &rusqlite::Connection) {}
+
+fn the_engine_in_a_macro() {
+    let _ = format!("{:?}", rusqlite::version());
+}
+
+fn extern_crate_of_the_engine() {
+    extern crate rusqlite;
+}
+
+fn select() {
+    let _ = "SELECT id FROM teams WHERE parent = ?1";
+}
+
+fn select_in_lower_case() {
+    let _ = "select id from teams where parent = ?1";
+}
+
+fn select_star() {
+    let _ = "select * from teams";
+}
+
+fn insert() {
+    let _ = "INSERT INTO teams (id) VALUES (?1)";
+}
+
+fn insert_or_replace() {
+    let _ = "INSERT OR REPLACE INTO teams (id) VALUES (?1)";
+}
+
+fn replace_into() {
+    let _ = "REPLACE INTO teams (id) VALUES (?1)";
+}
+
+fn update() {
+    let _ = "UPDATE teams SET name = ?1 WHERE id = ?2";
+}
+
+fn delete() {
+    let _ = "delete from teams where id = ?1";
+}
+
+fn create_table() {
+    let _ = "CREATE TABLE IF NOT EXISTS teams (id TEXT PRIMARY KEY)";
+}
+
+fn create_unique_index() {
+    let _ = "CREATE UNIQUE INDEX teams_by_name ON teams (name)";
+}
+
+fn drop_table() {
+    let _ = "DROP TABLE teams";
+}
+
+fn alter_table() {
+    let _ = "ALTER TABLE teams ADD COLUMN name TEXT";
+}
+
+fn pragma() {
+    let _ = "PRAGMA journal_mode = WAL";
+}
+
+fn begin_immediate() {
+    let _ = "BEGIN IMMEDIATE";
+}
+
+fn commit() {
+    let _ = "COMMIT";
+}
+
+fn attach() {
+    let _ = "ATTACH DATABASE 'other.db' AS other";
+}
+
+fn savepoint() {
+    let _ = "SAVEPOINT before_write";
+}
+
+fn sql_in_a_raw_string() {
+    let _ = r#"SELECT "name" FROM teams"#;
+}
+
+fn sql_in_a_format_macro() {
+    let _ = format!("SELECT {} FROM teams", "id");
+}
+
+fn sql_in_a_nested_macro() {
+    let _ = vec![format!("DELETE FROM {}", "teams")];
+}
+
+fn an_sql_file_included() {
+    let _ = include_str!("../schema.sql");
+}
+
+fn sql_in_a_const() {
+    const STATEMENT: &str = "UPDATE teams SET name = ?1";
+}
+
+fn select_without_from() {
+    let _ = "SELECT 1";
+}
+
+fn select_a_function() {
+    let _ = "SELECT sqlite_version()";
+}
+
+fn with_a_common_table() {
+    let _ = "WITH t AS (values (1)) select x from t";
+}
+
+fn explain_in_capitals() {
+    let _ = "EXPLAIN QUERY PLAN select id from teams";
+}
+
+fn reindex_alone() {
+    let _ = "REINDEX";
+}
+
+fn analyze_a_table() {
+    let _ = "ANALYZE teams";
+}
+
+fn with_in_lower_case() {
+    let _ = "with t as (select id from teams where parent = ?1) select id from t";
+}
+
+fn explain_in_lower_case() {
+    let _ = "explain select id from teams where id = ?1";
+}
+
+fn release_a_savepoint() {
+    let _ = "RELEASE before_write";
+}
+
+fn rollback_to_a_savepoint() {
+    let _ = "ROLLBACK TO before_write";
+}
+
+fn analyze() {
+    let _ = "ANALYZE";
+}
+
+fn reindex() {
+    let _ = "REINDEX teams_by_name";
+}
+
+fn update_or_replace() {
+    let _ = "UPDATE OR REPLACE teams SET name = ?1";
+}
+
+fn sql_in_a_byte_string() {
+    let _ = b"SELECT id FROM teams";
+}
+
+fn sql_in_a_byte_string_in_a_macro() {
+    let _ = format!("{:?}", b"DELETE FROM teams");
+}
+
+fn sql_in_a_concat_piece() {
+    let _ = concat!("SELECT id ", "FROM teams");
+}
+
+#[some_attribute(query = "INSERT INTO teams (id) VALUES (?1)")]
+fn sql_in_an_attribute() {}
+
+#[cfg_attr(test, doc = "x", some_attribute(query = "INSERT INTO teams (id) VALUES (?1)"))]
+fn sql_beside_a_doc_in_cfg_attr() {}

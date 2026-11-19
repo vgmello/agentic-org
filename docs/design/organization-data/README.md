@@ -86,7 +86,7 @@ The organization repository must be remote. Its tracked content is mirrored as o
 
 `<data-root>` is resolved once by the instance under the [standalone design](../standalone-server.md#3-instance-selection-and-storage) and saved in instance configuration; it is never inferred from a client ID, a shell's working directory or `HOME`. An operator may place `durable/` on separate storage, but its logical location stays `<data-root>/<organization-id>/durable/`. Do not introduce another root name. Two things are deliberately outside this tree and are backed up separately: the host's key and writer custody, and credential stores (document 16; [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md)).
 
-Code today keeps its authoritative `org.db` and `office.db` under `offices/<office-id>/` of the host home ([host boundary](../office-host-boundary.md)); the code moves each record family into this tree.
+Code today (B1b): the organization family lives in this tree under `<data-root>/<organization-id>/` ([office store](../office-store.md) section 11); other families move here with their increments.
 
 Durable scalar values are explicit YAML/front-matter fields. Association rows come from ID arrays or maps in their owning documents. Markdown bodies map to `body_markdown`. Array positions and resolver indexes are derived and have no independently authored source. Generated numeric keys are derived from persisted numbers. Null optional fields and documented defaults round-trip identically.
 

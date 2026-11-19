@@ -1,7 +1,11 @@
 //! A writer custody that keeps its head in memory and applies exactly the host's rule.
 
-use std::sync::{Condvar, Mutex};
+use std::{
+    sync::{Condvar, Mutex},
+    time::{Duration, Instant},
+};
 
+use super::HELD_BOUND;
 use crate::custody::{CustodyError, JournalHead, OfficeIdentity, WriterAuthority};
 
 #[derive(Default)]
@@ -33,12 +37,35 @@ impl FakeCustody {
         self.state().hold_confirmations = true;
     }
 
-    /// Returns once a confirmation is waiting behind the hold.
+    /// Returns once a confirmation is waiting behind the hold. Panics when none has
+    /// arrived within [`HELD_BOUND`]: the thread meant to confirm may have died before
+    /// reaching the hold, and the test must then fail instead of waiting forever.
     pub fn wait_for_held_confirmation(&self) {
+        self.wait_for_held_confirmation_within(HELD_BOUND);
+    }
+
+    fn wait_for_held_confirmation_within(&self, bound: Duration) {
+        let deadline = Instant::now() + bound;
         let mut state = self.state();
         while state.held_confirmations == 0 {
             assert!(state.hold_confirmations, "no hold is set");
-            state = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                // Lift the hold first: a store dropped while this panic unwinds joins its
+                // threads, and one that reached the hold meanwhile must not wait forever.
+                state.hold_confirmations = false;
+                self.changed.notify_all();
+                drop(state);
+                panic!(
+                    "no confirmation reached the hold within {bound:?}: \
+                 the thread meant to confirm may have died before it"
+                );
+            }
+            let (next, _) = self
+                .changed
+                .wait_timeout(state, left)
+                .unwrap_or_else(|e| e.into_inner());
+            state = next;
         }
     }
 
@@ -206,5 +233,28 @@ mod tests {
             .confirm(&identity(), Some(&stored), &head(6, 9))
             .unwrap();
         assert_eq!(custody.head(), Some(head(6, 9)));
+    }
+
+    /// A hold that no confirmation reaches (its thread died first) fails the wait, not
+    /// the run.
+    #[test]
+    #[should_panic(expected = "no confirmation reached the hold within")]
+    fn waiting_for_a_held_confirmation_that_never_arrives_fails_at_its_bound() {
+        let custody = FakeCustody::new();
+        custody.hold_confirmations();
+        custody.wait_for_held_confirmation_within(Duration::from_millis(50));
+    }
+
+    /// The failed wait lifts the hold, so a store dropped while the panic unwinds never
+    /// joins a thread that reached the hold in the meantime.
+    #[test]
+    fn a_failed_wait_lifts_the_hold() {
+        let custody = FakeCustody::new();
+        custody.hold_confirmations();
+        let waited = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            custody.wait_for_held_confirmation_within(Duration::from_millis(50))
+        }));
+        assert!(waited.is_err());
+        assert!(!custody.state().hold_confirmations);
     }
 }

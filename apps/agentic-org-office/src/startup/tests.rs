@@ -13,14 +13,14 @@ use std::os::unix::net::{UnixDatagram, UnixListener};
 use std::path::Path;
 use std::time::Duration;
 
-const ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const ID: &str = "019a8928-1337-7456-8456-0123456789ac";
+const ORG: &str = "019a8928-1337-7456-8456-0123456789ab";
+const OWNER: &str = "019a8928-1337-7456-8456-0123456789ae";
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 const WAIT: Duration = Duration::from_secs(10);
 
 fn first(path: &Path, op: FirstLine) -> HostFirstLine {
     let office = OfficeLine {
-        id_profile: None,
-        selected_writer_required: false,
         instance_id: INSTANCE.into(),
         office_id: ID.into(),
         rendezvous: path.to_str().unwrap().into(),
@@ -28,12 +28,34 @@ fn first(path: &Path, op: FirstLine) -> HostFirstLine {
     match op {
         FirstLine::Create => HostFirstLine::Create(CreateLine {
             office,
-            org_id: ID.into(),
+            org_id: ORG.into(),
             org_name: "Acme".into(),
             office_name: "HQ".into(),
             role: OfficeRole::Hq,
-            owner_member_id: ID.into(),
-            hq_creation: None,
+            owner_member_id: OWNER.into(),
+            hq_creation: org_office_launch::HqCreationV1 {
+                version: org_office_launch::HqCreationV1::VERSION,
+                operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+                escrow_profile: 1,
+                bootstrap: Box::new(org_proto::selected_bootstrap::PreparedV1 {
+                    plan: org_proto::selected_bootstrap::PlanV1 {
+                        version: 1,
+                        name: "Acme".into(),
+                        slug: "acme".into(),
+                        repository_remote_url: "https://example.test/org.git".into(),
+                        state_branch: "org/state".into(),
+                    },
+                    organization_id: ORG.into(),
+                    office_id: ID.into(),
+                    repository_id: "019a8928-1337-7456-8456-0123456789ad".into(),
+                    home_team_id: "019a8928-1337-7456-8456-0123456789b0".into(),
+                    hr_employee_id: "019a8928-1337-7456-8456-0123456789af".into(),
+                    creator: org_proto::selected_bootstrap::CreatorV1::from_login(
+                        OWNER.into(),
+                        "Ana",
+                    ),
+                }),
+            },
         }),
         FirstLine::Start => HostFirstLine::Start(office),
         FirstLine::Discard => HostFirstLine::Discard(office),

@@ -27,7 +27,10 @@ use org_store::{
     Status, Store, StoreError, StoreParts, WriterAuthority,
 };
 
-pub use operations::{CreateOrganizationOp, CreateTeamOp, DirectoryGeneration, DirectorySnapshot};
+pub use operations::{
+    CreateOrganizationOp, CreateTeamOp, DirectoryGeneration, DirectorySnapshot, OfficeStanding,
+    Standing,
+};
 
 use super::sqlite::SqliteEngine;
 use crate::{

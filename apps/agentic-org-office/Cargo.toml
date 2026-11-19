@@ -24,6 +24,8 @@ zeroize = "=1.9.1"
 org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office = { path = "../../crates/org-office" }
+# The writer custody contract the office's store calls, implemented over the host channel.
+org-store = { path = "../../crates/org-store" }
 org-work = { path = "../../crates/org-work" }
 org-mailbox = { path = "../../crates/org-mailbox" }
 org-office-launch = { path = "../../crates/org-office-launch" }
