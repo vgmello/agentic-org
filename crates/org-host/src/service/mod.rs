@@ -154,12 +154,15 @@ impl Service {
             }),
         })
     }
-    /// `tls.set` (`host.sock` only; an administrator's session; journaled; X-02 §6.2): the
-    /// pair is checked and installed by [`crate::web_tls::WebTls::set`], and a pair it
-    /// installs is announced to the web process with `tls.renew`. Refused with
-    /// `not_authorized` on the web connection, without a registry or for an account that is
-    /// not the administrator; `unavailable` on an instance whose listener is not `https`.
-    fn set_tls(&self, request: &Request, connection: &Arc<Connection>) -> bool {
+    /// `tls.set` (`host.sock` only; the signed `agentic-org` peer; an administrator's
+    /// session; journaled; X-02 §6.2): the pair is checked and installed by
+    /// [`crate::web_tls::WebTls::set`], and a pair it installs is announced to the web
+    /// process with `tls.renew`. Refused with `not_authorized` on the web connection, without
+    /// a registry, for a peer the administrator calls' admission refuses
+    /// ([`crate::admin::Admin::admit_peer`]) or for an account that is not the
+    /// administrator; `unavailable` before the administrator service is installed and on an
+    /// instance whose listener is not `https`.
+    fn set_tls(&self, request: &Request, connection: &Arc<Connection>, received: Received) -> bool {
         use org_host_control::ops::TlsSet;
         if !request.is::<TlsSet>() {
             return false;
@@ -170,6 +173,13 @@ impl Service {
             return true;
         };
         connection.send_response(answer::<TlsSet>(request, |params| {
+            let admin = self.admin.get().ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::Unavailable,
+                    "administrator calls are unavailable on this host",
+                )
+            })?;
+            admin.admit_peer(connection, received)?;
             let account = authentication.authorize(connection, &params.session)?;
             if !account.admin() {
                 return Err(ApiError::new(
@@ -222,7 +232,7 @@ impl Service {
         let answer = match snapshot.scheme() {
             ListenMode::HttpLoopback => TlsFetchResult::HttpLoopback { origin, hsts },
             ListenMode::HttpPublished => TlsFetchResult::HttpPublished { origin, hsts },
-            ListenMode::Https => match self.web_tls.as_deref().map(|tls| tls.fetch()) {
+            ListenMode::Https => match self.web_tls.as_deref().map(|tls| tls.fetch_for(&origin)) {
                 Some(Ok((cert, key))) => TlsFetchResult::Https {
                     cert,
                     key,
@@ -736,7 +746,7 @@ impl Handler for Service {
             self.fetch_tls(&request, connection);
             return;
         }
-        if self.set_tls(&request, connection) {
+        if self.set_tls(&request, connection, received) {
             return;
         }
         if self.administer(&request, connection, received) {
@@ -1697,11 +1707,33 @@ pub(crate) mod tests {
             cert: cert.clone(),
             key: TlsPrivateKey::new(key.clone()).unwrap(),
         };
-        let local = |web_tls: Option<Arc<crate::web_tls::WebTls>>| {
+        // The administrator calls' admission: one that admits this test's own executable as
+        // the development `agentic-org` peer, or one that admits no unsigned peer.
+        let admission = |admits: bool| {
+            let policy = crate::app_auth::AppPolicy::new(crate::HOST_SIGNING_ID, None).unwrap();
+            let policy = if admits {
+                policy
+                    .with_dev_app(&std::env::current_exe().unwrap())
+                    .unwrap()
+            } else {
+                policy
+            };
+            Arc::new(crate::admin::Admin::new(
+                authentication.provisioning_storage().0,
+                &crate::ids::uuid_v7().unwrap(),
+                org_host_control::listen::ListenOrigin::parse("https://127.0.0.1:8443").unwrap(),
+                policy,
+                Arc::new(crate::admin::NativePresence),
+            ))
+        };
+        let local = |web_tls: Option<Arc<crate::web_tls::WebTls>>, admits: Option<bool>| {
             let home = tempfile::tempdir().unwrap();
             let mut service = service(home.path())
                 .with_authentication(Some(Arc::clone(&authentication)))
                 .with_web_tls(web_tls);
+            if let Some(admits) = admits {
+                assert!(service.install_admin(admission(admits)));
+            }
             service.instance_id = Some(crate::ids::uuid_v7().unwrap());
             let offices = service.offices.clone();
             let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -1730,7 +1762,23 @@ pub(crate) mod tests {
             .unwrap()
             .session
         };
-        let (_home, connection, mut peer, offices) = local(Some(Arc::clone(&tls)));
+        // Before the administrator service is installed, and for a peer it does not admit
+        // (an unsigned process of the same user), even with the administrator's session.
+        for admits in [None, Some(false)] {
+            let (_home, connection, mut peer, offices) = local(Some(Arc::clone(&tls)), admits);
+            let owner = sign_in(&mut peer, "Owner");
+            assert!(refused(
+                exchange::<TlsSet>(&mut peer, 3, &params(owner)),
+                if admits.is_none() {
+                    ErrorCode::Unavailable
+                } else {
+                    ErrorCode::NotAuthorized
+                }
+            ));
+            drop(connection);
+            offices.shutdown();
+        }
+        let (_home, connection, mut peer, offices) = local(Some(Arc::clone(&tls)), Some(true));
         let bogus = SessionHandle::new("A".repeat(43)).unwrap();
         assert!(refused(
             exchange::<TlsSet>(&mut peer, 3, &params(bogus)),
@@ -1758,7 +1806,7 @@ pub(crate) mod tests {
         drop(connection);
         offices.shutdown();
         // Without an https pair.
-        let (_home, connection, mut peer, offices) = local(None);
+        let (_home, connection, mut peer, offices) = local(None, Some(true));
         let owner = sign_in(&mut peer, "Owner");
         assert!(refused(
             exchange::<TlsSet>(&mut peer, 3, &params(owner)),

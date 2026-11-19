@@ -276,6 +276,15 @@ impl WebTls {
     /// validity (`None`: not judged, as `tls.fetch` does not), with its key from the host's
     /// secrets. The caller holds `writing`.
     fn current(&self, now: Option<i64>) -> Result<(Checked, Source), Unservable> {
+        self.current_for(&self.origin, now)
+    }
+
+    /// [`WebTls::current`] for `origin`.
+    fn current_for(
+        &self,
+        origin: &ListenOrigin,
+        now: Option<i64>,
+    ) -> Result<(Checked, Source), Unservable> {
         let stored = self
             .db
             .web_tls_pair()
@@ -288,7 +297,7 @@ impl WebTls {
             .map_err(|_| Unservable::Storage)?
             .ok_or(Unservable::Storage)?;
         let key = key_text(&key).ok_or(Unservable::Storage)?;
-        match check(&stored.cert_pem, key, &[&self.origin], now) {
+        match check(&stored.cert_pem, key, &[origin], now) {
             Ok(checked) => Ok((checked, stored.source)),
             Err(TlsRefusal::TlsNotValid { .. }) => Err(Unservable::NotValid),
             Err(TlsRefusal::TlsNameMismatch { uncovered }) => {
@@ -336,11 +345,21 @@ impl WebTls {
         Ok((checked.not_before, checked.not_after))
     }
 
-    /// `tls.fetch`'s pair: the chain and the key. Read while no pair is being installed, so
-    /// the row and its key are one pair.
+    /// The pair, for the instance's own origin (tests).
+    #[cfg(test)]
     pub(crate) fn fetch(&self) -> Result<(String, TlsPrivateKey), Unservable> {
+        self.fetch_for(&self.origin.clone())
+    }
+
+    /// `tls.fetch`'s pair: the chain and the key, re-checked for `origin`, the snapshot's
+    /// (X-02 §6.1). Read while no pair is being installed, so the row and its key are one
+    /// pair.
+    pub(crate) fn fetch_for(
+        &self,
+        origin: &ListenOrigin,
+    ) -> Result<(String, TlsPrivateKey), Unservable> {
         let _writing = crate::sync::lock(&self.writing);
-        let (mut checked, _) = self.current(None).inspect_err(|_| {
+        let (mut checked, _) = self.current_for(origin, None).inspect_err(|_| {
             // A pair that cannot be read (its key lost while the host ran) is verified whole
             // again by the gate, which then keeps the web process waiting.
             *crate::sync::lock(&self.verified) = None;
