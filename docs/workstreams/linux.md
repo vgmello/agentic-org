@@ -20,7 +20,7 @@ contracts (`crates/org-platform`, `crates/org-platform-host`), the Linux service
 | X2 · the first office worker on Linux (LNX-1) | Done | v1 54f0a404 | — |
 | X3 · host secrets on Linux (LNX-4) | Done | v1 54f0a404; custody rounds in de960b2c | — |
 | X4 · the web process confined on Linux (LNX-3) | Done | v1 54f0a404 | — |
-| X5 · service and container (LNX-2) | Done (its HTTPS criterion moved to X7 by the owner's decision of 2026-11-18) | v1 de960b2c, c60bcada, 58a44b2b; restart-race fix in a31248ca | — |
+| X5 · service and container (LNX-2) | Done | v1 de960b2c, c60bcada, 58a44b2b; restart-race fix in a31248ca | — (its HTTPS criterion moved to X7 by the owner's decision of 2026-11-18) |
 | X6 · both systems in CI (LNX-5, LNX-6) | In progress | v1 701d8460 (CI `container` job with the profiles, Linux `agent-os` timings, platform facts for test code) | The last 11 predicates, in `apps/agentic-org-office/src/startup/tests.rs` (8) and `tests/launch/activation/transfer.rs` (3), to empty the allowlist; then FC-164 Done; `session attach` timings after B6 |
 | X7 · HTTPS for a container, with the instance's own certificate | In progress | v1 a31248ca (self-made or supplied pair, `tls.set`, renewal, instance view `tls`) | The container's switch to https (`deploy/container/setup.json`, README, LNX-2 https steps); a Linux and container route for `admin tls set` (owner decision below); P3s: re-announce `tls.renew` after a failed web fetch; the gate cache's doc wording |
 | Release image | Not started | — | Needs the release pipeline |
@@ -34,6 +34,25 @@ steps), then X6's last 11 predicates to empty the allowlist (LNX-5), which close
 
 Nothing on origin. One local branch `x/x5-restart-race-diag` (bdfe1a28) in the linux-dev checkout:
 diagnostic logging only, never to merge; delete when the owner agrees.
+
+## How Track X's checks were run (nothing here lives outside the repository)
+
+- Linux from a Mac: export a commit with `git archive <commit>` into a Docker volume, then run
+  `cargo clippy --locked --workspace --all-targets -- -D warnings` and `cargo test --locked ...` in
+  `rust:1.99.1-trixie` (the image `deploy/container/build.sh` pins) as uid 1000, with `/var/tmp` on a
+  named volume (the credential rules refuse overlayfs) and `--security-opt seccomp=unconfined`. The
+  scratch scripts that did this were session-local; CI's `rust (ubuntu-26.04)` job is the durable
+  equivalent.
+- LNX-2: `deploy/container/lnx2.sh` after building the UI (`cd apps/agentic-org-ui && bun install
+  --frozen-lockfile && bun run build`); on Docker Desktop it runs from a Linux container with the
+  Docker socket and the repository at its Mac path. A first run after a cold `target/linux` can fail
+  with E0463 over Docker Desktop's file share: rerun. CI's `container` job runs it on every push.
+- Real systemd and AppArmor: an Ubuntu 26.04 Lima VM (systemd 259, AppArmor enforcing, Docker 29.1.3);
+  deleted after use, recreate with `limactl create` when needed. Copy builds in with
+  `COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata` (macOS tar otherwise adds AppleDouble files
+  the web process refuses).
+- Reviews: fresh Claude Opus reviewers at medium effort, iterated until no P1 or P2 (owner's
+  direction; never Codex for review).
 
 ## Open decisions (owner)
 
