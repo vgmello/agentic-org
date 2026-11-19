@@ -19,7 +19,6 @@ import type {
 	MemberProfile,
 	MemberRow,
 	PresenceId,
-	ProcessRow,
 	TeamRef,
 	Turn,
 	TurnState,
@@ -31,7 +30,6 @@ import runsData from '../data/members/runs.json' with { type: 'json' };
 import tasksData from '../data/members/tasks.json' with { type: 'json' };
 import activityData from '../data/members/activity.json' with { type: 'json' };
 import conversationsData from '../data/members/conversations.json' with { type: 'json' };
-import processesData from '../data/members/processes.json' with { type: 'json' };
 import rolesData from '../data/members/roles.json' with { type: 'json' };
 import teamsData from '../data/teams/teams.json' with { type: 'json' };
 import claudeSession from '../data/members/sessions/claude-noor-run.json' with { type: 'json' };
@@ -491,26 +489,6 @@ export const conversationsFor = (pick: (c: (typeof conversationsData)[number]) =
 		preview: c.preview
 	}));
 
-/** The effective processes for a team: the organization's, with the team's replacements and additions. */
-export function processesForTeam(s: OrgSnapshot, teamId: string | undefined): ProcessRow[] {
-	const org: ProcessRow[] = processesData.organization.map((p) => ({
-		...p,
-		level: 'organization',
-		relation: p.relation as ProcessRow['relation']
-	}));
-	const own = teamId
-		? ((processesData.teams as Record<string, typeof processesData.organization>)[teamId] ?? [])
-		: [];
-	const teamName = teamRef(s, teamId)?.name;
-	const mine: ProcessRow[] = own.map((p) => ({
-		...p,
-		level: 'team',
-		from: teamName,
-		relation: p.relation as ProcessRow['relation']
-	}));
-	return [...org.filter((o) => !mine.some((m) => m.key === o.key)), ...mine];
-}
-
 const member = async (organizationId: string, memberId: string) => {
 	const s = await snapshotFor(organizationId);
 	const m = s.members.find((x) => x.id === memberId && present(x));
@@ -678,17 +656,6 @@ export const membersApi: MembersApi = {
 		const lines = structuredClone(f.lines);
 		if (run) shiftTimes(lines, Date.parse(run.startedAt));
 		return { runId, memberId, format: f.format, lines };
-	},
-	async processes(organizationId, memberId) {
-		await gate();
-		const s = await snapshotFor(organizationId);
-		const hasCurrentWork = tasksData.some(
-			(t) => (state.assigned.get(t.ref) ?? t.assigneeId) === memberId && t.state !== 'done'
-		);
-		return {
-			hasCurrentWork,
-			rows: processesForTeam(s, hasCurrentWork ? homeTeamId(s, memberId) : undefined)
-		};
 	},
 	async role(organizationId, memberId) {
 		await gate();

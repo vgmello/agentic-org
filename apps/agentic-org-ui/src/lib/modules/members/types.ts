@@ -234,22 +234,6 @@ export interface WorkRow {
 	state: WorkState;
 }
 
-export interface ProcessRow {
-	key: string;
-	name: string;
-	level: 'organization' | 'team' | 'project';
-	/** "Checkout", the team or project the version comes from. */
-	from?: string;
-	revision: number;
-	relation: 'inherited' | 'replaces' | 'added' | 'not_overridable';
-}
-
-export interface ProcessesView {
-	/** False when there is no current work: the organization's set is shown with the spec's sentence. */
-	hasCurrentWork: boolean;
-	rows: ProcessRow[];
-}
-
 export interface RoleView {
 	role?: { name: string; revision: number; body: string };
 	roleText?: string;

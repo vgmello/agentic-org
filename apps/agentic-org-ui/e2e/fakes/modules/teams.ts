@@ -17,7 +17,6 @@ import {
 	conversationsFor,
 	fail,
 	gate,
-	processesForTeam,
 	recordHandle,
 	rows as memberRows,
 	scenario,
@@ -176,11 +175,6 @@ export const teamsApi: TeamsApi = {
 					...c,
 					id: `c-team-${teamId}`
 				}));
-	},
-	async processes(organizationId, teamId) {
-		await gate();
-		const s = await found(organizationId, teamId);
-		return scenario() === 'empty' ? [] : processesForTeam(s, teamId);
 	},
 	async archive(organizationId, teamId) {
 		await gate();

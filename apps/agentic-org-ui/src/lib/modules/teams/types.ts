@@ -3,7 +3,7 @@
 // `max_members` the member limit. Counts are of active employees whose home team it is (TEAM-2).
 import type { MemberRef, PresenceId, TeamRef } from '$lib/modules/members';
 
-export type { ActivityEntry, ConversationRow, ProcessRow, WorkRow } from '$lib/modules/members';
+export type { ActivityEntry, ConversationRow, WorkRow } from '$lib/modules/members';
 
 export interface TeamProject {
 	id: string;

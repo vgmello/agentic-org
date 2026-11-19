@@ -5,7 +5,6 @@ import type {
 	ConversationRow,
 	MemberProfile,
 	MemberRow,
-	ProcessesView,
 	RoleView,
 	RunNowResult,
 	SessionFile,
@@ -33,7 +32,6 @@ export interface MembersApi {
 	 * returning the parsed `SessionLog`. `not_found` when no log was kept.
 	 */
 	sessionFile(organizationId: string, memberId: string, runId: string): Promise<SessionFile>;
-	processes(organizationId: string, memberId: string): Promise<ProcessesView>;
 	role(organizationId: string, memberId: string): Promise<RoleView>;
 	/**
 	 * Run now, with an optional note. Rejects `busy` while a turn is open (RUN-4) and `cannot_start` with the reason.
@@ -73,7 +71,6 @@ export const membersApi: MembersApi = {
 	activity: unavailableCall,
 	runs: unavailableCall,
 	sessionFile: unavailableCall,
-	processes: unavailableCall,
 	role: unavailableCall,
 	runNow: unavailableCall,
 	setAllowHiring: unavailableCall,

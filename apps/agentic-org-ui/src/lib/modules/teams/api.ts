@@ -3,7 +3,6 @@ import type {
 	ActivityEntry,
 	ConversationRow,
 	NewTeamPerson,
-	ProcessRow,
 	TeamDetail,
 	TeamProjectRow,
 	TeamRow,
@@ -22,7 +21,6 @@ export interface TeamsApi {
 	projects(organizationId: string, teamId: string): Promise<TeamProjectRow[]>;
 	activity(organizationId: string, teamId: string): Promise<ActivityEntry[]>;
 	conversations(organizationId: string, teamId: string): Promise<ConversationRow[]>;
-	processes(organizationId: string, teamId: string): Promise<ProcessRow[]>;
 	/**
 	 * Archive keeps the team's ID and history (§7.10). Refused (`conflict`, the blockers named) while teams under it,
 	 * home employees, projects it owns or its open tasks remain.
@@ -47,7 +45,6 @@ export const teamsApi: TeamsApi = {
 	projects: unavailableCall,
 	activity: unavailableCall,
 	conversations: unavailableCall,
-	processes: unavailableCall,
 	archive: unavailableCall,
 	delete: unavailableCall,
 	addPerson: unavailableCall
