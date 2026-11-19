@@ -6,7 +6,7 @@
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
-      "sha256": "3a1126e9d29b1fbbc526f5290e8133d666a7edc8ef763d11168be8c8851bfcc5"
+      "sha256": "cddb511e8b74c37d520e2915eee4d023d85af66dc3769423d130825b32ee8682"
     },
     {
       "path": ".agent-kit/project-roles/codebase-scout.md",
@@ -18,7 +18,7 @@
     },
     {
       "path": ".agent-kit/project-roles/staff-engineer.md",
-      "sha256": "9df6019afd5837ba5e13c3658b47190f2edeb15701b29a2682a287b0794661ed"
+      "sha256": "cd2620176f20cb6ef01bc5418c2608c0dbd3e77e7975b822b2e6db968c59c00d"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
@@ -26,7 +26,7 @@
     },
     {
       "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
-      "sha256": "c0343c5f725d6ea9ff0a75ad34003c14e3edd4bb0dcc1b1bc9ff53afe00ea2eb"
+      "sha256": "9034015870774e754825535ebd29dfc6093968278ac3fbbdad139d4a30e6139f"
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
@@ -78,7 +78,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "040676e026afe222d7b28efd2f13a43fe06b67de1646ea929d0db439a79044a1"
+      "sha256": "48886939e93ee365d20ec087e709a3dfe7951178dd2dd19b10895c14be03c2f6"
     },
     {
       "path": "Cargo.lock",
@@ -198,7 +198,7 @@
     },
     {
       "path": "docs/processes/branch-and-merge.md",
-      "sha256": "2ce376007e5c79e188a60fbe5aa7e77d7eb80f0982f4badb190ab3236763384b"
+      "sha256": "9ebb3123f0763b3280ea8d1b0486719ce96a4782b1482a247353967ef917b135"
     },
     {
       "path": "rust-toolchain.toml",

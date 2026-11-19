@@ -2,20 +2,20 @@
 
 The full browser suite took about 47 minutes when measured once (ordinary Chromium + WebKit, interactive CSP, gateway CSP). Each change runs a tier instead. Everything is driven by one file, [`gate-manifest.json`](gate-manifest.json).
 
-| Tier     | What                                                                                                                                                                                                                                                                      | When                                                                                                     |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Journeys | The tests tagged `@journey`: 55 tests in 13 flows (create/open organization, navigation, chat, agents, org chart, projects/work/tasks/bugs, offices, requests, processes, copilot, retired import, production-unavailable) plus an 8-test WebKit subset for pointer/focus | Every UI change, never skipped                                                                           |
-| Areas    | The whole category (all its spec files) whose source paths changed                                                                                                                                                                                                        | Added to the journeys                                                                                    |
-| Full     | Everything (`test:e2e:full`)                                                                                                                                                                                                                                              | A shared/high-blast-radius or unknown path changed; and periodically on `v1-integration`, not per change |
+| Tier     | What                                                                                                                                                                                                                                                                      | When                                                                                         |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Journeys | The tests tagged `@journey`: 55 tests in 13 flows (create/open organization, navigation, chat, agents, org chart, projects/work/tasks/bugs, offices, requests, processes, copilot, retired import, production-unavailable) plus an 8-test WebKit subset for pointer/focus | Every UI change, never skipped                                                               |
+| Areas    | The whole category (all its spec files) whose source paths changed                                                                                                                                                                                                        | Added to the journeys                                                                        |
+| Full     | Everything (`test:e2e:full`)                                                                                                                                                                                                                                              | A shared/high-blast-radius or unknown path changed; and periodically on `v1`, not per change |
 
 ## Run it
 
-All commands run from `apps/agentic-org-ui`. The selector runs Playwright with `--workers=1` unless you pass `--workers <n>`; the plain `test:e2e:*` scripts and `playwright` itself need `--workers` added by hand. The selector's default base is `origin/v1` (`scripts/ui-gate.ts`); pass `--base origin/v1-integration`, the integration branch.
+All commands run from `apps/agentic-org-ui`. The selector runs Playwright with `--workers=1` unless you pass `--workers <n>`; the plain `test:e2e:*` scripts and `playwright` itself need `--workers` added by hand. The selector's default base is `origin/v1` (`scripts/ui-gate.ts`), the integration branch.
 
 ```sh
 bun run test:e2e:journeys                 # build + journeys on Chromium + production (+ WebKit subset)
 bun run test:e2e:select                   # explain: rule per changed file, then the commands it would run
-bun run test:e2e:affected -- --base origin/v1-integration   # select from the diff + working tree, build, run in order, 1 worker
+bun run test:e2e:affected -- --base origin/v1              # select from the diff + working tree, build, run in order, 1 worker
 bun run test:e2e:areas                    # list categories (specs and source globs) and journeys
 bun run test:e2e:verify                   # Playwright --list: journeys == manifest (also per entry), journeys + categories == the whole suite; prints each mismatch
 bun run test:e2e:full                     # unchanged full ordinary suite (same as test:e2e)
@@ -46,7 +46,7 @@ Ordinary plan: `--grep @journey`, then `--grep-invert @journey` over the selecte
 - `budget.measured` is a self-report: `verify` and the guard check the test count and the budget, but the recorded seconds are whatever the last person who ran the journeys wrote down.
 - Every spec file belongs to exactly one category, and every journey names a real tagged test. `bun run test` (vitest, `src/lib/platform/tooling/ui-gate.test.ts`) fails otherwise, and also when any current source file is unmapped.
 - The journey budget is 60 tests and 5 minutes on Chromium + production with 2 workers (`budget.measured.workers`; re-measure with `--workers 2`, not the selector's default of 1); the 8-test WebKit subset runs on top of that and is not counted in the 60. `budget.measured` records the last measurement; after changing the journeys, run them and update it (the guard compares test counts).
-- A full run (ordinary plus CSP, plus the 3 gateway CSP tests, which a full plan always includes, and which a tiered plan adds when gateway files changed) happens periodically on `v1-integration`, not per change.
+- A full run (ordinary plus CSP, plus the 3 gateway CSP tests, which a full plan always includes, and which a tiered plan adds when gateway files changed) happens periodically on `v1`, not per change.
 
 ## Notes on the tags
 

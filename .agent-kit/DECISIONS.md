@@ -11,10 +11,10 @@ one of them differ, the document wins. Architecture decisions are recorded in
   No path belongs to a named person. One writer per file at a time; at most two
   concurrent source writers within an increment, in separate worktrees.
 - Integration: [branch and merge](../docs/processes/branch-and-merge.md). Branch from
-  `origin/v1-integration`; checks; fresh local review, original-author validation and a
-  separate fresh final review; `git merge --no-ff` into `v1-integration`. No pull
-  request or outside reviewer. Never `main` or release `v1` without an explicit
-  release instruction.
+  `origin/v1`; checks; fresh local review, original-author validation and a
+  separate fresh final review; `git merge --no-ff` into `v1`. No pull
+  request or outside reviewer. Never `main` without an explicit release
+  instruction.
 - Decisions: [architecture non-negotiables](../docs/architecture-non-negotiables.md),
   "Who decides what". Decide inside the non-negotiables, record the decision in the
   owning document (and an ADR when architectural), bring to the owner only what changes
