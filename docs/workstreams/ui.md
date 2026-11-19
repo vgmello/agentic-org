@@ -53,6 +53,10 @@ A restarted ui-dev reads `INDEX.md` after this file. If that folder is gone, thi
 
 ## Shared fixes queued
 
+- The project Work tab's Tasks/Bugs tabs need `aria-controls`, arrow-key navigation, and tests for the
+  keyboard and for 320 px with 200% text (release review, P3).
+- `apps/agentic-org-ui/e2e/README-gate.md` still mentions the retired non-chat-icons and
+  project-profile specs.
 - The settings layout and the shell at 960–1279 px with 200% text leave pages too little room.
 - The shared ConfirmDialog doesn't close on browser Back; the shared Resource should show the office's
   `unsupported` answer as "not available in this version" with no Retry.
