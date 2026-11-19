@@ -74,8 +74,6 @@ pub(crate) fn request() -> (NewOffice, Binding) {
     let binding = Binding {
         operation_id: OPERATION.into(),
         owner_member_id: prepared.creator.employee_id.clone(),
-        // The old store's public root; the office on its store has none.
-        public_root: std::path::PathBuf::from("/unused"),
         bootstrap: Some(prepared),
     };
     (new, binding)

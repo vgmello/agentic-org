@@ -1,5 +1,5 @@
 use super::*;
-use org_office::journal_office::{Office, TestOffice};
+use org_office::{Office, TestOffice};
 use org_proto::inbox::InboxListParams;
 use org_proto::OrgSnapshot;
 use serde_json::json;

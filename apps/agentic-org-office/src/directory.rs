@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use org_mailbox::{MemberDirectory, StoreError};
-use org_office::journal_office::Office;
+use org_office::Office;
 use org_proto::{Member, OrgSnapshot, Position};
 
 /// Where the directory reads its snapshot: the office in production, a fixed one in tests.
@@ -40,7 +40,7 @@ impl MemberDirectory for OfficeDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use org_office::journal_office::TestOffice;
+    use org_office::TestOffice;
 
     #[test]
     fn members_resolve_by_id_handle_and_owner_from_the_office_projection() {

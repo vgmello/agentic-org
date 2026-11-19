@@ -11,7 +11,7 @@ use std::{
 
 pub(super) fn serve(
     mut stream: UnixStream,
-    office: &org_office::journal_office::Office,
+    office: &org_office::Office,
     instance: &str,
     office_id: &str,
 ) -> io::Result<()> {
@@ -56,10 +56,7 @@ mod tests {
     use super::*;
     use crate::hq_creation::tests::{code, key, World, INSTANCE, OFFICE, ORG};
 
-    fn ask(
-        office: &org_office::journal_office::Office,
-        operation: &str,
-    ) -> io::Result<wire::PublicRecord> {
+    fn ask(office: &org_office::Office, operation: &str) -> io::Result<wire::PublicRecord> {
         let (worker, mut host) = UnixStream::pair()?;
         let request = wire::Request {
             version: 1,

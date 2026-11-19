@@ -20,18 +20,20 @@ use std::path::PathBuf;
 use org_store::{journal_dir, AnchorFacts, Files, Id, Opening, Outcome, StoreError};
 
 use super::{
-    check_roots, intent, intent::Intent, recovery, refuse_older_build, storage, Custody, DataRoots,
-    Office, Options,
+    check_roots,
+    folder::{
+        check_named_by, check_not_a_link, exists, is_older_builds, lock_folder, plain_folder,
+        refuse_older_build, remove_the_empty_folder, LOCK_FILE, LOCK_WAIT,
+    },
+    intent,
+    intent::Intent,
+    recovery, storage, Custody, DataRoots, Office, Options,
 };
 use crate::{
     error::OfficeError,
     hq_creation::{Binding, LocalRecord},
     key::Key,
     model::{NewOffice, OfficeInfo, OfficeRole},
-    office::{
-        check_named_by, check_not_a_link, exists, lock_folder, plain_folder,
-        remove_the_empty_folder, LOCK_FILE, LOCK_WAIT,
-    },
     office_file,
     office_local::{read_ca, CaMaterial},
     organization::{
@@ -56,23 +58,6 @@ const CUSTODY_MARKER: &str = "selected-writer.required";
 /// The prefix and suffix of the files the host stages its marker in; one may outlive a
 /// host that died while installing it.
 const CUSTODY_STAGING: (&str, &str) = (".selected-writer-", ".tmp");
-
-/// What an office of the old databases leaves in its folder, besides `office.json` and
-/// the creation intent. Its databases are refused as an older build's by
-/// `refuse_older_build`; so is any of their logs, its workspace or its unfinished
-/// `office.json`.
-const OLDER_BUILD_ENTRIES: [&str; 10] = [
-    "office.json.tmp",
-    "workspace",
-    "org.db",
-    "org.db-wal",
-    "org.db-shm",
-    "org.db-journal",
-    "office.db",
-    "office.db-wal",
-    "office.db-shm",
-    "office.db-journal",
-];
 
 /// The request, checked as a whole: the binding's bootstrap names this office and
 /// organization, its creator is the owner, every ID is a UUIDv7 but the operation, which
@@ -323,7 +308,7 @@ fn refuse_another_office(folder: &std::path::Path) -> Result<(), OfficeError> {
         if name == office_file::FILE_NAME || name == intent::FILE {
             return Err(OfficeError::OfficeExists);
         }
-        if OLDER_BUILD_ENTRIES.contains(&name.as_str()) {
+        if is_older_builds(&name) {
             return Err(intent::older_build());
         }
         if !entry.file_type().map_err(OfficeError::storage)?.is_file() {

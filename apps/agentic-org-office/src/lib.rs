@@ -9,7 +9,7 @@
 //! One launch version: events travel on the authenticated rendezvous; its EOF closes the office
 //! and exits 0. stdin is drained unparsed after the first line and is not a lifetime signal;
 //! stdout carries nothing. Logs go to stderr.
-//! The office, its folder, lock, key and store are `org_office::journal_office::Office`; this
+//! The office, its folder, lock, key and store are `org_office::Office`; this
 //! crate is the process around it: launch control, the host's writer custody, typed authority
 //! and the socket. Every create and start takes the host's writer control first, before it
 //! creates or opens anything. The server never touches a Keychain.
@@ -44,7 +44,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use launch::Launch;
-use org_office::journal_office::Office;
+use org_office::Office;
 use org_office::OfficeError;
 use org_office_launch::{
     office_dir, FailCode, FirstLine, LaunchError, OfficeFile, ServerEvent, CREATE_FLAG,
@@ -252,8 +252,6 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
     let binding = org_office::hq_creation::Binding {
         operation_id: context.operation_id,
         owner_member_id: create.owner_member_id,
-        // The old store's public root: the office on its store has none (gone in 4b).
-        public_root: std::path::PathBuf::new(),
         bootstrap: context.bootstrap.map(|b| *b),
     };
     let created = hq_creation::prepare(

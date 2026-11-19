@@ -81,9 +81,9 @@ impl World {
 
     /// The office on its store, opened in this process with the world's custody (the
     /// worker must not be running).
-    fn office(&self) -> org_office::journal_office::Office {
+    fn office(&self) -> org_office::Office {
         let (custody, roots) = self.writer.admitted();
-        org_office::journal_office::Office::open(
+        org_office::Office::open(
             self.folder(OFFICE),
             Some(org_office::Key::from_office_secrets_key(
                 office_secrets_key(),

@@ -130,8 +130,8 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
         crate::test_support::grant_key(),
     ))
 }
-fn office_fixture() -> (tempfile::TempDir, Arc<org_office::journal_office::Office>) {
-    use org_office::journal_office::{Office, TestOffice};
+fn office_fixture() -> (tempfile::TempDir, Arc<org_office::Office>) {
+    use org_office::{Office, TestOffice};
     let root = tempfile::TempDir::new().unwrap();
     (root, Arc::new(Office::for_test(TestOffice::default())))
 }

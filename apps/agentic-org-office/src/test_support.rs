@@ -233,12 +233,7 @@ impl FakeWriter {
 
     /// The custody and roots an office takes from a new channel, as the worker takes them
     /// from the host: through the worker's own adapter.
-    pub fn admitted(
-        &self,
-    ) -> (
-        org_office::journal_office::Custody,
-        org_office::journal_office::DataRoots,
-    ) {
+    pub fn admitted(&self) -> (org_office::Custody, org_office::DataRoots) {
         let (worker, _thread) = self.channel();
         let identity = &self.admission.identity;
         let admitted =

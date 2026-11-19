@@ -414,7 +414,7 @@ pub(super) fn ready_create(world: &World) -> Session {
 fn assert_reopens(world: &World) {
     let (custody, roots) = world.writer.admitted();
     assert!(matches!(
-        org_office::journal_office::Office::open(
+        org_office::Office::open(
             world.folder(OFFICE),
             Some(org_office::Key::from_office_secrets_key(
                 office_secrets_key()

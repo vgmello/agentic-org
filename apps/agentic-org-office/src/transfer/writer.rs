@@ -5,7 +5,7 @@
 //! the organization's data roots. The store then asks for the confirmed head once at opening
 //! and confirms its flushed head once per group flush. A denial, a broken frame or a closed
 //! channel ends the channel for good: every later call fails closed.
-use org_office::journal_office::{Custody, DataRoots};
+use org_office::{Custody, DataRoots};
 use org_office_launch::writer::{self as wire, Admission, Head, HighWaters, Request, Response};
 use org_store::{CustodyError, Id, JournalHead, OfficeIdentity, Sha256, WriterAuthority};
 use std::{

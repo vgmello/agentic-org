@@ -1,15 +1,13 @@
 //! `office.json`: the plaintext, secret-free file that marks an office as finished and tells the
 //! host (and `agent-os`) which office this folder is. The server writes it LAST on `--create`
-//! (temporary file, fsync, rename, fsync of the folder), so a folder without it is an
-//! unfinished create.
+//! (`org_store::publish_one`: a fresh temporary file, fsync, rename, fsync of the folder),
+//! so a folder without it is an unfinished create.
 //!
 //! The shape is the host/server boundary design's (`docs/design/office-host-boundary.md`,
 //! schema v1). **Transitional:** the contract crate `org-office-launch` will own the type and
 //! its checks; when it is on `v1`, this module becomes a thin adapter over it.
 
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
+use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -19,7 +17,6 @@ use crate::model::{OfficeInfo, OfficeRole};
 use org_proto::OrganizationName;
 
 pub(crate) const FILE_NAME: &str = "office.json";
-const TEMP_NAME: &str = "office.json.tmp";
 /// The most the host reads.
 const MAX_BYTES: u64 = 64 * 1024;
 const VERSION: u32 = 1;
@@ -41,9 +38,6 @@ struct Raw {
 /// Whether `id` is a plain id: 1 to 64 ASCII letters and digits.
 pub(crate) fn is_plain_id(id: &str) -> bool {
     (1..=MAX_ID_CHARS).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric())
-}
-pub(crate) fn is_storage_id(id: &str) -> bool {
-    is_plain_id(id) || org_proto::is_uuid_v7(id)
 }
 fn selected(info: &OfficeInfo) -> bool {
     org_proto::is_uuid_v7(&info.office_id) && org_proto::is_uuid_v7(&info.org_id)
@@ -158,24 +152,6 @@ pub(crate) fn read(folder: &Path) -> Result<Option<OfficeInfo>, OfficeError> {
     decode(&bytes).map(Some)
 }
 
-/// Writes `<folder>/office.json` so that a crash leaves either no file or the whole one:
-/// a fresh temporary file (never followed through a link), fsync, rename, fsync of the folder.
-pub(crate) fn write(folder: &Path, info: &OfficeInfo) -> Result<(), OfficeError> {
-    let bytes = encode(info)?;
-    let temp = folder.join(TEMP_NAME);
-    let mut file: File = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temp)
-        .map_err(OfficeError::storage)?;
-    file.write_all(&bytes)
-        .and_then(|()| file.sync_all())
-        .and_then(|()| fs::rename(&temp, folder.join(FILE_NAME)))
-        .and_then(|()| File::open(folder)?.sync_all())
-        .map_err(OfficeError::storage)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,21 +216,12 @@ mod tests {
     }
 
     #[test]
-    fn reading_refuses_links_and_big_files_and_writing_never_follows_a_planted_temp() {
+    fn reading_refuses_links_and_big_files() {
         let dir = tempfile::tempdir().unwrap();
         assert!(read(dir.path()).unwrap().is_none());
 
-        write(dir.path(), &info()).unwrap();
+        std::fs::write(dir.path().join(FILE_NAME), encode(&info()).unwrap()).unwrap();
         assert_eq!(read(dir.path()).unwrap().unwrap(), info());
-        assert_eq!(
-            std::fs::metadata(dir.path().join(FILE_NAME))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-        assert!(!dir.path().join(TEMP_NAME).exists());
 
         // A link in its place is refused, not followed.
         std::fs::remove_file(dir.path().join(FILE_NAME)).unwrap();
@@ -267,14 +234,5 @@ mod tests {
         // Too big.
         std::fs::write(dir.path().join(FILE_NAME), vec![b' '; 70 * 1024]).unwrap();
         assert!(matches!(read(dir.path()), Err(OfficeError::Invalid(_))));
-        std::fs::remove_file(dir.path().join(FILE_NAME)).unwrap();
-
-        // A planted temporary file is never written through.
-        std::os::unix::fs::symlink(&outside, dir.path().join(TEMP_NAME)).unwrap();
-        let before = std::fs::read(&outside).unwrap();
-        assert!(write(dir.path(), &info()).is_err());
-        assert_eq!(std::fs::read(&outside).unwrap(), before);
     }
-
-    use std::os::unix::fs::PermissionsExt;
 }

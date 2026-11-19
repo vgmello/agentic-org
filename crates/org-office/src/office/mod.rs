@@ -15,11 +15,9 @@
 //!
 //! An office made by the old databases (`org.db`, `office.db`) is refused, never migrated.
 //! Nothing here deletes anything under `durable/`.
-//!
-//! B1b builds this beside the office of the old databases ([`crate::Office`]); the worker
-//! switches to it (block 6), and the old one is deleted after (block 4b).
 
 mod creation;
+mod folder;
 mod intent;
 #[cfg(any(test, feature = "testkit"))]
 mod testkit;
@@ -46,7 +44,6 @@ use crate::{
     hq_creation::{LocalRecord, PublicRecord},
     key::Key,
     model::OfficeInfo,
-    office::{check_named_by, check_not_a_link, exists, lock_folder, plain_folder, LOCK_WAIT},
     office_file,
     office_local::{read_ca, CaRecords},
     organization::{directory, operation_id, wire},
@@ -57,6 +54,8 @@ use crate::{
     },
     time,
 };
+pub use folder::LOCK_WAIT;
+use folder::{check_named_by, check_not_a_link, lock_folder, plain_folder, refuse_older_build};
 
 /// An organization's two data roots, both absolute: `<data-root>/<org-id>/durable` and
 /// `<data-root>/<org-id>/runtime`.
@@ -155,17 +154,6 @@ pub(crate) fn recovery() -> OfficeError {
 /// A store failure, its path kept in the cause for the log and out of `Display`.
 pub(crate) fn storage(error: StoreError) -> OfficeError {
     OfficeError::storage(error)
-}
-
-/// Refuses an office folder the old databases made.
-pub(crate) fn refuse_older_build(folder: &Path) -> Result<(), OfficeError> {
-    use crate::office::{OFFICE_DB, ORG_DB};
-    for database in [ORG_DB, OFFICE_DB] {
-        if exists(&folder.join(database))? {
-            return Err(intent::older_build());
-        }
-    }
-    Ok(())
 }
 
 /// Roots that are absolute and plain: no `.` or `..`, and two different folders.

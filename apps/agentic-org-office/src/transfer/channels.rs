@@ -26,12 +26,12 @@ pub(crate) struct Channels {
     hello: org_proto::HelloResult,
     out: startup::EventWriter,
     revocations: Arc<Mutex<Revocations>>,
-    office: Arc<org_office::journal_office::Office>,
+    office: Arc<org_office::Office>,
 }
 impl Channels {
     pub fn new(
         shared: Arc<serve::Shared>,
-        office: Arc<org_office::journal_office::Office>,
+        office: Arc<org_office::Office>,
         instance: String,
         out: startup::EventWriter,
         revocations: Arc<Mutex<Revocations>>,

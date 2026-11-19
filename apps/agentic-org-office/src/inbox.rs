@@ -13,13 +13,11 @@ pub(crate) use hint::Hint;
 pub(crate) struct Hq {
     pub(crate) sources: Vec<Arc<dyn Source>>,
     pub(crate) clock: Clock,
-    pub(crate) list_office: Option<Arc<org_office::journal_office::Office>>,
+    pub(crate) list_office: Option<Arc<org_office::Office>>,
 }
 
 impl Hq {
-    pub(crate) fn for_office(
-        office: Arc<org_office::journal_office::Office>,
-    ) -> std::io::Result<Self> {
+    pub(crate) fn for_office(office: Arc<org_office::Office>) -> std::io::Result<Self> {
         use std::io::Read;
         let mut epoch = [0; 16];
         std::fs::File::open("/dev/urandom")?.read_exact(&mut epoch)?;

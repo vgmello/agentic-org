@@ -3,8 +3,8 @@
 use super::*;
 use crate::hq_creation::tests::{code, key, World, INSTANCE, OFFICE, OWNER};
 use crate::test_support::{test_admission, FakeWriter};
-use org_office::journal_office::Office;
 use org_office::rules::OrgCommand;
+use org_office::Office;
 use org_proto::org::TeamCreateParams;
 
 /// The top team: the creation's home team.

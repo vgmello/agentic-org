@@ -16,7 +16,7 @@ const OPERATION: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
 pub(crate) struct World {
     _dir: tempfile::TempDir,
     pub folder: PathBuf,
-    pub roots: org_office::journal_office::DataRoots,
+    pub roots: org_office::DataRoots,
     pub writer: FakeWriter,
 }
 
@@ -26,7 +26,7 @@ impl World {
         let root = dir.path().canonicalize().unwrap();
         let folder = root.join("home/offices").join(OFFICE);
         let data = root.join("data").join(ORG);
-        let roots = org_office::journal_office::DataRoots {
+        let roots = org_office::DataRoots {
             durable: data.join("durable"),
             runtime: data.join("runtime"),
         };
@@ -81,7 +81,6 @@ pub(crate) fn binding() -> Binding {
     Binding {
         operation_id: OPERATION.into(),
         owner_member_id: OWNER.into(),
-        public_root: PathBuf::new(),
         bootstrap: Some(org_proto::selected_bootstrap::PreparedV1 {
             plan: org_proto::selected_bootstrap::PlanV1 {
                 version: 1,

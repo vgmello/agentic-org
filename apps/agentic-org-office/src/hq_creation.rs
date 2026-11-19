@@ -4,9 +4,8 @@
 //! office secrets key (ADR-0016 decision 3, ENC-5).
 use org_office::{
     hq_creation::{Binding, LocalRecord},
-    journal_office::{Custody, DataRoots, Office},
     organization_family::operation_id::from_wire_ulid,
-    Key, NewOffice, OfficeError,
+    Custody, DataRoots, Key, NewOffice, Office, OfficeError,
 };
 use org_proto::RecoveryCode;
 use std::path::Path;
