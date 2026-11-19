@@ -296,7 +296,7 @@ fn a_reserved_create_killed_before_its_intent_survives_a_host_restart_and_comple
         .expose()
         .to_vec();
     let key = fingerprint(&keys.load(&office).unwrap().unwrap());
-    controller.stop();
+    controller.stop_by(std::time::Instant::now());
     first.shutdown();
     drop((controller, first, writers));
 
@@ -367,7 +367,7 @@ fn a_reserved_create_killed_before_its_intent_survives_a_host_restart_and_comple
         assert_eq!(meta.mode() & 0o7777, 0o700, "{path}");
     }
     assert_eq!(fingerprint(&keys.load(&office).unwrap().unwrap()), key);
-    controller.stop();
+    controller.stop_by(std::time::Instant::now());
     second.shutdown();
 }
 

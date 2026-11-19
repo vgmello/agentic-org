@@ -3,6 +3,9 @@
 //! (`ORG_DEV_SERVICE_DIR`: the service is a detached child, never launchd; disk encryption is a
 //! fixed answer, never `fdesetup`). Development key files replace the Keychain. No test opens a
 //! real organization root.
+//!
+//! `systemd` (below) runs the same commands through the Linux service adapter itself, with
+//! stand-ins for `systemctl` and `loginctl` (`ORG_DEV_SERVICE_PROGRAMS`).
 use std::io::Read;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
@@ -61,6 +64,13 @@ fn named_port_base() -> u16 {
 
 struct Account {
     base: PathBuf,
+    /// This account's `agentic-org`, with the office and web programs beside it and a UI
+    /// folder for the web process (`installed`): setup is ready only once the instance's
+    /// browser service runs (X5 review, fourth round, P2-1).
+    bin: PathBuf,
+    /// Set: the system's own service adapter with stand-in programs from this folder,
+    /// instead of the detached-child adapter.
+    programs: Option<PathBuf>,
     /// The first port a named instance of this account tries without `--port`.
     port_base: u16,
     _temp: tempfile::TempDir,
@@ -82,14 +92,16 @@ impl Account {
                 .unwrap();
         }
         Self {
+            bin: installed(&base),
             base,
+            programs: None,
             port_base: named_port_base(),
             _temp: temp,
         }
     }
 
     fn command(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(BIN);
+        let mut command = Command::new(&self.bin);
         command
             .args(args)
             .env_clear()
@@ -97,9 +109,14 @@ impl Account {
             .env("PATH", "/usr/bin:/bin")
             .env("ORG_DEV_ACCOUNT_BASE", self.base.join("app"))
             .env("ORG_OFFICE_DEV_KEY_DIR", self.base.join("keys"))
-            .env("ORG_DEV_SERVICE_DIR", self.base.join("svc"))
             .env("ORG_DEV_DISK_ENCRYPTION", "on")
             .env("ORG_DEV_NAMED_PORT_BASE", self.port_base.to_string());
+        match &self.programs {
+            None => command.env("ORG_DEV_SERVICE_DIR", self.base.join("svc")),
+            Some(programs) => command
+                .env("ORG_DEV_SERVICE_PROGRAMS", programs)
+                .env("XDG_RUNTIME_DIR", self.base.join("run")),
+        };
         command
     }
 
@@ -208,11 +225,48 @@ impl Account {
 
 impl Drop for Account {
     fn drop(&mut self) {
-        for (_, pid) in self.service_pids() {
+        let stand_in = self.programs.as_ref().and_then(|programs| {
+            let pid = std::fs::read_to_string(programs.join("pid")).ok()?;
+            Some((String::new(), pid.trim().parse().ok()?))
+        });
+        for (_, pid) in self.service_pids().into_iter().chain(stand_in) {
             // SAFETY: plain signal to a child this test's setup started.
             unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
         }
     }
+}
+
+/// The built `agentic-org`, `agentic-org-office` and `agentic-org-web` in `<base>/bin`,
+/// with a UI folder beside them as an installation has one, so that the service's web
+/// process starts. Returns the `agentic-org` there.
+fn installed(base: &std::path::Path) -> PathBuf {
+    let built = std::path::Path::new(BIN).parent().unwrap();
+    let bin = base.join("bin");
+    std::fs::create_dir_all(bin.join("ui")).unwrap();
+    // The web process refuses an entry without its inline bootstrap, as for a real build.
+    std::fs::write(
+        bin.join("ui/index.html"),
+        "<html><body>setup test<script>/* bootstrap */</script></body></html>",
+    )
+    .unwrap();
+    for name in ["agentic-org", "agentic-org-office", "agentic-org-web"] {
+        let from = built.join(name);
+        assert!(
+            from.is_file(),
+            "{} is not built: build agentic-org-office and agentic-org-web first",
+            from.display()
+        );
+        // A copy, not a link: a program is known by its one path (the CLI accepts its
+        // own executable as the development host). Under the descriptor lock: a child
+        // forked by a parallel test meanwhile would hold the copy open for writing, and
+        // executing it would then fail ("text file busy").
+        let _held = descriptors();
+        std::fs::copy(&from, bin.join(name)).unwrap();
+    }
+    for dir in [bin.clone(), bin.join("ui")] {
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    bin.join("agentic-org")
 }
 
 fn text(output: &Output) -> (String, String) {
@@ -249,7 +303,11 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
         "{out}"
     );
     // ENC-3: the injected encryption answer, the modes as read from disk, the isolation mode.
-    assert!(out.contains("Disk encryption (FileVault): on."), "{out}");
+    let encryption = org_platform::disk::wording().name;
+    assert!(
+        out.contains(&format!("Disk encryption ({encryption}): on.")),
+        "{out}"
+    );
     assert!(out.contains("(folders 700, files 600)"), "{out}");
     assert!(out.contains("same-user mode"), "{out}");
     assert!(out.contains("Service running."), "{out}");
@@ -317,13 +375,20 @@ fn setup_starts_the_service_prints_one_link_and_a_second_run_changes_nothing() {
     let stop = account.run(&["service", "stop"]);
     assert!(stop.status.success(), "{:?}", text(&stop));
     assert!(!alive(pid));
-    // With the service stopped, admin reset names the recovery.
+    // With the service stopped, admin reset names the recovery. Where the system names a
+    // peer by its user alone (Linux), anyone but root is refused before the service is
+    // asked anything, in the specification's words (SIGN-33).
     let (ok, reset_out, reset_err) = account.run_in_terminal(&["admin", "reset"]);
     assert!(!ok, "{reset_out}");
     assert!(
-        reset_err.contains("agentic-org service start"),
+        reset_err.contains("agentic-org service start")
+            || reset_err.contains(
+                "Resetting the administrator's password on Linux needs root. Run it with \
+                 sudo: sudo agentic-org admin reset"
+            ),
         "{reset_err}"
     );
+    assert!(link_token(&reset_out).is_none(), "{reset_out}");
 
     // While the service is stopped, another program takes the saved port: setup names the
     // port and the way out instead of starting a service that cannot serve it.
@@ -445,6 +510,44 @@ fn an_occupied_port_is_refused_and_nothing_is_saved() {
     assert!(account.service_pids().is_empty());
 }
 
+/// X5 review V-a and P3-1: a development build's service is given its key folder by its
+/// absolute path; a relative one, which would name another folder where the service runs,
+/// or none at all where its host keeps its keys there, is refused before anything is saved.
+/// A missing folder is made, private, before the service is registered.
+#[test]
+fn the_development_key_folder_is_absolute_and_made_before_the_service_starts() {
+    let account = Account::new();
+    let port = free_port().to_string();
+    let mut relative = account.command(&["setup", "--port", &port]);
+    relative.env("ORG_OFFICE_DEV_KEY_DIR", "keys");
+    let refused = output(&mut relative);
+    let (out, err) = text(&refused);
+    assert!(!refused.status.success(), "{out}");
+    assert!(
+        err.contains("ORG_OFFICE_DEV_KEY_DIR (keys) is not an absolute path")
+            && err.contains("nothing was changed"),
+        "{err}"
+    );
+    assert!(!account
+        .base
+        .join("app/setup/default/setup.v1.json")
+        .exists());
+    assert!(account.service_pids().is_empty());
+    // A folder that does not exist yet is made before the service is registered, which
+    // then starts with it.
+    let fresh = account.base.join("fresh-keys");
+    let mut absent = account.command(&["setup", "--port", &port]);
+    absent.env("ORG_OFFICE_DEV_KEY_DIR", &fresh);
+    let made = output(&mut absent);
+    let (out, err) = text(&made);
+    assert!(made.status.success(), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.contains("Service running."), "{out}");
+    assert_eq!(
+        std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o7777,
+        0o700
+    );
+}
+
 #[test]
 fn satellite_flags_and_unknown_arguments_are_refused_before_any_change() {
     let account = Account::new();
@@ -523,3 +626,6 @@ fn the_registered_account_fixture_serves_with_serve_name() {
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
     assert!(child.wait().unwrap().success());
 }
+
+mod configured;
+mod systemd;

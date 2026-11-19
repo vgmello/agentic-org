@@ -550,7 +550,7 @@ impl Spawner {
                     &first,
                 )
                 .map_err(|_| io::Error::other("worker discard line failed"))?;
-                super::channels::Broker::discard(
+                broker.discard(
                     rendezvous,
                     admission,
                     &mut running.process,

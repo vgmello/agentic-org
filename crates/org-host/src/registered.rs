@@ -43,11 +43,22 @@ impl Host {
         // Before any key or custody is read (this path opens custody before the ordinary
         // composition is reached).
         crate::harden()?;
-        // Before anything is touched on disk: a release build without a pinned runtime
-        // release refuses here.
-        config.admit_runtime()?;
         let record = Journal::snapshot(&paths.base, name)
             .map_err(|e| refused("reading the setup record", e))?;
+        // Before anything is touched on disk (the record was only read): a release build
+        // without a pinned runtime release refuses here, and so does a development build
+        // that names no custody of its own, neither a development key folder nor a
+        // credential directory in its record.
+        config
+            .admit_runtime_with(record.credentials.is_some() && keeps_secrets_in_a_directory())?;
+        // The record was validated as it was read: a listener that is plain HTTP on a
+        // published port with a service mode other than foreground (a record edited by
+        // hand) never comes this far. Said once per start, before anything is bound.
+        if record.input.listen.scheme() == org_host_control::listen::ListenMode::HttpPublished {
+            host_log::log(&crate::setup_flow::published_http_notice(
+                &record.input.listen,
+            ));
+        }
         let id = record.instance_id.clone().ok_or_else(|| {
             refused(
                 "reading the setup record",
@@ -116,20 +127,37 @@ impl Host {
         let dev_key_dir = config.dev_key_dir.clone();
         #[cfg(not(debug_assertions))]
         let dev_key_dir: Option<std::path::PathBuf> = None;
-        // Where a release build keeps its secrets in a credential directory, it is opened
-        // here, once, from the path setup recorded: checked, locked for this host alone, and
-        // refused with the directory and the rule it broke. Both views open below it. No
-        // custody exists before this, so a store found empty where the records say keys exist
-        // stops the start before anything could make a fresh key.
+        let foreground = record.input.service == crate::instance::setup::Service::Foreground;
+        // On a system that keeps a host's secrets in a directory, a foreground instance's
+        // record names its secrets volume: setup refuses a file without one. A record without
+        // one (written by hand, or by an earlier build) does not start, in any build: the
+        // volume's checks below would be skipped and the keys kept wherever the build says.
+        if foreground && record.credentials.is_none() && keeps_secrets_in_a_directory() {
+            return Err(refused(
+                "reading the setup record",
+                FOREGROUND_WITHOUT_VOLUME,
+            ));
+        }
+        // The account's records, held to be compared with the credential directory: it must
+        // not be in their volume either (a data folder mounted inside the data volume).
+        let records = open_directory(&paths.base).map_err(|source| HostError::Io {
+            context: "opening the account's records",
+            source,
+        })?;
+        // Where this system keeps a host's secrets in a directory and the record names one, it
+        // is opened here, once, in every build: checked (in the foreground mode as a mounted
+        // volume), bound to this instance and locked for this host alone. Both views open
+        // below it from its descriptor. An empty store with office records or a store bound
+        // to a different instance refuses before either view can read or write a key.
         let release_directory = crate::release_store::open(
             !cfg!(debug_assertions),
             org_platform_host::credentials::protected_store(),
             crate::release_store::Facts {
+                instance_id: instance.id(),
                 recorded: record.credentials.as_deref(),
                 data_root: instance.root_descriptor(),
-                // The setup record has no service mode yet: increment X5 adds it, and with it
-                // the foreground mode of a container, where the directory must be a mount.
-                foreground: false,
+                // In the foreground mode (a container) the directory is a mounted volume.
+                foreground,
                 expect_items: crate::release_store::records_say_keys_exist(
                     &layout_paths.office_home,
                 )
@@ -137,9 +165,25 @@ impl Host {
                     context: "reading the office folders",
                     source,
                 })?,
+                records: Some(std::os::fd::AsFd::as_fd(&records)),
             },
         )
         .map_err(|why| refused("opening the credential directory", why))?;
+        drop(records);
+        if let (None, Some(dir)) = (&release_directory, &dev_key_dir) {
+            // A development build whose record names no credential directory keeps its keys
+            // in the folder its environment names: made if it is missing, never its parent.
+            use std::os::unix::fs::DirBuilderExt;
+            match std::fs::DirBuilder::new().mode(0o700).create(dir) {
+                Err(source) if source.kind() != io::ErrorKind::AlreadyExists => {
+                    return Err(HostError::Io {
+                        context: "making the development key folder",
+                        source,
+                    });
+                }
+                _ => {}
+            }
+        }
         let custody = crate::host_secrets::store_for(
             dev_key_dir.as_deref(),
             instance.root(),
@@ -180,6 +224,9 @@ impl Host {
             policy,
             Arc::new(NativePresence),
         );
+        if foreground {
+            admin.foreground_instance();
+        }
         let installed = host.service.install_admin(Arc::new(admin));
         debug_assert!(installed, "the administrator service is installed once");
         let named = host.service.install_instance_name(&instance_name);
@@ -187,6 +234,12 @@ impl Host {
         Ok(host)
     }
 }
+
+/// The message a foreground start refuses with when its record names no secrets volume on a
+/// system that keeps a host's secrets in a directory.
+pub(crate) const FOREGROUND_WITHOUT_VOLUME: &str = "this foreground instance's setup record \
+     names no credential directory, and this system keeps a host's secrets in one (the \
+     mounted secrets volume); the instance does not start; nothing was written";
 
 /// The message a start refuses with when the registry it once created is gone.
 pub(crate) const REGISTRY_MISSING: &str = "host registry missing: restore host-registry.db \
@@ -252,6 +305,23 @@ fn create_registry(
         .map_err(|e| refused("creating the host registry", format!("{e:?}")))?;
     host_log::log("created the host registry at the instance's first start");
     Ok(())
+}
+
+/// Whether this system keeps a host's secrets in a directory (GNU/Linux), where a recorded
+/// credential directory is opened in every build.
+fn keeps_secrets_in_a_directory() -> bool {
+    org_platform_host::credentials::protected_store()
+        == Ok(org_platform_host::credentials::ProtectedStore::ReleaseDirectory)
+}
+
+/// The directory at `path`, held open to be compared: never a file, and not opened for
+/// anything else.
+fn open_directory(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY)
+        .open(path)
 }
 
 #[cfg(test)]

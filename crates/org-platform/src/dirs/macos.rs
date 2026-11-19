@@ -15,6 +15,17 @@ pub(super) fn application_base_variables() -> Result<&'static [&'static str], Re
     Ok(&[])
 }
 
+/// No variable moves a location: the temporary directory is the system's own answer.
+pub(super) fn location_variables() -> Result<&'static [&'static str], Refused> {
+    Ok(&[])
+}
+
+pub(super) fn location_overrides(
+    _home: &Path,
+) -> Result<Vec<(&'static str, std::ffi::OsString)>, Refused> {
+    Ok(Vec::new())
+}
+
 pub(super) fn user_temp_base(_home: &Path) -> Result<PathBuf, UserTempError> {
     let mut bytes = vec![0_u8; 4096];
     // SAFETY: module-owned writable storage and supported Darwin query.
@@ -75,6 +86,12 @@ mod tests {
             application_base(Path::new("/Users/a")).unwrap(),
             Path::new("/Users/a/Library/Application Support/agentic.org")
         );
+    }
+
+    #[test]
+    fn no_variable_moves_a_macos_location() {
+        assert_eq!(location_variables(), Ok(&[][..]));
+        assert_eq!(application_base_variables(), Ok(&[][..]));
     }
 
     #[test]

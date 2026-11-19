@@ -402,11 +402,13 @@ fn a_worker_that_exits_without_connecting_ends_the_wait_at_once_as_a_crash() {
     let rendezvous = broker.bind().unwrap();
     let started = Instant::now();
     let mut asked = 0;
-    let error = Broker::connect(rendezvous, started + Duration::from_secs(30), &mut || {
-        asked += 1;
-        true
-    })
-    .unwrap_err();
+    let error = broker
+        .connect(rendezvous, started + Duration::from_secs(30), &mut || {
+            asked += 1;
+            true
+        })
+        .map(drop)
+        .unwrap_err();
     // A crash (restart with backoff), not the listener's WouldBlock and not a 30 s stall.
     assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
     assert_eq!(asked, 1);
@@ -422,7 +424,7 @@ fn a_worker_that_connects_and_then_exits_is_still_accepted() {
     let path = rendezvous.path().to_owned();
     let mut client = None;
     // The worker connects between the host's first accept and its exit check.
-    let result = Broker::connect(
+    let result = broker.connect(
         rendezvous,
         Instant::now() + Duration::from_secs(30),
         &mut || {
@@ -440,13 +442,66 @@ fn no_connection_by_the_deadline_is_a_timeout_not_would_block() {
         tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let broker = Broker::new("instance".into(), root.path().to_owned());
     let rendezvous = broker.bind().unwrap();
-    let error = Broker::connect(
-        rendezvous,
-        Instant::now() + Duration::from_millis(50),
-        &mut || false,
-    )
-    .unwrap_err();
+    let error = broker
+        .connect(
+            rendezvous,
+            Instant::now() + Duration::from_millis(50),
+            &mut || false,
+        )
+        .map(drop)
+        .unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+}
+
+/// X5 review V2: a stopping host ends every launch handshake at once. A wait for the worker
+/// to connect ends (before its own 30 s here), and so does a handshake whose worker has
+/// connected: its connection is shut down, so the handshake's next read ends. After the
+/// stop no handshake waits at all.
+#[test]
+fn a_stop_ends_the_launch_handshakes_under_way_and_every_later_one() {
+    let root =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let broker = Broker::new("instance".into(), root.path().to_owned());
+    let waiting = broker.bind().unwrap();
+    let connected = broker.bind().unwrap();
+    let path = connected.path().to_owned();
+    let _worker = UnixStream::connect(&path).unwrap();
+    let (stream, _deadline, handshake) = broker
+        .connect(
+            connected,
+            Instant::now() + Duration::from_secs(30),
+            &mut || false,
+        )
+        .unwrap();
+    std::thread::scope(|scope| {
+        let accepting = scope.spawn(|| {
+            let started = Instant::now();
+            let result = broker
+                .connect(waiting, started + Duration::from_secs(30), &mut || false)
+                .map(drop);
+            (result, started.elapsed())
+        });
+        let reading = scope.spawn(|| {
+            let mut byte = [0u8; 1];
+            std::io::Read::read(&mut &stream, &mut byte)
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        broker.stop();
+        let (result, took) = accepting.join().unwrap();
+        assert_eq!(result.unwrap_err().to_string(), "the host is stopping");
+        assert!(took < Duration::from_secs(5), "{took:?}");
+        // The shut-down connection reads its end at once, not after its 30 s timeout.
+        assert!(matches!(reading.join().unwrap(), Ok(0) | Err(_)));
+    });
+    drop(handshake);
+    let later = broker.bind().unwrap();
+    let started = Instant::now();
+    let error = broker
+        .connect(later, started + Duration::from_secs(30), &mut || false)
+        .map(drop)
+        .unwrap_err();
+    assert_eq!(error.to_string(), "the host is stopping");
+    assert!(started.elapsed() < Duration::from_secs(1));
 }
 
 /// Real host handoff/SCM_RIGHTS/event receiver with a bounded synthetic worker.

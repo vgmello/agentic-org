@@ -133,9 +133,29 @@ fn listen_mode_and_hsts_have_their_wire_spellings() {
     for (mode, wire, scheme) in [
         (ListenMode::Https, "https", "https"),
         (ListenMode::HttpLoopback, "http_loopback", "http"),
+        (ListenMode::HttpPublished, "http_published", "http"),
     ] {
         assert_eq!(serde_json::to_value(mode).unwrap(), wire);
+        assert_eq!(
+            serde_json::from_value::<ListenMode>(json!(wire)).unwrap(),
+            mode
+        );
+        assert_eq!(mode.as_str(), wire);
         assert_eq!(mode.scheme().as_str(), scheme);
+    }
+    // No spelling near a mode's is one: a mode is chosen by its exact name.
+    for bad in [
+        "http",
+        "http-published",
+        "HTTP_PUBLISHED",
+        "http_public",
+        "published",
+        "",
+    ] {
+        assert!(
+            serde_json::from_value::<ListenMode>(json!(bad)).is_err(),
+            "{bad}"
+        );
     }
     for (hsts, wire) in [(Hsts::Off, "off"), (Hsts::On, "on"), (Hsts::Clear, "clear")] {
         assert_eq!(serde_json::to_value(hsts).unwrap(), wire);
@@ -158,6 +178,7 @@ fn tls_fetch_vectors() {
         let got = match &decoded {
             Ok(TlsFetchResult::Https { .. }) => "https",
             Ok(TlsFetchResult::HttpLoopback { .. }) => "http_loopback",
+            Ok(TlsFetchResult::HttpPublished { .. }) => "http_published",
             Ok(TlsFetchResult::Unavailable(_)) => "unavailable",
             Err(e) => {
                 // No decode error quotes the key.
@@ -361,4 +382,136 @@ fn listen_config_vectors() {
         both.validate(),
         Err(InvalidListenConfig::Listen(ListenField::Address))
     );
+}
+
+/// The whole rule of plain HTTP off loopback, every combination: the mode, the listen
+/// address, the origin's host and the instance's service mode. `http_published` is accepted
+/// only on an address that is not a loopback address, only with a loopback name as the
+/// origin's host, and only for a foreground instance. Nothing else gains anything from it:
+/// `http_loopback` stays on exactly `127.0.0.1` and `::1` in either service mode, and
+/// `https` is the same in both.
+#[test]
+fn plain_http_off_loopback_is_one_mode_for_a_foreground_instance_only() {
+    use crate::listen::ForegroundOnly;
+    let addresses = [
+        "127.0.0.1",
+        "::1",
+        "127.0.0.2",
+        "0.0.0.0",
+        "::",
+        "172.17.0.2",
+        "192.168.1.20",
+        "fd00::2",
+    ];
+    let hosts = [
+        "localhost",
+        "127.0.0.1",
+        "[::1]",
+        "127.0.0.2",
+        "0.0.0.0",
+        "192.168.1.20",
+        "office.example",
+        "sub.localhost",
+        "[fd00::2]",
+    ];
+    let mut accepted = Vec::new();
+    for mode in [
+        ListenMode::Https,
+        ListenMode::HttpLoopback,
+        ListenMode::HttpPublished,
+    ] {
+        for address in addresses {
+            let address: IpAddr = address.parse().unwrap();
+            for host in hosts {
+                let origin =
+                    ListenOrigin::parse(&format!("{}://{host}:8443", mode.scheme().as_str()))
+                        .unwrap();
+                let fit = origin.check(mode, address, 8443);
+                for foreground in [false, true] {
+                    let allowed = mode.fits_service(foreground);
+                    let expected_fit = match mode {
+                        ListenMode::Https => true,
+                        // Exactly the bound literal, on exactly the two loopback addresses.
+                        ListenMode::HttpLoopback => {
+                            (address.to_string() == "127.0.0.1" && host == "127.0.0.1")
+                                || (address.to_string() == "::1" && host == "[::1]")
+                        }
+                        // Only the IPv4 literal the port is published on: not the name
+                        // `localhost`, which can resolve to ::1, and not `[::1]`.
+                        ListenMode::HttpPublished => !address.is_loopback() && host == "127.0.0.1",
+                    };
+                    let expected_allowed = mode != ListenMode::HttpPublished || foreground;
+                    assert_eq!(
+                        fit.is_ok(),
+                        expected_fit,
+                        "{mode:?} {address} {host}: {fit:?}"
+                    );
+                    assert_eq!(
+                        allowed.is_ok(),
+                        expected_allowed,
+                        "{mode:?} foreground={foreground}"
+                    );
+                    if mode == ListenMode::HttpPublished && fit.is_ok() && allowed.is_ok() {
+                        accepted.push((address, host));
+                    }
+                }
+            }
+        }
+    }
+    // What is accepted: five addresses that are not loopback, with 127.0.0.1 alone.
+    assert_eq!(accepted.len(), 5, "{accepted:?}");
+    // The two refusals of the mode itself have their own reasons.
+    let origin = ListenOrigin::parse("http://127.0.0.1:8443").unwrap();
+    assert_eq!(
+        origin.check(
+            ListenMode::HttpPublished,
+            "127.0.0.1".parse().unwrap(),
+            8443
+        ),
+        Err(OriginError::PublishedAddress)
+    );
+    for named in [
+        "http://office.example:8443",
+        "http://localhost:8443",
+        "http://[::1]:8443",
+    ] {
+        let named = ListenOrigin::parse(named).unwrap();
+        assert_eq!(
+            named.check(ListenMode::HttpPublished, "0.0.0.0".parse().unwrap(), 8443),
+            Err(OriginError::PublishedHost),
+            "{named:?}"
+        );
+    }
+    // Plain HTTP with a non-loopback address is never `http_loopback`, whoever asks.
+    assert_eq!(
+        origin.check(ListenMode::HttpLoopback, "0.0.0.0".parse().unwrap(), 8443),
+        Err(OriginError::LoopbackAddress)
+    );
+    assert_eq!(
+        ListenMode::HttpPublished.fits_service(false),
+        Err(ForegroundOnly)
+    );
+    let why = ForegroundOnly.to_string();
+    assert!(
+        why.contains("http_published") && why.contains("foreground"),
+        "{why}"
+    );
+    // A stored configuration is judged by the same rule, and decodes only when it holds.
+    let stored = |address: &str, origin: &str| {
+        serde_json::from_value::<ListenConfig>(json!({
+            "address": address, "port": 8443, "scheme": "http_published",
+            "origin": origin, "hsts": "off"
+        }))
+    };
+    let config = stored("0.0.0.0", "http://127.0.0.1:8443").unwrap();
+    assert_eq!(config.scheme(), ListenMode::HttpPublished);
+    assert_eq!(
+        serde_json::to_value(&config).unwrap()["scheme"],
+        "http_published"
+    );
+    assert!(stored("127.0.0.1", "http://127.0.0.1:8443").is_err());
+    assert!(stored("0.0.0.0", "http://localhost:8443").is_err());
+    assert!(stored("0.0.0.0", "http://[::1]:8443").is_err());
+    assert!(stored("0.0.0.0", "http://office.example:8443").is_err());
+    assert!(stored("0.0.0.0", "https://localhost:8443").is_err());
 }

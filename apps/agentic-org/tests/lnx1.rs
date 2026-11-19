@@ -32,6 +32,10 @@ use org_proto::OfficeSecretsKey;
 use support::{eventually, private_program, sibling_program, Client};
 
 const WAIT: Duration = Duration::from_secs(30);
+/// How long the service may take to exit after `SIGTERM`, with its workers stopped: the
+/// design's bound (Linux host design section 3.4), inside Docker Desktop's default grace of
+/// 3 s.
+const STOP_WITHIN: Duration = Duration::from_millis(2500);
 const OFFICE: &str = "01OFFICE00000000000000HQ1";
 const ORG: &str = "01ORG0000000000000000ACME1";
 const PIXEL: &str = "AGENT00000000000000000PIXL";
@@ -359,8 +363,18 @@ fn the_real_host_starts_the_real_worker_and_agent_os_reaches_it() {
         assert!(stopped.elapsed() < WAIT, "the host didn't stop");
         std::thread::sleep(Duration::from_millis(20));
     };
+    let took = stopped.elapsed();
     assert!(status.success(), "{status}: {}", world.host_log());
-    eventually(WAIT, "the worker's socket to stop answering", || {
-        UnixStream::connect(world.office_socket()).is_err()
-    });
+    assert!(
+        took < STOP_WITHIN,
+        "the service took {took:?} to stop: {}",
+        world.host_log()
+    );
+    println!("the service stopped {took:?} after SIGTERM");
+    // It took its worker with it: nothing serves the socket once the service has exited.
+    eventually(
+        Duration::from_secs(1),
+        "the worker's socket to stop answering",
+        || UnixStream::connect(world.office_socket()).is_err(),
+    );
 }

@@ -1,18 +1,46 @@
 //! Service lifecycle: who starts and restarts the instance's `agentic-org serve`
 //! ([Linux host design](../../../../docs/design/linux-host.md) section 3.4).
 //!
-//! macOS registers a per-user launchd agent. Every other system refuses until its adapter
-//! exists (milestone two). `Foreground` (the container mode) is not built yet and refuses
-//! everywhere.
+//! # Modes
+//!
+//! - [`ServiceMode::Registered`]: the system's service manager starts the instance at
+//!   login, restarts it after a crash and leaves it stopped after a clean stop.
+//! - [`ServiceMode::Foreground`]: nothing is registered. Whoever runs `agentic-org serve`
+//!   (a container runtime, a person at a terminal) is the supervisor. It is the same on
+//!   every system, the refusing ones included, and is chosen by the caller: nothing here
+//!   detects a container.
+//!
+//! # Systems (`Registered`)
+//!
+//! - macOS: a per-user launchd agent in `~/Library/LaunchAgents`.
+//! - GNU/Linux: a systemd user unit in `~/.config/systemd/user`. A machine or container
+//!   without a systemd user manager has no adapter to register with: every operation, and
+//!   [`ServiceManager::available`] first, answers [`ServiceError::Unavailable`], and the
+//!   caller offers the foreground mode.
+//! - Every other Unix target refuses.
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg_attr(target_os = "macos", allow(dead_code))]
-mod refused;
-
 #[cfg(target_os = "macos")]
 use macos as imp;
-#[cfg(not(target_os = "macos"))]
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+mod linux;
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+use linux as imp;
+
+// Unused in a build for macOS or GNU/Linux, where only its tests call it.
+#[cfg_attr(
+    any(target_os = "macos", all(target_os = "linux", target_env = "gnu")),
+    allow(dead_code)
+)]
+mod refused;
+#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
 use refused as imp;
+
+mod foreground;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 
 use crate::Refused;
 use std::{
@@ -74,6 +102,21 @@ pub enum ServiceStatus {
     },
 }
 
+/// Whether a registered service runs while its user has no login session.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Lingering {
+    /// The service manager has no such setting, so there is nothing to report (launchd:
+    /// an agent belongs to the login session; the foreground mode: nothing is registered).
+    NotApplicable,
+    /// The user's services start at boot and outlive the user's sessions.
+    On,
+    /// The service runs only while its user is logged in. `enable` is the command that
+    /// changes that; nothing in this crate runs it.
+    Off { enable: String },
+    /// The system could not say, for this reason.
+    Unknown(String),
+}
+
 #[derive(Debug)]
 pub enum ServiceError {
     Refused(Refused),
@@ -83,6 +126,10 @@ pub enum ServiceError {
     Conflict(String),
     /// The service manager failed.
     System(String),
+    /// This system has an adapter, but no service manager answers it here (a machine or
+    /// container without a systemd user manager). Nothing was changed. The text says what
+    /// is missing; an instance on such a system runs in [`ServiceMode::Foreground`].
+    Unavailable(String),
 }
 
 impl std::fmt::Display for ServiceError {
@@ -92,6 +139,11 @@ impl std::fmt::Display for ServiceError {
             Self::Invalid(why) => write!(f, "service definition refused: {why}"),
             Self::Conflict(why) => write!(f, "service conflict: {why}"),
             Self::System(why) => write!(f, "service manager failed: {why}"),
+            Self::Unavailable(why) => write!(
+                f,
+                "no service manager can register a service here: {why}; an instance \
+                 without one runs in the foreground (service mode \"foreground\")"
+            ),
         }
     }
 }
@@ -100,7 +152,10 @@ impl std::error::Error for ServiceError {}
 
 pub trait ServiceManager: Send + Sync {
     /// Idempotent. An identical, loaded registration is left alone so a healthy service
-    /// is not restarted. A different definition under the same name is a conflict.
+    /// is not restarted. A definition under the same name that is exactly what this adapter
+    /// rendered for another unit of the same instance (an earlier program, arguments or
+    /// environment) is replaced: its service is stopped and unloaded first. Any other
+    /// definition under the name is a conflict, never taken over.
     fn register(&self, unit: &Unit) -> Result<Registration, ServiceError>;
     /// Starts a loaded service; a running one is left alone. A definition the manager has
     /// not loaded is refused: only `register`, which compares it with the unit, loads it.
@@ -111,28 +166,46 @@ pub trait ServiceManager: Send + Sync {
     fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>;
     /// Unloads the service and removes its definition.
     fn unregister(&self, instance_id: &str) -> Result<(), ServiceError>;
+    /// Whether the service manager answers at all and would load a definition from this
+    /// adapter's placement, asked before anything is changed. [`ServiceError::Unavailable`]
+    /// where the system has none to register with; another error where it answers but
+    /// reads its definitions elsewhere. Managers that are always there answer `Ok` without
+    /// asking.
+    fn available(&self) -> Result<(), ServiceError> {
+        Ok(())
+    }
+    /// Whether a registered service runs while its user is not logged in. Read-only:
+    /// nothing is changed, and a manager without such a setting has nothing to report.
+    fn lingering(&self) -> Lingering {
+        Lingering::NotApplicable
+    }
 }
 
-/// The build target's service manager in the account's own placement.
+/// The build target's service manager in the account's own placement. The foreground
+/// mode has no placement and exists on every system.
 pub fn service(mode: ServiceMode, home: &Path) -> Result<Box<dyn ServiceManager>, Refused> {
-    service_in(mode, Placement::user(home)?)
+    match mode {
+        ServiceMode::Registered => imp::registered(Placement::user(home)?),
+        ServiceMode::Foreground => Ok(Box::new(foreground::Foreground)),
+    }
 }
 
-/// The build target's service manager in an explicit placement.
+/// The build target's service manager in an explicit placement, which the foreground
+/// mode does not use.
 pub fn service_in(
     mode: ServiceMode,
     placement: Placement,
 ) -> Result<Box<dyn ServiceManager>, Refused> {
     match mode {
         ServiceMode::Registered => imp::registered(placement),
-        ServiceMode::Foreground => Err(Refused::unsupported("foreground service mode")),
+        ServiceMode::Foreground => Ok(Box::new(foreground::Foreground)),
     }
 }
 
-/// Checks shared by every adapter, so a definition never carries path syntax in its name,
-/// a relative program, or loader variables.
-// Until the Linux adapter exists (X5), only the macOS adapter and the test fake call this.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+/// Checks shared by every adapter and by the foreground mode, so a definition never
+/// carries path syntax in its name, a relative program, or loader variables. An adapter
+/// adds what its own definition format cannot carry (the systemd adapter: environment
+/// names that are not identifiers, among others).
 pub(crate) fn validate(unit: &Unit) -> Result<(), ServiceError> {
     valid_instance_id(&unit.instance_id)?;
     if !unit.program.is_absolute() || !unit.program.to_str().is_some_and(xml_text) {
@@ -175,16 +248,12 @@ pub(crate) fn validate(unit: &Unit) -> Result<(), ServiceError> {
 
 /// Text every definition format can carry: XML 1.0 has no NUL, no C0 control other than
 /// tab, line feed and carriage return, and no U+FFFE or U+FFFF.
-// Until the Linux adapter exists (X5), only the macOS adapter and the test fake call this.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn xml_text(text: &str) -> bool {
     !text.chars().any(|c| {
         (c < ' ' && !matches!(c, '\t' | '\n' | '\r')) || matches!(c, '\u{FFFE}' | '\u{FFFF}')
     })
 }
 
-// Until the Linux adapter exists (X5), only the macOS adapter and the test fake call this.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn valid_instance_id(id: &str) -> Result<(), ServiceError> {
     if id.is_empty()
         || id.len() > 64
@@ -290,17 +359,69 @@ mod tests {
     }
 
     #[test]
-    fn the_refusing_adapter_and_the_unbuilt_foreground_mode_refuse() {
+    fn the_refusing_adapter_refuses_registration_and_has_no_placement() {
         let placement = Placement {
             prefix: "p.".into(),
             directory: "/nonexistent".into(),
         };
-        let Err(Refused::Unsupported { capability, .. }) = refused::registered(placement.clone())
-        else {
+        let Err(Refused::Unsupported { capability, .. }) = refused::registered(placement) else {
             panic!("the refusing adapter must refuse");
         };
         assert_eq!(capability, "service registration");
         assert!(refused::user_placement(Path::new("/home/a")).is_err());
-        assert!(service_in(ServiceMode::Foreground, placement).is_err());
+    }
+
+    /// The foreground mode is the same on every target: nothing is registered, every
+    /// operation succeeds without touching anything, and a unit or an instance ID that no
+    /// definition could carry is still refused.
+    #[test]
+    fn the_foreground_mode_registers_nothing_and_succeeds_on_every_system() {
+        let temp = tempfile::tempdir().unwrap();
+        let placement = Placement {
+            prefix: "p.".into(),
+            directory: temp.path().join("definitions"),
+        };
+        for manager in [
+            service_in(ServiceMode::Foreground, placement).unwrap(),
+            // No placement is asked for, so a home that does not exist is not looked at.
+            service(ServiceMode::Foreground, Path::new("/nonexistent/home")).unwrap(),
+        ] {
+            let id = unit().instance_id;
+            assert!(manager.available().is_ok());
+            assert_eq!(manager.register(&unit()).unwrap(), Registration::Unchanged);
+            assert_eq!(manager.status(&id).unwrap(), ServiceStatus::NotRegistered);
+            manager.start(&id).unwrap();
+            manager.stop(&id).unwrap();
+            assert_eq!(manager.status(&id).unwrap(), ServiceStatus::NotRegistered);
+            manager.unregister(&id).unwrap();
+            assert_eq!(manager.lingering(), Lingering::NotApplicable);
+            let broken = Unit {
+                program: "agentic-org".into(),
+                ..unit()
+            };
+            assert!(matches!(
+                manager.register(&broken),
+                Err(ServiceError::Invalid(_))
+            ));
+            for call in [
+                manager.start("../x"),
+                manager.stop("../x"),
+                manager.unregister("../x"),
+                manager.status("../x").map(drop),
+            ] {
+                assert!(matches!(call, Err(ServiceError::Invalid(_))));
+            }
+        }
+        assert!(
+            std::fs::read_dir(temp.path()).unwrap().next().is_none(),
+            "the foreground mode wrote something"
+        );
+    }
+
+    #[test]
+    fn an_unavailable_manager_is_reported_with_the_foreground_mode() {
+        let text = ServiceError::Unavailable("XDG_RUNTIME_DIR is not set".into()).to_string();
+        assert!(text.contains("XDG_RUNTIME_DIR is not set"), "{text}");
+        assert!(text.contains("foreground"), "{text}");
     }
 }
