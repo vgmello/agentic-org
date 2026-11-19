@@ -23,6 +23,11 @@ export {
 	default as OneTimeLink,
 	type OneTimeLinkValue
 } from './features/sign-in-access/OneTimeLink.svelte';
+export {
+	default as SignInAccessActions,
+	type SignInPerson
+} from './features/sign-in-access/SignInAccessActions.svelte';
+export { expiryText } from './features/sign-in-access/expiry';
 export { profileBase, tabHref } from './features/profile/tabs';
 export { default as MembersDirectory } from './features/directory/MembersDirectory.svelte';
 export { default as MoveHomeTeamDialog } from './features/profile/MoveHomeTeamDialog.svelte';

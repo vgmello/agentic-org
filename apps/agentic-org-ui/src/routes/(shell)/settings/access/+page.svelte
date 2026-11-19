@@ -1,5 +1,9 @@
 <script lang="ts">
-	import NotBuilt from '$lib/components/NotBuilt.svelte';
+	import { AccessPage } from '$lib/modules/access';
+
+	let { data } = $props();
 </script>
 
-<NotBuilt title="Members and access" place="Members and access" area="Organization settings" />
+{#key data.connection.organization.id}<AccessPage
+		organizationId={data.connection.organization.id}
+	/>{/key}
