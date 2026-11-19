@@ -358,7 +358,10 @@ impl Supervisor {
         // for this office and organization.
         self.spawner()
             .map_err(|e| CreateStartError::NotStarted(e.to_string()))?
-            .custody(&first.office.office_id, Some(&first.org_id))
+            .custody(
+                &first.office.office_id,
+                Some((&first.org_id, &first.owner_member_id)),
+            )
             .map_err(|e| CreateStartError::NotStarted(e.to_string()))?;
         let office_secrets_key = self
             .config
@@ -1435,7 +1438,7 @@ pub(crate) mod tests {
         let Some(pid_file) = std::env::var_os(CREATE_PID) else {
             return;
         };
-        fs::write(pid_file, std::process::id().to_string()).unwrap();
+        fs::write(&pid_file, std::process::id().to_string()).unwrap();
         let mut stdin = std::io::BufReader::new(std::io::stdin());
         let Ok(Some(HostFirstLine::Create(create))) =
             org_office_launch::read_first_line(&mut stdin, org_office_launch::FirstLine::Create)
@@ -1519,8 +1522,32 @@ pub(crate) mod tests {
         if office_id != create.office.office_id || received.descriptors.len() != 1 {
             std::process::exit(9);
         }
-        // Held for the server's life: the host's custody channel stays open.
-        let _writer = received.descriptors;
+        // The host's admission comes first on the custody channel: it must be valid, and
+        // what it names is recorded beside the pid file for the test to check. The channel
+        // stays open for the server's life.
+        let Some(writer) = received.descriptors.into_iter().next() else {
+            std::process::exit(9);
+        };
+        let writer = UnixStream::from(writer);
+        writer.set_nonblocking(false).unwrap();
+        writer
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut writer = std::io::BufReader::new(writer);
+        let Ok(Some(admission)) =
+            org_office_launch::writer::read::<org_office_launch::writer::Admission>(&mut writer)
+        else {
+            std::process::exit(11);
+        };
+        if !admission.check()
+            || admission.identity.office_id != create.office.office_id
+            || admission.identity.organization_id != create.org_id
+        {
+            std::process::exit(12);
+        }
+        let mut seen = std::path::PathBuf::from(&pid_file).into_os_string();
+        seen.push(".admission");
+        fs::write(seen, serde_json::to_vec(&admission).unwrap()).unwrap();
         org_office_launch::write_rendezvous_event(
             &mut stream,
             &org_office_launch::RendezvousEvent::FdsReceived { of: channel_id },
@@ -1711,8 +1738,48 @@ pub(crate) mod tests {
         assert!(keys.has(OFFICE) && keys.has(NO_CUSTODY));
     }
 
-    /// A create needs the custody provisioning reserved for that office and that
-    /// organization: otherwise nothing is spawned and the key is not read.
+    /// Custody that can't be read now (the custody store fails) is not a refusal: the
+    /// office is `offline` (`storage_error`) with a restart scheduled, nothing is spawned
+    /// meanwhile, and once custody reads again the office starts.
+    #[test]
+    fn unreadable_custody_is_retried_and_the_office_starts_once_it_reads() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        let custody = custody(dir.path());
+        let supervisor =
+            uncustodied_supervisor(dir.path(), recording_worker(), &keys, ServerCheck::Skip)
+                .with_writers(Arc::clone(&custody.writers));
+        custody
+            .unreadable
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        supervisor.start_office(OFFICE).unwrap();
+        wait_for_state(&supervisor, OFFICE, |s| {
+            s.status == OfficeStatus::Offline
+                && s.reason == Some(OfficeStatusReason::StorageError)
+                && s.next_restart_at.is_some()
+        });
+        assert_eq!(
+            recorded_starts(dir.path()),
+            0,
+            "started over unreadable custody"
+        );
+        custody
+            .unreadable
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while recorded_starts(dir.path()) == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "never started once custody read: {:?}",
+                supervisor.state(OFFICE)
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        supervisor.shutdown();
+    }
+
+    /// A create needs the custody provisioning reserved for that office, organization and
+    /// owner member: otherwise nothing is spawned and the key is not read.
     #[test]
     fn a_create_without_its_custody_starts_nothing() {
         let dir = short_tempdir();
@@ -1748,6 +1815,20 @@ pub(crate) mod tests {
             .as_mut()
             .unwrap()
             .organization_id = organization;
+        assert!(supervisor.begin_hq_create(other, recovery()).is_err());
+        // A record for this organization, but another owner member.
+        let mut other = hq_create_line(&custody, OFFICE);
+        let member = crate::ids::uuid_v7().unwrap();
+        other.owner_member_id = member.clone();
+        other
+            .hq_creation
+            .as_mut()
+            .unwrap()
+            .bootstrap
+            .as_mut()
+            .unwrap()
+            .creator
+            .employee_id = member;
         assert!(supervisor.begin_hq_create(other, recovery()).is_err());
         assert_eq!(recorded_starts(dir.path()), 0, "a create server ran");
         assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Load));

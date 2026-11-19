@@ -110,13 +110,12 @@ impl Broker {
             writers: None,
         }
     }
-    /// Every office needs writer custody to start or be created: returns the organization
-    /// its writer is bound to. A host without writer custody (no protected registry) starts
-    /// no office.
-    pub fn custody(&self, office: &str) -> io::Result<String> {
+    /// Every office needs writer custody to start or be created: returns what its writer is
+    /// bound to. A host without writer custody (no protected registry) starts no office.
+    pub fn custody(&self, office: &str) -> Result<crate::writer::Bound, crate::writer::AdmitError> {
         self.writers
             .as_ref()
-            .ok_or_else(|| io::Error::other("no writer custody on this host"))?
+            .ok_or(crate::writer::AdmitError::Refused)?
             .admit(office)
     }
     pub fn bind(&self) -> io::Result<Rendezvous> {

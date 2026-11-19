@@ -5,7 +5,8 @@
 //!
 //! Every start first requires the office's writer custody: without it nothing is started and
 //! the office is `unavailable` (`storage_error`) until `office.restart` or the next host run,
-//! never restarted in a loop. It then loads the office's secrets key. A missing item, or one
+//! never restarted in a loop; custody that can't be read now is a `storage_error` retried
+//! with backoff. It then loads the office's secrets key. A missing item, or one
 //! that isn't a key, still starts the server: its handoff carries `null` and the office serves
 //! its data, with only what the key unwraps unavailable. Any other key store error is a
 //! `storage_error`, retried with backoff. The key is dropped once its line is written.
@@ -167,10 +168,12 @@ impl OfficeRunner {
     fn start(&self, generation: &mut u64) -> Ending {
         // An office without writer custody never starts, and no restart on its own can fix
         // it: `unavailable` until `office.restart` or the next host run, not a restart loop.
-        if let Err(SpawnError::NoCustody) = self.spawner.custody(&self.office_id, None) {
+        // Custody that can't be read now is a storage error, retried with backoff (the
+        // give-up rule ends it).
+        if let Err(e) = self.spawner.custody(&self.office_id, None) {
             return Ending::Ended {
                 reason: OfficeStatusReason::StorageError,
-                fatal: true,
+                fatal: matches!(e, SpawnError::NoCustody),
                 uptime: None,
             };
         }
@@ -220,6 +223,7 @@ impl OfficeRunner {
                 let (reason, fatal) = match e {
                     SpawnError::Untrusted(_) => (OfficeStatusReason::StorageError, false),
                     SpawnError::NoCustody => (OfficeStatusReason::StorageError, true),
+                    SpawnError::CustodyUnreadable => (OfficeStatusReason::StorageError, false),
                     SpawnError::Io(_) => (OfficeStatusReason::Crashed, false),
                 };
                 Ending::Ended {

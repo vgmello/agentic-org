@@ -112,6 +112,61 @@ fn refused() -> io::Error {
 fn private<T>(_: T) -> io::Error {
     refused()
 }
+/// The custody store or the host registry could not be read: a condition that may pass,
+/// unlike a missing or invalid record.
+#[derive(Debug)]
+struct Unreadable;
+impl std::fmt::Display for Unreadable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("writer custody is unreadable")
+    }
+}
+impl std::error::Error for Unreadable {}
+fn unreadable() -> io::Error {
+    io::Error::other(Unreadable)
+}
+/// A custody store error: a passing I/O or OS failure is [`Unreadable`]; anything else
+/// (corrupt, unsafe, wrong name) is a refusal.
+fn store(error: crate::host_secrets::Error) -> io::Error {
+    use crate::host_secrets::Error as E;
+    match error {
+        E::Io(_) | E::Os(_) | E::InUse => unreadable(),
+        _ => refused(),
+    }
+}
+/// A host registry error: a database or I/O failure is [`Unreadable`]; a binding the
+/// registry does not hold is a refusal.
+fn registry(error: crate::hostdb::Error) -> io::Error {
+    use crate::hostdb::Error as E;
+    match error {
+        E::Io(_) | E::Sql(_) => unreadable(),
+        _ => refused(),
+    }
+}
+
+/// Why an office may not start: [`Self::Refused`] (no record, an invalid or older one, or
+/// no exact marker) needs protected provisioning or recovery, never a restart;
+/// [`Self::Unreadable`] (the custody store or the registry could not be read) may pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AdmitError {
+    Refused,
+    Unreadable,
+}
+impl From<io::Error> for AdmitError {
+    fn from(error: io::Error) -> Self {
+        if error.get_ref().is_some_and(|e| e.is::<Unreadable>()) {
+            Self::Unreadable
+        } else {
+            Self::Refused
+        }
+    }
+}
+/// What an admitted office's writer is bound to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Bound {
+    pub(crate) organization_id: String,
+    pub(crate) owner_member: String,
+}
 fn name(office: &str) -> io::Result<Name> {
     let hash: String = Sha256::digest(office.as_bytes())
         .iter()
@@ -193,7 +248,7 @@ impl Writers {
     fn load(&self, office: &str) -> io::Result<Option<Record>> {
         self.custody
             .load(&name(office)?)
-            .map_err(private)?
+            .map_err(store)?
             .map(|v| serde_json::from_slice(v.expose()).map_err(private))
             .transpose()
     }
@@ -231,7 +286,7 @@ impl Writers {
         let device = self
             .custody
             .load(&Name::parse("writer-device").map_err(private)?)
-            .map_err(private)?
+            .map_err(store)?
             .ok_or_else(refused)?;
         if device.expose() != a.identity.machine_id.as_bytes() {
             return Err(refused());
@@ -242,7 +297,7 @@ impl Writers {
                 &a.owner_account,
                 &a.owner_member,
             )
-            .map_err(private)
+            .map_err(registry)
     }
     /// The organization's data roots: `<instance-root>/<organization-id>/durable` and
     /// `.../runtime`. Only a canonical UUIDv7 organization has them.
@@ -413,9 +468,13 @@ impl Writers {
     }
     /// Whether `office` may start or be created: it has a valid record of this schema and
     /// its reservation marker. Every office needs both; the host never creates them here.
-    /// Returns the organization the office's writer is bound to.
-    pub(crate) fn admit(&self, office: &str) -> io::Result<String> {
-        Ok(self.admitted(office)?.admission.identity.organization_id)
+    /// Returns what the office's writer is bound to.
+    pub(crate) fn admit(&self, office: &str) -> Result<Bound, AdmitError> {
+        let admission = self.admitted(office)?.admission;
+        Ok(Bound {
+            organization_id: admission.identity.organization_id,
+            owner_member: admission.owner_member,
+        })
     }
     fn admitted(&self, office: &str) -> io::Result<Record> {
         let record = self.load(office)?.ok_or_else(refused)?;
@@ -518,6 +577,33 @@ pub(crate) struct TestCustody {
     pub(crate) writers: Arc<Writers>,
     pub(crate) organization: String,
     pub(crate) member: String,
+    /// While set, every read of the custody store fails with an I/O error.
+    pub(crate) unreadable: Arc<AtomicBool>,
+}
+
+/// A custody store whose reads fail with an I/O error while `fail` is set.
+#[cfg(test)]
+struct Faulty {
+    inner: Arc<dyn HostSecrets>,
+    fail: Arc<AtomicBool>,
+}
+#[cfg(test)]
+impl HostSecrets for Faulty {
+    fn put(&self, name: &Name, value: &Value) -> Result<(), crate::host_secrets::Error> {
+        self.inner.put(name, value)
+    }
+    fn load(&self, name: &Name) -> Result<Option<Value>, crate::host_secrets::Error> {
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(crate::host_secrets::Error::Io(io::ErrorKind::Other));
+        }
+        self.inner.load(name)
+    }
+    fn delete(&self, name: &Name) -> Result<(), crate::host_secrets::Error> {
+        self.inner.delete(name)
+    }
+    fn list(&self) -> Result<Vec<Name>, crate::host_secrets::Error> {
+        self.inner.list()
+    }
 }
 
 #[cfg(test)]
@@ -538,8 +624,13 @@ impl TestCustody {
         let keys = base.join("keys");
         private(&home);
         private(&keys);
-        let custody: Arc<dyn HostSecrets> =
-            Arc::new(crate::host_secrets::dev::DevSecrets::open(&keys, &home, instance).unwrap());
+        let unreadable = Arc::new(AtomicBool::new(false));
+        let custody: Arc<dyn HostSecrets> = Arc::new(Faulty {
+            inner: Arc::new(
+                crate::host_secrets::dev::DevSecrets::open(&keys, &home, instance).unwrap(),
+            ),
+            fail: Arc::clone(&unreadable),
+        });
         let init = crate::hostdb::HostDbInit {
             instance_id: instance.into(),
             clock_high_ms: 1,
@@ -583,6 +674,7 @@ impl TestCustody {
             writers,
             organization,
             member,
+            unreadable,
         }
     }
 }

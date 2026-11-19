@@ -305,7 +305,7 @@ fn an_older_writer_record_is_refused_and_kept() {
             .custody
             .put(&credential, &Value::new(bytes.clone()).unwrap())
             .unwrap();
-        assert!(writers.admit(&input.office).is_err());
+        assert_eq!(writers.admit(&input.office), Err(AdmitError::Refused));
         let (host, _worker) = UnixStream::pair().unwrap();
         assert!(writers
             .serve(&input.office, host, Arc::new(AtomicBool::new(true)))
@@ -399,6 +399,33 @@ fn the_served_channel_speaks_version_two() {
         writers.load(&input.office).unwrap().unwrap().head,
         Some(three)
     );
+}
+
+/// Admission tells a refusal (no record, an invalid one, no exact marker) from custody that
+/// can't be read now, and reports what an admitted writer is bound to.
+#[test]
+fn admission_tells_a_refusal_from_unreadable_custody() {
+    let dir = tempfile::tempdir().unwrap();
+    let instance = crate::ids::uuid_v7().unwrap();
+    let office = crate::ids::uuid_v7().unwrap();
+    let custody = TestCustody::reserve(dir.path(), &instance, &[&office]);
+    let writers = &custody.writers;
+    assert_eq!(
+        writers.admit(&office),
+        Ok(Bound {
+            organization_id: custody.organization.clone(),
+            owner_member: custody.member.clone(),
+        })
+    );
+    assert_eq!(
+        writers.admit(&crate::ids::uuid_v7().unwrap()),
+        Err(AdmitError::Refused)
+    );
+    custody.unreadable.store(true, Ordering::SeqCst);
+    assert_eq!(writers.admit(&office), Err(AdmitError::Unreadable));
+    custody.unreadable.store(false, Ordering::SeqCst);
+    fs::remove_file(writers.marker(&office).unwrap()).unwrap();
+    assert_eq!(writers.admit(&office), Err(AdmitError::Refused));
 }
 
 #[test]

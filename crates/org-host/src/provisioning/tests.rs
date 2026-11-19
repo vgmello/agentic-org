@@ -318,6 +318,8 @@ fn a_reserved_create_killed_before_its_intent_survives_a_host_restart_and_comple
     assert_eq!(fingerprint(&keys.load(&office).unwrap().unwrap()), key);
 
     // The retried create completes over the same custody.
+    let seen = short_path.join("pid.admission");
+    let _ = std::fs::remove_file(&seen);
     let creating = short_path.join("creating");
     write_create_server(&creating, &pid_file, false);
     let writers = Writers::open(custody.clone(), db.clone(), &instance, &root).unwrap();
@@ -344,6 +346,26 @@ fn a_reserved_create_killed_before_its_intent_survives_a_host_restart_and_comple
         custody.load(&credential).unwrap().unwrap().expose(),
         &reserved[..]
     );
+    // What the worker received on its custody channel: a valid admission naming this
+    // organization and its data roots, which exist, owner-only, for the host's user.
+    let admission: org_office_launch::writer::Admission =
+        serde_json::from_slice(&std::fs::read(&seen).unwrap()).unwrap();
+    assert!(admission.check());
+    assert_eq!(
+        admission.identity.organization_id,
+        r.prepared.organization_id
+    );
+    assert_eq!(admission.identity.office_id, office);
+    assert_eq!(admission.owner_member, r.owner_member);
+    let data = root.join(&r.prepared.organization_id);
+    assert_eq!(Path::new(&admission.durable_root), data.join("durable"));
+    assert_eq!(Path::new(&admission.runtime_root), data.join("runtime"));
+    for path in [&admission.durable_root, &admission.runtime_root] {
+        let meta = std::fs::symlink_metadata(path).unwrap();
+        assert!(meta.is_dir(), "{path}");
+        assert_eq!(meta.uid(), crate::home::euid(), "{path}");
+        assert_eq!(meta.mode() & 0o7777, 0o700, "{path}");
+    }
     assert_eq!(fingerprint(&keys.load(&office).unwrap().unwrap()), key);
     controller.stop();
     second.shutdown();
