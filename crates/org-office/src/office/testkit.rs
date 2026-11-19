@@ -74,7 +74,7 @@ pub(crate) fn request() -> (NewOffice, Binding) {
     let binding = Binding {
         operation_id: OPERATION.into(),
         owner_member_id: prepared.creator.employee_id.clone(),
-        bootstrap: Some(prepared),
+        bootstrap: prepared,
     };
     (new, binding)
 }

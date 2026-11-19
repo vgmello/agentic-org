@@ -14,8 +14,8 @@ pub(super) struct Create {
     /// Consumed by HQ creation-v1 during preparation, before serving. A create without one is
     /// refused before anything is stored.
     pub recovery: Option<RecoveryCode>,
-    /// A create without it is refused: HQ creation-v1 is the only create (G2).
-    pub hq_creation: Option<org_office_launch::HqCreationV1>,
+    /// HQ creation-v1 is the only create (G2): every create line carries it.
+    pub hq_creation: org_office_launch::HqCreationV1,
 }
 
 #[derive(Debug, PartialEq, Eq)]

@@ -307,11 +307,7 @@ impl Offices {
     ) -> Result<(), ApiError> {
         let deadline = Instant::now() + self.create_wait;
         self.wait_for_startup(deadline)?;
-        let p = first
-            .hq_creation
-            .as_ref()
-            .and_then(|c| c.bootstrap.as_ref())
-            .ok_or_else(storage_error)?;
+        let p = &first.hq_creation.bootstrap;
         let office = p.office_id.clone();
         let stored = lock(&self.catalog).office(&office).cloned();
         if let Some(stored) = stored {

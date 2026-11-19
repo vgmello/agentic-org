@@ -82,7 +82,7 @@ impl Hq for FakeHq {
         if *worker == Worker::Refuses {
             return Err(ApiError::new(ErrorCode::NotAuthorized, "refused"));
         }
-        let bootstrap = first.hq_creation.unwrap().bootstrap.unwrap();
+        let bootstrap = first.hq_creation.bootstrap;
         assert_eq!(bootstrap.creator.employee_id, first.owner_member_id);
         let office = serde_json::from_value(serde_json::json!({
             "id": first.office.office_id, "organization_id": first.org_id, "name": "HQ",

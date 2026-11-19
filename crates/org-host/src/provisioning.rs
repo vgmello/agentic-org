@@ -580,12 +580,12 @@ impl Provisioning {
             office_name: "HQ".into(),
             role: org_proto::OfficeRole::Hq,
             owner_member_id: r.owner_member.clone(),
-            hq_creation: Some(org_office_launch::HqCreationV1 {
+            hq_creation: org_office_launch::HqCreationV1 {
                 version: org_office_launch::HqCreationV1::VERSION,
                 operation_id: r.operation_id.clone(),
                 escrow_profile: 1,
-                bootstrap: Some(Box::new(r.prepared.clone())),
-            }),
+                bootstrap: Box::new(r.prepared.clone()),
+            },
         };
         hq.provision_hq(first, pending.code)?;
         // The link and its announcement are one critical section of the web connections'

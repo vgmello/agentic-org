@@ -90,12 +90,12 @@ fn selected_create() -> CreateLine {
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
         owner_member_id: OWNER.into(),
-        hq_creation: Some(HqCreationV1 {
+        hq_creation: HqCreationV1 {
             version: 2,
             operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
             escrow_profile: 1,
-            bootstrap: Some(Box::new(prepared)),
-        }),
+            bootstrap: Box::new(prepared),
+        },
     }
 }
 
@@ -179,7 +179,7 @@ fn selected_create_rejects_retired_fields_missing_bootstrap_unknown_and_mismatch
     assert!(wire.is_empty());
     // Invalid in-memory preparation must also fail before emitting any bytes.
     let mut invalid = selected_create();
-    invalid.hq_creation.as_mut().unwrap().bootstrap = None;
+    invalid.hq_creation.bootstrap.creator.handle = "Not A Handle".into();
     let mut wire = Vec::new();
     assert!(write_first_line(&mut wire, &HostFirstLine::Create(invalid)).is_err());
     assert!(wire.is_empty());
@@ -1067,7 +1067,7 @@ fn hq_creation_context_is_explicit_versioned_and_strictly_decoded_from_raw_bytes
     ] {
         assert!(read_first_line(&mut Cursor::new(bad), FirstLine::Create).is_err());
     }
-    creation.hq_creation.as_mut().unwrap().version = 1;
+    creation.hq_creation.version = 1;
     let mut out = Vec::new();
     assert!(write_first_line(&mut out, &HostFirstLine::Create(creation)).is_err());
     assert!(out.is_empty());

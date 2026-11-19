@@ -61,9 +61,7 @@ fn intent_of(
     options: &Options,
 ) -> Result<Intent, OfficeError> {
     check_roots(roots)?;
-    let Some(prepared) = binding.bootstrap.as_ref() else {
-        return Err(recovery());
-    };
+    let prepared = &binding.bootstrap;
     let here = &custody.identity;
     let uuid = org_proto::is_uuid_v7;
     let ok = prepared.valid()

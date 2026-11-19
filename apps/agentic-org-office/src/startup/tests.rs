@@ -33,11 +33,11 @@ fn first(path: &Path, op: FirstLine) -> HostFirstLine {
             office_name: "HQ".into(),
             role: OfficeRole::Hq,
             owner_member_id: OWNER.into(),
-            hq_creation: Some(org_office_launch::HqCreationV1 {
+            hq_creation: org_office_launch::HqCreationV1 {
                 version: org_office_launch::HqCreationV1::VERSION,
                 operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
                 escrow_profile: 1,
-                bootstrap: Some(Box::new(org_proto::selected_bootstrap::PreparedV1 {
+                bootstrap: Box::new(org_proto::selected_bootstrap::PreparedV1 {
                     plan: org_proto::selected_bootstrap::PlanV1 {
                         version: 1,
                         name: "Acme".into(),
@@ -54,8 +54,8 @@ fn first(path: &Path, op: FirstLine) -> HostFirstLine {
                         OWNER.into(),
                         "Ana",
                     ),
-                })),
-            }),
+                }),
+            },
         }),
         FirstLine::Start => HostFirstLine::Start(office),
         FirstLine::Discard => HostFirstLine::Discard(office),

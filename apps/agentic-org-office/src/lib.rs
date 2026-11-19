@@ -201,13 +201,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         }
     }
     // HQ creation-v1 is the only create: it consumes the recovery code before serving.
-    let Some(context) = create.hq_creation else {
-        return fail(
-            &mut control,
-            FailCode::InvalidRequest,
-            "missing HQ creation binding",
-        );
-    };
+    let context = create.hq_creation;
     let Some(recovery) = create.recovery else {
         return fail(
             &mut control,
@@ -240,7 +234,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
     let binding = org_office::hq_creation::Binding {
         operation_id: context.operation_id,
         owner_member_id: create.owner_member_id,
-        bootstrap: context.bootstrap.map(|b| *b),
+        bootstrap: *context.bootstrap,
     };
     let created = hq_creation::prepare(
         &folder,

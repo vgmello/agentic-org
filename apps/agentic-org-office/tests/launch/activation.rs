@@ -47,12 +47,12 @@ fn create_line(path: &Path) -> HostFirstLine {
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
         owner_member_id: OWNER.into(),
-        hq_creation: Some(org_office_launch::HqCreationV1 {
+        hq_creation: org_office_launch::HqCreationV1 {
             version: org_office_launch::HqCreationV1::VERSION,
             operation_id: OPERATION.into(),
             escrow_profile: 1,
-            bootstrap: Some(Box::new(plan())),
-        }),
+            bootstrap: Box::new(plan()),
+        },
     })
 }
 
@@ -476,7 +476,7 @@ fn hq_creation_of_an_existing_office_by_another_operation_is_refused_and_changes
     // The same operation id resumes its own creation (ADR-0011). Another operation is another
     // request than the frozen intent, so it is refused, not a new office.
     let code = refused_create(&world, |create| {
-        create.hq_creation.as_mut().unwrap().operation_id = "01ARZ3NDEKTSV4RRFFQ79G5FAY".into();
+        create.hq_creation.operation_id = "01ARZ3NDEKTSV4RRFFQ79G5FAY".into();
     });
     assert_eq!(code, "already_exists");
     assert_eq!(stored_bytes(&world), before);
