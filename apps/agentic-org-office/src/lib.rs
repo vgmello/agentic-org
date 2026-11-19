@@ -256,33 +256,23 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         Err(e) => return fail_with(&mut control, &e),
     };
     let info = office.info();
-    let file = if org_office_launch::is_selected_entity_id(&info.office_id) {
-        match OfficeFile::selected(
-            info.office_id.clone(),
-            info.office_name.clone(),
-            OfficeRole::Hq,
-            info.org_id.clone(),
-            info.org_name.clone(),
-            info.created_at.clone(),
-        ) {
-            Ok(file) => file,
-            Err(_) => {
-                return fail(
-                    &mut control,
-                    FailCode::StorageError,
-                    "selected office marker rejected",
-                );
-            }
+    // The office is created with UUIDv7 ids only, so its `office.json` is version 2.
+    let file = match OfficeFile::selected(
+        info.office_id.clone(),
+        info.office_name.clone(),
+        OfficeRole::Hq,
+        info.org_id.clone(),
+        info.org_name.clone(),
+        info.created_at.clone(),
+    ) {
+        Ok(file) => file,
+        Err(_) => {
+            return fail(
+                &mut control,
+                FailCode::StorageError,
+                "selected office marker rejected",
+            );
         }
-    } else {
-        OfficeFile::new(
-            info.office_id.clone(),
-            info.office_name.clone(),
-            OfficeRole::Hq,
-            info.org_id.clone(),
-            info.org_name.clone(),
-            info.created_at.clone(),
-        )
     };
     // `office.json` is in place and durable: from here the office is stored, whatever happens.
     emit(&mut control, &ServerEvent::Created { office: file });
