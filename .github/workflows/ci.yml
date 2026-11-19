@@ -178,7 +178,9 @@ jobs:
 
       # Step 10 of LNX-2, the optional seccomp and AppArmor profiles, needs a Docker host that
       # enforces AppArmor, with the profile loaded. GitHub's Ubuntu runners enforce it; on one
-      # that does not, the step is skipped with the reason in the log and the job summary.
+      # that does not, the step is skipped with the reason in the log and the job summary. Where
+      # the runner can load profiles, a profile the parser refuses fails the job: it is this
+      # repository's file, and a skip would hide that it no longer loads.
       - name: Load the optional AppArmor profile (LNX-2 step 10)
         run: |
           reason=
@@ -186,6 +188,8 @@ jobs:
             reason="the kernel does not enforce AppArmor"
           elif ! docker info -f '{{.SecurityOptions}}' | grep -q apparmor; then
             reason="Docker does not apply AppArmor profiles"
+          elif ! sudo -n true 2>/dev/null; then
+            reason="sudo is not available without a password"
           elif ! sudo -n sh -c 'command -v apparmor_parser' >/dev/null; then
             reason="apparmor_parser is not installed"
           fi
