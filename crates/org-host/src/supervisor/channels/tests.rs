@@ -328,13 +328,27 @@ fn a_discard_reader_from_another_process_identity_gets_no_header() {
 #[test]
 #[ignore = "root runs actual local listener; child sandbox forbids binding"]
 fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
+    const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
+    const OFFICE: &str = "01900000-0000-7000-8000-0000000000aa";
     let root =
         tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
-    let broker = Broker::new("instance".into(), root.path().to_owned());
+    // Every start needs writer custody: a real one, with a reservation for this office.
+    let custody = crate::writer::TestCustody::reserve(root.path(), INSTANCE, &[OFFICE]);
+    let organization = custody.organization.clone();
+    let mut broker = Broker::new(INSTANCE.into(), root.path().to_owned());
+    broker.writers = Some(Arc::clone(&custody.writers));
     let rendezvous = broker.bind().unwrap();
     let path = rendezvous.path().to_owned();
+    // Everything the host needs is ready before the worker connects: only `accept` itself
+    // runs inside the worker's 150 ms delays.
+    let (signals, _) = mpsc::channel();
+    let (admission, mut child) = stand_in(std::process::id()).unwrap();
+    // The stand-in child always reads as exited, so the host would take a worker that has
+    // not connected yet for one that never will: the worker connects before `accept` runs.
+    let (connected, on_connect) = mpsc::channel();
     let worker = std::thread::spawn(move || {
         let mut stream = UnixStream::connect(path).unwrap();
+        connected.send(()).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(3)))
             .unwrap();
@@ -363,7 +377,9 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
         crate::secrets::zero(&mut header);
         let (marker, mut fds) = byte(&mut receiver, 1);
         assert_eq!(marker, org_office_launch::FD_MARKER);
-        let _transfer = org_socket::rights::unix_datagram(fds.pop().unwrap()).unwrap();
+        let transfer = org_socket::rights::unix_datagram(fds.pop().unwrap()).unwrap();
+        let mut transfer = org_socket::rights::DatagramReceiver::new(transfer);
+        // A delayed receipt: the host's read of it must wait, not fail at once.
         std::thread::sleep(Duration::from_millis(150));
         org_office_launch::write_rendezvous_event(
             &mut stream,
@@ -372,16 +388,48 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
             },
         )
         .unwrap();
+        // The writer control comes next, as the real worker takes it: the record and its
+        // one descriptor on the transfer socket, the host's admission first on that channel,
+        // then the receipt.
+        let (record, mut fds) = datagram(&mut transfer, 1);
+        let org_office_launch::TransferRecord::WriterControl {
+            office_id,
+            channel_id,
+        } = record
+        else {
+            panic!("writer control expected")
+        };
+        assert_eq!(office_id, OFFICE);
+        let writer = org_socket::rights::connected_unix_stream(fds.pop().unwrap()).unwrap();
+        writer.set_nonblocking(false).unwrap();
+        writer
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut writer = BufReader::new(writer);
+        let admission =
+            org_office_launch::writer::read::<org_office_launch::writer::Admission>(&mut writer)
+                .unwrap()
+                .unwrap();
+        assert!(admission.check());
+        assert_eq!(admission.identity.instance_id, INSTANCE);
+        assert_eq!(admission.identity.office_id, OFFICE);
+        assert_eq!(admission.identity.organization_id, organization);
+        org_office_launch::write_rendezvous_event(
+            &mut stream,
+            &org_office_launch::RendezvousEvent::FdsReceived { of: channel_id },
+        )
+        .unwrap();
+        // The worker stays until the host ends the launch connection.
         assert!(frame::read_line(&mut BufReader::new(stream))
             .unwrap()
             .is_none());
+        drop(writer);
     });
-    let (signals, _) = mpsc::channel();
-    let (admission, mut child) = stand_in(std::process::id()).unwrap();
+    on_connect.recv_timeout(Duration::from_secs(3)).unwrap();
     let endpoint = broker
         .accept(
             rendezvous,
-            "office",
+            OFFICE,
             &admission,
             &mut child,
             HandoffSecrets::Start(None),
