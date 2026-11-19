@@ -54,6 +54,7 @@
 <DividedRow
 	data-testid="office-row"
 	data-office={office.id}
+	data-office-name={office.name}
 	class="{compactRow.gutters} {compactRow.gap} flex flex-wrap items-center justify-end gap-x-4 gap-y-2 hover:bg-tint/[0.025]"
 >
 	<button
@@ -63,12 +64,15 @@
 		aria-haspopup="dialog"
 		onclick={(event) => onopen(event.currentTarget)}
 	>
-		<span class="block truncate text-sm/6 font-semibold text-fg" title={office.name}
-			>{office.name}{#if isHq(office) && office.name !== 'HQ'}<span
-					class="font-normal text-fg-muted">&#32;· HQ</span
+		<span class="relative block truncate text-sm/6 font-semibold text-fg" title={office.name}
+			>{office.name}{#if isHq(office) && office.name !== 'HQ'}<span class="sr-only"
+					>&#32;·&#32;</span
+				><span
+					class="ml-2 inline-block rounded-md bg-brand/10 px-1.5 align-[0.0625rem] text-xs/5 font-medium text-brand-text ring-1 ring-brand/20 ring-inset"
+					data-testid="hq-badge">HQ</span
 				>{/if}</span
 		>
-		<span class="mt-3 flex flex-wrap items-baseline gap-x-2 text-xs/5 text-fg-muted">
+		<span class="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs/5 text-fg-muted">
 			<span class="max-w-full [overflow-wrap:anywhere]" title={why} data-testid="office-location">
 				{#if office.status_reason === 'unsupported_version' && why}
 					{repairReasonCopy.before}<OfficeRepairLocation {office} />{repairReasonCopy.after}

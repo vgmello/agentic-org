@@ -26,7 +26,7 @@
 	import type { AddProgress, Issued, PendingAdd } from '../../types';
 	import InvitationPanel from './InvitationPanel.svelte';
 
-	type Stage = 'form' | 'working' | 'waiting' | 'invitation' | 'refused' | 'failed';
+	type Stage = 'form' | 'working' | 'waiting' | 'invitation' | 'refused' | 'failed' | 'unchecked';
 
 	let {
 		open = $bindable(false),
@@ -118,10 +118,12 @@
 					await onchanged();
 				}
 			} catch (e) {
+				// Reading the progress failed, not the add: it may still be running at HQ. Keep the operation and offer
+				// to check it again; never a new add (§6.2: an idempotent retry).
 				ended = true;
 				clearInterval(timer);
-				error = toAppError(e).message;
-				stage = 'failed';
+				error = `Can't check how adding ${name} is going: ${toAppError(e).message}`;
+				stage = 'unchecked';
 			}
 		};
 		void poll();
@@ -216,6 +218,29 @@
 				>
 				<Button type="button" class={mobileButton} onclick={inviteInstead}
 					>Invite another machine</Button
+				>
+			</DialogFooter>
+		{:else if stage === 'unchecked'}
+			<p
+				class="text-sm/6 text-danger-text [overflow-wrap:anywhere]"
+				role="alert"
+				data-testid="add-unchecked"
+			>
+				{error}
+			</p>
+			<DialogFooter>
+				<Button type="button" variant="outline" class={mobileButton} onclick={() => (open = false)}
+					>Close</Button
+				>
+				<Button
+					type="button"
+					class={mobileButton}
+					onclick={() => {
+						if (!operationId) return;
+						error = undefined;
+						stage = 'working';
+						watch(operationId);
+					}}>Check status</Button
 				>
 			</DialogFooter>
 		{:else if stage === 'failed'}

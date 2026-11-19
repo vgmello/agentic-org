@@ -58,7 +58,6 @@
 					<div class="flex flex-wrap gap-2">
 						<Button
 							variant="outline"
-							size="sm"
 							class="max-[639px]:min-h-11"
 							aria-busy={retrying === item.id}
 							aria-disabled={retrying === item.id}
@@ -68,7 +67,6 @@
 						>
 						<Button
 							variant="outline"
-							size="sm"
 							class="max-[639px]:min-h-11"
 							aria-label="Discard: {item.description}"
 							onclick={(e) => ondiscard(item, e.currentTarget)}>Discard</Button

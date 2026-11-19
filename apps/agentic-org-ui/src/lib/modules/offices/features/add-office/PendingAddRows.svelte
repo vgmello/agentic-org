@@ -46,7 +46,6 @@
 		</button>
 		<Button
 			variant="outline"
-			size="sm"
 			class="relative z-10 max-[639px]:min-h-11"
 			aria-label="Cancel adding {add.name}"
 			onclick={(e) => oncancel(add, e.currentTarget)}>Cancel</Button
