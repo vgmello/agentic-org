@@ -658,9 +658,12 @@ refused "$tag-nest" "holds the account's records" \
     -v "$tag-nest-d:/data" -v "$tag-nest-i:/data/instance" \
     --mount "type=volume,src=$tag-nest-d,dst=/secrets,volume-subpath=secrets" ||
     fail "the refusal does not name the account's records"
-[ -z "$(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'find /v/secrets -mindepth 1')" ] ||
-    fail "the refused start wrote into the data volume's secrets folder"
-echo "  and nothing was written in it"
+# No key and no item store is made there. (Setup's own check of the directory, which does
+# not compare it with the records yet, leaves its lock file `.lock` in it; the host refuses
+# before it makes anything.)
+left=$(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'find /v/secrets -mindepth 1 ! -name .lock')
+[ -z "$left" ] || fail "the refused start wrote into the data volume's secrets folder: $left"
+echo "  and no key or item store was written in it ($(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'ls -A /v/secrets' | tr '\n' ' '))"
 
 say "10. the optional profiles (LNX2_PROFILES=1, on a Docker host that enforces AppArmor)"
 if [ "${LNX2_PROFILES:-}" = 1 ]; then
