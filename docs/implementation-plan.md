@@ -738,6 +738,8 @@ on the offers of design section 10.
   when one is named.
 - **Done when:** the CHAT criteria for sending, reading and channels pass; the
   engine-independent messaging suite passes; ACK-1 is measured on a Mac and recorded.
+  B6 also restores LNX-1's send and read through the office in
+  `apps/agentic-org/tests/lnx1.rs`, which B1b reduced to a directory read and a refused send.
 - **Needs:** B2, A5, B1c. The browser part needs A3.
 
 ### B7 · Asks and questions
