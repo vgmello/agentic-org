@@ -290,7 +290,8 @@ fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_resta
     let page = owner.call::<InboxList>(&params).unwrap();
     assert_eq!(page.counts, InboxCounts::default());
     assert!(page.items.is_empty() && page.next_cursor.is_none() && page.degraded.is_empty());
-    assert_eq!(page.as_of.seq, 0);
+    // The position is the organization's committed head, the snapshot's position.
+    assert_eq!(page.as_of.seq, before.position.seq);
     assert_eq!(page.as_of.epoch.len(), 32);
     assert_eq!(snapshot(&mut owner), before);
     drop((client, owner));
@@ -300,7 +301,7 @@ fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_resta
     let mut owner = again.caller(Some(&owner_id));
     let later = owner.call::<InboxList>(&params).unwrap();
     assert_ne!(later.as_of.epoch, page.as_of.epoch);
-    assert_eq!(later.as_of.seq, 0);
+    assert_eq!(later.as_of.seq, before.position.seq);
     assert_eq!(snapshot(&mut owner), before);
     drop(owner);
     again.stop();

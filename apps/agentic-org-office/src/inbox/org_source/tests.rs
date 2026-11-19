@@ -87,12 +87,13 @@ fn inbox_list_position_advances_after_offboarding_without_hints() {
     assert_eq!(before.counts.problems, 1);
     assert_eq!(before.items.len(), 1);
     let now_ms = std::time::UNIX_EPOCH.elapsed().unwrap().as_millis() as u64;
+    let offboard = MemberOffboardParams {
+        command_id: org_work::ulid_from_parts(now_ms, 1),
+        member_id: agent_id.into(),
+        expected_version: 1,
+    };
     office
-        .submit_org(OrgCommand::MemberOffboard(MemberOffboardParams {
-            command_id: org_work::ulid_from_parts(now_ms, 1),
-            member_id: agent_id.into(),
-            expected_version: 1,
-        }))
+        .submit_org(OrgCommand::MemberOffboard(offboard.clone()))
         .unwrap()
         .unwrap();
     let after = list();
@@ -100,6 +101,13 @@ fn inbox_list_position_advances_after_offboarding_without_hints() {
     assert!(after.items.is_empty());
     assert_eq!(after.as_of.epoch, before.as_of.epoch);
     assert!(after.as_of.seq > before.as_of.seq);
+    assert_eq!(list().as_of, after.as_of);
+
+    // An exact replay commits nothing, so the position stays where it was.
+    office
+        .submit_org(OrgCommand::MemberOffboard(offboard))
+        .unwrap()
+        .unwrap();
     assert_eq!(list().as_of, after.as_of);
 }
 

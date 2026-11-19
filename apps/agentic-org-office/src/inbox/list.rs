@@ -36,10 +36,17 @@ impl Hq {
             limit: limit as usize + 1,
         };
         let mut as_of = self.clock.as_of();
-        // The M1 worker has only the org source and its feed is disabled. Sample the
-        // office's change token before the snapshot so a concurrent commit can't be missed.
+        // The M1 worker has only the org source and its feed is disabled. The position is the
+        // organization's committed head, read before the snapshot so a concurrent commit can't
+        // be missed; a replayed or refused command does not move it.
         if let Some(office) = &self.list_office {
-            as_of.seq = office.org_change_token();
+            as_of.seq = office
+                .org_head()
+                .map_err(|error| {
+                    crate::logged("inbox.position", &error);
+                    ApiError::new(ErrorCode::Unavailable, "the inbox position is unavailable")
+                })?
+                .seq;
         }
         let mut result = collect(&sources, &query);
         let more = result.items.len() > limit as usize;
