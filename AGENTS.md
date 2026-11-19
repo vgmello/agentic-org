@@ -79,6 +79,10 @@ managed employees use their injected binding.
 
 ## Session start: check for a handover
 
+First read [`docs/workstreams/README.md`](docs/workstreams/README.md) and your stream's file
+(`backend.md`, `linux.md` or `ui.md`): it is the shared record of where each stream stands and
+what comes next; a local `HANDOVER.md` only adds checkout detail.
+
 At the start of every lead session, check for `.agent-kit/tasks/HANDOVER.md` in this
 checkout (each checkout has its own). It is local session state, ignored by Git and
 never committed. If it exists, read it before starting new work, summarize its state and
