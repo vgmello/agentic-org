@@ -9,6 +9,21 @@ backend rows of `docs/FEATURES.md`, and the documented web API (`docs/design/web
 **Paused by the owner on 2026-11-19: no new features; only review, verify and merge what is done.**
 Ask the owner before starting anything new.
 
+## How this stream works (owner rules)
+
+- This file is the current state and wins over the delivery log, which is history
+  (`.agent-kit/tasks/v1-milestone-1.md`).
+- Integrate into `v1` (`git merge --no-ff`, push `v1`); never push `main`. Owner, 2026-11-18. AGENTS.md
+  rule 2 and `docs/processes/branch-and-merge.md` still say `v1-integration`, which is stale (that branch
+  stopped on 15 Nov).
+- Writers: Claude Opus, effort high. Every review: a fresh Claude `code-reviewer`, Opus, effort medium.
+  No Codex or Sol runs (owner, 2026-11-19, usage). One fresh review per change and a whole-change review
+  before every merge into `v1`; verify findings before acting.
+- A PR review the owner asks for is posted as a comment on the PR.
+- Backend and documented web API only; the UI stream owns `apps/agentic-org-ui`.
+- When host or worker launch changes, the gate includes `cargo test -p agentic-org` and the org-host
+  ignored real-process set (see the delivery log, "How to continue", step 3).
+
 ## Status
 
 | Increment | Status | Evidence | Next / remaining |

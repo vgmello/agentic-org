@@ -229,8 +229,9 @@ This session works backend and non-UI only (crates, office worker, host/CLI, ser
 
 ## WHERE WE ARE / HOW TO CONTINUE (written 2026-11-19, end of session)
 
-**Read this section first in a new session.** It is the committed copy of the handover;
-`.agent-kit/tasks/HANDOVER.md` (local, ignored by Git) points here.
+**Superseded for current state by `docs/workstreams/backend.md`** (start there). This section is the
+handover as written at the end of the 2026-11-19 session; some facts below have since changed (LNX-2
+step 10 later passed in CI on Linux; v1 has moved on).
 
 ### State
 - `origin/v1` = 4d747ab7. It contains A1-A4, B1a, **B1b** (merge 5f9941f1: the office runs on the
