@@ -273,6 +273,15 @@ fn another_schema_digest_rebuilds_the_projection_and_changes_no_journal_or_file_
     assert_eq!(tree(&office.place.durable()), durable);
 }
 
+/// Releases held flushes when dropped, also while a failed assertion unwinds.
+struct ReleaseFlushes<'a>(&'a org_store::testkit::Faults);
+
+impl Drop for ReleaseFlushes<'_> {
+    fn drop(&mut self) {
+        self.0.release_flushes();
+    }
+}
+
 /// STORE-4 on SQLite.
 #[test]
 fn on_sqlite_a_committed_write_is_answered_while_the_flush_is_held_and_a_team_is_not() {
@@ -292,6 +301,10 @@ fn on_sqlite_a_committed_write_is_answered_while_the_flush_is_held_and_a_team_is
 
     let (answered, answer) = mpsc::channel();
     std::thread::scope(|scope| {
+        // Released however this closure ends: a failed assertion below must not leave
+        // the team's thread waiting on a held flush, or the scope would never join it
+        // and the test would hang instead of failing.
+        let held = ReleaseFlushes(&office.place.faults);
         let team = scope.spawn(|| {
             let reply = office.team(&store, 2, 0x21);
             let _ = answered.send(());
@@ -310,7 +323,7 @@ fn on_sqlite_a_committed_write_is_answered_while_the_flush_is_held_and_a_team_is
         assert!(!office.team_file(0x21));
         assert_eq!(store.status().flushed, flushed);
 
-        office.place.faults.release_flushes();
+        drop(held);
         let reply = team.join().expect("the submitting thread").expect("a team");
         let created: TeamCreated = serde_json::from_slice(&reply.bytes).unwrap();
         assert_eq!((created.number, created.generation), (2, 2));
