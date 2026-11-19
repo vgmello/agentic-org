@@ -1,10 +1,7 @@
 // Test-only startup hook, before libtest creates any threads. Lowering hard0 is
 // irreversible for this process and its children; never restore/change it in a test.
 // Each integration test binary and the library's unit-test binary include this module.
-#[used]
-#[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
-static INITIALIZE: unsafe extern "C" fn() = disable_core_dumps;
+org_platform::process::run_before_main!(INITIALIZE = disable_core_dumps);
 
 unsafe extern "C" fn disable_core_dumps() {
     let limit = libc::rlimit {

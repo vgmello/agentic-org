@@ -119,7 +119,79 @@ pub mod testing {
     pub fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
         super::native::open_paths()
     }
+
+    /// Makes this process the reaper of its orphaned descendants, where the system has
+    /// such an attribute (GNU/Linux: `PR_SET_CHILD_SUBREAPER`): `true` when it is now
+    /// one, `false` where the system has none (macOS: an orphan goes to `launchd`), so a
+    /// test reaps a grandchild only where it was given it. Irreversible for the process:
+    /// for a test's own child process only. The refusing adapter refuses.
+    pub fn become_subreaper() -> io::Result<bool> {
+        super::native::become_subreaper()
+    }
+
+    /// Whether the process `pid` is stopped (suspended by a signal or started
+    /// suspended), as the system reports its state: `proc_pidinfo` on macOS, the state
+    /// field of `/proc/<pid>/stat` on GNU/Linux. The refusing adapter refuses.
+    pub fn is_stopped(pid: libc::pid_t) -> io::Result<bool> {
+        super::native::is_stopped(pid)
+    }
+
+    /// The storage of this process's own `argv[0]`, which the process may overwrite,
+    /// where the system exposes it (macOS: `_NSGetArgv`), else `None`. For a test of
+    /// what a recovery scan reads after a process changed its arguments.
+    pub fn argv_zero() -> Option<*mut libc::c_char> {
+        super::native::argv_zero()
+    }
+
+    /// Ends the calling thread alone; the process goes on while another thread runs.
+    /// GNU/Linux: the `exit` system call (not `exit_group`), which also ends a main
+    /// thread alone. Elsewhere `pthread_exit`. Callable before `main` (from
+    /// [`crate::process::run_before_main`]), where nothing of the Rust runtime is used.
+    pub fn exit_this_thread() -> ! {
+        super::native::exit_this_thread()
+    }
 }
+
+/// `run_before_main!(NAME = function)`: a static `NAME` that has the system's loader
+/// call `function` (an `unsafe extern "C" fn()`) before `main`, and so before a test
+/// harness starts any thread (`test-support`). macOS: the `__DATA,__mod_init_func`
+/// section; GNU/Linux: `.init_array`. A target without an adapter does not build it.
+#[cfg(any(test, feature = "test-support"))]
+pub use native::run_before_main;
+
+/// Whether a signal to a whole process group whose members have all exited, but are
+/// not yet reaped, is refused (macOS: `EPERM`, which [`is_exited_group_denial`]
+/// recognises), rather than delivered or answered `ESRCH` (GNU/Linux).
+pub const EXITED_GROUP_SIGNAL_IS_DENIED: bool = native::EXITED_GROUP_SIGNAL_IS_DENIED;
+
+/// Whether [`spawn_piped`] starts the child suspended, until [`release_spawned`]
+/// continues it (macOS), rather than running (GNU/Linux).
+pub const SPAWNS_SUSPENDED: bool = native::SPAWNS_SUSPENDED;
+
+/// The `posix_spawn` attribute flag that starts the child in a new session, as
+/// `setsid` does. Its value differs by system, and the macOS C library does not name it.
+pub const POSIX_SPAWN_SETSID: libc::c_short = native::POSIX_SPAWN_SETSID;
+
+/// Where a [`RecoveryScan`] reads the processes it observes, and so which of their
+/// edge cases it meets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScanSource {
+    /// `/proc/<pid>` (GNU/Linux). Each observed process is pinned by a pidfd while the
+    /// scan holds it: one descriptor per process, within `RLIMIT_NOFILE`. The
+    /// environment is `/proc/<pid>/environ`, which a page the process made unreadable
+    /// cuts short. A process whose main thread ended while another thread runs is in
+    /// the zombie state there.
+    Procfs,
+    /// `sysctl` (macOS): `KERN_PROC` and `KERN_PROCARGS2`, whose environment is what
+    /// follows the arguments counted at start, and which the system withholds for a
+    /// restricted process.
+    Sysctl,
+    /// No adapter: no scan exists.
+    Unavailable,
+}
+
+/// Where a [`RecoveryScan`] reads processes on this system.
+pub const SCAN_SOURCE: ScanSource = native::SCAN_SOURCE;
 
 fn check(rc: libc::c_int) -> io::Result<()> {
     if rc == 0 {

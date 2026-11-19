@@ -4,11 +4,10 @@ mod core_limit;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
-#[cfg(target_os = "linux")]
-use std::sync::RwLockWriteGuard;
-use std::sync::{mpsc, RwLock, RwLockReadGuard};
+use std::sync::{mpsc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
+use org_platform::process::{ScanSource, SCAN_SOURCE};
 use org_supervise::recovery::{
     recover_record, CheckpointTarget, NativeRecovery, ProcessIdentity, RecoveryCheckpoint,
     RecoveryProcesses, RecoveryRecord, RecoveryRecords,
@@ -57,7 +56,6 @@ fn shared_scans() -> RwLockReadGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-#[cfg(target_os = "linux")]
 fn exclusive_scans() -> RwLockWriteGuard<'static, ()> {
     NATIVE_SCANS
         .write()
@@ -146,15 +144,13 @@ fn hold_fixture() {
     let Ok(mode) = std::env::var("ORG_TEST_CASE") else {
         return;
     };
-    #[cfg(target_os = "linux")]
+    // Each of these modes is started only by a test of the scan source it needs.
     if mode == "fd-limit" || mode == "fd-exhausted" {
         capture_under_low_fd_limit(mode == "fd-exhausted");
     }
-    #[cfg(target_os = "linux")]
     if mode.starts_with("partial-environ:") {
         hold_partial_environment();
     }
-    #[cfg(target_os = "macos")]
     if mode == "restricted-job" || mode == "restricted-escape" {
         hold_restricted_job(mode == "restricted-escape");
         return;
@@ -262,7 +258,7 @@ fn native_recovery_refuses_a_reused_non_child_identity_and_scans_detached_tools(
     assert!(owner.try_exit().unwrap().is_some());
 }
 
-#[cfg(target_os = "linux")]
+/// Procfs scans pin each process with a descriptor (see [`ScanSource::Procfs`]).
 fn capture_under_low_fd_limit(exhaust: bool) {
     struct Children(Vec<libc::pid_t>);
     impl Drop for Children {
@@ -337,23 +333,26 @@ fn capture_under_low_fd_limit(exhaust: bool) {
     assert_eq!(gone.report().signals, 0);
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn native_recovery_fits_one_descriptor_per_process() {
+    if SCAN_SOURCE != ScanSource::Procfs {
+        return;
+    }
     let _scans = exclusive_scans();
     let root = tempfile::tempdir().unwrap();
     let (_child, _) = fixture(root.path(), &unique_mark(), "fd-limit");
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn native_recovery_explains_descriptor_exhaustion() {
+    if SCAN_SOURCE != ScanSource::Procfs {
+        return;
+    }
     let _scans = exclusive_scans();
     let root = tempfile::tempdir().unwrap();
     let (_child, _) = fixture(root.path(), &unique_mark(), "fd-exhausted");
 }
 
-#[cfg(target_os = "linux")]
 fn page_size() -> usize {
     // SAFETY: _SC_PAGESIZE requires no pointer arguments.
     let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
@@ -361,7 +360,7 @@ fn page_size() -> usize {
     size as usize
 }
 
-#[cfg(target_os = "linux")]
+/// The environment's address range, from fields 48 and 49 of `/proc/<pid>/stat`.
 fn environment_range(stat: &str) -> (usize, usize) {
     let fields = stat.rsplit_once(") ").unwrap().1;
     let mut addresses = fields.split_ascii_whitespace().skip(47);
@@ -370,7 +369,6 @@ fn environment_range(stat: &str) -> (usize, usize) {
     (start, end)
 }
 
-#[cfg(target_os = "linux")]
 fn hold_partial_environment() -> ! {
     let mark = std::env::var("ORG_SESSION_MARK").unwrap();
     let entry = format!("ORG_SESSION_MARK={mark}\0");
@@ -399,9 +397,11 @@ fn hold_partial_environment() -> ! {
     }
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn native_capture_quarantines_a_nul_terminated_partial_environment() {
+    if SCAN_SOURCE != ScanSource::Procfs {
+        return;
+    }
     let _scans = shared_scans();
     use org_supervise::recovery::MarkEvidence;
     for recorded_job in [false, true] {
@@ -466,12 +466,8 @@ fn native_capture_quarantines_a_nul_terminated_partial_environment() {
     }
 }
 
-#[cfg(target_os = "linux")]
-#[used]
-#[unsafe(link_section = ".init_array")]
-static LEADER_EXIT_FIXTURE: extern "C" fn() = start_leader_exit_fixture;
+org_platform::process::run_before_main!(LEADER_EXIT_FIXTURE = start_leader_exit_fixture);
 
-#[cfg(target_os = "linux")]
 extern "C" fn start_leader_exit_fixture() {
     // SAFETY: the loader has initialized libc and the test harness has yet to start.
     let mode = unsafe { libc::getenv(c"ORG_TEST_CASE".as_ptr()) };
@@ -495,14 +491,10 @@ extern "C" fn start_leader_exit_fixture() {
         // SAFETY: terminate this disposable test child on fixture initialization failure.
         unsafe { libc::_exit(125) };
     }
-    // SAFETY: exit only the calling thread. The worker keeps this process alive.
-    unsafe {
-        libc::syscall(libc::SYS_exit, 0i32);
-        libc::_exit(125);
-    }
+    // Exit only the calling thread. The worker keeps this process alive.
+    org_platform::process::testing::exit_this_thread()
 }
 
-#[cfg(target_os = "linux")]
 extern "C" fn hold_worker(_: *mut libc::c_void) -> *mut libc::c_void {
     let ready = b"RECOVERY_READY\n";
     // SAFETY: the fixture owns its stdout pipe. Bound its lifetime even on test failure.
@@ -513,9 +505,13 @@ extern "C" fn hold_worker(_: *mut libc::c_void) -> *mut libc::c_void {
     }
 }
 
-#[cfg(target_os = "linux")]
+/// Where a process whose main thread ended while a worker runs is a zombie in the
+/// scan's source (procfs), recovery must not take it for gone.
 #[test]
 fn native_recovery_keeps_a_record_when_a_zombie_leader_has_live_workers() {
+    if SCAN_SOURCE != ScanSource::Procfs {
+        return;
+    }
     let _scans = shared_scans();
     let root = tempfile::tempdir().unwrap();
     let (mut child, _) = fixture(root.path(), &unique_mark(), "leader-exit");
@@ -555,7 +551,6 @@ fn native_recovery_keeps_a_record_when_a_zombie_leader_has_live_workers() {
     assert!(Instant::now() >= submillisecond);
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn native_capture_reports_an_exited_unreaped_child_as_zombie() {
     let _scans = shared_scans();
@@ -584,14 +579,13 @@ fn native_capture_reports_an_exited_unreaped_child_as_zombie() {
     assert!(child.try_exit().unwrap().is_some());
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn hold_mutated_argv_fixture() {
-    unsafe extern "C" {
-        fn _NSGetArgv() -> *mut *mut *mut libc::c_char;
-    }
-    // SAFETY: _NSGetArgv provides this process's live argv vector and string.
-    let argv_zero = unsafe { **_NSGetArgv() };
+    // Only where the process's own argv[0] storage is exposed (macOS).
+    let Some(argv_zero) = org_platform::process::testing::argv_zero() else {
+        return;
+    };
+    // SAFETY: argv_zero is this process's live, NUL-terminated argv[0].
     if unsafe { std::ffi::CStr::from_ptr(argv_zero) } != c"ABC" {
         return;
     }
@@ -635,19 +629,14 @@ fn native_spawn(
         0
     );
     let mut attributes = unsafe { attributes.assume_init() };
-    #[cfg(target_os = "macos")]
     if new_session {
-        // Darwin POSIX_SPAWN_SETSID, also used by PreparedSpawn.
-        assert_eq!(
-            unsafe { libc::posix_spawnattr_setflags(&mut attributes, 0x0400) },
-            0
-        );
-    }
-    #[cfg(target_os = "linux")]
-    if new_session {
+        // The flag PreparedSpawn also uses.
         assert_eq!(
             unsafe {
-                libc::posix_spawnattr_setflags(&mut attributes, libc::POSIX_SPAWN_SETSID as _)
+                libc::posix_spawnattr_setflags(
+                    &mut attributes,
+                    org_platform::process::POSIX_SPAWN_SETSID,
+                )
             },
             0
         );
@@ -730,9 +719,13 @@ fn native_fixture_mark(
         .mark
 }
 
-#[cfg(target_os = "macos")]
+/// Where the scan reads a process's environment after the arguments counted at its
+/// start (sysctl), a process that moved a mark from its arguments is believed.
 #[test]
 fn native_capture_documents_the_mutated_argv_trust_boundary() {
+    if SCAN_SOURCE != ScanSource::Sysctl {
+        return;
+    }
     let _scans = shared_scans();
     use org_supervise::recovery::MarkEvidence;
     let mark = unique_mark();
@@ -755,9 +748,13 @@ fn native_capture_documents_the_mutated_argv_trust_boundary() {
     assert_eq!(observed, MarkEvidence::Present(mark));
 }
 
-#[cfg(target_os = "macos")]
+/// Where the system withholds a restricted process's environment (sysctl), the scan
+/// quarantines it.
 #[test]
 fn native_capture_quarantines_empty_argv_zero_and_restricted_processes() {
+    if SCAN_SOURCE != ScanSource::Sysctl {
+        return;
+    }
     let _scans = shared_scans();
     use org_supervise::recovery::MarkEvidence;
     let mark = std::ffi::CString::new(format!("ORG_SESSION_MARK={}", unique_mark())).unwrap();
@@ -802,7 +799,6 @@ fn native_capture_accepts_identical_duplicate_environment_marks() {
     assert_eq!(observed, MarkEvidence::Present(mark));
 }
 
-#[cfg(target_os = "macos")]
 fn hold_restricted_job(escape: bool) {
     let mark = std::ffi::CString::new(format!(
         "ORG_SESSION_MARK={}",
@@ -859,9 +855,11 @@ fn hold_restricted_job(escape: bool) {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn native_recovery_checkpoints_restricted_nohup_job_before_stopping_its_leader() {
+    if SCAN_SOURCE != ScanSource::Sysctl {
+        return;
+    }
     let _scans = shared_scans();
     let root = tempfile::tempdir().unwrap();
     let (mut owner, child) = fixture(root.path(), &unique_mark(), "restricted-job");
@@ -897,9 +895,11 @@ fn native_recovery_checkpoints_restricted_nohup_job_before_stopping_its_leader()
     assert!(owner.try_exit().unwrap().is_some());
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn native_recovery_warns_and_skips_unknown_restricted_setsid_escape() {
+    if SCAN_SOURCE != ScanSource::Sysctl {
+        return;
+    }
     let _scans = shared_scans();
     let root = tempfile::tempdir().unwrap();
     let (mut owner, child) = fixture(root.path(), &unique_mark(), "restricted-escape");

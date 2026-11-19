@@ -42,6 +42,49 @@ pub(super) fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
     refused()
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn become_subreaper() -> io::Result<bool> {
+    refused()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn is_stopped(_pid: libc::pid_t) -> io::Result<bool> {
+    refused()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
+    None
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn exit_this_thread() -> ! {
+    // SAFETY: ends only the calling thread; nothing it owns is used afterwards.
+    unsafe { libc::pthread_exit(std::ptr::null_mut()) }
+}
+
+/// No loader hook is known for this target: a consumer that needs one does not build.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __org_platform_before_main_refused {
+    ($name:ident = $function:expr) => {
+        ::core::compile_error!(
+            "org-platform has no adapter to run code before main on this target"
+        );
+    };
+}
+#[cfg(any(test, feature = "test-support"))]
+#[allow(unused_imports)]
+pub use crate::__org_platform_before_main_refused as run_before_main;
+
+/// No claim beyond POSIX.
+pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = false;
+pub(super) const SPAWNS_SUSPENDED: bool = false;
+/// No adapter spawns; no claim about the flag.
+pub(super) const POSIX_SPAWN_SETSID: libc::c_short = 0;
+pub(super) const SCAN_SOURCE: super::ScanSource = super::ScanSource::Unavailable;
+
 pub(super) enum Watch {}
 
 impl Watch {

@@ -127,10 +127,7 @@ impl Running {
 }
 
 /// `EAFNOSUPPORT`: the kernel has no IPv6 at all.
-#[cfg(target_os = "linux")]
-const NO_ADDRESS_FAMILY: i32 = 97;
-#[cfg(not(target_os = "linux"))]
-const NO_ADDRESS_FAMILY: i32 = 47;
+const NO_ADDRESS_FAMILY: i32 = org_platform::socket::EAFNOSUPPORT;
 
 /// The IPv6 loopback listener, or `None` only where this host has no IPv6 loopback (no address
 /// family, or `::1` not configured). The skip goes to stderr directly, not through the test

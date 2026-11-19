@@ -18,6 +18,19 @@ use tests::getsockopt;
 /// peer-query error is accepted.
 pub(super) const PEER_CLOSED_IS_EINVAL: bool = false;
 
+/// `MSG_CMSG_CLOEXEC` makes the kernel set close-on-exec with the receive.
+pub(super) const RECEIVED_CLOSE_ON_EXEC: super::ReceivedCloseOnExec =
+    super::ReceivedCloseOnExec::WithTheReceive(libc::MSG_CMSG_CLOEXEC);
+
+/// [`send_flags`] include `MSG_NOSIGNAL`.
+pub(super) const SEND_SUPPRESSES_SIGPIPE: bool = true;
+
+/// A full datagram peer answers `EAGAIN`: the send would block.
+pub(super) const DATAGRAM_PEER_FULL: i32 = libc::EAGAIN;
+
+/// A receive after the datagram peer closed only finds nothing to read.
+pub(super) const DATAGRAM_PEER_CLOSE_MAY_RESET: bool = false;
+
 pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
     // SAFETY: every bit pattern is valid for ucred's integer fields.
     let mut cred: libc::ucred = unsafe { std::mem::zeroed() };
@@ -51,6 +64,7 @@ pub(super) fn descriptor_receive(_fence: &Mutex<()>) -> io::Result<DescriptorRec
 
 impl DescriptorReceive<'_> {
     pub(super) fn flags(&self) -> libc::c_int {
+        // RECEIVED_CLOSE_ON_EXEC states this flag.
         libc::MSG_DONTWAIT | libc::MSG_CMSG_CLOEXEC
     }
 
@@ -85,4 +99,16 @@ pub(super) fn listening(fd: RawFd) -> io::Result<bool> {
         return Err(io::Error::last_os_error());
     }
     Ok(value != 0)
+}
+
+/// What `socket::testing` needs of this system (`test-support`).
+#[cfg(any(test, feature = "test-support"))]
+pub(super) mod testing {
+    /// Linux has Unix seqpacket sockets.
+    pub(in crate::socket) const SEQPACKET: bool = true;
+    /// Linux refuses `listen` on a connected socket with `EINVAL`.
+    pub(in crate::socket) const CONNECTED_STREAM_CAN_LISTEN: bool = false;
+
+    /// A Linux socket address has no length field.
+    pub(in crate::socket) fn set_address_length(_address: &mut libc::sockaddr_un) {}
 }

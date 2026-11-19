@@ -504,9 +504,13 @@ fn a_blocking_socket_still_sends_nonblocking_under_the_deadline() {
     assert!(matches!(result, Err(SendError::TimedOut)), "{result:?}");
 }
 
-#[cfg(target_os = "linux")]
+/// Where the send flags suppress `SIGPIPE` (Linux: `MSG_NOSIGNAL`), a send to a closed
+/// stream fails with `EPIPE` and raises no signal. Elsewhere the caller owns `SIGPIPE`.
 #[test]
 fn a_closed_stream_does_not_raise_sigpipe() {
+    if !org_platform::socket::SEND_SUPPRESSES_SIGPIPE {
+        return;
+    }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
@@ -521,7 +525,6 @@ fn a_closed_stream_does_not_raise_sigpipe() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("EPIPE without SIGPIPE"));
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn sigpipe_child() {
     if std::env::var_os("ORG_SOCKET_SEND_SIGPIPE_CHILD").is_none() {

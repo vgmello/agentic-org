@@ -60,6 +60,69 @@ pub(super) fn hardened() -> io::Result<bool> {
     super::shared::core_dumps_disabled()
 }
 
+/// macOS has no subreaper: an orphan goes to `launchd`.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn become_subreaper() -> io::Result<bool> {
+    Ok(false)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn is_stopped(pid: libc::pid_t) -> io::Result<bool> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: a correctly sized output record for PROC_PIDTBSDINFO.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if written != size {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: proc_pidinfo wrote the complete record.
+    Ok(unsafe { info.assume_init() }.pbi_status == libc::SSTOP)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
+    unsafe extern "C" {
+        fn _NSGetArgv() -> *mut *mut *mut libc::c_char;
+    }
+    // SAFETY: _NSGetArgv returns this process's live argv vector.
+    Some(unsafe { **_NSGetArgv() })
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn exit_this_thread() -> ! {
+    // SAFETY: ends only the calling thread; nothing it owns is used afterwards.
+    unsafe { libc::pthread_exit(std::ptr::null_mut()) }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __org_platform_before_main_macos {
+    ($name:ident = $function:expr) => {
+        #[used]
+        #[unsafe(link_section = "__DATA,__mod_init_func")]
+        static $name: unsafe extern "C" fn() = $function;
+    };
+}
+#[cfg(any(test, feature = "test-support"))]
+pub use crate::__org_platform_before_main_macos as run_before_main;
+
+/// XNU answers a signal to a group of only exited members with `EPERM`.
+pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = true;
+/// [`session_flags`] start the child suspended.
+pub(super) const SPAWNS_SUSPENDED: bool = true;
+/// Darwin spawn.h defines `POSIX_SPAWN_SETSID` as 0x0400; libc doesn't export it.
+pub(super) const POSIX_SPAWN_SETSID: libc::c_short = 0x0400;
+pub(super) const SCAN_SOURCE: super::ScanSource = super::ScanSource::Sysctl;
+
 /// The names `lsof` lists for this process's open files.
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
@@ -303,10 +366,9 @@ pub(super) unsafe fn add_chdir(
 pub(super) unsafe fn session_flags(
     _actions: *mut libc::posix_spawn_file_actions_t,
 ) -> io::Result<libc::c_int> {
-    // Darwin spawn.h defines SETSID=0x0400; libc doesn't export this flag.
     let flags = libc::POSIX_SPAWN_CLOEXEC_DEFAULT
         | libc::POSIX_SPAWN_START_SUSPENDED
-        | 0x0400
+        | libc::c_int::from(POSIX_SPAWN_SETSID)
         | libc::POSIX_SPAWN_SETSIGMASK
         | libc::POSIX_SPAWN_SETSIGDEF;
     Ok(flags)

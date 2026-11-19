@@ -72,6 +72,60 @@ pub(super) fn hardened() -> io::Result<bool> {
     Ok(super::shared::core_dumps_disabled()? && !dumpable()?)
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn become_subreaper() -> io::Result<bool> {
+    // SAFETY: PR_SET_CHILD_SUBREAPER takes an integer flag and no pointer.
+    if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(true)
+}
+
+/// The state field of `/proc/<pid>/stat`: `T` (stopped) or `t` (stopped for tracing).
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn is_stopped(pid: libc::pid_t) -> io::Result<bool> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let state = stat
+        .rsplit_once(") ")
+        .and_then(|(_, fields)| fields.chars().next())
+        .ok_or_else(|| invalid("unexpected /proc stat format"))?;
+    Ok(matches!(state, 'T' | 't'))
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
+    None
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn exit_this_thread() -> ! {
+    // SAFETY: the exit system call ends only the calling thread, even the main thread.
+    unsafe {
+        libc::syscall(libc::SYS_exit, 0i32);
+        libc::_exit(125)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __org_platform_before_main_linux {
+    ($name:ident = $function:expr) => {
+        #[used]
+        #[unsafe(link_section = ".init_array")]
+        static $name: unsafe extern "C" fn() = $function;
+    };
+}
+#[cfg(any(test, feature = "test-support"))]
+pub use crate::__org_platform_before_main_linux as run_before_main;
+
+/// Linux delivers a signal to a group of only exited members, or answers `ESRCH`.
+pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = false;
+/// [`session_flags`] start the child running.
+pub(super) const SPAWNS_SUSPENDED: bool = false;
+pub(super) const POSIX_SPAWN_SETSID: libc::c_short = libc::POSIX_SPAWN_SETSID as libc::c_short;
+pub(super) const SCAN_SOURCE: super::ScanSource = super::ScanSource::Procfs;
+
 /// The targets of this process's descriptor links that are absolute paths.
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
@@ -227,9 +281,8 @@ pub(super) unsafe fn session_flags(
 ) -> io::Result<libc::c_int> {
     // SAFETY: the caller's initialized actions.
     check(unsafe { libc::posix_spawn_file_actions_addclosefrom_np(actions, 3) })?;
-    let flags = i32::from(libc::POSIX_SPAWN_SETSID)
-        | libc::POSIX_SPAWN_SETSIGMASK
-        | libc::POSIX_SPAWN_SETSIGDEF;
+    let flags =
+        i32::from(POSIX_SPAWN_SETSID) | libc::POSIX_SPAWN_SETSIGMASK | libc::POSIX_SPAWN_SETSIGDEF;
     Ok(flags)
 }
 

@@ -12,6 +12,20 @@ use std::sync::{Mutex, MutexGuard};
 /// A peer-address query on a stream whose peer has closed fails with `EINVAL`.
 pub(super) const PEER_CLOSED_IS_EINVAL: bool = true;
 
+/// No receive flag sets close-on-exec: it is set under the caller's fence.
+pub(super) const RECEIVED_CLOSE_ON_EXEC: super::ReceivedCloseOnExec =
+    super::ReceivedCloseOnExec::UnderTheFence;
+
+/// macOS has no `MSG_NOSIGNAL`.
+pub(super) const SEND_SUPPRESSES_SIGPIPE: bool = false;
+
+/// A full datagram peer answers `ENOBUFS`, even while `poll` reports `POLLOUT`.
+pub(super) const DATAGRAM_PEER_FULL: i32 = libc::ENOBUFS;
+
+/// A receive after the datagram peer closed has been seen to fail with `ECONNRESET`,
+/// and also to find nothing to read.
+pub(super) const DATAGRAM_PEER_CLOSE_MAY_RESET: bool = true;
+
 pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
     let (mut uid, mut gid) = (0, 0);
     // SAFETY: both out-pointers are live and writable for the getpeereid call.
@@ -60,4 +74,18 @@ pub(super) fn listening(fd: RawFd) -> io::Result<bool> {
 
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+/// What `socket::testing` needs of this system (`test-support`).
+#[cfg(any(test, feature = "test-support"))]
+pub(super) mod testing {
+    /// macOS has no Unix seqpacket sockets (`EPROTONOSUPPORT`).
+    pub(in crate::socket) const SEQPACKET: bool = false;
+    /// macOS lets a connected stream socket be bound and listen.
+    pub(in crate::socket) const CONNECTED_STREAM_CAN_LISTEN: bool = true;
+
+    /// A BSD socket address states its own length.
+    pub(in crate::socket) fn set_address_length(address: &mut libc::sockaddr_un) {
+        address.sun_len = std::mem::size_of_val(address) as u8;
+    }
 }
