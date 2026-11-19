@@ -538,7 +538,7 @@ fn a_start_without_the_office_secrets_key_serves_the_office() {
 }
 
 #[test]
-fn a_wrong_secrets_key_still_opens_the_plain_databases_without_logging_keys() {
+fn a_wrong_secrets_key_still_opens_the_office_store_without_logging_keys() {
     let _process = process_isolation();
     let world = World::new();
     let mut first = started(&world);

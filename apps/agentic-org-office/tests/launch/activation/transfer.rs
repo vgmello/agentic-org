@@ -565,7 +565,7 @@ fn sender_retries_actual_backpressure_then_refuses_oversize_and_expired_deadline
 }
 
 #[test]
-fn losing_all_host_channels_terminates_without_ack_or_orphan_and_reopens_the_db() {
+fn losing_all_host_channels_terminates_without_ack_or_orphan_and_the_office_reopens() {
     let _process = process_isolation();
     let world = World::new();
     let session = ready_create(&world);
@@ -609,7 +609,7 @@ fn losing_all_host_channels_terminates_without_ack_or_orphan_and_reopens_the_db(
     );
     assert_reopens(&world);
     eprintln!(
-        "measured all-host-channel exit: code={:?} elapsed={:?}; no stdout ACK/orphan; DB reopened",
+        "measured all-host-channel exit: code={:?} elapsed={:?}; no stdout ACK/orphan; office reopened",
         status.code(),
         started.elapsed()
     );

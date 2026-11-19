@@ -514,7 +514,7 @@ fn hq_creation_whose_socket_path_cannot_exist_fails_before_anything_is_stored() 
 }
 
 #[test]
-fn rendezvous_eof_closes_all_databases_and_persists_the_create_instance() {
+fn rendezvous_eof_closes_the_office_cleanly_and_persists_the_create_instance() {
     let _process = process_isolation();
     let world = World::new();
     let session = ready_create(&world);
