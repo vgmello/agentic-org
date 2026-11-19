@@ -43,9 +43,8 @@ The design:
    What it does is recorded under the employee
    ([chat spec](../specs/chat-ux.md): "anything an agent's own subprocesses post is
    attributed to that agent").
-6. **Background tasks and sub-agents may stay running across turns while the session is active (owner clarification 2026-11-19).**
-   Inside a persistent headless session (`stream-json` / `app-server` with `stdin` kept open), an agent may start long-running background commands or background sub-agents and remain available to receive and answer new messages while they run. When a background task or sub-agent finishes, the runtime's completion notification (e.g., Claude's `system/task_notification`) wakes the session for a reactive follow-up turn whose usage and actions are attributed to the same employee and run. The office tracks active background work and **stops and reaps all remaining background tasks and sub-agents on Pause, Stop, Offboard, or stall timeout**, recording what was stopped.
-   *(Foreground-only execution remains available via `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` if a specific policy requires synchronous turn boundaries, but is not forced by default.)*
+6. **Background tasks and sub-agents stay enabled across turns while the session is active (owner clarification 2026-11-19).**
+   Inside a persistent headless session (`stream-json` / `app-server` with `stdin` kept open), an agent may start long-running background commands or background sub-agents and remain available to receive and answer new messages while they run. When a background task or sub-agent finishes, the runtime's completion notification (e.g., Claude's `system/task_notification`) wakes the session for a reactive follow-up turn (`started_by_kind = 'background_wake'`) whose usage and actions are attributed to the same employee and run. The office tracks active background work and **stops and reaps all remaining background tasks and sub-agents on Pause, Stop, Offboard, or stall timeout**, recording what was stopped.
 7. **Its cost is the employee's.** Every model call of a sub-agent is usage of the
    employee in that run, and is in the turn's cost.
 8. **Its model is the agent's model.** A sub-agent runs on the model of the agent's

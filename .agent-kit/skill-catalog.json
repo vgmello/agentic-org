@@ -174,7 +174,7 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "379ca93190007a8da2ef54a6a7645850b82c10e3a908739016211ec2fc37f8a0"
+      "sha256": "e88b469c39138f6da9fbd03124d004af86cc5684143202577e6f28ba3feb6f7e"
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
@@ -190,7 +190,7 @@
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "4125065e4872e4803c06ba85c9348de8b870234fc0e94ae1171cda8d05746224"
+      "sha256": "8b8cdcec54228b541c82dc2a47dd54ba9d052de16bbd5ca43db325b425556305"
     },
     {
       "path": "docs/independent-delivery.md",

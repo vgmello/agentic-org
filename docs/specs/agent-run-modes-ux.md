@@ -102,16 +102,20 @@ team; every other agent is created only by a hire that someone who may hire has 
 does not block hiring with the manual form. Creating configuration does not start a
 model turn.
 
-**Advanced settings (sandbox and permissions):** under an agent's or connection's
-Advanced Settings, the UI presents user-friendly security presets mapped strictly to
-`org-agent-runtime::PermissionMode`, defaulting to a sandboxed workspace with interactive
-approval routing (`safe_ask`, alongside `read_only`, `workspace_edits`, and
-`autonomous_sandboxed`;
+**Advanced settings (sandbox and permissions):** under an agent's execution configuration
+(`agent_execution_configs.permission_preset` in `execution.md`, never on a provider
+connection), the UI presents user-friendly security presets mapped strictly to
+`org-agent-runtime::PermissionMode` plus named `PermissionPolicy` rules—always subject
+to `effective_permission_mode`, the fixed denies, and mandatory escalation denials—defaulting
+to a sandboxed workspace with interactive approval routing (`safe_ask` → `Ask`, alongside
+`read_only` → `Plan`, `workspace_edits` → `AcceptEdits`, and `autonomous_sandboxed` →
+`AcceptEdits` + named workspace-scoped sandboxed command allow rules;
 [ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)).
 The product never exposes a bypass / unrestricted skip-permissions switch, preserving
 the `org-agent-runtime` no-bypass invariant. Browser-driven one-time subscription sign-in for
 connections (Claude paste-code / `setup-token` and Codex device-code) is also defined
-in ADR-0032 without exposing a browser terminal for agent sessions (ADR-0004).
+in ADR-0032 under ADR-0004 decision 3's narrow enrollment exception without exposing a
+browser terminal for agent sessions.
 
 ## 3. States and edge cases
 
@@ -132,7 +136,7 @@ in ADR-0032 without exposing a browser terminal for agent sessions (ADR-0004).
 
 - RUN-1 · Not in v1: an automatic run mode (Always on, On call, Scheduled) chosen at hire.
 - RUN-2 · Not in v1: Asleep and Offline presence derived from a run mode.
-- RUN-3 · A turn starts from an explicit Run, from the answer to a required ask, from an ask, a hand-off or a mention by name sent by another agent to an idle agent, or from an answer to a question the agent itself asked (ADR-0023, WAKE-1 to WAKE-7; ADR-0024). By [ADR-0028](../adr/0028-an-agent-is-always-available.md) a direct message or a mention from a person, and a task assigned to the agent, start a turn the same way (AVAIL-1 to AVAIL-6). An announcement, `@here`, and an ordinary post or an undirected question in a channel start nothing. An agent that is not working shows as Available, whether or not its process is running.
+- RUN-3 · A turn starts from an explicit Run, from the answer to a required ask, from an ask, a hand-off or a mention by name sent by another agent to an idle agent, or from an answer to a question the agent itself asked (ADR-0023, WAKE-1 to WAKE-7; ADR-0024), or from a reactive completion wake (`background_wake`) of the agent's own active background task or sub-agent ([ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6). By [ADR-0028](../adr/0028-an-agent-is-always-available.md) a direct message or a mention from a person, and a task assigned to the agent, start a turn the same way (AVAIL-1 to AVAIL-6). An announcement, `@here`, and an ordinary post or an undirected question in a channel start nothing. An agent that is not working shows as Available, whether or not its process is running.
 - RUN-4 · A second Run is Busy while the original turn is open; no second process or implicit queue is created.
 - RUN-5 · Turn history shows the logical turn, its actual routed attempts, durations, permitted amounts and completeness, and the concrete outcome; process reuse never merges attempt attribution.
 - RUN-6 · Not in v1: idle sleep and a maximum busy time per run.

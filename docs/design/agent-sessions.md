@@ -197,12 +197,17 @@ The decisions this design applies:
      and two grant no connector, so the MCP configuration is empty
      ([agent command line](agent-os-command-line.md), section 2.10). Claude's
      other tools act outside the office or the sandbox (cross-session messaging,
-     scheduling and remote triggers, work that continues in the background after a
-     result, worktrees, web access). The adapter passes the built-in names as `--tools`, the whole list as the
-     inline agent's `tools`, and every other known tool in `--disallowedTools`.
+     scheduling and remote triggers, worktrees, web access). The adapter passes the
+     built-in names as `--tools`, the whole list as the inline agent's `tools`, and
+     every other known risky tool in `--disallowedTools`.
      `ToolSearch` is disallowed and `ENABLE_TOOL_SEARCH=false`, so a granted
-     connector's tools are never deferred. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` turns off Bash's
-     background mode. The adapter checks every `init`: `init.tools` must be a subset of
+     connector's tools are never deferred. Per [ADR-0025](../adr/0025-agents-start-sub-agents.md)
+     decision 6 (amended 2026-11-19), background commands and background sub-agents
+     stay **enabled** in persistent `stream-json` sessions so an agent remains
+     conversational while background work completes; the adapter never disables
+     background tasks, and Pause, Stop, Offboard or stall timeout stops and reaps every
+     remaining background task and sub-agent.
+     The adapter checks every `init`: `init.tools` must be a subset of
      the allowlist, or the start fails or the session is stopped with the fast stop
      (an in-band `interrupt`, every later `can_use_tool` denied, `Abort`). Remote
      control stays off and a session reporting it active fails. Web access is off. Codex
@@ -356,7 +361,10 @@ A turn starts only from an explicit instruction, the answer to a required ask, b
 addressed by another agent or receiving an answer to its own question while idle
 ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), a direct message or a
 mention from a person or a task assigned to the agent
-([ADR-0028](../adr/0028-an-agent-is-always-available.md)), or a recovery. Other
+([ADR-0028](../adr/0028-an-agent-is-always-available.md)), a reactive completion wake
+from the agent's own active background task or background sub-agent
+(`background_wake`, [ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6), or
+a recovery. Other
 messages and schedules never create model work by themselves.
 A second open turn returns `BUSY`. An agent ends a turn with one line saying what it
 did; the office keeps it as the turn's outcome summary, shown in the turn's history and
@@ -656,7 +664,9 @@ office.
 - Claude: under the isolation switches, no user instruction file, skill, agent,
   command, synced plugin or user MCP server loads; `init.tools` holds only the allowlist
   under `--tools` and `--disallowedTools`; `init.mcp_servers` is empty while no
-  connector is granted; no work continues after a `result`; remote control is off.
+  connector is granted; active background tasks and sub-agents stay tracked and confined
+  inside the session, and no work continues after Pause, Stop, Offboard or stall timeout
+  (ADR-0025 decision 6, `SUB-5`); remote control is off.
 - Codex: the permissions profile holds every fixed deny in live turns; commits work in
   a worktree under it; managed requirements are tried to lock `danger-full-access` out
   of the interactive tool.

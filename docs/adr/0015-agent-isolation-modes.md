@@ -109,15 +109,19 @@ section 8.
     (a) On macOS, overriding `HOME` into the agent's private home breaks macOS Keychain
     lookup for Claude; supplying a 1-year `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`)
     avoids Keychain completely and lets both `HOME` and `CLAUDE_CONFIG_DIR` point into the
-    private home on macOS and headless Linux. (b) Codex OAuth refresh tokens are 30-day
-    single-use rotating tokens, so copying one `auth.json` across concurrent agents or
-    offices causes `refresh_token_already_used` revocations;
-    [ADR-0032](0032-browser-driven-cli-signin-and-remote-token-distribution.md) addresses
-    this via HQ-centralized single-lock refresh with `codex app-server`
-    `chatgptAuthTokens` (verified live on Codex `0.169.0` with zero `auth.json` written to
-    disk) or per-office `codex login --device-auth`. The macOS second-OS-account and Xcode
-    check of decision 7 (`ISO-6`) remains pending; `same-user` stays the default until it
-    passes.
+    private home on macOS (headless Linux behavior remains unverified until a Linux run).
+    (b) Codex OAuth refresh tokens are single-use rotating tokens, so copying one
+    `auth.json` across concurrent agents or offices risks `refresh_token_already_used`
+    revocations; [ADR-0032](0032-browser-driven-cli-signin-and-remote-token-distribution.md)
+    makes HQ-centralized single-lock refresh via `codex app-server` `chatgptAuthTokens`
+    the default for multi-office Codex pools (explicitly recorded as an exception to
+    "Works alone" in [architecture-non-negotiables.md](../architecture-non-negotiables.md);
+    synthetic protocol probe verified zero `auth.json` written to disk on Codex `0.169.0`;
+    live model turn and vendor-supported refresh path remain required before shipping),
+    with independent per-office `codex login --device-auth` available for extended offline
+    use. The macOS second-OS-account
+    and Xcode check of decision 7 (`ISO-6`) remains pending; `same-user` stays the default
+    until it passes.
 12. **Changing the filesystem root was evaluated and is the reserved `os-sandbox`
     mode, not v1.** The owner asked whether putting each agent in its own root
     directory (chroot) would be a cheap sandbox.

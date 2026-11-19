@@ -602,13 +602,14 @@ on the offers of design section 10.
   [C1 sign-in spike record](research/c1-sign-in-spike.md),
   [ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md).
 - **Recorded result (2026-11-19):** [C1 sign-in spike](research/c1-sign-in-spike.md)
-  records live findings on Claude Code `2.1.311` and Codex `0.169.0` (companion POC in
-  `pocs/console-attach/`) and selects **`org-agent-runtime-claude`** as the first adapter for C3
-  (persistent `stream-json` keeping background commands and sub-agents alive across turns
-  per ADR-0025 decision 6 amended 2026-11-19, plus `CLAUDE_CODE_OAUTH_TOKEN` for
-  portable/private-`HOME` sign-in). Remaining before `dedicated-user` becomes default:
-  the macOS second-OS-account + Xcode check (ADR-0015 decision 7 / `ISO-6`), and Codex
-  sub-agent isolation verification when `org-agent-runtime-codex` begins.
+  records macOS `27.2.1` findings on Claude Code `2.1.311` and Codex `0.169.0` (Linux
+  unverified pending a Linux run; companion POC in `pocs/console-attach/`) and selects
+  **`org-agent-runtime-claude`** as the first adapter for C3 (persistent `stream-json`
+  keeping background commands and sub-agents alive across turns per ADR-0025 decision 6
+  amended 2026-11-19, plus per-office `CLAUDE_CODE_OAUTH_TOKEN` for portable/private-`HOME`
+  sign-in). Remaining before `dedicated-user` becomes default: the macOS second-OS-account
+  + Xcode check (ADR-0015 decision 7 / `ISO-6`), Linux sign-in/isolation verification,
+  and Codex sub-agent isolation verification when `org-agent-runtime-codex` begins.
 - **Done when:** the result is recorded and the first adapter to build is chosen.
 - **Needs nothing else and can start at any time.**
 
@@ -676,13 +677,20 @@ on the offers of design section 10.
   agent receives, with the sections for what this build has, and their scenarios run
   ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8, 12, 15 and 21). Row
   FC-171.
+- **Enrollment and permission presets:** browser-driven one-time CLI enrollment
+  (`claude setup-token` / `codex login --device-auth`) inside wiped per-login `0700`
+  temp directories, worker-wrapped `agentic-org/provider-credential/v1` storage, and the
+  Advanced Settings `permission_preset` UI on `agent_execution_configs`
+  ([ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md);
+  `ENROLL-1` to `ENROLL-7`). Row FC-189.
 - **Read:** [agent sessions design](design/agent-sessions.md),
   [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
   [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-4),
+  [ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md) (ENROLL-1 to ENROLL-7),
   [ADR-0003](adr/0003-agent-messaging-office-first.md) decision 12,
   [employee supervision UX](specs/employee-supervision-ux.md) (EMP criteria). Rows FC-031,
-  FC-098, FC-100, FC-101.
+  FC-098, FC-100, FC-101, FC-189.
 - **Code today:** `crates/org-agent-runtime` is the contract; only `crates/org-supervise`
   uses its types, and nothing launches an agent.
   `crates/org-supervise` starts, stops and cleans up processes; it is used only to

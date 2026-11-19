@@ -107,7 +107,7 @@ crates/
   org-command/                       # The command contract: table, parser, envelope, help, schemas, contract tests
   org-platform/                      # Every OS difference: platform contracts and their macOS, Linux and refusing adapters
   org-socket/                        # Portable Unix-socket I/O: ticked reads, descriptor passing
-  org-agent-runtime/                       # Vendor runtime contract and conformance support
+  org-agent-runtime/                 # Vendor runtime contract and conformance support
   org-supervise/                     # OS process ownership and cleanup
   org-process/                       # Process and standard resolution
   org-docs/                          # Document and front-matter parsing and editing
@@ -118,7 +118,7 @@ crates/
   org-copilot/                       # Bounded draft-only helper
   # Added when their first caller is built:
   org-git/                           # Local Git adapter
-  org-agent-runtime-claude/                # Vendor adapters behind org-agent-runtime
+  org-agent-runtime-claude/          # Vendor adapters behind org-agent-runtime
   org-agent-runtime-codex/
   org-agent-runtime-agy/
   org-office-sessions/               # Agent sessions in the office (agent-sessions design)

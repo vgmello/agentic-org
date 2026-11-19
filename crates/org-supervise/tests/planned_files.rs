@@ -350,17 +350,13 @@ fn runtime_mapper_rejects_injection_and_duplicate_switches_before_writes() {
         assert!(prepare(&root, launch, &context(&root)).is_err());
     }
     let mut launch = plan(&root);
-    launch.env_add = [
-        "DISABLE_AUTOUPDATER",
-        "ENABLE_TOOL_SEARCH",
-        "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
-    ]
-    .map(|name| {
-        (
-            org_agent_runtime::EnvName::try_from(name).unwrap(),
-            "false".into(),
-        )
-    })
-    .into();
+    launch.env_add = ["DISABLE_AUTOUPDATER", "ENABLE_TOOL_SEARCH"]
+        .map(|name| {
+            (
+                org_agent_runtime::EnvName::try_from(name).unwrap(),
+                "false".into(),
+            )
+        })
+        .into();
     prepare(&root, launch, &context(&root)).unwrap();
 }

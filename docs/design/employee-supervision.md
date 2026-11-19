@@ -157,10 +157,13 @@ process text. No process edit invents commands or changes tool permissions.
 
 Goals and goal reminders, automatic scheduling, generated native agent definitions
 and private specialists, delegation chosen by a process, and memory checkpoints are not
-part of v1. Starting a sub-agent inside the vendor tool is
-([ADR-0025](../adr/0025-agents-start-sub-agents.md)): it runs within the turn, in the
-parent's sandbox and under the office's rules; the office grants it nothing of its own
-and tracks no separate job for it. EMP criteria about these features describe later work.
+part of v1. Starting a sub-agent or background task inside the vendor tool is
+([ADR-0025](../adr/0025-agents-start-sub-agents.md)): it runs in the parent's sandbox
+and under the office's rules, may stay active across turns inside the live session so
+the agent remains conversational while background work completes (decision 6), is
+stopped and reaped on Pause, Stop, Offboard or stall timeout (`SUB-5`), and is granted
+nothing of its own beyond the employee's permissions. EMP criteria about these features
+describe later work.
 
 ## 6. Validation
 
