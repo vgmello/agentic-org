@@ -72,9 +72,14 @@ where
         .filter(|e| e.home_team_id == team.id && e.status != EmployeeStatus::Inactive)
         .count();
     if child_teams > 0 || members > 0 {
+        let count = |n: usize, one: &str, many: &str| match n {
+            1 => format!("1 {one}"),
+            _ => format!("{n} {many}"),
+        };
         let message = format!(
-            "the team still has {child_teams} active teams and {members} employees: \
-             move or archive them first"
+            "the team still has {} and {}: move or archive them first",
+            count(child_teams, "active team", "active teams"),
+            count(members, "employee", "employees"),
         );
         return reject(RejectCode::NotEmpty, message);
     }

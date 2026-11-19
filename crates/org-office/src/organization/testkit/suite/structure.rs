@@ -182,6 +182,19 @@ pub fn a_subtree_move_rewrites_every_path_once<E: OrganizationEngine, G>(
     bench.created_team(4, 0x23, TEAM);
     bench.add_person(5, 0x31, 0x21);
     bench.add_person(6, 0x32, 0x22);
+    // An agent homed below the moved team (no command places one before C3).
+    let mut agent = bench.employee(HR);
+    agent.id = id(0x3b);
+    agent.handle = "agent3b".into();
+    agent.builtin_key = None;
+    agent.home_team_id = id(0x22);
+    let agent_path = profile_file(&[TEAM, 0x21, 0x22], EmployeeKind::Agent, 0x3b);
+    let placed = Change::new(Op::CreateTeam.ack())
+        .put(durable(&agent_path), records::encode_employee(&agent));
+    assert_eq!(
+        bench.write(placed).map(|r| r.outcome),
+        Ok(Outcome::Completed)
+    );
     let before = bench.state_files();
     let generation = bench.generation();
     let moved_b = bench.team(0x22);
@@ -195,12 +208,14 @@ pub fn a_subtree_move_rewrites_every_path_once<E: OrganizationEngine, G>(
         team_file(&[TEAM, 0x21, 0x22]),
         profile_file(&[TEAM, 0x21], EmployeeKind::Person, 0x31),
         profile_file(&[TEAM, 0x21, 0x22], EmployeeKind::Person, 0x32),
+        agent_path.clone(),
     ];
     let new = [
         team_file(&[TEAM, 0x23, 0x21]),
         team_file(&[TEAM, 0x23, 0x21, 0x22]),
         profile_file(&[TEAM, 0x23, 0x21], EmployeeKind::Person, 0x31),
         profile_file(&[TEAM, 0x23, 0x21, 0x22], EmployeeKind::Person, 0x32),
+        profile_file(&[TEAM, 0x23, 0x21, 0x22], EmployeeKind::Agent, 0x3b),
     ];
     for path in &old {
         assert!(!after.contains_key(path), "{path} is still there");
@@ -337,7 +352,7 @@ pub fn archive_needs_an_empty_team<E: OrganizationEngine, G>(open: &dyn Fn() -> 
     let refused = bench.refused(5, &bench.archive(0x21));
     assert_eq!(refused.code, RejectCode::NotEmpty);
     assert!(
-        refused.message.contains("1 active teams and 1 employees"),
+        refused.message.contains("1 active team and 1 employee:"),
         "{refused:?}"
     );
     bench.done(6, &bench.archive(0x22));
@@ -349,7 +364,7 @@ pub fn archive_needs_an_empty_team<E: OrganizationEngine, G>(open: &dyn Fn() -> 
     let refused = bench.refused(11, &bench.archive(0x21));
     assert_eq!(refused.code, RejectCode::NotEmpty);
     assert!(
-        refused.message.contains("1 active teams and 0 employees"),
+        refused.message.contains("1 active team and 0 employees:"),
         "{refused:?}"
     );
     bench.done(12, &bench.archive(0x23));
@@ -542,6 +557,8 @@ pub fn deactivate_sets_inactive_and_offboarded_at_and_keeps_the_handle<E: Organi
     code(8, bench.refused(8, &bench.move_person(0x31, 0x22)));
     // An agent is not deactivated here.
     code(9, bench.refused(9, &deactivation(&bench, HR)));
+    let hr = UpdatePerson::new(id(HR), bench.employee(HR).meta.revision);
+    code(10, bench.refused(10, &hr));
     assert_eq!(text(&bench.state_files()), text(&files));
 }
 
@@ -581,7 +598,27 @@ pub fn nobody_new_reports_to_an_inactive_person<E: OrganizationEngine, G>(
     bench.deactivate(6, 0x32);
     let refused = bench.refused(7, &manager(&bench, 0x31, 0x32));
     assert_eq!(refused.code, RejectCode::InvalidRequest);
+    // Nor to a paused agent (one is paused here as its file would carry it).
+    let mut hr = bench.employee(HR);
+    hr.status = EmployeeStatus::Paused;
+    let path = durable(&profile_file(&[TEAM], EmployeeKind::Agent, HR));
+    let paused = Change::new(Op::CreateTeam.ack()).put(path, records::encode_employee(&hr));
+    assert_eq!(
+        bench.write(paused).map(|r| r.outcome),
+        Ok(Outcome::Completed)
+    );
+    let refused = bench.refused(8, &manager(&bench, 0x31, HR));
+    assert_eq!(refused.code, RejectCode::InvalidRequest);
     assert_eq!(bench.employee(0x31).reports_to_employee_id, None);
+    // An active agent is fine.
+    hr.status = EmployeeStatus::Active;
+    let path = durable(&profile_file(&[TEAM], EmployeeKind::Agent, HR));
+    let active = Change::new(Op::CreateTeam.ack()).put(path, records::encode_employee(&hr));
+    assert_eq!(
+        bench.write(active).map(|r| r.outcome),
+        Ok(Outcome::Completed)
+    );
+    bench.set_manager(9, 0x31, Some(HR));
 }
 
 /// R14: the owner is never deactivated, ahead of every other rule that would refuse it.
@@ -608,7 +645,7 @@ pub fn deactivating_refuses_a_lead_or_a_manager<E: OrganizationEngine, G>(
     let refused = bench.refused(9, &deactivation(&bench, 0x31));
     assert_eq!(refused.code, RejectCode::NotEmpty);
     assert!(refused.message.contains("TEAM-2"), "{refused:?}");
-    assert!(refused.message.contains("manager of 1"), "{refused:?}");
+    assert!(refused.message.contains("manager of @p32"), "{refused:?}");
     assert_eq!(text(&bench.state_files()), text(&files));
 
     bench.set_lead(10, 0x21, None);
@@ -1020,7 +1057,15 @@ fn refused_by_validation<E: OrganizationEngine, G>(
     let generation = bench.generation();
     match bench.write(faulty) {
         // An engine constraint stops the write: nothing is accepted.
-        Err(StoreError::Internal(_) | StoreError::Projection(_)) => {
+        Err(error @ (StoreError::Internal(_) | StoreError::Projection(_))) => {
+            // The engine's own constraint or reference check, not some other failure.
+            let text = format!("{error:?}");
+            assert!(
+                ["constraint", "references", reason]
+                    .iter()
+                    .any(|t| text.contains(t)),
+                "{text}"
+            );
             assert_eq!(bench.generation(), generation);
             return;
         }

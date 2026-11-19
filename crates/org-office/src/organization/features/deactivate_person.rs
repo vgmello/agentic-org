@@ -67,18 +67,19 @@ where
     }
     let led = led_by(view, &person.id)?;
     let employees = view.employees()?;
-    let reports = employees
+    let reports: Vec<&str> = employees
         .iter()
         .filter(|e| e.reports_to_employee_id.as_ref() == Some(&person.id))
         .filter(|e| e.status != EmployeeStatus::Inactive)
-        .count();
-    if led.is_some() || reports > 0 {
+        .map(|e| e.handle.as_str())
+        .collect();
+    if led.is_some() || !reports.is_empty() {
         let mut clear = Vec::new();
         if let Some(team) = &led {
             clear.push(format!("the lead of {}", named(team)));
         }
-        if reports > 0 {
-            clear.push(format!("the manager of {reports} employees"));
+        if !reports.is_empty() {
+            clear.push(format!("the manager of {}", handles(&reports)));
         }
         let message = format!(
             "{} is {}: appoint another lead or manager first",
@@ -103,4 +104,20 @@ where
     Ok(Change::new(Op::DeactivatePerson.ack())
         .put(path, records::encode_employee(&inactive))
         .reply(reply))
+}
+
+/// The first few reports by handle (`@a, @b and 3 more`): enough to say whose line to
+/// change, never an unbounded message.
+fn handles(reports: &[&str]) -> String {
+    const NAMED: usize = 5;
+    let named: Vec<String> = reports
+        .iter()
+        .take(NAMED)
+        .map(|h| format!("@{h}"))
+        .collect();
+    let more = reports.len().saturating_sub(NAMED);
+    match more {
+        0 => named.join(", "),
+        _ => format!("{} and {more} more", named.join(", ")),
+    }
 }

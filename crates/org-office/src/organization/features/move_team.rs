@@ -76,6 +76,8 @@ where
     else {
         return invalid("a team has no chain of parents to a top-level team");
     };
+    // A loop is told before the depth limit (an `invalid_request`): a team under itself
+    // has no depth to measure.
     if above.contains(&team.id) {
         let rule = "a team cannot move under itself or a team below it";
         return reject(RejectCode::Cycle, rule);

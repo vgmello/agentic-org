@@ -153,8 +153,9 @@ where
         if manager.id == person.id {
             return reject(RejectCode::InvalidRequest, "nobody reports to themselves");
         }
-        if manager.status == EmployeeStatus::Inactive {
-            let rule = "nobody new reports to an inactive employee";
+        // A line names an employee at work: not one who left, nor a paused agent.
+        if manager.status != EmployeeStatus::Active {
+            let rule = "nobody new reports to an employee who is not active";
             return reject(RejectCode::InvalidRequest, rule);
         }
     }
