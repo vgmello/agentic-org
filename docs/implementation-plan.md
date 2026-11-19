@@ -473,6 +473,9 @@ on the offers of design section 10.
   roles is enforced by the office and covered by the engine-independent organization
   suite; each action in the outcome works from the command line and through `/api/v1`
   and is in the history. The screen criteria (TEAM, PEOPLE, REPORT) are finished in U1.
+  `operation.get` for organization commands answers from the store's receipts,
+  replacing the `unsupported` B1b left (a client learns a committed command's answer
+  without resending it).
 - **Needs:** B1a to start, B1b to finish; A5.
 
 ### B3 · Projects, the minimum
@@ -740,6 +743,16 @@ on the offers of design section 10.
   engine-independent messaging suite passes; ACK-1 is measured on a Mac and recorded.
   B6 also restores LNX-1's send and read through the office in
   `apps/agentic-org/tests/lnx1.rs`, which B1b reduced to a directory read and a refused send.
+  B6 serves again what B1b switched off with the old tables, through the office or A3's
+  `/events`, each with its scenario as a test: `subscribe` (another caller's committed
+  `team.create` arrives as `org.changed`; a refused command or a retry is no event; a position
+  beyond the log is `snapshot_required`; after a restart a subscriber resuming from its
+  position gets the backlog, then live changes); live events (`message.received` with the
+  header, never the body; `member.presence_changed` after `status.set`); and `inbox.changed`
+  hints (a send to the owner reaches the owner's subscriber within 1 s with the counts
+  `inbox.list` gives and the next position, none to others, no second hint for a replay;
+  offboarding an agent placed in no office clears its problem the same way). The inbox
+  position then has one rule: the hint clock and the list both take the organization's head.
 - **Needs:** B2, A5, B1c. The browser part needs A3.
 
 ### B7 · Asks and questions

@@ -1,7 +1,7 @@
 //! `agent-os` against a real office server: `who` goes through the office; `msg send | inbox |
 //! read | wait` reach it and are refused, because the office does not serve messaging until B6
-//! rebuilds it on the office store; and `send` falls back to the local spool when the office is
-//! down.
+//! rebuilds it on the office store; and a `send` to an office that is down is refused (exit 5)
+//! without spooling.
 //!
 //! The server is the real one: this test binary, started with `ORG_AGENT_TEST_OFFICE_SERVER`
 //! set, runs exactly what `agentic-org-office`'s `main` runs (its library). It is driven the way

@@ -1,7 +1,10 @@
 //! The office's socket: JSON lines (`org_proto::frame`), one thread per connection. It answers
 //! `hello`, `org.snapshot`, `msg.bind`, `who`, `msg.send` / `msg.inbox` / `msg.read` /
 //! `msg.wait`, `subscribe` and the organization commands, which only an app-bound connection may
-//! send, and the work writes made as a bound member; other methods are `unknown_method`. A `msg.wait` is held on a thread of its own
+//! send, and the work writes made as a bound member; other methods are `unknown_method`. With no
+//! `mailbox` or `feed` port (the worker since B1b) the messaging calls and `subscribe` answer
+//! `unsupported`, and composition answers work writes, `status.set` and `operation.get` the same
+//! way; see [`OfficePorts`]. A `msg.wait` is held on a thread of its own
 //! (at most [`MAX_HELD`] per connection), so the connection keeps answering meanwhile. When the
 //! server stops, every connection is closed and its thread joined BEFORE the office is, so no thread
 //! touches a database that is closing.
