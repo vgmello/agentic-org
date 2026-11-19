@@ -146,4 +146,13 @@ describe('making sure the next step runs', () => {
 		expect(run.steps).toHaveLength(2);
 		expect(runner.report('x3', first.id, 'context_sufficient')).toMatch(/no longer current/);
 	});
+
+	it('retries a rejected report under the same op id once it is accepted', () => {
+		const { runner } = setup([]);
+		const run = runner.start('dss', { task: 'T-1' });
+		const first = run.steps[0];
+		expect(runner.report('r1', first.id, 'context_sufficient')).toMatch(/has not started/);
+		runner.begin(first.id);
+		expect(runner.report('r1', first.id, 'context_sufficient')).toMatch(/accepted/);
+	});
 });

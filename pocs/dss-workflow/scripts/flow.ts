@@ -13,7 +13,7 @@ import { Runner, emptyState, type RunState } from '../src/lib/runtime.ts';
 const USAGE = `usage: flow.ts [--state FILE] [--caps task,project] <command>
   start <trigger> [--task ID]      start a run
   begin <step>                     agent: my turn for this step started
-  report <step> <outcome> [flag..] agent: report the block's outcome
+  report <step> <outcome> [flag|!flag..] agent: report the block's outcome
   task <id> <${TASK_STATUSES.join('|')}>   host: move a task
   standards <true|false>           host: project fact standards_defined
   tick                             time passes; expired dispatches retry
@@ -72,9 +72,11 @@ function main() {
 			console.log(`step ${args[0]} running`);
 			break;
 		case 'report': {
-			if (args.length < 2) fail('report takes <step> <outcome> [flag...]');
+			if (args.length < 2) fail('report takes <step> <outcome> [flag|!flag...]');
 			const [step, outcome, ...flags] = args;
-			const result = runner.report(`${step}:${outcome}`, step, outcome, Object.fromEntries(flags.map((f) => [f, true])));
+			// `!flag` clears a flag the run holds; a bare `flag` sets it.
+			const parsed = Object.fromEntries(flags.map((f) => (f.startsWith('!') ? [f.slice(1), false] : [f, true])));
+			const result = runner.report(`${step}:${outcome}`, step, outcome, parsed);
 			console.log(result);
 			if (result.startsWith('rejected')) process.exitCode = 3;
 			break;

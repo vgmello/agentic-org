@@ -106,16 +106,19 @@ bun run flow --state /tmp/s.json task T-1 in_review   # host move → reviewer d
 - A block has one owning agent; pairing (architect + staff engineer) is only in the Markdown.
 - Svelte Flow layout is hand-placed; labels overlap on back-edges.
 
-### Known issues (from the round-2 review, not fixed)
+### Known issues (from the round-2 and round-3 reviews, not fixed unless noted)
 
 Committed as-is while the direction is undecided (see DESIGN.md, *Workflow or agent-driven*).
 Fix these before reusing the runner code:
 
-- **Rejected reports are cached** under their op id, and the CLI's op id is
-  `<step>:<outcome>`, so retrying a rejected report (e.g. `approved` before the task is
-  `done`) replays the rejection forever. Only accepted results should be receipted.
 - **Flags stick to the run** (`run.flags = ...` in `applyReport`), so a later loop
-  (`new_version`) reuses an old `standards_changed`. Flags should apply to one report only.
+  (`new_version`) reuses an old `standards_changed` unless the agent clears it with
+  `!standards_changed`. Flags should apply to one report only (not yet done).
+- **A duplicate of an accepted report replays `accepted`** (exit 0) even though a fresh
+  call would now be rejected. State is not double-applied; only the output is misleading.
+- **Concurrent CLI writes are not atomic**: the state file is written via a fixed
+  `<file>.tmp` name, so two processes writing the same `--state` can clobber each other.
+  Single-writer use only.
 - **Dispatch runs before the caller saves state**, so "one commit, then dispatch" is only
   half true; the crash test throws in the dispatcher rather than crashing after the commit.
   Needs an outbox drained after persisting.

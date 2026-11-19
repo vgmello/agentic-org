@@ -123,7 +123,8 @@ export class Runner {
 		const replay = this.state.receipts[opId];
 		if (replay !== undefined) return replay;
 		const result = this.applyReport(stepId, outcome, flags);
-		this.state.receipts[opId] = result;
+		// Only accepted reports are receipted, so a rejected one can be retried once the run allows it.
+		if (result.startsWith('accepted')) this.state.receipts[opId] = result;
 		this.reconcile();
 		return result;
 	}
