@@ -1,5 +1,12 @@
 <script lang="ts">
-	import NotBuilt from '$lib/components/NotBuilt.svelte';
+	import { pageTitle } from '$lib/nav';
+	import { RolesList } from '$lib/modules/roles';
+
+	let { data } = $props();
 </script>
 
-<NotBuilt title="Roles" place="Roles" area="Organization settings" />
+<svelte:head><title>{pageTitle('Roles', 'Organization settings')}</title></svelte:head>
+
+{#key data.connection.organization.id}<RolesList
+		organizationId={data.connection.organization.id}
+	/>{/key}
