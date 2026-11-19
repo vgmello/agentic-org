@@ -30,6 +30,10 @@
 			"why": "new spec; not yet run on WebKit (BUG-169b)"
 		},
 		{
+			"spec": "updates.spec.ts",
+			"why": "new spec; not yet run on WebKit (BUG-169b)"
+		},
+		{
 			"spec": "agents-roster.spec.ts",
 			"why": "not yet run on WebKit (BUG-169b)"
 		},
@@ -452,7 +456,8 @@
 				"member-profile.spec.ts",
 				"roles.spec.ts",
 				"access.spec.ts",
-				"agent-setup.spec.ts"
+				"agent-setup.spec.ts",
+				"updates.spec.ts"
 			],
 			"sources": [
 				"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
@@ -658,7 +663,7 @@
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
 			"src/lib/modules/shell/**",
-			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,offices,projects,workitems,docs,features,releases,insights,costs,budgets,access}/**",
+			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,offices,projects,workitems,docs,features,releases,insights,costs,budgets,access,updates}/**",
 			"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
 			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",
