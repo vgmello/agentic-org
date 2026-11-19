@@ -670,6 +670,30 @@ fn discard_uses_zero_fds_no_receipt_and_no_secret() {
     assert!(world.folder(OFFICE).join("office.json").exists());
 }
 
+/// A folder the host reserved writer custody in is never discarded, whether it holds the
+/// marker or only a staging file of it (a host killed while installing it), even with nothing
+/// else there: the refusal is the fixed storage error, not "an office exists".
+#[test]
+fn discard_refuses_a_folder_holding_the_hosts_custody_marker_or_its_staging() {
+    let _process = process_isolation();
+    for name in [
+        "selected-writer.required",
+        ".selected-writer-01ARZ3NDEK.tmp",
+    ] {
+        let world = World::new();
+        std::fs::create_dir_all(world.folder(OFFICE)).unwrap();
+        let marker = world.folder(OFFICE).join(name);
+        std::fs::write(&marker, b"selected").unwrap();
+        let mut session = handshake(&world, FirstLine::Discard, INSTANCE, None);
+        let failed = session.event();
+        assert_eq!(failed["event"], "failed", "{name}: {failed}");
+        assert_eq!(failed["code"], "storage_error", "{name}: {failed}");
+        assert!(!session.run.wait().success());
+        session.no_stdout();
+        assert_eq!(std::fs::read(&marker).unwrap(), b"selected", "{name}");
+    }
+}
+
 #[test]
 fn cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
     let _process = process_isolation();

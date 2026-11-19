@@ -473,7 +473,7 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
     assert_eq!(
         api_code(
             refused
-                .call::<MsgBind>(&MsgBindParams::member(&hr()))
+                .call::<MsgBind>(&MsgBindParams::member(hr()))
                 .unwrap_err()
         ),
         ErrorCode::NotAuthorized

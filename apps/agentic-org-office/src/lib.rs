@@ -136,8 +136,10 @@ fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
             "not a plain office id",
         );
     };
-    // A folder the host reserved writer custody for is never discarded: a discard claims none.
-    if std::fs::symlink_metadata(folder.join("selected-writer.required")).is_ok() {
+    // A folder the host reserved writer custody for (its marker, or a staging file of one) is
+    // never discarded: a discard claims none. It is the reservation's, not a finished office,
+    // so the refusal is the same fixed storage error for both, whatever the folder holds.
+    if holds_writer_custody(&folder) {
         return fail(
             &mut control,
             FailCode::StorageError,
@@ -150,6 +152,25 @@ fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
             0
         }
         Err(e) => fail_with(&mut control, &e),
+    }
+}
+
+/// Whether the host reserved writer custody in `folder`: `selected-writer.required`, or a
+/// `.selected-writer-*.tmp` staging file a host killed while installing it left. A folder
+/// that can't be listed counts too: it is kept.
+fn holds_writer_custody(folder: &Path) -> bool {
+    if std::fs::symlink_metadata(folder.join("selected-writer.required")).is_ok() {
+        return true;
+    }
+    match std::fs::read_dir(folder) {
+        Ok(entries) => entries.into_iter().any(|entry| {
+            entry.map_or(true, |entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with(".selected-writer-") && name.ends_with(".tmp")
+            })
+        }),
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
     }
 }
 

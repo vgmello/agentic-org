@@ -278,10 +278,31 @@ pub(crate) fn unfinished_folders(home: &Path) -> io::Result<Vec<String>> {
         .filter(|(_, path)| {
             !has_office_file(path)
                 && !path.join("hq-creation.v1.json").exists()
-                && !path.join("selected-writer.required").exists()
+                && !holds_writer_custody(path)
         })
         .map(|(folder, _)| folder)
         .collect())
+}
+
+/// Whether the host reserved writer custody in `folder`: its `selected-writer.required`
+/// marker, or a staging file of one (`.selected-writer-*.tmp`, which a host killed while it
+/// installed the marker leaves). Such a folder is the reservation's: its protected operation
+/// finishes or keeps it, and a worker's discard refuses it, so it is never "unfinished". A
+/// folder that can't be read is kept as well.
+fn holds_writer_custody(folder: &Path) -> bool {
+    if fs::symlink_metadata(folder.join("selected-writer.required")).is_ok() {
+        return true;
+    }
+    let Ok(entries) = fs::read_dir(folder) else {
+        return true;
+    };
+    entries.into_iter().any(|entry| {
+        entry.map_or(true, |entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(".selected-writer-") && name.ends_with(".tmp")
+        })
+    })
 }
 
 /// Moves an office folder the host refuses (a refused create's, or one holding another office's
@@ -625,6 +646,16 @@ mod tests {
         write(home, "STORED", b"{broken");
         // Refused creates, moved aside: neither unfinished nor stored.
         fs::create_dir_all(offices.join(REFUSED_DIR_NAME).join("REFUSED")).unwrap();
+        // Folders the host reserved writer custody in: its marker, or only a staging file of
+        // one that a killed host left. They are the reservation's, never discarded.
+        fs::create_dir_all(offices.join("MARKED")).unwrap();
+        fs::write(offices.join("MARKED/selected-writer.required"), b"selected").unwrap();
+        fs::create_dir_all(offices.join("STAGED")).unwrap();
+        fs::write(
+            offices.join("STAGED/.selected-writer-01ARZ.tmp"),
+            b"selected",
+        )
+        .unwrap();
         assert_eq!(unfinished_folders(home).unwrap(), ["UNFINISHED"]);
         assert!(!is_stored(home, REFUSED_DIR_NAME));
         assert!(is_stored(home, "STORED"));
