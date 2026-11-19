@@ -1,7 +1,6 @@
 <script lang="ts">
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import KeyboardSection from '$lib/modules/preferences/features/keyboard/KeyboardSection.svelte';
-	import TimeZoneSection from '$lib/modules/preferences/features/time-zone/TimeZoneSection.svelte';
+	import { KeyboardSection, TimeZoneSection } from '$lib/modules/preferences';
 	import { pageTitle } from '$lib/nav';
 
 	let { data } = $props();

@@ -17,8 +17,7 @@
 		type ActivityRow
 	} from '$lib/modules/activity';
 	import { InboxListRow, inboxApi, openCount, openItems, type InboxItem } from '$lib/modules/inbox';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import { durationWords, formatDate } from '$lib/modules/preferences/time';
+	import { accountZone, durationWords, formatDate } from '$lib/modules/preferences';
 	import { homeApi } from '../../api';
 	import { Loader } from '../../loader.svelte';
 	import HomeSection from '../section/HomeSection.svelte';

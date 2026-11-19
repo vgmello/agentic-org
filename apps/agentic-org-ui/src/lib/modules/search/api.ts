@@ -1,5 +1,5 @@
 import { unavailableCall } from '$lib/platform/unavailable-api';
-import type { SearchResults } from '$lib/modules/shell/types';
+import type { SearchResults } from '$lib/modules/shell';
 
 /** The results page behind "See all results": every match per group, not the top-bar's first five. */
 export interface SearchPageApi {

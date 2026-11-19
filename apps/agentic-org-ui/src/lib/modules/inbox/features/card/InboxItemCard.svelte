@@ -18,8 +18,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Label } from '$lib/components/ui/label';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import { eventTime, formatFull, relativeUntil } from '$lib/modules/preferences/time';
+	import { accountZone, eventTime, formatFull, relativeUntil } from '$lib/modules/preferences';
 	import { KIND_WORD, type InboxItem, type InboxRequest } from '../../types';
 
 	let {

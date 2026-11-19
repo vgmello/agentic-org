@@ -148,7 +148,6 @@
 	"src/lib/modules/messaging/features/manage-channel/MembersPanel.svelte": "sha256:8bdc216d4af86aeb9fdfd54d463dc9ab72c97a146f32c0edc115624eeee15f7e",
 	"src/lib/modules/messaging/features/open-dm/NewMessageDialog.svelte": "sha256:2558632c716e9761c516e53030ffa9f2b01a8d061c2fc4c258cc21470fa330f5",
 	"src/lib/modules/messaging/features/run-command/CommandDialog.svelte": "sha256:a41a21589ccf19af6b55878f68183454893420d72d41c80c222e709eaf0a99c3",
-	"src/lib/modules/messaging/legacy-api.ts": "sha256:f708d1a46c2ba66baa710d8aee8a7fb014b5491fc5d410bc878e796a0e57b4e8",
 	"src/lib/modules/messaging/markdown.test.ts": "sha256:b259ce2ac449a01e85af27e07366651b3c685b40d04f834126396286798e7f2a",
 	"src/lib/modules/messaging/markdown.ts": "sha256:d662b641c8ebcf1ab5b38c54a0ae53869b6e666515fad7135a2a1f3b270cc203",
 	"src/lib/modules/messaging/row-activity.svelte.ts": "sha256:075e95ded6f686cee2db713c8512239e384b5757c58dc8ecab018674bbde44bc",

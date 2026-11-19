@@ -4,7 +4,7 @@
 	import { pageTitle } from '$lib/nav';
 	import { CostsSettingsPage } from '$lib/modules/costs';
 	import { tabHref } from '$lib/modules/members';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
+	import { accountZone } from '$lib/modules/preferences';
 
 	let { data } = $props();
 	const organizationId = $derived(data.connection.organization.id);

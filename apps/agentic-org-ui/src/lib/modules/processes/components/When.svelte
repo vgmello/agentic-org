@@ -4,8 +4,7 @@
   (app-shell-ux "Account time display").
 -->
 <script lang="ts">
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import { formatClock, formatDate, formatFull } from '$lib/modules/preferences/time';
+	import { accountZone, formatClock, formatDate, formatFull } from '$lib/modules/preferences';
 
 	let { at }: { at: string } = $props();
 	const date = $derived(new Date(at));

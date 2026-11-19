@@ -1,11 +1,10 @@
 // The Recovery row's words, one per state (server-installation-and-access-ux §4a.6, RCV-4). Pure, so the copy is testable.
+// One POSIX quoting rule for every command the UI shows: platform/organizations owns it.
+import { shellQuote } from '$lib/platform/organizations/command';
 import type { RecoveryState } from './types';
 
 /** A message is plain text and code, in order, so the command can be set in mono and copied apart from the sentence. */
 export type Segment = string | { code: string };
-
-/** Single quotes, with an embedded quote written `'\''`: names with `"`, `$` or backticks paste safely. */
-export const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
 const SUFFIX_NAME = (instance: string) =>
 	instance && instance !== 'default' ? ` --name ${shellQuote(instance)}` : '';

@@ -8,8 +8,7 @@
 	import Callout from '$lib/components/Callout.svelte';
 	import { mobileButton } from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import { formatClock, formatDate, formatFull } from '$lib/modules/preferences/time';
+	import { accountZone, formatClock, formatDate, formatFull } from '$lib/modules/preferences';
 	import { staleText } from '../../present';
 	import type { StaleCopy } from '../../types';
 

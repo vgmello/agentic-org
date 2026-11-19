@@ -3,10 +3,10 @@ import {
 	messageText,
 	recoveryMessage,
 	releaseCommand,
-	shellQuote,
 	NOT_SUPPORTED,
 	type RecoveryContext
 } from './recovery';
+import { shellQuote } from '$lib/platform/organizations/command';
 
 const ctx: RecoveryContext = {
 	organization: 'Lumen Labs',

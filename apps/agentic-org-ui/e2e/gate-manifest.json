@@ -563,6 +563,11 @@
 			"why": "The profile's own Edit and Move home team dialogs check a person's name and list the team tree with the organization's existing rules instead of copying them; the org-chart and projects-work specs keep covering those rules."
 		},
 		{
+			"from": "src/lib/modules/settings/recovery.ts",
+			"to": "src/lib/platform/organizations/command.ts",
+			"why": "The Recovery row's commands quote names with the one POSIX quoting rule the organization pages own (shellQuote) instead of a copy; selection.test.ts covers the rule and recovery.test.ts the Recovery row's commands."
+		},
+		{
 			"from": "src/lib/platform/shell/NewMenu.svelte",
 			"to": "src/lib/{components/{NewRequestDialog,AddPersonSheet}.svelte,modules/employees/index.ts,modules/messaging/{index,model,legacy-api}.ts}",
 			"why": "The top-bar New menu opens the existing creation flows (request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."

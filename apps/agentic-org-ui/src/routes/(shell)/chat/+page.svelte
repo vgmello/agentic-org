@@ -675,6 +675,24 @@
 			);
 	}
 
+	/** Check status: reconcile the retained change id first; a retry reuses it, so nothing is sent twice. */
+	async function checkStatus(p: Pending) {
+		p.status = 'checking';
+		try {
+			const known = await chatApi.status(organizationId, p.change_id);
+			if (known.state === 'applied') {
+				pending = pending.filter((x) => x.key !== p.key);
+				await load();
+				toast.success('Delivered.');
+			} else {
+				p.status = 'failed';
+				p.error = 'the office has no record of it. Retry sends it once.';
+			}
+		} catch {
+			p.status = 'unknown';
+		}
+	}
+
 	// ---- message actions -----------------------------------------------------------------------
 
 	const react = (m: ChatMessage, reaction: Reaction) => {
@@ -946,6 +964,7 @@
 			{inThread}
 			{officeRunning}
 			delivery={{ status: p.status, error: p.error }}
+			oncheck={() => void checkStatus(p)}
 			onretry={(button) => void deliver(p, true, button)}
 			ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))}
 		/>
