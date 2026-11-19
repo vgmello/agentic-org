@@ -244,7 +244,8 @@ fn without_a_user_manager_setup_names_the_foreground_mode_and_saves_nothing() {
 /// X5 review V7: the unit carries the variables that decided the instance's locations when
 /// setup ran (each of the three XDG base directories, when it is set to an absolute path),
 /// so that the service, which the user manager starts with its own environment, resolves
-/// the same paths. A relative value, which the path rule ignores, is not carried.
+/// the same paths. A relative value, which the path rule ignores, is not carried, and the
+/// variables not carried are unset in the unit.
 #[test]
 fn the_unit_carries_the_variables_that_decided_the_instances_paths() {
     for (variable, others) in [
@@ -275,10 +276,20 @@ fn the_unit_carries_the_variables_that_decided_the_instances_paths() {
             unit.contains(&format!("Environment=\"{variable}={}\"\n", place.display())),
             "{variable}: {unit}"
         );
+        // The others are not carried, and are unset: the user manager's own values never
+        // reach the service (X5 review, third round).
+        let unset = unit
+            .lines()
+            .find_map(|line| line.strip_prefix("UnsetEnvironment="))
+            .unwrap_or_default();
         for other in others {
             assert!(
-                !unit.contains(other),
+                !unit.contains(&format!("Environment=\"{other}=")),
                 "{variable}: {other} was carried: {unit}"
+            );
+            assert!(
+                unset.split(' ').any(|name| name == other),
+                "{variable}: {other} is not unset: {unit}"
             );
         }
         let stop = account.run(&["service", "stop"]);

@@ -13,7 +13,9 @@
 #
 # The rules below, up to `userns`, are docker-default's (moby,
 # profiles/apparmor/template.go), written out for a profile named agentic-org.
-# Not loaded or tested where this file was written: that machine has no AppArmor.
+# Not loaded or tested where this file was written: that machine has no AppArmor. That
+# `docker stop` and `docker kill` reach the service under this profile on a host that
+# enforces AppArmor is therefore not verified.
 
 #include <tunables/global>
 
@@ -25,11 +27,18 @@ profile agentic-org flags=(attach_disconnected,mediate_deleted) {
   file,
   umount,
 
-  # Host (privileged) processes, the runtime and the Docker daemon may send signals to
-  # container processes (docker stop, docker kill).
+  # Host (privileged) processes and the runtime may send signals to container processes
+  # (docker stop).
   signal (receive) peer=unconfined,
   signal (receive) peer=runc,
   signal (receive) peer=crun,
+  # So may the Docker daemon (docker kill), under the AppArmor label it runs with. Moby's
+  # template writes the daemon's own label here; a static file cannot read it, so: an
+  # unconfined daemon is covered above, and the Docker snap's daemon runs as
+  # snap.docker.dockerd. Where dockerd runs under another label
+  # (cat /proc/$(pidof dockerd)/attr/current), add a line for it before loading:
+  #   signal (receive) peer=<that label>,
+  signal (receive) peer=snap.docker.dockerd,
   # Container processes may send signals amongst themselves.
   signal (send,receive) peer=agentic-org,
 

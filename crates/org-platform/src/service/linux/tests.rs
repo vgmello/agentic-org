@@ -17,8 +17,12 @@ struct State {
     load: Option<&'static str>,
     /// What the manager lists as the unit's drop-in files.
     drop_ins: String,
-    /// `enable` fails, as when the unit's program cannot be started.
+    /// `enable --now` enables the unit and then fails to start it, as when the unit's
+    /// program cannot be started.
     enable_fails: bool,
+    /// What a drop-in for every service changes: [`EFFECTIVE`] properties the manager
+    /// reports with these values instead of the ones its file says.
+    changed: Vec<(&'static str, String)>,
     /// `Some`: what `loginctl show-user` prints for `Linger`; `None`: it fails.
     linger: Option<&'static str>,
     /// No user manager answers: `systemctl` fails as it does without a user bus.
@@ -72,10 +76,10 @@ impl State {
                 self.read = Some(bytes);
             }
             Ok(_) => {}
+            // The enablement link stays, dangling, until a `disable` removes it.
             Err(_) if again && self.pid.is_none() => {
                 self.fragment = None;
                 self.read = None;
-                self.enabled = false;
             }
             Err(_) => {}
         }
@@ -91,9 +95,19 @@ impl State {
             Some(fragment) => (self.load.unwrap_or("loaded"), fragment.clone()),
             None => ("not-found", String::new()),
         };
+        let mut effective = self.read.as_deref().map(reported).unwrap_or_default();
+        for (name, value) in &self.changed {
+            effective.retain(|(key, _)| key != name);
+            effective.push((name, value.clone()));
+        }
+        let effective: String = effective
+            .iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(name, value)| format!("{name}={value}\n"))
+            .collect();
         format!(
             "LoadState={load}\nActiveState={}\nMainPID={}\nFragmentPath={fragment}\n\
-             UnitFileState={}\nNeedDaemonReload={}\nDropInPaths={}\n",
+             UnitFileState={}\nNeedDaemonReload={}\nDropInPaths={}\n{effective}",
             if self.pid.is_some() {
                 "active"
             } else {
@@ -113,6 +127,92 @@ impl State {
             self.drop_ins,
         )
     }
+}
+
+/// What systemd 257 reports of a unit file for the [`EFFECTIVE`] properties, as
+/// `systemctl show` prints them: written here from systemd's rules, not from the adapter's.
+/// A property the file does not set has systemd's default.
+fn reported(file: &[u8]) -> Vec<(&'static str, String)> {
+    // systemd reading a quoted word of a unit file: escapes and `%%` undone, `$$` kept.
+    fn words(line: &str) -> Vec<String> {
+        let mut words = Vec::new();
+        let mut word = String::new();
+        let (mut quoted, mut chars) = (false, line.chars());
+        while let Some(c) = chars.next() {
+            match (c, quoted) {
+                ('"', _) => quoted = !quoted,
+                (' ', false) => words.push(std::mem::take(&mut word)),
+                ('\\', true) => word.push(match chars.next().unwrap() {
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    other => other,
+                }),
+                ('%', _) => word.push(chars.next().unwrap()),
+                (c, _) => word.push(c),
+            }
+        }
+        words.push(word);
+        words
+    }
+    // systemd's `shell_maybe_quote`: a word with a space or a shell character is
+    // double-quoted, with `\`, `"`, `$` and `` ` `` escaped.
+    fn shell(word: &str) -> String {
+        if !word.chars().any(|c| " \t\n\"\\`$*?['()<>|&;!".contains(c)) {
+            return word.to_owned();
+        }
+        let mut out = String::from('"');
+        for c in word.chars() {
+            if "\"\\`$".contains(c) {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out.push('"');
+        out
+    }
+    let text = String::from_utf8_lossy(file);
+    let set = |key: &str| {
+        text.lines()
+            .filter_map(|line| line.strip_prefix(key)?.strip_prefix('='))
+            .collect::<Vec<_>>()
+    };
+    let last = |key: &str, default: &str| set(key).last().copied().unwrap_or(default).to_owned();
+    let exec = set("ExecStart")
+        .last()
+        .map(|line| {
+            let argv = words(line);
+            format!(
+                "{{ path={} ; argv[]={} ; ignore_errors=no ; start_time=[n/a] ; \
+                 stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }}",
+                argv[0],
+                argv.join(" ")
+            )
+        })
+        .unwrap_or_default();
+    let environment: Vec<String> = set("Environment")
+        .into_iter()
+        .flat_map(words)
+        .map(|word| shell(&word))
+        .collect();
+    vec![
+        ("ExecStart", exec),
+        ("Environment", environment.join(" ")),
+        ("UnsetEnvironment", set("UnsetEnvironment").join(" ")),
+        ("Type", last("Type", "simple")),
+        ("KillMode", last("KillMode", "control-group")),
+        ("KillSignal", "15".into()),
+        ("SendSIGKILL", "yes".into()),
+        (
+            "TimeoutStopUSec",
+            set("TimeoutStopSec")
+                .last()
+                .map_or("1min 30s".into(), |s| format!("{s}s")),
+        ),
+        ("Restart", last("Restart", "no")),
+        ("UMask", last("UMask", "0022")),
+        ("NoNewPrivileges", last("NoNewPrivileges", "no")),
+    ]
 }
 
 impl Commands for Fake {
@@ -186,6 +286,8 @@ impl Commands for Fake {
                     return done(1, String::new(), &format!("Unit {unit} does not exist\n"));
                 }
                 if s.enable_fails {
+                    // systemd links the unit into its target first, then starts it.
+                    s.enabled = true;
                     return done(1, String::new(), "Job failed. See journalctl.\n");
                 }
                 s.enabled = true;
@@ -201,9 +303,10 @@ impl Commands for Fake {
                 done(0, String::new(), "")
             }
             "disable" => {
-                assert_eq!(call[3], "--now");
                 s.enabled = false;
-                s.pid = None;
+                if call[3] == "--now" {
+                    s.pid = None;
+                }
                 done(0, String::new(), "")
             }
             "reset-failed" => done(1, String::new(), "Unit not loaded\n"),
@@ -255,6 +358,7 @@ fn the_unit_restarts_only_after_a_failure_and_stops_the_host_first() {
          Type=exec\n\
          ExecStart=\"/opt/agentic org/agentic-org\" \"serve\" \"--name\" \"a&b<c>\"\n\
          Environment=\"HOME=/home/a\"\n\
+         UnsetEnvironment=XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME\n\
          KillMode=mixed\n\
          TimeoutStopSec=15\n\
          Restart=on-failure\n\
@@ -272,7 +376,9 @@ fn the_unit_restarts_only_after_a_failure_and_stops_the_host_first() {
 }
 
 /// Every value is one quoted word on one line: nothing a value holds starts a second
-/// command, a second setting, a specifier, a variable or a continuation line.
+/// command, a second setting, a specifier, a variable or a continuation line. (A control
+/// character is refused before anything is rendered, `unit_file_safe`; the rendering
+/// escapes it all the same.)
 #[test]
 fn every_value_is_escaped_for_the_unit_file_grammar() {
     let hostile = Unit {
@@ -297,7 +403,7 @@ fn every_value_is_escaped_for_the_unit_file_grammar() {
         ],
         ..unit()
     };
-    assert!(validate(&hostile).is_ok() && unit_file_safe(&hostile).is_ok());
+    assert!(validate(&hostile).is_ok() && unit_file_safe(&hostile).is_err());
     let text = rendered(&hostile);
     let exec = text.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
     assert_eq!(
@@ -333,6 +439,7 @@ fn every_value_is_escaped_for_the_unit_file_grammar() {
             "Environment",
             "Environment",
             "Environment",
+            "UnsetEnvironment",
             "KillMode",
             "TimeoutStopSec",
             "Restart",
@@ -405,7 +512,7 @@ fn systemd_analyze_accepts_the_rendered_unit() {
         ],
         ..unit()
     };
-    assert!(validate(&hostile).is_ok() && unit_file_safe(&hostile).is_ok());
+    assert!(validate(&hostile).is_ok());
     let name = "agentic-org-test-verify.service";
     let (code, about_ours, said) = verify(name, &render(name, &hostile));
     assert!(about_ours.is_empty(), "systemd complains: {said}");
@@ -451,6 +558,32 @@ fn a_unit_the_grammar_cannot_carry_is_refused_and_nothing_is_written() {
         },
         Unit {
             env: vec![("A".into(), "x\u{7f}".into())],
+            ..unit()
+        },
+        // What `systemctl show` would print raw, so that what systemd runs could not be
+        // compared with the definition.
+        Unit {
+            env: vec![("A".into(), "x\ty".into())],
+            ..unit()
+        },
+        Unit {
+            env: vec![("A".into(), "x\ny".into())],
+            ..unit()
+        },
+        Unit {
+            args: vec!["two\nlines".into()],
+            ..unit()
+        },
+        Unit {
+            args: vec!["tab\there".into()],
+            ..unit()
+        },
+        Unit {
+            args: vec!["c1\u{85}".into()],
+            ..unit()
+        },
+        Unit {
+            program: "/opt/a\tb/agentic-org".into(),
             ..unit()
         },
         Unit {
@@ -1116,8 +1249,27 @@ fn a_definition_whose_load_fails_is_not_left_behind() {
     assert!(!file.exists(), "the definition was left behind");
     assert_eq!(
         fake.verbs(),
-        ["show", "daemon-reload", "show", "enable", "daemon-reload"]
+        [
+            "show",
+            "daemon-reload",
+            "show",
+            "enable",
+            "disable",
+            "daemon-reload",
+            "reset-failed"
+        ]
     );
+    // X5 review (third round): `enable --now` linked the unit into its target before its
+    // start failed; that link went with the definition, and no restart is scheduled.
+    assert!(
+        !fake.0.lock().unwrap().enabled,
+        "an enablement link was left behind"
+    );
+    assert!(fake.calls().contains(
+        &["systemctl", "--user", "disable", "--now", NAME]
+            .map(String::from)
+            .to_vec()
+    ));
     // The next registration writes and loads it as the first would have.
     fake.set(|s| {
         s.enable_fails = false;
@@ -1126,4 +1278,379 @@ fn a_definition_whose_load_fails_is_not_left_behind() {
     });
     assert_eq!(systemd.register(&unit()).unwrap(), Registration::Loaded);
     assert!(file.exists());
+}
+
+/// The unit of the comparison fixture below, with every character `systemctl show` quotes
+/// or escapes.
+fn odd_unit() -> Unit {
+    Unit {
+        args: vec![
+            "serve".into(),
+            "--name".into(),
+            "a&b<c>".into(),
+            "$HOME %h \"q\" back\\slash".into(),
+        ],
+        env: vec![
+            ("HOME".into(), "/home/a b".into()),
+            ("XDG_DATA_HOME".into(), "/x/$y \"z\" back\\slash é".into()),
+        ],
+        ..unit()
+    }
+}
+
+/// What systemd 257 printed for [`odd_unit`]'s rendering (`systemctl show` of the
+/// properties the adapter asks for, on Debian 13), with nothing changing it.
+const ODD_SHOWN: &str = "Type=exec\nRestart=on-failure\nTimeoutStopUSec=15s\nMainPID=0\n\
+ExecStart={ path=/opt/agentic org/agentic-org ; argv[]=/opt/agentic org/agentic-org serve --name \
+a&b<c> $$HOME %h \"q\" back\\slash ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; \
+pid=0 ; code=(null) ; status=0/0 }\n\
+Environment=\"HOME=/home/a b\" \"XDG_DATA_HOME=/x/\\$y \\\"z\\\" back\\\\slash é\"\n\
+PassEnvironment=\nUnsetEnvironment=XDG_CACHE_HOME XDG_STATE_HOME\nUMask=0077\n\
+NoNewPrivileges=yes\nKillMode=mixed\nKillSignal=15\nSendSIGKILL=yes\nLoadState=loaded\nActiveState=inactive\n\
+FragmentPath=/etc/systemd/system/agentic-org-test-01965d2e-8b1c-7c3a-9f00-0123456789ab.service\n\
+DropInPaths=\nUnitFileState=disabled\nNeedDaemonReload=no\n";
+
+/// X5 review (third round): what systemd itself reports for a rendered unit matches it,
+/// quoting and all, and each property a drop-in for every service changed is found. The
+/// changed lines are what systemd 257 printed with such a drop-in
+/// (`service.d/50-x.conf`: `Environment=XDG_CACHE_HOME=/elsewhere`, `ExecStart=` reset to
+/// `/bin/sh -c true`, `KillMode=process`).
+#[test]
+fn what_systemd_reports_is_compared_with_the_definition_property_by_property() {
+    let unit = odd_unit();
+    let shown = parse_show(ODD_SHOWN).unwrap();
+    assert_eq!(effective_differs(&unit, &shown), None);
+    // The definition read back from the file is the unit, and so compares the same.
+    let defined = definition(NAME, &render(NAME, &unit)).unwrap();
+    assert_eq!(
+        (&defined.program, &defined.args, &defined.env),
+        (&unit.program, &unit.args, &unit.env)
+    );
+    assert_eq!(effective_differs(&defined, &shown), None);
+    let changed = |from: &str, to: &str| {
+        assert!(ODD_SHOWN.contains(from), "{from}");
+        parse_show(&ODD_SHOWN.replacen(from, to, 1)).unwrap()
+    };
+    let exec = ODD_SHOWN
+        .lines()
+        .find(|l| l.starts_with("ExecStart="))
+        .unwrap();
+    let environment = ODD_SHOWN
+        .lines()
+        .find(|l| l.starts_with("Environment="))
+        .unwrap();
+    for (from, to, property) in [
+        (
+            exec,
+            "ExecStart={ path=/bin/sh ; argv[]=/bin/sh -c true ; ignore_errors=no ; \
+             start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+            "ExecStart",
+        ),
+        // A second command appended to the first (a drop-in without the reset).
+        (
+            " status=0/0 }",
+            " status=0/0 } { path=/bin/sh ; argv[]=/bin/sh ; ignore_errors=no ; \
+             start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+            "ExecStart",
+        ),
+        (" serve --name", " serve --name x", "ExecStart"),
+        // An argument `;` and another word after ours, as systemd 257 printed it for a
+        // drop-in that reset ExecStart= to our command followed by `\; x`.
+        (
+            "back\\slash ; ignore_errors=no",
+            "back\\slash ; x ; ignore_errors=no",
+            "ExecStart",
+        ),
+        (" ignore_errors=no ;", " ignore_errors=yes ;", "ExecStart"),
+        // The same, with words that copy the field that follows the arguments.
+        (
+            "back\\slash ; ignore_errors=no",
+            "back\\slash ; ignore_errors=no ; x ; ignore_errors=no",
+            "ExecStart",
+        ),
+        (
+            environment,
+            "Environment=\"HOME=/home/a b\" \"XDG_DATA_HOME=/x/\\$y \\\"z\\\" \
+             back\\\\slash é\" XDG_CACHE_HOME=/elsewhere",
+            "Environment",
+        ),
+        ("HOME=/home/a b", "HOME=/home/a", "Environment"),
+        (
+            "\nPassEnvironment=\n",
+            "\nPassEnvironment=XDG_DATA_HOME\n",
+            "PassEnvironment",
+        ),
+        (
+            "UnsetEnvironment=XDG_CACHE_HOME XDG_STATE_HOME",
+            "UnsetEnvironment=XDG_CACHE_HOME",
+            "UnsetEnvironment",
+        ),
+        ("KillMode=mixed", "KillMode=process", "KillMode"),
+        ("KillSignal=15", "KillSignal=9", "KillSignal"),
+        ("SendSIGKILL=yes", "SendSIGKILL=no", "SendSIGKILL"),
+        ("Type=exec", "Type=simple", "Type"),
+        (
+            "TimeoutStopUSec=15s",
+            "TimeoutStopUSec=1min 30s",
+            "TimeoutStopUSec",
+        ),
+        ("Restart=on-failure", "Restart=always", "Restart"),
+        ("UMask=0077", "UMask=0022", "UMask"),
+        (
+            "NoNewPrivileges=yes",
+            "NoNewPrivileges=no",
+            "NoNewPrivileges",
+        ),
+        (
+            "MainPID=0\n",
+            "MainPID=0\nExecStartPre={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no \
+             ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+            "ExecStartPre",
+        ),
+        (
+            "MainPID=0\n",
+            "MainPID=0\nExecStartPost={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no \
+             ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+            "ExecStartPost",
+        ),
+        (
+            "MainPID=0\n",
+            "MainPID=0\nEnvironmentFiles=/etc/foo (ignore_errors=yes)\n",
+            "EnvironmentFiles",
+        ),
+        (
+            "MainPID=0\n",
+            "MainPID=0\nExecStop={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no ; \
+             start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+            "ExecStop",
+        ),
+        (
+            "MainPID=0\n",
+            "MainPID=0\nExecStopPost={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no ; \
+             start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+            "ExecStopPost",
+        ),
+        (
+            "MainPID=0\n",
+            "MainPID=0\nExecCondition={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no \
+             ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+            "ExecCondition",
+        ),
+    ] {
+        assert_eq!(
+            effective_differs(&unit, &changed(from, to)),
+            Some(property),
+            "{to}"
+        );
+    }
+    // A property systemd did not print at all is not what the definition says either.
+    assert_eq!(
+        effective_differs(&unit, &changed("KillMode=mixed\n", "")),
+        Some("KillMode")
+    );
+}
+
+#[test]
+fn the_words_systemctl_prints_are_read_with_its_quotes() {
+    assert_eq!(
+        shell_words(r#"A=plain "B=x\$y" "C=x\\y" "D=q's" E=é "F=a;b" G= "H=*?[" I=~x "#),
+        Some(
+            ["A=plain", "B=x$y", "C=x\\y", "D=q's", "E=é", "F=a;b", "G=", "H=*?[", "I=~x"]
+                .map(String::from)
+                .to_vec()
+        )
+    );
+    assert_eq!(shell_words(""), Some(vec![]));
+    assert_eq!(shell_words(r#""""#), Some(vec![String::new()]));
+    for unreadable in [r#""open"#, r#""\t""#, r#"a\b"#] {
+        assert_eq!(shell_words(unreadable), None, "{unreadable}");
+    }
+}
+
+/// Only a file that is exactly a rendering of a unit is read back as one: anything else is
+/// not a definition this adapter wrote. (A file that renders another unit, one more
+/// argument for one, is read back as that unit, and what systemd runs is compared with it.)
+#[test]
+fn a_definition_is_read_back_only_from_its_exact_rendering() {
+    let unit = odd_unit();
+    let bytes = render(NAME, &unit);
+    assert!(definition(NAME, &bytes).is_some());
+    let text = String::from_utf8(bytes).unwrap();
+    for changed in [
+        text.replace("KillMode=mixed", "KillMode=process"),
+        text.replace("UnsetEnvironment=XDG_CACHE_HOME XDG_STATE_HOME\n", ""),
+        format!("{text}[Service]\nExecStartPre=/bin/true\n"),
+        text.replace("%%h", "%h"),
+        "[Service]\nExecStart=/bin/someone-elses\n".into(),
+    ] {
+        assert!(definition(NAME, changed.as_bytes()).is_none(), "{changed}");
+    }
+    assert!(definition("agentic-org-test-other.service", text.as_bytes()).is_none());
+}
+
+/// X5 review (third round), P2: the service resolves the instance's locations from what
+/// setup gave it and nothing else. A location variable the unit does not set is unset, so
+/// the user manager's own value does not reach the service; one it sets is not unset.
+#[test]
+fn the_location_variables_the_unit_does_not_set_are_unset() {
+    let line = |unit: &Unit| {
+        rendered(unit)
+            .lines()
+            .find(|l| l.starts_with("UnsetEnvironment="))
+            .map(str::to_owned)
+    };
+    assert_eq!(
+        line(&unit()).as_deref(),
+        Some("UnsetEnvironment=XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME")
+    );
+    let some = Unit {
+        env: vec![
+            ("HOME".into(), "/home/a".into()),
+            ("XDG_CACHE_HOME".into(), "/c".into()),
+        ],
+        ..unit()
+    };
+    assert_eq!(
+        line(&some).as_deref(),
+        Some("UnsetEnvironment=XDG_DATA_HOME XDG_STATE_HOME")
+    );
+    let all = Unit {
+        env: ["XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"]
+            .map(|name| (name.into(), "/x".into()))
+            .to_vec(),
+        ..unit()
+    };
+    assert_eq!(line(&all), None);
+    for name in org_platform_location_variables() {
+        assert!(rendered(&unit()).contains(name), "{name} is not unset");
+    }
+}
+
+fn org_platform_location_variables() -> &'static [&'static str] {
+    crate::dirs::location_variables().unwrap()
+}
+
+/// X5 review (third round), P2: a drop-in for every service of the user is accepted
+/// (distributions ship some), but one that changes what systemd would run under our name
+/// (its command, its environment, how it is stopped) is a conflict for register, start and
+/// status. Stop and unregister still end and remove our own unit.
+#[test]
+fn a_drop_in_for_every_service_that_changes_what_runs_is_a_conflict_for_what_runs_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    systemd.register(&unit()).unwrap();
+    let file = temp.path().join(format!("systemd/user/{NAME}"));
+    // One that changes nothing the service depends on.
+    fake.set(|s| s.drop_ins = "/usr/lib/systemd/user/service.d/10-timeout-abort.conf".into());
+    assert_eq!(systemd.register(&unit()).unwrap(), Registration::Unchanged);
+    assert_eq!(
+        systemd.status(ID).unwrap(),
+        ServiceStatus::Running { pid: 42 }
+    );
+    for (property, value) in [
+        (
+            "ExecStart",
+            "{ path=/bin/sh ; argv[]=/bin/sh -c true ; ignore_errors=no ; start_time=[n/a] ; \
+             stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+        ),
+        ("Environment", "HOME=/home/a XDG_DATA_HOME=/elsewhere"),
+        ("UnsetEnvironment", ""),
+        ("KillMode", "process"),
+        ("KillSignal", "9"),
+        ("EnvironmentFiles", "/etc/x (ignore_errors=no)"),
+    ] {
+        fake.set(|s| {
+            s.drop_ins = "/home/a/.config/systemd/user/service.d/50-x.conf".into();
+            s.changed = vec![(property, value.into())];
+        });
+        fake.clear();
+        for call in [
+            systemd.register(&unit()).map(drop),
+            systemd.start(ID),
+            systemd.status(ID).map(drop),
+        ] {
+            let error = call.unwrap_err();
+            assert!(
+                matches!(&error, ServiceError::Conflict(why)
+                    if why.contains(property) && why.contains("50-x.conf")),
+                "{property}: {error}"
+            );
+        }
+        assert_eq!(fake.verbs(), ["show"; 3], "{property}");
+        assert_eq!(fs::read(&file).unwrap(), render(NAME, &unit()));
+    }
+    // Ending our own unit is not refused: that would only leave it running.
+    systemd.stop(ID).unwrap();
+    assert_eq!(fake.0.lock().unwrap().pid, None, "the unit was not stopped");
+    systemd.unregister(ID).unwrap();
+    assert!(!file.exists());
+    // A first registration that such a drop-in would change is not enabled, and what it
+    // wrote is removed again.
+    let (fresh, fake) = self::systemd(&temp.path().join("fresh"));
+    fake.set(|s| s.changed = vec![("KillMode", "process".into())]);
+    let error = fresh.register(&unit()).unwrap_err();
+    assert!(
+        matches!(&error, ServiceError::Conflict(why) if why.contains("KillMode")),
+        "{error}"
+    );
+    assert!(!fake.verbs().contains(&"enable".to_string()));
+    assert!(!temp
+        .path()
+        .join(format!("fresh/systemd/user/{NAME}"))
+        .exists());
+}
+
+/// X5 review (third round): a loaded file that is not exactly a rendering of a unit (one
+/// written by an earlier build, before the unit unset the location variables, or edited by
+/// hand) is not run on: register, start and status are conflicts. It can still be stopped
+/// and unregistered, which removes it.
+#[test]
+fn a_definition_that_is_no_rendering_is_not_run_but_can_be_stopped_and_unregistered() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    systemd.register(&unit()).unwrap();
+    let file = temp.path().join(format!("systemd/user/{NAME}"));
+    let earlier = String::from_utf8(render(NAME, &unit())).unwrap().replace(
+        "UnsetEnvironment=XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME\n",
+        "",
+    );
+    fs::write(&file, &earlier).unwrap();
+    // systemd read that file: what it holds is the file on disk.
+    fake.set(|s| s.read = Some(earlier.clone().into_bytes()));
+    for call in [
+        systemd.register(&unit()).map(drop),
+        systemd.start(ID),
+        systemd.status(ID).map(drop),
+    ] {
+        assert!(matches!(call, Err(ServiceError::Conflict(_))), "{call:?}");
+    }
+    systemd.stop(ID).unwrap();
+    assert_eq!(fake.0.lock().unwrap().pid, None);
+    systemd.unregister(ID).unwrap();
+    assert!(!file.exists());
+    assert_eq!(systemd.status(ID).unwrap(), ServiceStatus::NotRegistered);
+}
+
+/// X5 review (third round): a unit that runs although it is not enabled (disabled by hand)
+/// keeps running when register's `enable --now` fails: the rollback takes back only the
+/// enablement that call made.
+#[test]
+fn a_failed_enable_of_a_running_unit_takes_back_the_link_and_leaves_it_running() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    systemd.register(&unit()).unwrap();
+    fake.set(|s| {
+        s.enabled = false;
+        s.enable_fails = true;
+    });
+    fake.clear();
+    assert!(systemd.register(&unit()).is_err());
+    assert!(fake.calls().contains(
+        &["systemctl", "--user", "disable", NAME]
+            .map(String::from)
+            .to_vec()
+    ));
+    let state = fake.0.lock().unwrap();
+    assert!(!state.enabled, "the link this call made was left");
+    assert_eq!(state.pid, Some(42), "a running unit was stopped");
 }

@@ -182,12 +182,13 @@ impl Host {
         // place, does not start (X5 review V3). Where the release store was opened above,
         // that was this check. No item is expected here: which keys exist is the open
         // store's question.
+        let mut development_folder = None;
         if let (true, None, Some(directory)) = (
             foreground,
             &release_directory,
             record.credentials.as_deref(),
         ) {
-            org_platform_host::credentials::release_directory_with_stores(
+            let checked = org_platform_host::credentials::release_directory_with_stores(
                 org_platform_host::credentials::ReleaseDirectory {
                     path: directory,
                     data_root: instance.root_descriptor(),
@@ -196,16 +197,26 @@ impl Host {
                 },
                 &crate::release_store::ITEM_STORES,
             )
-            .map(drop)
             .map_err(|why| refused("checking the credential directory", why))?;
+            // The development key folder of the foreground mode is made in the secrets
+            // volume, which is empty at the first start, only now that the volume itself
+            // was judged: from the volume's own descriptor, without following a link, and
+            // on the volume's own mount, so that no other volume mounted there (a folder of
+            // the data volume, on the same filesystem) holds the keys (X5 review, third
+            // round, P1). The folder keeps the volume's lock for the host's custody.
+            if let Some((credentials, name)) = dev_key_folder {
+                development_folder = Some(
+                    development_folder_in(&checked, credentials, name)
+                        .map_err(|why| refused("making the development key folder", why))?,
+                );
+            }
         }
-        // The development key folder of the foreground mode is made in the secrets volume,
-        // which is empty at the first start, only now that the volume itself was judged,
-        // and is opened from it without following a link and on its filesystem.
-        if let Some((credentials, name)) = dev_key_folder {
-            make_development_key_folder(credentials, name)
-                .map_err(|why| refused("making the development key folder", why))?;
-        } else if let (true, Some(dir)) = (foreground, &dev_key_dir) {
+        if let (true, None, None, Some(dir)) = (
+            foreground,
+            &dev_key_folder,
+            &development_folder,
+            &dev_key_dir,
+        ) {
             // A system that keeps no secrets in a directory records none: there the folder
             // is the one the build names, made if it is missing and never its parent.
             use std::os::unix::fs::DirBuilderExt;
@@ -219,14 +230,20 @@ impl Host {
                 _ => {}
             }
         }
-        let custody = crate::host_secrets::store_for(
-            dev_key_dir.as_deref(),
-            instance.root(),
-            instance.id(),
-            crate::code_signing::own_signing,
-            release_directory.as_ref(),
-        )
+        // The host's own development custody is opened from the checked folder; the office
+        // keys' development store opens the same folder by its path when it is first used.
+        let custody = match &development_folder {
+            Some(folder) => crate::host_secrets::development_store(folder, instance.id()),
+            None => crate::host_secrets::store_for(
+                dev_key_dir.as_deref(),
+                instance.root(),
+                instance.id(),
+                crate::code_signing::own_signing,
+                release_directory.as_ref(),
+            ),
+        }
         .map_err(|e| refused("opening protected account custody", format!("{e:?}")))?;
+        drop(development_folder);
         if registry_state == RegistryState::Absent {
             create_registry(&layout_paths.office_home, &*custody, instance.id())?;
         }
@@ -364,64 +381,38 @@ fn development_key_folder<'a>(credentials: &Path, folder: &'a Path) -> Result<&'
     }
 }
 
-/// Makes the folder `name` in the credential directory `credentials` (mode 700) if it is
-/// missing, and checks it from the directory's own descriptor: a directory of this user,
-/// mode 700, reached without following a link, on the credential directory's filesystem (not
-/// another volume mounted there). A folder that breaks a rule is refused, never repaired.
+/// The development key folder `name` in the credential directory `credentials`, which the
+/// host opened and checked as `checked`: made there (mode 700) if it is missing, and checked
+/// by the platform from the directory's own descriptor (a directory of this user, mode 700,
+/// reached without following a link, on the directory's own mount). A folder that breaks a
+/// rule is refused with the rule, never repaired.
 ///
-/// Known limit: the development stores open the folder again by its path afterwards (their
-/// anchor's last component is not followed), so a process of the service user could swap
-/// it in between. Only that user can write to the volume, and it can read the keys anyway;
-/// a release build opens its store from the checked directory itself (`release_store`).
-fn make_development_key_folder(credentials: &Path, name: &OsStr) -> Result<(), String> {
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    let directory = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
-        .open(credentials)
-        .map_err(|e| format!("{}: {e}", credentials.display()))?;
-    let folder = credentials.join(name);
-    let refuse = |why: &dyn std::fmt::Display| format!("{}: {why}", folder.display());
-    let name = std::ffi::CString::new(name.as_bytes()).map_err(|_| refuse(&"is not a path"))?;
-    // SAFETY: an open directory and a NUL-terminated single name.
-    if unsafe { libc::mkdirat(directory.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
-        let error = io::Error::last_os_error();
-        if error.kind() != io::ErrorKind::AlreadyExists {
-            return Err(refuse(&error));
-        }
-    }
-    // SAFETY: as above; the descriptor is checked before it is owned.
-    let opened = unsafe {
-        libc::openat(
-            directory.as_raw_fd(),
-            name.as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+/// Known limit: the office keys' development store opens the folder again by its path when
+/// it is first used (its anchor's last component is not followed), so a process of the
+/// service user could swap it in between. Only that user can write to the volume, and it can
+/// read the keys anyway; the host's own development custody is opened from the checked
+/// folder, and a release build opens its stores from the checked directory itself.
+fn development_folder_in(
+    checked: &org_platform_host::credentials::ReleaseRoot,
+    credentials: &Path,
+    name: &OsStr,
+) -> Result<org_platform_host::credentials::DevelopmentFolder, String> {
+    let not_a_name = || {
+        format!(
+            "{}: a development key folder in the credential directory is named with letters, \
+             digits, '.', '-' and '_', does not start with '.', and is not one of the \
+             directory's item stores (host-secrets, office-keys); dev-keys is one; nothing \
+             was written",
+            credentials.join(name).display()
         )
     };
-    if opened < 0 {
-        // A symbolic link, or something that is not a directory.
-        return Err(refuse(&format_args!(
-            "is not a folder of its own ({})",
-            io::Error::last_os_error()
-        )));
-    }
-    // SAFETY: a new descriptor owned only here.
-    let opened = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(opened) });
-    let (found, volume) = (
-        opened.metadata().map_err(|e| refuse(&e))?,
-        directory.metadata().map_err(|e| refuse(&e))?,
-    );
-    if found.dev() != volume.dev() {
-        return Err(refuse(
-            &"is another filesystem mounted in the credential directory",
-        ));
-    }
-    if found.uid() != crate::home::euid() || found.mode() & 0o7777 != 0o700 {
-        return Err(refuse(&"must belong to the service user with mode 700"));
-    }
-    Ok(())
+    let name = name.to_str().ok_or_else(not_a_name)?;
+    checked
+        .development_folder(name)
+        .map_err(|error| match error {
+            org_platform_host::credentials::CredentialError::InvalidName => not_a_name(),
+            other => other.to_string(),
+        })
 }
 
 #[cfg(test)]

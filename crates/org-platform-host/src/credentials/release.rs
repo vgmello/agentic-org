@@ -54,8 +54,16 @@
 //!    filesystem must not be equal or inside each other. Where the place of one of
 //!    the two cannot be had, the directory is refused ([`RootRule::Undetermined`]),
 //!    never accepted on doubt. The two are found in the table by the mount ids the
-//!    kernel gives for their descriptors, so the machine's other mounts are not read
-//!    beyond their ids and cannot refuse a store, whatever they are.
+//!    kernel gives for their descriptors, so for this check the machine's other mounts
+//!    are not read beyond their ids and cannot refuse a store, whatever they are.
+//!
+//!    Nothing is mounted inside it either: no mount of the mount table has a mount
+//!    point below its path ([`RootRule::MountInside`], naming that mount point). A
+//!    volume mounted there, whatever its filesystem, owner or mode, would take whatever
+//!    is written below it out of the store's volume (two volumes of one filesystem share
+//!    a device number, so nothing else tells them apart). Only for this is every line's
+//!    mount point read; a line whose mount point cannot be read refuses
+//!    ([`RootRule::Undetermined`]).
 //! 8. When a mount point is required (a container's mounted secrets volume), it is
 //!    the root of a mount (`statx`, `STATX_ATTR_MOUNT_ROOT`; a kernel that cannot say
 //!    refuses), and it is on another volume than the data: it is not inside the
@@ -80,6 +88,22 @@
 //!     missing lock is made, and its mode is set on the descriptor that made it,
 //!     whatever the process's file-creation mask is; an existing one is never
 //!     changed.
+//!
+//! # A development build's key folder
+//!
+//! A development build keeps its development stores in a folder of plain files. In a
+//! container (the foreground mode) that folder is one folder directly in the release
+//! directory, the mounted secrets volume ([`ReleaseRoot::development_folder`]): made there
+//! (mode `0700`) if it is missing, from the release directory's own descriptor, and opened
+//! from it without following a link. It must be a directory of the service user with mode
+//! exactly `0700`, and it must be on the release directory's own mount: the kernel's mount
+//! id for it (`statx`, `STATX_MNT_ID`; a kernel that cannot say refuses) is the release
+//! directory's. Another volume mounted on it is refused whatever its filesystem, owner or
+//! mode, so that a subdirectory of the data volume mounted at `/secrets/dev-keys` (two
+//! named volumes on one filesystem have the same device number) never holds the keys.
+//! Nothing is made inside such a mount: `mkdirat` finds its mount point and makes nothing.
+//! The development stores the host opens from the folder ([`DevelopmentFolder::store`])
+//! hold the release directory's lock while they live, as an item store does.
 //!
 //! # What the private-group exception does not establish
 //!
@@ -217,6 +241,52 @@ impl ReleaseRoot {
     pub fn store(&self, items: ReleaseItems<'_>) -> Result<Credentials, CredentialError> {
         self.root.store(&items).map(|store| Credentials { store })
     }
+
+    /// A development build's key folder `name` directly in this release directory, made
+    /// if it is missing and checked (the module documentation says how). `name` has the
+    /// syntax of an item name and is none of the item stores the directory was opened
+    /// for, or the answer is [`CredentialError::InvalidName`] and nothing is made. A
+    /// folder that breaks a rule is [`CredentialError::Root`] with the rule and the
+    /// folder's path; it is never repaired.
+    pub fn development_folder(&self, name: &str) -> Result<DevelopmentFolder, CredentialError> {
+        self.root
+            .development_folder(name)
+            .map(|folder| DevelopmentFolder { folder })
+    }
+}
+
+/// A development build's key folder in a release directory, opened and checked
+/// ([`ReleaseRoot::development_folder`]). It holds the release directory's lock, and so
+/// does every store opened from it.
+pub struct DevelopmentFolder {
+    folder: native::DevelopmentFolder,
+}
+
+impl DevelopmentFolder {
+    /// The directory store that the single names `below` lead to from this folder (made
+    /// if missing), opened from the folder's own descriptor: a directory store with every
+    /// check it makes when it opens and on every operation.
+    pub fn store(
+        &self,
+        below: &[&str],
+        sharing: Sharing,
+        suffix: &str,
+    ) -> Result<Credentials, CredentialError> {
+        self.folder
+            .store(below, sharing, suffix)
+            .map(|store| Credentials { store })
+    }
+}
+
+// As for `ReleaseRoot`: a drop on every target.
+impl Drop for DevelopmentFolder {
+    fn drop(&mut self) {}
+}
+
+impl fmt::Debug for DevelopmentFolder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("DevelopmentFolder")
+    }
 }
 
 // Dropping the handle gives up its hold on the directory's lock. It is a drop on every
@@ -310,6 +380,8 @@ pub enum RootRule {
     ContainsDataVolume,
     /// A mount point is required and the release directory is not the root of a mount.
     NotAMountPoint,
+    /// Something is mounted inside the release directory. The path is the mount point.
+    MountInside,
     /// A mount point is required and this kernel does not say whether a directory is
     /// one (before Linux 5.8).
     MountPointUnknown,
@@ -336,6 +408,23 @@ pub enum RootRule {
     LockUnavailable(io::ErrorKind),
     /// Another host has the release directory open.
     InUse,
+    /// What stands where the development key folder goes is not a directory (a link is
+    /// not followed). The path is the folder's.
+    DevelopmentFolderNotADirectory,
+    /// The development key folder could not be made, opened or examined, with this kind
+    /// of error. The path is the folder's.
+    DevelopmentFolderUnavailable(io::ErrorKind),
+    /// The development key folder is on another mount than the release directory: a
+    /// volume mounted on it. The path is the folder's.
+    DevelopmentFolderOnAnotherMount,
+    /// This kernel does not say which mount the development key folder or the release
+    /// directory is on (before Linux 5.8). The path is the folder's.
+    DevelopmentFolderMountUnknown,
+    /// The development key folder is not owned by the service user. The path is the
+    /// folder's.
+    DevelopmentFolderOwner,
+    /// The development key folder's mode is not exactly `0700`. The path is the folder's.
+    DevelopmentFolderMode,
 }
 
 impl fmt::Display for RootRule {
@@ -410,6 +499,10 @@ impl fmt::Display for RootRule {
                 "the credential directory must be a mount point (a mounted secrets volume) and \
                  is not one",
             ),
+            Self::MountInside => f.write_str(
+                "another volume is mounted here, inside the credential directory; the keys \
+                 stay in the credential directory's own volume, so mount nothing inside it",
+            ),
             Self::MountPointUnknown => f.write_str(
                 "the credential directory must be a mount point, and this kernel does not say \
                  whether it is one",
@@ -443,6 +536,30 @@ impl fmt::Display for RootRule {
                 "the credential directory's lock file (.lock) could not be opened: {kind}"
             ),
             Self::InUse => f.write_str("the credential directory is in use by another host"),
+            Self::DevelopmentFolderNotADirectory => f.write_str(
+                "the development key folder in the credential directory is not a folder of \
+                 its own (a symbolic link is never followed)",
+            ),
+            Self::DevelopmentFolderUnavailable(kind) => write!(
+                f,
+                "the development key folder in the credential directory could not be made or \
+                 examined: {kind}"
+            ),
+            Self::DevelopmentFolderOnAnotherMount => f.write_str(
+                "the development key folder is another volume mounted in the credential \
+                 directory; the keys stay in the secrets volume itself, so mount nothing there",
+            ),
+            Self::DevelopmentFolderMountUnknown => f.write_str(
+                "this kernel does not say whether the development key folder is on the \
+                 credential directory's own mount",
+            ),
+            Self::DevelopmentFolderOwner => f.write_str(
+                "the development key folder in the credential directory is not owned by the \
+                 service user",
+            ),
+            Self::DevelopmentFolderMode => f.write_str(
+                "the development key folder's mode is not 0700 (nothing is repaired here)",
+            ),
         }
     }
 }

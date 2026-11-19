@@ -139,6 +139,14 @@ Ubuntu 24.04 and later also restrict through AppArmor.
   among their flags.
 - `apparmor-agentic-org`: `docker-default` plus `userns`, for a Docker host that has
   AppArmor. Load it with `sudo apparmor_parser -r -W deploy/container/apparmor-agentic-org`.
+  Docker's own profile lets the Docker daemon signal the container under whatever
+  AppArmor label the daemon runs with; this file is static, so it admits an unconfined
+  daemon and the Docker snap's (`snap.docker.dockerd`). Where `dockerd` runs under another
+  label (`cat /proc/$(pidof dockerd)/attr/current`), add
+  `signal (receive) peer=<that label>,` beside those lines before loading it, or
+  `docker kill` cannot reach the service. Not verified: this profile has not been loaded
+  on a host that enforces AppArmor, so `docker stop` and `docker kill` under it are
+  untested.
 
 ```sh
 docker run -d --name agentic-org -p 127.0.0.1:8443:8443 \
@@ -188,6 +196,13 @@ file differs from what its volumes were set up with refuses to start.
 The image holds the workspace's own Linux build (`--build-arg BIN=target/linux/debug`, the
 default). The host logs that the office worker has no publisher check, and it keeps its
 keys in its development key store, `/secrets/dev-keys`, not in the release store.
+
+The development key store must be one folder directly in `/secrets` (the image sets
+`ORG_OFFICE_DEV_KEY_DIR=/secrets/dev-keys`): a folder anywhere else is refused, and so is
+another volume mounted at `/secrets/dev-keys` (a folder of the data volume mounted there
+would put the keys in every copy of the data), even on the same filesystem. Mount nothing
+inside `/secrets`: a start with anything mounted inside it is refused, naming the mount
+point, in a development image and a release image alike.
 
 What the every-start check covers in this image: where `/secrets` is (a mount point, its
 owner and mode, its filesystem, apart from the data folder). What it does not cover: which

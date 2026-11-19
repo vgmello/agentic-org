@@ -23,7 +23,8 @@
 # It builds the image, then checks, in order:
 #   1. a plain `docker run` on two named volumes sets the instance up and serves;
 #   2. the first registration link comes from `docker exec -u 0 ... admin reset --user`,
-#      and only from root at a terminal;
+#      and only from root at a terminal; a browser at the origin registers the
+#      administrator from it and signs in, through the web API as the UI calls it;
 #   3. the browser address answers from the Docker host over plain HTTP from the first
 #      start, before any office exists: the version, the UI's index, the page of the
 #      registration link, and a refusal for any other Host; then an office worker starts
@@ -32,13 +33,16 @@
 #   4. LNX-4: everything under /secrets is the service user's, files 600 and folders 700,
 #      and no key is under /data; nothing was written outside the two volumes;
 #   5. `docker stop` ends the service within 2.5 s (inside the runtime's grace), with exit code 0;
-#   6. a new container on the same volumes is the same instance with the same keys and
-#      reads a message sent before the replacement;
+#   6. a new container on the same volumes is the same instance with the same keys, reads
+#      a message sent before the replacement, sends and reads a new one, keeps the
+#      browser's session and signs the administrator in again;
 #   7. a new container with the data volume and a new, empty secrets volume does not serve;
 #   8. a plain `docker run` with no volume named (anonymous volumes) works too;
 #   9. what the credential store refuses: a path that is not a mount, a volume root that
-#      is not the service user's, a development key folder outside the secrets volume, and
-#      a secrets directory inside the data directory; and root's reset for an instance
+#      is not the service user's, a development key folder outside the secrets volume,
+#      another volume mounted inside the secrets volume (a folder of the data volume, on
+#      the same filesystem, at the development key folder or at an item store), and a
+#      secrets directory inside the data directory; and root's reset for an instance
 #      whose data folder is gone is refused with its words escaped.
 # Every container and volume it makes is removed at the end, pass or fail.
 #
@@ -222,6 +226,49 @@ say "1b. the browser address, from the Docker host, over plain HTTP, before any 
 # origin's authority itself; a browser sends it by opening http://127.0.0.1:8443.
 browser() { curl -sS -m 10 -o "$scratch/body" -D "$scratch/head" -w '%{http_code}' -H "Host: ${2:-127.0.0.1:8443}" "http://127.0.0.1:$port$1" 2>/dev/null || true; }
 answers_http() { [ "$(browser /api/v1/version)" = 200 ]; }
+# A top-level navigation to <path> at the origin, with the headers a browser sends for one.
+navigate() {
+    curl -sS -m 10 -o "$scratch/body" -D "$scratch/head" -w '%{http_code}' -H "Host: 127.0.0.1:8443" \
+        -H 'Accept: text/html,application/xhtml+xml' -H 'Sec-Fetch-Site: none' -H 'Sec-Fetch-Mode: navigate' \
+        -H 'Sec-Fetch-Dest: document' -H 'Sec-Fetch-User: ?1' "http://127.0.0.1:$port$1" 2>/dev/null || true
+}
+# api <method> <path> [<JSON body>] [<header>...]: a call of the web API as the UI's own fetch
+# makes it from a page at the origin (apps/agentic-org-ui, json-http.ts): same origin, JSON.
+# A sign-in or registration that the host answers `unavailable` (503) while it is still
+# hashing is asked again, as the browser tests do (bounded: 20 tries 250 ms apart).
+# `site` names the request's Sec-Fetch-Site (same-origin unless it is set for the call).
+api() {
+    method=$1 path=$2 body=${3:-}
+    shift $(($# < 3 ? $# : 3))
+    for _ in $(seq 1 20); do
+        code=$(curl -sS -m 30 -o "$scratch/body" -D "$scratch/head" -w '%{http_code}' -X "$method" \
+            -H "Host: 127.0.0.1:8443" -H "Origin: http://127.0.0.1:8443" -H "Sec-Fetch-Site: ${site:-same-origin}" \
+            -H 'Sec-Fetch-Mode: cors' -H 'Sec-Fetch-Dest: empty' -H 'Accept: application/json' \
+            ${body:+-H 'Content-Type: application/json' --data-binary "$body"} "$@" \
+            "http://127.0.0.1:$port$path" 2>/dev/null || true)
+        [ "$code" = 503 ] || break
+        sleep 0.25
+    done
+    echo "$code"
+}
+# The browser's session from the last reply: its cookie (name=value) and the proof.
+session_cookie() { tr -d '\r' < "$scratch/head" | sed -n 's/^[Ss]et-[Cc]ookie: *\(org_session_[^;]*\).*/\1/p' | head -n 1; }
+session_proof() { sed -n 's/.*"proof":"\([0-9a-f]\{64\}\)".*/\1/p' "$scratch/body"; }
+password='lnx2 synthetic administrator password'
+signed_in() {
+    what=$1
+    [ "$2" = 200 ] || fail "$what: $2 $(head -c 300 "$scratch/body")"
+    has '"login":"Owner"' "$(cat "$scratch/body")" || fail "$what: not the administrator: $(head -c 300 "$scratch/body")"
+    has '"admin":true' "$(cat "$scratch/body")" || fail "$what: not the administrator: $(head -c 300 "$scratch/body")"
+    cookie=$(session_cookie)
+    proof=$(session_proof)
+    [ -n "$cookie" ] && [ -n "$proof" ] || fail "$what: no session cookie and proof: $(cat "$scratch/head")"
+    if has '^set-cookie:.*; *secure' "$(tr 'A-Z' 'a-z' < "$scratch/head")"; then
+        fail "$what: a Secure cookie over plain HTTP, which the browser would never send back"
+    fi
+}
+# The session `cookie` and `proof` are the browser's own, and the host knows them.
+session_holds() { [ "$(api GET /api/v1/session '' -H "Cookie: $cookie" -H "X-Org-Session-Proof: $proof")" = 200 ]; }
 started=$(now)
 wait_until "the web process to serve" answers_http
 echo "GET /api/v1/version: 200 $(tr -d '\n' < "$scratch/body" | head -c 200)"
@@ -232,8 +279,10 @@ echo "GET /: 200, $(wc -c < "$scratch/body") bytes of HTML with its content secu
 if has '^(strict-transport-security|set-cookie):' "$(tr 'A-Z' 'a-z' < "$scratch/head")"; then
     fail "plain HTTP answered with HSTS or a cookie: $(cat "$scratch/head")"
 fi
-register=$(browser /register)
-echo "GET /register (the page of the registration link): $register"
+register=$(navigate /register)
+[ "$register" = 200 ] || fail "the page of the registration link: $register $(head -n 1 "$scratch/head")"
+has '<html' "$(cat "$scratch/body")" || fail "the page of the registration link is not the UI"
+echo "GET /register, navigated to as a browser does: 200, the UI"
 for other in "localhost:8443" "127.0.0.1:$port" "$(hostname):8443" "192.0.2.7:8443"; do
     [ "$other" = "127.0.0.1:8443" ] && continue
     code=$(browser /api/v1/version "$other")
@@ -263,6 +312,25 @@ if out=$(docker exec -t -u 65534 "$tag-a" agentic-org admin reset --user "$user"
     fail "a third user reset the administrator: $out"
 fi
 echo "refused without a terminal, as the service user and as a third user"
+# The browser at the origin opens the link: the page reads the token from the fragment and
+# registers the administrator with it, which signs it in.
+token=$(sed -n 's|.*http://127\.0\.0\.1:8443/register#\([A-Za-z0-9_-]*\).*|\1|p' <<<"$link" | head -n 1)
+[ -n "$token" ] || fail "no token in the link: $link"
+signed_in "registration from the link" \
+    "$(api POST /api/v1/links/register "{\"link\":\"$token\",\"login\":\"Owner\",\"password\":\"$password\"}")"
+session_holds || fail "the registration's session is not the host's"
+echo "POST /api/v1/links/register at the origin: 200, the administrator Owner, signed in"
+again=$(api POST /api/v1/links/register "{\"link\":\"$token\",\"login\":\"Other\",\"password\":\"$password\"}")
+[ "$again" != 200 ] || fail "the link registered a second account"
+[ -z "$(session_cookie)" ] || fail "a refused registration set a cookie"
+signed_in "sign-in" "$(api POST /api/v1/session/sign-in "{\"login\":\"Owner\",\"password\":\"$password\"}")"
+session_holds || fail "the sign-in's session is not the host's"
+echo "the link works once; POST /api/v1/session/sign-in at the origin: 200, signed in"
+wrong=$(api POST /api/v1/session/sign-in '{"login":"Owner","password":"not the password at all"}')
+[ "$wrong" != 200 ] && [ -z "$(session_cookie)" ] || fail "a wrong password was answered with $wrong"
+cross=$(site=cross-site api POST /api/v1/session/sign-in "{\"login\":\"Owner\",\"password\":\"$password\"}")
+[ "$cross" = 403 ] || fail "a cross-site sign-in was answered with $cross"
+echo "a wrong password: $wrong, no cookie; the same sign-in from another site: 403"
 [ -z "$(docker exec -u 0 "$tag-a" find /data /secrets ! -user "$user")" ] ||
     fail "root left a file of its own in the volumes"
 
@@ -342,6 +410,18 @@ wait_until "the worker to answer agent-os" answers "$tag-b"
 kept=$(agent "$tag-b" nova msg read --next --json)
 has '"body":"read me after the replacement"' "$kept" || fail "the earlier message: $kept"
 echo "the same instance $id, the same keys, and nova read the message sent before"
+after=$(agent "$tag-b" pixel msg send --to nova --subject after --json "sent after the replacement")
+echo "pixel sent: $after"
+inbox=$(agent "$tag-b" nova msg inbox --json)
+has '"subject":"after"' "$inbox" || fail "nova's inbox does not show the new message: $inbox"
+read_back=$(agent "$tag-b" nova msg read --next --json)
+has '"body":"sent after the replacement"' "$read_back" || fail "nova read after the replacement: $read_back"
+echo "a new message sent and read after the replacement"
+wait_until "the replaced web process to serve" answers_http
+session_holds || fail "the browser's session did not survive the replacement"
+signed_in "sign-in after the replacement" \
+    "$(api POST /api/v1/session/sign-in "{\"login\":\"Owner\",\"password\":\"$password\"}")"
+echo "the browser's session held across the replacement, and the administrator signed in again"
 docker rm -f "$tag-b" >/dev/null
 
 say "7. the data volume with a new, empty secrets volume"
@@ -468,6 +548,28 @@ refused "$tag-k" 'is not a folder directly in the credential directory /secrets'
 docker run --rm -v "$tag-dk:/data" --entrypoint /bin/sh "$image" -c '! test -e /data/keys' ||
     fail "the refused start made /data/keys"
 echo "  and /data/keys was not made"
+echo "a development key folder that is another volume mounted in the secrets volume (a folder"
+echo "of the data volume at /secrets/dev-keys; two named volumes share one filesystem):"
+volumes+=("$tag-nd" "$tag-ns")
+docker volume create "$tag-nd" >/dev/null
+docker volume create "$tag-ns" >/dev/null
+# Mounted at /data first, so that the new volume gets the image's /data (its owner and mode).
+docker run --rm -u 0 -v "$tag-nd:/data" --entrypoint /bin/sh "$image" -c \
+    'mkdir -m 700 /data/devkeys /data/itemstore && chown 61000:61000 /data/devkeys /data/itemstore' >/dev/null
+refused "$tag-n" '/secrets/dev-keys: another volume is mounted here, inside the credential directory' \
+    -v "$tag-nd:/data" -v "$tag-ns:/secrets" \
+    --mount "type=volume,src=$tag-nd,dst=/secrets/dev-keys,volume-subpath=devkeys" ||
+    fail "the refusal does not name the mounted development key folder"
+echo "the same at an item store of the credential directory (/secrets/office-keys):"
+volumes+=("$tag-ns2")
+docker volume create "$tag-ns2" >/dev/null
+refused "$tag-n2" '/secrets/office-keys: another volume is mounted here, inside the credential directory' \
+    -v "$tag-nd:/data" -v "$tag-ns2:/secrets" \
+    --mount "type=volume,src=$tag-nd,dst=/secrets/office-keys,volume-subpath=itemstore" ||
+    fail "the refusal does not name the mounted item store"
+[ -z "$(docker run --rm -v "$tag-nd:/v" --entrypoint /bin/sh "$image" -c 'find /v/devkeys /v/itemstore -mindepth 1')" ] ||
+    fail "a refused start wrote into the data volume's folders"
+echo "  and nothing was written in the data volume's folders"
 echo "root's reset for an instance whose data folder is gone: refused, its words escaped:"
 volumes+=("$tag-rd" "$tag-rs")
 docker volume create "$tag-rd" >/dev/null

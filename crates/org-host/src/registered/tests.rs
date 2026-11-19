@@ -366,17 +366,13 @@ fn a_foreground_start_refuses_a_development_key_folder_outside_the_secrets_volum
     assert_eq!(fs::read_dir(&secrets).unwrap().count(), 0);
 }
 
-/// The rule itself: one folder directly in the credential directory, made there owner-only
-/// when it is missing and opened from it; anything else is refused and nothing is made.
+/// The path rule: one folder directly in the credential directory; anything else is refused
+/// with what to set instead, before anything is opened.
 #[test]
 fn the_foreground_development_key_folder_is_one_folder_directly_in_the_secrets_volume() {
     let f = fixture();
     let secrets = f.base.join("secrets");
     let data = f.base.join("data");
-    for dir in [&secrets, &data] {
-        fs::create_dir(dir).unwrap();
-        fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
-    }
     for outside in [
         data.join("keys"),
         secrets.join("a/keys"),
@@ -390,28 +386,83 @@ fn the_foreground_development_key_folder_is_one_folder_directly_in_the_secrets_v
             "{refused}"
         );
     }
+    assert_eq!(
+        development_key_folder(&secrets, &secrets.join("dev-keys")),
+        Ok(std::ffi::OsStr::new("dev-keys"))
+    );
+}
+
+/// The folder in the checked credential directory: made there owner-only when it is missing,
+/// opened from the directory, refused with the rule it breaks (never repaired), and its name
+/// one the directory can hold. The platform's own tests judge every rule; this one shows what
+/// the host says. Only a system that keeps a host's secrets in a directory has one.
+#[test]
+fn the_development_key_folder_is_made_and_judged_in_the_checked_credential_directory() {
+    use org_platform_host::credentials::{protected_store, ProtectedStore, ReleaseDirectory};
+    use org_platform_host::testing::credentials::release_directory_below_with_stores;
+    if protected_store() != Ok(ProtectedStore::ReleaseDirectory) {
+        println!("skipped: this system keeps no host secrets in a directory");
+        return;
+    }
+    let f = fixture();
+    let secrets = f.base.join("secrets");
+    let data = f.base.join("data");
+    for dir in [&secrets, &data] {
+        fs::create_dir(dir).unwrap();
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let data_root = fs::File::open(&data).unwrap();
+    let checked = match release_directory_below_with_stores(
+        &f.base,
+        ReleaseDirectory {
+            path: &secrets,
+            data_root: std::os::fd::AsFd::as_fd(&data_root),
+            mount_point_required: false,
+            expect_items: false,
+        },
+        &crate::release_store::ITEM_STORES,
+    ) {
+        Ok(checked) => checked,
+        Err(why) => {
+            println!(
+                "skipped: {} cannot hold a credential directory here: {why}",
+                secrets.display()
+            );
+            return;
+        }
+    };
+    let made = |name: &str| development_folder_in(&checked, &secrets, std::ffi::OsStr::new(name));
     // A link in the volume to a folder elsewhere is not followed, and nothing is made there.
     fs::create_dir(data.join("elsewhere")).unwrap();
     fs::set_permissions(data.join("elsewhere"), fs::Permissions::from_mode(0o700)).unwrap();
     std::os::unix::fs::symlink(data.join("elsewhere"), secrets.join("linked")).unwrap();
-    let linked = secrets.join("linked");
-    let name = development_key_folder(&secrets, &linked).unwrap();
-    let refused = make_development_key_folder(&secrets, name).unwrap_err();
+    let refused = made("linked").unwrap_err();
     assert!(refused.contains("is not a folder of its own"), "{refused}");
+    assert!(
+        refused.contains(&secrets.join("linked").display().to_string()),
+        "{refused}"
+    );
     assert_eq!(fs::read_dir(data.join("elsewhere")).unwrap().count(), 0);
+    // A name the directory cannot hold, or one of its item stores, is refused as a name.
+    for name in ["host-secrets", "office-keys", "dev keys", ".hidden"] {
+        let refused = made(name).unwrap_err();
+        assert!(
+            refused.contains("is named with letters") && refused.contains("item stores"),
+            "{name}: {refused}"
+        );
+    }
     // The folder in the volume is made owner-only, and found again on the next start.
     let folder = secrets.join("dev-keys");
-    let name = development_key_folder(&secrets, &folder).unwrap();
-    make_development_key_folder(&secrets, name).unwrap();
+    drop(made("dev-keys").unwrap());
     assert_eq!(
         fs::metadata(&folder).unwrap().permissions().mode() & 0o7777,
         0o700
     );
-    make_development_key_folder(&secrets, name).unwrap();
+    drop(made("dev-keys").unwrap());
     // A folder that breaks the mode is refused, never repaired.
     fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
-    let refused = make_development_key_folder(&secrets, name).unwrap_err();
-    assert!(refused.contains("with mode 700"), "{refused}");
+    let refused = made("dev-keys").unwrap_err();
+    assert!(refused.contains("mode is not 0700"), "{refused}");
     assert_eq!(
         fs::metadata(&folder).unwrap().permissions().mode() & 0o7777,
         0o755

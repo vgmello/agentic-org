@@ -12,7 +12,9 @@
 //! key folder.
 //!
 //! The development store is plain files: `<base>/host-secrets/<instance id>/<name>`, held by
-//! one host at a time. A put error can follow publication: the value may be visible but not
+//! one host at a time. In a container's foreground mode the base is a development key folder
+//! that the host opened and checked in its credential directory, and the store is opened
+//! from that folder's descriptor ([`development_store`]). A put error can follow publication: the value may be visible but not
 //! durable. Reload the item before deciding how to recover; an error does not imply rollback.
 
 #[cfg(test)]
@@ -22,8 +24,8 @@ use std::{fmt, io};
 
 use org_platform::Refused;
 use org_platform_host::credentials::{
-    credentials, CredentialError, CredentialLocation, Credentials, ItemName, ItemStore,
-    KeychainItems, ProtectedStore, ReleaseItems, ReleaseRoot, Sharing,
+    credentials, CredentialError, CredentialLocation, Credentials, DevelopmentFolder, ItemName,
+    ItemStore, KeychainItems, ProtectedStore, ReleaseItems, ReleaseRoot, Sharing,
 };
 
 pub(crate) const MAX_BYTES: usize = 16 * 1024;
@@ -360,6 +362,24 @@ pub(crate) fn store_for(
         )
     }
 }
+/// The development custody of `instance` in the development key folder `folder`, which the
+/// host opened and checked in its credential directory: `host-secrets/<instance>` below the
+/// folder, made if it is missing, opened from the folder's own descriptor (never again by
+/// its path), and held by this handle alone. The release directory's lock is held with it.
+pub(crate) fn development_store(
+    folder: &DevelopmentFolder,
+    instance: &str,
+) -> Result<std::sync::Arc<dyn HostSecrets>, SelectionError> {
+    if !org_proto::is_uuid_v7(instance) {
+        return Err(SelectionError::InvalidInstance);
+    }
+    match folder.store(&["host-secrets", instance], Sharing::Exclusive, "") {
+        Ok(store) => Ok(std::sync::Arc::new(Custody { store })),
+        Err(CredentialError::Refused(_)) => Err(SelectionError::Unsupported),
+        Err(e) => Err(SelectionError::Storage(e.into())),
+    }
+}
+
 /// A release build's custody on a system whose protected store is `store`: `host-secrets`
 /// below the open release directory where it is one, and the Keychain custody otherwise. A
 /// system without a protected store takes the Keychain's path too, and is refused there as

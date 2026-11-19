@@ -48,6 +48,12 @@
 //! A mount over another at the same mount point does not matter either: a directory
 //! is placed by its own mount id, not by which mount a path would reach today.
 //!
+//! One question reads one more field of every line: whether anything is mounted inside
+//! the release directory ([`Table::mounted_inside`]). That is about every mount, so the
+//! mount point of each line is read, and a line whose mount point cannot be read refuses.
+//! The kernel writes a mount point as an absolute path, escaped, before any field of
+//! free text, so a machine's other mounts do not make that read fail.
+//!
 //! The GNU/Linux adapter supplies the table, the mount ids and the paths
 //! (`linux/release.rs`); the decisions are compiled and tested on every target.
 
@@ -133,6 +139,30 @@ impl<'a> Table<'a> {
             })
             .collect::<Result<_, _>>()
             .map(|lines| Self { lines })
+    }
+
+    /// The first mount whose mount point is inside the directory at `path` (from this
+    /// process's root), not the directory itself: its mount point. A mount there puts
+    /// another volume, or another directory of this one, under the directory's own names,
+    /// so whatever is written below it is not in the directory's volume.
+    ///
+    /// Here the mount point of **every** line is read (the fifth field), since any line
+    /// could be such a mount. A line whose mount point cannot be read is
+    /// [`MountDoubt::Malformed`]: it could be one. Nothing else of those lines is read.
+    pub(super) fn mounted_inside(&self, path: &[u8]) -> Result<Option<Vec<u8>>, MountDoubt> {
+        let directory = names(path).ok_or(MountDoubt::Malformed)?;
+        for (_, line) in &self.lines {
+            let field = line
+                .split(|byte| *byte == b' ')
+                .nth(4)
+                .ok_or(MountDoubt::Malformed)?;
+            let mount_point = unescape(field).ok_or(MountDoubt::Malformed)?;
+            let point = names(&mount_point).ok_or(MountDoubt::Malformed)?;
+            if point.len() > directory.len() && point.starts_with(&directory) {
+                return Ok(Some(mount_point));
+            }
+        }
+        Ok(None)
     }
 
     /// How many mounts the table lists.
@@ -362,6 +392,59 @@ mod tests {
     /// the secrets directory is a directory of the data volume.
     const CONTAINER_SECRETS_INSIDE_DATA: &str =
         include_str!("mounts/container_secrets_inside_data.mountinfo");
+
+    /// The table a container sees with two named volumes at `/data` and `/secrets` and a
+    /// folder of the data volume mounted at `/secrets/dev-keys`
+    /// (`--mount type=volume,src=D,dst=/secrets/dev-keys,volume-subpath=devkeys`), as
+    /// written. All three are on one filesystem.
+    const CONTAINER_MOUNT_INSIDE_SECRETS: &str =
+        include_str!("mounts/container_mount_inside_secrets.mountinfo");
+
+    /// X5 review (third round): a mount inside the release directory, at any depth, is
+    /// found by its mount point, however the volumes share a filesystem; the directory's
+    /// own mount, a mount beside it with a longer name, and mounts elsewhere are not.
+    #[test]
+    fn a_mount_inside_the_release_directory_is_found_by_its_mount_point() {
+        let nested = Table::of(CONTAINER_MOUNT_INSIDE_SECRETS.as_bytes()).unwrap();
+        assert_eq!(
+            nested.mounted_inside(b"/secrets").unwrap().as_deref(),
+            Some(&b"/secrets/dev-keys"[..])
+        );
+        assert_eq!(nested.mounted_inside(b"/data").unwrap(), None);
+        assert_eq!(nested.mounted_inside(b"/secrets/dev-keys").unwrap(), None);
+        for table in [CONTAINER_TWO_VOLUMES, CONTAINER_SECRETS_INSIDE_DATA] {
+            let table = Table::of(table.as_bytes()).unwrap();
+            assert_eq!(table.mounted_inside(b"/secrets").unwrap(), None);
+        }
+        let line = |id: u32, point: &str| format!("{id} 1 8:1 /x {point} rw - ext4 /dev/sda1 rw\n");
+        let table = [
+            line(1, "/"),
+            line(2, "/secrets"),
+            line(3, "/secrets-old"),
+            line(4, "/secrets/office-keys/a\\040b"),
+        ]
+        .concat();
+        assert_eq!(
+            Table::of(table.as_bytes())
+                .unwrap()
+                .mounted_inside(b"/secrets")
+                .unwrap()
+                .as_deref(),
+            Some(&b"/secrets/office-keys/a b"[..])
+        );
+        // A line whose mount point cannot be read could be one.
+        let unreadable = [line(1, "/"), "2 1 8:1 /x relative rw - ext4 s rw\n".into()].concat();
+        assert_eq!(
+            Table::of(unreadable.as_bytes())
+                .unwrap()
+                .mounted_inside(b"/secrets"),
+            Err(MountDoubt::Malformed)
+        );
+        assert_eq!(
+            nested.mounted_inside(b"relative"),
+            Err(MountDoubt::Malformed)
+        );
+    }
 
     /// A mount table as the kernel writes one: the root filesystem, `/proc`, a
     /// separate filesystem for `/srv`, and whatever a test adds.

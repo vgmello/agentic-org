@@ -443,6 +443,11 @@ checks and a lock.
     descriptors, walking `..` from each up to `/`: neither may contain the other.
   - In a container (setup's `service` is `foreground`) the store directory must be a
     mount point (`statx` `STATX_ATTR_MOUNT_ROOT`).
+  - Nothing is mounted inside the store directory, at any depth: every mount point of
+    the mount table is read, and one below the store refuses with that mount point
+    (two named volumes of one filesystem share a device number, so a folder of the
+    data volume mounted at `/secrets/office-keys` or `/secrets/dev-keys` is otherwise
+    indistinguishable).
   - When `expect_items` is set and the store holds no item, the store refuses with
     "credentials missing", and the host does not start: it never creates fresh keys
     for offices that already have wrapped records.
@@ -464,10 +469,14 @@ checks and a lock.
   directly in the recorded secrets volume (`/secrets/dev-keys` in the image): a host
   in the foreground mode refuses, before anything is written, a development key folder
   anywhere else (in the data volume, a copy of which would then hold the keys), one
-  reached through a link, or one on another filesystem mounted inside the volume; and
-  a foreground record that names no secrets volume does not start on Linux. Known limit:
-  the development stores reopen that folder by its path after the check, which only
-  the service user, who can read the keys anyway, could exploit.
+  reached through a link, or another volume mounted on it, whatever its filesystem
+  (the platform's `ReleaseRoot::development_folder` compares the kernel's mount ids,
+  `statx` `STATX_MNT_ID`, since two named volumes on one filesystem share a device
+  number); and a foreground record that names no secrets volume does not start on
+  Linux. The host's own development custody is opened from the checked folder's
+  descriptor and holds the volume's lock. Known limit: the office keys' development
+  store reopens that folder by its path when it is first used, which only the service
+  user, who can read the keys anyway, could exploit.
 
 **Built in X3** (`org_platform_host::credentials`: `protected_store()` answers
 `Keychain` or `ReleaseDirectory`; `release_directory(ReleaseDirectory { path,
@@ -768,6 +777,31 @@ instance runs only while the user is logged in and print
 for themselves; setup does not run it without being asked. The unit file is writable
 by the same user, like the executable path it names (section 5).
 
+The unit sets the location variables setup gave it (`dirs::location_variables`) and
+unsets the others (`UnsetEnvironment=`), so a value the user manager holds cannot move
+the instance's locations away from the ones setup reserved. A drop-in that applies to
+the unit by its name is a conflict for every operation; a drop-in for every service
+(`service.d/`) is accepted, but whenever systemd has the unit file loaded as it is on
+disk, what it reports for `ExecStart`, `ExecStartPre`, `ExecStartPost`,
+`ExecCondition`, `ExecStop`, `ExecStopPost`, `Environment`, `EnvironmentFiles`,
+`PassEnvironment`, `UnsetEnvironment`, `Type`, `KillMode`, `KillSignal`, `SendSIGKILL`,
+`TimeoutStopUSec`, `Restart`, `UMask` and `NoNewPrivileges` must be what the file says
+(read back only from an exact rendering of a unit), or register, start and status are a
+conflict; stop and unregister still end and remove the unit. No command runs unregister
+yet, so a unit written by an earlier build (before `UnsetEnvironment=`) is removed by
+hand, then setup registers it again:
+`systemctl --user disable --now agentic-org-<instance-id>.service`, remove
+`~/.config/systemd/user/agentic-org-<instance-id>.service`, and
+`systemctl --user daemon-reload`. The
+program, its arguments and its environment values carry no control character, which
+`systemctl show` would print raw. Known limits: `ExecStart`'s arguments are compared as
+systemd prints them, joined by spaces, so a drop-in that only regroups words around a
+space is not seen; and a systemd that quotes `Environment=` differently from systemd 257
+refuses a unit whose values hold a space or a shell character, never accepts it. A
+registration whose `enable --now` enabled the unit and then failed to start it removes
+that enablement (`disable --now`, or `disable` for a unit that was already running)
+before it removes the file it wrote.
+
 **`Foreground`, the container mode.** Nothing is registered: the container runtime
 is the supervisor. Setup is told the mode explicitly; nothing detects a container.
 The container's command is `agentic-org serve --setup /etc/agentic-org/setup.json`:
@@ -809,7 +843,11 @@ the product serves no HTTPS on any system yet.
   sandboxes need (section 3.5). The `agentic-org` AppArmor profile is
   `docker-default` plus `userns`, for Docker hosts that restrict unprivileged user
   namespaces through AppArmor (Ubuntu 24.04 and later); on a Docker host without
-  AppArmor that option is left out. `apparmor=unconfined` and `--privileged` are
+  AppArmor that option is left out. Being a static file, it admits signals from an
+  unconfined Docker daemon and the Docker snap's (`snap.docker.dockerd`) where Moby's
+  template names the running daemon's label; another daemon label is added by the
+  operator (`deploy/container/README.md`). It has not been loaded on a host that
+  enforces AppArmor: `docker stop` under it is unverified. `apparmor=unconfined` and `--privileged` are
   never used.
 - **The first registration link.** Non-interactive setup prints none, and nothing is
   written to the container log. The administrator runs
