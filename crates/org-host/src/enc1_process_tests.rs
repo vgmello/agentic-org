@@ -7,11 +7,19 @@
 //! It proves: a provisioned HQ reaches `active`; after the worker is killed the
 //! supervisor restarts it to `active` again; after the office's key file is deleted
 //! from the development store a restart still reaches `active` with no status reason
-//! (the start proceeds with no key) and the data is plain SQLite that reads with no
-//! key. Its dev key file holds the office secrets key as lowercase hex (its stored and
-//! handoff form); once that file is deleted, no remaining file holds the key as raw bytes
-//! or lowercase/uppercase hex. The wrapped CA record is found raw in the office's folder
-//! and, in any of those forms, in no file outside it.
+//! (the start proceeds with no key). The office's store keeps its projection as plain
+//! SQLite at `<instance-root>/<organization-id>/runtime/<office-id>/office.db` (its file
+//! header, read as bytes: this test does not open it), and the wrapped CA key in the
+//! office's local record `<organization-id>/durable/local/offices/<office-id>/security/
+//! ca-key.v1.json` (data contract document 16), read here from that file.
+//!
+//! The dev key file holds the office secrets key as lowercase hex (its stored and handoff
+//! form); once that file is deleted, no remaining file holds the key as raw bytes or
+//! lowercase/uppercase hex. The wrapped CA key, in any of those forms, is in the local
+//! record and may be in the protected journal under `<organization-id>/durable/recovery/`
+//! (creation's journal entry carries the record until its segment is released); it is in
+//! no other file: not the projection, not `durable/state/` (the organization's Git
+//! content), not the host's registry, logs or runtime files.
 use crate::web_process_tests::{create_hq, start_signed_in, Started};
 use org_proto::{OfficeInfo, OfficeStatus};
 use std::{
@@ -110,6 +118,24 @@ pub(crate) fn unhex(text: &str) -> Vec<u8> {
         .collect()
 }
 
+/// Every file under `folder` holds none of `forms`; `what` names the secret.
+fn holds_none(folder: &Path, forms: &[Vec<u8>], what: &str) -> usize {
+    let mut all = Vec::new();
+    files(folder, &mut all);
+    for path in &all {
+        // The live office may fold its log in between the listing and the read.
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => panic!("can't read {path:?} for the leak scan: {e}"),
+        };
+        for form in forms {
+            assert!(!contains(&bytes, form), "{what} in {path:?}");
+        }
+    }
+    all.len()
+}
+
 #[test]
 #[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
 fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_sqlite() {
@@ -124,7 +150,8 @@ fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_s
     } = start_signed_in();
     let base = _temp.path().canonicalize().unwrap();
     let worker = program.with_file_name("agentic-org-office");
-    let office_id = create_hq(&host, address).office_id;
+    let created = create_hq(&host, address);
+    let (organization_id, office_id) = (created.organization_id, created.office_id);
     wait_active(&host, &office_id, "provisioned");
 
     // The dev store holds exactly one key file for this office, outside the office home.
@@ -155,55 +182,70 @@ fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_s
     kill_worker_and_wait_for_another(&worker);
     wait_active(&host, &office_id, "restart without a key");
 
-    // ENC-1: both office databases are plain SQLite that read with no key, beside the
-    // live office.
+    // The organization's data root, found by the local record's exact place under it.
+    let record_tail = Path::new("durable/local/offices")
+        .join(&office_id)
+        .join("security/ca-key.v1.json");
     let mut all = Vec::new();
     files(&base, &mut all);
-    let folder = all
+    let records: Vec<_> = all
         .iter()
-        .find(|p| {
-            p.file_name().unwrap() == "office.db"
-                && p.parent().unwrap().file_name().unwrap() == office_id.as_str()
-        })
-        .expect("the office's office.db")
-        .parent()
+        .filter(|p| p.ends_with(Path::new(&organization_id).join(&record_tail)))
+        .collect();
+    assert_eq!(records.len(), 1, "the HQ's CA key record: {records:?}");
+    let record_path = records[0].clone();
+    let organization_root = record_path
+        .ancestors()
+        .nth(record_tail.components().count())
         .unwrap()
         .to_path_buf();
-    for name in ["office.db", "org.db"] {
-        let bytes = fs::read(folder.join(name)).unwrap();
-        assert!(bytes.starts_with(b"SQLite format 3\0"), "{name}");
-    }
-    let read_only = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY;
-    let db = rusqlite::Connection::open_with_flags(folder.join("office.db"), read_only).unwrap();
-    let wrapped: Vec<u8> = db
-        .query_row(
-            "SELECT wrapped_ca_key FROM local_hq_creation WHERE singleton=1",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert!(wrapped.len() > 32);
-    let org = rusqlite::Connection::open_with_flags(folder.join("org.db"), read_only).unwrap();
-    let tables: i64 = org
-        .query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0))
-        .unwrap();
-    assert!(tables > 0);
+    assert!(organization_root.ends_with(&organization_id));
+    let durable = organization_root.join("durable");
+    let projection = organization_root.join("runtime").join(&office_id);
+
+    // The wrapped CA key, from the local record (document 16's one exact form).
+    let record_text = fs::read_to_string(&record_path).unwrap();
+    assert!(record_text.ends_with("}\n"), "{record_text}");
+    let record: serde_json::Value = serde_json::from_str(&record_text).unwrap();
+    assert_eq!(record["schema_version"], 1, "{record}");
+    assert_eq!(record["organization_id"], organization_id.as_str());
+    assert_eq!(record["office_id"], office_id.as_str());
+    let wrapped_hex = record["wrapped_ca_key"].as_str().expect("wrapped_ca_key");
+    assert_eq!(wrapped_hex, wrapped_hex.to_ascii_lowercase());
+    let wrapped = unhex(wrapped_hex);
+    assert!(wrapped.len() > 32, "{} bytes", wrapped.len());
+
+    // ENC-1: the projection is plain SQLite, by its header bytes, beside the live office.
+    let database = fs::read(projection.join("office.db")).unwrap();
+    assert!(database.starts_with(b"SQLite format 3\0"), "office.db");
     // The office answers the host's status checks on the same data with no key.
     wait_active(&host, &office_id, "serving without a key");
 
-    // ENC-5: with its dev key file deleted, the office secrets key, raw or hex, appears
-    // in no remaining file, so neither the office nor the host stored it elsewhere; the
-    // wrapped CA record, raw or hex, appears only in the office's own folder, so no
-    // rendezvous event or handoff carried it to anything the host wrote (registry, logs,
-    // runtime files).
+    // The projection (the database and its log) holds neither the office secrets key
+    // nor the wrapped CA key, in any form.
     let key_forms = encodings(&key);
     let wrapped_forms = encodings(&wrapped);
+    let in_projection = holds_none(&projection, &key_forms, "office secrets key");
+    holds_none(&projection, &wrapped_forms, "wrapped CA key");
+    assert!(in_projection >= 1, "{projection:?}");
+    // Nor does any file of the organization's Git content.
+    holds_none(&durable.join("state"), &wrapped_forms, "wrapped CA key");
+
+    // ENC-5: with its dev key file deleted, the office secrets key, raw or hex, appears
+    // in no remaining file, so neither the office nor the host stored it elsewhere. The
+    // wrapped CA key, raw or hex, is only in the local record and the protected journal,
+    // so no rendezvous event or handoff carried it to anything the host wrote (registry,
+    // logs, runtime files).
+    let journal = durable.join("recovery");
+    assert!(journal.is_dir(), "{journal:?}");
+    let mut all = Vec::new();
+    files(&base, &mut all);
     assert!(
         !all.contains(&key_files[0]),
         "the deleted key file is not scanned"
     );
     let mut scanned = 0;
-    let mut wrapped_in_folder = false;
+    let mut wrapped_in_record = false;
     for path in &all {
         if path.starts_with(base.join("bin")) {
             continue;
@@ -219,19 +261,19 @@ fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_s
         for form in &key_forms {
             assert!(!contains(&bytes, form), "office secrets key in {path:?}");
         }
-        if path.starts_with(&folder) {
-            wrapped_in_folder |= contains(&bytes, &wrapped);
-        } else {
+        if *path == record_path {
+            wrapped_in_record = contains(&bytes, &wrapped_forms[1]);
+        } else if !path.starts_with(&journal) {
             for form in &wrapped_forms {
-                assert!(!contains(&bytes, form), "wrapped CA record in {path:?}");
+                assert!(!contains(&bytes, form), "wrapped CA key in {path:?}");
             }
         }
     }
     assert!(scanned > 4, "{scanned}");
-    // Positive control: the scan reads the files that do hold the wrapped CA record.
+    // Positive control: the scan reads the file that does hold the wrapped CA key.
     assert!(
-        wrapped_in_folder,
-        "no file in {folder:?} holds the wrapped CA record"
+        wrapped_in_record,
+        "{record_path:?} does not hold the wrapped CA key as lowercase hex"
     );
     drop(wire);
     host.shutdown();
