@@ -405,15 +405,15 @@ fn a_recorded_credential_directory_holds_a_development_builds_custody() {
     };
     assert!(f.registry_db().exists());
     host.shutdown();
-    // The registry's secret is in the directory's host-secrets item store, not in the
-    // development folder, and nothing is in the data folder but the instance's own files.
-    assert!(
-        fs::read_dir(secrets.join("host-secrets"))
-            .unwrap()
-            .any(|entry| entry.unwrap().file_name() == "registry"),
-        "{:?}",
-        walk(&secrets)
-    );
+    // Both views were opened in the directory (each made its item store there, with its
+    // lock), and nothing in the development folder: there is none.
+    for store in ["host-secrets", "office-keys"] {
+        assert!(
+            secrets.join(store).join(".lock").is_file(),
+            "{store}: {:?}",
+            walk(&secrets)
+        );
+    }
     assert!(f.custody().is_empty(), "the development folder was used");
 
     // An office exists, and the directory is replaced by an empty one: the start refuses

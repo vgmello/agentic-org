@@ -55,8 +55,9 @@ for _ in $(seq 1 150); do serving && break; sleep 0.2; done
 serving || fail "the service did not serve under the profiles: $(docker logs "$tag-a" 2>&1 | tail -n 3)"
 [ "$(docker inspect -f '{{.AppArmorProfile}}' "$tag-a")" = agentic-org ] ||
     fail "the container is not under the agentic-org profile (is it loaded?)"
-has 'web process started, confined by the seccomp filter' "$(docker logs "$tag-a" 2>&1)" ||
-    fail "the web process is not confined: $(docker logs "$tag-a" 2>&1 | grep -i web | tail -n 2)"
+confined() { has 'web process started, confined by the seccomp filter' "$(docker logs "$tag-a" 2>&1)"; }
+for _ in $(seq 1 150); do confined && break; sleep 0.2; done
+confined || fail "the web process is not confined: $(docker logs "$tag-a" 2>&1 | grep -i web | tail -n 2)"
 started=$(now)
 docker stop "$tag-a" >/dev/null
 took=$(since "$started")
