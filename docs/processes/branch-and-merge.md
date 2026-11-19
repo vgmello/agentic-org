@@ -3,10 +3,10 @@ process: branch-and-merge
 name: Branch, review and integration
 kind: process
 level: organization
-version: 3
+version: 4
 owner: lead
 status: active
-summary: Branch from origin/v1-integration, verify and review locally, then merge into v1-integration.
+summary: Branch from origin/v1, verify and review locally, then merge into v1.
 applies_to: every agent that changes this repository
 overridable: true
 ---
@@ -22,7 +22,7 @@ no outside reviewer is required.
 
 ## 1. Branch and plan
 
-- Start each increment's branch from `origin/v1-integration`.
+- Start each increment's branch from `origin/v1`.
 - Before code, write the increment's short plan: the outcome, the files you own, what
   you will delete, and the decisions you take where the documents are silent.
 - One writer per file at a time. A file that two increments need is handed over
@@ -57,11 +57,11 @@ change needs current checks and review again.
 
 ## 4. Integrate
 
-After the checks and the final review pass, the lead merges with
-`git merge --no-ff` into `v1-integration` and pushes that branch. Verify the pushed
-commit. Then start the next increment from the updated `origin/v1-integration`.
+After the checks and the final review pass, the lead merges `origin/v1` into the branch,
+tells the other lead sessions, then merges with `git merge --no-ff` into `v1` and pushes it. Verify the pushed commit. Then
+start the next increment from the updated `origin/v1`.
 
-- `v1-integration` is the integration branch for all v1 work.
-- Never push to `main` or merge into the release branch `v1` without an explicit
-  release instruction.
+- `v1` is the integration branch for all v1 work (owner, 2026-11-18). `v1-integration`
+  is retired; don't branch from it or merge into it.
+- Never push to `main` without an explicit release instruction.
 - Clean up a branch or worktree only after confirming it is fully merged.

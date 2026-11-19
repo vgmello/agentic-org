@@ -3,8 +3,9 @@
 Three lead sessions build v1 at the same time, each in its own stream. This folder is their
 shared handover: what each stream has done, what is left, and what a lead starting again picks
 up first. It sits apart from the requirements and plans so that the owner can delete it once
-all three streams are finished. Only the session-start step in [AGENTS.md](../../AGENTS.md) points
-here; when the folder is deleted, delete that line too.
+all three streams are finished. The session-start step in [AGENTS.md](../../AGENTS.md) and the
+streams' own task logs under `.agent-kit/tasks/` point here; when the folder is deleted, delete
+those pointers too (`git grep docs/workstreams` finds them).
 
 The order of work and the requirements stay where they are: the
 [implementation plan](../implementation-plan.md), the [UI plan](../plans/v1-ui-screens.md) (it reaches

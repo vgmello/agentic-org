@@ -247,7 +247,7 @@ Follow the [architecture rules](../architecture-rules.md) and the [v1 project st
 
 ## Implementation plan
 
-Every step is planned; none has started. Each step is a separate acceptance and merge unit under the [independent delivery rules](../independent-delivery.md) and the [dependency boundaries](../architecture-rules.md#independent-delivery-and-dependency-boundaries). Each starts on its own branch from `origin/v1-integration`, is reviewed locally and is merged into `v1-integration`. The [feature checklist](../FEATURES.md) rows FC-139 and FC-140 track delivery; this plan does not replace them.
+Every step is planned; none has started. Each step is a separate acceptance and merge unit under the [independent delivery rules](../independent-delivery.md) and the [dependency boundaries](../architecture-rules.md#independent-delivery-and-dependency-boundaries). Each starts on its own branch from `origin/v1`, is reviewed locally and is merged into `v1`. The [feature checklist](../FEATURES.md) rows FC-139 and FC-140 track delivery; this plan does not replace them.
 
 | Step | What | Kind | Depends on |
 | --- | --- | --- | --- |
