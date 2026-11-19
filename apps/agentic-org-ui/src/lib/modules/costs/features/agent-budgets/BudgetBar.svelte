@@ -12,6 +12,7 @@
 		budgetPercent,
 		budgetPeriodLabel,
 		budgetState,
+		extensionText,
 		NO_USAGE_RUNTIME
 	} from '../../present';
 	import type { BudgetPeriodState } from '../../types';
@@ -79,7 +80,14 @@
 		</p>
 	{/if}
 	{#if budget.extended}
-		<p class="mt-0.5 text-xs/5 text-fg-muted">This budget already used its one 20% extension.</p>
+		<p class="mt-0.5 text-xs/5 text-fg-muted">
+			This budget already used its one 20% extension{budget.baseLimit !== undefined
+				? `: ${extensionText(budget)}`
+				: ''}.
+		</p>
 	{/if}
-	<p class="sr-only">{budgetBoundsText(budget, zone)}</p>
+	<!-- §4: the period's bounds in the budget zone, inclusive start and exclusive end, shown, not only spoken. -->
+	<p class="mt-0.5 text-xs/5 text-fg-muted tabular-nums" data-testid="budget-bounds">
+		{budgetBoundsText(budget, zone)}
+	</p>
 </div>

@@ -48,6 +48,14 @@
 	let errors = $state<CustomErrors>({});
 	let fromInput = $state<HTMLInputElement | null>(null);
 	let toInput = $state<HTMLInputElement | null>(null);
+	let trigger = $state<HTMLElement | null>(null);
+
+	/** Closing the form, by Show or Cancel, returns focus to the menu that opened it (app-shell §6a). */
+	async function backToTrigger() {
+		editing = false;
+		await tick();
+		trigger?.focus();
+	}
 
 	const shown = $derived<PeriodKind>(editing ? 'custom' : period.kind);
 	const today = $derived(todayKey(period.timeZone));
@@ -75,13 +83,13 @@
 			(errors.from ? fromInput : toInput)?.focus();
 			return;
 		}
-		editing = false;
 		onchange({ kind: 'custom', from, ...(to ? { to } : {}), timeZone: period.timeZone });
+		await backToTrigger();
 	}
 
 	function cancel() {
-		editing = false;
 		errors = {};
+		void backToTrigger();
 	}
 </script>
 
@@ -91,6 +99,7 @@
 			{#snippet child({ props })}
 				<Button
 					{...props}
+					bind:ref={trigger}
 					variant="outline"
 					class="self-start {mobileButton}"
 					aria-label="Period: {periodLabel(shown)}"
@@ -118,12 +127,12 @@
 
 	{#if editing}
 		<form
-			class="flex flex-wrap items-start gap-x-4 gap-y-3"
+			class="flex min-w-0 flex-wrap items-start gap-x-4 gap-y-3"
 			onsubmit={apply}
 			novalidate
 			aria-label="Custom period"
 		>
-			<div class="w-full min-[480px]:w-44">
+			<div class="w-full min-w-0 min-[480px]:w-44">
 				<Label for="{id}-from" class="block text-sm/6 font-medium text-fg">From</Label>
 				<Input
 					bind:ref={fromInput}
@@ -133,7 +142,7 @@
 					bind:value={from}
 					aria-invalid={errors.from ? true : undefined}
 					aria-describedby={errors.from ? `${id}-from-error` : `${id}-from-help`}
-					class="mt-2 {inputClass}"
+					class="mt-2 w-full min-w-0 {inputClass}"
 				/>
 				{#if errors.from}
 					<p id="{id}-from-error" class={errorClass}>{errors.from}</p>
@@ -141,16 +150,17 @@
 					<p id="{id}-from-help" class={helpClass}>The first whole day counted.</p>
 				{/if}
 			</div>
-			<div class="w-full min-[480px]:w-44">
+			<div class="w-full min-w-0 min-[480px]:w-44">
 				<Label for="{id}-to" class="block text-sm/6 font-medium text-fg">To (optional)</Label>
 				<Input
 					bind:ref={toInput}
 					id="{id}-to"
 					type="date"
+					max={today}
 					bind:value={to}
 					aria-invalid={errors.to ? true : undefined}
 					aria-describedby={errors.to ? `${id}-to-error` : `${id}-to-help`}
-					class="mt-2 {inputClass}"
+					class="mt-2 w-full min-w-0 {inputClass}"
 				/>
 				{#if errors.to}
 					<p id="{id}-to-error" class={errorClass}>{errors.to}</p>

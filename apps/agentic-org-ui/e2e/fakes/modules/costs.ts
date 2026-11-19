@@ -239,11 +239,13 @@ function totalsOf(records: StoredRecord[]): UsageTotals {
 		tokenIncompleteRecords: 0,
 		costIncompleteRecords: 0,
 		unpricedRecords: 0,
+		unknownCostRecords: 0,
 		includesApiEquivalent: false
 	};
 	for (const r of records) {
 		if (r.costMicroUsd !== null) cost = (cost ?? 0) + r.costMicroUsd;
-		else t.unpricedRecords++;
+		else if (r.costBasis === 'unpriced') t.unpricedRecords++;
+		else t.unknownCostRecords++;
 		if (r.tokens) {
 			tokens = (tokens ?? 0) + r.tokens[0] + r.tokens[1] + r.tokens[2] + r.tokens[3];
 			cacheRead = (cacheRead ?? 0) + r.tokens[2];
@@ -380,6 +382,8 @@ function budgetState(
 			r.occurredAt >= period.startsAt.toISOString() && r.occurredAt < period.endsAt.toISOString()
 	);
 	const totals = totalsOf(inPeriod);
+	// Document 17: the one extension raises the base limit L to L + floor(L / 5).
+	const limit = stored.extended ? stored.limit + Math.floor(stored.limit / 5) : stored.limit;
 	const spent = stored.unit === 'usd' ? (totals.knownCostMicroUsd ?? 0) : (totals.knownTokens ?? 0);
 	const complete =
 		stored.unit === 'usd'
@@ -387,7 +391,8 @@ function budgetState(
 			: totals.tokenIncompleteRecords === 0;
 	return {
 		unit: stored.unit,
-		limit: stored.limit,
+		limit,
+		...(stored.extended ? { baseLimit: stored.limit } : {}),
 		spent,
 		complete: complete && !unmeasured,
 		...(unmeasured
@@ -398,7 +403,7 @@ function budgetState(
 			startsAt: period.startsAt.toISOString(),
 			endsAt: period.endsAt.toISOString()
 		},
-		...(stored.hold && spent >= stored.limit ? { hold: stored.hold } : {}),
+		...(stored.hold && spent >= limit ? { hold: stored.hold } : {}),
 		...(stored.extended ? { extended: true } : {}),
 		...(stored.warned ? { warned: true } : {})
 	};

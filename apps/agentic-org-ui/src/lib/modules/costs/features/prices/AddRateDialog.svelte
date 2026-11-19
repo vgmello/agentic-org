@@ -2,10 +2,12 @@
   @component
   Add a rate (costs-and-insights-ux §5): a new price version for a provider and model, from today or a later date.
   Used versions never change, so editing a rate is adding a new one; started from a model's row, the form is prefilled
-  with its current rates. The values stay while Adding…; a refusal names the fix beside its field and focuses it (the
+  with its current rates. The values stay while Saving…; a refusal names the fix beside its field and focuses it (the
   date for date refusals). A verified failure can be tried again with the same operation ID. When the outcome is
   unknown, the dialog says "Save not confirmed" and offers only Check status until the rate is known to be added or not:
-  it never sends the rate a second time blind.
+  it never sends the rate a second time blind. Closing does not abandon it: reopening the dialog, from any button,
+  returns to that save until Check status settles it, and `onunconfirmed` tells the page so it can say so and
+  read the prices again.
   Open it with `start(prefill?)`; `onadded` gets the version HQ recorded.
 -->
 <script lang="ts">
@@ -43,6 +45,7 @@
 		providers = [],
 		models = [],
 		onadded,
+		onunconfirmed,
 		onCloseAutoFocus
 	}: {
 		organizationId: string;
@@ -52,6 +55,8 @@
 		providers?: string[];
 		models?: string[];
 		onadded: (price: PriceVersion) => void;
+		/** A save's outcome became unknown (`true`), or was settled (`false`); `closed` when the dialog closed over it. */
+		onunconfirmed?: (state: { unconfirmed: boolean; closed?: boolean }) => void;
 		onCloseAutoFocus?: (event: Event) => void;
 	} = $props();
 
@@ -98,6 +103,11 @@
 	}
 
 	export function start(prefill?: PriceVersion) {
+		// An unconfirmed save is never replaced by a new operation: reopen on it until it is settled.
+		if (unresolved) {
+			open = true;
+			return;
+		}
 		form = prefill
 			? {
 					provider: prefill.provider,
@@ -149,6 +159,7 @@
 			const field = fieldOf((e as { field?: PriceField })?.field);
 			if (failure.code === OUTCOME_UNKNOWN) {
 				outcome = { kind: 'unknown' };
+				onunconfirmed?.({ unconfirmed: true });
 			} else if (field) {
 				// A refusal about one field: it is fixed there, and a fresh attempt gets a new operation.
 				errors = { [field]: failure.message };
@@ -167,6 +178,7 @@
 		try {
 			const result = await costsApi.priceOperation(organizationId, operationId);
 			busy = undefined;
+			if (result.state !== 'pending') onunconfirmed?.({ unconfirmed: false });
 			if (result.state === 'applied') {
 				open = false;
 				onadded(result.price);
@@ -184,6 +196,20 @@
 		}
 		checkError = undefined;
 	}
+	function cancel() {
+		open = false;
+		openChanged(false);
+	}
+
+	function openChanged(next: boolean) {
+		if (next) return;
+		if (busy) {
+			open = true;
+			return;
+		}
+		if (unresolved) onunconfirmed?.({ unconfirmed: true, closed: true });
+	}
+
 	const rateFields: { field: 'input' | 'output' | 'cacheRead' | 'cacheWrite'; label: string }[] = [
 		{ field: 'input', label: 'Input' },
 		{ field: 'output', label: 'Output' },
@@ -198,9 +224,9 @@
 	{#if errors[field]}<p id="{id}-{field}-error" class={errorClass}>{errors[field]}</p>{/if}
 {/snippet}
 
-<Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
+<Dialog bind:open onOpenChange={openChanged}>
 	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
-		<form class="grid gap-6" onsubmit={submit} novalidate>
+		<form class="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6" onsubmit={submit} novalidate>
 			<DialogHeader>
 				<DialogTitle text={prefilledFrom ? `New rate for ${prefilledFrom}` : 'Add a rate'} />
 				<DialogDescription class="[overflow-wrap:anywhere]">
@@ -210,8 +236,11 @@
 			</DialogHeader>
 
 			<!-- While a save is in flight or its outcome unknown, the values are kept and can't be changed. -->
-			<fieldset disabled={!!busy || unresolved} class="grid gap-6">
-				<div class="grid gap-4 min-[640px]:grid-cols-2">
+			<fieldset
+				disabled={!!busy || unresolved}
+				class="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6"
+			>
+				<div class="grid grid-cols-[minmax(0,1fr)] gap-4 min-[640px]:grid-cols-2">
 					<div>
 						<Label for="{id}-provider" class="block text-sm/6 font-medium text-fg">Provider</Label>
 						<Input
@@ -223,7 +252,7 @@
 							readonly={!!prefilledFrom}
 							aria-invalid={errors.provider ? true : undefined}
 							aria-describedby={describedBy('provider')}
-							class="mt-2 {inputClass}"
+							class="mt-2 w-full min-w-0 {inputClass}"
 						/>
 						<datalist id="{id}-providers">
 							{#each providers as name (name)}<option value={name}></option>{/each}
@@ -241,7 +270,7 @@
 							readonly={!!prefilledFrom}
 							aria-invalid={errors.model ? true : undefined}
 							aria-describedby={describedBy('model')}
-							class="mt-2 {inputClass}"
+							class="mt-2 w-full min-w-0 {inputClass}"
 						/>
 						<datalist id="{id}-models">
 							{#each models as name (name)}<option value={name}></option>{/each}
@@ -250,13 +279,13 @@
 					</div>
 				</div>
 
-				<fieldset>
+				<fieldset class="min-w-0">
 					<legend class="text-sm/6 font-medium text-fg">Rates ($ per million tokens)</legend>
 					<p id="{id}-rates-help" class="mt-1 text-xs/5 text-fg-muted">
 						Leave a rate blank when it isn't known: records with those tokens are then unpriced.
 						Enter 0 only for tokens that cost nothing.
 					</p>
-					<div class="mt-3 grid grid-cols-1 gap-4 min-[480px]:grid-cols-2">
+					<div class="mt-3 grid grid-cols-[minmax(0,1fr)] gap-4 min-[480px]:grid-cols-2">
 						{#each rateFields as { field, label } (field)}
 							<div>
 								<Label for="{id}-{field}" class="block text-sm/6 font-medium text-fg">{label}</Label
@@ -270,7 +299,7 @@
 									bind:value={form[field]}
 									aria-invalid={errors[field] ? true : undefined}
 									aria-describedby={describedBy(field, `${id}-rates-help`)}
-									class="mt-2 {inputClass}"
+									class="mt-2 w-full min-w-0 {inputClass}"
 								/>
 								{@render fieldError(field)}
 							</div>
@@ -278,7 +307,7 @@
 					</div>
 				</fieldset>
 
-				<div class="min-[480px]:max-w-56">
+				<div class="min-w-0 min-[480px]:max-w-56">
 					<Label for="{id}-effectiveFrom" class="block text-sm/6 font-medium text-fg"
 						>Takes effect on</Label
 					>
@@ -290,7 +319,7 @@
 						bind:value={form.effectiveFrom}
 						aria-invalid={errors.effectiveFrom ? true : undefined}
 						aria-describedby={describedBy('effectiveFrom', `${id}-effectiveFrom-help`)}
-						class="mt-2 {inputClass}"
+						class="mt-2 w-full min-w-0 {inputClass}"
 					/>
 					{#if errors.effectiveFrom}
 						{@render fieldError('effectiveFrom')}
@@ -338,12 +367,12 @@
 					variant="outline"
 					class={mobileButton}
 					disabled={!!busy}
-					onclick={() => (open = false)}>Cancel</Button
+					onclick={cancel}>Cancel</Button
 				>
 				{#if unresolved}
 					<Button
 						type="button"
-						class="min-w-32 {mobileButton}"
+						class="min-[640px]:min-w-32 {mobileButton}"
 						aria-busy={busy === 'checking'}
 						aria-disabled={busy === 'checking'}
 						onclick={checkStatus}>{busy === 'checking' ? 'Checking…' : 'Check status'}</Button
@@ -351,9 +380,9 @@
 				{:else}
 					<Button
 						type="submit"
-						class="min-w-28 {mobileButton}"
+						class="min-[640px]:min-w-28 {mobileButton}"
 						aria-busy={busy === 'adding'}
-						aria-disabled={busy === 'adding'}>{busy === 'adding' ? 'Adding…' : 'Add rate'}</Button
+						aria-disabled={busy === 'adding'}>{busy === 'adding' ? 'Saving…' : 'Add rate'}</Button
 					>
 				{/if}
 			</DialogFooter>

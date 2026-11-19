@@ -21,11 +21,14 @@
 	let {
 		resource,
 		zone,
+		unconfirmed = false,
 		onadd
 	}: {
 		resource: Resource<PricesOverview>;
 		/** The viewer's zone, for effective dates. */
 		zone: string;
+		/** A rate's save is not confirmed yet: Add a rate… reopens it for Check status. */
+		unconfirmed?: boolean;
 		/** Add a rate, prefilled from a model's current rates when given. */
 		onadd: (opener: HTMLElement, prefill?: PriceVersion) => void;
 	} = $props();
@@ -88,6 +91,16 @@
 		{/if}
 	</div>
 
+	{#if unconfirmed}
+		<p
+			role="status"
+			class="mt-3 max-w-3xl text-sm/6 text-fg-secondary {gutters}"
+			data-testid="unconfirmed-save"
+		>
+			A rate's save isn't confirmed yet. Open Add a rate… to check its status before adding another.
+		</p>
+	{/if}
+
 	<div class="mt-4">
 		{#if resource.state === 'loading'}
 			<SkeletonRows label="prices" rows={3} />
@@ -133,8 +146,7 @@
 							{#if canManage}
 								<Button
 									variant="outline"
-									size="sm"
-									class="min-[640px]:h-8 {mobileButton}"
+									class={mobileButton}
 									aria-label="New rate for {group.model}"
 									onclick={(e: MouseEvent) =>
 										onadd(e.currentTarget as HTMLElement, group.current ?? group.scheduled[0])}
