@@ -33,7 +33,6 @@ dependencies = [
  "org-client",
  "org-host",
  "org-host-control",
- "org-office",
  "org-office-launch",
  "org-platform",
  "org-proto",

@@ -486,7 +486,10 @@ on the offers of design section 10.
   the office for a placed agent (everyone, one by name, the owner by kind,
   the plain-text card), and an offboarded agent refused at its next bind; the messaging
   cases (send, inbox, read and wait answered `unsupported` with no body shown) return
-  with B6.
+  with B6. LNX-2 (`deploy/container/lnx2.sh`) likewise regains `agent-os` inside the
+  container (an agent's directory read of another through the office, after a restart
+  and in a replacement container); B1b's LNX-2 creates the organization through the web
+  API and checks the worker serving under custody instead.
   `operation.get` for organization commands answers from the store's receipts,
   replacing the `unsupported` B1b left (a client learns a committed command's answer
   without resending it).
