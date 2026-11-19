@@ -302,7 +302,8 @@ fn a_registry_call_waits_for_the_locator_lock_a_moment_and_refuses_a_held_root_a
     let fixture = Fixture::new();
     let id = fixture.reserve("lab").id().to_owned();
     let root = fixture.root("lab");
-    let calls: [(&str, &dyn Fn() -> Result<(), Error>); 5] = [
+    type Call<'a> = (&'a str, &'a dyn Fn() -> Result<(), Error>);
+    let calls: [Call; 6] = [
         ("restore_temp_folders", &|| {
             fixture.registry.restore_temp_folders().map(drop)
         }),
@@ -320,6 +321,10 @@ fn a_registry_call_waits_for_the_locator_lock_a_moment_and_refuses_a_held_root_a
         ("reserve", &|| {
             assert_eq!(fixture.registry.reserve(Some("lab"), &root)?.id(), id);
             Ok(())
+        }),
+        // Its preview and confirmation take no lock; its revalidation waits for it.
+        ("rebind", &|| {
+            fixture.registry.rebind(Some("lab"), |_| Ok(()))
         }),
     ];
     for (name, call) in calls {
