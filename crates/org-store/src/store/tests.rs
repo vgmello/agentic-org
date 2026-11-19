@@ -133,6 +133,16 @@ fn bounded<R: Send + 'static>(
     result
 }
 
+/// [`Store::wait_for`] bounded by [`ANSWER_BOUND`]: when the thread meant to change the
+/// status dies first, the test fails instead of waiting forever.
+fn wait_until(
+    what: &str,
+    store: &Arc<TestStore>,
+    ready: impl Fn(&Status) -> bool + Send + 'static,
+) -> Status {
+    bounded(what, store, move |store| store.wait_for(ready))
+}
+
 fn cursor(store: &TestStore) -> Cursor {
     store.read(|s| Ok(s.cursor()?)).unwrap().0.unwrap()
 }
@@ -549,7 +559,9 @@ fn two_operations_with_one_id_in_one_batch_decide_once_and_a_durable_retry_waits
     let original = submit(&store);
     office.faults.wait_for_held_flush();
     let retry = submit(&store);
-    store.wait_for(|s| s.waiting_durable == 2);
+    wait_until("the wait for both durable requests", &store, |s| {
+        s.waiting_durable == 2
+    });
     assert!(!original.is_finished() && !retry.is_finished());
     office.faults.release_flushes();
     assert_eq!(
@@ -745,7 +757,9 @@ fn back_pressure_holds_writes_until_the_flusher_catches_up_and_reads_continue() 
     let worker = Arc::clone(&store);
     let held =
         thread::spawn(move || worker.submit(None, false, probe.put("b", b"b", Ack::Committed)));
-    let status = store.wait_for(|s| s.holding_back && s.queued == 1);
+    let status = wait_until("the wait for the write held back", &store, |s| {
+        s.holding_back && s.queued == 1
+    });
     assert_eq!(status.stopped, None);
     assert!(office.hash(&store, "a").is_some());
     assert_eq!(office.hash(&store, "b"), None);
@@ -1273,7 +1287,11 @@ fn an_entry_appended_during_a_flush_is_flushed_by_the_next_one_and_closing_retur
 
     office.faults.release_flushes();
     durable.join().unwrap().unwrap();
-    let status = store.wait_for(|status| status.confirmed >= 2);
+    let status = wait_until(
+        "the wait for the confirmation of entry 2",
+        &store,
+        |status| status.confirmed >= 2,
+    );
     assert!(
         status.flushed >= 2 && status.stopped.is_none(),
         "{status:?}"
