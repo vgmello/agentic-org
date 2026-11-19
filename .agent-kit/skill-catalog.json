@@ -78,7 +78,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "48886939e93ee365d20ec087e709a3dfe7951178dd2dd19b10895c14be03c2f6"
+      "sha256": "2946f7876cbba892fa0460556dd44d8ff86e31637eb510d263db0031c0ddf336"
     },
     {
       "path": "Cargo.lock",
@@ -198,7 +198,7 @@
     },
     {
       "path": "docs/processes/branch-and-merge.md",
-      "sha256": "9ebb3123f0763b3280ea8d1b0486719ce96a4782b1482a247353967ef917b135"
+      "sha256": "25034864d676a785b38accc80e8f5e5343e3a4c373221fbf9870230bf8510f52"
     },
     {
       "path": "rust-toolchain.toml",
