@@ -54,8 +54,16 @@
 //!    filesystem must not be equal or inside each other. Where the place of one of
 //!    the two cannot be had, the directory is refused ([`RootRule::Undetermined`]),
 //!    never accepted on doubt. The two are found in the table by the mount ids the
-//!    kernel gives for their descriptors, so the machine's other mounts are not read
-//!    beyond their ids and cannot refuse a store, whatever they are.
+//!    kernel gives for their descriptors, so for this check the machine's other mounts
+//!    are not read beyond their ids and cannot refuse a store, whatever they are.
+//!
+//!    Nothing is mounted inside it either: no mount of the mount table has a mount
+//!    point below its path ([`RootRule::MountInside`], naming that mount point). A
+//!    volume mounted there, whatever its filesystem, owner or mode, would take whatever
+//!    is written below it out of the store's volume (two volumes of one filesystem share
+//!    a device number, so nothing else tells them apart). Only for this is every line's
+//!    mount point read; a line whose mount point cannot be read refuses
+//!    ([`RootRule::Undetermined`]).
 //! 8. When a mount point is required (a container's mounted secrets volume), it is
 //!    the root of a mount (`statx`, `STATX_ATTR_MOUNT_ROOT`; a kernel that cannot say
 //!    refuses), and it is on another volume than the data: it is not inside the
@@ -372,6 +380,8 @@ pub enum RootRule {
     ContainsDataVolume,
     /// A mount point is required and the release directory is not the root of a mount.
     NotAMountPoint,
+    /// Something is mounted inside the release directory. The path is the mount point.
+    MountInside,
     /// A mount point is required and this kernel does not say whether a directory is
     /// one (before Linux 5.8).
     MountPointUnknown,
@@ -488,6 +498,10 @@ impl fmt::Display for RootRule {
             Self::NotAMountPoint => f.write_str(
                 "the credential directory must be a mount point (a mounted secrets volume) and \
                  is not one",
+            ),
+            Self::MountInside => f.write_str(
+                "another volume is mounted here, inside the credential directory; the keys \
+                 stay in the credential directory's own volume, so mount nothing inside it",
             ),
             Self::MountPointUnknown => f.write_str(
                 "the credential directory must be a mount point, and this kernel does not say \

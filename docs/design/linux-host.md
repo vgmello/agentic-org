@@ -443,6 +443,11 @@ checks and a lock.
     descriptors, walking `..` from each up to `/`: neither may contain the other.
   - In a container (setup's `service` is `foreground`) the store directory must be a
     mount point (`statx` `STATX_ATTR_MOUNT_ROOT`).
+  - Nothing is mounted inside the store directory, at any depth: every mount point of
+    the mount table is read, and one below the store refuses with that mount point
+    (two named volumes of one filesystem share a device number, so a folder of the
+    data volume mounted at `/secrets/office-keys` or `/secrets/dev-keys` is otherwise
+    indistinguishable).
   - When `expect_items` is set and the store holds no item, the store refuses with
     "credentials missing", and the host does not start: it never creates fresh keys
     for offices that already have wrapped records.
@@ -782,8 +787,12 @@ disk, what it reports for `ExecStart`, `ExecStartPre`, `ExecStartPost`,
 `PassEnvironment`, `UnsetEnvironment`, `Type`, `KillMode`, `KillSignal`, `SendSIGKILL`,
 `TimeoutStopUSec`, `Restart`, `UMask` and `NoNewPrivileges` must be what the file says
 (read back only from an exact rendering of a unit), or register, start and status are a
-conflict; stop and unregister still end and remove the unit, so a unit file of an
-earlier build or one changed by a drop-in can be removed and registered again. The
+conflict; stop and unregister still end and remove the unit. No command runs unregister
+yet, so a unit written by an earlier build (before `UnsetEnvironment=`) is removed by
+hand, then setup registers it again:
+`systemctl --user disable --now agentic-org-<instance-id>.service`, remove
+`~/.config/systemd/user/agentic-org-<instance-id>.service`, and
+`systemctl --user daemon-reload`. The
 program, its arguments and its environment values carry no control character, which
 `systemctl show` would print raw. Known limits: `ExecStart`'s arguments are compared as
 systemd prints them, joined by spaces, so a drop-in that only regroups words around a

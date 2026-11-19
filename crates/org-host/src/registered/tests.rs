@@ -444,10 +444,10 @@ fn the_development_key_folder_is_made_and_judged_in_the_checked_credential_direc
     );
     assert_eq!(fs::read_dir(data.join("elsewhere")).unwrap().count(), 0);
     // A name the directory cannot hold, or one of its item stores, is refused as a name.
-    for name in ["host-secrets", "dev keys", ".hidden"] {
+    for name in ["host-secrets", "office-keys", "dev keys", ".hidden"] {
         let refused = made(name).unwrap_err();
         assert!(
-            refused.contains("is named with letters"),
+            refused.contains("is named with letters") && refused.contains("item stores"),
             "{name}: {refused}"
         );
     }

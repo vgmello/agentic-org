@@ -189,6 +189,16 @@ fn open(
     let (store_place, _) = place(directory.as_fd(), &table).map_err(undetermined)?;
     let (data_place, data_mount) = place(location.data_root, &table).map_err(undetermined)?;
     mounts::disjoint(&store_place, &data_place).map_err(refuse)?;
+    // Nothing mounted below it, at any depth.
+    if let Some(mount_point) = table
+        .mounted_inside(path.as_os_str().as_bytes())
+        .map_err(undetermined)?
+    {
+        return Err(refused(
+            RootRule::MountInside,
+            Path::new(OsStr::from_bytes(&mount_point)),
+        ));
+    }
     if location.mount_point_required {
         let (attributes, reported) = mount_attributes(directory.as_fd()).map_err(unavailable)?;
         rules::mount_point(attributes, reported).map_err(refuse)?;

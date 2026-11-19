@@ -39,10 +39,11 @@
 #   7. a new container with the data volume and a new, empty secrets volume does not serve;
 #   8. a plain `docker run` with no volume named (anonymous volumes) works too;
 #   9. what the credential store refuses: a path that is not a mount, a volume root that
-#      is not the service user's, a development key folder outside the secrets volume or
-#      that is another volume mounted in it (a folder of the data volume, on the same
-#      filesystem), and a secrets directory inside the data directory; and root's reset
-#      for an instance whose data folder is gone is refused with its words escaped.
+#      is not the service user's, a development key folder outside the secrets volume,
+#      another volume mounted inside the secrets volume (a folder of the data volume, on
+#      the same filesystem, at the development key folder or at an item store), and a
+#      secrets directory inside the data directory; and root's reset for an instance
+#      whose data folder is gone is refused with its words escaped.
 # Every container and volume it makes is removed at the end, pass or fail.
 #
 # Known limits of this test: two rules have no case here because they need a client
@@ -554,14 +555,21 @@ docker volume create "$tag-nd" >/dev/null
 docker volume create "$tag-ns" >/dev/null
 # Mounted at /data first, so that the new volume gets the image's /data (its owner and mode).
 docker run --rm -u 0 -v "$tag-nd:/data" --entrypoint /bin/sh "$image" -c \
-    'mkdir -m 700 /data/devkeys && chown 61000:61000 /data/devkeys' >/dev/null
-refused "$tag-n" 'another volume mounted in the credential directory' \
+    'mkdir -m 700 /data/devkeys /data/itemstore && chown 61000:61000 /data/devkeys /data/itemstore' >/dev/null
+refused "$tag-n" '/secrets/dev-keys: another volume is mounted here, inside the credential directory' \
     -v "$tag-nd:/data" -v "$tag-ns:/secrets" \
     --mount "type=volume,src=$tag-nd,dst=/secrets/dev-keys,volume-subpath=devkeys" ||
     fail "the refusal does not name the mounted development key folder"
-[ -z "$(docker run --rm -v "$tag-nd:/v" --entrypoint /bin/sh "$image" -c 'find /v/devkeys -mindepth 1')" ] ||
-    fail "the refused start wrote into the data volume's folder"
-echo "  and nothing was written in the data volume's folder"
+echo "the same at an item store of the credential directory (/secrets/office-keys):"
+volumes+=("$tag-ns2")
+docker volume create "$tag-ns2" >/dev/null
+refused "$tag-n2" '/secrets/office-keys: another volume is mounted here, inside the credential directory' \
+    -v "$tag-nd:/data" -v "$tag-ns2:/secrets" \
+    --mount "type=volume,src=$tag-nd,dst=/secrets/office-keys,volume-subpath=itemstore" ||
+    fail "the refusal does not name the mounted item store"
+[ -z "$(docker run --rm -v "$tag-nd:/v" --entrypoint /bin/sh "$image" -c 'find /v/devkeys /v/itemstore -mindepth 1')" ] ||
+    fail "a refused start wrote into the data volume's folders"
+echo "  and nothing was written in the data volume's folders"
 echo "root's reset for an instance whose data folder is gone: refused, its words escaped:"
 volumes+=("$tag-rd" "$tag-rs")
 docker volume create "$tag-rd" >/dev/null

@@ -201,7 +201,8 @@ The development key store must be one folder directly in `/secrets` (the image s
 `ORG_OFFICE_DEV_KEY_DIR=/secrets/dev-keys`): a folder anywhere else is refused, and so is
 another volume mounted at `/secrets/dev-keys` (a folder of the data volume mounted there
 would put the keys in every copy of the data), even on the same filesystem. Mount nothing
-inside `/secrets`.
+inside `/secrets`: a start with anything mounted inside it is refused, naming the mount
+point, in a development image and a release image alike.
 
 What the every-start check covers in this image: where `/secrets` is (a mount point, its
 owner and mode, its filesystem, apart from the data folder). What it does not cover: which

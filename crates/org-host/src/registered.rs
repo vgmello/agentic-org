@@ -400,7 +400,8 @@ fn development_folder_in(
     let not_a_name = || {
         format!(
             "{}: a development key folder in the credential directory is named with letters, \
-             digits, '.', '-' and '_' and does not start with '.', such as dev-keys; nothing \
+             digits, '.', '-' and '_', does not start with '.', and is not one of the \
+             directory's item stores (host-secrets, office-keys); dev-keys is one; nothing \
              was written",
             credentials.join(name).display()
         )
