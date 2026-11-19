@@ -26,6 +26,10 @@
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
 	"webkitExempt": [
 		{
+			"spec": "projects.spec.ts",
+			"why": "rewritten for the new Projects screens; not yet run on WebKit (BUG-169b)"
+		},
+		{
 			"spec": "costs.spec.ts",
 			"why": "new spec; not yet run on WebKit (BUG-169b)"
 		},
@@ -246,12 +250,12 @@
 				},
 				{
 					"spec": "projects.spec.ts",
-					"match": "PROJ-2: Assign team",
+					"match": "PROJ-2: New project creates its own team",
 					"count": 1
 				},
 				{
 					"spec": "projects.spec.ts",
-					"match": "PROJ-3: a project page shows its name",
+					"match": "PROJ-3: a project page has its header",
 					"count": 1
 				},
 				{
@@ -439,8 +443,7 @@
 			"sources": [
 				"src/routes/(shell)/settings/offices/**",
 				"src/lib/offices/**",
-				"src/lib/components/Office*.svelte",
-				"src/lib/components/testing/office-status.*"
+				"src/lib/modules/offices/**"
 			]
 		},
 		"shell-look": {
@@ -483,6 +486,7 @@
 			],
 			"sources": [
 				"src/routes/(shell)/projects/**",
+				"src/lib/modules/projects/**",
 				"src/routes/(shell)/work/**",
 				"src/lib/org/projects*",
 				"src/lib/org/team-edit*",
@@ -553,6 +557,11 @@
 	],
 	"allowedCoupling": [
 		{
+			"from": "src/lib/modules/projects/{components/ProcessSelect,features/overview/ProjectOverview}.svelte",
+			"to": "src/lib/modules/processes/index.ts",
+			"why": "A project chooses its development process from the processes module's catalogue and links to it (development-processes §3, PKG-4), through that module's public index; the processes specs cover the catalogue, the projects spec covers the choice."
+		},
+		{
 			"from": "src/lib/modules/members/features/directory/MembersDirectory.svelte",
 			"to": "src/lib/components/AddPersonSheet.svelte",
 			"why": "The Members directory's Add a person opens the organization's existing add-a-person flow, as the top-bar New and a team's page do, without owning it; the org-chart specs cover that flow. It moves into the members module when the org chart slice is rebuilt."
@@ -561,6 +570,11 @@
 			"from": "src/lib/modules/members/features/profile/{IdentityDialog,MoveHomeTeamDialog}.svelte",
 			"to": "src/lib/org/{people-edit,team-edit}.ts",
 			"why": "The profile's own Edit and Move home team dialogs check a person's name and list the team tree with the organization's existing rules instead of copying them; the org-chart and projects-work specs keep covering those rules."
+		},
+		{
+			"from": "src/lib/modules/settings/recovery.ts",
+			"to": "src/lib/platform/organizations/command.ts",
+			"why": "The Recovery row's commands quote names with the one POSIX quoting rule the organization pages own (shellQuote) instead of a copy; selection.test.ts covers the rule and recovery.test.ts the Recovery row's commands."
 		},
 		{
 			"from": "src/lib/platform/shell/NewMenu.svelte",
@@ -608,7 +622,7 @@
 			"why": "The Agent setup route composes Hire an agent from the employees module's public URL helper (hireUrl) and hands it to the agent-setup list, so agent-setup itself depends on no module that depends on members (members links to agent setup; no cycle). The org-chart category owns and tests the employees module."
 		},
 		{
-			"from": "src/routes/(shell)/settings/offices/+page.svelte",
+			"from": "src/lib/modules/offices/features/list/OfficesPage.svelte",
 			"to": "src/lib/modules/employees/index.ts",
 			"why": "Offices lists unplaced agents and opens the employees module's Offboard agent dialog; the org-chart category owns and tests that dialog."
 		},
@@ -618,9 +632,29 @@
 			"why": "The dev-mock fake implements the employees module's api contract and only needs its types; the fake is never part of a production build."
 		},
 		{
+			"from": "e2e/fakes/modules/offices.ts",
+			"to": "src/lib/modules/offices/{api,types}.ts",
+			"why": "The dev-mock fake implements the offices module's api contract and only needs its types; the fake is never part of a production build."
+		},
+		{
 			"from": "e2e/fakes/modules/org-chart.ts",
 			"to": "src/lib/modules/org-chart/{api,types}.ts",
 			"why": "The dev-mock fake implements the org chart module's api contract and only needs its types; the fake is never part of a production build."
+		},
+		{
+			"from": "src/lib/modules/{teams/features/team-page/TeamProcesses,members/features/profile-tabs/ProcessesTab}.svelte",
+			"to": "src/lib/modules/processes/index.ts",
+			"why": "A team's and an agent's Processes tab (processes-ux §2 \"Where\") embed the processes module's own view through its public index (PlaceProcesses, readPlace), so the inheritance view has one owner; the processes specs cover it and team-page/member-profile specs open those tabs."
+		},
+		{
+			"from": "e2e/fakes/modules/processes.ts",
+			"to": "src/lib/modules/processes/{api,types}.ts",
+			"why": "The processes mock stands in for the module's api.ts by name under dev:mock (README-screens \"Mock data\") and so implements its interface and types; e2e/fakes is shared, so a change to it runs the full suite anyway."
+		},
+		{
+			"from": "e2e/processes{,-bugs}.spec.ts",
+			"to": "src/routes/(shell)/settings/+page.svelte",
+			"why": "The route scanner reads only the first path segment, so /settings/processes/** (owned by processes) is seen as the General settings page; the processes specs never open General itself."
 		}
 	],
 	"rules": {
@@ -673,7 +707,7 @@
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
 			"src/lib/modules/shell/**",
-			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,offices,projects,workitems,docs,features,releases,insights,costs,budgets,access,updates}/**",
+			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,projects,workitems,docs,features,releases,insights,costs,budgets,access,updates}/**",
 			"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
 			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",

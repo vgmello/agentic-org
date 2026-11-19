@@ -11,6 +11,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { teamsApi } from '../../api';
 	import EmptyState from '$lib/components/EmptyState.svelte';
+	import { newProjectUrl } from '$lib/modules/projects';
 	import { teamHref } from '../../team-page';
 	import type { TeamRef } from '$lib/modules/members';
 	import { teamPageContext } from './context';
@@ -42,11 +43,14 @@
 			<EmptyState
 				level={4}
 				title="No projects yet"
-				description="Projects {team.teamName} owns or contributes to show here. A project's settings choose its owner team and contributing teams."
+				description="Projects {team.teamName} owns or contributes to show here. A new project can have {team.teamName} as its accountable team; a project's settings change its teams later."
 			>
 				{#snippet action()}
-					<Button variant="outline" href={resolve('/projects')} class="max-[639px]:h-11"
-						>Open Projects</Button
+					<!-- New project with this team accountable (offices-and-teams-ux §7.9, prefilled from the launching team). -->
+					<Button
+						variant="outline"
+						href={resolve(newProjectUrl(team.teamId) as '/')}
+						class="max-[639px]:h-11">New project</Button
 					>
 				{/snippet}
 			</EmptyState>

@@ -224,15 +224,12 @@ test('TSK-5: assigning to a paused agent asks first, on the task page and in New
 	page
 }) => {
 	await open(page);
-	// Pause an agent first (the Agents screen is the place for it).
-	await visit(page, '/org-chart');
-	await page
-		.locator('[data-testid=team-card][data-team=web]')
-		.getByRole('button', { name: /^Noor Haddad/ })
-		.click();
-	await page.getByTestId('selected-member').getByRole('button', { name: 'Pause…' }).click();
-	await page.getByRole('dialog').getByRole('button', { name: 'Pause Noor Haddad' }).click();
-	await expect(page.getByText('Paused Noor Haddad.')).toBeVisible();
+	// Pause an agent first, from its profile (More › Pause…).
+	await visit(page, '/members/noor');
+	await page.getByRole('button', { name: /^More/ }).click();
+	await page.getByRole('menuitem', { name: 'Pause…', exact: true }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Pause', exact: true }).click();
+	await expect(page.getByText('Pause requested for Noor Haddad.')).toBeVisible();
 	await visit(page, '/projects/atlas');
 	await page.getByRole('tab', { name: 'Tasks' }).click();
 	await page.getByRole('button', { name: 'New task' }).click();

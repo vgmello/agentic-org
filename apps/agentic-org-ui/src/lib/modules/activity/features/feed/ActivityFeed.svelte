@@ -24,8 +24,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import ZoneNotice from '$lib/modules/preferences/ZoneNotice.svelte';
+	import { accountZone, ZoneNotice } from '$lib/modules/preferences';
 	import { activityApi } from '../../api';
 	import { matchesQuery, queryFromParams, queryToParams } from '../../filter';
 	import { dayBlocks } from '../../group';

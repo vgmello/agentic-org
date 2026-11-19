@@ -1,0 +1,462 @@
+{
+	"processes": [
+		{
+			"id": "0193a000-0000-7000-8000-0000000000c0",
+			"key": "dss",
+			"name": "Desired State Specification",
+			"summary": "Specify the product, then the system, as desired state. Plan, staff and build from the issued versions, and bring the code back in line whenever a version changes.",
+			"versionLabel": "1.0",
+			"revision": 1,
+			"status": "current",
+			"origin": "built_in",
+			"roles": [
+				{
+					"key": "product-lead",
+					"name": "Product Owner / Principal Designer",
+					"hats": ["product-owner", "principal-designer"],
+					"seed": true,
+					"bodyMarkdown": "## Mission\nWhat the product owner / principal designer is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				},
+				{
+					"key": "technical-lead",
+					"name": "System Architect / Senior Staff Engineer",
+					"hats": ["system-architect", "staff-engineer"],
+					"seed": true,
+					"bodyMarkdown": "## Mission\nWhat the system architect / senior staff engineer is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				},
+				{
+					"key": "backend-engineer",
+					"name": "REST Backend Engineer",
+					"hats": [],
+					"seed": false,
+					"bodyMarkdown": "## Mission\nWhat the rest backend engineer is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				},
+				{
+					"key": "frontend-engineer",
+					"name": "Frontend Engineer",
+					"hats": [],
+					"seed": false,
+					"bodyMarkdown": "## Mission\nWhat the frontend engineer is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				}
+			],
+			"skills": [
+				{
+					"key": "write-product-dss",
+					"title": "Write the Product DSS",
+					"description": "Use when the person describes what the product should do and no issued Product DSS covers it.",
+					"roles": ["product-lead"],
+					"bodyMarkdown": "## When\nThe person asks for behaviour the product does not have.\n\n## Steps\n1. Read the project's index.\n2. Talk with the person until the behaviour is clear.\n3. Save it as a Product DSS in the section for its product domain, then issue it.\n\n## Done when\nThe version is issued and the technical lead is told.\n"
+				},
+				{
+					"key": "derive-technical-dss",
+					"title": "Derive the Technical DSS",
+					"description": "Use when a Product DSS version has been issued and the system specification has to follow it.",
+					"roles": ["technical-lead"],
+					"bodyMarkdown": "## When\nA Product DSS version was issued.\n\n## Steps\n1. Read the issued version and what changed.\n2. Update the Technical DSS to match.\n\n## Done when\nThe Technical DSS version is issued.\n"
+				},
+				{
+					"key": "staff-the-project",
+					"title": "Staff the project",
+					"description": "Use when both specifications are issued and the work needs more people than the seed team.",
+					"roles": ["product-lead", "technical-lead"],
+					"bodyMarkdown": "## When\nBoth specifications are issued.\n\n## Steps\n1. List the roles the work needs.\n2. Inspect each role with agent-os role inspect.\n3. Hire with agent-os hr hire if you may; otherwise ask your lead.\n\n## Done when\nEvery needed role is filled or asked for.\n"
+				},
+				{
+					"key": "reconcile-code",
+					"title": "Bring the code in line",
+					"description": "Use when a task points at a document version the code does not yet realize.",
+					"roles": [],
+					"bodyMarkdown": "## When\nYou hold a task that realizes a version.\n\n## Steps\n1. Read the version and the code links.\n2. Change the code until it matches.\n\n## Done when\nThe task's checks pass and the version is realized.\n"
+				}
+			],
+			"templates": [
+				{
+					"key": "product-dss",
+					"bodyMarkdown": "## Behaviour\n\n## States\n\n## Acceptance\n"
+				},
+				{
+					"key": "technical-dss",
+					"bodyMarkdown": "## Components\n\n## Contracts\n\n## Decisions\n"
+				}
+			],
+			"stages": [
+				{
+					"key": "specify",
+					"title": "Specify the product",
+					"summary": "Talk with the person until the behaviour is clear, then issue it.",
+					"leadRole": "product-lead"
+				},
+				{
+					"key": "design",
+					"title": "Specify the system",
+					"summary": "Derive the Technical DSS from the issued Product DSS.",
+					"leadRole": "technical-lead"
+				},
+				{
+					"key": "build",
+					"title": "Build and reconcile",
+					"summary": "Plan tasks from the issued versions and bring the code in line."
+				}
+			],
+			"kinds": [
+				{
+					"key": "product-dss",
+					"title": "Product DSS",
+					"versioned": true
+				},
+				{
+					"key": "technical-dss",
+					"title": "Technical DSS",
+					"versioned": true
+				}
+			],
+			"folders": [
+				{
+					"path": "product",
+					"title": "Product documentation",
+					"summary": "What the product does, by product domain and area."
+				},
+				{
+					"path": "technical",
+					"title": "Technical documentation",
+					"summary": "How the system is built, with its diagrams and images."
+				}
+			],
+			"tabs": [
+				{
+					"key": "product",
+					"title": "Product",
+					"view": "documents"
+				},
+				{
+					"key": "technical",
+					"title": "Technical",
+					"view": "documents"
+				},
+				{
+					"key": "releases",
+					"title": "Releases",
+					"view": "releases"
+				}
+			],
+			"updated": {
+				"at": "2026-11-01T00:00:00Z",
+				"byKind": "system"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-0000000000c1",
+			"key": "feature-delivery",
+			"name": "Feature delivery",
+			"summary": "Software delivery by features: requests are scoped into features, features are built by tasks and shipped in releases.",
+			"versionLabel": "1.0",
+			"revision": 1,
+			"status": "current",
+			"origin": "built_in",
+			"roles": [
+				{
+					"key": "product-lead",
+					"name": "Product lead",
+					"hats": [],
+					"seed": true,
+					"bodyMarkdown": "## Mission\nWhat the product lead is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				},
+				{
+					"key": "engineering-lead",
+					"name": "Engineering lead",
+					"hats": [],
+					"seed": true,
+					"bodyMarkdown": "## Mission\nWhat the engineering lead is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				},
+				{
+					"key": "software-engineer",
+					"name": "Software Engineer",
+					"hats": [],
+					"seed": false,
+					"bodyMarkdown": "## Mission\nWhat the software engineer is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				}
+			],
+			"skills": [
+				{
+					"key": "scope-a-request",
+					"title": "Scope a request",
+					"description": "Use when a request arrives and has to become a feature or be declined.",
+					"roles": ["product-lead"],
+					"bodyMarkdown": "## When\nA new request arrives.\n\n## Steps\n1. Ask what outcome the person needs.\n2. Write the feature definition.\n\n## Done when\nThe request is scoped or declined with a reason.\n"
+				},
+				{
+					"key": "plan-a-release",
+					"title": "Plan a release",
+					"description": "Use when features are ready to be grouped into a release.",
+					"roles": ["engineering-lead"],
+					"bodyMarkdown": "## Steps\n1. Pick the features.\n2. Plan the milestones.\n"
+				}
+			],
+			"templates": [],
+			"stages": [
+				{
+					"key": "scope",
+					"title": "Scope",
+					"leadRole": "product-lead"
+				},
+				{
+					"key": "build",
+					"title": "Build",
+					"leadRole": "engineering-lead"
+				},
+				{
+					"key": "ship",
+					"title": "Ship"
+				}
+			],
+			"kinds": [],
+			"folders": [
+				{
+					"path": "decisions",
+					"title": "Decisions"
+				},
+				{
+					"path": "designs",
+					"title": "Designs"
+				},
+				{
+					"path": "reports",
+					"title": "Reports"
+				}
+			],
+			"tabs": [
+				{
+					"key": "features",
+					"title": "Features",
+					"view": "features"
+				},
+				{
+					"key": "requests",
+					"title": "Requests",
+					"view": "work"
+				},
+				{
+					"key": "bugs",
+					"title": "Bugs",
+					"view": "work"
+				},
+				{
+					"key": "board",
+					"title": "Board",
+					"view": "work"
+				},
+				{
+					"key": "releases",
+					"title": "Releases",
+					"view": "releases"
+				}
+			],
+			"updated": {
+				"at": "2026-11-01T00:00:00Z",
+				"byKind": "system"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-0000000000d0",
+			"key": "dss-payments",
+			"name": "Desired State Specification (Payments)",
+			"summary": "Specify the product, then the system, as desired state. Plan, staff and build from the issued versions, and bring the code back in line whenever a version changes.",
+			"versionLabel": "1.0",
+			"revision": 4,
+			"status": "current",
+			"origin": "organization",
+			"roles": [
+				{
+					"key": "product-lead",
+					"name": "Product Owner / Principal Designer",
+					"hats": ["product-owner", "principal-designer"],
+					"seed": true,
+					"bodyMarkdown": "## Mission\nWhat the product owner / principal designer is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				},
+				{
+					"key": "technical-lead",
+					"name": "System Architect / Senior Staff Engineer",
+					"hats": ["system-architect", "staff-engineer"],
+					"seed": true,
+					"bodyMarkdown": "## Mission\nWhat the system architect / senior staff engineer is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				},
+				{
+					"key": "backend-engineer",
+					"name": "REST Backend Engineer",
+					"hats": [],
+					"seed": false,
+					"bodyMarkdown": "## Mission\nWhat the rest backend engineer is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				},
+				{
+					"key": "frontend-engineer",
+					"name": "Frontend Engineer",
+					"hats": [],
+					"seed": false,
+					"bodyMarkdown": "## Mission\nWhat the frontend engineer is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				}
+			],
+			"skills": [
+				{
+					"key": "write-product-dss",
+					"title": "Write the Product DSS",
+					"description": "Use when the person describes what the product should do and no issued Product DSS covers it.",
+					"roles": ["product-lead"],
+					"bodyMarkdown": "## When\nThe person asks for behaviour the product does not have.\n\n## Steps\n1. Read the project's index.\n2. Talk with the person until the behaviour is clear.\n3. Save it as a Product DSS in the section for its product domain, then issue it.\n\n## Done when\nThe version is issued and the technical lead is told.\n"
+				},
+				{
+					"key": "derive-technical-dss",
+					"title": "Derive the Technical DSS",
+					"description": "Use when a Product DSS version has been issued and the system specification has to follow it.",
+					"roles": ["technical-lead"],
+					"bodyMarkdown": "## When\nA Product DSS version was issued.\n\n## Steps\n1. Read the issued version and what changed.\n2. Update the Technical DSS to match.\n\n## Done when\nThe Technical DSS version is issued.\n"
+				},
+				{
+					"key": "staff-the-project",
+					"title": "Staff the project",
+					"description": "Use when both specifications are issued and the work needs more people than the seed team.",
+					"roles": ["product-lead", "technical-lead"],
+					"bodyMarkdown": "## When\nBoth specifications are issued.\n\n## Steps\n1. List the roles the work needs.\n2. Inspect each role with agent-os role inspect.\n3. Hire with agent-os hr hire if you may; otherwise ask your lead.\n\n## Done when\nEvery needed role is filled or asked for.\n"
+				},
+				{
+					"key": "reconcile-code",
+					"title": "Bring the code in line",
+					"description": "Use when a task points at a document version the code does not yet realize.",
+					"roles": [],
+					"bodyMarkdown": "## When\nYou hold a task that realizes a version.\n\n## Steps\n1. Read the version and the code links.\n2. Change the code until it matches.\n\n## Done when\nThe task's checks pass and the version is realized.\n"
+				},
+				{
+					"key": "pci-review",
+					"title": "PCI review",
+					"description": "Use before a change that touches card data is handed to review.",
+					"roles": ["technical-lead", "backend-engineer"],
+					"bodyMarkdown": "## Steps\n1. List every place card data passes through.\n2. Check it against the PCI process.\n"
+				}
+			],
+			"templates": [
+				{
+					"key": "product-dss",
+					"bodyMarkdown": "## Behaviour\n\n## States\n\n## Acceptance\n"
+				},
+				{
+					"key": "technical-dss",
+					"bodyMarkdown": "## Components\n\n## Contracts\n\n## Decisions\n"
+				}
+			],
+			"stages": [
+				{
+					"key": "specify",
+					"title": "Specify the product",
+					"summary": "Talk with the person until the behaviour is clear, then issue it.",
+					"leadRole": "product-lead"
+				},
+				{
+					"key": "design",
+					"title": "Specify the system",
+					"summary": "Derive the Technical DSS from the issued Product DSS.",
+					"leadRole": "technical-lead"
+				},
+				{
+					"key": "build",
+					"title": "Build and reconcile",
+					"summary": "Plan tasks from the issued versions and bring the code in line."
+				}
+			],
+			"kinds": [
+				{
+					"key": "product-dss",
+					"title": "Product DSS",
+					"versioned": true
+				},
+				{
+					"key": "technical-dss",
+					"title": "Technical DSS",
+					"versioned": true
+				}
+			],
+			"folders": [
+				{
+					"path": "product",
+					"title": "Product documentation",
+					"summary": "What the product does, by product domain and area."
+				},
+				{
+					"path": "technical",
+					"title": "Technical documentation",
+					"summary": "How the system is built, with its diagrams and images."
+				}
+			],
+			"tabs": [
+				{
+					"key": "product",
+					"title": "Product",
+					"view": "documents"
+				},
+				{
+					"key": "technical",
+					"title": "Technical",
+					"view": "documents"
+				},
+				{
+					"key": "releases",
+					"title": "Releases",
+					"view": "releases"
+				}
+			],
+			"updated": {
+				"at": "2026-11-16T14:20:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"owner_employee_id": "you",
+			"copied_from_process_id": "0193a000-0000-7000-8000-0000000000c0"
+		},
+		{
+			"id": "0193a000-0000-7000-8000-0000000000d1",
+			"key": "research-spike",
+			"name": "Research spike",
+			"summary": "Answer one question in a fixed time and write down what was learned.",
+			"revision": 2,
+			"status": "draft",
+			"origin": "organization",
+			"owner_employee_id": "avery",
+			"roles": [
+				{
+					"key": "researcher",
+					"name": "Researcher",
+					"hats": [],
+					"seed": true,
+					"bodyMarkdown": "## Mission\nWhat the researcher is for in this process.\n\n## Responsibilities\n- Own the work this role leads.\n\n## Working style\nShort updates, with the evidence for each.\n"
+				}
+			],
+			"skills": [],
+			"templates": [],
+			"stages": [
+				{
+					"key": "ask",
+					"title": "Ask"
+				},
+				{
+					"key": "answer",
+					"title": "Answer"
+				}
+			],
+			"kinds": [],
+			"folders": [
+				{
+					"path": "reports",
+					"title": "Reports"
+				}
+			],
+			"tabs": [],
+			"updated": {
+				"at": "2026-11-18T09:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		}
+	],
+	"projects": {
+		"atlas": "0193a000-0000-7000-8000-0000000000d0",
+		"beacon": "0193a000-0000-7000-8000-0000000000c1"
+	}
+}

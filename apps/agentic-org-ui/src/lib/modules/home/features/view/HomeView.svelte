@@ -17,8 +17,8 @@
 		type ActivityRow
 	} from '$lib/modules/activity';
 	import { InboxListRow, inboxApi, openCount, openItems, type InboxItem } from '$lib/modules/inbox';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import { durationWords, formatDate } from '$lib/modules/preferences/time';
+	import { accountZone, durationWords, formatDate } from '$lib/modules/preferences';
+	import { newProjectUrl } from '$lib/modules/projects';
 	import { homeApi } from '../../api';
 	import { Loader } from '../../loader.svelte';
 	import HomeSection from '../section/HomeSection.svelte';
@@ -138,6 +138,11 @@
 			<div class="px-4 min-[640px]:px-6 min-[1024px]:px-8" data-testid="projects-empty">
 				<p class="text-sm/6 font-semibold text-fg">No projects yet</p>
 				<p class="mt-1 text-sm/6 text-fg-muted">Projects hold the work your teams do.</p>
+				<a
+					href={resolve(newProjectUrl() as '/')}
+					class="{outline} mt-4 max-[639px]:min-h-11"
+					data-testid="create-project">Create project</a
+				>
 			</div>
 		{:else}
 			<ul

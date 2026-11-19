@@ -14,8 +14,8 @@ async function create(page: Page, width: number, scale = 1) {
 	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/teams\/members$/);
 	// URL changes before the destination is ready; avoid interrupting the create handoff (BUG-93).
-	await expect(page.getByRole('main', { name: 'Agents', exact: true })).toBeVisible();
-	await expect(page.getByRole('table', { name: 'Agents', exact: true })).toBeVisible();
+	await expect(page.getByRole('main', { name: 'Teams', exact: true })).toBeVisible();
+	await expect(page.getByRole('list', { name: 'Members', exact: true })).toBeVisible();
 }
 
 export async function openChat(page: Page, width = 1280, scale = 1, url = '/chat') {

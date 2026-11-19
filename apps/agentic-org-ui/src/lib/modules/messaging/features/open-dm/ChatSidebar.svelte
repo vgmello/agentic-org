@@ -9,8 +9,6 @@
 	} from '$lib/components/ui/sheet';
 	import Plus from '@lucide/svelte/icons/plus';
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
-	import { resolve } from '$app/paths';
-	import { icons } from '$lib/components/icons';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import {
 		PRESENCE_WORD,
@@ -20,13 +18,9 @@
 	} from '$lib/modules/messaging/model';
 	import Avatar from '$lib/modules/messaging/components/Avatar.svelte';
 
-	/**
-	 * The left column (CHAT-1): Inbox (a link, with the common owner-waiting count: Chat keeps no second queue), Mentions,
-	 * Threads, channels, direct messages, and Between agents (what the owner reads as the owner).
-	 */
+	/** The left column (CHAT-1): Needs you, Mentions, Threads, channels, direct messages, and what is read as the owner. */
 	let {
 		bar,
-		inboxCount,
 		view,
 		ctx,
 		officeRunning,
@@ -37,12 +31,9 @@
 		onCloseFocus,
 		onselect,
 		onnewchannel,
-		onnewmessage,
-		onbrowse
+		onnewmessage
 	}: {
 		bar: Sidebar;
-		/** The Inbox count the navigation shows; undefined while unknown. */
-		inboxCount?: number;
 		view: ChatView;
 		ctx: ChatContext;
 		officeRunning: boolean;
@@ -54,7 +45,6 @@
 		onselect: (v: ChatView) => void;
 		onnewchannel: (opener: HTMLElement) => void;
 		onnewmessage: (opener: HTMLElement) => void;
-		onbrowse: (opener: HTMLElement) => void;
 	} = $props();
 
 	const item =
@@ -113,6 +103,8 @@
 				? preferred
 				: (nav?.querySelector<HTMLElement>('[aria-current="true"]') ??
 					nav?.querySelector<HTMLElement>('button'));
+		const group = item?.closest('details');
+		if (group instanceof HTMLDetailsElement) group.open = true;
 		item?.focus();
 	}
 </script>
@@ -180,36 +172,27 @@
 	>
 		<ul class="space-y-0.5">
 			<li>
-				<a
-					href={resolve('/inbox')}
-					class="{item} {off}"
-					aria-label={inboxCount
-						? `Inbox, ${inboxCount} ${inboxCount === 1 ? 'needs' : 'need'} you`
-						: 'Inbox'}
-					data-testid="inbox-link"
+				<button
+					type="button"
+					class="{item} {here({ type: 'needs' }) ? on : off}"
+					aria-current={here({ type: 'needs' }) ? 'true' : undefined}
+					data-testid="needs-you-link"
+					onclick={() => onselect({ type: 'needs' })}
 				>
-					<svg
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.5"
-						aria-hidden="true"
-						class="size-[min(1.5rem,32px)] shrink-0 text-current"
-						><path d={icons.inbox} stroke-linecap="round" stroke-linejoin="round" /></svg
-					>
+					<HeroIcon class="size-[min(1.5rem,32px)] text-current" variant="outline" name="bell" />
 					<span class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
 						<span
-							class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal] {inboxCount
+							class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal] {bar
+								.needsYou.length
 								? 'font-semibold text-fg'
-								: ''}">Inbox</span
+								: ''}">Needs you</span
 						>
-						{#if inboxCount}<span
+						{#if bar.needsYou.length}<span
 								class="shrink-0 rounded-full bg-warning px-1.5 text-xs/5 font-semibold text-on-warning"
-								aria-hidden="true"
-								data-testid="inbox-count">{inboxCount}</span
+								data-testid="needs-you-count">{bar.needsYou.length}</span
 							>{/if}
 					</span>
-				</a>
+				</button>
 			</li>
 			<li>
 				<button
@@ -266,18 +249,7 @@
 			</ul>
 			<button
 				type="button"
-				class="{item} {off} mt-1"
-				data-testid="browse-channels"
-				onclick={(event) => onbrowse(event.currentTarget)}
-				><HeroIcon
-					class="size-[min(1.5rem,32px)] text-current"
-					variant="outline"
-					name="hashtag"
-				/><span class="min-w-0 flex-1 whitespace-normal">Browse channels</span></button
-			>
-			<button
-				type="button"
-				class="{item} {off} disabled:opacity-50 disabled:hover:bg-transparent"
+				class="{item} {off} mt-1 disabled:opacity-50 disabled:hover:bg-transparent"
 				disabled={!officeRunning}
 				onclick={(event) => onnewchannel(event.currentTarget)}
 				><Plus class="size-[min(1.5rem,32px)] shrink-0 text-current" aria-hidden="true" /><span
@@ -305,15 +277,15 @@
 		</div>
 
 		{#if bar.asOwner.length}
-			<div data-testid="as-owner">
-				<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">
-					Between agents
-				</h2>
-				<p class="px-2 text-xs/5 text-fg-muted">You read these as the owner.</p>
+			<details class="group" data-testid="as-owner">
+				<summary
+					class="cursor-pointer px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase hover:text-fg"
+					>Reading as the owner · {bar.asOwner.length}</summary
+				>
 				<ul class="mt-1 space-y-0.5">
 					{#each bar.asOwner as r (r.conversation.id)}{@render row(r)}{/each}
 				</ul>
-			</div>
+			</details>
 		{/if}
 	</nav>
 {/snippet}

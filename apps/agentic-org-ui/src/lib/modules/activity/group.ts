@@ -1,4 +1,4 @@
-import { dayKey, dayLabel } from '$lib/modules/preferences/time';
+import { dayKey, dayLabel } from '$lib/modules/preferences';
 import type { ActivityAction, ActivityRow } from './types';
 
 /** Consecutive rows of the same action from the same member collapse once there are this many. */

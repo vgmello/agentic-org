@@ -16,8 +16,7 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import { formatClock, formatDate, formatFull } from '$lib/modules/preferences/time';
+	import { accountZone, formatClock, formatDate, formatFull } from '$lib/modules/preferences';
 	import { activityApi } from '../../api';
 	import type { ActivityThread } from '../../types';
 

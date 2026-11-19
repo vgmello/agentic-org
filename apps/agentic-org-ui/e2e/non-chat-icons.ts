@@ -1,5 +1,4 @@
 import { expect, type Locator, type Page } from '@playwright/test';
-import { viewAction } from './org-chart-menu';
 import icons from './fixtures/non-chat-icons-v2.2.0.json' with { type: 'json' };
 import { enterMockedOrganization } from './mock-organization';
 
@@ -14,8 +13,8 @@ export async function create(page: Page, width: number, scale = 1) {
 	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/teams\/members$/);
 	// URL changes before the destination is ready; avoid interrupting the create handoff (BUG-93).
-	await expect(page.getByRole('main', { name: 'Agents', exact: true })).toBeVisible();
-	await expect(page.getByRole('table', { name: 'Agents', exact: true })).toBeVisible();
+	await expect(page.getByRole('main', { name: 'Teams', exact: true })).toBeVisible();
+	await expect(page.getByRole('list', { name: 'Members', exact: true })).toBeVisible();
 }
 export async function iconIs(icon: Locator, key: keyof typeof icons) {
 	const expected = icons[key];
@@ -64,12 +63,4 @@ export async function focusTarget(page: Page, button: Locator) {
 			})
 		)
 		.toBe(true);
-}
-export const team = (page: Page, id: string) =>
-	page.locator(`[data-testid=team-card][data-team=${id}]`);
-
-/** The phone defaults to List; choose Chart through the same retained View menu. */
-export async function showChart(page: Page) {
-	if (page.viewportSize()!.width < 640) await viewAction(page, 'Chart');
-	await expect(page.getByTestId('teams-chart')).toBeVisible();
 }

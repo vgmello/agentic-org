@@ -40,6 +40,11 @@
 			"version": "0.1.0",
 			"holdsBack": true,
 			"instance": "build"
+		},
+		"lab": {
+			"version": "0.0.9",
+			"holdsBack": false,
+			"instance": "lab"
 		}
 	}
 }

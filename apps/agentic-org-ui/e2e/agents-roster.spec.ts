@@ -221,13 +221,11 @@ test('§7.4 PEOPLE-5: a former member is listed apart, without presence, account
 	page
 }) => {
 	await createOrg(page);
-	await visit(page, '/org-chart');
-	await page
-		.locator('[data-testid=team-card][data-team=eng]')
-		.getByRole('button', { name: /^Sam Okafor/ })
-		.click();
-	await page.getByTestId('selected-member').getByRole('button', { name: 'Offboard…' }).click();
-	await page.getByRole('dialog').getByRole('button', { name: 'Offboard Sam Okafor' }).click();
+	// Offboard from the member's profile (More › Offboard…), as a person does.
+	await visit(page, '/members/sam');
+	await page.getByRole('button', { name: /^More/ }).click();
+	await page.getByRole('menuitem', { name: 'Offboard…', exact: true }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Offboard', exact: true }).click();
 	await expect(page.getByText('Offboarded Sam Okafor.')).toBeVisible();
 	await visit(page, '/teams/members');
 	await expect(rows(page)).toHaveCount(11);

@@ -6,10 +6,10 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { agentSetupHref } from '$lib/modules/agent-setup';
+	import { RoleBody } from '$lib/modules/roles';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { membersApi } from '../../api';
 	import { profileContext } from '../profile/context.svelte';
-	import { roleBlocks } from '../role/role-body';
 	import { tabResource } from './reload.svelte';
 
 	const ctx = profileContext();
@@ -27,18 +27,8 @@
 						>rev {view.role.revision}</span
 					>
 				</h3>
-				<div class="mt-4 max-w-3xl space-y-3 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">
-					{#each roleBlocks(view.role.body) as block, i (i)}
-						{#if block.kind === 'heading'}
-							<h4 class="pt-2 text-sm/6 font-semibold text-fg">{block.text}</h4>
-						{:else if block.kind === 'list'}
-							<ul role="list" class="list-disc space-y-1 pl-5 marker:text-fg-subtle">
-								{#each block.items as item, j (j)}<li>{item}</li>{/each}
-							</ul>
-						{:else}
-							<p>{block.text}</p>
-						{/if}
-					{/each}
+				<div class="mt-4">
+					<RoleBody body={view.role.body} level={4} />
 				</div>
 			{:else}
 				<h3 class="text-base/7 font-semibold text-fg">
