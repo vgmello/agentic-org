@@ -182,6 +182,10 @@ These settle what the decisions above left open. The detail is in the
       whether the pair was made or supplied. The administrator replaces a pair
       with `tls.set` on `host.sock` (journaled; the same checks), after which the
       host sends `tls.renew` and the web process serves it for new handshakes.
+      `agentic-org admin tls set --cert --key --login` is that call's command: it
+      prints only the new fingerprint, and sends the administrator's password only
+      to a host it identified, so on Linux and in a container it refuses until
+      command-line sign-in is approved in the browser (FC-173).
     - *Start gate.* Before the web process is spawned: the listener fields and
       origin, `hsts`, a stored pair (`tls_missing`), its coverage of the origin
       (`tls_name_mismatch`) and its validity now. While the stored pair fails it the

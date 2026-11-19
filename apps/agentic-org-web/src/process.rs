@@ -327,8 +327,9 @@ fn with_renewals(sessions: EventSink, renewed: mpsc::Sender<()>) -> EventSink {
 enum Renewal {
     /// The pair to use for new handshakes.
     Swap(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>),
-    /// Keep serving the current pair (`unavailable`, or a pair that does not load).
-    Keep,
+    /// Keep serving the current pair (`unavailable`, or a pair that does not load), for
+    /// the reason named ([`renewal_kept_line`]).
+    Keep(&'static str),
     /// The host answered another listener: a host bug. The process exits without swapping.
     Exit,
 }
@@ -354,17 +355,35 @@ fn renewal(
                 PrivateKeyDer::from_pem_slice(key.expose().as_bytes()),
             ) {
                 (Ok(chain), Ok(key)) if !chain.is_empty() => Renewal::Swap(chain, key),
-                _ => Renewal::Keep,
+                _ => Renewal::Keep("unusable_pair"),
             }
         }
-        TlsFetchResult::Unavailable(_) => Renewal::Keep,
+        TlsFetchResult::Unavailable(_) => Renewal::Keep("unavailable"),
         _ => Renewal::Exit,
     }
 }
 
+/// The start of the one line the web process writes when a `tls.renew` did not replace its
+/// pair. The host forwards the line's reason to its log when it is one of the closed set
+/// (`org-host`'s `web::RENEWAL_KEPT_PREFIX`):
+///
+/// ```text
+/// line   = "agentic-org-web: tls renewal kept the current pair: " reason LF
+/// reason = "fetch_failed" / "unavailable" / "unusable_pair" / "replace_failed"
+/// ```
+///
+/// It carries no key material and no certificate bytes.
+pub const RENEWAL_KEPT_PREFIX: &str = "agentic-org-web: tls renewal kept the current pair: ";
+
+/// The line [`RENEWAL_KEPT_PREFIX`] describes, for `reason`.
+pub fn renewal_kept_line(reason: &str) -> String {
+    format!("{RENEWAL_KEPT_PREFIX}{reason}\n")
+}
+
 /// After each `tls.renew`, fetches the pair again on its own thread and swaps it for new
-/// handshakes ([`TlsCertificates::replace`]). A failed call or an unusable pair keeps the
-/// current one; a different listener ends the process.
+/// handshakes ([`TlsCertificates::replace`]). A failed call, an unusable pair or a failed
+/// swap keeps the current one and writes one line saying so ([`renewal_kept_line`]); a
+/// different listener ends the process.
 fn follow_renewals(
     host: Arc<HostControl>,
     tls: Arc<TlsCertificates>,
@@ -380,14 +399,20 @@ fn follow_renewals(
             while renewals.recv().is_ok() {
                 // Renewals that arrived meanwhile are one fetch.
                 while renewals.try_recv().is_ok() {}
+                let kept = |reason: &str| {
+                    let _ = io::stderr().write_all(renewal_kept_line(reason).as_bytes());
+                };
                 let Ok(fetched) = host.fetch_listener() else {
+                    kept("fetch_failed");
                     continue;
                 };
                 match renewal(&current, fetched) {
                     Renewal::Swap(chain, key) => {
-                        let _ = tls.replace(chain, key);
+                        if tls.replace(chain, key).is_err() {
+                            kept("replace_failed");
+                        }
                     }
-                    Renewal::Keep => {}
+                    Renewal::Keep(reason) => kept(reason),
                     Renewal::Exit => fatal(),
                 }
             }
@@ -557,7 +582,7 @@ mod tests {
         ));
         assert!(matches!(
             renewal(&current, https(&origin, Hsts::Off, "not a key".into())),
-            Renewal::Keep
+            Renewal::Keep("unusable_pair")
         ));
         assert!(matches!(
             renewal(
@@ -566,8 +591,14 @@ mod tests {
                     uncovered: Uncovered::one(origin.clone())
                 })
             ),
-            Renewal::Keep
+            Renewal::Keep("unavailable")
         ));
+        // The one line a kept pair writes: the host's prefix, a known reason, nothing else.
+        let line = renewal_kept_line("unusable_pair");
+        assert_eq!(
+            line,
+            "agentic-org-web: tls renewal kept the current pair: unusable_pair\n"
+        );
         let elsewhere = ListenOrigin::parse("https://elsewhere.example:8443").unwrap();
         for changed in [
             https(&origin, Hsts::On, pem("PRIVATE KEY", key)),

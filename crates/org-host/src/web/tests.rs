@@ -2895,3 +2895,24 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
     ));
     assert!(last.is_some_and(is_cause), "{printed}");
 }
+
+/// The line a web process writes when a `tls.renew` kept its pair is found across reads, its
+/// reason only when it is a known one, and at most [`RENEWAL_KEPT_LOGGED`] times.
+#[test]
+fn a_kept_renewal_line_is_found_across_reads_and_only_for_known_reasons() {
+    let mut kept = RenewalKept::default();
+    let line = format!("{RENEWAL_KEPT_PREFIX}replace_failed\n");
+    let (head, tail) = line.as_bytes().split_at(20);
+    assert!(kept.read(head).is_empty());
+    assert_eq!(kept.read(tail), ["replace_failed"]);
+    let other = format!(
+        "noise\n{RENEWAL_KEPT_PREFIX}-----BEGIN PRIVATE KEY-----\n{RENEWAL_KEPT_PREFIX}{}\n\
+         {RENEWAL_KEPT_PREFIX}unavailable",
+        "x".repeat(300)
+    );
+    assert!(kept.read(other.as_bytes()).is_empty(), "no line ended yet");
+    assert_eq!(kept.read(b"\n"), ["unavailable"]);
+    let many = format!("{RENEWAL_KEPT_PREFIX}fetch_failed\n").repeat(40);
+    assert_eq!(kept.read(many.as_bytes()).len(), RENEWAL_KEPT_LOGGED - 2);
+    assert!(renewal_kept_text("fetch_failed").contains("fetch_failed"));
+}

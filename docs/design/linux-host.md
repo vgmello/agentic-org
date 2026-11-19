@@ -916,13 +916,32 @@ instance, on any address. The pair is the host's (`crates/org-host/src/web_tls/`
   combined file, is dropped), the pair fingerprint and `made` or `supplied`. A new pair
   is installed by adding its key, pointing the row at it, then deleting the old key; a
   start deletes any TLS key the row does not name. The registry of an instance created
-  before X7 gains the table at open; its unused `tls_pair` table is left as it is.
+  before X7 gains the table at open. Every registry keeps the unused `tls_pair` table of
+  earlier builds (a new one creates it too): a build from before X7 requires it and leaves
+  the `web_tls_pair` it does not know alone, so it can still open a registry this build
+  created. The rule for later additive tables is the same: never drop a table an earlier
+  build requires.
 - **Replacement.** `tls.set` on `host.sock` from the administrator's session (journaled,
   X-02 §6.2's checks) installs a supplied pair; the host then sends `tls.renew`, and the
-  web process fetches the pair and swaps it for new handshakes, without a restart. On an
+  web process fetches the pair and swaps it for new handshakes, without a restart. When
+  the web process keeps its current pair instead (the fetch failed, the host answered
+  `unavailable`, the pair did not load or the swap failed), it writes one line naming the
+  reason, and the host logs it (a known reason only, at most 16 per web process; no key or
+  certificate bytes). On an
   instance whose listener is not `https` it answers `unavailable` (decided with X7: no
   plain-HTTP listener serves a pair, and the scheme never changes, so none is stored). A
   chain longer than 64 KiB in its normal form is `tls_invalid`.
+- **Command.** `agentic-org admin tls set --cert <file> --key <file> --login <login>
+  [--name <instance>]` reads the files with setup's rules, checks the pair in `tls.set`'s
+  order (a refusal names the files, before a password is asked), signs the administrator in
+  with the password typed at the terminal (native `account.verify`, the interim sign-in
+  `recovery` uses until FC-173), calls `tls.set`, ends the session and prints only the new
+  certificate's SHA-256 fingerprint. It is admitted as the call is and no wider: on
+  `host.sock`, as the service's user, by the administrators' admission (the signed
+  `agentic-org` on a Mac); root has no route. It sends the password only to a host whose
+  program it identified, so where a peer is known by its user alone (GNU/Linux, a
+  container) it refuses before asking for the password or sending anything, until
+  command-line sign-in is approved in the browser (FC-173).
 - **Start gate and `tls.fetch`.** The web process is spawned only while the stored pair is
   present (`tls_missing`), names the origin's host (`tls_name_mismatch`) and is valid now;
   the gate is part of the web start's eligibility (asked at most every two seconds, each
@@ -933,8 +952,10 @@ instance, on any address. The pair is the host's (`crates/org-host/src/web_tls/`
   `Strict-Transport-Security`; an IP-literal origin never gets HSTS.
 
 Known limits: the self-made certificate is trusted by no browser until the operator
-accepts it (compare the fingerprint first); there is no command for `tls.set` yet, so a
-supplied pair is replaced only by a client of `host.sock`; a supplied pair that expires
+accepts it (compare the fingerprint first); on Linux and in a container `admin tls set`
+refuses until FC-173 (no password is sent to a host known by its user alone), so a
+supplied pair is replaced there only by an administrator's `tls.set` from another client of
+`host.sock`, or by a new instance; a supplied pair that expires
 stops the browser service until it is replaced; a supplied pair already expired at the
 instance's first start refuses that start (setup verified it moments before; the operator
 replaces the files at the recorded paths and starts again), while one

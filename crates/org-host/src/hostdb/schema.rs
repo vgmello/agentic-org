@@ -40,6 +40,10 @@ CREATE TABLE org_create_staging (
  name_key TEXT NOT NULL UNIQUE, org_id TEXT NOT NULL UNIQUE,
  office_id TEXT NOT NULL UNIQUE, owner_member_id TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
+CREATE TABLE tls_pair (
+ id INTEGER PRIMARY KEY CHECK (id = 1), cert_pem TEXT NOT NULL,
+ pair_fp BLOB NOT NULL CHECK (length(pair_fp) = 32), set_at_ms INTEGER NOT NULL
+) STRICT;
 CREATE TABLE org_owners (
  org_id TEXT PRIMARY KEY, account TEXT NOT NULL, owner_member_id TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;

@@ -42,7 +42,7 @@ use files::FILE_LIMIT;
 pub(crate) use renewal::{Renewal, EVERY as RENEW_EVERY};
 #[cfg(test)]
 use store::StartRefusal;
-pub(crate) use store::{read_supplied, Unservable, WebTls};
+pub(crate) use store::{read_supplied, refusal_text, Unservable, WebTls};
 pub(crate) use verify::check;
 
 use std::fmt;
@@ -113,7 +113,7 @@ impl Checked {
     pub(crate) fn pair(&self) -> [u8; 32] {
         self.pair
     }
-    #[cfg(test)]
+    /// The leaf's SHA-256 fingerprint, the one thing about the pair a command prints.
     pub(crate) fn fingerprint(&self) -> Fingerprint {
         self.leaf
     }

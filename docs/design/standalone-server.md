@@ -44,7 +44,7 @@ and it never becomes HQ because its connection failed.
 
 | Executable | Role |
 | --- | --- |
-| `agentic-org` | The person's command line. `setup` creates the instance and prints the administrator's registration link; `admin reset` re-issues it or resets the administrator's password; `serve` runs the host: accounts, sessions, secrets, child supervision and update management. |
+| `agentic-org` | The person's command line. `setup` creates the instance and prints the administrator's registration link; `admin reset` re-issues it or resets the administrator's password; `admin tls set` replaces an `https` instance's TLS pair (Linux host design 3.4); `serve` runs the host: accounts, sessions, secrets, child supervision and update management. |
 | `agentic-org-web` | Browser HTTPS, sign-in, static assets, API responses and live events. No keys and no database. |
 | `agentic-org-office` | One HQ or satellite office: every domain rule, the one data writer, and the supervisor of its agents. |
 | `agent-os` | The agent's command line, with employee-scoped authority. |

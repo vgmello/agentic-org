@@ -380,3 +380,98 @@ fn a_real_host_serves_the_browser_over_tls_with_its_own_certificate_and_a_suppli
     drop(host);
     drop(temp);
 }
+
+/// `agentic-org admin tls set` against a real host: where the command can identify the host's
+/// program it signs the administrator in with the password asked at the terminal (once),
+/// replaces the pair in the running web process and prints only the new fingerprint; a
+/// pair for another name or a wrong password changes nothing. Where the host is known by its
+/// user alone, it refuses before a password is asked or anything is sent.
+#[test]
+fn the_admin_tls_set_command_replaces_the_pair_where_it_may_send_the_password() {
+    use crate::setup_flow::tls_command::{set, Target};
+    let (temp, base, address) = root();
+    let (host, socket, _) = start(&base, address, true);
+    let made = leaf_of(&stored_chain(&host));
+    let files = base.join("supplied");
+    fs::create_dir(&files).unwrap();
+    let write = |name: &str, text: &str| {
+        let path = files.join(name);
+        fs::write(&path, text).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        path
+    };
+    let (cert, key) = operator_pair();
+    let (cert_path, key_path) = (write("cert.pem", &cert), write("key.pem", &key));
+    let id = host.service.instance_id_for_test().unwrap().to_owned();
+    let origin = listen(address).origin().clone();
+    let target = Target {
+        socket: &socket,
+        instance_id: &id,
+        origin: &origin,
+        name: None,
+    };
+    let asked = std::cell::Cell::new(0);
+    let typed = |password: &'static str| {
+        let asked = &asked;
+        move || {
+            asked.set(asked.get() + 1);
+            Ok(Password::new(password.into()).unwrap())
+        }
+    };
+    let run = |cert: &Path, password: &'static str| {
+        let mut out = Vec::new();
+        let result = set(
+            &target,
+            cert,
+            &key_path,
+            "Owner",
+            &mut typed(password),
+            &mut out,
+        );
+        (result, String::from_utf8(out).unwrap())
+    };
+    let by_code = matches!(
+        crate::test_programs::image_identity(),
+        org_platform_host::admission::ImageIdentity::CodeSignature
+    );
+    if !by_code {
+        let (result, out) = run(&cert_path, PASSWORD);
+        assert!(result.unwrap_err().contains("browser"), "{out}");
+        assert_eq!(asked.get(), 0, "no password is asked for");
+        assert_eq!(leaf_of(&stored_chain(&host)), made);
+        drop(host);
+        drop(temp);
+        return;
+    }
+    // A pair for another name: refused from the files, before a password is asked.
+    let (other, _) = {
+        let key = rcgen::KeyPair::from_pem(&key).unwrap();
+        let params = rcgen::CertificateParams::new(vec!["elsewhere.example".to_owned()]).unwrap();
+        (params.self_signed(&key).unwrap().pem(), ())
+    };
+    let other_path = write("other.pem", &other);
+    let (result, _) = run(&other_path, PASSWORD);
+    assert!(result.unwrap_err().contains("tls_name_mismatch"));
+    assert_eq!(asked.get(), 0);
+    // A wrong password: refused by the host, nothing changed.
+    let (result, _) = run(&cert_path, "not the password at all");
+    assert!(result.unwrap_err().contains("not the administrator's"));
+    assert_eq!(asked.get(), 1);
+    assert_eq!(leaf_of(&stored_chain(&host)), made);
+    // The administrator's password: replaced, the fingerprint printed, nothing of the key.
+    let (result, out) = run(&cert_path, PASSWORD);
+    result.unwrap();
+    assert_eq!(asked.get(), 2);
+    let supplied = leaf_of(&cert);
+    assert!(out.contains(&fingerprint(&supplied)), "{out}");
+    assert!(
+        !out.contains("PRIVATE KEY") && !out.contains("BEGIN"),
+        "{out}"
+    );
+    assert_eq!(leaf_of(&stored_chain(&host)), supplied);
+    wait_until("the web process to serve the supplied pair", || {
+        get(address, &supplied, "/api/v1/version").is_ok()
+    });
+    drop(host);
+    drop(temp);
+}

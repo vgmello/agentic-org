@@ -5,7 +5,9 @@
 //! gains it at open, as `browser_sessions` was added (`sessions::ensure_schema`): the table is
 //! created only when it is missing, and a present one must match its DDL exactly, or the open
 //! is refused with `Outdated`. `SCHEMA_VERSION` is unchanged. The `tls_pair` table of earlier
-//! registries was never written and is not read.
+//! builds was never written and is not read, but every registry still has it (it stays in the
+//! base schema): a build from before X7 requires it, so it can still open a registry this
+//! build created (a downgrade), and the `web_tls_pair` it does not know is left alone.
 //!
 //! `tls.set` is journaled here too (X-02 §6.3): its stored results are `completed` and the one
 //! stored refusal, `tls_key_mismatch` ([`TlsStored`]), which the shared journal type does not
@@ -293,9 +295,10 @@ mod tests {
         let (home, db) = sqlite();
         drop(db);
         raw_db(home.path())
-            .execute_batch(&format!("DROP TABLE web_tls_pair; {EARLIER};"))
+            .execute_batch("DROP TABLE web_tls_pair;")
             .unwrap();
         assert_eq!(tables(&raw_db(home.path())), ["tls_pair"]);
+        super::super::require_schema(&raw_db(home.path()), EARLIER).unwrap();
         let db = HostDb::open(home.path(), &NoSecrets).unwrap();
         assert!(db.web_tls_pair().unwrap().is_none());
         drop(db);
@@ -303,6 +306,17 @@ mod tests {
         // Opening again changes nothing.
         drop(HostDb::open(home.path(), &NoSecrets).unwrap());
         assert_eq!(tables(&raw_db(home.path())), ["tls_pair", "web_tls_pair"]);
+    }
+
+    /// A downgrade: a build from before X7 requires its `tls_pair` table exactly as it was,
+    /// and tolerates tables it does not know; a registry this build creates has both.
+    #[test]
+    fn a_registry_this_build_creates_keeps_the_table_earlier_builds_require() {
+        let (home, db) = sqlite();
+        drop(db);
+        let raw = raw_db(home.path());
+        assert_eq!(tables(&raw), ["tls_pair", "web_tls_pair"]);
+        super::super::require_schema(&raw, EARLIER).unwrap();
     }
 
     #[test]

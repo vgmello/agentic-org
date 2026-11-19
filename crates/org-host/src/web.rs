@@ -180,6 +180,71 @@ const REFUSAL_PREFIX: &str = "agentic-org-web: startup refused: confinement: ";
 /// report lacks a Landlock layer. It shows the reason once per start and decides
 /// nothing by it: whether the child is confined is what the host observed.
 const LANDLOCK_NOT_APPLIED_PREFIX: &str = "agentic-org-web: confinement: landlock not applied: ";
+/// The start of the line a running web process writes when a `tls.renew` did not replace
+/// its pair (`agentic-org-web`'s `process::RENEWAL_KEPT_PREFIX`); its reason is one of
+/// [`RENEWAL_KEPT_REASONS`]. The host logs its own text for a known reason, never the line.
+const RENEWAL_KEPT_PREFIX: &str = "agentic-org-web: tls renewal kept the current pair: ";
+const RENEWAL_KEPT_REASONS: [&str; 4] = [
+    "fetch_failed",
+    "unavailable",
+    "unusable_pair",
+    "replace_failed",
+];
+/// How many such lines one web process has forwarded to the host log at most.
+const RENEWAL_KEPT_LOGGED: usize = 16;
+
+/// Finds the [`RENEWAL_KEPT_PREFIX`] lines in a child's standard error as it is read, across
+/// reads. A line longer than the longest such line is skipped whole.
+#[derive(Default)]
+struct RenewalKept {
+    line: Vec<u8>,
+    overlong: bool,
+    logged: usize,
+}
+
+impl RenewalKept {
+    const LINE_BYTES: usize = 128;
+
+    /// The reasons of the lines that `bytes` completes, in order, up to
+    /// [`RENEWAL_KEPT_LOGGED`] for the life of the child.
+    fn read(&mut self, bytes: &[u8]) -> Vec<&'static str> {
+        let mut found = Vec::new();
+        for &byte in bytes {
+            if byte != b'\n' {
+                if self.line.len() < Self::LINE_BYTES {
+                    self.line.push(byte);
+                } else {
+                    self.overlong = true;
+                }
+                continue;
+            }
+            let reason = (!self.overlong)
+                .then(|| self.line.strip_prefix(RENEWAL_KEPT_PREFIX.as_bytes()))
+                .flatten()
+                .and_then(|reason| {
+                    RENEWAL_KEPT_REASONS
+                        .into_iter()
+                        .find(|known| known.as_bytes() == reason)
+                });
+            if let Some(reason) = reason.filter(|_| self.logged < RENEWAL_KEPT_LOGGED) {
+                self.logged += 1;
+                found.push(reason);
+            }
+            self.line.clear();
+            self.overlong = false;
+        }
+        found
+    }
+}
+
+/// What the host logs for a web process that kept its pair after `tls.renew`.
+fn renewal_kept_text(reason: &str) -> String {
+    format!(
+        "the web process kept serving its current TLS pair after a renewal: {reason}; it \
+         serves the new pair from its next start"
+    )
+}
+
 /// How much of a child's standard error is kept; the rest is read and dropped.
 const STDERR_KEPT: usize = 1024;
 /// How long a child whose control stream ended may take to exit by itself, so that
@@ -258,6 +323,7 @@ impl Stderr {
             .name("web-stderr".into())
             .spawn(move || {
                 let mut bytes = [0u8; 4096];
+                let mut renewals = RenewalKept::default();
                 // Reads until the end of the pipe or an error, which also ends it.
                 let stopped = loop {
                     let read = match stderr.read(&mut bytes) {
@@ -265,6 +331,9 @@ impl Stderr {
                         Ok(read) => read,
                         Err(error) => break Some(error),
                     };
+                    for reason in renewals.read(&bytes[..read]) {
+                        crate::host_log::log(&renewal_kept_text(reason));
+                    }
                     #[cfg(test)]
                     lock(&CAPTURED_STDERR)
                         .entry(instance.clone())

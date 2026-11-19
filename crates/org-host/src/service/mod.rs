@@ -98,6 +98,11 @@ impl Service {
         self
     }
     #[cfg(test)]
+    pub(crate) fn instance_id_for_test(&self) -> Option<&str> {
+        self.instance_id.as_deref()
+    }
+
+    #[cfg(test)]
     pub(crate) fn web_tls_for_test(&self) -> Option<&Arc<crate::web_tls::WebTls>> {
         self.web_tls.as_ref()
     }
