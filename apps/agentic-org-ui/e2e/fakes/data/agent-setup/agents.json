@@ -1,0 +1,178 @@
+{
+	"connections": {
+		"sub-a": {
+			"name": "Anthropic · subscription A",
+			"runtime": "Claude Code",
+			"state": "ready"
+		},
+		"sub-b": {
+			"name": "Anthropic · subscription B",
+			"runtime": "Claude Code",
+			"state": "cooling_down"
+		},
+		"sub-c": {
+			"name": "OpenAI · subscription C",
+			"runtime": "Codex",
+			"state": "signed_out"
+		},
+		"api-anthropic": {
+			"name": "Anthropic API · org key",
+			"runtime": "Claude Code",
+			"state": "unknown"
+		}
+	},
+	"profiles": [
+		{
+			"id": "primary-pool",
+			"name": "Primary pool",
+			"connectionIds": ["sub-a", "sub-b"],
+			"models": [
+				{
+					"id": "claude-sonnet-5",
+					"supporting": 2,
+					"ready": 1,
+					"stale": false
+				},
+				{
+					"id": "claude-opus-5",
+					"supporting": 2,
+					"ready": 1,
+					"stale": false
+				}
+			]
+		},
+		{
+			"id": "codex-pool",
+			"name": "Codex pool",
+			"connectionIds": ["sub-c"],
+			"models": [
+				{
+					"id": "gpt-5.5-codex",
+					"supporting": 1,
+					"ready": 0,
+					"stale": false
+				}
+			],
+			"blockers": [
+				{
+					"code": "AUTH_EXPIRED",
+					"reason": "Codex isn't signed in on HQ (This Mac)",
+					"fix": "Sign in there with `codex login`, then the office checks again within a minute."
+				}
+			]
+		},
+		{
+			"id": "anthropic-api",
+			"name": "Anthropic API · default",
+			"connectionIds": ["api-anthropic"],
+			"models": null
+		}
+	],
+	"tools": ["org.messages", "org.tasks", "workspace.shell", "workspace.git"],
+	"byMember": {
+		"sam": {
+			"profileId": "primary-pool",
+			"modelId": "claude-sonnet-5",
+			"revision": 3,
+			"employeeRevision": 4,
+			"generation": 3,
+			"observedAgoS": 20,
+			"observedRuntime": "Claude Code 2.1.4",
+			"readiness": "known",
+			"updated": {
+				"byName": "Alex Kim",
+				"agoH": 30
+			}
+		},
+		"noor": {
+			"profileId": "primary-pool",
+			"modelId": "claude-sonnet-5",
+			"revision": 2,
+			"employeeRevision": 3,
+			"generation": 2,
+			"observedAgoS": 45,
+			"observedRuntime": "Claude Code 2.1.4",
+			"readiness": "known",
+			"updated": {
+				"byName": "Alex Kim",
+				"agoH": 50
+			}
+		},
+		"kai": {
+			"profileId": "codex-pool",
+			"modelId": "gpt-5.1-codex",
+			"revision": 4,
+			"employeeRevision": 2,
+			"generation": 1,
+			"observedAgoS": 30,
+			"observedRuntime": "Codex 0.61.0",
+			"readiness": "known",
+			"updated": {
+				"byName": "Alex Kim",
+				"agoH": 200
+			}
+		},
+		"mira": {
+			"profileId": "primary-pool",
+			"modelId": "claude-sonnet-5",
+			"revision": 1,
+			"employeeRevision": 1,
+			"generation": 1,
+			"observedAgoS": 7200,
+			"readiness": "unknown",
+			"unknownWhy": "HQ (This Mac) hasn't reported Mira's readiness since it restarted 2 h ago.",
+			"updated": {
+				"byName": "Alex Kim",
+				"agoH": 90
+			}
+		},
+		"juno": {
+			"profileId": "primary-pool",
+			"modelId": "claude-opus-5",
+			"revision": 1,
+			"employeeRevision": 1,
+			"generation": 1,
+			"observedAgoS": 90,
+			"observedRuntime": "Claude Code 2.1.4",
+			"readiness": "known",
+			"updated": {
+				"byName": "Alex Kim",
+				"agoH": 120
+			}
+		},
+		"pax": {
+			"profileId": null,
+			"modelId": null,
+			"revision": 0,
+			"employeeRevision": 1,
+			"generation": 1,
+			"observedAgoS": 7200,
+			"readiness": "known"
+		},
+		"ines": {
+			"profileId": "primary-pool",
+			"modelId": "claude-sonnet-5",
+			"revision": 1,
+			"employeeRevision": 2,
+			"generation": null,
+			"readiness": "known",
+			"updated": {
+				"byName": "Alex Kim",
+				"agoH": 400
+			}
+		},
+		"quinn": {
+			"profileId": "codex-pool",
+			"modelId": "gpt-5.5-codex",
+			"revision": 2,
+			"employeeRevision": 1,
+			"generation": 1,
+			"observedAgoS": 15,
+			"readiness": "known",
+			"updated": {
+				"byName": "Alex Kim",
+				"agoH": 5
+			}
+		}
+	}
+}

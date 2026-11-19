@@ -1,5 +1,5 @@
 // What the Organization settings screens read and change. Shapes follow docs/design/organization-data (accounts and
-// recovery: server-installation-and-access-ux §4a; execution: document 11; prices: costs-and-insights-ux §5).
+// recovery: server-installation-and-access-ux §4a; prices: costs-and-insights-ux §5).
 
 /** The recovery code's state as HQ reports it (§4a.6). The code itself never reaches the browser (RCV-1). */
 export type RecoveryState =
@@ -123,51 +123,4 @@ export interface CostSummary {
 	budgets: AgentBudgets[];
 	/** The zone the day and month budgets run in, with who set it. */
 	budgetZone: string;
-}
-
-/** The agent's execution configuration (`execution.md`, document 11): separate from the employee record. */
-export interface AgentExecution {
-	memberId: string;
-	configured: boolean;
-	profileName?: string;
-	model?: string;
-	enabled: boolean;
-	/** The employee record's revision and the execution file's: they change apart. */
-	employeeRevision: number;
-	executionRevision: number;
-}
-
-/** What the office observes about running the agent. Unknown is never read as ready. */
-export type Readiness =
-	{ kind: 'ready' } | { kind: 'needs_setup'; reason: string } | { kind: 'unknown' };
-
-export interface AgentSetup {
-	memberId: string;
-	execution: AgentExecution;
-	/** The driver the office observes, as a word: "Claude Code". */
-	driver?: string;
-	readiness: Readiness;
-	/** The managed home, resolved by the office: read-only, with no picker. */
-	managedHome?: string;
-	/** When the office last observed the agent (RFC 3339). */
-	observedAt?: string;
-}
-
-export interface ModelProfileChoice {
-	id: string;
-	name: string;
-	models: string[];
-}
-
-export interface AgentSetupList {
-	agents: AgentSetup[];
-	profiles: ModelProfileChoice[];
-}
-
-export interface ExecutionEdit {
-	profileId: string;
-	model: string;
-	enabled: boolean;
-	/** The execution revision the person looked at: a newer one is a conflict. */
-	expectedRevision: number;
 }

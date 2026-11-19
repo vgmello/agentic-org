@@ -2,7 +2,7 @@
   @component
   The Teams index (offices-and-teams-ux §7.2, TEAM-1): the recursive team tree as indented divided rows, each
   with its TEAM- reference, optional lead, People and Agents counts (home team only) and projects marked Owner
-  or Contributor. New team, and each row's menu: Move, Rename, Change lead, Add team under, Archive, Delete.
+  or Contributor. Hire requests, Hire an agent and New team, and each row's menu: Move, Rename, Change lead, Add team under, Archive, Delete.
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
@@ -11,26 +11,19 @@
 	import { toast } from 'svelte-sonner';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
-	import NewTeamSheet from '$lib/components/NewTeamSheet.svelte';
-	import MoveTeamDialog from '$lib/components/MoveTeamDialog.svelte';
-	import RenameTeamDialog from '$lib/components/RenameTeamDialog.svelte';
-	import DeleteTeamDialog from '$lib/components/DeleteTeamDialog.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { toAppError } from '$lib/office/api';
+	import { HIRE_REQUESTS_URL, hireUrl } from '$lib/modules/employees';
 	import { orgApi } from '$lib/org/api';
 	import { sessionFor } from '$lib/org/session';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
 	import type { OrgSnapshot } from '$lib/proto';
 	import Loaded from '$lib/components/Loaded.svelte';
-	import { membersApi } from '$lib/modules/members/api';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { teamsApi } from '../../api';
 	import { focusAfterRemoval, indentTeams } from '../../tree';
-	import type { LeadCandidate, TeamRow } from '../../types';
-	import ArchiveTeamDialog from '../archive-team/ArchiveTeamDialog.svelte';
-	import ChangeLeadDialog from '../change-lead/ChangeLeadDialog.svelte';
-	import TeamRowMenu, { type TeamRowAction } from './TeamRowMenu.svelte';
+	import TeamDialogs from '../team-actions/TeamDialogs.svelte';
+	import TeamMenu from '../team-actions/TeamMenu.svelte';
 
 	let { organizationId, snapshot }: { organizationId: string; snapshot: OrgSnapshot } = $props();
 
@@ -39,46 +32,8 @@
 	const archived = $derived((teams.data ?? []).filter((t) => t.status === 'archived'));
 	const rows = $derived(indentTeams(active));
 	const session = $derived(sessionFor(orgApi, organizationId));
-	const orgTeam = (row: TeamRow | undefined) => row && snapshot.teams.find((t) => t.id === row.id);
-
-	let newOpen = $state(false);
-	let newUnder = $state<string | undefined>();
-	let target = $state<TeamRow | undefined>();
-	let moveOpen = $state(false);
-	let renameOpen = $state(false);
-	let deleteOpen = $state(false);
-	let archiveOpen = $state(false);
-	let leadOpen = $state(false);
-	let candidates = $state<LeadCandidate[] | undefined>();
+	let dialogs = $state<ReturnType<typeof TeamDialogs>>();
 	let justAdded = $state<string | undefined>();
-
-	async function loadCandidates(teamId: string) {
-		candidates = undefined;
-		try {
-			const everyone = await membersApi.directory(organizationId);
-			candidates = everyone
-				.filter((m) => m.homeTeam?.id === teamId && m.status !== 'inactive')
-				.map((m) => ({ id: m.id, name: m.name, kind: m.kind }));
-		} catch (e) {
-			candidates = [];
-			toast.error(`Couldn't load who can lead: ${toAppError(e).message}`);
-		}
-	}
-
-	function act(action: TeamRowAction, team: TeamRow) {
-		target = team;
-		if (action === 'move') moveOpen = true;
-		else if (action === 'rename') renameOpen = true;
-		else if (action === 'delete') deleteOpen = true;
-		else if (action === 'archive') archiveOpen = true;
-		else if (action === 'lead') {
-			leadOpen = true;
-			void loadCandidates(team.id);
-		} else {
-			newUnder = team.id;
-			newOpen = true;
-		}
-	}
 
 	async function reload() {
 		await invalidate('app:org');
@@ -122,10 +77,13 @@
 	description="Who works in which team. Each team can sit under another; a team's lead manages everything under it."
 >
 	{#snippet actions()}
-		<Button variant="outline" href={resolve('/teams/hires')} class="max-[639px]:h-11"
+		<Button href={resolve(HIRE_REQUESTS_URL as '/')} variant="outline" class="max-[639px]:h-11"
 			>Hire requests</Button
 		>
-		<Button class="max-[639px]:h-11" onclick={() => ((newUnder = undefined), (newOpen = true))}>
+		<Button href={resolve(hireUrl() as '/')} variant="outline" class="max-[639px]:h-11"
+			>Hire an agent</Button
+		>
+		<Button class="max-[639px]:h-11" onclick={() => dialogs?.openNew()}>
 			<MiniIcon name="plus" class="-ml-0.5 size-5" /> New team
 		</Button>
 	{/snippet}
@@ -183,7 +141,7 @@
 				<div
 					class="relative shrink-0 min-[1024px]:col-start-6 min-[1024px]:row-start-1 min-[1024px]:-my-1.5"
 				>
-					<TeamRowMenu {team} onaction={act} />
+					<TeamMenu {team} onaction={(action, t) => dialogs?.open(action, t)} />
 				</div>
 				<p
 					class="-mt-2 flex w-full flex-wrap gap-x-2 pl-(--indent) text-xs/5 text-gray-400 min-[1024px]:contents min-[1024px]:text-sm/6"
@@ -257,58 +215,17 @@
 	{/if}
 </Loaded>
 
-<NewTeamSheet bind:open={newOpen} {snapshot} {session} ownerTeamId={newUnder} ondone={created} />
-<MoveTeamDialog
-	bind:open={moveOpen}
-	team={orgTeam(target)}
-	{snapshot}
-	{session}
-	ondone={async (r) => {
-		await reload();
-		if (!('stale' in r)) toast.success(`Moved ${r.name} to ${r.to}.`);
-	}}
-/>
-<RenameTeamDialog
-	bind:open={renameOpen}
-	team={orgTeam(target)}
-	{snapshot}
-	{session}
-	ondone={async (r) => {
-		await reload();
-		if (r.name) toast.success(`Renamed to ${r.name}.`);
-	}}
-/>
-<DeleteTeamDialog
-	bind:open={deleteOpen}
-	team={orgTeam(target)}
-	{snapshot}
-	{session}
-	ondone={async (r) => {
-		if ('stale' in r) return reload();
-		await refocusAfter(target!.id);
-		toast.success(`Deleted ${r.name}.`);
-	}}
-/>
-<ArchiveTeamDialog
-	bind:open={archiveOpen}
-	team={target}
+<TeamDialogs
+	bind:this={dialogs}
 	{organizationId}
-	ondone={async (r) => {
-		await refocusAfter(target!.id);
-		toast.success(`Archived ${r.name}. Its ID and history stay.`);
-	}}
-/>
-<ChangeLeadDialog
-	bind:open={leadOpen}
-	team={target}
-	{candidates}
+	{snapshot}
 	{session}
-	ondone={async (r) => {
-		await reload();
+	{reload}
+	oncreated={created}
+	onremoved={async (r) => {
+		await refocusAfter(r.teamId);
 		toast.success(
-			r.lead
-				? `${r.lead} now leads ${r.team} and manages its subtree.`
-				: `${r.team} has no lead now.`
+			r.action === 'archive' ? `Archived ${r.name}. Its ID and history stay.` : `Deleted ${r.name}.`
 		);
 	}}
 />

@@ -22,6 +22,7 @@
 		emptyTitle,
 		emptyDescription,
 		emptyLevel = 3,
+		errorLevel = 2,
 		emptyAction,
 		avatar = false,
 		rows = 4,
@@ -38,7 +39,9 @@
 		isEmpty?: (value: T) => boolean;
 		emptyTitle?: string;
 		emptyDescription?: string;
-		emptyLevel?: 2 | 3;
+		emptyLevel?: 2 | 3 | 4;
+		/** The error heading's level, as for EmptyState. */
+		errorLevel?: 2 | 3 | 4;
 		emptyAction?: Snippet;
 		avatar?: boolean;
 		rows?: number;
@@ -61,6 +64,7 @@
 	{/if}
 {:else if resource.state === 'error'}
 	<ErrorState
+		level={errorLevel}
 		title={error}
 		message={resource.message}
 		onretry={() => resource.reload()}

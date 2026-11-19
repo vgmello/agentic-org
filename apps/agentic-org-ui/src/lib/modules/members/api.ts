@@ -1,5 +1,4 @@
 import { unavailableCall } from '$lib/platform/unavailable-api';
-import type { SessionLog } from './features/session-log/entries';
 import type {
 	ActivityEntry,
 	AssignableTask,
@@ -8,6 +7,8 @@ import type {
 	MemberRow,
 	ProcessesView,
 	RoleView,
+	RunNowResult,
+	SessionFile,
 	SignInLink,
 	Turn,
 	WorkRow
@@ -26,19 +27,32 @@ export interface MembersApi {
 	activity(organizationId: string, memberId: string): Promise<ActivityEntry[]>;
 	/** Agents only: newest first. */
 	runs(organizationId: string, memberId: string): Promise<Turn[]>;
-	/** The office parses and redacts the conversation files; the browser never reads one (REQ-05). */
-	sessionLog(organizationId: string, memberId: string, runId: string): Promise<SessionLog>;
+	/**
+	 * Proof of concept only (REQ-05): the run's conversation file, parsed in the browser by features/session-log.
+	 * The product never serves a raw transcript: the office parses and redacts, and this call is replaced by one
+	 * returning the parsed `SessionLog`. `not_found` when no log was kept.
+	 */
+	sessionFile(organizationId: string, memberId: string, runId: string): Promise<SessionFile>;
 	processes(organizationId: string, memberId: string): Promise<ProcessesView>;
 	role(organizationId: string, memberId: string): Promise<RoleView>;
-	/** Run now, with an optional note. Rejects `busy` while a turn is open (RUN-4) and `cannot_start` with the reason. */
-	runNow(organizationId: string, memberId: string, note: string): Promise<Turn>;
+	/**
+	 * Run now, with an optional note. Rejects `busy` while a turn is open (RUN-4) and `cannot_start` with the reason.
+	 * Answers the recorded turn (`accepted` until the office confirms the start) and the profile after it.
+	 */
+	runNow(organizationId: string, memberId: string, note: string): Promise<RunNowResult>;
 	setAllowHiring(organizationId: string, memberId: string, on: boolean): Promise<void>;
+	/**
+	 * Move home team (our-org-in-the-app §8, TEAM-6): one operation that records `toTeamId` as the employee's one home
+	 * team. Refuses `conflict` when it is already their home team or they are already in that team.
+	 */
+	moveHomeTeam(organizationId: string, memberId: string, toTeamId: string): Promise<void>;
 	assignableTasks(organizationId: string): Promise<AssignableTask[]>;
 	assignTask(organizationId: string, memberId: string, ref: string): Promise<void>;
 	/** A one-time registration link, shown once. Inviting again cancels the previous link. */
 	inviteToSignIn(organizationId: string, memberId: string): Promise<SignInLink>;
-	/** A one-time set-new-password link, shown once. */
+	/** A one-time set-new-password link, shown once. Refused for anyone without an account. */
 	newSignInLink(organizationId: string, memberId: string): Promise<SignInLink>;
+	/** Signs the person out everywhere. Refused for the owner ("Hand over ownership first.") and without an account. */
 	removeAccess(organizationId: string, memberId: string): Promise<void>;
 	/** Moves ownership in one operation, after the owner's password. */
 	handOverOwnership(organizationId: string, toMemberId: string, password: string): Promise<void>;
@@ -53,11 +67,12 @@ export const membersApi: MembersApi = {
 	conversations: unavailableCall,
 	activity: unavailableCall,
 	runs: unavailableCall,
-	sessionLog: unavailableCall,
+	sessionFile: unavailableCall,
 	processes: unavailableCall,
 	role: unavailableCall,
 	runNow: unavailableCall,
 	setAllowHiring: unavailableCall,
+	moveHomeTeam: unavailableCall,
 	assignableTasks: unavailableCall,
 	assignTask: unavailableCall,
 	inviteToSignIn: unavailableCall,

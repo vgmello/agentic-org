@@ -56,16 +56,20 @@
 		error = undefined;
 		try {
 			await onconfirm();
+			// Stays busy until the close has finished, so the button never flips back while it fades out.
 			open = false;
 		} catch (e) {
 			error = toAppError(e).message;
-		} finally {
 			busy = false;
 		}
 	}
 </script>
 
-<Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
+<Dialog
+	bind:open
+	onOpenChange={(next) => !next && busy && (open = true)}
+	onOpenChangeComplete={(next) => !next && (busy = false)}
+>
 	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto">
 		<DialogHeader>
 			<DialogTitle text={title} />

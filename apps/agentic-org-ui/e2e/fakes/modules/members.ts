@@ -1,11 +1,15 @@
 // Mock for src/lib/modules/members/api.ts under `bun run dev:mock`. Members, teams and projects come from the org
 // mock (so IDs, names and edits made through the existing dialogs match every page); what the org snapshot does not
 // carry yet (handles for people, presence, readiness, turns, sign-in access) is JSON in e2e/fakes/data/members.
-// `?mock=slow|fails|empty` on the page's URL exercises the loading, error and empty states.
+// `?mock=slow|fails|empty` on the page's URL exercises the loading, error and empty states; the directory also answers
+// `?mock=unavailable|no-agents|all-former|race`.
+import { invalidate } from '$app/navigation';
 import { orgApi } from '$lib/org/api';
+import { newId } from '$lib/org/commands';
 import { officeApi } from '$lib/office/api';
 import type { Member, OrgSnapshot } from '$lib/proto';
 import type { MembersApi } from '../../../src/lib/modules/members/api';
+import { busyText } from '../../../src/lib/modules/members/present';
 import type {
 	ExecutionView,
 	MemberProfile,
@@ -18,9 +22,6 @@ import type {
 	WorkRow,
 	WorkState
 } from '../../../src/lib/modules/members/types';
-import type { SessionLog } from '../../../src/lib/modules/members/features/session-log/entries';
-import { parseClaude } from '../../../src/lib/modules/members/features/session-log/parse-claude';
-import { parseCodex } from '../../../src/lib/modules/members/features/session-log/parse-codex';
 import data from '../data/members/members.json' with { type: 'json' };
 import runsData from '../data/members/runs.json' with { type: 'json' };
 import tasksData from '../data/members/tasks.json' with { type: 'json' };
@@ -86,10 +87,40 @@ const MIN = 60_000;
 const state = {
 	ownerId: undefined as string | undefined,
 	allowHiring: new Map<string, boolean>(),
-	access: new Map<string, boolean>(),
+	/** Sign-in access changed here: an account, or an open invitation until the person registers. */
+	access: new Map<string, { account: boolean; invitedUntil?: string }>(),
 	added: new Map<string, Turn[]>(),
+	/** One Run now check fails once under `?mock=refresh_fails_once` (the profile keeps its page). */
+	refreshFailed: false,
 	assigned: new Map<string, string>()
 };
+
+/** How long the fake office takes to confirm a Run now: HQ records it `accepted`, then the office starts it. */
+const CONFIRM_MS = 4000;
+const pendingAttempts = new Map<string, { connection: string; model: string }>();
+
+/** The turns Run now added for a member, with any the office has confirmed since moved to `running`. */
+function addedTurns(memberId: string): Turn[] {
+	const list = state.added.get(memberId) ?? [];
+	for (const t of list)
+		if (t.state === 'accepted' && Date.now() - Date.parse(t.startedAt) >= CONFIRM_MS) {
+			const route = pendingAttempts.get(t.id) ?? {
+				connection: 'Default connection',
+				model: 'unknown'
+			};
+			t.state = 'running';
+			t.attempts = [
+				{
+					n: 1,
+					...route,
+					startedAt: new Date().toISOString(),
+					outcome: 'running',
+					usageComplete: false
+				}
+			];
+		}
+	return list;
+}
 
 // ---- shared reads (teams.ts and employees.ts use these too) ----
 
@@ -114,19 +145,75 @@ export function teamRef(s: OrgSnapshot, id: string | undefined): TeamRef | undef
 	return { id: team.id, name: team.name, ref: n ? `TEAM-${n}` : '' };
 }
 
-/** One home team: the recorded override, else the first membership (the snapshot still allows several). */
-export function homeTeamId(s: OrgSnapshot, memberId: string): string | undefined {
-	const override = extras[memberId]?.homeTeamId;
-	if (override && s.teams.some((t) => t.id === override)) return override;
-	return s.memberships.find(
-		(m) => m.member_id === memberId && s.teams.some((t) => t.id === m.team_id)
-	)?.team_id;
+// ---- home teams set by Move home team ----
+
+/**
+ * Kept in localStorage beside the org mock (which persists the membership change), per organization, so a reload
+ * keeps the move. Each entry names the membership the move created; once that membership is gone (an org-chart move
+ * or removal later), the entry no longer applies and the later change wins.
+ */
+const HOME_KEY = 'agentic-org.mock.members.home';
+type HomeEntry = { teamId: string; membershipId: string };
+type HomeStore = Record<string, Record<string, HomeEntry>>;
+
+function readHomes(): HomeStore {
+	try {
+		const parsed = JSON.parse(localStorage.getItem(HOME_KEY) ?? '{}');
+		return parsed && typeof parsed === 'object' ? (parsed as HomeStore) : {};
+	} catch {
+		return {};
+	}
 }
 
+function recordHome(organizationId: string, memberId: string, entry: HomeEntry) {
+	const all = readHomes();
+	all[organizationId] = { ...(all[organizationId] ?? {}), [memberId]: entry };
+	localStorage.setItem(HOME_KEY, JSON.stringify(all));
+}
+
+/** The moved-to home team, while the membership the move created is still in this snapshot. */
+function movedHome(s: OrgSnapshot, memberId: string): string | undefined {
+	for (const byMember of Object.values(readHomes())) {
+		const e = byMember?.[memberId];
+		if (
+			e &&
+			s.memberships.some(
+				(m) => m.id === e.membershipId && m.member_id === memberId && m.team_id === e.teamId
+			)
+		)
+			return e.teamId;
+	}
+	return undefined;
+}
+
+/**
+ * One home team (the employee's `home_team_id`): a Move home team made here, else the sample's recorded value, else
+ * the first membership (the org snapshot still allows several memberships and has no home-team field).
+ */
+export function homeTeamId(s: OrgSnapshot, memberId: string): string | undefined {
+	const exists = (id: string | undefined) => !!id && s.teams.some((t) => t.id === id);
+	const moved = movedHome(s, memberId);
+	if (moved) return moved;
+	const recorded = extras[memberId]?.homeTeamId;
+	if (exists(recorded)) return recorded;
+	return s.memberships.find((m) => m.member_id === memberId && exists(m.team_id))?.team_id;
+}
+
+/**
+ * Handles chosen when a person was added (teams.ts Add a person): the one map every page reads, so People, the
+ * profile, the team page and the org chart show the same @handle, and uniqueness is checked against it.
+ */
+const chosenHandles = new Map<string, string>();
+export const recordHandle = (memberId: string, handle: string) =>
+	chosenHandles.set(memberId, handle);
+
 export const handleOf = (m: Member) =>
-	m.kind === 'agent'
+	chosenHandles.get(m.id) ??
+	(m.kind === 'agent'
 		? (m.agent?.messaging_name ?? m.id)
-		: (extras[m.id]?.handle ?? m.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+		: (extras[m.id]?.handle ?? m.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')));
+
+const hasAccount = (id: string) => state.access.get(id)?.account ?? extras[id]?.canSignIn ?? false;
 
 const statusOf = (m: Member): MemberRow['status'] =>
 	m.agent?.status === 'paused'
@@ -138,7 +225,15 @@ const statusOf = (m: Member): MemberRow['status'] =>
 function presenceOf(m: Member): MemberRow['presence'] {
 	if (statusOf(m) === 'inactive') return undefined;
 	if (statusOf(m) === 'paused') return { id: 'paused' };
+	const live = addedTurns(m.id).find((t) => t.state === 'accepted' || t.state === 'running');
+	if (live?.state === 'running') return { id: 'working' };
+	// Requested, not started: able to run, with the request named, never Working before the office says so.
+	if (live?.state === 'accepted')
+		return { id: 'available', detail: '· run requested, waiting for the office' };
 	const p = extras[m.id]?.presence;
+	// Available means able to run (ADR-0028): an agent with a reason it can't start isn't shown as Available.
+	if (p?.id === 'available' && m.kind === 'agent' && extras[m.id]?.execution?.reasons.length)
+		return undefined;
 	return p ? { id: p.id as PresenceId, ...(p.detail ? { detail: p.detail } : {}) } : undefined;
 }
 
@@ -162,7 +257,7 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 				role: m.agent?.title || m.agent?.role || x.title,
 				status: statusOf(m),
 				owner: m.id === ownerId,
-				canSignIn: m.kind === 'person' && (state.access.get(m.id) ?? x.canSignIn ?? false),
+				canSignIn: m.kind === 'person' && hasAccount(m.id),
 				presence: presenceOf(m),
 				homeTeam: teamRef(s, homeTeamId(s, m.id)),
 				office:
@@ -187,15 +282,42 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 		});
 }
 
+/** A pause made here has no office confirmation yet: stop pending, and the manual hold named (DEAL-3). */
+function supervisionOf(m: Member, x: Extra): MemberProfile['supervision'] {
+	if (m.kind !== 'agent' || statusOf(m) === 'inactive') return undefined;
+	if (statusOf(m) === 'paused' && !x.supervision?.holds.length)
+		return {
+			health: "Pause requested · the office hasn't confirmed the stop yet",
+			tone: 'waiting',
+			holds: ['Manual pause'],
+			stopPending: true
+		};
+	const live = addedTurns(m.id).find((t) => t.state === 'accepted' || t.state === 'running');
+	if (live?.state === 'accepted')
+		return {
+			health: "Run requested · the office hasn't started the turn yet",
+			tone: 'waiting',
+			holds: x.supervision?.holds ?? []
+		};
+	if (live?.state === 'running')
+		return {
+			health: 'Working · the office started the turn',
+			tone: 'ok',
+			holds: x.supervision?.holds ?? []
+		};
+	return x.supervision
+		? { ...x.supervision, tone: x.supervision.tone as 'ok' | 'waiting' | 'problem' | 'unknown' }
+		: undefined;
+}
+
 function execution(m: Member, x: Extra, officeName: string | undefined): ExecutionView | undefined {
 	const e = x.execution;
 	if (m.kind !== 'agent' || !e) return undefined;
 	return {
 		requested: e.pool && e.model ? { pool: e.pool, model: e.model } : null,
 		connection: e.connection,
-		turnState: (state.added.get(m.id)?.some((t) => t.state === 'running')
-			? 'running'
-			: e.turnState) as TurnState | 'idle',
+		turnState: (addedTurns(m.id).find((t) => t.state === 'accepted' || t.state === 'running')
+			?.state ?? e.turnState) as TurnState | 'idle',
 		office:
 			officeName && e.generation
 				? {
@@ -272,7 +394,25 @@ async function turnsFor(organizationId: string, memberId: string): Promise<Turn[
 			}))
 		};
 	});
-	return [...(state.added.get(memberId) ?? []), ...turns];
+	return [...addedTurns(memberId), ...turns];
+}
+
+/** Moves every `timestamp` in a recorded log so its earliest one falls at `start`, keeping the gaps. */
+export function shiftTimes(lines: unknown[], start: number) {
+	const stamps: { o: Record<string, unknown>; t: number }[] = [];
+	const walk = (v: unknown) => {
+		if (Array.isArray(v)) v.forEach(walk);
+		else if (v && typeof v === 'object') {
+			const o = v as Record<string, unknown>;
+			if (typeof o.timestamp === 'string' && Number.isFinite(Date.parse(o.timestamp)))
+				stamps.push({ o, t: Date.parse(o.timestamp) });
+			Object.values(o).forEach(walk);
+		}
+	};
+	walk(lines);
+	if (!stamps.length) return;
+	const shift = start - Math.min(...stamps.map((x) => x.t));
+	for (const { o, t } of stamps) o.timestamp = new Date(t + shift).toISOString();
 }
 
 // ---- work, activity, conversations ----
@@ -344,79 +484,110 @@ const link = (kind: string) => ({
 	expiresAt: new Date(Date.now() + 24 * 3600_000).toISOString()
 });
 
+// `?mock=race`: the read an add starts is superseded by a live change. The first read after mounting (the add's) waits
+// 800 ms while the organization changes again; it resolves first but is superseded; a newer read brings the row 1.5 s
+// later.
+let raceReads = 0;
+async function race() {
+	raceReads++;
+	if (raceReads === 2) {
+		setTimeout(() => void invalidate('app:org'), 100);
+		await new Promise((r) => setTimeout(r, 800));
+	} else if (raceReads === 3) await new Promise((r) => setTimeout(r, 1500));
+}
+
+async function profileOf(organizationId: string, memberId: string): Promise<MemberProfile> {
+	const { s, m } = await member(organizationId, memberId);
+	const row = (await rows(organizationId)).find((r) => r.id === memberId)!;
+	const x = extras[memberId] ?? {};
+	const offices = await officesFor(organizationId);
+	const viewer = viewerId();
+	const ownerId = ownerIdOf(s);
+	const isOwner = viewer === ownerId;
+	const leads = s.teams.filter((t) => t.lead_member_id === memberId).map((t) => teamRef(s, t.id)!);
+	// Only the owner, or a person above this employee, changes Allow hiring; nobody changes their own (§7.1).
+	const above = (() => {
+		let cur = m.reports_to_member_id;
+		const seen = new Set<string>();
+		while (cur && !seen.has(cur)) {
+			if (cur === viewer) return true;
+			seen.add(cur);
+			cur = s.members.find((b) => b.id === cur)?.reports_to_member_id;
+		}
+		return false;
+	})();
+	const self = memberId === viewer;
+	const allowOn = state.allowHiring.get(memberId) ?? x.allowHiring ?? m.kind === 'person';
+	const turns = await turnsFor(organizationId, memberId);
+	const open = turns.find((t) => t.state === 'running' || t.state === 'accepted');
+	const exec = execution(m, x, offices.find((o) => o.id === m.office_id)?.name);
+	const cannotStart =
+		m.kind !== 'agent'
+			? undefined
+			: row.status === 'paused'
+				? `${m.name} is paused. Resume ${m.name} to run it.`
+				: row.status === 'inactive'
+					? `${m.name} has been offboarded.`
+					: exec?.readiness.reasons[0];
+	return {
+		...row,
+		title: m.agent?.title ?? x.title,
+		focus: m.agent?.focus,
+		hired:
+			m.kind === 'agent' && x.hired
+				? {
+						at: ago(x.hired.agoDays * 24 * 60 * MIN),
+						by: { id: x.hired.by, name: nameOf(s, x.hired.by) }
+					}
+				: undefined,
+		leads,
+		allowHiring: {
+			on: allowOn,
+			canChange: !self && (isOwner || above),
+			reason: self
+				? "You can't change your own."
+				: !(isOwner || above)
+					? 'Only the owner, or a person above them, changes this.'
+					: undefined
+		},
+		currentTask: row.workingOn,
+		supervision: supervisionOf(m, x),
+		execution: exec,
+		openTurn: open ? { id: open.id, startedAt: open.startedAt, state: open.state } : undefined,
+		cannotStart,
+		invitePending:
+			m.kind === 'person' && !row.canSignIn && state.access.get(memberId)?.invitedUntil
+				? { expiresAt: state.access.get(memberId)!.invitedUntil! }
+				: undefined,
+		viewer: { isSelf: self, isOwnerOrAdmin: isOwner, costVisible: isOwner }
+	} satisfies MemberProfile;
+}
+
 export const membersApi: MembersApi = {
 	async directory(organizationId) {
 		await gate();
+		if (scenario() === 'unavailable')
+			throw fail('unavailable', "This server doesn't serve the members directory yet.");
 		if (scenario() === 'empty') return [];
-		return rows(organizationId);
+		if (scenario() === 'race') await race();
+		const all = await rows(organizationId);
+		// `?mock=no-agents` shows the Agents filter's empty state; `?mock=all-former` the one with only former members.
+		if (scenario() === 'no-agents') return all.filter((r) => r.kind !== 'agent');
+		if (scenario() === 'all-former')
+			return all.map((r) => ({ ...r, status: 'inactive' as const, presence: undefined }));
+		return all;
 	},
 	async profile(organizationId, memberId) {
 		await gate();
-		const { s, m } = await member(organizationId, memberId);
-		const row = (await rows(organizationId)).find((r) => r.id === memberId)!;
-		const x = extras[memberId] ?? {};
-		const offices = await officesFor(organizationId);
-		const viewer = viewerId();
-		const ownerId = ownerIdOf(s);
-		const isOwner = viewer === ownerId;
-		const leads = s.teams
-			.filter((t) => t.lead_member_id === memberId)
-			.map((t) => teamRef(s, t.id)!);
-		// Only the owner, or a person above this employee, changes Allow hiring; nobody changes their own (§7.1).
-		const above = (() => {
-			let cur = m.reports_to_member_id;
-			const seen = new Set<string>();
-			while (cur && !seen.has(cur)) {
-				if (cur === viewer) return true;
-				seen.add(cur);
-				cur = s.members.find((b) => b.id === cur)?.reports_to_member_id;
-			}
-			return false;
-		})();
-		const self = memberId === viewer;
-		const allowOn = state.allowHiring.get(memberId) ?? x.allowHiring ?? m.kind === 'person';
-		const turns = await turnsFor(organizationId, memberId);
-		const open = turns.find((t) => t.state === 'running' || t.state === 'accepted');
-		const exec = execution(m, x, offices.find((o) => o.id === m.office_id)?.name);
-		const cannotStart =
-			m.kind !== 'agent'
-				? undefined
-				: row.status === 'paused'
-					? `${m.name} is paused. Resume ${m.name} to run it.`
-					: row.status === 'inactive'
-						? `${m.name} has been offboarded.`
-						: exec?.readiness.reasons[0];
-		return {
-			...row,
-			title: m.agent?.title ?? x.title,
-			focus: m.agent?.focus,
-			hired:
-				m.kind === 'agent' && x.hired
-					? {
-							at: ago(x.hired.agoDays * 24 * 60 * MIN),
-							by: { id: x.hired.by, name: nameOf(s, x.hired.by) }
-						}
-					: undefined,
-			leads,
-			allowHiring: {
-				on: allowOn,
-				canChange: !self && (isOwner || above),
-				reason: self
-					? "You can't change your own."
-					: !(isOwner || above)
-						? 'Only the owner, or a person above them, changes this.'
-						: undefined
-			},
-			currentTask: row.workingOn,
-			supervision:
-				m.kind === 'agent' && x.supervision
-					? { ...x.supervision, tone: x.supervision.tone as 'ok' }
-					: undefined,
-			execution: exec,
-			openTurn: open ? { id: open.id, startedAt: open.startedAt } : undefined,
-			cannotStart,
-			viewer: { isSelf: self, isOwnerOrAdmin: isOwner, costVisible: isOwner }
-		} satisfies MemberProfile;
+		if (
+			scenario() === 'refresh_fails_once' &&
+			!state.refreshFailed &&
+			addedTurns(memberId).some((t) => t.state === 'accepted')
+		) {
+			state.refreshFailed = true;
+			throw fail('unavailable_now', "HQ didn't answer this time.");
+		}
+		return profileOf(organizationId, memberId);
 	},
 	async work(organizationId, memberId) {
 		await gate();
@@ -438,16 +609,24 @@ export const membersApi: MembersApi = {
 		const s = await snapshotFor(organizationId);
 		return ownerIdOf(s) === viewerId() ? turns : turns.map((t) => ({ ...t, cost: undefined }));
 	},
-	async sessionLog(_organizationId, memberId, runId) {
+	async sessionFile(organizationId, memberId, runId) {
 		await gate();
-		const fixtures: Record<string, { format: 'claude' | 'codex'; lines: unknown[] }> = {
-			't-n4': { format: 'claude', lines: claudeSession },
-			't-k2': { format: 'codex', lines: codexSession }
+		const fixtures: Record<
+			string,
+			{ member: string; format: 'claude' | 'codex'; lines: unknown[] }
+		> = {
+			't-n4': { member: 'noor', format: 'claude', lines: claudeSession },
+			't-k2': { member: 'kai', format: 'codex', lines: codexSession }
 		};
 		const f = fixtures[runId];
-		if (!f) throw fail('not_found', 'No session log was kept for this run.');
-		const parsed = f.format === 'claude' ? parseClaude(f.lines) : parseCodex(f.lines);
-		return { runId, memberId, format: f.format, ...parsed } satisfies SessionLog;
+		if (!f || f.member !== memberId)
+			throw fail('not_found', 'No session log was kept for this run.');
+		// The sample log was recorded on another day: move its times onto this run's, so the header's start time and
+		// the log's agree.
+		const run = (await turnsFor(organizationId, memberId)).find((t) => t.id === runId);
+		const lines = structuredClone(f.lines);
+		if (run) shiftTimes(lines, Date.parse(run.startedAt));
+		return { runId, memberId, format: f.format, lines };
 	},
 	async processes(organizationId, memberId) {
 		await gate();
@@ -471,31 +650,28 @@ export const membersApi: MembersApi = {
 	async runNow(organizationId, memberId, note) {
 		await gate();
 		const profile = await membersApi.profile(organizationId, memberId);
-		if (profile.openTurn)
-			throw fail(
-				'busy',
-				`${profile.name} is already running a turn. It takes new input when that turn ends.`
-			);
+		if (profile.openTurn) throw fail('busy', busyText(profile.name, profile.openTurn));
 		if (profile.cannotStart) throw fail('cannot_start', profile.cannotStart);
 		const turn: Turn = {
 			id: `t-new-${Date.now()}`,
 			startedAt: new Date().toISOString(),
 			startedBy: { kind: 'run', byViewer: true, by: { id: viewerId(), name: 'you' } },
-			state: 'running',
+			// HQ records the request; the office confirms the start later (addedTurns).
+			state: 'accepted',
 			summary: note || undefined,
-			attempts: [
-				{
-					n: 1,
-					connection: profile.execution?.connection ?? 'Default connection',
-					model: profile.execution?.requested?.model ?? 'unknown',
-					outcome: 'running',
-					usageComplete: false
-				}
-			],
+			// No attempt until the office starts one.
+			attempts: [],
 			hasLog: false
 		};
+		pendingAttempts.set(turn.id, {
+			connection: profile.execution?.connection ?? 'Default connection',
+			model: profile.execution?.requested?.model ?? 'unknown'
+		});
 		state.added.set(memberId, [turn, ...(state.added.get(memberId) ?? [])]);
-		return turn;
+		return {
+			turn: structuredClone(turn),
+			profile: await profileOf(organizationId, memberId)
+		};
 	},
 	async setAllowHiring(organizationId, memberId, on) {
 		await gate();
@@ -503,6 +679,38 @@ export const membersApi: MembersApi = {
 		if (!profile.allowHiring.canChange)
 			throw fail('not_authorized', profile.allowHiring.reason ?? "You can't change this.");
 		state.allowHiring.set(memberId, on);
+	},
+	async moveHomeTeam(organizationId, memberId, toTeamId) {
+		await gate();
+		const { s, m } = await member(organizationId, memberId);
+		const to = s.teams.find((t) => t.id === toTeamId);
+		if (!to) throw fail('not_found', "That team isn't in this organization any more.");
+		const from = homeTeamId(s, memberId);
+		if (from === toTeamId) throw fail('conflict', `${to.name} is already ${m.name}'s home team.`);
+		const memberOf = (teamId: string | undefined) =>
+			s.memberships.find((x) => x.member_id === memberId && x.team_id === teamId);
+		if (memberOf(toTeamId))
+			throw fail('conflict', `${m.name} is already in ${to.name}. Choose another team.`);
+		// The org snapshot's membership changes too (moved, or added for someone recorded without one), so the org
+		// chart and team pages agree, and the stored home team points at that membership.
+		const old = memberOf(from);
+		const membershipId = newId();
+		if (old)
+			await orgApi.command(organizationId, {
+				method: 'member.move',
+				params: {
+					membership_id: old.id,
+					expected_version: old.version,
+					new_membership_id: membershipId,
+					to_team_id: toTeamId
+				}
+			});
+		else
+			await orgApi.command(organizationId, {
+				method: 'team.add_member',
+				params: { membership_id: membershipId, team_id: toTeamId, member_id: memberId }
+			});
+		recordHome(organizationId, memberId, { teamId: toTeamId, membershipId });
 	},
 	async assignableTasks(organizationId) {
 		await gate();
@@ -523,18 +731,28 @@ export const membersApi: MembersApi = {
 		await gate();
 		const { m } = await member(organizationId, memberId);
 		if (m.kind !== 'person') throw fail('invalid', 'An account is never tied to an agent.');
-		return link('register');
+		if (hasAccount(memberId))
+			throw fail('conflict', `${m.name} can already sign in. Make a new sign-in link instead.`);
+		// Inviting again cancels the previous link: only the newest one is remembered.
+		const issued = link('register');
+		state.access.set(memberId, { account: false, invitedUntil: issued.expiresAt });
+		return issued;
 	},
 	async newSignInLink(organizationId, memberId) {
 		await gate();
-		await member(organizationId, memberId);
+		const { m } = await member(organizationId, memberId);
+		if (m.kind !== 'person') throw fail('invalid', 'An account is never tied to an agent.');
+		if (!hasAccount(memberId))
+			throw fail('invalid', `${m.name} has no account yet. Invite ${m.name} to sign in instead.`);
 		return link('reset');
 	},
 	async removeAccess(organizationId, memberId) {
 		await gate();
-		const s = await snapshotFor(organizationId);
+		const { s, m } = await member(organizationId, memberId);
+		if (m.kind !== 'person') throw fail('invalid', 'An account is never tied to an agent.');
+		if (!hasAccount(memberId)) throw fail('invalid', `${m.name} has no account to remove.`);
 		if (ownerIdOf(s) === memberId) throw fail('not_authorized', 'Hand over ownership first.');
-		state.access.set(memberId, false);
+		state.access.set(memberId, { account: false });
 	},
 	async handOverOwnership(organizationId, toMemberId, password) {
 		await gate();

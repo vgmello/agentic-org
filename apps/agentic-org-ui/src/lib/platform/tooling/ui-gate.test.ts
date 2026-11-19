@@ -1145,9 +1145,10 @@ describe('gate manifest guard', () => {
 			violations,
 			'a file imported from another area (or from shared code) must be shared, owned by every importing category, or listed in allowedCoupling'
 		).toEqual([]);
-		expect([...used].sort(), 'every allowedCoupling entry must match a real, current edge').toEqual(
-			allowed.map((_, index) => index)
-		);
+		expect(
+			[...used].sort((a, b) => a - b),
+			'every allowedCoupling entry must match a real, current edge'
+		).toEqual(allowed.map((_, index) => index));
 	});
 });
 
@@ -1324,19 +1325,19 @@ describe('selector', () => {
 		expect(plan([ui('e2e/gate-manifest.json')], manifest).all).toBe(true);
 	});
 
-	it('org-chart page, its load function and the chart fit menu item run org-chart and also the non-Chat icon spec (projects-work)', () => {
+	it('org-chart page and its load function run org-chart and also the non-Chat icon spec (projects-work)', () => {
 		for (const file of [
 			'src/routes/(shell)/teams/(views)/org-chart/+page.svelte',
-			'src/routes/(shell)/teams/(views)/org-chart/+page.ts',
-			'src/lib/components/ChartFitMenuItem.svelte'
+			'src/routes/(shell)/teams/(views)/org-chart/+page.ts'
 		]) {
 			const chosen = plan([ui(file)], manifest);
 			expect(chosen.all, file).toBe(false);
 			expect(chosen.categories.sort(), file).toEqual(['org-chart', 'projects-work']);
 		}
-		expect(plan([ui('src/lib/components/PeopleChart.svelte')], manifest).categories).toEqual([
-			'org-chart'
-		]);
+		expect(
+			plan([ui('src/lib/modules/org-chart/features/chart/OrgChartPage.svelte')], manifest)
+				.categories
+		).toEqual(['org-chart']);
 	});
 
 	it('several areas run each category once', () => {
@@ -1540,7 +1541,7 @@ describe('selector', () => {
 		).not.toContain('--project=chromium-default-font');
 	});
 
-	it('maps the non-Chat icon spec, its helpers and fixture to projects-work, and re-runs it when TeamsChart or its helper changes', () => {
+	it('maps the non-Chat icon spec, its helpers and fixture to projects-work', () => {
 		for (const file of [
 			'e2e/non-chat-icons.spec.ts',
 			'e2e/non-chat-icons-default-font.ts',
@@ -1551,10 +1552,6 @@ describe('selector', () => {
 				expect.objectContaining({ kind: 'category', category: 'projects-work' })
 			]);
 		}
-		expect(plan([ui('src/lib/components/TeamsChart.svelte')], manifest).categories.sort()).toEqual([
-			'org-chart',
-			'projects-work'
-		]);
 		expect(plan([ui('src/lib/components/ProjectTeams.svelte')], manifest).categories).toEqual([
 			'projects-work'
 		]);

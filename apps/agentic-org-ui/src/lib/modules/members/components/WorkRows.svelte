@@ -1,14 +1,19 @@
 <!--
   @component
   Work as divided rows (offices-and-teams-ux §7.2): reference and title, then project · assignee · priority, and one
-  trailing work-state pill. `hideAssignee` on a member's own Work tab, where the assignee is always them.
+  trailing work-state pill. `hideAssignee` on a member's own Work tab, where the assignee is always them. `linked={false}`
+  where the work item page can't open the rows yet: the title is then text, not a link to a page that isn't built.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import type { WorkRow, WorkState } from '../types';
 
-	let { rows, hideAssignee = false }: { rows: WorkRow[]; hideAssignee?: boolean } = $props();
+	let {
+		rows,
+		hideAssignee = false,
+		linked = true
+	}: { rows: WorkRow[]; hideAssignee?: boolean; linked?: boolean } = $props();
 	const STATE: Record<WorkState, { word: string; class: string }> = {
 		todo: { word: 'To do', class: '' },
 		in_progress: {
@@ -34,14 +39,19 @@
 		>
 			<div class="min-w-0 flex-1 basis-60">
 				<p class="text-sm/6 font-semibold text-white">
-					<a
-						href={resolve(`/work/${row.ref}` as '/')}
-						class="rounded-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
-						><span class="absolute inset-0" aria-hidden="true"></span><span
-							class="font-mono font-normal text-gray-400">{row.ref}</span
+					{#if linked}
+						<a
+							href={resolve(`/work/${row.ref}` as '/')}
+							class="rounded-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
+							><span class="absolute inset-0" aria-hidden="true"></span><span
+								class="font-mono font-normal text-gray-400">{row.ref}</span
+							>
+							<span class="[overflow-wrap:anywhere]">{row.title}</span></a
 						>
-						<span class="[overflow-wrap:anywhere]">{row.title}</span></a
-					>
+					{:else}
+						<span class="font-mono font-normal text-gray-400">{row.ref}</span>
+						<span class="[overflow-wrap:anywhere]">{row.title}</span>
+					{/if}
 				</p>
 				<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-gray-400">
 					{#each [row.project, hideAssignee ? undefined : (row.assignee ?? 'Unassigned'), row.priority && PRIORITY[row.priority]].filter(Boolean) as part, i (i)}

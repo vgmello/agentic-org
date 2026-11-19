@@ -19,14 +19,15 @@
 	}: {
 		title: string;
 		description?: string;
-		level?: 2 | 3;
+		/** The heading level: 2 for a page, 3 for a section, 4 for a tab under its own h3. */
+		level?: 2 | 3 | 4;
 		action?: Snippet;
 		class?: string;
 	} = $props();
 </script>
 
 <div class="px-4 py-16 text-center min-[640px]:px-6 min-[1024px]:px-8 {className}">
-	<svelte:element this={level === 2 ? 'h2' : 'h3'} class="text-base/7 font-semibold text-white"
+	<svelte:element this={`h${level}`} class="text-base/7 font-semibold text-white"
 		>{title}</svelte:element
 	>
 	{#if description}<p class="mx-auto mt-1 max-w-md text-sm/6 text-gray-400">{description}</p>{/if}

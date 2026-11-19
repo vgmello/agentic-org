@@ -13,19 +13,24 @@
 		message,
 		onretry,
 		retrying = false,
+		level = 2,
 		class: className = ''
 	}: {
 		title: string;
 		message?: string;
 		onretry?: () => void;
 		retrying?: boolean;
+		/** The heading level: 2 for a page, 3 for a section, 4 for a tab under its own h3. */
+		level?: 2 | 3 | 4;
 		class?: string;
 	} = $props();
 </script>
 
 <div role="alert" class="px-4 py-12 min-[640px]:px-6 min-[1024px]:px-8 {className}">
 	<div class="max-w-xl rounded-md border border-white/10 bg-white/[0.03] p-4">
-		<h2 class="text-sm/6 font-semibold text-red-300">{title}</h2>
+		<svelte:element this={`h${level}`} class="text-sm/6 font-semibold text-red-300"
+			>{title}</svelte:element
+		>
 		{#if message}<p class="mt-1 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">{message}</p>{/if}
 		{#if onretry}
 			<Button
