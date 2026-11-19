@@ -120,10 +120,14 @@ fn the_adapter_confirms_per_flush_not_per_operation() {
     let world = World::new();
     let office = std::sync::Arc::new(world.prepare(Some(key()), code()).unwrap());
     let before = world.writer.confirms();
+    // The three submits start together, so they meet in one group flush.
+    let start = std::sync::Barrier::new(3);
     std::thread::scope(|scope| {
         for n in 1..=3 {
             let office = std::sync::Arc::clone(&office);
+            let start = &start;
             scope.spawn(move || {
+                start.wait();
                 let accepted = office.submit_org(OWNER, team_create(n)).unwrap().unwrap();
                 assert_eq!(accepted.status, org_proto::org::CommandStatus::Committed);
             });
