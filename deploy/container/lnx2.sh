@@ -552,8 +552,9 @@ echo "of the data volume at /secrets/dev-keys; two named volumes share one files
 volumes+=("$tag-nd" "$tag-ns")
 docker volume create "$tag-nd" >/dev/null
 docker volume create "$tag-ns" >/dev/null
-docker run --rm -u 0 -v "$tag-nd:/v" --entrypoint /bin/sh "$image" -c \
-    'mkdir -m 700 /v/devkeys && chown 61000:61000 /v/devkeys' >/dev/null
+# Mounted at /data first, so that the new volume gets the image's /data (its owner and mode).
+docker run --rm -u 0 -v "$tag-nd:/data" --entrypoint /bin/sh "$image" -c \
+    'mkdir -m 700 /data/devkeys && chown 61000:61000 /data/devkeys' >/dev/null
 refused "$tag-n" 'another volume mounted in the credential directory' \
     -v "$tag-nd:/data" -v "$tag-ns:/secrets" \
     --mount "type=volume,src=$tag-nd,dst=/secrets/dev-keys,volume-subpath=devkeys" ||
