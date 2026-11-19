@@ -571,6 +571,7 @@ fn put_person(store: &OfficeStore, op: u64, chain: &[u64], person: u64, status: 
         title_in_team: None,
         offboarded_at: None,
         may_hire: true,
+        builtin_key: None,
         meta,
         body: String::new(),
     };

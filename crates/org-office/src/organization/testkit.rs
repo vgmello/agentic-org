@@ -14,7 +14,8 @@ use org_store::{
 use super::{
     ports::{OrganizationRead, OrganizationWrite, RecordRef},
     records::{
-        Employee, Office, OfficeCode, Organization, Repository, Team, TeamAllocation, TeamCounter,
+        Employee, Office, OfficeCode, Organization, Repository, Role, Team, TeamAllocation,
+        TeamCounter,
     },
 };
 
@@ -25,6 +26,7 @@ pub struct OrganizationTables {
     repositories: Vec<Repository>,
     offices: BTreeMap<Id, Office>,
     office_codes: Vec<OfficeCode>,
+    roles: BTreeMap<Id, Role>,
     teams: BTreeMap<Id, Team>,
     employees: BTreeMap<Id, Employee>,
     team_counter: Option<TeamCounter>,
@@ -62,6 +64,7 @@ impl FamilyTable for OrganizationTables {
         lines.extend(rows("repositories", &self.repositories));
         lines.extend(rows("offices", self.offices.values()));
         lines.extend(rows("office_codes", &self.office_codes));
+        lines.extend(rows("roles", self.roles.values()));
         lines.extend(rows("teams", self.teams.values()));
         lines.extend(rows("employees", self.employees.values()));
         lines.extend(rows("reference_counters", &self.team_counter));
@@ -110,6 +113,14 @@ macro_rules! memory_read {
 
             fn office_codes(&self) -> Result<Vec<OfficeCode>, EngineError> {
                 read(self.table(), |t| t.office_codes.clone())
+            }
+
+            fn role(&self, id: &Id) -> Result<Option<Role>, EngineError> {
+                read(self.table(), |t| t.roles.get(id).cloned())
+            }
+
+            fn roles(&self) -> Result<Vec<Role>, EngineError> {
+                read(self.table(), |t| t.roles.values().cloned().collect())
             }
 
             fn team(&self, id: &Id) -> Result<Option<Team>, EngineError> {
@@ -193,6 +204,17 @@ impl OrganizationWrite for MemoryTx {
 
     fn put_office_codes(&mut self, records: &[OfficeCode]) -> Result<(), EngineError> {
         self.table_mut::<OrganizationTables>()?.office_codes = records.to_vec();
+        Ok(())
+    }
+
+    fn put_role(&mut self, record: &Role) -> Result<(), EngineError> {
+        let tables = self.table_mut::<OrganizationTables>()?;
+        tables.roles.insert(record.id.clone(), record.clone());
+        Ok(())
+    }
+
+    fn remove_role(&mut self, id: &Id) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?.roles.remove(id);
         Ok(())
     }
 

@@ -16,6 +16,7 @@ fn team() -> Team {
         parent_team_id: None,
         lead_employee_id: Some(id(9)),
         status: TeamStatus::Active,
+        max_members: 6,
         meta: meta(),
     }
 }
@@ -37,6 +38,7 @@ fn employee() -> Employee {
         title_in_team: None,
         offboarded_at: None,
         may_hire: true,
+        builtin_key: None,
         meta: meta(),
         body: "About Ana.\n".into(),
     }
@@ -64,6 +66,7 @@ fn a_team_file_has_every_field_once_in_byte_order_and_reads_back() {
          created_by_kind: \"employee\"\n\
          id: \"01900000-0000-7000-8000-000000000004\"\n\
          lead_employee_id: \"01900000-0000-7000-8000-000000000009\"\n\
+         max_members: 6\n\
          name: \"Core\"\n\
          number: 1\n\
          parent_team_id: null\n\
@@ -142,7 +145,7 @@ fn every_record_reads_back_as_it_was_written() {
     assert_eq!(decode_office_codes(&bytes), Ok(codes));
 
     let bytes = encode_employee(&employee());
-    assert!(bytes.starts_with(b"---\ncontact: null\n"));
+    assert!(bytes.starts_with(b"---\nbuiltin_key: null\ncontact: null\n"));
     assert!(bytes.ends_with(b"updated_by_kind: \"employee\"\n---\nAbout Ana.\n"));
     assert_eq!(decode_employee(&bytes), Ok(employee()));
 
@@ -231,6 +234,54 @@ fn a_file_with_a_missing_an_unknown_or_a_wrong_field_is_refused_by_field() {
         refused("updated_by_kind", "updated_by_kind: \"owner\"\n"),
         is("updated_by_kind", "not one of: employee system unknown")
     );
+}
+
+#[test]
+fn a_role_reads_back_and_its_body_is_the_markdown() {
+    let role = Role {
+        id: id(5),
+        key: Some("engineer".into()),
+        name: "Engineer".into(),
+        meta: meta(),
+        body: "Builds things.\n".into(),
+    };
+    let bytes = encode_role(&role);
+    assert!(bytes.ends_with(b"---\nBuilds things.\n"));
+    assert_eq!(decode_role(&bytes), Ok(role.clone()));
+    let unkeyed = Role { key: None, ..role };
+    assert_eq!(decode_role(&encode_role(&unkeyed)), Ok(unkeyed));
+}
+
+#[test]
+fn a_team_takes_at_least_one_member_and_builtin_key_is_the_hr_agents_alone() {
+    let team = encode_team(&team());
+    let error = decode_team(&with_line(&team, "max_members", "max_members: 0\n")).unwrap_err();
+    assert_eq!(
+        (error.field.as_str(), error.reason.as_str()),
+        ("max_members", "below 1")
+    );
+    assert!(decode_team(&with_line(&team, "max_members", "")).is_err());
+
+    let hr = Employee {
+        kind: EmployeeKind::Agent,
+        may_hire: false,
+        builtin_key: Some(BuiltinKey::Hr),
+        ..employee()
+    };
+    let bytes = encode_employee(&hr);
+    assert_eq!(decode_employee(&bytes), Ok(hr.clone()));
+    let refused = |key: &str, line: &str| {
+        let error = decode_employee(&with_line(&bytes, key, line)).unwrap_err();
+        (error.field, error.reason)
+    };
+    let only = (
+        "builtin_key".to_owned(),
+        "only an agent without may_hire".to_owned(),
+    );
+    assert_eq!(refused("kind", "kind: \"person\"\n"), only);
+    assert_eq!(refused("may_hire", "may_hire: true\n"), only);
+    let other = refused("builtin_key", "builtin_key: \"ceo\"\n");
+    assert_eq!(other.0, "builtin_key");
 }
 
 #[test]
@@ -381,6 +432,13 @@ fn a_path_names_its_record_and_nothing_else_is_this_familys() {
         Some(Kind::TeamAllocation(org.clone(), 12))
     );
 
+    let role = role_path(&a);
+    assert_eq!(
+        role.as_str(),
+        "state/roles/01900000-0000-7000-8000-00000000000a.md"
+    );
+    assert_eq!(kind_of(&role), Some(Kind::Role(a.clone())));
+
     let chain = vec![a.clone(), b.clone()];
     let nested = team_path(&chain).unwrap();
     assert_eq!(
@@ -412,7 +470,8 @@ fn a_path_names_its_record_and_nothing_else_is_this_familys() {
         "state/organization.yml",
         "state/offices/hq.yaml",
         "state/offices/01900000-0000-7000-8000-00000000000a.yaml/x",
-        "state/roles/01900000-0000-7000-8000-00000000000a.md",
+        "state/roles/not-an-id.md",
+        "state/roles/01900000-0000-7000-8000-00000000000a.yaml",
         "state/teams/team.yaml",
         "state/teams/not-an-id/team.yaml",
         "state/teams/01900000-0000-7000-8000-00000000000a/work/tasks/x.md",

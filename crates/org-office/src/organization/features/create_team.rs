@@ -198,6 +198,7 @@ where
         parent_team_id: Some(parent.id),
         lead_employee_id: None,
         status: TeamStatus::Active,
+        max_members: records::DEFAULT_MAX_MEMBERS,
         meta: Meta::created(&by, now),
     };
     let allocation = TeamAllocation {
