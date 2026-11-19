@@ -1539,8 +1539,10 @@ fn development_keys(
 /// Makes a development build's key folder `folder` (absolute and normalized) if it is
 /// missing, and checks it as the host's development store will open it: a folder of this
 /// user with mode 700, its last component not a link, outside the instance's data folder
-/// `root`. It is made from its parent's descriptor (which must exist), and the mode is set
-/// on what was made, whatever the process's mask is; an existing folder is never changed.
+/// `root`. Folders above it that are missing are made first (mode 700), one at a time below
+/// the deepest one that exists, which must be root's or this user's and not writable by
+/// others. It is made from its parent's descriptor, and the mode is set on what was made,
+/// whatever the process's mask is; an existing folder is never changed.
 fn development_folder(folder: &Path, root: &Path) -> Result<(), String> {
     use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStrExt;
@@ -1556,16 +1558,32 @@ fn development_folder(folder: &Path, root: &Path) -> Result<(), String> {
     let (Some(parent), Some(name)) = (folder.parent(), folder.file_name()) else {
         return Err(refuse("is not a folder".into()));
     };
-    let resolved = std::fs::canonicalize(parent).map(|parent| parent.join(name));
-    let root_resolved = std::fs::canonicalize(root);
-    if inside(folder)
-        || matches!((&resolved, &root_resolved), (Ok(f), Ok(r)) if f.starts_with(r) || r.starts_with(f))
-    {
-        return Err(refuse(format!(
+    let contain = || {
+        refuse(format!(
             "and the instance's data folder {} contain each other: the keys would be in every \
              copy of the data",
             root.display()
-        )));
+        ))
+    };
+    if inside(folder) {
+        return Err(contain());
+    }
+    if !parent.is_dir() {
+        let existing = parent
+            .ancestors()
+            .find(|at| at.is_dir())
+            .ok_or_else(|| refuse("has no folder above it".into()))?;
+        let anchor = std::fs::canonicalize(existing)
+            .map_err(|e| refuse(format!("cannot be made: {}: {e}", existing.display())))?;
+        let rest = parent.strip_prefix(existing).unwrap_or(Path::new(""));
+        store_directories::make(&anchor.join(rest), None, &anchor)
+            .map_err(|why| refuse(format!("cannot be made: {why}")))?;
+    }
+    let resolved = std::fs::canonicalize(parent).map(|parent| parent.join(name));
+    let root_resolved = std::fs::canonicalize(root);
+    if matches!((&resolved, &root_resolved), (Ok(f), Ok(r)) if f.starts_with(r) || r.starts_with(f))
+    {
+        return Err(contain());
     }
     // The folder above may be reached through a link (a symlinked home), as the host's
     // store reaches it: only the folder itself is opened without following one.

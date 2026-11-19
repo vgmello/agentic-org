@@ -1783,6 +1783,17 @@ fn a_development_build_needs_and_makes_its_development_key_folder() {
         0o700
     );
     development_folder(&keys, &base.join("data")).unwrap();
+    // The folders above it that are missing are made too, private.
+    let deep = base.join("state/agentic-org/dev-keys");
+    development_folder(&deep, &base.join("data")).unwrap();
+    for made in [base.join("state"), base.join("state/agentic-org"), deep] {
+        assert_eq!(
+            std::fs::metadata(&made).unwrap().permissions().mode() & 0o7777,
+            0o700,
+            "{}",
+            made.display()
+        );
+    }
     // Inside the data folder, or holding it, it is refused and not made.
     for (folder, root) in [
         (base.join("data/keys"), base.join("data")),
