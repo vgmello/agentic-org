@@ -24,6 +24,11 @@ pub(crate) const VERSION: u32 = 2;
 pub(crate) struct Intent {
     pub version: u32,
     pub instance: String,
+    /// The journal incarnation, writer epoch and machine the host reserved for this
+    /// creation: a retry under another reservation is another request.
+    pub journal_incarnation: String,
+    pub writer_epoch: u64,
+    pub machine_id: String,
     /// The launch binding's operation: a ULID.
     pub operation: String,
     /// The owner member: the creator's person record.

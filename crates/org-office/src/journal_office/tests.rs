@@ -23,6 +23,7 @@ use super::{
     *,
 };
 use crate::{
+    office_file,
     office_local::{records as local, testkit::ca_material},
     organization::testkit::creation_files,
     store::open::Testing,
@@ -228,19 +229,24 @@ fn creation_writes_exactly_the_golden_files_and_the_ca_records() {
 /// names the path. Nothing is replaced and the office is not finished.
 #[test]
 fn a_foreign_file_where_creation_writes_stops_it_and_is_named() {
-    let site = Site::new();
-    std::fs::create_dir_all(site.durable("state")).unwrap();
-    std::fs::write(site.durable("state/organization.yaml"), b"planted: true\n").unwrap();
-    let error = site.provision(EngineChoice::Sqlite).unwrap_err();
-    assert!(matches!(error, OfficeError::Storage(_)), "{error:?}");
-    let cause = std::error::Error::source(&error).unwrap().to_string();
-    assert!(cause.contains("state/organization.yaml"), "{cause}");
-    assert!(!error.to_string().contains("organization.yaml"), "{error}");
-    assert_eq!(
-        std::fs::read(site.durable("state/organization.yaml")).unwrap(),
-        b"planted: true\n"
-    );
-    assert!(!site.folder.join("office.json").exists());
+    // The organization record is checked before a journal begins; any other file of the
+    // creation when its entry is written.
+    for planted in ["state/organization.yaml", "state/repositories.yaml"] {
+        let site = Site::new();
+        std::fs::create_dir_all(site.durable("state")).unwrap();
+        std::fs::write(site.durable(planted), b"planted: true\n").unwrap();
+        let error = site.provision(EngineChoice::Sqlite).unwrap_err();
+        assert!(
+            matches!(error, OfficeError::Storage(_)),
+            "{planted}: {error:?}"
+        );
+        let cause = std::error::Error::source(&error).unwrap().to_string();
+        assert!(cause.contains(planted), "{cause}");
+        assert!(!error.to_string().contains(".yaml"), "{error}");
+        let kept = std::fs::read(site.durable(planted)).unwrap();
+        assert_eq!(kept, b"planted: true\n");
+        assert!(!site.folder.join("office.json").exists());
+    }
 }
 
 /// A team, then the projection deleted: the reopened office rebuilds the same rows and
@@ -431,14 +437,15 @@ fn opening_refuses_missing_or_mismatched_ca_records() {
             ),
             "{case}: {refused:?}"
         );
-        // A creation retry does not generate a CA in their place either.
-        let generated = Cell::new(false);
+        // A creation retry neither generates a CA in their place nor hands records that
+        // disagree to `material`.
+        let called = Cell::new(false);
         let retried = site.provision_with(EngineChoice::Sqlite, |prior| {
-            generated.set(prior.is_none());
+            called.set(true);
             prior.map_or_else(|| testkit::record(9), Ok)
         });
         assert!(retried.is_err(), "{case}");
-        assert!(!generated.get(), "{case}");
+        assert!(!called.get(), "{case}");
     }
 }
 
@@ -506,22 +513,46 @@ fn the_intent_binds_the_request_the_roots_and_the_identity() {
         )
     };
     let custody = || testkit::custody(Arc::clone(&site.custody));
+    let unbound = |refused: Result<Office, OfficeError>| {
+        matches!(
+            refused,
+            Err(OfficeError::Invalid(
+                "the office was created with other roots or another identity"
+            ))
+        )
+    };
+    // Other roots, that exist.
     let elsewhere = DataRoots {
         durable: site.root.join("elsewhere/durable"),
         runtime: site.roots.runtime.clone(),
     };
-    let refused = open(elsewhere, custody());
-    assert!(
-        matches!(refused, Err(OfficeError::Invalid(_))),
-        "{refused:?}"
-    );
+    std::fs::create_dir_all(&elsewhere.durable).unwrap();
+    assert!(unbound(open(elsewhere, custody())));
+    // Another organization in the custody.
     let mut stranger = custody();
     stranger.identity.organization_id = org_store::testkit::id(0xB2);
-    let refused = open(site.roots.clone(), stranger);
-    assert!(
-        matches!(refused, Err(OfficeError::Invalid(_))),
-        "{refused:?}"
+    assert!(unbound(open(site.roots.clone(), stranger)));
+    // Another instance, the custody's too.
+    let other_instance = org_store::testkit::id(0xC1);
+    let mut moved = custody();
+    moved.identity.instance_id = other_instance.clone();
+    let refused = Office::open_with(
+        site.folder.clone(),
+        None,
+        other_instance.as_str(),
+        site.roots.clone(),
+        moved,
+        site.options(EngineChoice::Memory),
     );
+    assert!(unbound(refused));
+    // An office.json edited after the creation.
+    let saved = std::fs::read(site.folder.join("office.json")).unwrap();
+    let mut edited = office_file::read(&site.folder).unwrap().unwrap();
+    edited.office_name = "Renamed HQ".into();
+    let bytes = office_file::encode(&edited).unwrap();
+    org_store::publish_one(&site.folder, "office.json", &bytes, false).unwrap();
+    assert!(unbound(open(site.roots.clone(), custody())));
+    std::fs::write(site.folder.join("office.json"), saved).unwrap();
     site.provision(EngineChoice::Memory)
         .unwrap()
         .close()
@@ -699,4 +730,129 @@ fn the_creation_operation_on_disk_is_the_mapped_uuidv7() {
     );
     assert!(ulid.is_err());
     office.close().unwrap();
+}
+
+fn edit_incarnation(custody: &mut Custody) {
+    custody.identity.journal_incarnation = org_store::testkit::id(0xD4);
+}
+
+fn edit_epoch(custody: &mut Custody) {
+    custody.identity.writer_epoch = 2;
+}
+
+fn edit_machine(custody: &mut Custody) {
+    custody.identity.machine_id = org_store::testkit::id(0xD5);
+}
+
+/// A retry under another custody reservation is another request, and a journal never
+/// begins where another incarnation of the office's journal is.
+#[test]
+fn a_creation_never_begins_a_second_journal() {
+    // A first attempt dies after the anchor; retries under another reservation are refused.
+    let site = Site::new();
+    let died = site.provision_with(EngineChoice::Memory, |prior| {
+        site.faults.arm(CrashPoint::DuringDecide, 1);
+        prior.map_or_else(|| testkit::record(testkit::CA_SEED), Ok)
+    });
+    assert!(died.is_err());
+    site.faults.revive();
+    let (new, binding) = testkit::request();
+    let edits: [fn(&mut Custody); 3] = [edit_incarnation, edit_epoch, edit_machine];
+    for edit in edits {
+        let mut custody = testkit::custody(Arc::clone(&site.custody));
+        edit(&mut custody);
+        let refused = Office::provision_with(
+            site.folder.clone(),
+            &new,
+            None,
+            &binding,
+            site.roots.clone(),
+            custody,
+            |prior| prior.map_or_else(|| testkit::record(1), Ok),
+            site.options(EngineChoice::Memory),
+        );
+        assert!(
+            matches!(refused, Err(OfficeError::OfficeExists)),
+            "{refused:?}"
+        );
+    }
+    let ours = org_store::journal_dir(&site.roots.durable, &identity());
+    let journals = ours.parent().unwrap();
+    assert_eq!(
+        names(journals),
+        [identity().journal_incarnation.to_string()]
+    );
+    site.provision(EngineChoice::Memory)
+        .unwrap()
+        .close()
+        .unwrap();
+
+    // Another incarnation's folder already there: no journal begins beside it.
+    let site = Site::new();
+    let mut other = identity();
+    other.journal_incarnation = org_store::testkit::id(0xD4);
+    std::fs::create_dir_all(org_store::journal_dir(&site.roots.durable, &other)).unwrap();
+    let refused = site.provision(EngineChoice::Memory);
+    assert!(
+        matches!(
+            refused,
+            Err(OfficeError::Invalid(
+                "the data roots hold another journal of this office"
+            ))
+        ),
+        "{refused:?}"
+    );
+    let ours = org_store::journal_dir(&site.roots.durable, &identity());
+    assert!(!ours.join("anchor.json").exists());
+}
+
+/// A fresh create finds nothing in the office folder but its lock and unfinished
+/// publications.
+#[test]
+fn a_fresh_create_refuses_a_folder_with_anything_else() {
+    let site = Site::new();
+    std::fs::create_dir_all(&site.folder).unwrap();
+    std::fs::write(site.folder.join(".store-tmp-one-9-9"), b"partial").unwrap();
+    std::fs::write(site.folder.join("notes.txt"), b"mine").unwrap();
+    let refused = site.provision(EngineChoice::Memory);
+    assert!(
+        matches!(
+            refused,
+            Err(OfficeError::Invalid(
+                "the folder holds something an office does not make"
+            ))
+        ),
+        "{refused:?}"
+    );
+    assert!(!site.folder.join(intent::FILE).exists());
+    std::fs::remove_file(site.folder.join("notes.txt")).unwrap();
+    site.provision(EngineChoice::Memory)
+        .unwrap()
+        .close()
+        .unwrap();
+}
+
+/// The intent records the reservation and is dated by the office's clock.
+#[test]
+fn the_intent_records_the_reservation_and_the_offices_clock() {
+    let site = Site::new();
+    site.provision(EngineChoice::Memory)
+        .unwrap()
+        .close()
+        .unwrap();
+    let frozen = intent::read(&site.folder).unwrap().unwrap();
+    let at = crate::organization::testkit::CREATION_AT;
+    assert_eq!(
+        frozen.created_at,
+        crate::organization::records::time_text(at)
+    );
+    let here = identity();
+    assert_eq!(
+        frozen.journal_incarnation,
+        here.journal_incarnation.as_str()
+    );
+    assert_eq!(
+        (frozen.writer_epoch, frozen.machine_id.as_str()),
+        (1, here.machine_id.as_str())
+    );
 }

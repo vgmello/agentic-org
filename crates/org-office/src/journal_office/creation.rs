@@ -36,12 +36,14 @@ use crate::{
     office_local::{read_ca, CaMaterial},
     organization::{
         features::{CreateOrganization, Creator},
-        operation_id,
+        operation_id, records,
     },
     private_fs::{private_dir, tighten_dir},
     store::open::{open_store, CreateOrganizationOp, OfficeStanding},
-    time,
 };
+
+/// The prefix of a publication's temporary files (`org_store::publish_one`).
+const TEMPORARY: &str = ".store-tmp-";
 
 /// What a creation folder may hold besides its lock.
 const CREATION_ENTRIES: [&str; 2] = [intent::FILE, office_file::FILE_NAME];
@@ -54,6 +56,7 @@ fn intent_of(
     binding: &Binding,
     roots: &DataRoots,
     custody: &Custody,
+    options: &Options,
 ) -> Result<Intent, OfficeError> {
     check_roots(roots)?;
     let Some(prepared) = binding.bootstrap.as_ref() else {
@@ -80,13 +83,16 @@ fn intent_of(
     let intent = Intent {
         version: intent::VERSION,
         instance: here.instance_id.to_string(),
+        journal_incarnation: here.journal_incarnation.to_string(),
+        writer_epoch: here.writer_epoch,
+        machine_id: here.machine_id.to_string(),
         operation: binding.operation_id.clone(),
         owner: binding.owner_member_id.clone(),
         office_id: new.office_id.clone(),
         office_name: new.office_name.trim().to_owned(),
         org_id: new.org_id.clone(),
         org_name: new.org_name.trim().to_owned(),
-        created_at: time::now_rfc3339(),
+        created_at: records::time_text(options.clock.now()),
         durable_root: roots.durable.clone(),
         runtime_root: roots.runtime.clone(),
         bootstrap: prepared.clone(),
@@ -159,7 +165,7 @@ impl Office {
         material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
         options: Options,
     ) -> Result<Office, OfficeError> {
-        let request = intent_of(new, binding, &roots, &custody)?;
+        let request = intent_of(new, binding, &roots, &custody, &options)?;
         let folder = plain_folder(folder)?;
         check_named_by(&folder, &new.office_id)?;
         check_not_a_link(&folder)?;
@@ -175,6 +181,12 @@ impl Office {
             None => {
                 if exists(&folder.join(office_file::FILE_NAME))? {
                     return Err(OfficeError::OfficeExists);
+                }
+                // A fresh create finds nothing but its lock and unfinished publications.
+                if !holds_only_lock_and_temporaries(&folder)? {
+                    return Err(OfficeError::Invalid(
+                        "the folder holds something an office does not make",
+                    ));
                 }
                 intent::write(&folder, &request)?;
                 request
@@ -192,6 +204,7 @@ impl Office {
         let anchor = journal_dir(&roots.durable, &custody.identity).join("anchor.json");
         let mut config = options.config(&roots, &custody);
         if !exists(&anchor)? {
+            refuse_another_beginning(&roots, &custody)?;
             config.opening = Opening::Create(AnchorFacts::default());
         }
         let store = open_store(&config).map_err(storage)?;
@@ -200,6 +213,11 @@ impl Office {
         let here = custody.identity.clone();
         let files = Files::open(&roots.durable).map_err(OfficeError::storage)?;
         let prior = read_ca(&files, &here.office_id).map_err(|_| recovery())?;
+        if let Some(records) = &prior {
+            records
+                .check(&here.organization_id, &here.office_id, &creation)
+                .map_err(|_| recovery())?;
+        }
         let standing = OfficeStanding {
             office: here.office_id.clone(),
         };
@@ -245,8 +263,6 @@ impl Office {
         // H1: nobody is told the office exists before its files do.
         store.sync().map_err(storage)?;
         let bytes = office_file::encode(&info)?;
-        org_store::publish_one(&folder, office_file::FILE_NAME, &bytes, true)
-            .map_err(OfficeError::storage)?;
         let office = Office {
             folder,
             info,
@@ -262,8 +278,61 @@ impl Office {
         };
         office.check_standing()?;
         office.ca()?;
+        org_store::publish_one(&office.folder, office_file::FILE_NAME, &bytes, true)
+            .map_err(OfficeError::storage)?;
         Ok(office)
     }
+}
+
+/// Whether `folder` holds nothing but its lock and temporary files of an unfinished
+/// publication.
+fn holds_only_lock_and_temporaries(folder: &std::path::Path) -> Result<bool, OfficeError> {
+    for entry in std::fs::read_dir(folder).map_err(OfficeError::storage)? {
+        let entry = entry.map_err(OfficeError::storage)?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let file = entry.file_type().map_err(OfficeError::storage)?.is_file();
+        if !(name == LOCK_FILE || (file && name.starts_with(TEMPORARY))) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// A new journal incarnation begins the organization's data only where nothing else has:
+/// no other incarnation of this office's journal, and no organization record. A second
+/// anchor beside another could never be removed (nothing under `durable/` is).
+fn refuse_another_beginning(roots: &DataRoots, custody: &Custody) -> Result<(), OfficeError> {
+    let here = &custody.identity;
+    let ours = journal_dir(&roots.durable, here);
+    let journals = ours
+        .parent()
+        .expect("an incarnation is in its office's journals");
+    match std::fs::read_dir(journals) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.map_err(OfficeError::storage)?;
+                if entry.file_name().to_str() != Some(here.journal_incarnation.as_str()) {
+                    return Err(OfficeError::Invalid(
+                        "the data roots hold another journal of this office",
+                    ));
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(OfficeError::storage(e)),
+    }
+    let organization = roots.durable.join(records::organization_path().as_str());
+    if exists(&organization)? {
+        let there = std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "{} is there before the organization's creation",
+                organization.display()
+            ),
+        );
+        return Err(OfficeError::storage(there));
+    }
+    Ok(())
 }
 
 /// [`Office::discard`].
@@ -293,7 +362,7 @@ pub(super) fn discard(folder: PathBuf, office_id: &str) -> Result<(), OfficeErro
         if name == LOCK_FILE {
             continue;
         }
-        if !(name.starts_with(".store-tmp-") && kind.is_file()) {
+        if !(name.starts_with(TEMPORARY) && kind.is_file()) {
             return Err(OfficeError::Invalid(
                 "the folder holds something an office does not make",
             ));
