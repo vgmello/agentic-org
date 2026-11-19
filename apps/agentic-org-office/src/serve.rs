@@ -2,7 +2,7 @@
 //! `hello`, `org.snapshot`, `msg.bind`, `who`, `msg.send` / `msg.inbox` / `msg.read` /
 //! `msg.wait`, `subscribe` and the organization commands, which only an app-bound connection may
 //! send, and the work writes made as a bound member; other methods are `unknown_method`. With no
-//! `mailbox` or `feed` port (the worker since B1b) the messaging calls and `subscribe` answer
+//! `mailbox` or `feed` port (the worker since B1b) `msg.send`/`inbox`/`read`/`wait` and `subscribe` answer
 //! `unsupported`, and composition answers work writes, `status.set` and `operation.get` the same
 //! way; see [`OfficePorts`]. A `msg.wait` is held on a thread of its own
 //! (at most [`MAX_HELD`] per connection), so the connection keeps answering meanwhile. When the

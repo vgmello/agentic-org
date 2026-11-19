@@ -744,14 +744,17 @@ on the offers of design section 10.
   B6 also restores LNX-1's send and read through the office in
   `apps/agentic-org/tests/lnx1.rs`, which B1b reduced to a directory read and a refused send.
   B6 serves again what B1b switched off with the old tables, through the office or A3's
-  `/events`, each with its scenario as a test: `subscribe` (another caller's committed
-  `team.create` arrives as `org.changed`; a refused command or a retry is no event; a position
+  `/events`, each with its scenario as a test: `subscribe` (a caller without a grant or
+  binding is refused `not_authorized`; another caller's committed `team.create` arrives as
+  `org.changed` carrying its position and command id; a refused command or a retry is no event; a position
   beyond the log is `snapshot_required`; after a restart a subscriber resuming from its
   position gets the backlog, then live changes); live events (`message.received` with the
-  header, never the body; `member.presence_changed` after `status.set`); and `inbox.changed`
+  header, never the body; `member.presence_changed` with the member id and status text after `status.set`, next on
+  the same stream); and `inbox.changed`
   hints (a send to the owner reaches the owner's subscriber within 1 s with the counts
-  `inbox.list` gives and the next position, none to others, no second hint for a replay;
-  offboarding an agent placed in no office clears its problem the same way). The inbox
+  `inbox.list` gives and the next position, not degraded, none to others, no second hint for a replay;
+  offboarding an agent placed in no office clears its problem the same way: zero counts, not
+  degraded, and `inbox.list` showing no items). The inbox
   position then has one rule: the hint clock and the list both take the organization's head.
 - **Needs:** B2, A5, B1c. The browser part needs A3.
 
