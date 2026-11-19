@@ -133,7 +133,7 @@
 				</p>
 			{/if}
 			{#if waiting}
-				<p class="text-xs/5 text-gray-400 @min-[44rem]:text-right">
+				<p class="text-xs/5 text-fg-muted @min-[44rem]:text-right">
 					Wait for {waiting}'s link first.
 				</p>
 			{/if}
