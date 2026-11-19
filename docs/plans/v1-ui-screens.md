@@ -122,15 +122,15 @@ fresh review, merged with `--no-ff`. At most two are built at once, on disjoint 
 
 | Screen | Route | Status |
 | --- | --- | --- |
-| Teams index: tree of teams, lead, counts, projects | `/teams` | In progress (stopped part-way) |
-| Members directory: people and agents, filter, Can sign in | `/teams/members` | In progress (stopped part-way) |
-| Org chart: one reporting tree, owner bar, Hand over ownership | `/teams/org-chart` | In progress (stopped part-way) |
-| Team page: header, members; tabs Work, Projects, Activity, Conversations, Processes | `/teams/[teamId]` | In progress (stopped part-way) |
-| Member profile: header and actions; tabs Overview, Work, Conversations, Activity, Runs, Processes, Role, Cost, Notes and memory | `/members/[memberId]` | In progress (stopped part-way) |
-| Supervision and execution view, attempt history, Run now | member profile | In progress (stopped part-way) |
-| Session log viewer (messages, tool calls, files, usage) | `/members/[memberId]/runs/[runId]` | In progress (stopped part-way) |
-| Sign-in access dialogs for a person: Invite, New link, Remove access | member profile | In progress (stopped part-way) |
-| Hire: refused view, requests list, Allow hiring switch | Teams | In progress (stopped part-way) |
+| Teams index: tree of teams, lead, counts, projects | `/teams` | Done (f7a4c963, cc8025ba); an open Delete dialog does not follow live changes yet |
+| Members directory: people and agents, filter, Can sign in | `/teams/members` | Done (6a96a3a6) |
+| Org chart: one reporting tree, owner bar, Hand over ownership | `/teams/org-chart` | Done (ecb129a9, 6f723cec) |
+| Team page: header, members; tabs Work, Projects, Activity, Conversations, Processes | `/teams/[teamId]` | Done (f7a4c963, cc8025ba, 6f723cec) |
+| Member profile: header and actions; tabs Overview, Work, Conversations, Activity, Runs, Processes, Role, Cost, Notes and memory | `/members/[memberId]` | In progress: built except the Cost tab, an "isn't built yet" placeholder until step 7 (0dbb0e02, 69c97894) |
+| Supervision and execution view, attempt history, Run now | member profile | Done (0dbb0e02, 69c97894) |
+| Session log viewer (messages, tool calls, files, usage) | `/members/[memberId]/runs/[runId]` | Done (0dbb0e02) |
+| Sign-in access dialogs for a person: Invite, New link, Remove access | member profile | Done (0dbb0e02, 86cc9435) |
+| Hire: refused view, requests list, Allow hiring switch | Teams | Done (34b65b5d) |
 
 ## Step 3 · Organization settings
 
@@ -138,12 +138,12 @@ fresh review, merged with `--no-ff`. At most two are built at once, on disjoint 
 | --- | --- | --- |
 | General: name, workspace, runtime, recovery code row, administrator | `/settings` | Done |
 | Offices: Add office, invitation, Approve a join, Remove, Rename, unplaced agents, outbox | `/settings/offices` | In progress (stopped part-way) |
-| Agent setup: list and one agent's setup, health | `/settings/agents`, `/settings/agents/[memberId]` | In progress (stopped part-way) |
-| Roles: list, role page, editor, New role | `/settings/roles`, `/settings/roles/[roleId]` | In progress (stopped part-way) |
-| Processes: Standards tab, editor, development processes | `/settings/processes` | In progress (stopped part-way) |
-| Members and access | `/settings/access` | In progress (stopped part-way) |
-| Costs: prices, organization cost | `/settings/costs` | In progress (stopped part-way) |
-| Updates | `/settings/updates` | In progress (stopped part-way) |
+| Agent setup: list and one agent's setup, health | `/settings/agents`, `/settings/agents/[memberId]` | Done (38e648de, ebb5d3b8) |
+| Roles: list, role page, editor, New role | `/settings/roles`, `/settings/roles/[roleId]` | Done (6a56ae1b, f63f57ca) |
+| Processes: Standards tab, editor, development processes | `/settings/processes` | Done (e54a1f6d, 1ac0e8ef) |
+| Members and access | `/settings/access` | Done (bf324950, 86cc9435, bf4fe1e2, a54b1f3a) |
+| Costs: prices, organization cost | `/settings/costs` | Done (4940b647, ab090eea) |
+| Updates | `/settings/updates` | Done (b2e23e12, ffe818b2) |
 
 ## Step 4 · Projects
 
@@ -199,6 +199,12 @@ fresh review, merged with `--no-ff`. At most two are built at once, on disjoint 
 Bring the existing browser tests in line with the moved routes, capture a screenshot of
 every screen at wide and narrow widths, and update `docs/FEATURES.md` rows with what the
 UI now shows against mock data.
+
+Started on `v1-ui-release-fixes` (2026-11-19): the shell, footer, navigation, landmarks,
+top-bar and production specs, the shared entry helpers and the specs that drove the retired
+org-chart canvas now follow the current screens; the `docs/FEATURES.md` UI rows carry the
+step 0–3 evidence. Still open: the Chat specs that fail against the work-in-progress Chat
+until step 8, and the screenshot pass.
 
 ## Decisions made while building
 
