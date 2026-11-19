@@ -24,3 +24,5 @@ export {
 	type OneTimeLinkValue
 } from './features/sign-in-access/OneTimeLink.svelte';
 export { profileBase, tabHref } from './features/profile/tabs';
+export { default as MembersDirectory } from './features/directory/MembersDirectory.svelte';
+export { loadDirectory } from './features/directory/load';

@@ -1,7 +1,9 @@
 // Mock for src/lib/modules/members/api.ts under `bun run dev:mock`. Members, teams and projects come from the org
 // mock (so IDs, names and edits made through the existing dialogs match every page); what the org snapshot does not
 // carry yet (handles for people, presence, readiness, turns, sign-in access) is JSON in e2e/fakes/data/members.
-// `?mock=slow|fails|empty` on the page's URL exercises the loading, error and empty states.
+// `?mock=slow|fails|empty` on the page's URL exercises the loading, error and empty states; the directory also answers
+// `?mock=unavailable|no-agents|all-former|race`.
+import { invalidate } from '$app/navigation';
 import { orgApi } from '$lib/org/api';
 import { officeApi } from '$lib/office/api';
 import type { Member, OrgSnapshot } from '$lib/proto';
@@ -362,11 +364,31 @@ const link = (kind: string) => ({
 	expiresAt: new Date(Date.now() + 24 * 3600_000).toISOString()
 });
 
+// `?mock=race`: the read an add starts is superseded by a live change. The first read after mounting (the add's) waits
+// 800 ms while the organization changes again; it resolves first but is superseded; a newer read brings the row 1.5 s
+// later.
+let raceReads = 0;
+async function race() {
+	raceReads++;
+	if (raceReads === 2) {
+		setTimeout(() => void invalidate('app:org'), 100);
+		await new Promise((r) => setTimeout(r, 800));
+	} else if (raceReads === 3) await new Promise((r) => setTimeout(r, 1500));
+}
+
 export const membersApi: MembersApi = {
 	async directory(organizationId) {
 		await gate();
+		if (scenario() === 'unavailable')
+			throw fail('unavailable', "This server doesn't serve the members directory yet.");
 		if (scenario() === 'empty') return [];
-		return rows(organizationId);
+		if (scenario() === 'race') await race();
+		const all = await rows(organizationId);
+		// `?mock=no-agents` shows the Agents filter's empty state; `?mock=all-former` the one with only former members.
+		if (scenario() === 'no-agents') return all.filter((r) => r.kind !== 'agent');
+		if (scenario() === 'all-former')
+			return all.map((r) => ({ ...r, status: 'inactive' as const, presence: undefined }));
+		return all;
 	},
 	async profile(organizationId, memberId) {
 		await gate();
