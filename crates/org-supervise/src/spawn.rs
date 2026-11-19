@@ -1,11 +1,12 @@
 use std::ffi::{CString, OsString};
 use std::fs::File;
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::{ffi::OsStrExt, fs::MetadataExt};
 use std::path::PathBuf;
 
-use crate::{invalid, platform, ChildIdentity, ChildStdin, Environment, OwnedChild, Spawned};
+use org_platform::process;
+
+use crate::{invalid, ChildIdentity, ChildStdin, Environment, OwnedChild, Spawned};
 
 /// Explicit input for a new piped session. Additional group policies/PTY support are deferred.
 #[derive(Debug)]
@@ -50,7 +51,7 @@ pub struct PreparedSpawn {
 impl PreparedSpawn {
     /// Validate inputs. This performs no spawn and reads no ambient environment.
     pub fn new(mut spec: SpawnSpec, mark: SessionMark) -> io::Result<Self> {
-        platform::validate()?;
+        process::validate()?;
         if !spec.program.is_absolute() || !spec.cwd.is_absolute() {
             return Err(invalid("executable and cwd must be absolute"));
         }
@@ -99,7 +100,7 @@ pub struct RecordedSpawn(PreparedSpawn);
 impl RecordedSpawn {
     /// Start with pipes, capture process identity, and keep stdin unavailable until recorded.
     pub fn spawn(self) -> io::Result<PendingChild> {
-        platform::validate()?;
+        process::validate()?;
         let PreparedSpawn {
             spec,
             mark,
@@ -118,7 +119,7 @@ impl RecordedSpawn {
         // Successful posix_spawn applied SETSID before exec; guard the group even if a
         // subsequent identity/watch query fails.
         child.group = true;
-        let (pgid, started, boot) = platform::identity(pid)?;
+        let (pgid, started, boot) = process::identity(pid)?;
         if pgid != pid as u32 {
             return Err(io::Error::other("spawn did not create a private session"));
         }
@@ -129,7 +130,7 @@ impl RecordedSpawn {
             boot,
             mark: mark.0,
         });
-        child.watch = Some(platform::Watch::new(pid)?);
+        child.watch = Some(process::Watch::new(pid)?);
         Ok(PendingChild {
             child,
             stdin,
@@ -175,38 +176,6 @@ fn c(bytes: &[u8]) -> io::Result<CString> {
     CString::new(bytes).map_err(|_| invalid("NUL in process argument"))
 }
 
-fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
-    let mut pair = [-1; 2];
-    #[cfg(target_os = "linux")]
-    // SAFETY: valid two-element out buffer; CLOEXEC is set atomically with creation.
-    let rc = unsafe { libc::pipe2(pair.as_mut_ptr(), libc::O_CLOEXEC) };
-    #[cfg(target_os = "macos")]
-    // SAFETY: valid out buffer. Darwin has no pipe2: other embedder spawn paths must
-    // also close descriptors by default, or serialize their spawn with this entire call.
-    let rc = unsafe { libc::pipe(pair.as_mut_ptr()) };
-    if rc != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: pipe returned two distinct owned descriptors.
-    let original = unsafe { [OwnedFd::from_raw_fd(pair[0]), OwnedFd::from_raw_fd(pair[1])] };
-    let duplicate = |fd: OwnedFd| -> io::Result<OwnedFd> {
-        #[cfg(target_os = "linux")]
-        if fd.as_raw_fd() >= 3 {
-            // Already CLOEXEC from pipe2; transfer it without another duplication.
-            return Ok(fd);
-        }
-        // SAFETY: valid owned descriptor. Keep spawn source fds above2 even if stdio is closed.
-        let new = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
-        if new < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: successful duplication returns a new owned descriptor.
-        Ok(unsafe { OwnedFd::from_raw_fd(new) })
-    };
-    let [read, write] = original;
-    Ok((duplicate(read)?, duplicate(write)?))
-}
-
 fn spawn_piped(spec: &SpawnSpec) -> io::Result<(libc::pid_t, File, File, File)> {
     let program = c(spec.program.as_os_str().as_bytes())?;
     let cwd = c(spec.cwd.as_os_str().as_bytes())?;
@@ -225,91 +194,13 @@ fn spawn_piped(spec: &SpawnSpec) -> io::Result<(libc::pid_t, File, File, File)> 
             c(&bytes)
         })
         .collect::<io::Result<Vec<_>>>()?;
-    let pointers = |strings: &[CString]| {
-        let mut result: Vec<_> = strings.iter().map(|s| s.as_ptr().cast_mut()).collect();
-        result.push(std::ptr::null_mut());
-        result
-    };
-    let argv = pointers(&args);
-    let envp = pointers(&env);
-    let (input_child, input) = pipe()?;
-    // SAFETY: our pipe's write end; O_NONBLOCK prevents a writer holding the stdin mutex
-    // from blocking close/deadline handling when the child stops reading.
-    if unsafe { libc::fcntl(input.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    let (output, output_child) = pipe()?;
-    let (error, error_child) = pipe()?;
-    let mut actions = std::mem::MaybeUninit::<libc::posix_spawn_file_actions_t>::uninit();
-    let mut attrs = std::mem::MaybeUninit::<libc::posix_spawnattr_t>::uninit();
-    // SAFETY: valid init slots; every successful initialization is destroyed below.
-    platform::check(unsafe { libc::posix_spawn_file_actions_init(actions.as_mut_ptr()) })?;
-    let result = (|| {
-        // SAFETY: actions initialized above, attrs initialized here and destroyed on every
-        // closure result. Strings, fds, sigsets and pointers outlive the spawn call.
-        platform::check(unsafe { libc::posix_spawnattr_init(attrs.as_mut_ptr()) })?;
-        let result: io::Result<libc::pid_t> = (|| unsafe {
-            let actions = actions.as_mut_ptr();
-            let attrs = attrs.as_mut_ptr();
-            for (source, target) in [
-                (input_child.as_raw_fd(), 0),
-                (output_child.as_raw_fd(), 1),
-                (error_child.as_raw_fd(), 2),
-            ] {
-                platform::check(libc::posix_spawn_file_actions_adddup2(
-                    actions, source, target,
-                ))?;
-            }
-            platform::check(libc::posix_spawn_file_actions_addchdir_np(
-                actions,
-                cwd.as_ptr(),
-            ))?;
-            let mut mask = std::mem::zeroed();
-            let mut defaults = std::mem::zeroed();
-            libc::sigemptyset(&mut mask);
-            libc::sigfillset(&mut defaults);
-            libc::sigdelset(&mut defaults, libc::SIGKILL);
-            libc::sigdelset(&mut defaults, libc::SIGSTOP);
-            platform::check(libc::posix_spawnattr_setsigmask(attrs, &mask))?;
-            platform::check(libc::posix_spawnattr_setsigdefault(attrs, &defaults))?;
-            #[cfg(target_os = "macos")]
-            // Darwin spawn.h defines SETSID=0x0400; libc doesn't export this flag.
-            let flags = libc::POSIX_SPAWN_CLOEXEC_DEFAULT
-                | libc::POSIX_SPAWN_START_SUSPENDED
-                | 0x0400
-                | libc::POSIX_SPAWN_SETSIGMASK
-                | libc::POSIX_SPAWN_SETSIGDEF;
-            #[cfg(target_os = "linux")]
-            let flags = {
-                platform::check(libc::posix_spawn_file_actions_addclosefrom_np(actions, 3))?;
-                i32::from(libc::POSIX_SPAWN_SETSID)
-                    | libc::POSIX_SPAWN_SETSIGMASK
-                    | libc::POSIX_SPAWN_SETSIGDEF
-            };
-            platform::check(libc::posix_spawnattr_setflags(attrs, flags as _))?;
-            let mut pid = 0;
-            platform::check(libc::posix_spawn(
-                &mut pid,
-                program.as_ptr(),
-                actions,
-                attrs,
-                argv.as_ptr(),
-                envp.as_ptr(),
-            ))?;
-            Ok(pid)
-        })();
-        // SAFETY: attrs was successfully initialized.
-        unsafe { libc::posix_spawnattr_destroy(attrs.as_mut_ptr()) };
-        result
-    })();
-    // SAFETY: actions was successfully initialized, independently of attrs/result.
-    unsafe { libc::posix_spawn_file_actions_destroy(actions.as_mut_ptr()) };
-    Ok((result?, input.into(), output.into(), error.into()))
+    process::spawn_piped(&program, &args, &env, &cwd)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::AsRawFd;
 
     #[test]
     fn every_parent_pipe_is_cloexec_and_stays_out_of_an_unrelated_exec() {
@@ -391,7 +282,7 @@ mod zombie_group_tests {
         let (pid, stdin, stdout, _stderr) = spawn_piped(&spec).unwrap();
         let mut child = OwnedChild::new(pid);
         child.group = true;
-        child.watch = Some(platform::Watch::new(pid).unwrap());
+        child.watch = Some(process::Watch::new(pid).unwrap());
         child.release_after_record().unwrap();
         assert_eq!(
             child
@@ -407,7 +298,7 @@ mod zombie_group_tests {
     #[test]
     fn zombie_only_group_eperm_is_verified_before_explicit_cleanup_reaps() {
         let (mut child, _stdout, _hold_input) = exited_group("exit 17");
-        assert!(platform::group_contains_only_leader(child.pid).unwrap());
+        assert!(process::group_contains_only_leader(child.pid).unwrap());
         // SAFETY: the held leader is still our unreaped child, reserving this group ID.
         assert_eq!(unsafe { libc::killpg(child.pid, libc::SIGKILL) }, -1);
         assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
@@ -425,7 +316,7 @@ mod zombie_group_tests {
         let member: i32 = line.trim().parse().unwrap();
         // SAFETY: observation only of the gated fixture member in the held child group.
         assert_eq!(unsafe { libc::getpgid(member) }, child.pid);
-        assert!(!platform::group_contains_only_leader(child.pid).unwrap());
+        assert!(!process::group_contains_only_leader(child.pid).unwrap());
         assert_eq!(child.cleanup_and_reap(&[]).unwrap().status.code(), Some(17));
     }
 }

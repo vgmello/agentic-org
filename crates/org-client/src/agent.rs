@@ -252,32 +252,18 @@ pub fn spool_send(home: &Path, send: &SpooledSend) -> Result<PathBuf, SpoolSendE
     Ok(placed)
 }
 
-/// Moves `from` to `to`, never replacing a file already at `to`: in one step on macOS
-/// (`renamex_np` with `RENAME_EXCL`), as a link then an unlink elsewhere.
+/// Moves `from` to `to` in one step, never replacing a file already at `to`
+/// (`org_platform::fs::rename_noreplace`). A filesystem that can't do that refuses; nothing
+/// is linked and unlinked instead.
 fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::ffi::CString;
-        use std::os::unix::ffi::OsStrExt;
-        let c = |p: &Path| {
-            CString::new(p.as_os_str().as_bytes())
-                .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))
-        };
-        let (from, to) = (c(from)?, c(to)?);
-        // SAFETY: both are NUL-terminated paths that live across the call.
-        if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) } == 0 {
-            return Ok(());
-        }
-        Err(io::Error::last_os_error())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        // A link fails if `to` exists. Once it's in place the send will be ingested, so a staged
-        // name that won't go is no error (it holds the same content).
-        fs::hard_link(from, to)?;
-        let _ = fs::remove_file(from);
-        Ok(())
-    }
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let c = |p: &Path| {
+        CString::new(p.as_os_str().as_bytes())
+            .map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))
+    };
+    let (from, to) = (c(from)?, c(to)?);
+    org_platform::fs::rename_noreplace(&from, &to)
 }
 
 /// The office's ingest applies every `msg.send` rule to a spooled send (`SpooledSend`), plus
@@ -392,17 +378,10 @@ fn owner_only_dir(dir: &Path) -> Result<(), SpoolSendError> {
     Ok(())
 }
 
-/// Flushes `file` to the disk itself (`F_FULLFSYNC` on macOS; `fsync` elsewhere).
+/// Flushes `file` to the disk itself (`fsync`, and on macOS then `F_FULLFSYNC`). A failed
+/// flush is an error, never a weaker flush.
 fn full_sync(file: &File) -> io::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        use std::os::fd::AsRawFd;
-        // SAFETY: `fcntl` with F_FULLFSYNC only flushes the descriptor `file` owns.
-        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } == 0 {
-            return Ok(());
-        }
-    }
-    file.sync_all()
+    org_platform::fs::full_sync(file)
 }
 
 /// Why [`open_as`] gave no connection.

@@ -118,13 +118,8 @@ fn export(path: &Path, bytes: &[u8]) -> Result<(), String> {
     // SAFETY: openat returned a new owned descriptor exactly once.
     let mut file = unsafe { File::from_raw_fd(fd) };
     file.write_all(bytes)
-        .and_then(|_| file.sync_all())
+        .and_then(|_| org_platform::fs::full_sync(&file))
         .map_err(error)?;
-    #[cfg(target_os = "macos")]
-    // SAFETY: live writable file descriptor, no pointer argument.
-    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
-        return Err(error(()));
-    }
     parent.sync_all().map_err(error)
 }
 fn package_bytes(p: dto::PackageResult, instance: &str, org: &str) -> Result<Vec<u8>, String> {
@@ -418,7 +413,10 @@ pub fn recovery(arguments: &[String]) -> Result<(), String> {
         .or(default_login)
         .ok_or("explicit --login required")?;
     let stream = UnixStream::connect(socket).map_err(error)?;
-    super::verify_host(&stream)?;
+    // Before anything is said to it, and before a password is asked for: this command signs
+    // in with a password and collects a recovery secret, and a host known only by its user
+    // is sent neither.
+    super::verify_host(&stream)?.may_receive_secrets()?;
     let mut wire = Wire::new(stream)?;
     let hello: HelloResult = wire
         .call::<Hello>(

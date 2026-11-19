@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import { signInAsAdmin } from './web-session';
+import { enterMockedOrganization } from './mock-organization';
 
 // Signed in as the administrator (SIGN-9); the organizations list names the organization opened here.
 async function openOffices(page: Page) {
@@ -13,10 +14,8 @@ async function openOffices(page: Page) {
 			recovery: 'acknowledged'
 		}
 	]);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Heading focus');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/agents$/);
+	await enterMockedOrganization(page, 'Heading focus');
+	await expect(page).toHaveURL(/\/teams\/members$/);
 	await visit(page, '/offices');
 }
 async function sectionLink(page: Page, width: number, name: string) {
@@ -43,7 +42,7 @@ for (const width of [320, 640, 720, 960, 1280]) {
 					document.documentElement.style.fontSize = `${scale * 100}%`;
 				}, textScale);
 				await (await sectionLink(page, width, 'Agents')).press('Enter');
-				await expect(page).toHaveURL(/\/agents$/);
+				await expect(page).toHaveURL(/\/teams\/members$/);
 				const heading = page.locator('#shell-page-title');
 				await expect(heading).toHaveText('Agents');
 				await expect(heading).toBeFocused();
@@ -83,7 +82,7 @@ for (const width of [720, 1280]) {
 			await page.setViewportSize({ width, height: 900 });
 			await openOffices(page);
 			await (await sectionLink(page, width, 'Agents')).click();
-			await expect(page).toHaveURL(/\/agents$/);
+			await expect(page).toHaveURL(/\/teams\/members$/);
 			await expect(page.locator('#shell-page-title')).toBeFocused();
 			await shot(page, `bug74-pointer-${width}`);
 		}

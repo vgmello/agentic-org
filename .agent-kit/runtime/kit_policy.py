@@ -13,6 +13,8 @@ import sys
 from kit_config import ancestors_in_repo, digest
 
 POLICY = Path(__file__).resolve().parents[1] / "policy/model-routing.json"
+# Sol models the review/fix rounds may run on; the policy names one.
+SOL_REVIEW_MODELS = ("gpt-6.1-sol", "gpt-6.2-sol")
 FACTS = ("familiar_pattern", "precise_scope", "localized_change", "deterministic_checks",
          "low_risk", "no_prior_failure", "ambiguity_resolved")
 
@@ -41,7 +43,7 @@ def load_policy(path=None):
     review = value["review"]
     if (type(review["default_rounds"]) is not int or type(review["maximum_rounds"]) is not int or
             not 1 <= review["default_rounds"] <= review["maximum_rounds"] <= 5 or
-            review["model"] != "gpt-6.2-sol" or review["effort"] != "high" or
+            review["model"] not in SOL_REVIEW_MODELS or review["effort"] != "high" or
             review["optional_effort"] != "xhigh" or review["original_author_required"] is not True or
             review["stop_on_repeated_findings"] is not True or review["final_model"] != lead or
             review["final_default_effort"] != normal or review["final_risk_effort"] != risk):

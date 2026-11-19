@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { signInAsAdmin } from './web-session';
+import { enterMockedOrganization } from './mock-organization';
 
 // Organization settings › Updates against the mock updates API (app-shell-ux §0.1; server-installation-and-access-ux
 // §5; .agent-kit/tasks/v1-ui-updates-contract.md UPD-1 to UPD-7).
@@ -13,10 +14,7 @@ async function openOrganization(page: Page) {
 			recovery: 'acknowledged'
 		}
 	]);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Lumen Labs');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).not.toHaveURL(/\/create$/);
+	await enterMockedOrganization(page, 'Lumen Labs');
 }
 
 const offices = (page: Page) => page.getByTestId('office-versions').locator('> li');

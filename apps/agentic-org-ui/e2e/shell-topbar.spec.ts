@@ -1,12 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openOffice(page: Page, createPath = '/create') {
-	await visit(page, createPath);
-	await page.getByLabel('Organization name').fill('Topbar reference');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	// Creating lands on /agents, which redirects to the Teams area's Members view (app-shell-ux §0).
+	await enterMockedOrganization(page, 'Topbar reference', createPath);
 	await expect(page).toHaveURL(/\/teams\/members$/);
 	await visit(page, '/offices');
 	await expect(page.getByTestId('office-row')).toHaveCount(1);
@@ -16,10 +14,7 @@ async function openOffice(page: Page, createPath = '/create') {
 test('New › Hire an agent opens the Hire page with its heading, title and focus', async ({
 	page
 }) => {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Topbar reference');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/teams\/members$/);
+	await enterMockedOrganization(page, 'Topbar reference');
 	await page.getByRole('button', { name: 'New', exact: true }).click();
 	await page.getByRole('menuitem', { name: 'Hire an agent', exact: true }).click();
 	await expect(page).toHaveURL(/\/teams\/hire$/);
@@ -86,7 +81,7 @@ for (const width of [320, 720]) {
 					.getByRole('link', { name: 'Agents', exact: true })
 					.press('Enter');
 			} else await page.getByRole('link', { name: 'Agents', exact: true }).press('Enter');
-			await expect(page).toHaveURL(/\/agents$/);
+			await expect(page).toHaveURL(/\/teams\/members$/);
 			const heading = page.getByRole('heading', { name: 'Agents', exact: true });
 			await expect(heading).toHaveAttribute('id', 'shell-page-title');
 			await shot(page, `bug70-heading-focus-${width}`);

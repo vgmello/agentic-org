@@ -16,10 +16,17 @@ pub enum ScanFailureKind {
 }
 
 pub(super) fn classify(error: &io::Error) -> ScanFailureKind {
-    error
-        .get_ref()
-        .and_then(|error| error.downcast_ref::<FailureTag>())
-        .map_or(ScanFailureKind::Other, |tag| tag.kind)
+    let Some(source) = error.get_ref() else {
+        return ScanFailureKind::Other;
+    };
+    if let Some(tag) = source.downcast_ref::<FailureTag>() {
+        tag.kind
+    } else if source.is::<org_platform::process::DeadlineElapsed>() {
+        // The native scan's own deadline boundary, typed by the platform crate.
+        ScanFailureKind::DeadlineElapsed
+    } else {
+        ScanFailureKind::Other
+    }
 }
 
 #[derive(Debug)]
@@ -50,7 +57,8 @@ pub(super) fn tagged(
     )
 }
 
-/// One deadline boundary shared by policy, optional-job and native adapters.
+/// One deadline boundary shared by policy and the optional-job proof. The native scan
+/// reports its own as `org_platform::process::DeadlineElapsed`, which [`classify`] reads.
 pub(super) fn check_deadline(
     now: Instant,
     deadline: Instant,

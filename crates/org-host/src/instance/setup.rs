@@ -3,12 +3,19 @@
 //! progress only moves forward, in the order the setup flow takes it:
 //! instance reserved (`instance_id`), service registered, registry created by the service
 //! host at its first start (D1), initial registration link issued (at most once).
+//!
+//! `credentials` is where a release host keeps its secrets on a system whose protected
+//! store is a directory (Linux host design section 3.2): an absolute path, recorded once
+//! and never changed, which the host reads at every start instead of deriving one from its
+//! environment. A system that keeps them in the Keychain records none
+//! ([`credentials_rule`]).
 use super::{
     directory::{Directory, FileLock},
     Error, Name,
 };
 use crate::release::ReleasePin;
 use org_host_control::listen::ListenConfig;
+use org_platform_host::credentials::ProtectedStore;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 const FILE: &str = "setup.v1.json";
@@ -72,6 +79,9 @@ pub(crate) struct Record {
     pub setup_operation: String,
     /// The reserved instance, as the registry names it.
     pub instance_id: Option<String>,
+    /// The credential directory of a release host, where this system keeps a release
+    /// build's secrets in one: absolute and normalized, fixed once it is recorded.
+    pub credentials: Option<PathBuf>,
     pub service_registered: bool,
     /// The service host created its registry at its first start (D1).
     pub registry_created: bool,
@@ -84,6 +94,26 @@ impl Record {
         self.release
             .validate()
             .map_err(|_| Error::Unsafe("invalid setup release pin"))?;
+        if let Some(path) = &self.credentials {
+            // Absolute, UTF-8, and spelled exactly as it is walked: no `.`, `..`, repeated or
+            // trailing separator. The bytes are compared, since two spellings of one path
+            // are equal as paths.
+            if super::directory::absolute(path)
+                .ok()
+                .is_none_or(|normal| normal.as_os_str() != path.as_os_str())
+            {
+                return Err(Error::Invalid(
+                    "the credential directory must be an absolute, normalized path",
+                ));
+            }
+        }
+        credentials_rule(
+            org_platform_host::credentials::protected_store().ok(),
+            !cfg!(debug_assertions),
+            self.instance_id.is_some(),
+            self.credentials.is_some(),
+        )
+        .map_err(Error::Unsafe)?;
         if self.version != 1
             || !org_proto::is_uuid_v7(&self.setup_operation)
             || self
@@ -108,11 +138,48 @@ impl Record {
                 .instance_id
                 .as_ref()
                 .is_none_or(|i| Some(i) == self.instance_id.as_ref())
+            && old
+                .credentials
+                .as_ref()
+                .is_none_or(|c| Some(c) == self.credentials.as_ref())
             && (!old.service_registered || self.service_registered)
             && (!old.registry_created || self.registry_created)
             && (!old.initial_link_issued || self.initial_link_issued)
     }
 }
+/// Whether a setup record may name a credential directory, and whether it must, pure.
+///
+/// `store` is the kind of protected store a release build has on this system (`None`: it
+/// has none), `release_build` whether this build is one, `reserved` whether the record
+/// names its instance, and `recorded` whether it names a credential directory.
+///
+/// - The Keychain, or no protected store: a directory is never recorded. Nothing falls
+///   back to one.
+/// - A release directory: a release build's record names it from the moment the instance
+///   is reserved (both are written together), so a host never starts without knowing where
+///   its secrets are. A development build keeps its development stores and may record none.
+pub(crate) fn credentials_rule(
+    store: Option<ProtectedStore>,
+    release_build: bool,
+    reserved: bool,
+    recorded: bool,
+) -> Result<(), &'static str> {
+    match store {
+        Some(ProtectedStore::ReleaseDirectory) => {
+            if release_build && reserved && !recorded {
+                return Err("setup recorded no credential directory for this instance");
+            }
+            Ok(())
+        }
+        Some(ProtectedStore::Keychain) | None => {
+            if recorded {
+                return Err("a credential directory is recorded on a system that keeps none");
+            }
+            Ok(())
+        }
+    }
+}
+
 pub(crate) struct Journal {
     directory: Directory,
     lock: FileLock,
@@ -215,6 +282,7 @@ impl Journal {
             release,
             setup_operation: crate::ids::uuid_v7()?,
             instance_id: None,
+            credentials: None,
             service_registered: false,
             registry_created: false,
             initial_link_issued: false,

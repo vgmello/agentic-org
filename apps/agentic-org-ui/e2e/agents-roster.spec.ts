@@ -1,15 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 // Teams › Members (offices-and-teams-ux §7.0, §7.2, PEOPLE-1/2, TEAM-12; our-org-in-the-app §5 AC-IA08, §7). The old
 // Agents roster (status filters, ?q= search, ?add=1 and Add agent) is replaced: agents come only from Hire.
 
 async function createOrg(page: Page) {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/agents$|\/teams\/members$/);
+	await enterMockedOrganization(page);
+	await expect(page).toHaveURL(/\/teams\/members$/);
 }
 async function openMembers(page: Page, query = '') {
 	await createOrg(page);

@@ -33,7 +33,7 @@
 		label: string;
 		/** "Couldn't load the roles". */
 		error: string;
-		/** With `area`, an unavailable read shows the route's placeholder (NotBuilt); without, a line in place. */
+		/** An unavailable read shows the route placeholder (NotBuilt) when both `place` and `area` are set. */
 		place?: string;
 		area?: string;
 		isEmpty?: (value: T) => boolean;
@@ -52,8 +52,8 @@
 {#if resource.state === 'loading'}
 	<SkeletonRows {label} {rows} {avatar} />
 {:else if resource.state === 'unavailable'}
-	{#if area}
-		<NotBuilt title={place ?? area} {place} {area} />
+	{#if place && area}
+		<NotBuilt title={place} {place} {area} />
 	{:else}
 		<div class="px-4 py-12 min-[640px]:px-6 min-[1024px]:px-8">
 			<p class="text-sm/6 font-semibold text-fg">Not available yet</p>

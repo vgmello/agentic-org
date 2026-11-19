@@ -944,7 +944,7 @@ fn ownership_guards_accept_ours_and_refuse_foreign_linux_root_fixtures() {
     fs::write(&file, b"x").unwrap();
     assert!(checked_home(home.path()).is_ok());
     assert!(checked_file(&file, false).unwrap().is_some());
-    #[cfg(target_os = "linux")]
+    // Only root can give a file to another user.
     if crate::home::euid() == 0 {
         std::os::unix::fs::chown(&file, Some(1), None).unwrap();
         assert!(matches!(checked_file(&file, false), Err(Error::Unsafe)));
@@ -1588,7 +1588,6 @@ fn unsafe_orphan_sidecars_refuse_create_before_secrets_and_stay_untouched() {
         }
     }
 }
-#[cfg(target_os = "linux")]
 #[test]
 fn foreign_owned_orphans_refuse_create_before_secrets_when_root() {
     if crate::home::euid() != 0 {

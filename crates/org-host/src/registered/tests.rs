@@ -26,7 +26,8 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let temp = tempfile::tempdir_in("/private/tmp").unwrap();
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let base = temp.path().canonicalize().unwrap();
     fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
     for name in ["temp", "keys"] {

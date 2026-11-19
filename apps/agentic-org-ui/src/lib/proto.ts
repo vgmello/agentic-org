@@ -116,6 +116,9 @@ export const API_ERROR_CODES = [
 	'not_bound',
 	'too_large',
 	'checklist_incomplete',
+	// The protocol has the call; this office does not serve it yet. Not temporary: unlike
+	// `unavailable`, a retry against the same build answers the same.
+	'unsupported',
 	'unknown'
 ] as const;
 export type ApiErrorCode = (typeof API_ERROR_CODES)[number];

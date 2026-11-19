@@ -1,12 +1,11 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 async function open(page: Page, path = '/agents') {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/agents$|\/teams\/members$/);
+	await enterMockedOrganization(page);
+	await expect(page).toHaveURL(/\/teams\/members$/);
 	if (path !== '/agents') await visit(page, path);
 }
 

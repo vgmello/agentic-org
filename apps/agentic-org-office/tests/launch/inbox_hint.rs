@@ -1,27 +1,5 @@
 use super::*;
 
-#[test]
-#[ignore = "rewrite on A3's grant-bound host-channel subscribe (/events): no office-socket subscriber exists"]
-/// Must be rewritten on A3's grant-bound host-channel subscribe (/events): since A1.5 nobody
-/// binds or subscribes as the owner on the office socket. Scenario to keep: with the owner and a
-/// non-owner subscribed, a `msg.send` to the owner delivers one `inbox.changed` to the owner
-/// within 1 s (counts as `inbox.list` had them, as_of seq + 1, not degraded) and none to the
-/// non-owner; replaying the same send commits nothing and emits no second hint.
-fn inbox_hint_real_mailbox_commit_advances_once_and_filters_the_same_hint_per_delivery() {
-    panic!("rewrite on A3's grant-bound host-channel subscribe; see the doc comment");
-}
-
-#[test]
-#[ignore = "rewrite on A3's grant-bound host-channel subscribe (/events): no office-socket subscriber exists"]
-/// Must be rewritten on A3's grant-bound host-channel subscribe (/events): since A1.5 nobody
-/// binds or subscribes as the owner on the office socket. Scenario to keep: an office seeded with
-/// an agent placed in no office shows one problem in `inbox.list`; a second owner session's
-/// `member.offboard` of it delivers `inbox.changed` within 1 s with zero counts, as_of seq + 1,
-/// not degraded, and `inbox.list` agrees with no items.
-fn inbox_hint_real_second_owner_offboard_clears_the_seeded_problem_within_one_second() {
-    panic!("rewrite on A3's grant-bound host-channel subscribe; see the doc comment");
-}
-
 fn local_office(world: &World, id: &str) -> org_office::Office {
     org_office::Office::create(
         world.folder(id),
@@ -92,11 +70,8 @@ fn inbox_hint_registration_uses_real_unbound_bound_restore_and_replica_authority
             state != "satellite",
             "{state}"
         );
-        assert_eq!(
-            hello.supports("inbox.changed"),
-            state != "satellite",
-            "{state}"
-        );
+        // Hints travel only on `subscribe`, which this office does not serve yet (B6).
+        assert!(!hello.supports("inbox.changed"), "{state}");
         drop(reader);
         assert!(run.host_goes_away().success());
     }

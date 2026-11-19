@@ -372,6 +372,19 @@ impl Provisioning {
         self.hold_drives
             .store(true, std::sync::atomic::Ordering::Release);
     }
+    /// The account a browser signed in as `login` acts as, for a test that creates an
+    /// organization in the host's process where no web process serves.
+    #[cfg(test)]
+    pub(crate) fn account_for_test(&self, login: &str) -> Account {
+        let credentials = self
+            .db
+            .account_credentials(&crate::accounts::identity::LoginKey::new(login).unwrap())
+            .unwrap()
+            .expect("the account exists");
+        let id = crate::accounts::identity::AccountId::parse(credentials.account().account_id())
+            .unwrap();
+        self.db.account_authority(&id).unwrap().unwrap()
+    }
     #[cfg(test)]
     pub(crate) fn driving_now(&self) -> usize {
         self.driving.lock().unwrap().len()

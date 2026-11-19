@@ -1,6 +1,18 @@
 use super::*;
 use org_office_launch::ServerEvent;
 
+/// This test process stands in for a worker whose pid is `pid`: an admission that checks no
+/// image (a debug build's) and a child handle that is never signalled or waited for. A system
+/// without an admission adapter has neither, so nothing can be handed off there.
+fn stand_in(pid: u32) -> io::Result<(Admission, Child)> {
+    // A real program: an adapter that executes verified bytes reads it when the admission
+    // is built.
+    let admission = crate::server_check::ServerCheck::Skip
+        .admission(&crate::test_programs::recording_worker())?;
+    let child = org_platform_host::testing::admission::unowned_child(pid, None)?;
+    Ok((admission, child))
+}
+
 fn byte(receiver: &mut org_socket::rights::StreamReceiver, count: usize) -> (u8, Vec<OwnedFd>) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -109,13 +121,13 @@ fn actual_launch_pair_handoff_transfers_owned_channel_then_revokes_and_closes_on
     let broker = Broker::new("instance".into(), PathBuf::new());
     let (signals, events) = mpsc::channel();
     let key = OfficeSecretsKey::from_bytes([71; 32]);
+    let (admission, child) = stand_in(std::process::id()).unwrap();
     let endpoint = broker
         .handoff(
             host,
             "office",
-            std::process::id(),
-            None,
-            &ServerCheck::Skip,
+            &admission,
+            &child,
             HandoffSecrets::Start(Some(&key)),
             7,
             signals,
@@ -150,19 +162,21 @@ fn a_reader_from_another_process_identity_gets_no_key_bytes() {
         .unwrap();
     let broker = Broker::new("instance".into(), PathBuf::new());
     let (signals, _) = mpsc::channel();
-    assert!(broker
-        .handoff(
+    // Another pid than the reader's. Where no admission exists at all, nothing is handed off
+    // either: the host's end closes without a byte written.
+    let handed = stand_in(std::process::id() + 1).and_then(move |(admission, child)| {
+        broker.handoff(
             host,
             "office",
-            std::process::id() + 1,
-            None,
-            &ServerCheck::Skip,
+            &admission,
+            &child,
             HandoffSecrets::Start(Some(&OfficeSecretsKey::from_bytes([72; 32]))),
             1,
             signals,
-            Instant::now() + Duration::from_secs(1)
+            Instant::now() + Duration::from_secs(1),
         )
-        .is_err());
+    });
+    assert!(handed.is_err());
     assert!(frame::read_line(&mut BufReader::new(worker))
         .unwrap()
         .is_none());
@@ -211,15 +225,8 @@ fn a_discard_hands_off_no_key_and_no_descriptors_and_forwards_its_report() {
         .unwrap();
     });
     let (signals, events) = mpsc::channel();
-    Broker::discard_handoff(
-        host,
-        std::process::id(),
-        None,
-        &ServerCheck::Skip,
-        9,
-        signals,
-    )
-    .unwrap();
+    let (admission, child) = stand_in(std::process::id()).unwrap();
+    Broker::discard_handoff(host, &admission, &child, 9, signals).unwrap();
     worker_thread.join().unwrap();
     assert!(matches!(
         events.recv_timeout(Duration::from_secs(3)).unwrap(),
@@ -259,15 +266,8 @@ fn a_discard_stream_ends_at_a_non_server_event() {
         worker
     });
     let (signals, events) = mpsc::channel();
-    Broker::discard_handoff(
-        host,
-        std::process::id(),
-        None,
-        &ServerCheck::Skip,
-        3,
-        signals,
-    )
-    .unwrap();
+    let (admission, child) = stand_in(std::process::id()).unwrap();
+    Broker::discard_handoff(host, &admission, &child, 3, signals).unwrap();
     let _worker = worker_thread.join().unwrap();
     // Only the stream's end: the `discarded` after the receipt is never forwarded.
     assert!(matches!(
@@ -284,15 +284,18 @@ fn a_discard_reader_from_another_process_identity_gets_no_header() {
         .set_read_timeout(Some(Duration::from_millis(100)))
         .unwrap();
     let (signals, events) = mpsc::channel();
-    assert!(Broker::discard_handoff(
-        host,
-        std::process::id() + 1,
-        None,
-        &ServerCheck::Skip,
-        1,
-        signals,
-    )
-    .is_err());
+    // Another process than the one that holds the worker's end (this one): a real, living
+    // process, so that the only thing wrong with the reader is who it is.
+    let mut other = std::process::Command::new("/bin/sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let (admission, child) = stand_in(other.id()).unwrap();
+    let refused = Broker::discard_handoff(host, &admission, &child, 1, signals);
+    drop(child);
+    other.kill().unwrap();
+    other.wait().unwrap();
+    assert!(refused.is_err());
     assert!(frame::read_line(&mut BufReader::new(worker))
         .unwrap()
         .is_none());
@@ -302,7 +305,8 @@ fn a_discard_reader_from_another_process_identity_gets_no_header() {
 #[test]
 #[ignore = "root runs actual local listener; child sandbox forbids binding"]
 fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
-    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let root =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let broker = Broker::new("instance".into(), root.path().to_owned());
     let rendezvous = broker.bind().unwrap();
     let path = rendezvous.path().to_owned();
@@ -350,17 +354,16 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
             .is_none());
     });
     let (signals, _) = mpsc::channel();
+    let (admission, mut child) = stand_in(std::process::id()).unwrap();
     let endpoint = broker
         .accept(
             rendezvous,
             "office",
-            std::process::id(),
-            None,
-            &ServerCheck::Skip,
+            &admission,
+            &mut child,
             HandoffSecrets::Start(None),
             1,
             signals,
-            &mut || false,
         )
         .unwrap();
     assert!(endpoint.live.load(Ordering::SeqCst));
@@ -370,7 +373,8 @@ fn accepted_stream_waits_for_delayed_ready_and_descriptor_receipt() {
 
 #[test]
 fn a_worker_that_exits_without_connecting_ends_the_wait_at_once_as_a_crash() {
-    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let root =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let broker = Broker::new("instance".into(), root.path().to_owned());
     let rendezvous = broker.bind().unwrap();
     let started = Instant::now();
@@ -388,7 +392,8 @@ fn a_worker_that_exits_without_connecting_ends_the_wait_at_once_as_a_crash() {
 
 #[test]
 fn a_worker_that_connects_and_then_exits_is_still_accepted() {
-    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let root =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let broker = Broker::new("instance".into(), root.path().to_owned());
     let rendezvous = broker.bind().unwrap();
     let path = rendezvous.path().to_owned();
@@ -408,7 +413,8 @@ fn a_worker_that_connects_and_then_exits_is_still_accepted() {
 
 #[test]
 fn no_connection_by_the_deadline_is_a_timeout_not_would_block() {
-    let root = tempfile::tempdir_in("/private/tmp").unwrap();
+    let root =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let broker = Broker::new("instance".into(), root.path().to_owned());
     let rendezvous = broker.bind().unwrap();
     let error = Broker::connect(
@@ -454,13 +460,13 @@ pub(crate) fn worker_fixture(office: &str) -> WorkerFixture {
     });
     let broker = Broker::new("instance".into(), PathBuf::new());
     let (signals, _) = mpsc::channel();
+    let (admission, child) = stand_in(std::process::id()).unwrap();
     let endpoint = broker
         .handoff(
             host,
             office,
-            std::process::id(),
-            None,
-            &ServerCheck::Skip,
+            &admission,
+            &child,
             HandoffSecrets::Start(Some(&OfficeSecretsKey::from_bytes([71; 32]))),
             7,
             signals,
@@ -741,13 +747,13 @@ fn incompatible_profile_gets_no_secret_or_descriptor() {
         }
         frame::write_message(&mut worker, &ready).unwrap();
         let (signals, _) = mpsc::channel();
+        let (admission, child) = stand_in(std::process::id()).unwrap();
         assert!(Broker::new("instance".into(), PathBuf::new())
             .handoff(
                 host,
                 "office",
-                std::process::id(),
-                None,
-                &ServerCheck::Skip,
+                &admission,
+                &child,
                 HandoffSecrets::Start(Some(&OfficeSecretsKey::from_bytes([71; 32]))),
                 1,
                 signals,

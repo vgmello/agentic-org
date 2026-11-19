@@ -1,0 +1,34 @@
+[package]
+name = "org-platform-host"
+description = "The host's operating-system capabilities whose macOS adapter needs an Apple framework, behind contracts with macOS, Linux and refusing adapters. Only the host links it; org-platform, which every executable links, stays libc-only (ADR-0017 decision 6)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Test adapters built from the contracts, for consumer tests only.
+test-support = []
+
+[dependencies]
+org-platform = { path = "../org-platform" }
+libc.workspace = true
+sha2.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation.workspace = true
+security-framework.workspace = true
+security-framework-sys.workspace = true
+
+[dev-dependencies]
+# test-support: the disk-backed and memory-backed shared temporary directories.
+org-platform = { path = "../org-platform", features = ["test-support"] }
+tempfile.workspace = true
+
+[build-dependencies]
+# build.rs compiles the recovery presence bridge (src/presence/bridge.m) for macOS targets.
+cc = "=1.11.1"
+
+# The compiled worker the admission adapter's tests start (`cargo test` builds it).
+[[example]]
+name = "admission_fixture"

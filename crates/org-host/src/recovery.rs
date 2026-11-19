@@ -148,7 +148,6 @@ impl Recovery {
         if c.channel_kind() != org_office_launch::ChannelKind::Local || !c.recovery_peer_idle() {
             return Err(denied());
         }
-        #[cfg(target_os = "macos")]
         if self.policy.allows(&crate::app_auth::SocketPeer {
             stream: c.socket(),
             accepted: c.accepted(),
@@ -156,8 +155,6 @@ impl Recovery {
         }) {
             return Ok(());
         }
-        #[cfg(not(target_os = "macos"))]
-        let _ = (&self.policy, received);
         Err(denied())
     }
     fn authority(

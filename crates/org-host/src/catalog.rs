@@ -261,6 +261,13 @@ fn office_folders(home: &Path) -> io::Result<Vec<(String, PathBuf)>> {
     Ok(folders)
 }
 
+/// Whether any office has a folder in this home, finished or not. A folder is made only
+/// after its office's key was stored (the key and its fingerprint come first), so a home
+/// with one is a home whose records say that keys exist.
+pub(crate) fn any_office_folder(home: &Path) -> io::Result<bool> {
+    Ok(!office_folders(home)?.is_empty())
+}
+
 /// The office folders with no `office.json`: creates that never finished. The host never
 /// removes them itself; it has a server discard each one, with the office's key (see
 /// `Offices::discard_unfinished`), because only a server can open the folder's databases to

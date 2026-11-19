@@ -143,30 +143,6 @@ fn session(handle: &SessionHandle) -> SessionHandle {
     SessionHandle::new(handle.expose().into()).expect("live nonempty handle")
 }
 
-pub(crate) fn verify_host(stream: &UnixStream) -> Result<(), String> {
-    if !org_socket::peer_allowed(stream, org_socket::effective_uid()) {
-        return Err("host peer refused".into());
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let token = crate::peer::audit_token(stream).map_err(|_| "host identity unavailable")?;
-        if let Some(team) = crate::APP_TEAM_ID {
-            let req = crate::code_signing::developer_id_requirement(crate::HOST_SIGNING_ID, team)?;
-            if crate::code_signing::satisfies_hardened(&token, &req) {
-                return Ok(());
-            }
-        }
-        #[cfg(debug_assertions)]
-        if crate::peer::pid(stream)
-            .and_then(crate::peer::executable)
-            .ok()
-            == std::env::current_exe().ok()
-        {
-            return Ok(());
-        }
-    }
-    Err("host signing identity refused".into())
-}
 fn password() -> Result<Password, String> {
     terminal::password()
 }
@@ -201,37 +177,27 @@ pub(crate) fn paths(name: Option<&str>) -> Result<Paths, String> {
         }
         return Paths::at(&base, temp, name).map_err(|e| e.to_string());
     }
-    if !cfg!(target_os = "macos") {
+    // Protected setup keeps its custody in the system's protected store; a system without one
+    // provisions nothing.
+    if org_platform_host::credentials::protected_store().is_err() {
         return Err(
             "protected platform setup/custody is unavailable on this target; no HQ was provisioned"
                 .into(),
         );
     }
     let account = crate::home::account_dir().ok_or("account home unavailable")?;
-    Paths::prepare(&account, user_temp()?, name).map_err(|_| unavailable())
+    Paths::prepare(&account, user_temp(&account)?, name).map_err(|_| unavailable())
 }
-fn user_temp() -> Result<PathBuf, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let mut bytes = vec![0_u8; 4096];
-        // SAFETY: module-owned writable storage and supported Darwin query.
-        let n = unsafe {
-            libc::confstr(
-                libc::_CS_DARWIN_USER_TEMP_DIR,
-                bytes.as_mut_ptr().cast(),
-                bytes.len(),
-            )
-        };
-        if n == 0 || n > bytes.len() || bytes[n - 1] != 0 {
-            return Err("OS private temporary directory unavailable".into());
-        }
-        bytes.truncate(n - 1);
-        let path = PathBuf::from(String::from_utf8(bytes).map_err(|_| unavailable())?);
-        path.canonicalize().map_err(|_| unavailable())
-    }
-    #[cfg(not(target_os = "macos"))]
-    Err("protected platform setup is unavailable".into())
+fn user_temp(account: &std::path::Path) -> Result<PathBuf, String> {
+    use org_platform::dirs::UserTempError;
+    org_platform::dirs::user_temp_base(account).map_err(|error| match error {
+        UserTempError::Unavailable => "OS private temporary directory unavailable".into(),
+        UserTempError::Invalid(_) => unavailable(),
+        UserTempError::Unsupported(_) => "protected platform setup is unavailable".into(),
+    })
 }
+mod host;
+pub(crate) use host::verify_host;
 mod recovery;
 pub use recovery::recovery;
 mod terminal;

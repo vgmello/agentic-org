@@ -70,6 +70,7 @@ fn hq(source: Arc<Rows>) -> Hq {
     Hq {
         sources: vec![source],
         clock: Clock::new("test-instance".into()),
+        list_office: None,
     }
 }
 fn request(params: Value) -> Request {
@@ -377,6 +378,7 @@ fn inbox_degraded_cursor_survives_then_fresh_list_recovers_earlier_source_rows()
         Hq {
             sources: vec![later, early.clone()],
             clock: Clock::new("test".into()),
+            list_office: None,
         },
         Ok(true),
     );

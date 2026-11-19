@@ -30,7 +30,6 @@ test(
 			if (new URL(request.url()).pathname.startsWith('/api/')) apiRequests.push(request.url());
 		});
 		for (const [path, area] of [
-			['/create', undefined],
 			...areas.map(([path, name]) => [`/${path}`, name] as const),
 			['/projects/a-project', 'Projects']
 		] as const) {
@@ -54,11 +53,11 @@ test(
 	}
 );
 
-test('A3: the session pages are enabled in the release, and the other areas stay unavailable', async ({
+test('A3, A4: the session pages and Create organization are enabled in the release, and the other areas stay unavailable', async ({
 	page
 }) => {
-	// No gateway answers the static preview, so the instance URL and /welcome open sign-in (SIGN-1, SIGN-7).
-	for (const path of ['/', '/welcome', '/sign-in']) {
+	// No gateway answers the static preview, so the instance URL, /welcome and /create open sign-in (SIGN-1, SIGN-7).
+	for (const path of ['/', '/welcome', '/sign-in', '/create']) {
 		await visit(page, path);
 		await expect(page).toHaveURL(/\/sign-in(\?|$)/);
 		await expect(page.getByRole('heading', { level: 1, name: /^Sign in to HQ at / })).toBeVisible();
@@ -111,10 +110,7 @@ test('SRV-18 / BUG-53: unknown routes keep their error and a named browser tab',
 	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
 });
 
-for (const [path, area] of [
-	['/create', undefined],
-	['/agents', 'Agents']
-] as const) {
+for (const [path, area] of [['/agents', 'Agents']] as const) {
 	test(`BUG-53: ${path} keeps its wrapping navigation and readable copy at 320px`, async ({
 		page
 	}) => {
@@ -147,7 +143,7 @@ for (const [path, area] of [
 test('BUG-53: the unavailable header home link has the design-system keyboard focus ring', async ({
 	page
 }) => {
-	await visit(page, '/create');
+	await visit(page, '/org-chart');
 	await page.keyboard.press('Tab');
 	const home = page.getByRole('link', { name: 'Agentic Org', exact: true });
 	await expect(home).toBeFocused();

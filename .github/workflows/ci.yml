@@ -27,15 +27,6 @@ jobs:
       matrix:
         # macos-15: macOS arm64. ubuntu-26.04: Linux x86-64.
         os: [macos-15, ubuntu-26.04]
-        include:
-          - os: ubuntu-26.04
-            # The extracted org-host library has items only its macOS code uses (code-signature peer checks,
-            # Keychain key store), so on Linux clippy's dead-code and unused-import lints fail, and
-            # the host integration tests in agentic-org cannot start every worker path yet. Until the Linux host bring-up (implementation plan X1) gates those items
-            # by target, it's excluded here and linted by the `clippy (Linux host)` step with only
-            # those two lints allowed; its tests stay excluded.
-            clippy-flags: --exclude org-host --exclude agentic-org
-            test-flags: --exclude org-host --exclude agentic-org
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -62,18 +53,26 @@ jobs:
         if: runner.os == 'Linux'
         run: python3 docs/design/organization-data/test_schema.py
 
+      # ADR-0017 LNX-5: no platform predicate outside crates/org-platform, beyond the shrinking
+      # list in .github/platform-conditionals.allow. `cargo test` below runs it again with the rest.
+      - name: Platform conditionals (LNX-5)
+        run: cargo test --locked -p org-platform --test platform_conditionals
+
+      # A Unix target that is neither macOS nor GNU/Linux gets the refusing adapters of org-platform
+      # and org-platform-host.
+      # Linux with musl is such a target, and its test binaries run on this runner. Consumers
+      # whose system code has moved into org-platform must build there too; the list grows as
+      # Track X moves the rest (crates that compile C cannot be built for musl on this runner).
+      - name: Refusing adapters (a target without an adapter)
+        if: runner.os == 'Linux'
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          cargo clippy --locked -p org-platform -p org-platform-host --all-targets --all-features --target x86_64-unknown-linux-musl -- -D warnings
+          cargo clippy --locked -p org-supervise -p org-spool -p org-socket --lib --target x86_64-unknown-linux-musl -- -D warnings
+          cargo test --locked -p org-platform -p org-platform-host --all-features --target x86_64-unknown-linux-musl
+
       - name: cargo clippy
-        run: cargo clippy --locked --workspace --all-targets ${{ matrix.clippy-flags }} -- -D warnings
-
-      - name: clippy (Linux host)
-        if: runner.os == 'Linux'
-        # `-A dead_code` leaves every `expect(dead_code)` in these crates unfulfilled, so that lint is
-        # allowed here too; the macOS job still checks each expectation.
-        run: cargo clippy --locked -p org-host -p agentic-org --all-targets -- -D warnings -A dead_code -A unused_imports -A unfulfilled_lint_expectations
-
-      - name: CLI migration checks (Linux)
-        if: runner.os == 'Linux'
-        run: cargo test --locked -p agentic-org --lib --test cli
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       # agentic-org-web's dependency-closure test reads the locked graph for every platform with
       # `cargo metadata --offline`. A build downloads only this platform's packages, so the rest
@@ -81,8 +80,37 @@ jobs:
       - name: cargo fetch (every platform's locked packages)
         run: cargo fetch --locked
 
+      # --no-fail-fast: a failing test binary must not hide the result of every crate after it.
       - name: cargo test
-        run: cargo test --locked --workspace ${{ matrix.test-flags }}
+        run: cargo test --locked --workspace --no-fail-fast
+
+  # ADR-0017 LNX-5: a change never adds a file to .github/platform-conditionals.allow or raises a
+  # count in it. A branch is compared with where it left v1, the integration branch; a push to v1
+  # with the commit it replaced.
+  platform-list:
+    name: Platform conditionals list only shrinks
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compare the list with its base
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$GITHUB_REF" = "refs/heads/v1" ]; then
+            base="$BEFORE"
+          else
+            base="$(git merge-base HEAD origin/v1)" || {
+              echo "This branch shares no history with v1."; exit 1; }
+          fi
+          case "$base" in
+            ""|0000000000000000000000000000000000000000)
+              echo "No base commit to compare with."; exit 0 ;;
+          esac
+          python3 .github/scripts/platform_allowlist_shrinks.py "$base"
 
   # The UI checks run in a browser against the app's own code and fakes, with no Tauri and nothing
   # platform-specific, so they run on Linux only. Node and Bun are both pinned.

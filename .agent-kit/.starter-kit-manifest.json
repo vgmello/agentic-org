@@ -1,11 +1,11 @@
 {
   "files": {
     ".agent-kit/.gitignore": "f389e43cfdd5a3fd5875bb837688d5d3b19f05663becad58552dae018418ab60",
-    ".agent-kit/DECISIONS.md": "0af4a0a0d04db6cae057e585a8f885736881e69002a9f415da66093df4f9e36c",
-    ".agent-kit/PROJECT_MAP.md": "90e5fc47566cb157006ae5d49ce2787b409d6cc7aac5ffe4b97c202b78b6e3e6",
-    ".agent-kit/WORKFLOW.md": "794d11cfd37a7144cab88ca8a7d7d9c91efed93dfa22c164afe8fdd4eab3e046",
+    ".agent-kit/DECISIONS.md": "fd4f7312f620578da6add74b1e66fe1ef9a441ed5a81f7439b7b1db1d76a5101",
+    ".agent-kit/PROJECT_MAP.md": "a4c6d241dd43f35f6b8e538b0292e19c07ead97c2f044084b138d020e1a6f876",
+    ".agent-kit/WORKFLOW.md": "c40842fc00bc38974c63c3b229b01860555ce6dd3835885dbb3e4b26b062932e",
     ".agent-kit/context-tools.json": "c80617ab93495224c2f55425b15115807a624084b8542f6f20fd05857a7db99c",
-    ".agent-kit/memory-tools.json": "4ae9b9db0cfc4e756cae6e3fc90032f90e25e2b272c997e437d1ca64c9ad2fa7",
+    ".agent-kit/memory-tools.json": "873764c10cfb48d5e795adcbce7b8c9270a290d2d4b8179977b7ab71255909e9",
     ".agent-kit/policy/hindsight/Dockerfile": "daceecb90e2a693729566a388647b74a4acc73e89bdc36b941305d820189faf9",
     ".agent-kit/policy/hindsight/download_models.py": "48c15a4eb4e68074b4405c4998c442dd5f0aef897f81bdc55e50ebe5531624ba",
     ".agent-kit/policy/hindsight/requirements.txt": "669692449bd95131b226878484b29de49bdce4797f784b29464caee0530c7a88",
@@ -13,26 +13,26 @@
     ".agent-kit/policy/model-routing.json": "4e2419772f7014f13964f213bbbeca95a1b38f4175c41088908626e5ebeafe22",
     ".agent-kit/policy/repowise-requirements.txt": "71bcdffbeb3f5586d3fddc462160cd9840acd25a42261b6b8a11233912d70c79",
     ".agent-kit/policy/repowise.in": "f64b303ded1d62559d58d1ecb016bd0b853a1e66002fa1543264602d7083d24c",
-    ".agent-kit/reference/ADOPT.md": "392cbb62bc36910e1949e95952b48cde58c7cd1f38393c0f7564c4ff0ffea55e",
-    ".agent-kit/reference/CODEX_ONLY.md": "e58954dd49137948bc02d5f0556ca9cccf5b6b1ebe69c74f614af0c50e127ea8",
-    ".agent-kit/reference/CONTEXT_TOOLS.md": "8dee331705b95453870e4bd4d691a84ef122851fb9b1389f34a68b332456933e",
+    ".agent-kit/reference/ADOPT.md": "97cff558abf15909fb35fb81bdbd3ba50d737af0edf79447b24ceef150e03cb3",
+    ".agent-kit/reference/CODEX_ONLY.md": "80e1b95acf6c586807abde151084a09465091764fef71423fbc6d74cdc628201",
+    ".agent-kit/reference/CONTEXT_TOOLS.md": "968c2809ce0ef55434c35aeb5db130885a408ffb9b65fd683dd6f4e1bcf78f46",
     ".agent-kit/reference/HINDSIGHT.md": "a2744f7b427f6e32db6370686403274a785acf10dfe76e3aaa68ba0e82296008",
     ".agent-kit/reference/PROJECT_CAPABILITIES.md": "2ca5efb0992d078b8b858f2eb1af9d7d68d31dae3d987fdf012ea41713fdf67b",
-    ".agent-kit/runtime/kit_codex.py": "e4435b5acaf3022fd0575b728e6cb99da85a88029291bfc163ccb6cc3bed3139",
-    ".agent-kit/runtime/kit_codex_hooks.py": "8dfc1893876d81fc87ed47f1ae6b9bca97da1a123a5cefc24d0ef0be12eb26ae",
-    ".agent-kit/runtime/kit_config.py": "9fcd60f0e7572f7b145267e05ed04871c883a8e6e8943b53560c6ba57f2d224f",
+    ".agent-kit/runtime/kit_codex.py": "08c17e30e02d5a74176a3ab7c3cede7a09e4a59f9199f78b7e9b66c0b9ad3e2e",
+    ".agent-kit/runtime/kit_codex_hooks.py": "191a021103191aabcd37e56bb716d93038ee0d71bb72c1722b8fc8563d04e3dd",
+    ".agent-kit/runtime/kit_config.py": "4b5e61d62a0843bf3dab679dc988542a467c97e49dd5a690a21dea0025f0b78e",
     ".agent-kit/runtime/kit_context.py": "8dbcefebfc9e80d9fc58f37499f873ab32529a3455a142f750c4ce005768146d",
     ".agent-kit/runtime/kit_context_setup.py": "ab2b78c41e2cd146a36c81d928ab58125197cb0b18bdc2dca7ed86a7d5767bd4",
-    ".agent-kit/runtime/kit_doctor.py": "c0bbbdb48f8036f89f4b20b4abd3fa6f11b6a1d45d46209b877a6074abbcc061",
-    ".agent-kit/runtime/kit_evidence.py": "a7c9d7160dd62ea273feb8870b8836dde116ecae00731e0fbd9f5c747d2d80e9",
+    ".agent-kit/runtime/kit_doctor.py": "df7e45959990a4df88b16091e749b41133de7d7fa52c4b807b24faee571fbd59",
+    ".agent-kit/runtime/kit_evidence.py": "37fad9e6cb7cadbf70df78cfb3675f0883fbbabfaf55f64b6a1810f55af18d2c",
     ".agent-kit/runtime/kit_hindsight.py": "f926893df907114de43e4b76f8fc08dab53a1378a1989bfc312a0a5f01ed8adc",
-    ".agent-kit/runtime/kit_hooks.py": "07b7e1d6cc9ee915eb04484592a4cf03d7caad4373383afb2f6e6f682f754f03",
+    ".agent-kit/runtime/kit_hooks.py": "15999d16a9fd750dd0caee9a6ba0df763e8ba2d6e3ac35ecab312968b486200a",
     ".agent-kit/runtime/kit_memory.py": "94a0190e2d998a0cbff9dfe2164e770de6b275f59fd27fe5cba36b7b37cbfdba",
     ".agent-kit/runtime/kit_metrics.py": "e3c031653f3e436ef7a417618b43ae23b7169a06a6339c461e46c7670a063078",
-    ".agent-kit/runtime/kit_policy.py": "3aa4bcd7ddaab23e65ae7323422e99fae2c9cfd2a846b73b354dd627e5cd668f",
-    ".agent-kit/runtime/kit_review.py": "e8f3e1ef3b191cb50f7afa73eb0961eafe319a5e104f834a6b035faa3b9f950c",
+    ".agent-kit/runtime/kit_policy.py": "0a451738c0f1c706bbe342889c7ae1c9c785fdb40d5d9543888697ac03fc6f11",
+    ".agent-kit/runtime/kit_review.py": "2097d8042b59039ae8665148c261068c986014417c43cdb623e79157e06b1f96",
     ".agent-kit/runtime/kit_skills.py": "8b208ee6cc5b3baf12f18d8e18de4b1ed85217702067eb68706cf6305a298f94",
-    ".agent-kit/skill-catalog.json": "021ed08f485d60c611947647770ef0f762b312a6a811dcdc007e79dcf4d837f4",
+    ".agent-kit/skill-catalog.json": "f407c89e7d8b6a6c4a5bde10c763fd30f15a5e26ea4b7704a46a8ec21621ab0d",
     ".agent-kit/templates/ADOPTION.md": "cf8a1974c95d9edb66f144c61917300d62131f1382aaa396f1964dacb697314a",
     ".agent-kit/templates/ARCHITECTURE_DECISION.md": "7e2173a73972d6e4f8cf904d46df3a6edcc3efb3ff052cdee76499a7fbd51108",
     ".agent-kit/templates/EXPERIMENT.json": "1efd8da9257495ee5a5e4f5a4b1db62ba08def669748cec8c6c6394782c5b1d4",
@@ -49,7 +49,7 @@
     ".agent-kit/templates/SUBSYSTEM_MAP.md": "7e1341c640a1c81e95817b21e73b3c3bbfd6e5b76432ca84adc83eaf9e5ad2c7",
     ".agent-kit/templates/TASK_ASSESSMENT.json": "1a05a120b6ec7b4edfc78a4105beb9435e51755f81a2d39a371c5c0ccb47ca2c",
     ".agent-kit/templates/TASK_STATE.md": "d96a929eba32ff53f864552bed15b0c634bb2aaf69680787c5240276319e1131",
-    ".agent-kit/verification.json": "da0e44b6a33c53f87d1141c734096fe38718d0342c4fc4b7f89f919e2a2457d4",
+    ".agent-kit/verification.json": "37998a713ec98bc901d1a3929098dc3dfc57cfda4841bdbc31e71b9c2894e49a",
     ".agents/skills/architecture-decisions/SKILL.md": "81f28f4dfd2531ec9b88e7844db0dbc30ba382c6512e969e8a3d5ad3286fa0c8",
     ".agents/skills/bounded-lookup/SKILL.md": "88ccf1ca292dbf264dd18983db0e5189a356fb57d31dfaa1a44b0da697a15726",
     ".agents/skills/code-navigation/SKILL.md": "194ffe11f756fef9003ef4019f62601d8d6a7d9ebe409b638af504b7f191916c",
@@ -68,17 +68,18 @@
     ".codex/agents/codebase-scout.toml": "3594d91002a9101b2be82afd3dbddbf2d64cc8aa35b8ffda63ac8a2958cfcbbb",
     ".codex/agents/fullstack-engineer.toml": "7e6721cf784f6a88009e92bc7447e714fd7c97fc1b9ce7af95e785b44fbe9cc2",
     ".codex/agents/staff-engineer.toml": "eaa824d546a72f1692badf189989d099abf597635f0d8aa552c999e8da8405da",
-    ".codex/config.toml": "e011d15040c3e784be0c377bf2883132a7cd640cb7e42846aecf37b75d2b4974",
+    ".codex/config.toml": "df51918b40eec9c98b07a642eb6dc9e983126710a6ed3793ec0b08076068ebdb",
     ".codex/hooks.json": "44d5eeb100bfe70c9e5c2ec6868345567bc87851662bb97492d6ac433de3a525",
-    "AGENTS.md": "cc2dd7a13948e5ee836acbe072dfd4c0f7e18ad91973c710b5efad6861f22f19",
+    "AGENTS.md": "040676e026afe222d7b28efd2f13a43fe06b67de1646ea929d0db439a79044a1",
     ".agent-kit/runtime/kit_hindsight_embed.py": "2a60a49711d30708f76de68c807f65c0f9bcb69e790bfe1ae11b9c13ea8447e9",
-    ".agent-kit/policy/hindsight/embed.json": "9217050898e809066002cdba90262cb79af75320df62d45795b0f1cd10f28de1"
+    ".agent-kit/policy/hindsight/embed.json": "9217050898e809066002cdba90262cb79af75320df62d45795b0f1cd10f28de1",
+    ".agent-kit/policy/review-sandbox.json": "19b941f4e340d3b7848a52de24df0b0d3e09a36e1e662c78068ecf654156f130"
   },
   "kit_version": "0.10.0",
   "mode": "codex-only",
   "version": 1,
   "local_adaptations": {
-    "reason": "Owner explicitly requested local hindsight-embed daemon with Codex-backed native memory instead of Docker on 2026-11-15. Reviewed-record bank remains separate and chunk-only. Review-runner children disable native memory hooks/MCP to preserve independent read-only review isolation. The standalone plan-review recipe and native architecture role also require an isolated parent/process. Owner switched the Codex model from gpt-6.1-sol to gpt-6.2-sol on 2026-11-18 (live call confirmed access); the routing policy, runner, validator, doctor text, Codex roles, plan-review recipe and model references in reference/skills docs carry that local model pin. Efforts and gates unchanged.",
+    "reason": "Owner explicitly requested local hindsight-embed daemon with Codex-backed native memory instead of Docker on 2026-11-15. Reviewed-record bank remains separate and chunk-only. Review-runner children disable native memory hooks/MCP to preserve independent read-only review isolation. The standalone plan-review recipe and native architecture role also require an isolated parent/process. Owner switched the Codex model from gpt-6.1-sol to gpt-6.2-sol on 2026-11-18 (live call confirmed access); the routing policy, runner, validator, doctor text, Codex roles, plan-review recipe and model references in reference/skills docs carry that local model pin. Efforts and gates unchanged. Fresh reviews run in a disposable copy-on-write clone of the checkout with a private temp folder (policy/review-sandbox.json, read from the task's base commit), so they can run every project check (read-only real checkout in workspace-write mode); the user Codex config (and its MCP servers) is not loaded; the turn's processes are killed and the clone deleted afterwards; repair turns are pinned to the real checkout with -C. Network is on (accepted risk; owner decision 2026-11-18). Review turns use danger-full-access so browser checks can run (owner decision 2026-11-18; macOS's Codex sandbox refuses browsers); the runner rejects a review that changes source files, HEAD, the index, git config, hooks and info (with modes), the policy's protected refs (integration branches, tags, replace refs), shallow, object alternates or linked-worktree pointers (also after a timeout or failed cleanup); other branches and their upstream tracking settings, remote-tracking refs, stash, other worktrees added or deleted, ignored files, the run folder, git objects, hooksPath targets, included/global/submodule git config, paths outside the checkout and escaped processes are not detected. Kit docs that call reviews read-only mean review-only in full-access mode.",
     "source_revision": "01e0d2f8ec338cf84dcbf15fe158ee5181fbd0b1",
     "files": {
       ".agent-kit/runtime/kit_hindsight.py": {
@@ -87,7 +88,7 @@
       },
       ".agent-kit/runtime/kit_doctor.py": {
         "upstream_sha256": "86e1d6738a47d2cbc518fa22623af8c8dfe09ed1e642caad78e38b4df59c43c7",
-        "local_sha256": "c0bbbdb48f8036f89f4b20b4abd3fa6f11b6a1d45d46209b877a6074abbcc061"
+        "local_sha256": "df7e45959990a4df88b16091e749b41133de7d7fa52c4b807b24faee571fbd59"
       },
       ".agent-kit/runtime/kit_hindsight_embed.py": {
         "upstream_sha256": null,
@@ -99,7 +100,7 @@
       },
       ".agent-kit/runtime/kit_codex.py": {
         "upstream_sha256": "730b2ae4f14611886d9ed5f8cbaabf1daec3aeac52b5f53a9e0950c6fbccf878",
-        "local_sha256": "e4435b5acaf3022fd0575b728e6cb99da85a88029291bfc163ccb6cc3bed3139"
+        "local_sha256": "08c17e30e02d5a74176a3ab7c3cede7a09e4a59f9199f78b7e9b66c0b9ad3e2e"
       },
       ".agents/skills/plan-review/SKILL.md": {
         "upstream_sha256": "241ed1641b19611521e3f759d4a5c0c041e7ed1f68a4dcccf4d1dff09924e5c8",
@@ -115,15 +116,15 @@
       },
       ".agent-kit/reference/CODEX_ONLY.md": {
         "upstream_sha256": "5d7a29a0d958f37780df1cc998c9d25c926a6ea599f3bfcd5a6bea42e6c6fe59",
-        "local_sha256": "e58954dd49137948bc02d5f0556ca9cccf5b6b1ebe69c74f614af0c50e127ea8"
+        "local_sha256": "80e1b95acf6c586807abde151084a09465091764fef71423fbc6d74cdc628201"
       },
       ".agent-kit/reference/CONTEXT_TOOLS.md": {
         "upstream_sha256": "72fb89bfab36f75ec00ee9f32fd925b8ee62ca0b33130505d795a23d56ebc1fe",
-        "local_sha256": "8dee331705b95453870e4bd4d691a84ef122851fb9b1389f34a68b332456933e"
+        "local_sha256": "968c2809ce0ef55434c35aeb5db130885a408ffb9b65fd683dd6f4e1bcf78f46"
       },
       ".agent-kit/runtime/kit_policy.py": {
         "upstream_sha256": "94c5f7259dbd590616d0ea8767732a7ad7edd83664b5dea2b3cc5f7b74602b1e",
-        "local_sha256": "3aa4bcd7ddaab23e65ae7323422e99fae2c9cfd2a846b73b354dd627e5cd668f"
+        "local_sha256": "0a451738c0f1c706bbe342889c7ae1c9c785fdb40d5d9543888697ac03fc6f11"
       },
       ".agents/skills/bounded-lookup/SKILL.md": {
         "upstream_sha256": "c1a0a1b0c8a801eb5d6c46ad9acd8df6bbf80096ff6879628e3df6befd919a9d",
@@ -144,6 +145,10 @@
       ".codex/agents/staff-engineer.toml": {
         "upstream_sha256": "95923ebe0deefae124f0da03b42c51750e6154d59f6b035ce4adea04e8095162",
         "local_sha256": "eaa824d546a72f1692badf189989d099abf597635f0d8aa552c999e8da8405da"
+      },
+      ".agent-kit/policy/review-sandbox.json": {
+        "upstream_sha256": null,
+        "local_sha256": "19b941f4e340d3b7848a52de24df0b0d3e09a36e1e662c78068ecf654156f130"
       }
     }
   }

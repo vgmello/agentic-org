@@ -60,16 +60,6 @@
       "count": 1
     }
   },
-  "src/lib/modules/employees/AgentsTabs.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    }
-  },
-  "src/lib/modules/employees/AgentsTabs.test.ts": {
-    "@typescript-eslint/no-empty-object-type": {
-      "count": 1
-    }
-  },
   "src/lib/modules/messaging/components/Rich.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 1
@@ -209,11 +199,6 @@
       "count": 1
     }
   },
-  "src/routes/(onboarding)/create/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 2
-    }
-  },
   "src/routes/(shell)/chat/+page.svelte": {
     "no-undef": {
       "count": 2
@@ -246,11 +231,6 @@
     },
     "svelte/no-useless-mustaches": {
       "count": 1
-    }
-  },
-  "src/routes/(shell)/teams/(views)/members/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 3
     }
   },
   "src/routes/(shell)/work/+page.svelte": {

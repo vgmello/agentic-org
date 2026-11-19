@@ -8,6 +8,12 @@
 //! discovery on macOS and Linux. Real harnesses whose tools detach require recovery
 //! integration before use. PTYs are a later delivery.
 //!
+//! This crate is the ownership policy. Everything it asks of the kernel goes through
+//! `org_platform::process`, which has a macOS adapter, a GNU/Linux adapter and a
+//! refusing one for every other Unix target: there the preparation check, the first
+//! step of every spawn, probe and recovery, returns that refusal before anything is
+//! started or signalled.
+//!
 //! All processes in the embedding program must preserve child ownership: never install
 //! SIGCHLD=SIG_IGN/SA_NOCLDWAIT or reap arbitrary children. Preparation checks the former;
 //! detecting a stolen child disarms this owner before any further signal.
@@ -16,14 +22,10 @@
 #![warn(missing_docs)]
 #![deny(clippy::disallowed_methods)]
 
-#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
-compile_error!("org-supervise requires macOS or GNU/Linux");
-
 mod child;
 mod cleanup;
 mod environment;
 mod files;
-mod platform;
 pub mod recovery;
 pub mod runtime;
 mod spawn;

@@ -16,7 +16,8 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let temp = tempfile::tempdir_in("/private/tmp").unwrap();
+        let temp =
+            tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
         let input = temp.path().join("input");
         fs::create_dir(&input).unwrap();
         fs::create_dir(input.join("ui")).unwrap();
@@ -123,8 +124,11 @@ fn durable_pin_reopens_exact_retry_keeps_bytes_and_refuses_conflicts_downgrades(
     assert!(store.recover().is_err());
     let counts = super::super::files::take_flush_counts();
     assert!(counts[0] > 0 && counts[2] > 0);
-    #[cfg(target_os = "macos")]
-    assert_eq!(counts[0], counts[1]);
+    // Every file flush of the publication reached the device: exactly as many device
+    // flushes as this system makes per flush (the platform's fixed fact: one on macOS, so
+    // the two counts are equal there; none on GNU/Linux, where `fsync` is the device flush).
+    let per_flush = org_platform::fs::testing::device_flushes_per_full_sync().unwrap();
+    assert_eq!(counts[1] as u64, counts[0] as u64 * per_flush, "{counts:?}");
     println!("generated release store actual successful flush calls: file_fsync={}, macOS_F_FULLFSYNC={}, directory_fsync={}; process/reopen evidence, not physical power-loss proof",counts[0],counts[1],counts[2]);
 }
 

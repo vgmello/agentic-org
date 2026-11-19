@@ -120,19 +120,13 @@ impl Admin {
     /// The caller is a local `host.sock` client that passes the host's signing check.
     fn admit(&self, c: &Connection, received: Received) -> Result<(), ApiError> {
         admit_with(c.channel_kind(), || {
-            #[cfg(target_os = "macos")]
-            {
-                self.policy.allows(&crate::app_auth::SocketPeer {
-                    stream: c.socket(),
-                    accepted: c.accepted(),
-                    received,
-                })
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                let _ = (&self.policy, received);
-                false
-            }
+            // On a system that cannot identify a peer's image the peer has no token and is
+            // refused (`app_auth::SocketPeer`).
+            self.policy.allows(&crate::app_auth::SocketPeer {
+                stream: c.socket(),
+                accepted: c.accepted(),
+                received,
+            })
         })
     }
 

@@ -192,11 +192,23 @@ fn hint_capability_and_initial_cursor_are_enabled_only_for_registered_hq() {
 }
 
 #[test]
+fn without_a_feed_the_registered_hq_advertises_no_hints_and_keeps_its_list() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let mut shared = shared();
+    shared.register_inbox(hq(rows(1)), Ok(true));
+    shared.ports.feed = None;
+    shared.enable_inbox_hints().unwrap();
+    assert!(!shared.hello.supports("inbox.changed"));
+    assert!(shared.hint.is_none());
+    assert!(shared.hello.supports("inbox.list"));
+}
+
+#[test]
 fn hint_cursor_failure_is_returned_without_advertising_a_working_capability() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     let mut shared = shared();
     shared.register_inbox(hq(rows(1)), Ok(true));
-    shared.ports.feed = Box::new(NoHead);
+    shared.ports.feed = Some(Box::new(NoHead));
     assert!(shared.enable_inbox_hints().is_err());
     assert!(!shared.hello.supports("inbox.changed"));
     assert!(shared.hint.is_none());
@@ -207,7 +219,7 @@ fn hint_cursor_failure_still_emits_ready_without_capability_or_owner_delivery() 
     let _spawn = crate::transfer::tests::without_process_spawn();
     let mut shared = shared();
     shared.register_inbox(hq(rows(1)), Ok(true));
-    shared.ports.feed = Box::new(NoHead);
+    shared.ports.feed = Some(Box::new(NoHead));
     let mut control = crate::startup::Control::new(
         crate::fdswap::ControlPipe {
             from_host: tempfile::tempfile().unwrap(),

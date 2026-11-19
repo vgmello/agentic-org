@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { signInAsAdmin } from './web-session';
+import { enterMockedOrganization } from './mock-organization';
 
 // Organization settings › Costs against the mock costs API (costs-and-insights-ux §1 Organization › Cost, §3, §4, §5;
 // app-shell-ux §0.1). Mock: e2e/fakes/modules/costs.ts; its `?mock=` switches are listed there. The mock's clock is
@@ -14,11 +15,7 @@ async function openOrganization(page: Page) {
 			recovery: 'acknowledged'
 		}
 	]);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Lumen Labs');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	// The first test of a run may wait on the dev server compiling the shell.
-	await expect(page).not.toHaveURL(/\/create$/, { timeout: 30_000 });
+	await enterMockedOrganization(page, 'Lumen Labs');
 }
 
 const cost = (page: Page) => page.getByTestId('organization-cost');

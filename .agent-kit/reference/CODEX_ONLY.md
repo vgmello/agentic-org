@@ -34,7 +34,8 @@ The default model is `gpt-6.2-sol` (owner switch from `gpt-6.1-sol` on 2026-11-1
 confirmed access; the effort levels below were set for 6.1 and are kept): Low for bounded extraction only, Medium for
 fully evidenced familiar implementation, High for lead planning and other bounded
 implementation/review, Xhigh for ambiguous/high-risk work and architecture review.
-Final review uses High, or Xhigh when required by risk. These are starting defaults,
+The review/fix rounds run on the routing policy's `review.model` (`gpt-6.1-sol` or
+`gpt-6.2-sol`). Final review uses High, or Xhigh when required by risk. These are starting defaults,
 not measured proof of optimal efficiency. Max is not a default or automatic retry.
 
 Keep the original author context. Follow the installed review-cycle skill: fresh

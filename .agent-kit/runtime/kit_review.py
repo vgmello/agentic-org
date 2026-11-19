@@ -24,6 +24,16 @@ def package(repo, base, receipt_path):
     if not any(source.get("root") == str(root) for source in receipt["sources_after"]):
         raise ValueError("Receipt does not cover this checkout")
     resolved = git(root, "rev-parse", "--verify", "--end-of-options", f"{base}^{{commit}}").decode().strip()
+    scope = report["scope"]
+    if scope != "all" and not scope.get("configuration_changed"):
+        # A scoped receipt judged only the files it saw change; every file this review changes must be one.
+        wanted_from = git(root, "merge-base", "HEAD", resolved).decode().strip()
+        raw = git(root, "diff", "--name-only", "--no-renames", "-z", wanted_from, "--")
+        raw += git(root, "ls-files", "--others", "--exclude-standard", "-z")
+        wanted = {str(root / os.fsdecode(p)) for p in raw.split(b"\0") if p}
+        if not wanted <= set(scope.get("changed", [])):
+            raise ValueError(f"Verification was scoped to {scope.get('base')}, which covers less than {base}; "
+                             f"rerun kit_hooks.py check --base {base} or --all")
     paths = git(root, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", resolved, "--")
     changed = [os.fsdecode(p) for p in paths.split(b"\0") if p]
     if any(protected_name(Path(p).name) for p in changed):

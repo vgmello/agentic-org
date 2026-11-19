@@ -191,3 +191,132 @@ fn records_with_unknown_fields_or_over_the_size_limit_are_refused() {
     fs::write(&file, &padded).unwrap();
     assert!(journal.read().is_err(), "a record over 64 KiB is not read");
 }
+
+#[test]
+fn a_credential_directory_is_recorded_only_where_a_release_host_keeps_one() {
+    use ProtectedStore::{Keychain, ReleaseDirectory};
+    // (store, release build, instance reserved, directory recorded)
+    for allowed in [
+        // The Keychain, and a system with no protected store: never a directory.
+        (Some(Keychain), true, false, false),
+        (Some(Keychain), true, true, false),
+        (Some(Keychain), false, true, false),
+        (None, true, true, false),
+        (None, false, false, false),
+        // A release directory. A release build names it once its instance is reserved.
+        (Some(ReleaseDirectory), true, false, false),
+        (Some(ReleaseDirectory), true, true, true),
+        // A directory given before the instance is reserved (non-interactive setup).
+        (Some(ReleaseDirectory), true, false, true),
+        // A development build keeps its development stores and may record either.
+        (Some(ReleaseDirectory), false, true, false),
+        (Some(ReleaseDirectory), false, true, true),
+        (Some(ReleaseDirectory), false, false, false),
+    ] {
+        let (store, release, reserved, recorded) = allowed;
+        assert_eq!(
+            credentials_rule(store, release, reserved, recorded),
+            Ok(()),
+            "{allowed:?}"
+        );
+    }
+    for refused in [
+        (Some(Keychain), true, true, true),
+        (Some(Keychain), true, false, true),
+        (Some(Keychain), false, true, true),
+        (None, true, true, true),
+        (None, false, false, true),
+        // A reserved release instance whose record does not say where its secrets are.
+        (Some(ReleaseDirectory), true, true, false),
+    ] {
+        let (store, release, reserved, recorded) = refused;
+        assert!(
+            credentials_rule(store, release, reserved, recorded).is_err(),
+            "{refused:?}"
+        );
+    }
+}
+
+/// The record on the system these tests run on: where a release host keeps a credential
+/// directory, the property is validated strictly and frozen once it is written; where it
+/// keeps none (the Keychain), a record that names one is refused.
+#[test]
+fn the_credential_directory_is_validated_strictly_and_frozen_with_the_record() {
+    let (_temp, base) = base();
+    let journal = Journal::open(&base, None).unwrap();
+    let r = journal
+        .freeze(input(base.join("instance")), true, pin())
+        .unwrap();
+    assert_eq!(r.credentials, None);
+    let id = crate::ids::uuid_v7().unwrap();
+    let directory = base.join("state/agentic-org/credentials").join(&id);
+    let named = Record {
+        instance_id: Some(id.clone()),
+        credentials: Some(directory.clone()),
+        ..r.clone()
+    };
+    if org_platform_host::credentials::protected_store() != Ok(ProtectedStore::ReleaseDirectory) {
+        // Nothing falls back to a directory: the record cannot name one here.
+        assert!(journal.write(&named).is_err());
+        assert_eq!(journal.read().unwrap().unwrap(), r);
+        return;
+    }
+    // Not an absolute, normalized path: refused, and nothing is written.
+    for bad in [
+        "relative/credentials",
+        "",
+        "/",
+        "/secrets/../data",
+        "/secrets/./x",
+        "/secrets//x",
+        "/secrets/",
+    ] {
+        let broken = Record {
+            credentials: Some(PathBuf::from(bad)),
+            ..named.clone()
+        };
+        assert!(journal.write(&broken).is_err(), "{bad:?}");
+    }
+    assert_eq!(journal.read().unwrap().unwrap(), r);
+    // Written with the instance it belongs to, it is read back exactly, by the journal and
+    // by the host's lock-free snapshot.
+    journal.write(&named).unwrap();
+    assert_eq!(journal.read().unwrap().unwrap(), named);
+    assert_eq!(
+        Journal::snapshot(&base, None).unwrap().credentials,
+        Some(directory.clone())
+    );
+    // Frozen: it cannot move or go, whatever else moves forward.
+    let mut step = named.clone();
+    step.service_registered = true;
+    journal.write(&step).unwrap();
+    for changed in [
+        Record {
+            credentials: Some(base.join("elsewhere")),
+            ..step.clone()
+        },
+        Record {
+            credentials: None,
+            ..step.clone()
+        },
+    ] {
+        assert!(journal.write(&changed).is_err(), "{changed:?}");
+    }
+    assert_eq!(journal.read().unwrap().unwrap(), step);
+    // The property has its own key; a record without the key reads as one that names none,
+    // and any other shape of it is refused.
+    let file = base.join("setup/default").join(FILE);
+    let raw: serde_json::Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    assert_eq!(raw["credentials"], serde_json::json!(directory));
+    for shape in [
+        serde_json::json!(7),
+        serde_json::json!(["/a"]),
+        serde_json::json!({}),
+    ] {
+        let mut tampered = raw.clone();
+        tampered["credentials"] = shape;
+        fs::write(&file, serde_json::to_vec(&tampered).unwrap()).unwrap();
+        assert!(journal.read().is_err());
+        assert!(Journal::snapshot(&base, None).is_err());
+    }
+}
