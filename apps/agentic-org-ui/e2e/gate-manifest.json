@@ -467,6 +467,7 @@
 				"navigation.spec.ts",
 				"shell-*.spec.ts",
 				"desktop-navigation-focus.spec.ts",
+				"team-page.spec.ts",
 				"look-primitives.spec.ts",
 				"focus-primitives.spec.ts",
 				"focus-primitives-default-font.ts",
@@ -610,8 +611,8 @@
 		},
 		{
 			"from": "src/lib/modules/teams/features/{team-actions/TeamDialogs,team-page/AddPersonToTeam}.svelte",
-			"to": "src/lib/components/{NewTeamSheet,MoveTeamDialog,RenameTeamDialog,DeleteTeamDialog,AddPersonSheet}.svelte",
-			"why": "The Teams index and a team's page reuse the org chart's team dialogs (new, move, rename, delete) through TeamDialogs, and a team's page opens the existing add-a-person flow as the top-bar New does, without owning them; the org-chart specs cover those dialogs and flows."
+			"to": "src/lib/{components/{NewTeamSheet,MoveTeamDialog,RenameTeamDialog}.svelte,org/team-edit.ts}",
+			"why": "The Teams index and a team's page reuse the org chart's team dialogs (new, move, rename) through TeamDialogs, and read the org chart's team helpers (the team list for Home team, Delete's effects on contributed projects), without owning them; the org-chart specs cover those dialogs and helpers. Archive, Delete and Add a person from a team are the teams module's own (team-page.spec.ts)."
 		},
 		{
 			"from": "src/lib/modules/teams/features/{browse-teams/TeamsIndex,team-page/TeamPage}.svelte",

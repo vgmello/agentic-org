@@ -2,21 +2,24 @@
   @component
   The dialogs behind a team's menu (§7.2, §7.5, §7.7, §7.10, TEAM-15), shared by the Teams index and a team's
   page: New team (top level or under a team), Move to…, Rename…, Change lead…, Archive… and Delete….
-  `open(action, team)` and `openNew(parentId?)` start one. After a confirmed change it calls `reload` and says
-  so; a removed or created team goes to the caller, which knows where focus belongs.
+  `open(action, team)` and `openNew(parentId?)` start one. Archive and Delete first check what still points at the
+  team and refuse in the dialog while anything does (§7.10, TEAM-9). After a confirmed change it calls `reload` and
+  says so; a removed or created team goes to the caller, which knows where focus belongs.
 -->
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
 	import NewTeamSheet from '$lib/components/NewTeamSheet.svelte';
 	import MoveTeamDialog from '$lib/components/MoveTeamDialog.svelte';
 	import RenameTeamDialog from '$lib/components/RenameTeamDialog.svelte';
-	import DeleteTeamDialog from '$lib/components/DeleteTeamDialog.svelte';
 	import { membersApi } from '$lib/modules/members';
 	import { toAppError } from '$lib/office/api';
 	import type { OrgSession } from '$lib/org/session';
+	import { deleteSummary } from '$lib/org/team-edit';
 	import type { OrgSnapshot } from '$lib/proto';
+	import { teamsApi } from '../../api';
+	import { teamBlockers, type BlockerCheck, type TeamRemoval } from '../../blockers';
 	import type { LeadCandidate, TeamAction, TeamRow } from '../../types';
-	import ArchiveTeamDialog from '../archive-team/ArchiveTeamDialog.svelte';
+	import RemoveTeamDialog from '../remove-team/RemoveTeamDialog.svelte';
 	import ChangeLeadDialog from '../change-lead/ChangeLeadDialog.svelte';
 
 	let {
@@ -41,7 +44,16 @@
 	let current = $state<TeamAction | 'new' | undefined>();
 	let newUnder = $state<string | undefined>();
 	let candidates = $state<LeadCandidate[] | undefined>();
+	let removal = $state<TeamRemoval>('archive');
+	let check = $state.raw<BlockerCheck>({ state: 'checking' });
+	let checkRun = 0;
 	const orgTeam = $derived(target && snapshot.teams.find((t) => t.id === target!.id));
+	// Delete's other effects once nothing blocks it: the projects it only contributes to stay with their owners.
+	const effects = $derived(
+		orgTeam
+			? deleteSummary(snapshot, orgTeam).lines.filter((l) => !l.startsWith('No one is in'))
+			: []
+	);
 
 	/** Opens one dialog with the selected bind: the others stay closed (one overlay at a time). */
 	const isOpen = (which: TeamAction | 'new') => ({
@@ -52,8 +64,13 @@
 	const move = isOpen('move');
 	const rename = isOpen('rename');
 	const lead = isOpen('lead');
-	const archive = isOpen('archive');
-	const remove = isOpen('delete');
+	/** Archive and Delete share one dialog; `removal` says which. */
+	const removing = {
+		get: () => current === 'archive' || current === 'delete',
+		set: (next: boolean) => {
+			if (!next) current = undefined;
+		}
+	};
 
 	async function loadCandidates(teamId: string) {
 		candidates = undefined;
@@ -68,6 +85,27 @@
 		}
 	}
 
+	/** What still points at `teamId`, read fresh each time Archive or Delete is chosen (§7.10, TEAM-9). */
+	async function checkBlockers(teamId: string, kind: TeamRemoval) {
+		const run = ++checkRun;
+		check = { state: 'checking' };
+		try {
+			const [teams, members, projects, work] = await Promise.all([
+				teamsApi.list(organizationId),
+				membersApi.directory(organizationId),
+				teamsApi.projects(organizationId, teamId),
+				teamsApi.work(organizationId, teamId)
+			]);
+			if (run === checkRun)
+				check = {
+					state: 'done',
+					blockers: teamBlockers(teamId, { teams, members, projects, work }, kind)
+				};
+		} catch (e) {
+			if (run === checkRun) check = { state: 'failed', message: toAppError(e).message };
+		}
+	}
+
 	/** Opens New team, at the top level or under `parentId`. */
 	export function openNew(parentId?: string) {
 		newUnder = parentId;
@@ -78,6 +116,10 @@
 		target = team;
 		if (action === 'add-team') return openNew(team.id);
 		if (action === 'lead') void loadCandidates(team.id);
+		if (action === 'archive' || action === 'delete') {
+			removal = action;
+			void checkBlockers(team.id, action);
+		}
 		current = action;
 	}
 </script>
@@ -109,21 +151,15 @@
 		if (r.name) toast.success(`Renamed to ${r.name}.`);
 	}}
 />
-<DeleteTeamDialog
-	bind:open={remove.get, remove.set}
-	team={orgTeam}
-	{snapshot}
-	{session}
-	ondone={async (r) => {
-		if ('stale' in r) return reload();
-		onremoved({ action: 'delete', teamId: target!.id, name: r.name });
-	}}
-/>
-<ArchiveTeamDialog
-	bind:open={archive.get, archive.set}
+<RemoveTeamDialog
+	bind:open={removing.get, removing.set}
+	{removal}
 	team={target}
 	{organizationId}
-	ondone={(r) => onremoved({ action: 'archive', teamId: target!.id, name: r.name })}
+	{check}
+	{effects}
+	onrecheck={() => target && checkBlockers(target.id, removal)}
+	ondone={(r) => onremoved({ action: removal, teamId: target!.id, name: r.name })}
 />
 <ChangeLeadDialog
 	bind:open={lead.get, lead.set}

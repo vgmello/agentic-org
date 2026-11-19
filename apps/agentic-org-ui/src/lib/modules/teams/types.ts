@@ -49,6 +49,8 @@ export interface TeamProjectRow extends TeamProject {
 	key?: string;
 	/** The accountable owner team when this team only contributes. */
 	ownerTeam?: TeamRef;
+	/** The other contributing teams: neither this team nor the owner (TEAM-13). */
+	contributors?: TeamRef[];
 	openWork: number;
 }
 
@@ -61,3 +63,14 @@ export interface LeadCandidate {
 
 /** What a team's menu opens (§7.2): each is one reviewed dialog. */
 export type TeamAction = 'move' | 'rename' | 'lead' | 'add-team' | 'archive' | 'delete';
+
+/** A person added from a team's page (PEOPLE-3, §7.4): one home team, an explicit handle. */
+export interface NewTeamPerson {
+	name: string;
+	/** Lowercase, stored without `@`. */
+	handle: string;
+	homeTeamId: string;
+	contact?: string;
+	/** An explicit employee manager; omitted is No explicit manager. */
+	reportsToId?: string;
+}
