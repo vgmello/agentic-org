@@ -17,12 +17,15 @@
 		now,
 		oncancel,
 		onrenew,
+		renewing,
 		onremove
 	}: {
 		invitations: Invitation[];
 		now: number;
 		oncancel: (invitation: Invitation, button: HTMLElement) => void;
 		onrenew: (invitation: Invitation, button: HTMLElement) => void;
+		/** The invitation being renewed from its row: its button is busy. */
+		renewing?: string | undefined;
 		onremove: (invitation: Invitation, button: HTMLElement) => void;
 	} = $props();
 
@@ -41,6 +44,7 @@
 		class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-line-subtle px-4 py-4 last:border-b-0 min-[640px]:px-6 min-[1024px]:px-8"
 		data-testid="invitation-row"
 		data-invitation={invitation.id}
+		data-office-name={invitation.officeName}
 	>
 		<div class="min-w-0 flex-1 basis-56">
 			<p
@@ -66,7 +70,6 @@
 			{#if live(invitation)}
 				<Button
 					variant="outline"
-					size="sm"
 					class="max-[639px]:min-h-11"
 					aria-label="Cancel invitation for {invitation.officeName}"
 					onclick={(e) => oncancel(invitation, e.currentTarget)}>Cancel invitation</Button
@@ -74,15 +77,16 @@
 			{/if}
 			<Button
 				variant="outline"
-				size="sm"
 				class="max-[639px]:min-h-11"
 				aria-label="New invitation for {invitation.officeName}"
-				onclick={(e) => onrenew(invitation, e.currentTarget)}>New invitation</Button
+				aria-busy={renewing === invitation.id}
+				aria-disabled={renewing === invitation.id}
+				onclick={(e) => onrenew(invitation, e.currentTarget)}
+				>{renewing === invitation.id ? 'Creating…' : 'New invitation'}</Button
 			>
 			{#if !live(invitation)}
 				<Button
 					variant="outline"
-					size="sm"
 					class="max-[639px]:min-h-11"
 					aria-label="Remove the invitation for {invitation.officeName}"
 					onclick={(e) => onremove(invitation, e.currentTarget)}>Remove</Button

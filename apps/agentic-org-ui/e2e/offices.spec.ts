@@ -1849,7 +1849,7 @@ for (const rootFont of [16, 32, 40])
 				await page.addStyleTag({ content: `html { font-size: ${rootFont}px !important; }` });
 				await shot(page, `of2-gutter-${rootFont}-${offset}`, { context: row });
 				const intro = page.getByText(
-					"Where Acme's agents run. HQ keeps the records and approves new offices; other offices keep a copy.",
+					"Where Acme's agents run. HQ keeps the records and approves new offices; every other office keeps a copy.",
 					{ exact: true }
 				);
 				const header = (await intro.boundingBox())!,
@@ -2462,3 +2462,124 @@ for (const width of [320, 390, 640, 1024, 1440]) {
 		await shot(page, `offices-seeded-${width}`);
 	});
 }
+
+// ---- Review fixes: focus never falls to the page when the row that opened a dialog is gone (OF-14, §6a) ----
+
+const focusedIsNotBody = (page: Page) =>
+	page.evaluate(() => document.activeElement !== document.body && document.activeElement !== null);
+
+test('OF-14: after approving a join, focus moves to the new office’s row', async ({ page }) => {
+	await openSeeded(page);
+	await page.getByRole('button', { name: 'Review and approve Laptop' }).click();
+	const dialog = page.getByRole('dialog');
+	await dialog.getByLabel('Type the check code shown on Laptop').fill('K7QP4MZT');
+	await dialog.getByRole('button', { name: 'Approve Laptop' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(
+		rows(page).filter({ hasText: 'Laptop' }).locator('button[aria-haspopup]')
+	).toBeFocused();
+});
+
+test('OF-14: after declining a join, focus moves to its declined invitation', async ({ page }) => {
+	await openSeeded(page);
+	await page.getByRole('button', { name: 'Review and approve Laptop' }).click();
+	const dialog = page.getByRole('dialog');
+	await dialog.getByRole('button', { name: 'Decline' }).click();
+	await dialog.getByRole('button', { name: 'Decline' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(
+		page
+			.getByTestId('invitation-row')
+			.filter({ hasText: 'Laptop' })
+			.getByRole('button', { name: 'New invitation for Laptop' })
+	).toBeFocused();
+});
+
+test('OF-14 OF-13: renewing an ended invitation is busy once, then focus lands on its new row', async ({
+	page
+}) => {
+	await openSeeded(page);
+	const renew = page
+		.getByTestId('invitation-row')
+		.filter({ hasText: 'Old mini' })
+		.getByRole('button', { name: 'New invitation for Old mini' });
+	await renew.dblclick(); // a double click makes one invitation
+	const issued = page.getByRole('dialog').filter({ hasText: 'New invitation for Old mini' });
+	await expect(issued.getByLabel('Invitation')).toHaveValue(/^ao-invite-/);
+	await issued.getByRole('button', { name: 'Done' }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	expect(await focusedIsNotBody(page)).toBe(true);
+	await expect(
+		page
+			.getByTestId('invitation-row')
+			.filter({ hasText: 'Old mini' })
+			.getByRole('button', { name: 'Cancel invitation for Old mini' })
+	).toBeFocused();
+	await expect(page.getByText("That invitation isn't here any more.")).toHaveCount(0);
+});
+
+test('OF-15: the Approve dialog fits at 320 px with 200% text', async ({ page }) => {
+	await page.setViewportSize({ width: 320, height: 900 });
+	await openSeeded(page);
+	await page.addStyleTag({ content: 'html { font-size: 200% !important; }' });
+	await page.getByRole('button', { name: 'Review and approve Laptop' }).click();
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.getByRole('button', { name: 'Approve Laptop' })).toBeVisible();
+	await shot(page, 'offices-approve-320-200', { context: dialog });
+	const outside = await dialog.evaluate((root) =>
+		[root, ...root.querySelectorAll('*')]
+			.filter((e) => {
+				const r = e.getBoundingClientRect();
+				return r.width > 0 && (r.right > window.innerWidth + 0.5 || r.left < -0.5);
+			})
+			.map((e) => e.tagName + (e.textContent ?? '').slice(0, 20))
+	);
+	expect(outside).toEqual([]);
+});
+
+test('OF-9: while the agents can’t be counted, Remove says so instead of hiding the cost', async ({
+	page
+}) => {
+	await enterMockedOrganization(page, 'Lumen Labs');
+	await visit(page, '/offices?org=fails');
+	await expect(rows(page)).toHaveCount(4);
+	await rows(page).filter({ hasText: 'Studio Mac' }).getByRole('button').first().click();
+	await page.getByTestId('remove-office').click();
+	const confirm = page.getByRole('dialog').last();
+	await expect(confirm).toContainText("Its agents couldn't be counted");
+	await expect(confirm).toContainText('becomes unplaced');
+});
+
+test('OFC-2: a failed progress check offers Check status, never a second add', async ({ page }) => {
+	await openSeeded(page, '?add=check-fails');
+	await addOffice(page).click();
+	const dialog = page.getByRole('dialog');
+	await dialog.getByLabel('Office name').fill('Office 2');
+	await dialog.getByRole('button', { name: 'Add office' }).click();
+	await expect(dialog.getByTestId('add-unchecked')).toContainText(
+		"Can't check how adding Office 2 is going"
+	);
+	await expect(dialog.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+	await dialog.getByRole('button', { name: 'Check status' }).click();
+	await expect(page.getByText("Office 2 added. It's starting.")).toBeVisible({ timeout: 10_000 });
+	await expect(rows(page).filter({ hasText: 'Office 2' })).toHaveCount(1);
+});
+
+test('OFC-13: a status change of an office that joined is announced in the spec’s words', async ({
+	page
+}) => {
+	await openSeeded(page);
+	await page.getByRole('button', { name: 'Review and approve Laptop' }).click();
+	const dialog = page.getByRole('dialog');
+	await dialog.getByLabel('Type the check code shown on Laptop').fill('K7QP4MZT');
+	await dialog.getByRole('button', { name: 'Approve Laptop' }).click();
+	await expect(rows(page).filter({ hasText: 'Laptop' }).locator('[data-status-icon]')).toHaveText(
+		'Starting'
+	);
+	await page.waitForTimeout(6_500); // the mock finishes Laptop's first copy of records
+	// Any action that reads the offices again shows the change.
+	const outbox = page.getByTestId('outbox');
+	await outbox.getByRole('button', { name: 'Discard: Assign T-A12 to Pax Moreau' }).click();
+	await page.getByRole('dialog').last().getByRole('button', { name: 'Discard' }).click();
+	await expect(page.getByTestId('office-changes')).toHaveText('Laptop is online');
+});

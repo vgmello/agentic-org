@@ -5,7 +5,7 @@
 //   slow · fails (every call fails) · empty (HQ alone: nothing joined, pending or queued) · unavailable (the production
 //   answer) · gone (approving or renewing finds the request or invitation gone)
 // and ?admin=other (the owner is not the administrator), ?add=waiting (adding on this instance waits for agents),
-// ?add=fails (it fails once). HQ refusing On this instance for a non-administrator is ?admin=other.
+// ?add=fails (it fails once), ?add=check-fails (one progress check fails; the add itself goes on). HQ refusing On this instance for a non-administrator is ?admin=other.
 import type { OfficeInfo } from '$lib/proto';
 import type { OfficesApi } from '../../../src/lib/modules/offices/api';
 import type {
@@ -124,6 +124,9 @@ async function ensure(organizationId: string) {
 	};
 	return state;
 }
+
+/** `?add=check-fails`: whether the one failing progress check has happened. */
+let checkFailed = false;
 
 const secret = () =>
 	`ao-invite-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 12)}-${Math.random().toString(36).slice(2, 12)}`;
@@ -380,6 +383,14 @@ export const officesApi: OfficesApi = {
 	},
 	async addProgress(organizationId, operationId) {
 		const s = await ensure(organizationId);
+		if (query().get('add') === 'check-fails' && !checkFailed) {
+			checkFailed = true;
+			throw {
+				source: 'app',
+				code: 'unreachable',
+				message: "HQ didn't answer. Check that it's running, then try again."
+			};
+		}
 		const op = s.ops.find((o) => o.id === operationId);
 		if (!op) return { phase: 'cancelled' };
 		return progressOf(s, op);

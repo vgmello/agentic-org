@@ -18,7 +18,8 @@
 		office: { id: string; name: string } | undefined;
 		organizationId: string;
 		organizationName: string;
-		agents: number;
+		/** Undefined while counted or when counting failed. */
+		agents: number | undefined;
 		tasks: number;
 		offline: boolean;
 		onchanged: () => void | Promise<void>;

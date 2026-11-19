@@ -22,7 +22,7 @@
 	import { errorClass, helpClass, inputClass, mobileButton } from '$lib/components/classes';
 	import { officesApi } from '../../api';
 	import { CODE_HINT, groupCode, readCheckCode } from '../../check-code';
-	import { agoText } from '../../time';
+	import { agoText, madeAtText } from '../../time';
 	import type { JoinRequest } from '../../types';
 
 	let {
@@ -65,13 +65,7 @@
 	});
 	const read = $derived(readCheckCode(typed));
 	const name = $derived(shown?.officeName ?? 'this office');
-	const created = $derived(
-		shown
-			? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(
-					new Date(shown.invitationCreatedAt)
-				)
-			: ''
-	);
+	const created = $derived(shown ? madeAtText(shown.invitationCreatedAt, Date.now()) : '');
 
 	function change(event: Event & { currentTarget: HTMLInputElement }) {
 		const next = readCheckCode(event.currentTarget.value);
@@ -123,7 +117,10 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+	<DialogContent
+		{onCloseAutoFocus}
+		class="max-h-[calc(100dvh-2rem)] min-w-0 overflow-y-auto sm:max-w-lg"
+	>
 		{#if stage === 'decline'}
 			<DialogHeader>
 				<DialogTitle text={`Decline ${name}?`} />
@@ -156,11 +153,11 @@
 				></DialogFooter
 			>
 		{:else}
-			<form class="grid gap-6" onsubmit={approve} novalidate>
+			<form class="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6" onsubmit={approve} novalidate>
 				<DialogHeader>
 					<DialogTitle text={`Approve ${name}?`} />
 					<DialogDescription class="[overflow-wrap:anywhere]">
-						A computer at {shown?.fromAddress} used the invitation for {name} (created today at {created})
+						A computer at {shown?.fromAddress} used the invitation for {name} (created {created})
 						{shown ? agoText(shown.requestedAt, Date.now()) : ''}.
 					</DialogDescription>
 				</DialogHeader>
@@ -181,7 +178,8 @@
 							aria-describedby="check-code-help{hint ? ' check-code-hint' : ''}{error
 								? ' check-code-error'
 								: ''}"
-							class="{inputClass} font-mono tracking-widest"
+							size={1}
+							class="{inputClass} w-full min-w-0 font-mono tracking-widest"
 						/>
 					</div>
 					{#if hint}<p id="check-code-hint" class={errorClass}>{CODE_HINT}</p>{/if}

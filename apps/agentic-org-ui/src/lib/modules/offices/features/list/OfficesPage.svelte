@@ -14,7 +14,7 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import DividedRow from '$lib/components/DividedRow.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import { neighbourFocus } from '$lib/components/focus';
+	import { focusHeading, neighbourFocus } from '$lib/components/focus';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
@@ -39,6 +39,7 @@
 	import RemoveOfficeDialog from '../remove-office/RemoveOfficeDialog.svelte';
 	import PlaceAgentDialog from '../unplaced/PlaceAgentDialog.svelte';
 	import UnplacedAgents from '../unplaced/UnplacedAgents.svelte';
+	import { possessive, statusChangeText } from '../../copy';
 	import { compactRow, listBleed } from './compact-row';
 	import type { Counts } from './counts';
 	import { OfficesLive } from './live.svelte';
@@ -123,6 +124,22 @@
 	const countError = $derived(counts && 'error' in counts ? counts.error : undefined);
 	const unplaced = $derived(snapshot ? unplacedAgents(snapshot, current) : []);
 
+	// ---- status changes of every office, said once in a polite live region (OFC-13, §6.1) ---------------------------
+	let changeNote = $state('');
+	// Bookkeeping only, never rendered: a plain map.
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity
+	const lastStatus = new Map<string, string>();
+	$effect(() => {
+		for (const office of offices) {
+			const status = live.statusOf(office.id);
+			const before = lastStatus.get(office.id);
+			lastStatus.set(office.id, status);
+			if (before === undefined || before === status || office.id === here.id) continue;
+			const text = statusChangeText(office.name, status, live.labelWhyOf(office.id));
+			if (text) changeNote = text;
+		}
+	});
+
 	// ---- details ----------------------------------------------------------------------------------------------------
 	let detailsId = $state<string | undefined>();
 	// The open sheet shows the latest data for its office, not the copy captured when it was clicked.
@@ -132,26 +149,42 @@
 		document.querySelector<HTMLElement>(`[data-office="${officeId}"] button[aria-haspopup]`);
 
 	// ---- overlays: one at a time, and whatever opened it gets focus back when it closes ------------------------------
+	// When the opener's row is gone by then (approved, declined, renewed, removed), focus goes to an explicit target
+	// set by the action, else to the opener's neighbour taken when it opened, else to the page heading: never the body.
 	let lastOpener: HTMLElement | undefined;
-	const via = (opener: HTMLElement | undefined) => (lastOpener = opener);
+	let lastNeighbour: (() => Promise<void>) | undefined;
+	let focusAfterClose: (() => void) | undefined;
+	/** An approve or decline whose list is reloading; it answers where focus goes. */
+	let approveChange: Promise<() => void> | undefined;
+	const pageHeading = () => (focusHeading('offices-heading'), undefined);
+	const via = (opener: HTMLElement | undefined) => {
+		lastOpener = opener;
+		lastNeighbour = opener ? neighbourFocus(opener, pageHeading) : undefined;
+	};
 	function restoreOpener(event: Event) {
 		const opener = lastOpener;
-		lastOpener = undefined;
-		if (!opener?.isConnected) return;
-		event.preventDefault();
-		opener.focus({ preventScroll: true });
-	}
-
-	/** After a confirmed removal of a row, its neighbour takes focus once the dialog has let go of it. */
-	let focusAfterClose: (() => Promise<void>) | undefined;
-	function restoreOrNeighbour(event: Event) {
+		const neighbour = lastNeighbour;
 		const next = focusAfterClose;
-		focusAfterClose = undefined;
-		if (!next) return restoreOpener(event);
+		lastOpener = lastNeighbour = focusAfterClose = undefined;
+		if (!next && !opener?.isConnected && !neighbour) return;
 		event.preventDefault();
-		lastOpener = undefined;
-		void next();
+		if (next) setTimeout(next, 0);
+		else if (opener?.isConnected) opener.focus({ preventScroll: true });
+		else void neighbour?.();
 	}
+	/** Focus the first control of the row named `name`: the office's row, else its invitation, else the heading. */
+	const focusRowNamed = (name: string) => () => {
+		const quoted = CSS.escape(name);
+		const target =
+			document.querySelector<HTMLElement>(
+				`[data-testid=office-row][data-office-name="${quoted}"] button[aria-haspopup]`
+			) ??
+			document.querySelector<HTMLElement>(
+				`[data-testid=invitation-row][data-office-name="${quoted}"] button`
+			);
+		if (target) target.focus();
+		else pageHeading();
+	};
 
 	function openDetails(id: string, opener: HTMLElement) {
 		via(opener);
@@ -196,17 +229,25 @@
 		!!overview && offices.length === 1 && pendingRows === 0 && overview.joinRequests.length === 0
 	);
 
+	/** The invitation being renewed straight from its row: its button says so and a second press sends nothing. */
+	let renewingId = $state<string | undefined>();
 	async function issue(invitation: Invitation) {
 		issued = await officesApi.newInvitation(orgId, invitation.id);
 		issuedOpen = true;
 		await reload();
+		// The renewed invitation is a new row: focus it when the shown-once dialog closes.
+		focusAfterClose = focusRowNamed(invitation.officeName);
 	}
 	function renew(invitation: Invitation, opener: HTMLElement) {
+		if (renewingId) return;
 		via(opener);
 		renewing = invitation;
 		const stillWorks = invitation.state === 'invited' && Date.parse(invitation.expiresAt) > now;
-		if (stillWorks) renewOpen = true;
-		else void issue(invitation).catch((e) => toast.error(toAppError(e).message));
+		if (stillWorks) return void (renewOpen = true);
+		renewingId = invitation.id;
+		void issue(invitation)
+			.catch((e) => toast.error(toAppError(e).message))
+			.finally(() => (renewingId = undefined));
 	}
 	async function removeInvitation(invitation: Invitation, opener: HTMLElement) {
 		const focusNext = neighbourFocus(opener);
@@ -243,7 +284,7 @@
 		if (!removed) return restoreOpener(event);
 		event.preventDefault();
 		removed = false;
-		lastOpener = undefined;
+		lastOpener = lastNeighbour = focusAfterClose = undefined;
 		setTimeout(() => (document.getElementById('unplaced') ?? rowButton(here.id))?.focus(), 0);
 	}
 </script>
@@ -255,7 +296,10 @@
 		title="Offices"
 		count={offices.length}
 		countLabel={offices.length === 1 ? 'office' : 'offices'}
-		description="Where {organization}'s agents run. HQ keeps the records and approves new offices; other offices keep a copy."
+		id="offices-heading"
+		description="Where {possessive(
+			organization
+		)} agents run. HQ keeps the records and approves new offices; every other office keeps a copy."
 	>
 		{#snippet actions()}
 			{#if extra.state !== 'unavailable'}
@@ -333,6 +377,7 @@
 		{/each}
 
 		<!-- Said once when the answer changes: the badge and count are hidden from screen readers, the row's label has them. -->
+		<p class="sr-only" role="status" data-testid="office-changes">{changeNote}</p>
 		<p class="sr-only" role="status" data-testid="live-status">
 			{offices.find((o) => o.id === here.id)?.name ?? 'Office'}: {statusInfo(live.statusOf(here.id))
 				.label}{live.labelWhyOf(here.id) ? `: ${live.labelWhyOf(here.id)}` : ''}
@@ -400,6 +445,7 @@
 						(cancelInviteOpen = true)
 					)}
 					onrenew={renew}
+					renewing={renewingId}
 					onremove={removeInvitation}
 				/>
 			</ul>
@@ -499,8 +545,21 @@
 	request={approving}
 	organizationId={orgId}
 	organizationName={organization}
-	onchanged={reload}
-	onCloseAutoFocus={restoreOpener}
+	onchanged={() => {
+		// The request's row goes: its office (approved) or its invitation (declined, cancelled) takes focus once listed.
+		const name = approving?.officeName;
+		const change = reload().then(() => (name ? focusRowNamed(name) : pageHeading));
+		approveChange = change;
+		return change.then(() => undefined);
+	}}
+	onCloseAutoFocus={(e) => {
+		const change = approveChange;
+		approveChange = undefined;
+		if (!change) return restoreOpener(e);
+		e.preventDefault();
+		lastOpener = lastNeighbour = focusAfterClose = undefined;
+		void change.then((focus) => setTimeout(focus, 0));
+	}}
 />
 <ConfirmDialog
 	bind:open={cancelInviteOpen}
@@ -509,13 +568,13 @@
 	confirmLabel="Cancel invitation"
 	busyLabel="Cancelling…"
 	cancelLabel="Keep invitation"
-	onCloseAutoFocus={restoreOrNeighbour}
+	onCloseAutoFocus={restoreOpener}
 	onconfirm={async () => {
 		if (!cancelling) return;
-		const focusNext = neighbourFocus(lastOpener);
+		const focusNext = neighbourFocus(lastOpener, pageHeading);
 		await officesApi.cancelInvitation(orgId, cancelling.id);
 		await reload();
-		focusAfterClose = focusNext;
+		focusAfterClose = () => void focusNext();
 	}}
 />
 <ConfirmDialog
@@ -557,7 +616,7 @@
 	office={removing}
 	organizationId={orgId}
 	organizationName={organization}
-	agents={removing && snapshot ? agentsIn(snapshot, removing.id).length : 0}
+	agents={removing && snapshot ? agentsIn(snapshot, removing.id).length : undefined}
 	tasks={removing ? (detailsOf(removing.id)?.tasks ?? 0) : 0}
 	offline={removing
 		? live.statusOf(removing.id) === 'offline' || live.statusOf(removing.id) === 'unreachable'
@@ -597,12 +656,12 @@
 	busyLabel="Discarding…"
 	cancelLabel="Keep it"
 	destructive
-	onCloseAutoFocus={restoreOrNeighbour}
+	onCloseAutoFocus={restoreOpener}
 	onconfirm={async () => {
 		if (!discarding) return;
-		const focusNext = neighbourFocus(lastOpener);
+		const focusNext = neighbourFocus(lastOpener, pageHeading);
 		await officesApi.discardOutbox(orgId, discarding.id);
 		await reload();
-		focusAfterClose = focusNext;
+		focusAfterClose = () => void focusNext();
 	}}
 />

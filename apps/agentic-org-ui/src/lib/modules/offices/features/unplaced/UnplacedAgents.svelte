@@ -55,14 +55,12 @@
 				<span class="flex flex-wrap items-center gap-2">
 					{#if canplace}<Button
 							variant="outline"
-							size="sm"
 							class="max-[639px]:min-h-11"
 							aria-label="Place {agent.name}…"
 							onclick={(e) => onplace(agent, e.currentTarget)}>Place…</Button
 						>{/if}
 					<Button
 						variant="outline"
-						size="sm"
 						class="max-[639px]:min-h-11"
 						aria-label="Offboard {agent.name}…"
 						onclick={(e) => onoffboard(agent, e.currentTarget)}>Offboard…</Button
