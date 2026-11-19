@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use super::{invalid, operation, reply, require, Op};
 use crate::organization::{
     ports::{OrganizationRead, MAX_TEAM_DEPTH},
-    records::{self, By, Meta, OfficeRole, Team, TeamAllocation, TeamStatus},
+    records::{
+        self, By, EmployeeKind, EmployeeStatus, Meta, OfficeRole, Team, TeamAllocation, TeamStatus,
+    },
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
@@ -28,6 +30,55 @@ pub struct TeamCreated {
     pub number: u64,
     /// The directory generation the creation is.
     pub generation: u64,
+}
+
+/// Why a creation was refused before admission. Nothing is recorded, so a retry decides
+/// again. Each reason is the fixed text of a [`Refusal::Invalid`], so whoever answers the
+/// caller can tell them apart ([`TeamRefusal::of`]); any other refusal is a malformed
+/// command or a broken rule of the organization.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TeamRefusal {
+    /// The parent team does not exist.
+    NoSuchParent,
+    /// The actor may not create a team there (see [`decide`]).
+    NotAuthorized,
+    /// The team's ID names another record of the organization.
+    IdInUse,
+    /// The name is not one line of text.
+    BadName,
+}
+
+impl TeamRefusal {
+    pub const ALL: [TeamRefusal; 4] = [
+        TeamRefusal::NoSuchParent,
+        TeamRefusal::NotAuthorized,
+        TeamRefusal::IdInUse,
+        TeamRefusal::BadName,
+    ];
+
+    pub const fn reason(self) -> &'static str {
+        match self {
+            TeamRefusal::NoSuchParent => "no such parent team",
+            TeamRefusal::NotAuthorized => {
+                "only an active person who leads the parent team or a team above it creates a team"
+            }
+            TeamRefusal::IdInUse => "the team's ID is in use",
+            TeamRefusal::BadName => "the name is one line of text",
+        }
+    }
+
+    /// The refusal whose reason is `reason`, the text of an [`org_store::StoreError::Invalid`].
+    pub fn of(reason: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|refusal| refusal.reason() == reason)
+    }
+}
+
+impl From<TeamRefusal> for Refusal {
+    fn from(refusal: TeamRefusal) -> Self {
+        Refusal::invalid(refusal.reason())
+    }
 }
 
 /// Why an admitted creation was rejected. Recorded, so a retry gets the same answer.
@@ -51,7 +102,13 @@ impl CreateTeam {
     }
 }
 
-/// The caller has authorized `by`; this decides whether the organization allows it.
+/// Whether the organization lets `by` create a team, and where.
+///
+/// Until B2 brings the organization's own permissions, the rule is this one: an employee
+/// creates a team only as an active person who leads the parent team or a team above it
+/// (the creator of the organization leads the top-level team, so qualifies everywhere).
+/// An agent never does. The system, which no wire request can act as, may. The caller has
+/// authenticated `by`; the organization decides what `by` may do.
 pub fn decide<E: Engine>(
     uow: &mut UnitOfWork<'_, E>,
     here: &OfficeIdentity,
@@ -63,10 +120,9 @@ where
 {
     let stable = records::is_stable_id(command.id.as_str());
     require(stable, "the team's ID is a UUIDv7 in lowercase text")?;
-    require(
-        records::is_line(&command.name),
-        "the name is one line of text",
-    )?;
+    if !records::is_line(&command.name) {
+        return Err(TeamRefusal::BadName.into());
+    }
     let generation = uow.next(Stream::Organization)?;
     let now = uow.now();
 
@@ -78,16 +134,36 @@ where
     let office = view.office(&here.office_id)?;
     let headquarters = office.is_some_and(|office| office.role == OfficeRole::Hq);
     require(headquarters, "only HQ creates a team")?;
-    let by = match by {
+    let actor = match by {
         Actor::Employee(id) => {
-            let known = view.employee(id)?.is_some();
-            require(known, "the actor is not an employee on record")?;
-            By::Employee(id.clone())
+            let Some(employee) = view.employee(id)? else {
+                return Err(TeamRefusal::NotAuthorized.into());
+            };
+            Some(employee)
         }
-        Actor::System => By::System,
+        Actor::System => None,
     };
     let Some(parent) = view.team(&command.parent)? else {
-        return invalid("no such parent team");
+        return Err(TeamRefusal::NoSuchParent.into());
+    };
+    let Some(mut chain) = view.team_chain(&parent.id)? else {
+        return invalid("the parent team has no chain of parents to a top-level team");
+    };
+    let by = match actor {
+        Some(employee) => {
+            let person =
+                employee.kind == EmployeeKind::Person && employee.status == EmployeeStatus::Active;
+            let mut led = Vec::with_capacity(chain.len());
+            for team in &chain {
+                led.push(view.team(team)?.and_then(|team| team.lead_employee_id));
+            }
+            let leads = led.iter().flatten().any(|lead| *lead == employee.id);
+            if !(person && leads) {
+                return Err(TeamRefusal::NotAuthorized.into());
+            }
+            By::Employee(employee.id)
+        }
+        None => By::System,
     };
     // An ID names one record of the organization, whatever its kind.
     let in_use = view.team(&command.id)?.is_some()
@@ -95,16 +171,15 @@ where
         || view.office(&command.id)?.is_some()
         || view.employee(&command.id)?.is_some()
         || view.repositories()?.iter().any(|r| r.id == command.id);
-    require(!in_use, "the team's ID is in use")?;
+    if in_use {
+        return Err(TeamRefusal::IdInUse.into());
+    }
     if !parent.is_active() {
         let rejected = TeamRejected {
             rejected: TeamRejection::ParentArchived,
         };
         return Err(Refusal::rejected(reply(&rejected)));
     }
-    let Some(mut chain) = view.team_chain(&parent.id)? else {
-        return invalid("the parent team has no chain of parents to a top-level team");
-    };
     chain.push(command.id.clone());
     require(chain.len() <= MAX_TEAM_DEPTH, "the team tree is too deep")?;
     let Some(counter) = view.team_counter()? else {
