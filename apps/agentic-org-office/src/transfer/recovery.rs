@@ -31,9 +31,13 @@ pub(super) fn serve(
         .map_err(|_| wire::invalid())?
         .ok_or_else(wire::invalid)?;
     // The records name the store operation the wire's ULID maps to; the wire keeps the
-    // ULID it was asked with (M7), so the answer binds the request exactly.
+    // ULID it was asked with (M7). The mapping drops the ULID's low 6 random bits, so the
+    // request must name the creation's own command ID, and its mapping the records'.
     let mapped = from_wire_ulid(&request.operation_id).map_err(|_| wire::invalid())?;
-    if public.operation_id != mapped.as_str() || public.organization_id != request.organization_id {
+    if request.operation_id != office.creation_command_id()
+        || public.operation_id != mapped.as_str()
+        || public.organization_id != request.organization_id
+    {
         return Err(wire::invalid());
     }
     let record = wire::PublicRecord {
@@ -92,5 +96,27 @@ mod tests {
         // Another operation is not this HQ's creation. (The mapping keeps 74 of the ULID's 80
         // random bits, so this one differs above the dropped low 6.)
         assert!(ask(&office, "01ARZ3NDEKTSV4RRFFQ79G5FAW").is_err());
+    }
+
+    /// A ULID that differs from the creation's only in the low 6 random bits maps to the
+    /// same store operation, yet it is not the request that created this HQ: refused.
+    #[test]
+    fn a_ulid_differing_only_in_its_dropped_bits_is_refused() {
+        let world = World::new();
+        let office = world.prepare(Some(key()), code()).unwrap();
+        let operation = crate::hq_creation::tests::binding().operation_id;
+        assert_eq!(office.creation_command_id(), operation);
+        // The last Crockford character carries the low 5 bits; the one before it, the 6th.
+        let mut near = operation.clone();
+        let last = near.pop().unwrap();
+        near.push(if last == '0' { '1' } else { '0' });
+        assert_ne!(near, operation);
+        assert_eq!(
+            from_wire_ulid(&near).unwrap(),
+            from_wire_ulid(&operation).unwrap(),
+            "the two ULIDs map to one store operation"
+        );
+        assert!(ask(&office, &near).is_err());
+        ask(&office, &operation).unwrap();
     }
 }

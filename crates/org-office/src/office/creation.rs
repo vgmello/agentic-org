@@ -196,6 +196,7 @@ impl Office {
             return Err(recovery());
         }
         let creation = operation_id::from_wire_ulid(&intent.operation).map_err(|_| recovery())?;
+        let creation_command = intent.operation.clone();
         let owner = Id::parse(&intent.owner).map_err(|_| recovery())?;
 
         // A new journal incarnation until its anchor is written; after that, the one there
@@ -273,6 +274,7 @@ impl Office {
             identity: here,
             owner,
             creation,
+            creation_command,
             secrets_key: key,
             store,
             _lock: lock,

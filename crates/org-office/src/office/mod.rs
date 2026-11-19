@@ -127,6 +127,9 @@ pub struct Office {
     owner: Id,
     /// The store operation that created the organization.
     creation: Id,
+    /// The creation request's command ID as the host sent it (the wire's ULID), which
+    /// `creation` is mapped from.
+    creation_command: String,
     secrets_key: Option<Key>,
     // The store closes before the lock is released: fields drop in order.
     store: OfficeStore,
@@ -246,6 +249,7 @@ impl Office {
         }
         let owner = Id::parse(&intent.owner).map_err(|_| recovery())?;
         let creation = operation_id::from_wire_ulid(&intent.operation).map_err(|_| recovery())?;
+        let creation_command = intent.operation.clone();
 
         let store = open_store(&options.config(&roots, &custody)).map_err(storage)?;
         let office = Office {
@@ -255,6 +259,7 @@ impl Office {
             identity: custody.identity,
             owner,
             creation,
+            creation_command,
             secrets_key: key,
             store,
             _lock: lock,
@@ -390,6 +395,14 @@ impl Office {
             key.wrapped_ca_key,
         )
         .map(Some)
+    }
+
+    /// The command ID of the request that created this HQ, exactly as the host sent it (the
+    /// wire's ULID, kept in the creation intent). The records name the store operation it
+    /// maps to, which drops the ULID's low 6 random bits: a caller that must bind the very
+    /// request compares with this.
+    pub fn creation_command_id(&self) -> &str {
+        &self.creation_command
     }
 
     /// The HQ's public creation record: the escrow package and what binds it. It carries

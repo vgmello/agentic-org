@@ -1088,3 +1088,20 @@ fn a_loose_office_folder_is_tightened_by_creation() {
         .mode();
     assert_eq!(mode & 0o777, 0o700);
 }
+
+/// The office keeps the creation's command ID as the host sent it, at creation and after
+/// a reopening: the records hold only the store operation it maps to.
+#[test]
+fn the_office_keeps_the_creations_command_id_as_sent() {
+    let site = Site::new();
+    let office = site.provision(EngineChoice::Memory).unwrap();
+    assert_eq!(office.creation_command_id(), OPERATION);
+    office.close().unwrap();
+    let office = site.open(EngineChoice::Memory).unwrap();
+    assert_eq!(office.creation_command_id(), OPERATION);
+    assert_ne!(
+        office.hq_creation_record().unwrap().unwrap().operation_id,
+        OPERATION
+    );
+    office.close().unwrap();
+}
