@@ -270,8 +270,9 @@ pub(crate) fn any_office_folder(home: &Path) -> io::Result<bool> {
 
 /// The office folders with no `office.json`: creates that never finished. The host never
 /// removes them itself; it has a server discard each one, with the office's key (see
-/// `Offices::discard_unfinished`), because only a server can open the folder's databases to
-/// check that no organization was committed. The host deletes the key after `discarded`.
+/// `Offices::discard_unfinished`), because only the server's discard removes the folder under
+/// the office lock, after checking that it holds nothing but the lock and the temporary files of
+/// an unfinished publication. The host deletes the key after `discarded`.
 pub(crate) fn unfinished_folders(home: &Path) -> io::Result<Vec<String>> {
     Ok(office_folders(home)?
         .into_iter()

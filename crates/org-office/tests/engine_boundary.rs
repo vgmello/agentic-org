@@ -4,8 +4,8 @@
 //! - the organization family on the office store, and the seam that opens the store,
 //!   never name `rusqlite`: only `src/store/sqlite/` does, among the new code.
 //!
-//! The scan of the whole workspace for SQL outside the engine, and its allowlist of the
-//! old store, arrive with B1b.
+//! The scan of the whole workspace for SQL outside the engine arrives with B1b block 7.
+//! The old store it would have had to allow is deleted, so its allowlist starts empty.
 
 use std::{
     fs,

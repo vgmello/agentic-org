@@ -436,10 +436,16 @@ refused on `host.sock`. It writes the creator's person record and takes no team 
 `organization.provision.v1` is deleted (implementation plan A4).
 
 The office directory today is `<home>/offices/<office-id>/` under the host home
-resolved by `org_proto::location`, holding `org.db`, `office.db` and `workspace/`
-besides `office.lock` and `office.json`. Those databases are the source of truth until
-the store writes the [storage tree](organization-data/README.md#shared-storage-contract)
-(implementation plan B1b). The rendezvous's first line names its office and
+resolved by `org_proto::location`. It holds the office lock `office.lock` (taken before
+anything is read), the host's writer-custody marker `selected-writer.required`
+(installed before a create), the creation intent `hq-creation.v1.json` (frozen first)
+and `office.json` (written last: the office is finished). It holds no database and no
+workspace. The organization's data is the
+[storage tree](organization-data/README.md#shared-storage-contract) under the data roots
+`<instance-root>/<org-id>/durable` (the acceptance journal and the organization's
+files) and `<instance-root>/<org-id>/runtime` (the projection, which can be deleted and
+rebuilt). An office folder made by the old databases (`org.db`, `office.db`) is refused,
+never migrated. The rendezvous's first line names its office and
 organization by UUIDv7 only (B1b removed the `id_profile` switch and the older
 alphanumeric IDs from the launch line), and `office.json` version 2 holds UUIDv7 IDs.
 The other places that still accept the older IDs move to UUIDv7 with FC-142. The `joined` event, the `child` and `child_gone` events, the
