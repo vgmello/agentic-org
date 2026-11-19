@@ -10,6 +10,7 @@
 		connection={data.connection}
 		snapshot={data.snapshot}
 		teamId={data.teamId}
+		loads={data.loads}
 		content={children}
 	/>
 {/key}

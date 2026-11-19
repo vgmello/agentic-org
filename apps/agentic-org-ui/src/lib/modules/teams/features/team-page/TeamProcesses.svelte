@@ -13,10 +13,12 @@
 	import { teamsApi } from '../../api';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import { teamPageContext } from './context';
+	import { reloadOnChange } from './reload.svelte';
 
 	const team = teamPageContext();
 
 	const processes = new Resource(() => teamsApi.processes(team.organizationId, team.teamId));
+	reloadOnChange(processes, () => team.loads);
 </script>
 
 <Loaded

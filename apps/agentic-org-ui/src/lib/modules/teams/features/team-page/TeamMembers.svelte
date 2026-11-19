@@ -3,6 +3,8 @@
   The members above a team's tabs (§7.2): at most six rows, the lead first, then "All N members" to show the
   rest in place. Each row: initials, name (opens the member's profile), Agent or Person in words, role, @handle,
   Lead when it leads the team, and its presence when known (unknown is omitted in rows, AC-IA08).
+  Reflow (app-shell-ux §2): the text column is never narrower than 200 px. Where the avatar would squeeze it
+  (320 px at 200% text) the text moves below the avatar; where the pill would, the pill wraps below the text.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -11,6 +13,7 @@
 	import { PresenceBadge, kindWord, rowPresence } from '$lib/modules/members';
 	import { MEMBERS_SHOWN, membersOfMax, shownMembers } from '../../team-page';
 	import type { TeamDetail } from '../../types';
+	import { fact, factsList, factsWrap } from './facts';
 
 	let { detail }: { detail: TeamDetail } = $props();
 
@@ -53,30 +56,36 @@
 		>
 			{#each rows as m (m.id)}
 				{@const presence = rowPresence({ presence: m.presence && { id: m.presence } })}
-				<li class="relative flex items-center gap-x-3 border-t border-white/5 py-3">
+				<li
+					class="relative flex flex-wrap items-center gap-x-3 gap-y-3 border-t border-white/5 py-4"
+				>
 					<Avatar name={m.name} size="md" />
-					<div class="min-w-0 flex-1">
-						<p class="flex flex-wrap items-baseline gap-x-2 text-sm/6">
-							<a
-								href={resolve(`/members/${encodeURIComponent(m.id)}` as '/')}
-								class="rounded-sm font-semibold text-white focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]"
-								><span class="absolute inset-0" aria-hidden="true"></span>{m.name}<span
-									class="sr-only">, {kindWord(m.kind).toLowerCase()}</span
-								></a
-							>
-							{#if m.lead}<span class="text-xs/5 font-medium text-indigo-300">Lead</span>{/if}
-						</p>
-						<p class="flex flex-wrap gap-x-2 text-xs/5 text-gray-400">
-							<span aria-hidden="true">{kindWord(m.kind)}</span>
-							{#if m.role}<span aria-hidden="true">·</span><span class="[overflow-wrap:anywhere]"
-									>{m.role}</span
-								>{/if}
-							<span aria-hidden="true">·</span><span class="[overflow-wrap:anywhere]"
-								>@{m.handle}</span
-							>
-						</p>
+					<!-- Beside the avatar while that leaves it 200 px, else below it; the pill wraps below the text. -->
+					<div
+						data-member-text
+						class="flex min-w-0 flex-[1_1_200px] flex-wrap items-center gap-x-3 gap-y-2"
+					>
+						<div class="min-w-0 flex-[1_1_12rem]">
+							<p class="flex flex-wrap items-baseline gap-x-2 text-sm/6">
+								<a
+									href={resolve(`/members/${encodeURIComponent(m.id)}` as '/')}
+									class="rounded-sm font-semibold text-white focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]"
+									><span class="absolute inset-0" aria-hidden="true"></span>{m.name}<span
+										class="sr-only">, {kindWord(m.kind).toLowerCase()}</span
+									></a
+								>
+								{#if m.lead}<span class="text-xs/5 font-medium text-indigo-300">Lead</span>{/if}
+							</p>
+							<div class={factsWrap}>
+								<ul role="list" class="{factsList} text-xs/5 text-gray-400">
+									<li class={fact} aria-hidden="true">{kindWord(m.kind)}</li>
+									{#if m.role}<li class={fact}>{m.role}</li>{/if}
+									<li class={fact}>@{m.handle}</li>
+								</ul>
+							</div>
+						</div>
+						{#if presence}<PresenceBadge {presence} class="relative" />{/if}
 					</div>
-					{#if presence}<PresenceBadge {presence} class="relative" />{/if}
 				</li>
 			{/each}
 		</ul>

@@ -2,7 +2,7 @@
   @component
   A team's Projects tab (§7.2, §7.9, TEAM-13): each active project it owns or contributes to, as divided rows:
   name (opens the project) and key, Owner or Contributor in words, the accountable owner team when this team only
-  contributes, and the number of open tasks. Owner and contributor teams are edited in the project's settings.
+  contributes, the other contributing teams, each a link, and the number of open tasks. Owner and contributor teams are edited in the project's settings.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -11,14 +11,26 @@
 	import { Button } from '$lib/components/ui/button';
 	import { teamsApi } from '../../api';
 	import EmptyState from '$lib/components/EmptyState.svelte';
+	import { teamHref } from '../../team-page';
+	import type { TeamRef } from '$lib/modules/members';
 	import { teamPageContext } from './context';
+	import { reloadOnChange } from './reload.svelte';
+	import { fact, factsList, factsWrap } from './facts';
 
 	const team = teamPageContext();
 
 	const projects = new Resource(() => teamsApi.projects(team.organizationId, team.teamId));
+	reloadOnChange(projects, () => team.loads);
 	const openWork = (n: number) =>
 		n === 0 ? 'No open tasks' : `${n} open ${n === 1 ? 'task' : 'tasks'}`;
 </script>
+
+<!-- A team named in a row's facts: a link inside the line, above the row's stretched link (TEAM-13). -->
+{#snippet teamLink(t: TeamRef)}<a
+		href={resolve(teamHref(t.id) as '/')}
+		class="relative rounded-sm text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+		>{t.name}</a
+	>{#if t.ref}<span class="ml-1 font-mono">{t.ref}</span>{/if}{/snippet}
 
 <Loaded
 	errorLevel={4}
@@ -54,24 +66,27 @@
 								>
 								{#if p.key}<span class="font-mono text-xs/5 text-gray-400">{p.key}</span>{/if}
 							</p>
-							<p class="mt-1 flex flex-wrap items-center gap-x-2 text-xs/5 text-gray-400">
-								<span class="font-medium text-gray-300"
-									>{p.role === 'owner' ? 'Owner' : 'Contributor'}</span
-								>
-								{#if p.ownerTeam}
-									<span aria-hidden="true">·</span>
-									<span
-										>Owned by <a
-											href={resolve(`/teams/${encodeURIComponent(p.ownerTeam.id)}` as '/')}
-											class="relative inline-flex min-h-6 items-center rounded-sm text-indigo-400 max-[639px]:min-h-11 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
-											>{p.ownerTeam.name}</a
-										>{#if p.ownerTeam.ref}<span class="ml-1 font-mono">{p.ownerTeam.ref}</span
-											>{/if}</span
-									>
-								{/if}
-								<span aria-hidden="true">·</span>
-								<span class="tabular-nums">{openWork(p.openWork)}</span>
-							</p>
+							<div class="mt-1">
+								<div class={factsWrap}>
+									<ul role="list" class="{factsList} text-xs/5 text-gray-400">
+										<li class="{fact} font-medium text-gray-300">
+											{p.role === 'owner' ? 'Owner' : 'Contributor'}
+										</li>
+										{#if p.ownerTeam}
+											<li class={fact}>
+												Owned by {@render teamLink(p.ownerTeam)}
+											</li>
+										{/if}
+										{#if p.contributors?.length}
+											<li class={fact}>
+												With {#each p.contributors as t, i (t.id)}{#if i > 0},
+													{/if}{@render teamLink(t)}{/each}
+											</li>
+										{/if}
+										<li class="{fact} tabular-nums">{openWork(p.openWork)}</li>
+									</ul>
+								</div>
+							</div>
 						</div>
 					</li>
 				{/each}
