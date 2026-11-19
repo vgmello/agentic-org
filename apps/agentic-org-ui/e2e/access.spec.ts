@@ -23,6 +23,8 @@ const section = (page: Page, title: string) =>
 	page.locator('section').filter({ has: page.getByRole('heading', { level: 3, name: title }) });
 const row = (page: Page, name: string) =>
 	page.locator('[data-access-row]').filter({ hasText: name });
+const focusedRow = (page: Page) =>
+	page.locator('[data-access-row]').filter({ has: page.locator(':focus') });
 const noSidewaysScroll = async (page: Page) => {
 	const overflow = await page.evaluate(
 		() => document.documentElement.scrollWidth - document.documentElement.clientWidth
@@ -45,9 +47,11 @@ test('ACC-1: the owner and administrator are shown, and people are grouped by si
 	await expect(row(page, 'Alex Kim')).toContainText('Owner');
 	await expect(row(page, 'Alex Kim')).toContainText('Administrator');
 	await expect(row(page, 'Avery Stone')).toContainText('Can sign in');
-	await expect(row(page, 'Hana Weiss')).toContainText('Can sign in');
-	await expect(section(page, 'No account yet').locator('[data-access-row]')).toHaveCount(1);
+	await expect(row(page, 'Hana Weiss')).toContainText('No account yet');
+	await expect(section(page, 'No account yet').locator('[data-access-row]')).toHaveCount(2);
 	await expect(row(page, 'Leo Brandt')).toContainText('No account yet');
+	await expect(row(page, 'Alex Kim')).toContainText('Engineering');
+	await expect(row(page, 'Avery Stone')).toContainText('Engineering');
 	// The owner's own row names why it has no remove action.
 	await expect(row(page, 'Alex Kim')).toContainText('Hand over ownership first.');
 	await expect(row(page, 'Alex Kim').getByRole('button', { name: 'Remove access…' })).toHaveCount(
@@ -74,6 +78,8 @@ test('ACC-2: inviting a person shows the one-time link once, then lists them as 
 	await expect(dialog).toHaveCount(0);
 	await expect(section(page, 'Invited, not signed in yet')).toContainText('Leo Brandt');
 	await expect(row(page, 'Leo Brandt')).toContainText('The link works until');
+	// Focus moves to the person's row in its new list, never to the body.
+	await expect(focusedRow(page)).toHaveAttribute('data-member-id', 'leo');
 });
 
 test('ACC-3: a new sign-in link is shown once; removing access asks first and names the effect', async ({
@@ -95,6 +101,20 @@ test('ACC-3: a new sign-in link is shown once; removing access asks first and na
 	await expect(confirm).toHaveCount(0);
 	await expect(section(page, 'No account yet')).toContainText('Avery Stone');
 	await expect(section(page, 'Can sign in')).not.toContainText('Avery Stone');
+	await expect(focusedRow(page)).toHaveAttribute('data-member-id', 'avery');
+});
+
+test('ACC-9: cancelling Remove access returns focus to the button that opened it', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/access');
+	await row(page, 'Avery Stone').getByRole('button', { name: 'Remove access…' }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(
+		row(page, 'Avery Stone').getByRole('button', { name: 'Remove access…' })
+	).toBeFocused();
 });
 
 test('ACC-4: a viewer without manage rights sees the lists and no actions, with the reason', async ({
@@ -125,18 +145,39 @@ test('ACC-5: loading, error with Retry, empty and unavailable are each shown in 
 
 	await visit(page, '/settings/access?mock=empty');
 	await expect(page.getByRole('heading', { name: 'No people yet' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Open Members' })).toHaveAttribute(
+		'href',
+		'/teams/members'
+	);
 
 	await visit(page, '/settings/access?mock=unavailable');
-	await expect(page.getByText("Members and access isn't built yet")).toBeVisible();
+	await expect(
+		page.getByRole('heading', { level: 2, name: "Members and access isn't built yet" })
+	).toBeVisible();
+	await expect(page.locator('main h2')).toHaveCount(1);
+});
+
+test('ACC-10: a person who has left is refused with the reason, and drops off the list', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/access?mock=gone');
+	await row(page, 'Leo Brandt').getByRole('button', { name: 'Invite to sign in' }).click();
+	await expect(page.getByRole('alert')).toContainText(
+		"That person isn't in this organization any more."
+	);
+	await expect(row(page, 'Leo Brandt')).toHaveCount(0);
 });
 
 test('ACC-6: a refused action says why inline and changes nothing', async ({ page }) => {
 	await openOrganization(page);
 	await visit(page, '/settings/access?mock=refuse');
 	await row(page, 'Leo Brandt').getByRole('button', { name: 'Invite to sign in' }).click();
-	await expect(row(page, 'Leo Brandt').getByRole('alert')).toContainText(
+	// The refusal is announced above the lists, not inside a row.
+	await expect(page.getByRole('alert')).toContainText(
 		'Only the owner or the administrator changes sign-in access.'
 	);
+	await expect(page.locator('[data-access-row]').getByRole('alert')).toHaveCount(0);
 	await expect(section(page, 'No account yet')).toContainText('Leo Brandt');
 });
 
@@ -157,4 +198,37 @@ test('ACC-8: after the page opens, its heading takes focus', async ({ page }) =>
 	await openOrganization(page);
 	await visit(page, '/settings/access');
 	await expect(page.locator('#access-heading')).toBeFocused();
+	// Headings focused by the app show no control ring (app-shell-ux §6a).
+	const outline = await page
+		.locator('#access-heading')
+		.evaluate((el) => getComputedStyle(el).outlineStyle);
+	expect(outline).toBe('none');
+});
+
+test('ACC-11: the owner row says why it has no remove action; the reference covers the administrator', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/access');
+	await expect(row(page, 'Alex Kim')).toContainText('Hand over ownership first.');
+	await expect(
+		section(page, 'Who can do what').locator('div:has(> dt:text-is("Administrator"))')
+	).toContainText('removes access');
+});
+
+test('ACC-12: at 1440 px the owner row keeps its action in the same column as the other rows', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await visit(page, '/settings/access');
+	const owner = await row(page, 'Alex Kim')
+		.getByRole('button', { name: 'New sign-in link' })
+		.boundingBox();
+	const other = await row(page, 'Avery Stone')
+		.getByRole('button', { name: 'Remove access…' })
+		.boundingBox();
+	expect(owner && other).toBeTruthy();
+	// Both actions end at the same right edge: the column is shared, not pushed by the owner's note.
+	expect(Math.abs(owner!.x + owner!.width - (other!.x + other!.width))).toBeLessThanOrEqual(1);
 });

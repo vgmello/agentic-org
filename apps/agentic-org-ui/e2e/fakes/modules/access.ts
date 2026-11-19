@@ -1,12 +1,15 @@
-// Mock for src/lib/modules/access/api.ts under `bun run dev:mock`. People, their home teams and handles come from the org
-// mock and members data, so IDs and names match the other pages. Which people have an account, the administrator, the
-// owner and the pending invitations are JSON in e2e/fakes/data/access. Changes are kept in memory until the page reloads.
+// Mock for src/lib/modules/access/api.ts under `bun run dev:mock`. People, handles, home teams and who has an account come
+// from the org mock and the members data (`canSignIn`, `homeTeamId`), so this page agrees with Members and the profiles.
+// JSON in e2e/fakes/data/access adds only the owner, the administrator and usernames. Changes are kept in memory until
+// the page reloads.
 // Scenarios (`?mock=` on the page's URL, several joined with commas):
-//   slow · fails (reads fail) · empty (no people) · unavailable · viewer (no manage rights) · invited (Leo is invited)
-//   refuse (issuing or removing is refused) · gone (the person has left: the next action on them refuses)
+//   slow · fails (reads fail) · empty (no people) · unavailable · viewer (no manage rights)
+//   invited (Leo Brandt is invited) · refuse (issuing or removing is refused) · gone (the next action on Leo finds
+//   him gone: he leaves the list)
 import { officeApi } from '$lib/office/api';
 import { orgApi } from '$lib/org/api';
 import type { AccessApi } from '../../../src/lib/modules/access/api';
+import { NOT_HOME_TEAM } from '../../../src/lib/modules/access/present';
 import type {
 	AccessOverview,
 	AccessPerson,
@@ -16,15 +19,22 @@ import { mockLatency, mockMode } from '../mock-mode';
 import data from '../data/access/access.json' with { type: 'json' };
 import membersData from '../data/members/members.json' with { type: 'json' };
 
-const handles = membersData.members as Record<string, { handle?: string }>;
+type MemberExtras = { handle?: string; canSignIn?: boolean; homeTeamId?: string };
+const extras = membersData.members as Record<string, MemberExtras>;
+
 const fail = (code: string, message: string) =>
 	Object.assign(new Error(message), { source: 'api', code, message });
 
-const accounts = new Map<string, string>(Object.entries(data.accounts));
-// Pending invitations start empty; `?mock=invited` seeds one for Leo Brandt, who has no account.
+/** Invitations made in this page's session; `?mock=invited` seeds one for Leo Brandt. */
 const invitations = new Map<string, string>();
+const left = new Set<string>();
+/** Accounts removed in this session (the members data is never changed). */
+const removed = new Set<string>();
+const hasAccount = (memberId: string) =>
+	!removed.has(memberId) && extras[memberId]?.canSignIn === true;
 const owner = data.owner;
-const administrator = { ...data.administrator };
+const administrator = data.administrator;
+const usernames = data.usernames as Record<string, string>;
 
 async function gate() {
 	await mockLatency(250);
@@ -35,15 +45,19 @@ async function gate() {
 async function people(organizationId: string) {
 	const { snapshot } = await orgApi.view(organizationId);
 	const teamNames = new Map(snapshot.teams.map((t) => [t.id, t.name]));
-	const homeOf = new Map<string, string>();
+	const firstTeamOf = new Map<string, string>();
 	for (const m of snapshot.memberships)
-		if (!homeOf.has(m.member_id)) homeOf.set(m.member_id, m.team_id);
+		if (!firstTeamOf.has(m.member_id)) firstTeamOf.set(m.member_id, m.team_id);
+	const connection = (await officeApi.connections()).find(
+		(c) => c.organization.id === organizationId
+	);
 	return {
-		organizationName: (await officeApi.connections()).find(
-			(c) => c.organization.id === organizationId
-		)?.organization.name,
-		members: snapshot.members.filter((m) => m.kind === 'person'),
-		teamName: (memberId: string) => teamNames.get(homeOf.get(memberId) ?? '') ?? 'No home team'
+		organizationName: connection?.organization.name,
+		members: snapshot.members.filter((m) => m.kind === 'person' && !left.has(m.id)),
+		homeTeam(memberId: string): string {
+			const teamId = extras[memberId]?.homeTeamId ?? firstTeamOf.get(memberId);
+			return (teamId && teamNames.get(teamId)) || NOT_HOME_TEAM;
+		}
 	};
 }
 
@@ -54,48 +68,54 @@ async function overview(organizationId: string): Promise<AccessOverview> {
 	const scope = await people(organizationId);
 	if (mockMode().includes('invited') && !invitations.has('leo'))
 		invitations.set('leo', new Date(Date.now() + 18 * 3_600_000).toISOString());
-	const viewerIsOwner = owner === 'you';
-	const viewer = mockMode().includes('viewer')
-		? { isOwner: false, isAdministrator: false, canManage: false }
-		: {
-				isOwner: viewerIsOwner,
-				isAdministrator: administrator.memberId === 'you',
-				canManage: true
-			};
+	const viewerCanManage = !mockMode().includes('viewer');
 	const list: AccessPerson[] = mockMode().includes('empty')
 		? []
 		: scope.members.map((m) => {
-				const username = accounts.get(m.id);
+				// Who can sign in is the members data's `canSignIn`: the same answer the Members directory gives.
+				const signedIn = hasAccount(m.id);
 				const invite = invitations.get(m.id);
-				const state = username ? 'signed_in' : invite ? 'invited' : 'no_account';
+				const state = signedIn ? 'signed_in' : invite ? 'invited' : 'no_account';
 				return {
 					memberId: m.id,
 					name: m.name,
-					handle: handles[m.id]?.handle ?? m.id,
-					homeTeam: scope.teamName(m.id),
+					handle: extras[m.id]?.handle ?? m.id,
+					homeTeam: scope.homeTeam(m.id),
 					owner: m.id === owner,
 					administrator: m.id === administrator.memberId,
 					state,
-					...(username ? { username } : {}),
-					...(!username && invite ? { inviteExpiresAt: invite } : {})
+					...(signedIn ? { username: usernames[m.id] ?? extras[m.id]?.handle ?? m.id } : {}),
+					...(!signedIn && invite ? { inviteExpiresAt: invite } : {})
 				};
 			});
-	const adminMember = list.find((p) => p.memberId === administrator.memberId);
+	const adminIsHere = list.find((p) => p.memberId === administrator.memberId);
 	return {
 		organization: { id: organizationId, name: scope.organizationName ?? 'Organization' },
 		administrator: {
 			username: administrator.username,
-			...(adminMember ? { memberId: adminMember.memberId, name: adminMember.name } : {}),
-			isYou: administrator.memberId === 'you'
+			...(adminIsHere ? { memberId: adminIsHere.memberId, name: adminIsHere.name } : {}),
+			isYou: viewerCanManage && administrator.memberId === 'you'
 		},
 		people: list,
-		viewer
+		viewer: {
+			isOwner: viewerCanManage && owner === 'you',
+			isAdministrator: viewerCanManage && administrator.memberId === 'you',
+			canManage: viewerCanManage
+		}
 	};
 }
 
 function requireManager() {
-	if (mockMode().includes('viewer') || mockMode().includes('refuse'))
-		throw fail('not_authorized', 'Only the owner or the administrator changes sign-in access.');
+	if (!mockMode().includes('viewer') && !mockMode().includes('refuse')) return;
+	throw fail('not_authorized', 'Only the owner or the administrator changes sign-in access.');
+}
+
+/** `?mock=gone`: the first action on Leo finds him gone from the organization. */
+async function requirePresent(organizationId: string, memberId: string) {
+	const scope = await people(organizationId);
+	if (mockMode().includes('gone') && memberId === 'leo') left.add('leo');
+	if (left.has(memberId) || !scope.members.some((m) => m.id === memberId))
+		throw fail('not_found', "That person isn't in this organization any more.");
 }
 
 export const accessApi: AccessApi = {
@@ -103,12 +123,11 @@ export const accessApi: AccessApi = {
 	async issueLink(organizationId, memberId, kind): Promise<IssuedLink> {
 		await mockLatency(400);
 		requireManager();
-		const scope = await people(organizationId);
-		if (mockMode().includes('gone') || !scope.members.some((m) => m.id === memberId))
-			throw fail('not_found', "That person isn't in this organization any more.");
-		if (kind === 'reset' && !accounts.has(memberId))
+		await requirePresent(organizationId, memberId);
+		const signedIn = hasAccount(memberId);
+		if (kind === 'reset' && !signedIn)
 			throw fail('conflict', 'Invite this person to sign in first.');
-		if (kind === 'invite' && accounts.has(memberId))
+		if (kind === 'invite' && signedIn)
 			throw fail('conflict', 'This person already has an account.');
 		const secret =
 			Math.random().toString(36).slice(2, 14) + Math.random().toString(36).slice(2, 10);
@@ -124,10 +143,8 @@ export const accessApi: AccessApi = {
 		await mockLatency(400);
 		requireManager();
 		if (owner === memberId) throw fail('not_authorized', 'Hand over ownership first.');
-		const scope = await people(organizationId);
-		if (mockMode().includes('gone') || !scope.members.some((m) => m.id === memberId))
-			throw fail('not_found', "That person isn't in this organization any more.");
-		accounts.delete(memberId);
+		await requirePresent(organizationId, memberId);
+		removed.add(memberId);
 		invitations.delete(memberId);
 	}
 };
