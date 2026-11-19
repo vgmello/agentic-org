@@ -432,6 +432,20 @@ fn the_cut_short_fact_is_what_the_system_reads_of_a_protected_environment() {
     let pad = CString::new(format!("PAD={}", "x".repeat(4 * page))).unwrap();
     let child = held_child(c"probe", &[c"ORG_PLATFORM_PROTECT_PAD=1", &pad]);
     let pid = child.0.pid;
+    // The control: the same read of an unprotected child succeeds and holds the mark,
+    // so a failure below is the page's doing.
+    let unprotected = held_child(c"probe", &[&pad]);
+    let control = super::native::read_environment_area(unprotected.0.pid).unwrap();
+    assert!(
+        control
+            .windows(PROBE_MARK.to_bytes().len())
+            .any(|window| window == PROBE_MARK.to_bytes()),
+        "the control read lacks the mark"
+    );
+    assert!(
+        control.len() > pad.as_bytes().len(),
+        "the control read is short"
+    );
     // The system's own read of the environment (GNU/Linux: /proc/<pid>/environ;
     // macOS: KERN_PROCARGS2): the part before the page, or a failure as a whole.
     let read = super::native::read_environment_area(pid);
@@ -569,9 +583,9 @@ fn the_descriptor_fact_is_what_a_scan_holds() {
         .and_then(|count| count.parse().ok())
         .unwrap_or_else(|| panic!("no process count: {stdout}"));
     assert!(processes > 0, "{stdout}");
-    // One per process: at least one for every two observed (some end mid-scan and are
-    // not pinned), never a fixed few.
-    let per_process = held >= processes / 2 && held > 0;
+    // One per process: the scan returns a row only for a process it pinned, so it holds
+    // at least as many descriptors as it returned rows; never a fixed few.
+    let per_process = held >= processes;
     assert_eq!(per_process, SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS, "{stdout}");
     if !SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS {
         assert_eq!(held, 0, "{stdout}");
