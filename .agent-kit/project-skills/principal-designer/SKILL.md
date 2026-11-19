@@ -96,12 +96,17 @@ you design or review:
 | `components.md` | Anatomy and choice of buttons, calls to action, inputs, navigation parts, overlays, feedback, rows, tables, plus motion and copy. Any component work. |
 | `tailwind.md` | Turning the decision into classes in this project. Whenever you write or review markup. |
 
+<!--
+Disabled by the owner on 2026-11-18: the UI/UX Pro Max companion skill is not used. Work from this persona,
+its reference files and the product specs only; do not check for, install or query it. The section is kept
+below, commented out, for reference.
+
 ## Companion skill: UI/UX Pro Max (optional)
 
 UI/UX Pro Max is a third-party, MIT-licensed skill with a searchable local database of UX
 guidelines, styles, palettes and stack notes. It is a second opinion and a lookup tool for
 you, never a source of authority. It is installed per checkout under `.claude/skills/`,
-which this repository ignores in Git, so check for it each time, from the repository root:
+which Git ignores here apart from the committed Svelte skill links, so check for it each time, from the repository root:
 
 ```sh
 test -f .claude/skills/ui-ux-pro-max/SKILL.md && echo installed || echo "not installed"
@@ -144,13 +149,14 @@ lead session, and it has consequences beyond this persona:
 - The installer's own four npm dependencies are fetched unpinned and were not inspected.
 
 Run from the repository root, never from `apps/agentic-org-ui`, whose `.claude/skills/`
-folder is tracked by Git:
+folder is fully tracked by Git:
 
 ```sh
 npx --yes ui-ux-pro-max-cli@2.15.0 init --ai claude --offline
 rm -rf .claude/skills/banner-design .claude/skills/brand .claude/skills/design \
   .claude/skills/design-system .claude/skills/slides .claude/skills/ui-styling
 ```
+-->
 
 ## How you reason
 

@@ -5,10 +5,10 @@ import { enterMockedOrganization } from './mock-organization';
 
 async function open(page: Page) {
 	await enterMockedOrganization(page);
-	await expect(page).toHaveURL(/\/agents$/);
+	await expect(page).toHaveURL(/\/teams\/members$/);
 }
 async function addTask(page: Page, project: string, title: string) {
-	await visit(page, `/projects/${project}`);
+	await visit(page, `/projects/${project}/work`);
 	await page.getByRole('tab', { name: 'Tasks' }).click();
 	await page.getByRole('button', { name: 'New task' }).click();
 	const dialog = page.getByRole('dialog', { name: 'New task' });
@@ -17,7 +17,7 @@ async function addTask(page: Page, project: string, title: string) {
 	await expect(dialog).toBeHidden();
 }
 async function addBug(page: Page, project: string, title: string, severity: string) {
-	await visit(page, `/projects/${project}`);
+	await visit(page, `/projects/${project}/work`);
 	await page.getByRole('tab', { name: 'Bugs' }).click();
 	await page.getByRole('button', { name: 'Report a bug' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Report a bug' });
@@ -37,29 +37,33 @@ test('WORK: with no work yet the screen says so, and it is in the nav', async ({
 	await expect(page.getByTestId('no-match')).toBeVisible();
 });
 
-test('WORK: tasks and bugs from every project with a Project column, saved filters with counts, and what needs the owner', { tag: '@journey' }, async ({ page }) => {
-	await open(page);
-	await addTask(page, 'atlas', 'Atlas task');
-	await addTask(page, 'beacon', 'Beacon task');
-	await addBug(page, 'atlas', 'Atlas crash', 'Critical');
-	await addBug(page, 'beacon', 'Beacon typo', 'Trivial');
-	await visit(page, '/work');
-	// Tasks open on All (nothing is blocked), grouped by project.
-	await expect(rows(page)).toHaveCount(2);
-	await expect(page.getByTestId('work-project')).toHaveText(['Atlas', 'Beacon']);
-	await expect(page.locator('[data-filter=all]')).toContainText('2');
-	// Bugs open on Needs my triage: both are New. Two bugs need the owner.
-	await page.getByRole('tab', { name: 'Bugs' }).click();
-	await expect(page.locator('[data-filter=triage]')).toHaveAttribute('aria-pressed', 'true');
-	await expect(rows(page)).toHaveCount(2);
-	await expect(page.getByTestId('needs-you')).toHaveText('2 items need you');
-	await page.locator('[data-filter=serious]').click();
-	await expect(rows(page)).toHaveCount(1); // Critical and Major bugs: only Atlas crash
-	await expect(rows(page)).toContainText('Atlas crash');
-	await rows(page).getByRole('button', { name: 'Atlas crash' }).click();
-	await page.getByRole('dialog').getByRole('button', { name: 'Triage' }).click();
-	await expect(page.getByRole('dialog').getByTestId('bug-status')).toHaveText('Triaged');
-	await page.keyboard.press('Escape');
-	await expect(page.getByTestId('needs-you')).toHaveText('1 item needs you');
-	await shot(page, 'work-bugs');
-});
+test(
+	'WORK: tasks and bugs from every project with a Project column, saved filters with counts, and what needs the owner',
+	{ tag: '@journey' },
+	async ({ page }) => {
+		await open(page);
+		await addTask(page, 'atlas', 'Atlas task');
+		await addTask(page, 'beacon', 'Beacon task');
+		await addBug(page, 'atlas', 'Atlas crash', 'Critical');
+		await addBug(page, 'beacon', 'Beacon typo', 'Trivial');
+		await visit(page, '/work');
+		// Tasks open on All (nothing is blocked), grouped by project.
+		await expect(rows(page)).toHaveCount(2);
+		await expect(page.getByTestId('work-project')).toHaveText(['Atlas', 'Beacon']);
+		await expect(page.locator('[data-filter=all]')).toContainText('2');
+		// Bugs open on Needs my triage: both are New. Two bugs need the owner.
+		await page.getByRole('tab', { name: 'Bugs' }).click();
+		await expect(page.locator('[data-filter=triage]')).toHaveAttribute('aria-pressed', 'true');
+		await expect(rows(page)).toHaveCount(2);
+		await expect(page.getByTestId('needs-you')).toHaveText('2 items need you');
+		await page.locator('[data-filter=serious]').click();
+		await expect(rows(page)).toHaveCount(1); // Critical and Major bugs: only Atlas crash
+		await expect(rows(page)).toContainText('Atlas crash');
+		await rows(page).getByRole('button', { name: 'Atlas crash' }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Triage' }).click();
+		await expect(page.getByRole('dialog').getByTestId('bug-status')).toHaveText('Triaged');
+		await page.keyboard.press('Escape');
+		await expect(page.getByTestId('needs-you')).toHaveText('1 item needs you');
+		await shot(page, 'work-bugs');
+	}
+);

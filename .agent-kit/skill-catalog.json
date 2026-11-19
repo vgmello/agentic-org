@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17; docs reassessment claude session_015ExbMo",
-  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs reassessment 2026-11-17 by Claude session_015ExbMo, three rounds: conflict fixes A-01..A-06; owner decisions in ADR0004 headless sessions/no browser terminal, ADR0013 stored sessions, ADR0014 acknowledgement classes, ADR0015 isolation modes and private agent home, ADR0016 no application-level encryption, ADR0017 macOS+Linux/containers, ADR0018 replaceable storage engine, ADR0019 office-coded task numbers (accepted in part); pre-release rule (no compatibility work before v1 ships); names web/agent-os; ADR0020 required asks; old tool, queue and legacy structures dropped. No new tool, role or stack. Code unchanged.",
+  "reviewed_by": "Codex lead01a1dd82 (F3c); Claude session_015ExbMo (docs 2026-11-17); Claude session_015ExbMnxeFeac1c16wAFWyh (UI manifest 2026-11-18); full earlier IDs at 34ca1855",
+  "rationale": "Merge of origin/v1 into v1-ui on 2026-11-19 changed AGENTS.md on both sides; this catalog hash is refreshed to the merged file only. No reassessment of the merged text is recorded yet: a project-capabilities reassessment is pending for the lead. Earlier rationales (origin/v1 docs 2026-11-17; v1-ui UI manifest 2026-11-18) are preserved in Git at origin/v1:.agent-kit/skill-catalog.json and HEAD:.agent-kit/skill-catalog.json.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -70,7 +70,7 @@
     },
     {
       "path": ".codex/config.toml",
-      "sha256": "a1cdbc3c7a52ba6cb3d7bcd37e34f04a0c28564aa8595dbdad62b6f446fef4f3"
+      "sha256": "df51918b40eec9c98b07a642eb6dc9e983126710a6ed3793ec0b08076068ebdb"
     },
     {
       "path": ".github/workflows/ci.yml",
@@ -78,7 +78,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "c0ea31a682229dc9d8cf41cbe7ec0fd2326da7070454a9e2c1177ba5675d25a0"
+      "sha256": "48886939e93ee365d20ec087e709a3dfe7951178dd2dd19b10895c14be03c2f6"
     },
     {
       "path": "Cargo.lock",
@@ -94,7 +94,7 @@
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
-      "sha256": "9ddf8bf65a90042fdf9b7b5bbcba4cece92bac35331a517f21a1f215c4c8b58c"
+      "sha256": "03cfeaa96ee26e6d6bb54f01f381d450c1dc9a6543e0cedd52a6b3b126f45652"
     },
     {
       "path": "apps/agentic-org-ui/components.json",
@@ -102,7 +102,7 @@
     },
     {
       "path": "apps/agentic-org-ui/package.json",
-      "sha256": "a6a47bf87e5801b67f8b15a3f2c1d4f2a42bff5de1e7d538de9723d2d4ec1210"
+      "sha256": "d12adc9634b1abc5234eda191e924a53e69e3134c9ed534a95d1a2449b815aa1"
     },
     {
       "path": "apps/agentic-org-web/Cargo.toml",

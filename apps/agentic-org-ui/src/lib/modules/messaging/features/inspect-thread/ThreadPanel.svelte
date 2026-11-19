@@ -4,7 +4,13 @@
 	import { Button } from '$lib/components/ui/button';
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import { composerState, titleOf } from '$lib/modules/messaging/model';
-	import type { ChatMessage, ChatState, Conversation, MuteMode, Reaction } from '$lib/modules/messaging/types';
+	import type {
+		ChatMessage,
+		ChatState,
+		Conversation,
+		MuteMode,
+		Reaction
+	} from '$lib/modules/messaging/types';
 	import Composer from '$lib/modules/messaging/features/send-message/Composer.svelte';
 	import MessageRow from '../../components/MessageRow.svelte';
 	import type { MessageRows } from '../../row-data';
@@ -48,12 +54,18 @@
 		readOnly?: boolean;
 		onclose: () => void;
 		undelivered?: Snippet;
-		onsend: (text: string, options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }) => Promise<boolean | void> | boolean | void;
+		onsend: (
+			text: string,
+			options: { alsoInChannel: boolean; attachments: string[]; asMessage?: boolean }
+		) => Promise<boolean | void> | boolean | void;
 		onreact: (m: ChatMessage, r: Reaction) => void;
 		onturn: (m: ChatMessage, into: 'bug' | 'request' | 'task', opener: HTMLElement) => void;
 		onmute: (m: ChatMessage, mode: MuteMode) => void;
 		onpin: (m: ChatMessage) => void;
-		onanswer: (m: ChatMessage, answer: { option_id?: string; text?: string }) => Promise<void> | void;
+		onanswer: (
+			m: ChatMessage,
+			answer: { option_id?: string; text?: string }
+		) => Promise<void> | void;
 		onaccept: (m: ChatMessage) => Promise<void> | void;
 	} = $props();
 
@@ -70,22 +82,95 @@
 	}
 </script>
 
-<aside data-chat-panel class="absolute inset-y-0 right-0 {sidebarInline ? 'left-[256px]' : 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-white/10 bg-gray-800" aria-label="Thread" data-testid="thread-panel">
-	<div class="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-white">Thread <span class="font-normal text-gray-400">in {title}</span></h2>
-		<Button type="button" variant="ghost" size="icon-sm" class="scroll-mt-16" aria-label="Close thread" bind:ref={closeButton} onclick={onclose}><X aria-hidden="true" /></Button>
+<aside
+	data-chat-panel
+	class="absolute inset-y-0 right-0 {sidebarInline
+		? 'left-[256px]'
+		: 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-line bg-surface"
+	aria-label="Thread"
+	data-testid="thread-panel"
+>
+	<div class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+		<h2 class="min-w-0 text-sm/6 font-semibold break-words text-fg">
+			Thread <span class="font-normal text-fg-muted">in {title}</span>
+		</h2>
+		<Button
+			type="button"
+			variant="ghost"
+			size="icon-sm"
+			class="scroll-mt-16"
+			aria-label="Close thread"
+			bind:ref={closeButton}
+			onclick={onclose}><X aria-hidden="true" /></Button
+		>
 	</div>
-	<div class="min-h-16 flex-1 space-y-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]" data-focus-scope>
+	<div
+		class="min-h-16 flex-1 space-y-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]"
+		data-focus-scope
+	>
 		{#key threadId}
-			<div class="space-y-1" role="log" aria-label="Thread messages" aria-live="polite" aria-relevant="additions">
-				<MessageRow active={active(root)} {onmenu} message={root} {ctx} rowData={rows.forMessage(root)} {now} {readOnly} {officeRunning} inThread askDraftFor={drafts.ask} {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
-				<p class="px-2 pt-2 text-xs/5 text-gray-400" aria-live="off" data-testid="thread-count">{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</p>
+			<div
+				class="space-y-1"
+				role="log"
+				aria-label="Thread messages"
+				aria-live="polite"
+				aria-relevant="additions"
+			>
+				<MessageRow
+					active={active(root)}
+					{onmenu}
+					message={root}
+					{ctx}
+					rowData={rows.forMessage(root)}
+					{now}
+					{readOnly}
+					{officeRunning}
+					inThread
+					askDraftFor={drafts.ask}
+					{onreact}
+					{onturn}
+					{onmute}
+					{onpin}
+					{onanswer}
+					{onaccept}
+				/>
+				<p class="px-2 pt-2 text-xs/5 text-fg-muted" aria-live="off" data-testid="thread-count">
+					{replies.length}
+					{replies.length === 1 ? 'reply' : 'replies'}
+				</p>
 				{#each replies as r (r.id)}
-					<MessageRow active={active(r)} {onmenu} message={r} {ctx} rowData={rows.forMessage(r)} {now} {readOnly} {officeRunning} inThread askDraftFor={drafts.ask} {onreact} {onturn} {onmute} {onpin} {onanswer} {onaccept} />
+					<MessageRow
+						active={active(r)}
+						{onmenu}
+						message={r}
+						{ctx}
+						rowData={rows.forMessage(r)}
+						{now}
+						{readOnly}
+						{officeRunning}
+						inThread
+						askDraftFor={drafts.ask}
+						{onreact}
+						{onturn}
+						{onmute}
+						{onpin}
+						{onanswer}
+						{onaccept}
+					/>
 				{/each}
 			</div>
 		{/key}
 		{@render undelivered?.()}
 	</div>
-	<Composer placeholder="Reply in thread" canWrite={compose.canWrite && !readOnly} note={compose.note} {conversation} {ctx} resetKey="thread:{root.id}" draft={drafts.reply} alsoIn={conversation.kind === 'channel' ? title : undefined} {onsend} />
+	<Composer
+		placeholder="Reply in thread"
+		canWrite={compose.canWrite && !readOnly}
+		note={compose.note}
+		{conversation}
+		{ctx}
+		resetKey="thread:{root.id}"
+		draft={drafts.reply}
+		alsoIn={conversation.kind === 'channel' ? title : undefined}
+		{onsend}
+	/>
 </aside>

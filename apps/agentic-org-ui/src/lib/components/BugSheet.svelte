@@ -126,7 +126,7 @@
 	const areaName = (id: string | undefined) => areas.find((a) => a.id === id)?.name ?? 'General';
 	// TRI-1: who looks at it first (no area leads yet: the project's owner of record, the owner).
 	const triager = $derived(nameOf(snapshot, snapshot.members.find((m) => m.owner)?.id));
-	const field = 'w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400';
+	const field = 'w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus';
 	const close = () => ((step = undefined), (note = ''), (anyway = ''), (askAnyway = false));
 
 	async function submitStep() {
@@ -158,23 +158,23 @@
 				<div class="flex flex-wrap items-center gap-2">
 					<Badge variant="secondary" data-testid="bug-status">{BUG_STATUS_LABEL[s.status] ?? s.status}{s.status === 'closed' ? ` · ${closedWord(s, originalBug)}` : ''}</Badge>
 					<Badge variant="secondary" data-testid="bug-severity"><SeverityIcon severity={s.severity} />{severityWord(s.severity)}{s.severity_confirmed ? '' : ' (not confirmed)'}</Badge>
-					<span class="text-sm/6 text-gray-400" data-testid="bug-meta">Area {areaName(s.area_id)} · Reporter {nameOf(snapshot, s.created_by)} · Assignee {nameOf(snapshot, s.assignee_id)}</span>
-					{#if s.reopen_count > 0}<span class="text-xs/5 text-gray-400">Reopened {s.reopen_count} {s.reopen_count === 1 ? 'time' : 'times'}</span>{/if}
+					<span class="text-sm/6 text-fg-muted" data-testid="bug-meta">Area {areaName(s.area_id)} · Reporter {nameOf(snapshot, s.created_by)} · Assignee {nameOf(snapshot, s.assignee_id)}</span>
+					{#if s.reopen_count > 0}<span class="text-xs/5 text-fg-muted">Reopened {s.reopen_count} {s.reopen_count === 1 ? 'time' : 'times'}</span>{/if}
 				</div>
 
 				<section class="space-y-2 text-sm/6">
-					<h3 class="font-semibold text-white">What happened</h3>
-					<p class="whitespace-pre-wrap text-gray-200 [overflow-wrap:anywhere]">{item.what_happened}</p>
-					{#if item.expected}<h3 class="font-semibold text-white">Expected</h3><p class="whitespace-pre-wrap text-gray-200 [overflow-wrap:anywhere]">{item.expected}</p>{/if}
-					{#if item.steps}<h3 class="font-semibold text-white">Steps to reproduce</h3><p class="whitespace-pre-wrap text-gray-200 [overflow-wrap:anywhere]">{item.steps}</p>{/if}
-					{#if item.environment}<p class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]">Environment: {item.environment}</p>{/if}
-					{#if item.closed_reason && (s.status === 'fixed' || s.status === 'closed')}<p class="rounded-md bg-white/5 px-3 py-2 text-gray-200" data-testid="bug-reason">{s.status === 'fixed' ? 'Fix' : 'Reason'}: {item.closed_reason}</p>{/if}
+					<h3 class="font-semibold text-fg">What happened</h3>
+					<p class="whitespace-pre-wrap text-fg-body [overflow-wrap:anywhere]">{item.what_happened}</p>
+					{#if item.expected}<h3 class="font-semibold text-fg">Expected</h3><p class="whitespace-pre-wrap text-fg-body [overflow-wrap:anywhere]">{item.expected}</p>{/if}
+					{#if item.steps}<h3 class="font-semibold text-fg">Steps to reproduce</h3><p class="whitespace-pre-wrap text-fg-body [overflow-wrap:anywhere]">{item.steps}</p>{/if}
+					{#if item.environment}<p class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]">Environment: {item.environment}</p>{/if}
+					{#if item.closed_reason && (s.status === 'fixed' || s.status === 'closed')}<p class="rounded-md bg-surface-raised px-3 py-2 text-fg-body" data-testid="bug-reason">{s.status === 'fixed' ? 'Fix' : 'Reason'}: {item.closed_reason}</p>{/if}
 				</section>
 
 				{#if s.status === 'new'}
-					<section class="space-y-3 rounded-lg bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10" aria-labelledby="triage" data-testid="triage-panel">
-						<h3 id="triage" class="text-sm/6 font-semibold text-white">Triage</h3>
-						<p class="text-xs/5 text-gray-400">Suggested triager: {triager}. Confirm the area and severity, set the priority, and give it to someone.</p>
+					<section class="space-y-3 rounded-lg bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line" aria-labelledby="triage" data-testid="triage-panel">
+						<h3 id="triage" class="text-sm/6 font-semibold text-fg">Triage</h3>
+						<p class="text-xs/5 text-fg-muted">Suggested triager: {triager}. Confirm the area and severity, set the priority, and give it to someone.</p>
 						<div class="grid gap-3 sm:grid-cols-2">
 							<div class="space-y-1"><Label for="t-area">Area</Label><select id="t-area" bind:value={tArea} class={field}>{#each areas as a (a.id)}<option value={a.id}>{a.name}</option>{/each}</select></div>
 							<div class="space-y-1"><Label for="t-severity">Severity</Label><select id="t-severity" bind:value={tSeverity} class={field}>{#each SEVERITIES as x (x.id)}<option value={x.id}>{x.label}</option>{/each}</select></div>
@@ -186,17 +186,17 @@
 				{/if}
 
 				<section class="space-y-2" aria-labelledby="fix-tasks" data-testid="fix-tasks">
-					<h3 id="fix-tasks" class="text-sm/6 font-semibold text-white">Fix tasks</h3>
-					<ul class="divide-y divide-white/5 rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10">
+					<h3 id="fix-tasks" class="text-sm/6 font-semibold text-fg">Fix tasks</h3>
+					<ul class="divide-y divide-line-subtle rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line">
 						{#each fixTasks as t (t.id)}
-							<li class="flex items-center gap-x-3 px-3 py-2 text-sm/6" data-testid="fix-task"><span class="text-gray-400">{taskRef(t)}</span><span class="min-w-0 flex-1 [overflow-wrap:anywhere]">{t.title}</span><span class="text-gray-300">{STATUS_LABEL[t.status as 'todo']}{t.status === 'done' && t.resolution === 'cancelled' ? ' · Cancelled' : ''}</span></li>
+							<li class="flex items-center gap-x-3 px-3 py-2 text-sm/6" data-testid="fix-task"><span class="text-fg-muted">{taskRef(t)}</span><span class="min-w-0 flex-1 [overflow-wrap:anywhere]">{t.title}</span><span class="text-fg-secondary">{STATUS_LABEL[t.status as 'todo']}{t.status === 'done' && t.resolution === 'cancelled' ? ' · Cancelled' : ''}</span></li>
 						{:else}
-							<li class="px-3 py-2 text-sm/6 text-gray-400">No fix task yet.</li>
+							<li class="px-3 py-2 text-sm/6 text-fg-muted">No fix task yet.</li>
 						{/each}
 					</ul>
 					{#if s.status !== 'closed' && s.status !== 'fixed'}<Button size="sm" variant="outline" disabled={busy} onclick={createFixTask}>Create a fix task</Button>{/if}
-					{#if s.status === 'fixed'}<p class="text-xs/5 text-gray-400" data-testid="fixed-no-fix-task">It's marked fixed. Send it back first to create another fix task.</p>{/if}
-					{#if fixTasks.length > 0 && fixTasks.every((t) => t.status === 'done' && t.resolution === 'cancelled') && s.status !== 'closed'}<p class="text-xs/5 text-amber-200">All its fix tasks were cancelled. Create a fix task, or close the bug.</p>{/if}
+					{#if s.status === 'fixed'}<p class="text-xs/5 text-fg-muted" data-testid="fixed-no-fix-task">It's marked fixed. Send it back first to create another fix task.</p>{/if}
+					{#if fixTasks.length > 0 && fixTasks.every((t) => t.status === 'done' && t.resolution === 'cancelled') && s.status !== 'closed'}<p class="text-xs/5 text-warning-text-strong">All its fix tasks were cancelled. Create a fix task, or close the bug.</p>{/if}
 				</section>
 
 				{#if s.status !== 'closed' && s.status !== 'new'}
@@ -212,7 +212,7 @@
 					<div class="flex flex-wrap gap-2" data-testid="bug-actions">
 						{#if s.status === 'triaged' || s.status === 'in_progress'}<Button size="sm" onclick={() => (step = 'fix')}>Mark fixed…</Button>{/if}
 						{#if s.status === 'fixed'}
-							<p class="basis-full text-sm/6 text-gray-200" data-testid="verify-question">{verifyQuestion}</p>
+							<p class="basis-full text-sm/6 text-fg-body" data-testid="verify-question">{verifyQuestion}</p>
 							<Button size="sm" disabled={busy} onclick={() => act({ method: 'bug.verify', item_id: s.id, expected_version: v, outcome: 'fixed' }, `${bugRef(s)} verified and closed.`)}>It's fixed: close</Button>
 							<Button size="sm" variant="outline" onclick={() => (step = 'still')}>Still happens…</Button>
 						{/if}
@@ -220,7 +220,7 @@
 						{#if s.status === 'closed'}<Button size="sm" variant="outline" onclick={() => (step = 'reopen')}>Reopen…</Button>{/if}
 					</div>
 				{:else}
-					<section class="space-y-2 rounded-lg bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10" data-testid="bug-step">
+					<section class="space-y-2 rounded-lg bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line" data-testid="bug-step">
 						{#if step === 'close'}
 							<Label for="close-as">Close it as</Label>
 							<select id="close-as" bind:value={closeAs} class={field}>
@@ -252,11 +252,11 @@
 					</section>
 				{/if}
 
-				<p class="text-sm/6 text-gray-400" data-testid="bug-time">{timeBlock(item.time)}</p>
-				{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+				<p class="text-sm/6 text-fg-muted" data-testid="bug-time">{timeBlock(item.time)}</p>
+				{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			</div>
 		{:else if error}
-			<p class="px-4 text-sm/6 text-red-400" role="alert">{error}</p>
+			<p class="px-4 text-sm/6 text-danger" role="alert">{error}</p>
 		{/if}
 	</SheetContent>
 </Sheet>

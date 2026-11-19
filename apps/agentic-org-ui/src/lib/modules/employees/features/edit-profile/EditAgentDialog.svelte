@@ -129,13 +129,13 @@
 				</div>
 			</div>
 			<div class="space-y-2">
-				<Label for="agent-focus">Focus <span class="font-normal text-gray-400">(clear it to remove)</span></Label>
+				<Label for="agent-focus">Focus <span class="font-normal text-fg-muted">(clear it to remove)</span></Label>
 				<Input id="agent-focus" bind:value={focus} disabled={busy} autocomplete="off" />
 			</div>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div class="space-y-2">
 					<Label for="agent-runtime">Runs on</Label>
-					<select id="agent-runtime" bind:value={runtime} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<select id="agent-runtime" bind:value={runtime} disabled={busy} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus">
 						{#if runtime === 'unknown'}<option value="unknown">Runtime not set: choose one</option>{/if}
 						{#each RUNTIMES as r (r)}<option value={r}>{runtimeLabel(r)}</option>{/each}
 						<option value="other">Another runtime…</option>
@@ -143,25 +143,25 @@
 					{#if runtime === 'other'}<Input aria-label="Runtime name" bind:value={otherRuntime} disabled={busy} autocomplete="off" placeholder="Its name" />{/if}
 				</div>
 				<div class="space-y-2">
-					<Label for="agent-model">Model <span class="font-normal text-gray-400">(optional)</span></Label>
+					<Label for="agent-model">Model <span class="font-normal text-fg-muted">(optional)</span></Label>
 					<Input id="agent-model" bind:value={model} disabled={busy} autocomplete="off" />
 				</div>
 			</div>
 			<div class="space-y-2">
-				<Label for="agent-home">Home folder <span class="font-normal text-gray-400">(optional, an absolute path on this Mac)</span></Label>
+				<Label for="agent-home">Home folder <span class="font-normal text-fg-muted">(optional, an absolute path on this Mac)</span></Label>
 				<Input id="agent-home" bind:value={home} disabled={busy} autocomplete="off" class="font-mono" />
 			</div>
 			<div class="space-y-2">
 				<Label for="agent-handle">Messaging name</Label>
 				<Input id="agent-handle" bind:value={handle} disabled={busy} autocomplete="off" class="font-mono" aria-invalid={handleError ? true : undefined} aria-describedby={handleError ? 'agent-handle-error' : undefined} />
-				{#if handleError}<p id="agent-handle-error" class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{handleError}</p>
+				{#if handleError}<p id="agent-handle-error" class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{handleError}</p>
 				{:else if shown?.agent && handle !== shown.agent.messaging_name && handle !== ''}
-					<p class="text-sm/6 text-amber-200 [overflow-wrap:anywhere]" data-testid="handle-change-warning">
+					<p class="text-sm/6 text-warning-text-strong [overflow-wrap:anywhere]" data-testid="handle-change-warning">
 						Others reach {shown.name} as <code class="font-mono">{shown.agent.messaging_name}</code> today. After saving they must use <code class="font-mono">{handle}</code>, and <code class="font-mono">{shown.agent.messaging_name}</code> stays reserved.
 					</p>
 				{/if}
 			</div>
-			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
 				<Button type="submit" disabled={busy || !!handleError || missing}>Save</Button>

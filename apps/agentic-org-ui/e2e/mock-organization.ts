@@ -31,7 +31,8 @@ function hqOffice(organizationId: string, stopped: string | null): OfficeInfo {
 }
 
 /**
- * Enter the mocked shell with an organization called `name`, landing on /agents.
+ * Enter the mocked shell with an organization called `name`, landing on the Members directory
+ * (`/agents` redirects there in the shell).
  *
  * The Create organization page talks to the web API (FC-018), so the specs of other areas no
  * longer create their organization through it. This puts the mocked office (src/lib/office/mock.ts)
@@ -78,5 +79,5 @@ export async function enterMockedOrganization(page: Page, name = 'Acme', createP
 		[CONNECTIONS_KEY, ORGANIZATIONS_KEY, [...hosted, created], connection] as const
 	);
 	await visit(page, '/agents');
-	await expect(page).toHaveURL(/\/agents$/);
+	await expect(page).toHaveURL(/\/teams\/members$/);
 }

@@ -127,7 +127,7 @@
 	// The tasks an approval made, and how far they are.
 	const made = $derived((item?.backlinks ?? []).filter((l) => l.kind === 'from_request').map((l) => items.find((i) => i.id === l.from_item_id)).filter((t): t is WorkItemSummary => !!t && !t.deleted));
 	const mergedInto = $derived(item?.merged_into ? items.find((i) => i.id === item?.merged_into) : undefined);
-	const field = 'w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400';
+	const field = 'w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus';
 	const kept = $derived(drafts.filter((d) => d.keep && d.title.trim() !== ''));
 	// A draft's team must work on the project chosen here, and its assignee must still be in the organization; otherwise the task is made without it.
 	const projectTeams = $derived(projectId ? teamsOfProject(snapshot, projectId).map((t) => t.id) : []);
@@ -195,29 +195,29 @@
 			<div class="flex min-w-0 flex-col gap-y-4 px-4 pb-6" data-testid="request-page">
 				<div class="flex flex-wrap items-center gap-2 text-sm/6">
 					<Badge variant="secondary" class="h-auto min-h-5 max-w-full whitespace-normal text-wrap [overflow-wrap:anywhere]" data-testid="request-state">{stateWords(s, snapshot)}</Badge>
-					<span class="text-gray-400" data-testid="request-meta">{kindWord(s.request_kind)} · {projectName}</span>
-					{#if item.route_reason && (s.status === 'routed' || s.status === 'scoping')}<span class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]" data-testid="route-reason">Sent because: {item.route_reason}{item.routed_by === 'rule' ? ' (suggested by rule)' : ''}</span>{/if}
+					<span class="text-fg-muted" data-testid="request-meta">{kindWord(s.request_kind)} · {projectName}</span>
+					{#if item.route_reason && (s.status === 'routed' || s.status === 'scoping')}<span class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]" data-testid="route-reason">Sent because: {item.route_reason}{item.routed_by === 'rule' ? ' (suggested by rule)' : ''}</span>{/if}
 				</div>
 
 				<section class="space-y-1 text-sm/6" aria-labelledby="req-words">
-					<h3 id="req-words" class="font-semibold text-white">Your words</h3>
-					<p class="whitespace-pre-wrap rounded-md bg-white/5 px-3 py-2 text-gray-200 [overflow-wrap:anywhere]" data-testid="request-words">{item.text}</p>
+					<h3 id="req-words" class="font-semibold text-fg">Your words</h3>
+					<p class="whitespace-pre-wrap rounded-md bg-surface-raised px-3 py-2 text-fg-body [overflow-wrap:anywhere]" data-testid="request-words">{item.text}</p>
 				</section>
 
 				{#if outcome}
 					<section class="space-y-2 text-sm/6" aria-labelledby="req-outcome" data-testid="request-outcome">
-						<h3 id="req-outcome" class="font-semibold text-white">Outcome</h3>
-						{#if outcome.feature && outcome.feature.type !== 'unknown'}<p class="text-gray-200">{outcome.feature.type === 'new' ? `A new feature: ${s.title}` : 'Adds to an existing feature'}</p>{/if}
-						{#if outcome.docs.length > 0}<p class="text-gray-300">Docs: {outcome.docs.map((d) => d.doc_key).join(', ')}</p>{/if}
-						{#if estimate}<p class="text-gray-200" data-testid="request-estimate">Estimate: {estimate}</p>{/if}
+						<h3 id="req-outcome" class="font-semibold text-fg">Outcome</h3>
+						{#if outcome.feature && outcome.feature.type !== 'unknown'}<p class="text-fg-body">{outcome.feature.type === 'new' ? `A new feature: ${s.title}` : 'Adds to an existing feature'}</p>{/if}
+						{#if outcome.docs.length > 0}<p class="text-fg-secondary">Docs: {outcome.docs.map((d) => d.doc_key).join(', ')}</p>{/if}
+						{#if estimate}<p class="text-fg-body" data-testid="request-estimate">Estimate: {estimate}</p>{/if}
 						{#if made.length > 0}
-							<p class="text-gray-300" data-testid="proposed-as-approved">Proposed: {outcome.draft_tasks.length} {outcome.draft_tasks.length === 1 ? 'task' : 'tasks'} (the ones you approved are below).</p>
+							<p class="text-fg-secondary" data-testid="proposed-as-approved">Proposed: {outcome.draft_tasks.length} {outcome.draft_tasks.length === 1 ? 'task' : 'tasks'} (the ones you approved are below).</p>
 						{:else}
-						<ul class="divide-y divide-white/5 rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Proposed tasks">
+						<ul class="divide-y divide-line-subtle rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line" aria-label="Proposed tasks">
 							{#each outcome.draft_tasks as d, i (i)}
-								<li class="px-3 py-2 text-gray-200 [overflow-wrap:anywhere]" data-testid="draft-task">{d.title}{#if d.assignee_id}<span class="text-gray-400"> · {nameOf(snapshot, d.assignee_id)}</span>{/if}</li>
+								<li class="px-3 py-2 text-fg-body [overflow-wrap:anywhere]" data-testid="draft-task">{d.title}{#if d.assignee_id}<span class="text-fg-muted"> · {nameOf(snapshot, d.assignee_id)}</span>{/if}</li>
 							{:else}
-								<li class="px-3 py-2 text-gray-400">No tasks proposed.</li>
+								<li class="px-3 py-2 text-fg-muted">No tasks proposed.</li>
 							{/each}
 						</ul>
 						{/if}
@@ -226,23 +226,23 @@
 
 				{#if made.length > 0}
 					<section class="space-y-1 text-sm/6" aria-labelledby="req-made" data-testid="request-tasks">
-						<h3 id="req-made" class="font-semibold text-white">Tasks created · {made.filter((t) => t.status === 'done').length} of {made.length} done</h3>
-						<ul class="divide-y divide-white/5 rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10">
+						<h3 id="req-made" class="font-semibold text-fg">Tasks created · {made.filter((t) => t.status === 'done').length} of {made.length} done</h3>
+						<ul class="divide-y divide-line-subtle rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line">
 							{#each made as t (t.id)}
-								<li class="flex items-center gap-x-3 px-3 py-2"><span class="text-gray-400">{taskRef(t)}</span><span class="min-w-0 flex-1 [overflow-wrap:anywhere]">{t.title}</span><span class="text-gray-300">{STATUS_LABEL[t.status as 'todo'] ?? t.status}</span></li>
+								<li class="flex items-center gap-x-3 px-3 py-2"><span class="text-fg-muted">{taskRef(t)}</span><span class="min-w-0 flex-1 [overflow-wrap:anywhere]">{t.title}</span><span class="text-fg-secondary">{STATUS_LABEL[t.status as 'todo'] ?? t.status}</span></li>
 							{/each}
 						</ul>
 					</section>
 				{/if}
 
-				{#if s.status === 'declined' && item.decline_reason}<p class="rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-200 [overflow-wrap:anywhere]" data-testid="decline-reason">Declined: {item.decline_reason}</p>{/if}
-				{#if s.status === 'merged'}<p class="rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-200" data-testid="merged-into">Merged into {mergedInto ? `${requestRef(mergedInto)} · ${mergedInto.title}` : 'another request'}.</p>{/if}
+				{#if s.status === 'declined' && item.decline_reason}<p class="rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-body [overflow-wrap:anywhere]" data-testid="decline-reason">Declined: {item.decline_reason}</p>{/if}
+				{#if s.status === 'merged'}<p class="rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-body" data-testid="merged-into">Merged into {mergedInto ? `${requestRef(mergedInto)} · ${mergedInto.title}` : 'another request'}.</p>{/if}
 
 				<section class="space-y-2 text-sm/6" aria-labelledby="req-talk">
-					<h3 id="req-talk" class="font-semibold text-white">What happened</h3>
+					<h3 id="req-talk" class="font-semibold text-fg">What happened</h3>
 					<ol class="space-y-2" data-testid="request-history">
 						{#each lines as l, i (i)}
-							<li class="text-gray-300"><span class="text-gray-400">{shortDate(l.at)}</span> · {l.text}{#if l.note}<p class="mt-1 whitespace-pre-wrap rounded-md bg-white/5 px-3 py-2 text-gray-200 [overflow-wrap:anywhere]">{l.note}</p>{/if}</li>
+							<li class="text-fg-secondary"><span class="text-fg-muted">{shortDate(l.at)}</span> · {l.text}{#if l.note}<p class="mt-1 whitespace-pre-wrap rounded-md bg-surface-raised px-3 py-2 text-fg-body [overflow-wrap:anywhere]">{l.note}</p>{/if}</li>
 						{/each}
 					</ol>
 				</section>
@@ -253,17 +253,17 @@
 							{#if (outcome?.draft_tasks.length ?? 0) > 0}
 								<Button size="sm" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={() => begin('approve')}>Approve and create {outcome?.draft_tasks.length} {outcome?.draft_tasks.length === 1 ? 'task' : 'tasks'}…</Button>
 							{:else}
-								<p class="basis-full text-sm/6 text-gray-200" data-testid="no-drafts">No tasks were proposed, so there is nothing to approve. Ask for changes.</p>
+								<p class="basis-full text-sm/6 text-fg-body" data-testid="no-drafts">No tasks were proposed, so there is nothing to approve. Ask for changes.</p>
 							{/if}
 							<Button size="sm" variant="outline" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={() => begin('changes')}>Ask for changes…</Button>
 						{/if}
 						{#if s.status !== 'scoped'}<Button size="sm" variant="outline" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={() => begin('route')}>{s.status === 'new' ? 'Route…' : 'Change who scopes it…'}</Button>{/if}
 						<Button size="sm" variant="outline" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={() => begin('merge')} disabled={others.length === 0} aria-describedby={others.length === 0 ? 'req-no-merge' : undefined}>Merge into…</Button>
 						<Button size="sm" variant="outline" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" onclick={() => begin('decline')}>Decline…</Button>
-						{#if others.length === 0}<p id="req-no-merge" class="basis-full text-xs/5 text-gray-400" data-testid="no-merge">No other open requests to merge into.</p>{/if}
+						{#if others.length === 0}<p id="req-no-merge" class="basis-full text-xs/5 text-fg-muted" data-testid="no-merge">No other open requests to merge into.</p>{/if}
 					</div>
 				{:else if step}
-					<section class="space-y-2 rounded-lg bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10" data-testid="request-step">
+					<section class="space-y-2 rounded-lg bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line" data-testid="request-step">
 						{#if step === 'route'}
 							<Label for="req-scoper">Who scopes it</Label>
 							<select id="req-scoper" bind:value={target} class={field}>
@@ -271,30 +271,30 @@
 								{#each suggestions as x (x.member.id)}<option value={x.member.id}>{x.member.name} · {x.why}</option>{/each}
 								{#each agents.filter((a) => !suggestions.some((x) => x.member.id === a.id)) as a (a.id)}<option value={a.id}>{a.name}{a.agent?.status === 'paused' ? ' (paused)' : ''}</option>{/each}
 							</select>
-							{#if snapshot.members.find((m) => m.id === target)?.agent?.status === 'paused'}<p class="rounded-md bg-red-500/10 px-3 py-2 text-sm/6 text-red-200" role="alert">{nameOf(snapshot, target)} is paused and won't pick this up. Choose someone else or leave it not routed.</p>{/if}
+							{#if snapshot.members.find((m) => m.id === target)?.agent?.status === 'paused'}<p class="rounded-md bg-danger-emphasis/10 px-3 py-2 text-sm/6 text-danger-text-strong" role="alert">{nameOf(snapshot, target)} is paused and won't pick this up. Choose someone else or leave it not routed.</p>{/if}
 						{:else if step === 'merge'}
 							<Label for="req-into">Merge into</Label>
 							<select id="req-into" bind:value={into} class={field}><option value="">Choose a request…</option>{#each others as o (o.id)}<option value={o.id}>{requestRef(o)} · {o.title}</option>{/each}</select>
-							<p class="text-xs/5 text-gray-400">Its words are added to that request as a note, and you stop seeing this one in the queue.</p>
+							<p class="text-xs/5 text-fg-muted">Its words are added to that request as a note, and you stop seeing this one in the queue.</p>
 						{:else if step === 'approve'}
 							<Label for="req-project">Which project?</Label>
 							<select id="req-project" bind:value={projectId} class={field}><option value="">Choose a project…</option>{#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}</select>
-							{#if projects.length === 0}<p class="rounded-md bg-red-500/10 px-3 py-2 text-sm/6 text-red-200" role="alert">There is no project to put the tasks in. Create a project first.</p>{/if}
-							<p class="text-sm/6 text-gray-200">These become tasks in {projectId ? (projects.find((p) => p.id === projectId)?.name ?? 'that project') : 'that project'}. Edit or remove any of them first.</p>
-							{#if dropped > 0}<p class="text-xs/5 text-gray-400" data-testid="drafts-dropped">{dropped} {dropped === 1 ? 'draft names' : 'drafts name'} a team or person that doesn't apply there, so {dropped === 1 ? 'it is' : 'they are'} created without it.</p>{/if}
+							{#if projects.length === 0}<p class="rounded-md bg-danger-emphasis/10 px-3 py-2 text-sm/6 text-danger-text-strong" role="alert">There is no project to put the tasks in. Create a project first.</p>{/if}
+							<p class="text-sm/6 text-fg-body">These become tasks in {projectId ? (projects.find((p) => p.id === projectId)?.name ?? 'that project') : 'that project'}. Edit or remove any of them first.</p>
+							{#if dropped > 0}<p class="text-xs/5 text-fg-muted" data-testid="drafts-dropped">{dropped} {dropped === 1 ? 'draft names' : 'drafts name'} a team or person that doesn't apply there, so {dropped === 1 ? 'it is' : 'they are'} created without it.</p>{/if}
 							<ul class="space-y-2" aria-label="Tasks to create">
 								{#each drafts as d, i (i)}
 									<li class="flex flex-wrap items-center gap-x-2">
 										<input type="checkbox" bind:checked={d.keep} aria-label="Create task {i + 1}" />
-										<Input bind:value={d.title} class="min-w-0 flex-1 basis-40 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-indigo-400" disabled={!d.keep} aria-label="Task {i + 1} title" autocomplete="off" />
-										{#if d.keep && d.title.trim() !== '' && !teamStands(d.draft.team_id)}<span class="shrink-0 text-xs/5 text-gray-400" data-testid="draft-without-team">loses its team</span>{/if}
-										{#if d.keep && d.title.trim() !== '' && !assigneeStands(d.draft.assignee_id)}<span class="shrink-0 text-xs/5 text-gray-400" data-testid="draft-without-person">loses its assignee</span>{/if}
+										<Input bind:value={d.title} class="min-w-0 flex-1 basis-40 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus" disabled={!d.keep} aria-label="Task {i + 1} title" autocomplete="off" />
+										{#if d.keep && d.title.trim() !== '' && !teamStands(d.draft.team_id)}<span class="shrink-0 text-xs/5 text-fg-muted" data-testid="draft-without-team">loses its team</span>{/if}
+										{#if d.keep && d.title.trim() !== '' && !assigneeStands(d.draft.assignee_id)}<span class="shrink-0 text-xs/5 text-fg-muted" data-testid="draft-without-person">loses its assignee</span>{/if}
 									</li>
 								{/each}
 							</ul>
 						{:else}
 							<Label for="req-note">{step === 'changes' ? 'What should change' : 'Why'}</Label>
-							<Input id="req-note" bind:value={note} class="focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-indigo-400" autocomplete="off" />
+							<Input id="req-note" bind:value={note} class="focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus" autocomplete="off" />
 						{/if}
 						<div class="flex flex-wrap gap-2">
 							<Button size="sm" class="h-auto min-h-8 max-w-full whitespace-normal text-wrap" disabled={busy || !canSubmit} onclick={submitStep}>
@@ -305,10 +305,10 @@
 					</section>
 				{/if}
 
-				{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+				{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			</div>
 		{:else if error}
-			<p class="px-4 text-sm/6 text-red-400" role="alert">{error}</p>
+			<p class="px-4 text-sm/6 text-danger" role="alert">{error}</p>
 		{/if}
 	</SheetContent>
 </Sheet>
