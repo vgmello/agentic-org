@@ -1,0 +1,23 @@
+{"version":"codex-cli 0.169.0","root":"/private/tmp/codex-s0-60KB76"}
+{"name":"initialize","verified":true,"result":{"userAgent":"agentic-org-s0/0.169.0 (Mac OS 26.7.2; arm64) unknown (agentic-org-s0; 0.1.0)","codexHome":"/private/tmp/codex-s0-60KB76/home/.codex","platformFamily":"unix","platformOs":"macos"}}
+{"name":"workspace-write","verified":true,"result":{"exitCode":0,"stdout":"sandbox-ok","stderr":""}}
+{"name":"outside-write-denied","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"probe: /private/tmp/codex-s0-60KB76/outside.txt: Operation not permitted\n"}}
+{"name":"default-token-environment","tokenPresent":true,"result":{"exitCode":0,"stdout":"","stderr":""}}
+{"name":"pinned-token-environment","verified":true,"result":{"exitCode":0,"stdout":"","stderr":""}}
+{"name":"legacy-office-socket","allowed":false,"result":{"exitCode":1,"stdout":"","stderr":"EPERM\n"}}
+{"name":"proxy-office-socket","verified":true,"result":{"exitCode":0,"stdout":"fixture-office-ok","stderr":""}}
+{"name":"proxy-other-socket-denied","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"EPERM\n"}}
+{"name":"proxy-direct-tcp-denied","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"EPERM\n"}}
+{"name":"profile-private-read-denied","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"cat: /private/tmp/codex-s0-60KB76/workspace/private.txt: Operation not permitted\n"}}
+{"name":"profile-private-write-denied","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"probe: /private/tmp/codex-s0-60KB76/workspace/private.txt: Operation not permitted\n"}}
+{"name":"profile-thread-start","verified":true,"threadId":"01a1de15-628a-75e0-bb9c-d84f828c3c13","approvalPolicy":"on-request"}
+{"name":"profile-thread-resume","available":false,"error":"{\"code\":-32600,\"message\":\"no rollout found for thread id 01a1de15-628a-75e0-bb9c-d84f828c3c13\"}","note":"No turn was sent. A newly started empty thread has no persisted rollout; resume after a real turn remains unverified."}
+{"name":"task-worktree-commit","verified":true,"result":{"exitCode":0,"stdout":"[task 3a597ed] task-change\n 1 file changed, 1 insertion(+)\n create mode 100644 change.txt\n","stderr":"error: Unable to create '/private/tmp/codex-s0-60KB76/work.git/packed-refs.lock': Operation not permitted\n"}}
+{"name":"worktree-deny-config","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"probe: /private/tmp/codex-s0-60KB76/work.git/config: Operation not permitted\n"}}
+{"name":"worktree-deny-hooks/probe","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"probe: /private/tmp/codex-s0-60KB76/work.git/hooks/probe: Operation not permitted\n"}}
+{"name":"worktree-deny-HEAD","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"probe: /private/tmp/codex-s0-60KB76/work.git/HEAD: Operation not permitted\n"}}
+{"name":"worktree-deny-info/exclude","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"probe: /private/tmp/codex-s0-60KB76/work.git/info/exclude: Operation not permitted\n"}}
+{"name":"worktree-deny-worktrees/task/commondir","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"probe: /private/tmp/codex-s0-60KB76/work.git/worktrees/task/commondir: Operation not permitted\n"}}
+{"name":"worktree-deny-worktrees/task/gitdir","verified":true,"result":{"exitCode":1,"stdout":"","stderr":"probe: /private/tmp/codex-s0-60KB76/work.git/worktrees/task/gitdir: Operation not permitted\n"}}
+{"name":"worktree-local-config","allowed":true,"result":{"exitCode":0,"stdout":"","stderr":""}}
+{"name":"objects-info-limit","verified":true,"note":"Legacy workspaceWrite allows all objects/; no subtractive deny field. core.commitGraph=false pinned and fixture has no objects/info/alternates. Office must apply the design fallback."}

@@ -1,0 +1,48 @@
+You are the architecture author/planner for one native runtime implementation task.
+Worktree /Users/vgmello/projects/agentic-org, branch codex/v1-codex-runtime, base
+4dd45f5ccd616cb5c54900196bd88b56ebe30011. Actual required model gpt-6.1-sol effort xhigh.
+READ ONLY. Do not implement, change files, delegate, start model turns, access
+credentials, inspect personal auth/config contents, or send team messages.
+
+Stable registered task: .agent-kit/tasks/v1-codex-runtime-contract.md
+Assessment: .agent-kit/tasks/v1-codex-runtime-assessment.json
+Journal: .agent-kit/logs/task-metrics/27b1c5f855bf4796a99c9f5e89351e3d.json
+Overall owner wants complete selected v1 feature by feature, vertical UI/backend/DB.
+Owner overrides reviewer/merge workflow: reviews local, merge reviewed features to
+v1-integration without waiting for PR. Area ownership remains in force; this task
+may add Codex-owned org-runtime-codex but may not change org-runtime or office code.
+
+Read every required source in .agent-kit/logs/skills/v1-codex-runtime-author/packet.json,
+then report ordered path/hash read acknowledgment for the lead to save as preflight.
+Use the project's Rust LSP skill at /Users/vgmello/.codex/skills/rust-lsp/SKILL.md
+for semantic Rust analysis; inspect ALL_TOOLS/tool discovery if needed. Follow
+applicable architecture/authority rules. Do not assume a source observation in
+the old session design overrides selected organization-data documents 11 and 14.
+
+Before detailed planning, determine essential feasibility of the FULL task:
+- Read existing org-runtime port, LaunchContext, SessionSpec, Capabilities and
+  testkit. Can the adapter select a connection's isolated auth directory while
+  keeping credential values out of plans/tools, and completely isolate ambient
+  MCP/hooks/settings for an arbitrary admitted spec with the current inputs?
+- Read the owning selected execution/provider documents and relevant full
+  agent-sessions security/S0 sections, plus spikes/codex/README.md/probe.mjs.
+- Installed version 0.169.0; generated schemas live under
+  .agent-kit/logs/v1-codex-runtime/schema-0.169.0. Root is running the existing
+  no-auth/no-model offline probe; if the output is not yet available report that
+  fact rather than wait or invent outcomes. Do not treat standalone command/exec
+  or successful schema validation as model-tool security proof.
+- Identify exact required missing fixtures vs a missing public port prerequisite.
+  No raw credentials, global HOME mutation, unapproved public-contract addition,
+  permissive defaults, mock-only office-ready claim, or unsupported stub accepted.
+
+Return an architecture proposal (not an implementation plan): intent, numbered
+premises with authority/evidence/VERIFIED or UNVERIFIED status, minimal dependency
+direction/coupling rationale, alternatives and checks. If current port lacks an
+essential input, identify exact source/type evidence and the minimal question
+for Ada. Preserve all stable acceptance criteria. Distinguish feasible missing
+implementation from an authority/contract blocker. Do not weaken task or invent
+requirements. If essential prerequisites are missing, say BLOCKED/INCOMPLETE,
+name affected work and identify useful genuinely independent authorized work.
+If feasible, explain how existing fields provide the needed facts, list bounded
+feasibility probes that must run before READY, and stop before detailed breakdown.
+The lead records your proposal then requests fresh independent architecture review.

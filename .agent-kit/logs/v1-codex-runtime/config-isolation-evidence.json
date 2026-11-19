@@ -1,0 +1,11 @@
+{
+  "observed_at": "2026-11-15T07:36:50.481916+00:00",
+  "probe_sha256": "6db3c32d36f298ae7af7b6f34b6c4a784a093706fdd55005d2e63c9d587771b3",
+  "artifact_sha256": "aeb2413c526768d360cdf3d9b892b097dab4eecfc2168ee0f1593a414776d20f",
+  "scope": "Synthetic home/workspace effective config only; no turn/start, auth, model, native tool or startup-side-effect claim.",
+  "case_count": 8,
+  "production_readiness": false,
+  "attempt_notes": [
+    "Initial profile startup without default_permissions failed closed with an explicit missing default error. Final probe sets default_permissions to the exact named profile. No production code changed."
+  ]
+}

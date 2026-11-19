@@ -1,0 +1,44 @@
+{
+  "status": "blocked-before-detailed-planning",
+  "task_contract": ".agent-kit/tasks/v1-codex-runtime-contract.md",
+  "task_journal": ".agent-kit/logs/task-metrics/27b1c5f855bf4796a99c9f5e89351e3d.json",
+  "source_base": "4dd45f5ccd616cb5c54900196bd88b56ebe30011",
+  "author_session": "01a1de15-c766-7c73-a794-f98194d43804",
+  "observed_model": "gpt-6.1-sol",
+  "observed_effort": "xhigh",
+  "architecture_author_verdict": "INCOMPLETE",
+  "independent_architecture_review": "not run; essential prerequisite missing",
+  "owner_messages": {
+    "ada": "01M7F1V78BKJS1F3GM16EXXV6C",
+    "river": "01M7F1V78FWQYHVCD9RFPZWVA2"
+  },
+  "author_provider_usage": [
+    {
+      "input_tokens": 3742107,
+      "cached_input_tokens": 3543552,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 10967,
+      "reasoning_output_tokens": 4327
+    }
+  ],
+  "whole_task_tokens": "unknown; author usage is a subset",
+  "implementation": "none",
+  "required_resolution": "Owner-reviewed connection-specific auth/environment launch and probe contract; then essential installed-version isolation evidence and independent architecture review.",
+  "decision_revision": 2,
+  "additional_evidence": ".agent-kit/logs/v1-codex-runtime/config-isolation-evidence.json",
+  "additional_probe_summary": {
+    "cases": 8,
+    "auth_calls": 0,
+    "model_turns": 0,
+    "empty_mcp_reset": "insufficient; entries remain enabled",
+    "workspace_profile": "inherited temp grant permits tested outside-root creation",
+    "custom_profile": "intended workspace/scratch creations succeed; tested sibling creation refused",
+    "live_tool_readiness": "unverified"
+  },
+  "owner_evidence_messages": {
+    "ada": "01M7F28B9RB08YSNZHRHCC8M5C",
+    "river": "01M7F28B9VPMDP64HZZT5WAVBF"
+  },
+  "blocked_audit": ".agent-kit/logs/v1-blocked-audit.json",
+  "resumption_requirement": "Owner response/authorization or explicit user override allowing remaining cross-area implementation; then review the auth/environment boundary and full selected contracts."
+}
