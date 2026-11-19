@@ -152,6 +152,10 @@ pub fn a_move_past_the_depth_limit_is_refused<E: OrganizationEngine, G>(
     bench.created_team(201, 0x50, TEAM);
     bench.created_team(202, 0x51, 0x50);
     let files = bench.state_files();
+    // A loop that would also be too deep: the depth limit (`invalid_request`) is told
+    // before `cycle`, in the wire contract's order.
+    let looped = bench.refused(210, &bench.move_team(chain[1], bottom));
+    assert_eq!(looped.code, RejectCode::InvalidRequest, "{looped:?}");
     let refused = bench.refused(203, &bench.move_team(0x50, above_bottom));
     assert_eq!(refused.code, RejectCode::InvalidRequest);
     assert_eq!(text(&bench.state_files()), text(&files));
@@ -558,7 +562,12 @@ pub fn deactivate_sets_inactive_and_offboarded_at_and_keeps_the_handle<E: Organi
     // An agent is not deactivated here.
     code(9, bench.refused(9, &deactivation(&bench, HR)));
     let hr = UpdatePerson::new(id(HR), bench.employee(HR).meta.revision);
-    code(10, bench.refused(10, &hr));
+    let refused = bench.refused(10, &hr);
+    assert!(
+        refused.message.contains("agents change through HR"),
+        "{refused:?}"
+    );
+    code(10, refused);
     assert_eq!(text(&bench.state_files()), text(&files));
 }
 
@@ -648,6 +657,17 @@ pub fn deactivating_refuses_a_lead_or_a_manager<E: OrganizationEngine, G>(
     assert!(refused.message.contains("manager of @p32"), "{refused:?}");
     assert_eq!(text(&bench.state_files()), text(&files));
 
+    // Many reports: the first five by ID are named, the rest counted.
+    for n in 0..6 {
+        bench.add_person(40 + n, 0x40 + n, 0x22);
+        bench.set_manager(50 + n, 0x40 + n, Some(0x31));
+    }
+    let many = bench.refused(60, &deactivation(&bench, 0x31));
+    let named = "manager of @p32, @p40, @p41, @p42, @p43 and 2 more";
+    assert!(many.message.contains(named), "{many:?}");
+    for n in 0..6 {
+        bench.set_manager(70 + n, 0x40 + n, None);
+    }
     bench.set_lead(10, 0x21, None);
     let refused = bench.refused(11, &deactivation(&bench, 0x31));
     assert_eq!(refused.code, RejectCode::NotEmpty);

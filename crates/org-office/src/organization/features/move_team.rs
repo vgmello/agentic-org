@@ -76,17 +76,18 @@ where
     else {
         return invalid("a team has no chain of parents to a top-level team");
     };
-    // A loop is told before the depth limit (an `invalid_request`): a team under itself
-    // has no depth to measure.
-    if above.contains(&team.id) {
+    let cycle = above.contains(&team.id);
+    let mut new = above;
+    new.push(team.id.clone());
+    // The depth limit is an `invalid_request`, told before the domain codes (`cycle`) as
+    // the wire contract orders them. Every file below moves with the team; one that would
+    // be too deep refuses the move.
+    let path = team_file(&new)?;
+    let moved = relocate(view, &old, &new)?;
+    if cycle {
         let rule = "a team cannot move under itself or a team below it";
         return reject(RejectCode::Cycle, rule);
     }
-    let mut new = above;
-    new.push(team.id.clone());
-    let path = team_file(&new)?;
-    // Every file below moves with it; one that would be too deep refuses the move.
-    let moved = relocate(view, &old, &new)?;
     check_revision(team.meta.revision, command.expected_revision)?;
     if team.parent_team_id.as_ref() == Some(&parent.id) {
         return reject(RejectCode::AlreadyExists, "the team is already there");
