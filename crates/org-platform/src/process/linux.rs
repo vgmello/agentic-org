@@ -107,10 +107,18 @@ pub(super) fn is_zombie(pid: libc::pid_t) -> io::Result<bool> {
 #[cfg(test)]
 pub(super) fn environment_strings() -> *const *const libc::c_char {
     unsafe extern "C" {
-        static environ: *const *const libc::c_char;
+        // The C library changes it when the environment changes.
+        static mut environ: *const *const libc::c_char;
     }
-    // SAFETY: the C library's environment pointer, read once.
-    unsafe { environ }
+    // SAFETY: the C library's environment pointer, read once, with no writer meanwhile.
+    unsafe { *std::ptr::addr_of!(environ) }
+}
+
+/// The system's read of `pid`'s environment area, for adapter tests: the bytes of
+/// `/proc/<pid>/environ`, which stop before a page the process made unreadable.
+#[cfg(test)]
+pub(super) fn read_environment_area(pid: libc::pid_t) -> io::Result<Vec<u8>> {
+    std::fs::read(format!("/proc/{pid}/environ"))
 }
 
 #[cfg(any(test, feature = "test-support"))]

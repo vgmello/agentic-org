@@ -119,6 +119,45 @@ pub(super) fn environment_strings() -> *const *const libc::c_char {
     unsafe { (*_NSGetEnviron()).cast_const().cast() }
 }
 
+/// The system's read of `pid`'s argument and environment area, for adapter tests:
+/// `KERN_PROCARGS2`, which fails as a whole when a page of the area is unreadable.
+#[cfg(test)]
+pub(super) fn read_environment_area(pid: libc::pid_t) -> io::Result<Vec<u8>> {
+    let mut name = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let mut size = 0;
+    // SAFETY: a size query with a valid name and no output buffer.
+    if unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            3,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let mut data = vec![0u8; size];
+    // SAFETY: an output buffer of `size` bytes.
+    if unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            3,
+            data.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    data.truncate(size);
+    Ok(data)
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
     unsafe extern "C" {

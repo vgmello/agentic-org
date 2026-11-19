@@ -195,11 +195,13 @@ fn adoption_child() {
                 // permits listen.
                 let status = unsafe { libc::listen(stream.as_raw_fd(), 1) };
                 if status != 0 {
+                    let error = io::Error::last_os_error();
+                    assert_eq!(error.raw_os_error(), Some(libc::EINVAL), "{error}");
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 status == 0
             });
-            assert!(listened, "{}", io::Error::last_os_error());
+            assert!(listened, "listen kept answering EINVAL");
             let listener = UnixListener::from(OwnedFd::from(stream));
             let connected = UnixStream::connect(path).unwrap();
             if case == "listener-crafted-queued" {

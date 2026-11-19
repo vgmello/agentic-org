@@ -432,22 +432,20 @@ fn the_cut_short_fact_is_what_the_system_reads_of_a_protected_environment() {
     let pad = CString::new(format!("PAD={}", "x".repeat(4 * page))).unwrap();
     let child = held_child(c"probe", &[c"ORG_PLATFORM_PROTECT_PAD=1", &pad]);
     let pid = child.0.pid;
-    // The system's own read, where it stops at the page: /proc/<pid>/environ. macOS
-    // has no such read; its KERN_PROCARGS2 fails as a whole, and the scan reports the
-    // environment unreadable on both.
-    let prefix = std::fs::read(format!("/proc/{pid}/environ")).ok();
-    let cut_short = prefix.as_ref().is_some_and(|bytes| {
-        bytes
-            .split(|byte| *byte == 0)
-            .any(|entry| entry == PROBE_MARK.to_bytes())
-            && bytes.len() < pad.as_bytes().len()
-    });
+    // The system's own read of the environment (GNU/Linux: /proc/<pid>/environ;
+    // macOS: KERN_PROCARGS2): the part before the page, or a failure as a whole.
+    let read = super::native::read_environment_area(pid);
     assert_eq!(
-        cut_short,
+        read.is_ok(),
         SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE,
-        "{:?}",
-        prefix.map(|bytes| bytes.len())
+        "{read:?}"
     );
+    if let Ok(bytes) = &read {
+        assert!(bytes
+            .split(|byte| *byte == 0)
+            .any(|entry| entry == PROBE_MARK.to_bytes()));
+        assert!(bytes.len() < pad.as_bytes().len(), "the page was read");
+    }
     assert_eq!(scanned_mark(&child.0), unreadable());
 }
 
@@ -523,7 +521,13 @@ fn the_zombie_leader_fact_is_the_state_of_a_process_whose_main_thread_ended() {
     );
     let pid = child.0.pid;
     // The main thread ends just after the worker reported; wait for the state.
-    let deadline = Instant::now() + Duration::from_secs(2);
+    // Where the fact holds the state follows at once; on a loaded runner, allow time.
+    let wait = if AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER {
+        10
+    } else {
+        2
+    };
+    let deadline = Instant::now() + Duration::from_secs(wait);
     let mut zombie = super::native::is_zombie(pid).unwrap();
     while !zombie && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
@@ -558,5 +562,18 @@ fn the_descriptor_fact_is_what_a_scan_holds() {
         .and_then(|rest| rest.split_whitespace().next())
         .and_then(|count| count.parse().ok())
         .unwrap_or_else(|| panic!("no count: {stdout}"));
-    assert_eq!(held > 0, SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS, "{stdout}");
+    let processes: usize = stdout
+        .split(" for ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or_else(|| panic!("no process count: {stdout}"));
+    assert!(processes > 0, "{stdout}");
+    // One per process: at least one for every two observed (some end mid-scan and are
+    // not pinned), never a fixed few.
+    let per_process = held >= processes / 2 && held > 0;
+    assert_eq!(per_process, SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS, "{stdout}");
+    if !SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS {
+        assert_eq!(held, 0, "{stdout}");
+    }
 }
