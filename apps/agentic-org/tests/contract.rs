@@ -27,8 +27,11 @@ use serde_json::{json, Value};
 use support::{eventually, hq, office_info, rfc3339, Client, TestHome};
 
 const WAIT: Duration = Duration::from_secs(10);
-const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
-const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
+// Offices and organizations are named by canonical UUIDv7, as every launch line names them.
+const A: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
+const B: &str = "0190a5d2-7c3e-7000-8000-00000000000b";
+const ORG_A: &str = "0190a5d2-7c3e-7000-8000-00000000010a";
+const ORG_B: &str = "0190a5d2-7c3e-7000-8000-00000000010b";
 const T: &str = "2026-11-08T00:00:00.000Z";
 
 /// A matching development peer policy; retired wire calls remain refused.
@@ -93,7 +96,7 @@ fn wait_for_state(
 #[test]
 fn the_launch_worker_gets_no_app_token() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.write_office(&hq(A, ORG_A, "Acme", T));
     let host = home.start(app_config(&home)).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
     // The launch handoff carries the office secrets key and the grant key only: it has no
@@ -106,7 +109,7 @@ fn the_launch_worker_gets_no_app_token() {
 #[test]
 fn retired_calls_are_refused_under_each_non_app_policy() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.write_office(&hq(A, ORG_A, "Acme", T));
     // No development app and no team id: nobody. Debug builds also try another executable as the
     // allowed development app (this test process isn't it), and one that isn't built yet.
     #[allow(unused_mut)]
@@ -126,7 +129,8 @@ fn retired_calls_are_refused_under_each_non_app_policy() {
         let err = wire_restart(host.socket_path(), A).unwrap_err();
         assert_eq!(err.code, ErrorCode::NotAuthorized);
         // The check comes first: even an unknown office is `not_authorized`.
-        let err = wire_app_token(host.socket_path(), "01NOSUCHOFFICENOSUCHOFFIC").unwrap_err();
+        let err =
+            wire_app_token(host.socket_path(), "0190a5d2-7c3e-7000-8000-0000000000ee").unwrap_err();
         assert_eq!(err.code, ErrorCode::NotAuthorized);
         host.shutdown();
     }
@@ -137,8 +141,8 @@ fn retired_calls_are_refused_under_each_non_app_policy() {
 #[test]
 fn native_restart_follows_the_runtime_contract() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
-    home.write_office(&hq(B, "01ORGB", "Beta", T));
+    home.write_office(&hq(A, ORG_A, "Acme", T));
+    home.write_office(&hq(B, ORG_B, "Beta", T));
     // A gives up after one crash, then gets ready; B's server speaks another version.
     home.script(json!({
         A: [{"do": "crash"}, {"do": "ready"}],
@@ -175,7 +179,7 @@ fn native_restart_follows_the_runtime_contract() {
     assert_eq!(err.code, ErrorCode::Unavailable);
     assert!(err.message.contains("version"), "{}", err.message);
     assert_eq!(home.runs(B), 1);
-    let err = restart(&host, "01NOSUCHOFFICENOSUCHOFFIC").unwrap_err();
+    let err = restart(&host, "0190a5d2-7c3e-7000-8000-0000000000ee").unwrap_err();
     assert_eq!(err.code, ErrorCode::NotFound);
     host.shutdown();
 }
@@ -239,7 +243,7 @@ fn every_way_a_start_ends_has_its_reason() {
     ];
     for (step, status, reason) in cases {
         let home = TestHome::registered();
-        home.write_office(&hq(A, "01ORGA", "Acme", T));
+        home.write_office(&hq(A, ORG_A, "Acme", T));
         home.script(json!({ A: step.clone() }));
         let mut config = home.config();
         config.timings.ready_timeout = ready_timeout(&step);
@@ -264,7 +268,7 @@ fn every_way_a_start_ends_has_its_reason() {
 #[test]
 fn status_changes_are_pushed_on_subscribe() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.write_office(&hq(A, ORG_A, "Acme", T));
     // It gets ready after a moment (so this test subscribes first) and crashes at once, then
     // runs. Events are level-triggered (each carries the state as it is then; a state may be
     // skipped), so the test waits for `active` after an `offline`.
@@ -311,7 +315,7 @@ fn status_changes_are_pushed_on_subscribe() {
 #[test]
 fn the_give_up_rule_stops_restarts_until_office_restart() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.write_office(&hq(A, ORG_A, "Acme", T));
     home.script(json!({ A: {"do": "crash"} }));
     let mut config = app_config(&home);
     config.timings.give_up_after = 3;
@@ -343,7 +347,7 @@ fn the_give_up_rule_stops_restarts_until_office_restart() {
 #[test]
 fn uptime_counts_from_ready_not_from_the_spawn() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.write_office(&hq(A, ORG_A, "Acme", T));
     // Each run takes 1.2 s to get ready, then crashes at once: up for 1.2 s from its spawn,
     // over the 1 s that makes a fresh start, but up for no time after `ready`.
     home.script(json!({ A: {"do": "crash", "at": "ready", "delay_ms": 1200} }));
@@ -375,7 +379,7 @@ fn uptime_counts_from_ready_not_from_the_spawn() {
 fn a_status_change_publishes_the_whole_office_record() {
     // The event's data is the office's whole record, as `office.list` shows it.
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.write_office(&hq(A, ORG_A, "Acme", T));
     home.script(json!({ A: {"do": "ready", "delay_ms": 600} }));
     let host = home.start(home.config()).unwrap();
     let mut events = Client::for_host(&host);
@@ -403,7 +407,7 @@ fn retired_calls_stay_refused_when_another_process_writes_the_connection() {
     use std::os::unix::process::CommandExt;
 
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.write_office(&hq(A, ORG_A, "Acme", T));
     let host = home.start(app_config(&home)).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
 
@@ -488,7 +492,7 @@ fn retired_calls_stay_refused_with_a_buffered_suffix() {
     use std::io::{BufRead, BufReader, Write};
 
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.write_office(&hq(A, ORG_A, "Acme", T));
     let host = home.start(app_config(&home)).unwrap();
     wait_for_state(&host, A, OfficeStatus::Active, None);
     let call = format!(

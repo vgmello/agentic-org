@@ -1,6 +1,12 @@
 //! Shared helpers for the host's integration tests: a short temporary office home (never the
 //! real one) with its own development key folder (never the Keychain), the fake office server
 //! and its script and log, and a small org-proto client.
+//!
+//! Every office a host starts needs the writer custody protected provisioning reserves, and
+//! names its office and organization by canonical UUIDv7 (`office.json` version 2). A
+//! registered home's [`TestHome::write_office`] stores an office as a create would have left
+//! it: the host-side custody reservation (`org_host::test_support::custody`), then its
+//! `office.json` and key. The fake server takes the custody admission the host sends.
 
 #![allow(dead_code)] // each test file uses a different part
 
@@ -120,6 +126,9 @@ pub fn fast_timings() -> Timings {
 pub struct TestHome {
     dir: tempfile::TempDir,
     instance_id: Option<String>,
+    /// Each organization's owner, from its first custody reservation.
+    #[cfg(debug_assertions)]
+    owners: Mutex<BTreeMap<String, org_host::test_support::custody::Owner>>,
 }
 
 impl TestHome {
@@ -127,6 +136,8 @@ impl TestHome {
         Self {
             dir: short_tempdir("oh"),
             instance_id: None,
+            #[cfg(debug_assertions)]
+            owners: Mutex::default(),
         }
     }
 
@@ -226,15 +237,44 @@ impl TestHome {
         .unwrap();
     }
 
-    /// Stores an office as if the host had created it: its `office.json`, and a key in the key
+    /// Stores an office as if the host had created it: in a registered home its writer custody
+    /// (the first time, while no host runs), then its `office.json`, and a key in the key
     /// folder (unless it has one).
     pub fn write_office(&self, office: &OfficeFile) {
         let dir = self.office_dir(&office.office_id);
+        #[cfg(debug_assertions)]
+        if self.instance_id.is_some() && !dir.exists() {
+            self.reserve_custody(&office.org_id, &office.office_id);
+        }
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("office.json"), office.to_vec().unwrap()).unwrap();
         if !self.has_key(&office.office_id) {
             self.write_key(&office.office_id);
         }
+    }
+
+    /// Reserves writer custody for `office_id` of `organization_id` on this registered home's
+    /// instance, as protected provisioning does before a create (its folder must not exist
+    /// yet). An organization keeps the owner its first reservation seeded. No host may run.
+    #[cfg(debug_assertions)]
+    pub fn reserve_custody(&self, organization_id: &str, office_id: &str) {
+        let base = self.fixture_base();
+        let at = org_host::test_support::custody::InstanceAt::new(
+            &base.join("l"),
+            &base.join("t"),
+            None,
+            &base.join("i"),
+            &self.dir.path().join("k"),
+        );
+        let mut owners = self.owners.lock().unwrap();
+        let owner = org_host::test_support::custody::reserve_office(
+            &at,
+            organization_id,
+            office_id,
+            owners.get(organization_id),
+        )
+        .unwrap();
+        owners.insert(organization_id.to_owned(), owner);
     }
 
     fn key_path(&self, office_id: &str) -> PathBuf {
@@ -362,6 +402,14 @@ impl TestHome {
             .iter()
             .map(|f| f[4].parse().unwrap())
             .collect()
+    }
+
+    /// The pid of the fake's discard run for the office `office_id`, once it took its handoff.
+    pub fn discard_pid(&self, office_id: &str) -> Option<u32> {
+        self.log_fields("secrets-key", "discard")
+            .iter()
+            .find(|f| f.get(4).is_some_and(|id| id == office_id))
+            .map(|f| f[2].parse().unwrap())
     }
 
     /// The pids that exited cleanly on stdin EOF.
@@ -591,9 +639,9 @@ pub fn office_info(host: &Host, office_id: &str) -> Option<org_proto::OfficeInfo
         .find(|o| o.id == office_id)
 }
 
-/// An HQ office file.
+/// An HQ office file (version 2: both IDs canonical UUIDv7).
 pub fn hq(office_id: &str, org_id: &str, name: &str, created_at: &str) -> OfficeFile {
-    OfficeFile::new(office_id, "HQ", OfficeRole::Hq, org_id, name, created_at)
+    OfficeFile::selected(office_id, "HQ", OfficeRole::Hq, org_id, name, created_at).unwrap()
 }
 
 /// Starts a host on a home another in-process host just shut down. Retries `AlreadyRunning` for
@@ -799,4 +847,10 @@ impl Client {
             Ok(_) => Some(serde_json::from_str(&line).unwrap()),
         }
     }
+}
+
+/// A canonical UUIDv7 for test fixtures, distinct for each `n`: the form every launch line,
+/// `office.json` (version 2) and custody record names offices and organizations by.
+pub fn uuid7(n: u64) -> String {
+    format!("0190a5d2-7c3e-7000-8000-{n:012x}")
 }
