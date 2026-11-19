@@ -35,11 +35,12 @@ impl Hq {
             after: after.as_ref(),
             limit: limit as usize + 1,
         };
-        // The M1 worker reads the committed org head before its sources. If the head read fails,
-        // retain the last observed position and let each source report its own read failure.
+        // The worker reads the organization's committed position (its directory generation)
+        // before its sources. If that read fails, retain the last observed position and let
+        // each source report its own read failure.
         if let Some(office) = &self.list_office {
-            match office.org_head() {
-                Ok(head) => self.clock.observe_org_head(head.seq),
+            match office.org_snapshot() {
+                Ok(snapshot) => self.clock.observe_org_head(snapshot.position.seq),
                 Err(error) => {
                     crate::logged("inbox.position", &error);
                 }

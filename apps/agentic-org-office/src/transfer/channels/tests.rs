@@ -117,7 +117,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
         std::path::Path::new("/unused"),
         serve::OfficePorts {
             snapshot,
-            submit: Box::new(|_| panic!("host touched Office submit")),
+            submit: Box::new(|_, _| panic!("host touched Office submit")),
             work: Box::new(|_, _| panic!("host touched Office work")),
             operation_get: Box::new(|_| panic!("host touched Office operation")),
             who: Box::new(|_| panic!("host touched Office who")),
@@ -131,20 +131,9 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
     ))
 }
 fn office_fixture() -> (tempfile::TempDir, Arc<org_office::Office>) {
+    use org_office::{Office, TestOffice};
     let root = tempfile::TempDir::new().unwrap();
-    let office = org_office::Office::create(
-        root.path().join("OFFICE1"),
-        &org_office::NewOffice {
-            office_id: "OFFICE1".into(),
-            office_name: "HQ".into(),
-            org_id: "ORG1".into(),
-            org_name: "Acme".into(),
-            role: org_office::OfficeRole::Hq,
-        },
-        org_office::Key::from_office_secrets_key(org_proto::OfficeSecretsKey::from_bytes([17; 32])),
-    )
-    .unwrap();
-    (root, Arc::new(office))
+    (root, Arc::new(Office::for_test(TestOffice::default())))
 }
 
 fn manager() -> (

@@ -380,6 +380,107 @@ impl ServiceManager for Untouchable {
     }
 }
 
+/// An `https` setup file: a supplied pair is read and verified before anything is saved
+/// (a key that is not the certificate's refuses the file and leaves no record); a good one
+/// is recorded by its paths, and setup prints its fingerprint. Without a pair, setup says
+/// the instance makes its own certificate.
+#[test]
+fn https_setup_verifies_a_supplied_pair_before_anything_is_saved() {
+    use crate::instance::setup::{Configured, SuppliedTls};
+    use sha2::Digest;
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let now = crate::web_tls::now().unwrap();
+    let (cert, key) = crate::web_tls::tests::pair_for(&["127.0.0.1"], now - 60, now + 86_400);
+    let (_, other_key) = crate::web_tls::tests::pair_for(&["127.0.0.1"], now - 60, now + 86_400);
+    let files = root.join("tls");
+    std::fs::create_dir(&files).unwrap();
+    std::fs::write(files.join("cert.pem"), &cert).unwrap();
+    std::fs::write(files.join("key.pem"), &key).unwrap();
+    std::fs::write(files.join("other.pem"), &other_key).unwrap();
+    let run = |base_name: &str, tls: Option<SuppliedTls>| {
+        let base = root.join(base_name);
+        for dir in [base.clone(), base.join("t")] {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let paths = Paths::at(&base, base.join("t"), None).unwrap();
+        let port = free_port();
+        let listen = serde_json::from_value(serde_json::json!({
+            "address": "127.0.0.1", "port": port, "scheme": "https",
+            "origin": format!("https://127.0.0.1:{port}"), "hsts": "off"
+        }))
+        .unwrap();
+        let input = Input {
+            version: 1,
+            service: Service::Foreground,
+            root: base.join("data"),
+            credentials: None,
+            listen,
+        };
+        let platform = Platform {
+            service: Box::new(Untouchable),
+            disk: Box::new(org_platform::testing::FakeDiskEncryption(
+                EncryptionState::Unknown("a test".into()),
+            )),
+            credentials: CredentialDirectory::Unused,
+        };
+        let request = Request {
+            name: None,
+            port: None,
+            prompt: None,
+            named_port_base: NAMED_PORT_BASE,
+            program: PathBuf::from("/no-such-program"),
+            env: Vec::new(),
+            terminal: false,
+            development_keys: None,
+            configuration: Some(Configuration(Configured { input, tls })),
+        };
+        let mut out = Vec::new();
+        let result = run_at(&paths, &platform, request, &mut out).map(drop);
+        (result, String::from_utf8(out).unwrap(), base)
+    };
+    let supplied = |key: &str| SuppliedTls {
+        cert: files.join("cert.pem"),
+        key: files.join(key),
+    };
+    let (refused, _, base) = run("mismatched", Some(supplied("other.pem")));
+    let refused = refused.unwrap_err();
+    assert!(
+        refused.contains("tls_key_mismatch") && refused.ends_with("nothing was saved"),
+        "{refused}"
+    );
+    assert!(!refused.contains("BEGIN"), "{refused}");
+    assert!(
+        Journal::snapshot(&base, None).is_err(),
+        "a record was saved"
+    );
+    let (missing, _, _) = run("missing", Some(supplied("gone.pem")));
+    assert!(missing.unwrap_err().contains("gone.pem"));
+    let (done, out, base) = run("supplied", Some(supplied("key.pem")));
+    done.unwrap();
+    let der =
+        org_host_control::pem::first_block(&cert, org_host_control::pem::CERTIFICATE).unwrap();
+    let shown = crate::web_tls::Fingerprint(sha2::Sha256::digest(der.bytes()).into());
+    assert!(
+        out.contains(&format!(
+            "TLS: supplied by the operator, SHA-256 fingerprint {shown}"
+        )),
+        "{out}"
+    );
+    assert!(!out.contains("PRIVATE KEY"), "{out}");
+    let record = Journal::snapshot(&base, None).unwrap();
+    assert_eq!(record.tls, Some(supplied("key.pem")));
+    let (made, out, base) = run("made", None);
+    made.unwrap();
+    assert!(
+        out.contains("TLS: the instance makes its own certificate for https://127.0.0.1:"),
+        "{out}"
+    );
+    assert_eq!(Journal::snapshot(&base, None).unwrap().tls, None);
+}
+
 /// Non-interactive setup in the foreground mode: the record is frozen from the file's
 /// input, the instance is reserved and its layout made, and that is all. No service
 /// manager is asked anything, nothing is waited for, no link is asked for or printed, and a
@@ -421,7 +522,7 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
             // Even at a terminal: the configuration decides, and no link is printed.
             terminal: true,
             development_keys: None,
-            configuration: Some(Configuration(input.clone())),
+            configuration: Some(Configuration::from(input.clone())),
         };
         assert!(request.configuration.as_ref().unwrap().foreground());
         let mut out = Vec::new();
@@ -520,7 +621,7 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
             env: Vec::new(),
             terminal: false,
             development_keys: None,
-            configuration: Some(Configuration(changed)),
+            configuration: Some(Configuration::from(changed)),
         };
         let mut out = Vec::new();
         let refused = run_at(&paths, &platform, request, &mut out).unwrap_err();
@@ -542,7 +643,7 @@ fn a_published_plain_http_listener_warns_every_reachable_peer() {
         "serving plain HTTP on a published port (0.0.0.0:8443). Every machine that can \
          reach the listen address can reach sign-in and sessions in plain text. In Docker, \
          publish only on the host's 127.0.0.1 (docker run -p 127.0.0.1:8443:8443). Open \
-         http://127.0.0.1:8443. HTTPS is not available yet."
+         http://127.0.0.1:8443. For HTTPS, set up an instance with \"scheme\": \"https\"."
     );
 }
 
@@ -602,7 +703,7 @@ fn a_refused_setup_from_a_file_leaves_nothing_and_a_corrected_file_then_works() 
             // Apart from what the test lists: a registered service of a development build
             // that records no credential directory needs it.
             development_keys: Some(temp.path().canonicalize().unwrap().join("k")),
-            configuration: Some(Configuration(input.clone())),
+            configuration: Some(Configuration::from(input.clone())),
         };
         let mut out = Vec::new();
         run_at(&paths, &platform, request, &mut out)
@@ -996,7 +1097,7 @@ fn a_configuration_file_is_read_without_changing_anything() {
     .unwrap();
     let registered = configuration(&file).unwrap();
     assert!(!registered.foreground());
-    // HTTPS is refused before anything is made, and so is a file that names a pair.
+    // HTTPS is read; a pair named for plain HTTP is refused before anything is made.
     let https = temp.path().join("https.json");
     std::fs::write(
         &https,
@@ -1005,9 +1106,18 @@ fn a_configuration_file_is_read_without_changing_anything() {
                       "origin":"https://office.example:8443","hsts":"off"}}"#,
     )
     .unwrap();
+    assert!(!configuration(&https).unwrap().foreground());
+    std::fs::write(
+        &https,
+        br#"{"version":1,"service":"registered","root":"/srv/agentic/instance",
+            "listen":{"address":"127.0.0.1","port":7420,"scheme":"http_loopback",
+                      "origin":"http://127.0.0.1:7420","hsts":"off"},
+            "tls":{"cert":"/tls/cert.pem","key":"/tls/key.pem"}}"#,
+    )
+    .unwrap();
     let refused = configuration(&https).unwrap_err();
     assert!(
-        refused.contains("\"https\" is not available in this build")
+        refused.contains("only \"scheme\": \"https\" serves")
             && refused.ends_with("nothing was changed"),
         "{refused}"
     );
@@ -1492,7 +1602,7 @@ mod credentials {
                 env: Vec::new(),
                 terminal: false,
                 development_keys: Some(account.base.join("keys")),
-                configuration: Some(Configuration(input.clone())),
+                configuration: Some(Configuration::from(input.clone())),
             };
             let mut out = Vec::new();
             run_at(&paths, &platform, request, &mut out)
@@ -1623,7 +1733,7 @@ mod credentials {
             env: Vec::new(),
             terminal: false,
             development_keys: None,
-            configuration: Some(Configuration(Input {
+            configuration: Some(Configuration::from(Input {
                 version: 1,
                 service: Service::Registered,
                 root: home.join("data"),
@@ -1775,7 +1885,7 @@ fn a_set_up_instance_continues_after_its_runtime_folders_are_gone() {
             env: Vec::new(),
             terminal: false,
             development_keys: None,
-            configuration: Some(Configuration(input.clone())),
+            configuration: Some(Configuration::from(input.clone())),
         };
         run_at(&paths, &platform, request, &mut Vec::new()).map(drop)
     };

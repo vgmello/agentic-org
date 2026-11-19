@@ -93,10 +93,14 @@ certificate or epoch authority.
    committed organization identity.
 2. On HQ creation only, the worker receives the code over the launch rendezvous.
    `org-pki` generates the CA key and seals it in worker memory. The usable CA
-   PKCS#8 is stored only in the worker's local-only PKI record in the office
-   database, wrapped with the office secrets key (ADR-0016), and excluded from
-   replicated rows, events and exports. The versioned public escrow record sits
-   beside it. No plaintext key file and no new host key namespace exist.
+   PKCS#8 is stored only in the HQ's protected local record
+   `durable/local/offices/<office-id>/security/ca-key.v1.json`, wrapped with the
+   office secrets key (ADR-0016), and excluded from organization Git, replicated
+   records, events and exports; the protected acceptance journal holds it, wrapped,
+   until the creation's entry is released (data contract document 16, "The HQ's CA
+   records"). The versioned public escrow package is the organization's
+   `state/security/ca-escrow.v1.bin`. No plaintext key file and no new host key
+   namespace exist.
 3. The worker commits the wrapped CA key, public envelope, organization identity and
    provisioning-complete version in one initial transaction, before creation
    success, capability readiness or the launch-ready acknowledgement. The public
@@ -154,7 +158,11 @@ absence of a pending code as permission to re-provision.
   commit and on reply loss prove one CA and package, the host's code kept, and no
   rotation on an ordinary retry. An acknowledged HQ restarts without a code. The
   local-only key never appears in copied state, history, Git, status, web, logs or
-  export, and a copy of the office database alone yields no usable key (ENC-5).
+  export. No office database holds the key, wrapped or not (the projection records
+  only the key record's hash): the wrapped key is only in the HQ's protected local
+  record `durable/local/offices/<office-id>/security/ca-key.v1.json` and, until the
+  creation's entry is released, in the protected acceptance journal, so a copy of
+  either without the office secrets key yields no usable key (ENC-5).
 - Protected collect, defer, export, acknowledge and restart run with temporary
   credential roots. Acknowledgement removes the pending code and a later release
   refuses redisplay; waiting or shown states do not block an otherwise ready HQ.

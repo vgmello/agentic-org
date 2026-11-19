@@ -256,7 +256,9 @@ mod tests {
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+/// Where a signal to a group of only exited members is refused (macOS), the exception
+/// the owner's cleanup verifies before it reaps. Elsewhere there is no such refusal.
+#[cfg(test)]
 mod zombie_group_tests {
     use super::*;
     use std::io::BufRead;
@@ -297,6 +299,9 @@ mod zombie_group_tests {
 
     #[test]
     fn zombie_only_group_eperm_is_verified_before_explicit_cleanup_reaps() {
+        if !process::EXITED_GROUP_SIGNAL_IS_DENIED {
+            return;
+        }
         let (mut child, _stdout, _hold_input) = exited_group("exit 17");
         assert!(process::group_contains_only_leader(child.pid).unwrap());
         // SAFETY: the held leader is still our unreaped child, reserving this group ID.
@@ -307,6 +312,9 @@ mod zombie_group_tests {
 
     #[test]
     fn an_exited_leader_with_a_live_group_member_is_not_the_zombie_only_exception() {
+        if !process::EXITED_GROUP_SIGNAL_IS_DENIED {
+            return;
+        }
         let (mut child, stdout, _hold_input) =
             exited_group("exec 3<&0; cat <&3 & echo $!; exit 17");
         let mut line = String::new();

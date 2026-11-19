@@ -91,6 +91,7 @@ fn refused_web_start_never_becomes_ready() {
             check: ServerCheck::gateway_for_build(false, None).unwrap(),
             critical_paths: vec![],
             release: None,
+            tls: None,
         },
         None,
         Arc::new(NoOps),
@@ -136,6 +137,7 @@ fn an_admission_refusal_inside_start_keeps_its_cause() {
         check: ServerCheck::gateway_for_build(false, None).unwrap(),
         critical_paths: vec![],
         release: None,
+        tls: None,
     };
     let Err(error) = start(&config, Arc::new(NoOps)) else {
         panic!("a release build without a team or a selected release never spawns")
@@ -778,6 +780,7 @@ fn scripted_config(
         check,
         critical_paths: vec![],
         release: None,
+        tls: None,
     };
     (dir, config)
 }
@@ -1196,7 +1199,7 @@ fn free_port() -> u16 {
 }
 
 #[test]
-fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
+fn the_supervisor_refuses_an_https_listener_without_a_stored_pair() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let https = serde_json::from_str(
@@ -1213,6 +1216,7 @@ fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
             check: ServerCheck::gateway_for_build(true, None).unwrap(),
             critical_paths: vec![],
             release: None,
+            tls: None,
         },
         None,
         Arc::new(NoOps),
@@ -1220,18 +1224,54 @@ fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
         Arc::new(|| true),
     );
     let Err(error) = started else {
-        panic!("an HTTPS listener never starts the web process")
+        panic!("an HTTPS listener without a pair never starts the web process")
     };
     // The confinement question comes first: where it refuses, the listener is not
     // looked at, and that refusal is the next test's.
     if org_platform::confinement::web_confinement_supported().is_ok() {
         assert_eq!(
             error.to_string(),
-            "the web process requires a plain HTTP listener (http_loopback, or http_published \
-             in the foreground mode): HTTPS has no verified certificate yet"
+            "the web process requires a verified TLS pair for its https listener: tls_missing"
         );
     }
     assert_eq!(*lock(&state), GatewayState::NotConfigured);
+}
+
+/// The `https` gate (X-02 §2, pre-spawn): a stored pair that names the origin passes; none
+/// is `tls_missing`, one for another host `tls_name_mismatch`, one whose key is gone is
+/// `tls_missing` too. Nothing is bound or spawned on a refusal.
+#[test]
+fn the_https_gate_admits_only_a_stored_pair_that_names_the_origin() {
+    use crate::web_tls::tests::started;
+    let now = crate::web_tls::now().unwrap();
+    let (_kept, tls) = started("https://127.0.0.1:48125");
+    https_gate(Some(&*tls), now).unwrap();
+    let refusal = |result: io::Result<()>| result.unwrap_err().to_string();
+    assert!(refusal(https_gate(None, now)).ends_with(": tls_missing"));
+    // Expired: 398 days on.
+    assert!(refusal(https_gate(Some(&*tls), now + 398 * 86_400)).contains("tls_not_valid"));
+    let (kept, other) = started("https://org.example:48125");
+    crate::web_tls::tests::store_pair_of(&kept, &other, "https://elsewhere.example");
+    assert!(refusal(https_gate(Some(&*other), now)).contains("tls_name_mismatch"));
+    crate::web_tls::tests::lose_keys(&kept);
+    assert!(refusal(https_gate(Some(&*other), now)).contains("tls_missing"));
+}
+
+/// The web start's eligibility in `https`: the host's own eligibility and a pair that can be
+/// served now. A pair that cannot be served keeps the web process waiting (the supervisor
+/// counts no failed start), and the refusal is logged once.
+#[test]
+fn an_https_web_start_waits_while_its_pair_cannot_be_served() {
+    use crate::web_tls::tests::started;
+    let (kept, tls) = started("https://127.0.0.1:48126");
+    assert!(gated(Arc::new(|| true), Arc::clone(&tls))());
+    assert!(!gated(Arc::new(|| false), Arc::clone(&tls))());
+    crate::web_tls::tests::store_pair_of(&kept, &tls, "https://elsewhere.example");
+    let waiting = gated(Arc::new(|| true), Arc::clone(&tls));
+    let (answers, log) = crate::host_log::capture(|| (waiting(), waiting()));
+    assert_eq!(answers, (false, false));
+    assert_eq!(log.len(), 1, "{log:?}");
+    assert!(log[0].contains("tls_name_mismatch"), "{log:?}");
 }
 
 /// The listener gate admits the two plain HTTP modes: a published listener of a foreground
@@ -1279,6 +1319,7 @@ fn startable(dir: &Path) -> Configuration {
         check: ServerCheck::gateway_for_build(true, None).unwrap(),
         critical_paths: vec![],
         release: None,
+        tls: None,
     }
 }
 
@@ -1895,6 +1936,7 @@ fn unchecked(dir: &Path, program: PathBuf) -> Configuration {
         check: ServerCheck::Skip,
         critical_paths: vec![],
         release: None,
+        tls: None,
     }
 }
 
@@ -2555,6 +2597,7 @@ fn real_web() -> RealWeb {
             check: ServerCheck::gateway_for_build(true, None).unwrap(),
             critical_paths: vec![root.join("critical")],
             release: None,
+            tls: None,
         },
         handler,
         offices,
@@ -2851,4 +2894,25 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
         "authenticated browser restart limit reached after {MAX_STARTS} failed starts; last: "
     ));
     assert!(last.is_some_and(is_cause), "{printed}");
+}
+
+/// The line a web process writes when a `tls.renew` kept its pair is found across reads, its
+/// reason only when it is a known one, and at most [`RENEWAL_KEPT_LOGGED`] times.
+#[test]
+fn a_kept_renewal_line_is_found_across_reads_and_only_for_known_reasons() {
+    let mut kept = RenewalKept::default();
+    let line = format!("{RENEWAL_KEPT_PREFIX}replace_failed\n");
+    let (head, tail) = line.as_bytes().split_at(20);
+    assert!(kept.read(head).is_empty());
+    assert_eq!(kept.read(tail), ["replace_failed"]);
+    let other = format!(
+        "noise\n{RENEWAL_KEPT_PREFIX}-----BEGIN PRIVATE KEY-----\n{RENEWAL_KEPT_PREFIX}{}\n\
+         {RENEWAL_KEPT_PREFIX}unavailable",
+        "x".repeat(300)
+    );
+    assert!(kept.read(other.as_bytes()).is_empty(), "no line ended yet");
+    assert_eq!(kept.read(b"\n"), ["unavailable"]);
+    let many = format!("{RENEWAL_KEPT_PREFIX}fetch_failed\n").repeat(40);
+    assert_eq!(kept.read(many.as_bytes()).len(), RENEWAL_KEPT_LOGGED - 2);
+    assert!(renewal_kept_text("fetch_failed").contains("fetch_failed"));
 }

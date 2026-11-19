@@ -1,9 +1,8 @@
 use super::*;
-use org_office::{NewOffice, Office, OfficeRole};
+use org_office::{Office, TestOffice};
 use org_proto::inbox::InboxListParams;
 use org_proto::OrgSnapshot;
 use serde_json::json;
-use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -46,21 +45,36 @@ fn source(snapshot: OrgSnapshot) -> OrgSource {
     OrgSource::new(Box::new(move || Ok(snapshot.clone())), "HQ".into())
 }
 
-fn office(root: &Path, id: &str) -> Arc<Office> {
-    Arc::new(
-        Office::create(
-            root.join(id),
-            &NewOffice {
-                office_id: id.into(),
-                office_name: id.into(),
-                role: OfficeRole::Hq,
-                org_id: "ORG".into(),
-                org_name: "Acme".into(),
-            },
-            None,
-        )
-        .unwrap(),
-    )
+fn office() -> Arc<Office> {
+    Arc::new(Office::for_test(TestOffice::default()))
+}
+
+/// A `team.create` under the organization's top team, as its owner.
+fn create_team(office: &Office, n: u64) {
+    use org_office::rules::OrgCommand;
+    use org_proto::org::TeamCreateParams;
+    let snapshot = office.org_snapshot().unwrap();
+    let owner = snapshot
+        .members
+        .iter()
+        .find(|m| m.owner)
+        .unwrap()
+        .id
+        .clone();
+    let top = snapshot
+        .teams
+        .iter()
+        .find(|t| t.owner_team_id.is_none())
+        .unwrap()
+        .id
+        .clone();
+    let command = OrgCommand::TeamCreate(TeamCreateParams {
+        command_id: format!("01HZY8M6V2Q3D4E5F{n:07}00"),
+        team_id: format!("01900000-0000-7000-8000-{n:012x}"),
+        name: format!("Team {n}"),
+        owner_team_id: Some(top),
+    });
+    office.submit_org(&owner, command).unwrap().unwrap();
 }
 
 fn open_items() -> InboxListParams {
@@ -74,77 +88,49 @@ fn open_items() -> InboxListParams {
     }
 }
 
+/// A source that cannot read is degraded; the page still answers, at the position the
+/// office's directory generation gave.
 #[test]
-fn inbox_list_reports_a_degraded_source_when_the_org_head_cannot_be_read() {
+fn inbox_list_reports_a_degraded_source_and_keeps_the_office_position() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    let root = tempfile::tempdir().unwrap();
-    let replica = office(root.path(), "REPLICA");
-    let inbox = super::super::Hq::for_office(Arc::clone(&replica)).unwrap();
+    let office = office();
+    let inbox = super::super::Hq::for_office(Arc::clone(&office)).unwrap();
     let before = inbox.list(open_items()).unwrap();
     assert!(before.degraded.is_empty());
     assert!(before.as_of.seq > 0);
 
-    // An awaiting-snapshot store gives the real org reader a deterministic error.
-    let hq = office(root.path(), "HQ");
-    hq.bind_replication_hq(Default::default(), 1024 * 1024)
-        .unwrap();
-    let pin = hq.replication_checkpoint().unwrap();
-    replica
-        .bind_replication_satellite(pin.hq_office, pin.ca, pin.highest_epoch, Default::default())
-        .unwrap();
-    assert!(matches!(
-        replica.org_head(),
-        Err(org_office::OfficeError::SnapshotPending)
-    ));
-
-    let page = inbox.list(open_items()).unwrap();
+    let failing = super::super::Hq {
+        sources: vec![Arc::new(OrgSource::new(
+            Box::new(|| Err(SourceFailure)),
+            "HQ".into(),
+        ))],
+        clock: super::super::Clock::new("degraded".into()),
+        list_office: Some(Arc::clone(&office)),
+    };
+    let page = failing.list(open_items()).unwrap();
     assert_eq!(page.degraded, ["org"]);
     assert_eq!(page.counts, InboxCounts::default());
     assert!(page.items.is_empty());
     assert!(page.next_cursor.is_none());
-    assert_eq!(page.as_of, before.as_of);
+    assert_eq!(page.as_of.seq, before.as_of.seq);
 }
 
+/// The page's position is the organization's committed directory generation: it advances
+/// with a committed `team.create`, and a replay commits nothing.
 #[test]
-fn inbox_list_position_advances_after_offboarding_without_hints() {
+fn inbox_list_position_advances_with_a_committed_organization_change() {
     let _spawn = crate::transfer::tests::without_process_spawn();
-    use org_office::rules::OrgCommand;
-    use org_proto::org::MemberOffboardParams;
-
-    let root = tempfile::tempdir().unwrap();
-    let office = office(root.path(), "HQ");
-    let mut snapshot = office.org_snapshot().unwrap();
-    let agent_id = org_mailbox::testkit::fixture::ADA_ID;
-    snapshot.members.push(member(agent_id, "agent", None));
-    office.seed_organization_for_test(&snapshot.members, snapshot.position);
+    let office = office();
     let inbox = super::super::Hq::for_office(Arc::clone(&office)).unwrap();
     let list = || inbox.list(open_items()).unwrap();
-
     let before = list();
-    assert_eq!(before.counts.problems, 1);
-    assert_eq!(before.items.len(), 1);
-    let now_ms = std::time::UNIX_EPOCH.elapsed().unwrap().as_millis() as u64;
-    let offboard = MemberOffboardParams {
-        command_id: org_work::ulid_from_parts(now_ms, 1),
-        member_id: agent_id.into(),
-        expected_version: 1,
-    };
-    office
-        .submit_org(OrgCommand::MemberOffboard(offboard.clone()))
-        .unwrap()
-        .unwrap();
+    create_team(&office, 1);
     let after = list();
-    assert_eq!(after.counts.problems, 0);
-    assert!(after.items.is_empty());
     assert_eq!(after.as_of.epoch, before.as_of.epoch);
     assert!(after.as_of.seq > before.as_of.seq);
     assert_eq!(list().as_of, after.as_of);
-
-    // An exact replay commits nothing, so the position stays where it was.
-    office
-        .submit_org(OrgCommand::MemberOffboard(offboard))
-        .unwrap()
-        .unwrap();
+    // The same command again: the same answer, nothing committed.
+    create_team(&office, 1);
     assert_eq!(list().as_of, after.as_of);
 }
 

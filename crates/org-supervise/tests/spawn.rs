@@ -216,13 +216,10 @@ fn child_entry() {
 }
 
 fn assert_owned_group_cleanup(natural_exit: bool) {
-    #[cfg(target_os = "linux")]
-    // SAFETY: this is an isolated helper, not the parallel test runner. Adopt/reap its
-    // grandchild so even container PID1 behavior cannot leave a fixture zombie.
-    assert_eq!(
-        unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) },
-        0
-    );
+    // This is an isolated helper, not the parallel test runner. Where the system has
+    // subreapers (Linux), adopt and reap its grandchild, so that even container PID 1
+    // behaviour cannot leave a fixture zombie.
+    let subreaper = org_platform::process::testing::become_subreaper().unwrap();
     let root = std::env::current_dir().unwrap();
     let spawned = prepare(
         &root,
@@ -289,8 +286,7 @@ fn assert_owned_group_cleanup(natural_exit: bool) {
     stdin.close().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        #[cfg(target_os = "linux")]
-        {
+        if subreaper {
             let mut status = 0;
             // SAFETY: the isolated subreaper owns this adopted, unreaped grandchild.
             let rc = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
@@ -313,11 +309,12 @@ fn assert_owned_group_cleanup(natural_exit: bool) {
             break;
         }
         if Instant::now() >= deadline {
-            #[cfg(target_os = "linux")]
-            // SAFETY: clean up the isolated subreaper's own still-unreaped grandchild.
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-                libc::waitpid(pid, std::ptr::null_mut(), 0);
+            if subreaper {
+                // SAFETY: clean up the isolated subreaper's own still-unreaped grandchild.
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                    libc::waitpid(pid, std::ptr::null_mut(), 0);
+                }
             }
             // The EOF gate is already closed, so the fixture can exit without a signal.
             // Never signal a macOS nonchild using a numeric PID after leader reaping.
@@ -359,9 +356,12 @@ fn supplies_only_explicit_environment_and_private_session() {
     assert!(text.contains("INSPECTED"));
 }
 
-#[cfg(target_os = "macos")]
+/// Where a child starts suspended (macOS), it is held until its identity is recorded.
 #[test]
 fn macos_holds_even_a_fast_child_until_its_identity_is_recorded() {
+    if !org_platform::process::SPAWNS_SUSPENDED {
+        return;
+    }
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
     let pending = prepare(
@@ -378,23 +378,7 @@ fn macos_holds_even_a_fast_child_until_its_identity_is_recorded() {
     let mut child = pending
         .record_identity(|identity| {
             assert_eq!(identity.pid, pid);
-            let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
-            let size = std::mem::size_of::<libc::proc_bsdinfo>();
-            // SAFETY: querying only our child with a correctly sized output record.
-            assert_eq!(
-                unsafe {
-                    libc::proc_pidinfo(
-                        pid as i32,
-                        libc::PROC_PIDTBSDINFO,
-                        0,
-                        info.as_mut_ptr().cast(),
-                        size as i32,
-                    )
-                },
-                size as i32
-            );
-            // SAFETY: complete proc_bsdinfo returned above.
-            assert_eq!(unsafe { info.assume_init() }.pbi_status, libc::SSTOP);
+            assert!(org_platform::process::testing::is_stopped(pid as i32).unwrap());
             assert!(!root.join("startup-marker").exists());
             Ok(())
         })

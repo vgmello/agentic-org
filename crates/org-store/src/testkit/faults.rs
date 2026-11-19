@@ -6,8 +6,10 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, MutexGuard},
+    time::{Duration, Instant},
 };
 
+use super::HELD_BOUND;
 use crate::{
     disk::{Disk, DiskFile, RealDisk},
     files::{Files, FilesError},
@@ -377,12 +379,35 @@ impl Faults {
         self.lock().hold_flushes = true;
     }
 
-    /// Returns once a segment flush is waiting behind the hold.
+    /// Returns once a segment flush is waiting behind the hold. Panics when none has
+    /// arrived within [`HELD_BOUND`]: the thread meant to flush may have died before
+    /// reaching the hold, and the test must then fail instead of waiting forever.
     pub fn wait_for_held_flush(&self) {
+        self.wait_for_held_flush_within(HELD_BOUND);
+    }
+
+    fn wait_for_held_flush_within(&self, bound: Duration) {
+        let deadline = Instant::now() + bound;
         let mut state = self.lock();
         while state.blocked_flushes == 0 {
             assert!(state.hold_flushes, "no hold is set");
-            state = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                // Lift the hold first: a store dropped while this panic unwinds joins its
+                // threads, and one that reached the hold meanwhile must not wait forever.
+                state.hold_flushes = false;
+                self.changed.notify_all();
+                drop(state);
+                panic!(
+                    "no segment flush reached the hold within {bound:?}: \
+                 the thread meant to flush may have died before it"
+                );
+            }
+            let (next, _) = self
+                .changed
+                .wait_timeout(state, left)
+                .unwrap_or_else(|e| e.into_inner());
+            state = next;
         }
     }
 
@@ -715,5 +740,47 @@ mod tests {
 
         faults.power_cut_losing_entries().unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"flushed");
+    }
+
+    /// A hold that no flush reaches (its thread died first) fails the wait, not the run.
+    #[test]
+    #[should_panic(expected = "no segment flush reached the hold within")]
+    fn waiting_for_a_held_flush_that_never_arrives_fails_at_its_bound() {
+        let faults = Faults::new();
+        faults.hold_flushes();
+        faults.wait_for_held_flush_within(Duration::from_millis(50));
+    }
+
+    /// The failed wait lifts the hold, so a store dropped while the panic unwinds never
+    /// joins a flusher that reached the hold in the meantime.
+    #[test]
+    fn a_failed_wait_lifts_the_hold() {
+        let faults = Faults::new();
+        faults.hold_flushes();
+        let waited = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            faults.wait_for_held_flush_within(Duration::from_millis(50))
+        }));
+        assert!(waited.is_err());
+        assert!(!faults.lock().hold_flushes);
+    }
+
+    #[test]
+    fn a_flush_reaching_the_hold_ends_the_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let segments = dir.path().canonicalize().unwrap().join("segments");
+        std::fs::create_dir(&segments).unwrap();
+        let path = segments.join("00000001.log");
+        let faults = Faults::new();
+        faults.hold_flushes();
+        let flusher = {
+            let faults = Arc::clone(&faults);
+            std::thread::spawn(move || {
+                let file = faults.disk().open_append(&path).unwrap();
+                file.flush_full()
+            })
+        };
+        faults.wait_for_held_flush_within(HELD_BOUND);
+        faults.release_flushes();
+        flusher.join().unwrap().unwrap();
     }
 }

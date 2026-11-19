@@ -187,8 +187,7 @@ fn strict_input_and_replaced_setup_lock_refuse_without_secrets() {
         serde_json::from_value::<Input>(raw).is_err(),
         "plain HTTP stays on loopback"
     );
-    // HTTPS decodes as a listener and is refused as an input: no build serves it yet, so
-    // no instance is set up for it (X5 review V11). The refusal names the modes that work.
+    // HTTPS on any address is an input (X7): the instance makes or is given its certificate.
     let https = |origin: &str| {
         serde_json::from_str::<ListenConfig>(&format!(
             r#"{{"address":"0.0.0.0","port":7420,"scheme":"https","origin":"{origin}","hsts":"off"}}"#
@@ -200,13 +199,7 @@ fn strict_input_and_replaced_setup_lock_refuse_without_secrets() {
     };
     let secure = https("https://office.example:7420").unwrap();
     assert!(secure.listen.address().is_unspecified());
-    let refused = secure.validate().unwrap_err().to_string();
-    assert!(
-        refused.contains("\"https\" is not available in this build")
-            && refused.contains("http_loopback")
-            && refused.contains("http_published"),
-        "{refused}"
-    );
+    secure.validate().unwrap();
     assert!(https("https://office.example:7421").is_err());
     assert!(https("http://office.example:7420").is_err());
     // The half-built certificate property is gone: a file that names it has an unknown
@@ -395,7 +388,9 @@ fn a_configuration_file_is_the_strict_input_and_names_its_shape_when_it_is_wrong
       "listen": {"address": "0.0.0.0", "port": 8443, "scheme": "http_published",
                  "origin": "http://127.0.0.1:8443", "hsts": "off"}
     }"#;
-    let input = Input::from_configuration(text.as_bytes()).unwrap();
+    let configured = Input::from_configuration(text.as_bytes()).unwrap();
+    assert_eq!(configured.tls, None);
+    let input = configured.input;
     assert_eq!(input.service, Service::Foreground);
     assert_eq!(input.root, PathBuf::from("/data/instance"));
     assert_eq!(input.credentials, Some(PathBuf::from("/secrets")));
@@ -464,6 +459,91 @@ fn a_configuration_file_is_the_strict_input_and_names_its_shape_when_it_is_wrong
         refused.contains("no other property is accepted"),
         "{refused}"
     );
+}
+
+/// An `https` configuration may name a supplied pair's two files (`tls`), absolute and
+/// normalized; a plain HTTP one may not, and `tls` takes no other property. Its paths are
+/// recorded beside the input and never change.
+#[test]
+fn a_configuration_names_a_supplied_pair_only_for_https() {
+    let https = serde_json::json!({
+      "version": 1, "service": "foreground", "root": "/data/instance",
+      "credentials": "/secrets",
+      "listen": {"address": "0.0.0.0", "port": 8443, "scheme": "https",
+                 "origin": "https://127.0.0.1:8443", "hsts": "off"}
+    });
+    let read = |value: &serde_json::Value| Input::from_configuration(value.to_string().as_bytes());
+    let made = read(&https).unwrap();
+    assert_eq!(made.tls, None);
+    assert_eq!(
+        made.input.listen.scheme(),
+        org_host_control::listen::ListenMode::Https
+    );
+    let mut supplied = https.clone();
+    supplied["tls"] = serde_json::json!({"cert": "/tls/cert.pem", "key": "/tls/key.pem"});
+    let configured = read(&supplied).unwrap();
+    assert_eq!(
+        configured.tls,
+        Some(SuppliedTls {
+            cert: "/tls/cert.pem".into(),
+            key: "/tls/key.pem".into()
+        })
+    );
+    for (what, tls) in [
+        (
+            "a relative path",
+            serde_json::json!({"cert": "tls/cert.pem", "key": "/k.pem"}),
+        ),
+        (
+            "a path with ..",
+            serde_json::json!({"cert": "/c.pem", "key": "/a/../k.pem"}),
+        ),
+        (
+            "a trailing slash",
+            serde_json::json!({"cert": "/c.pem/", "key": "/k.pem"}),
+        ),
+        ("no key", serde_json::json!({"cert": "/c.pem"})),
+        (
+            "a passphrase",
+            serde_json::json!({"cert": "/c.pem", "key": "/k.pem", "pass": "x"}),
+        ),
+        (
+            "the key itself",
+            serde_json::json!({"cert": "/c.pem", "key": {"pem": "x"}}),
+        ),
+    ] {
+        let mut changed = https.clone();
+        changed["tls"] = tls;
+        assert!(read(&changed).is_err(), "{what} was accepted");
+    }
+    let mut plain = supplied.clone();
+    plain["listen"] = serde_json::json!({"address": "0.0.0.0", "port": 8443,
+        "scheme": "http_published", "origin": "http://127.0.0.1:8443", "hsts": "off"});
+    let refused = read(&plain).unwrap_err().to_string();
+    assert!(refused.contains(TLS_NEEDS_HTTPS), "{refused}");
+    // Frozen beside the input: the same file again is the same configuration; another
+    // pair's files are refused.
+    let (_temp, base) = base();
+    let journal = Journal::open(&base, None).unwrap();
+    let pin = crate::setup_flow::release_pin().unwrap();
+    let record = journal
+        .freeze_configured(configured.clone(), true, pin.clone())
+        .unwrap();
+    assert_eq!(record.tls, configured.tls);
+    let reread: Record = serde_json::from_slice(&serde_json::to_vec(&record).unwrap()).unwrap();
+    assert_eq!(reread, record);
+    assert_eq!(
+        journal
+            .freeze_configured(configured.clone(), true, pin.clone())
+            .unwrap(),
+        record
+    );
+    let mut other = configured.clone();
+    other.tls.as_mut().unwrap().key = "/tls/other.pem".into();
+    assert!(journal.freeze_configured(other, true, pin.clone()).is_err());
+    let mut next = record.clone();
+    next.tls = None;
+    assert!(journal.write(&next).is_err());
 }
 
 /// Which systems an input fits: a directory is named only where secrets are kept in one,

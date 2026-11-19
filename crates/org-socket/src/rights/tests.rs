@@ -12,6 +12,26 @@ use std::time::{Duration, Instant};
 // Logs: /private/tmp/kai-b1072-fork-probe-{mac,linux}.log
 const MARKER: u8 = 0x3a;
 
+/// Whether this system sets close-on-exec with the receive, for this `recvmsg` flag,
+/// rather than under the caller's fence afterwards.
+fn atomic_close_on_exec() -> Option<libc::c_int> {
+    use org_platform::socket::{ReceivedCloseOnExec, RECEIVED_CLOSE_ON_EXEC};
+    match RECEIVED_CLOSE_ON_EXEC {
+        ReceivedCloseOnExec::WithTheReceive(flag) => Some(flag),
+        ReceivedCloseOnExec::UnderTheFence => None,
+        ReceivedCloseOnExec::Unavailable => panic!("no socket adapter on this system"),
+    }
+}
+
+/// Whether the control space for one descriptor has room for a second: the padding of
+/// `CMSG_SPACE` on this system (Linux, 8-byte alignment), where the kernel can report
+/// two descriptors to a receive that expects one.
+fn padded_control_space_fits_two() -> bool {
+    // SAFETY: CMSG_LEN only computes a length.
+    let two = unsafe { libc::CMSG_LEN((2 * mem::size_of::<RawFd>()) as _) } as usize;
+    control_space(1).unwrap() >= two
+}
+
 pub(super) fn send_rights(socket: RawFd, payload: &[u8], descriptors: &[RawFd]) {
     let space = control_space(descriptors.len()).unwrap();
     let mut control = vec![0usize; space.div_ceil(mem::size_of::<usize>())];
@@ -245,8 +265,9 @@ fn exact_control_capacity_nonblocking_flags_and_interrupted_retry() {
                 calls += 1;
                 assert_eq!(control_len(message), control_space(1).unwrap());
                 assert_ne!(flags & libc::MSG_DONTWAIT, 0);
-                #[cfg(target_os = "linux")]
-                assert_ne!(flags & libc::MSG_CMSG_CLOEXEC, 0);
+                if let Some(flag) = atomic_close_on_exec() {
+                    assert_eq!(flags & flag, flag);
+                }
                 if calls == 1 {
                     // Simulate a syscall changing its output count on an interrupted attempt.
                     message.msg_controllen = 0;
@@ -267,9 +288,12 @@ fn exact_control_capacity_nonblocking_flags_and_interrupted_retry() {
     assert_closed(peer);
 }
 
-#[cfg(not(target_os = "linux"))]
 #[test]
 fn mac_fence_covers_recvmsg_through_every_cloexec_operation() {
+    // Only where close-on-exec is set after the receive, under the fence (macOS).
+    if atomic_close_on_exec().is_some() {
+        return;
+    }
     // X-02 §5.2: use the caller's spawn fence, not a new unrelated private lock.
     let fence = Mutex::new(());
     let (sender, socket) = UnixDatagram::pair().unwrap();
@@ -345,17 +369,20 @@ fn fatal_paths_close_reported_fds_poison_receiver_and_return_to_caller() {
     for case in cases {
         run_fatal_child(case);
     }
-    #[cfg(target_os = "linux")]
-    run_fatal_child("reported-extra");
-    #[cfg(not(target_os = "linux"))]
-    for case in [
-        "fcntl",
-        "poisoned-fence",
-        "reported-fcntl",
-        "fcntl-get",
-        "fcntl-set",
-    ] {
-        run_fatal_child(case);
+    if padded_control_space_fits_two() {
+        run_fatal_child("reported-extra");
+    }
+    // The fence and the close-on-exec calls exist only where the receive cannot set it.
+    if atomic_close_on_exec().is_none() {
+        for case in [
+            "fcntl",
+            "poisoned-fence",
+            "reported-fcntl",
+            "fcntl-get",
+            "fcntl-set",
+        ] {
+            run_fatal_child(case);
+        }
     }
 }
 
@@ -482,7 +509,6 @@ fn fatal_child() {
             );
             assert!(matches!(result, Err(ReceiveError::Fatal(_))));
         }
-        #[cfg(not(target_os = "linux"))]
         "fcntl" => {
             send_rights(
                 sender.as_raw_fd(),
@@ -510,7 +536,6 @@ fn fatal_child() {
             drop(canary);
             assert_closed(peer);
         }
-        #[cfg(not(target_os = "linux"))]
         "poisoned-fence" => {
             let _ = std::panic::catch_unwind(|| {
                 let _guard = fence.lock().unwrap();

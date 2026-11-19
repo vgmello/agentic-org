@@ -180,6 +180,71 @@ const REFUSAL_PREFIX: &str = "agentic-org-web: startup refused: confinement: ";
 /// report lacks a Landlock layer. It shows the reason once per start and decides
 /// nothing by it: whether the child is confined is what the host observed.
 const LANDLOCK_NOT_APPLIED_PREFIX: &str = "agentic-org-web: confinement: landlock not applied: ";
+/// The start of the line a running web process writes when a `tls.renew` did not replace
+/// its pair (`agentic-org-web`'s `process::RENEWAL_KEPT_PREFIX`); its reason is one of
+/// [`RENEWAL_KEPT_REASONS`]. The host logs its own text for a known reason, never the line.
+const RENEWAL_KEPT_PREFIX: &str = "agentic-org-web: tls renewal kept the current pair: ";
+const RENEWAL_KEPT_REASONS: [&str; 4] = [
+    "fetch_failed",
+    "unavailable",
+    "unusable_pair",
+    "replace_failed",
+];
+/// How many such lines one web process has forwarded to the host log at most.
+const RENEWAL_KEPT_LOGGED: usize = 16;
+
+/// Finds the [`RENEWAL_KEPT_PREFIX`] lines in a child's standard error as it is read, across
+/// reads. A line longer than the longest such line is skipped whole.
+#[derive(Default)]
+struct RenewalKept {
+    line: Vec<u8>,
+    overlong: bool,
+    logged: usize,
+}
+
+impl RenewalKept {
+    const LINE_BYTES: usize = 128;
+
+    /// The reasons of the lines that `bytes` completes, in order, up to
+    /// [`RENEWAL_KEPT_LOGGED`] for the life of the child.
+    fn read(&mut self, bytes: &[u8]) -> Vec<&'static str> {
+        let mut found = Vec::new();
+        for &byte in bytes {
+            if byte != b'\n' {
+                if self.line.len() < Self::LINE_BYTES {
+                    self.line.push(byte);
+                } else {
+                    self.overlong = true;
+                }
+                continue;
+            }
+            let reason = (!self.overlong)
+                .then(|| self.line.strip_prefix(RENEWAL_KEPT_PREFIX.as_bytes()))
+                .flatten()
+                .and_then(|reason| {
+                    RENEWAL_KEPT_REASONS
+                        .into_iter()
+                        .find(|known| known.as_bytes() == reason)
+                });
+            if let Some(reason) = reason.filter(|_| self.logged < RENEWAL_KEPT_LOGGED) {
+                self.logged += 1;
+                found.push(reason);
+            }
+            self.line.clear();
+            self.overlong = false;
+        }
+        found
+    }
+}
+
+/// What the host logs for a web process that kept its pair after `tls.renew`.
+fn renewal_kept_text(reason: &str) -> String {
+    format!(
+        "the web process kept serving its current TLS pair after a renewal: {reason}; it \
+         serves the new pair from its next start"
+    )
+}
+
 /// How much of a child's standard error is kept; the rest is read and dropped.
 const STDERR_KEPT: usize = 1024;
 /// How long a child whose control stream ended may take to exit by itself, so that
@@ -258,6 +323,7 @@ impl Stderr {
             .name("web-stderr".into())
             .spawn(move || {
                 let mut bytes = [0u8; 4096];
+                let mut renewals = RenewalKept::default();
                 // Reads until the end of the pipe or an error, which also ends it.
                 let stopped = loop {
                     let read = match stderr.read(&mut bytes) {
@@ -265,6 +331,9 @@ impl Stderr {
                         Ok(read) => read,
                         Err(error) => break Some(error),
                     };
+                    for reason in renewals.read(&bytes[..read]) {
+                        crate::host_log::log(&renewal_kept_text(reason));
+                    }
                     #[cfg(test)]
                     lock(&CAPTURED_STDERR)
                         .entry(instance.clone())
@@ -466,6 +535,8 @@ pub(crate) struct Configuration {
     pub check: ServerCheck,
     pub critical_paths: Vec<PathBuf>,
     pub release: Option<org_host_control::gateway::WebRelease>,
+    /// The `https` listener's pair (`crate::web_tls`); `None` for plain HTTP.
+    pub tls: Option<Arc<crate::web_tls::WebTls>>,
 }
 /// The selected release's web process image pin (`Err`: the release has none) and the
 /// release identity bound into the web process's first line.
@@ -572,6 +643,78 @@ fn unconfinable(reason: io::Error) -> io::Error {
     ))
 }
 
+/// The pre-spawn check of an `https` listener (X-02 §2) at `now` (Unix seconds), after its
+/// listener fields, origin and `hsts`, which the snapshot passed when it was read: a stored
+/// pair is present (`tls_missing`), covers the origin (`tls_name_mismatch`), is valid now and
+/// its key can be read. The refusal names the reason for the host log.
+fn https_gate(tls: Option<&crate::web_tls::WebTls>, now: i64) -> io::Result<()> {
+    use crate::web_tls::Unservable;
+    let refused = |reason: &str| {
+        io::Error::other(format!(
+            "the web process requires a verified TLS pair for its https listener: {reason}"
+        ))
+    };
+    match tls.map(|tls| tls.servable(now)) {
+        Some(Ok(())) => Ok(()),
+        None | Some(Err(Unservable::Missing)) => Err(refused("tls_missing")),
+        Some(Err(Unservable::Failure(_))) => Err(refused(
+            "tls_name_mismatch: the stored certificate does not name the origin's host",
+        )),
+        Some(Err(Unservable::NotValid)) => Err(refused(
+            "tls_not_valid: the stored certificate is not valid now; the administrator \
+             replaces it (tls.set)",
+        )),
+        Some(Err(Unservable::Storage)) => Err(refused(
+            "tls_missing: the stored pair or its key cannot be read",
+        )),
+    }
+}
+
+/// How often the `https` gate is asked again while the supervisor polls its eligibility.
+const HTTPS_GATE_EVERY: Duration = Duration::from_secs(2);
+
+/// `eligible`, and the `https` gate ([`https_gate`]) for `tls`: the web process starts only
+/// while the stored pair can be served, and the supervisor waits, without counting a failed
+/// start, while it cannot (a supplied pair that expired waits for the administrator's
+/// `tls.set`); a running one is stopped when it no longer can. The gate is asked at most
+/// every [`HTTPS_GATE_EVERY`], and each change of its answer is logged once.
+fn gated(
+    eligible: Arc<dyn Fn() -> bool + Send + Sync>,
+    tls: Arc<crate::web_tls::WebTls>,
+) -> Arc<dyn Fn() -> bool + Send + Sync> {
+    let last: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    Arc::new(move || {
+        if !eligible() {
+            return false;
+        }
+        let mut last = lock(&last);
+        if let Some((at, served)) = *last {
+            if at.elapsed() < HTTPS_GATE_EVERY {
+                return served;
+            }
+        }
+        let verdict = match crate::web_tls::now() {
+            Some(now) => https_gate(Some(&tls), now),
+            None => Err(io::Error::other("the clock is unavailable")),
+        };
+        let served = verdict.is_ok();
+        if last.map(|(_, was)| was) != Some(served) {
+            match &verdict {
+                Err(why) => crate::host_log::log(&format!(
+                    "the web process is not started: {}",
+                    crate::host_log::untrusted(&why.to_string())
+                )),
+                Ok(()) if last.is_some() => crate::host_log::log(
+                    "the stored TLS pair can be served: the web process is started",
+                ),
+                Ok(()) => {}
+            }
+        }
+        *last = Some((Instant::now(), served));
+        served
+    })
+}
+
 pub(crate) struct Supervisor {
     stop: Arc<AtomicBool>,
     state: Arc<Mutex<GatewayState>>,
@@ -594,16 +737,13 @@ impl Supervisor {
         org_platform::confinement::web_confinement_supported().map_err(unconfinable)?;
         // Plain HTTP, in one of its two modes: on loopback, or on the published port of a
         // foreground instance, which the registered start has already judged against the
-        // instance's service mode. HTTPS needs a verified pair, which no host has yet.
-        if !matches!(
-            config.listen.scheme(),
-            ListenMode::HttpLoopback | ListenMode::HttpPublished
-        ) {
-            return Err(io::Error::other(
-                "the web process requires a plain HTTP listener (http_loopback, or \
-                 http_published in the foreground mode): HTTPS has no verified certificate yet",
-            ));
-        }
+        // instance's service mode. HTTPS needs the host's pair; it is started only while
+        // the stored pair verifies (`gated`).
+        let eligible = match (config.listen.scheme(), &config.tls) {
+            (ListenMode::Https, None) => return Err(https_gate(None, 0).unwrap_err()),
+            (ListenMode::Https, Some(tls)) => gated(eligible, Arc::clone(tls)),
+            _ => eligible,
+        };
         config
             .check
             .may_spawn()

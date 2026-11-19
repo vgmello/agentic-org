@@ -6,16 +6,18 @@
 //! agentic-org-office --office <id>   # first stdin line: the start message; serves the office
 //! agentic-org-office --discard <id>  # first stdin line: the discard message (the key or null); removes an unfinished create
 //! ```
-//! One launch version: events travel on the authenticated rendezvous; its EOF closes the databases
+//! One launch version: events travel on the authenticated rendezvous; its EOF closes the office
 //! and exits 0. stdin is drained unparsed after the first line and is not a lifetime signal;
 //! stdout carries nothing. Logs go to stderr.
-//! The office, its folder, lock, key and databases are `org_office::Office`; this crate is the
-//! process around it: launch control, typed authority and the socket. The server never touches
-//! a Keychain.
+//! The office, its folder, lock, key and store are `org_office::Office`; this
+//! crate is the process around it: launch control, the host's writer custody, typed authority
+//! and the socket. Every create and start takes the host's writer control first, before it
+//! creates or opens anything. The server never touches a Keychain.
 
 #![deny(unsafe_code)]
 
 mod bounded;
+mod directory;
 pub mod fdswap;
 mod follow;
 mod grant;
@@ -28,7 +30,7 @@ mod revocations;
 mod serve;
 mod signals;
 mod startup;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod test_support;
 mod transfer;
 mod zeroed;
@@ -42,7 +44,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use launch::Launch;
-use org_office::{Office, OfficeError};
+use org_office::Office;
+use org_office::OfficeError;
 use org_office_launch::{
     office_dir, FailCode, FirstLine, LaunchError, OfficeFile, ServerEvent, CREATE_FLAG,
     DISCARD_FLAG, OFFICE_FLAG,
@@ -133,9 +136,10 @@ fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
             "not a plain office id",
         );
     };
-    if std::fs::symlink_metadata(folder.join("selected-writer.required")).is_ok()
-        && !control.selected_writer_required
-    {
+    // A folder the host reserved writer custody for (its marker, or a staging file of one) is
+    // never discarded: a discard claims none. It is the reservation's, not a finished office,
+    // so the refusal is the same fixed storage error for both, whatever the folder holds.
+    if holds_writer_custody(&folder) {
         return fail(
             &mut control,
             FailCode::StorageError,
@@ -149,6 +153,13 @@ fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
         }
         Err(e) => fail_with(&mut control, &e),
     }
+}
+
+/// Whether the host reserved writer custody in `folder` (`org_office_launch::writer::marker`).
+/// A folder that can't be listed counts too: it is kept. A missing one holds nothing.
+fn holds_writer_custody(folder: &Path) -> bool {
+    org_office_launch::writer::marker::holds_custody(folder)
+        .unwrap_or_else(|error| error.kind() != std::io::ErrorKind::NotFound)
 }
 
 fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
@@ -190,13 +201,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         }
     }
     // HQ creation-v1 is the only create: it consumes the recovery code before serving.
-    let Some(context) = create.hq_creation else {
-        return fail(
-            &mut control,
-            FailCode::InvalidRequest,
-            "missing HQ creation binding",
-        );
-    };
+    let context = create.hq_creation;
     let Some(recovery) = create.recovery else {
         return fail(
             &mut control,
@@ -204,18 +209,40 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
             "missing recovery code",
         );
     };
+    // The host's writer control comes first: nothing is created without custody.
+    let mut transfer = control.transfer();
+    let admitted = match admit(
+        &mut control,
+        &mut transfer,
+        &create.office.office_id,
+        &create.instance,
+    ) {
+        Ok(admitted) => admitted,
+        Err(code) => return code,
+    };
+    // The admission is for this organization and this owner; the office checks its roots
+    // against the intent it freezes.
+    if admitted.admission.identity.organization_id != create.office.org_id
+        || admitted.admission.owner_member != create.owner_member_id
+    {
+        return fail(
+            &mut control,
+            FailCode::StorageError,
+            "protected writer admission requires recovery",
+        );
+    }
     let binding = org_office::hq_creation::Binding {
         operation_id: context.operation_id,
         owner_member_id: create.owner_member_id,
-        public_root: context.public_root.into(),
-        bootstrap: context.bootstrap.map(|b| *b),
+        bootstrap: *context.bootstrap,
     };
     let created = hq_creation::prepare(
         &folder,
         &create.office,
         Some(create.key),
-        &create.instance,
         &binding,
+        admitted.roots,
+        admitted.custody,
         recovery,
     );
     let office = match created {
@@ -223,43 +250,34 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         Err(e) => return fail_with(&mut control, &e),
     };
     let info = office.info();
-    let file = if org_office_launch::is_selected_entity_id(&info.office_id) {
-        match OfficeFile::selected(
-            info.office_id.clone(),
-            info.office_name.clone(),
-            OfficeRole::Hq,
-            info.org_id.clone(),
-            info.org_name.clone(),
-            info.created_at.clone(),
-        ) {
-            Ok(file) => file,
-            Err(_) => {
-                return fail(
-                    &mut control,
-                    FailCode::StorageError,
-                    "selected office marker rejected",
-                );
-            }
+    // The office is created with UUIDv7 ids only, so its `office.json` is version 2.
+    let file = match OfficeFile::selected(
+        info.office_id.clone(),
+        info.office_name.clone(),
+        OfficeRole::Hq,
+        info.org_id.clone(),
+        info.org_name.clone(),
+        info.created_at.clone(),
+    ) {
+        Ok(file) => file,
+        Err(_) => {
+            return fail(
+                &mut control,
+                FailCode::StorageError,
+                "selected office marker rejected",
+            );
         }
-    } else {
-        OfficeFile::new(
-            info.office_id.clone(),
-            info.office_name.clone(),
-            OfficeRole::Hq,
-            info.org_id.clone(),
-            info.org_name.clone(),
-            info.created_at.clone(),
-        )
     };
     // `office.json` is in place and durable: from here the office is stored, whatever happens.
     emit(&mut control, &ServerEvent::Created { office: file });
     serve_office(
         control,
+        transfer,
         from_host,
         runtime,
         office,
         create.auth,
-        Some(create.instance),
+        create.instance,
     )
 }
 
@@ -285,21 +303,40 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
     if let Err(message) = socket_path(runtime, id) {
         return fail(&mut control, FailCode::InvalidRequest, message);
     }
-    if std::fs::symlink_metadata(folder.join("selected-writer.required")).is_ok()
-        && !control.selected_writer_required
-    {
-        return fail(
-            &mut control,
-            FailCode::StorageError,
-            "selected writer custody is required",
-        );
-    }
     let instance = office.instance_id;
-    let opened = Office::open_for_instance(folder, key.clone(), &instance);
+    // The host's writer control comes first: a start without it is refused.
+    let mut transfer = control.transfer();
+    let admitted = match admit(&mut control, &mut transfer, id, &instance) {
+        Ok(admitted) => admitted,
+        Err(code) => return code,
+    };
+    // The office checks the admission's organization and roots against its creation intent.
+    let opened = Office::open(folder, key, &instance, admitted.roots, admitted.custody);
     let office = match opened {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
+    // The admission is for this office's owner, as a create checks it: the snapshot marks
+    // the owner the creation intent froze.
+    let owner = office
+        .org_snapshot()
+        .map(|snapshot| snapshot.members.into_iter().find(|member| member.owner));
+    match owner {
+        Ok(Some(owner)) if owner.id == admitted.admission.owner_member => {}
+        Ok(_) => {
+            // Nothing was appended: the orderly stop puts back the clean-stop marker the
+            // opening consumed.
+            if let Err(error) = office.close() {
+                eprintln!("agentic-org-office: closing the refused office failed: {error}");
+            }
+            return fail(
+                &mut control,
+                FailCode::StorageError,
+                "protected writer admission requires recovery",
+            );
+        }
+        Err(e) => return fail_with(&mut control, &e),
+    }
     match hq_creation::verify_existing(&office) {
         Ok(hq_creation::CaStatus::Unavailable) => {
             // No key material, path or SQL in the log: the office keeps serving its data.
@@ -311,7 +348,35 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
         Ok(hq_creation::CaStatus::NotHq | hq_creation::CaStatus::Available) => {}
         Err(error) => return fail_with(&mut control, &error),
     }
-    serve_office(control, from_host, runtime, office, auth, Some(instance))
+    serve_office(
+        control, transfer, from_host, runtime, office, auth, instance,
+    )
+}
+
+/// Takes the host's writer control and its admission, before the office is created or
+/// opened. `Err(code)` is the exit code: every office needs custody.
+fn admit(
+    control: &mut Control,
+    transfer: &mut Option<startup::Transfer>,
+    office_id: &str,
+    instance: &str,
+) -> Result<transfer::Admitted, i32> {
+    let admitted = match (transfer.as_mut(), control.writer()) {
+        (Some(transport), Some(out)) => {
+            transfer::install_initial(transport, office_id, instance, &out)
+        }
+        _ => Err(std::io::Error::other("missing protected writer control")),
+    };
+    admitted.map_err(|error| {
+        // The log (stderr) is the only place the cause goes; the host gets a fixed text.
+        eprintln!("agentic-org-office: protected writer admission failed: {error}");
+        log_causes(&error);
+        fail(
+            control,
+            FailCode::StorageError,
+            "protected writer admission requires recovery",
+        )
+    })
 }
 
 /// Reads the first line from the host. `Err(code)` is the exit code to return: 0 when the host
@@ -349,30 +414,20 @@ fn first_line(
     }
 }
 
-/// Binds the socket, says `ready`, serves until the host goes away or a stop signal arrives,
-/// then closes the office (databases, lock) and exits 0.
+/// Binds the socket, says `ready`, serves until the host goes away, a stop signal arrives or
+/// the office's store stops, then closes the office and exits: 0 after an orderly stop, 1
+/// when the store stopped (the host restarts it).
 fn serve_office(
     mut control: Control,
+    transfer: Option<startup::Transfer>,
     from_host: Lifetime,
     runtime: &Path,
     office: Office,
     auth: serve::LaunchAuth,
-    instance: Option<String>,
+    instance: String,
 ) -> i32 {
     let info = office.info().clone();
     let office = Arc::new(office);
-    let mut transfer = control.transfer();
-    let admitted = initial_writer_admission(&mut transfer, &office, instance.as_deref(), &control);
-    if let Err(error) = &admitted {
-        // The log (stderr) is the only place the cause goes; the host gets a fixed text.
-        eprintln!("agentic-org-office: protected writer admission failed: {error}");
-        log_causes(error);
-        return fail(
-            &mut control,
-            FailCode::StorageError,
-            "protected writer admission requires recovery",
-        );
-    }
     let socket = match socket_path(runtime, &info.office_id) {
         Ok(socket) => socket,
         Err(message) => return fail(&mut control, FailCode::InvalidRequest, message),
@@ -421,39 +476,35 @@ fn serve_office(
             },
             who: {
                 let office = Arc::clone(&office);
-                Box::new(move |params| {
-                    // Status lines and runtime presence are unavailable until B6.
-                    let result = office
-                        .who(params, &org_office::directory::NothingLive)
-                        .map_err(|e| logged("who", &e))?;
-                    Ok(result.map(|mut directory| {
-                        // The directory can derive Asleep from run mode alone.
-                        for member in &mut directory.members {
-                            member.presence = org_proto::directory::MemberPresence::Offline;
-                        }
-                        directory
-                    }))
-                })
+                // Status lines and runtime presence are unavailable until B6: everyone reads
+                // as offline.
+                Box::new(move |params| office.who(params).map_err(|e| logged("who", &e)))
             },
             status: Box::new(|_, _| Ok(Err(unsupported("status lines", "B6")))),
             live,
             feed: None,
             mailbox: None,
-            directory: Arc::new(office.member_directory()),
+            directory: Arc::new(directory::OfficeDirectory::of(Arc::clone(&office))),
             submit: {
                 let office = Arc::clone(&office);
-                Box::new(move |command| {
+                Box::new(move |member, command| {
                     office
-                        .submit_org(command)
+                        .submit_org(member, command)
                         .map_err(|e| logged("command", &e))
                 })
             },
         },
         auth,
     );
+    // The organization's directory generation: the member watcher looks again when it moves.
+    // A read that fails gives a value no generation has, so the next good read differs.
     let directory_office = Arc::clone(&office);
-    shared.watch_directory_changes(move || directory_office.org_change_token());
-    shared.register_inbox(inbox, office.is_replication_hq());
+    shared.watch_directory_changes(move || {
+        directory_office
+            .org_snapshot()
+            .map_or(u64::MAX, |snapshot| snapshot.position.seq)
+    });
+    shared.register_inbox(inbox, office.is_hq());
     // The host's lifetime is the authenticated rendezvous (stdin is drained elsewhere).
     // The fixed-buffer watcher never parses later input.
     let host_gone = Arc::new(AtomicBool::new(false));
@@ -484,7 +535,7 @@ fn serve_office(
             let mut channels = transfer::Channels::new(
                 Arc::clone(&shared),
                 Arc::clone(&office),
-                instance.expect("verified launch instance"),
+                instance,
                 control.writer().expect("launch rendezvous writer"),
                 Arc::clone(&revocations),
             );
@@ -501,7 +552,18 @@ fn serve_office(
             return 1;
         }
     };
-    let stop = || host_gone.load(Ordering::SeqCst) || signals::stop_requested();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let stop = || {
+        // A store that stopped (a failed flush or append) is fatal: log its fixed text and
+        // exit 1 so the host restarts the office from what is on the drive.
+        if let Some(fatal) = office.fatal() {
+            if !stopped.swap(true, Ordering::SeqCst) {
+                eprintln!("agentic-org-office: {fatal}");
+            }
+            return true;
+        }
+        host_gone.load(Ordering::SeqCst) || signals::stop_requested()
+    };
     serve::run(&listener, &shared, &stop);
     drop(transfers);
 
@@ -510,25 +572,29 @@ fn serve_office(
     // Every connection thread is gone (joined by `serve::run`): the only owners of the office
     // left are `shared` and this function.
     drop(shared);
-    drop(office);
-    0
+    if stopped.load(Ordering::SeqCst) {
+        return 1;
+    }
+    close(office)
 }
 
-fn initial_writer_admission(
-    transfer: &mut Option<startup::Transfer>,
-    office: &Office,
-    instance: Option<&str>,
-    control: &Control,
-) -> std::io::Result<()> {
-    if control.selected_writer_required || org_proto::is_uuid_v7(&office.info().office_id) {
-        match (transfer, instance, control.writer()) {
-            (Some(transport), Some(instance), Some(out)) => {
-                transfer::install_initial(transport, office, instance, &out)
+/// The orderly stop: the store closes (flushed, confirmed, written) and leaves its clean-stop
+/// marker. An office something still holds is dropped instead: a stop without the marker.
+fn close(office: Arc<Office>) -> i32 {
+    match Arc::try_unwrap(office) {
+        Ok(office) => match office.close() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("agentic-org-office: the office did not close cleanly: {error}");
+                log_causes(&error);
+                1
             }
-            _ => Err(std::io::Error::other("missing protected writer control")),
+        },
+        Err(office) => {
+            eprintln!("agentic-org-office: the office is still in use at stop; it stops uncleanly");
+            drop(office);
+            0
         }
-    } else {
-        Ok(())
     }
 }
 

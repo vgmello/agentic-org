@@ -9,7 +9,7 @@
 #   (cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 #   deploy/container/lnx2.sh
 #
-# It builds the four executables and its own office program itself, for Linux, with
+# It builds the four executables itself, for Linux, with
 # deploy/container/build.sh (in the Rust toolchain's Debian image, on a Mac as on a Linux
 # Docker host), immediately before the image, so that the image never holds what an
 # earlier build left in the build folder, and it checks the packed `agentic-org` for test
@@ -30,16 +30,17 @@
 #      administrator from it and signs in, through the web API as the UI calls it;
 #   3. the browser address answers from the Docker host over plain HTTP from the first
 #      start, before any office exists: the version, the UI's index, the page of the
-#      registration link, and a refusal for any other Host; then an office worker starts
-#      and `agent-os` reaches it inside the container: a directory read is answered, and a
-#      send is answered `unsupported` by the office itself, not spooled (since B1b the office
-#      serves no messaging; B6 restores the send and read). The office is stored by the
-#      test's own program: no command creates one yet;
+#      registration link, and a refusal for any other Host; then the signed-in
+#      administrator creates the organization through the web API, the host starts its HQ's
+#      worker under the writer custody it reserved, and the create completes with the HQ
+#      active and its worker serving its socket. (`agent-os` reaches the office again once an
+#      agent is placed in it and `agent-os` addresses a selected office: implementation plan
+#      B2/C2 and A5; the send and read return with B6);
 #   4. LNX-4: the service's directories and files under /secrets are private, no key
 #      is under /data, and nothing was written outside the two volumes;
 #   5. `docker stop` ends the service within 2.5 s (inside the runtime's grace), with exit code 0;
 #   6. a new container on the same volumes is the same instance with the same keys, its
-#      office answers `agent-os` as before the replacement, and it keeps the browser's
+#      office's worker serves again under the same custody, and it keeps the browser's
 #      session and signs the administrator in again;
 #   7. a new container with the data volume and a new, empty secrets volume does not start
 #      ("credentials missing"), and nothing is made in the empty volume. Fresh data with
@@ -76,8 +77,9 @@ image=${LNX2_IMAGE:-agentic-org:lnx2-$$}
 port=${LNX2_PORT:-18443}
 tag=lnx2-$$
 user=agentic
-office=01OFFICE00000000000000HQ1
-key_hex=$(printf 'b3%.0s' $(seq 1 32))
+# The HQ's ID and its office secrets key (as hex), known once step 3 created it.
+office=
+key_hex=
 network=$tag-net
 record=/data/.local/share/agentic-org/setup/default/setup.v1.json
 scratch=$(mktemp -d "${TMPDIR:-/var/tmp}/lnx2.XXXXXX")
@@ -162,47 +164,25 @@ worker_socket() {
 }
 # A worker process runs and its socket exists. (The runtime folder is in the data volume,
 # so a socket file alone may be a stopped worker's.)
+# The worker that created the HQ serves it on (`--create`) until the host next starts it
+# (`--office <id>`).
 worker_runs() {
-    has "agentic-org-office --office $office" \
+    has "agentic-org-office (--create|--office $office)" \
         "$(docker exec "$1" sh -c 'for p in /proc/[0-9]*; do tr "\0" " " < "$p/cmdline" 2>/dev/null; echo; done' || true)"
 }
 worker_serves() { worker_runs "$1" && [ -n "$(worker_socket "$1")" ]; }
-# `agent-os` as an agent of the office. A registered instance keeps its worker's socket in
-# its runtime folder, where `agent-os` cannot look yet on any system (the LNX-1 test has the
-# same bridge): the agent is given an office home whose `run` folder holds a second name of
-# that socket. Everything from the socket on is the product's own route.
-agent() {
-    container=$1
-    agent=$2
-    shift 2
-    docker exec -e ORG_AGENT="$agent" -e ORG_OFFICE="$office" \
-        -e ORG_OFFICE_HOME=/data/.cache/lnx2-view -e ORG_HOME=/data/.cache/lnx2-agent \
-        "$container" agent-os "$@"
-}
-bridge() {
-    docker exec "$1" sh -c '
-        set -e
-        view=/data/.cache/lnx2-view
-        rm -rf "$view"
-        mkdir -m 700 -p "$view/run" /data/.cache/lnx2-agent
-        ln -s /data/instance/office-state/offices "$view/offices"
-        socket=$(find /data/.cache/agentic-org/tmp -type s ! -name host.sock | head -n 1)
-        ln "$socket" "$view/run/$(basename "$socket")"'
-}
-# The bridge, made again until the worker answers through it: a worker that has just
-# started replaces the socket file of the one before it.
-answers() { bridge "$1" 2>/dev/null && agent "$1" pixel who nova --json >/dev/null 2>&1; }
-# reaches <container>: agent-os reads nova from the office's directory, and a send reaches the
-# office, which refuses it (exit 4, until B6 restores messaging), with nothing spooled.
-reaches() {
-    local found sent code=0
-    found=$(agent "$1" pixel who nova --json)
-    has '"id":"AGENT00000000000000000NOVA"' "$found" || fail "pixel's directory read of nova: $found"
-    sent=$(agent "$1" pixel msg send --to nova --subject first --json "hello nova" 2>&1) || code=$?
-    [ "$code" = 4 ] || fail "a send gave exit code $code, not the office's refusal (4): $sent"
-    has 'does not serve messaging yet' "$sent" || fail "the send was not refused by the office: $sent"
-    docker exec "$1" sh -c '! [ -e /data/.cache/lnx2-agent/spool/outbox/new ]' ||
-        fail "the refused send was spooled"
+# ulid <container>: an operation ID made now, a ULID with the container's clock.
+ulid() {
+    local milliseconds alphabet timestamp digit
+    milliseconds=$(docker exec "$1" date +%s000)
+    alphabet=0123456789ABCDEFGHJKMNPQRSTVWXYZ
+    timestamp=
+    for _ in $(seq 1 10); do
+        digit=$((milliseconds % 32))
+        timestamp=${alphabet:digit:1}$timestamp
+        milliseconds=$((milliseconds / 32))
+    done
+    echo "${timestamp}0000000000000000"
 }
 # A listing of every file in the secrets volume with its owner, mode and digest.
 secrets_manifest='cd /secrets && find . -type f ! -name .lock | sort | while read -r f; do
@@ -221,10 +201,9 @@ target/linux/debug) ;;
 target/linux/release) profile=(--release) ;;
 *) fail "LNX2_BIN is target/linux/debug or target/linux/release" ;;
 esac
-{ "$here/build.sh" ${profile[@]+"${profile[@]}"} &&
-    "$here/build.sh" ${profile[@]+"${profile[@]}"} -p agentic-org --example lnx2-office; } >"$scratch/cargo.log" 2>&1 ||
+"$here/build.sh" ${profile[@]+"${profile[@]}"} >"$scratch/cargo.log" 2>&1 ||
     fail "the Linux build failed: $(tail -n 5 "$scratch/cargo.log")"
-for program in agentic-org agentic-org-office agentic-org-web agent-os examples/lnx2-office; do
+for program in agentic-org agentic-org-office agentic-org-web agent-os; do
     [ -x "$repo/$bin/$program" ] || fail "$bin/$program is not built"
 done
 [ -f "$repo/apps/agentic-org-ui/build/index.html" ] || fail "the UI is not built (see the head of this script)"
@@ -319,6 +298,11 @@ api() {
 session_cookie() { tr -d '\r' < "$scratch/head" | sed -n 's/^[Ss]et-[Cc]ookie: *\(org_session_[^;]*\).*/\1/p' | head -n 1; }
 session_proof() { sed -n 's/.*"proof":"\([0-9a-f]\{64\}\)".*/\1/p' "$scratch/body"; }
 password='lnx2 synthetic administrator password'
+# The request bodies, made outside the command substitutions they are sent from: the
+# macOS bash 3.2 brace-expands a "{...,...}" literal inside "$(...)" in double quotes,
+# which split the JSON into three requests.
+credentials="{\"login\":\"Owner\",\"password\":\"$password\"}"
+registration() { printf '{"link":"%s","login":"Owner","password":"%s"}' "$1" "$password"; }
 signed_in() {
     what=$1
     [ "$2" = 200 ] || fail "$what: $2 $(head -c 300 "$scratch/body")"
@@ -382,13 +366,13 @@ echo "refused without a terminal, as the service user and as a third user"
 token=$(sed -n 's|.*http://127\.0\.0\.1:8443/register#\([A-Za-z0-9_-]*\).*|\1|p' <<<"$link" | head -n 1)
 [ -n "$token" ] || fail "no token in the link: $link"
 signed_in "registration from the link" \
-    "$(api POST /api/v1/links/register "{\"link\":\"$token\",\"login\":\"Owner\",\"password\":\"$password\"}")"
+    "$(api POST /api/v1/links/register "$(registration "$token")")"
 session_holds || fail "the registration's session is not the host's"
 echo "POST /api/v1/links/register at the origin: 200, the administrator Owner, signed in"
 again=$(api POST /api/v1/links/register "{\"link\":\"$token\",\"login\":\"Other\",\"password\":\"$password\"}")
 [ "$again" != 200 ] || fail "the link registered a second account"
 [ -z "$(session_cookie)" ] || fail "a refused registration set a cookie"
-signed_in "sign-in" "$(api POST /api/v1/session/sign-in "{\"login\":\"Owner\",\"password\":\"$password\"}")"
+signed_in "sign-in" "$(api POST /api/v1/session/sign-in "$credentials")"
 session_holds || fail "the sign-in's session is not the host's"
 echo "the link works once; POST /api/v1/session/sign-in at the origin: 200, signed in"
 wrong=$(api POST /api/v1/session/sign-in '{"login":"Owner","password":"not the password at all"}')
@@ -399,21 +383,37 @@ echo "a wrong password: $wrong, no cookie; the same sign-in from another site: 4
 [ -z "$(docker exec -u 0 "$tag-a" find /data /secrets ! -user "$user")" ] ||
     fail "root left a file of its own in the volumes"
 
-say "3. an office worker, and agent-os reaches it"
+say "3. the administrator creates the organization, and its office worker serves"
 started=$(now)
 docker stop "$tag-a" >/dev/null
 echo "docker stop (no worker yet): $(since "$started") s, exit code $(docker inspect -f '{{.State.ExitCode}}' "$tag-a")"
-docker run --rm --volumes-from "$tag-a" -v "$repo/$bin/examples/lnx2-office:/lnx2-office:ro" \
-    --entrypoint /lnx2-office "$image" /data/instance/office-state /secrets/office-keys >/dev/null
 docker start "$tag-a" >/dev/null
 wait_until "the instance to serve again" serving "$tag-a"
-wait_until "the office worker's socket" worker_serves "$tag-a"
-wait_until "the worker to answer agent-os" answers "$tag-a"
-reaches "$tag-a"
-echo "pixel read nova from the office's directory; the office refused a send (no messaging until B6), and nothing was spooled"
-
-# The web process serves on after the restart, with the office there.
 wait_until "the web process to serve again" answers_http
+session_holds || fail "the browser's session did not survive the restart"
+# The create, as the UI posts it, with the session of step 2; then its operation is looked up
+# until it completed, as the UI does.
+operation=$(ulid "$tag-a")
+code=$(api POST /api/v1/organizations \
+    "{\"operation_id\":\"$operation\",\"scope\":{\"kind\":\"instance\",\"instance_id\":\"$id\"},\"params\":{\"name\":\"Acme\",\"slug\":\"acme\",\"organization_repository\":{\"kind\":\"remote\",\"remote_url\":\"https://example.test/acme.git\"},\"state_branch\":\"org/state\"}}" \
+    -H "Cookie: $cookie" -H "X-Org-Session-Proof: $proof")
+[ "$code" = 202 ] || [ "$code" = 200 ] ||
+    fail "the host did not admit organization creation: $code $(head -c 300 "$scratch/body")"
+completed() {
+    [ "$(api GET "/api/v1/operations/host/$operation?instance_id=$id" '' \
+        -H "Cookie: $cookie" -H "X-Org-Session-Proof: $proof")" = 200 ] &&
+        has '"outcome":"completed"' "$(cat "$scratch/body")"
+}
+wait_until "the organization create to complete" completed
+hq=$(grep -o '"offices":\[{[^}]*}' "$scratch/body" || true)
+office=$(grep -o '"id":"[0-9a-f-]*"' <<<"$hq" | sed 's/"id":"\(.*\)"/\1/' | head -n 1)
+[ -n "$office" ] || fail "the completed create names no HQ: $(head -c 400 "$scratch/body")"
+has '"status":"active"' "$hq" || fail "the HQ is not active: $hq"
+wait_until "the office worker's socket" worker_serves "$tag-a"
+echo "POST /api/v1/organizations: $code; the create completed with its HQ $office active, and its worker serves its socket"
+# The office secrets key the host made for the HQ, as hex, for the scans of step 5.
+key_hex=$(docker exec "$tag-a" od -An -v -tx1 "/secrets/office-keys/$office.key" | tr -d ' \n')
+[ "${#key_hex}" = 64 ] || fail "the HQ's key is not 32 bytes in /secrets/office-keys"
 
 say "4. LNX-4 in the container, and nothing outside the volumes"
 secrets_listing "$tag-a" | sed 's/^/  /'
@@ -439,7 +439,7 @@ echo "docker stop: $took s, exit code $code"
 awk -v t="$took" 'BEGIN { exit !(t < 2.5) }' || fail "the service took $took s to stop (its bound is 2.5 s)"
 # With the service stopped, nothing writes to the data volume while it is scanned.
 absent "the office's key is under /data (as hex)" "$tag-data" -rlaq "$key_hex" /data
-absent "the office's key bytes are under /data" "$tag-data" -rlaqP '\xb3{32}' /data
+absent "the office's key bytes are under /data" "$tag-data" -rlaqP "$(sed 's/../\\x&/g' <<<"$key_hex")" /data
 echo "the stopped data volume holds the office's key neither as hex nor as its bytes"
 
 say "5b. docker stop with a worker that does not act on the stop (X5 review V2)"
@@ -467,13 +467,11 @@ wait_until "the replaced instance to serve" serving "$tag-b"
 wait_until "the office worker's socket" worker_serves "$tag-b"
 [ "$(instance_id "$tag-b")" = "$id" ] || fail "another instance: $(instance_id "$tag-b")"
 [ "$(secrets_listing "$tag-b")" = "$before" ] || fail "the keys changed"
-wait_until "the worker to answer agent-os" answers "$tag-b"
-reaches "$tag-b"
-echo "the same instance $id, the same keys, and its office answers agent-os as before"
+echo "the same instance $id, the same keys, and its office's worker serves again under the same custody"
 wait_until "the replaced web process to serve" answers_http
 session_holds || fail "the browser's session did not survive the replacement"
 signed_in "sign-in after the replacement" \
-    "$(api POST /api/v1/session/sign-in "{\"login\":\"Owner\",\"password\":\"$password\"}")"
+    "$(api POST /api/v1/session/sign-in "$credentials")"
 echo "the browser's session held across the replacement, and the administrator signed in again"
 docker rm -f "$tag-b" >/dev/null
 
@@ -522,7 +520,7 @@ token=$(sed -n 's|.*http://127\.0\.0\.1:8443/register#\([A-Za-z0-9_-]*\).*|\1|p'
 [ -n "$token" ] || fail "no registration link on anonymous volumes"
 wait_until "the anonymous instance's web process to serve" answers_http
 signed_in "registration on anonymous volumes" \
-    "$(api POST /api/v1/links/register "{\"link\":\"$token\",\"login\":\"Owner\",\"password\":\"$password\"}")"
+    "$(api POST /api/v1/links/register "$(registration "$token")")"
 # The create operation uses a ULID with a current timestamp. This instance submits just one.
 milliseconds=$(docker exec "$tag-d" date +%s000)
 alphabet=0123456789ABCDEFGHJKMNPQRSTVWXYZ

@@ -177,6 +177,13 @@ pub(crate) enum SpawnError {
     /// platform will not start this image or this environment, or it was spawned and isn't
     /// the server it must be (then it was killed and reaped). Nothing got a line.
     Untrusted(String),
+    /// The office has no valid writer custody (a schema-3 record and its reservation marker):
+    /// nothing was started. Only protected provisioning reserves custody, so a restart alone
+    /// can't fix it.
+    NoCustody,
+    /// The office's writer custody could not be read (the custody store or the host
+    /// registry): nothing was started. It may pass, so it is retried.
+    CustodyUnreadable,
 }
 
 impl std::fmt::Display for SpawnError {
@@ -184,6 +191,8 @@ impl std::fmt::Display for SpawnError {
         match self {
             SpawnError::Io(e) => write!(f, "{e}"),
             SpawnError::Untrusted(why) => write!(f, "refused to start it: {why}"),
+            SpawnError::NoCustody => f.write_str("it has no valid writer custody"),
+            SpawnError::CustodyUnreadable => f.write_str("its writer custody can't be read"),
         }
     }
 }
@@ -198,7 +207,9 @@ impl From<SpawnError> for io::Error {
     fn from(e: SpawnError) -> Self {
         match e {
             SpawnError::Io(e) => e,
-            SpawnError::Untrusted(_) => io::Error::other(e.to_string()),
+            SpawnError::Untrusted(_) | SpawnError::NoCustody | SpawnError::CustodyUnreadable => {
+                io::Error::other(e.to_string())
+            }
         }
     }
 }
@@ -250,6 +261,14 @@ impl CreateLine {
         &self.0.first.office.office_id
     }
 
+    fn org_id(&self) -> &str {
+        &self.0.first.org_id
+    }
+
+    fn owner_member_id(&self) -> &str {
+        &self.0.first.owner_member_id
+    }
+
     /// The new office's secrets key and recovery code, for the handoff. Never copy them.
     fn handoff_secrets(&self) -> super::channels::HandoffSecrets<'_> {
         super::channels::HandoffSecrets::Create {
@@ -284,6 +303,39 @@ impl Spawner {
         }
     }
 
+    /// Whether `office` may start or be created: it holds valid writer custody and, for a
+    /// create, that custody is bound to the create's organization and owner member. Logged
+    /// with the office, never with a path or a record.
+    pub(crate) fn custody(
+        &self,
+        office: &str,
+        create: Option<(&str, &str)>,
+    ) -> Result<(), SpawnError> {
+        match self.broker.custody(office) {
+            Ok(bound)
+                if create.is_none_or(|(organization, member)| {
+                    bound.organization_id == organization && bound.owner_member == member
+                }) =>
+            {
+                Ok(())
+            }
+            Err(crate::writer::AdmitError::Unreadable) => {
+                host_log::log(&format!(
+                    "didn't start office {office}: its writer custody can't be read now; it \
+                     is tried again"
+                ));
+                Err(SpawnError::CustodyUnreadable)
+            }
+            _ => {
+                host_log::log(&format!(
+                    "didn't start office {office}: it has no valid writer custody (only \
+                     protected provisioning reserves it; a restart alone can't)"
+                ));
+                Err(SpawnError::NoCustody)
+            }
+        }
+    }
+
     /// Starts a server. Its control lines go to `signals` tagged with `generation`; its stderr
     /// goes to `log`. Its first line (per [`Mode`]) is written at once, once it passed the check.
     ///
@@ -297,6 +349,9 @@ impl Spawner {
     ///
     /// A check that may start no server, an image the platform refuses and a child it refuses
     /// are all [`SpawnError::Untrusted`], in the check's words: nothing got a line.
+    ///
+    /// Every office needs writer custody: a start or a create of an office without it is
+    /// [`SpawnError::NoCustody`], before anything is made for a child. A discard claims none.
     pub(crate) fn spawn(
         &self,
         mode: Mode<'_>,
@@ -304,6 +359,14 @@ impl Spawner {
         signals: Sender<Signal>,
         log: Arc<Mutex<RotatingLog>>,
     ) -> Result<RunningChild, SpawnError> {
+        match mode {
+            Mode::Office(id, _) => self.custody(id, None)?,
+            Mode::Create(line) => self.custody(
+                line.office_id(),
+                Some((line.org_id(), line.owner_member_id())),
+            )?,
+            Mode::Discard(_) => {}
+        }
         self.check.may_spawn().map_err(|why| {
             host_log::log(&format!("didn't start an office server: {why}"));
             SpawnError::Untrusted(why)
@@ -406,9 +469,6 @@ impl Spawner {
             Mode::Office(id, office_secrets_key) => {
                 let first =
                     org_office_launch::HostFirstLine::Start(org_office_launch::OfficeLine {
-                        id_profile: org_office_launch::is_selected_entity_id(id)
-                            .then_some(org_office_launch::IdProfile::SelectedV1),
-                        selected_writer_required: broker.writer_required(id)?,
                         instance_id: broker.instance.clone(),
                         office_id: id.into(),
                         rendezvous: rendezvous
@@ -468,11 +528,8 @@ impl Spawner {
             Mode::Discard(id) => {
                 let first =
                     org_office_launch::HostFirstLine::Discard(org_office_launch::OfficeLine {
-                        id_profile: org_office_launch::is_selected_entity_id(id)
-                            .then_some(org_office_launch::IdProfile::SelectedV1),
-                        // As over v2: a discard never claims writer custody, so the worker
-                        // keeps refusing a folder marked `selected-writer.required`.
-                        selected_writer_required: false,
+                        // A discard never claims writer custody: the host keeps the
+                        // custody record and the folder's `selected-writer.required` marker.
                         instance_id: broker.instance.clone(),
                         office_id: id.into(),
                         rendezvous: rendezvous

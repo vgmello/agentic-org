@@ -42,6 +42,60 @@ pub(super) fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
     refused()
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn become_subreaper() -> io::Result<bool> {
+    refused()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn is_stopped(_pid: libc::pid_t) -> io::Result<bool> {
+    refused()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
+    None
+}
+
+/// # Safety
+///
+/// See `testing::exit_this_thread`.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) unsafe fn exit_this_thread() -> ! {
+    // SAFETY: the caller's contract; ends only the calling thread.
+    unsafe { libc::pthread_exit(std::ptr::null_mut()) }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
+    refused()
+}
+
+/// No loader hook is known for this target: a consumer that needs one does not build.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __org_platform_before_main_refused {
+    (unsafe $name:ident = $function:expr) => {
+        ::core::compile_error!(
+            "org-platform has no adapter to run code before main on this target"
+        );
+    };
+}
+#[cfg(any(test, feature = "test-support"))]
+#[allow(unused_imports)]
+pub use crate::__org_platform_before_main_refused as run_before_main;
+
+/// No claim beyond POSIX.
+pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = false;
+pub(super) const SPAWNS_SUSPENDED: bool = false;
+/// No scan exists.
+pub(super) const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = false;
+pub(super) const SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE: bool = false;
+pub(super) const AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER: bool = false;
+pub(super) const SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS: bool = false;
+pub(super) const SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS: bool = false;
+
 pub(super) enum Watch {}
 
 impl Watch {

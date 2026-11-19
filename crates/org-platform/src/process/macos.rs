@@ -60,6 +60,156 @@ pub(super) fn hardened() -> io::Result<bool> {
     super::shared::core_dumps_disabled()
 }
 
+/// macOS has no subreaper: an orphan goes to `launchd`.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn become_subreaper() -> io::Result<bool> {
+    Ok(false)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn is_stopped(pid: libc::pid_t) -> io::Result<bool> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: a correctly sized output record for PROC_PIDTBSDINFO.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if written != size {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: proc_pidinfo wrote the complete record.
+    Ok(unsafe { info.assume_init() }.pbi_status == libc::SSTOP)
+}
+
+/// The process state, for adapter tests: whether `pid` is a zombie.
+#[cfg(test)]
+pub(super) fn is_zombie(pid: libc::pid_t) -> io::Result<bool> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: a correctly sized output record for PROC_PIDTBSDINFO.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if written != size {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: proc_pidinfo wrote the complete record.
+    Ok(unsafe { info.assume_init() }.pbi_status == libc::SZOMB)
+}
+
+/// This process's environment array, for adapter tests.
+#[cfg(test)]
+pub(super) fn environment_strings() -> *const *const libc::c_char {
+    unsafe extern "C" {
+        fn _NSGetEnviron() -> *mut *mut *mut libc::c_char;
+    }
+    // SAFETY: _NSGetEnviron returns this process's live environment pointer.
+    unsafe { (*_NSGetEnviron()).cast_const().cast() }
+}
+
+/// The system's read of `pid`'s argument and environment area, for adapter tests:
+/// `KERN_PROCARGS2`, which fails as a whole when a page of the area is unreadable.
+#[cfg(test)]
+pub(super) fn read_environment_area(pid: libc::pid_t) -> io::Result<Vec<u8>> {
+    let mut name = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid];
+    let mut size = 0;
+    // SAFETY: a size query with a valid name and no output buffer.
+    if unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            3,
+            std::ptr::null_mut(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let mut data = vec![0u8; size];
+    // SAFETY: an output buffer of `size` bytes.
+    if unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            3,
+            data.as_mut_ptr().cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    } != 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    data.truncate(size);
+    Ok(data)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
+    unsafe extern "C" {
+        fn _NSGetArgv() -> *mut *mut *mut libc::c_char;
+    }
+    // SAFETY: _NSGetArgv returns this process's live argv vector.
+    Some(unsafe { **_NSGetArgv() })
+}
+
+/// # Safety
+///
+/// See `testing::exit_this_thread`.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) unsafe fn exit_this_thread() -> ! {
+    // SAFETY: the caller's contract; ends only the calling thread.
+    unsafe { libc::pthread_exit(std::ptr::null_mut()) }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
+    Ok(POSIX_SPAWN_SETSID)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __org_platform_before_main_macos {
+    (unsafe $name:ident = $function:expr) => {
+        #[used]
+        #[unsafe(link_section = "__DATA,__mod_init_func")]
+        static $name: unsafe extern "C" fn() = $function;
+    };
+}
+#[cfg(any(test, feature = "test-support"))]
+pub use crate::__org_platform_before_main_macos as run_before_main;
+
+/// XNU answers a signal to a group of only exited members with `EPERM`.
+pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = true;
+/// [`session_flags`] start the child suspended.
+pub(super) const SPAWNS_SUSPENDED: bool = true;
+/// Darwin spawn.h defines `POSIX_SPAWN_SETSID` as 0x0400; libc doesn't export it.
+const POSIX_SPAWN_SETSID: libc::c_short = 0x0400;
+/// `scan.rs` holds no descriptor for an observed process.
+pub(super) const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = false;
+/// `KERN_PROCARGS2` fails as a whole when a page of the area is unreadable.
+pub(super) const SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE: bool = false;
+pub(super) const AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER: bool = false;
+/// `scan.rs` reads `KERN_PROCARGS2` and skips the counted arguments.
+pub(super) const SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS: bool = true;
+/// `scan.rs` reports a `CS_RESTRICT` process's mark unreadable (`unrestricted`).
+pub(super) const SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS: bool = true;
+
 /// The names `lsof` lists for this process's open files.
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
@@ -303,10 +453,9 @@ pub(super) unsafe fn add_chdir(
 pub(super) unsafe fn session_flags(
     _actions: *mut libc::posix_spawn_file_actions_t,
 ) -> io::Result<libc::c_int> {
-    // Darwin spawn.h defines SETSID=0x0400; libc doesn't export this flag.
     let flags = libc::POSIX_SPAWN_CLOEXEC_DEFAULT
         | libc::POSIX_SPAWN_START_SUSPENDED
-        | 0x0400
+        | libc::c_int::from(POSIX_SPAWN_SETSID)
         | libc::POSIX_SPAWN_SETSIGMASK
         | libc::POSIX_SPAWN_SETSIGDEF;
     Ok(flags)

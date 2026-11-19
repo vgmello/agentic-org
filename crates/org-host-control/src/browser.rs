@@ -174,6 +174,10 @@ pub struct InstanceViewResult {
     pub status: InstanceMode,
     pub web_status: GatewayState,
     pub administrator: Administrator,
+    /// The listener's certificate, for an `https` instance only: served (`ok`), fewer than
+    /// 30 days left (`expiring`) or unservable (`missing`). Never certificate material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls: Option<org_proto::gateway::TlsStatus>,
 }
 impl Call for InstanceView {
     const METHOD: &'static str = "instance.view";

@@ -1,9 +1,12 @@
 use super::*;
-use org_office_launch::{CreateLine, HandoffFd, OfficeLine};
+use org_office_launch::{CreateLine, HandoffFd, HqCreationV1, OfficeLine};
+use org_proto::selected_bootstrap::{CreatorV1, PlanV1, PreparedV1};
 use org_proto::{GrantKey, OfficeSecretsKey};
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
-const OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const OFFICE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607191";
+const ORG: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607192";
+const OWNER: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607193";
 fn office_secrets_key() -> OfficeSecretsKey {
     OfficeSecretsKey::from_bytes([0xb3; 32])
 }
@@ -12,23 +15,55 @@ fn grant() -> GrantKey {
 }
 fn office() -> OfficeLine {
     OfficeLine {
-        id_profile: None,
-        selected_writer_required: false,
         instance_id: INSTANCE.into(),
-        office_id: "OFFICE1".into(),
+        office_id: OFFICE.into(),
         rendezvous: "/unused".into(),
     }
 }
+/// A create line the contract accepts: UUIDv7 ids and the HQ creation with its bootstrap.
 fn create() -> CreateLine {
+    let id = |n: u8| format!("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071{n:02x}");
     CreateLine {
         office: office(),
-        org_id: "ORG2".into(),
+        org_id: ORG.into(),
         org_name: "Acme".into(),
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
         owner_member_id: OWNER.into(),
-        hq_creation: None,
+        hq_creation: HqCreationV1 {
+            version: HqCreationV1::VERSION,
+            operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            escrow_profile: 1,
+            bootstrap: Box::new(PreparedV1 {
+                plan: PlanV1 {
+                    version: 1,
+                    name: "Acme".into(),
+                    slug: "acme".into(),
+                    repository_remote_url: "https://example.test/org.git".into(),
+                    state_branch: "org/state".into(),
+                },
+                organization_id: ORG.into(),
+                office_id: OFFICE.into(),
+                repository_id: id(0xa1),
+                home_team_id: id(0xa2),
+                hr_employee_id: id(0xa3),
+                creator: CreatorV1::from_login(OWNER.into(), "Ana"),
+            }),
+        },
     }
+}
+#[test]
+fn the_create_fixture_is_a_line_the_contract_accepts() {
+    let mut wire = Vec::new();
+    org_office_launch::write_first_line(&mut wire, &HostFirstLine::Create(create())).unwrap();
+    assert_eq!(
+        org_office_launch::read_first_line(
+            &mut wire.as_slice(),
+            org_office_launch::FirstLine::Create
+        )
+        .unwrap(),
+        Some(HostFirstLine::Create(create()))
+    );
 }
 fn request(op: u8, key: bool) -> Request {
     match op {
@@ -61,9 +96,9 @@ fn launch_create_preserves_identity_keys_and_typed_recovery() {
     let Launch::Create(c) = Launch::from_request(request(0, true)).unwrap() else {
         panic!("not create")
     };
-    assert_eq!(c.office.office_id, "OFFICE1");
+    assert_eq!(c.office.office_id, OFFICE);
     assert_eq!(c.office.office_name, "HQ");
-    assert_eq!(c.office.org_id, "ORG2");
+    assert_eq!(c.office.org_id, ORG);
     assert_eq!(c.office.org_name, "Acme");
     assert_eq!(c.office.role, org_office::OfficeRole::Hq);
     assert_eq!(c.role, OfficeRole::Hq);
@@ -71,6 +106,7 @@ fn launch_create_preserves_identity_keys_and_typed_recovery() {
     assert_eq!(c.auth.grant_key(), &grant());
     assert_eq!(c.instance, INSTANCE);
     assert_eq!(c.owner_member_id, OWNER);
+    assert_eq!(c.hq_creation, create().hq_creation);
     assert_eq!(c.recovery.unwrap().expose(), "RECOVERY-TEST");
     // A create handoff without a recovery code reaches the workflow as `None`, which refuses it.
     let Launch::Create(c) = Launch::from_request(request(0, false)).unwrap() else {
@@ -90,7 +126,7 @@ fn start_preserves_keys_authority_and_instance() {
     assert_eq!(
         office,
         OfficeIdentity {
-            office_id: "OFFICE1".into(),
+            office_id: OFFICE.into(),
             instance_id: INSTANCE.into(),
         }
     );
@@ -104,7 +140,7 @@ fn a_start_without_the_office_secrets_key_proceeds_with_none() {
     };
     assert!(key.is_none());
     assert_eq!(auth.grant_key(), &grant());
-    assert_eq!(office.office_id, "OFFICE1");
+    assert_eq!(office.office_id, OFFICE);
 }
 #[test]
 fn discard_carries_no_secret() {
@@ -115,7 +151,7 @@ fn discard_carries_no_secret() {
     assert_eq!(
         office,
         OfficeIdentity {
-            office_id: "OFFICE1".into(),
+            office_id: OFFICE.into(),
             instance_id: INSTANCE.into(),
         }
     );
@@ -179,22 +215,26 @@ fn create_preserves_unsupported_role_for_the_workflow_to_refuse() {
 fn distinct_launch_identities_are_preserved_on_every_operation() {
     let _spawn = crate::transfer::tests::without_process_spawn();
     const OTHER_INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184";
-    const OTHER_OWNER: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+    const OTHER_OWNER: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607194";
+    const OTHER_OFFICE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607195";
     for op in 0..3 {
         let Request::Launch { mut line, handoff } = request(op, true);
         let office = match &mut line {
             HostFirstLine::Create(c) => {
                 c.owner_member_id = OTHER_OWNER.into();
+                let bootstrap = &mut c.hq_creation.bootstrap;
+                bootstrap.office_id = OTHER_OFFICE.into();
+                bootstrap.creator.employee_id = OTHER_OWNER.into();
                 &mut c.office
             }
             HostFirstLine::Start(office) | HostFirstLine::Discard(office) => office,
             _ => unreachable!(),
         };
-        office.office_id = "OFFICE2".into();
+        office.office_id = OTHER_OFFICE.into();
         office.instance_id = OTHER_INSTANCE.into();
         match Launch::from_request(Request::Launch { line, handoff }).unwrap() {
             Launch::Create(c) => {
-                assert_eq!(c.office.office_id, "OFFICE2");
+                assert_eq!(c.office.office_id, OTHER_OFFICE);
                 assert_eq!(c.instance, OTHER_INSTANCE);
                 assert_eq!(c.owner_member_id, OTHER_OWNER);
             }
@@ -202,7 +242,7 @@ fn distinct_launch_identities_are_preserved_on_every_operation() {
                 assert_eq!(
                     office,
                     OfficeIdentity {
-                        office_id: "OFFICE2".into(),
+                        office_id: OTHER_OFFICE.into(),
                         instance_id: OTHER_INSTANCE.into(),
                     }
                 );

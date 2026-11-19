@@ -24,7 +24,12 @@
 //! ## Command ids and retries
 //! `command_id` is a ULID in its canonical form: exactly 26 **uppercase** Crockford base32
 //! characters (`0-9`, `A-Z` without `I`, `L`, `O`, `U`), the first `0` to `7`. Its time part
-//! dates the command. Work writes' `change_id` ([`crate::work`]) has the same form.
+//! dates the command. Work writes' `change_id` ([`crate::work`]) has the same form. Until the
+//! wire moves to UUIDv7, the office stores each command under a UUIDv7 that keeps all but the
+//! ULID's lowest 6 random bits (`org_office::organization_family::operation_id`), so a client
+//! must not use a monotonic ULID generator: two commands in one millisecond could map to one id,
+//! and once the first is recorded the second is refused as a reused command id or, if it comes
+//! from the same member with the same params, gets the first's stored answer without running.
 //!
 //! HQ keeps each command's answer, refusals included, until the id's time plus 30 days (offices
 //! design, "Dedup window"). A retry with the same `command_id` and the same params gets the

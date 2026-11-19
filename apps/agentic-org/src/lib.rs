@@ -6,7 +6,7 @@ mod setup;
 
 use std::collections::BTreeMap;
 
-const HELP: &str = "Agentic Org\n\nUsage: agentic-org <command>\n\nCommands:\n  serve      Run the installed service host in the foreground\n  setup      Set up this computer's instance and register its service\n  admin      admin reset: a new administrator registration link\n  service    start, stop or show the instance's service\n\nOptions:\n  --help     Show this help\n  --version  Show the release version\n\nSatellite enrollment is initiated separately from HQ.";
+const HELP: &str = "Agentic Org\n\nUsage: agentic-org <command>\n\nCommands:\n  serve      Run the installed service host in the foreground\n  setup      Set up this computer's instance and register its service\n  admin      admin reset: a new administrator registration link; admin tls set: replace the TLS pair\n  service    start, stop or show the instance's service\n\nOptions:\n  --help     Show this help\n  --version  Show the release version\n\nSatellite enrollment is initiated separately from HQ.";
 
 /// Dispatches a human CLI command.
 pub fn run(arguments: Vec<String>) -> Result<(), String> {

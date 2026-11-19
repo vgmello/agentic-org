@@ -52,11 +52,15 @@ use org_proto::{Hello, HelloParams};
 
 use crate::human::Wire;
 use crate::instance::registry::Registry;
-use crate::instance::setup::{Input, Journal, Paths, Record, Service};
+use crate::instance::setup::{Configured, Input, Journal, Paths, Record, Service};
 use crate::release::ReleasePin;
 
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub mod fixture;
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
+pub mod seed;
+pub(crate) mod tls_command;
+pub use tls_command::{admin_tls_set, HELP as ADMIN_TLS_SET_HELP};
 #[cfg(test)]
 mod tests;
 
@@ -66,8 +70,6 @@ pub const DEFAULT_PORT: u16 = 7420;
 /// passes this; only a test-support build may pass another base ([`Request::named_port_base`]).
 pub const NAMED_PORT_BASE: u16 = DEFAULT_PORT + 1;
 const READY_WITHIN: Duration = Duration::from_secs(60);
-/// How long a command waits for the instance locator while a starting service holds it.
-const LOCATOR_WAIT: Duration = Duration::from_secs(5);
 
 /// The environment variables that decided this account's instance locations in this
 /// process, with their values: what a registered service must be given so that it resolves
@@ -97,7 +99,7 @@ pub(crate) fn published_http_notice(listen: &ListenConfig) -> String {
         "serving plain HTTP on a published port ({}). Every machine that can reach the \
          listen address can reach sign-in and sessions in plain text. In Docker, publish \
          only on the host's 127.0.0.1 (docker run -p 127.0.0.1:{port}:{port}). Open {}. \
-         HTTPS is not available yet.",
+         For HTTPS, set up an instance with \"scheme\": \"https\".",
         std::net::SocketAddr::new(listen.address(), listen.port()),
         listen.origin().as_str(),
         port = listen.port(),
@@ -659,12 +661,20 @@ pub struct Request<'a> {
 /// <file>`, `serve --setup <file>`): the setup record's own input, read from a strict JSON
 /// file. See [`configuration`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Configuration(Input);
+pub struct Configuration(Configured);
+
+/// A configuration of `input` alone: no supplied pair.
+#[cfg(test)]
+impl From<Input> for Configuration {
+    fn from(input: Input) -> Self {
+        Configuration(Configured { input, tls: None })
+    }
+}
 
 impl Configuration {
     /// Whether the instance runs in the foreground, with nothing registered.
     pub fn foreground(&self) -> bool {
-        self.0.service == Service::Foreground
+        self.0.input.service == Service::Foreground
     }
 }
 
@@ -684,7 +694,13 @@ impl Configuration {
 ///   exactly `127.0.0.1` or `::1`) or `"http_published"`: plain HTTP on an
 ///   address that is not loopback, with `127.0.0.1` as the origin's host, accepted only with `"service": "foreground"` (a container whose port the
 ///   runtime publishes on the Docker host's loopback). It is never implied: `http_loopback`
-///   with another address is refused. `"https"` is refused: no build serves it yet.
+///   with another address is refused. `"https"` serves TLS on any address, with a
+///   certificate the instance makes for the origin's host at its first start.
+/// - `tls` (with `https` only): `{"cert": <path>, "key": <path>}`, the absolute paths of a PEM
+///   certificate chain (leaf first) and its unencrypted key, supplied instead of the
+///   instance's own certificate. Setup reads and verifies them before it saves anything
+///   (the key is the leaf's, the leaf is valid now and names the origin's host); the host
+///   imports the pair into its secrets at its first start.
 ///
 /// Nothing is created or changed by reading it. It must be a regular file: anything else (a
 /// FIFO, a device, a directory) is refused when it is opened, without waiting for a writer,
@@ -707,7 +723,7 @@ pub fn configuration(path: &Path) -> Result<Configuration, String> {
             file.take(64 * 1024 + 1).read_to_end(&mut bytes)
         })
         .map_err(|e| format!("reading the setup configuration {shown}: {e}"))?;
-    let input = Input::from_configuration(&bytes).map_err(|e| {
+    let configured = Input::from_configuration(&bytes).map_err(|e| {
         // The rule alone: the error's own prefix speaks of choosing an instance.
         let why = match e {
             crate::instance::Error::Invalid(why) => why.to_owned(),
@@ -715,10 +731,62 @@ pub fn configuration(path: &Path) -> Result<Configuration, String> {
         };
         format!("{shown}: {why}; nothing was changed")
     })?;
-    input
+    configured
+        .input
         .fits(org_platform_host::credentials::protected_store().ok())
         .map_err(|why| format!("{shown}: {why}; nothing was changed"))?;
-    Ok(Configuration(input))
+    Ok(Configuration(configured))
+}
+
+/// Whether a configuration is the one `record` froze: its input and its supplied pair.
+fn same_configuration(configured: &Configured, record: &Record) -> bool {
+    configured.input == record.input && configured.tls == record.tls
+}
+
+/// Setup's check of an `https` input's certificate, before anything is saved: a supplied pair
+/// is read and verified for the origin now (`tls.set`'s checks), and its fingerprint is what
+/// setup says; without one, what the host will make. `None` for plain HTTP.
+fn tls_preflight(
+    input: &Input,
+    tls: Option<&crate::instance::setup::SuppliedTls>,
+) -> Result<Option<String>, String> {
+    if input.listen.scheme() != org_host_control::listen::ListenMode::Https {
+        return Ok(None);
+    }
+    let Some(tls) = tls else {
+        return Ok(Some(made_notice(input.listen.origin())));
+    };
+    let now = crate::web_tls::now().ok_or("the clock is unavailable; nothing was saved")?;
+    let checked = crate::web_tls::read_supplied(&tls.cert, &tls.key, input.listen.origin(), now)
+        .map_err(|why| format!("{why}; nothing was saved"))?;
+    Ok(Some(format!(
+        "{}. The host imports it into its secrets at its first start; the files are not \
+         read after that",
+        checked.summary(crate::web_tls::Source::Supplied)
+    )))
+}
+
+fn made_notice(origin: &org_host_control::listen::ListenOrigin) -> String {
+    format!(
+        "the instance makes its own certificate for {} at its first start (ECDSA P-256, \
+         valid 397 days, renewed when 30 days remain) and prints its SHA-256 fingerprint in \
+         its log at every start; check it against the fingerprint the browser shows before \
+         you accept the certificate",
+        origin.as_str()
+    )
+}
+
+/// What a later run says of an `https` instance's certificate.
+fn tls_notice(record: &Record) -> String {
+    match &record.tls {
+        Some(tls) => format!(
+            "supplied ({}, {}); the host prints its SHA-256 fingerprint in its log at every \
+             start",
+            tls.cert.display(),
+            tls.key.display()
+        ),
+        None => made_notice(record.input.listen.origin()),
+    }
 }
 
 fn fail(context: &str, why: impl std::fmt::Display) -> String {
@@ -1103,7 +1171,7 @@ pub(crate) fn run_at(
     let configured = request
         .configuration
         .take()
-        .map(|Configuration(input)| input);
+        .map(|Configuration(configured)| configured);
     let existing = journal.read().map_err(|e| fail("reading setup", e))?;
     // Before anything is saved or reserved: what a development build's registered service
     // needs, for the input this run continues or freezes.
@@ -1119,7 +1187,9 @@ pub(crate) fn run_at(
     // continue. It pins nothing: a corrected file replaces it (X5 review V1). A record
     // that names its instance is the instance's configuration and never changes.
     let existing = match (existing, &configured) {
-        (Some(record), Some(input)) if record.instance_id.is_none() && *input != record.input => {
+        (Some(record), Some(configured))
+            if record.instance_id.is_none() && !same_configuration(configured, &record) =>
+        {
             journal
                 .abandon()
                 .map_err(|e| fail("replacing an unfinished setup", e))?;
@@ -1138,11 +1208,14 @@ pub(crate) fn run_at(
     let mut held = None;
     // A development build's key folder, which its registered service needs (made below).
     let development;
+    // What setup says of an `https` listener's certificate: a supplied pair is verified
+    // (and its fingerprint shown) when the input is first taken from its file.
+    let mut tls_line = None;
     let mut record = match existing {
         Some(record)
             if configured
                 .as_ref()
-                .is_some_and(|input| *input != record.input) =>
+                .is_some_and(|configured| !same_configuration(configured, &record)) =>
         {
             return Err(format!(
                 "instance \"{shown}\" was set up with a different configuration (service \
@@ -1174,19 +1247,21 @@ pub(crate) fn run_at(
             // The same file again, after a run that froze the record and stopped before it
             // reserved the instance: asked again, and its address held, as on a first run.
             if configured.is_some() && record.instance_id.is_none() {
+                tls_line = tls_preflight(&record.input, record.tls.as_ref())?;
                 held = Some(preflight(&record.input, records.as_fd())?);
             }
             record
         }
         None if configured.is_some() => {
             // Offline: nothing is asked and nothing is fetched. The address is the file's.
-            let input = configured.expect("checked above");
+            let configured = configured.expect("checked above");
             // Everything that can refuse this input is asked before anything is saved.
-            development = development_needed(&input, None)?;
-            held = Some(preflight(&input, records.as_fd())?);
+            development = development_needed(&configured.input, None)?;
+            tls_line = tls_preflight(&configured.input, configured.tls.as_ref())?;
+            held = Some(preflight(&configured.input, records.as_fd())?);
             froze_from_file = true;
             journal
-                .freeze(input, true, pin)
+                .freeze_configured(configured, true, pin)
                 .map_err(|e| fail("saving setup", e))?
         }
         None => {
@@ -1232,6 +1307,10 @@ pub(crate) fn run_at(
         out,
         format!("Address: {}", record.input.listen.origin().as_str()),
     )?;
+    if record.input.listen.scheme() == org_host_control::listen::ListenMode::Https {
+        let line = tls_line.unwrap_or_else(|| tls_notice(&record));
+        say(out, format!("TLS: {line}"))?;
+    }
 
     // 3. Reserve the instance, record its listener and prepare its layout, then record its
     // ID. Once the ID is recorded all three are done, and a running host holds the root lock,
@@ -1244,13 +1323,12 @@ pub(crate) fn run_at(
             // The runtime folders are not kept: a cache that was cleared since (a container
             // started on its volumes again) has none, and they are made again here, as the
             // host makes them at its start (X5 review, fourth round, P1-4).
-            let deadline = Instant::now() + LOCATOR_WAIT;
-            wait_for_locator("restoring instance temp folders", deadline, || {
-                registry.restore_temp_folders()
-            })?;
-            let (id, temp) = wait_for_locator("locating the instance", deadline, || {
-                registry.locate(name, &record.input.root)
-            })?;
+            registry
+                .restore_temp_folders()
+                .map_err(|e| fail("restoring instance temp folders", e))?;
+            let (id, temp) = registry
+                .locate(name, &record.input.root)
+                .map_err(|e| fail("locating the instance", e))?;
             if &id != recorded {
                 return Err(
                     "the reserved instance is not the one setup recorded; nothing was changed"
@@ -1895,32 +1973,14 @@ fn registered(paths: &Paths, name: Option<&str>) -> Result<(Record, String, Path
     let registry = Registry::open(&paths.locator, &paths.user_temp)
         .map_err(|e| fail("opening the instance locator", e))?;
     // A service that is just starting holds the locator's lock for a moment (it reserves
-    // its instance again): a command that arrives then waits for it instead of failing.
-    let (id, temp) = wait_for_locator(
-        "locating the instance",
-        Instant::now() + LOCATOR_WAIT,
-        || registry.locate(name, &record.input.root),
-    )?;
+    // its instance again): the registry waits for it rather than failing.
+    let (id, temp) = registry
+        .locate(name, &record.input.root)
+        .map_err(|e| fail("locating the instance", e))?;
     if record.instance_id.as_deref() != Some(id.as_str()) {
         return Err("the instance is not the one setup recorded; run agentic-org setup".into());
     }
     Ok((record, id, temp.join("host.sock")))
-}
-
-fn wait_for_locator<T>(
-    context: &str,
-    deadline: Instant,
-    mut work: impl FnMut() -> Result<T, crate::instance::Error>,
-) -> Result<T, String> {
-    loop {
-        match work() {
-            Err(crate::instance::Error::Busy(_)) if Instant::now() < deadline => {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                std::thread::sleep(remaining.min(Duration::from_millis(50)));
-            }
-            result => return result.map_err(|e| fail(context, e)),
-        }
-    }
 }
 
 /// What `admin reset` answers when its output is not a terminal (spec §4a.4).

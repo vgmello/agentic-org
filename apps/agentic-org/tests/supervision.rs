@@ -21,9 +21,15 @@ use support::{alive, eventually, hq, Client, TestHome};
 
 const WAIT: Duration = Duration::from_secs(10);
 
-const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
-const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
-const C: &str = "01CCCCCCCCCCCCCCCCCCCCCCCC";
+// Offices and organizations are named by canonical UUIDv7, as every launch line names them.
+const A: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
+const B: &str = "0190a5d2-7c3e-7000-8000-00000000000b";
+const C: &str = "0190a5d2-7c3e-7000-8000-00000000000c";
+const ORG_A: &str = "0190a5d2-7c3e-7000-8000-00000000010a";
+const ORG_B: &str = "0190a5d2-7c3e-7000-8000-00000000010b";
+/// Unfinished creates' folders (no `office.json`, no custody marker).
+const UNFINISHED: &str = "0190a5d2-7c3e-7000-8000-0000000000f1";
+const HELD: &str = "0190a5d2-7c3e-7000-8000-0000000000f2";
 
 fn status(host: &Host, office_id: &str) -> OfficeStatus {
     Client::for_host(host)
@@ -44,7 +50,7 @@ fn wait_for(host: &Host, office_id: &str, want: OfficeStatus) {
 #[test]
 fn a_crashed_server_is_restarted_with_growing_backoff() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     home.script(json!({ A: [{"do": "crash"}, {"do": "crash"}, {"do": "ready"}] }));
     let host = home.start(home.config()).unwrap(); // backoff 100 ms, then 200 ms
     wait_for(&host, A, OfficeStatus::Active);
@@ -62,7 +68,7 @@ fn a_crashed_server_is_restarted_with_growing_backoff() {
 #[test]
 fn in_use_and_unknown_failures_are_retried() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     home.script(json!({ A: [
         {"do": "fail", "code": "in_use"},
         {"do": "fail", "code": "a_code_from_the_future"},
@@ -77,8 +83,8 @@ fn in_use_and_unknown_failures_are_retried() {
 #[test]
 fn a_fatal_failure_makes_the_office_unavailable_without_restarts() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
-    home.write_office(&hq(B, "01ORGB", "Beta", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(B, ORG_B, "Beta", "2026-11-08T00:00:00.000Z"));
     home.script(json!({
         A: {"do": "fail", "code": "invalid_request"},
         B: {"do": "fail", "code": "unsupported_version"}
@@ -97,7 +103,7 @@ fn a_fatal_failure_makes_the_office_unavailable_without_restarts() {
 #[test]
 fn a_server_that_is_never_ready_is_killed_and_restarted() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     home.script(json!({ A: [{"do": "hang", "ignore_eof": true}, {"do": "ready"}] }));
     let mut config = home.config();
     config.timings.ready_timeout = Duration::from_millis(1500);
@@ -113,35 +119,42 @@ fn a_server_that_is_never_ready_is_killed_and_restarted() {
 #[test]
 fn startup_serves_stored_offices_cleans_unfinished_ones_and_skips_bad_ones() {
     let home = TestHome::registered();
-    let sat = OfficeFile::new(
+    let sat = OfficeFile::selected(
         C,
         "Lab",
         OfficeRole::Satellite,
-        "01ORGB",
+        ORG_B,
         "Beta",
         "2026-11-08T00:00:00.000Z",
-    );
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T05:00:00.000Z"));
-    home.write_office(&hq(B, "01ORGB", "Beta", "2026-11-08T00:00:00.000Z"));
+    )
+    .unwrap();
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T05:00:00.000Z"));
+    home.write_office(&hq(B, ORG_B, "Beta", "2026-11-08T00:00:00.000Z"));
     home.write_office(&sat);
     // Not offices: bad JSON, an office.json for another folder (moved aside), an unfinished
     // create.
-    let bad = home.office_dir("01BADBADBADBADBADBADBADBAD");
+    let bad = home.office_dir("0190a5d2-7c3e-7000-8000-0000000000ba");
     fs::create_dir_all(&bad).unwrap();
     fs::write(bad.join("office.json"), b"{nope").unwrap();
-    let wrong = home.office_dir("01WRONGWRONGWRONGWRONGWRON");
+    const WRONG: &str = "0190a5d2-7c3e-7000-8000-0000000000e1";
+    let wrong = home.office_dir(WRONG);
     fs::create_dir_all(&wrong).unwrap();
     fs::write(
         wrong.join("office.json"),
-        hq(A, "X", "X", "2026-11-08T00:00:00.000Z")
-            .to_vec()
-            .unwrap(),
+        hq(
+            A,
+            "0190a5d2-7c3e-7000-8000-0000000001ff",
+            "X",
+            "2026-11-08T00:00:00.000Z",
+        )
+        .to_vec()
+        .unwrap(),
     )
     .unwrap();
-    let unfinished = home.office_dir("01UNFINISHEDUNFINISHEDUNFI");
+    let unfinished = home.office_dir(UNFINISHED);
     fs::create_dir_all(&unfinished).unwrap();
     // An unfinished folder whose lock a (pretend) server still holds is kept.
-    let held = home.office_dir("01HELDHELDHELDHELDHELDHELD");
+    let held = home.office_dir(HELD);
     fs::create_dir_all(&held).unwrap();
     let lock = OpenOptions::new()
         .write(true)
@@ -156,8 +169,13 @@ fn startup_serves_stored_offices_cleans_unfinished_ones_and_skips_bad_ones() {
     config.timings.discard_timeout = Duration::from_millis(1500);
     let started = Instant::now();
     let host = home.start(config).unwrap();
-    // The discards run in the background: starting doesn't wait for them.
-    assert!(started.elapsed() < Duration::from_secs(1));
+    // The discards run in the background: starting doesn't wait for them. The held folder's
+    // discard can't end before its timeout, so its server is still running after the start
+    // returned. (A bound on the start's own time would also count the registry's start-up
+    // hash, which every host with writer custody pays.)
+    eventually(WAIT, "the held folder's discard to be running", || {
+        home.discard_pid(HELD).is_some_and(alive)
+    });
     // Only the two folders without office.json were discarded; only the free one went, and
     // the held one's discard gave up after its timeout.
     eventually(WAIT, "the free unfinished folder to be discarded", || {
@@ -172,7 +190,9 @@ fn startup_serves_stored_offices_cleans_unfinished_ones_and_skips_bad_ones() {
     assert!(!wrong.exists());
     assert!(home
         .path()
-        .join("offices/.refused/01WRONGWRONGWRONGWRONGWRON/office.json")
+        .join("offices/.refused")
+        .join(WRONG)
+        .join("office.json")
         .exists());
 
     let orgs = Client::for_host(&host)
@@ -180,7 +200,7 @@ fn startup_serves_stored_offices_cleans_unfinished_ones_and_skips_bad_ones() {
         .unwrap()
         .organizations;
     let ids: Vec<_> = orgs.iter().map(|o| o.id.as_str()).collect();
-    assert_eq!(ids, ["01ORGB", "01ORGA"], "ordered by created_at");
+    assert_eq!(ids, [ORG_B, ORG_A], "ordered by created_at");
     let beta: Vec<_> = orgs[0].offices.iter().map(|o| o.id.as_str()).collect();
     assert_eq!(beta, [B, C], "HQ first");
     for id in [A, B, C] {
@@ -218,8 +238,8 @@ fn a_second_host_on_the_same_home_fails_fast() {
 #[test]
 fn shutdown_closes_stdins_so_servers_exit_cleanly_and_releases_the_home() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
-    home.write_office(&hq(B, "01ORGB", "Beta", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(B, ORG_B, "Beta", "2026-11-08T00:00:00.000Z"));
     let host = home.start(home.config()).unwrap();
     wait_for(&host, A, OfficeStatus::Active);
     wait_for(&host, B, OfficeStatus::Active);
@@ -238,7 +258,7 @@ fn shutdown_closes_stdins_so_servers_exit_cleanly_and_releases_the_home() {
 #[test]
 fn a_server_that_ignores_eof_is_killed_after_the_grace_period() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     home.script(json!({ A: {"do": "ready", "ignore_eof": true} }));
     let mut config = home.config();
     config.timings.shutdown_grace = Duration::from_millis(300);
@@ -260,7 +280,7 @@ fn a_server_that_ignores_eof_is_killed_after_the_grace_period() {
 #[test]
 fn a_stop_asked_for_during_the_start_counts_the_grace_from_then() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     home.script(json!({ A: {"do": "ready", "ignore_eof": true} }));
     let mut config = home.config();
     config.timings.shutdown_grace = Duration::from_secs(2);
@@ -310,7 +330,7 @@ fn a_home_too_long_for_its_sockets_refuses_to_start() {
 #[test]
 fn server_stderr_goes_to_an_owner_only_log_rotated_at_the_cap() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     home.script(json!({ A: {"do": "ready", "stderr_bytes": 10_000} }));
     let mut config = home.config();
     config.log_max_bytes = 4096;
@@ -338,9 +358,9 @@ fn a_discard_refused_with_already_exists_or_storage_error_is_left_alone() {
     // or databases it can't open or check (storage_error).
     for code in ["already_exists", "storage_error"] {
         let home = TestHome::registered();
-        let unfinished = home.office_dir("01UNFINISHEDUNFINISHEDUNFI");
+        let unfinished = home.office_dir(UNFINISHED);
         fs::create_dir_all(&unfinished).unwrap();
-        home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+        home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
         home.script(json!({"discard": {"do": "fail", "code": code}}));
         let host = home.start(home.config()).unwrap();
         wait_for(&host, A, OfficeStatus::Active);
@@ -363,11 +383,11 @@ fn a_discard_refused_with_already_exists_or_storage_error_is_left_alone() {
 
 #[test]
 fn a_folder_holding_another_offices_file_is_moved_aside_never_started_or_discarded() {
-    const MISPLACED: &str = "01MISPLACEDMISPLACEDMISPLA";
+    const MISPLACED: &str = "0190a5d2-7c3e-7000-8000-0000000000e2";
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     // MISPLACED's folder holds an office.json for B (whose own folder doesn't exist).
-    let file = hq(B, "01ORGB", "Beta", "2026-11-08T00:00:00.000Z")
+    let file = hq(B, ORG_B, "Beta", "2026-11-08T00:00:00.000Z")
         .to_vec()
         .unwrap();
     let misplaced = home.office_dir(MISPLACED);
@@ -401,9 +421,9 @@ fn a_folder_holding_another_offices_file_is_moved_aside_never_started_or_discard
 #[test]
 fn a_failed_discard_is_logged_not_retried_and_the_host_still_starts() {
     let home = TestHome::registered();
-    let unfinished = home.office_dir("01UNFINISHEDUNFINISHEDUNFI");
+    let unfinished = home.office_dir(UNFINISHED);
     fs::create_dir_all(&unfinished).unwrap();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     home.script(json!({"discard": {"do": "fail", "code": "storage_error"}}));
     let host = home.start(home.config()).unwrap();
     wait_for(&host, A, OfficeStatus::Active);
@@ -423,7 +443,7 @@ fn a_failed_discard_is_logged_not_retried_and_the_host_still_starts() {
 #[test]
 fn a_server_that_exits_while_a_descendant_holds_its_stdout_is_restarted() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     // It gets ready, leaves a `sleep` holding its stdout for 20 s, and exits.
     home.script(json!({ A: [
         {"do": "crash", "at": "ready", "orphan_stdout_ms": 20_000},
@@ -444,7 +464,7 @@ fn a_server_that_exits_while_a_descendant_holds_its_stdout_is_restarted() {
 #[test]
 fn a_late_close_from_a_killed_server_doesnt_end_its_replacement() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     // The first server is never ready and leaves its stdout held for 1.5 s, so its pipe closes
     // well after its replacement (restarted at once) is up.
     home.script(json!({ A: [
@@ -473,7 +493,7 @@ fn a_late_close_from_a_killed_server_doesnt_end_its_replacement() {
 #[test]
 fn a_fatal_failure_counts_even_if_the_server_then_outlives_its_ready_deadline() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     // It reports a fatal failure, then neither exits nor gets ready.
     home.script(json!({ A: {"do": "fail", "code": "invalid_request", "linger": true} }));
     let mut config = home.config();
@@ -494,12 +514,15 @@ fn a_fatal_failure_counts_even_if_the_server_then_outlives_its_ready_deadline() 
 #[test]
 fn the_host_answers_at_once_during_a_slow_startup_discard_which_then_finishes() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
-    let unfinished = home.office_dir("01UNFINISHEDUNFINISHEDUNFI");
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
+    let unfinished = home.office_dir(UNFINISHED);
     fs::create_dir_all(&unfinished).unwrap();
     home.script(json!({"discard": {"do": "ready", "delay_ms": 2000}}));
     let started = Instant::now();
     let host = home.start(home.config()).unwrap();
+    // From the start's return: its own time includes the registry's start-up hash, which
+    // every host with writer custody pays; the discard begins after it.
+    let answering = Instant::now();
     let mut client = Client::for_host(&host);
     Client::connect(host.socket_path())
         .call::<Hello>(&HelloParams::default())
@@ -507,7 +530,7 @@ fn the_host_answers_at_once_during_a_slow_startup_discard_which_then_finishes() 
     let offices = client.call::<OfficeList>(&Empty {}).unwrap().offices;
     assert_eq!(offices.len(), 1);
     assert!(
-        started.elapsed() < Duration::from_secs(1),
+        answering.elapsed() < Duration::from_secs(1),
         "the host waited for the discard before answering"
     );
     assert!(unfinished.exists());
@@ -536,7 +559,7 @@ fn servers_inherit_no_host_fds_while_clients_connect() {
     for (i, id) in offices.iter().enumerate() {
         home.write_office(&hq(
             id,
-            &format!("01ORG{i}"),
+            &support::uuid7(0x200 + i as u64),
             &format!("Org {i}"),
             "2026-11-08T00:00:00.000Z",
         ));
@@ -631,7 +654,7 @@ fn servers_get_only_the_allowed_environment() {
     );
 
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     home.script(json!({ A: [{"do": "crash"}, {"do": "ready"}] }));
     let host = home.start(home.config()).unwrap();
     wait_for(&host, A, OfficeStatus::Active);

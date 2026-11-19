@@ -22,7 +22,7 @@
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
-      "sha256": "3a111e77eea9ebddfd25f5ae5d386f707237764d9559f2a2533911ce66bbf649"
+      "sha256": "8c415b1df618756743687c5f83cc6f2eea8292d362d519cf25af2340d67bea9d"
     },
     {
       "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
@@ -74,7 +74,7 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "79ba00c826c2dd5b4ceb3623fe686c598f2be8969000f5566f6dd7b008b05a6c"
+      "sha256": "5bf4698d44d5ab40ee0a93e15a65a968db70763dac3ca8d19d73dcfa4a1170b9"
     },
     {
       "path": "AGENTS.md",
@@ -82,7 +82,7 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "2b0695362034836bff00b6b2129d941f80ada7f81eef63c51872b1c1289f284b"
+      "sha256": "3ff16ccc71b7b2ec59ff504190028673c17a5b802c84ac241dcded4bf695a335"
     },
     {
       "path": "Cargo.toml",
@@ -90,7 +90,7 @@
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
-      "sha256": "ec69bc81feb5874a133b99db211e8ec69637b76b750f53a7ab483dc97388051f"
+      "sha256": "c8ed6d020e51837564bc06e31c7947f48e76757c989651814591b64937cdc1ed"
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
@@ -118,15 +118,15 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "658a01df9a0297c3826f0297584053c4fb0596fb71f779dcc6420aab58c03b05"
+      "sha256": "061891a42710c09cc4ad53a3bc5d8dda3ee772f0405b14b6d857a1b462ddf0a3"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
-      "sha256": "f98458710d9697445041863a31f18922e6afa6f5a4b81eb50e36dbdf225b19ca"
+      "sha256": "cc38c67f9cd514683ee8d06e578822cdf1cee41e2c82ca137be34a6a65e66e5c"
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "c07d04241dc7d05649b37a5dd8cd48a20dde55b83d2d5f34859c2c960fd46729"
+      "sha256": "ec4da6f3181b139b23a9a426c3a6d365e2e4bab0fd5051898145250a5aaf7b90"
     },
     {
       "path": "crates/org-pki/Cargo.toml",
@@ -150,7 +150,7 @@
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
-      "sha256": "4d245c2cb68fe3242c46a11da40621ddc78d9d5aa1a6f476224a2cb27418f36e"
+      "sha256": "6d4f62b3c6e3852be280eca8bdf861b34902308072eb4e09cb140b6c28081d2e"
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
@@ -186,7 +186,7 @@
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "6a40220e0ddd2fa15f56d30e5b5a238e826ea6579521562b6435920ba3489e42"
+      "sha256": "06dda77521ded6aa58eb0b1d3a592b2146393cdbd157e48fff37678c6944efb4"
     },
     {
       "path": "docs/design/project-structure.md",

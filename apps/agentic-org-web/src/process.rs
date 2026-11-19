@@ -25,7 +25,7 @@ use std::{
         unix::net::{UnixDatagram, UnixStream},
     },
     path::Path,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{mpsc, Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
@@ -309,6 +309,117 @@ pub(crate) fn session_events(
     })
 }
 
+/// `sessions`, and `tls.renew` passed on to `renewed` (to [`follow_renewals`]): the reader
+/// thread cannot call the host itself.
+fn with_renewals(sessions: EventSink, renewed: mpsc::Sender<()>) -> EventSink {
+    Arc::new(move |name: &str, data: &serde_json::Value| {
+        if name == org_host_control::event::TLS_RENEW {
+            let _ = renewed.send(());
+        } else {
+            sessions(name, data);
+        }
+    })
+}
+
+/// What a `tls.fetch` after `tls.renew` means for an `https` listener serving `current`
+/// (its origin and `hsts`).
+#[derive(Debug)]
+enum Renewal {
+    /// The pair to use for new handshakes.
+    Swap(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>),
+    /// Keep serving the current pair (`unavailable`, or a pair that does not load), for
+    /// the reason named ([`renewal_kept_line`]).
+    Keep(&'static str),
+    /// The host answered another listener: a host bug. The process exits without swapping.
+    Exit,
+}
+
+fn renewal(
+    current: &(
+        org_host_control::listen::ListenOrigin,
+        org_host_control::listen::Hsts,
+    ),
+    fetched: TlsFetchResult,
+) -> Renewal {
+    match fetched {
+        TlsFetchResult::Https {
+            cert,
+            key,
+            origin,
+            hsts,
+        } if (origin.clone(), hsts) == *current => {
+            let chain =
+                CertificateDer::pem_slice_iter(cert.as_bytes()).collect::<Result<Vec<_>, _>>();
+            match (
+                chain,
+                PrivateKeyDer::from_pem_slice(key.expose().as_bytes()),
+            ) {
+                (Ok(chain), Ok(key)) if !chain.is_empty() => Renewal::Swap(chain, key),
+                _ => Renewal::Keep("unusable_pair"),
+            }
+        }
+        TlsFetchResult::Unavailable(_) => Renewal::Keep("unavailable"),
+        _ => Renewal::Exit,
+    }
+}
+
+/// The start of the one line the web process writes when a `tls.renew` did not replace its
+/// pair. The host forwards the line's reason to its log when it is one of the closed set
+/// (`org-host`'s `web::RENEWAL_KEPT_PREFIX`):
+///
+/// ```text
+/// line   = "agentic-org-web: tls renewal kept the current pair: " reason LF
+/// reason = "fetch_failed" / "unavailable" / "unusable_pair" / "replace_failed"
+/// ```
+///
+/// It carries no key material and no certificate bytes.
+pub const RENEWAL_KEPT_PREFIX: &str = "agentic-org-web: tls renewal kept the current pair: ";
+
+/// The line [`RENEWAL_KEPT_PREFIX`] describes, for `reason`.
+pub fn renewal_kept_line(reason: &str) -> String {
+    format!("{RENEWAL_KEPT_PREFIX}{reason}\n")
+}
+
+/// After each `tls.renew`, fetches the pair again on its own thread and swaps it for new
+/// handshakes ([`TlsCertificates::replace`]). A failed call, an unusable pair or a failed
+/// swap keeps the current one and writes one line saying so ([`renewal_kept_line`]); a
+/// different listener ends the process.
+fn follow_renewals(
+    host: Arc<HostControl>,
+    tls: Arc<TlsCertificates>,
+    current: (
+        org_host_control::listen::ListenOrigin,
+        org_host_control::listen::Hsts,
+    ),
+    renewals: mpsc::Receiver<()>,
+) -> io::Result<()> {
+    std::thread::Builder::new()
+        .name("web-tls-renewal".into())
+        .spawn(move || {
+            while renewals.recv().is_ok() {
+                // Renewals that arrived meanwhile are one fetch.
+                while renewals.try_recv().is_ok() {}
+                let kept = |reason: &str| {
+                    let _ = io::stderr().write_all(renewal_kept_line(reason).as_bytes());
+                };
+                let Ok(fetched) = host.fetch_listener() else {
+                    kept("fetch_failed");
+                    continue;
+                };
+                match renewal(&current, fetched) {
+                    Renewal::Swap(chain, key) => {
+                        if tls.replace(chain, key).is_err() {
+                            kept("replace_failed");
+                        }
+                    }
+                    Renewal::Keep(reason) => kept(reason),
+                    Renewal::Exit => fatal(),
+                }
+            }
+        })
+        .map(drop)
+}
+
 /// Resolves once the host connection is gone (control EOF, a failed call or
 /// stdin EOF): serving stops and the listener closes with the process.
 async fn host_lost(host: Arc<HostControl>) {
@@ -368,15 +479,21 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     // `session.ended` event, in arrival order, from the first frame on.
     let cache = Arc::new(SessionCache::default());
     let generation = Arc::new(OnceLock::new());
+    let (renewed, renewals) = mpsc::channel();
     let host = HostControl::from_handoff(
         control,
         transfer,
         line.instance_id,
         Arc::new(|| fatal()),
-        session_events(Arc::clone(&cache), Arc::clone(&generation)),
+        with_renewals(
+            session_events(Arc::clone(&cache), Arc::clone(&generation)),
+            renewed,
+        ),
     )?;
     let _ = generation.set(host.generation());
-    let (mode, origin, hsts) = match host.fetch_listener().map_err(|_| failure())? {
+    let fetched = host.fetch_listener().map_err(|_| failure())?;
+    let scheme = fetched.listen().ok_or_else(failure)?.0;
+    let (mode, origin, hsts) = match fetched {
         TlsFetchResult::HttpLoopback { origin, hsts } => (ListenMode::HttpLoopback, origin, hsts),
         TlsFetchResult::HttpPublished { origin, hsts } => (ListenMode::HttpPublished, origin, hsts),
         TlsFetchResult::Https {
@@ -390,8 +507,14 @@ pub fn serve(assets: &Path) -> io::Result<()> {
                 .map_err(|_| failure())?;
             let key =
                 PrivateKeyDer::from_pem_slice(key.expose().as_bytes()).map_err(|_| failure())?;
-            let tls = TlsCertificates::new(chain, key).map_err(|_| failure())?;
-            (ListenMode::Https(Arc::new(tls)), origin, hsts)
+            let tls = Arc::new(TlsCertificates::new(chain, key).map_err(|_| failure())?);
+            follow_renewals(
+                Arc::clone(&host),
+                Arc::clone(&tls),
+                (origin.clone(), hsts),
+                renewals,
+            )?;
+            (ListenMode::Https(tls), origin, hsts)
         }
         _ => return Err(failure()),
     };
@@ -418,7 +541,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         config,
         files,
         move || {
-            let backend = SessionApi::new(Arc::clone(&host), cache, &browser_origin);
+            let backend = SessionApi::new(Arc::clone(&host), cache, &browser_origin, scheme);
             Ok((backend, host_lost(host)))
         },
         serving,
@@ -428,6 +551,84 @@ pub fn serve(assets: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// After `tls.renew`: a pair for the same origin and `hsts` is swapped in; `unavailable`
+    /// or a pair that does not load keeps the current one; another listener is a host bug
+    /// and the process exits.
+    #[test]
+    fn a_renewal_swaps_only_a_pair_for_the_same_listener() {
+        use org_host_control::listen::{Hsts, ListenFailure, ListenOrigin, Uncovered};
+        use org_host_control::TlsPrivateKey;
+        let origin = ListenOrigin::parse("https://org.example:8443").unwrap();
+        let current = (origin.clone(), Hsts::Off);
+        let cert = include_bytes!("../tests/fixtures/test-cert-a.der");
+        let key = include_bytes!("../tests/fixtures/test-key-a.der");
+        let pem = |label: &str, der: &[u8]| {
+            use base64::prelude::*;
+            format!(
+                "-----BEGIN {label}-----\n{}\n-----END {label}-----\n",
+                BASE64_STANDARD.encode(der)
+            )
+        };
+        let https = |origin: &ListenOrigin, hsts, key_pem: String| TlsFetchResult::Https {
+            cert: pem("CERTIFICATE", cert),
+            key: TlsPrivateKey::new(key_pem).unwrap(),
+            origin: origin.clone(),
+            hsts,
+        };
+        assert!(matches!(
+            renewal(&current, https(&origin, Hsts::Off, pem("PRIVATE KEY", key))),
+            Renewal::Swap(chain, _) if chain.len() == 1
+        ));
+        assert!(matches!(
+            renewal(&current, https(&origin, Hsts::Off, "not a key".into())),
+            Renewal::Keep("unusable_pair")
+        ));
+        assert!(matches!(
+            renewal(
+                &current,
+                TlsFetchResult::Unavailable(ListenFailure::TlsNameMismatch {
+                    uncovered: Uncovered::one(origin.clone())
+                })
+            ),
+            Renewal::Keep("unavailable")
+        ));
+        // The one line a kept pair writes: the host's prefix, a known reason, nothing else.
+        let line = renewal_kept_line("unusable_pair");
+        assert_eq!(
+            line,
+            "agentic-org-web: tls renewal kept the current pair: unusable_pair\n"
+        );
+        let elsewhere = ListenOrigin::parse("https://elsewhere.example:8443").unwrap();
+        for changed in [
+            https(&origin, Hsts::On, pem("PRIVATE KEY", key)),
+            https(&elsewhere, Hsts::Off, pem("PRIVATE KEY", key)),
+            TlsFetchResult::HttpLoopback {
+                origin: ListenOrigin::parse("http://127.0.0.1:8443").unwrap(),
+                hsts: Hsts::Off,
+            },
+        ] {
+            assert!(matches!(renewal(&current, changed), Renewal::Exit));
+        }
+    }
+
+    /// `tls.renew` goes to the renewal thread and nothing else; every other event still
+    /// reaches the session sink.
+    #[test]
+    fn tls_renew_is_passed_on_and_other_events_reach_the_sessions() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&seen);
+        let sessions: EventSink = Arc::new(move |name: &str, _: &serde_json::Value| {
+            recorded.lock().unwrap().push(name.to_owned())
+        });
+        let (renewed, renewals) = mpsc::channel();
+        let events = with_renewals(sessions, renewed);
+        events(org_host_control::event::TLS_RENEW, &serde_json::json!({}));
+        events("session.ended", &serde_json::json!({}));
+        assert!(renewals.try_recv().is_ok());
+        assert!(renewals.try_recv().is_err());
+        assert_eq!(*seen.lock().unwrap(), ["session.ended"]);
+    }
 
     #[test]
     fn a_confinement_refusal_is_reported_with_its_reason_on_one_bounded_line() {

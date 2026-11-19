@@ -140,7 +140,7 @@ would be declared four times.
 | `agentic-org-office` | Its end of the rendezvous: receive descriptors | `org-socket/src/rights.rs`, `rights/send.rs`, `rights/stream.rs` | `socket` |
 | `agentic-org-office` | Admit same-user peers on its local socket | `org-socket/src/peer.rs` (`peer_allowed`), called from `apps/agentic-org-office/src/serve.rs` | `socket` |
 | `agentic-org-office` | Start, watch, stop and recover agent processes | `org-supervise/src/lib.rs`, `platform.rs`, `spawn.rs`, `child.rs`, `recovery.rs`, `recovery/scan.rs`, `recovery/native/` | `process`, `isolation` |
-| `agentic-org-office` | Durable flush of accepted work | `org-office/src/store/acceptance/durable.rs` | `fs` |
+| `agentic-org-office` | Durable flush of accepted work: since B1b the office store's journal and files under `<instance-root>/<org-id>/durable/`, and the single-file publications (creation intent `hq-creation.v1.json`, `office.json`) in the office folder `<home>/offices/<office-id>/`, which also holds the office lock and the host's writer-custody marker; the projection `<instance-root>/<org-id>/runtime/<office-id>/office.db` can be deleted and rebuilt from the journal | `org-store/src/disk.rs` (`flush_full`) and `org-store/src/files.rs` (`publish_one`), both through `org_platform::fs::full_sync`, with no conditional | `fs` |
 | `agentic-org-web` | Confine itself before input | `org-platform/src/confinement/` since X1c (was `org-socket/src/confinement.rs`, `confinement/macos.rs`) | `confinement` |
 | `agentic-org-web` | Which platform's release it is, when it authenticates its own image | `apps/agentic-org-web/src/release.rs` (`policy`, a `cfg!` on the system) | `admission` (X1c, with `org-host/src/release.rs`) |
 | `agentic-org-web` | Check the inherited listener and received descriptors | `org-socket/src/rights/stream.rs` (`listening`), `rights.rs` | `socket` |
@@ -156,9 +156,9 @@ above.
 
 Count when the check was written (X1a): 79 `.rs` files outside `org-platform` have a
 platform predicate. 45 are source files: 29 in `org-host`, 6 in `org-socket`, 6 in
-`org-supervise`, and `org-office/src/store/acceptance/durable.rs`,
-`org-client/src/agent.rs`, `org-spool/src/safe_read.rs` and
-`apps/agentic-org-web/src/release.rs`; each is in a row above. One is an example
+`org-supervise`, and `org-office/src/store/acceptance/durable.rs` (deleted in B1b; its
+row now names the office store's flush), `org-client/src/agent.rs`,
+`org-spool/src/safe_read.rs` and `apps/agentic-org-web/src/release.rs`; each is in a row above. One is an example
 (`org-socket/examples/gateway_confinement.rs`; it stayed in `org-socket` in X1c, because it needs that crate's descriptor passing, and lost its predicates),
 and 33 are test files. The list is at 78 files and 491 predicates since A1 removed
 SQLCipher from the office store. Milestone-one work in these files adds no new
@@ -882,8 +882,93 @@ the seccomp and AppArmor profiles are optional and exist for agents' vendor sand
 The `http_published` listener is available in foreground mode on bare macOS and
 Linux machines and in containers. Every machine that can reach the listen address
 can reach sign-in and sessions in plain text. A bare host using `0.0.0.0` listens on
-all IPv4 interfaces, including those on the LAN. HTTPS with a certificate made by
-the instance or supplied by the operator is pending (implementation plan, X7).
+all IPv4 interfaces, including those on the LAN.
+
+**HTTPS** (X7; ADR-0017 decision 10). `scheme: "https"` is available to every
+instance, on any address. The pair is the host's (`crates/org-host/src/web_tls/`):
+
+- **Made at first start** when the setup file names none: an ECDSA P-256 key and a
+  self-signed certificate whose only subject alternative name is the origin's host
+  (DNS name or IP literal), `CN=Agentic Org`, not a CA, server authentication, a random
+  128-bit serial, valid 397 days from five minutes before the start. Setup prints that
+  the instance makes it; the host logs `the TLS certificate for <origin>: made by this
+  instance, SHA-256 fingerprint AB:…, valid from … until …` at every start (stderr: the
+  container log). At a start, or every six hours while it runs, a self-made certificate
+  with fewer than 30 days left is replaced by a new key and certificate (a new
+  fingerprint, logged), and the host sends `tls.renew` to the web process. A lost
+  self-made key is made again, and logged as such.
+- **Supplied** by `"tls": {"cert": "<path>", "key": "<path>"}` in the setup file (absolute
+  paths; only with `https`). Setup opens each without following a symbolic link in its
+  last component (such a link is refused: name the file itself; a link among its parent
+  directories is followed), as a regular file of at most 64 KiB, and verifies
+  the pair in `tls.set`'s order (`tls_invalid`, `tls_key_mismatch`, `tls_not_valid`,
+  `tls_name_mismatch`) before it saves anything; setup prints its fingerprint. The paths
+  are recorded beside the frozen input, never the key. The host imports the pair at its
+  first start (verified again) and does not read the files after that. A supplied key
+  missing from the host's secrets refuses the start, naming the cause: it is never made
+  again. A supplied pair that no longer verifies (expired, say) is never replaced by the
+  instance: the host starts and logs why, and no browser is served until the
+  administrator replaces the pair with `tls.set` (a start with fewer than 30 days left
+  logs a warning).
+- **Custody.** The key is the host secret `tls.<pair fingerprint>` (add-only; in a
+  container, in the secrets volume); the registry's `web_tls_pair` row holds the chain
+  (its `CERTIFICATE` blocks only, re-encoded: text around them, such as a key in a
+  combined file, is dropped), the pair fingerprint and `made` or `supplied`. A new pair
+  is installed by adding its key, pointing the row at it, then deleting the old key; a
+  start deletes any TLS key the row does not name. The registry of an instance created
+  before X7 gains the table at open. Every registry keeps the unused `tls_pair` table of
+  earlier builds (a new one creates it too): a build from before X7 requires it and leaves
+  the `web_tls_pair` it does not know alone, so it can still open a registry this build
+  created. The rule for later additive tables is the same: never drop a table an earlier
+  build requires.
+- **Replacement.** `tls.set` on `host.sock` from the administrator's session (journaled,
+  X-02 §6.2's checks) installs a supplied pair; the host then sends `tls.renew`, and the
+  web process fetches the pair and swaps it for new handshakes, without a restart. When
+  the web process keeps its current pair instead (the fetch failed, the host answered
+  `unavailable`, the pair did not load or the swap failed), it writes one line naming the
+  reason, and the host logs it (a known reason only, at most 16 per web process; no key or
+  certificate bytes). On an
+  instance whose listener is not `https` it answers `unavailable` (decided with X7: no
+  plain-HTTP listener serves a pair, and the scheme never changes, so none is stored). A
+  chain longer than 64 KiB in its normal form is `tls_invalid`.
+- **Command.** `agentic-org admin tls set --cert <file> --key <file> --login <login>
+  [--name <instance>]` reads the files with setup's rules, checks the pair in `tls.set`'s
+  order (a refusal names the files, before a password is asked), signs the administrator in
+  with the password typed at the terminal (native `account.verify`, the interim sign-in
+  `recovery` uses until FC-173), calls `tls.set`, ends the session and prints only the new
+  certificate's SHA-256 fingerprint. It is admitted as the call is and no wider: on
+  `host.sock`, as the service's user, by the administrators' admission (the signed
+  `agentic-org` on a Mac); root has no route. It sends the password only to a host whose
+  program it identified, so where a peer is known by its user alone (GNU/Linux, a
+  container) it refuses before asking for the password or sending anything, until
+  command-line sign-in is approved in the browser (FC-173).
+- **Start gate and `tls.fetch`.** The web process is spawned only while the stored pair is
+  present (`tls_missing`), names the origin's host (`tls_name_mismatch`) and is valid now;
+  the gate is part of the web start's eligibility (asked at most every two seconds, each
+  change logged once), so the web process waits for a replacement rather than failing, and
+  a running one stops when its pair can no longer be served. `tls.fetch` re-checks coverage
+  and answers `https` with the chain and the key on the secret-line path.
+- The web process sets `Secure` session cookies and, for a named host with `hsts` on,
+  `Strict-Transport-Security`; an IP-literal origin never gets HSTS.
+
+Known limits: the self-made certificate is trusted by no browser until the operator
+accepts it (compare the fingerprint first); on Linux and in a container `admin tls set`
+refuses until FC-173 (no password is sent to a host known by its user alone), so a
+supplied pair is replaced there only by an administrator's `tls.set` from another client of
+`host.sock`, or by a new instance; a supplied pair that expires
+stops the browser service until it is replaced; a supplied pair already expired at the
+instance's first start refuses that start (setup verified it moments before; the operator
+replaces the files at the recorded paths and starts again), while one
+that expires later only stops the browser; a supplied pair nearing its end is warned
+about at a start, not while the host runs; and a clock set back more than five minutes
+before a self-made certificate's start, or a self-made key deleted from the secrets while
+the host runs, keeps the browser down until the next six-hourly renewal look (a restart
+remakes it at once). While the gate holds the web process its status stays `starting`;
+the reason is in the host log and `instance.view` reports `tls: missing` (a status
+reason for it belongs to the host status of move 2b). The gate checks in `tls.set`'s order,
+validity before coverage, so an expired pair that also does not name the origin is
+reported as `tls_not_valid` rather than `tls_name_mismatch` (X-02 §2's order); the origin
+never changes, so it does not arise.
 
 **The container file** (`deploy/container/Dockerfile`, `deploy/container/README.md`):
 
@@ -898,8 +983,9 @@ the instance or supplied by the operator is pending (implementation plan, X7).
   layout, and sets no `ORG_OFFICE_DEV_KEY_DIR`).
 - `/etc/agentic-org/setup.json`: `service: foreground`, `root: /data/instance`,
   `credentials: /secrets`, and the listener below.
-- **The listener.** A published port arrives on the container's network interface, not
-  its loopback. The container listens on `0.0.0.0:8443` with `http_published`, whose
+- **The listener** (until the container moves to `https` after B1b). A published port
+  arrives on the container's network interface, not its loopback. The container listens
+  on `0.0.0.0:8443` with `http_published`, whose
   origin's host is exactly `127.0.0.1`: the configured origin is
   `http://127.0.0.1:8443`, and the operator publishes the port as
   `-p 127.0.0.1:8443:8443` (Docker Engine 28 or later, which keeps a port published on
@@ -961,7 +1047,8 @@ the instance or supplied by the operator is pending (implementation plan, X7).
 **Without a terminal.** `setup --non-interactive --config <file>` takes the setup record's
 input as one strict JSON object: `version`, `service` (`registered` or `foreground`),
 `root`, `credentials` (the absolute store directory of section 3.2, required with
-`foreground` on Linux) and `listen` (`address`, `port`, `scheme`, `origin`, `hsts`).
+`foreground` on Linux), `listen` (`address`, `port`, `scheme`, `origin`, `hsts`) and,
+with `https` only, an optional `tls` (`cert`, `key`: the paths of a supplied pair).
 Configuration files require an explicit `service`. Persisted v1 setup records that
 predate that field resume in `registered` mode.
 
@@ -1008,7 +1095,8 @@ same three adapters, and LNX-5's check covers them.
   `require_disk(dir)`: refuses `tmpfs`, `ramfs` and `hugetlbfs` where data must
   persist. These replace the copies in `org-host` (`writer.rs`, `hostdb.rs`,
   `release/files.rs`, `release/files/output.rs`, `human/recovery.rs`,
-  `instance/directory.rs`), `org-office/src/store/acceptance/durable.rs`,
+  `instance/directory.rs`), `org-office/src/store/acceptance/durable.rs` (deleted in B1b;
+  the office store's flush in `org-store` calls `full_sync`),
   `org-client/src/agent.rs` and `org-spool/src/safe_read.rs`.
 - **`dirs`.** The application base, the default office home, the user temp base and
   the runtime base for sockets, with the socket path limit. Built in X1b:
@@ -1175,7 +1263,7 @@ increments are in the [implementation plan](../implementation-plan.md#milestone-
 | Increment | Files it changes | Also changed by |
 | --- | --- | --- |
 | X1a check and layout | `crates/org-platform/tests/platform_conditionals.rs`, `.github/platform-conditionals.allow`, `.github/scripts/platform_allowlist_shrinks.py`, `.github/workflows/ci.yml`; the layout text and `From<Refused> for io::Error` in `crates/org-platform/src/lib.rs` | A2 B0 created the crate, the `service` contract and its launchd adapter in `org-platform/src/service/` |
-| X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs` (or `org-store/src/files.rs`, where B1a carries its flush); `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
+| X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs` (deleted in B1b: the office store's flush is in `org-store/src/disk.rs` and `files.rs`); `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
 | X1c `admission`, `confinement`, `presence` | `org-platform/src/{admission,confinement,presence}/`, `org-platform/build.rs`; `org-socket/src/{confinement.rs, confinement/, image.rs}`; `org-host/src/{spawn.rs, server_check.rs, code_signing.rs, peer.rs, app_auth.rs, human.rs (verify_host), recovery.rs, recovery/presence.rs, release.rs, release/platform.rs, release/runtime.rs, supervisor/child.rs, supervisor/channels.rs, supervisor/mod.rs, offices.rs, lib.rs}`, `org-host/build.rs`, `org-host/Cargo.toml` | A1: `supervisor/child.rs`, `supervisor/channels.rs`, `supervisor/mod.rs`. A2 and A3: `org-host/src/lib.rs`, `instance/`, `hostdb`. A3: the web process's start and its confinement call. A4: `offices.rs` |
 | X1d `credentials` | `org-platform/src/credentials/`; `org-host/src/{keys/, host_secrets.rs, host_secrets/}` | A1 (`keys/`, the office secrets key) |
 | X2 first worker | `org-platform/src/{admission,fs,dirs,process,socket}/linux.rs`, `org-platform/src/testing.rs`; the tests in `org-host/src/supervisor/` and `apps/agentic-org/tests/`; `ci.yml` | the tests in `apps/agentic-org/tests/` that A1 and A2 also edit |

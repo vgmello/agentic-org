@@ -7,7 +7,7 @@ use org_proto::{frame, GrantKey, OfficeSecretsKey};
 use std::{
     collections::BTreeMap,
     fs::DirBuilder,
-    io::{self, BufReader, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     os::{
         fd::{AsFd, OwnedFd},
         unix::{
@@ -141,10 +141,13 @@ impl Broker {
             let _ = stream.shutdown(std::net::Shutdown::Both);
         }
     }
-    pub fn writer_required(&self, office: &str) -> io::Result<bool> {
+    /// Every office needs writer custody to start or be created: returns what its writer is
+    /// bound to. A host without writer custody (no protected registry) starts no office.
+    pub fn custody(&self, office: &str) -> Result<crate::writer::Bound, crate::writer::AdmitError> {
         self.writers
             .as_ref()
-            .map_or(Ok(false), |writers| writers.required(office))
+            .ok_or(crate::writer::AdmitError::Refused)?
+            .admit(office)
     }
     pub fn bind(&self) -> io::Result<Rendezvous> {
         let directory = self.runtime.join("r");
@@ -190,13 +193,27 @@ impl Broker {
         generation: u64,
         signals: Sender<Signal>,
     ) -> io::Result<Arc<Endpoint>> {
+        // Every start and create needs writer custody. No custody, no office.
+        let writers = self.writers.as_ref().ok_or_else(invalid)?;
         let (stream, deadline, _handshake) =
             self.connect(rendezvous, Instant::now() + DEADLINE, &mut || {
                 child.try_wait().unwrap_or(false)
             })?;
-        self.handoff(
+        let endpoint = self.handoff(
             stream, office, admission, child, secrets, generation, signals, deadline,
-        )
+        )?;
+        // The writer control goes first after the handoff, before the worker opens or
+        // creates anything.
+        let (host, worker) = {
+            let _fence = lock(&SPAWN_LOCK);
+            UnixStream::pair()?
+        };
+        phase(
+            "writer authority channel",
+            writers.serve(office, host, Arc::clone(&endpoint.live)),
+        )?;
+        phase("writer descriptor receipt", endpoint.writer_control(worker))?;
+        Ok(endpoint)
     }
     /// The one connection to a bound rendezvous, by `deadline`, with blocking I/O bounded by
     /// what is left of it. The wait ends early when `exited` says the worker is gone: a worker
@@ -273,6 +290,7 @@ impl Broker {
         stream: UnixStream,
         admission: &Admission,
         child: &Child,
+        deadline: Instant,
     ) -> io::Result<BufReader<UnixStream>> {
         // Authenticate the socket's actual reader, not merely a process that was
         // admitted before it ran. Release macOS requires the exact audit token.
@@ -283,7 +301,7 @@ impl Broker {
         let mut reader = BufReader::new(stream);
         let _: org_office_launch::ReadyForSecrets = phase(
             "ready for secrets",
-            frame::read_message(&mut reader).map_err(launch),
+            frame::read_message(&mut ByDeadline::new(&mut reader, deadline)).map_err(launch),
         )?
         .ok_or_else(invalid)?;
         if !reader.buffer().is_empty() {
@@ -312,11 +330,11 @@ impl Broker {
         generation: u64,
         signals: Sender<Signal>,
     ) -> io::Result<()> {
-        let (stream, _deadline, _handshake) =
+        let (stream, deadline, _handshake) =
             self.connect(rendezvous, Instant::now() + DEADLINE, &mut || {
                 child.try_wait().unwrap_or(false)
             })?;
-        Self::discard_handoff(stream, admission, child, generation, signals)
+        Self::discard_handoff(stream, admission, child, generation, signals, deadline)
     }
     fn discard_handoff(
         stream: UnixStream,
@@ -324,8 +342,9 @@ impl Broker {
         child: &Child,
         generation: u64,
         signals: Sender<Signal>,
+        deadline: Instant,
     ) -> io::Result<()> {
-        let mut reader = Self::ready(stream, admission, child)?;
+        let mut reader = Self::ready(stream, admission, child, deadline)?;
         // Still sent only to the authenticated child reader, after `ready_for_secrets`, so a
         // discard keeps the start/create handshake order; the header itself holds no secret.
         let header = org_office_launch::encode_discard_handoff().map_err(launch)?;
@@ -359,7 +378,7 @@ impl Broker {
         signals: Sender<Signal>,
         deadline: Instant,
     ) -> io::Result<Arc<Endpoint>> {
-        let mut reader = Self::ready(stream, admission, child)?;
+        let mut reader = Self::ready(stream, admission, child, deadline)?;
         let (transfer, worker) = {
             let _fence = lock(&SPAWN_LOCK);
             UnixDatagram::pair()?
@@ -397,17 +416,10 @@ impl Broker {
             )
             .map_err(launch),
         )?;
-        set_timeout_unless_peer_closed(
-            reader.get_ref(),
-            Some(
-                deadline
-                    .checked_duration_since(Instant::now())
-                    .ok_or_else(invalid)?,
-            ),
-        )?;
         match phase(
             "handoff receipt decode",
-            org_office_launch::read_server_event(&mut reader).map_err(launch),
+            org_office_launch::read_server_event(&mut ByDeadline::new(&mut reader, deadline))
+                .map_err(launch),
         )? {
             Some(org_office_launch::RendezvousEvent::FdsReceived { of }) if of == "handoff" => {}
             _ => return Err(invalid()),
@@ -446,19 +458,6 @@ impl Broker {
                 }
                 receiving.fail();
             })?;
-        if let Some(writers) = &self.writers {
-            if writers.required(office)? {
-                let (host, worker) = {
-                    let _fence = lock(&SPAWN_LOCK);
-                    UnixStream::pair()?
-                };
-                phase(
-                    "writer authority channel",
-                    writers.serve(office, host, Arc::clone(&endpoint.live)),
-                )?;
-                phase("writer descriptor receipt", endpoint.writer_control(worker))?;
-            }
-        }
         Ok(endpoint)
     }
 }
@@ -701,6 +700,51 @@ impl Endpoint {
 impl Drop for Endpoint {
     fn drop(&mut self) {
         self.fail();
+    }
+}
+
+/// A launch read bounded by one deadline, however slowly the worker's bytes come: each read
+/// from the socket waits only for what is left of `deadline` (the socket's single timeout
+/// would restart with every byte a trickling worker sends). Bytes already buffered are served
+/// without a wait, so nothing past a line is lost to the next reader of the same buffer.
+pub(crate) struct ByDeadline<'a> {
+    reader: &'a mut BufReader<UnixStream>,
+    deadline: Instant,
+}
+
+impl<'a> ByDeadline<'a> {
+    pub(crate) fn new(reader: &'a mut BufReader<UnixStream>, deadline: Instant) -> Self {
+        Self { reader, deadline }
+    }
+}
+
+impl Read for ByDeadline<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let available = self.fill_buf()?;
+        let n = available.len().min(buf.len());
+        buf[..n].copy_from_slice(&available[..n]);
+        self.consume(n);
+        Ok(n)
+    }
+}
+
+impl BufRead for ByDeadline<'_> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if self.reader.buffer().is_empty() {
+            let left = self.deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the launch deadline passed",
+                ));
+            }
+            set_timeout_unless_peer_closed(self.reader.get_ref(), Some(left))?;
+        }
+        self.reader.fill_buf()
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.reader.consume(amount);
     }
 }
 

@@ -3,6 +3,12 @@ use org_platform_host::admission::{ChildEnv, Held, Peer, SpawnRefused};
 use org_platform_host::testing::admission::{child_peer, unowned_child};
 use std::sync::Arc;
 
+/// Whether this system identifies an image by its code signature (macOS), the identity
+/// every test here pins. Elsewhere they have nothing to check.
+fn code_signatures() -> bool {
+    org_platform_host::admission::image_identity() == Ok(ImageIdentity::CodeSignature)
+}
+
 /// Starts a child of `check` from this test binary, checked and held (never let run).
 fn start(check: &ServerCheck) -> Result<Held, ImageRefusal> {
     check
@@ -19,6 +25,9 @@ fn start(check: &ServerCheck) -> Result<Held, ImageRefusal> {
 
 #[test]
 fn selected_pin_checks_actual_child_kernel_hash_and_never_accepts_debug_skip() {
+    if !code_signatures() {
+        return;
+    }
     let me = std::env::current_exe().unwrap();
     // The script admits every child with its real token.
     let platform = ServerCheck::Scripted(Scripted(Arc::new(|_, pid| {
@@ -74,6 +83,9 @@ fn selected_pin_checks_actual_child_kernel_hash_and_never_accepts_debug_skip() {
 
 #[test]
 fn a_refused_or_pinned_check_never_admits_through_the_plain_decision() {
+    if !code_signatures() {
+        return;
+    }
     let me = std::env::current_exe().unwrap();
     // A refused check names no image: no admission exists, so nothing can be started.
     assert!(ServerCheck::WebRefused("refused").expected(&me).is_err());
