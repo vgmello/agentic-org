@@ -111,6 +111,14 @@ impl Stop {
     }
 }
 
+/// One line to the process's log: `message`, without the program's name, which is put in
+/// front. For a line written while a stop is bounded: it is written by the host log's own
+/// thread, and this waits for it a short, bounded time only, so that a stderr nobody reads
+/// (a full pipe) cannot hold the stop past its bound (X5 final review).
+pub fn log(message: &str) {
+    crate::host_log::log(message);
+}
+
 /// Ends the process now, with exit code 0, after one line to its log: `message`, one line
 /// without the program's name, which is put in front. For the composition's `overrun` (see
 /// [`Stop::watch`]): the line is written by the host log's own thread, and this waits for it
@@ -118,7 +126,7 @@ impl Stop {
 /// up (X5 review, fourth round, P1). `_exit` skips the exit handlers, which a thread blocked in
 /// a write, or in anything else, could hold up.
 pub fn end_process(message: &str) -> ! {
-    crate::host_log::log(message);
+    log(message);
     // SAFETY: `_exit` ends the process at once and never returns.
     unsafe { libc::_exit(0) }
 }

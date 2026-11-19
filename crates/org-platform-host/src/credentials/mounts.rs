@@ -54,6 +54,14 @@
 //! The kernel writes a mount point as an absolute path, escaped, before any field of
 //! free text, so a machine's other mounts do not make that read fail.
 //!
+//! One more question reads three fields of every line: whether another mount shows the
+//! release directory somewhere else ([`Table::aliases`]): the same volume mounted twice,
+//! a folder of it mounted elsewhere, or a mount of a directory that contains it. That is
+//! about every mount too, so the device, the root and the mount point of each line are
+//! read, and a line where they cannot be read refuses. All three come before any field of
+//! free text. A line of another filesystem, a mount of a namespace file (its root is no
+//! path) and a mount whose root was deleted show no directory of the store.
+//!
 //! The GNU/Linux adapter supplies the table, the mount ids and the paths
 //! (`linux/release.rs`); the decisions are compiled and tested on every target.
 
@@ -83,6 +91,36 @@ pub(super) struct Place {
 /// The most bytes of a mount table that are read. A node with ten thousand container
 /// mounts has a table of a few megabytes.
 pub(super) const LARGEST_TABLE: usize = 64 * 1024 * 1024;
+
+/// Another mount through which the release directory, or a part of it, can be reached
+/// ([`Table::aliases`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Alias {
+    /// Where the other mount is, from this process's root, unescaped.
+    pub(super) mount_point: Vec<u8>,
+    /// Where the store, or the part of it the mount shows, is reached through it, from
+    /// this process's root, as single names.
+    pub(super) shows: Vec<Vec<u8>>,
+}
+
+impl Alias {
+    /// Whether what the mount shows of the store is at or below the directory at `path`
+    /// (from this process's root). A path that is not absolute is
+    /// [`MountDoubt::Malformed`].
+    pub(super) fn within(&self, path: &[u8]) -> Result<bool, MountDoubt> {
+        let directory = names(path).ok_or(MountDoubt::Malformed)?;
+        Ok(starts_with(&self.shows, &directory))
+    }
+}
+
+/// Whether the names `path` begin with the names `prefix` (or are equal to them).
+fn starts_with<A: AsRef<[u8]>, B: AsRef<[u8]>>(path: &[A], prefix: &[B]) -> bool {
+    path.len() >= prefix.len()
+        && path
+            .iter()
+            .zip(prefix)
+            .all(|(name, other)| name.as_ref() == other.as_ref())
+}
 
 /// The mount table, indexed: every line with the mount id it starts with.
 ///
@@ -165,6 +203,63 @@ impl<'a> Table<'a> {
         Ok(None)
     }
 
+    /// Every mount, other than `own` (the mount the release directory is in) and any
+    /// mount at its mount point, that shows a directory of the release directory's
+    /// filesystem at `store` (its place), inside it, or containing it: where else the
+    /// store, or a part of it, can be reached, and through which mount.
+    ///
+    /// A mount at the same mount point as `own` is not one: one of the two hides the
+    /// other, and `own` is the one the release directory was reached through.
+    ///
+    /// Here the device, the root and the mount point of **every** line are read (the
+    /// third to fifth fields), since any line could be such a mount. A line where one of
+    /// them cannot be read is [`MountDoubt::Malformed`]: it could be one. A line of
+    /// another filesystem is not read past its device, and one whose root is no path (a
+    /// namespace file) or was deleted is not read past its root: neither shows a
+    /// directory through which anything of the store can be reached.
+    pub(super) fn aliases(&self, own: &Mount, store: &Place) -> Result<Vec<Alias>, MountDoubt> {
+        let mut found = Vec::new();
+        for (_, line) in &self.lines {
+            let mut fields = line.split(|byte| *byte == b' ').skip(2);
+            let (Some(filesystem), Some(root), Some(mount_point)) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                return Err(MountDoubt::Malformed);
+            };
+            if device(filesystem).ok_or(MountDoubt::Malformed)? != store.filesystem {
+                continue;
+            }
+            let root = unescape(root).ok_or(MountDoubt::Malformed)?;
+            if root.first() != Some(&b'/')
+                || root.ends_with(DELETED_ROOT)
+                || root.ends_with(DELETED_PATH)
+            {
+                continue;
+            }
+            let mount_point = unescape(mount_point).ok_or(MountDoubt::Malformed)?;
+            if mount_point == own.mount_point {
+                continue;
+            }
+            let root = names(&root).ok_or(MountDoubt::Malformed)?;
+            let at = names(&mount_point).ok_or(MountDoubt::Malformed)?;
+            let shows: Vec<Vec<u8>> = if starts_with(&root, &store.path) {
+                // A folder of the store, or the store itself: it is at the mount point.
+                at.iter().map(|name| name.to_vec()).collect()
+            } else if starts_with(&store.path, &root) {
+                // A directory that contains the store: it is below the mount point.
+                let below = &store.path[root.len()..];
+                at.iter()
+                    .map(|name| name.to_vec())
+                    .chain(below.iter().cloned())
+                    .collect()
+            } else {
+                continue;
+            };
+            found.push(Alias { mount_point, shows });
+        }
+        Ok(found)
+    }
+
     /// How many mounts the table lists.
     #[cfg(test)]
     pub(super) fn len(&self) -> usize {
@@ -223,14 +318,7 @@ fn fixed_fields(line: &[u8]) -> Option<Mount> {
     }
     number(fields[0])?;
     number(fields[1])?;
-    let mut device = fields[2].split(|byte| *byte == b':');
-    let filesystem = (
-        u32::try_from(number(device.next()?)?).ok()?,
-        u32::try_from(number(device.next()?)?).ok()?,
-    );
-    if device.next().is_some() {
-        return None;
-    }
+    let filesystem = device(fields[2])?;
     let root = unescape(fields[3])?;
     let mount_point = unescape(fields[4])?;
     if mount_point.first() != Some(&b'/') {
@@ -241,6 +329,19 @@ fn fixed_fields(line: &[u8]) -> Option<Mount> {
         root,
         mount_point,
     })
+}
+
+/// The device field of a line, `major:minor`, as two numbers.
+fn device(field: &[u8]) -> Option<(u32, u32)> {
+    let mut numbers = field.split(|byte| *byte == b':');
+    let filesystem = (
+        u32::try_from(number(numbers.next()?)?).ok()?,
+        u32::try_from(number(numbers.next()?)?).ok()?,
+    );
+    if numbers.next().is_some() {
+        return None;
+    }
+    Some(filesystem)
 }
 
 /// A decimal number of ASCII digits and nothing else (no sign, no space).
@@ -399,6 +500,118 @@ mod tests {
     /// written. All three are on one filesystem.
     const CONTAINER_MOUNT_INSIDE_SECRETS: &str =
         include_str!("mounts/container_mount_inside_secrets.mountinfo");
+
+    /// The table a container sees with two named volumes at `/data` and `/secrets`, the
+    /// secrets volume mounted a second time inside the data volume (`-v S:/data/extra`)
+    /// and a folder of it there as well (`--mount
+    /// type=volume,src=S,dst=/data/instance-keys,volume-subpath=office-keys`), as written.
+    const CONTAINER_SECRETS_MOUNTED_TWICE: &str =
+        include_str!("mounts/container_secrets_mounted_twice.mountinfo");
+
+    fn aliases_of(text: &str, store: (u64, &str)) -> Result<Vec<Alias>, MountDoubt> {
+        Table::of(text.as_bytes())?.aliases(&mount(text, store.0)?, &at(text, store.0, store.1)?)
+    }
+
+    fn points(aliases: &[Alias]) -> Vec<String> {
+        aliases
+            .iter()
+            .map(|alias| String::from_utf8_lossy(&alias.mount_point).into_owned())
+            .collect()
+    }
+
+    /// X5 final review (P3): the secrets volume mounted again, or a folder of it, is found
+    /// wherever it is mounted, with where the store is reached through it; the store's own
+    /// mount, the data volume and a container's files are not such mounts.
+    #[test]
+    fn another_mount_of_the_release_directory_is_found_wherever_it_is() {
+        let aliases = aliases_of(CONTAINER_SECRETS_MOUNTED_TWICE, (226, "/secrets")).unwrap();
+        assert_eq!(points(&aliases), ["/data/extra", "/data/instance-keys"]);
+        assert!(aliases.iter().all(|alias| alias.within(b"/data").unwrap()));
+        assert!(aliases[0].within(b"/data/extra").unwrap());
+        assert!(!aliases[0].within(b"/data/instance").unwrap());
+        assert!(!aliases[1].within(b"/data/instance").unwrap());
+        assert_eq!(aliases[0].within(b"relative"), Err(MountDoubt::Malformed));
+        // The data volume shows no directory of the secrets volume: two volumes of one
+        // filesystem, apart.
+        assert!(
+            aliases_of(CONTAINER_SECRETS_MOUNTED_TWICE, (225, "/data/instance"))
+                .unwrap()
+                .is_empty()
+        );
+        // One mount of each volume: none. A folder of the data volume mounted inside the
+        // secrets volume is not the secrets volume's (`mounted_inside` finds that one).
+        for (text, store) in [
+            (CONTAINER_TWO_VOLUMES, 106),
+            (CONTAINER_MOUNT_INSIDE_SECRETS, 185),
+        ] {
+            assert!(aliases_of(text, (store, "/secrets")).unwrap().is_empty());
+        }
+        // A secrets folder of the data volume: the data volume's mount contains it.
+        let inside = aliases_of(CONTAINER_SECRETS_INSIDE_DATA, (106, "/secrets")).unwrap();
+        assert_eq!(points(&inside), ["/data"]);
+        assert!(inside[0].within(b"/data/secrets").unwrap());
+    }
+
+    /// The same question on an ordinary machine: a store on the root filesystem, which is
+    /// mounted at `/` and nowhere else unless something says so.
+    #[test]
+    fn another_mount_of_a_store_on_the_disk_is_found_with_where_it_shows_it() {
+        let store = (27, "/home/a/.local/state/agentic-org/credentials/i");
+        // Nothing else of the disk, another filesystem, a mount of a namespace file, a
+        // deleted root, a mount over `/` itself, and a folder of the disk beside the
+        // store: none.
+        let plain = table(&[
+            "48 27 254:0 /var/lib/docker /var/lib/docker rw - ext4 /dev/vda rw",
+            "57 27 0:4 net:[4026532268] /run/docker/netns/1c rw - nsfs nsfs rw",
+            "58 27 254:0 /home/a/.local/state/agentic-org/credentials/i/gone//deleted /mnt/gone rw - ext4 /dev/vda rw",
+            "59 1 254:0 / / rw - ext4 /dev/vda rw",
+            "60 27 254:16 /home/a/.local/state/agentic-org/credentials/i /mnt/other-disk rw - ext4 /dev/vdb rw",
+        ]);
+        assert!(aliases_of(&plain, store).unwrap().is_empty());
+        // The disk's top mounted again (`/sysroot`, as on an image-based system), the
+        // store bound into the data root, and a folder of it bound elsewhere.
+        let text = table(&[
+            "70 27 254:0 / /sysroot rw - ext4 /dev/vda rw",
+            "71 27 254:0 /home/a/.local/state/agentic-org/credentials/i /home/a/data/keys rw - ext4 /dev/vda rw",
+            r"72 27 254:0 /home/a/.local/state/agentic-org/credentials/i/office-keys /mnt/k\040eys rw - ext4 /dev/vda rw",
+        ]);
+        let aliases = aliases_of(&text, store).unwrap();
+        assert_eq!(
+            points(&aliases),
+            ["/sysroot", "/home/a/data/keys", "/mnt/k eys"]
+        );
+        assert_eq!(
+            aliases[0].shows,
+            [
+                &b"sysroot"[..],
+                b"home",
+                b"a",
+                b".local",
+                b"state",
+                b"agentic-org",
+                b"credentials",
+                b"i"
+            ]
+        );
+        assert!(!aliases[0].within(b"/home/a/data").unwrap());
+        assert!(aliases[1].within(b"/home/a/data").unwrap());
+        assert!(aliases[1].within(b"/home/a/data/keys").unwrap());
+        assert!(!aliases[2].within(b"/home/a/data").unwrap());
+        // A line whose device, root or mount point cannot be read could be one.
+        for line in [
+            "73 27 254 / /x rw - ext4 /dev/vda rw",
+            "73 27 254:0 /a\\b /x rw - ext4 /dev/vda rw",
+            "73 27 254:0 / relative rw - ext4 /dev/vda rw",
+            "73 27 254:0 /a//b /x rw - ext4 /dev/vda rw",
+            "73 27",
+        ] {
+            assert_eq!(
+                aliases_of(&table(&[line]), store),
+                Err(MountDoubt::Malformed),
+                "{line}"
+            );
+        }
+    }
 
     /// X5 review (third round): a mount inside the release directory, at any depth, is
     /// found by its mount point, however the volumes share a filesystem; the directory's

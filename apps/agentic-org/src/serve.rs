@@ -60,7 +60,11 @@
 //!   process started meanwhile end with it (the end of their input and of their control
 //!   connection).
 //! - Any stop that has not ended 2.4 s after the signal (the host's last steps waiting on a
-//!   slow volume, say) ends the process there, with status 0 and a line that says so.
+//!   slow volume, say) ends the process there, with status 0 and a line that says so. That
+//!   includes writing the lines that end it: "stopped before serving" goes through the host
+//!   log, which waits for it 100 ms at most, and an error from setup or the start is returned
+//!   with the stop still bounded, so a standard error nobody reads cannot hold the process
+//!   past the limit (X5 final review).
 //! - Waiting for the signal failing (it cannot, in practice) is an error, whenever it is
 //!   found: `serve` stops what it started and exits non-zero.
 //!
@@ -213,12 +217,16 @@ fn serve_until_stopped<H>(
     let started = start_unless_stopped(stop, setup, start);
     // From here on the stop no longer bounds the start: it has ended, one way or another.
     stop.settle();
-    let Some(host) = started.inspect_err(|_| stop.finish())? else {
-        stop.finish();
-        eprintln!(
-            "agentic-org: stopped before serving: the stop signal came while starting; what \
-             setup completed is kept, and the next start serves it"
+    // An error is returned with the stop still bounded: the caller writes it to standard
+    // error, and a stop asked for meanwhile still ends the process within its limit if that
+    // write blocks (a full pipe nobody reads; X5 final review).
+    let Some(host) = started? else {
+        // Through the host log, which waits for its line a short, bounded time only.
+        org_host::stop::log(
+            "stopped before serving: the stop signal came while starting; what setup \
+             completed is kept, and the next start serves it",
         );
+        stop.finish();
         return Ok(());
     };
     let stopped = match stop.wait() {
@@ -603,6 +611,114 @@ mod tests {
         );
         assert_eq!(result, Ok(()));
         assert!(overruns.lock().unwrap().is_empty());
+    }
+
+    const FULL_STDERR_CHILD: &str = "AGENTIC_ORG_TEST_SERVE_FULL_STDERR";
+
+    /// Runs this test binary's test `test` alone in a child process whose stderr is a pipe
+    /// that is full and never read, with [`FULL_STDERR_CHILD`] set to `case`, and returns
+    /// its exit status and stdout, or `None` if it had not ended within 20 s (it is then
+    /// killed). A write to its stderr blocks for as long as it lives.
+    fn with_full_stderr(test: &str, case: &str) -> Option<(std::process::ExitStatus, String)> {
+        use std::io::Write;
+        use std::os::fd::AsRawFd;
+        let (reader, mut full) = std::io::pipe().unwrap();
+        let fd = full.as_raw_fd();
+        // SAFETY: a valid descriptor this function owns; fcntl reads or sets its flags.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        assert!(flags >= 0);
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) },
+            0
+        );
+        loop {
+            match full.write(&[b'x'; 4096]) {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) => panic!("filling the pipe: {e}"),
+            }
+        }
+        // Blocking again (the child shares this open file), and full.
+        // SAFETY: as above.
+        assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFL, flags) }, 0);
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture", "--test-threads=1"])
+            .env(FULL_STDERR_CHILD, case)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(full)
+            .spawn()
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(20);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break Some(status);
+            }
+            if Instant::now() >= until {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let mut stdout = String::new();
+        let _ = std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut stdout);
+        drop(reader);
+        status.map(|status| (status, stdout))
+    }
+
+    /// X5 final review: a stop during setup is not held past its bound by a standard error
+    /// that is a full pipe nobody reads. The line that says it stopped before serving is
+    /// written through the host log, which waits for it a bounded time; and an error from
+    /// setup is returned with the stop still bounded, so that when `main` blocks writing it,
+    /// the stop's overrun ends the process (here at 300 ms; 2.4 s in `serve`).
+    #[test]
+    fn a_stop_during_setup_is_not_held_up_by_a_full_stderr() {
+        const TEST: &str = "serve::tests::a_stop_during_setup_is_not_held_up_by_a_full_stderr";
+        if let Some(case) = std::env::var_os(FULL_STDERR_CHILD) {
+            let (send, signal) = std::sync::mpsc::channel::<i32>();
+            let stop = Stop::watch(
+                move || signal.recv().map_err(std::io::Error::other),
+                Duration::from_secs(10),
+                Duration::from_millis(300),
+                |_, _| org_host::stop::end_process("the stop overran"),
+            )
+            .unwrap();
+            let failed = case == "error";
+            let result = serve_until_stopped(
+                &stop,
+                || {
+                    stop_now(&stop, &send);
+                    if failed {
+                        Err("setup failed".to_owned())
+                    } else {
+                        Ok(None)
+                    }
+                },
+                |_| -> Result<(), String> { panic!("the host started after the stop") },
+                |_, _| panic!("nothing started, so nothing is shut down"),
+            );
+            println!("returned {result:?}");
+            if let Err(message) = result {
+                // What `main` does with it.
+                eprintln!("agentic-org: {message}");
+                println!("the error was written");
+            }
+            return;
+        }
+        let (status, stdout) =
+            with_full_stderr(TEST, "stopped").expect("the stop before serving blocked");
+        assert!(status.success(), "{status:?} {stdout}");
+        assert!(stdout.contains("returned Ok(())"), "{stdout}");
+        let (status, stdout) =
+            with_full_stderr(TEST, "error").expect("the error after the stop blocked");
+        assert!(status.success(), "{status:?} {stdout}");
+        assert!(
+            stdout.contains("returned Err(\"setup failed\")"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("the error was written"), "{stdout}");
     }
 
     /// X5 review, third round, P1: a stop that comes while the host starts stops it as soon

@@ -454,6 +454,17 @@ checks and a lock.
     volume of its own mounted inside the account's (`-v D:/data -v I:/data/instance`),
     a secrets volume that is a folder of `D` is otherwise apart from the data root and
     its volume, and a copy of `D` would hold the keys (X5 review, fourth round).
+  - The store is reached through no other mount (X5 final review). The device, root
+    and mount point of every line of the mount table are read to find a mount that
+    shows the store directory, a directory inside it or one that contains it. When a
+    mount point is required there must be none, and the refusal names that mount
+    (`RootRule::MountedElsewhere`): `-v S:/secrets -v S:/data/extra`, or a
+    `volume-subpath` of `S` mounted anywhere, puts every key in a copy of `/data`.
+    Everywhere, none may show any of the store at or below the data root or the
+    account's records (`RootRule::MountedInData`). A mount elsewhere on an ordinary
+    machine is allowed: an image-based system (Fedora CoreOS, for one) mounts its whole
+    disk a second time at `/sysroot`. These are checked after the rules above, so a store
+    inside the data is reported as that.
   - When `expect_items` is set and the store holds no item, the store refuses with
     "credentials missing", and the host does not start: it never creates fresh keys
     for offices that already have wrapped records.
@@ -752,12 +763,16 @@ A2 writes the launchd registration behind this contract. A2 B0 built it as shown
 (`crates/org-platform/src/service/`), before X1a: `ServiceStatus` is `NotRegistered`,
 `Unloaded`, `Stopped` or `Running { pid }`; every adapter refuses a relative program,
 path syntax in the instance ID and loader variables (`DYLD_*`, `LD_*`,
-`GLIBC_TUNABLES`) in the unit's environment. `Foreground` refuses everywhere until X5.
+`GLIBC_TUNABLES`) in the unit's environment. Since X5, `Foreground` is the container's
+mode on every system: nothing is registered, and `agentic-org serve --setup <file>` is the
+service (`crates/org-platform/src/service/foreground.rs`).
 
 `agentic-org serve` is the same foreground process in every mode, with file-creation mask
 `077` set at its start in every mode (a container's runtime would give it `022`); it stops on
-`SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, stops the web
-process and the workers (`SIGTERM`, then `SIGKILL` after 1.5 s), flushes its logs and
+`SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, kills and reaps
+the web process at once (`SIGKILL`, then its control connection closes), asks every worker
+to stop by closing its standard input and its rendezvous connection and `SIGKILL`s any
+still running 1.5 s after the signal (`Timings::shutdown_grace`), flushes its logs and
 exits 0 within 2.5 s, inside the shortest default grace of a container runtime (Docker
 Desktop's 3 s, `default-stop-timeout`; Docker Engine's is 10 s). A worker killed at the
 deadline loses nothing: the office store recovers from a kill at any point. Every wait of
@@ -786,7 +801,10 @@ must name our definition file; `register`, `start`, `stop`, `status` and `unregi
 all refuse such a job. The definition is published by hard-linking a complete temporary
 file, so a file that appears meanwhile is never replaced (a conflict). `start` never
 loads a definition: on `Unloaded` it refuses, and the caller runs `register` again,
-which loads the file only when its bytes equal the rendered unit. `unregister` waits
+which loads the file only when its bytes equal the rendered unit. A definition that
+`register` wrote and launchd refuses to load (a first one, or one that replaced an
+earlier rendering whose job it booted out) is removed again, as the systemd adapter
+removes its unit, so the next `register` starts clean. `unregister` waits
 up to 15 s for launchd to drop the job after `bootout`. The plist has no
 `ProcessType`, so the host is not throttled as a background job. Program, arguments
 and environment must be valid XML text (no NUL or other C0 control except tab, line
@@ -800,7 +818,10 @@ nearest existing ancestor of the root.
 `KillMode=mixed`, `TimeoutStopSec=15`, `Restart=on-failure`, `UMask=0077` and
 `NoNewPrivileges=yes`, registered with `systemctl --user daemon-reload` and
 `enable --now`, as the launchd agent starts when it is loaded. Without a user manager (no `XDG_RUNTIME_DIR` or user bus) it refuses
-and names `Foreground`. When lingering is off, `status` and setup report that the
+and names `Foreground`. It needs systemd 240 or later, the first that knows `Type=exec`: an
+older user manager (its `Version`, which `available` asks for before anything is written)
+is refused the same way, by its version, and one found later (a unit it loaded reports
+`Type=simple`) is named as too old, not as a drop-in that changes the type. When lingering is off, `status` and setup report that the
 instance runs only while the user is logged in and print
 `loginctl enable-linger <user>`, which polkit normally lets a local, active user run
 for themselves; setup does not run it without being asked. The unit file is writable

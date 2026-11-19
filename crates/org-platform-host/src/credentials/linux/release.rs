@@ -270,8 +270,9 @@ fn checked_directory(
     let undetermined = |doubt| refused(RootRule::Undetermined(doubt), &path);
     let table = mount_table().map_err(undetermined)?;
     let table = Table::of(&table).map_err(undetermined)?;
-    let (store_place, _) = place(directory.as_fd(), &table).map_err(undetermined)?;
-    let (data_place, data_mount) = place(location.data_root, &table).map_err(undetermined)?;
+    let (store_place, store_mount, _) = place(directory.as_fd(), &table).map_err(undetermined)?;
+    let (data_place, data_mount, data_path) =
+        place(location.data_root, &table).map_err(undetermined)?;
     mounts::disjoint(&store_place, &data_place).map_err(refuse)?;
     // Nothing mounted below it, at any depth.
     if let Some(mount_point) = table
@@ -293,6 +294,7 @@ fn checked_directory(
     // The account's other persistent data (its records, for one), by the same three rules:
     // a data root on a volume of its own (`/data/instance` mounted inside `/data`) must not
     // let the store sit in the volume that holds the rest (X5 review, fourth round, P1).
+    let mut kept_apart = vec![data_path];
     for other in account_data {
         let apart = |rule: RootRule| match rule {
             RootRule::DataRoot(kind) => refuse(RootRule::AccountDataUnavailable(kind)),
@@ -301,11 +303,36 @@ fn checked_directory(
         let other_chain = chain(*other)
             .map_err(|error| refuse(RootRule::AccountDataUnavailable(error.kind())))?;
         rules::disjoint(&store_chain, &other_chain).map_err(apart)?;
-        let (other_place, other_mount) = place(*other, &table).map_err(undetermined)?;
+        let (other_place, other_mount, other_path) = place(*other, &table).map_err(undetermined)?;
         mounts::disjoint(&store_place, &other_place).map_err(apart)?;
         if location.mount_point_required {
             let other_volume = mounts::shown(&other_mount).map_err(undetermined)?;
             mounts::separate_volumes(&store_place, &other_volume).map_err(apart)?;
+        }
+        kept_apart.push(other_path);
+    }
+    // Nor reached through another mount (X5 final review): the secrets volume mounted a
+    // second time, a folder of it mounted elsewhere, or a mount of a directory that holds
+    // it. Asked last, so that the rules above name a store inside the data first.
+    let aliases = table
+        .aliases(&store_mount, &store_place)
+        .map_err(undetermined)?;
+    let elsewhere = |alias: &mounts::Alias, rule| {
+        refused(rule, Path::new(OsStr::from_bytes(&alias.mount_point)))
+    };
+    // A mounted secrets volume is mounted once, at the credential directory.
+    if let Some(alias) = aliases.first().filter(|_| location.mount_point_required) {
+        return Err(elsewhere(alias, RootRule::MountedElsewhere));
+    }
+    // Everywhere, nothing of it is reached inside the data root or the account's records.
+    for directory in &kept_apart {
+        for alias in &aliases {
+            if alias
+                .within(directory.as_os_str().as_bytes())
+                .map_err(undetermined)?
+            {
+                return Err(elsewhere(alias, RootRule::MountedInData));
+            }
         }
     }
     Ok((directory, path, service_user))
@@ -811,14 +838,14 @@ fn mount_table() -> Result<Vec<u8>, MountDoubt> {
     Ok(table)
 }
 
-/// Where the open directory `fd` is inside its filesystem, and the mount it is in:
-/// the mount the kernel says it is in (`statx`), found in the mount table `table` by
-/// its id, and the directory's path from this process's root (its descriptor's entry
+/// Where the open directory `fd` is inside its filesystem, the mount it is in, and its
+/// path from this process's root: the mount the kernel says it is in (`statx`), found in
+/// the mount table `table` by its id, and the directory's path (its descriptor's entry
 /// in `/proc/self/fd`), placed below that mount.
 ///
 /// The path is only believed if it names the same directory the descriptor holds: a
 /// directory that was deleted or moved has a path that does not.
-fn place(fd: BorrowedFd<'_>, table: &Table<'_>) -> Result<(Place, Mount), MountDoubt> {
+fn place(fd: BorrowedFd<'_>, table: &Table<'_>) -> Result<(Place, Mount, PathBuf), MountDoubt> {
     let unreadable = |error: io::Error| MountDoubt::Unreadable(error.kind());
     // SAFETY: an all-zero `statx` is a valid value for the call to overwrite.
     let mut stat: libc::statx = unsafe { std::mem::zeroed() };
@@ -851,7 +878,7 @@ fn place(fd: BorrowedFd<'_>, table: &Table<'_>) -> Result<(Place, Mount), MountD
         return Err(MountDoubt::PathOutsideMount);
     }
     let place = mounts::place(&mount, path.as_os_str().as_bytes())?;
-    Ok((place, mount))
+    Ok((place, mount, path))
 }
 
 #[cfg(test)]

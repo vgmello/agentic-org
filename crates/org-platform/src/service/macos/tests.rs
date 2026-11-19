@@ -8,6 +8,8 @@ struct State {
     /// The file the job was bootstrapped from, as `print` reports it.
     path: String,
     calls: Vec<Vec<String>>,
+    /// `bootstrap` fails (launchd's code 5) and loads nothing.
+    refuse_bootstrap: bool,
 }
 
 /// A launchd stand-in: `bootstrap` loads and starts (RunAtLoad), `kill` stops cleanly,
@@ -42,6 +44,7 @@ impl Launchctl for Fake {
                 Some(pid) => format!("{}= {{\n\tactive count = 1\n\tpath = {}\n\tstate = running\n\n\tpid = {pid}\n\tendpoints = {{\n\t\tpid = 9\n\t\tpath = /x\n\t}}\n}}\n", args[1], s.path),
                 None => format!("{} = {{\n\tpath = {}\n\tstate = not running\n}}\n", args[1], s.path),
             }),
+            "bootstrap" if s.refuse_bootstrap => Ok(Outcome { code: 5, stdout: String::new() }),
             "bootstrap" => {
                 s.loaded = true;
                 s.path = args[2].clone();
@@ -452,6 +455,50 @@ fn real_launchd() {
     manager.unregister(&id).unwrap();
     assert_eq!(manager.status(&id).unwrap(), ServiceStatus::NotRegistered);
     assert!(fs::read_dir(temp.path()).unwrap().next().is_none());
+}
+
+/// X5 final review: a definition launchd refuses to load is not left behind, as the
+/// systemd adapter removes its unit: neither a first one nor one that replaced an earlier
+/// rendering (whose job is gone by then). The next registration starts clean and loads.
+#[test]
+fn a_definition_launchd_refuses_is_removed() {
+    let temp = tempfile::tempdir().unwrap();
+    let (launchd, fake) = launchd(temp.path());
+    let file = temp.path().join(format!("LaunchAgents/{LABEL}.plist"));
+    fake.0.lock().unwrap().refuse_bootstrap = true;
+    assert!(matches!(
+        launchd.register(&unit()),
+        Err(ServiceError::System(_))
+    ));
+    assert!(!file.exists(), "the refused first definition was left");
+    assert_eq!(launchd.status(ID).unwrap(), ServiceStatus::NotRegistered);
+
+    fake.0.lock().unwrap().refuse_bootstrap = false;
+    launchd.register(&unit()).unwrap();
+    let fixed = Unit {
+        args: vec!["serve".into(), "--name".into(), "other".into()],
+        ..unit()
+    };
+    fake.0.lock().unwrap().refuse_bootstrap = true;
+    fake.clear();
+    assert!(matches!(
+        launchd.register(&fixed),
+        Err(ServiceError::System(_))
+    ));
+    assert_eq!(
+        fake.verbs(),
+        ["print", "bootout", "print", "bootstrap", "print"]
+    );
+    assert!(!file.exists(), "the refused replacement was left");
+    assert_eq!(launchd.status(ID).unwrap(), ServiceStatus::NotRegistered);
+    let entries = fs::read_dir(temp.path().join("LaunchAgents"))
+        .unwrap()
+        .count();
+    assert_eq!(entries, 0, "a temporary file remains");
+
+    fake.0.lock().unwrap().refuse_bootstrap = false;
+    assert_eq!(launchd.register(&fixed).unwrap(), Registration::Loaded);
+    assert_eq!(fs::read(&file).unwrap(), render(LABEL, &fixed));
 }
 
 /// X5 review V-b: a definition that is exactly an earlier rendering of a job for the same

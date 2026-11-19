@@ -4,7 +4,8 @@
 //! user's manager starts the host when the manager starts, restarts it after a crash, and
 //! an explicit stop (`SIGTERM`, a clean exit) stays stopped. `KillMode=mixed` sends
 //! `SIGTERM` to the host alone and, after `TimeoutStopSec=15`, `SIGKILL` to what is left of
-//! its group; the host itself stops within 2.5 s.
+//! its group; the host itself stops within 2.5 s. `Type=exec` needs systemd 240 or later
+//! ([`MINIMUM_VERSION`]); an older user manager is refused as unavailable, by its version.
 //!
 //! The launchd adapter's guarantees, in systemd's terms:
 //!
@@ -81,6 +82,10 @@ const UNLOAD_WAIT: Duration = Duration::from_secs(20);
 pub(super) const USER_PREFIX: &str = "agentic-org-";
 /// What the adapter reads of a unit, in one `systemctl show`: its state, and the values
 /// the service depends on ([`EFFECTIVE`]).
+/// The first systemd that knows `Type=exec`. An older one ignores the line, runs the unit as
+/// `Type=simple`, and so would run something other than what the definition says.
+const MINIMUM_VERSION: u32 = 240;
+
 const PROPERTIES: &str = "--property=LoadState,ActiveState,MainPID,FragmentPath,UnitFileState,\
      NeedDaemonReload,DropInPaths,ExecStart,ExecStartPre,ExecStartPost,ExecCondition,ExecStop,\
      ExecStopPost,Environment,EnvironmentFiles,PassEnvironment,UnsetEnvironment,Type,KillMode,\
@@ -408,6 +413,14 @@ impl Systemd {
                 )));
             };
             if let Some(property) = effective_differs(&defined, &shown) {
+                // A manager too old for `Type=exec` reports `simple` without any drop-in: it
+                // is named as that, not as a drop-in that changes the type.
+                if property == "Type" {
+                    match self.systemctl(&["show".as_ref(), "--property=Version".as_ref()]) {
+                        Ok(out) if out.code == 0 => recent_enough(&out)?,
+                        _ => {}
+                    }
+                }
                 return Err(ServiceError::Conflict(format!(
                     "systemd's {property} for {name} is not what {} says (a drop-in changes \
                      it: {}); the definition is not the only thing it would run",
@@ -710,6 +723,7 @@ impl ServiceManager for Systemd {
                 said(&out)
             )));
         }
+        recent_enough(&out)?;
         self.reads_placement()
     }
 
@@ -924,6 +938,28 @@ fn property<'a>(output: &'a str, key: &str) -> Option<&'a str> {
         line.strip_prefix(key)
             .and_then(|rest| rest.strip_prefix('='))
     })
+}
+
+/// Refuses a user manager older than [`MINIMUM_VERSION`], from what `systemctl show
+/// --property=Version` printed: `255`, `252 (252.22-1~deb12u1)` or `249.11-0ubuntu3.12`,
+/// whose leading number is the version. One that does not start with a number is not
+/// refused here: what such a manager would run is still compared with the definition.
+fn recent_enough(out: &Outcome) -> Result<(), ServiceError> {
+    let Some(version) = property(&out.stdout, "Version") else {
+        return Ok(());
+    };
+    let digits: String = version
+        .trim()
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    match digits.parse::<u32>() {
+        Ok(major) if major < MINIMUM_VERSION => Err(ServiceError::Unavailable(format!(
+            "systemd's user manager is version {major}, and the service's unit needs \
+             {MINIMUM_VERSION} or later (Type=exec); nothing was changed"
+        ))),
+        _ => Ok(()),
+    }
 }
 
 /// `systemctl show`'s `Key=Value` lines for [`PROPERTIES`]. A unit systemd does not know

@@ -265,6 +265,22 @@ impl Launchd {
         self.expect_ok(&["bootstrap".into(), self.domain.clone().into(), file.into()])
             .map(drop)
     }
+
+    /// Loads the definition `register` has just written at `file` for the job `label`. What
+    /// launchd refuses is not left behind for the next call to find, as the systemd adapter
+    /// does with its unit: the file goes, and a job launchd lists under the label all the
+    /// same is booted out (best effort; the error reported is the bootstrap's). A definition
+    /// this call replaced is not put back: it was this instance's, and its job is gone.
+    fn load_written(&self, label: &str, file: &Path) -> Result<Registration, ServiceError> {
+        self.bootstrap(file)
+            .map(|()| Registration::Loaded)
+            .inspect_err(|_| {
+                if matches!(self.print_ours(label), Ok(Some(_))) {
+                    let _ = self.boot_out(label);
+                }
+                let _ = fs::remove_file(file);
+            })
+    }
 }
 
 impl ServiceManager for Launchd {
@@ -291,7 +307,7 @@ impl ServiceManager for Launchd {
                     self.boot_out(&label)?;
                 }
                 self.write_definition(&file, &bytes, true)?;
-                self.bootstrap(&file).map(|()| Registration::Loaded)
+                self.load_written(&label, &file)
             }
             Some(_) if loaded => Ok(Registration::Unchanged),
             Some(_) => self.bootstrap(&file).map(|()| Registration::Loaded),
@@ -300,7 +316,7 @@ impl ServiceManager for Launchd {
             ))),
             None => {
                 self.write_definition(&file, &bytes, false)?;
-                self.bootstrap(&file).map(|()| Registration::Loaded)
+                self.load_written(&label, &file)
             }
         }
     }
