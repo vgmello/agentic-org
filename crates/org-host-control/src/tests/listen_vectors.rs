@@ -436,10 +436,9 @@ fn plain_http_off_loopback_is_one_mode_for_a_foreground_instance_only() {
                             (address.to_string() == "127.0.0.1" && host == "127.0.0.1")
                                 || (address.to_string() == "::1" && host == "[::1]")
                         }
-                        ListenMode::HttpPublished => {
-                            !address.is_loopback()
-                                && matches!(host, "localhost" | "127.0.0.1" | "[::1]")
-                        }
+                        // Only the IPv4 literal the port is published on: not the name
+                        // `localhost`, which can resolve to ::1, and not `[::1]`.
+                        ListenMode::HttpPublished => !address.is_loopback() && host == "127.0.0.1",
                     };
                     let expected_allowed = mode != ListenMode::HttpPublished || foreground;
                     assert_eq!(
@@ -459,10 +458,10 @@ fn plain_http_off_loopback_is_one_mode_for_a_foreground_instance_only() {
             }
         }
     }
-    // What is accepted: five addresses that are not loopback, three loopback names each.
-    assert_eq!(accepted.len(), 5 * 3, "{accepted:?}");
+    // What is accepted: five addresses that are not loopback, with 127.0.0.1 alone.
+    assert_eq!(accepted.len(), 5, "{accepted:?}");
     // The two refusals of the mode itself have their own reasons.
-    let origin = ListenOrigin::parse("http://localhost:8443").unwrap();
+    let origin = ListenOrigin::parse("http://127.0.0.1:8443").unwrap();
     assert_eq!(
         origin.check(
             ListenMode::HttpPublished,
@@ -471,11 +470,18 @@ fn plain_http_off_loopback_is_one_mode_for_a_foreground_instance_only() {
         ),
         Err(OriginError::PublishedAddress)
     );
-    let named = ListenOrigin::parse("http://office.example:8443").unwrap();
-    assert_eq!(
-        named.check(ListenMode::HttpPublished, "0.0.0.0".parse().unwrap(), 8443),
-        Err(OriginError::PublishedHost)
-    );
+    for named in [
+        "http://office.example:8443",
+        "http://localhost:8443",
+        "http://[::1]:8443",
+    ] {
+        let named = ListenOrigin::parse(named).unwrap();
+        assert_eq!(
+            named.check(ListenMode::HttpPublished, "0.0.0.0".parse().unwrap(), 8443),
+            Err(OriginError::PublishedHost),
+            "{named:?}"
+        );
+    }
     // Plain HTTP with a non-loopback address is never `http_loopback`, whoever asks.
     assert_eq!(
         origin.check(ListenMode::HttpLoopback, "0.0.0.0".parse().unwrap(), 8443),
@@ -497,13 +503,15 @@ fn plain_http_off_loopback_is_one_mode_for_a_foreground_instance_only() {
             "origin": origin, "hsts": "off"
         }))
     };
-    let config = stored("0.0.0.0", "http://localhost:8443").unwrap();
+    let config = stored("0.0.0.0", "http://127.0.0.1:8443").unwrap();
     assert_eq!(config.scheme(), ListenMode::HttpPublished);
     assert_eq!(
         serde_json::to_value(&config).unwrap()["scheme"],
         "http_published"
     );
-    assert!(stored("127.0.0.1", "http://localhost:8443").is_err());
+    assert!(stored("127.0.0.1", "http://127.0.0.1:8443").is_err());
+    assert!(stored("0.0.0.0", "http://localhost:8443").is_err());
+    assert!(stored("0.0.0.0", "http://[::1]:8443").is_err());
     assert!(stored("0.0.0.0", "http://office.example:8443").is_err());
     assert!(stored("0.0.0.0", "https://localhost:8443").is_err());
 }

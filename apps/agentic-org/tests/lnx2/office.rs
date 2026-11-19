@@ -3,12 +3,13 @@
 //! No command creates an office yet without a signed-in administrator, so the test stores
 //! one as the host's provisioning leaves it, exactly as the LNX-1 test does in its own
 //! process (`tests/lnx1.rs`): an HQ office with two agents, made with the office library,
-//! and its office secrets key in the host's development key store. The test copies this
-//! program into the container and runs it there as the service user while the host is
-//! stopped; the host finds the office at its next start and starts the worker.
+//! and its office secrets key in the office keys' item store of the instance's credential
+//! directory (`/secrets/office-keys`), which every build of the image keeps its keys in. The
+//! test copies this program into the container and runs it there as the service user while
+//! the host is stopped; the host finds the office at its next start and starts the worker.
 //!
 //! ```text
-//! lnx2-office <office home> <the instance's development key folder>
+//! lnx2-office <office home> <the office keys' item store>
 //! ```
 //!
 //! It refuses an office home that already has the office, so a second run changes nothing.
@@ -28,7 +29,7 @@ const AGENTS: [(u8, &str, &str); 2] = [
     (1, "AGENT00000000000000000PIXL", "pixel"),
     (2, "AGENT00000000000000000NOVA", "nova"),
 ];
-/// The office's secrets key: the host's development key store holds it as hex.
+/// The office's secrets key: the office keys' item store holds its 32 bytes.
 const KEY: [u8; 32] = [0xB3; 32];
 
 /// A ULID made now (the command ids the office accepts), distinct for each `n`.
@@ -94,20 +95,19 @@ fn store(office_home: PathBuf, keys: PathBuf) -> Result<(), String> {
         .mode(0o700)
         .create(&keys)
         .map_err(|e| format!("{}: {e}", keys.display()))?;
-    let hex: String = KEY.iter().map(|b| format!("{b:02x}")).collect();
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(keys.join(format!("{OFFICE}.key")))
-        .and_then(|mut file| file.write_all(hex.as_bytes()))
+        .and_then(|mut file| file.write_all(&KEY))
         .map_err(|e| format!("storing the office's key: {e}"))
 }
 
 fn main() -> ExitCode {
     let arguments: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     let [office_home, keys] = arguments.as_slice() else {
-        eprintln!("usage: lnx2-office <office home> <the instance's development key folder>");
+        eprintln!("usage: lnx2-office <office home> <the office keys' item store>");
         return ExitCode::from(2);
     };
     match store(office_home.clone(), keys.clone()) {

@@ -885,6 +885,15 @@
      "s390x"
     ]
    }
+  },
+  {
+   "names": [
+    "mount",
+    "umount2",
+    "pivot_root"
+   ],
+   "action": "SCMP_ACT_ALLOW",
+   "comment": "Agentic Org: the mount calls a vendor sandbox (bubblewrap) makes inside the user and mount namespaces it created. The kernel admits each only to a process with CAP_SYS_ADMIN over the mount namespace: a container process (Docker drops CAP_SYS_ADMIN) has that only in a user namespace of its own, and there only for the filesystems a user namespace may mount."
   }
  ]
 }

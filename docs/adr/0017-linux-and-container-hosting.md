@@ -112,7 +112,10 @@ These settle what the decisions above left open. The detail is in the
    table (and, in a container, from the whole data volume); a mount point in a
    container; and
    an empty store for an instance whose records say keys exist refuses. Anything else
-   refuses. The same engine is every development build's store.
+   refuses. The same engine is every development build's store. A development build on
+   Linux records and uses the credential directory as a release build does; on macOS a
+   development build's registered setup needs an absolute `ORG_OFFICE_DEV_KEY_DIR`, which
+   setup makes, with mode 700, before it registers the service.
 9. **The web process confines itself with a seccomp filter, and with Landlock where
    the kernel has it** (amended by the owner's direction of 2026-11-18: the product
    runs on ordinary Linux hosts and in Docker without extra configuration). It

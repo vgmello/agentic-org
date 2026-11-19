@@ -140,28 +140,6 @@ pub(super) fn item_store(owner: u32, mode: u32, service_user: u32) -> Result<(),
     })
 }
 
-/// The rule of a development build's key folder, after it was found on the release
-/// directory's own mount: the service user's, with mode exactly `0700`, as the store.
-pub(super) fn development_folder(owner: u32, mode: u32, service_user: u32) -> Result<(), RootRule> {
-    store(owner, mode, service_user).map_err(|rule| match rule {
-        RootRule::StoreOwner => RootRule::DevelopmentFolderOwner,
-        _ => RootRule::DevelopmentFolderMode,
-    })
-}
-
-/// The mount rule of a development build's key folder, over the mount ids the kernel
-/// gives for it and for the release directory (`None`: it did not say): the same mount.
-pub(super) fn same_mount(
-    folder: Option<u64>,
-    release_directory: Option<u64>,
-) -> Result<(), RootRule> {
-    match (folder, release_directory) {
-        (Some(folder), Some(directory)) if folder == directory => Ok(()),
-        (Some(_), Some(_)) => Err(RootRule::DevelopmentFolderOnAnotherMount),
-        _ => Err(RootRule::DevelopmentFolderMountUnknown),
-    }
-}
-
 /// The rule of the lock file: a regular file (`regular`) of the service user with mode
 /// exactly `0600` and one link.
 pub(super) fn lock_file(
@@ -621,36 +599,6 @@ mod tests {
             assert_eq!(
                 disjoint(store, data_root),
                 Err(RootRule::DataRoot(ErrorKind::InvalidInput))
-            );
-        }
-    }
-
-    /// X5 review (third round), P1: the development key folder is on the credential
-    /// directory's own mount, which only the kernel's mount ids show (two volumes on one
-    /// filesystem have one device number); a kernel that names no mount cannot vouch for it.
-    #[test]
-    fn a_development_folder_is_on_the_release_directorys_own_mount_and_is_owner_only() {
-        assert_eq!(same_mount(Some(41), Some(41)), Ok(()));
-        assert_eq!(
-            same_mount(Some(57), Some(41)),
-            Err(RootRule::DevelopmentFolderOnAnotherMount)
-        );
-        for unknown in [(None, Some(41)), (Some(41), None), (None, None)] {
-            assert_eq!(
-                same_mount(unknown.0, unknown.1),
-                Err(RootRule::DevelopmentFolderMountUnknown)
-            );
-        }
-        assert_eq!(development_folder(USER, 0o40700, USER), Ok(()));
-        assert_eq!(
-            development_folder(USER + 1, 0o40700, USER),
-            Err(RootRule::DevelopmentFolderOwner)
-        );
-        for mode in [0o40750, 0o40755, 0o41700, 0o40500] {
-            assert_eq!(
-                development_folder(USER, mode, USER),
-                Err(RootRule::DevelopmentFolderMode),
-                "{mode:o}"
             );
         }
     }

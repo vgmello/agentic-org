@@ -292,14 +292,17 @@ impl Stderr {
         Ok(captured)
     }
 
-    /// The reason of the child's refusal line, once its standard error has ended or
-    /// `wait` has passed.
-    fn refusal(&self, wait: Duration) -> Option<String> {
+    /// What the child said of its end, once its standard error has ended or `wait` has
+    /// passed: the reason of its refusal line, or else the last whole line it wrote.
+    fn ending(&self, wait: Duration) -> Ending {
         let (kept, _) = self
             .changed
             .wait_timeout_while(lock(&self.kept), wait, |kept| !kept.1)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        refusal_reason(&kept.0).map(shown)
+        match refusal_reason(&kept.0) {
+            Some(reason) => Ending::Refused(shown(reason)),
+            None => last_line(&kept.0).map_or(Ending::Silent, |line| Ending::Said(shown(line))),
+        }
     }
 
     /// The reason of the child's "landlock not applied" line, as soon as the line is
@@ -337,10 +340,33 @@ fn confined_by(
     }
 }
 
+/// What an ended child's standard error says of its end.
+enum Ending {
+    /// Its refusal line's reason: it could not confine itself.
+    Refused(String),
+    /// No refusal line: the last whole line it wrote (its one failure line, such as the UI
+    /// build's refusal or the fixed "startup unavailable"), shown as printable ASCII.
+    Said(String),
+    /// Nothing whole.
+    Silent,
+}
+
+/// The last whole, non-empty line of `captured`: the one the child wrote as it ended, after
+/// any notice before it. Only the kept start of its standard error is looked at.
+fn last_line(captured: &[u8]) -> Option<&str> {
+    let whole = &captured[..captured.iter().rposition(|byte| *byte == b'\n')?];
+    whole
+        .split(|byte| *byte == b'\n')
+        .rev()
+        .find(|line| !line.is_empty())
+        .map(|line| std::str::from_utf8(line).unwrap_or("(not text)"))
+}
+
 /// The cause of a start that failed before the ready line, with the reason of the
-/// child's own refusal when it left one. Only a child that has ended by itself is
-/// asked: one that is already reaped, or, when its control stream ended, one that
-/// exits within [`EXIT_GRACE`]. Any other child is left to be killed at once.
+/// child's own refusal when it left one, or else the last whole line it wrote. Only a
+/// child that has ended by itself is asked: one that is already reaped, or, when its
+/// control stream ended, one that exits within [`EXIT_GRACE`]. Any other child is left
+/// to be killed at once.
 fn with_refusal(error: io::Error, captured: &Stderr, child: &mut Child) -> io::Error {
     let went_away = error
         .get_ref()
@@ -357,11 +383,14 @@ fn with_refusal(error: io::Error, captured: &Stderr, child: &mut Child) -> io::E
         }
         thread::sleep(Duration::from_millis(5));
     }
-    match captured.refusal(STDERR_GRACE) {
-        Some(reason) => io::Error::other(format!(
+    match captured.ending(STDERR_GRACE) {
+        Ending::Refused(reason) => io::Error::other(format!(
             "{error}; it reported that it cannot confine itself: {reason}"
         )),
-        None => error,
+        // X5 review, fourth round (V-c): any other end says what the child last wrote, so
+        // that the log says why it ended before it connected.
+        Ending::Said(line) => io::Error::other(format!("{error}; it wrote: {line}")),
+        Ending::Silent => error,
     }
 }
 

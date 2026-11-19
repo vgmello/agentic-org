@@ -7,9 +7,8 @@
 //! refused, never recreated), and hands the lock and custody to the ordinary composition. Only
 //! then is the administrator link service installed: until it is, the admin calls answer
 //! `unavailable`. The host never writes the setup record; setup observes the registry itself.
-use std::ffi::OsStr;
 use std::io;
-use std::path::{Component, Path};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::admin::{Admin, NativePresence};
@@ -44,11 +43,14 @@ impl Host {
         // Before any key or custody is read (this path opens custody before the ordinary
         // composition is reached).
         crate::harden()?;
-        // Before anything is touched on disk: a release build without a pinned runtime
-        // release refuses here.
-        config.admit_runtime()?;
         let record = Journal::snapshot(&paths.base, name)
             .map_err(|e| refused("reading the setup record", e))?;
+        // Before anything is touched on disk (the record was only read): a release build
+        // without a pinned runtime release refuses here, and so does a development build
+        // that names no custody of its own, neither a development key folder nor a
+        // credential directory in its record.
+        config
+            .admit_runtime_with(record.credentials.is_some() && keeps_secrets_in_a_directory())?;
         // The record was validated as it was read: a listener that is plain HTTP on a
         // published port with a service mode other than foreground (a record edited by
         // hand) never comes this far. Said once per start, before anything is bound.
@@ -130,33 +132,24 @@ impl Host {
         // record names its secrets volume: setup refuses a file without one. A record without
         // one (written by hand, or by an earlier build) does not start, in any build: the
         // volume's checks below would be skipped and the keys kept wherever the build says.
-        if foreground
-            && record.credentials.is_none()
-            && org_platform_host::credentials::protected_store()
-                == Ok(org_platform_host::credentials::ProtectedStore::ReleaseDirectory)
-        {
+        if foreground && record.credentials.is_none() && keeps_secrets_in_a_directory() {
             return Err(refused(
                 "reading the setup record",
                 FOREGROUND_WITHOUT_VOLUME,
             ));
         }
-        // In the foreground mode a development build keeps its development key folder in the
-        // secrets volume setup recorded, and nowhere else: a folder named anywhere else (in
-        // the data volume, whose every copy would then hold the keys) is refused here, before
-        // anything is opened or written (X5 review, second round, P1).
-        let dev_key_folder = match (foreground, record.credentials.as_deref(), &dev_key_dir) {
-            (true, Some(credentials), Some(dir)) => Some((
-                credentials,
-                development_key_folder(credentials, dir)
-                    .map_err(|why| refused("choosing the development key folder", why))?,
-            )),
-            _ => None,
-        };
-        // Where a release build keeps its secrets in a credential directory, it is opened
-        // here, once, from the path setup recorded: checked, locked for this host alone, and
-        // refused with the directory and the rule it broke. Both views open below it. No
-        // custody exists before this, so a store found empty where the records say keys exist
-        // stops the start before anything could make a fresh key.
+        // The account's records, held to be compared with the credential directory: it must
+        // not be in their volume either (a data folder mounted inside the data volume).
+        let records = open_directory(&paths.base).map_err(|source| HostError::Io {
+            context: "opening the account's records",
+            source,
+        })?;
+        // Where this system keeps a host's secrets in a directory and the record names one, it
+        // is opened here, once, in every build: checked (in the foreground mode as a mounted
+        // volume), locked for this host alone, and refused with the directory and the rule it
+        // broke. Both views open below it, from its descriptor. No custody exists before this,
+        // so a store found empty where the records say keys exist (a lost secrets volume)
+        // stops the start before anything could make a fresh key (X5 review, fourth round).
         let release_directory = crate::release_store::open(
             !cfg!(debug_assertions),
             org_platform_host::credentials::protected_store(),
@@ -172,53 +165,14 @@ impl Host {
                     context: "reading the office folders",
                     source,
                 })?,
+                records: Some(std::os::fd::AsFd::as_fd(&records)),
             },
         )
         .map_err(|why| refused("opening the credential directory", why))?;
-        // In the foreground mode the recorded credential directory is judged at every start
-        // by the store's location rules (a mount point, its owner and mode, its filesystem,
-        // apart from the data root), whichever store this build keeps its keys in: a
-        // container started without its secrets volume, or with a memory filesystem in its
-        // place, does not start (X5 review V3). Where the release store was opened above,
-        // that was this check. No item is expected here: which keys exist is the open
-        // store's question.
-        let mut development_folder = None;
-        if let (true, None, Some(directory)) = (
-            foreground,
-            &release_directory,
-            record.credentials.as_deref(),
-        ) {
-            let checked = org_platform_host::credentials::release_directory_with_stores(
-                org_platform_host::credentials::ReleaseDirectory {
-                    path: directory,
-                    data_root: instance.root_descriptor(),
-                    mount_point_required: true,
-                    expect_items: false,
-                },
-                &crate::release_store::ITEM_STORES,
-            )
-            .map_err(|why| refused("checking the credential directory", why))?;
-            // The development key folder of the foreground mode is made in the secrets
-            // volume, which is empty at the first start, only now that the volume itself
-            // was judged: from the volume's own descriptor, without following a link, and
-            // on the volume's own mount, so that no other volume mounted there (a folder of
-            // the data volume, on the same filesystem) holds the keys (X5 review, third
-            // round, P1). The folder keeps the volume's lock for the host's custody.
-            if let Some((credentials, name)) = dev_key_folder {
-                development_folder = Some(
-                    development_folder_in(&checked, credentials, name)
-                        .map_err(|why| refused("making the development key folder", why))?,
-                );
-            }
-        }
-        if let (true, None, None, Some(dir)) = (
-            foreground,
-            &dev_key_folder,
-            &development_folder,
-            &dev_key_dir,
-        ) {
-            // A system that keeps no secrets in a directory records none: there the folder
-            // is the one the build names, made if it is missing and never its parent.
+        drop(records);
+        if let (None, Some(dir)) = (&release_directory, &dev_key_dir) {
+            // A development build whose record names no credential directory keeps its keys
+            // in the folder its environment names: made if it is missing, never its parent.
             use std::os::unix::fs::DirBuilderExt;
             match std::fs::DirBuilder::new().mode(0o700).create(dir) {
                 Err(source) if source.kind() != io::ErrorKind::AlreadyExists => {
@@ -230,20 +184,14 @@ impl Host {
                 _ => {}
             }
         }
-        // The host's own development custody is opened from the checked folder; the office
-        // keys' development store opens the same folder by its path when it is first used.
-        let custody = match &development_folder {
-            Some(folder) => crate::host_secrets::development_store(folder, instance.id()),
-            None => crate::host_secrets::store_for(
-                dev_key_dir.as_deref(),
-                instance.root(),
-                instance.id(),
-                crate::code_signing::own_signing,
-                release_directory.as_ref(),
-            ),
-        }
+        let custody = crate::host_secrets::store_for(
+            dev_key_dir.as_deref(),
+            instance.root(),
+            instance.id(),
+            crate::code_signing::own_signing,
+            release_directory.as_ref(),
+        )
         .map_err(|e| refused("opening protected account custody", format!("{e:?}")))?;
-        drop(development_folder);
         if registry_state == RegistryState::Absent {
             create_registry(&layout_paths.office_home, &*custody, instance.id())?;
         }
@@ -359,60 +307,21 @@ fn create_registry(
     Ok(())
 }
 
-/// The development key folder `folder` of a foreground host whose credential directory (its
-/// mounted secrets volume) is `credentials`: its one name in that directory. Pure: anything
-/// that is not one folder directly in it is refused with what to set instead, and nothing
-/// is opened or made.
-fn development_key_folder<'a>(credentials: &Path, folder: &'a Path) -> Result<&'a OsStr, String> {
-    let mut below = folder.strip_prefix(credentials).map(Path::components).ok();
-    match (
-        below.as_mut().and_then(Iterator::next),
-        below.as_mut().and_then(Iterator::next),
-    ) {
-        (Some(Component::Normal(name)), None) => Ok(name),
-        _ => Err(format!(
-            "{} is not a folder directly in the credential directory {}: in the foreground \
-             mode a development build keeps its keys in the secrets volume and nowhere else; \
-             set ORG_OFFICE_DEV_KEY_DIR to a folder in it, such as {}; nothing was written",
-            folder.display(),
-            credentials.display(),
-            credentials.join("dev-keys").display()
-        )),
-    }
+/// Whether this system keeps a host's secrets in a directory (GNU/Linux), where a recorded
+/// credential directory is opened in every build.
+fn keeps_secrets_in_a_directory() -> bool {
+    org_platform_host::credentials::protected_store()
+        == Ok(org_platform_host::credentials::ProtectedStore::ReleaseDirectory)
 }
 
-/// The development key folder `name` in the credential directory `credentials`, which the
-/// host opened and checked as `checked`: made there (mode 700) if it is missing, and checked
-/// by the platform from the directory's own descriptor (a directory of this user, mode 700,
-/// reached without following a link, on the directory's own mount). A folder that breaks a
-/// rule is refused with the rule, never repaired.
-///
-/// Known limit: the office keys' development store opens the folder again by its path when
-/// it is first used (its anchor's last component is not followed), so a process of the
-/// service user could swap it in between. Only that user can write to the volume, and it can
-/// read the keys anyway; the host's own development custody is opened from the checked
-/// folder, and a release build opens its stores from the checked directory itself.
-fn development_folder_in(
-    checked: &org_platform_host::credentials::ReleaseRoot,
-    credentials: &Path,
-    name: &OsStr,
-) -> Result<org_platform_host::credentials::DevelopmentFolder, String> {
-    let not_a_name = || {
-        format!(
-            "{}: a development key folder in the credential directory is named with letters, \
-             digits, '.', '-' and '_', does not start with '.', and is not one of the \
-             directory's item stores (host-secrets, office-keys); dev-keys is one; nothing \
-             was written",
-            credentials.join(name).display()
-        )
-    };
-    let name = name.to_str().ok_or_else(not_a_name)?;
-    checked
-        .development_folder(name)
-        .map_err(|error| match error {
-            org_platform_host::credentials::CredentialError::InvalidName => not_a_name(),
-            other => other.to_string(),
-        })
+/// The directory at `path`, held open to be compared: never a file, and not opened for
+/// anything else.
+fn open_directory(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY)
+        .open(path)
 }
 
 #[cfg(test)]

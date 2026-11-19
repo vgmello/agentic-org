@@ -75,6 +75,12 @@
 //!    beside the instance root and inside the data volume. Where no mount point is
 //!    required this is not asked: the data root's mount is then the disk's own, which
 //!    shows everything on it.
+//!
+//!    Where the host keeps persistent data in more directories than its data root (the
+//!    account's records, [`release_directory_apart_from`]), checks 6 to 8 are made against
+//!    each of them as well ([`RootRule::AccountData`]): with the data root on a volume of its
+//!    own mounted inside the account's (`-v D:/data -v I:/data/instance`), the store must not
+//!    be a directory of `D` either, or a copy of `D` holds the keys.
 //! 9. Each of the host's item stores that exists is a directory of the service user
 //!    with mode exactly `0700`, not followed if it is a link
 //!    ([`RootRule::ItemStoreOwner`], [`RootRule::ItemStoreMode`],
@@ -88,22 +94,6 @@
 //!     missing lock is made, and its mode is set on the descriptor that made it,
 //!     whatever the process's file-creation mask is; an existing one is never
 //!     changed.
-//!
-//! # A development build's key folder
-//!
-//! A development build keeps its development stores in a folder of plain files. In a
-//! container (the foreground mode) that folder is one folder directly in the release
-//! directory, the mounted secrets volume ([`ReleaseRoot::development_folder`]): made there
-//! (mode `0700`) if it is missing, from the release directory's own descriptor, and opened
-//! from it without following a link. It must be a directory of the service user with mode
-//! exactly `0700`, and it must be on the release directory's own mount: the kernel's mount
-//! id for it (`statx`, `STATX_MNT_ID`; a kernel that cannot say refuses) is the release
-//! directory's. Another volume mounted on it is refused whatever its filesystem, owner or
-//! mode, so that a subdirectory of the data volume mounted at `/secrets/dev-keys` (two
-//! named volumes on one filesystem have the same device number) never holds the keys.
-//! Nothing is made inside such a mount: `mkdirat` finds its mount point and makes nothing.
-//! The development stores the host opens from the folder ([`DevelopmentFolder::store`])
-//! hold the release directory's lock while they live, as an item store does.
 //!
 //! # What the private-group exception does not establish
 //!
@@ -215,7 +205,20 @@ pub fn release_directory_with_stores(
     location: ReleaseDirectory<'_>,
     item_stores: &[ItemStore<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
-    native::release_directory(&location, item_stores).map(|root| ReleaseRoot { root })
+    release_directory_apart_from(location, item_stores, &[])
+}
+
+/// [`release_directory_with_stores`] for a host that keeps persistent data in more
+/// directories than its data root: `account_data` are those directories, as descriptors the
+/// host holds (the account's records, for one). The release directory must be apart from
+/// each of them as it must be from the data root, and, where a mount point is required,
+/// apart from the volume each of them is on ([`RootRule::AccountData`]).
+pub fn release_directory_apart_from(
+    location: ReleaseDirectory<'_>,
+    item_stores: &[ItemStore<'_>],
+    account_data: &[BorrowedFd<'_>],
+) -> Result<ReleaseRoot, CredentialError> {
+    native::release_directory(&location, item_stores, account_data).map(|root| ReleaseRoot { root })
 }
 
 /// [`release_directory_with_stores`] for a caller that opens no item store: the
@@ -240,52 +243,6 @@ impl ReleaseRoot {
     /// suffix; any other is [`CredentialError::InvalidName`], and nothing is made.
     pub fn store(&self, items: ReleaseItems<'_>) -> Result<Credentials, CredentialError> {
         self.root.store(&items).map(|store| Credentials { store })
-    }
-
-    /// A development build's key folder `name` directly in this release directory, made
-    /// if it is missing and checked (the module documentation says how). `name` has the
-    /// syntax of an item name and is none of the item stores the directory was opened
-    /// for, or the answer is [`CredentialError::InvalidName`] and nothing is made. A
-    /// folder that breaks a rule is [`CredentialError::Root`] with the rule and the
-    /// folder's path; it is never repaired.
-    pub fn development_folder(&self, name: &str) -> Result<DevelopmentFolder, CredentialError> {
-        self.root
-            .development_folder(name)
-            .map(|folder| DevelopmentFolder { folder })
-    }
-}
-
-/// A development build's key folder in a release directory, opened and checked
-/// ([`ReleaseRoot::development_folder`]). It holds the release directory's lock, and so
-/// does every store opened from it.
-pub struct DevelopmentFolder {
-    folder: native::DevelopmentFolder,
-}
-
-impl DevelopmentFolder {
-    /// The directory store that the single names `below` lead to from this folder (made
-    /// if missing), opened from the folder's own descriptor: a directory store with every
-    /// check it makes when it opens and on every operation.
-    pub fn store(
-        &self,
-        below: &[&str],
-        sharing: Sharing,
-        suffix: &str,
-    ) -> Result<Credentials, CredentialError> {
-        self.folder
-            .store(below, sharing, suffix)
-            .map(|store| Credentials { store })
-    }
-}
-
-// As for `ReleaseRoot`: a drop on every target.
-impl Drop for DevelopmentFolder {
-    fn drop(&mut self) {}
-}
-
-impl fmt::Debug for DevelopmentFolder {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("DevelopmentFolder")
     }
 }
 
@@ -387,6 +344,14 @@ pub enum RootRule {
     MountPointUnknown,
     /// The host's records say keys exist, and the release directory holds no item.
     CredentialsMissing,
+    /// The release directory is, is inside or contains one of the account's other data
+    /// directories ([`release_directory_apart_from`]), inside one filesystem or as this
+    /// process sees them, or, where a mount point is required, is on the volume one of them
+    /// is on.
+    AccountData,
+    /// One of the account's other data directories could not be examined, with this kind
+    /// of error.
+    AccountDataUnavailable(io::ErrorKind),
     /// One of the host's item stores is not owned by the service user. The path is
     /// the item store's.
     ItemStoreOwner,
@@ -408,23 +373,6 @@ pub enum RootRule {
     LockUnavailable(io::ErrorKind),
     /// Another host has the release directory open.
     InUse,
-    /// What stands where the development key folder goes is not a directory (a link is
-    /// not followed). The path is the folder's.
-    DevelopmentFolderNotADirectory,
-    /// The development key folder could not be made, opened or examined, with this kind
-    /// of error. The path is the folder's.
-    DevelopmentFolderUnavailable(io::ErrorKind),
-    /// The development key folder is on another mount than the release directory: a
-    /// volume mounted on it. The path is the folder's.
-    DevelopmentFolderOnAnotherMount,
-    /// This kernel does not say which mount the development key folder or the release
-    /// directory is on (before Linux 5.8). The path is the folder's.
-    DevelopmentFolderMountUnknown,
-    /// The development key folder is not owned by the service user. The path is the
-    /// folder's.
-    DevelopmentFolderOwner,
-    /// The development key folder's mode is not exactly `0700`. The path is the folder's.
-    DevelopmentFolderMode,
 }
 
 impl fmt::Display for RootRule {
@@ -511,6 +459,17 @@ impl fmt::Display for RootRule {
                 "credentials missing: the host's records say keys exist, and the credential \
                  directory holds none; restore the directory, nothing was created",
             ),
+            Self::AccountData => f.write_str(
+                "the credential directory is in the volume that holds the account's records, \
+                 or holds them; the secrets and the data must be two separate volumes, not \
+                 one inside the other (with the data folder mounted inside the data volume, \
+                 the secrets volume must still be apart from the data volume itself)",
+            ),
+            Self::AccountDataUnavailable(kind) => write!(
+                f,
+                "the account's records could not be compared with the credential directory: \
+                 {kind}"
+            ),
             Self::ItemStoreOwner => f.write_str(
                 "this item store of the credential directory is not owned by the service user",
             ),
@@ -536,30 +495,6 @@ impl fmt::Display for RootRule {
                 "the credential directory's lock file (.lock) could not be opened: {kind}"
             ),
             Self::InUse => f.write_str("the credential directory is in use by another host"),
-            Self::DevelopmentFolderNotADirectory => f.write_str(
-                "the development key folder in the credential directory is not a folder of \
-                 its own (a symbolic link is never followed)",
-            ),
-            Self::DevelopmentFolderUnavailable(kind) => write!(
-                f,
-                "the development key folder in the credential directory could not be made or \
-                 examined: {kind}"
-            ),
-            Self::DevelopmentFolderOnAnotherMount => f.write_str(
-                "the development key folder is another volume mounted in the credential \
-                 directory; the keys stay in the secrets volume itself, so mount nothing there",
-            ),
-            Self::DevelopmentFolderMountUnknown => f.write_str(
-                "this kernel does not say whether the development key folder is on the \
-                 credential directory's own mount",
-            ),
-            Self::DevelopmentFolderOwner => f.write_str(
-                "the development key folder in the credential directory is not owned by the \
-                 service user",
-            ),
-            Self::DevelopmentFolderMode => f.write_str(
-                "the development key folder's mode is not 0700 (nothing is repaired here)",
-            ),
         }
     }
 }

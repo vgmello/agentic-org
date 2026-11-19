@@ -190,7 +190,9 @@ pub(crate) enum StoreError {
 /// Where a release build's protected store is a credential directory instead, the store is
 /// the office keys' item store below `release_directory`, the directory the host opened and
 /// checked at its start ([`StoreError::NoCredentialDirectory`] without one). The system says
-/// which kind it has; nothing here names a system. A debug build ignores `release_directory`.
+/// which kind it has; nothing here names a system. A debug build given a `release_directory`
+/// (one its setup record names) uses that item store as well, and its development folder
+/// only without one.
 pub(crate) fn store_for(
     dev_key_dir: Option<&Path>,
     home: &Path,
@@ -200,8 +202,20 @@ pub(crate) fn store_for(
 ) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     #[cfg(debug_assertions)]
     {
-        let _ = (own_signing, release_directory);
-        dev_store(dev_key_dir, home, instance_id)
+        let _ = own_signing;
+        // A credential directory the host opened (its setup record names one) holds this
+        // build's keys as it holds a release build's; only without one is it the
+        // development folder.
+        match release_directory {
+            Some(root) => selected_release_store(
+                Ok(ProtectedStore::ReleaseDirectory),
+                None,
+                instance_id,
+                || None,
+                Some(root),
+            ),
+            None => dev_store(dev_key_dir, home, instance_id),
+        }
     }
     #[cfg(not(debug_assertions))]
     {
@@ -221,7 +235,6 @@ pub(crate) fn store_for(
 /// Keychain. A system without a protected store gets the refusing view, which refuses
 /// every call ([`KeyStoreError::Unsupported`]): it is chosen before any Keychain check, so
 /// `group` and `own_signing` are not consulted and no Keychain-only reason is reported there.
-#[cfg_attr(debug_assertions, allow(dead_code))]
 pub(crate) fn selected_release_store(
     store: Result<ProtectedStore, Refused>,
     group: Option<&str>,

@@ -7,14 +7,16 @@ decisions 4 and 10; [Linux host design](../../docs/design/linux-host.md), sectio
 ## Run it
 
 Build the four executables for Linux, the UI and the image from the repository root, then
-run it. Nothing else is needed: no option, no file to write, no certificate to make.
+run it on a network of its own. Nothing else is needed: no file to write, no certificate
+to make.
 
 ```sh
 # The four executables, for Linux, into target/linux/debug. Always right before the image.
 deploy/container/build.sh
 (cd apps/agentic-org-ui && bun install --frozen-lockfile && bun run build)
 docker build -f deploy/container/Dockerfile -t agentic-org .
-docker run -d --name agentic-org -p 127.0.0.1:8443:8443 agentic-org
+docker network create agentic-org
+docker run -d --name agentic-org --network agentic-org -p 127.0.0.1:8443:8443 agentic-org
 ```
 
 `deploy/container/build.sh` runs `cargo build` in the Rust toolchain's own Debian 13 image
@@ -33,17 +35,31 @@ Then open **`http://127.0.0.1:8443`** in a browser on the Docker host.
 
 **The container serves plain HTTP. Publish it on `127.0.0.1` only**, as the command above
 does. Published on another interface (`-p 8443:8443`, `-p 0.0.0.0:8443:8443`), sign-in and
-every session travel unencrypted on that network. HTTPS is not available yet. Setup and
-the host say the same in the log at every start ("serving plain HTTP on a published
+every session travel unencrypted on that network. HTTPS is not available yet (X7). Setup
+and the host say the same in the log at every start ("serving plain HTTP on a published
 port").
 
+**Other containers reach the port whatever `-p` says.** `-p` decides what the Docker host
+publishes; a container on the same Docker network connects to the instance's own address
+and port 8443 directly, unencrypted, and the web process's address checks stop browsers,
+not those programs. The command above gives the instance a network of its own
+(`--network agentic-org`), so that at least no container started without a network (on
+Docker's default bridge) shares one with it. Whether a container on another network can
+still reach a published container port depends on the engine: measured for this build,
+Docker Engine 29.1.3 on Linux isolates the networks (no route), and Docker Desktop 29.9.3
+on a Mac does not (a container on any network reaches it). LNX-2 reports which case its
+engine is. **Until HTTPS (X7), every container of the Docker host is inside the boundary
+of the sign-in: run the instance on a Docker host whose other containers you trust with
+the administrator's password and sessions, and attach nothing else to its network.**
+
 The address is exactly `http://127.0.0.1:8443`: keep the port 8443 on both sides of `-p`.
-The web process answers only requests for that origin; `http://localhost:8443`, another
-port or the machine's name in the address bar get `400`. It is the address and not the
-name `localhost` on purpose: a name can resolve to `::1`, where the port is not published
-and another program of the machine could listen. That is the same check as on a
-Mac, not a loosening: the listener is on every address of the container only because a
-published port arrives on the container's network interface, never on its loopback.
+The web process answers only requests for that origin; `http://localhost:8443`,
+`http://[::1]:8443`, another port or the machine's name in the address bar get `400`, and
+the setup file accepts no other origin. It is the address and not the name `localhost` on
+purpose: a name can resolve to `::1`, where the port is not published and another program
+of the machine could listen. That is the same check as on a Mac, not a loosening: the
+listener is on every address of the container only because a published port arrives on
+the container's network interface, never on its loopback.
 
 At its first start the container sets the instance up from
 `/etc/agentic-org/setup.json` (`agentic-org serve --setup`), then serves it in the
@@ -63,7 +79,7 @@ volumes, which is enough to try it and is lost with the container. To keep an in
 across a replaced container, name them:
 
 ```sh
-docker run -d --name agentic-org -p 127.0.0.1:8443:8443 \
+docker run -d --name agentic-org --network agentic-org -p 127.0.0.1:8443:8443 \
   -v agentic-org-data:/data -v agentic-org-secrets:/secrets agentic-org
 ```
 
@@ -73,8 +89,10 @@ docker run -d --name agentic-org -p 127.0.0.1:8443:8443 \
 | `/secrets` | The host's keys, owned by the service user, folders `700` and files `600`. Never in `/data`, so a copy of the data volume holds no key. |
 
 A new container on the same two volumes is the same instance with the same keys. A new
-container on the data volume with a **new, empty** secrets volume does not make new keys:
-the offices whose keys are gone are not started.
+container on the data volume with a **new, empty** secrets volume does not start once the
+instance has an office ("credentials missing: the host's records say keys exist, and the
+credential directory holds none"), and makes nothing in that volume: no key is ever made in
+place of a lost one. Restore the secrets volume.
 
 The instance's data folder is `/data/instance`, not `/data`: the instance's records must
 be in the volume too, and the product refuses a data folder that contains them.
@@ -115,10 +133,18 @@ default Linux host and inside Docker Desktop's virtual machine on a Mac) and pas
 
 Do not place the secrets folder inside the folder that is mounted as `/data`
 (`-v ./agentic:/data -v ./agentic/secrets:/secrets`): a copy of the data folder would
-then hold the keys.
+then hold the keys. It is refused, and so is a secrets folder in the data volume when the
+data folder `/data/instance` is a volume of its own mounted inside it: the instance's
+records are in `/data` too ("the credential directory is in the volume that holds the
+account's records"). Mount nothing inside `/secrets` either: a start with anything mounted
+inside it, at any depth, is refused, naming the mount point.
 
-A first start that is refused leaves nothing in the data volume: correct the mistake and
-start again. Once an instance is set up, its configuration does not change.
+A first start that is refused before the instance is reserved saves no setup record,
+reserves nothing and writes nothing in `/secrets`. It leaves only empty folders and an empty lock
+file of the service user: `/data/.local/share/agentic-org` (an empty `locator` folder and
+`setup/default/setup.lock`) and `/data/.cache/agentic-org/tmp`. A corrected start uses
+them. Correct the mistake and start again. Once an instance is set up, its
+configuration does not change.
 
 ## Who can reach the volumes
 
@@ -134,28 +160,57 @@ are **optional** and exist for one purpose: an agent's vendor tool whose own san
 creates a user namespace, which Docker's default seccomp profile refuses and which
 Ubuntu 24.04 and later also restrict through AppArmor.
 
-- `seccomp.json`: Docker's default profile (moby v28.0.0) with three rules added at its
+- `seccomp.json`: Docker's default profile (moby v28.0.0) with four rules added at its
   end: `unshare` and `clone` (both argument orders) are allowed when `CLONE_NEWUSER` is
-  among their flags.
-- `apparmor-agentic-org`: `docker-default` plus `userns`, for a Docker host that has
+  among their flags, and `mount`, `umount2` and `pivot_root` are allowed.
+- `apparmor-agentic-org`: `docker-default` plus `userns`, and `mount` and `pivot_root`
+  allowed in place of `docker-default`'s `deny mount`, for a Docker host that has
   AppArmor. Load it with `sudo apparmor_parser -r -W deploy/container/apparmor-agentic-org`.
   Docker's own profile lets the Docker daemon signal the container under whatever
   AppArmor label the daemon runs with; this file is static, so it admits an unconfined
   daemon and the Docker snap's (`snap.docker.dockerd`). Where `dockerd` runs under another
   label (`cat /proc/$(pidof dockerd)/attr/current`), add
   `signal (receive) peer=<that label>,` beside those lines before loading it, or
-  `docker kill` cannot reach the service. Not verified: this profile has not been loaded
-  on a host that enforces AppArmor, so `docker stop` and `docker kill` under it are
-  untested.
+  `docker kill` cannot reach the service.
 
 ```sh
-docker run -d --name agentic-org -p 127.0.0.1:8443:8443 \
+docker run -d --name agentic-org --network agentic-org -p 127.0.0.1:8443:8443 \
   --security-opt seccomp=deploy/container/seccomp.json \
   --security-opt apparmor=agentic-org agentic-org
 ```
 
+What they allow, and why it stays sound: a sandbox like bubblewrap creates a user
+namespace and then mounts in the mount namespace it made (a private `/`, `/dev`, a `tmpfs`,
+then `pivot_root`). Neither profile lets the container itself mount anything: the kernel
+admits a mount only to a process with `CAP_SYS_ADMIN` over the mount namespace, which a
+container process has only in a user namespace it created (Docker drops `CAP_SYS_ADMIN`;
+never add it back), and there only for the filesystems a user namespace may mount. Every
+other denial of Docker's profiles stays. The cost is kernel surface: a process of the
+container can then use the mount code of those filesystems (overlayfs, tmpfs, bind mounts,
+devpts) inside its own namespaces, where container escapes have been found before
+(CVE-2023-0386, CVE-2023-2640 and CVE-2023-32629 in overlayfs). Use the profiles only on a
+Docker host whose kernel is kept patched, and only for agents that need such a sandbox.
+
+Verified on Ubuntu 26.04 (AppArmor enforcing, Docker 29.1.3) by
+`deploy/container/profiles-check.sh` (LNX-2 step 10, `LNX2_PROFILES=1`): under both
+profiles the service serves and stops within 2.5 s with exit code 0, and
+`bwrap --unshare-all --ro-bind / / --dev /dev --tmpfs /tmp true` runs in the container as
+the service user; with Docker's default profiles it cannot create its namespace.
+
+**A sandbox that mounts a fresh `/proc` does not run in the container** (`bwrap ... --proc
+/proc`: `Can't mount proc on /proc: Operation not permitted`). The kernel refuses a new
+`/proc` while Docker masks paths of the container's own, and those masks stay: never add
+`--security-opt systempaths=unconfined`. With the paths unmasked, root in the container
+could bind `/proc/sys` to another place in a mount namespace of its own and write kernel
+settings there, where the AppArmor path rules do not look. A sandbox that binds the
+container's `/proc` (`--ro-bind /proc /proc`) is not affected. `profiles-check.sh` checks
+that neither the service user nor root in the container can mount outside a user
+namespace, nor write `/proc/sys` through such a mount.
+
 Leave `--security-opt apparmor=…` out on a Docker host without AppArmor. Never use
-`seccomp=unconfined`, `apparmor=unconfined` or `--privileged`.
+`seccomp=unconfined`, `apparmor=unconfined`, `systempaths=unconfined`, `--privileged` or
+`--cap-add SYS_ADMIN`. The image does not include bubblewrap or any vendor tool's other
+packages.
 
 ## Optional: less for the container to hold
 
@@ -165,7 +220,7 @@ capability dropped but the three that root's `admin reset` uses inside it (to re
 service user's folders as that user, and to reach its socket):
 
 ```sh
-docker run -d --name agentic-org -p 127.0.0.1:8443:8443 \
+docker run -d --name agentic-org --network agentic-org -p 127.0.0.1:8443:8443 \
   --read-only --security-opt no-new-privileges \
   --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE \
   -v agentic-org-data:/data -v agentic-org-secrets:/secrets agentic-org
@@ -186,7 +241,7 @@ JSON object (an unknown property is refused):
 | `service` | `"foreground"`: nothing is registered; the container runtime is the supervisor. (`"registered"` is the account's service manager, on a machine.) |
 | `root` | The instance's data folder, absolute. |
 | `credentials` | The secrets directory, absolute: a mounted volume that setup never makes. |
-| `listen` | `address`, `port`, `scheme`, `origin`, `hsts` (`"off"`, `"on"`, `"clear"`). The image's scheme is `"http_published"`: plain HTTP on an address that is not loopback, accepted only with `"service": "foreground"` and only with `127.0.0.1`, `[::1]` or `localhost` as the origin's host. The other is `"http_loopback"` (exactly `127.0.0.1` or `::1`). `"https"` is refused: no build serves it yet. |
+| `listen` | `address`, `port`, `scheme`, `origin`, `hsts` (`"off"`, `"on"`, `"clear"`). The image's scheme is `"http_published"`: plain HTTP on an address that is not loopback, accepted only with `"service": "foreground"` and only with `127.0.0.1` as the origin's host (`http://127.0.0.1:<port>`): not `localhost`, which can resolve to `::1`, and not `[::1]`. The other is `"http_loopback"` (exactly `127.0.0.1` or `::1`). `"https"` is refused: no build serves it yet. |
 
 The instance's configuration does not change after its first start: a container whose
 file differs from what its volumes were set up with refuses to start.
@@ -194,22 +249,11 @@ file differs from what its volumes were set up with refuses to start.
 ## A development image
 
 The image holds the workspace's own Linux build (`--build-arg BIN=target/linux/debug`, the
-default). The host logs that the office worker has no publisher check, and it keeps its
-keys in its development key store, `/secrets/dev-keys`, not in the release store.
-
-The development key store must be one folder directly in `/secrets` (the image sets
-`ORG_OFFICE_DEV_KEY_DIR=/secrets/dev-keys`): a folder anywhere else is refused, and so is
-another volume mounted at `/secrets/dev-keys` (a folder of the data volume mounted there
-would put the keys in every copy of the data), even on the same filesystem. Mount nothing
-inside `/secrets`: a start with anything mounted inside it is refused, naming the mount
-point, in a development image and a release image alike.
-
-What the every-start check covers in this image: where `/secrets` is (a mount point, its
-owner and mode, its filesystem, apart from the data folder). What it does not cover: which
-keys are there. The release store refuses a start whose keys are missing; the development
-store does not, so a new, empty secrets volume on an existing data volume starts: no key
-is made in place of a lost one, and each office whose key is gone is reported in the log
-("has no usable key") and not started.
+default). The host logs that the office worker has no publisher check. It keeps its keys
+exactly as a release build does: in `/secrets`, the credential directory its setup record
+names, checked at every start by every rule above (a lost secrets volume included), in
+`/secrets/office-keys` and `/secrets/host-secrets`. It uses no development key folder: the
+image sets no `ORG_OFFICE_DEV_KEY_DIR`, and one given with `-e` is not used.
 
 ### What a release image still needs
 
@@ -218,16 +262,20 @@ is made in place of a lost one, and each office whose key is gone is reported in
 - HTTPS: the host's certificate for the listener (making one at first start, or
   verifying a supplied pair) and the host's web start for an HTTPS listener. Until then
   the container serves plain HTTP for a port published on the Docker host's loopback.
-- `ORG_OFFICE_DEV_KEY_DIR` removed: a release build keeps its keys in `/secrets` itself.
 
 ## Known limits
 
-- A first start that is refused before the instance is reserved leaves nothing. A
+- A first start that is refused before the instance is reserved saves no setup record,
+  reserves nothing and writes nothing in `/secrets`. It leaves only empty folders and an empty
+  lock file of the service user: `/data/.local/share/agentic-org` (an empty `locator`
+  folder and `setup/default/setup.lock`) and `/data/.cache/agentic-org/tmp`. A corrected start uses
+  them. A
   registered-mode setup (on a machine, not this image) that fails later, when its service
   is registered, keeps its record: correct the cause and run the same file again; another
   file is refused until the instance is removed.
-- The image is a development image (above): a lost secrets volume is not refused at
-  start, and the keys are in the development store.
+- The image is a development image (above): the worker has no publisher check.
+- Until HTTPS, other containers of the Docker host can reach its plain-HTTP port: on its
+  network always, and on Docker Desktop from every network (above).
 - HTTPS is not available; the container serves plain HTTP for a port published on the
   Docker host's `127.0.0.1`.
 
@@ -238,6 +286,8 @@ containers: the plain run, the link, a worker with an `agent-os` send and read, 
 browser address over plain HTTP from the Docker host (the API, the UI's index, `400` for
 any other Host, the web process's confinement in the host log), the modes in `/secrets`,
 that nothing is written outside the volumes, the stop, the replaced container, the empty
-secrets volume, anonymous volumes, and the store's refusals. It builds the executables and
+secrets volume, anonymous volumes, the store's refusals, that a container on the
+instance's network reaches its port, and whether one on the default bridge does. With `LNX2_PROFILES=1`, on a Docker host that enforces
+AppArmor with the profile loaded, it also runs `profiles-check.sh` (step 10). It builds the executables and
 its own office program for Linux itself (`build.sh`); it needs the UI built, Docker
 Engine 28 or later and `curl`.
