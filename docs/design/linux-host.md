@@ -939,8 +939,14 @@ stops the browser service until it is replaced; a supplied pair already expired 
 instance's first start refuses that start (setup verified it moments before), while one
 that expires later only stops the browser; a supplied pair nearing its end is warned
 about at a start, not while the host runs; and a clock set back more than five minutes
-before a self-made certificate's start keeps the browser down until the next six-hourly
-renewal look.
+before a self-made certificate's start, or a self-made key deleted from the secrets while
+the host runs, keeps the browser down until the next six-hourly renewal look (a restart
+remakes it at once). While the gate holds the web process its status stays `starting`;
+the reason is in the host log and `instance.view` reports `tls: missing` (a status
+reason for it belongs to the host status of move 2b). The gate checks in `tls.set`'s order,
+validity before coverage, so an expired pair that also does not name the origin is
+reported as `tls_not_valid` rather than `tls_name_mismatch` (X-02 §2's order); the origin
+never changes, so it does not arise.
 
 **The container file** (`deploy/container/Dockerfile`, `deploy/container/README.md`):
 

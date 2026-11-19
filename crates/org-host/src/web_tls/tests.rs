@@ -871,6 +871,14 @@ fn a_chain_the_registry_cannot_keep_is_refused() {
         check(&cert.repeat(fits + 1), &key, &[&here], Some(now)).err(),
         Some(TlsRefusal::TlsInvalid)
     );
+    // A parse failure comes before the key comparison (step 3 before step 4): with another
+    // key it is still `tls_invalid`, which `tls.set` does not journal, never
+    // `tls_key_mismatch`, which it does.
+    let (_, other_key) = pair(&["org.example"]);
+    assert_eq!(
+        check(&cert.repeat(fits + 1), &other_key, &[&here], Some(now)).err(),
+        Some(TlsRefusal::TlsInvalid)
+    );
 }
 
 /// A key lost while the host runs: `tls.fetch` cannot serve it, and the gate, which had

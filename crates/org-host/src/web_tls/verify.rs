@@ -50,6 +50,28 @@ pub(crate) fn check(
     if typed.secret_der() != framed.bytes() {
         return Err(TlsRefusal::TlsInvalid);
     }
+    // Everything step 3 parses, before the key is compared (step 4): the leaf's subject
+    // alternative names, the key's form and the chain in the normal form the registry keeps.
+    let names = subject_alternative_names(&leaf)?;
+    let label = match &typed {
+        PrivateKeyDer::Pkcs8(_) => "PRIVATE KEY",
+        PrivateKeyDer::Pkcs1(_) => "RSA PRIVATE KEY",
+        PrivateKeyDer::Sec1(_) => "EC PRIVATE KEY",
+        _ => return Err(TlsRefusal::TlsInvalid),
+    };
+    let mut chain_hash = Sha256::new();
+    let mut normal = String::new();
+    for der in &chain {
+        let len = u32::try_from(der.bytes().len()).map_err(invalid)?;
+        chain_hash.update(len.to_be_bytes());
+        chain_hash.update(der.bytes());
+        encode(&mut normal, "CERTIFICATE", der.bytes());
+    }
+    // The registry keeps the chain in this form: a chain that only fits it as written (long
+    // lines) does not parse as a pair the host can keep.
+    if normal.len() > CHAIN_LIMIT {
+        return Err(TlsRefusal::TlsInvalid);
+    }
     let provider = rustls::crypto::ring::default_provider();
     let signing = provider
         .key_provider
@@ -66,8 +88,6 @@ pub(crate) fn check(
         }
         Err(_) => return Err(TlsRefusal::TlsInvalid),
     }
-    // Parsed with the chain (step 3), before validity is judged.
-    let names = subject_alternative_names(&leaf)?;
     let validity = leaf.validity();
     let (not_before, not_after) = (
         validity.not_before.timestamp(),
@@ -101,28 +121,9 @@ pub(crate) fn check(
         });
     }
     let leaf = Fingerprint(Sha256::digest(chain[0].bytes()).into());
-    let mut chain_hash = Sha256::new();
-    let mut normal = String::new();
-    for der in &chain {
-        let len = u32::try_from(der.bytes().len()).map_err(invalid)?;
-        chain_hash.update(len.to_be_bytes());
-        chain_hash.update(der.bytes());
-        encode(&mut normal, "CERTIFICATE", der.bytes());
-    }
-    // The registry keeps the chain in this form: a chain that only fits it as written (long
-    // lines) does not parse as a pair the host can keep.
-    if normal.len() > CHAIN_LIMIT {
-        return Err(TlsRefusal::TlsInvalid);
-    }
     let mut pair = Sha256::new();
     pair.update(chain_hash.finalize());
     pair.update(Sha256::digest(typed.secret_der()));
-    let label = match &typed {
-        PrivateKeyDer::Pkcs8(_) => "PRIVATE KEY",
-        PrivateKeyDer::Pkcs1(_) => "RSA PRIVATE KEY",
-        PrivateKeyDer::Sec1(_) => "EC PRIVATE KEY",
-        _ => return Err(TlsRefusal::TlsInvalid),
-    };
     // Sized up front, so the text is never moved to a larger buffer and left behind.
     let der = typed.secret_der();
     let mut key = Zeroizing::new(String::with_capacity(
