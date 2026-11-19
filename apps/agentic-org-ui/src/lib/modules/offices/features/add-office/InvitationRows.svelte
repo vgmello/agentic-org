@@ -6,7 +6,7 @@
 <script lang="ts">
 	import Mail from '@lucide/svelte/icons/mail';
 	import MailX from '@lucide/svelte/icons/mail-x';
-	import StatusPill from '$lib/components/StatusPill.svelte';
+	import WordPill from '../status/WordPill.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { tone } from '$lib/components/pills';
 	import { expiresText } from '../../time';
@@ -47,12 +47,12 @@
 				class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 font-semibold text-fg [overflow-wrap:anywhere]"
 			>
 				{invitation.officeName}
-				<StatusPill label={label(invitation)} class={live(invitation) ? '' : tone.owner}>
+				<WordPill label={label(invitation)} class={live(invitation) ? '' : tone.owner}>
 					{#snippet icon()}{#if live(invitation)}<Mail
 								class="size-3.5 text-fg-muted"
 								aria-hidden="true"
 							/>{:else}<MailX class="size-3.5 text-warning" aria-hidden="true" />{/if}{/snippet}
-				</StatusPill>
+				</WordPill>
 			</p>
 			<p class="mt-1 text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
 				{#if live(invitation)}invitation · {expiresText(

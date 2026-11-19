@@ -1,0 +1,30 @@
+<script lang="ts">
+	import OfficeStatusBadge from '../features/status/OfficeStatusBadge.svelte';
+	const statuses = [
+		'active',
+		'starting',
+		'pending',
+		'offline',
+		'unavailable',
+		'update_needed',
+		'unreachable',
+		'checking',
+		'status_unknown',
+		undefined
+	] as const;
+</script>
+
+<section
+	aria-label="Office status contracts"
+	class="fixed inset-4 z-[100] overflow-auto bg-surface p-4"
+>
+	{#each statuses as status (status ?? 'undefined')}
+		<div data-office-status={status ?? 'undefined'} class="mb-3 w-40 max-w-full">
+			<OfficeStatusBadge {status} />
+		</div>
+	{/each}
+	<div data-office-status="future" class="w-40 max-w-full">
+		<!-- A future runtime value must retain the existing unknown fallback. -->
+		<OfficeStatusBadge status={'future' as never} />
+	</div>
+</section>
