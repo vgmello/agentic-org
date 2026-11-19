@@ -57,6 +57,34 @@ stop() {
     : > "$here/pid"
 }
 
+# What systemd 257 reports for the unit's settings the adapter compares with its file
+# (`systemctl show`): ExecStart's words joined by spaces, each Environment= word as one
+# word (double-quoted where it holds a space), and the file's other settings as written.
+effective() {
+    line=$(sed -n 's/^ExecStart=//p' "$1")
+    (
+        eval "set -- $line"
+        printf 'ExecStart={ path=%s ; argv[]=%s ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n' "$1" "$*"
+    )
+    printf 'Environment='
+    first=yes
+    sed -n 's/^Environment=//p' "$1" | while IFS= read -r assignment; do
+        eval "set -- $assignment"
+        [ "$first" = yes ] || printf ' '
+        first=no
+        case "$1" in
+        *[[:space:]]*) printf '"%s"' "$1" ;;
+        *) printf '%s' "$1" ;;
+        esac
+    done
+    printf '\n'
+    printf 'UnsetEnvironment=%s\n' "$(sed -n 's/^UnsetEnvironment=//p' "$1")"
+    for key in Type KillMode Restart UMask NoNewPrivileges; do
+        printf '%s=%s\n' "$key" "$(sed -n "s/^$key=//p" "$1")"
+    done
+    printf 'TimeoutStopUSec=%ss\n' "$(sed -n 's/^TimeoutStopSec=//p' "$1")"
+}
+
 case "$verb" in
 show)
     if [ "$1" = "--property=Version" ]; then
@@ -82,6 +110,7 @@ show)
     fi
     printf 'LoadState=%s\nActiveState=%s\nMainPID=%s\nFragmentPath=%s\nUnitFileState=%s\nNeedDaemonReload=no\nDropInPaths=\n' \
         "$load" "$active" "$pid" "$fragment" "$enabled"
+    if [ -f "$file" ]; then effective "$file"; fi
     ;;
 daemon-reload) ;;
 enable)
