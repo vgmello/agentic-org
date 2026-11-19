@@ -103,43 +103,43 @@
 				<Label for="person-name">Name</Label>
 				<Input id="person-name" bind:value={name} disabled={busy} autocomplete="off" aria-invalid={nameError ? true : undefined} aria-describedby={nameError ? 'person-name-error' : 'person-name-help'} />
 				{#if nameError}
-					<p id="person-name-error" class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{nameError}</p>
+					<p id="person-name-error" class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{nameError}</p>
 				{:else}
-					<p id="person-name-help" class="text-xs/5 text-gray-400">Agents address people by name, so it must be different from everyone else's.</p>
+					<p id="person-name-help" class="text-xs/5 text-fg-muted">Agents address people by name, so it must be different from everyone else's.</p>
 				{/if}
 			</div>
 
 			<div class="space-y-2">
-				<Label for="person-contact">Contact <span class="font-normal text-gray-400">(optional)</span></Label>
+				<Label for="person-contact">Contact <span class="font-normal text-fg-muted">(optional)</span></Label>
 				<Input id="person-contact" bind:value={contact} disabled={busy} autocomplete="off" placeholder="sam@example.com" aria-describedby="person-contact-help" />
-				<p id="person-contact-help" class="text-xs/5 text-gray-400">How to reach them outside Agentic Org, e.g. an email.</p>
+				<p id="person-contact-help" class="text-xs/5 text-fg-muted">How to reach them outside Agentic Org, e.g. an email.</p>
 			</div>
 
 			<fieldset class="space-y-2" disabled={busy}>
-				<legend class="text-sm/6 font-medium text-white">Teams <span class="font-normal text-gray-400">(optional)</span></legend>
-				<ul class="max-h-40 divide-y divide-white/5 overflow-y-auto rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Teams">
+				<legend class="text-sm/6 font-medium text-fg">Teams <span class="font-normal text-fg-muted">(optional)</span></legend>
+				<ul class="max-h-40 divide-y divide-line-subtle overflow-y-auto rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line" aria-label="Teams">
 					{#each teams as option (option.team.id)}
 						<li>
 							<label class="flex cursor-pointer items-center gap-x-3 py-1.5 pr-3 text-sm/6" style="padding-left: {0.75 + option.depth * 1.25}rem">
 								<Checkbox checked={teamIds.has(option.team.id)} onCheckedChange={(on) => (on === true ? teamIds.add(option.team.id) : teamIds.delete(option.team.id))} aria-label={option.path} />
-								<span class="min-w-0 text-white [overflow-wrap:anywhere]">{option.team.name}</span>
+								<span class="min-w-0 text-fg [overflow-wrap:anywhere]">{option.team.name}</span>
 							</label>
 						</li>
 					{:else}
-						<li class="px-3 py-2 text-sm/6 text-gray-400">There are no teams yet. They will show under Not in a team.</li>
+						<li class="px-3 py-2 text-sm/6 text-fg-muted">There are no teams yet. They will show under Not in a team.</li>
 					{/each}
 				</ul>
 			</fieldset>
 
 			<div class="space-y-2">
 				<Label for="person-manager">Reports to</Label>
-				<select id="person-manager" bind:value={manager} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+				<select id="person-manager" bind:value={manager} disabled={busy} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus">
 					<option value="">{ownerName} (you)</option>
 					{#each managers as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
 				</select>
 			</div>
 
-			<p class="flex gap-x-2 rounded-lg bg-sky-500/10 px-3 py-2 text-sm/6 text-sky-100 outline-1 -outline-offset-1 outline-sky-400/20">
+			<p class="flex gap-x-2 rounded-lg bg-info-emphasis/10 px-3 py-2 text-sm/6 text-info-text-stronger outline-1 -outline-offset-1 outline-info/20">
 				<Info class="mt-1 size-4 shrink-0" aria-hidden="true" />
 				<span>Once added, any agent in {organization} can message them, ask them or assign them work.</span>
 			</p>

@@ -2,9 +2,27 @@
 import type { OrgSnapshot } from '$lib/proto';
 import { isFormer } from '$lib/org/model';
 import { span } from '$lib/work/time';
-import { canRead, isMember, memberOf, mentionsHere, mentionsIn, OFFICE, slug, type ChatContext, type ChatMember } from './engine';
+import {
+	canRead,
+	isMember,
+	memberOf,
+	mentionsHere,
+	mentionsIn,
+	OFFICE,
+	slug,
+	type ChatContext,
+	type ChatMember
+} from './engine';
 import { plain } from './markdown';
-import { CHAT_LIMITS, type ChatMessage, type ChatState, type Conversation, type MessageKind, type Presence, type Typing } from './types';
+import {
+	CHAT_LIMITS,
+	type ChatMessage,
+	type ChatState,
+	type Conversation,
+	type MessageKind,
+	type Presence,
+	type Typing
+} from './types';
 
 const ms = (iso: string) => Date.parse(iso);
 
@@ -18,13 +36,26 @@ export function chatMembers(s: OrgSnapshot): ChatMember[] {
 			id: m.id,
 			kind: m.kind as 'agent' | 'person',
 			name: m.name,
-			handle: m.owner ? 'owner' : m.kind === 'agent' && m.agent?.messaging_name ? m.agent.messaging_name : slug(m.name) || m.id,
+			handle: m.owner
+				? 'owner'
+				: m.kind === 'agent' && m.agent?.messaging_name
+					? m.agent.messaging_name
+					: slug(m.name) || m.id,
 			...(m.owner ? { owner: true } : {}),
 			...(isFormer(m) ? { former: true } : {})
 		}));
 }
 
-export function chatContext(s: OrgSnapshot, init: { now: string; actor?: string; surface?: ChatContext['surface']; newId?: ChatContext['newId']; typing_ms?: number }): ChatContext {
+export function chatContext(
+	s: OrgSnapshot,
+	init: {
+		now: string;
+		actor?: string;
+		surface?: ChatContext['surface'];
+		newId?: ChatContext['newId'];
+		typing_ms?: number;
+	}
+): ChatContext {
 	const owner = s.members.find((m) => m.owner)?.id ?? 'owner';
 	return {
 		now: init.now,
@@ -32,8 +63,17 @@ export function chatContext(s: OrgSnapshot, init: { now: string; actor?: string;
 		surface: init.surface ?? 'app',
 		owner,
 		members: chatMembers(s),
-		teams: s.teams.map((t) => ({ id: t.id, name: t.name, member_ids: s.memberships.filter((m) => m.team_id === t.id).map((m) => m.member_id) })),
-		projects: (s.projects ?? []).map((p) => ({ id: p.id, key: p.key, name: p.name, team_ids: (s.project_teams ?? []).filter((l) => l.project_id === p.id).map((l) => l.team_id) })),
+		teams: s.teams.map((t) => ({
+			id: t.id,
+			name: t.name,
+			member_ids: s.memberships.filter((m) => m.team_id === t.id).map((m) => m.member_id)
+		})),
+		projects: (s.projects ?? []).map((p) => ({
+			id: p.id,
+			key: p.key,
+			name: p.name,
+			team_ids: (s.project_teams ?? []).filter((l) => l.project_id === p.id).map((l) => l.team_id)
+		})),
 		...(init.newId ? { newId: init.newId } : {}),
 		...(init.typing_ms !== undefined ? { typing_ms: init.typing_ms } : {})
 	};
@@ -41,7 +81,8 @@ export function chatContext(s: OrgSnapshot, init: { now: string; actor?: string;
 
 // ---- naming ----------------------------------------------------------------------------------------
 
-export const nameOf = (ctx: ChatContext, id: string): string => (id === 'default' ? 'Default' : id === OFFICE ? 'Office' : (memberOf(ctx, id)?.name ?? 'Someone'));
+export const nameOf = (ctx: ChatContext, id: string): string =>
+	id === 'default' ? 'Default' : id === OFFICE ? 'Office' : (memberOf(ctx, id)?.name ?? 'Someone');
 
 /** "#agentic-org", a person's or agent's name, or the group's names (CHAT-3). */
 export function titleOf(c: Conversation, ctx: ChatContext, viewer: string): string {
@@ -50,22 +91,45 @@ export function titleOf(c: Conversation, ctx: ChatContext, viewer: string): stri
 	return (others.length ? others : c.members).map((id) => nameOf(ctx, id)).join(', ');
 }
 
-export const PRESENCE_WORD: Record<Presence, string> = { working: 'Working', waiting: 'Waiting', asleep: 'Asleep', offline: 'Offline', paused: 'Paused', online: 'Online' };
+export const PRESENCE_WORD: Record<Presence, string> = {
+	working: 'Working',
+	waiting: 'Waiting',
+	asleep: 'Asleep',
+	offline: 'Offline',
+	paused: 'Paused',
+	online: 'Online'
+};
 
-export const KIND_WORD: Record<MessageKind, string> = { msg: 'Message', request: 'Ask', handoff: 'Hand-off', announcement: 'Announcement', reply: 'Reply', unknown: 'Message' };
+export const KIND_WORD: Record<MessageKind, string> = {
+	msg: 'Message',
+	request: 'Ask',
+	handoff: 'Hand-off',
+	announcement: 'Announcement',
+	reply: 'Reply',
+	unknown: 'Message'
+};
 
 // ---- the sidebar (CHAT-1) --------------------------------------------------------------------------
 
 /** The owner's mute or digest setting for an agent here. */
-export const muteOf = (s: ChatState, conversationId: string, from: string) => s.mutes.find((x) => x.conversation_id === conversationId && x.member_id === from)?.mode ?? 'none';
+export const muteOf = (s: ChatState, conversationId: string, from: string) =>
+	s.mutes.find((x) => x.conversation_id === conversationId && x.member_id === from)?.mode ?? 'none';
 
 /** An ask or hand-off for the owner that has not been answered or accepted: always in Needs you, whatever is muted. */
-export const waitingOnOwner = (m: ChatMessage, ctx: ChatContext): boolean => m.addressed_to === ctx.owner && ((m.kind === 'request' && !m.answer) || (m.kind === 'handoff' && !m.accepted_by));
+export const waitingOnOwner = (m: ChatMessage, ctx: ChatContext): boolean =>
+	m.addressed_to === ctx.owner &&
+	((m.kind === 'request' && !m.answer) || (m.kind === 'handoff' && !m.accepted_by));
 
 /** Asks and hand-offs waiting for the owner, newest first (the **Needs you** group). */
-export const needsYou = (s: ChatState, ctx: ChatContext): ChatMessage[] => s.messages.filter((m) => waitingOnOwner(m, ctx)).sort((a, b) => ms(b.created_at) - ms(a.created_at));
+export const needsYou = (s: ChatState, ctx: ChatContext): ChatMessage[] =>
+	s.messages
+		.filter((m) => waitingOnOwner(m, ctx))
+		.sort((a, b) => ms(b.created_at) - ms(a.created_at));
 
-const mentionsOwner = (m: ChatMessage, ctx: ChatContext, c: Conversation) => m.from !== ctx.owner && (mentionsIn(m.body, ctx).includes(ctx.owner) || (mentionsHere(m.body) && c.kind === 'channel' && isMember(c, ctx.owner)));
+const mentionsOwner = (m: ChatMessage, ctx: ChatContext, c: Conversation) =>
+	m.from !== ctx.owner &&
+	(mentionsIn(m.body, ctx).includes(ctx.owner) ||
+		(mentionsHere(m.body) && c.kind === 'channel' && isMember(c, ctx.owner)));
 
 /** Messages that mention the owner, newest first (the **Mentions** group). */
 export function mentionsOf(s: ChatState, ctx: ChatContext): ChatMessage[] {
@@ -87,7 +151,10 @@ export interface ThreadSummary {
 }
 
 /** The threads in a conversation, by root id. */
-export const repliesTo = (s: ChatState, rootId: string): ChatMessage[] => s.messages.filter((m) => m.thread_root_id === rootId).sort((a, b) => ms(a.created_at) - ms(b.created_at));
+export const repliesTo = (s: ChatState, rootId: string): ChatMessage[] =>
+	s.messages
+		.filter((m) => m.thread_root_id === rootId)
+		.sort((a, b) => ms(a.created_at) - ms(b.created_at));
 
 /** Threads the owner is in (started, replied in, or was mentioned in) with the newest activity first (the **Threads** group). */
 export function threadsOf(s: ChatState, ctx: ChatContext): ThreadSummary[] {
@@ -97,10 +164,22 @@ export function threadsOf(s: ChatState, ctx: ChatContext): ThreadSummary[] {
 		if (!replies.length) continue;
 		const c = s.conversations.find((x) => x.id === root.conversation_id);
 		if (!c || !isMember(c, ctx.owner)) continue;
-		const inIt = root.from === ctx.owner || replies.some((r) => r.from === ctx.owner || mentionsIn(r.body, ctx).includes(ctx.owner)) || mentionsIn(root.body, ctx).includes(ctx.owner);
+		const inIt =
+			root.from === ctx.owner ||
+			replies.some((r) => r.from === ctx.owner || mentionsIn(r.body, ctx).includes(ctx.owner)) ||
+			mentionsIn(root.body, ctx).includes(ctx.owner);
 		if (!inIt) continue;
 		const readAt = ms(s.read_at[c.id] ?? '1970-01-01T00:00:00Z');
-		out.push({ root, conversation: c, replies: replies.length, last_at: replies[replies.length - 1].created_at, new_replies: replies.filter((r) => r.from !== ctx.owner && ms(r.created_at) > readAt && muteOf(s, c.id, r.from) === 'none').length });
+		out.push({
+			root,
+			conversation: c,
+			replies: replies.length,
+			last_at: replies[replies.length - 1].created_at,
+			new_replies: replies.filter(
+				(r) =>
+					r.from !== ctx.owner && ms(r.created_at) > readAt && muteOf(s, c.id, r.from) === 'none'
+			).length
+		});
 	}
 	return out.sort((a, b) => ms(b.last_at) - ms(a.last_at));
 }
@@ -119,9 +198,19 @@ export interface ConversationRow {
 	readingAsOwner: boolean;
 }
 
-export function unreadIn(s: ChatState, ctx: ChatContext, c: Conversation): { unread: number; mentions: number } {
+export function unreadIn(
+	s: ChatState,
+	ctx: ChatContext,
+	c: Conversation
+): { unread: number; mentions: number } {
 	const readAt = ms(s.read_at[c.id] ?? '1970-01-01T00:00:00Z');
-	const fresh = s.messages.filter((m) => m.conversation_id === c.id && m.from !== ctx.owner && ms(m.created_at) > readAt && (muteOf(s, c.id, m.from) === 'none' || waitingOnOwner(m, ctx)));
+	const fresh = s.messages.filter(
+		(m) =>
+			m.conversation_id === c.id &&
+			m.from !== ctx.owner &&
+			ms(m.created_at) > readAt &&
+			(muteOf(s, c.id, m.from) === 'none' || waitingOnOwner(m, ctx))
+	);
 	return { unread: fresh.length, mentions: fresh.filter((m) => mentionsOwner(m, ctx, c)).length };
 }
 
@@ -136,24 +225,52 @@ export interface Sidebar {
 }
 
 const rowOf = (s: ChatState, ctx: ChatContext, c: Conversation): ConversationRow => {
-	const other = c.kind === 'dm' ? memberOf(ctx, c.members.find((id) => id !== ctx.owner)) : undefined;
-	return { conversation: c, title: titleOf(c, ctx, ctx.owner), ...unreadIn(s, ctx, c), ...(other ? { other } : {}), ...(other ? { presence: s.presence[other.id] ?? (other.kind === 'agent' ? 'offline' : 'online') } : {}), readingAsOwner: !isMember(c, ctx.owner) };
+	const other =
+		c.kind === 'dm'
+			? memberOf(
+					ctx,
+					c.members.find((id) => id !== ctx.owner)
+				)
+			: undefined;
+	return {
+		conversation: c,
+		title: titleOf(c, ctx, ctx.owner),
+		...unreadIn(s, ctx, c),
+		...(other ? { other } : {}),
+		...(other
+			? { presence: s.presence[other.id] ?? (other.kind === 'agent' ? 'offline' : 'online') }
+			: {}),
+		readingAsOwner: !isMember(c, ctx.owner)
+	};
 };
 
-const lastAt = (s: ChatState, c: Conversation) => s.messages.filter((m) => m.conversation_id === c.id).reduce((t, m) => Math.max(t, ms(m.created_at)), ms(c.created_at));
+const lastAt = (s: ChatState, c: Conversation) =>
+	s.messages
+		.filter((m) => m.conversation_id === c.id)
+		.reduce((t, m) => Math.max(t, ms(m.created_at)), ms(c.created_at));
 
 export function sidebar(s: ChatState, ctx: ChatContext): Sidebar {
 	const live = s.conversations.filter((c) => !c.archived && canRead(ctx, ctx.owner, c));
 	const mine = live.filter((c) => isMember(c, ctx.owner));
-	const byName = (a: ConversationRow, b: ConversationRow) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+	const byName = (a: ConversationRow, b: ConversationRow) =>
+		a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
 	return {
 		needsYou: needsYou(s, ctx),
 		mentions: mentionsOf(s, ctx),
 		threads: threadsOf(s, ctx),
-		channels: mine.filter((c) => c.kind === 'channel').map((c) => rowOf(s, ctx, c)).sort(byName),
+		channels: mine
+			.filter((c) => c.kind === 'channel')
+			.map((c) => rowOf(s, ctx, c))
+			.sort(byName),
 		// Direct messages by latest activity, like Slack.
-		dms: mine.filter((c) => c.kind !== 'channel').sort((a, b) => lastAt(s, b) - lastAt(s, a)).map((c) => rowOf(s, ctx, c)),
-		asOwner: live.filter((c) => !isMember(c, ctx.owner)).map((c) => rowOf(s, ctx, c)).sort(byName)
+		dms: mine
+			.filter((c) => c.kind !== 'channel')
+			.sort((a, b) => lastAt(s, b) - lastAt(s, a))
+			.map((c) => rowOf(s, ctx, c)),
+		asOwner: live
+			.filter((c) => !isMember(c, ctx.owner))
+			.map((c) => rowOf(s, ctx, c))
+			.sort(byName)
 	};
 }
 
@@ -177,9 +294,17 @@ export interface ConversationView {
  * The top level of a conversation as the owner sees it: messages from a muted agent are held back, from a digest agent are
  * gathered into a digest, and everything else is shown. An ask or hand-off waiting for the owner is never held back.
  */
-export function conversationView(s: ChatState, ctx: ChatContext, conversationId: string): ConversationView {
+export function conversationView(
+	s: ChatState,
+	ctx: ChatContext,
+	conversationId: string
+): ConversationView {
 	const all = s.messages
-		.filter((m) => m.conversation_id === conversationId && (m.thread_root_id === undefined || m.also_in_channel))
+		.filter(
+			(m) =>
+				m.conversation_id === conversationId &&
+				(m.thread_root_id === undefined || m.also_in_channel)
+		)
 		.sort((a, b) => ms(a.created_at) - ms(b.created_at));
 	const view: ConversationView = { shown: [], muted: [], digests: [] };
 	for (const m of all) {
@@ -203,10 +328,24 @@ export function foldedWords(s: ChatState, ctx: ChatContext, rootId: string): str
 }
 
 /** "HR is typing…", "Sam and Noor are typing…". */
-export function typingWords(typing: Typing[], ctx: ChatContext, conversationId: string, now: string): string | undefined {
-	const names = typing.filter((t) => t.conversation_id === conversationId && ms(t.until) > ms(now) && t.member_id !== ctx.owner).map((t) => nameOf(ctx, t.member_id));
+export function typingWords(
+	typing: Typing[],
+	ctx: ChatContext,
+	conversationId: string,
+	now: string
+): string | undefined {
+	const names = typing
+		.filter(
+			(t) =>
+				t.conversation_id === conversationId && ms(t.until) > ms(now) && t.member_id !== ctx.owner
+		)
+		.map((t) => nameOf(ctx, t.member_id));
 	if (!names.length) return undefined;
-	return names.length === 1 ? `${names[0]} is typing…` : names.length === 2 ? `${names[0]} and ${names[1]} are typing…` : `${names.length} people are typing…`;
+	return names.length === 1
+		? `${names[0]} is typing…`
+		: names.length === 2
+			? `${names[0]} and ${names[1]} are typing…`
+			: `${names.length} people are typing…`;
 }
 
 // ---- the composer (CHAT-7, states) -----------------------------------------------------------------
@@ -220,23 +359,52 @@ export interface ComposerState {
 	wakes: string[];
 }
 
-export function composerState(s: ChatState, ctx: ChatContext, c: Conversation, officeRunning: boolean): ComposerState {
-	if (!officeRunning) return { canWrite: false, note: "The office isn't running. Restart it from Offices.", wakes: [] };
-	if (c.archived) return { canWrite: false, note: `${c.kind === 'channel' ? `#${c.name}` : 'This conversation'} is archived.`, wakes: [] };
-	const gone = c.kind === 'dm' ? c.members.map((id) => memberOf(ctx, id)).find((m) => m?.former) : undefined;
+export function composerState(
+	s: ChatState,
+	ctx: ChatContext,
+	c: Conversation,
+	officeRunning: boolean
+): ComposerState {
+	if (!officeRunning)
+		return {
+			canWrite: false,
+			note: "The office isn't running. Restart it from Offices.",
+			wakes: []
+		};
+	if (c.archived)
+		return {
+			canWrite: false,
+			note: `${c.kind === 'channel' ? `#${c.name}` : 'This conversation'} is archived.`,
+			wakes: []
+		};
+	const gone =
+		c.kind === 'dm' ? c.members.map((id) => memberOf(ctx, id)).find((m) => m?.former) : undefined;
 	if (gone) return { canWrite: false, note: `${gone.name} was offboarded.`, wakes: [] };
 	const others = c.kind === 'dm' ? c.members.filter((id) => id !== ctx.owner) : [];
 	const asleep = others.filter((id) => s.presence[id] === 'asleep');
-	if (asleep.length) return { canWrite: true, note: `${asleep.map((id) => nameOf(ctx, id)).join(' and ')} ${asleep.length === 1 ? 'is' : 'are'} asleep. Your message will wake ${asleep.length === 1 ? 'it' : 'them'}.`, wakes: asleep };
+	if (asleep.length)
+		return {
+			canWrite: true,
+			note: `${asleep.map((id) => nameOf(ctx, id)).join(' and ')} ${asleep.length === 1 ? 'is' : 'are'} asleep. Your message will wake ${asleep.length === 1 ? 'it' : 'them'}.`,
+			wakes: asleep
+		};
 	const paused = others.filter((id) => s.presence[id] === 'paused');
-	if (paused.length) return { canWrite: true, note: `${paused.map((id) => nameOf(ctx, id)).join(' and ')} ${paused.length === 1 ? 'is' : 'are'} paused and will not read this until resumed.`, wakes: [] };
+	if (paused.length)
+		return {
+			canWrite: true,
+			note: `${paused.map((id) => nameOf(ctx, id)).join(' and ')} ${paused.length === 1 ? 'is' : 'are'} paused and will not read this until resumed.`,
+			wakes: []
+		};
 	return { canWrite: true, wakes: [] };
 }
 
 /** The wake a typed message would cause, for the line under the box while typing a mention in a channel. */
 export function wakesFor(s: ChatState, ctx: ChatContext, c: Conversation, body: string): string[] {
-	if (c.kind === 'dm') return c.members.filter((id) => id !== ctx.owner && s.presence[id] === 'asleep');
-	return mentionsIn(body, ctx).filter((id) => memberOf(ctx, id)?.kind === 'agent' && s.presence[id] === 'asleep');
+	if (c.kind === 'dm')
+		return c.members.filter((id) => id !== ctx.owner && s.presence[id] === 'asleep');
+	return mentionsIn(body, ctx).filter(
+		(id) => memberOf(ctx, id)?.kind === 'agent' && s.presence[id] === 'asleep'
+	);
 }
 
 // ---- mentions ---------------------------------------------------------------------------------------
@@ -264,17 +432,39 @@ const fold = (t: string) => t.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerC
 /** Members typed by display name or handle, completed to the handle; `@here` for a channel (CHAT-14). */
 export function mentionOptions(ctx: ChatContext, c: Conversation, query: string): MentionOption[] {
 	const q = fold(query);
-	const pool = c.kind === 'channel' || c.kind === 'group_dm' ? c.members : ctx.members.map((m) => m.id);
-	const members = pool.map((id) => memberOf(ctx, id)).filter((m): m is ChatMember => !!m && !m.former && !m.owner);
-	const hits = members.filter((m) => q === '' || fold(m.name).split(/\s+/).some((w) => w.startsWith(q)) || fold(m.handle).startsWith(q) || fold(m.name).startsWith(q));
-	const out: MentionOption[] = hits.sort((a, b) => a.name.localeCompare(b.name)).map((m) => ({ handle: m.handle, name: m.name, kind: m.kind }));
-	if (c.kind === 'channel' && 'here'.startsWith(q)) out.unshift({ handle: 'here', name: "Everyone in this channel's members", kind: 'here' });
+	const pool =
+		c.kind === 'channel' || c.kind === 'group_dm' ? c.members : ctx.members.map((m) => m.id);
+	const members = pool
+		.map((id) => memberOf(ctx, id))
+		.filter((m): m is ChatMember => !!m && !m.former && !m.owner);
+	const hits = members.filter(
+		(m) =>
+			q === '' ||
+			fold(m.name)
+				.split(/\s+/)
+				.some((w) => w.startsWith(q)) ||
+			fold(m.handle).startsWith(q) ||
+			fold(m.name).startsWith(q)
+	);
+	const out: MentionOption[] = hits
+		.sort((a, b) => a.name.localeCompare(b.name))
+		.map((m) => ({ handle: m.handle, name: m.name, kind: m.kind }));
+	if (c.kind === 'channel' && 'here'.startsWith(q))
+		out.unshift({ handle: 'here', name: "Everyone in this channel's members", kind: 'here' });
 	return out.slice(0, 8);
 }
 
-export function applyMention(text: string, at: MentionQuery, caret: number, handle: string): { text: string; caret: number } {
+export function applyMention(
+	text: string,
+	at: MentionQuery,
+	caret: number,
+	handle: string
+): { text: string; caret: number } {
 	const inserted = `@${handle} `;
-	return { text: text.slice(0, at.start) + inserted + text.slice(caret), caret: at.start + inserted.length };
+	return {
+		text: text.slice(0, at.start) + inserted + text.slice(caret),
+		caret: at.start + inserted.length
+	};
 }
 
 // ---- slash commands (CHAT-9) -----------------------------------------------------------------------
@@ -289,7 +479,9 @@ export const SLASH_COMMANDS: { name: SlashName; usage: string; help: string }[] 
 	{ name: 'remind', usage: '/remind [in 30m] [what]', help: 'Remind you about this conversation' }
 ];
 
-export type Slash = { ok: true; name: SlashName; args: string; handle?: string; rest: string } | { ok: false; message: string; unknown?: true };
+export type Slash =
+	| { ok: true; name: SlashName; args: string; handle?: string; rest: string }
+	| { ok: false; message: string; unknown?: true };
 
 /** Edit distance, for catching a mistyped command. */
 function editDistance(a: string, b: string): number {
@@ -315,14 +507,27 @@ export function parseSlash(text: string): Slash | undefined {
 	if (!cmd) {
 		// A leading /word is a command; keep unknown commands in the composer for correction.
 		const sorted = (t: string) => [...t].sort().join('');
-		const near = SLASH_COMMANDS.find((c) => editDistance(c.name, name) <= 1 || sorted(c.name) === sorted(name));
-		return { ok: false, unknown: true, message: `No command /${m[1]}.${near ? ` Did you mean /${near.name}?` : ''}` };
+		const near = SLASH_COMMANDS.find(
+			(c) => editDistance(c.name, name) <= 1 || sorted(c.name) === sorted(name)
+		);
+		return {
+			ok: false,
+			unknown: true,
+			message: `No command /${m[1]}.${near ? ` Did you mean /${near.name}?` : ''}`
+		};
 	}
 	const args = (m[2] ?? '').trim();
 	const who = /^@([\w-]+)\s*([\s\S]*)$/.exec(args);
-	if ((cmd.name === 'task' || cmd.name === 'wake') && !who) return { ok: false, message: `Say which agent: ${cmd.usage}` };
-	if (cmd.name === 'task' && !who![2].trim()) return { ok: false, message: 'Give the task a title: /task @agent [title]' };
-	return { ok: true, name: cmd.name, args, ...(who ? { handle: who[1].toLowerCase(), rest: who[2].trim() } : { rest: args }) };
+	if ((cmd.name === 'task' || cmd.name === 'wake') && !who)
+		return { ok: false, message: `Say which agent: ${cmd.usage}` };
+	if (cmd.name === 'task' && !who![2].trim())
+		return { ok: false, message: 'Give the task a title: /task @agent [title]' };
+	return {
+		ok: true,
+		name: cmd.name,
+		args,
+		...(who ? { handle: who[1].toLowerCase(), rest: who[2].trim() } : { rest: args })
+	};
 }
 
 /** Matches for a half-typed command: `/b` lists `/bug`. */
@@ -336,20 +541,34 @@ export function remindDelay(text: string): { ms: number; what: string } | undefi
 	const m = /^in\s+(\d+)\s*(m|h|d)\b\s*([\s\S]*)$/i.exec(text.trim());
 	if (!m) return undefined;
 	const n = Number(m[1]);
-	return { ms: n * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2].toLowerCase() as 'm'], what: m[3].trim() };
+	return {
+		ms: n * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2].toLowerCase() as 'm'],
+		what: m[3].trim()
+	};
 }
 
 /** Turn into… (CHAT-9): the same forms as the slash commands, filled from an existing message. */
-export function turnInto(m: ChatMessage, into: 'bug' | 'request' | 'task'): { title: string; body: string } {
+export function turnInto(
+	m: ChatMessage,
+	into: 'bug' | 'request' | 'task'
+): { title: string; body: string } {
 	const text = plain(m.body);
 	const first = text.split(/(?<=[.?!])\s/)[0] ?? text;
-	const title = (first.length > 80 ? first.slice(0, 79).trimEnd() + '…' : first).replace(/^(@[\w-]+\s*)+/, '').trim();
-	return { title: title || (into === 'bug' ? 'Bug from chat' : into === 'task' ? 'Task from chat' : 'Request from chat'), body: m.body };
+	const title = (first.length > 80 ? first.slice(0, 79).trimEnd() + '…' : first)
+		.replace(/^(@[\w-]+\s*)+/, '')
+		.trim();
+	return {
+		title:
+			title ||
+			(into === 'bug' ? 'Bug from chat' : into === 'task' ? 'Task from chat' : 'Request from chat'),
+		body: m.body
+	};
 }
 
 // ---- asks (CHAT-5, CHAT-6) -------------------------------------------------------------------------
 
-export const waitingFor = (m: ChatMessage, now: string): string => `Waiting ${span(Math.max(0, ms(now) - ms(m.created_at)))}`;
+export const waitingFor = (m: ChatMessage, now: string): string =>
+	`Waiting ${span(Math.max(0, ms(now) - ms(m.created_at)))}`;
 
 export interface DeadlineWords {
 	text: string;
@@ -358,18 +577,39 @@ export interface DeadlineWords {
 }
 
 /** "If no answer by 18:00, I'll allow it" before the deadline; "Default applied: …" after (CHAT-6). */
-export function deadlineWords(m: ChatMessage, now: string, clock: (iso: string) => string = clockTime): DeadlineWords | undefined {
+export function deadlineWords(
+	m: ChatMessage,
+	now: string,
+	clock: (iso: string) => string = clockTime
+): DeadlineWords | undefined {
 	if (m.kind !== 'request' || !m.default_option || !m.default_at) return undefined;
 	const label = m.options?.find((o) => o.id === m.default_option)?.label ?? m.default_option;
-	if (m.answer?.by === 'default') return { text: `No answer by ${clock(m.default_at)}: the default was applied (${label}).`, applied: true };
+	if (m.answer?.by === 'default')
+		return {
+			text: `No answer by ${clock(m.default_at)}: the default was applied (${label}).`,
+			applied: true
+		};
 	if (m.answer) return undefined;
-	if (ms(m.default_at) <= ms(now)) return { text: `The deadline passed: the default (${label}) is being applied.`, applied: false };
-	return { text: `If no answer by ${clock(m.default_at)}, the default applies: ${label}. (${span(ms(m.default_at) - ms(now))} left)`, applied: false };
+	if (ms(m.default_at) <= ms(now))
+		return {
+			text: `The deadline passed: the default (${label}) is being applied.`,
+			applied: false
+		};
+	return {
+		text: `If no answer by ${clock(m.default_at)}, the default applies: ${label}. (${span(ms(m.default_at) - ms(now))} left)`,
+		applied: false
+	};
 }
 
 /** "Accepted by Noor Haddad · 09:12" on an accepted hand-off, for everyone (CHAT-18). */
-export function acceptedWords(m: ChatMessage, ctx: ChatContext, clock: (iso: string) => string = clockTime): string | undefined {
-	return m.kind === 'handoff' && m.accepted_by ? `Accepted by ${nameOf(ctx, m.accepted_by)}${m.accepted_at ? ` · ${clock(m.accepted_at)}` : ''}` : undefined;
+export function acceptedWords(
+	m: ChatMessage,
+	ctx: ChatContext,
+	clock: (iso: string) => string = clockTime
+): string | undefined {
+	return m.kind === 'handoff' && m.accepted_by
+		? `Accepted by ${nameOf(ctx, m.accepted_by)}${m.accepted_at ? ` · ${clock(m.accepted_at)}` : ''}`
+		: undefined;
 }
 
 export function answerWords(m: ChatMessage, ctx: ChatContext): string | undefined {
@@ -380,13 +620,20 @@ export function answerWords(m: ChatMessage, ctx: ChatContext): string | undefine
 }
 
 /** Whether the app (and nothing else) may answer this: asks and hand-offs to the owner, and every approval (CHAT-17). */
-export const appOnly = (m: ChatMessage, ctx: ChatContext): boolean => (m.kind === 'request' && (m.addressed_to === ctx.owner || !!m.approval)) || (m.kind === 'handoff' && m.addressed_to === ctx.owner);
+export const appOnly = (m: ChatMessage, ctx: ChatContext): boolean =>
+	(m.kind === 'request' && (m.addressed_to === ctx.owner || !!m.approval)) ||
+	(m.kind === 'handoff' && m.addressed_to === ctx.owner);
 
 // ---- long text (CHAT-14) ---------------------------------------------------------------------------
 
-export function collapse(body: string, limit: number = CHAT_LIMITS.collapseLines): { shown: string; hidden: number } {
+export function collapse(
+	body: string,
+	limit: number = CHAT_LIMITS.collapseLines
+): { shown: string; hidden: number } {
 	const lines = body.split('\n');
-	return lines.length <= limit ? { shown: body, hidden: 0 } : { shown: lines.slice(0, limit).join('\n'), hidden: lines.length - limit };
+	return lines.length <= limit
+		? { shown: body, hidden: 0 }
+		: { shown: lines.slice(0, limit).join('\n'), hidden: lines.length - limit };
 }
 
 // ---- search (CHAT-13) ------------------------------------------------------------------------------
@@ -423,7 +670,8 @@ export function parseSearch(q: string): SearchQuery {
 }
 
 export function searchMessages(s: ChatState, ctx: ChatContext, q: SearchQuery): ChatMessage[] {
-	const handleToId = (h: string) => ctx.members.find((m) => m.handle.toLowerCase() === h || slug(m.name) === h)?.id;
+	const handleToId = (h: string) =>
+		ctx.members.find((m) => m.handle.toLowerCase() === h || slug(m.name) === h)?.id;
 	const from = q.from ? handleToId(q.from) : undefined;
 	const member = q.member ? handleToId(q.member) : undefined;
 	const text = fold(q.text);
@@ -434,11 +682,31 @@ export function searchMessages(s: ChatState, ctx: ChatContext, q: SearchQuery): 
 			const c = s.conversations.find((x) => x.id === m.conversation_id);
 			if (!c || !canRead(ctx, ctx.actor, c)) return false;
 			if (q.from && m.from !== from) return false;
-			if (q.in && !(c.kind === 'channel' ? c.name === q.in : fold(titleOf(c, ctx, ctx.actor)).includes(q.in))) return false;
-			if (q.member && !(member && (m.from === member || m.addressed_to === member || mentionsIn(m.body, ctx).includes(member)))) return false;
+			if (
+				q.in &&
+				!(c.kind === 'channel' ? c.name === q.in : fold(titleOf(c, ctx, ctx.actor)).includes(q.in))
+			)
+				return false;
+			if (
+				q.member &&
+				!(
+					member &&
+					(m.from === member ||
+						m.addressed_to === member ||
+						mentionsIn(m.body, ctx).includes(member))
+				)
+			)
+				return false;
 			if (q.kind && m.kind !== q.kind) return false;
 			if (q.has) {
-				const has = q.has === 'ask' ? m.kind === 'request' : q.has === 'thread' ? s.messages.some((r) => r.thread_root_id === m.id) : q.has === 'attachment' ? !!m.attachments?.length : m.kind === q.has;
+				const has =
+					q.has === 'ask'
+						? m.kind === 'request'
+						: q.has === 'thread'
+							? s.messages.some((r) => r.thread_root_id === m.id)
+							: q.has === 'attachment'
+								? !!m.attachments?.length
+								: m.kind === q.has;
 				if (!has) return false;
 			}
 			if (before !== undefined && !(ms(m.created_at) < before)) return false;
@@ -451,7 +719,8 @@ export function searchMessages(s: ChatState, ctx: ChatContext, q: SearchQuery): 
 // ---- links between Chat and Activity (CHAT-15) -----------------------------------------------------
 
 /** Where "Open in Chat" on an Activity row goes. */
-export const chatHref = (m: Pick<ChatMessage, 'id' | 'conversation_id'>): string => `/chat?c=${encodeURIComponent(m.conversation_id)}&m=${encodeURIComponent(m.id)}`;
+export const chatHref = (m: Pick<ChatMessage, 'id' | 'conversation_id'>): string =>
+	`/chat?c=${encodeURIComponent(m.conversation_id)}&m=${encodeURIComponent(m.id)}`;
 
 export function parseChatLocation(search: string): { conversation?: string; message?: string } {
 	const p = new URLSearchParams(search);
@@ -462,21 +731,37 @@ export function parseChatLocation(search: string): { conversation?: string; mess
 export function activityRows(s: ChatState, ctx: ChatContext) {
 	return [...s.messages]
 		.sort((a, b) => ms(b.created_at) - ms(a.created_at))
-		.map((m) => ({ message: m, who: nameOf(ctx, m.from), href: chatHref(m), muted: muteOf(s, m.conversation_id, m.from) !== 'none' }));
+		.map((m) => ({
+			message: m,
+			who: nameOf(ctx, m.from),
+			href: chatHref(m),
+			muted: muteOf(s, m.conversation_id, m.from) !== 'none'
+		}));
 }
 
 /** The conversation, thread and message a link names; falls back to the conversation, then nothing. */
-export function locate(s: ChatState, loc: { conversation?: string; message?: string }): { conversation?: Conversation; thread?: ChatMessage; message?: ChatMessage } {
+export function locate(
+	s: ChatState,
+	loc: { conversation?: string; message?: string }
+): { conversation?: Conversation; thread?: ChatMessage; message?: ChatMessage } {
 	const message = loc.message ? s.messages.find((m) => m.id === loc.message) : undefined;
-	const conversation = s.conversations.find((c) => c.id === (message?.conversation_id ?? loc.conversation));
-	const thread = message?.thread_root_id ? s.messages.find((m) => m.id === message.thread_root_id) : undefined;
+	const conversation = s.conversations.find(
+		(c) => c.id === (message?.conversation_id ?? loc.conversation)
+	);
+	const thread = message?.thread_root_id
+		? s.messages.find((m) => m.id === message.thread_root_id)
+		: undefined;
 	return { conversation, thread, message };
 }
 
 // ---- times -----------------------------------------------------------------------------------------
 
 export function clockTime(iso: string): string {
-	return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+	return new Date(iso).toLocaleTimeString([], {
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: false
+	});
 }
 
 /** "Today", "Yesterday" or the date, for the separators between days. */
@@ -490,4 +775,9 @@ export function dayLabel(iso: string, now: string): string {
 
 // ---- what the middle of the screen shows -----------------------------------------------------------
 
-export type ChatView = { type: 'needs' } | { type: 'mentions' } | { type: 'threads' } | { type: 'search' } | { type: 'conversation'; id: string };
+export type ChatView =
+	| { type: 'needs' }
+	| { type: 'mentions' }
+	| { type: 'threads' }
+	| { type: 'search' }
+	| { type: 'conversation'; id: string };

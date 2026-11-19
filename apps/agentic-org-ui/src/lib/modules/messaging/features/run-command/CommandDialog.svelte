@@ -42,17 +42,17 @@
 			<form class="space-y-4" onsubmit={submit} novalidate>
 				{#each form.fields as f (f.id)}
 					<div class="space-y-2">
-						<Label for="cmd-{f.id}">{f.label}{#if !f.required}{' '}<span class="font-normal text-gray-400">(optional)</span>{/if}</Label>
+						<Label for="cmd-{f.id}">{f.label}{#if !f.required}{' '}<span class="font-normal text-fg-muted">(optional)</span>{/if}</Label>
 						{#if f.kind === 'text'}
 							<Input id="cmd-{f.id}" bind:value={values[f.id]} autocomplete="off" aria-invalid={touched && missing.includes(f) ? true : undefined} />
 						{:else if f.kind === 'textarea'}
-							<textarea id="cmd-{f.id}" bind:value={values[f.id]} rows="4" class="w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"></textarea>
+							<textarea id="cmd-{f.id}" bind:value={values[f.id]} rows="4" class="w-full rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus"></textarea>
 						{:else}
-							<select id="cmd-{f.id}" bind:value={values[f.id]} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+							<select id="cmd-{f.id}" bind:value={values[f.id]} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus">
 								{#each f.options ?? [] as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
 							</select>
 						{/if}
-						{#if touched && missing.includes(f)}<p class="text-sm/6 text-red-400" role="alert">{f.label} is needed.</p>{/if}
+						{#if touched && missing.includes(f)}<p class="text-sm/6 text-danger" role="alert">{f.label} is needed.</p>{/if}
 					</div>
 				{/each}
 				<DialogFooter>

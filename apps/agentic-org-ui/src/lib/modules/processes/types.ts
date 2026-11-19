@@ -1,180 +1,256 @@
-// Processes (docs/specs/processes-ux.md rev 3, docs/design/processes.md): how agents work, written down and inherited.
-// A process is a Markdown file with front matter in a repository; here it is the file's front matter and its text.
+// Organization processes, standards and development processes (docs/specs/processes-ux.md; the records are
+// docs/design/organization-data/01-organization-structure.md `structure_documents` and document 18). The office
+// resolves which documents apply; the browser shows what it is told and never computes an effective set itself.
 
-/** Organization, then the team (a chain of nested teams), then the project; an agent's own private processes add to them. */
-export type Level = 'organization' | 'team' | 'project' | 'agent';
+/** What a structure document is: how the organization handles something, or what it uses and how it builds. */
+export type DocumentKind = 'process' | 'standard';
+export type Lifecycle = 'draft' | 'current' | 'deprecated';
+/** Where a document lives: the organization root, a team's folder (any depth) or a project's. */
+export type Level = 'organization' | 'team' | 'project';
 
-export const LEVEL_LABEL: Record<Level, string> = { organization: 'Organization', team: 'Team', project: 'Project', agent: 'Agent' };
-
-export type ProcessStatus = 'draft' | 'active' | 'off' | 'retired';
-
-/** The guidance moments a process may add a short prompt to (decisions-and-tech-debt-ux §6.2). */
-export interface Moments {
-	starting_task?: string;
-	waking_up?: string;
-	finishing_task?: string;
+/** Common attribution (record contracts): who changed a record and when. */
+export interface Attribution {
+	at: string;
+	byKind: 'employee' | 'system' | 'unknown';
+	byId?: string;
+	/** The employee's name, when the office knows it. */
+	byName?: string;
 }
 
-export interface ChecklistStep {
-	text: string;
-	required: boolean;
-}
-
-/** Where a file lives, which fixes the level and scope it must declare (design §2.2). */
-export interface Location {
-	level: Level;
-	/** The team id, project key or member id; none for the organization. */
-	scope?: string;
-}
-
-/** A front matter field that could not be read (PROC-16): its name and why. */
-export interface FieldProblem {
-	field: string;
-	message: string;
-}
-
-export interface ProcessDoc {
-	/** The doc id like every doc's (`doc-<ULID>`): different for each level's file of one process. */
+export interface EmployeeRef {
 	id: string;
-	/** The stable key that matches a process across levels. */
-	key: string;
 	name: string;
+}
+
+/** One process or standard file: its front matter, where it lives and its Markdown text. */
+export interface ProcessDocument {
+	id: string;
+	/** Matches a document across levels; a lower level's document with the same key replaces the one above. */
+	key?: string;
+	revision: number;
+	kind: DocumentKind;
+	title: string;
+	status: Lifecycle;
+	/** Accountable owner; required for `current`. */
+	owner?: EmployeeRef;
+	/** The level and scope from the file's path. */
 	level: Level;
-	scope?: string;
-	version: number;
-	owner: string;
-	summary: string;
-	appliesTo?: string;
-	/** False: sealed, applies as written at every lower level. */
+	teamId?: string;
+	projectId?: string;
+	/** The team's or project's name; none at organization level. */
+	scopeName?: string;
 	overridable: boolean;
-	status: ProcessStatus;
-	/** For an override, the inherited key and version it was written against (drift). */
-	overrides?: { key: string; version: number };
-	/** Why a lower level turned the process off (`status: off`). */
-	reason?: string;
-	moments?: Moments;
-	checklist?: ChecklistStep[];
-	body: string;
-	/** Who wrote this version and who approved it (an off counts only when approved by someone else). */
-	author?: string;
-	approvedBy?: string;
-	/** Where the file actually is: a level or scope that differs from the front matter is a problem. */
-	location: Location;
-	/** Front matter that could not be read: the file is listed with this and left out of every set. */
-	problems?: FieldProblem[];
+	bodyMarkdown: string;
+	/** The file in organization Git, e.g. `teams/eng/teams/web/processes/<id>.md`. */
+	path: string;
+	created: Attribution;
+	updated: Attribution;
+	/** Front matter the office could not read (PROC-16): the file is listed with this and left out of every set. */
+	invalid?: { field: string };
 }
 
-export interface TeamRef {
-	id: string;
+/** A place the Processes page can show: the organization, a team, a project or an agent. */
+export type Place =
+	| { kind: 'organization' }
+	| { kind: 'team'; id: string }
+	| { kind: 'project'; id: string }
+	| { kind: 'agent'; id: string };
+
+/** One Show option (PROC-34): "Organization", "Web (team)", "Atlas (project)", "Noor Haddad (agent)". */
+export interface PlaceOption {
+	place: Place;
 	name: string;
-	owner_team_id?: string;
-	lead_member_id?: string;
 }
 
-export interface ProjectRef {
-	key: string;
-	name: string;
-	/** The teams the project belongs to (a shared project has several). */
-	teamIds: string[];
-}
+/** What happened to one level's document of a key, for "why" (PROC-8, PROC-9). */
+export type LayerOutcome =
+	| 'applies'
+	| 'replaced'
+	/** It tried to replace a document marked not overridable. */
+	| 'refused'
+	/** Its front matter isn't recognized. */
+	| 'invalid'
+	/** Two documents use its key at one level and scope. */
+	| 'clash';
 
-export interface ResolveInput {
-	docs: ProcessDoc[];
-	teams: TeamRef[];
-	/** The project of the work, when there is current work. */
-	project?: ProjectRef;
-	/** The agent, whose private processes join the set. */
-	agentId?: string;
-	/** Who may approve at each level: when given, a turning-off of the one open branch rule counts only if its approver is one of them. */
-	approval?: ApprovalContext;
-}
-
-/** What happened to one level's file of a process, for `process why` (PROC-8). */
 export interface Layer {
-	level: Level;
-	/** The team's name, the project's name or the agent's id. */
-	scopeName?: string;
-	doc: ProcessDoc;
-	/** `conflict`: another team's version disagrees and the project has not decided. */
-	outcome: 'applies' | 'overridden' | 'refused' | 'left_out' | 'turned_off' | 'not_applied' | 'conflict';
-	/** In words: why it lost, was refused or left out. */
-	note?: string;
+	document: ProcessDocument;
+	outcome: LayerOutcome;
 }
 
-export type EntryKind = 'inherited' | 'override' | 'addition';
+/** A problem that keeps a document out of the effective set, shown on its row. */
+export type RowProblem =
+	/** `by`: the document above that is not overridable. */
+	| { kind: 'refused'; by: ProcessDocument }
+	| { kind: 'invalid'; field: string }
+	/** `scopeName`: where the two documents clash ("Checkout"); `others`: the other documents with the key. */
+	| { kind: 'clash'; scopeName: string; others: ProcessDocument[] };
 
-export interface Drift {
-	/** The version the override was written against, and what its parent is now. */
-	wrote: number;
-	parentVersion: number;
-	parentLevel: Level;
-	parentName: string;
-}
-
-export interface Entry {
-	key: string;
-	doc: ProcessDoc;
-	kind: EntryKind;
-	/** The level the winning file comes from, and its team or project name. */
-	source: Level;
-	scopeName?: string;
-	sealed: boolean;
-	/** "Sealed by <team>; applies until the project decides": a sealed version applying while a sibling team disagrees. */
-	sealedNote?: string;
-	drift?: Drift;
-	/** An override that does not name the version it was written against: whether its parent changed is unknown. */
-	driftUnknown?: boolean;
-	/** For a team file: its place in the chain from the outermost parent team (0), to order a chain's processes. */
-	depth?: number;
-	/** The layers that had this key, highest first, and what happened to each. */
+/**
+ * One row of the inheritance view: a key matched across levels (or one document without a key). `document` is the
+ * one that applies, or, when none applies, the one the row is about. `chain` lists every level's document for the
+ * key, highest first.
+ */
+export interface EffectiveRow {
+	/** The key, or the document's ID when it has none. */
+	id: string;
+	document: ProcessDocument;
+	/** Whether the document is in the effective set for this place. */
+	applies: boolean;
+	/** The document it replaces, when it replaces one above. */
+	replaces?: ProcessDocument;
+	/** The document comes from the place being shown ("added here") rather than from above. */
+	here: boolean;
+	problem?: RowProblem;
 	chain: Layer[];
 }
 
-export interface TurnedOff {
-	key: string;
-	/** The layers that had this key, highest first, and what happened to each. */
-	chain: Layer[];
+/** The organization repository couldn't be reached: the rows are the last copy, from `copiedAt`. */
+export interface StaleCopy {
+	copiedAt: string;
+}
+
+/** What one place follows. */
+export interface PlaceView {
+	place: Place;
+	/** The Show label of the place. */
 	name: string;
-	level: Level;
-	scopeName?: string;
-	reason: string;
-	doc: ProcessDoc;
+	options: PlaceOption[];
+	processes: EffectiveRow[];
+	standards: EffectiveRow[];
+	/** Drafts and deprecated documents written at this place: listed, never applied. */
+	inactive: ProcessDocument[];
+	/** For a team or project: the level documents written here go to. */
+	writable: boolean;
+	/** The project's development process, for a project or an agent working in one (PROC-35). */
+	developmentProcess?: { id: string; name: string };
+	/** For an agent: its current work, or none (PROC-10). */
+	agent?: { work?: { ref: string; title: string; projectName?: string } };
+	stale?: StaleCopy;
+	viewer: { canEdit: boolean };
 }
 
-export interface Conflict {
+/** A new document, or an override of `replacesId` with the same key at a lower level. */
+export interface DocumentDraft {
+	kind: DocumentKind;
+	title: string;
+	key?: string;
+	status: Lifecycle;
+	ownerId?: string;
+	overridable: boolean;
+	teamId?: string;
+	projectId?: string;
+	bodyMarkdown: string;
+}
+
+export type DocumentField = 'title' | 'key' | 'status' | 'ownerId' | 'overridable' | 'bodyMarkdown';
+
+/** A document and what the editor needs around it. */
+export interface DocumentDetail {
+	document: ProcessDocument;
+	/** The document it replaces (same key, the level above), for "difference from the parent". */
+	parent?: ProcessDocument;
+}
+
+/** What the editor offers: who may own a document, and the places it may be written at. */
+export interface EditorOptions {
+	owners: EmployeeRef[];
+	places: PlaceOption[];
+	viewer: { canEdit: boolean };
+}
+
+// ── Development processes (document 18) ──────────────────────────────────────────────────────────────────────
+
+export type DevProcessOrigin = 'built_in' | 'organization';
+
+export interface DevRole {
 	key: string;
-	/** The process's name (the organization's, else a team's), to lead the line with. */
 	name: string;
-	/** The teams whose versions disagree. */
-	teams: string[];
-	/** What applies meanwhile, in words. */
-	applies: string;
-	doc?: ProcessDoc;
+	hats: string[];
+	seed: boolean;
+	bodyMarkdown: string;
 }
 
-export type ProblemKind = 'invalid' | 'mismatch' | 'clash' | 'sealed_refused' | 'private_only_adds';
-
-export interface Problem {
-	kind: ProblemKind;
+export interface DevSkill {
 	key: string;
-	doc: ProcessDoc;
-	/** In the spec's words. */
-	text: string;
-	/** The other file of a clash, or the file whose seal refused this one. */
-	other?: ProcessDoc;
+	title: string;
+	description: string;
+	/** Role keys; empty means every role of the process. */
+	roles: string[];
+	bodyMarkdown: string;
 }
 
-export interface EffectiveSet {
-	entries: Entry[];
-	turnedOff: TurnedOff[];
-	conflicts: Conflict[];
-	problems: Problem[];
+export interface DevTemplate {
+	key: string;
+	bodyMarkdown: string;
 }
 
-/** Who may approve a change to a process (rules.ts `approversOf` reads it). */
-export interface ApprovalContext {
-	ownerId: string;
-	teams: TeamRef[];
-	/** The leads of the project's teams (a shared project has one per team). */
-	projectLeads: string[];
+export interface DevStage {
+	key: string;
+	title: string;
+	summary?: string;
+	leadRole?: string;
+}
+
+export interface DevTab {
+	key: string;
+	title: string;
+	view: 'documents' | 'work' | 'features' | 'releases';
+}
+
+export interface DevFolder {
+	path: string;
+	title: string;
+	summary?: string;
+}
+
+export interface DevProcessSummary {
+	id: string;
+	key: string;
+	name: string;
+	summary: string;
+	versionLabel?: string;
+	revision: number;
+	status: Lifecycle;
+	origin: DevProcessOrigin;
+	owner?: EmployeeRef;
+	seedRoles: { key: string; name: string }[];
+	tabs: DevTab[];
+	folders: DevFolder[];
+	/** Projects that follow it. */
+	projects: { id: string; name: string }[];
+	invalid?: { field: string };
+}
+
+export interface DevProcessCatalogue {
+	processes: DevProcessSummary[];
+	stale?: StaleCopy;
+	viewer: { canEdit: boolean };
+}
+
+export interface DevProcessDetail extends DevProcessSummary {
+	roles: DevRole[];
+	skills: DevSkill[];
+	templates: DevTemplate[];
+	stages: DevStage[];
+	kinds: { key: string; title: string; versioned: boolean }[];
+	/** `process.yaml` as written. */
+	manifestYaml: string;
+	copiedFrom?: { id: string; name: string };
+	updated: Attribution;
+	stale?: StaleCopy;
+	viewer: { canEdit: boolean };
+}
+
+/** One file of a development process: the manifest, or a role, skill or template by key. */
+export type DevPart =
+	| { kind: 'manifest' }
+	| { kind: 'role'; key: string }
+	| { kind: 'skill'; key: string }
+	| { kind: 'template'; key: string };
+
+/** The process file a download gives and an import takes. */
+export interface ProcessFile {
+	fileName: string;
+	blob: Blob;
 }

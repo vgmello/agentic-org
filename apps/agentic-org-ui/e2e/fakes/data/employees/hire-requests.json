@@ -1,0 +1,57 @@
+[
+	{
+		"id": "h4",
+		"state": "drafting",
+		"name": "Marlowe",
+		"role": "QA engineer (senior)",
+		"requestedBy": "you",
+		"homeTeam": "web",
+		"agoMin": 15,
+		"reason": "Someone to test checkout end to end before each release."
+	},
+	{
+		"id": "h5",
+		"state": "drafting",
+		"name": "Ellis",
+		"role": "Platform engineer",
+		"requestedBy": "sam",
+		"homeTeam": "platform",
+		"agoMin": 40,
+		"reason": "Someone to keep the build machines patched."
+	},
+	{
+		"id": "h3",
+		"state": "hiring",
+		"name": "Rowan",
+		"role": "Data analyst",
+		"requestedBy": "sam",
+		"homeTeam": "platform",
+		"agoMin": 90,
+		"reason": "Weekly numbers on deploys and build times.",
+		"failedStep": "messaging",
+		"doneSteps": ["record", "home"]
+	},
+	{
+		"id": "h2",
+		"state": "hired",
+		"name": "Quinn Adeyemi",
+		"role": "Researcher",
+		"requestedBy": "you",
+		"homeTeam": "eng",
+		"agoMin": 4320,
+		"reason": "Research for the Beacon launch.",
+		"doneSteps": ["record", "home", "messaging"],
+		"employeeId": "quinn"
+	},
+	{
+		"id": "h1",
+		"state": "withdrawn",
+		"name": "Sasha",
+		"role": "Support agent",
+		"requestedBy": "juno",
+		"homeTeam": "design",
+		"agoMin": 8000,
+		"reason": "Answer design questions from other teams.",
+		"closedReason": "Withdrawn by Juno Park"
+	}
+]

@@ -1,0 +1,56 @@
+{
+	"instances": {
+		"HQ": "hq-mac.local",
+		"Studio Mac": "studio-mac.local",
+		"Build box": "build-box.local"
+	},
+	"profiles": [
+		{
+			"id": "primary-pool",
+			"name": "Primary pool",
+			"driver": "Claude Code",
+			"models": ["claude-sonnet-5", "claude-opus-5"],
+			"readiness": {
+				"HQ": "ready",
+				"Studio Mac": "ready",
+				"Build box": "unknown"
+			}
+		},
+		{
+			"id": "codex-pool",
+			"name": "Codex pool",
+			"driver": "Codex",
+			"models": ["gpt-5.5-codex"],
+			"readiness": {
+				"HQ": "signed_out",
+				"Studio Mac": "signed_out",
+				"Build box": "not_installed"
+			}
+		}
+	],
+	"roles": [
+		{
+			"id": "role-qa",
+			"name": "QA engineer"
+		},
+		{
+			"id": "role-swe",
+			"name": "Software engineer"
+		},
+		{
+			"id": "role-designer",
+			"name": "Designer"
+		}
+	],
+	"draft": {
+		"name": "Marlowe",
+		"handle": "qa-engineer-marlowe",
+		"roleId": "role-qa",
+		"title": "QA engineer (senior)",
+		"focus": "End-to-end tests for checkout and saved carts",
+		"executionProfileId": "primary-pool",
+		"model": "claude-sonnet-5",
+		"hrReason": "You asked for someone to test checkout end to end. The QA engineer role fits; senior, because nobody on the team reviews tests yet. It runs on the primary pool like the rest of the team.",
+		"stoppedReason": "its run ended before it wrote a proposal (the model provider refused the request)"
+	}
+}

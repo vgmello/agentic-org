@@ -1,0 +1,251 @@
+{
+	"viewer": "you",
+	"members": {
+		"you": {
+			"handle": "alex-kim",
+			"canSignIn": true,
+			"presence": {
+				"id": "available"
+			},
+			"allowHiring": true,
+			"homeTeamId": "eng",
+			"contact": "alex@example.com"
+		},
+		"avery": {
+			"handle": "avery",
+			"canSignIn": true,
+			"allowHiring": true,
+			"homeTeamId": "eng",
+			"title": "Head of product"
+		},
+		"hana": {
+			"handle": "hana.weiss",
+			"canSignIn": false,
+			"allowHiring": true,
+			"title": "People lead"
+		},
+		"leo": {
+			"handle": "leo",
+			"canSignIn": false,
+			"allowHiring": true
+		},
+		"sam": {
+			"presence": {
+				"id": "working"
+			},
+			"workingOn": {
+				"ref": "T-A40",
+				"title": "Split the checkout service",
+				"project": "Beacon"
+			},
+			"hired": {
+				"agoDays": 10,
+				"by": "you"
+			},
+			"allowHiring": true,
+			"runsOn": "Claude Code \u00b7 claude-sonnet-5",
+			"howItRuns": "Starts when it gets work",
+			"execution": {
+				"pool": "primary-pool",
+				"model": "claude-sonnet-5",
+				"connection": "Anthropic \u00b7 subscription A",
+				"turnState": "running",
+				"generation": 3,
+				"observedAgoS": 20,
+				"reasons": [],
+				"home": "/srv/agentic-org/lumen/agents/sam"
+			},
+			"supervision": {
+				"health": "Responding \u00b7 last event 20 s ago",
+				"tone": "ok",
+				"holds": []
+			},
+			"openTurn": "t-s3"
+		},
+		"noor": {
+			"presence": {
+				"id": "available"
+			},
+			"hired": {
+				"agoDays": 9,
+				"by": "sam"
+			},
+			"allowHiring": false,
+			"runsOn": "Claude Code \u00b7 claude-sonnet-5",
+			"howItRuns": "Starts when it gets work",
+			"execution": {
+				"pool": "primary-pool",
+				"model": "claude-sonnet-5",
+				"connection": "Anthropic \u00b7 subscription B",
+				"turnState": "idle",
+				"generation": 2,
+				"observedAgoS": 45,
+				"reasons": [],
+				"home": "/srv/agentic-org/lumen/agents/noor"
+			},
+			"supervision": {
+				"health": "Idle \u00b7 last turn ended 1 h ago",
+				"tone": "ok",
+				"holds": []
+			}
+		},
+		"kai": {
+			"presence": {
+				"id": "waiting_answer",
+				"detail": "from Mira Castillo \u00b7 12 min"
+			},
+			"workingOn": {
+				"ref": "T-A37",
+				"title": "Make the deploy script give up after 5 tries",
+				"project": "Atlas"
+			},
+			"hired": {
+				"agoDays": 9,
+				"by": "sam"
+			},
+			"allowHiring": false,
+			"runsOn": "Codex \u00b7 gpt-5.1-codex",
+			"howItRuns": "Starts when it gets work",
+			"execution": {
+				"pool": "codex-pool",
+				"model": "gpt-5.1-codex",
+				"connection": "OpenAI \u00b7 subscription C",
+				"turnState": "idle",
+				"generation": 1,
+				"observedAgoS": 30,
+				"reasons": [],
+				"home": "/srv/agentic-org/lumen/agents/kai"
+			},
+			"supervision": {
+				"health": "Waiting for an answer from Mira Castillo \u00b7 12 min",
+				"tone": "waiting",
+				"holds": []
+			}
+		},
+		"mira": {
+			"presence": {
+				"id": "needs_you"
+			},
+			"workingOn": {
+				"ref": "T-A44",
+				"title": "Decide the retry policy for payments",
+				"project": "Beacon"
+			},
+			"hired": {
+				"agoDays": 7,
+				"by": "you"
+			},
+			"allowHiring": false,
+			"runsOn": "Claude Code \u00b7 claude-sonnet-5",
+			"howItRuns": "Starts when it gets work",
+			"execution": {
+				"pool": "primary-pool",
+				"model": "claude-sonnet-5",
+				"connection": "Anthropic \u00b7 subscription A",
+				"turnState": "idle",
+				"generation": 1,
+				"observedAgoS": 60,
+				"reasons": [],
+				"home": "/srv/agentic-org/lumen/agents/mira"
+			},
+			"supervision": {
+				"health": "Waiting for approval",
+				"tone": "waiting",
+				"holds": []
+			}
+		},
+		"juno": {
+			"presence": {
+				"id": "available"
+			},
+			"hired": {
+				"agoDays": 12,
+				"by": "you"
+			},
+			"allowHiring": true,
+			"runsOn": "Claude Code \u00b7 claude-sonnet-5",
+			"howItRuns": "Starts when it gets work",
+			"execution": {
+				"pool": "primary-pool",
+				"model": "claude-sonnet-5",
+				"connection": "Anthropic \u00b7 subscription A",
+				"turnState": "idle",
+				"generation": 1,
+				"observedAgoS": 90,
+				"reasons": [],
+				"home": "/srv/agentic-org/lumen/agents/juno"
+			},
+			"supervision": {
+				"health": "Idle \u00b7 last turn ended yesterday",
+				"tone": "ok",
+				"holds": []
+			}
+		},
+		"pax": {
+			"hired": {
+				"agoDays": 5,
+				"by": "juno"
+			},
+			"allowHiring": false,
+			"runsOn": "Claude Code \u00b7 model not chosen",
+			"howItRuns": "Starts when it gets work",
+			"execution": {
+				"pool": null,
+				"turnState": "idle",
+				"generation": 1,
+				"observedAgoS": 7200,
+				"reasons": ["Execution not configured: choose a model profile in Agent setup."]
+			},
+			"supervision": {
+				"health": "Status unknown \u00b7 the office last reported 2 h ago",
+				"tone": "unknown",
+				"holds": []
+			}
+		},
+		"ines": {
+			"hired": {
+				"agoDays": 20,
+				"by": "hana"
+			},
+			"allowHiring": false,
+			"runsOn": "Claude Code \u00b7 claude-sonnet-5",
+			"howItRuns": "Starts when it gets work",
+			"execution": {
+				"pool": "primary-pool",
+				"model": "claude-sonnet-5",
+				"turnState": "idle",
+				"reasons": ["Unplaced: In\u00eas isn't placed in an office, so it can't start."]
+			},
+			"supervision": {
+				"health": "Not running: unplaced",
+				"tone": "problem",
+				"holds": []
+			}
+		},
+		"quinn": {
+			"presence": {
+				"id": "available"
+			},
+			"hired": {
+				"agoDays": 3,
+				"by": "you"
+			},
+			"allowHiring": false,
+			"runsOn": "Codex \u00b7 gpt-5.1-codex",
+			"howItRuns": "Starts when it gets work",
+			"execution": {
+				"pool": "codex-pool",
+				"model": "gpt-5.1-codex",
+				"turnState": "idle",
+				"generation": 1,
+				"observedAgoS": 15,
+				"reasons": ["Codex isn't signed in on HQ (This Mac). Sign in there with `codex login`."]
+			},
+			"supervision": {
+				"health": "Can't start: Codex isn't signed in",
+				"tone": "problem",
+				"holds": ["Manual pause requested by Alex Kim \u00b7 stop pending"]
+			}
+		}
+	}
+}

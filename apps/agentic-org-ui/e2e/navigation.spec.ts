@@ -1,35 +1,50 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 import { enterMockedOrganization } from './mock-organization';
 
-const SECTIONS = ['Chat', 'Agents', 'Org chart', 'Projects', 'Work', 'Sessions', 'Activity', 'Processes', 'Offices', 'Settings'];
-const JOURNEY_SECTIONS = ['Chat', 'Org chart', 'Projects', 'Work', 'Offices'];
-const slug = (name: string) => name.toLowerCase().replace(' ', '-');
+// The main navigation in app-shell-ux §0's order. Inbox shows because the mocked office serves its count.
+const SECTIONS = [
+	['Home', '/home'],
+	['Inbox', '/inbox'],
+	['Projects', '/projects'],
+	['Work', '/work'],
+	['Chat', '/chat'],
+	['Activity', '/activity'],
+	['Teams', '/teams'],
+	['Organization settings', '/settings']
+] as const;
+const JOURNEY_SECTIONS = ['Chat', 'Teams', 'Projects', 'Work', 'Organization settings'];
+const slug = (path: string) => path.slice(1);
+/** The destinations themselves, not the Projects and Teams places listed under them. */
+const destinations = (page: Page) =>
+	page.getByRole('navigation', { name: 'Main' }).locator(':scope > ul > li > a');
 
 test.beforeEach(async ({ page }) => {
 	await enterMockedOrganization(page);
-	await expect(page).toHaveURL(/\/agents$/);
+	await expect(page).toHaveURL(/\/teams\/members$/);
 });
 
 test('the sidebar lists every section, with its icon', { tag: '@journey' }, async ({ page }) => {
-	const links = page
-		.getByRole('navigation', { name: 'Main' })
-		.getByRole('link')
-		.filter({ hasNotText: 'Switch organization' });
-	await expect(links).toHaveText(SECTIONS);
-	await expect(links.locator('svg')).toHaveCount(SECTIONS.length);
+	await expect(destinations(page)).toHaveCount(SECTIONS.length);
+	for (const [index, [name]] of SECTIONS.entries())
+		await expect(destinations(page).nth(index)).toHaveAccessibleName(name);
+	await expect(destinations(page).locator('svg')).toHaveCount(SECTIONS.length);
 });
 
-for (const name of SECTIONS) {
-	test(`${name} opens its page and is marked current`, { tag: JOURNEY_SECTIONS.includes(name) ? '@journey' : [] }, async ({ page }) => {
-		const link = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name });
-		await link.click();
-		await expect(page).toHaveURL(new RegExp(`/${slug(name)}$`));
-		await expect(link).toHaveAttribute('aria-current', 'page');
-		await expect(page.getByRole('heading', { level: 1, name })).toBeVisible();
-		await shot(page, `nav-${slug(name)}`);
-	});
+for (const [name, path] of SECTIONS) {
+	test(
+		`${name} opens its page and is marked current`,
+		{ tag: JOURNEY_SECTIONS.includes(name) ? '@journey' : [] },
+		async ({ page }) => {
+			const link = destinations(page).and(page.getByRole('link', { name, exact: true }));
+			await link.click();
+			await expect(page).toHaveURL(new RegExp(`${path}$`));
+			await expect(link).toHaveAttribute('aria-current', 'page');
+			await expect(page.getByRole('heading', { level: 1, name, exact: true })).toBeVisible();
+			await shot(page, `nav-${slug(path)}`);
+		}
+	);
 }
 
 test('an unknown section is a 404, not a blank page', async ({ page }) => {

@@ -1,0 +1,74 @@
+[
+	{
+		"id": "a1",
+		"agoMin": 2,
+		"actor": "Avery Stone",
+		"kind": "Task",
+		"text": "assigned T-A40 Split the checkout service to Sam Okafor",
+		"members": ["sam", "avery"],
+		"teams": ["web"]
+	},
+	{
+		"id": "a2",
+		"agoMin": 12,
+		"actor": "Kai Lindqvist",
+		"kind": "Ask",
+		"text": "asked Mira Castillo: should the deploy retry on 503 as well?",
+		"members": ["kai", "mira"],
+		"teams": ["platform"]
+	},
+	{
+		"id": "a3",
+		"agoMin": 40,
+		"actor": "Kai Lindqvist",
+		"kind": "Run",
+		"text": "ran 1 min \u00b7 The deploy script now gives up after 5 tries",
+		"members": ["kai"],
+		"teams": ["platform"]
+	},
+	{
+		"id": "a4",
+		"agoMin": 75,
+		"actor": "Noor Haddad",
+		"kind": "Run",
+		"text": "ran 2 min \u00b7 Let the Pay button wrap at 320 px",
+		"members": ["noor"],
+		"teams": ["web"]
+	},
+	{
+		"id": "a5",
+		"agoMin": 80,
+		"actor": "Noor Haddad",
+		"kind": "Task",
+		"text": "moved T-A42 to In review",
+		"members": ["noor"],
+		"teams": ["web"]
+	},
+	{
+		"id": "a6",
+		"agoMin": 300,
+		"actor": "Noor Haddad",
+		"kind": "Run",
+		"text": "couldn't start: Claude Code isn't signed in on HQ",
+		"members": ["noor"],
+		"teams": ["web"]
+	},
+	{
+		"id": "a7",
+		"agoMin": 1440,
+		"actor": "Juno Park",
+		"kind": "Message",
+		"text": "posted in #design: new checkout icons are in Figma",
+		"members": ["juno", "pax"],
+		"teams": ["design"]
+	},
+	{
+		"id": "a8",
+		"agoMin": 4320,
+		"actor": "Alex Kim",
+		"kind": "Hire",
+		"text": "hired Quinn Adeyemi, researcher",
+		"members": ["quinn", "you"],
+		"teams": ["eng"]
+	}
+]

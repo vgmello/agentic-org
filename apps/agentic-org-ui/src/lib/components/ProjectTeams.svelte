@@ -77,14 +77,14 @@
 
 <div bind:this={chips} class="flex flex-wrap items-center gap-x-2 gap-y-1.5">
 	{#each row.teams as team (team.id)}
-		<span class="inline-flex items-center gap-x-1 rounded-md bg-white/10 py-0.5 pr-0.5 pl-2 text-xs/5 text-gray-100" data-testid="project-team" data-team={team.id}>
+		<span class="inline-flex items-center gap-x-1 rounded-md bg-surface-overlay py-0.5 pr-0.5 pl-2 text-xs/5 text-fg-bright" data-testid="project-team" data-team={team.id}>
 			{team.name}
 			<button type="button" aria-label="Remove {row.project.name} from {team.name}"
-					title="Remove {row.project.name} from {team.name}" onclick={() => take(team.id, team.name)} class="inline-flex size-6 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button>
+					title="Remove {row.project.name} from {team.name}" onclick={() => take(team.id, team.name)} class="inline-flex size-6 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button>
 		</span>
 	{/each}
 	{#if row.shared}<Badge variant="secondary">Shared</Badge>{/if}
-	{#if row.unassigned}<span class="text-xs/5 text-gray-400" data-testid="no-team">No team</span>{/if}
+	{#if row.unassigned}<span class="text-xs/5 text-fg-muted" data-testid="no-team">No team</span>{/if}
 	<Button data-assign-team variant="outline" size="xs" aria-label="Assign a team to {row.project.name}" onclick={() => (assignOpen = true)}>{row.unassigned ? 'Assign team…' : 'Add team…'}</Button>
 </div>
 

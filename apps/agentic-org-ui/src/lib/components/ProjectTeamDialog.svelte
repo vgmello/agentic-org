@@ -86,29 +86,29 @@
 			<legend class="sr-only">{shownTeam ? 'Project' : 'Team'}</legend>
 			{#if shownTeam}
 				{#each projects as p (p.id)}
-					<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-white/5">
+					<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-surface-raised">
 						<input type="radio" name="project-team" value={p.id} class="mt-1" bind:group={choice} />
 						<span class="min-w-0">
-							<span class="block text-white [overflow-wrap:anywhere]">{p.name}</span>
-							<span class="block text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{p.teams.length ? `Teams: ${p.teams.join(', ')}` : 'No team'}</span>
+							<span class="block text-fg [overflow-wrap:anywhere]">{p.name}</span>
+							<span class="block text-xs/5 text-fg-muted [overflow-wrap:anywhere]">{p.teams.length ? `Teams: ${p.teams.join(', ')}` : 'No team'}</span>
 						</span>
 					</label>
 				{:else}
-					<p class="px-2 py-1.5 text-sm/6 text-gray-400">{shownTeam.name} already works on every project.</p>
+					<p class="px-2 py-1.5 text-sm/6 text-fg-muted">{shownTeam.name} already works on every project.</p>
 				{/each}
 			{:else}
 				{#each teams as option (option.team.id)}
-					<label class="flex items-start gap-x-3 rounded-md py-1.5 pr-2 text-sm/6 hover:bg-white/5" style="padding-left: {0.5 + option.depth * 1.25}rem">
+					<label class="flex items-start gap-x-3 rounded-md py-1.5 pr-2 text-sm/6 hover:bg-surface-raised" style="padding-left: {0.5 + option.depth * 1.25}rem">
 						<input type="radio" name="project-team" value={option.team.id} class="mt-1" bind:group={choice} />
-						<span class="min-w-0 text-white [overflow-wrap:anywhere]">{option.team.name}</span>
+						<span class="min-w-0 text-fg [overflow-wrap:anywhere]">{option.team.name}</span>
 					</label>
 				{:else}
-					<p class="px-2 py-1.5 text-sm/6 text-gray-400">There are no teams yet. Create one first.</p>
+					<p class="px-2 py-1.5 text-sm/6 text-fg-muted">There are no teams yet. Create one first.</p>
 				{/each}
 			{/if}
 		</fieldset>
 
-		{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+		{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 
 		<DialogFooter>
 			<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>

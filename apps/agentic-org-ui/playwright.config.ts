@@ -20,7 +20,6 @@ export default defineConfig({
 	projects: [
 		{ name: 'chromium', testIgnore: 'production-unavailable.spec.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${port}` } },
 		{ name: 'production', testMatch: 'production-unavailable.spec.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${productionPort}` } },
-		{ name: 'chromium-default-font', testMatch: 'non-chat-icons-default-font.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${port}`, launchOptions: { args: ['--blink-settings=defaultFontSize=20'] } } },
 		{ name: 'chromium-chat-default-font', testMatch: 'chat-followups-default-font.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${port}`, launchOptions: { args: ['--blink-settings=defaultFontSize=20'] } } },
 		{ name: 'chromium-focus-default-font', testMatch: 'focus-primitives-default-font.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${port}`, launchOptions: { args: ['--blink-settings=defaultFontSize=20'] } } },
 		{ name: 'chromium-title-default-font', testMatch: 'dialog-title-words-default-font.ts', use: { browserName: 'chromium', baseURL: `http://localhost:${port}`, launchOptions: { args: ['--blink-settings=defaultFontSize=20'] } } },

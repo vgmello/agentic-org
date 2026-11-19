@@ -1,0 +1,47 @@
+[
+	{
+		"id": "c1",
+		"title": "#web",
+		"kind": "channel",
+		"agoMin": 20,
+		"preview": "Noor: the Pay button fix is up for review",
+		"members": ["noor", "mira", "sam"],
+		"teams": ["web"]
+	},
+	{
+		"id": "c2",
+		"title": "Kai Lindqvist and Mira Castillo",
+		"kind": "direct",
+		"agoMin": 12,
+		"preview": "Kai: should the deploy retry on 503 as well?",
+		"members": ["kai", "mira"],
+		"teams": []
+	},
+	{
+		"id": "c3",
+		"title": "T-A40 Split the checkout service",
+		"kind": "thread",
+		"agoMin": 2,
+		"preview": "Avery: please keep the public API stable",
+		"members": ["sam", "avery"],
+		"teams": ["web"]
+	},
+	{
+		"id": "c4",
+		"title": "#design",
+		"kind": "channel",
+		"agoMin": 1440,
+		"preview": "Juno: new checkout icons are in Figma",
+		"members": ["juno", "pax"],
+		"teams": ["design"]
+	},
+	{
+		"id": "c5",
+		"title": "#platform",
+		"kind": "channel",
+		"agoMin": 40,
+		"preview": "Kai: deploy script change ready on T-A37",
+		"members": ["kai", "mira"],
+		"teams": ["platform"]
+	}
+]

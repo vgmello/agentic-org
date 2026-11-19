@@ -4,7 +4,7 @@ description: Delegate a precise read-only lookup or extraction when it saves dis
 ---
 
 Use the active policy's lookup model/effort and codebase-scout role. Hybrid assigns
-Haiku Low; codex-only assigns Sol 6.1 Low. Give one concrete question, bounded paths
+Haiku Low; codex-only assigns Sol 6.2 Low. Give one concrete question, bounded paths
 and an output budget. Prefer a direct Repowise query or rg for an already known
 symbol; avoid spawning a helper solely because its token rate seems cheaper.
 
