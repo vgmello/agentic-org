@@ -6,7 +6,7 @@ filled in. The tracks and increments are defined in the
 
 ```text
 You are working on Agentic Org in the repository vgmello/agentic-org. Start from the
-latest origin/v1-integration.
+latest origin/v1.
 
 Read first, in this order:
 1. docs/START-HERE.md: what the product is, where each kind of requirement is written,
@@ -35,9 +35,9 @@ when it is finished, the files you will own, what you will delete, the acceptanc
 criteria you will make pass, and the decisions you are taking where the documents are
 silent.
 
-For every increment: branch from origin/v1-integration, keep the checks green, update
-the row in docs/FEATURES.md with evidence, get an independent review, then merge into
-v1-integration. Never push to main. Tests never touch a real organization's data.
+For every increment: branch from origin/v1, keep the checks green, update
+the row in docs/FEATURES.md with evidence, get an independent review, then merge origin/v1 into
+your branch, tell the other lead sessions, git merge --no-ff into v1 and push it. Never push to main. Tests never touch a real organization's data.
 ```
 
 Suggested start: one engineer takes Track A from A2 (setup's registration link), then

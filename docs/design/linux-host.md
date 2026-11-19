@@ -102,7 +102,7 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   than its count, and on a listed file with fewer than its count or none, so the
   list always equals the sources. A second CI job
   (`.github/scripts/platform_allowlist_shrinks.py`) compares the list with the commit
-  where the branch left `v1-integration` and fails on a raised count or a raised
+  where the branch left `v1` and fails on a raised count or a raised
   total, so the list only shrinks (a renamed or split file may appear under new paths
   while the total does not rise). X1b to X1d remove the source files, X2 and the `testing`
   module remove the test files, and the list is empty at X6.
