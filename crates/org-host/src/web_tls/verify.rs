@@ -66,6 +66,8 @@ pub(crate) fn check(
         }
         Err(_) => return Err(TlsRefusal::TlsInvalid),
     }
+    // Parsed with the chain (step 3), before validity is judged.
+    let names = subject_alternative_names(&leaf)?;
     let validity = leaf.validity();
     let (not_before, not_after) = (
         validity.not_before.timestamp(),
@@ -84,7 +86,6 @@ pub(crate) fn check(
             });
         }
     }
-    let names = subject_alternative_names(&leaf)?;
     let mut uncovered: Vec<ListenOrigin> = Vec::new();
     for origin in origins {
         if origin.scheme() == OriginScheme::Https
@@ -107,6 +108,11 @@ pub(crate) fn check(
         chain_hash.update(len.to_be_bytes());
         chain_hash.update(der.bytes());
         encode(&mut normal, "CERTIFICATE", der.bytes());
+    }
+    // The registry keeps the chain in this form: a chain that only fits it as written (long
+    // lines) does not parse as a pair the host can keep.
+    if normal.len() > CHAIN_LIMIT {
+        return Err(TlsRefusal::TlsInvalid);
     }
     let mut pair = Sha256::new();
     pair.update(chain_hash.finalize());
@@ -132,6 +138,9 @@ pub(crate) fn check(
         not_after,
     })
 }
+
+/// The longest chain the registry keeps, in its normal form (`web_tls_pair.cert_pem`).
+pub(crate) const CHAIN_LIMIT: usize = 65_536;
 
 /// Every parse failure is `tls_invalid`.
 fn invalid<E>(_: E) -> TlsRefusal {

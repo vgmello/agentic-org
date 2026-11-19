@@ -1266,12 +1266,12 @@ fn an_https_web_start_waits_while_its_pair_cannot_be_served() {
     let (kept, tls) = started("https://127.0.0.1:48126");
     assert!(gated(Arc::new(|| true), Arc::clone(&tls))());
     assert!(!gated(Arc::new(|| false), Arc::clone(&tls))());
-    crate::web_tls::tests::lose_keys(&kept);
+    crate::web_tls::tests::store_pair_of(&kept, &tls, "https://elsewhere.example");
     let waiting = gated(Arc::new(|| true), Arc::clone(&tls));
     let (answers, log) = crate::host_log::capture(|| (waiting(), waiting()));
     assert_eq!(answers, (false, false));
     assert_eq!(log.len(), 1, "{log:?}");
-    assert!(log[0].contains("tls_missing"), "{log:?}");
+    assert!(log[0].contains("tls_name_mismatch"), "{log:?}");
 }
 
 /// The listener gate admits the two plain HTTP modes: a published listener of a foreground

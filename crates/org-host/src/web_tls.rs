@@ -143,7 +143,7 @@ impl Checked {
         self.not_after
     }
     #[cfg(test)]
-    pub(crate) fn not_before(&self) -> i64 {
+    pub(crate) fn not_before_for_test(&self) -> i64 {
         self.not_before
     }
     /// Whether fewer than [`RENEW_WITHIN_DAYS`] days of validity remain at `now`.

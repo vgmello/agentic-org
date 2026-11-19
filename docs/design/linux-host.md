@@ -919,7 +919,10 @@ instance, on any address. The pair is the host's (`crates/org-host/src/web_tls/`
   before X7 gains the table at open; its unused `tls_pair` table is left as it is.
 - **Replacement.** `tls.set` on `host.sock` from the administrator's session (journaled,
   X-02 §6.2's checks) installs a supplied pair; the host then sends `tls.renew`, and the
-  web process fetches the pair and swaps it for new handshakes, without a restart.
+  web process fetches the pair and swaps it for new handshakes, without a restart. On an
+  instance whose listener is not `https` it answers `unavailable` (decided with X7: no
+  plain-HTTP listener serves a pair, and the scheme never changes, so none is stored). A
+  chain longer than 64 KiB in its normal form is `tls_invalid`.
 - **Start gate and `tls.fetch`.** The web process is spawned only while the stored pair is
   present (`tls_missing`), names the origin's host (`tls_name_mismatch`) and is valid now;
   the gate is part of the web start's eligibility (asked at most every two seconds, each

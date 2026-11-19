@@ -51,6 +51,10 @@ pub(crate) struct WebTls {
     origin: ListenOrigin,
     /// Held by whatever installs a pair: the start, `tls.set` and the renewal.
     writing: Mutex<()>,
+    /// The last stored pair the web start's gate verified with its key: its pair
+    /// fingerprint and validity bounds. While the row names that pair, the gate judges only
+    /// its validity, without reading the key again.
+    verified: Mutex<Option<([u8; 32], i64, i64)>>,
 }
 
 fn secret_name(pair: &[u8; 32]) -> Result<Name, String> {
@@ -96,6 +100,7 @@ impl WebTls {
             secrets,
             origin,
             writing: Mutex::new(()),
+            verified: Mutex::new(None),
         });
         let refused = |why: String| StartRefusal(why);
         let _writing = crate::sync::lock(&tls.writing);
@@ -297,9 +302,31 @@ impl WebTls {
     /// The web start's gate (X-02 §2, pre-spawn) at `now`: a stored pair is present
     /// (`tls_missing`), covers the origin (`tls_name_mismatch`) and is valid now; its key can
     /// be read.
+    ///
+    /// The pair it verified is remembered by its fingerprint: while the row still names it,
+    /// only its validity is judged again, so the gate, asked every few seconds, reads the
+    /// registry but not the key. A new pair (installed by `tls.set` or a renewal) is
+    /// verified whole.
     pub(crate) fn servable(&self, now: i64) -> Result<(), Unservable> {
         let _writing = crate::sync::lock(&self.writing);
-        self.current(Some(now)).map(drop)
+        let stored = self
+            .db
+            .web_tls_pair()
+            .map_err(|_| Unservable::Storage)?
+            .ok_or(Unservable::Missing)?;
+        let mut verified = crate::sync::lock(&self.verified);
+        if let Some((pair, not_before, not_after)) = *verified {
+            if pair == stored.pair_fp {
+                return if (not_before..=not_after).contains(&now) {
+                    Ok(())
+                } else {
+                    Err(Unservable::NotValid)
+                };
+            }
+        }
+        let (checked, _) = self.current(Some(now))?;
+        *verified = Some((checked.pair(), checked.not_before, checked.not_after));
+        Ok(())
     }
 
     /// `tls.fetch`'s pair: the chain and the key. Read while no pair is being installed, so

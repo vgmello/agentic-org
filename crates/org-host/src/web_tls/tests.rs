@@ -214,8 +214,8 @@ fn the_instance_makes_a_p256_certificate_naming_only_the_origins_host() {
     ] {
         let made = make(&origin(text), now).unwrap();
         assert!(made.key().starts_with("-----BEGIN PRIVATE KEY-----\n"));
-        assert_eq!(made.not_before(), now - 300);
-        assert_eq!(made.not_after() - made.not_before(), 397 * DAY);
+        assert_eq!(made.not_before_for_test(), now - 300);
+        assert_eq!(made.not_after() - made.not_before_for_test(), 397 * DAY);
         assert!(!made.expiring(now));
         assert!(made.expiring(made.not_after() - 29 * DAY));
         let der =
@@ -826,4 +826,49 @@ fn only_the_instances_own_pair_is_renewed_while_running() {
     let supplied = f.stored();
     assert!(!tls.renew_if_expiring(now + 9 * DAY).unwrap());
     assert_eq!(f.stored(), supplied);
+}
+
+/// The web start's gate, asked every few seconds, re-reads the key only for a pair it has
+/// not verified: while the row names the verified pair it judges only the validity; a new
+/// row is verified whole.
+#[test]
+fn the_gate_verifies_each_stored_pair_once_and_then_judges_its_validity() {
+    let f = fixture();
+    let here = origin("https://org.example:8443");
+    let now = wall();
+    let tls = f.start(&here, None, now).unwrap();
+    tls.servable(now).unwrap();
+    f.secrets.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    tls.servable(now).unwrap();
+    assert!(matches!(
+        tls.servable(now + 398 * DAY),
+        Err(store::Unservable::NotValid)
+    ));
+    f.secrets
+        .1
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    store_pair_of(&f, &tls, "https://elsewhere.example");
+    assert!(matches!(
+        tls.servable(now),
+        Err(store::Unservable::Failure(_))
+    ));
+}
+
+/// A chain longer than the registry keeps, in its normal form, is `tls_invalid`, so setup
+/// refuses it before anything is saved rather than the host at its first start.
+#[test]
+fn a_chain_the_registry_cannot_keep_is_refused() {
+    let now = wall();
+    let here = origin("https://org.example");
+    let (cert, key) = pair(&["org.example"]);
+    let per = check(&cert, &key, &[&here], Some(now))
+        .unwrap()
+        .chain()
+        .len();
+    let fits = verify::CHAIN_LIMIT / per;
+    assert!(check(&cert.repeat(fits), &key, &[&here], Some(now)).is_ok());
+    assert_eq!(
+        check(&cert.repeat(fits + 1), &key, &[&here], Some(now)).err(),
+        Some(TlsRefusal::TlsInvalid)
+    );
 }

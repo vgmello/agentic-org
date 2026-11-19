@@ -164,8 +164,8 @@ These settle what the decisions above left open. The detail is in the
       made again, and the log says so.
     - *Supplied by the operator.* The setup file may name `"tls": {"cert":
       <path>, "key": <path>}`: absolute paths of a PEM chain (leaf first) and its
-      unencrypted key. Setup reads them (opened without following a link, regular
-      files, at most 64 KiB each) and verifies the pair with `tls.set`'s checks
+      unencrypted key. Setup reads them (opened without following a symbolic link in
+      their last component, regular files, at most 64 KiB each) and verifies the pair with `tls.set`'s checks
       before it saves anything: both parse (`tls_invalid`), the key is the leaf's
       (`tls_key_mismatch`), the leaf is valid now (`tls_not_valid`) and names the
       origin's host by a subject alternative name (`tls_name_mismatch`). Only the
