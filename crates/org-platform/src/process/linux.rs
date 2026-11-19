@@ -97,9 +97,13 @@ pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
     None
 }
 
+/// # Safety
+///
+/// See `testing::exit_this_thread`.
 #[cfg(any(test, feature = "test-support"))]
-pub(super) fn exit_this_thread() -> ! {
-    // SAFETY: the exit system call ends only the calling thread, even the main thread.
+pub(super) unsafe fn exit_this_thread() -> ! {
+    // SAFETY: the caller's contract; the exit system call ends only the calling thread,
+    // even the main thread.
     unsafe {
         libc::syscall(libc::SYS_exit, 0i32);
         libc::_exit(125)
@@ -110,7 +114,7 @@ pub(super) fn exit_this_thread() -> ! {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __org_platform_before_main_linux {
-    ($name:ident = $function:expr) => {
+    (unsafe $name:ident = $function:expr) => {
         #[used]
         #[unsafe(link_section = ".init_array")]
         static $name: unsafe extern "C" fn() = $function;
@@ -123,7 +127,13 @@ pub use crate::__org_platform_before_main_linux as run_before_main;
 pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = false;
 /// [`session_flags`] start the child running.
 pub(super) const SPAWNS_SUSPENDED: bool = false;
-pub(super) const POSIX_SPAWN_SETSID: libc::c_short = libc::POSIX_SPAWN_SETSID as libc::c_short;
+/// The spawn flag of [`session_flags`].
+const POSIX_SPAWN_SETSID: libc::c_short = libc::POSIX_SPAWN_SETSID as libc::c_short;
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
+    Ok(POSIX_SPAWN_SETSID)
+}
 pub(super) const SCAN_SOURCE: super::ScanSource = super::ScanSource::Procfs;
 
 /// The targets of this process's descriptor links that are absolute paths.

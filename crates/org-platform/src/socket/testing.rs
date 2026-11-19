@@ -2,7 +2,7 @@
 //! build whose construction or behaviour differs by system.
 
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
@@ -19,24 +19,11 @@ pub const SEQPACKET: bool = native::testing::SEQPACKET;
 
 /// A connected pair of Unix seqpacket sockets, both close-on-exec, or `None` where the
 /// system has no Unix seqpacket sockets (macOS).
+///
+/// Linux sets close-on-exec with the call (`SOCK_CLOEXEC`), so a child started meanwhile
+/// by another thread cannot inherit either descriptor.
 pub fn seqpacket_pair() -> io::Result<Option<(OwnedFd, OwnedFd)>> {
-    if !SEQPACKET {
-        return Ok(None);
-    }
-    let mut fds = [-1; 2];
-    // SAFETY: socketpair writes two descriptors into the live two-item array.
-    if unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_SEQPACKET, 0, fds.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: socketpair succeeded; each new descriptor gets exactly one owner.
-    let pair = unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
-    for fd in [&pair.0, &pair.1] {
-        // SAFETY: F_SETFD sets a valid flag on a descriptor owned above.
-        if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(Some(pair))
+    native::testing::seqpacket_pair()
 }
 
 /// Binds the Unix socket `fd` to `path`, with the address laid out as this system

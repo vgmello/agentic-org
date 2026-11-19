@@ -88,4 +88,10 @@ pub(super) mod testing {
     pub(in crate::socket) fn set_address_length(address: &mut libc::sockaddr_un) {
         address.sun_len = std::mem::size_of_val(address) as u8;
     }
+
+    /// No Unix seqpacket sockets here.
+    pub(in crate::socket) fn seqpacket_pair(
+    ) -> std::io::Result<Option<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)>> {
+        Ok(None)
+    }
 }

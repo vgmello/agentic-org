@@ -145,17 +145,34 @@ pub mod testing {
 
     /// Ends the calling thread alone; the process goes on while another thread runs.
     /// GNU/Linux: the `exit` system call (not `exit_group`), which also ends a main
-    /// thread alone. Elsewhere `pthread_exit`. Callable before `main` (from
-    /// [`crate::process::run_before_main`]), where nothing of the Rust runtime is used.
-    pub fn exit_this_thread() -> ! {
-        super::native::exit_this_thread()
+    /// thread alone. Elsewhere `pthread_exit`.
+    ///
+    /// # Safety
+    ///
+    /// No destructor of the calling thread runs and its stack is given up. Call it only
+    /// where no value on that stack is borrowed elsewhere, pinned or owed a drop: for
+    /// example before `main` (from [`crate::process::run_before_main`]), where nothing
+    /// of the Rust runtime is in use.
+    pub unsafe fn exit_this_thread() -> ! {
+        // SAFETY: the caller's contract above.
+        unsafe { super::native::exit_this_thread() }
+    }
+
+    /// The `posix_spawn` attribute flag that starts the child in a new session, as
+    /// `setsid` does. Its value differs by system, and the macOS C library does not
+    /// name it. The refusing adapter refuses: no flag stands in for it.
+    pub fn posix_spawn_setsid() -> io::Result<libc::c_short> {
+        super::native::posix_spawn_setsid()
     }
 }
 
-/// `run_before_main!(NAME = function)`: a static `NAME` that has the system's loader
-/// call `function` (an `unsafe extern "C" fn()`) before `main`, and so before a test
-/// harness starts any thread (`test-support`). macOS: the `__DATA,__mod_init_func`
+/// `run_before_main!(unsafe NAME = function)`: a static `NAME` that has the system's
+/// loader call `function` (an `unsafe extern "C" fn()`) before `main`, and so before a
+/// test harness starts any thread (`test-support`). macOS: the `__DATA,__mod_init_func`
 /// section; GNU/Linux: `.init_array`. A target without an adapter does not build it.
+///
+/// It is unsafe, and the call says so: `function` runs before the Rust runtime is set
+/// up, so it may use only what needs none (raw C library calls), and must not unwind.
 #[cfg(any(test, feature = "test-support"))]
 pub use native::run_before_main;
 
@@ -167,10 +184,6 @@ pub const EXITED_GROUP_SIGNAL_IS_DENIED: bool = native::EXITED_GROUP_SIGNAL_IS_D
 /// Whether [`spawn_piped`] starts the child suspended, until [`release_spawned`]
 /// continues it (macOS), rather than running (GNU/Linux).
 pub const SPAWNS_SUSPENDED: bool = native::SPAWNS_SUSPENDED;
-
-/// The `posix_spawn` attribute flag that starts the child in a new session, as
-/// `setsid` does. Its value differs by system, and the macOS C library does not name it.
-pub const POSIX_SPAWN_SETSID: libc::c_short = native::POSIX_SPAWN_SETSID;
 
 /// Where a [`RecoveryScan`] reads the processes it observes, and so which of their
 /// edge cases it meets.

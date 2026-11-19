@@ -111,4 +111,26 @@ pub(super) mod testing {
 
     /// A Linux socket address has no length field.
     pub(in crate::socket) fn set_address_length(_address: &mut libc::sockaddr_un) {}
+
+    pub(in crate::socket) fn seqpacket_pair(
+    ) -> std::io::Result<Option<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)>> {
+        use std::os::fd::{FromRawFd, OwnedFd};
+        let mut fds = [-1; 2];
+        // SAFETY: socketpair writes two descriptors into the live two-item array.
+        let status = unsafe {
+            libc::socketpair(
+                libc::AF_UNIX,
+                libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC,
+                0,
+                fds.as_mut_ptr(),
+            )
+        };
+        if status != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: socketpair succeeded; each new descriptor gets exactly one owner.
+        Ok(Some(unsafe {
+            (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))
+        }))
+    }
 }

@@ -466,7 +466,8 @@ fn native_capture_quarantines_a_nul_terminated_partial_environment() {
     }
 }
 
-org_platform::process::run_before_main!(LEADER_EXIT_FIXTURE = start_leader_exit_fixture);
+// SAFETY: start_leader_exit_fixture uses only raw C library calls and cannot unwind.
+org_platform::process::run_before_main!(unsafe LEADER_EXIT_FIXTURE = start_leader_exit_fixture);
 
 extern "C" fn start_leader_exit_fixture() {
     // SAFETY: the loader has initialized libc and the test harness has yet to start.
@@ -491,8 +492,9 @@ extern "C" fn start_leader_exit_fixture() {
         // SAFETY: terminate this disposable test child on fixture initialization failure.
         unsafe { libc::_exit(125) };
     }
-    // Exit only the calling thread. The worker keeps this process alive.
-    org_platform::process::testing::exit_this_thread()
+    // SAFETY: before main, nothing on this thread's stack is borrowed, pinned or owed a
+    // drop. Exit only the calling thread; the worker keeps this process alive.
+    unsafe { org_platform::process::testing::exit_this_thread() }
 }
 
 extern "C" fn hold_worker(_: *mut libc::c_void) -> *mut libc::c_void {
@@ -635,7 +637,7 @@ fn native_spawn(
             unsafe {
                 libc::posix_spawnattr_setflags(
                     &mut attributes,
-                    org_platform::process::POSIX_SPAWN_SETSID,
+                    org_platform::process::testing::posix_spawn_setsid().unwrap(),
                 )
             },
             0

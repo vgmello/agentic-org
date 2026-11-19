@@ -57,10 +57,18 @@ pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
     None
 }
 
+/// # Safety
+///
+/// See `testing::exit_this_thread`.
 #[cfg(any(test, feature = "test-support"))]
-pub(super) fn exit_this_thread() -> ! {
-    // SAFETY: ends only the calling thread; nothing it owns is used afterwards.
+pub(super) unsafe fn exit_this_thread() -> ! {
+    // SAFETY: the caller's contract; ends only the calling thread.
     unsafe { libc::pthread_exit(std::ptr::null_mut()) }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
+    refused()
 }
 
 /// No loader hook is known for this target: a consumer that needs one does not build.
@@ -68,7 +76,7 @@ pub(super) fn exit_this_thread() -> ! {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __org_platform_before_main_refused {
-    ($name:ident = $function:expr) => {
+    (unsafe $name:ident = $function:expr) => {
         ::core::compile_error!(
             "org-platform has no adapter to run code before main on this target"
         );
@@ -81,8 +89,6 @@ pub use crate::__org_platform_before_main_refused as run_before_main;
 /// No claim beyond POSIX.
 pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = false;
 pub(super) const SPAWNS_SUSPENDED: bool = false;
-/// No adapter spawns; no claim about the flag.
-pub(super) const POSIX_SPAWN_SETSID: libc::c_short = 0;
 pub(super) const SCAN_SOURCE: super::ScanSource = super::ScanSource::Unavailable;
 
 pub(super) enum Watch {}

@@ -96,17 +96,25 @@ pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
     Some(unsafe { **_NSGetArgv() })
 }
 
+/// # Safety
+///
+/// See `testing::exit_this_thread`.
 #[cfg(any(test, feature = "test-support"))]
-pub(super) fn exit_this_thread() -> ! {
-    // SAFETY: ends only the calling thread; nothing it owns is used afterwards.
+pub(super) unsafe fn exit_this_thread() -> ! {
+    // SAFETY: the caller's contract; ends only the calling thread.
     unsafe { libc::pthread_exit(std::ptr::null_mut()) }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
+    Ok(POSIX_SPAWN_SETSID)
 }
 
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __org_platform_before_main_macos {
-    ($name:ident = $function:expr) => {
+    (unsafe $name:ident = $function:expr) => {
         #[used]
         #[unsafe(link_section = "__DATA,__mod_init_func")]
         static $name: unsafe extern "C" fn() = $function;
@@ -120,7 +128,7 @@ pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = true;
 /// [`session_flags`] start the child suspended.
 pub(super) const SPAWNS_SUSPENDED: bool = true;
 /// Darwin spawn.h defines `POSIX_SPAWN_SETSID` as 0x0400; libc doesn't export it.
-pub(super) const POSIX_SPAWN_SETSID: libc::c_short = 0x0400;
+const POSIX_SPAWN_SETSID: libc::c_short = 0x0400;
 pub(super) const SCAN_SOURCE: super::ScanSource = super::ScanSource::Sysctl;
 
 /// The names `lsof` lists for this process's open files.

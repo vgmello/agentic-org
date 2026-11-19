@@ -68,6 +68,12 @@ pub(super) mod testing {
     pub(in crate::socket) const CONNECTED_STREAM_CAN_LISTEN: bool = false;
 
     pub(in crate::socket) fn set_address_length(_address: &mut libc::sockaddr_un) {}
+
+    /// No Unix seqpacket sockets here.
+    pub(in crate::socket) fn seqpacket_pair(
+    ) -> std::io::Result<Option<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)>> {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
