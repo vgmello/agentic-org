@@ -118,7 +118,7 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "658a01df9a0297c3826f0297584053c4fb0596fb71f779dcc6420aab58c03b05"
+      "sha256": "061891a42710c09cc4ad53a3bc5d8dda3ee772f0405b14b6d857a1b462ddf0a3"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
