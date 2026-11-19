@@ -507,7 +507,7 @@
 		{
 			"category": "projects-work",
 			"files": ["src/routes/(shell)/teams/(views)/org-chart/+page.{svelte,ts}"],
-			"why": "non-chat-icons.spec.ts opens /org-chart (through a ternary the route-visit guard cannot see) and asserts page-owned behaviour: the take-off toast and last-team dialog, the View menu with Actual size, and the empty, loading and error states. Selected in addition to org-chart, without making projects-work own the page's many imports."
+			"why": "non-chat-icons.spec.ts opens /org-chart (through a ternary the route-visit guard cannot see) and asserts page-owned behaviour of the page's empty, loading and error states (its assertions on the retired team canvas are brought in line in plan step 9). Selected in addition to org-chart, without making projects-work own the page's imports."
 		},
 		{
 			"category": "dialog-title-words",

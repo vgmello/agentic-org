@@ -34,7 +34,7 @@
 		reportingTree,
 		topLevelTeam
 	} from '../../tree';
-	import type { ChartEmployee } from '../../types';
+	import type { ChartEmployee, OrgChart } from '../../types';
 	import ChangeManagerDialog from '../change-manager/ChangeManagerDialog.svelte';
 	import HandOverDialog from '../owner/HandOverDialog.svelte';
 	import OwnerBar from '../owner/OwnerBar.svelte';
@@ -59,24 +59,39 @@
 	const organizationId = $derived(connection.organization.id);
 	const collapsed = new SvelteSet<string>();
 	let seeded = false;
+	/**
+	 * The last chart a read returned. Open dialogs work from it, so a failed re-read (the page then says it couldn't
+	 * load) never unmounts a dialog with what the person chose or typed (§6a "Keep input on failure").
+	 */
+	let lastChart = $state.raw<OrgChart | undefined>();
+	let reads = 0;
+	let newestRead = 0;
 	const chart = new Resource(async () => {
+		const run = ++reads;
 		const read = await orgChartApi.chart(organizationId);
 		// A large organization starts with levels below two collapsed (§7.10); later reads keep the person's choice.
 		if (!seeded) {
 			seeded = true;
 			for (const id of initiallyCollapsed(reportingTree(read.employees))) collapsed.add(id);
 		}
+		if (run > newestRead) {
+			newestRead = run;
+			lastChart = read;
+		}
 		return read;
 	});
 
-	// Changes made elsewhere (New › Add a person, a hire, a live office change) invalidate the route's org data: re-read
-	// then, keeping the shown tree until the answer arrives. The first load is the Resource's own.
+	// Changes made elsewhere (New › Add a person, a hire, a live office change) and here invalidate the route's org
+	// data: re-read then, keeping the shown tree until the answer arrives. The first load is the Resource's own.
 	let seenLoad = untrack(() => loads);
+	let pendingRead: Promise<void> | undefined;
 	$effect(() => {
 		const load = loads;
 		if (load === seenLoad) return;
 		seenLoad = load;
-		untrack(() => void chart.reload());
+		untrack(() => {
+			pendingRead = chart.reload();
+		});
 	});
 
 	const tree = $derived(chart.data ? reportingTree(chart.data.employees) : undefined);
@@ -94,10 +109,11 @@
 	let opened = $state<Open | undefined>();
 	let dialogOpen = $state(false);
 	let openings = 0;
+	const lastTree = $derived(lastChart ? reportingTree(lastChart.employees) : undefined);
 	const target = $derived.by(() => {
 		const o = opened;
 		return o && o.kind !== 'handover'
-			? chart.data?.employees.find((e) => e.id === o.employeeId)
+			? lastChart?.employees.find((e) => e.id === o.employeeId)
 			: undefined;
 	});
 
@@ -111,7 +127,17 @@
 		if (tree) for (const up of ancestorsOf(tree, id)) collapsed.delete(up);
 		await tick();
 		const el = document.querySelector<HTMLElement>(`[data-node-${part}="${CSS.escape(id)}"]`);
-		(el ?? document.getElementById('org-chart-heading'))?.focus();
+		if (el) el.focus();
+		else focusHeading();
+	}
+
+	/** Where focus goes when its control is gone: the tree's heading, else the page's (never body, §6a). */
+	function focusHeading() {
+		const heading =
+			document.getElementById('no-manager-heading') ?? document.getElementById('org-chart-heading');
+		if (!heading) return;
+		heading.tabIndex = -1;
+		heading.focus();
 	}
 
 	/** Dialogs give focus back to the node they were opened from, wherever it is drawn now. */
@@ -122,18 +148,25 @@
 
 	function restoreToOwnerBar(event: Event) {
 		event.preventDefault();
-		void tick().then(() =>
-			(
+		void tick().then(() => {
+			const back =
 				document.querySelector<HTMLElement>('[data-handover]') ??
-				document.getElementById('owner-bar-name')
-			)?.focus()
-		);
+				document.getElementById('owner-bar-name');
+			if (back) back.focus();
+			else focusHeading();
+		});
 	}
 
-	/** After a change made here: the route's data and the chart, read again. */
+	/**
+	 * After a change made here: the route's data is read again, which moves `loads`, and the effect above re-reads the
+	 * chart once. Waits for that read; reads here only if the route didn't reload.
+	 */
 	async function reload() {
+		const before = loads;
 		await invalidate('app:org');
-		await chart.reload();
+		await tick();
+		if (loads === before) pendingRead = chart.reload();
+		await pendingRead;
 	}
 
 	// ---- the person just added: shown, focused and tinted for two seconds (§7.4) ----
@@ -201,7 +234,7 @@
 		error="Couldn't load the org chart"
 		isEmpty={(c) => c.employees.length === 0}
 		emptyTitle="No one is on the org chart yet"
-		emptyDescription="The org chart shows who reports to whom. Add a person to start it; agents join through Hire."
+		emptyDescription="The org chart shows who reports to whom. Start it with Add a person above; agents join through Hire."
 	>
 		{#snippet children(data)}
 			<div class="@container px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8">
@@ -223,7 +256,7 @@
 				{/if}
 
 				{#if tree}
-					<section aria-labelledby="no-manager-heading" class="mt-8">
+					<section aria-labelledby="no-manager-heading" class="mt-8 max-w-4xl">
 						<h3 id="no-manager-heading" class="text-sm/6 font-semibold text-white">
 							No explicit manager
 							<span class="font-normal text-gray-400"
@@ -253,57 +286,60 @@
 					</section>
 				{/if}
 			</div>
-
-			{#key opened?.n}
-				{#if opened?.kind === 'manager' && target && tree}
-					<ChangeManagerDialog
-						bind:open={dialogOpen}
-						{organizationId}
-						employee={target}
-						choices={managerChoices(data, tree, target.id)}
-						onCloseAutoFocus={restoreToNode}
-						onrefused={reload}
-						ondone={async (r) => {
-							await reload();
-							toast.success(
-								r.manager
-									? `${r.name} now reports to ${r.manager}.`
-									: `${r.name} has no explicit manager now.`
-							);
-							await focusNode(target.id, 'menu');
-						}}
-					/>
-				{:else if opened?.kind === 'move' && target?.homeTeam && snapshot}
-					<MoveHomeTeamDialog
-						bind:open={dialogOpen}
-						{organizationId}
-						member={{ id: target.id, name: target.name }}
-						fromTeamId={target.homeTeam.id}
-						{snapshot}
-						onCloseAutoFocus={restoreToNode}
-						ondone={async (r) => {
-							const id = target.id;
-							await reload();
-							if ('name' in r) toast.success(`Moved ${r.name} to ${r.to}.`);
-							await focusNode(id, 'menu');
-						}}
-					/>
-				{:else if opened?.kind === 'handover'}
-					<HandOverDialog
-						bind:open={dialogOpen}
-						{organizationId}
-						organizationName={data.organization.name}
-						candidates={handOverCandidates(data)}
-						onCloseAutoFocus={restoreToOwnerBar}
-						ondone={async (r) => {
-							await reload();
-							toast.success(`${r.name} is now the owner of ${data.organization.name}.`);
-							await tick();
-							document.getElementById('owner-bar-name')?.focus();
-						}}
-					/>
-				{/if}
-			{/key}
 		{/snippet}
 	</Loaded>
 {/if}
+
+<!-- Outside the loaded content, so a failed re-read never closes a dialog the person is working in. -->
+{#key opened?.n}
+	{#if opened?.kind === 'manager' && target && lastChart && lastTree}
+		<ChangeManagerDialog
+			bind:open={dialogOpen}
+			{organizationId}
+			employee={target}
+			choices={managerChoices(lastChart, lastTree, target.id)}
+			onCloseAutoFocus={restoreToNode}
+			onrefused={reload}
+			ondone={async (r) => {
+				const id = target.id;
+				await reload();
+				toast.success(
+					r.manager
+						? `${r.name} now reports to ${r.manager}.`
+						: `${r.name} has no explicit manager now.`
+				);
+				await focusNode(id, 'menu');
+			}}
+		/>
+	{:else if opened?.kind === 'move' && target?.homeTeam && snapshot}
+		<MoveHomeTeamDialog
+			bind:open={dialogOpen}
+			{organizationId}
+			member={{ id: target.id, name: target.name }}
+			fromTeamId={target.homeTeam.id}
+			{snapshot}
+			onCloseAutoFocus={restoreToNode}
+			ondone={async (r) => {
+				const id = target.id;
+				await reload();
+				if ('name' in r) toast.success(`Moved ${r.name} to ${r.to}.`);
+				await focusNode(id, 'menu');
+			}}
+		/>
+	{:else if opened?.kind === 'handover' && lastChart}
+		<HandOverDialog
+			bind:open={dialogOpen}
+			{organizationId}
+			organizationName={lastChart.organization.name}
+			candidates={handOverCandidates(lastChart)}
+			onCloseAutoFocus={restoreToOwnerBar}
+			ondone={async (r) => {
+				const organizationName = lastChart?.organization.name ?? '';
+				await reload();
+				toast.success(`${r.name} is now the owner of ${organizationName}.`);
+				await tick();
+				document.getElementById('owner-bar-name')?.focus();
+			}}
+		/>
+	{/if}
+{/key}

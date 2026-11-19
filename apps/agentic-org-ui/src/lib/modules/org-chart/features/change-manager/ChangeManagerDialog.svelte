@@ -24,6 +24,7 @@
 	import { kindWord } from '$lib/modules/members';
 	import { toAppError } from '$lib/office/api';
 	import { orgChartApi } from '../../api';
+	import BusyLabel from '../../components/BusyLabel.svelte';
 	import { listText, type ManagerChoice } from '../../tree';
 	import type { ChartEmployee } from '../../types';
 
@@ -198,7 +199,7 @@
 					onclick={() => (open = false)}>Cancel</Button
 				>
 				<Button type="submit" class={mobileButton} aria-busy={busy}
-					>{busy ? 'Saving…' : 'Save manager'}</Button
+					><BusyLabel {busy} idle="Save manager" working="Saving…" /></Button
 				>
 			</DialogFooter>
 		</form>

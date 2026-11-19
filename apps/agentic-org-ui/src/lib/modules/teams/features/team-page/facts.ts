@@ -6,7 +6,20 @@
 //   <div class={factsWrap}><ul role="list" class="{factsList} text-xs/5 text-gray-400"><li class={fact}>…</li></ul></div>
 // The member profile's header uses the same construction (members/components/facts.ts on its branch); one shared
 // helper is the lead's call once both are merged.
-export const factsWrap = '-mx-1 overflow-hidden px-1 -my-1 py-1';
+// Below 640 px the clip reaches 12 px past the line, so a link's 44 px target (linkInLine) isn't cut off.
+export const factsWrap = '-mx-1 overflow-hidden px-1 -my-1 py-1 max-[639px]:-my-3 max-[639px]:py-3';
 export const factsList = 'flex flex-wrap -ml-4';
 export const fact =
 	"relative min-w-0 pl-4 [overflow-wrap:anywhere] before:absolute before:left-1.5 before:font-sans before:content-['·'_/_''] before:select-none";
+
+/**
+ * A link inside a line of facts, sized as a target (app-shell-ux §6a, SHELL-33: 24 px, 44 px below 640 px) without
+ * growing the line: negative margins give back what the box adds beyond the line height. `sm` for 14/24 lines, `xs`
+ * for 12/20 lines.
+ */
+const linkTarget =
+	'inline-flex max-w-full items-center rounded-sm align-top text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere] min-h-6 max-[639px]:min-h-11';
+export const linkInLine = {
+	sm: `${linkTarget} max-[639px]:-my-2.5`,
+	xs: `${linkTarget} -my-0.5 max-[639px]:-my-3`
+} as const;

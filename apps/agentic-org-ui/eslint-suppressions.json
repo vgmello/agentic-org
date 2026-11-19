@@ -253,11 +253,6 @@
       "count": 3
     }
   },
-  "src/routes/(shell)/teams/(views)/org-chart/+page.svelte": {
-    "@typescript-eslint/no-unused-expressions": {
-      "count": 7
-    }
-  },
   "src/routes/(shell)/work/+page.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 1

@@ -5,7 +5,7 @@
   Agent or Person in words with the @handle and the one home team; an agent's office and freshness, or Unplaced;
   "Leads <team>" beside the number of explicit reports, so both sources of responsibility show (REPORT-5); Owner and
   Paused in words. A manager has a collapse/expand control naming them; every node has an actions menu.
-  Nested lists keep the hierarchy for screen readers; indentation stops growing past level three on a narrow tree so
+  Nested lists keep the hierarchy for screen readers; indentation stops growing past level two on a narrow tree so
   the text keeps its width (320 px, 200% text).
 -->
 <script lang="ts" module>
@@ -65,13 +65,14 @@
 
 <li data-node={e.id} data-kind={e.kind}>
 	<!--
-	  Toggle · avatar · name · menu, the facts under the name. A narrow tree drops the avatar; a very narrow one (320 px
-	  at 200% text) lets the facts span the row so they keep their width. Columns are spaced by margins, so a hidden
-	  avatar leaves no gap. Under 16rem of tree (320 px at 200% text) the controls share the first line and the name
-	  and facts take the full width below them.
+	  Toggle · avatar · name · menu, the facts under the name (app-shell-ux §2: no text column under 200 px). Under 24rem
+	  of tree (a phone) it stacks: toggle · name · menu on the first line and the facts across the whole row below,
+	  without the avatar or a leaf's empty toggle space. Under 16rem (320 px at 200% text) the controls take the first
+	  line, close above the name they belong to, and name and facts take the full width. Columns are spaced by
+	  margins, so a hidden column leaves no gap. The row tints on hover and keyboard focus, tying the menu to it.
 	-->
 	<div
-		class="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-start rounded-md px-1 py-3 transition-colors duration-150 motion-reduce:transition-none {highlight ===
+		class="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-start rounded-md px-1 py-3 transition-colors duration-150 has-focus-visible:bg-white/5 hover:bg-white/5 motion-reduce:transition-none @max-[16rem]:pt-1 @max-[16rem]:pb-4 {highlight ===
 		e.id
 			? 'bg-indigo-500/10'
 			: ''}"
@@ -101,13 +102,15 @@
 				>
 			</button>
 		{:else}
-			<span aria-hidden="true" class="col-start-1 row-start-1 mr-3 size-7 max-[639px]:size-11"
+			<span
+				aria-hidden="true"
+				class="col-start-1 row-start-1 mr-3 size-7 max-[639px]:size-11 @max-[24rem]:hidden"
 			></span>
 		{/if}
 		<Avatar
 			name={e.name}
 			size="md"
-			class="col-start-2 row-span-2 row-start-1 mr-3 -mt-1.5 @max-[28rem]:hidden"
+			class="col-start-2 row-span-2 row-start-1 mr-3 -mt-1.5 @max-[24rem]:hidden"
 		/>
 		<div
 			class="col-start-3 row-start-1 min-w-0 @max-[16rem]:col-span-full @max-[16rem]:col-start-1 @max-[16rem]:row-start-2"
@@ -159,7 +162,8 @@
 			</DropdownMenuContent>
 		</DropdownMenu>
 		<div
-			class="col-start-3 row-start-2 min-w-0 @max-[16rem]:col-span-full @max-[16rem]:col-start-1 @max-[16rem]:row-start-3"
+			data-facts
+			class="col-start-3 row-start-2 min-w-0 @max-[24rem]:col-span-full @max-[24rem]:col-start-1 @max-[16rem]:row-start-3"
 		>
 			<p class={meta}>
 				{kindWord(e.kind)} · @{e.handle} ·
@@ -187,7 +191,7 @@
 			aria-label="{e.name}'s reports"
 			hidden={!open}
 			class="ml-[0.875rem] border-l border-white/10 pl-2 max-[639px]:ml-[1.375rem] @max-[16rem]:ml-1 @max-[16rem]:pl-[8px] {node.level >=
-			3
+			2
 				? '@max-[30rem]:ml-0 @max-[30rem]:border-l-0 @max-[30rem]:pl-0'
 				: ''}"
 		>

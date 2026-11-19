@@ -31,7 +31,7 @@
 	import TeamMenu from '../team-actions/TeamMenu.svelte';
 	import { setTeamPageContext } from './context';
 	import AddPersonToTeam from './AddPersonToTeam.svelte';
-	import { fact, factsList, factsWrap } from './facts';
+	import { fact, factsList, factsWrap, linkInLine } from './facts';
 	import TeamMembers from './TeamMembers.svelte';
 	import TeamPageSkeleton from './TeamPageSkeleton.svelte';
 	import { reloadOnChange } from './reload.svelte';
@@ -84,9 +84,8 @@
 	});
 
 	let dialogs = $state<ReturnType<typeof TeamDialogs>>();
-	// A link inside a line of text: the line's own height, not a 44 px box (WCAG 2.5.8 exempts inline targets).
-	const inlineLink =
-		'rounded-sm text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]';
+	// A link inside the 14/24 facts line: a 24 px target, 44 px below 640 px, without growing the line (SHELL-33).
+	const inlineLink = linkInLine.sm;
 
 	// Changing tab moves focus to the tab's heading, so what was shown is announced (TEAM-10).
 	afterNavigate((move) => {
@@ -235,10 +234,12 @@
 	}}
 	onremoved={async (r) => {
 		if (r.action === 'delete') {
-			await invalidate('app:org');
+			// Leave first: re-reading here would show the deleted team as "Team not found" on the way out. The Teams
+			// index reads the organization afresh; the shell's lists follow once this page is gone.
 			await goto(resolve('/teams'));
 			await focusDestinationHeading();
 			toast.success(`Deleted ${r.name}.`);
+			void invalidate('app:org');
 		} else {
 			await reload();
 			focusTeamHeading();
