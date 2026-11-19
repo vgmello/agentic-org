@@ -1414,7 +1414,6 @@ pub(crate) mod tests {
         };
         org_office_launch::CreateLine {
             office: org_office_launch::OfficeLine {
-                id_profile: Some(org_office_launch::IdProfile::SelectedV1),
                 instance_id: INSTANCE.into(),
                 office_id: office.into(),
                 rendezvous: String::new(),

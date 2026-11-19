@@ -630,7 +630,9 @@ mod tests {
             },
             INSTANCE,
         );
-        for (id, stored) in [("STORED", true), ("UNFINISHED", false)] {
+        const STORED: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071d1";
+        const UNFINISHED: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071d2";
+        for (id, stored) in [(STORED, true), (UNFINISHED, false)] {
             let folder = home.join("offices").join(id);
             fs::create_dir_all(&folder).unwrap();
             if stored {
@@ -639,7 +641,7 @@ mod tests {
             discard_unfinished(home, &supervisor, id);
         }
         let ran = fs::read_to_string(home.join("ran")).unwrap_or_default();
-        assert_eq!(ran, "--discard UNFINISHED\n");
+        assert_eq!(ran, format!("--discard {UNFINISHED}\n"));
     }
 
     const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";

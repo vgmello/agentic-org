@@ -12,7 +12,6 @@ fn grant() -> GrantKey {
 }
 fn office() -> OfficeLine {
     OfficeLine {
-        id_profile: None,
         instance_id: INSTANCE.into(),
         office_id: "OFFICE1".into(),
         rendezvous: "/unused".into(),

@@ -6,49 +6,60 @@ use serde_json::{json, Value};
 use super::*;
 
 const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1";
-const OFFICE: &str = "01M72N8MG00000000000000F01";
-const ORG: &str = "01M72N8MG00000000000000G01";
+const OFFICE: &str = "01900000-0000-7000-8000-000000000002";
+const ORG: &str = "01900000-0000-7000-8000-000000000001";
+/// The ids of a version 1 `office.json`, which are plain.
+const FILE_OFFICE: &str = "01M72N8MG00000000000000F01";
+const FILE_ORG: &str = "01M72N8MG00000000000000G01";
 const OWNER: &str = "01900000-0000-7000-8000-0000000000ee";
 const RENDEZVOUS: &str = "/run/user/501/agentic-org/r/0123456789abcdef";
 
 fn office() -> OfficeLine {
     OfficeLine {
-        id_profile: None,
         instance_id: INSTANCE.into(),
         office_id: OFFICE.into(),
         rendezvous: RENDEZVOUS.into(),
     }
 }
 
+/// A launch line names its office by a UUIDv7: a ULID or another plain id is refused on
+/// both sides, and so is the retired `id_profile` key.
 #[test]
-fn selected_identity_profile_is_explicit_and_does_not_widen_legacy_lines() {
-    let mut line = office();
-    line.office_id = "019a8928-1337-7456-8456-0123456789ac".into();
-    let mut bytes = Vec::new();
-    assert!(write_first_line(&mut bytes, &HostFirstLine::Start(line.clone())).is_err());
-    assert!(bytes.is_empty());
-    line.id_profile = Some(IdProfile::SelectedV1);
+fn a_first_line_names_a_uuidv7_office_only() {
+    let line = office();
     let mut bytes = Vec::new();
     write_first_line(&mut bytes, &HostFirstLine::Start(line.clone())).unwrap();
     assert!(
         matches!(read_first_line(&mut bytes.as_slice(), FirstLine::Start).unwrap(),Some(HostFirstLine::Start(actual)) if actual==line)
     );
-    line.office_id = "legacy".into();
-    let mut bytes = Vec::new();
-    assert!(write_first_line(&mut bytes, &HostFirstLine::Start(line)).is_err());
-    assert!(bytes.is_empty());
+    let mut value: Value = serde_json::from_slice(&bytes).unwrap();
+    value["id_profile"] = json!("selected_v1");
+    let wire = serde_json::to_vec(&value).unwrap();
+    assert!(read_first_line(&mut wire.as_slice(), FirstLine::Start).is_err());
+    for plain in ["01M72N8MG00000000000000F01", "legacy"] {
+        let mut line = office();
+        line.office_id = plain.into();
+        let mut bytes = Vec::new();
+        assert!(write_first_line(&mut bytes, &HostFirstLine::Start(line)).is_err());
+        assert!(bytes.is_empty());
+        let mut value: Value = serde_json::from_slice(
+            &written(&HostFirstLine::Start(office()))
+                .to_string()
+                .into_bytes(),
+        )
+        .unwrap();
+        value["office_id"] = json!(plain);
+        let wire = serde_json::to_vec(&value).unwrap();
+        assert!(
+            read_first_line(&mut wire.as_slice(), FirstLine::Start).is_err(),
+            "{plain}"
+        );
+    }
 }
 
+/// Every create is the selected HQ creation.
 fn create() -> CreateLine {
-    CreateLine {
-        office: office(),
-        org_id: ORG.into(),
-        org_name: "Acme".into(),
-        office_name: "HQ".into(),
-        role: OfficeRole::Hq,
-        owner_member_id: OWNER.into(),
-        hq_creation: None,
-    }
+    selected_create()
 }
 
 fn selected_create() -> CreateLine {
@@ -70,8 +81,7 @@ fn selected_create() -> CreateLine {
     };
     CreateLine {
         office: OfficeLine {
-            id_profile: Some(IdProfile::SelectedV1),
-            instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182".into(),
+            instance_id: INSTANCE.into(),
             office_id: prepared.office_id.clone(),
             rendezvous: RENDEZVOUS.into(),
         },
@@ -104,13 +114,6 @@ fn complete_selected_create_round_trips_without_a_path_or_writer_flag() {
         read_first_line(&mut wire.as_slice(), FirstLine::Create).unwrap(),
         Some(expected)
     );
-    let legacy = HostFirstLine::Create(create());
-    let mut wire = Vec::new();
-    write_first_line(&mut wire, &legacy).unwrap();
-    assert_eq!(
-        read_first_line(&mut wire.as_slice(), FirstLine::Create).unwrap(),
-        Some(legacy)
-    );
 }
 
 #[test]
@@ -121,7 +124,8 @@ fn selected_create_rejects_retired_fields_missing_bootstrap_unknown_and_mismatch
         "writer-flag-false",
         "public-root",
         "version-1",
-        "no-profile",
+        "retired-profile",
+        "ulid-organization",
         "no-bootstrap",
         "no-context",
         "organization",
@@ -135,8 +139,11 @@ fn selected_create_rejects_retired_fields_missing_bootstrap_unknown_and_mismatch
             "writer-flag-false" => v["selected_writer_required"] = json!(false),
             "public-root" => v["hq_creation"]["public_root"] = json!("/private/tmp/state"),
             "version-1" => v["hq_creation"]["version"] = json!(1),
-            "no-profile" => {
-                v.as_object_mut().unwrap().remove("id_profile");
+            "retired-profile" => v["id_profile"] = json!("selected_v1"),
+            "ulid-organization" => {
+                v["org_id"] = json!("01M72N8MG00000000000000G01");
+                v["hq_creation"]["bootstrap"]["organization_id"] =
+                    json!("01M72N8MG00000000000000G01");
             }
             "no-bootstrap" => {
                 v["hq_creation"]
@@ -208,7 +215,8 @@ fn first_lines_have_no_secret_fields() {
         json!({
             "v": 1, "op": "create", "instance_id": INSTANCE, "office_id": OFFICE,
             "rendezvous": RENDEZVOUS, "org_id": ORG, "org_name": "Acme", "office_name": "HQ",
-            "role": "hq", "owner_member_id": OWNER
+            "role": "hq", "owner_member_id": OWNER,
+            "hq_creation": serde_json::to_value(create().hq_creation).unwrap()
         })
     );
     let common = ["v", "op", "instance_id", "office_id", "rendezvous"];
@@ -913,10 +921,10 @@ fn rendezvous_receipt_vectors_pin_encoding_decoding_and_strict_fields() {
 #[test]
 fn rendezvous_writer_preserves_ordinary_event_validation() {
     let office = crate::OfficeFile::new(
-        OFFICE,
+        FILE_OFFICE,
         "HQ",
         OfficeRole::Hq,
-        ORG,
+        FILE_ORG,
         "Acme",
         "2026-11-08T02:10:00.000Z",
     );
@@ -973,10 +981,10 @@ fn rendezvous_receipts_keep_the_frame_size_limit() {
 #[test]
 fn rendezvous_events_keep_the_office_file_size_limit() {
     let office = crate::OfficeFile::new(
-        OFFICE,
+        FILE_OFFICE,
         "HQ",
         OfficeRole::Hq,
-        ORG,
+        FILE_ORG,
         "Acme",
         "2026-11-08T02:10:00.000Z",
     );
@@ -1012,10 +1020,7 @@ fn rendezvous_events_keep_the_office_file_size_limit() {
 /// A start line has no writer flag: one that carries it, either value, is refused.
 #[test]
 fn a_start_line_with_the_retired_writer_flag_is_refused() {
-    let mut office = office();
-    office.id_profile = Some(IdProfile::SelectedV1);
-    office.office_id = "019a8928-1337-7456-8456-0123456789ac".into();
-    let line = HostFirstLine::Start(office);
+    let line = HostFirstLine::Start(office());
     let mut bytes = Vec::new();
     write_first_line(&mut bytes, &line).unwrap();
     assert_eq!(
@@ -1033,12 +1038,6 @@ fn a_start_line_with_the_retired_writer_flag_is_refused() {
 #[test]
 fn hq_creation_context_is_explicit_versioned_and_strictly_decoded_from_raw_bytes() {
     let mut creation = create();
-    creation.hq_creation = Some(HqCreationV1 {
-        version: 2,
-        operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
-        escrow_profile: 1,
-        bootstrap: None,
-    });
     let line = HostFirstLine::Create(creation.clone());
     let mut bytes = Vec::new();
     write_first_line(&mut bytes, &line).unwrap();

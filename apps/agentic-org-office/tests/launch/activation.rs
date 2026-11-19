@@ -33,7 +33,6 @@ fn plan() -> org_proto::selected_bootstrap::PreparedV1 {
 
 fn office_line(path: &Path) -> OfficeLine {
     OfficeLine {
-        id_profile: Some(org_office_launch::IdProfile::SelectedV1),
         instance_id: INSTANCE.into(),
         office_id: OFFICE.into(),
         rendezvous: path.to_str().unwrap().into(),

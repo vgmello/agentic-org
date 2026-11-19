@@ -571,7 +571,6 @@ impl Provisioning {
         self.reserve_writer(account, r, &folder)?;
         let first = org_office_launch::CreateLine {
             office: org_office_launch::OfficeLine {
-                id_profile: Some(org_office_launch::IdProfile::SelectedV1),
                 instance_id: self.instance.clone(),
                 office_id: r.prepared.office_id.clone(),
                 rendezvous: String::new(),

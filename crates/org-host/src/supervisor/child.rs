@@ -469,8 +469,6 @@ impl Spawner {
             Mode::Office(id, office_secrets_key) => {
                 let first =
                     org_office_launch::HostFirstLine::Start(org_office_launch::OfficeLine {
-                        id_profile: org_office_launch::is_selected_entity_id(id)
-                            .then_some(org_office_launch::IdProfile::SelectedV1),
                         instance_id: broker.instance.clone(),
                         office_id: id.into(),
                         rendezvous: rendezvous
@@ -530,8 +528,6 @@ impl Spawner {
             Mode::Discard(id) => {
                 let first =
                     org_office_launch::HostFirstLine::Discard(org_office_launch::OfficeLine {
-                        id_profile: org_office_launch::is_selected_entity_id(id)
-                            .then_some(org_office_launch::IdProfile::SelectedV1),
                         // A discard never claims writer custody: the host keeps the
                         // custody record and the folder's `selected-writer.required` marker.
                         instance_id: broker.instance.clone(),

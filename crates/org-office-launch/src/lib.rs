@@ -16,7 +16,7 @@
 //! address) arrives with a role or op that older servers refuse, never as a field they would
 //! silently ignore. `v` is reserved in every line: no op or event has a field named `v`.
 //!
-//! The types check their own rules (plain ids, a role this version can create) whenever they
+//! The types check their own rules (UUIDv7 ids, a role this version can create) whenever they
 //! are decoded or encoded, by any serde path. The `"v"` of a launch line is checked by
 //! [`read_first_line`] and [`read_server_event`], so read and write lines only through
 //! these functions. Launch version 1 ([`LAUNCH_VERSION`]) is the only one: the earlier
@@ -721,9 +721,9 @@ pub use contract::{
     decode_handoff, decode_transfer_record, encode_create_handoff, encode_discard_handoff,
     encode_handoff, encode_start_handoff, encode_transfer_record, read_first_line,
     read_server_event, write_first_line, write_rendezvous_event, write_server_event, ChannelKind,
-    CreateLine, Handoff, HandoffFd, HostFirstLine, HqCreationV1, IdProfile, OfficeLine,
-    ReadyForSecrets, RecoveryCode, RefusalReason, RendezvousEvent, TransferRecord, CHANNEL_PROFILE,
-    FD_MARKER, LAUNCH_VERSION, MAX_CHANNELS, MAX_WEB_CHANNELS, TRANSFER_HEADER_MAX_BYTES,
+    CreateLine, Handoff, HandoffFd, HostFirstLine, HqCreationV1, OfficeLine, ReadyForSecrets,
+    RecoveryCode, RefusalReason, RendezvousEvent, TransferRecord, CHANNEL_PROFILE, FD_MARKER,
+    LAUNCH_VERSION, MAX_CHANNELS, MAX_WEB_CHANNELS, TRANSFER_HEADER_MAX_BYTES,
     TRANSFER_SOCKET_BUFFER_BYTES,
 };
 pub mod writer;

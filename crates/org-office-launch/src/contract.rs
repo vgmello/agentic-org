@@ -39,8 +39,7 @@ use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    is_plain_id, read_secret_line, zero, ByteCounter, FirstLine, LaunchError, OfficeSecretsKey,
-    ServerEvent,
+    read_secret_line, zero, ByteCounter, FirstLine, LaunchError, OfficeSecretsKey, ServerEvent,
 };
 
 /// An organization's recovery code (X-02 §6.4): staged by the host at `reserved` and sent on
@@ -90,22 +89,13 @@ pub enum HostFirstLine {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawOfficeLine")]
 pub struct OfficeLine {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id_profile: Option<IdProfile>,
     /// The instance the office belongs to: canonical lowercase UUIDv7 text (a ULID is refused).
-    /// The server stores it at create and refuses a `start` naming another; an office created
-    /// before instance ids adopts it on its first `start`.
+    /// The server stores it at create and refuses a `start` naming another.
     pub instance_id: String,
+    /// Canonical lowercase UUIDv7 text.
     pub office_id: String,
     /// The absolute path of the per-spawn rendezvous socket: `<runtime>/r/<16 hex>`.
     pub rendezvous: String,
-}
-
-/// Explicit additive identity profile; omission retains legacy launch rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IdProfile {
-    SelectedV1,
 }
 
 /// A first line refuses a field it doesn't define (a v2 key such as `db_key` included); `v` is the
@@ -113,8 +103,6 @@ pub enum IdProfile {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawOfficeLine {
-    #[serde(default)]
-    id_profile: Option<IdProfile>,
     #[serde(default, rename = "v")]
     _version: Option<IgnoredAny>,
     instance_id: String,
@@ -127,7 +115,6 @@ impl TryFrom<RawOfficeLine> for OfficeLine {
 
     fn try_from(raw: RawOfficeLine) -> Result<Self, Self::Error> {
         let line = OfficeLine {
-            id_profile: raw.id_profile,
             instance_id: raw.instance_id,
             office_id: raw.office_id,
             rendezvous: raw.rendezvous,
@@ -139,15 +126,11 @@ impl TryFrom<RawOfficeLine> for OfficeLine {
 
 impl OfficeLine {
     fn check(&self) -> Result<(), &'static str> {
-        let office_valid = match self.id_profile {
-            None => is_plain_id(&self.office_id),
-            Some(IdProfile::SelectedV1) => crate::is_selected_entity_id(&self.office_id),
-        };
         if !org_proto::is_uuid_v7(&self.instance_id) {
             return Err("the first line's instance id isn't a canonical lowercase UUIDv7");
         }
-        if !office_valid {
-            return Err("the first line holds an id that isn't plain");
+        if !crate::is_selected_entity_id(&self.office_id) {
+            return Err("the first line's office id isn't a canonical lowercase UUIDv7");
         }
         if !self.rendezvous.starts_with('/') || self.rendezvous.contains('\0') {
             return Err("the rendezvous path must be absolute, without NUL");
@@ -171,7 +154,7 @@ pub struct CreateLine {
     /// The organization's owner member, chosen by the host so a retried create uses the same
     /// one ([`org_proto::is_valid_member_id`]).
     pub owner_member_id: String,
-    /// Explicit REC-ESC-1 preparation; absence preserves legacy create behavior.
+    /// The protected HQ creation (REC-ESC-1) with its bootstrap: every create carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hq_creation: Option<HqCreationV1>,
 }
@@ -209,8 +192,6 @@ impl HqCreationV1 {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawCreateLine {
-    #[serde(default)]
-    id_profile: Option<IdProfile>,
     #[serde(default, rename = "v")]
     _version: Option<IgnoredAny>,
     instance_id: String,
@@ -232,7 +213,6 @@ impl TryFrom<RawCreateLine> for CreateLine {
     fn try_from(raw: RawCreateLine) -> Result<Self, Self::Error> {
         let line = CreateLine {
             office: OfficeLine {
-                id_profile: raw.id_profile,
                 instance_id: raw.instance_id,
                 office_id: raw.office_id,
                 rendezvous: raw.rendezvous,
@@ -253,14 +233,8 @@ impl CreateLine {
     fn check(&self) -> Result<(), &'static str> {
         self.office.check()?;
         self.check_bootstrap_context()?;
-        let org_valid = match self.office.id_profile {
-            None => is_plain_id(&self.org_id),
-            Some(IdProfile::SelectedV1) => {
-                crate::is_selected_entity_id(&self.org_id) && self.hq_creation.is_some()
-            }
-        };
-        if !org_valid {
-            return Err("the create line holds an id that isn't plain");
+        if !crate::is_selected_entity_id(&self.org_id) {
+            return Err("the create line's organization id isn't a canonical lowercase UUIDv7");
         }
         if !org_proto::is_valid_member_id(&self.owner_member_id) {
             return Err("the create line's owner_member_id isn't a member id");
@@ -272,16 +246,15 @@ impl CreateLine {
     }
 
     fn check_bootstrap_context(&self) -> Result<(), &'static str> {
-        // Every selected create is a protected HQ creation with its bootstrap: it is the
-        // only create the host reserves writer custody for.
-        if self.office.id_profile == Some(IdProfile::SelectedV1)
-            && self
-                .hq_creation
-                .as_ref()
-                .and_then(|c| c.bootstrap.as_ref())
-                .is_none()
+        // Every create is a protected HQ creation with its bootstrap: it is the only create
+        // the host reserves writer custody for.
+        if self
+            .hq_creation
+            .as_ref()
+            .and_then(|c| c.bootstrap.as_ref())
+            .is_none()
         {
-            return Err("a selected create requires the explicit bootstrap profile");
+            return Err("a create requires the explicit bootstrap profile");
         }
         if let Some(context) = &self.hq_creation {
             context.check()?;
@@ -290,7 +263,6 @@ impl CreateLine {
                     || b.office_id != self.office.office_id
                     || b.plan.name != self.org_name
                     || b.creator.employee_id != self.owner_member_id
-                    || self.office.id_profile != Some(IdProfile::SelectedV1)
                 {
                     return Err("selected bootstrap scope mismatch");
                 }

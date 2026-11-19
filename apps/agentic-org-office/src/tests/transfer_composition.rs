@@ -72,7 +72,6 @@ fn probe(failure: bool) {
     org_office_launch::write_first_line(
         &mut input,
         &HostFirstLine::Start(OfficeLine {
-            id_profile: Some(org_office_launch::IdProfile::SelectedV1),
             instance_id: INSTANCE.into(),
             office_id: ID.into(),
             rendezvous: path.to_str().unwrap().into(),
