@@ -1321,7 +1321,10 @@ browser over plain HTTP (X5), and the documented run command publishes that port
   [offices and teams UX](specs/offices-and-teams-ux.md) (OFC criteria for a second
   office), [recovery contract](design/organization-data/16-recovery-and-office-continuity.md).
   Rows FC-020, FC-145; the replication suite of ADR-0018 (ENG-3).
-- **Code today:** `crates/org-sync` is the replication core; nothing enrols an office.
+- **Code today:** `crates/org-sync` is the replication core; nothing enrols an office. Since
+  B1b a second office of one organization on one instance is refused: the host reserves writer
+  custody only into empty per-organization roots (`crates/org-host/src/writer.rs`
+  `empty_reservation_root`); S1 decides per-office roots.
 - **Needs:** milestone one. It starts with its own short plan.
 
 ---

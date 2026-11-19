@@ -20,7 +20,7 @@ use std::time::Duration;
 use tests::poll_readable;
 #[cfg(test)]
 use tests::Builder;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub(crate) use writer::install as install_writer;
 pub(crate) use writer::Admitted;
 

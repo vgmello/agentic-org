@@ -351,7 +351,8 @@ fn a_committed_team_survives_killing_the_worker_after_its_answer() {
     assert!(world.writer.head().unwrap().ordinal >= confirmed.ordinal);
     drop(owner);
     again.stop();
-    // The kill left no clean-stop marker; the orderly stop after it did.
+    // The orderly stop after the restart leaves a clean-stop marker (the in-process test checks
+    // that a drop without `close` leaves none).
     assert!(world.office().stopped_cleanly());
 }
 
