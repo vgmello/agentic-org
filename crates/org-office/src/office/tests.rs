@@ -807,7 +807,12 @@ fn opening_a_missing_folder_is_not_found_and_creates_nothing() {
     std::fs::write(&site.folder, b"not a folder").unwrap();
     let refused = site.open(EngineChoice::Memory);
     assert!(
-        matches!(refused, Err(OfficeError::Invalid(_))),
+        matches!(
+            refused,
+            Err(OfficeError::Invalid(
+                "the office folder is not a plain folder"
+            ))
+        ),
         "{refused:?}"
     );
     assert_eq!(std::fs::read(&site.folder).unwrap(), b"not a folder");

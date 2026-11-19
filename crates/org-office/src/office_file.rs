@@ -5,8 +5,9 @@
 //!
 //! The shape is the host/server boundary design's (`docs/design/office-host-boundary.md`),
 //! version 2: UUIDv7 office and organization ids. The office writes and reads no other version;
-//! the plain ids of version 1 belong to offices this build refuses. **Transitional:** the contract crate `org-office-launch` will own the type and
-//! its checks; when it is on `v1`, this module becomes a thin adapter over it.
+//! the plain ids of version 1 belong to offices this build refuses. **Transitional:** the
+//! contract crate `org-office-launch` will own the type and its checks; when it is on `v1`, this
+//! module becomes a thin adapter over it.
 
 use std::fs;
 use std::path::Path;

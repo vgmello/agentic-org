@@ -74,7 +74,7 @@ close-on-exec, so no child keeps the lock.
 ### `office.json`
 
 ```json
-{"v":1,"office_id":"0193…","office_name":"HQ","role":"hq",
+{"v":2,"office_id":"0193…","office_name":"HQ","role":"hq",
  "org_id":"0193…","org_name":"Acme","created_at":"2026-11-08T02:10:00.000Z"}
 ```
 

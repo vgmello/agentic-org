@@ -221,15 +221,9 @@ impl Office {
         }
         check_roots(&roots)?;
         let folder = plain_folder(folder.into())?;
+        // A link or a file where the folder goes is refused here; a missing folder is
+        // `NotFound` from `lock_folder`, which creates nothing.
         check_not_a_link(&folder)?;
-        match std::fs::metadata(&folder) {
-            Ok(meta) if meta.is_dir() => {}
-            Ok(_) => return Err(OfficeError::Invalid("the office folder is not a folder")),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Err(OfficeError::NotFound);
-            }
-            Err(e) => return Err(OfficeError::storage(e)),
-        }
         let lock = lock_folder(&folder, LOCK_WAIT)?;
         refuse_older_build(&folder)?;
         let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
