@@ -30,6 +30,7 @@ version = "0.0.0"
 dependencies = [
  "agentic-org",
  "libc",
+ "org-client",
  "org-host",
  "org-host-control",
  "org-office",
