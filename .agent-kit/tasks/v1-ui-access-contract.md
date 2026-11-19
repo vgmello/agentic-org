@@ -80,10 +80,20 @@
   members) mounts its own. The members index exports the host, its types, `NOT_IN_ORGANIZATION` and `expiryUntil`.
 - Mock: `e2e/fakes/modules/access.ts` keeps no state: people, handles, home teams, sign-in state and the owner come
   from the members mock (`signInOf`, `ownerIdOf`), the administrator and usernames from the settings mock, so the
-  profile, Members, General and this page agree in one session. Switches: `?mock=slow|fails|empty|unavailable|viewer|
-  invited|deactivated|refuse|gone`.
+  profile, Members, General and this page agree in one session. Switches (`?mock=`): slow, fails, empty, unavailable,
+  viewer, invited, deactivated, refuse, gone.
 - Coupling: access imports the members public index (the dialog host, expiryUntil). No `allowedCoupling` entry is
   needed: both are in the same e2e category and `ui-gate.test` passes.
+
+## Open owner decision: who sees usernames
+
+- Today every viewer of the page, managers or not, sees each signed-in person's username and the administrator's
+  username (review access-full #9, access-opus #3). Listing every member's login name to all employees gives a list
+  of valid usernames; §4a.1 and SIGN-28 limit account exposure but do not settle this case.
+- Decision by the owner, left as built on 2026-11-19 at the lead's instruction. The UI does not decide it: `username`
+  in `AccessPerson` and `AccessAdministrator` is server-controlled (`types.ts`), sent only when the server decides the
+  viewer may see it; the page shows a username only when one is sent. The default the reviews recommend is least
+  exposure: send usernames only when `viewer.canManage`.
 
 ## Non-goals
 

@@ -22,7 +22,11 @@ export interface AccessPerson {
 	 */
 	active: boolean;
 	state: AccessState;
-	/** Set when `state` is `signed_in`: the account's username. */
+	/**
+	 * Set when `state` is `signed_in`: the account's username. Server-controlled: sent only when the server decides the
+	 * viewer may see it (who may see usernames is an open owner decision, recorded in the task contract); the page
+	 * shows it only when present.
+	 */
 	username?: string;
 	/** Set when `state` is `invited`: RFC 3339. The link works until then. */
 	inviteExpiresAt?: string;
@@ -30,7 +34,11 @@ export interface AccessPerson {
 
 /** The instance's administrator, who may be a person here or none yet. */
 export interface AccessAdministrator {
-	username: string;
+	/**
+	 * The administrator account's username. Server-controlled like `AccessPerson.username`: the server decides whether
+	 * this viewer may see it (open owner decision, task contract).
+	 */
+	username?: string;
 	/** The person the account is tied to in this organization, when it has one. */
 	memberId?: string;
 	name?: string;
