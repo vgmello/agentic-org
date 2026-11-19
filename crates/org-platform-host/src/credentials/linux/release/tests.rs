@@ -2233,7 +2233,8 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
         refusal(tree.open_apart(&container_secrets, &instance, true, &[&records])),
         (RootRule::AccountData, container_secrets.clone())
     );
-    assert_eq!(listing(&outer.join("secrets")), [".lock"]);
+    // Both refusals come before the store's lock: nothing is made in it.
+    assert!(listing(&outer.join("secrets")).is_empty());
     drop((records, instance, secrets_bound, inner_bound, outer_bound));
 
     // 4c. The store mounted again inside the data root (`mount --bind credentials
