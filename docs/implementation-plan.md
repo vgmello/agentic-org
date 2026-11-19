@@ -1379,7 +1379,7 @@ each is finished.
 - An increment that gives agents a command adds or changes the section of the
   [built-in agent instructions](design/agent-instructions.md) that tells them when to use
   it, and makes its scenario pass.
-- Branch from `origin/v1-integration`. One writer per file at a time.
+- Branch from `origin/v1`. One writer per file at a time.
 - Before code, write the short plan for the increment: what a person can do at the end,
   the files you will own, what you will delete, and the decisions you are taking where
   the documents are silent.
@@ -1389,4 +1389,4 @@ each is finished.
   `cargo test --workspace`; for the UI, its type check, tests and build. When you change
   the data contract, `python3 docs/design/organization-data/test_schema.py`.
 - Update the checklist row with evidence. Mark it Done only for the row's whole scope.
-- Get an independent review, then merge into `v1-integration`.
+- Get an independent review, then merge `origin/v1` into your branch, tell the other lead sessions, then `git merge --no-ff` into `v1` and push it.

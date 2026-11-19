@@ -40,6 +40,8 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 
 ## Increments
 
+> Superseded: the current status of every Track X increment is in `docs/workstreams/linux.md` (2026-11-19). The table below is history.
+
 | Increment | State | Evidence |
 | --- | --- | --- |
 | X1a check, list, CI guards, layout | Built and accepted 2026-11-18 | See below |

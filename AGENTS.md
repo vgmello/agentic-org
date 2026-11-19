@@ -49,10 +49,10 @@ Engineers and their agents make architectural decisions themselves, inside the
 ## Rules
 1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** For domain/data work, also read the authority map and owning organization-data contract before implementing a secondary design or UX criterion. Follow the [v1 project structure](docs/design/project-structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin. Planned variation (another OS, vendor, storage engine or deployment form) goes behind a consumer-owned adapter contract from the first implementation; every operating system without an implementation gets an adapter that fails closed, an unbuilt provider or engine is refused at composition, and later additions change only the adapter and composition ([rule](docs/architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
 2. **Branches and integration:** follow [`docs/processes/branch-and-merge.md`](docs/processes/branch-and-merge.md).
-   - Start feature branches from `origin/v1-integration`. Use separate worktrees for concurrent writers; otherwise work in the dedicated current checkout.
+   - Start feature branches from `origin/v1`. Use separate worktrees for concurrent writers; otherwise work in the dedicated current checkout.
    - Each lead keeps one active implementation branch at a time. Preserve blocked branches/checkpoints and move to independent work rather than stopping all delivery.
-   - Review completed work locally, then `git merge --no-ff` into `v1-integration` and push that branch. It is the integration branch for **all v1 features**. Do not wait for a pull request or an outside reviewer.
-   - Never push to `main` or merge into release `v1` without an explicit release instruction. Never delete unmerged work; verify integration before cleaning up merged branches/worktrees.
+   - Review completed work locally, then merge `origin/v1` into your branch, tell the other lead sessions, `git merge --no-ff` into `v1` and push it. `v1` is the integration branch for **all v1 features** (owner, 2026-11-18; `v1-integration` is retired). Do not wait for a pull request or an outside reviewer.
+   - Never push to `main` without an explicit release instruction. Never delete unmerged work; verify integration before cleaning up merged branches/worktrees.
 3. **Checks and local review:** use the installed kit's task-routing, skill-routing and review-cycle. Keep the original author context, fix confirmed findings, validate original intent and obtain the separate fresh final local review for the exact commit. The lead merges after current checks and local acceptance pass.
    - For Rust changes, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass.
    - For app changes, the type check, tests, build and relevant browser checks pass; capture UI evidence where applicable.
@@ -78,6 +78,10 @@ person-started commands select an explicit instance and office or a saved contex
 managed employees use their injected binding.
 
 ## Session start: check for a handover
+
+First read [`docs/workstreams/README.md`](docs/workstreams/README.md) and your stream's file
+(`backend.md`, `linux.md` or `ui.md`): it is the shared record of where each stream stands and
+what comes next; a local `HANDOVER.md` only adds checkout detail.
 
 At the start of every lead session, check for `.agent-kit/tasks/HANDOVER.md` in this
 checkout (each checkout has its own). It is local session state, ignored by Git and
