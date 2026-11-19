@@ -1,0 +1,222 @@
+{
+	"repositories": [
+		{
+			"id": "0193b000-0000-7000-8000-000000000101",
+			"key": "web-app",
+			"kind": "remote",
+			"remoteUrl": "git@github.com:lumen-labs/web-app.git",
+			"defaultBranch": "main"
+		},
+		{
+			"id": "0193b000-0000-7000-8000-000000000102",
+			"key": "infra",
+			"kind": "remote",
+			"remoteUrl": "git@github.com:lumen-labs/infra.git",
+			"defaultBranch": "main"
+		},
+		{
+			"id": "0193b000-0000-7000-8000-000000000103",
+			"key": "design-tokens",
+			"kind": "remote",
+			"remoteUrl": "git@github.com:lumen-labs/design-tokens.git",
+			"defaultBranch": "main"
+		},
+		{
+			"id": "0193b000-0000-7000-8000-000000000104",
+			"key": "research-notes",
+			"kind": "local",
+			"defaultBranch": "main"
+		}
+	],
+	"projects": {
+		"atlas": {
+			"number": 3,
+			"slug": "atlas",
+			"tasks": { "todo": 4, "inProgress": 2, "blocked": 0, "done": 11, "cancelled": 1 },
+			"bugs": { "critical": 0, "major": 1, "minor": 1, "trivial": 0, "unset": 1 },
+			"features": { "planned": 1, "inProgress": 1, "live": 3 },
+			"releases": 1,
+			"brief": {
+				"markdown": "Atlas is the deploy pipeline every Lumen service ships through.\n\n## Goals\n- A deploy takes under ten minutes from merge to production\n- A failed deploy rolls back by itself\n- Every deploy says which commits it carried\n\n## Not in scope\nBuild machines and the package registry: they belong to Platform's own team work.",
+				"updatedAt": "2026-11-12T09:20:00Z",
+				"updatedBy": "Kai Lindqvist"
+			},
+			"repositories": [
+				{ "repositoryId": "0193b000-0000-7000-8000-000000000102", "integrationBranch": "main" }
+			],
+			"activity": [
+				{
+					"id": "pa-a1",
+					"agoMin": 14,
+					"actor": "Kai Lindqvist",
+					"kind": "Task",
+					"text": "moved T-A31 Retry deploys on 503 to In progress"
+				},
+				{
+					"id": "pa-a2",
+					"agoMin": 55,
+					"actor": "Avery Stone",
+					"kind": "Bug",
+					"text": "reported Bug T-A33 Rollback leaves the old pods running"
+				},
+				{
+					"id": "pa-a3",
+					"agoMin": 190,
+					"actor": "Kai Lindqvist",
+					"kind": "Task",
+					"text": "completed T-A29 Tag every deploy with its commits"
+				},
+				{
+					"id": "pa-a4",
+					"agoMin": 1500,
+					"actor": "Mira Castillo",
+					"kind": "Task",
+					"text": "assigned T-A30 Canary step to Platform · Mira Castillo"
+				}
+			],
+			"conversations": [
+				{
+					"id": "pc-a1",
+					"title": "T-A31 Retry deploys on 503",
+					"kind": "thread",
+					"agoMin": 12,
+					"preview": "Kai: five tries, then give up and page"
+				},
+				{
+					"id": "pc-a2",
+					"title": "#platform",
+					"kind": "channel",
+					"agoMin": 70,
+					"preview": "Mira: canary is green on staging"
+				}
+			]
+		},
+		"beacon": {
+			"number": 8,
+			"slug": "beacon",
+			"tasks": { "todo": 3, "inProgress": 2, "blocked": 1, "done": 6, "cancelled": 2 },
+			"bugs": { "critical": 1, "major": 2, "minor": 0, "trivial": 1, "unset": 1 },
+			"features": { "planned": 1, "inProgress": 2, "live": 5 },
+			"releases": 2,
+			"brief": {
+				"markdown": "Beacon is Lumen's checkout: cart, payment and the receipt.\n\n## Goals\n1. Pay in two taps on a phone\n2. No order is charged twice\n3. A failed payment says what to do next\n\n## Who it is for\nPeople buying on lumen.example from any device, including small phones and large text.",
+				"updatedAt": "2026-11-17T16:05:00Z",
+				"updatedBy": "Noor Haddad"
+			},
+			"repositories": [
+				{ "repositoryId": "0193b000-0000-7000-8000-000000000101", "integrationBranch": "main" },
+				{
+					"repositoryId": "0193b000-0000-7000-8000-000000000103",
+					"integrationBranch": "release/beacon"
+				}
+			],
+			"activity": [
+				{
+					"id": "pa-b1",
+					"agoMin": 2,
+					"actor": "Avery Stone",
+					"kind": "Task",
+					"text": "assigned T-A40 Split the checkout service to Web · Sam Okafor"
+				},
+				{
+					"id": "pa-b2",
+					"agoMin": 18,
+					"actor": "Noor Haddad",
+					"kind": "Bug",
+					"text": "moved Bug T-A42 Pay button wraps under the total at 320 px to In progress"
+				},
+				{
+					"id": "pa-b3",
+					"agoMin": 35,
+					"actor": "Mira Castillo",
+					"kind": "Task",
+					"text": "marked T-A44 Decide the retry policy for payments as Blocked: waiting on the payments provider"
+				},
+				{
+					"id": "pa-b4",
+					"agoMin": 160,
+					"actor": "Juno Park",
+					"kind": "Task",
+					"text": "completed T-A38 Receipt layout for small phones"
+				},
+				{
+					"id": "pa-b5",
+					"agoMin": 400,
+					"actor": "Avery Stone",
+					"kind": "Bug",
+					"text": "reported Bug T-A45 Card number field drops the last digit"
+				},
+				{
+					"id": "pa-b6",
+					"agoMin": 1300,
+					"actor": "Sam Okafor",
+					"kind": "Task",
+					"text": "created T-A41 Saved cards behind a flag"
+				},
+				{
+					"id": "pa-b7",
+					"agoMin": 2900,
+					"actor": "Noor Haddad",
+					"kind": "Brief",
+					"text": "updated the brief"
+				}
+			],
+			"conversations": [
+				{
+					"id": "c3",
+					"title": "T-A40 Split the checkout service",
+					"kind": "thread",
+					"agoMin": 2,
+					"preview": "Avery: please keep the public API stable"
+				},
+				{
+					"id": "c1",
+					"title": "#web",
+					"kind": "channel",
+					"agoMin": 20,
+					"preview": "Noor: the Pay button fix is up for review"
+				},
+				{
+					"id": "pc-b3",
+					"title": "Bug T-A45 Card number field drops the last digit",
+					"kind": "thread",
+					"agoMin": 380,
+					"preview": "Juno: happens only with a pasted number"
+				}
+			]
+		},
+		"onboarding": {
+			"number": 5,
+			"slug": "onboarding-kit",
+			"tasks": { "todo": 2, "inProgress": 0, "blocked": 0, "done": 1, "cancelled": 0 },
+			"bugs": { "critical": 0, "major": 0, "minor": 0, "trivial": 0, "unset": 0 },
+			"features": { "planned": 0, "inProgress": 0, "live": 0 },
+			"releases": 0,
+			"brief": null,
+			"repositories": [],
+			"activity": [
+				{
+					"id": "pa-o1",
+					"agoMin": 600,
+					"actor": "Hana Weiss",
+					"kind": "Task",
+					"text": "created T-A50 First-week checklist for new agents"
+				}
+			],
+			"conversations": []
+		},
+		"scratch": {
+			"number": 9,
+			"slug": "scratchpad",
+			"owner": "eng",
+			"tasks": { "todo": 0, "inProgress": 0, "blocked": 0, "done": 0, "cancelled": 0 },
+			"bugs": { "critical": 0, "major": 0, "minor": 0, "trivial": 0, "unset": 0 },
+			"features": { "planned": 0, "inProgress": 0, "live": 0 },
+			"releases": 0,
+			"brief": null,
+			"repositories": [],
+			"activity": [],
+			"conversations": []
+		}
+	}
+}

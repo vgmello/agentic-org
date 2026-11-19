@@ -9,3 +9,6 @@ export { default as PlaceProcesses } from './features/embedded/PlaceProcesses.sv
 export { readPlace, type PlaceRead } from './features/place-view/load';
 export { PROCESSES_URL, DEV_PROCESSES_URL, listHref, devProcessHref } from './present';
 export type { Place } from './types';
+// The development process catalogue, for a project's Development process select (development-processes §3, PKG-4).
+export { processesApi, type ProcessesApi } from './api';
+export type { DevProcessCatalogue, DevProcessSummary } from './types';

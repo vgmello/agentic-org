@@ -26,6 +26,10 @@
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
 	"webkitExempt": [
 		{
+			"spec": "projects.spec.ts",
+			"why": "rewritten for the new Projects screens; not yet run on WebKit (BUG-169b)"
+		},
+		{
 			"spec": "costs.spec.ts",
 			"why": "new spec; not yet run on WebKit (BUG-169b)"
 		},
@@ -246,12 +250,12 @@
 				},
 				{
 					"spec": "projects.spec.ts",
-					"match": "PROJ-2: Assign team",
+					"match": "PROJ-2: New project creates its own team",
 					"count": 1
 				},
 				{
 					"spec": "projects.spec.ts",
-					"match": "PROJ-3: a project page shows its name",
+					"match": "PROJ-3: a project page has its header",
 					"count": 1
 				},
 				{
@@ -482,6 +486,7 @@
 			],
 			"sources": [
 				"src/routes/(shell)/projects/**",
+				"src/lib/modules/projects/**",
 				"src/routes/(shell)/work/**",
 				"src/lib/org/projects*",
 				"src/lib/org/team-edit*",
@@ -551,6 +556,11 @@
 		}
 	],
 	"allowedCoupling": [
+		{
+			"from": "src/lib/modules/projects/{components/ProcessSelect,features/overview/ProjectOverview}.svelte",
+			"to": "src/lib/modules/processes/index.ts",
+			"why": "A project chooses its development process from the processes module's catalogue and links to it (development-processes §3, PKG-4), through that module's public index; the processes specs cover the catalogue, the projects spec covers the choice."
+		},
 		{
 			"from": "src/lib/modules/members/features/directory/MembersDirectory.svelte",
 			"to": "src/lib/components/AddPersonSheet.svelte",
