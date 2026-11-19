@@ -198,21 +198,21 @@
 		},
 		{
 			"name": "agents-roster",
-			"why": "List agents, add an agent, open one in the org chart.",
+			"why": "Members directory: list people and agents, add a person, open a member's profile.",
 			"tests": [
 				{
 					"spec": "agents-roster.spec.ts",
-					"match": "the Agents screen lists every agent",
+					"match": "Members lists people and agents A–Z",
 					"count": 1
 				},
 				{
 					"spec": "agents-roster.spec.ts",
-					"match": "a name opens the org chart",
+					"match": "a name in the directory opens",
 					"count": 1
 				},
 				{
 					"spec": "agents-roster.spec.ts",
-					"match": "Add agent from the Agents screen",
+					"match": "Add a person adds the row once",
 					"count": 1
 				}
 			]
@@ -567,6 +567,11 @@
 	],
 	"allowedCoupling": [
 		{
+			"from": "src/lib/modules/members/features/directory/MembersDirectory.svelte",
+			"to": "src/lib/components/AddPersonSheet.svelte",
+			"why": "The Members directory's Add a person opens the organization's existing add-a-person flow, as the top-bar New and a team's page do, without owning it; the org-chart specs cover that flow. It moves into the members module when the org chart slice is rebuilt."
+		},
+		{
 			"from": "src/lib/modules/members/features/profile/ProfileFrame.svelte",
 			"to": "src/lib/{components/{EditPersonDialog,MoveMemberDialog}.svelte,modules/employees/index.ts}",
 			"why": "The member profile reuses the org chart's Edit and Move home team dialogs (and the agent Edit dialog from the employees module's public entry) without owning them; org-chart specs cover them. They move into the members module when the org chart slice is rebuilt."
@@ -600,11 +605,6 @@
 			"from": "e2e/{tasks,copilot}.spec.ts",
 			"to": "src/routes/(shell)/{teams/(views)/org-chart,projects}/+page.svelte",
 			"why": "tasks pauses an agent through the org chart; copilot opens a project page only to reach the report and task dialogs, which requests-copilot owns too."
-		},
-		{
-			"from": "e2e/agents-roster.spec.ts",
-			"to": "src/routes/(shell)/projects/+page.svelte",
-			"why": "Opens Projects to check the Agents views navigation leaves the roster."
 		},
 		{
 			"from": "src/lib/modules/teams/features/{team-actions/TeamDialogs,team-page/AddPersonToTeam}.svelte",
