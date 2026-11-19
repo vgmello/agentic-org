@@ -412,11 +412,31 @@ onto it and deletes the old store; B1c measures and guards it.
   (opening, loss boundaries); [ADR-0007](adr/0007-hq-creation-escrow.md),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md),
   [host boundary design](design/office-host-boundary.md).
-- **Code today:** `crates/org-office/src/office.rs` opens `org.db` and `office.db` and
-  writes `meta` rows; `office/hq_creation.rs` and `store/hq_creation.rs` hold the
-  creation record; `apps/agentic-org-office/src/transfer/writer.rs` is the host custody
-  channel, called twice per write and once per read today; `apps/agentic-org-office/src/lib.rs`
-  wired the mailbox to the old tables until B1b's first merge, which unplugged it (`unsupported`).
+- **Code today:** `org_office::Office` (`crates/org-office/src/office/`) opens through
+  `open_store` (`crates/org-office/src/store/open.rs`) on the organization's data roots `<instance-root>/<org-id>/{durable,runtime}`, which the host
+  gives it in its writer admission. HQ creation is the journal's first entry
+  (`CreateOrganizationOp`, `store/open/operations.rs`): the organization's files under
+  `durable/state/`, the escrow package `state/security/ca-escrow.v1.bin` and the CA key
+  record `local/offices/<office-id>/security/ca-key.v1.json`, wrapped by the office
+  secrets key (`office_local/`). `apps/agentic-org-office/src/transfer/writer.rs`
+  implements `org_store::WriterAuthority` over writer-control wire version 2: the head is
+  read once at opening and confirmed once per flush, and the host checks it
+  (`crates/org-host/src/writer.rs`); no office starts without custody. The clean-stop
+  marker is `local/offices/<office-id>/clean-stop`. `org.snapshot`, `who`, `inbox.list`,
+  `msg.bind`'s lookup (`apps/agentic-org-office/src/directory.rs`) and `team.create`
+  answer from the store; work, operation lookup, the other organization commands,
+  messaging, status lines and `subscribe` answer `unsupported`. The old store and every
+  SQL statement outside `src/store/sqlite/` are deleted;
+  `crates/org-office/tests/engine_boundary.rs` parses the crate with `syn` and fails on a `rusqlite` path or SQL outside it (empty
+  allowlist). `TestOffice` opens on the memory engine by default and the office's tests
+  run on both engines. Done-when evidence: deleting `runtime/<office-id>/` rebuilds with
+  no loss in process (`office/tests.rs`), through the real worker
+  (`apps/agentic-org-office/tests/launch/activation/owner.rs`) and through the real host
+  (`crates/org-host/src/web_process_tests/organizations.rs`, ignored real-process); an
+  answered team survives a `SIGKILL` (`owner.rs`
+  `a_committed_team_survives_killing_the_worker_after_its_answer`); STORE-6 on the
+  production path (`office/tests.rs` `creation_writes_exactly_the_golden_files_and_the_ca_records`).
+  An organization created before B1b is refused, not migrated.
 - **Done when:** with an organization created through the host, deleting
   `runtime/<office-id>/` and restarting rebuilds the projection with no loss; a
   committed organization write survives killing the office right after its answer; the
@@ -426,7 +446,7 @@ onto it and deletes the old store; B1c measures and guards it.
 - **Needs:** B1a; A1 (the store it deletes is the one A1 changes); A4 (the creation path
   it moves).
 - **Paths:** the data-root contract paths (`<data-root>/<org-id>/durable/state/…`) are
-  B1b's. A4 writes `<instance-root>/durable/state/<org-id>/`.
+  B1b's; since B1b the office writes there (A4 wrote `<instance-root>/durable/state/<org-id>/`).
 
 ### B1c · The store measured and guarded
 
@@ -472,9 +492,18 @@ on the offers of design section 10.
   [agent structure](design/organization-data/04-agent-structure.md),
   [identity and numbering](design/organization-data/06-identity-and-numbering.md),
   [teams design](design/teams-and-org-chart.md). Rows FC-025 to FC-029.
-- **Code today:** `crates/org-office/src/organization` and `employees` implement members
-  with several memberships (a `memberships` table in `store/org.rs`); the rules in
-  `crates/org-office/src/rules` carry tests worth keeping where the rule is unchanged.
+- **Code today:** the organization family on the office store
+  (`crates/org-office/src/organization/{records,ports,projector,features}`) holds
+  organizations, offices, teams, employees and the HQ counters, and serves `team.create`
+  and the directory reads (B1a, B1b). B1b deleted the old store, including its
+  `memberships` table (`store/org.rs`), and left `crates/org-office/src/rules/**`,
+  `employees/**` and `organization/{structure,people,policy,view,directory,apply}.rs`
+  in place: pure rules over `OrgView`, with `rules/memory.rs` as their only
+  implementation, still modelling several memberships per member. Outside its own tests,
+  the office uses only `rules::OrgCommand` (the wire command `Office::submit_org` takes)
+  and `organization::directory::resolve_member` (`msg.bind`). B2 deletes or replaces
+  them: it owns the move from many-to-many membership to one home team, keeping the
+  tests worth keeping where a rule is unchanged.
 - **Done when:** every rule the three data documents state for teams, employees and
   roles is enforced by the office and covered by the engine-independent organization
   suite; each action in the outcome works from the command line and through `/api/v1`

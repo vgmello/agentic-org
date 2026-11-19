@@ -196,11 +196,11 @@ rebuildable caches under `runtime/<office-id>/`:
 <data-root>/<organization-id>/
 ├── durable/                  # sources: back up all of it; never removed by cleanup
 │   ├── state/                # organization Git files
-│   ├── journal/              # acknowledged unpublished changes
 │   ├── authority/            # numbering, placement generations, permits (06, 11)
 │   ├── accounting/           # usage streams and checkpoints (10)
 │   ├── messaging/            # protected envelopes and attachments (15)
-│   ├── recovery/             # receipts, streams, journals, snapshots, cleanup (16)
+│   ├── recovery/             # receipts, streams, snapshots, cleanup (16), and each office's
+│   │                         #   acceptance journal: offices/<office-id>/journals/acceptance/
 │   ├── budgets/              # policies, periods, events, extensions and holds (17)
 │   ├── private/              # HQ only: private task notes (05)
 │   ├── local/offices/        # private local bindings and agents' private homes, never Git
@@ -212,6 +212,11 @@ rebuildable caches under `runtime/<office-id>/`:
         ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
         └── tasks/<task-id>/repositories/<repository-id>/
 ```
+
+The acceptance journal holds every acknowledged change until its files are written
+and flushed; there is no separate `journal/` tree. The office store writes it at
+`durable/recovery/offices/<office-id>/journals/acceptance/<journal-incarnation>/`
+([office store](office-store.md) section 1; `crates/org-store/src/journal.rs`).
 
 Nothing under `durable/` sits inside a directory that cache cleanup removes; cleanup
 is limited to `runtime/<office-id>/`. Organization Git is remote, with an explicit

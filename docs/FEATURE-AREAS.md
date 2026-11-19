@@ -29,9 +29,9 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content, development processes and deferred learning engines | 18 | 0 | 3 | 10 | 0 | 5 | 0 |
 | [AREA-10 · Project health and reports](#area-10) | Health, narratives, analytics and private digests | 5 | 0 | 0 | 0 | 0 | 5 | 0 |
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
-| [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 15 | 1 | 4 | 7 | 0 | 3 | 0 |
+| [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 15 | 1 | 5 | 6 | 0 | 3 | 0 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
-| **Total** | | **188** | **9** | **67** | **67** | **1** | **44** | **0** |
+| **Total** | | **188** | **9** | **68** | **66** | **1** | **44** | **0** |
 
 ## AREA-01
 
