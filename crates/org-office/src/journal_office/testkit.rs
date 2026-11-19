@@ -123,6 +123,8 @@ pub(crate) fn options(engine: EngineChoice) -> Options {
         engine,
         clock: Arc::new(FixedClock(CREATION_AT)),
         testing: Default::default(),
+        #[cfg(test)]
+        before_final_checks: None,
     }
 }
 

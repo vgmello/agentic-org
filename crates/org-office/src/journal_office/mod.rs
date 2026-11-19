@@ -6,7 +6,8 @@
 //! ```text
 //! <home>/offices/<office-id>/
 //!   office.lock            the office lock: exclusive, taken before anything is read
-//!   hq-creation.v1.json    the creation intent (version 2), frozen first
+//!   selected-writer.required   the host's writer-custody marker, there before a create
+//!   hq-creation.v1.json    the creation intent (version 3), frozen first
 //!   office.json            written last: the office is finished
 //! <data-root>/<org-id>/durable/   the journal and the organization's files
 //! <data-root>/<org-id>/runtime/<office-id>/office.db   the projection
@@ -81,6 +82,10 @@ pub(crate) struct Options {
     pub clock: Arc<dyn Clock>,
     #[cfg(any(test, feature = "testkit"))]
     pub testing: crate::store::open::Testing,
+    /// Runs once a creation is durable and its files are written, before the final checks
+    /// and `office.json`: a test spoils the disk there.
+    #[cfg(test)]
+    pub before_final_checks: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Options {
@@ -90,6 +95,8 @@ impl Options {
             clock: Arc::new(SystemClock),
             #[cfg(any(test, feature = "testkit"))]
             testing: Default::default(),
+            #[cfg(test)]
+            before_final_checks: None,
         }
     }
 
@@ -298,9 +305,9 @@ impl Office {
     }
 
     /// Removes an unfinished create: a folder with neither `office.json` nor a creation
-    /// intent. One with either is `OfficeExists`; nothing under the data roots is ever
-    /// touched. A folder that is not there is fine; one that holds anything an office does
-    /// not make is `Invalid`.
+    /// intent, nor the host's custody marker or a file it stages one in. One with any of
+    /// them is `OfficeExists`; nothing under the data roots is ever touched. A folder that
+    /// is not there is fine; one that holds anything an office does not make is `Invalid`.
     pub fn discard(folder: impl Into<PathBuf>, office_id: &str) -> Result<(), OfficeError> {
         creation::discard(folder.into(), office_id)
     }
