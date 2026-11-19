@@ -584,3 +584,41 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
     drop((unbound, owner));
     live.stop();
 }
+
+/// A store that stops (here: the host refuses the confirmation of a flushed write) is fatal
+/// for the worker: the write is not answered as committed, the worker logs the store's fixed
+/// text and exits 1, so the host restarts it from what is on the drive.
+#[test]
+fn a_store_that_stops_exits_the_worker_1() {
+    let _process = process_isolation();
+    let world = World::new();
+    let owner_id = seeded(&world);
+    let mut first = live(&world);
+    let mut owner = first.caller(Some(&owner_id));
+    let held = world.writer.head().unwrap();
+    // The host now holds a head this office never wrote: it refuses the next confirmation.
+    let mut elsewhere = held.clone();
+    elsewhere.ordinal += 100;
+    world.writer.set_head(Some(elsewhere));
+    let refused = team(&mut owner, &command_id(1), "Platform");
+    assert!(
+        !matches!(&refused, Ok(accepted) if accepted.status == org_proto::org::CommandStatus::Committed),
+        "{refused:?}"
+    );
+    drop(owner);
+    let mut session = first.session;
+    assert_eq!(session.run.wait().code(), Some(1));
+    let log = session.run.stderr();
+    assert!(
+        log.contains("agentic-org-office: the office store stopped"),
+        "{log}"
+    );
+    session.no_stdout();
+    drop(session);
+    // With its custody back, the office starts again from the drive.
+    world.writer.set_head(Some(held));
+    let mut again = live(&world);
+    let snapshot = snapshot(&mut again.caller(Some(&owner_id)));
+    assert!(snapshot.members.iter().any(|m| m.id == owner_id));
+    again.stop();
+}
