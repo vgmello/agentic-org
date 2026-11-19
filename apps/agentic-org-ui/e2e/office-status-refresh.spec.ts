@@ -66,7 +66,7 @@ for (const unrelated of [false, true]) {
 		await expect(page).toHaveURL(/\/teams\/members$/);
 		await holdFirstRefresh(page, unrelated);
 		// SPA navigation preserves the patched test-owned API instance.
-		await page.getByRole('link', { name: 'Offices', exact: true }).click();
+		await page.getByRole('link', { name: /^HQ office · / }).click(); // the footer's office line (app-shell-ux §0)
 		const office = await page.evaluate(
 			() => (window as unknown as { __heldOfficeRefresh: HeldRefresh }).__heldOfficeRefresh.started
 		);
@@ -174,7 +174,7 @@ test('OFC-11 / BUG-5 LOW: a delayed probe refresh cannot overwrite a newer resta
 	await enterMockedOrganization(page, 'Acme', '/create?office=crashed');
 	await expect(page).toHaveURL(/\/teams\/members$/);
 	await holdOverlappingRefreshes(page);
-	await page.getByRole('link', { name: 'Offices', exact: true }).click();
+	await page.getByRole('link', { name: /^HQ office · / }).click(); // the footer's office line (app-shell-ux §0)
 	await page.evaluate(
 		() => (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.started[0]
 	);
@@ -204,7 +204,7 @@ for (const newerFirst of [false, true]) {
 		await expect(page).toHaveURL(/\/teams\/members$/);
 		await page.clock.install();
 		await holdOverlappingRefreshes(page, 'failed');
-		await page.getByRole('link', { name: 'Offices', exact: true }).click();
+		await page.getByRole('link', { name: /^HQ office · / }).click(); // the footer's office line (app-shell-ux §0)
 		await page.evaluate(
 			() => (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.started[0]
 		);
@@ -245,7 +245,7 @@ for (const newer of ['failed', 'missing'] as const) {
 		await expect(page).toHaveURL(/\/teams\/members$/);
 		await page.clock.install();
 		await holdOverlappingRefreshes(page, newer);
-		await page.getByRole('link', { name: 'Offices', exact: true }).click();
+		await page.getByRole('link', { name: /^HQ office · / }).click(); // the footer's office line (app-shell-ux §0)
 		await page.evaluate(
 			() => (window as unknown as { __officePeekPair: PeekPair }).__officePeekPair.started[0]
 		);

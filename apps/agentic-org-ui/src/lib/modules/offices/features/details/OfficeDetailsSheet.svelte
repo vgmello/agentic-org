@@ -8,12 +8,12 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import OfficeStatusBadge from './OfficeStatusBadge.svelte';
+	import OfficeStatusBadge from '../status/OfficeStatusBadge.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { toast } from 'svelte-sonner';
-	import pkg from '../../../package.json';
+	import pkg from '../../../../../../package.json';
 	import { officeApi, toAppError } from '$lib/office/api';
-	import OfficeRepairLocation from '$lib/offices/OfficeRepairLocation.svelte';
+	import OfficeRepairLocation from './OfficeRepairLocation.svelte';
 	import {
 		agentsIn,
 		copyDetails,
@@ -26,10 +26,10 @@
 		type DisplayStatus
 	} from '$lib/offices/model';
 	import type { OfficeInfo, OrgSnapshot } from '$lib/proto';
-	import { agoText } from '$lib/modules/offices/time';
-	import { syncText } from '$lib/modules/offices/layer';
-	import RenameOffice from '$lib/modules/offices/features/rename-office/RenameOffice.svelte';
-	import type { SatelliteDetails } from '$lib/modules/offices/types';
+	import { agoText } from '../../time';
+	import { syncText } from '../../layer';
+	import RenameOffice from '../rename-office/RenameOffice.svelte';
+	import type { SatelliteDetails } from '../../types';
 
 	let {
 		open = $bindable(false),

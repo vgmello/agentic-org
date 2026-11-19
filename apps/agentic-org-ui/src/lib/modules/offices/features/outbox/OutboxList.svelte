@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
 	import DividedRow from '$lib/components/DividedRow.svelte';
-	import StatusPill from '$lib/components/StatusPill.svelte';
+	import WordPill from '../status/WordPill.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { tone } from '$lib/components/pills';
 	import { agoText } from '../../time';
@@ -31,9 +31,9 @@
 </script>
 
 <section aria-labelledby="outbox-title" class="space-y-3" data-testid="outbox">
-	<h2 id="outbox-title" class="text-xs/6 font-semibold text-fg-muted">
+	<h3 id="outbox-title" class="text-xs/6 font-semibold text-fg-muted">
 		Waiting on offices · {items.length}
-	</h2>
+	</h3>
 	<ul class="{bleed} -mx-4 sm:-mx-6 lg:-mx-8" aria-label="Waiting on offices">
 		{#each items as item (item.id)}
 			<DividedRow
@@ -45,7 +45,7 @@
 						class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 font-semibold text-fg [overflow-wrap:anywhere]"
 					>
 						{item.description}
-						<StatusPill
+						<WordPill
 							label={item.state === 'blocked' ? 'Blocked' : 'Pending'}
 							class={item.state === 'blocked' ? tone.owner : ''}
 						/>

@@ -439,8 +439,7 @@
 			"sources": [
 				"src/routes/(shell)/settings/offices/**",
 				"src/lib/offices/**",
-				"src/lib/components/Office*.svelte",
-				"src/lib/components/testing/office-status.*"
+				"src/lib/modules/offices/**"
 			]
 		},
 		"shell-look": {
@@ -608,7 +607,7 @@
 			"why": "The Agent setup route composes Hire an agent from the employees module's public URL helper (hireUrl) and hands it to the agent-setup list, so agent-setup itself depends on no module that depends on members (members links to agent setup; no cycle). The org-chart category owns and tests the employees module."
 		},
 		{
-			"from": "src/routes/(shell)/settings/offices/+page.svelte",
+			"from": "src/lib/modules/offices/features/list/OfficesPage.svelte",
 			"to": "src/lib/modules/employees/index.ts",
 			"why": "Offices lists unplaced agents and opens the employees module's Offboard agent dialog; the org-chart category owns and tests that dialog."
 		},
@@ -616,6 +615,11 @@
 			"from": "e2e/fakes/modules/employees.ts",
 			"to": "src/lib/modules/employees/{api,types}.ts",
 			"why": "The dev-mock fake implements the employees module's api contract and only needs its types; the fake is never part of a production build."
+		},
+		{
+			"from": "e2e/fakes/modules/offices.ts",
+			"to": "src/lib/modules/offices/{api,types}.ts",
+			"why": "The dev-mock fake implements the offices module's api contract and only needs its types; the fake is never part of a production build."
 		},
 		{
 			"from": "e2e/fakes/modules/org-chart.ts",
@@ -688,7 +692,7 @@
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
 			"src/lib/modules/shell/**",
-			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,offices,projects,workitems,docs,features,releases,insights,costs,budgets,access,updates}/**",
+			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,projects,workitems,docs,features,releases,insights,costs,budgets,access,updates}/**",
 			"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
 			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",

@@ -5,7 +5,7 @@
 <script lang="ts">
 	import Bell from '@lucide/svelte/icons/bell';
 	import { Button } from '$lib/components/ui/button';
-	import StatusPill from '$lib/components/StatusPill.svelte';
+	import WordPill from '../status/WordPill.svelte';
 	import { tone } from '$lib/components/pills';
 	import { agoText } from '../../time';
 	import type { JoinRequest } from '../../types';
@@ -27,11 +27,11 @@
 			class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 font-semibold text-fg [overflow-wrap:anywhere]"
 		>
 			{request.officeName} wants to join
-			<StatusPill label="Wants to join" class={tone.owner}
+			<WordPill label="Wants to join" class={tone.owner}
 				>{#snippet icon()}<Bell
 						class="size-3.5 text-warning"
 						aria-hidden="true"
-					/>{/snippet}</StatusPill
+					/>{/snippet}</WordPill
 			>
 		</p>
 		<p class="mt-1 text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
