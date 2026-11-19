@@ -27,7 +27,7 @@ use crate::{
     service::listener::Connection,
     Host,
 };
-use org_host_control::ops;
+use org_host_control::{ops, recovery as dto};
 use org_proto::{ErrorCode, OfficeStatus};
 use serde_json::{json, Value};
 use std::{
@@ -398,6 +398,112 @@ fn actual_browser_creates_an_organization_that_survives_a_lost_response_and_a_ho
     );
     assert_eq!(replay.status, 200, "{}", replay.body);
     assert_eq!(replay.body["result"]["id"], organization.as_str());
+    assert_eq!(host.offices.offices().len(), 1, "no second office");
+    stop(host, &base);
+}
+
+/// `recovery.package` on the host's local socket: the HQ's public recovery record, which
+/// the host reads from the office (its recovery-public call), signed in as the seeded
+/// administrator with presence answered yes.
+fn recovery_package(host: &Host, socket: &Path, organization: &str) -> dto::PackageResult {
+    let stream = UnixStream::connect(socket).unwrap();
+    stream.set_read_timeout(Some(super::WAIT)).unwrap();
+    let mut wire = BufReader::new(stream);
+    super::answer::<org_host_control::Hello>(&mut wire, 1, &Default::default()).unwrap();
+    let native = super::answer::<ops::AccountVerify>(
+        &mut wire,
+        2,
+        &ops::AccountVerifyParams {
+            login: "Owner".into(),
+            password: org_host_control::Password::new(PASSWORD.into()).unwrap(),
+        },
+    )
+    .unwrap();
+    let params = dto::PackageParams {
+        session: org_host_control::SessionHandle::new(native.session.expose().into()).unwrap(),
+        org_id: organization.to_owned(),
+    };
+    host.service
+        .recovery_for_test()
+        .with_test_presence(Arc::new(Confirmed), || {
+            super::answer::<dto::Package>(&mut wire, 3, &params).unwrap()
+        })
+}
+
+/// The office's store keeps only a disposable projection under
+/// `<data root>/<organization>/runtime/<office>/`: deleted while the host is stopped, the
+/// office rebuilds it from the journal at the next start. The organization is listed as
+/// before, its office is active, its files are byte-for-byte what they were, and the
+/// recovery-public read still returns the same escrow package, the one in its files.
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_office_runtime_deleted_while_stopped_is_rebuilt_and_the_organization_stays_listed() {
+    let Launched {
+        temp: _temp,
+        address,
+        host,
+        socket,
+        base,
+        ..
+    } = launch(Seed::Administrator);
+    wait_serving(&host, address);
+    let browser = Browser::sign_in(&host, address);
+    let (_, view) = browser.create("Example", "example");
+    let (organization, office, creator) = checked(&view, "Example", "example");
+    wait_offices_active(&host, 1);
+    let listed = browser.list();
+    assert_eq!(listed["organizations"].as_array().unwrap().len(), 1);
+    let (_, files_before) = state_files(&base, &organization);
+    let package = recovery_package(&host, &socket, &organization);
+    assert_eq!(package.organization_id, organization);
+    assert_eq!(package.office_id, office);
+    // The package is the escrow file in the organization's state, as hex.
+    let escrow = files_before
+        .iter()
+        .find(|(path, _)| path == Path::new("security/ca-escrow.v1.bin"))
+        .map(|(_, bytes)| bytes)
+        .expect("the escrow package in the organization's files");
+    let escrow_hex: String = escrow.iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(package.package_hex, escrow_hex);
+    stop(host, &base);
+
+    // Delete the office's runtime folder: `<data root>/<organization>/runtime/<office>/`.
+    let database = Path::new(&organization)
+        .join("runtime")
+        .join(&office)
+        .join("office.db");
+    let projection = all_files(&base)
+        .into_iter()
+        .find(|p| p.ends_with(&database))
+        .unwrap_or_else(|| panic!("no {database:?} under {base:?}"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    fs::remove_dir_all(&projection).unwrap();
+    assert!(!projection.exists());
+
+    // The host starts again on the same data and the office rebuilds its projection.
+    let (host, socket) = host_at(fixture_config(&base), &base, |_, _, _| {});
+    wait_serving(&host, address);
+    wait_offices_active(&host, 1);
+    assert!(
+        projection.join("office.db").is_file(),
+        "the projection was not rebuilt at {projection:?}"
+    );
+    let after = browser.list();
+    assert_eq!(after["creating"], json!([]), "{after}");
+    assert_eq!(after["organizations"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        checked(&after["organizations"][0], "Example", "example"),
+        (organization.clone(), office.clone(), creator.clone())
+    );
+    assert_eq!(after, listed, "the list is what it was");
+    assert_organization_files(&base, &organization, &creator, "example");
+    assert!(
+        state_files(&base, &organization).1 == files_before,
+        "files changed"
+    );
+    assert_eq!(recovery_package(&host, &socket, &organization), package);
     assert_eq!(host.offices.offices().len(), 1, "no second office");
     stop(host, &base);
 }
