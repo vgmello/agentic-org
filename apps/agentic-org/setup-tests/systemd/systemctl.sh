@@ -83,6 +83,8 @@ effective() {
         printf '%s=%s\n' "$key" "$(sed -n "s/^$key=//p" "$1")"
     done
     printf 'TimeoutStopUSec=%ss\n' "$(sed -n 's/^TimeoutStopSec=//p' "$1")"
+    # Neither is in the file: systemd's defaults.
+    printf 'KillSignal=15\nSendSIGKILL=yes\n'
 }
 
 case "$verb" in

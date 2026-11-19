@@ -290,9 +290,17 @@ impl ReleaseRoot {
             // Made by this call: its mode is set whatever the process's mask took away,
             // and the release directory is flushed so that it is still there after a
             // power loss. An existing folder is never changed.
+            // Not through a link, should the folder have been replaced by one meanwhile
+            // (glibc refuses a link with this flag).
             // SAFETY: as above, on the folder this call just made.
-            if unsafe { libc::fchmodat(root.directory.as_raw_fd(), c_folder.as_ptr(), 0o700, 0) }
-                != 0
+            if unsafe {
+                libc::fchmodat(
+                    root.directory.as_raw_fd(),
+                    c_folder.as_ptr(),
+                    0o700,
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            } != 0
             {
                 return Err(unavailable(io::Error::last_os_error()));
             }

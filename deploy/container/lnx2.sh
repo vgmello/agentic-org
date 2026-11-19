@@ -235,12 +235,13 @@ navigate() {
 # makes it from a page at the origin (apps/agentic-org-ui, json-http.ts): same origin, JSON.
 # A sign-in or registration that the host answers `unavailable` (503) while it is still
 # hashing is asked again, as the browser tests do (bounded: 20 tries 250 ms apart).
+# `site` names the request's Sec-Fetch-Site (same-origin unless it is set for the call).
 api() {
     method=$1 path=$2 body=${3:-}
     shift $(($# < 3 ? $# : 3))
     for _ in $(seq 1 20); do
         code=$(curl -sS -m 30 -o "$scratch/body" -D "$scratch/head" -w '%{http_code}' -X "$method" \
-            -H "Host: 127.0.0.1:8443" -H "Origin: http://127.0.0.1:8443" -H 'Sec-Fetch-Site: same-origin' \
+            -H "Host: 127.0.0.1:8443" -H "Origin: http://127.0.0.1:8443" -H "Sec-Fetch-Site: ${site:-same-origin}" \
             -H 'Sec-Fetch-Mode: cors' -H 'Sec-Fetch-Dest: empty' -H 'Accept: application/json' \
             ${body:+-H 'Content-Type: application/json' --data-binary "$body"} "$@" \
             "http://127.0.0.1:$port$path" 2>/dev/null || true)
@@ -326,7 +327,7 @@ session_holds || fail "the sign-in's session is not the host's"
 echo "the link works once; POST /api/v1/session/sign-in at the origin: 200, signed in"
 wrong=$(api POST /api/v1/session/sign-in '{"login":"Owner","password":"not the password at all"}')
 [ "$wrong" != 200 ] && [ -z "$(session_cookie)" ] || fail "a wrong password was answered with $wrong"
-cross=$(api POST /api/v1/session/sign-in "{\"login\":\"Owner\",\"password\":\"$password\"}" -H 'Sec-Fetch-Site: cross-site')
+cross=$(site=cross-site api POST /api/v1/session/sign-in "{\"login\":\"Owner\",\"password\":\"$password\"}")
 [ "$cross" = 403 ] || fail "a cross-site sign-in was answered with $cross"
 echo "a wrong password: $wrong, no cookie; the same sign-in from another site: 403"
 [ -z "$(docker exec -u 0 "$tag-a" find /data /secrets ! -user "$user")" ] ||

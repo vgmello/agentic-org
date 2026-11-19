@@ -201,6 +201,8 @@ fn reported(file: &[u8]) -> Vec<(&'static str, String)> {
         ("UnsetEnvironment", set("UnsetEnvironment").join(" ")),
         ("Type", last("Type", "simple")),
         ("KillMode", last("KillMode", "control-group")),
+        ("KillSignal", "15".into()),
+        ("SendSIGKILL", "yes".into()),
         (
             "TimeoutStopUSec",
             set("TimeoutStopSec")
@@ -301,9 +303,10 @@ impl Commands for Fake {
                 done(0, String::new(), "")
             }
             "disable" => {
-                assert_eq!(call[3], "--now");
                 s.enabled = false;
-                s.pid = None;
+                if call[3] == "--now" {
+                    s.pid = None;
+                }
                 done(0, String::new(), "")
             }
             "reset-failed" => done(1, String::new(), "Unit not loaded\n"),
@@ -1303,7 +1306,7 @@ a&b<c> $$HOME %h \"q\" back\\slash ; ignore_errors=no ; start_time=[n/a] ; stop_
 pid=0 ; code=(null) ; status=0/0 }\n\
 Environment=\"HOME=/home/a b\" \"XDG_DATA_HOME=/x/\\$y \\\"z\\\" back\\\\slash é\"\n\
 PassEnvironment=\nUnsetEnvironment=XDG_CACHE_HOME XDG_STATE_HOME\nUMask=0077\n\
-NoNewPrivileges=yes\nKillMode=mixed\nLoadState=loaded\nActiveState=inactive\n\
+NoNewPrivileges=yes\nKillMode=mixed\nKillSignal=15\nSendSIGKILL=yes\nLoadState=loaded\nActiveState=inactive\n\
 FragmentPath=/etc/systemd/system/agentic-org-test-01965d2e-8b1c-7c3a-9f00-0123456789ab.service\n\
 DropInPaths=\nUnitFileState=disabled\nNeedDaemonReload=no\n";
 
@@ -1351,6 +1354,20 @@ fn what_systemd_reports_is_compared_with_the_definition_property_by_property() {
             "ExecStart",
         ),
         (" serve --name", " serve --name x", "ExecStart"),
+        // An argument `;` and another word after ours, as systemd 257 printed it for a
+        // drop-in that reset ExecStart= to our command followed by `\; x`.
+        (
+            "back\\slash ; ignore_errors=no",
+            "back\\slash ; x ; ignore_errors=no",
+            "ExecStart",
+        ),
+        (" ignore_errors=no ;", " ignore_errors=yes ;", "ExecStart"),
+        // The same, with words that copy the field that follows the arguments.
+        (
+            "back\\slash ; ignore_errors=no",
+            "back\\slash ; ignore_errors=no ; x ; ignore_errors=no",
+            "ExecStart",
+        ),
         (
             environment,
             "Environment=\"HOME=/home/a b\" \"XDG_DATA_HOME=/x/\\$y \\\"z\\\" \
@@ -1369,6 +1386,8 @@ fn what_systemd_reports_is_compared_with_the_definition_property_by_property() {
             "UnsetEnvironment",
         ),
         ("KillMode=mixed", "KillMode=process", "KillMode"),
+        ("KillSignal=15", "KillSignal=9", "KillSignal"),
+        ("SendSIGKILL=yes", "SendSIGKILL=no", "SendSIGKILL"),
         ("Type=exec", "Type=simple", "Type"),
         (
             "TimeoutStopUSec=15s",
@@ -1398,6 +1417,24 @@ fn what_systemd_reports_is_compared_with_the_definition_property_by_property() {
             "MainPID=0\n",
             "MainPID=0\nEnvironmentFiles=/etc/foo (ignore_errors=yes)\n",
             "EnvironmentFiles",
+        ),
+        (
+            "MainPID=0\n",
+            "MainPID=0\nExecStop={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no ; \
+             start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+            "ExecStop",
+        ),
+        (
+            "MainPID=0\n",
+            "MainPID=0\nExecStopPost={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no ; \
+             start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+            "ExecStopPost",
+        ),
+        (
+            "MainPID=0\n",
+            "MainPID=0\nExecCondition={ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no \
+             ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n",
+            "ExecCondition",
         ),
     ] {
         assert_eq!(
@@ -1495,10 +1532,10 @@ fn org_platform_location_variables() -> &'static [&'static str] {
 
 /// X5 review (third round), P2: a drop-in for every service of the user is accepted
 /// (distributions ship some), but one that changes what systemd would run under our name
-/// (its command, its environment, how it is stopped) is a conflict for every operation,
-/// as a drop-in that applies by the unit's name is.
+/// (its command, its environment, how it is stopped) is a conflict for register, start and
+/// status. Stop and unregister still end and remove our own unit.
 #[test]
-fn a_drop_in_for_every_service_that_changes_what_runs_is_a_conflict_for_every_operation() {
+fn a_drop_in_for_every_service_that_changes_what_runs_is_a_conflict_for_what_runs_it() {
     let temp = tempfile::tempdir().unwrap();
     let (systemd, fake) = systemd(temp.path());
     systemd.register(&unit()).unwrap();
@@ -1519,6 +1556,7 @@ fn a_drop_in_for_every_service_that_changes_what_runs_is_a_conflict_for_every_op
         ("Environment", "HOME=/home/a XDG_DATA_HOME=/elsewhere"),
         ("UnsetEnvironment", ""),
         ("KillMode", "process"),
+        ("KillSignal", "9"),
         ("EnvironmentFiles", "/etc/x (ignore_errors=no)"),
     ] {
         fake.set(|s| {
@@ -1529,9 +1567,7 @@ fn a_drop_in_for_every_service_that_changes_what_runs_is_a_conflict_for_every_op
         for call in [
             systemd.register(&unit()).map(drop),
             systemd.start(ID),
-            systemd.stop(ID),
             systemd.status(ID).map(drop),
-            systemd.unregister(ID),
         ] {
             let error = call.unwrap_err();
             assert!(
@@ -1540,9 +1576,14 @@ fn a_drop_in_for_every_service_that_changes_what_runs_is_a_conflict_for_every_op
                 "{property}: {error}"
             );
         }
-        assert_eq!(fake.verbs(), ["show"; 5], "{property}");
+        assert_eq!(fake.verbs(), ["show"; 3], "{property}");
         assert_eq!(fs::read(&file).unwrap(), render(NAME, &unit()));
     }
+    // Ending our own unit is not refused: that would only leave it running.
+    systemd.stop(ID).unwrap();
+    assert_eq!(fake.0.lock().unwrap().pid, None, "the unit was not stopped");
+    systemd.unregister(ID).unwrap();
+    assert!(!file.exists());
     // A first registration that such a drop-in would change is not enabled, and what it
     // wrote is removed again.
     let (fresh, fake) = self::systemd(&temp.path().join("fresh"));
@@ -1557,4 +1598,59 @@ fn a_drop_in_for_every_service_that_changes_what_runs_is_a_conflict_for_every_op
         .path()
         .join(format!("fresh/systemd/user/{NAME}"))
         .exists());
+}
+
+/// X5 review (third round): a loaded file that is not exactly a rendering of a unit (one
+/// written by an earlier build, before the unit unset the location variables, or edited by
+/// hand) is not run on: register, start and status are conflicts. It can still be stopped
+/// and unregistered, which removes it.
+#[test]
+fn a_definition_that_is_no_rendering_is_not_run_but_can_be_stopped_and_unregistered() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    systemd.register(&unit()).unwrap();
+    let file = temp.path().join(format!("systemd/user/{NAME}"));
+    let earlier = String::from_utf8(render(NAME, &unit())).unwrap().replace(
+        "UnsetEnvironment=XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME\n",
+        "",
+    );
+    fs::write(&file, &earlier).unwrap();
+    // systemd read that file: what it holds is the file on disk.
+    fake.set(|s| s.read = Some(earlier.clone().into_bytes()));
+    for call in [
+        systemd.register(&unit()).map(drop),
+        systemd.start(ID),
+        systemd.status(ID).map(drop),
+    ] {
+        assert!(matches!(call, Err(ServiceError::Conflict(_))), "{call:?}");
+    }
+    systemd.stop(ID).unwrap();
+    assert_eq!(fake.0.lock().unwrap().pid, None);
+    systemd.unregister(ID).unwrap();
+    assert!(!file.exists());
+    assert_eq!(systemd.status(ID).unwrap(), ServiceStatus::NotRegistered);
+}
+
+/// X5 review (third round): a unit that runs although it is not enabled (disabled by hand)
+/// keeps running when register's `enable --now` fails: the rollback takes back only the
+/// enablement that call made.
+#[test]
+fn a_failed_enable_of_a_running_unit_takes_back_the_link_and_leaves_it_running() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    systemd.register(&unit()).unwrap();
+    fake.set(|s| {
+        s.enabled = false;
+        s.enable_fails = true;
+    });
+    fake.clear();
+    assert!(systemd.register(&unit()).is_err());
+    assert!(fake.calls().contains(
+        &["systemctl", "--user", "disable", NAME]
+            .map(String::from)
+            .to_vec()
+    ));
+    let state = fake.0.lock().unwrap();
+    assert!(!state.enabled, "the link this call made was left");
+    assert_eq!(state.pid, Some(42), "a running unit was stopped");
 }

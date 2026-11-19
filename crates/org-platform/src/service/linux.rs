@@ -23,7 +23,8 @@
 //!   whenever systemd has our file loaded as it is on disk, the values the service depends
 //!   on, as systemd reports them ([`EFFECTIVE`]), are compared with what our definition
 //!   says (read back from the file, which must be exactly a rendering of a unit), and any
-//!   difference is a conflict for every operation, like a drop-in by name.
+//!   difference is a conflict for register, start and status. Stop and unregister still
+//!   end and remove our own unit: refusing them would only leave it running.
 //! - **An identical, settled registration is left alone**: the file has the rendered bytes,
 //!   systemd loaded it from that file, nothing changed on disk since, and it is enabled.
 //!   A healthy service is not restarted.
@@ -34,7 +35,8 @@
 //!   cannot move the instance's locations away from the ones setup resolved.
 //! - **A failed registration leaves nothing behind**: when `enable --now` enabled the unit
 //!   and then failed to start it, the enablement that call made is removed
-//!   (`disable --now`) before the definition this call wrote is removed.
+//!   (`disable --now`; `disable` alone for a unit that was already running) before the
+//!   definition this call wrote is removed.
 //! - **`start` never loads a definition.** systemd reads a unit file when it is first
 //!   asked about it, so "loaded" means here what register established: enabled, and
 //!   unchanged on disk since systemd read it. A unit that is not enabled, or whose file
@@ -75,21 +77,26 @@ pub(super) const USER_PREFIX: &str = "agentic-org-";
 /// What the adapter reads of a unit, in one `systemctl show`: its state, and the values
 /// the service depends on ([`EFFECTIVE`]).
 const PROPERTIES: &str = "--property=LoadState,ActiveState,MainPID,FragmentPath,UnitFileState,\
-     NeedDaemonReload,DropInPaths,ExecStart,ExecStartPre,ExecStartPost,Environment,\
-     EnvironmentFiles,PassEnvironment,UnsetEnvironment,Type,KillMode,TimeoutStopUSec,\
-     Restart,UMask,NoNewPrivileges";
+     NeedDaemonReload,DropInPaths,ExecStart,ExecStartPre,ExecStartPost,ExecCondition,ExecStop,\
+     ExecStopPost,Environment,EnvironmentFiles,PassEnvironment,UnsetEnvironment,Type,KillMode,\
+     KillSignal,SendSIGKILL,TimeoutStopUSec,Restart,UMask,NoNewPrivileges";
 /// The properties of [`PROPERTIES`] that say what systemd would run and how: each is
 /// compared with what the definition says (`effective_differs`).
-const EFFECTIVE: [&str; 13] = [
+const EFFECTIVE: [&str; 18] = [
     "ExecStart",
     "ExecStartPre",
     "ExecStartPost",
+    "ExecCondition",
+    "ExecStop",
+    "ExecStopPost",
     "Environment",
     "EnvironmentFiles",
     "PassEnvironment",
     "UnsetEnvironment",
     "Type",
     "KillMode",
+    "KillSignal",
+    "SendSIGKILL",
     "TimeoutStopUSec",
     "Restart",
     "UMask",
@@ -340,8 +347,12 @@ impl Systemd {
     }
 
     /// What systemd holds under the name, `None` when it knows no such unit, or a conflict
-    /// when it holds one from anything but our definition file.
-    fn show_ours(&self, name: &str) -> Result<Option<Shown>, ServiceError> {
+    /// when it holds one from anything but our definition file. `runs`: the caller may make
+    /// systemd run the unit (register, start, and status, which start asks), so what systemd
+    /// would run must also be what the file says. Stop and unregister only end our own unit:
+    /// they act on it whatever a drop-in for every service changed, and whatever an earlier
+    /// rendering of the file says.
+    fn show_ours(&self, name: &str, runs: bool) -> Result<Option<Shown>, ServiceError> {
         let shown = self.show(name)?;
         if shown.fragment.is_empty() {
             let idle = matches!(shown.active.as_str(), "inactive" | "failed");
@@ -381,7 +392,7 @@ impl Systemd {
         // the file says, whatever a drop-in for every service changed. A file that changed
         // since systemd read it is not compared: it is `Unloaded`, nothing starts it, and
         // register compares its bytes and reloads it, which compares again.
-        if shown.load == "loaded" && !shown.needs_reload {
+        if runs && shown.load == "loaded" && !shown.needs_reload {
             let defined = self
                 .read_definition(&file)?
                 .and_then(|bytes| definition(name, &bytes));
@@ -476,8 +487,10 @@ impl Systemd {
     /// enablement is removed again, and a restart systemd scheduled is cancelled.
     fn load(&self, name: &str, file: &Path) -> Result<(), ServiceError> {
         self.expect_ok(&["daemon-reload".as_ref()])?;
-        let was_enabled = match self.show_ours(name)? {
-            Some(shown) if shown.load == "loaded" => shown.file_state == "enabled",
+        let (was_enabled, was_running) = match self.show_ours(name, true)? {
+            Some(shown) if shown.load == "loaded" => {
+                (shown.file_state == "enabled", shown.running().is_some())
+            }
             Some(shown) => {
                 return Err(ServiceError::System(format!(
                     "systemd cannot use {} (its load state is {})",
@@ -495,8 +508,14 @@ impl Systemd {
         };
         let enabled = self.expect_ok(&["enable".as_ref(), "--now".as_ref(), name.as_ref()]);
         if enabled.is_err() && !was_enabled {
-            // Best effort: the error the caller reports is the enable's.
-            let _ = self.systemctl(&["disable".as_ref(), "--now".as_ref(), name.as_ref()]);
+            // Best effort: the error the caller reports is the enable's. A unit that was
+            // already running keeps running: this call did not start it.
+            let disable: &[&OsStr] = if was_running {
+                &["disable".as_ref(), name.as_ref()]
+            } else {
+                &["disable".as_ref(), "--now".as_ref(), name.as_ref()]
+            };
+            let _ = self.systemctl(disable);
         }
         enabled
     }
@@ -509,7 +528,7 @@ impl ServiceManager for Systemd {
         let name = self.name(&unit.instance_id)?;
         let file = self.file(&name);
         let bytes = render(&name, unit);
-        let shown = self.show_ours(&name)?;
+        let shown = self.show_ours(&name, true)?;
         match self.read_definition(&file)? {
             Some(existing) if existing != bytes => Err(ServiceError::Conflict(format!(
                 "{} already defines {name} differently; it is left untouched",
@@ -556,7 +575,7 @@ impl ServiceManager for Systemd {
 
     fn stop(&self, instance_id: &str) -> Result<(), ServiceError> {
         let name = self.name(instance_id)?;
-        match self.show_ours(&name)? {
+        match self.show_ours(&name, false)? {
             // Also a start systemd has only scheduled (after a crash): it is cancelled.
             Some(shown) if !matches!(shown.active.as_str(), "inactive" | "failed") => {
                 self.expect_ok(&["stop".as_ref(), name.as_ref()])
@@ -569,7 +588,7 @@ impl ServiceManager for Systemd {
         let name = self.name(instance_id)?;
         // A unit under the name from another file is reported as a conflict, so start and
         // stop never act on it.
-        match self.show_ours(&name)? {
+        match self.show_ours(&name, true)? {
             Some(shown) => Ok(match shown.running() {
                 Some(pid) => ServiceStatus::Running { pid },
                 None if shown.settled() => ServiceStatus::Stopped,
@@ -585,7 +604,7 @@ impl ServiceManager for Systemd {
     fn unregister(&self, instance_id: &str) -> Result<(), ServiceError> {
         let name = self.name(instance_id)?;
         let file = self.file(&name);
-        let known = self.show_ours(&name)?.is_some();
+        let known = self.show_ours(&name, false)?.is_some();
         if known {
             // Stops the unit (and waits for it) and removes its enablement links.
             self.expect_ok(&["disable".as_ref(), "--now".as_ref(), name.as_ref()])?;
@@ -782,7 +801,8 @@ fn unquoted_words(line: &str, exec: bool) -> Option<Vec<String>> {
 /// is not seen. Units hold no control character ([`unit_file_safe`]), which systemd would
 /// print raw in an argument and break the line. A systemd that quotes differently makes a
 /// value with a space or such a character differ, and the unit is refused: never accepted
-/// on doubt.
+/// on doubt. The command must also stop at our words: an extra argument after an argument
+/// `;` shows as more text before `ignore_errors=`.
 fn effective_differs(defined: &Unit, shown: &Shown) -> Option<&'static str> {
     let exec = std::iter::once(defined.program.as_os_str())
         .chain(defined.args.iter().map(OsString::as_os_str))
@@ -790,12 +810,15 @@ fn effective_differs(defined: &Unit, shown: &Shown) -> Option<&'static str> {
         .collect::<Vec<_>>()
         .join(" ");
     let start = shown.effective("ExecStart");
+    // One command, our words and nothing after them: the field that follows the arguments
+    // comes next, and appears once (an argument `;` would otherwise hide more words).
     let one_command = start
         .strip_prefix(&format!(
-            "{{ path={} ; argv[]={exec} ; ",
+            "{{ path={} ; argv[]={exec} ; ignore_errors=no ; ",
             defined.program.display()
         ))
-        .is_some_and(|rest| rest.ends_with(" }") && !rest.contains("{ path="));
+        .is_some_and(|rest| rest.ends_with(" }") && !rest.contains("{ path="))
+        && start.matches("ignore_errors=").count() == 1;
     if !one_command {
         return Some("ExecStart");
     }
@@ -821,10 +844,15 @@ fn effective_differs(defined: &Unit, shown: &Shown) -> Option<&'static str> {
     let expected = [
         ("ExecStartPre", ""),
         ("ExecStartPost", ""),
+        ("ExecCondition", ""),
+        ("ExecStop", ""),
+        ("ExecStopPost", ""),
         ("EnvironmentFiles", ""),
         ("PassEnvironment", ""),
         ("Type", "exec"),
         ("KillMode", "mixed"),
+        ("KillSignal", "15"),
+        ("SendSIGKILL", "yes"),
         ("TimeoutStopUSec", "15s"),
         ("Restart", "on-failure"),
         ("UMask", "0077"),
