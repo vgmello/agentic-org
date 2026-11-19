@@ -106,7 +106,7 @@ pub(super) fn listening(fd: RawFd) -> io::Result<bool> {
 pub(super) mod testing {
     /// Linux has Unix seqpacket sockets.
     pub(in crate::socket) const SEQPACKET: bool = true;
-    /// Linux refuses `listen` on a connected socket with `EINVAL`.
+    /// Linux makes no working listener of a stream that was connected.
     pub(in crate::socket) const CONNECTED_STREAM_CAN_LISTEN: bool = false;
 
     /// A Linux socket address has no length field.

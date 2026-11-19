@@ -29,16 +29,14 @@ fn seqpacket_is_whether_the_system_makes_a_unix_seqpacket_pair() {
 }
 
 #[test]
-fn a_connected_stream_listens_exactly_where_the_fact_says() {
+fn a_connected_stream_becomes_a_listener_exactly_where_the_fact_says() {
     let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("s");
     let (stream, peer) = UnixStream::pair().unwrap();
-    // Binding a connected stream works on both systems; listening once its peer has
-    // closed is what differs.
-    bind_path(stream.as_fd(), &directory.path().join("s")).unwrap();
+    bind_path(stream.as_fd(), &path).unwrap();
     drop(peer);
     // macOS takes the closed peer into account a moment after the close, so `listen`
-    // is tried again for up to half a second; Linux refuses it every time.
-    let mut error = None;
+    // is tried again for up to half a second.
     let mut listened = false;
     for _ in 0..100 {
         // SAFETY: listen on a live socket owned by this test.
@@ -46,14 +44,18 @@ fn a_connected_stream_listens_exactly_where_the_fact_says() {
             listened = true;
             break;
         }
-        error = Some(io::Error::last_os_error());
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::EINVAL)
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    let error = error.filter(|_| !listened);
-    assert_eq!(listened, CONNECTED_STREAM_CAN_LISTEN, "{error:?}");
-    if let Some(error) = error {
-        assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
-    }
+    // A listener only if a connection reaches it.
+    let accepting = listened && UnixStream::connect(&path).is_ok();
+    assert_eq!(
+        accepting, CONNECTED_STREAM_CAN_LISTEN,
+        "listen returned {listened}"
+    );
 }
 
 #[test]

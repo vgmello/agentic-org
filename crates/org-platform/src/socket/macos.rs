@@ -81,7 +81,7 @@ fn invalid(message: &'static str) -> io::Error {
 pub(super) mod testing {
     /// macOS has no Unix seqpacket sockets (`EPROTONOSUPPORT`).
     pub(in crate::socket) const SEQPACKET: bool = false;
-    /// macOS lets a connected stream socket be bound and listen.
+    /// macOS makes a working listener of a stream whose peer has closed.
     pub(in crate::socket) const CONNECTED_STREAM_CAN_LISTEN: bool = true;
 
     /// A BSD socket address states its own length.

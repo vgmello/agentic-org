@@ -8,10 +8,12 @@ use std::path::Path;
 
 use super::native;
 
-/// Whether a Unix stream socket that is already connected can still be bound and put
-/// in the listening state (macOS), rather than being refused with `EINVAL` (Linux).
-/// macOS then reports such a listener's peer address with `EINVAL`, as for a stream
-/// whose peer has closed (`socket::listening` tells the two apart).
+/// Whether a Unix stream socket that was connected can be bound, once its peer has
+/// closed, and made a listener that accepts connections (macOS). Linux refuses its
+/// `listen` with `EINVAL` while the peer is open; once the peer has closed, `listen`
+/// returns but no connection reaches the socket (`ECONNREFUSED`). macOS reports such a
+/// listener's peer address with `EINVAL`, as for a stream whose peer has closed
+/// (`socket::listening` tells the two apart).
 pub const CONNECTED_STREAM_CAN_LISTEN: bool = native::testing::CONNECTED_STREAM_CAN_LISTEN;
 
 /// Whether this system has Unix seqpacket sockets (not macOS).
