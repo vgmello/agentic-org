@@ -4,50 +4,84 @@
 			"id": "role-swe",
 			"key": "software-engineer",
 			"keyNamedBy": ["Feature delivery"],
-			"created": { "at": "2026-11-02T09:12:00Z", "byKind": "system" },
+			"created": {
+				"at": "2026-11-02T09:12:00Z",
+				"byKind": "system"
+			},
 			"revisions": [
 				{
 					"name": "Software Engineer",
-					"updated": { "at": "2026-11-02T09:12:00Z", "byKind": "system" },
+					"updated": {
+						"at": "2026-11-02T09:12:00Z",
+						"byKind": "system"
+					},
 					"bodyMarkdown": "## Mission\nBuild reliable software within the assigned team's scope.\n\n## Responsibilities\nImplement and review assigned work.\n\n## Working style\nExplain decisions and keep useful evidence.\n\n## Boundaries\nFollow approved processes and enforced permission policy.\n"
 				},
 				{
 					"name": "Software Engineer",
-					"updated": { "at": "2026-11-10T15:40:00Z", "byKind": "employee", "byId": "avery" },
+					"updated": {
+						"at": "2026-11-10T15:40:00Z",
+						"byKind": "employee",
+						"byId": "avery"
+					},
 					"bodyMarkdown": "## Mission\nBuild reliable software within the assigned team's scope.\n\n## Responsibilities\n- Implement and review assigned work.\n- Add a check for every fix.\n\n## Working style\nExplain decisions and keep useful evidence.\n\n## Boundaries\nFollow approved processes and enforced permission policy.\n"
 				},
 				{
 					"name": "Software Engineer",
-					"updated": { "at": "2026-11-17T08:05:00Z", "byKind": "employee", "byId": "you" },
-					"bodyMarkdown": "## Mission\nBuild reliable software within the assigned team's scope.\n\n## Responsibilities\n- Pick up assigned tasks and open them for review.\n- Add a check for every fix.\n- Review a teammate's change when asked.\n\n## Working style\nSmall changes, each with its reason. Explain decisions and keep useful evidence.\n\n## Boundaries\n- Follow approved processes and enforced permission policy.\n- Never merge its own changes.\n"
+					"updated": {
+						"at": "2026-11-17T08:05:00Z",
+						"byKind": "employee",
+						"byId": "you"
+					},
+					"bodyMarkdown": "## Mission\nBuild and fix the web app.\n\n## Responsibilities\n- Pick up assigned tasks and open them for review.\n- Add a check for every fix.\n\n## Working style\nSmall changes, each with its reason.\n"
 				}
 			]
 		},
 		{
 			"id": "role-staff",
 			"key": "staff-engineer",
-			"created": { "at": "2026-11-04T11:00:00Z", "byKind": "employee", "byId": "you" },
+			"created": {
+				"at": "2026-11-04T11:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
 			"revisions": [
 				{
 					"name": "Staff Engineer",
-					"updated": { "at": "2026-11-04T11:00:00Z", "byKind": "employee", "byId": "you" },
-					"bodyMarkdown": "## Mission\nKeep the engineering teams shipping safely.\n\n## Responsibilities\n- Split large work into reviewable tasks.\n- Review designs before they are built.\n\n## Working style\nWrite the plan down before the code.\n\n## Boundaries\n- Never merges its own changes.\n"
+					"updated": {
+						"at": "2026-11-04T11:00:00Z",
+						"byKind": "employee",
+						"byId": "you"
+					},
+					"bodyMarkdown": "## Mission\nKeep the engineering teams shipping safely.\n\n## Responsibilities\n- Split large work into reviewable tasks.\n- Review designs before they are built.\n\n## Boundaries\n- Never merges its own changes.\n"
 				}
 			]
 		},
 		{
 			"id": "role-designer",
 			"key": "product-designer",
-			"created": { "at": "2026-11-05T10:20:00Z", "byKind": "employee", "byId": "avery" },
+			"created": {
+				"at": "2026-11-05T10:20:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			},
 			"revisions": [
 				{
 					"name": "Designer",
-					"updated": { "at": "2026-11-05T10:20:00Z", "byKind": "employee", "byId": "avery" },
+					"updated": {
+						"at": "2026-11-05T10:20:00Z",
+						"byKind": "employee",
+						"byId": "avery"
+					},
 					"bodyMarkdown": "## Mission\nDesign the product's screens.\n"
 				},
 				{
 					"name": "Product Designer",
-					"updated": { "at": "2026-11-12T13:30:00Z", "byKind": "employee", "byId": "avery" },
+					"updated": {
+						"at": "2026-11-12T13:30:00Z",
+						"byKind": "employee",
+						"byId": "avery"
+					},
 					"bodyMarkdown": "## Mission\nDesign screens people can use all day.\n\n## Responsibilities\n- Sort each screen's fields by how often they are used.\n- Hand over every state: loading, empty, error.\n\n## Working style\nStart from the data, not the layout.\n\n## Boundaries\n- Product scope and data contracts belong to the lead.\n"
 				}
 			]
@@ -55,22 +89,25 @@
 		{
 			"id": "role-qa",
 			"key": "qa-engineer",
-			"created": { "at": "2026-11-15T16:45:00Z", "byKind": "unknown" },
+			"created": {
+				"at": "2026-11-15T16:45:00Z",
+				"byKind": "unknown"
+			},
 			"revisions": [
 				{
 					"name": "QA Engineer",
-					"updated": { "at": "2026-11-15T16:45:00Z", "byKind": "unknown" },
+					"updated": {
+						"at": "2026-11-15T16:45:00Z",
+						"byKind": "unknown"
+					},
 					"bodyMarkdown": "## Mission\nFind what breaks before people do.\n\n## Responsibilities\n- Write the checks for each change's acceptance criteria.\n\n## Boundaries\n- Reports problems; does not fix them in the same change.\n"
 				}
 			]
 		}
 	],
 	"employees": {
-		"noor": "role-swe",
-		"mira": "role-swe",
-		"kai": "role-swe",
-		"leo": "role-swe",
 		"sam": "role-staff",
-		"juno": "role-designer"
+		"noor": "role-swe",
+		"mira": "role-swe"
 	}
 }

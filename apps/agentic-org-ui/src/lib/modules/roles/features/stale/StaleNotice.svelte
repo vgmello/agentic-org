@@ -1,7 +1,8 @@
 <!--
   @component
   Organization data can't be reached (roles-ux §1): "Can't reach organization data. Showing the last copy from
-  <time>." Changes wait until it is reachable; Try again reads it again. One quiet callout below the page header.
+  <time>." Try again reads it again. One quiet callout below the page header; the actions it pauses say so beside
+  themselves.
 -->
 <script lang="ts">
 	import Callout from '$lib/components/Callout.svelte';
@@ -29,7 +30,6 @@
 		<p class="text-sm/6 font-semibold text-white">
 			{staleText(shown)}<span class="sr-only"> ({formatFull(at, accountZone.zone)})</span>
 		</p>
-		<p class="mt-1 text-sm/6">Changes can be made again once it's reachable.</p>
 		<Button
 			variant="outline"
 			class="mt-3 min-w-24 {mobileButton}"

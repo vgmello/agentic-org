@@ -5,12 +5,22 @@ import type { Attribution, Role, RoleDraft, RoleField, RoleSummary } from './typ
 /** roles-ux §1, word for word. */
 export const HR_CANT_RUN = "The HR lead can't run right now, so it can't draft roles.";
 
-/** The empty list's copy. It only offers HR's draft when the HR lead can run (ROLE-10). */
-export function emptyRolesText(hrCanRun: boolean): string {
+/**
+ * The empty list's copy. It only invites creating a role when the viewer can make changes now, and only offers
+ * HR's draft when the HR lead can also run (ROLE-10: empty copy never promises what can't happen).
+ */
+export function emptyRolesText(hrCanRun: boolean, canChange = true): string {
+	if (!canChange) return "Roles describe employees' work. None have been created yet.";
 	return hrCanRun
 		? "Roles describe employees' work. Create one, or ask HR to draft one."
 		: "Roles describe employees' work. Create one.";
 }
+
+/** Why New role, Ask HR, Edit and Fix are disabled while organization data can't be reached (RL-8). */
+export const CHANGES_PAUSED = 'Changes are paused until organization data can be reached.';
+
+/** Shown when Save is pressed with nothing changed: no revision is added. */
+export const NOTHING_TO_SAVE = "Nothing changed, so there's nothing to save.";
 
 /** "Can't reach organization data. Showing the last copy from <time>." (roles-ux §1). */
 export const staleText = (time: string) =>

@@ -2,7 +2,8 @@
   @component
   Ask HR to draft a role (roles-ux §1): what the role should do, then the HR lead's draft. Nothing is created here:
   the draft opens in the New role editor for the person to review. While the HR lead drafts the button reads
-  "Drafting…" and the dialog can't be dismissed; a refusal keeps what was typed and says why.
+  "Drafting…" and the dialog can't be dismissed; a refusal keeps what was typed and says why. Openers call `start()`;
+  each opening clears the last attempt's refusal but keeps what was typed. Back closes the dialog only (§6).
 -->
 <script lang="ts">
 	import { errorClass, helpClass, mobileButton, textareaClass } from '$lib/components/classes';
@@ -17,17 +18,16 @@
 	} from '$lib/components/ui/dialog';
 	import { Label } from '$lib/components/ui/label';
 	import { toAppError } from '$lib/office/api';
+	import { registerModalBack } from '$lib/platform/shell/modal-back';
 	import { rolesApi } from '../../api';
 	import type { RoleDraft } from '../../types';
 
 	let {
-		open = $bindable(false),
 		organizationId,
 		ondrafted,
 		onclosed,
 		onCloseAutoFocus
 	}: {
-		open: boolean;
 		organizationId: string;
 		/** The HR lead's draft, for the New role editor. */
 		ondrafted: (draft: RoleDraft) => void;
@@ -36,11 +36,29 @@
 		onCloseAutoFocus?: (event: Event) => void;
 	} = $props();
 
+	let open = $state(false);
 	let description = $state('');
 	let error = $state<string | undefined>();
 	let failure = $state<string | undefined>();
 	let busy = $state(false);
 	let field = $state<HTMLTextAreaElement | null>(null);
+
+	/** Opens the dialog, without the last attempt's refusal; what was typed stays. */
+	export function start() {
+		error = undefined;
+		failure = undefined;
+		open = true;
+	}
+
+	/** Whether the dialog is open (or still closing): the list waits for it before opening the editor. */
+	export function isOpen() {
+		return open;
+	}
+
+	// Back with the dialog open closes it only, and focus returns to its opener (§6).
+	$effect(() => {
+		if (open) return registerModalBack(() => (open = false));
+	});
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();

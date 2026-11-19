@@ -55,14 +55,19 @@ to draft one when the HR lead can run. All against the mock roles API; the produ
    with the reason naming the development process (decision 7).
 8. RL-8 States (ROLE-10): loading skeleton shaped like the rows; no roles ("Roles describe employees' work.
    Create one, or ask HR to draft one." — the HR clause only when the HR lead can run, so empty copy never
-   promises HR can run); error with Retry; production unavailable (the section's NotBuilt placeholder, never
+   promises HR can run, and no invitation at all when the viewer can't change roles now: "Roles describe employees'
+   work. None have been created yet."; with no roles the empty state holds the actions, one primary); error with
+   Retry; production unavailable (the section's NotBuilt placeholder, never
    sample data); not found; organization data unreachable ("Can't reach organization data. Showing the last copy
-   from <time>." with Try again; changes are paused, the actions say why); invalid details ("<role>: details not
+   from <time>." with Try again; changes are paused: New role, Ask HR, Edit and Fix stay, disabled, described by
+   "Changes are paused until organization data can be reached."); invalid details ("<role>: details not
    recognized (<field>)." with Fix, which opens the editor at that field); viewer without edit rights sees no
    New role, Ask HR, Edit or Fix (hidden, §0.1).
 9. RL-9 Focus (§6a): after client navigation to a role page, focus lands on the role's h2 (after the shell's own
    heading focus); closing the editor or dialog returns focus to its opener; creating a role moves to and focuses
    the new role's heading; a refusal focuses its field.
+   Back with the editor or Ask HR open closes it only (app-shell §6) and keeps the typed text: reopening the same
+   editor restores it with "Your unsaved changes are kept. Cancel discards them." (§6a keep input). Cancel discards.
 10. RL-10 Layout at 1440, 1024, 640, 390, 320 and 320 px with 200% text: no sideways scroll, controls 44 px
     below 640 px, state pills keep whole words, editor full width below 640 px with its buttons visible.
 11. RL-11 No role grants authority: the editor and page say a role describes work and grants no tools, budgets or

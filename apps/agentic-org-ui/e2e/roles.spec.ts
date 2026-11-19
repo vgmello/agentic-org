@@ -38,12 +38,12 @@ test('RL-1, RL-4: the list shows each role with its revision and employees, and 
 	await expect(page.getByRole('heading', { level: 2, name: /^Roles/ })).toContainText('4');
 	await expect(rows(page)).toHaveCount(4);
 	await expect(rows(page).nth(0)).toContainText('Product Designer');
-	await expect(rows(page).nth(0)).toContainText('1 employee');
+	await expect(rows(page).nth(0)).toContainText('no employees yet');
 	await expect(rows(page).nth(1)).toContainText('QA Engineer');
 	await expect(rows(page).nth(1)).toContainText('no employees yet');
 	await expect(rows(page).nth(2)).toContainText('Software Engineer');
 	await expect(rows(page).nth(2)).toContainText('rev 3');
-	await expect(rows(page).nth(2)).toContainText('4 employees');
+	await expect(rows(page).nth(2)).toContainText('2 employees');
 
 	await page.getByRole('link', { name: 'Software Engineer' }).click();
 	await expect(page).toHaveURL(/\/settings\/roles\/role-swe$/);
@@ -54,13 +54,18 @@ test('RL-1, RL-4: the list shows each role with its revision and employees, and 
 	await expect(page.locator('main header').first()).toContainText('software-engineer');
 	await expect(page.locator('main header').first()).toContainText('rev 3');
 	const body = page.getByTestId('role-body');
-	await expect(body.getByRole('heading', { level: 3, name: 'Mission' })).toBeVisible();
-	await expect(body.getByRole('heading', { level: 3, name: 'Boundaries' })).toBeVisible();
-	await expect(body).toContainText('Never merge its own changes.');
+	// The text has its own h3; its sections are h4 under it, apart from the page's h3 sections (P3-4).
+	await expect(body.getByRole('heading', { level: 3, name: 'Role text' })).toBeAttached();
+	await expect(body.getByRole('heading', { level: 4, name: 'Mission' })).toBeVisible();
+	await expect(body.getByRole('heading', { level: 4, name: 'Working style' })).toBeVisible();
+	await expect(body.getByRole('heading', { level: 3 })).toHaveCount(1);
+	await expect(body).toContainText('Small changes, each with its reason.');
+	// The same employees as their profiles' Role tab (members mock): Mira and Noor.
 	const employees = page.getByTestId('role-employees');
-	await expect(employees.locator('li')).toHaveCount(4);
-	await expect(employees).toContainText('Leo Brandt');
-	await expect(employees).toContainText('Person');
+	await expect(employees.locator('li')).toHaveCount(2);
+	await expect(employees).toContainText('Mira Castillo');
+	await expect(employees).toContainText('Agent');
+	await expect(employees).not.toContainText('Leo Brandt');
 	await expect(employees.getByRole('link', { name: 'Noor Haddad' })).toHaveAttribute(
 		'href',
 		'/members/noor'
@@ -135,8 +140,13 @@ test('RL-5: Edit says what saving does, saves the next revision and returns focu
 	await expect(page.getByTestId('save-effect')).toHaveText(
 		'Saving makes rev 2. The 1 employee with this role read the new text.'
 	);
-	// Nothing changed: closing adds no revision.
+	// Nothing changed: the sheet says so and stays open; no revision is added (P3-3).
 	await editor(page).getByRole('button', { name: 'Save role' }).click();
+	await expect(page.getByTestId('save-notice')).toHaveText(
+		"Nothing changed, so there's nothing to save."
+	);
+	await expect(editor(page)).toBeVisible();
+	await editor(page).getByRole('button', { name: 'Cancel' }).click();
 	await expect(editor(page)).toBeHidden();
 	await expect(page.getByRole('button', { name: 'Edit' })).toBeFocused();
 	await expect(page.locator('main header').first()).toContainText('rev 1');
@@ -273,11 +283,18 @@ test('RL-8: unreachable data shows the last copy without changes; a viewer sees 
 		"Can't reach organization data. Showing the last copy from"
 	);
 	await expect(rows(page)).toHaveCount(4);
-	await expect(page.getByRole('button', { name: 'New role…' })).toHaveCount(0);
+	// Changes are paused: the actions stay, disabled, and say why (RL-8).
+	const paused = 'Changes are paused until organization data can be reached.';
+	for (const name of ['New role…', 'Ask HR to draft…']) {
+		const button = page.getByRole('button', { name });
+		await expect(button).toBeDisabled();
+		await expect(button).toHaveAccessibleDescription(paused);
+	}
 	await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
 	await visit(page, '/settings/roles/role-swe?mock=stale');
 	await expect(page.getByTestId('stale')).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Edit' })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Edit' })).toBeDisabled();
+	await expect(page.getByRole('button', { name: 'Edit' })).toHaveAccessibleDescription(paused);
 
 	await visit(page, '/settings/roles?mock=viewer');
 	await expect(rows(page)).toHaveCount(4);
@@ -320,7 +337,7 @@ test('RL-10: at 320 px the list, the role page and the editor reflow with 44 px 
 	await noSidewaysScroll(page);
 	const newRole = page.getByRole('button', { name: 'New role…' });
 	expect((await newRole.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-	await expect(rows(page).nth(2)).toContainText('rev 3 · 4 employees');
+	await expect(rows(page).nth(2)).toContainText('rev 3 · 2 employees');
 
 	await visit(page, '/settings/roles/role-swe');
 	await expect(heading(page)).toHaveText('Software Engineer');
@@ -336,4 +353,135 @@ test('RL-10: at 320 px the list, the role page and the editor reflow with 44 px 
 	await expect(save).toBeInViewport();
 	expect((await save.boundingBox())!.height).toBeGreaterThanOrEqual(44);
 	await noSidewaysScroll(page);
+});
+
+// P2-1: at 320 px with 200% text the editor's footer never covers a field, the description column stays at least
+// 200 px wide, and Save is reachable without being covered.
+test('RL-10: at 320 px and 200% text the editor footer never covers the fields', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 320, height: 800 });
+	await openOrganization(page);
+	await visit(page, '/settings/roles/role-swe');
+	await page.evaluate(() => (document.documentElement.style.fontSize = '200%'));
+	await page.getByRole('button', { name: 'Edit' }).click();
+	const sheet = editor(page);
+	const name = page.getByLabel('Name');
+	await expect(name).toBeFocused();
+	const uncovered = (id: string) =>
+		page.evaluate((id) => {
+			const el = document.getElementById(id)!;
+			const r = el.getBoundingClientRect();
+			const top = Math.max(r.top, 0) + 4;
+			const bottom = Math.min(r.bottom, window.innerHeight) - 4;
+			if (bottom <= top) return 'off screen';
+			// Every visible horizontal band of the control is the control itself, not something over it.
+			for (let y = top; y <= bottom; y += 8) {
+				const hit = document.elementFromPoint(r.left + r.width / 2, y);
+				if (!hit || !(hit === el || el.contains(hit) || hit.contains(el))) return `covered at ${y}`;
+			}
+			return 'ok';
+		}, id);
+	await expect.poll(() => uncovered('role-name')).toBe('ok');
+	const description = sheet.getByText("A role describes an employee's work for teammates.");
+	expect((await description.boundingBox())!.width).toBeGreaterThanOrEqual(200);
+	const save = sheet.getByRole('button', { name: 'Save role' });
+	await save.focus();
+	await expect(save).toBeInViewport();
+	expect(
+		await save.evaluate((el) => {
+			const r = el.getBoundingClientRect();
+			const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+			return !!hit && (hit === el || el.contains(hit));
+		})
+	).toBe(true);
+	await page.getByLabel('Key (optional)').focus();
+	await expect.poll(() => uncovered('role-key')).toBe('ok');
+	await noSidewaysScroll(page);
+});
+
+// P2-2: Back with the editor or the Ask HR dialog open closes it only (app-shell §6) and keeps what was typed.
+test('RL-9: Back with the editor or Ask HR open closes it only and keeps the typed text', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/roles');
+	await page.getByRole('link', { name: 'Staff Engineer' }).click();
+	await expect(heading(page)).toHaveText('Staff Engineer');
+	const edit = page.getByRole('button', { name: 'Edit' });
+	await edit.click();
+	await page.getByLabel('Name').fill('Principal Engineer');
+	await page.goBack();
+	await expect(editor(page)).toBeHidden();
+	await expect(page).toHaveURL(/\/settings\/roles\/role-staff$/);
+	await expect(edit).toBeFocused();
+	await edit.click();
+	await expect(page.getByLabel('Name')).toHaveValue('Principal Engineer');
+	await expect(page.getByTestId('restored-note')).toHaveText(
+		'Your unsaved changes are kept. Cancel discards them.'
+	);
+	// Cancel is the deliberate discard: the next opening starts from the role again.
+	await editor(page).getByRole('button', { name: 'Cancel' }).click();
+	await edit.click();
+	await expect(page.getByLabel('Name')).toHaveValue('Staff Engineer');
+	await expect(page.getByTestId('restored-note')).toHaveCount(0);
+	await editor(page).getByRole('button', { name: 'Cancel' }).click();
+
+	await page.locator('main header').getByRole('link', { name: 'Roles', exact: true }).click();
+	const ask = page.getByRole('button', { name: 'Ask HR to draft…' });
+	await ask.click();
+	await page.getByLabel('What should this role do?').fill('Keep releases moving');
+	await page.goBack();
+	await expect(page.getByRole('dialog')).toBeHidden();
+	await expect(page).toHaveURL(/\/settings\/roles$/);
+	await expect(ask).toBeFocused();
+	await ask.click();
+	await expect(page.getByLabel('What should this role do?')).toHaveValue('Keep releases moving');
+});
+
+// P2-3 and P2-4: with no roles the view has one primary action, and the empty copy only invites what the viewer
+// can do now.
+test('RL-8: the empty state has one primary action and never invites what the viewer cannot do', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/roles?mock=empty');
+	await expect(page.getByRole('heading', { name: 'No roles yet' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'New role…' })).toHaveCount(1);
+	await expect(page.locator('main header').getByRole('button')).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Ask HR to draft…' })).toHaveCount(1);
+	await expect(page.getByRole('button', { name: 'Ask HR to draft…' })).toBeEnabled();
+
+	const invite = /Create one/;
+	const none = "Roles describe employees' work. None have been created yet.";
+	await visit(page, '/settings/roles?mock=empty,viewer');
+	await expect(page.getByRole('heading', { name: 'No roles yet' })).toBeVisible();
+	await expect(page.locator('main')).toContainText(none);
+	await expect(page.locator('main')).not.toContainText(invite);
+	await expect(page.getByRole('button', { name: 'New role…' })).toHaveCount(0);
+
+	await visit(page, '/settings/roles?mock=empty,stale');
+	await expect(page.getByRole('heading', { name: 'No roles yet' })).toBeVisible();
+	await expect(page.locator('main')).toContainText(none);
+	await expect(page.locator('main')).not.toContainText(invite);
+	await expect(page.getByRole('button', { name: 'New role…' })).toBeDisabled();
+});
+
+// P3-2: a failed draft's message is not shown again when the dialog reopens; the typed text is.
+test('RL-3: reopening Ask HR after a failure keeps the text and clears the old refusal', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/roles?mock=save-fails');
+	const ask = page.getByRole('button', { name: 'Ask HR to draft…' });
+	await ask.click();
+	const dialog = page.getByRole('dialog');
+	await page.getByLabel('What should this role do?').fill('Keep releases moving');
+	await dialog.getByRole('button', { name: 'Ask HR' }).click();
+	await expect(dialog.getByRole('alert')).toContainText('The HR lead stopped');
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(ask).toBeFocused();
+	await ask.click();
+	await expect(page.getByLabel('What should this role do?')).toHaveValue('Keep releases moving');
+	await expect(dialog.getByRole('alert')).toHaveCount(0);
 });

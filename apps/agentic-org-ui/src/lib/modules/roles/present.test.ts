@@ -27,6 +27,13 @@ describe('the spec copy', () => {
 		);
 		expect(emptyRolesText(false)).not.toMatch(/HR/);
 	});
+	it('invites no action when the viewer cannot change roles now (viewer or stale)', () => {
+		for (const hr of [true, false]) {
+			expect(emptyRolesText(hr, false)).toBe(
+				"Roles describe employees' work. None have been created yet."
+			);
+		}
+	});
 	it('names the stale copy and an invalid file', () => {
 		expect(staleText('18 Nov, 09:40')).toBe(
 			"Can't reach organization data. Showing the last copy from 18 Nov, 09:40."
