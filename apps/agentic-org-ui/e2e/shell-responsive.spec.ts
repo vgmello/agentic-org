@@ -459,6 +459,8 @@ test(
 	{ tag: '@webkit' },
 	async ({ page }) => {
 		await enterMockedOrganization(page);
+		// The badge is set on the loaded module, so the shell is entered again without a reload.
+		await visit(page, '/create');
 		await page.evaluate(async () => {
 			const path = '/src/lib/nav.ts';
 			const { NAV } = await import(path);
@@ -466,6 +468,9 @@ test(
 				text: '3',
 				label: '3 need you'
 			};
+			const link = Object.assign(document.createElement('a'), { href: '/agents' });
+			document.body.append(link);
+			link.click();
 		});
 		await expect(page).toHaveURL(/\/teams\/members$/);
 		const nav = page.getByRole('navigation', { name: 'Main', exact: true });
