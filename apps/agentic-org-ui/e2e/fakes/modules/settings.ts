@@ -6,10 +6,7 @@
 import { officeApi } from '$lib/office/api';
 import { orgApi } from '$lib/org/api';
 import type { SettingsApi } from '../../../src/lib/modules/settings/api';
-import type {
-	GeneralSettings,
-	RecoveryState
-} from '../../../src/lib/modules/settings/types';
+import type { GeneralSettings, RecoveryState } from '../../../src/lib/modules/settings/types';
 import general from '../data/settings/general.json' with { type: 'json' };
 import { signInOf } from './members';
 
@@ -74,7 +71,6 @@ async function general_(organizationId: string): Promise<GeneralSettings> {
 	};
 }
 
-
 export const settingsApi: SettingsApi = {
 	async general(organizationId) {
 		await gate();
@@ -96,6 +92,5 @@ export const settingsApi: SettingsApi = {
 			};
 		administrator = { memberId, username: accounts[memberId]! };
 		return general_(organizationId);
-	},
 	}
 };
