@@ -899,3 +899,24 @@ fn a_key_lost_while_running_closes_the_gate_after_a_failed_fetch() {
     assert!(matches!(tls.servable(now), Err(store::Unservable::Storage)));
     assert_eq!(tls.status(now), org_proto::gateway::TlsStatus::Missing);
 }
+
+/// A stored pair that has expired is judged from its remembered bounds after one full read:
+/// the gate, asked every few seconds, does not read its key again until it is replaced.
+#[test]
+fn an_expired_pair_is_read_once_by_the_gate() {
+    let f = fixture();
+    let here = origin("https://org.example:8443");
+    let now = wall();
+    let tls = f.start(&here, None, now).unwrap();
+    let later = now + 398 * DAY;
+    assert!(matches!(
+        tls.servable(later),
+        Err(store::Unservable::NotValid)
+    ));
+    f.secrets.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(matches!(
+        tls.servable(later),
+        Err(store::Unservable::NotValid)
+    ));
+    assert_eq!(tls.status(later), org_proto::gateway::TlsStatus::Missing);
+}

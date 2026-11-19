@@ -1770,6 +1770,7 @@ pub(crate) mod tests {
             crate::test_programs::image_identity(),
             org_platform_host::admission::ImageIdentity::CodeSignature
         );
+        let before = tls.fetch().unwrap().0;
         for admits in [None, Some(false)] {
             let (_home, connection, mut peer, offices) = local(Some(Arc::clone(&tls)), admits);
             let owner = sign_in(&mut peer, "Owner");
@@ -1796,7 +1797,6 @@ pub(crate) mod tests {
             exchange::<TlsSet>(&mut peer, 4, &params(member)),
             ErrorCode::NotAuthorized
         ));
-        let before = tls.fetch().unwrap().0;
         let owner = sign_in(&mut peer, "Owner");
         let answered = exchange::<TlsSet>(&mut peer, 5, &params(owner))
             .unwrap()

@@ -247,10 +247,12 @@ impl WebTls {
     /// Deletes `checked`'s key after its row could not be written (unless the row already
     /// names that pair); the next start's sweep deletes it if this fails.
     fn drop_unnamed(&self, checked: &Checked) {
-        let named =
-            matches!(self.db.web_tls_pair(), Ok(Some(row)) if row.pair_fp == checked.pair());
-        if named {
-            return;
+        // Only when the row is known not to name it: a registry that cannot be read leaves
+        // the key, which may be the stored pair's own, to the sweep.
+        match self.db.web_tls_pair() {
+            Ok(Some(row)) if row.pair_fp != checked.pair() => {}
+            Ok(None) => {}
+            _ => return,
         }
         if let Ok(name) = secret_name(&checked.pair()) {
             if self.secrets.delete(&name).is_err() {
@@ -357,7 +359,18 @@ impl WebTls {
                 };
             }
         }
-        let (checked, _) = self.current(Some(now))?;
+        let checked = match self.current(Some(now)) {
+            Ok((checked, _)) => checked,
+            // A pair that verifies but for its validity is remembered too, so a pair that has
+            // expired is not read again on every look until it is replaced.
+            Err(Unservable::NotValid) => {
+                if let Ok((checked, _)) = self.current(None) {
+                    *verified = Some((checked.pair(), checked.not_before, checked.not_after));
+                }
+                return Err(Unservable::NotValid);
+            }
+            Err(other) => return Err(other),
+        };
         *verified = Some((checked.pair(), checked.not_before, checked.not_after));
         Ok((checked.not_before, checked.not_after))
     }

@@ -936,7 +936,8 @@ Known limits: the self-made certificate is trusted by no browser until the opera
 accepts it (compare the fingerprint first); there is no command for `tls.set` yet, so a
 supplied pair is replaced only by a client of `host.sock`; a supplied pair that expires
 stops the browser service until it is replaced; a supplied pair already expired at the
-instance's first start refuses that start (setup verified it moments before), while one
+instance's first start refuses that start (setup verified it moments before; the operator
+replaces the files at the recorded paths and starts again), while one
 that expires later only stops the browser; a supplied pair nearing its end is warned
 about at a start, not while the host runs; and a clock set back more than five minutes
 before a self-made certificate's start, or a self-made key deleted from the secrets while
