@@ -65,10 +65,10 @@ describe('the execution form', () => {
 		expect(missingText({ profileId: 'p', modelId: 'm' })).toBeUndefined();
 	});
 
-	it('knows an unchanged form, except a disabled configuration, which saving turns on', () => {
+	it('knows an unchanged form; a save never stands in for turning execution on', () => {
 		const form = initialForm({ execution: exec });
 		expect(unchanged(form, { execution: exec })).toBe(true);
-		expect(unchanged(form, { execution: { ...exec, enabled: false } })).toBe(false);
+		expect(unchanged(form, { execution: { ...exec, enabled: false } })).toBe(true);
 		expect(unchanged({ ...form, modelId: 'claude-opus-5' }, { execution: exec })).toBe(false);
 	});
 

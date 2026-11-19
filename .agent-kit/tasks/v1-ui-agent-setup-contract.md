@@ -46,8 +46,9 @@ member profile's "Open Agent setup" lands on that agent's setup.
   unavailable|viewer|conflict|save-fails|not-found`.
 - The parked part-way start in `modules/settings` (`agentSetups`, `saveExecution`, `AgentSetup*`, `ExecutionEdit`,
   `Readiness`, `ModelProfileChoice`, `e2e/fakes/data/settings/execution.json`) is removed: one owner for Agent setup.
-- Couplings (declared in `e2e/gate-manifest.json` where the gate asks): agent-setup → `modules/employees` public
-  index (hire URL); members profile → agent-setup public index (per-member URL). Lifecycle uses the shared
+- Couplings: members profile → agent-setup public index (per-member URL). agent-setup imports no other module: the
+  list takes `hireHref` as a prop and the route composes it from `modules/employees` (declared in
+  `e2e/gate-manifest.json`), so there is no members → agent-setup → employees → members cycle. Lifecycle uses the shared
   `$lib/org/{actions,agents,session,api,load}`.
 - Files edited outside the module: the four member-profile links to Agent setup (OverviewTab, RoleTab, RunNowDialog,
   IdentityDialog), `modules/settings/{api,types}.ts` and `e2e/fakes/modules/settings.ts` (removal only),
@@ -58,7 +59,7 @@ member profile's "Open Agent setup" lands on that agent's setup.
 - Editing tools, the system prompt, provider connections, model profiles or office credential bindings (office-local
   and private; no UI contract yet). Shown read-only where the record has them.
 - An "execution enabled" switch: stopping an agent is Pause (run-modes decision 6); a disabled `execution.md` is
-  shown as Needs setup.
+  shown as Needs setup, and nothing here claims a save turns it on (document 11 defines no such write).
 - Placing an Unplaced agent (the placement flow is specified with the profile and not built); the page links to
   Offices › Place or offboard.
 - Run modes, schedules, how-it-runs panel (RUN-1, RUN-7, RUN-13: not in v1). Per-agent process editing (Processes
@@ -67,7 +68,9 @@ member profile's "Open Agent setup" lands on that agent's setup.
 
 ## Verification
 
-- Unit: `health.test.ts` (precedence, strict missing-model predicate, unknown), `present.test.ts`, `urls.test.ts`.
+- Unit: `health.test.ts` (precedence, strict missing-model predicate, unknown, no runtime, disabled execution with
+  no promised re-enable), `present.test.ts`, `urls.test.ts`, `features/edit-execution/form.test.ts`,
+  `features/agent-page/lookup.test.ts`, `boundaries.test.ts` (agent-setup is on no module dependency cycle).
 - E2E `e2e/agent-setup.spec.ts` (chromium): list columns and Health words, narrow rows, detail parts, Edit execution
   (save, conflict, refusal), Change role, Pause/Resume, Offboard, not found, error + Retry, empty, unavailable,
   read-only viewer, profile link round trip, 320 px reflow and targets.

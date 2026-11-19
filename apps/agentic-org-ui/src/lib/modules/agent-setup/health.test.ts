@@ -82,7 +82,18 @@ describe('health', () => {
 	it('treats a disabled execution configuration as needing setup, not as a second pause', () => {
 		const h = health({ ...ready, execution: { ...ready.execution!, enabled: false } });
 		expect(healthText(h)).toBe('Needs setup: Execution is turned off in its configuration');
+		// Document 11 defines no write that turns it on with a profile or model save: nothing here promises one.
+		const reason = h.kind === 'needs_setup' ? h.reasons[0] : undefined;
+		expect(reason?.fix).toBe(
+			"The office admits no turn while it's off. Turning it on isn't available here yet."
+		);
+		expect(reason?.fix).not.toMatch(/Edit|sav/i);
 	});
+});
+
+it('needs setup when the profile has no connection, even if the office reports no blocker', () => {
+	const h = health({ ...ready, execution: { ...ready.execution!, runtimes: [] } });
+	expect(healthText(h)).toBe('Needs setup: Primary pool has no connection to run on');
 });
 
 describe('the strict missing-model predicate', () => {

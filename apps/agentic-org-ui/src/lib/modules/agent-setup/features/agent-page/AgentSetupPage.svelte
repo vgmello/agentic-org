@@ -19,6 +19,8 @@
 	import Loaded from '$lib/components/Loaded.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import Section from '$lib/components/Section.svelte';
+	import StatusPill from '$lib/components/StatusPill.svelte';
+	import { tone } from '$lib/components/pills';
 	import { mobileButton } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
@@ -30,6 +32,7 @@
 		DropdownMenuTrigger
 	} from '$lib/components/ui/dropdown-menu';
 	import { pageTitle } from '$lib/nav';
+	import { cn } from '$lib/utils';
 	import { toAppError } from '$lib/office/api';
 	import { offboardAgent, setAgentStatus } from '$lib/org/actions';
 	import { offboardSummary } from '$lib/org/agents';
@@ -42,6 +45,7 @@
 	import { focusHeading, focusHeadingAfterShell } from '../../heading';
 	import {
 		CONNECTION_STATE,
+		CONNECTION_TONE,
 		ageText,
 		codeParts,
 		isStale,
@@ -117,9 +121,7 @@
 		shown = {
 			version: record?.version,
 			lines:
-				record && detail
-					? offboardLines(offboardSummary(snapshot, record, false), detail.name, detail.handle)
-					: []
+				record && detail ? offboardLines(offboardSummary(snapshot, record, false), detail.name) : []
 		};
 	}
 
@@ -447,13 +449,13 @@
 								<span class="text-gray-300">{i + 1}. {c.name}</span>
 								<span class="block text-xs/5"
 									>{c.runtime} ·
-									<span
-										class={c.state === 'ready'
-											? 'text-green-300'
-											: c.state === 'unknown'
-												? ''
-												: 'text-amber-200'}>{CONNECTION_STATE[c.state]}</span
-									>{#if c.checkedAt}, checked {ageText(c.checkedAt, now)}{/if}</span
+									<StatusPill
+										label={CONNECTION_STATE[c.state]}
+										class={cn(
+											tone[CONNECTION_TONE[c.state]],
+											'[&>span]:overflow-visible [&>span]:whitespace-normal'
+										)}
+									/>{#if c.checkedAt}, checked {ageText(c.checkedAt, now)}{/if}</span
 								>
 							</li>
 						{/each}
@@ -491,7 +493,7 @@
 							date.{/if}</span
 					>
 				{:else}
-					<span class="font-medium text-amber-200">Unplaced</span>
+					<span class="font-medium text-gray-300">Unplaced</span>
 					<span class="block"
 						>No office runs {d.name}. Choose one in
 						<a href={resolve('/settings/offices')} class={linkClass}>Offices</a>, under Place or

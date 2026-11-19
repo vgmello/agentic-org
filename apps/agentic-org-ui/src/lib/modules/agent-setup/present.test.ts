@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	CONNECTION_TONE,
 	ageText,
 	isStale,
 	listDescription,
@@ -12,7 +13,6 @@ import {
 	sortAgents,
 	toolsText
 } from './present';
-import { agentSetupHref, profileHref } from './urls';
 
 const now = Date.parse('2026-11-19T12:00:00Z');
 
@@ -82,31 +82,30 @@ describe('words', () => {
 		expect(toolsText(['a'])).toBe('1 approved tool');
 	});
 
-	it('replaces the summary retention line with the spec words naming the handle', () => {
+	it('replaces the summary retention line with the words of §9', () => {
 		expect(
 			offboardLines(
 				['Juno leaves Design.', "Juno's record stays, and the name juno stays reserved."],
-				'Juno',
-				'juno'
+				'Juno'
 			)
 		).toEqual([
 			'Juno leaves Design.',
-			"Juno's profile and home-team history stay in organization data. The handle @juno stays reserved: nobody else can use it."
+			"Juno's profile and home-team history stay in organization data. The handle stays reserved."
 		]);
+	});
+
+	it('keeps amber for what the owner must do on the office; a cooldown is neutral', () => {
+		expect(CONNECTION_TONE.signed_out).toBe('owner');
+		expect(CONNECTION_TONE.binding_missing).toBe('owner');
+		expect(CONNECTION_TONE.cooling_down).toBe('neutral');
+		expect(CONNECTION_TONE.unknown).toBe('neutral');
+		expect(CONNECTION_TONE.ready).toBe('ok');
 	});
 
 	it('keeps the holds Resume does not clear', () => {
 		expect(remainingHolds(['Manual pause by Alex', 'Daily budget reached'])).toEqual([
 			'Daily budget reached'
 		]);
-	});
-});
-
-describe('urls', () => {
-	it('encodes member IDs', () => {
-		expect(agentSetupHref('kai')).toBe('/settings/agents/kai');
-		expect(agentSetupHref('a/b')).toBe('/settings/agents/a%2Fb');
-		expect(profileHref('a b')).toBe('/members/a%20b');
 	});
 });
 

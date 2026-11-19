@@ -622,9 +622,9 @@
 			"why": "The Teams index and a team's page link to the Hire flow and Hire requests through the employees module's public URL helpers (hireUrl, HIRE_REQUESTS_URL); the org-chart category owns and tests the employees module."
 		},
 		{
-			"from": "src/lib/modules/agent-setup/features/list/AgentSetupList.svelte",
+			"from": "src/routes/(shell)/settings/agents/+page.svelte",
 			"to": "src/lib/modules/employees/index.ts",
-			"why": "Agent setup's Hire an agent opens the existing reviewed hire flow (AC-IA07-3) through the employees module's public URL helper (hireUrl), without owning it; the org-chart category owns and tests the employees module."
+			"why": "The Agent setup route composes Hire an agent from the employees module's public URL helper (hireUrl) and hands it to the agent-setup list, so agent-setup itself depends on no module that depends on members (members links to agent setup; no cycle). The org-chart category owns and tests the employees module."
 		},
 		{
 			"from": "src/routes/(shell)/settings/offices/+page.svelte",

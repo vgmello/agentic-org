@@ -1,4 +1,5 @@
 // Agent setup's facts in words (our-org-in-the-app §5, §9; employee-supervision-ux §1). Pure: no I/O.
+import type { tone } from '$lib/components/pills';
 import type {
 	AgentSetupRow,
 	ConnectionState,
@@ -68,6 +69,19 @@ export const CONNECTION_STATE: Record<ConnectionState, string> = {
 	unknown: 'Not checked yet'
 };
 
+/**
+ * A connection state's shared tone (`pills.ts`): amber only where the owner has something to do on the office
+ * (sign in, install, bind); a cooldown passes by itself and unknown is unknown, so both are neutral.
+ */
+export const CONNECTION_TONE: Record<ConnectionState, keyof typeof tone> = {
+	ready: 'ok',
+	signed_out: 'owner',
+	not_installed: 'owner',
+	binding_missing: 'owner',
+	cooling_down: 'neutral',
+	unknown: 'neutral'
+};
+
 /** A model option in Edit: what the office reports, never a promise of capacity. */
 export function modelNote(m: ProfileModel): string {
 	if (m.supporting === 0) return 'not reported by any connection';
@@ -87,13 +101,13 @@ export const toolsText = (tools: string[]) =>
 
 /**
  * The Offboard preview (our-org-in-the-app §9): the organization's own summary of team, task and report changes,
- * with the retention line in the spec's words, naming the handle.
+ * with the retention line in the spec's words.
  */
-export function offboardLines(summary: string[], name: string, handle: string): string[] {
+export function offboardLines(summary: string[], name: string): string[] {
 	const retention = `${name}'s record stays`;
 	return [
 		...summary.filter((line) => !line.startsWith(retention)),
-		`${name}'s profile and home-team history stay in organization data. The handle @${handle} stays reserved: nobody else can use it.`
+		`${name}'s profile and home-team history stay in organization data. The handle stays reserved.`
 	];
 }
 
