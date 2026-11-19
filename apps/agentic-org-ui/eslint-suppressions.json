@@ -220,11 +220,6 @@
       "count": 1
     }
   },
-  "src/routes/(shell)/teams/(views)/members/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 3
-    }
-  },
   "src/routes/(shell)/work/+page.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 1

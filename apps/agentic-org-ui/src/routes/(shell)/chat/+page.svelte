@@ -8,7 +8,6 @@
 	import Info from '@lucide/svelte/icons/info';
 	import Unplug from '@lucide/svelte/icons/unplug';
 	import Callout from '$lib/components/Callout.svelte';
-	import ErrorState from '$lib/components/ErrorState.svelte';
 	import { resolve } from '$app/paths';
 	import { shellApi } from '$lib/modules/shell/api';
 	import { Badge } from '$lib/components/ui/badge';
@@ -26,12 +25,7 @@
 		MembersPanel,
 		CommandDialog,
 		BrowseChannelsDialog,
-		PinsPanel,
 		browseChannels,
-		cannotRunFor,
-		cannotRunWords,
-		clockTime,
-		pinsIn,
 		commandForm,
 		turnForm,
 		type CommandEnv,
@@ -100,7 +94,6 @@
 		}
 	}
 	let showMembers = $state(false);
-	let showPins = $state(false);
 	let membersOpener: HTMLElement | undefined;
 	let compactPanels = $state(false);
 	let conversationEl = $state<HTMLElement | undefined>();
@@ -230,15 +223,8 @@
 		return root && message.thread_root_id === root.id ? 'off' : undefined;
 	}
 	const panelKind = $derived(
-		root && threadConversation
-			? 'thread'
-			: showMembers && conversation
-				? 'members'
-				: showPins && conversation
-					? 'pins'
-					: undefined
+		root && threadConversation ? 'thread' : showMembers && conversation ? 'members' : undefined
 	);
-	const pins = $derived(conversation && chatState ? pinsIn(chatState, conversation.id) : []);
 	$effect(() => {
 		const target = panel;
 		if (!compactPanels || !panelKind || !target) return;
@@ -261,11 +247,6 @@
 			? composerState(chatState, ctx, conversation, officeRunning, cannotRun)
 			: undefined
 	);
-	// "HR lead can't run right now…" while a mention of it is typed (chat-ux §6).
-	const liveNote = (c: Conversation) => (text: string) => {
-		const blocked = cannotRunFor(ctx, c, text, cannotRun);
-		return blocked.length ? cannotRunWords(ctx, blocked[0]) : undefined;
-	};
 	const typing = $derived(
 		conversation && chatState ? typingWords(chatState.typing, ctx, conversation.id, now) : undefined
 	);
@@ -423,7 +404,6 @@
 		threadOpener = undefined;
 		rowActivity.clear();
 		showMembers = false;
-		showPins = false;
 		membersOpener = undefined;
 		showMuted = false;
 		openDigest = undefined;
@@ -511,7 +491,6 @@
 	}
 	function closeMembers() {
 		showMembers = false;
-		showPins = false;
 		const target = membersOpener?.isConnected ? membersOpener : listEl;
 		void tick().then(() => focusVisible(target));
 	}
@@ -519,14 +498,6 @@
 		if (showMembers) return closeMembers();
 		membersOpener = opener;
 		showMembers = true;
-		showPins = false;
-		closeThread(false);
-	}
-	function togglePins(opener: HTMLElement) {
-		if (showPins) return closeMembers();
-		membersOpener = opener;
-		showPins = true;
-		showMembers = false;
 		closeThread(false);
 	}
 	// Opening a conversation reads it: what arrives while it is open is read too (unread muted messages don't count).
@@ -703,23 +674,6 @@
 					) ?? null
 			);
 	}
-	/** Check status: reconcile the retained change id first; a retry reuses it, so nothing is sent twice. */
-	async function checkStatus(p: Pending) {
-		p.status = 'checking';
-		try {
-			const known = await chatApi.status(organizationId, p.change_id);
-			if (known.state === 'applied') {
-				pending = pending.filter((x) => x.key !== p.key);
-				await load();
-				toast.success('Delivered.');
-			} else {
-				p.status = 'failed';
-				p.error = 'the office has no record of it. Retry sends it once.';
-			}
-		} catch {
-			p.status = 'unknown';
-		}
-	}
 
 	// ---- message actions -----------------------------------------------------------------------
 
@@ -802,12 +756,6 @@
 		);
 	}
 	const accept = (m: ChatMessage) => cardCall({ method: 'chat.accept_handoff', message_id: m.id });
-	async function handBack(m: ChatMessage, reason: string) {
-		await cardCall({ method: 'chat.hand_back', message_id: m.id, reason });
-		toast.success(`Handed back to ${nameOf(ctx, m.from)}.`);
-	}
-	const withdraw = (m: ChatMessage, reason: string) =>
-		cardCall({ method: 'chat.withdraw', ask_id: m.id, reason: reason.trim() || undefined });
 	function openThread(m: ChatMessage, opener: HTMLElement) {
 		if (chatState && (searching || view.type !== 'conversation' || view.id !== m.conversation_id)) {
 			select({ type: 'conversation', id: m.conversation_id }, false);
