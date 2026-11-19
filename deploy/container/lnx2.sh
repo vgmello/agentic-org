@@ -164,8 +164,10 @@ worker_socket() {
 }
 # A worker process runs and its socket exists. (The runtime folder is in the data volume,
 # so a socket file alone may be a stopped worker's.)
+# The worker that created the HQ serves it on (`--create`) until the host next starts it
+# (`--office <id>`).
 worker_runs() {
-    has "agentic-org-office --office $office" \
+    has "agentic-org-office (--create|--office $office)" \
         "$(docker exec "$1" sh -c 'for p in /proc/[0-9]*; do tr "\0" " " < "$p/cmdline" 2>/dev/null; echo; done' || true)"
 }
 worker_serves() { worker_runs "$1" && [ -n "$(worker_socket "$1")" ]; }
@@ -296,6 +298,11 @@ api() {
 session_cookie() { tr -d '\r' < "$scratch/head" | sed -n 's/^[Ss]et-[Cc]ookie: *\(org_session_[^;]*\).*/\1/p' | head -n 1; }
 session_proof() { sed -n 's/.*"proof":"\([0-9a-f]\{64\}\)".*/\1/p' "$scratch/body"; }
 password='lnx2 synthetic administrator password'
+# The request bodies, made outside the command substitutions they are sent from: the
+# macOS bash 3.2 brace-expands a "{...,...}" literal inside "$(...)" in double quotes,
+# which split the JSON into three requests.
+credentials="{\"login\":\"Owner\",\"password\":\"$password\"}"
+registration() { printf '{"link":"%s","login":"Owner","password":"%s"}' "$1" "$password"; }
 signed_in() {
     what=$1
     [ "$2" = 200 ] || fail "$what: $2 $(head -c 300 "$scratch/body")"
@@ -359,13 +366,13 @@ echo "refused without a terminal, as the service user and as a third user"
 token=$(sed -n 's|.*http://127\.0\.0\.1:8443/register#\([A-Za-z0-9_-]*\).*|\1|p' <<<"$link" | head -n 1)
 [ -n "$token" ] || fail "no token in the link: $link"
 signed_in "registration from the link" \
-    "$(api POST /api/v1/links/register "{\"link\":\"$token\",\"login\":\"Owner\",\"password\":\"$password\"}")"
+    "$(api POST /api/v1/links/register "$(registration "$token")")"
 session_holds || fail "the registration's session is not the host's"
 echo "POST /api/v1/links/register at the origin: 200, the administrator Owner, signed in"
 again=$(api POST /api/v1/links/register "{\"link\":\"$token\",\"login\":\"Other\",\"password\":\"$password\"}")
 [ "$again" != 200 ] || fail "the link registered a second account"
 [ -z "$(session_cookie)" ] || fail "a refused registration set a cookie"
-signed_in "sign-in" "$(api POST /api/v1/session/sign-in "{\"login\":\"Owner\",\"password\":\"$password\"}")"
+signed_in "sign-in" "$(api POST /api/v1/session/sign-in "$credentials")"
 session_holds || fail "the sign-in's session is not the host's"
 echo "the link works once; POST /api/v1/session/sign-in at the origin: 200, signed in"
 wrong=$(api POST /api/v1/session/sign-in '{"login":"Owner","password":"not the password at all"}')
@@ -464,7 +471,7 @@ echo "the same instance $id, the same keys, and its office's worker serves again
 wait_until "the replaced web process to serve" answers_http
 session_holds || fail "the browser's session did not survive the replacement"
 signed_in "sign-in after the replacement" \
-    "$(api POST /api/v1/session/sign-in "{\"login\":\"Owner\",\"password\":\"$password\"}")"
+    "$(api POST /api/v1/session/sign-in "$credentials")"
 echo "the browser's session held across the replacement, and the administrator signed in again"
 docker rm -f "$tag-b" >/dev/null
 
@@ -513,7 +520,7 @@ token=$(sed -n 's|.*http://127\.0\.0\.1:8443/register#\([A-Za-z0-9_-]*\).*|\1|p'
 [ -n "$token" ] || fail "no registration link on anonymous volumes"
 wait_until "the anonymous instance's web process to serve" answers_http
 signed_in "registration on anonymous volumes" \
-    "$(api POST /api/v1/links/register "{\"link\":\"$token\",\"login\":\"Owner\",\"password\":\"$password\"}")"
+    "$(api POST /api/v1/links/register "$(registration "$token")")"
 # The create operation uses a ULID with a current timestamp. This instance submits just one.
 milliseconds=$(docker exec "$tag-d" date +%s000)
 alphabet=0123456789ABCDEFGHJKMNPQRSTVWXYZ
