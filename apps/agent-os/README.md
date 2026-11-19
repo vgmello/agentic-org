@@ -41,7 +41,11 @@ a run binding.
   checks that the office exists under the office home (`$ORG_OFFICE_HOME`, else the
   default under `$HOME`), connects to its socket, binds
   as the agent and makes the call (`src/office.rs`). With `$ORG_SESSION_TOKEN` set
-  (an agent run by the office), it never falls back to the file queue.
+  (an agent run by the office), it never falls back to the file queue. Only `who`
+  answers there today: the office does not serve messaging until increment B6 rebuilds
+  it on the office store, so the four `msg` commands are refused with the office's
+  `unsupported` error (exit 4, nothing on standard output, no fallback to the file
+  queue).
 - **A file queue.** Every other command, and those five when no office is named, read
   and write a file queue under `$ORG_HOME/spool` (default `~/.agency/spool`), through
   `crates/org-spool`. It hard-codes an owner id and delivers through the relay.

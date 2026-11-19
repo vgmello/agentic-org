@@ -276,9 +276,11 @@ impl Call for OrganizationList {
 /// the last position you got) once bound. No filter or unsubscribe yet (a filter would be an
 /// optional param, which is additive). A subscriber also receives events for its own actions.
 ///
-/// On an **office server** it needs a binding (ADR-0003 §2.1.4): on an unbound connection
-/// it's `not_authorized`, like `org.snapshot`, and today only app-bound connections may
-/// subscribe (an agent-bound subscriber needs its own event filter first). The **host**
+/// On an **office server** it answers `unsupported` before any binding check until B6 rebuilds
+/// the office's change feed on its new store. Once it is served it needs a binding (ADR-0003
+/// §2.1.4): on an unbound connection it's `not_authorized`, like `org.snapshot`, and only
+/// app-bound connections may subscribe (an agent-bound subscriber needs its own event filter
+/// first). The **host**
 /// serves it to any same-user connection without a binding (its socket is 0600), for the
 /// office list and `office.status_changed`.
 ///

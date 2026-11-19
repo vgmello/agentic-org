@@ -58,7 +58,6 @@ dependencies = [
  "org-platform",
  "org-proto",
  "org-socket",
- "org-supervise",
  "org-sync",
  "org-work",
  "proc-macro2",

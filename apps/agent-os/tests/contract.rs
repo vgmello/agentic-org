@@ -31,6 +31,23 @@ fn setup(tag: &str) -> TempOrgHome {
 }
 
 #[test]
+fn help_explains_which_commands_work_with_a_named_office() {
+    let env = TempOrgHome::new("help");
+    let run = env.run(ME, &["--help"]);
+    let help = run.stderr;
+    assert_eq!(run.code, 0, "{help}");
+    assert!(
+        help.contains("who command works against a named office"),
+        "{help}"
+    );
+    assert!(
+        help.contains("msg send, inbox, read and wait return unsupported (exit 4)")
+            && help.contains("without falling back to the local spool"),
+        "{help}"
+    );
+}
+
+#[test]
 fn v1_old_output_shapes_are_unchanged() {
     let env = TempOrgHome::new("compat");
     let reg = env.run(ME, &["msg", "register"]);

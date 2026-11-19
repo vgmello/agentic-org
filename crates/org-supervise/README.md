@@ -6,8 +6,8 @@ no office, employee, protocol, storage or adapter implementation.
 
 Piped spawning, generated files, owned graceful/fast stopping, socket cleanup and
 probe preparation are implemented. Native orphan discovery is available through
-the recovery API on macOS and Linux, and the office worker uses it
-(`apps/agentic-org-office/src/owned_recovery.rs`). PTYs are not implemented; agents
+the recovery API on macOS and Linux; no office calls it since B1b removed the
+worker's owned-process recovery, which returns with process ownership in C3. PTYs are not implemented; agents
 run headless. Integrate native recovery before launching a real agent runtime: its
 tools can leave its process group. Increment C3 starts agents with this library.
 

@@ -949,7 +949,7 @@ GROUP BY m.organization_id,m.office_id,p.model_profile_id,m.model_id;
 | --- | --- |
 | `crates/org-supervise` | A library for explicit environments, child spawning, ownership, stopping, cleanup and recovery primitives. It is not a supervisor daemon or a routing engine, and it does not launch agents today. |
 | `crates/org-runtime` | The runtime-adapter contract: `AgentRuntime::plan_session` produces a launch plan; the adapter does not spawn or do I/O. It has no caller. |
-| `apps/agentic-org-office` | Holds a recovery adapter over office-owned process rows (`tests/owned_recovery.rs`). The agent launch loop is not wired. |
+| `apps/agentic-org-office` | No process ownership: B1b removed the recovery adapter over office-owned process rows (C3 rebuilds it on the new store). The agent launch loop is not wired. |
 
 The office hosts the logical employee supervisor, router and runner defined above; there is no separate supervisor executable.
 

@@ -293,14 +293,15 @@ impl World {
     }
 }
 
-/// LNX-1. The real host admits the real worker through the platform's admission, the worker
-/// serves its local socket as this office, and `agent-os` sends a message through it and
-/// reads it back; then the host stops cleanly on `SIGTERM` and takes its worker with it.
+/// LNX-1, as far as B1b leaves it. The real host admits the real worker through the platform's
+/// admission, the worker serves its local socket as this office, and `agent-os` reaches it: a
+/// directory read is answered, and a send is answered `unsupported` by the office itself rather
+/// than spooled. The send and read of ADR-0017's LNX-1 return when B6 rebuilds messaging on the
+/// office store. Then the host stops cleanly on `SIGTERM` and takes its worker with it.
 #[test]
-fn the_real_host_starts_the_real_worker_and_agent_os_sends_and_reads() {
-    if !support::may_run_the_service(
-        "the_real_host_starts_the_real_worker_and_agent_os_sends_and_reads",
-    ) {
+fn the_real_host_starts_the_real_worker_and_agent_os_reaches_it() {
+    if !support::may_run_the_service("the_real_host_starts_the_real_worker_and_agent_os_reaches_it")
+    {
         return;
     }
     let world = World::new();
@@ -311,46 +312,38 @@ fn the_real_host_starts_the_real_worker_and_agent_os_sends_and_reads() {
     assert!(!log.contains("refused office server"), "{log}");
     assert!(!log.contains("no office server can be started"), "{log}");
 
-    // pixel sends to nova by handle; the office answers with the message's id.
-    let sent = world
-        .agent(
-            "pixel",
-            &[
-                "msg",
-                "send",
-                "--to",
-                "nova",
-                "--subject",
-                "hi",
-                "--json",
-                "hello nova",
-            ],
-        )
-        .ok();
-    assert_eq!(sent.stderr, "");
-    let id = sent.json()["id"].as_str().unwrap().to_owned();
-    // Nothing fell back to a local spool: the send went through the office.
-    assert!(!world.base().join("u/spool/outbox/new").exists());
+    // pixel looks nova up through the office's directory.
+    let nova = world.agent("pixel", &["who", "nova", "--json"]).ok().json();
+    assert_eq!(nova["id"], NOVA);
+    assert_eq!(nova["kind"], "agent");
 
-    // nova's inbox shows it, and reading it gives the body back.
-    let inbox = world.agent("nova", &["msg", "inbox", "--json"]).ok().json();
-    let rows = inbox.as_array().unwrap();
-    assert_eq!(rows.len(), 1, "{inbox}");
-    assert_eq!(rows[0]["id"], id.as_str());
-    assert_eq!(rows[0]["from"], "pixel");
-    assert_eq!(rows[0]["status"], "unread");
-    let read = world
-        .agent("nova", &["msg", "read", "--next", "--json"])
-        .ok()
-        .json();
-    assert_eq!(read["id"], id.as_str());
-    assert_eq!(read["body"], "hello nova");
-    assert_eq!(read["from"], "pixel");
-    assert_eq!(read["subject"], "hi");
-    assert_eq!(
-        world.agent("nova", &["msg", "inbox", "--json"]).ok().stdout,
-        "[]"
+    // A send reaches the office, which refuses it until B6 (exit 4); nothing is spooled.
+    let sent = world.agent(
+        "pixel",
+        &[
+            "msg",
+            "send",
+            "--to",
+            "nova",
+            "--subject",
+            "hi",
+            "--json",
+            "hello nova",
+        ],
     );
+    assert_eq!(
+        sent.code, 4,
+        "stdout: {}\nstderr: {}",
+        sent.stdout, sent.stderr
+    );
+    assert_eq!(sent.stdout, "");
+    assert!(
+        sent.stderr.contains("does not serve messaging yet"),
+        "{}",
+        sent.stderr
+    );
+    assert!(!sent.stderr.contains("hello nova"), "{}", sent.stderr);
+    assert!(!world.base().join("u/spool/outbox/new").exists());
 
     // The service stops on SIGTERM, exits 0 and leaves no worker serving the socket.
     // SAFETY: sends a signal to this test's own child.

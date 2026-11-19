@@ -1,7 +1,10 @@
 //! The office's socket: JSON lines (`org_proto::frame`), one thread per connection. It answers
 //! `hello`, `org.snapshot`, `msg.bind`, `who`, `msg.send` / `msg.inbox` / `msg.read` /
 //! `msg.wait`, `subscribe` and the organization commands, which only an app-bound connection may
-//! send, and the work writes made as a bound member; other methods are `unknown_method`. A `msg.wait` is held on a thread of its own
+//! send, and the work writes made as a bound member; other methods are `unknown_method`. With no
+//! `mailbox` or `feed` port (the worker since B1b) `msg.send`/`inbox`/`read`/`wait` and `subscribe` answer
+//! `unsupported`, and composition answers work writes, `status.set` and `operation.get` the same
+//! way; see [`OfficePorts`]. A `msg.wait` is held on a thread of its own
 //! (at most [`MAX_HELD`] per connection), so the connection keeps answering meanwhile. When the
 //! server stops, every connection is closed and its thread joined BEFORE the office is, so no thread
 //! touches a database that is closing.
@@ -88,12 +91,15 @@ pub struct OfficePorts {
     pub operation_get: OperationFn,
     pub who: WhoFn,
     pub status: StatusFn,
-    /// The log, for `subscribe`.
-    pub feed: Box<dyn OrgFeed>,
+    /// The log, for `subscribe`. With `None`, `subscribe` answers `unsupported` and the
+    /// inbox sends no `inbox.changed` hints.
+    pub feed: Option<Box<dyn OrgFeed>>,
     /// Live events for `subscribe` (messages, status lines).
     pub live: Arc<LiveEvents>,
-    /// Messaging: what `msg.send`, `msg.inbox`, `msg.read` and `msg.wait` run on.
-    pub mailbox: Arc<Mailbox>,
+    /// Messaging: what `msg.send`, `msg.inbox`, `msg.read` and `msg.wait` run on. `None`:
+    /// this office does not serve them yet (they answer `unsupported`); `msg.bind` still binds
+    /// through `directory`.
+    pub mailbox: Option<Arc<Mailbox>>,
     /// Who a `msg.bind` names.
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
@@ -303,6 +309,7 @@ pub struct Shared {
     timing: Timing,
     /// The connections bound as a member, for the watcher.
     bound: Bound,
+    directory_change_token: Option<Box<dyn Fn() -> u64 + Send + Sync>>,
     pub(crate) inbox: Option<crate::inbox::Hq>,
     hint: Option<crate::inbox::Hint>,
 }
@@ -328,6 +335,7 @@ impl Shared {
             auth: auth.into(),
             timing: Timing::default(),
             bound: Mutex::default(),
+            directory_change_token: None,
             inbox: None,
             hint: None,
             // Part 1 implements only what every server of this api_version has: no capabilities.
@@ -354,6 +362,14 @@ impl Shared {
         }
     }
 
+    /// Track organization changes for revocation even when no subscription feed is served.
+    pub(crate) fn watch_directory_changes(
+        &mut self,
+        token: impl Fn() -> u64 + Send + Sync + 'static,
+    ) {
+        self.directory_change_token = Some(Box::new(token));
+    }
+
     /// Only a known HQ composition registers real sources; other offices stay dark.
     pub(crate) fn register_inbox(
         &mut self,
@@ -371,9 +387,13 @@ impl Shared {
     }
 
     pub(crate) fn enable_inbox_hints(&mut self) -> Result<(), String> {
+        // Hints reach the owner only through `subscribe`: no feed, no hints.
+        let Some(feed) = &self.ports.feed else {
+            return Ok(());
+        };
         if self.inbox.is_some() && self.hint.is_none() {
             self.hint = Some(crate::inbox::Hint::new(
-                self.ports.feed.head()?,
+                feed.head()?,
                 self.ports.live.mailbox_head(),
             ));
             self.hello.capabilities.push("inbox.changed".into());
@@ -529,25 +549,30 @@ fn run_for_uid(
     }
 }
 
-/// Whenever the organization's log has moved (and the first time), looks at each member-bound
+/// Whenever the organization has changed (and the first time), looks at each member-bound
 /// connection's member: one that is no longer bindable (offboarded, made office-run, removed) has
 /// its held `msg.wait` calls ended with `not_bound` and its subscription ended, without waiting
 /// for the connection's next call. An idle revoked connection closes at its next reader tick;
 /// a call that arrives first receives `not_bound`, then the connection closes. A lookup that
-/// fails ends nothing. Organization changes are what can unbind a member, so a quiet log costs
-/// one cheap head read per tick.
+/// fails ends nothing. With no subscription feed, check the directory's change token each tick.
 fn watch(shared: &Shared, watching: &std::sync::atomic::AtomicBool) {
-    let mut last_head = None;
+    let feed = shared.ports.feed.as_deref();
+    let mut checked = (None, None);
     while watching.load(Ordering::SeqCst) {
-        // Before looking, so a change while looking wakes the wait below at once.
-        let token = shared.ports.feed.token();
-        let head = shared.ports.feed.head().ok();
-        if head.is_none() || head != last_head {
+        // Sample before looking so a change during the pass gets another pass.
+        let token = feed.map(|feed| feed.token());
+        let position = match feed {
+            Some(feed) => (feed.head().ok(), None),
+            None => (
+                None,
+                shared.directory_change_token.as_ref().map(|token| token()),
+            ),
+        };
+        if position == (None, None) || position != checked {
             // A panic in a lookup must not end the watching for good.
             let pass = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| revoke(shared)));
             match pass {
-                // Settled: this head is done with.
-                Ok(false) => last_head = head,
+                Ok(false) => checked = position,
                 // A lookup could not answer: look again on the next tick.
                 Ok(true) => {}
                 Err(_) => {
@@ -555,18 +580,18 @@ fn watch(shared: &Shared, watching: &std::sync::atomic::AtomicBool) {
                 }
             }
         }
-        let sleep = match (&shared.inbox, &shared.hint) {
-            (Some(hq), Some(hint)) => hint
-                .poll(
-                    hq,
-                    &*shared.ports.feed,
-                    &shared.ports.live,
-                    std::time::Instant::now,
-                )
+        let sleep = match (&shared.inbox, &shared.hint, feed) {
+            (Some(hq), Some(hint), Some(feed)) => hint
+                .poll(hq, feed, &shared.ports.live, std::time::Instant::now)
                 .min(shared.timing.idle),
             _ => shared.timing.idle,
         };
-        shared.ports.feed.wait(token, sleep);
+        match (feed, token) {
+            (Some(feed), Some(token)) => {
+                feed.wait(token, sleep);
+            }
+            _ => std::thread::sleep(sleep),
+        }
     }
 }
 
@@ -594,8 +619,13 @@ fn revoke(shared: &Shared) -> bool {
         // one that bound as someone else, or bound again after the member was restored, is left
         // alone.
         let bound = shared.bound.lock().unwrap_or_else(|p| p.into_inner());
-        if !is_gone(shared, &member) {
-            continue;
+        match lookup_binding(shared, &member) {
+            Lookup::Failed => {
+                undecided = true;
+                continue;
+            }
+            Lookup::Bindable(_) => continue,
+            Lookup::Not => {}
         }
         for (_, control) in bound.values().filter(|(m, _)| *m == member) {
             // `revoked` first: a wait that starts after the cancel below sees it.
@@ -788,6 +818,17 @@ fn serve_connection_as(
                 held.cancel_all();
             }
             if request.is::<MsgWait>() {
+                let Some(mailbox) = &shared.ports.mailbox else {
+                    if !send(
+                        &out,
+                        request.id,
+                        &msg_calls::unsupported(request.id),
+                        shared.timing,
+                    ) {
+                        break;
+                    }
+                    continue;
+                };
                 match msg_calls::begin_wait(&request, binding.member()) {
                     Ok(wait) => {
                         let (cancel, cancellation) = cancellation_pair();
@@ -809,8 +850,7 @@ fn serve_connection_as(
                         if control.revoked.load(Ordering::SeqCst) {
                             held.cancel_all();
                         }
-                        let (out, held, mailbox, timing) =
-                            (&out, &held, &shared.ports.mailbox, shared.timing);
+                        let (out, held, timing) = (&out, &held, shared.timing);
                         let id = request.id;
                         let started = std::thread::Builder::new()
                             .name("org-office-wait".into())
@@ -844,13 +884,17 @@ fn serve_connection_as(
                     }
                 }
             }
-            let response = if request.is::<org_proto::Subscribe>() {
-                match follow::begin(
-                    &request,
-                    &*shared.ports.feed,
-                    binding.via_grant(),
-                    subscribed,
-                ) {
+            let feed = shared.ports.feed.as_deref();
+            let response = if request.is::<org_proto::Subscribe>() && feed.is_none() {
+                Response::error(
+                    request.id,
+                    ApiError::new(
+                        ErrorCode::Unsupported,
+                        "this office does not serve `subscribe` yet",
+                    ),
+                )
+            } else if let (true, Some(feed)) = (request.is::<org_proto::Subscribe>(), feed) {
+                match follow::begin(&request, feed, binding.via_grant(), subscribed) {
                     Ok(position) => {
                         // Live events start from here: what is published from now on.
                         let start = follow::Start {
@@ -871,7 +915,7 @@ fn serve_connection_as(
                         if let Some(old) = pusher.take() {
                             let _ = old.join();
                         }
-                        let (feed, live) = (&*shared.ports.feed, &*shared.ports.live);
+                        let live = &*shared.ports.live;
                         let wire = follow::Wire {
                             out: &out,
                             generation,
@@ -1074,7 +1118,9 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     if request.is::<MsgBind>() {
         return bind_connection(request, shared, binding);
     }
-    if let Some(response) = msg_calls::answer(request, &shared.ports.mailbox, binding.member()) {
+    if let Some(response) =
+        msg_calls::answer(request, shared.ports.mailbox.as_deref(), binding.member())
+    {
         return response;
     }
     match WorkCall::parse(request) {
@@ -1360,6 +1406,7 @@ fn internal(id: u64) -> Response {
 mod tests {
     mod inbox;
     mod office_socket;
+    mod unserved;
     mod work;
     use std::io::BufReader;
     use std::sync::atomic::AtomicBool;
@@ -1556,7 +1603,7 @@ mod tests {
             // Principal-bearing rebinds cannot cancel the active Grants agent's held call.
             let _wait = client.call_later::<MsgWait>(&wait_params());
             until("Grants agent wait is held", || {
-                shared.ports.mailbox.held_waits() == 1
+                shared.ports.mailbox.as_ref().unwrap().held_waits() == 1
             });
             for principal in office_socket::principal_values() {
                 assert_eq!(
@@ -1568,7 +1615,7 @@ mod tests {
                     ))),
                     ErrorCode::NotAuthorized
                 );
-                assert_eq!(shared.ports.mailbox.held_waits(), 1);
+                assert_eq!(shared.ports.mailbox.as_ref().unwrap().held_waits(), 1);
                 assert!(matches!(
                     client.call::<MsgInbox>(&inbox_params()),
                     org_proto::Outcome::Result(_)
@@ -1768,7 +1815,7 @@ mod tests {
             revoke: Mutex::new(None),
         });
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.mailbox = mailbox;
+        ports.mailbox = Some(mailbox);
         ports.directory = directory.clone();
         let shared = Shared::new(
             &test_info(),
@@ -1833,7 +1880,7 @@ mod tests {
         // the hello call itself must discover the missing member and close.
         let (mailbox, directory) = messaging();
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.mailbox = mailbox;
+        ports.mailbox = Some(mailbox);
         ports.directory = directory.clone();
         let shared = Shared::new(
             &test_info(),
@@ -1903,9 +1950,9 @@ mod tests {
         });
         let feed = Arc::new(FakeFeed::default());
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.mailbox = mailbox.clone();
+        ports.mailbox = Some(mailbox.clone());
         ports.directory = directory.clone();
-        ports.feed = Box::new(feed.clone());
+        ports.feed = Some(Box::new(feed.clone()));
         let shared = Shared::new(
             &test_info(),
             Path::new("/unused-test-socket"),
@@ -2205,9 +2252,9 @@ mod tests {
             submit: Box::new(|_| Err("none".to_owned())),
             who: Box::new(|_| Err("none".to_owned())),
             status: Box::new(|_, _| Err("none".to_owned())),
-            feed: Box::new(Arc::new(FakeFeed::default())),
+            feed: Some(Box::new(Arc::new(FakeFeed::default()))),
             live: Arc::new(LiveEvents::new(Box::new(|| {}))),
-            mailbox,
+            mailbox: Some(mailbox),
             directory,
         }
     }
@@ -2659,9 +2706,9 @@ mod tests {
                 }),
                 who: Box::new(|_| Err("none".to_owned())),
                 status: Box::new(|_, _| Err("none".to_owned())),
-                feed: Box::new(Arc::new(FakeFeed::default())),
+                feed: Some(Box::new(Arc::new(FakeFeed::default()))),
                 live: Arc::new(LiveEvents::new(Box::new(|| {}))),
-                mailbox,
+                mailbox: Some(mailbox),
                 directory,
             },
             launch_key(),
@@ -3129,9 +3176,9 @@ mod tests {
                     submit: Box::new(|_| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
                     status: Box::new(|_, _| Err("none".to_owned())),
-                    feed: Box::new(Arc::clone(&feed)),
+                    feed: Some(Box::new(Arc::clone(&feed))),
                     live: Arc::new(LiveEvents::new(Box::new(|| {}))),
-                    mailbox,
+                    mailbox: Some(mailbox),
                     directory,
                 },
                 launch_key(),
@@ -3622,9 +3669,9 @@ mod tests {
                     answer(params)
                 }),
                 status: Box::new(|_, _| Err("none".to_owned())),
-                feed: Box::new(Arc::new(FakeFeed::default())),
+                feed: Some(Box::new(Arc::new(FakeFeed::default()))),
                 live: Arc::new(LiveEvents::new(Box::new(|| {}))),
-                mailbox,
+                mailbox: Some(mailbox),
                 directory,
             },
             launch_key(),
@@ -3750,7 +3797,7 @@ mod tests {
         let (mailbox, directory) = messaging();
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
         ports.submit = Box::new(|_| committed());
-        ports.mailbox = Arc::clone(&mailbox);
+        ports.mailbox = Some(Arc::clone(&mailbox));
         ports.directory = directory.clone();
         let shared = Arc::new(Shared::new(&test_info(), path, ports, launch_key()));
         let (stop, server) = start(path, &shared);
@@ -4337,7 +4384,7 @@ mod tests {
         let log: StatusLog = Arc::default();
         let (mailbox, directory) = messaging();
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.mailbox = mailbox;
+        ports.mailbox = Some(mailbox);
         ports.directory = directory;
         let recorded = Arc::clone(&log);
         ports.status = Box::new(move |member, params| {
@@ -4464,7 +4511,7 @@ mod tests {
     ) -> (Arc<Mailbox>, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
         let (mailbox, directory) = messaging_with(Arc::clone(live));
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.mailbox = Arc::clone(&mailbox);
+        ports.mailbox = Some(Arc::clone(&mailbox));
         ports.directory = directory;
         ports.live = Arc::clone(live);
         let timing = Timing {
@@ -4567,10 +4614,10 @@ mod tests {
     ) -> (Arc<AtomicBool>, std::thread::JoinHandle<()>) {
         let (mailbox, directory) = messaging_with(Arc::clone(live));
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.mailbox = mailbox;
+        ports.mailbox = Some(mailbox);
         ports.directory = directory;
         ports.live = Arc::clone(live);
-        ports.feed = Box::new(Arc::clone(feed));
+        ports.feed = Some(Box::new(Arc::clone(feed)));
         let shared =
             Arc::new(Shared::new(&test_info(), path, ports, launch_key()).with_timing(timing));
         start(path, &shared)
@@ -4757,10 +4804,10 @@ mod tests {
         };
         let (mailbox, directory) = messaging_with(Arc::clone(&live));
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.mailbox = Arc::clone(&mailbox);
+        ports.mailbox = Some(Arc::clone(&mailbox));
         ports.directory = directory.clone();
         ports.live = Arc::clone(&live);
-        ports.feed = Box::new(Arc::clone(&feed));
+        ports.feed = Some(Box::new(Arc::clone(&feed)));
         let timing = Timing {
             idle: Duration::from_secs(3),
             ..Timing::default()
@@ -4930,10 +4977,10 @@ mod tests {
             failing: AtomicBool::new(false),
         });
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.mailbox = Arc::clone(&mailbox);
+        ports.mailbox = Some(Arc::clone(&mailbox));
         ports.directory = flaky.clone();
         ports.live = Arc::clone(&live);
-        ports.feed = Box::new(Arc::clone(&feed));
+        ports.feed = Some(Box::new(Arc::clone(&feed)));
         let timing = Timing {
             idle: Duration::from_secs(3),
             ..Timing::default()
@@ -5026,10 +5073,10 @@ mod tests {
             failing: AtomicBool::new(false),
         });
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.mailbox = Arc::clone(&mailbox);
+        ports.mailbox = Some(Arc::clone(&mailbox));
         ports.directory = flaky.clone();
         ports.live = Arc::clone(&live);
-        ports.feed = Box::new(Arc::clone(&feed));
+        ports.feed = Some(Box::new(Arc::clone(&feed)));
         // A short idle: the retry comes without any commit.
         let timing = Timing {
             idle: Duration::from_millis(100),
