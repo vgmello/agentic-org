@@ -410,6 +410,19 @@ impl Offices {
         }
     }
 
+    /// [`Offices::shutdown`] with the servers' grace period ending at `deadline`
+    /// ([`Supervisor::shutdown_by`]), waiting for the startup discards until `until` at the
+    /// latest: the supervisor stopped their runs and starts no other, and one left still
+    /// running (its key store slow to answer, say) is logged.
+    pub(crate) fn shutdown_by(&self, deadline: Instant, until: Instant) {
+        self.supervisor.shutdown_by(deadline);
+        if let Some(startup) = lock(&self.startup).take() {
+            if !crate::sync::join_by(startup, until) {
+                host_log::log("the startup discards did not end with the host");
+            }
+        }
+    }
+
     fn organization(&self, org: OrganizationEntry<'_>) -> Organization {
         Organization {
             id: org.id.to_owned(),

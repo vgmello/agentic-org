@@ -67,8 +67,29 @@ pub const REFUSAL_REASON_BYTES: usize = 240;
 /// grammar is in `org-host`'s `web.rs`.
 pub const LANDLOCK_NOT_APPLIED_PREFIX: &str =
     "agentic-org-web: confinement: landlock not applied: ";
+/// What a web process whose UI build could not be loaded writes to its standard error
+/// before it exits, before it has confined itself or received anything from its host:
+///
+/// ```text
+/// line = "agentic-org-web: startup refused: ui build: " kind LF
+/// kind = the build check that failed, by its fixed name (`InvalidKey`, `UnreadableBuild`, ...)
+/// ```
+///
+/// The name says which rule the release's `ui/` folder broke (a file whose name is not one a
+/// build has, such as a macOS `._` file, is `InvalidKey`), never a path or a file's bytes.
+pub const BUILD_REFUSAL_PREFIX: &str = "agentic-org-web: startup refused: ui build: ";
 /// What every other failed start writes: one fixed line that says nothing more.
 const UNAVAILABLE: &str = "agentic-org-web: authenticated startup unavailable";
+
+/// Why the release's UI build could not be loaded: the build check's fixed name.
+#[derive(Debug)]
+struct BuildRefused(crate::assets::BuildError);
+impl std::fmt::Display for BuildRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+impl std::error::Error for BuildRefused {}
 
 /// Why this process could not confine itself: the adapter's reason, as the refusal
 /// line carries it.
@@ -105,15 +126,19 @@ fn confinement_refused(error: io::Error) -> io::Error {
 
 /// The one line the executable writes to its standard error for a failed
 /// [`serve`], without its line feed: the refusal line with the adapter's reason when
-/// the process could not confine itself, and one fixed line for anything else.
+/// the process could not confine itself, the UI build's refusal with the check that
+/// failed, and one fixed line for anything else.
 pub fn startup_failure_line(error: &io::Error) -> String {
-    match error
-        .get_ref()
-        .and_then(|inner| inner.downcast_ref::<ConfinementRefused>())
+    let inner = error.get_ref();
+    if let Some(ConfinementRefused(reason)) =
+        inner.and_then(|inner| inner.downcast_ref::<ConfinementRefused>())
     {
-        Some(ConfinementRefused(reason)) => format!("{REFUSAL_PREFIX}{reason}"),
-        None => UNAVAILABLE.to_owned(),
+        return format!("{REFUSAL_PREFIX}{reason}");
     }
+    if let Some(refused) = inner.and_then(|inner| inner.downcast_ref::<BuildRefused>()) {
+        return format!("{BUILD_REFUSAL_PREFIX}{refused}");
+    }
+    UNAVAILABLE.to_owned()
 }
 /// The line for a Landlock layer that was not applied, without its line feed.
 pub fn landlock_not_applied_line(reason: &str) -> String {
@@ -327,7 +352,8 @@ pub fn release_root(
 pub fn serve(assets: &Path) -> io::Result<()> {
     confinement::disable_core_dumps()?;
     let line = first_line(&mut io::stdin().lock())?;
-    let files = crate::release::load(assets, line.release.as_ref()).map_err(|_| failure())?;
+    let files = crate::release::load(assets, line.release.as_ref())
+        .map_err(|refused| io::Error::other(BuildRefused(refused)))?;
     let confined =
         confinement::confine_web(Path::new(&line.rendezvous)).map_err(confinement_refused)?;
     if let Some(reason) = &confined.landlock_not_applied {
@@ -352,6 +378,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     let _ = generation.set(host.generation());
     let (mode, origin, hsts) = match host.fetch_listener().map_err(|_| failure())? {
         TlsFetchResult::HttpLoopback { origin, hsts } => (ListenMode::HttpLoopback, origin, hsts),
+        TlsFetchResult::HttpPublished { origin, hsts } => (ListenMode::HttpPublished, origin, hsts),
         TlsFetchResult::Https {
             cert,
             key,
@@ -497,6 +524,25 @@ mod tests {
         // It is not a refusal line, and a refusal line is not one of these.
         assert!(!LANDLOCK_NOT_APPLIED_PREFIX.starts_with(REFUSAL_PREFIX));
         assert!(!REFUSAL_PREFIX.starts_with(LANDLOCK_NOT_APPLIED_PREFIX));
+    }
+
+    /// X5 review, fourth round (V-c): a UI build that cannot be loaded says which check it
+    /// failed, by the check's fixed name alone, so the host's log can say why the process
+    /// ended before it connected.
+    #[test]
+    fn a_ui_build_that_cannot_be_loaded_is_reported_by_its_check() {
+        use crate::assets::BuildError;
+        for (refused, kind) in [
+            (BuildError::InvalidKey, "InvalidKey"),
+            (BuildError::UnreadableBuild, "UnreadableBuild"),
+            (BuildError::UnauthenticatedRelease, "UnauthenticatedRelease"),
+        ] {
+            assert_eq!(
+                startup_failure_line(&io::Error::other(BuildRefused(refused))),
+                format!("agentic-org-web: startup refused: ui build: {kind}")
+            );
+        }
+        assert!(!BUILD_REFUSAL_PREFIX.starts_with(REFUSAL_PREFIX));
     }
 
     #[test]

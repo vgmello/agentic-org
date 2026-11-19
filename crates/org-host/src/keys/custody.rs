@@ -6,12 +6,14 @@
 //! **The Keychain store** (release builds on macOS): the item's value is the key's 32 bytes. The
 //! store is opened when it is chosen, which reads and writes nothing.
 //!
-//! **The release directory store** (release builds on Linux): owner-only files
+//! **The release directory store** (Linux, where the setup record names a credential
+//! directory, in every build): owner-only files
 //! `<credential directory>/office-keys/<office id>.key`, each the key's 32 bytes, in the
 //! credential directory the host opened and checked at its start (`release_store`). It is the
 //! platform's directory store below that directory, held by this host alone.
 //!
-//! **The development store** (debug builds): owner-only files `<dir>/<office id>.key`, or
+//! **The development store** (debug builds without a recorded credential directory):
+//! owner-only files `<dir>/<office id>.key`, or
 //! `<dir>/<instance id>/<office id>.key` for a registered instance, each 64 hex digits, the same
 //! format as `agentic-org-office`'s former `dev-keys` store. So a debug host, and every test,
 //! never writes a real Keychain item. **Never** for real data: the files are plain text. It is
@@ -106,8 +108,6 @@ impl OfficeKeys {
 
     /// Keys as the items of the office keys' item store below the release directory `root`,
     /// which is opened (and made, if it is missing) now.
-    // Debug builds never choose this store (`keys::store_for`); its tests still run there.
-    #[cfg_attr(debug_assertions, allow(dead_code))]
     pub(super) fn release_directory(root: &ReleaseRoot) -> Result<Self, CredentialError> {
         Ok(Self {
             source: Source::Protected(root.store(RELEASE_ITEMS)?),

@@ -311,7 +311,9 @@ restarted.
   replace their record idempotently.
 - **Shutdown** (the service manager's stop signal, or the host exiting): close every
   child's stdin and its rendezvous connection (the worker stops on the rendezvous
-  closing), wait up to 10 s, then SIGKILL what is left, and reap.
+  closing), wait until 1.5 s after the stop was asked for (`Timings::shutdown_grace`, on
+  every system), then SIGKILL what is left, and reap. The whole stop ends within 2.5 s
+  of the signal ([Linux host design](linux-host.md#34-service-lifecycle)).
 - **Create:** under the catalog mutex only, check the name and its uniqueness among the
   instance's organizations (ignoring case, counting creates in flight), make the IDs,
   reserve the name and release the mutex. Outside it: create the office secrets key and

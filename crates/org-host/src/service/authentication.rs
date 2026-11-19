@@ -73,6 +73,18 @@ impl Lifecycle {
         })
     }
 }
+impl Lifecycle {
+    /// Stops the expiry and waits for it until `until` at the latest, and says whether it
+    /// ended. A sweep waiting for the registry (a create holding it, up to its busy timeout)
+    /// is left to end on its own: a stopping host does not wait for it past its bound.
+    pub(crate) fn join_by(mut self, until: std::time::Instant) -> bool {
+        self.stop.store(true, Ordering::SeqCst);
+        self.thread.take().is_none_or(|thread| {
+            thread.thread().unpark();
+            crate::sync::join_by(thread, until)
+        })
+    }
+}
 impl Drop for Lifecycle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);

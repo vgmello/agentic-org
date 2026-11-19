@@ -10,7 +10,8 @@ use org_host_control::listen::{ListenMode, ListenOrigin, OriginScheme};
 
 /// Refuse to start unless `origin` fits the listener bound at `listener` in `mode`. Runs before
 /// any runtime or application initialization. The error carries the [`OriginError`] as its
-/// source: `PermissionDenied` for `http_loopback`, `InvalidInput` for `https`.
+/// source: `PermissionDenied` for the two plain HTTP modes (`http_loopback`,
+/// `http_published`), `InvalidInput` for `https`.
 ///
 /// [`OriginError`]: org_host_control::listen::OriginError
 pub(crate) fn check_listener(
@@ -22,7 +23,9 @@ pub(crate) fn check_listener(
         .check(mode, listener.ip(), listener.port())
         .map_err(|error| {
             let kind = match mode {
-                ListenMode::HttpLoopback => io::ErrorKind::PermissionDenied,
+                ListenMode::HttpLoopback | ListenMode::HttpPublished => {
+                    io::ErrorKind::PermissionDenied
+                }
                 ListenMode::Https => io::ErrorKind::InvalidInput,
             };
             io::Error::new(kind, error)
@@ -179,7 +182,9 @@ mod tests {
                 None => "accepted",
                 Some((kind, reason)) => {
                     let start_kind = match mode {
-                        ListenMode::HttpLoopback => io::ErrorKind::PermissionDenied,
+                        ListenMode::HttpLoopback | ListenMode::HttpPublished => {
+                            io::ErrorKind::PermissionDenied
+                        }
                         ListenMode::Https => io::ErrorKind::InvalidInput,
                     };
                     assert_eq!(kind, start_kind, "{row}");

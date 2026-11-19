@@ -509,7 +509,7 @@ pub(super) fn valid_suffix(suffix: &str) -> bool {
 
 /// A fresh temporary file name: [`TEMPORARY`] and 32 hex digits from the system's
 /// random source.
-fn temporary_name() -> Result<String, CredentialError> {
+pub(super) fn temporary_name() -> Result<String, CredentialError> {
     let mut random = [0u8; 16];
     File::open("/dev/urandom")?.read_exact(&mut random)?;
     let mut name = String::from(TEMPORARY);
@@ -544,7 +544,7 @@ fn check(file: &File, kind: Kind) -> Result<(), CredentialError> {
 }
 
 /// Open `name` in `directory`, never following a link in `name` itself.
-fn at(directory: &File, name: &str, flags: i32) -> Result<File, CredentialError> {
+pub(super) fn at(directory: &File, name: &str, flags: i32) -> Result<File, CredentialError> {
     let name = cstring(name)?;
     let flags = flags | libc::O_NOFOLLOW | libc::O_CLOEXEC;
     // SAFETY: live directory fd and checked leaf; successful open transfers a new fd to File.

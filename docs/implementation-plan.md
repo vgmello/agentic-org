@@ -892,7 +892,8 @@ on the offers of design section 10.
   [identity and numbering](design/organization-data/06-identity-and-numbering.md),
   [assignment and history](design/organization-data/12-task-assignment-and-history.md),
   [ADR-0019](adr/0019-office-coded-task-numbers.md). Rows FC-039 to FC-046, FC-050,
-  FC-054, FC-056, FC-142.
+  FC-054, FC-056, FC-142. Task test cases from the retired assignment branch:
+  [assignment branch test cases](research/assignment-branch-test-cases.md#task-work).
 - **Code today:** `crates/org-work` has tasks, bugs, checklists and history against the
   model the data contract replaces, with per-project counters; `selected_codec`,
   `selected_assignment` and `selected_history` are the parts written for the selected
@@ -916,7 +917,8 @@ on the offers of design section 10.
   CLI-15 for the common task commands).
 - **Read:** [work items UX](specs/work-items-ux.md) (TSK, BUG, CHK, WORK criteria),
   [identity and numbering, default project](design/organization-data/06-identity-and-numbering.md#stable-ids-readable-references-and-scopes).
-  Rows FC-038, FC-039, FC-043.
+  Rows FC-038, FC-039, FC-043. Browser test cases from the retired assignment branch:
+  [assignment branch test cases](research/assignment-branch-test-cases.md#browser-and-web).
 - **Done when:** the TSK, BUG, CHK and WORK criteria that need no agent runtime pass in
   browser tests against a real instance; a task created in the browser is updated from
   a terminal and the browser shows the change without a reload.

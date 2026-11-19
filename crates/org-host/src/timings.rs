@@ -20,7 +20,15 @@ pub struct Timings {
     /// `unavailable` (`restarts_exhausted`) until `office.restart` or the next host run.
     pub give_up_after: u32,
     pub give_up_window: Duration,
-    /// How long servers get to exit after their stdin closes before they're SIGKILLed.
+    /// How long servers get to exit after their stdin closes before they're SIGKILLed. It
+    /// bounds the host's own stop: every server is asked at once and waited for until one
+    /// shared deadline, fixed when the host is asked to stop, and every other wait of the
+    /// stop ends 0.5 s after it at the latest, so the host exits within this grace plus
+    /// 0.5 s and the moments its last steps take. The design's bound is 2.5 s from
+    /// `SIGTERM` to exit 0 (Linux host design, section 3.4), inside the shortest default
+    /// grace of a container runtime: Docker Desktop's 3 s (`default-stop-timeout`; Docker Engine's is 10 s). A worker
+    /// asked to stop exits well within it; one killed at the deadline loses nothing, since
+    /// the office store recovers from a kill at any point.
     pub shutdown_grace: Duration,
     /// How long `--discard` of an unfinished office may take (it waits for the office lock).
     pub discard_timeout: Duration,
@@ -34,6 +42,15 @@ pub struct Timings {
     pub exit_poll: Duration,
 }
 
+impl Timings {
+    /// How long after a stop is asked for every wait of it has ended: the servers' grace,
+    /// then the margin the host gives its own threads after it. A host's last steps (removing
+    /// `host.sock`, releasing `host.lock`) follow at once.
+    pub fn stop_ends_within(&self) -> Duration {
+        self.shutdown_grace + crate::THREAD_END_MARGIN
+    }
+}
+
 impl Default for Timings {
     fn default() -> Self {
         Self {
@@ -44,7 +61,7 @@ impl Default for Timings {
             backoff_reset_after: Duration::from_secs(60),
             give_up_after: 10,
             give_up_window: Duration::from_secs(30 * 60),
-            shutdown_grace: Duration::from_secs(10),
+            shutdown_grace: Duration::from_millis(1500),
             discard_timeout: Duration::from_secs(30),
             create_wait: Duration::from_secs(30),
             exit_poll: Duration::from_secs(1),

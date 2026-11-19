@@ -87,8 +87,9 @@ mod adapter_tests;
 // The release directory's contract: its types and its entry, on every target.
 mod release;
 pub use release::{
-    release_directory, release_directory_with_stores, FilesystemClass, ItemStore, MountDoubt,
-    ReleaseDirectory, ReleaseItems, ReleaseRoot, RootRefusal, RootRule,
+    check_unused_release_directory, release_directory, release_directory_apart_from,
+    release_directory_with_stores, FilesystemClass, ItemStore, MountDoubt, ReleaseDirectory,
+    ReleaseItems, ReleaseRoot, RootRefusal, RootRule,
 };
 
 // The release directory's rules, pure. Only the GNU/Linux adapter calls them; every

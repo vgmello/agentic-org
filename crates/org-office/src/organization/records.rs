@@ -793,6 +793,63 @@ pub fn decode_team_allocation(bytes: &[u8]) -> Result<TeamAllocation, RecordErro
     Ok(record)
 }
 
+// ---- security/ca-escrow.v1.bin ----
+
+/// The largest escrow package ADR-0007 allows, in bytes.
+pub const MAX_CA_ESCROW_BYTES: usize = 4475;
+/// The magic and version an escrow package starts with (ADR-0007).
+const CA_ESCROW_MAGIC: &[u8; 8] = b"AGORGCA1";
+/// The one suite ADR-0007 defines.
+const CA_ESCROW_SUITE: u8 = 1;
+/// The ciphertext lengths ADR-0007 allows: up to 4096 PKCS#8 bytes plus the 16-byte tag.
+const CA_ESCROW_CIPHERTEXT: std::ops::RangeInclusive<usize> = 17..=4112;
+
+/// The organization's public CA escrow package (data contract document 01, ADR-0007): the
+/// exact encrypted envelope, published to Git verbatim. Its bytes are the record.
+pub fn ca_escrow_path() -> DurablePath {
+    path("state/security/ca-escrow.v1.bin")
+}
+
+/// The CA's public key in the escrow package `package` of `organization`, once its framing
+/// is checked: magic and version, the organization ID, the suite, an uncompressed SEC1
+/// public key, and a ciphertext length that ends the package exactly. The ciphertext is not
+/// opened: that takes the recovery code and is the PKI adapter's (`org-pki`).
+pub fn ca_escrow_public_key(package: &[u8], organization: &Id) -> Result<[u8; 65], RecordError> {
+    let refused = |reason: &str| RecordError::new("", reason);
+    let short = || refused("cut short");
+    if package.len() > MAX_CA_ESCROW_BYTES {
+        return Err(refused("larger than an escrow package can be"));
+    }
+    let Some(rest) = package.strip_prefix(CA_ESCROW_MAGIC.as_slice()) else {
+        return Err(refused("not an escrow package of version 1"));
+    };
+    let (length, rest) = rest.split_first_chunk::<2>().ok_or_else(short)?;
+    let length = usize::from(u16::from_be_bytes(*length));
+    if !(1..=255).contains(&length) {
+        return Err(refused("the organization ID is 1 to 255 bytes"));
+    }
+    let (recorded, rest) = rest.split_at_checked(length).ok_or_else(short)?;
+    if recorded != organization.as_str().as_bytes() {
+        return Err(refused("sealed for another organization"));
+    }
+    let (&suite, rest) = rest.split_first().ok_or_else(short)?;
+    if suite != CA_ESCROW_SUITE {
+        return Err(refused("not suite 1"));
+    }
+    // The salt (16 bytes) and the nonce (12) are the PKI adapter's.
+    let (_, rest) = rest.split_at_checked(16 + 12).ok_or_else(short)?;
+    let (public, rest) = rest.split_first_chunk::<65>().ok_or_else(short)?;
+    if public[0] != 4 {
+        return Err(refused("the public key is not an uncompressed SEC1 key"));
+    }
+    let (ciphertext, rest) = rest.split_first_chunk::<4>().ok_or_else(short)?;
+    let ciphertext = u32::from_be_bytes(*ciphertext) as usize;
+    if !CA_ESCROW_CIPHERTEXT.contains(&ciphertext) || rest.len() != ciphertext {
+        return Err(refused("the ciphertext is not the length the header gives"));
+    }
+    Ok(*public)
+}
+
 // ---- which record a path holds ----
 
 /// The record a path of this family holds, with what the path itself says.
@@ -809,6 +866,8 @@ pub enum Kind {
     /// The scope the path names.
     TeamCounter(Id),
     TeamAllocation(Id, u64),
+    /// The public CA escrow package.
+    CaEscrow,
 }
 
 /// A number as a path writes it: decimal, no sign, no leading zero, at least 1.
@@ -828,6 +887,7 @@ pub fn kind_of(path: &DurablePath) -> Option<Kind> {
         ["state", "repositories.yaml"] => Some(Kind::Repositories),
         ["state", "offices", name] => file(name).map(Kind::Office),
         ["state", "identity", "office-codes.yaml"] => Some(Kind::OfficeCodes),
+        ["state", "security", "ca-escrow.v1.bin"] => Some(Kind::CaEscrow),
         ["state", "identity", "counters", "organization", scope, "team.yaml"] => {
             id(scope).map(Kind::TeamCounter)
         }

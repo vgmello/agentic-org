@@ -131,10 +131,13 @@ fn bootstrap_files() -> BTreeMap<String, Vec<u8>> {
         Ok(text) => text.replace(written_at.as_str(), &golden_at).into_bytes(),
         Err(not_text) => not_text.into_bytes(),
     };
-    // Only this family's files: the office publishes others there (the CA escrow package).
+    // Only this family's files, and not the CA escrow package: today's bootstrap publishes
+    // the fixture bytes above there, and the new creation's CA records are compared on
+    // their own (`store/open/tests/local.rs`).
     let ours = |path: &String| {
         let path = org_store::DurablePath::parse(path);
-        path.is_ok_and(|path| records::kind_of(&path).is_some())
+        let kind = path.ok().and_then(|path| records::kind_of(&path));
+        kind.is_some_and(|kind| kind != records::Kind::CaEscrow)
     };
     let files = files_under(&public).into_iter();
     files
