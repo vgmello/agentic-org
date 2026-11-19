@@ -1,6 +1,6 @@
 # Organization structure
 
-Status: **selected** data contract, revision 2.8. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Status: **selected** data contract, revision 2.9. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
 
 ## Relationships
 
@@ -175,23 +175,69 @@ An employee has exactly one home team. Each team may have direct people, direct 
 
 An office file stores its stable ID, slug, name, revision and `role: hq` or `satellite`. The schema allows one HQ per organization and any number of satellites. Endpoint selection, enrollment, current connectivity and credentials belong to local configuration/operations, not the team hierarchy. Office definitions survive runtime deletion; the current agent placement can be rebuilt separately.
 
-`security/ca-escrow.v1.bin` contains only the exact versioned encrypted public
-package from [ADR-0007](../../adr/0007-hq-creation-escrow.md). The usable CA key is
-an HQ-local record wrapped by the host-held office secrets key
-([ADR-0016](../../adr/0016-no-application-level-data-encryption.md)), excluded from copied organization projections and
-all selected journals/history. The delivery code stays in protected host custody
-until acknowledged; neither secret is organization Git content. The public
-package alone supplies no account, epoch or writer authority.
+### The HQ's CA records
 
-The protected creation context supplies an explicit absolute canonical state
-root, separate from the private office directory. Creation freezes that location
-with its original operation. Before create completion, the worker publishes the
-exact committed package at that root's `security/ca-escrow.v1.bin`, using immutable
-publication and the required file/parent flushes. A missing copy is repairable
-from committed bytes on reopen; a different copy is retained and refused, never
-overwritten. The binary envelope is the versioned copied record; the organization snapshot codec
-does not acquire secret or escrow fields implicitly. Copies in Git keep this public
-file verbatim.
+`security/ca-escrow.v1.bin` contains only the exact versioned encrypted public
+package from [ADR-0007](../../adr/0007-hq-creation-escrow.md). It belongs to the
+organization: its file is a source of the organization's records, published to Git
+verbatim. The usable CA key is the HQ's local record
+`durable/local/offices/<office-id>/security/ca-key.v1.json`, never organization Git
+content. In it the CA private key is only ever wrapped by the host-held office secrets
+key ([ADR-0016](../../adr/0016-no-application-level-data-encryption.md)); the raw key
+is written nowhere. The delivery code stays in protected host custody until
+acknowledged. The public package alone supplies no account, epoch or writer
+authority.
+
+Both files are written by the organization's creation, the first entry of its
+acceptance journal ([document 16](16-recovery-and-office-continuity.md#how-the-directory-begins)),
+so the escrow package and the wrapped key are committed together or not at all. The
+protected journal under `durable/recovery/` therefore holds the wrapped key until that
+entry's segment is released. Nothing else does: the key record is excluded from
+organization Git, from copied organization projections, from every export and from the
+office's projection, which records only its hash. The office reads it from its file at
+opening and when the recovery package is read.
+
+**What leaves an office.** The replication outbox, Git publication and any export ship
+only file changes under `durable/state/`. A change under `durable/local/` or any other
+protected tree (`authority/`, `accounting/`, `messaging/`, `recovery/`, `budgets/`,
+`private/`) never leaves the office that wrote it, whichever entry it is in; the
+creation entry is read with its `local/` file left out. Replication (S1) inherits a
+test of this rule.
+
+**The CA key record's one form.** One JSON object, keys in this order, lowercase hex,
+no whitespace, and a final newline; a file in any other form is refused, so the exact
+bytes are the contract:
+
+```json
+{"schema_version":1,"organization_id":"01930000-0000-7000-8000-0000000000a2","office_id":"01930000-0000-7000-8000-0000000000a3","operation_id":"01930000-0000-7000-8000-000000000001","escrow_version":1,"public_key":"04…","package_sha256":"…","wrapped_ca_key":"…"}
+```
+
+| Field | Rule |
+| --- | --- |
+| `schema_version` | `1` |
+| `organization_id`, `office_id` | The organization and the HQ office: UUIDv7, and the office the folder names |
+| `operation_id` | The store operation that created the organization: a UUIDv7. While the wire's command IDs are ULIDs, the UUIDv7 the creation's ULID maps to (the one mapping in `crates/org-office/src/organization/operation_id.rs`, removed when the wire carries UUIDv7) |
+| `escrow_version` | `1`, the ADR-0007 envelope version of the package |
+| `public_key` | The CA's 65-byte uncompressed SEC1 public key (130 hex digits, starting `04`); it equals the package's |
+| `package_sha256` | The SHA-256 of `state/security/ca-escrow.v1.bin` (64 hex digits) |
+| `wrapped_ca_key` | The `org_pki::wrap` record of the CA's PKCS#8 key: version, nonce, ciphertext and tag |
+
+An HQ whose escrow package or key record is missing, whose package does not hash to
+`package_sha256`, or whose public key, organization or operation differ from the
+creation's is not opened; nothing is reset or generated again
+([ADR-0007](../../adr/0007-hq-creation-escrow.md), step 4). A retry of the creation
+carries the same material, and the material is part of what the retry is matched on: a
+retry with regenerated material is refused as a reused operation ID.
+
+The package is published like every file of an entry: created exclusively, once its
+entry is flushed. A missing copy is written again from the journal on reopen; a
+different copy stops the office and is kept, never overwritten. The binary envelope
+is the versioned copied record; the organization snapshot codec does not acquire
+secret or escrow fields. Copies in Git keep this public file verbatim.
+
+Code today (until increment B1b switches the office to its new store): the worker
+keeps the wrapped key in its office database and publishes the package to the state
+root its protected creation context names.
 
 ## Repository types
 
