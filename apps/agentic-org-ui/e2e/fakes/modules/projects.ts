@@ -7,7 +7,7 @@
 // Scenarios (`?mock=` on the page's URL, several joined with commas):
 //   slow · fails (reads fail) · empty (no projects) · unavailable · viewer (no create or edit rights)
 //   stale (HQ unreachable: the last copy, changes refused) · conflict (the first save meets a newer revision)
-//   save-fails (writes fail)
+//   save-fails (writes fail) · create-unknown (the first New project is applied, but its answer is lost)
 import { orgApi } from '$lib/org/api';
 import { newId } from '$lib/org/commands';
 import { unavailableCall } from '$lib/platform/unavailable-api';
@@ -23,6 +23,7 @@ import type {
 	TeamChoice,
 	TeamRef
 } from '../../../src/lib/modules/projects/types';
+import { OUTCOME_UNKNOWN } from '../../../src/lib/modules/projects/outcome';
 import { mockMode } from '../mock-mode';
 import { rows as memberRows, teamRef } from './members';
 import data from '../data/projects/projects.json' with { type: 'json' };
@@ -53,6 +54,9 @@ const extras = new Map<string, Extra>();
 /** The answer each create operation got: a repeated attempt gets the same project, not a second one. */
 const created = new Map<string, { projectId: string; number: number }>();
 let conflicted = false;
+let unknownOnce = false;
+/** HQ's revisions only grow; they don't step by one (other writes land between), so callers re-read, never guess. */
+const bump = (e: { revision: number }) => (e.revision += 2);
 
 const zeroTasks = (): TaskCounts => ({ todo: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 0 });
 const zeroBugs = (): BugCounts => ({ critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 });
@@ -335,7 +339,8 @@ export const projectsApi: ProjectsApi = {
 			.map((t): TeamChoice => ({
 				...ref(s, t.id),
 				path: teamPath(s, t.id),
-				topLevel: !t.owner_team_id
+				// The organization's own top-level team: the first root, made with the organization.
+				organizationTeam: t.id === roots(s)[0]?.id
 			}))
 			.toSorted((a, b) => a.path.localeCompare(b.path));
 	},
@@ -407,7 +412,23 @@ export const projectsApi: ProjectsApi = {
 		});
 		const answer = { projectId, number: e.number };
 		created.set(draft.operationId, answer);
+		if (on('create-unknown') && !unknownOnce) {
+			unknownOnce = true;
+			throw Object.assign(new Error('The connection to HQ dropped before it answered.'), {
+				source: 'app',
+				code: OUTCOME_UNKNOWN,
+				message: 'The connection to HQ dropped before it answered.'
+			});
+		}
 		return answer;
+	},
+
+	async createOperation(_organizationId, operationId) {
+		await read();
+		const done = created.get(operationId);
+		return done
+			? { state: 'applied', ...done }
+			: { state: 'not_applied', reason: 'HQ has no record of this project.' };
 	},
 
 	async rename(organizationId, projectId, change) {
@@ -433,7 +454,7 @@ export const projectsApi: ProjectsApi = {
 				params: { project_id: projectId, expected_version: project.version ?? 0, name }
 			});
 		e.slug = change.slug;
-		e.revision++;
+		bump(e);
 	},
 
 	async ownerChangePreview(organizationId, projectId) {
@@ -443,26 +464,23 @@ export const projectsApi: ProjectsApi = {
 		return { tasks: t.todo + t.inProgress + t.blocked + t.done + t.cancelled };
 	},
 
-	async setOwner(organizationId, projectId, change) {
+	async setTeams(organizationId, projectId, change) {
 		const { r, e } = await projectRow(organizationId, projectId);
 		await write(r.name);
 		checkRevision(e, change.expectedRevision, r.name);
-		const contributors = r.contributors.map((c) => c.id).filter((id) => id !== change.teamId);
-		await setTeams(organizationId, projectId, change.teamId, contributors);
-		e.revision++;
-	},
-
-	async setContributors(organizationId, projectId, change) {
-		const { r, e } = await projectRow(organizationId, projectId);
-		await write(r.name);
-		checkRevision(e, change.expectedRevision, r.name);
-		if (change.teamIds.includes(r.ownerTeam.id))
-			throw fail(
-				'invalid_request',
-				`${r.ownerTeam.name} is the accountable team; it can't also contribute.`
-			);
-		await setTeams(organizationId, projectId, r.ownerTeam.id, change.teamIds);
-		e.revision++;
+		const s = await snapshot(organizationId);
+		const ids = [change.ownerTeamId, ...change.contributorTeamIds];
+		if (change.contributorTeamIds.includes(change.ownerTeamId))
+			throw fail('invalid_request', "The accountable team can't also be a contributor.", {
+				field: 'owner'
+			});
+		if (ids.some((id) => !s.teams.some((t) => t.id === id)))
+			throw fail('not_found', "One of those teams isn't in the organization any more.", {
+				field: 'owner'
+			});
+		// Checked first, then applied whole: the org mock's own commands are not one transaction.
+		await setTeams(organizationId, projectId, change.ownerTeamId, change.contributorTeamIds);
+		bump(e);
 	},
 
 	async setRepositories(organizationId, projectId, change) {
@@ -480,7 +498,7 @@ export const projectsApi: ProjectsApi = {
 					field: 'repositories'
 				});
 		e.repositories = structuredClone(change.repositories);
-		e.revision++;
+		bump(e);
 	},
 
 	async processPreview(_organizationId, _projectId, processId) {
@@ -511,6 +529,6 @@ export const projectsApi: ProjectsApi = {
 				});
 		}
 		e.processId = change.processId;
-		e.revision++;
+		bump(e);
 	}
 };

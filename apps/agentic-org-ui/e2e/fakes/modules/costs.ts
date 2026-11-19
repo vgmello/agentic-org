@@ -5,6 +5,7 @@
 // IDs match the other pages. Added rates are kept in memory until the page reloads.
 // Scenarios (`?mock=` on the page's URL, several joined with commas):
 //   slow · fails (reads fail) · empty (no records, no prices) · unavailable · viewer (not the owner)
+//   manager (a project manager: the lead of Web, who sees only the investment of Web's projects)
 //   no-zone (the budget zone isn't known) · save-fails (adding a rate fails, verified) · save-unknown (the first add's
 //   outcome is unknown; it was in fact applied) · records-fail (the records sheet fails to load)
 import { orgApi } from '$lib/org/api';
@@ -480,6 +481,39 @@ export const costsApi: CostsApi = {
 		return price
 			? { state: 'applied', price: structuredClone(price) }
 			: { state: 'not_applied', reason: 'HQ has no record of this rate.' };
+	},
+
+	async projectInvestment(organizationId, request) {
+		await read();
+		if (on('viewer'))
+			throw fail('not_authorized', "Only the owner and a project's manager see its cost.");
+		const { snapshot } = await orgApi.view(organizationId);
+		// A project's manager is the lead of its accountable team (the first team listed on it) or of a team above it.
+		const above = (teamId: string | undefined): string[] => {
+			const team = snapshot.teams.find((t) => t.id === teamId);
+			return team ? [team.id, ...above(team.owner_team_id)] : [];
+		};
+		const owner = (projectId: string) =>
+			(snapshot.project_teams ?? []).find((l) => l.project_id === projectId)?.team_id;
+		const managed = on('manager');
+		const projects = (snapshot.projects ?? []).filter(
+			(p) => !managed || above(owner(p.id)).includes('web')
+		);
+		const month = resolvePeriod({ kind: 'this_month', timeZone: request.timeZone }).period;
+		const records = on('empty') ? [] : effective;
+		return structuredClone({
+			scope: managed ? ('managed' as const) : ('organization' as const),
+			thisMonth: month,
+			projects: projects.map((p) => {
+				const mine = records.filter((r) => r.attribution.projectId === p.id);
+				return {
+					projectId: p.id,
+					toDate: totalsOf(mine),
+					thisMonth: totalsOf(mine.filter((r) => within(r, month)))
+				};
+			}),
+			coverage: { checkpointAt: usage.checkpointAt, gaps: on('empty') ? [] : usage.gaps }
+		});
 	},
 
 	async organizationCost(organizationId, request) {

@@ -125,6 +125,24 @@ export interface OrganizationCost {
 	coverage: Coverage;
 }
 
+/** One project's investment (decision 6): what was spent on it to date and in the current month. */
+export interface ProjectInvestmentRow {
+	projectId: string;
+	/** All time: every effective record attributed to the project, overhead included. */
+	toDate: UsageTotals;
+	thisMonth: UsageTotals;
+}
+
+/** The projects whose amounts the viewer may see, and nothing else (§1 "Who sees amounts"). */
+export interface ProjectInvestment {
+	/** `organization` for the owner (every project); `managed` for a project manager (the projects they lead). */
+	scope: 'organization' | 'managed';
+	/** The current month as resolved in the zone asked for. */
+	thisMonth: ResolvedPeriod;
+	projects: ProjectInvestmentRow[];
+	coverage: Coverage;
+}
+
 /** How a record's work was attributed when it was consumed (decision 4). */
 export type AttributionBasis =
 	'work_for' | 'current_task' | 'project_overhead' | 'team_overhead' | 'organization_overhead';

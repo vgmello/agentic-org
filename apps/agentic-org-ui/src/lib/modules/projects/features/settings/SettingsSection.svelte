@@ -19,6 +19,7 @@
 		saveLabel = 'Save',
 		busyLabel = 'Saving…',
 		dirty,
+		working = false,
 		onsubmit,
 		children
 	}: {
@@ -31,11 +32,14 @@
 		busyLabel?: string;
 		/** Nothing to save until something changed: Save says so beside it instead of being silently disabled. */
 		dirty: boolean;
+		/** Work before the save itself (counting what a change would move): the button is busy meanwhile. */
+		working?: boolean;
 		onsubmit: (form: HTMLFormElement) => void;
 		children: Snippet;
 	} = $props();
 
 	let unchanged = $state(false);
+	const busy = $derived(save.busy || working);
 </script>
 
 <section aria-labelledby="{id}-heading" class="border-b border-line-subtle py-8">
@@ -60,7 +64,7 @@
 			}}
 			oninput={() => (unchanged = false)}
 		>
-			<fieldset disabled={locked || save.busy} class="space-y-6">
+			<fieldset disabled={locked || busy} class="space-y-6">
 				{@render children()}
 			</fieldset>
 			{#if save.refusal && !save.refusal.field}
@@ -74,9 +78,9 @@
 					<Button
 						type="submit"
 						variant="outline"
-						disabled={save.busy}
-						aria-busy={save.busy}
-						class="min-w-24 {mobileButton}">{save.busy ? busyLabel : saveLabel}</Button
+						disabled={busy}
+						aria-busy={busy}
+						class="min-w-24 {mobileButton}">{busy ? busyLabel : saveLabel}</Button
 					>
 					<p class="text-xs/5 text-fg-muted" role="status">
 						{#if save.saved && !dirty}Saved{:else if unchanged}Nothing has changed yet{/if}

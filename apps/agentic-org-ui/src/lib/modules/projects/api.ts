@@ -1,6 +1,7 @@
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type {
 	ActivityEntry,
+	CreateOutcome,
 	ConversationRow,
 	NewProject,
 	ProcessPreview,
@@ -29,8 +30,13 @@ export interface ProjectsApi {
 	teamChoices(organizationId: string): Promise<TeamChoice[]>;
 	/** Code repositories registered with the organization. */
 	repositoryChoices(organizationId: string): Promise<RepositoryChoice[]>;
-	/** Creates the project (and, by default, its team) in one operation. Idempotent on `draft.operationId`. */
+	/**
+	 * Creates the project (and, by default, its team) in one operation. Idempotent on `draft.operationId`: a repeat
+	 * answers with the project it created. A lost answer rejects with `OUTCOME_UNKNOWN` (./outcome.ts).
+	 */
 	create(organizationId: string, draft: NewProject): Promise<{ projectId: string; number: number }>;
+	/** Where a create whose outcome was unknown stands, by its operation ID. */
+	createOperation(organizationId: string, operationId: string): Promise<CreateOutcome>;
 	rename(
 		organizationId: string,
 		projectId: string,
@@ -42,16 +48,16 @@ export interface ProjectsApi {
 		projectId: string,
 		teamId: string
 	): Promise<{ tasks: number }>;
-	/** Changes the accountable team and every project task's `team_id` together; assignments stay. */
-	setOwner(
+	/**
+	 * Sets the accountable team and the contributing teams in one accepted operation (offices-and-teams-ux §7.9): when
+	 * the accountable team changes, every project task's `team_id` moves with it, with history; assignments stay. It is
+	 * applied whole or not at all, against `expectedRevision`; the caller re-reads afterwards and never guesses the new
+	 * revision.
+	 */
+	setTeams(
 		organizationId: string,
 		projectId: string,
-		change: { teamId: string; expectedRevision: number }
-	): Promise<void>;
-	setContributors(
-		organizationId: string,
-		projectId: string,
-		change: { teamIds: string[]; expectedRevision: number }
+		change: { ownerTeamId: string; contributorTeamIds: string[]; expectedRevision: number }
 	): Promise<void>;
 	/** Replaces the project's repository associations; each needs its integration branch. */
 	setRepositories(
@@ -87,10 +93,10 @@ export const projectsApi: ProjectsApi = {
 	teamChoices: unavailableCall,
 	repositoryChoices: unavailableCall,
 	create: unavailableCall,
+	createOperation: unavailableCall,
 	rename: unavailableCall,
 	ownerChangePreview: unavailableCall,
-	setOwner: unavailableCall,
-	setContributors: unavailableCall,
+	setTeams: unavailableCall,
 	setRepositories: unavailableCall,
 	processPreview: unavailableCall,
 	setProcess: unavailableCall

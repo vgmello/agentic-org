@@ -95,6 +95,13 @@ export function projectTabs(
 	return tabs;
 }
 
+/**
+ * New project from anywhere (the top-bar New menu, Home, a team's page): the Projects page opens the New project sheet,
+ * with `teamId` as the accountable team when given (offices-and-teams-ux §7.9 "prefilled from the launching team").
+ */
+export const newProjectUrl = (teamId?: string) =>
+	`${PROJECTS_URL}?new${teamId ? `&team=${encodeURIComponent(teamId)}` : ''}`;
+
 export const projectHref = (projectId: string, path = '') =>
 	`${PROJECTS_URL}/${encodeURIComponent(projectId)}${path ? `/${path}` : ''}`;
 
@@ -165,6 +172,16 @@ export function featuresText(f: FeatureCounts): string {
 	].filter((p): p is string => !!p);
 	return parts.length ? parts.join(' · ') : 'No features yet';
 }
+
+/**
+ * A "·"-separated line that wraps only between its parts and never strands a dot at the start of a line: spaces inside
+ * a part and before each dot don't break (U+00A0), the space after a dot does.
+ */
+export const keepWords = (line: string) =>
+	line
+		.split(' · ')
+		.map((part) => part.replaceAll(' ', '\u00a0'))
+		.join('\u00a0· ');
 
 export const teamNames = (teams: TeamRef[]) => teams.map((t) => t.name).join(', ');
 
@@ -270,5 +287,7 @@ export const CHANGES_PAUSED =
 	"HQ can't be reached, so changes are paused. What's shown is the last copy.";
 export const VIEW_ONLY =
 	"Only the organization's owner or a lead above the project's accountable team can change its settings.";
+export const archivedText = (name: string) =>
+	`${name} is archived: its settings are kept as they were and can't be changed.`;
 export const conflictText = (name: string) =>
 	`${name} changed while you were editing. Here's the latest; what you typed is kept.`;

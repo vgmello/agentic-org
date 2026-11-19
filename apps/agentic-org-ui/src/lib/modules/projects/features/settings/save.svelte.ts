@@ -35,14 +35,14 @@ export class SectionSave {
 			return true;
 		} catch (e) {
 			const failure = toAppError(e);
-			if (failure.code === 'conflict') {
-				await this.#reload().catch(() => {});
-				this.refusal = { message: conflictText(projectName) };
-			} else
-				this.refusal = {
-					field: (failure as { field?: ProjectField }).field,
-					message: failure.message
-				};
+			const field = (failure as { field?: ProjectField }).field;
+			// Whatever HQ answered, show the project as it is now, never as it was guessed to be: a refusal about one
+			// field changed nothing, anything else is read again (the typed values are kept by the section).
+			if (!field) await this.#reload().catch(() => {});
+			this.refusal =
+				failure.code === 'conflict'
+					? { message: conflictText(projectName) }
+					: { field, message: failure.message };
 			return false;
 		} finally {
 			this.busy = false;

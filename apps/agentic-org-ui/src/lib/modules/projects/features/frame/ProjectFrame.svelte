@@ -152,7 +152,9 @@
 							</li>
 						{/if}
 						<li class="{fact} tabular-nums">{doneText(p.tasks)}</li>
-						<li class="{fact} font-mono text-xs/5">{p.slug}</li>
+						<li class={fact}>
+							Slug: <span class="font-mono text-xs/5 text-fg-secondary">{p.slug}</span>
+						</li>
 					</ul>
 				</header>
 				{#if p.stale}
