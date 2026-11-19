@@ -747,6 +747,16 @@ worker's launch handshake under way end at once (that child is killed), and a th
 waiting 0.5 s after the workers' grace (a request or a create waiting for a lock of the
 registry) is logged and left to end with the process.
 
+The stop is taken from the moment `serve` blocks the signals, before setup
+(`org-host/src/stop.rs`). A stop during setup lets setup end, keeps what it did, starts
+no host and exits 0 ("stopped before serving"). A stop during the host's start stops the
+host with the deadline counted from the signal. A start still running 2.0 s after the
+signal, or a stop still running 2.4 s after it, ends the process with status 0 and one
+line saying so. Every stop exits 0, so neither launchd nor systemd counts it a failure. A
+foreground setup holds the browser port from its first check until the web process's
+first start (`BrowserListener`), so another process cannot take it in between; until HQ
+exists a browser waits in the listener's backlog.
+
 **macOS adapter.** A per-user launchd agent (written by A2 behind this contract):
 `~/Library/LaunchAgents/com.ellosoft.agentic-org.instance.<instance-id>.plist` with
 `RunAtLoad`, `KeepAlive { SuccessfulExit = false }`, `Umask` 0077 and an explicit
