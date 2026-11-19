@@ -1,9 +1,9 @@
 //! The office secrets key (ADR-0016 decision 3).
 //!
 //! **The host makes and keeps it** (ADR-0002, key custody) and sends it to the server on the
-//! launch pipe. It is never a database key: the office databases are plain SQLite. The worker
-//! uses it only to wrap and unwrap the office's private keys (`org_pki::wrap`). An office
-//! started without it still serves its data; only what needs a wrapped key is unavailable.
+//! launch pipe. It is never a database key: the office store's projection is plain SQLite.
+//! The worker uses it only to wrap and unwrap the office's private keys (`org_pki::wrap`). An
+//! office started without it still serves its data; only what needs a wrapped key is unavailable.
 
 use std::fmt;
 use std::sync::Arc;

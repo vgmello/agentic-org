@@ -1423,12 +1423,12 @@ pub(crate) mod tests {
             office_name: "HQ".into(),
             role: org_proto::OfficeRole::Hq,
             owner_member_id: custody.member.clone(),
-            hq_creation: Some(org_office_launch::HqCreationV1 {
+            hq_creation: org_office_launch::HqCreationV1 {
                 version: org_office_launch::HqCreationV1::VERSION,
                 operation_id: crate::ids::generate().unwrap(),
                 escrow_profile: 1,
-                bootstrap: Some(Box::new(prepared)),
-            }),
+                bootstrap: Box::new(prepared),
+            },
         }
     }
 
@@ -1911,28 +1911,13 @@ pub(crate) mod tests {
         let mut other = hq_create_line(&custody, OFFICE);
         let organization = crate::ids::uuid_v7().unwrap();
         other.org_id = organization.clone();
-        other
-            .hq_creation
-            .as_mut()
-            .unwrap()
-            .bootstrap
-            .as_mut()
-            .unwrap()
-            .organization_id = organization;
+        other.hq_creation.bootstrap.organization_id = organization;
         assert!(supervisor.begin_hq_create(other, recovery()).is_err());
         // A record for this organization, but another owner member.
         let mut other = hq_create_line(&custody, OFFICE);
         let member = crate::ids::uuid_v7().unwrap();
         other.owner_member_id = member.clone();
-        other
-            .hq_creation
-            .as_mut()
-            .unwrap()
-            .bootstrap
-            .as_mut()
-            .unwrap()
-            .creator
-            .employee_id = member;
+        other.hq_creation.bootstrap.creator.employee_id = member;
         assert!(supervisor.begin_hq_create(other, recovery()).is_err());
         assert_eq!(recorded_starts(dir.path()), 0, "a create server ran");
         assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Load));

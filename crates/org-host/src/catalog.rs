@@ -270,18 +270,36 @@ pub(crate) fn any_office_folder(home: &Path) -> io::Result<bool> {
 
 /// The office folders with no `office.json`: creates that never finished. The host never
 /// removes them itself; it has a server discard each one, with the office's key (see
-/// `Offices::discard_unfinished`), because only a server can open the folder's databases to
-/// check that no organization was committed. The host deletes the key after `discarded`.
+/// `Offices::discard_unfinished`), because only the server's discard removes the folder under
+/// the office lock, after checking that it holds nothing but the lock and the temporary files of
+/// an unfinished publication. The host deletes the key after `discarded`.
+///
+/// Only a folder named by a UUIDv7 office id is listed: a server discards nothing else, so a
+/// folder left by an older build under a plain id is skipped, logged in one line, and kept.
 pub(crate) fn unfinished_folders(home: &Path) -> io::Result<Vec<String>> {
-    Ok(office_folders(home)?
-        .into_iter()
-        .filter(|(_, path)| {
-            !has_office_file(path)
-                && !path.join("hq-creation.v1.json").exists()
-                && !holds_writer_custody(path)
-        })
-        .map(|(folder, _)| folder)
-        .collect())
+    let mut skipped = Vec::new();
+    let mut unfinished = Vec::new();
+    for (folder, path) in office_folders(home)? {
+        if has_office_file(&path)
+            || path.join("hq-creation.v1.json").exists()
+            || holds_writer_custody(&path)
+        {
+            continue;
+        }
+        if org_office_launch::is_selected_entity_id(&folder) {
+            unfinished.push(folder);
+        } else {
+            skipped.push(host_log::untrusted(&folder));
+        }
+    }
+    if !skipped.is_empty() {
+        host_log::log(&format!(
+            "kept unfinished office folders not named by a UUIDv7 office id: {}; a server \
+             can't discard them, so they are left for a person",
+            skipped.join(", ")
+        ));
+    }
+    Ok(unfinished)
 }
 
 /// Whether the host reserved writer custody in `folder` (`org_office_launch::writer::marker`):
@@ -623,12 +641,42 @@ mod tests {
         assert!(unfinished_folders(home).unwrap().is_empty());
     }
 
+    /// A folder that is not named by a UUIDv7 office id is never listed for a discard: a
+    /// server can't discard it, so a leftover plain-ID folder would start a doomed discard
+    /// at every host start. It is logged once per listing and kept.
+    #[test]
+    fn unfinished_folders_skip_names_that_are_not_uuidv7_office_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let offices = home.join("offices");
+        fs::create_dir_all(offices.join(UNFINISHED)).unwrap();
+        for plain in ["PLAINID1", "PLAINID2"] {
+            fs::create_dir_all(offices.join(plain)).unwrap();
+        }
+        let (listed, logged) = crate::host_log::capture(|| unfinished_folders(home).unwrap());
+        assert_eq!(listed, [UNFINISHED]);
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        for plain in ["PLAINID1", "PLAINID2"] {
+            assert!(logged[0].contains(plain), "{logged:?}");
+            assert!(offices.join(plain).is_dir());
+        }
+        // Nothing skipped: nothing logged.
+        for plain in ["PLAINID1", "PLAINID2"] {
+            fs::remove_dir(offices.join(plain)).unwrap();
+        }
+        let (listed, logged) = crate::host_log::capture(|| unfinished_folders(home).unwrap());
+        assert_eq!(listed, [UNFINISHED]);
+        assert!(logged.is_empty(), "{logged:?}");
+    }
+
+    const UNFINISHED: &str = "01900000-0000-7000-8000-0000000000a1";
+
     #[test]
     fn unfinished_folders_are_those_without_office_json() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let offices = home.join("offices");
-        fs::create_dir_all(offices.join("UNFINISHED")).unwrap();
+        fs::create_dir_all(offices.join(UNFINISHED)).unwrap();
         fs::create_dir_all(offices.join("not-plain")).unwrap();
         fs::write(offices.join("AFILE"), b"").unwrap();
         write(home, "STORED", b"{broken");
@@ -644,10 +692,10 @@ mod tests {
             b"selected",
         )
         .unwrap();
-        assert_eq!(unfinished_folders(home).unwrap(), ["UNFINISHED"]);
+        assert_eq!(unfinished_folders(home).unwrap(), [UNFINISHED]);
         assert!(!is_stored(home, REFUSED_DIR_NAME));
         assert!(is_stored(home, "STORED"));
-        assert!(!is_stored(home, "UNFINISHED"));
+        assert!(!is_stored(home, UNFINISHED));
         assert!(!is_stored(home, "../STORED"));
         // A folder that can't be searched: its office.json can't be checked, so it is kept.
         // (Root can search it anyway, so this part needs a normal user.)
@@ -666,7 +714,7 @@ mod tests {
             "running as root? the folder was still searchable"
         );
         assert!(locked_stored);
-        assert_eq!(unfinished, ["UNFINISHED"]);
+        assert_eq!(unfinished, [UNFINISHED]);
     }
 
     fn orphan_ids(list: &[&str]) -> Vec<String> {

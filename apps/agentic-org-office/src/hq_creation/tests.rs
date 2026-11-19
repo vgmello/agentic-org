@@ -81,7 +81,7 @@ pub(crate) fn binding() -> Binding {
     Binding {
         operation_id: OPERATION.into(),
         owner_member_id: OWNER.into(),
-        bootstrap: Some(org_proto::selected_bootstrap::PreparedV1 {
+        bootstrap: org_proto::selected_bootstrap::PreparedV1 {
             plan: org_proto::selected_bootstrap::PlanV1 {
                 version: 1,
                 name: "Example".into(),
@@ -95,7 +95,7 @@ pub(crate) fn binding() -> Binding {
             home_team_id: "019a8928-1337-7456-8456-0123456789ae".into(),
             hr_employee_id: "019a8928-1337-7456-8456-0123456789af".into(),
             creator: org_proto::selected_bootstrap::CreatorV1::from_login(OWNER.into(), "Ana"),
-        }),
+        },
     }
 }
 pub(crate) fn new() -> NewOffice {

@@ -8,7 +8,7 @@ use crate::OfficeError;
 pub struct Binding {
     pub operation_id: String,
     pub owner_member_id: String,
-    pub bootstrap: Option<org_proto::selected_bootstrap::PreparedV1>,
+    pub bootstrap: org_proto::selected_bootstrap::PreparedV1,
 }
 /// Copied/public creation record. It cannot carry usable private key material.
 #[derive(Clone, Debug, PartialEq, Eq)]

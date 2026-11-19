@@ -155,8 +155,7 @@ pub struct CreateLine {
     /// one ([`org_proto::is_valid_member_id`]).
     pub owner_member_id: String,
     /// The protected HQ creation (REC-ESC-1) with its bootstrap: every create carries it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hq_creation: Option<HqCreationV1>,
+    pub hq_creation: HqCreationV1,
 }
 
 /// The protected creation context of an HQ create, version 2. It names no path: the
@@ -168,8 +167,8 @@ pub struct HqCreationV1 {
     pub version: u32,
     pub operation_id: String,
     pub escrow_profile: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bootstrap: Option<Box<org_proto::selected_bootstrap::PreparedV1>>,
+    /// The prepared organization: every creation carries it.
+    pub bootstrap: Box<org_proto::selected_bootstrap::PreparedV1>,
 }
 
 impl HqCreationV1 {
@@ -177,7 +176,7 @@ impl HqCreationV1 {
     pub const VERSION: u32 = 2;
 
     fn check(&self) -> Result<(), &'static str> {
-        if self.bootstrap.as_ref().is_some_and(|b| !b.valid())
+        if !self.bootstrap.valid()
             || self.version != Self::VERSION
             || self.escrow_profile != 1
             || org_proto::ulid_time_ms(&self.operation_id).is_none()
@@ -203,8 +202,7 @@ struct RawCreateLine {
     #[serde(default)]
     role: OfficeRole,
     owner_member_id: String,
-    #[serde(default)]
-    hq_creation: Option<HqCreationV1>,
+    hq_creation: HqCreationV1,
 }
 
 impl TryFrom<RawCreateLine> for CreateLine {
@@ -245,28 +243,19 @@ impl CreateLine {
         Ok(())
     }
 
+    /// Every create is a protected HQ creation with its bootstrap (the only create the host
+    /// reserves writer custody for), and the bootstrap names this line's office, organization
+    /// and owner.
     fn check_bootstrap_context(&self) -> Result<(), &'static str> {
-        // Every create is a protected HQ creation with its bootstrap: it is the only create
-        // the host reserves writer custody for.
-        if self
-            .hq_creation
-            .as_ref()
-            .and_then(|c| c.bootstrap.as_ref())
-            .is_none()
+        let context = &self.hq_creation;
+        context.check()?;
+        let b = &context.bootstrap;
+        if b.organization_id != self.org_id
+            || b.office_id != self.office.office_id
+            || b.plan.name != self.org_name
+            || b.creator.employee_id != self.owner_member_id
         {
-            return Err("a create requires the explicit bootstrap profile");
-        }
-        if let Some(context) = &self.hq_creation {
-            context.check()?;
-            if let Some(b) = &context.bootstrap {
-                if b.organization_id != self.org_id
-                    || b.office_id != self.office.office_id
-                    || b.plan.name != self.org_name
-                    || b.creator.employee_id != self.owner_member_id
-                {
-                    return Err("selected bootstrap scope mismatch");
-                }
-            }
+            return Err("selected bootstrap scope mismatch");
         }
         Ok(())
     }

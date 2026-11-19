@@ -731,6 +731,124 @@ fn an_office_folder_that_is_a_link_is_refused() {
     assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0);
 }
 
+/// An unfinished create's folder: only its lock file and a publication's temporary file,
+/// which `discard` would remove.
+fn unfinished_create(folder: &Path) {
+    std::fs::create_dir_all(folder).unwrap();
+    std::fs::write(folder.join("office.lock"), b"").unwrap();
+    std::fs::write(folder.join(".store-tmp-one-1-1"), b"partial").unwrap();
+}
+
+/// `discard` takes only a UUIDv7 office id, and only for the folder that id names: an
+/// unfinished create's folder under any other name is refused and kept.
+#[test]
+fn discard_refuses_an_id_that_is_not_a_uuidv7_or_does_not_name_the_folder() {
+    let site = Site::new();
+    let offices = site.folder.parent().unwrap().to_path_buf();
+
+    // A plain id, naming its folder: refused for the id.
+    let plain = offices.join("hq");
+    unfinished_create(&plain);
+    let refused = Office::discard(&plain, "hq");
+    assert!(
+        matches!(refused, Err(OfficeError::Invalid(why)) if why.contains("UUIDv7")),
+        "{refused:?}"
+    );
+    assert!(plain.join(".store-tmp-one-1-1").is_file());
+
+    // A UUIDv7 that is not the folder's name: refused for the name.
+    unfinished_create(&site.folder);
+    let other = "01900000-0000-7000-8000-0000000000ff";
+    let refused = Office::discard(&site.folder, other);
+    assert!(
+        matches!(refused, Err(OfficeError::Invalid(why)) if why.contains("not named by")),
+        "{refused:?}"
+    );
+    assert!(site.folder.join(".store-tmp-one-1-1").is_file());
+}
+
+/// `discard` never removes a folder another process holds locked: it waits for the lock,
+/// gives up with `InUse` and leaves everything in place.
+#[test]
+fn discard_gives_up_on_a_held_lock() {
+    let site = Site::new();
+    let office_id = identity().office_id.to_string();
+    unfinished_create(&site.folder);
+    let held = lock_folder(&site.folder, LOCK_WAIT).unwrap();
+    let refused = Office::discard(&site.folder, &office_id);
+    assert!(matches!(refused, Err(OfficeError::InUse)), "{refused:?}");
+    assert!(site.folder.join(".store-tmp-one-1-1").is_file());
+    drop(held);
+    Office::discard(&site.folder, &office_id).unwrap();
+    assert!(!site.folder.exists());
+}
+
+/// Opening a folder that is not there is `NotFound` and makes nothing: no office folder,
+/// no lock file, nothing in the data roots. A file where the folder should be is refused.
+#[test]
+fn opening_a_missing_folder_is_not_found_and_creates_nothing() {
+    let site = Site::new();
+    let before = tree(&site.root);
+    let missing = site.open(EngineChoice::Memory);
+    assert!(matches!(missing, Err(OfficeError::NotFound)), "{missing:?}");
+    assert!(!site.folder.exists());
+    assert!(!site.folder.parent().unwrap().exists());
+    assert_eq!(tree(&site.root), before);
+    assert!(std::fs::read_dir(&site.roots.durable)
+        .unwrap()
+        .next()
+        .is_none());
+    assert!(std::fs::read_dir(&site.roots.runtime)
+        .unwrap()
+        .next()
+        .is_none());
+
+    std::fs::create_dir_all(site.folder.parent().unwrap()).unwrap();
+    std::fs::write(&site.folder, b"not a folder").unwrap();
+    let refused = site.open(EngineChoice::Memory);
+    assert!(
+        matches!(
+            refused,
+            Err(OfficeError::Invalid(
+                "the office folder is not a plain folder"
+            ))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(std::fs::read(&site.folder).unwrap(), b"not a folder");
+}
+
+/// An `office.json` must name the folder it is in: a finished office moved under another
+/// office id's name is refused, even though its intent, roots and custody all agree.
+#[test]
+fn opening_refuses_an_office_json_that_does_not_name_its_folder() {
+    let site = Site::new();
+    site.provision(EngineChoice::Memory)
+        .unwrap()
+        .close()
+        .unwrap();
+    let moved = site
+        .folder
+        .with_file_name("01900000-0000-7000-8000-0000000000ff");
+    std::fs::rename(&site.folder, &moved).unwrap();
+    let instance = identity().instance_id.to_string();
+    let refused = Office::open_with(
+        moved.clone(),
+        None,
+        &instance,
+        site.roots.clone(),
+        testkit::custody(Arc::clone(&site.custody)),
+        site.options(EngineChoice::Memory),
+    );
+    assert!(
+        matches!(refused, Err(OfficeError::Invalid(why)) if why.contains("not named by")),
+        "{refused:?}"
+    );
+    // Back under its own name, the same office opens.
+    std::fs::rename(&moved, &site.folder).unwrap();
+    site.open(EngineChoice::Memory).unwrap().close().unwrap();
+}
+
 /// One office process at a time: a second opening waits for the lock and gives up.
 #[test]
 fn a_second_opening_waits_for_the_lock_and_gives_up() {
