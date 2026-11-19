@@ -462,7 +462,13 @@ fn only_transient_store_and_registry_failures_are_unreadable() {
     use io::ErrorKind as K;
     use rusqlite::ErrorCode as C;
     let of = |error: io::Error| AdmitError::from(error);
-    for kind in [K::Interrupted, K::WouldBlock, K::TimedOut, K::ResourceBusy] {
+    for kind in [
+        K::Interrupted,
+        K::WouldBlock,
+        K::TimedOut,
+        K::ResourceBusy,
+        K::OutOfMemory,
+    ] {
         assert_eq!(of(store(S::Io(kind))), AdmitError::Unreadable, "{kind:?}");
         assert_eq!(
             of(registry(D::Io(kind))),
@@ -500,8 +506,17 @@ fn only_transient_store_and_registry_failures_are_unreadable() {
         S::CaseAlias,
         S::InvalidName,
         S::TooLarge,
+        // errSecMissingEntitlement, errSecDecode, errSecParam, errSecNoSuchKeychain,
+        // errSecInvalidKeychain, errSecNotAvailable.
+        S::Os(-34018),
+        S::Os(-26275),
+        S::Os(-50),
+        S::Os(-25294),
+        S::Os(-25295),
+        S::Os(-25291),
     ] {
-        assert_eq!(of(store(error)), AdmitError::Refused);
+        let shown = format!("{error:?}");
+        assert_eq!(of(store(error)), AdmitError::Refused, "{shown}");
     }
     for code in [
         C::NotADatabase,

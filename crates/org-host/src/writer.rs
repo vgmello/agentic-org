@@ -126,28 +126,36 @@ fn unreadable() -> io::Error {
     io::Error::other(Unreadable)
 }
 /// An I/O failure that passes on its own. Every other kind (a symlinked or unreadable
-/// item, a missing store, no adapter) is a lasting state: a refusal.
+/// item, a missing store, no adapter) is a lasting state: a refusal. Running out of
+/// descriptors (EMFILE, ENFILE) is refused too: the error keeps only its kind, which is
+/// `Uncategorized`, so it can't be told from other uncategorized failures.
 fn transient(kind: io::ErrorKind) -> bool {
     use io::ErrorKind as K;
     matches!(
         kind,
-        K::Interrupted | K::WouldBlock | K::TimedOut | K::ResourceBusy
+        K::Interrupted | K::WouldBlock | K::TimedOut | K::ResourceBusy | K::OutOfMemory
     )
 }
-/// A custody store error: a transient I/O failure, an OS keychain error or an item in use
-/// is [`Unreadable`]; anything else (corrupt, unsafe, linked, missing, unsupported) is a
-/// refusal.
+/// errSecInteractionNotAllowed: the keychain is locked or user interaction is not allowed
+/// now. The only keychain status that passes on its own; every other one (a missing
+/// entitlement, a decode failure, a bad parameter, no or an invalid keychain, keychain
+/// services unavailable) is lasting.
+const KEYCHAIN_INTERACTION_NOT_ALLOWED: i32 = -25308;
+/// A custody store error: a transient I/O failure, a locked keychain or an item in use is
+/// [`Unreadable`]; anything else (corrupt, unsafe, linked, missing, unsupported, any other
+/// keychain status) is a refusal.
 fn store(error: crate::host_secrets::Error) -> io::Error {
     use crate::host_secrets::Error as E;
     match error {
         E::Io(kind) if transient(kind) => unreadable(),
-        E::Os(_) | E::InUse => unreadable(),
+        E::Os(KEYCHAIN_INTERACTION_NOT_ALLOWED) | E::InUse => unreadable(),
         _ => refused(),
     }
 }
 /// A host registry error: a busy or locked database, an OS I/O failure, no memory or a
 /// transient I/O failure is [`Unreadable`]; anything else (a corrupt or tampered registry,
-/// another schema, a binding it does not hold) is a refusal.
+/// another schema, a binding it does not hold) is a refusal. `SystemIoFailure` is retried
+/// deliberately: it may pass, and the supervisor's give-up rule bounds one that lasts.
 fn registry(error: crate::hostdb::Error) -> io::Error {
     use crate::hostdb::Error as E;
     use rusqlite::ErrorCode as C;
