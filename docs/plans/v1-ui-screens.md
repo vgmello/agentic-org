@@ -192,7 +192,7 @@ fresh review, merged with `--no-ff`. At most two are built at once, on disjoint 
 | --- | --- | --- |
 | Set a new password, Approve a terminal sign-in, invited registration | `/set-password`, `/approve`, `/register` | To do |
 | Change password, recovery code banner, organization switcher | shell | To do |
-| Chat: question, approval and hand-off cards, browse channels, pins, mute, system notices, Inbox link, states | `/chat` | In progress (stopped part-way) |
+| Chat: question, approval and hand-off cards, browse channels, pins, mute, system notices, Inbox link, states | `/chat` | To do for the release: v1 ships origin/v1's Chat (restored in 7537f917). The work in progress (stopped part-way) is kept on branch `v1-ui-chat-wip`; step 8 continues from there |
 
 ## Step 9 · Closing
 
@@ -203,8 +203,8 @@ UI now shows against mock data.
 Started on `v1-ui-release-fixes` (2026-11-19): the shell, footer, navigation, landmarks,
 top-bar and production specs, the shared entry helpers and the specs that drove the retired
 org-chart canvas now follow the current screens; the `docs/FEATURES.md` UI rows carry the
-step 0–3 evidence. Still open: the Chat specs that fail against the work-in-progress Chat
-until step 8, and the screenshot pass.
+step 0–3 evidence. Chat ships as on origin/v1, so its specs are v1's. Still open: the
+screenshot pass.
 
 ## Decisions made while building
 
