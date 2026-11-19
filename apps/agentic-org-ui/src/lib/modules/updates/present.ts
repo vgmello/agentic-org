@@ -58,14 +58,25 @@ export function sortOffices<T extends Pick<OfficeVersion, 'role' | 'name'>>(offi
 	);
 }
 
-/** The offices spec's own note (§6.1), for the offices that hold new features back. */
-export function holdBackNote(offices: Pick<OfficeVersion, 'name' | 'holdsBack'>[]): string | null {
-	const names = offices.filter((o) => o.holdsBack).map((o) => o.name);
-	if (names.length === 0) return null;
+/**
+ * The offices spec's own note (§6.1) for the offices that hold new features back: the offices it names (each links to
+ * its row), the words around them, and the whole sentence (for tests and plain-text use).
+ */
+export function holdBackNote<T extends Pick<OfficeVersion, 'id' | 'name' | 'holdsBack'>>(
+	offices: T[]
+): { held: T[]; tail: string; text: string } | null {
+	const held = offices.filter((o) => o.holdsBack);
+	if (held.length === 0) return null;
+	const names = held.map((o) => o.name);
 	const list =
 		names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
-	return `${list} ${names.length === 1 ? 'runs' : 'run'} an older version of Agentic Org, so new features wait until ${names.length === 1 ? 'it updates' : 'they update'}.`;
+	const tail = ` ${held.length === 1 ? 'runs' : 'run'} an older version of Agentic Org, so new features wait until ${held.length === 1 ? 'it updates' : 'they update'}.`;
+	return { held, tail, text: list + tail };
 }
+
+/** Between the names of a list: ", " and " and " before the last. */
+export const listSeparator = (index: number, count: number): string =>
+	index === 0 ? '' : index === count - 1 ? ' and ' : ', ';
 
 /** The local command that upgrades the selected instance (server spec §5); quoted only when the name needs it. */
 export function upgradeCommand(instance: string): string {
@@ -73,6 +84,20 @@ export function upgradeCommand(instance: string): string {
 		? instance
 		: `'${instance.replace(/'/g, `'\\''`)}'`;
 	return `agentic-org upgrade --name ${name}`;
+}
+
+/**
+ * How to update an office on its own machine. Every instance operation takes `--name` and defaults to `default`
+ * (server spec §5, SRV-15), so a command without the office's instance could upgrade a peer instance on that machine
+ * (SRV-16). When HQ doesn't know the office's instance, the hint names the flag and asks for the name instead.
+ */
+export function officeUpgradeHint(office: Pick<OfficeVersion, 'instance'>): {
+	command: string;
+	known: boolean;
+} {
+	return office.instance
+		? { command: upgradeCommand(office.instance), known: true }
+		: { command: 'agentic-org upgrade --name <instance>', known: false };
 }
 
 /**

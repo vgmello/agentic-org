@@ -1,20 +1,20 @@
 <!--
   @component
-  One status word in a pill (app-shell-ux §6a). Unlike the shared StatusPill it never truncates: the words wrap
-  between words, so "Needs update" stays whole at 320 px and 200% text.
+  One status word in the shared StatusPill (app-shell-ux §6a), with the shared tones (`pills.ts`). As Agent setup's
+  HealthBadge does, the pill keeps whole words and wraps between them instead of truncating, with rounded corners so
+  a wrapped pill still reads as one tag.
 -->
 <script lang="ts">
+	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { tone as tones } from '$lib/components/pills';
+	import { cn } from '$lib/utils';
 	import type { Tone } from '../../present';
 
 	let { label, tone }: { label: string; tone: Tone } = $props();
 
-	const toneClass = $derived(
-		tone === 'neutral' ? 'bg-quiet/10 text-fg-secondary ring-quiet/20' : tones[tone]
-	);
+	/** StatusPill truncates by default; a status word is never cut (§6a). */
+	const wraps =
+		'items-start rounded-lg text-left [&>span]:overflow-visible [&>span]:whitespace-normal';
 </script>
 
-<span
-	class="inline-flex max-w-full shrink-0 items-center rounded-full px-2 py-1 text-xs/4 font-medium ring-1 ring-inset {toneClass}"
-	>{label}</span
->
+<StatusPill {label} class={cn(tones[tone], wraps)} data-testid="version-pill" />

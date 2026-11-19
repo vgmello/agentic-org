@@ -75,7 +75,7 @@ only in `e2e/fakes`.
 
 ## Mock switches
 
-`?mock=slow|fails|empty|unavailable` plus `?mock=current|failed|offline|unknown` for the
+`?mock=slow|fails|fails-once|empty|unavailable|no-instance` plus `?mock=current|failed|offline|unknown` for the
 check state (comma-joined). `empty` means HQ alone with nothing reported.
 
 ## Non-goals
@@ -89,5 +89,7 @@ banner (shell/session concern), About in the account menu.
 - The web API has no route for update-check state or per-office versions; the UI type
   `UpdatesOverview` proposes them. Office view needs a version field (offices spec §6.1
   already shows "Agentic Org version").
+- The satellite upgrade hint's wording is invented (no spec gives it); `OfficeVersion.instance`
+  is part of the proposed shape.
 - Not found is not applicable (no ID in the route); refusals and confirmations are not
   applicable (no mutations).
