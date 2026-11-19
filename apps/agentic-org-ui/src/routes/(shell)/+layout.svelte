@@ -158,7 +158,7 @@
 </script>
 
 <!-- The app fills the window edge to edge. -->
-<div class="fixed inset-0 overflow-hidden bg-gray-800">
+<div class="fixed inset-0 overflow-hidden bg-surface">
 	<div
 		bind:this={desktopNavigation}
 		class="fixed inset-y-0 z-50 hidden w-16 flex-col min-[640px]:flex min-[960px]:w-72"

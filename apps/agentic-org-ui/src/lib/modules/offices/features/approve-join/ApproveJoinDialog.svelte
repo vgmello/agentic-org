@@ -129,7 +129,7 @@
 				<DialogTitle text={`Decline ${name}?`} />
 				<DialogDescription>Its invitation is cancelled.</DialogDescription>
 			</DialogHeader>
-			{#if error}<p class="text-sm/6 text-red-300" role="alert">{error}</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger-text" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button
 					type="button"
@@ -150,7 +150,7 @@
 			<DialogHeader>
 				<DialogTitle text={`${name}'s invitation is cancelled`} />
 			</DialogHeader>
-			<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">{error}</p>
+			<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">{error}</p>
 			<DialogFooter
 				><Button type="button" class={mobileButton} onclick={() => (open = false)}>Close</Button
 				></DialogFooter
@@ -165,7 +165,7 @@
 					</DialogDescription>
 				</DialogHeader>
 				<div>
-					<Label for="check-code" class="block text-sm/6 font-medium text-white"
+					<Label for="check-code" class="block text-sm/6 font-medium text-fg"
 						>Type the check code shown on {name}</Label
 					>
 					<div class="mt-2">

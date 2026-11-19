@@ -56,28 +56,28 @@
 <svelte:head><title>Organizations · Agentic Org</title></svelte:head>
 
 {#if !session || listing.kind === 'loading'}
-	<p class="text-sm/6 text-gray-400" aria-live="polite">Loading…</p>
+	<p class="text-sm/6 text-fg-muted" aria-live="polite">Loading…</p>
 {:else}
 	<div class="mb-8 flex justify-end"><AccountMenu {session} /></div>
 	{#if listing.kind === 'failed'}
-		<div role="alert" class="rounded-md bg-red-500/10 p-3 text-sm/6 text-red-300">
+		<div role="alert" class="rounded-md bg-danger-emphasis/10 p-3 text-sm/6 text-danger-text">
 			Can't reach HQ. Check that the instance is running on the HQ machine, then try again.
 			<button type="button" class="ml-2 font-semibold underline" onclick={load}>Try again</button>
 		</div>
 	{:else if listing.names.length > 0}
-		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">Organizations</h1>
+		<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">Organizations</h1>
 		<ul class="mt-4 space-y-2">
-			{#each listing.names as name (name)}<li class="text-sm/6 text-white">{name}</li>{/each}
+			{#each listing.names as name (name)}<li class="text-sm/6 text-fg">{name}</li>{/each}
 		</ul>
 	{:else if session.admin}
 		<!-- SIGN-9, administrator: what the administrator sees right after registering. -->
-		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">
+		<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">
 			No organizations yet. Create one to get started.
 		</h1>
 		<div class="mt-6 flex items-center gap-x-4">
 			<a
 				href={resolve('/create')}
-				class="inline-flex items-center gap-x-2 rounded-md bg-indigo-500 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+				class="inline-flex items-center gap-x-2 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-on-emphasis hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 			>
 				<Plus class="size-4" aria-hidden="true" />Create organization
 			</a>
@@ -85,13 +85,13 @@
 				type="button"
 				disabled={signOutFlow.signingOut}
 				onclick={signOut}
-				class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20"
+				class="rounded-md bg-surface-overlay px-3 py-2 text-sm font-semibold text-fg hover:bg-tint/20"
 				>Sign out</button
 			>
 		</div>
 	{:else}
 		<!-- SIGN-9, any other account. -->
-		<h1 class="text-2xl/9 font-semibold tracking-tight text-white">
+		<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">
 			This account can't open any organization on this HQ. Ask the owner of your organization to
 			invite you again.
 		</h1>
@@ -100,7 +100,7 @@
 				type="button"
 				disabled={signOutFlow.signingOut}
 				onclick={signOut}
-				class="rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20"
+				class="rounded-md bg-surface-overlay px-3 py-2 text-sm font-semibold text-fg hover:bg-tint/20"
 				>Sign out</button
 			>
 		</div>

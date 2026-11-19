@@ -29,16 +29,16 @@
 
 <div class="@container">
 	<fieldset
-		class="hidden h-9 rounded-md bg-white/5 outline-1 -outline-offset-1 outline-white/10 @min-[40rem]:inline-flex"
+		class="hidden h-9 rounded-md bg-surface-raised outline-1 -outline-offset-1 outline-line @min-[40rem]:inline-flex"
 	>
 		<legend class="sr-only">Outcome</legend>
 		{#each OUTCOME_FILTERS as f (f.id)}
 			<label
-				class="relative flex h-full cursor-pointer items-center gap-x-1.5 px-3 text-sm/6 font-medium text-gray-400 before:absolute before:inset-1 before:rounded-sm hover:text-white has-checked:font-semibold has-checked:text-white has-checked:before:bg-white/10 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-indigo-400"
+				class="relative flex h-full cursor-pointer items-center gap-x-1.5 px-3 text-sm/6 font-medium text-fg-muted before:absolute before:inset-1 before:rounded-sm hover:text-fg has-checked:font-semibold has-checked:text-fg has-checked:before:bg-surface-overlay has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-focus"
 			>
 				<input type="radio" name="{ids}-outcome" value={f.id} bind:group={value} class="sr-only" />
 				<span class="relative whitespace-nowrap">{f.label}</span>
-				<span class="relative font-normal text-gray-400 tabular-nums">{counts[f.id]}</span>
+				<span class="relative font-normal text-fg-muted tabular-nums">{counts[f.id]}</span>
 			</label>
 		{/each}
 	</fieldset>
@@ -52,7 +52,7 @@
 						class="h-auto min-h-9 max-w-full py-1.5 text-left whitespace-normal max-[639px]:min-h-11"
 					>
 						<span class="min-w-0 [overflow-wrap:anywhere]">Outcome: {current}</span>
-						<MiniIcon name="chevronDown" class="size-5 text-gray-400" />
+						<MiniIcon name="chevronDown" class="size-5 text-fg-muted" />
 					</Button>
 				{/snippet}
 			</DropdownMenuTrigger>
@@ -66,7 +66,7 @@
 					{#each OUTCOME_FILTERS as f (f.id)}
 						<DropdownMenuRadioItem value={f.id} class="min-h-9 max-[639px]:min-h-11">
 							<span class="flex-1 [overflow-wrap:anywhere]">{f.label}</span>
-							<span class="text-gray-400 tabular-nums">{counts[f.id]}</span>
+							<span class="text-fg-muted tabular-nums">{counts[f.id]}</span>
 						</DropdownMenuRadioItem>
 					{/each}
 				</DropdownMenuRadioGroup>

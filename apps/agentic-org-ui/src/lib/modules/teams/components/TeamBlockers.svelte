@@ -15,8 +15,8 @@
 		$props();
 
 	const link =
-		'inline-flex min-h-6 items-center rounded-sm font-medium text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11 [overflow-wrap:anywhere]';
-	const heading = 'font-semibold text-white';
+		'inline-flex min-h-6 items-center rounded-sm font-medium text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 [overflow-wrap:anywhere]';
+	const heading = 'font-semibold text-fg';
 </script>
 
 <div class="space-y-4 text-sm/6" data-team-blockers>
@@ -27,7 +27,7 @@
 				{#each blockers.teams as t (t.id)}
 					<li>
 						<a href={resolve(teamHref(t.id) as '/')} class={link} onclick={onleave}>{t.name}</a
-						>{#if t.ref}<span class="ml-2 font-mono text-xs/5 text-gray-400">{t.ref}</span>{/if}
+						>{#if t.ref}<span class="ml-2 font-mono text-xs/5 text-fg-muted">{t.ref}</span>{/if}
 					</li>
 				{/each}
 			</ul>
@@ -43,7 +43,7 @@
 							href={resolve(`/members/${encodeURIComponent(m.id)}` as '/')}
 							class={link}
 							onclick={onleave}>{m.name}</a
-						><span class="ml-2 text-xs/5 text-gray-400">{kindWord(m.kind)}</span>
+						><span class="ml-2 text-xs/5 text-fg-muted">{kindWord(m.kind)}</span>
 					</li>
 				{/each}
 			</ul>
@@ -68,10 +68,10 @@
 	{#if blockers.tasks.length > 0}
 		<section aria-labelledby="team-blocking-tasks">
 			<h3 id="team-blocking-tasks" class={heading}>Open tasks</h3>
-			<ul role="list" class="mt-1 space-y-1 text-gray-300">
+			<ul role="list" class="mt-1 space-y-1 text-fg-secondary">
 				{#each blockers.tasks as t (t.ref)}
 					<li class="[overflow-wrap:anywhere]">
-						<span class="font-mono text-xs/5 text-gray-400">{t.ref}</span>
+						<span class="font-mono text-xs/5 text-fg-muted">{t.ref}</span>
 						{t.title}
 					</li>
 				{/each}

@@ -11,17 +11,16 @@
 </script>
 
 {#if blocks.length === 0}
-	<p class="text-sm/6 text-gray-400">No text yet.</p>
+	<p class="text-sm/6 text-fg-muted">No text yet.</p>
 {:else}
-	<div class="max-w-3xl space-y-3 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">
+	<div class="max-w-3xl space-y-3 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">
 		{#each blocks as block, i (i)}
 			{#if block.kind === 'heading'}
-				<svelte:element
-					this={`h${level}`}
-					class="pt-2 text-sm/6 font-semibold text-white first:pt-0">{block.text}</svelte:element
+				<svelte:element this={`h${level}`} class="pt-2 text-sm/6 font-semibold text-fg first:pt-0"
+					>{block.text}</svelte:element
 				>
 			{:else if block.kind === 'list'}
-				<ul role="list" class="list-disc space-y-1 pl-5 marker:text-gray-400">
+				<ul role="list" class="list-disc space-y-1 pl-5 marker:text-fg-muted">
 					{#each block.items as item, j (j)}<li>{item}</li>{/each}
 				</ul>
 			{:else}

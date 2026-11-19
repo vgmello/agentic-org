@@ -112,41 +112,41 @@
 		<fieldset class="space-y-2" disabled={busy}>
 			<legend class="sr-only">Agents and people</legend>
 			<Input type="search" bind:value={search} placeholder="Search agents and people…" aria-label="Search agents and people" autocomplete="off" />
-			<ul class="max-h-60 divide-y divide-white/5 overflow-y-auto rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Agents and people">
+			<ul class="max-h-60 divide-y divide-line-subtle overflow-y-auto rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line" aria-label="Agents and people">
 				{#each shownCandidates as m (m.id)}
 					{@const also = shown ? otherTeamsOf(snapshot, m.id, shown.id) : []}
 					<li>
 						<label class="flex cursor-pointer items-start gap-x-3 px-3 py-2 text-sm/6">
 							<Checkbox class="mt-1" checked={chosen.has(m.id)} onCheckedChange={(on) => toggle(m.id, on === true)} aria-label="{m.name}, {kindWord(m.kind).toLowerCase()}" />
 							<span class="min-w-0">
-								<span class="block text-white [overflow-wrap:anywhere]">{m.name} <span class="text-xs text-gray-400">{kindWord(m.kind)}</span></span>
-								{#if also.length > 0}<span class="block text-xs/5 text-gray-400 [overflow-wrap:anywhere]">Also in: {also.map((t) => t.name).join(', ')}</span>{/if}
+								<span class="block text-fg [overflow-wrap:anywhere]">{m.name} <span class="text-xs text-fg-muted">{kindWord(m.kind)}</span></span>
+								{#if also.length > 0}<span class="block text-xs/5 text-fg-muted [overflow-wrap:anywhere]">Also in: {also.map((t) => t.name).join(', ')}</span>{/if}
 							</span>
 						</label>
 					</li>
 				{:else}
-					<li class="px-3 py-2 text-sm/6 text-gray-400">{search ? 'No one matches.' : 'No agents or people yet.'}</li>
+					<li class="px-3 py-2 text-sm/6 text-fg-muted">{search ? 'No one matches.' : 'No agents or people yet.'}</li>
 				{/each}
 			</ul>
 		</fieldset>
 
 		<div class="space-y-2">
 			<Label for="members-lead">Lead</Label>
-			<select id="members-lead" bind:value={lead} disabled={busy || leadChoices.length === 0} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400 disabled:opacity-60">
+			<select id="members-lead" bind:value={lead} disabled={busy || leadChoices.length === 0} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus disabled:opacity-60">
 				<option value="">No lead</option>
 				{#each leadChoices as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
 			</select>
-			<p class="text-xs/5 text-gray-400">The lead also leads the team's projects.</p>
+			<p class="text-xs/5 text-fg-muted">The lead also leads the team's projects.</p>
 		</div>
 
 		{#if clearsLead}
-			<p class="flex gap-x-2 rounded-lg bg-amber-500/10 px-3 py-2 text-sm/6 text-amber-100 outline-1 -outline-offset-1 outline-amber-400/20 [overflow-wrap:anywhere]" data-testid="clears-lead">
+			<p class="flex gap-x-2 rounded-lg bg-warning-emphasis/10 px-3 py-2 text-sm/6 text-warning-text-stronger outline-1 -outline-offset-1 outline-warning/20 [overflow-wrap:anywhere]" data-testid="clears-lead">
 				<TriangleAlert class="mt-1 size-4 shrink-0" aria-hidden="true" />
 				<span>{leaderName} leads {shown?.name}. Removing {leaderName} also clears {shown?.name}'s lead.</span>
 			</p>
 		{/if}
 		{#if problems.length > 0}
-			<ul class="space-y-1 text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">
+			<ul class="space-y-1 text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">
 				{#each problems as problem (problem)}<li>{problem}</li>{/each}
 			</ul>
 		{/if}

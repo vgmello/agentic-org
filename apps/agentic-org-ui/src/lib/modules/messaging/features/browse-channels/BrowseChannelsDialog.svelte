@@ -68,18 +68,18 @@
 		</DialogHeader>
 		<ul
 			role="list"
-			class="-mx-2 max-h-[60dvh] divide-y divide-white/5 overflow-y-auto"
+			class="-mx-2 max-h-[60dvh] divide-y divide-line-subtle overflow-y-auto"
 			data-testid="browse-list"
 		>
 			{#each rows as r (r.conversation.id)}
 				<li class="flex flex-wrap items-center gap-x-4 gap-y-2 px-2 py-3" data-testid="browse-row">
 					<div class="min-w-0 flex-1 basis-56">
-						<p class="text-sm/6 font-semibold text-white">#{r.conversation.name}</p>
-						{#if r.conversation.purpose}<p class="text-sm/6 text-gray-300">
+						<p class="text-sm/6 font-semibold text-fg">#{r.conversation.name}</p>
+						{#if r.conversation.purpose}<p class="text-sm/6 text-fg-secondary">
 								{r.conversation.purpose}
 							</p>{/if}
 						<!-- eslint-disable svelte/no-useless-mustaches -- the spaces must be inside a mustache: Svelte trims a block's leading whitespace -->
-						<p class="text-xs/5 text-gray-400">
+						<p class="text-xs/5 text-fg-muted">
 							{r.scope ??
 								(r.conversation.access === 'invite' ? 'By invitation' : 'Open to everyone')} · {r
 								.conversation.members.length}
@@ -113,15 +113,15 @@
 							onclick={() => run(r.conversation.id, onrequest)}>Request invitation</Button
 						>
 					{:else if r.action === 'requested'}
-						<p class="text-xs/5 text-gray-400">Invitation requested</p>
+						<p class="text-xs/5 text-fg-muted">Invitation requested</p>
 					{:else}
-						<p class="text-xs/5 text-gray-400">
+						<p class="text-xs/5 text-fg-muted">
 							Follows its {r.conversation.auto?.type === 'team' ? 'team' : 'project'}
 						</p>
 					{/if}
 				</li>
 			{/each}
 		</ul>
-		{#if error}<p class="text-sm/6 text-red-400" role="alert">{error}</p>{/if}
+		{#if error}<p class="text-sm/6 text-danger" role="alert">{error}</p>{/if}
 	</DialogContent>
 </Dialog>

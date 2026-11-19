@@ -20,8 +20,8 @@
 			{@const members = membersOfTeam(snapshot, node.team.id)}
 			{@const lead = leadOf(snapshot, node.team)}
 			<li data-testid="team-list-item">
-				<p class="team-heading flex items-center gap-x-1 text-sm/6 font-semibold text-white">{node.team.name}{#if actions}{@render actions(node.team)}{/if}</p>
-				<p class="text-xs/5 text-gray-400">
+				<p class="team-heading flex items-center gap-x-1 text-sm/6 font-semibold text-fg">{node.team.name}{#if actions}{@render actions(node.team)}{/if}</p>
+				<p class="text-xs/5 text-fg-muted">
 					{lead ? `Lead: ${lead.name}` : 'No lead'} ·
 					{members.length === 0
 						? 'No members'

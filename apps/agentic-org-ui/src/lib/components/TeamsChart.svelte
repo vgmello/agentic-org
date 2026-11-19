@@ -107,31 +107,31 @@
 	{@const projects = projectsOfTeam(snapshot, team.id)}
 	{@const open = !collapsed.has(team.id)}
 	<div class="flex w-64 flex-col items-center" data-testid="team-card" data-team={team.id}>
-		<div class="w-full rounded-xl bg-gray-800/50 p-3 text-left outline-1 -outline-offset-1 {justAdded === team.id ? 'outline-2 outline-indigo-400' : 'outline-white/10'}">
+		<div class="w-full rounded-xl bg-surface/50 p-3 text-left outline-1 -outline-offset-1 {justAdded === team.id ? 'outline-2 outline-focus' : 'outline-line'}">
 			<div class="flex items-start justify-between gap-x-1">
-				<h3 class="min-w-0 truncate text-sm/6 font-semibold text-white" title={team.name}>{team.name}</h3>
+				<h3 class="min-w-0 truncate text-sm/6 font-semibold text-fg" title={team.name}>{team.name}</h3>
 				{#if actions}<span class="-mt-1 -mr-1 shrink-0">{@render actions(team)}</span>{/if}
 			</div>
-			<p class="text-xs/5 text-gray-400">
-				{#if lead}Lead: <span class="break-words text-gray-200">{lead.name}</span>{:else}No lead{/if}
+			<p class="text-xs/5 text-fg-muted">
+				{#if lead}Lead: <span class="break-words text-fg-body">{lead.name}</span>{:else}No lead{/if}
 			</p>
 
 			<dl class="mt-2 space-y-1.5 text-xs/5">
 				<div class="flex items-center gap-x-2">
-					<dt class="w-14 shrink-0 text-gray-400">Agents <span class="text-gray-300">{agents.length}</span></dt>
+					<dt class="w-14 shrink-0 text-fg-muted">Agents <span class="text-fg-secondary">{agents.length}</span></dt>
 					<dd class="flex flex-wrap gap-1.5">
-						{#each agents as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-gray-400" aria-label="None">—</span>{/each}
+						{#each agents as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-fg-muted" aria-label="None">—</span>{/each}
 					</dd>
 				</div>
 				<div class="flex items-center gap-x-2">
-					<dt class="w-14 shrink-0 text-gray-400">People <span class="text-gray-300">{people.length}</span></dt>
+					<dt class="w-14 shrink-0 text-fg-muted">People <span class="text-fg-secondary">{people.length}</span></dt>
 					<dd class="flex flex-wrap gap-1.5">
-						{#each people as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-gray-400" aria-label="None">—</span>{/each}
+						{#each people as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{:else}<span class="text-fg-muted" aria-label="None">—</span>{/each}
 					</dd>
 				</div>
 				{#if others.length > 0}
 					<div class="flex items-center gap-x-2">
-						<dt class="w-14 shrink-0 text-gray-400">Other <span class="text-gray-300">{others.length}</span></dt>
+						<dt class="w-14 shrink-0 text-fg-muted">Other <span class="text-fg-secondary">{others.length}</span></dt>
 						<dd class="flex flex-wrap gap-1.5">
 							{#each others as m (m.id)}<MemberTile {...tileProps(m, team.id)} />{/each}
 						</dd>
@@ -140,15 +140,15 @@
 			</dl>
 
 			{#if projects.length > 0}
-				<ul class="mt-2 space-y-1 border-t border-white/5 pt-2 text-xs/5" aria-label="Projects of {team.name}">
+				<ul class="mt-2 space-y-1 border-t border-line-subtle pt-2 text-xs/5" aria-label="Projects of {team.name}">
 					{#each projects as project (project.id)}
 						{@const others = otherTeamsOnProject(snapshot, project.id, team.id)}
 						<li class="flex flex-wrap items-center gap-x-2">
-							<span class="font-medium break-words text-gray-200">{project.name}</span>
-							<span class="text-gray-400">· {lead ? `lead ${lead.name}` : 'No lead'}</span>
+							<span class="font-medium break-words text-fg-body">{project.name}</span>
+							<span class="text-fg-muted">· {lead ? `lead ${lead.name}` : 'No lead'}</span>
 							{#if onremoveproject}
 								<button type="button" aria-label="Remove {project.name} from {team.name}"
-									data-project={project.id} style="width: calc(1.5rem / var(--fit-scale)); height: calc(1.5rem / var(--fit-scale));" title="Remove {project.name} from {team.name}" onclick={() => onremoveproject(project.id, team)} class="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded text-gray-400 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button>
+									data-project={project.id} style="width: calc(1.5rem / var(--fit-scale)); height: calc(1.5rem / var(--fit-scale));" title="Remove {project.name} from {team.name}" onclick={() => onremoveproject(project.id, team)} class="ml-auto inline-flex size-6 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button>
 							{/if}
 							{#if others.length > 0}
 								<button
@@ -157,12 +157,12 @@
 									aria-label="Shared project {project.name}, also worked on by {others.map((t) => t.name).join(', ')}"
 									onclick={() => (sharedOpen = sharedOpen === `${team.id}|${project.id}` ? undefined : `${team.id}|${project.id}`)}
 									onkeydown={(e) => e.key === 'Escape' && (sharedOpen = undefined)}
-									class="rounded bg-sky-500/15 px-1.5 text-[0.65rem] leading-4 font-semibold text-sky-200 outline-1 outline-sky-400/30 focus-visible:outline-2 focus-visible:outline-indigo-400"
+									class="rounded bg-info-emphasis/15 px-1.5 text-[0.65rem] leading-4 font-semibold text-info-text-strong outline-1 outline-info/30 focus-visible:outline-2 focus-visible:outline-focus"
 								>
 									Shared
 								</button>
 								{#if sharedOpen === `${team.id}|${project.id}`}
-									<span class="basis-full text-gray-400">Also: {others.map((t) => t.name).join(', ')}</span>
+									<span class="basis-full text-fg-muted">Also: {others.map((t) => t.name).join(', ')}</span>
 								{/if}
 							{/if}
 						</li>
@@ -177,7 +177,7 @@
 				onclick={() => toggle(team.id)}
 				aria-expanded={open}
 				aria-label="{subTeamCount(node)} {subTeamCount(node) === 1 ? 'team' : 'teams'}: {open ? 'collapse' : 'expand'} the teams under {team.name}"
-				class="-mt-px flex h-6 items-center gap-x-1 rounded-b-md bg-gray-800/70 px-2 text-xs text-gray-300 outline-1 -outline-offset-1 outline-white/10 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-500"
+				class="-mt-px flex h-6 items-center gap-x-1 rounded-b-md bg-surface/70 px-2 text-xs text-fg-secondary outline-1 -outline-offset-1 outline-line hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-ring"
 			>
 				{subTeamCount(node)} {subTeamCount(node) === 1 ? 'team' : 'teams'}
 				<ChevronDown class="size-3.5 transition-transform {open ? '' : '-rotate-90'}" aria-hidden="true" />

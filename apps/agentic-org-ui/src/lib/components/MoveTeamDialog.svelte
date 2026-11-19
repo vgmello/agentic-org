@@ -73,27 +73,27 @@
 
 		<fieldset class="max-h-64 space-y-1 overflow-y-auto" disabled={busy}>
 			<legend class="sr-only">New owner team</legend>
-			<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-white/5 has-disabled:opacity-60">
+			<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-surface-raised has-disabled:opacity-60">
 				<input type="radio" name="move-target" value="" class="mt-1" checked={target === ''} disabled={atTop} onchange={() => (target = '')} />
-				<span class="min-w-0"><span class="block text-white">None: top level</span>{#if atTop}<span class="block text-xs/5 text-gray-400">{shown?.name} is already at the top level</span>{/if}</span>
+				<span class="min-w-0"><span class="block text-fg">None: top level</span>{#if atTop}<span class="block text-xs/5 text-fg-muted">{shown?.name} is already at the top level</span>{/if}</span>
 			</label>
 			{#each choices as { option, disabled } (option.team.id)}
-				<label class="flex items-start gap-x-3 rounded-md py-1.5 pr-2 text-sm/6 hover:bg-white/5 has-disabled:opacity-60" style="padding-left: {0.5 + option.depth * 1.25}rem">
+				<label class="flex items-start gap-x-3 rounded-md py-1.5 pr-2 text-sm/6 hover:bg-surface-raised has-disabled:opacity-60" style="padding-left: {0.5 + option.depth * 1.25}rem">
 					<input type="radio" name="move-target" value={option.team.id} class="mt-1" checked={target === option.team.id} disabled={!!disabled} onchange={() => (target = option.team.id)} />
 					<span class="min-w-0">
-						<span class="block text-white [overflow-wrap:anywhere]">{option.team.name}</span>
-						{#if disabled}<span class="block text-xs/5 text-gray-400">{disabled}</span>{/if}
+						<span class="block text-fg [overflow-wrap:anywhere]">{option.team.name}</span>
+						{#if disabled}<span class="block text-xs/5 text-fg-muted">{disabled}</span>{/if}
 					</span>
 				</label>
 			{/each}
 		</fieldset>
 
 		{#if shown && target !== undefined}
-			<p class="text-sm/6 text-gray-300 [overflow-wrap:anywhere]" data-testid="move-summary">
+			<p class="text-sm/6 text-fg-secondary [overflow-wrap:anywhere]" data-testid="move-summary">
 				Move {shown.name}{movesAlong(snapshot, shown)} from {from} to {to}? Members and projects stay with it.
 			</p>
 		{/if}
-		{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+		{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 
 		<DialogFooter>
 			<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>

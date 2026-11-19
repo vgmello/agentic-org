@@ -85,44 +85,44 @@
 			<fieldset class="space-y-1">
 				<legend class="sr-only">Lead</legend>
 				{#if candidates === undefined}
-					<p class="text-sm/6 text-gray-400" role="status">Loading who can lead…</p>
+					<p class="text-sm/6 text-fg-muted" role="status">Loading who can lead…</p>
 				{:else}
 					<label
-						class="flex min-h-11 items-center gap-x-3 rounded-md px-2 text-sm/6 text-white hover:bg-white/5 has-focus-visible:outline-2 has-focus-visible:outline-indigo-400"
+						class="flex min-h-11 items-center gap-x-3 rounded-md px-2 text-sm/6 text-fg hover:bg-surface-raised has-focus-visible:outline-2 has-focus-visible:outline-focus"
 					>
 						<input
 							type="radio"
 							name="lead"
 							value=""
 							bind:group={choice}
-							class="size-4 accent-indigo-500"
+							class="size-4 accent-primary"
 						/> No lead
 					</label>
 					{#each candidates as c (c.id)}
 						<label
-							class="flex min-h-11 items-center gap-x-3 rounded-md px-2 text-sm/6 text-white hover:bg-white/5 has-focus-visible:outline-2 has-focus-visible:outline-indigo-400"
+							class="flex min-h-11 items-center gap-x-3 rounded-md px-2 text-sm/6 text-fg hover:bg-surface-raised has-focus-visible:outline-2 has-focus-visible:outline-focus"
 						>
 							<input
 								type="radio"
 								name="lead"
 								value={c.id}
 								bind:group={choice}
-								class="size-4 accent-indigo-500"
+								class="size-4 accent-primary"
 							/>
 							<span class="[overflow-wrap:anywhere]">{c.name}</span><span
-								class="text-xs/5 text-gray-400">{c.kind === 'agent' ? 'Agent' : 'Person'}</span
+								class="text-xs/5 text-fg-muted">{c.kind === 'agent' ? 'Agent' : 'Person'}</span
 							>
 						</label>
 					{/each}
 					{#if candidates.length === 0}
-						<p class="text-sm/6 text-gray-400">
+						<p class="text-sm/6 text-fg-muted">
 							Nobody has {shown?.name} as their home team yet. Move someone here first with Move home
 							team on their profile.
 						</p>
 					{/if}
 				{/if}
 			</fieldset>
-			{#if error}<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">
+			{#if error}<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">
 					{error}
 				</p>{/if}
 			<DialogFooter>

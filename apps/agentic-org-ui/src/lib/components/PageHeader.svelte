@@ -40,11 +40,13 @@
 	} = $props();
 </script>
 
-<header class="border-b border-white/5 px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8 {className}">
+<header
+	class="border-b border-line-subtle px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8 {className}"
+>
 	{#if back}
 		<a
 			href={resolve(back.href as '/')}
-			class="mb-2 inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+			class="mb-2 inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 			>{back.label}</a
 		>
 	{/if}
@@ -53,11 +55,11 @@
 			<svelte:element
 				this={level === 1 ? 'h1' : 'h2'}
 				{id}
-				class="flex flex-wrap items-baseline gap-x-2 text-base/7 font-semibold text-white [overflow-wrap:anywhere]"
+				class="flex flex-wrap items-baseline gap-x-2 text-base/7 font-semibold text-fg [overflow-wrap:anywhere]"
 			>
 				{title}
 				{#if count !== undefined}
-					<span class="text-sm/6 font-normal text-gray-400"
+					<span class="text-sm/6 font-normal text-fg-muted"
 						><span aria-hidden="true">{count}</span><span class="sr-only"
 							>, {count} {countLabel ?? ''}</span
 						></span
@@ -65,9 +67,9 @@
 				{/if}
 			</svelte:element>
 			{#if typeof description === 'string'}
-				<p class="mt-1 max-w-3xl text-sm/6 text-gray-400">{description}</p>
+				<p class="mt-1 max-w-3xl text-sm/6 text-fg-muted">{description}</p>
 			{:else if description}
-				<div class="mt-1 max-w-3xl text-sm/6 text-gray-400">{@render description()}</div>
+				<div class="mt-1 max-w-3xl text-sm/6 text-fg-muted">{@render description()}</div>
 			{/if}
 		</div>
 		{#if actions}<div class="flex flex-wrap items-center gap-3">{@render actions()}</div>{/if}

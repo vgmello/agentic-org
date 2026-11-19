@@ -42,7 +42,7 @@
 				: ': leads no team yet, so there is nowhere to hire into'
 			: ''}
 		{#if !profile.allowHiring.canChange && profile.allowHiring.reason}
-			<span class="block text-xs/5 text-gray-400">{profile.allowHiring.reason}</span>
+			<span class="block text-xs/5 text-fg-muted">{profile.allowHiring.reason}</span>
 		{/if}
 	</span>
 	{#if profile.allowHiring.canChange && profile.status !== 'inactive'}

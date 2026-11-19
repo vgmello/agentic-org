@@ -158,13 +158,13 @@
 	}
 
 	const fieldClass =
-		'block w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-500 disabled:opacity-50 aria-invalid:outline-red-400';
+		'block w-full rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:opacity-50 aria-invalid:outline-danger';
 </script>
 
 <div class="space-y-2" data-testid="draftable-{id}">
 	<div class="flex items-center justify-between gap-x-3">
 		<div class="flex items-center gap-x-2">
-			<Label for={id}>{label}{#if hint}<span class="font-normal text-gray-400"> {hint}</span>{/if}</Label>
+			<Label for={id}>{label}{#if hint}<span class="font-normal text-fg-muted"> {hint}</span>{/if}</Label>
 			{#if drafted}<Badge variant="secondary" data-testid="drafted-tag-{id}">Drafted</Badge>{/if}
 		</div>
 		{#if available}
@@ -211,22 +211,22 @@
 		/>
 	{/if}
 	{#if error}
-		<p id="{id}-error" class="text-sm/6 text-red-400" role="alert">{error}</p>
+		<p id="{id}-error" class="text-sm/6 text-danger" role="alert">{error}</p>
 	{/if}
 
 	{#if previous !== undefined && !open}
-		<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="draft-used">
+		<p class="flex items-center gap-x-2 text-xs/5 text-fg-muted" data-testid="draft-used">
 			Draft used.{#if clipped !== undefined}{' '}Shortened to fit the limit of {clipped} characters.{/if}
-			<button type="button" class="inline-flex items-center gap-x-1 font-semibold text-indigo-300 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={undo} {disabled}>
+			<button type="button" class="inline-flex items-center gap-x-1 font-semibold text-brand-text underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-focus" onclick={undo} {disabled}>
 				<Undo class="size-3" aria-hidden="true" /> Undo
 			</button>
 		</p>
 	{/if}
 
 	{#if available && open}
-		<div id="{id}-copilot" role="group" aria-labelledby="{id}-copilot-title" data-testid="copilot-{id}" class="space-y-3 rounded-lg bg-white/5 p-4 outline-1 -outline-offset-1 outline-white/10">
+		<div id="{id}-copilot" role="group" aria-labelledby="{id}-copilot-title" data-testid="copilot-{id}" class="space-y-3 rounded-lg bg-surface-raised p-4 outline-1 -outline-offset-1 outline-line">
 			<div class="flex items-center justify-between gap-x-3">
-				<p id="{id}-copilot-title" class="text-sm/6 font-semibold text-white">{mode === 'improve' ? 'Improve this text' : 'Draft this text'}</p>
+				<p id="{id}-copilot-title" class="text-sm/6 font-semibold text-fg">{mode === 'improve' ? 'Improve this text' : 'Draft this text'}</p>
 				{#if api.sample}<Badge variant="secondary" data-testid="copilot-sample">Sample data</Badge>{/if}
 			</div>
 
@@ -252,21 +252,21 @@
 						aria-describedby={requestError ? `${id}-request-error` : undefined}
 					/>
 					{#if requestError}
-						<p id="{id}-request-error" class="text-sm/6 text-red-400" role="alert">{requestError}</p>
+						<p id="{id}-request-error" class="text-sm/6 text-danger" role="alert">{requestError}</p>
 					{/if}
 				</div>
 			{/if}
 
 			<div aria-live="polite">
 				{#if drafting}
-					<p class="flex items-center gap-x-2 text-sm/6 text-gray-300"><LoaderCircle class="size-4 animate-spin text-indigo-400" aria-hidden="true" /> Drafting…</p>
+					<p class="flex items-center gap-x-2 text-sm/6 text-fg-secondary"><LoaderCircle class="size-4 animate-spin text-link" aria-hidden="true" /> Drafting…</p>
 				{/if}
 				{#if phase.kind === 'ready'}
 					<div class="space-y-2">
-						<p class="text-xs/5 font-semibold text-gray-400">The copilot proposes</p>
-						<p class="whitespace-pre-wrap rounded-md bg-gray-900/60 px-3 py-2 text-sm/6 text-white" data-testid="copilot-proposal">{phase.response.draft.text}</p>
+						<p class="text-xs/5 font-semibold text-fg-muted">The copilot proposes</p>
+						<p class="whitespace-pre-wrap rounded-md bg-surface-sunken/60 px-3 py-2 text-sm/6 text-fg" data-testid="copilot-proposal">{phase.response.draft.text}</p>
 						{#if phase.response.notes.length > 0}
-							<ul class="list-disc space-y-1 pl-5 text-xs/5 text-gray-400" data-testid="copilot-notes">
+							<ul class="list-disc space-y-1 pl-5 text-xs/5 text-fg-muted" data-testid="copilot-notes">
 								{#each phase.response.notes as note, i (i)}<li>{note}</li>{/each}
 							</ul>
 						{/if}

@@ -76,17 +76,17 @@
 			<legend class="sr-only">New manager</legend>
 			{#each options as { member: m, disabled, reason } (m.id)}
 				{@const isCurrent = (current?.id ?? snapshot.members.find((x) => x.owner)?.id) === m.id}
-				<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-white/5 has-disabled:opacity-60">
+				<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-surface-raised has-disabled:opacity-60">
 					<input type="radio" name="manager" value={m.id} class="mt-1" checked={target === m.id} disabled={disabled || isCurrent} onchange={() => (target = m.id)} />
 					<span class="min-w-0">
-						<span class="block text-white [overflow-wrap:anywhere]">{label(m)} <span class="text-xs text-gray-400">{kindWord(m.kind)}{isCurrent ? ' · current' : ''}</span></span>
-						{#if disabled}<span class="block text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{reason}</span>{/if}
+						<span class="block text-fg [overflow-wrap:anywhere]">{label(m)} <span class="text-xs text-fg-muted">{kindWord(m.kind)}{isCurrent ? ' · current' : ''}</span></span>
+						{#if disabled}<span class="block text-xs/5 text-fg-muted [overflow-wrap:anywhere]">{reason}</span>{/if}
 					</span>
 				</label>
 			{/each}
 		</fieldset>
 
-		{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+		{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 
 		<DialogFooter>
 			<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>

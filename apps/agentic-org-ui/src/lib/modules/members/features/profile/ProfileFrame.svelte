@@ -155,7 +155,7 @@
 		changes++;
 		const notice = runNowNotice(result.turn, result.profile.name);
 		// The shared toaster draws descriptions too dim on this surface; this one carries what happens next.
-		const options = { description: notice.description, descriptionClass: '!text-gray-300' };
+		const options = { description: notice.description, descriptionClass: '!text-fg-secondary' };
 		if (notice.tone === 'success') toast.success(notice.title, options);
 		else toast.info(notice.title, options);
 	}
@@ -327,7 +327,7 @@
 	});
 
 	const linkClass =
-		'rounded-sm text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400';
+		'rounded-sm text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
 </script>
 
 <svelte:head><title>{title}</title></svelte:head>
@@ -358,7 +358,7 @@
 			{@const manage = p.viewer.isOwnerOrAdmin && active && !!record}
 			{@const tabs = tabsFor(p)}
 			<header
-				class="border-b border-white/5 bg-black/10 px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8"
+				class="border-b border-line-subtle bg-shade/10 px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8"
 			>
 				<a
 					href={resolve('/teams/members')}
@@ -374,22 +374,22 @@
 							<h2
 								bind:this={nameHeading}
 								tabindex="-1"
-								class="flex flex-wrap items-center gap-x-2 gap-y-1 text-base/7 font-semibold text-white [overflow-wrap:anywhere]"
+								class="flex flex-wrap items-center gap-x-2 gap-y-1 text-base/7 font-semibold text-fg [overflow-wrap:anywhere]"
 							>
 								{p.name}{p.viewer.isSelf ? ' (you)' : ''}
 								{#if p.owner}<StatusPill
 										label="Owner"
-										class="bg-indigo-400/10 text-indigo-300 ring-indigo-400/30"
+										class="bg-brand/10 text-brand-text ring-brand/30"
 									/>{/if}
 							</h2>
 							<div class={factsWrap}>
-								<ul role="list" class="{factsList} text-sm/6 text-gray-300">
+								<ul role="list" class="{factsList} text-sm/6 text-fg-secondary">
 									{#if p.role}<li class={fact}>{p.role}</li>{/if}
-									<li class="{fact} font-mono text-gray-400">@{p.handle}</li>
+									<li class="{fact} font-mono text-fg-muted">@{p.handle}</li>
 								</ul>
 							</div>
 							<div class="mt-1 {factsWrap}">
-								<ul role="list" class="{factsList} text-xs/5 text-gray-400">
+								<ul role="list" class="{factsList} text-xs/5 text-fg-muted">
 									<li class={fact}>{kindWord(p.kind)}</li>
 									{#if p.homeTeam}
 										<li class={fact}>
@@ -401,7 +401,7 @@
 												>{/if}
 										</li>
 									{:else if active}
-										<li class="{fact} text-red-300">
+										<li class="{fact} text-danger-text">
 											No home team on record: this record is invalid
 										</li>
 									{:else}
@@ -421,7 +421,7 @@
 							</div>
 							{#if p.kind === 'agent' && active}
 								<div class={factsWrap}>
-									<ul role="list" class="{factsList} text-xs/5 text-gray-400">
+									<ul role="list" class="{factsList} text-xs/5 text-fg-muted">
 										{#if p.office}
 											<li class={fact}>Runs at {p.office.name}</li>
 											<li class={fact}>{reportedText(p.office.observedAt)}</li>
@@ -431,7 +431,7 @@
 									</ul>
 								</div>
 							{:else if p.contact}
-								<p class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{p.contact}</p>
+								<p class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]">{p.contact}</p>
 							{/if}
 							{#if presence || !active || p.canSignIn}
 								<div class="mt-2 flex flex-wrap gap-2">
@@ -448,7 +448,7 @@
 								</div>
 							{/if}
 							<!-- A pending-turn check that failed: quiet, in place; the page and any open dialog stay. -->
-							<p class={['text-xs/5 text-gray-400', refreshFailed && 'mt-1']} role="status">
+							<p class={['text-xs/5 text-fg-muted', refreshFailed && 'mt-1']} role="status">
 								{refreshFailed ? "Couldn't refresh; checking again." : ''}
 							</p>
 						</div>

@@ -116,7 +116,7 @@ test('TEAM-1 PEOPLE-1 REPORT-2 BUG-70 OC-10: chart metadata uses gray-400 rather
 	for (const view of ['Teams', 'People', 'Reporting lines']) {
 		await page.getByRole('tab', { name: view, exact: true }).click();
 		const canvas = page.getByTestId(view === 'Teams' ? 'teams-chart' : view === 'People' ? 'people-chart' : 'reporting-chart');
-		await expect(canvas.locator('.text-gray-500')).toHaveCount(0);
+		await expect(canvas.locator('.text-fg-subtle')).toHaveCount(0);
 		await shot(page, 'oc1-meta-' + view.replaceAll(' ', '-').toLowerCase());
 	}
 });

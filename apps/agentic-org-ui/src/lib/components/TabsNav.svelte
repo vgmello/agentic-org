@@ -47,7 +47,7 @@
 
 <nav
 	aria-label={label}
-	class="flex gap-x-6 overflow-x-auto border-b border-white/10 px-4 min-[640px]:px-6 min-[1024px]:px-8 {className}"
+	class="flex gap-x-6 overflow-x-auto border-b border-line px-4 min-[640px]:px-6 min-[1024px]:px-8 {className}"
 >
 	{#each tabs as tab (tab.href)}
 		{@const current = isCurrent(tab)}
@@ -55,13 +55,13 @@
 			href={resolve(tab.href as '/')}
 			aria-current={current ? 'page' : undefined}
 			onclick={(event) => choose(event, tab)}
-			class="-mb-px flex min-h-11 items-center gap-x-2 border-b-2 py-3 text-sm/6 font-semibold whitespace-nowrap focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 {current
-				? 'border-indigo-400 text-white'
-				: 'border-transparent text-gray-400 hover:border-white/20 hover:text-white'}"
+			class="-mb-px flex min-h-11 items-center gap-x-2 border-b-2 py-3 text-sm/6 font-semibold whitespace-nowrap focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {current
+				? 'border-brand text-fg'
+				: 'border-transparent text-fg-muted hover:border-line-strong hover:text-fg'}"
 		>
 			{tab.label}
 			{#if tab.count !== undefined}
-				<span class="rounded-full bg-white/10 px-2 text-xs/5 font-medium text-gray-300"
+				<span class="rounded-full bg-surface-overlay px-2 text-xs/5 font-medium text-fg-secondary"
 					>{tab.count}</span
 				>
 			{/if}

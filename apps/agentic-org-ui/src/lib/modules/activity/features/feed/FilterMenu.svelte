@@ -41,7 +41,7 @@
 				aria-label="{label}: {current}"
 			>
 				<span class="truncate">{current}</span>
-				<MiniIcon name="chevronDown" class="size-5 text-gray-400" />
+				<MiniIcon name="chevronDown" class="size-5 text-fg-muted" />
 			</Button>
 		{/snippet}
 	</DropdownMenuTrigger>

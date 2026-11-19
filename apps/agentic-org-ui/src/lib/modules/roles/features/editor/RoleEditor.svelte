@@ -234,12 +234,12 @@
 		{onCloseAutoFocus}
 		onOpenAutoFocus={openFocus}
 	>
-		<SheetHeader class="shrink-0 border-b border-white/10">
+		<SheetHeader class="shrink-0 border-b border-line">
 			<!-- When Close doesn't fit beside the title (narrow, large text) it wraps above it, and the title
 				 keeps the full width. -->
 			<div class="flex flex-wrap-reverse items-start justify-end gap-x-3 gap-y-2">
 				<SheetTitle
-					class="min-w-0 flex-1 basis-[200px] text-base/7 font-semibold text-white [overflow-wrap:anywhere]"
+					class="min-w-0 flex-1 basis-[200px] text-base/7 font-semibold text-fg [overflow-wrap:anywhere]"
 					>{title}</SheetTitle
 				>
 				<SheetClose>
@@ -247,7 +247,7 @@
 						<Button
 							variant="ghost"
 							size="icon"
-							class="-my-1 -mr-1.5 shrink-0 text-gray-400 hover:text-white max-[639px]:size-11"
+							class="-my-1 -mr-1.5 shrink-0 text-fg-muted hover:text-fg max-[639px]:size-11"
 							title="Close"
 							{...props}
 							><MiniIcon name="xMark" class="size-5" /><span class="sr-only">Close</span></Button
@@ -255,7 +255,7 @@
 					{/snippet}
 				</SheetClose>
 			</div>
-			<SheetDescription class="text-sm/6 text-gray-400">
+			<SheetDescription class="text-sm/6 text-fg-muted">
 				A role describes an employee's work for teammates. It grants no tools, budgets or authority.
 			</SheetDescription>
 		</SheetHeader>
@@ -284,7 +284,7 @@
 				{/if}
 				{#if editing?.invalid}
 					<Callout data-testid="invalid-note">
-						<p class="text-sm/6 font-semibold text-red-300">
+						<p class="text-sm/6 font-semibold text-danger-text">
 							{invalidText(editing.name, editing.invalid.field)}
 						</p>
 						<p class="mt-1 text-sm/6">
@@ -297,16 +297,16 @@
 						<p
 							id="role-conflict"
 							tabindex="-1"
-							class="text-sm/6 font-semibold text-white focus:outline-none"
+							class="text-sm/6 font-semibold text-fg focus:outline-none"
 						>
 							{conflictMessage}
 						</p>
 						<details open class="mt-2">
 							<summary
-								class="cursor-pointer rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:py-2.5"
+								class="cursor-pointer rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:py-2.5"
 								>Newer version: rev {latest.revision}, {latest.name}</summary
 							>
-							<div class="mt-2 border-l-2 border-white/10 pl-3">
+							<div class="mt-2 border-l-2 border-line pl-3">
 								<RoleBody body={latest.bodyMarkdown} level={3} />
 							</div>
 						</details>
@@ -314,7 +314,7 @@
 				{/if}
 
 				<div>
-					<Label for="role-name" class="block text-sm/6 font-medium text-white">Name</Label>
+					<Label for="role-name" class="block text-sm/6 font-medium text-fg">Name</Label>
 					<div class="mt-2">
 						<Input
 							bind:ref={nameField}
@@ -332,8 +332,8 @@
 				</div>
 
 				<div>
-					<Label for="role-key" class="block text-sm/6 font-medium text-white"
-						>Key <span class="font-normal text-gray-400">(optional)</span></Label
+					<Label for="role-key" class="block text-sm/6 font-medium text-fg"
+						>Key <span class="font-normal text-fg-muted">(optional)</span></Label
 					>
 					<div class="mt-2">
 						<Input
@@ -347,7 +347,7 @@
 							aria-invalid={errors.key ? true : undefined}
 							aria-describedby="role-key-help{errors.key ? ' role-key-error' : ''}"
 							oninput={() => errors.key && (errors = { ...errors, key: undefined })}
-							class="{inputClass} font-mono read-only:text-gray-300 read-only:outline-white/10"
+							class="{inputClass} font-mono read-only:text-fg-secondary read-only:outline-line"
 						/>
 					</div>
 					<p id="role-key-help" class={helpClass}>
@@ -362,8 +362,8 @@
 				</div>
 
 				<div>
-					<Label for="role-body" class="block text-sm/6 font-medium text-white">Text</Label>
-					<p id="role-body-help" class="mt-1 text-xs/5 text-gray-400">
+					<Label for="role-body" class="block text-sm/6 font-medium text-fg">Text</Label>
+					<p id="role-body-help" class="mt-1 text-xs/5 text-fg-muted">
 						Markdown. The usual sections are Mission, Responsibilities, Working style and
 						Boundaries.
 					</p>
@@ -381,7 +381,7 @@
 				</div>
 
 				{#if mode.kind === 'edit'}
-					<p class="text-sm/6 text-gray-300" data-testid="save-effect">
+					<p class="text-sm/6 text-fg-secondary" data-testid="save-effect">
 						Saving makes rev {expectedRevision + 1}.
 						{#if mode.employeeCount > 0}
 							The {employeesText(mode.employeeCount)} with this role read the new text.
@@ -392,19 +392,19 @@
 				{/if}
 
 				{#if failure}
-					<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">
+					<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">
 						{failure}
 					</p>
 				{/if}
 			</div>
 
 			<SheetFooter
-				class="shrink-0 flex-row flex-wrap items-center justify-end gap-3 border-t border-white/10 px-4 py-4"
+				class="shrink-0 flex-row flex-wrap items-center justify-end gap-3 border-t border-line px-4 py-4"
 			>
 				<!-- Always present, so the polite status is announced when it fills; empty, it takes no room. -->
 				<p
 					role="status"
-					class="min-w-0 flex-1 basis-[200px] text-sm/6 text-gray-300 empty:basis-0"
+					class="min-w-0 flex-1 basis-[200px] text-sm/6 text-fg-secondary empty:basis-0"
 					data-testid="save-notice"
 				>
 					{notice ?? ''}

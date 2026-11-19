@@ -67,13 +67,13 @@
 	href="/welcome"
 	aria-disabled={busy ? 'true' : undefined}
 	tabindex={busy ? -1 : undefined}
-	class="-ml-1 mb-6 inline-flex w-fit items-center gap-x-1.5 rounded-md text-sm/6 font-semibold text-gray-400 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500 {busy ? 'pointer-events-none opacity-50' : ''}"
+	class="-ml-1 mb-6 inline-flex w-fit items-center gap-x-1.5 rounded-md text-sm/6 font-semibold text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring {busy ? 'pointer-events-none opacity-50' : ''}"
 >
 	<ArrowLeft class="size-4" aria-hidden="true" /> Back
 </a>
 
-<h1 class="text-3xl/9 font-semibold tracking-tight text-white">Create organization</h1>
-<p class="mt-2 text-base/7 text-gray-400">Name it. You can change the rest later.</p>
+<h1 class="text-3xl/9 font-semibold tracking-tight text-fg">Create organization</h1>
+<p class="mt-2 text-base/7 text-fg-muted">Name it. You can change the rest later.</p>
 
 <form class="mt-8 space-y-6" onsubmit={submit} novalidate>
 	<div class="space-y-2">
@@ -92,17 +92,17 @@
 			aria-describedby={nameError ? 'name-error' : undefined}
 		/>
 		{#if nameError}
-			<p id="name-error" class="text-sm/6 text-red-400" role="alert">{nameError}</p>
+			<p id="name-error" class="text-sm/6 text-danger" role="alert">{nameError}</p>
 		{/if}
 	</div>
 
 	<div class="space-y-2">
-		<span class="text-sm/6 font-medium text-white">Where its office runs</span>
-		<div class="flex items-center gap-x-3 rounded-lg bg-white/5 px-4 py-3 outline-1 -outline-offset-1 outline-white/10">
-			<Laptop class="size-5 text-gray-400" aria-hidden="true" />
+		<span class="text-sm/6 font-medium text-fg">Where its office runs</span>
+		<div class="flex items-center gap-x-3 rounded-lg bg-surface-raised px-4 py-3 outline-1 -outline-offset-1 outline-line">
+			<Laptop class="size-5 text-fg-muted" aria-hidden="true" />
 			<div class="text-sm/6">
-				<p class="font-semibold text-white">This Mac</p>
-				<p class="text-gray-400">Its first office, HQ, runs on this Mac. It starts with your Mac and keeps running when Agentic Org is closed.</p>
+				<p class="font-semibold text-fg">This Mac</p>
+				<p class="text-fg-muted">Its first office, HQ, runs on this Mac. It starts with your Mac and keeps running when Agentic Org is closed.</p>
 			</div>
 		</div>
 	</div>
@@ -111,15 +111,15 @@
 		{#if busy || phase.kind === 'failed'}
 		<ol class="space-y-2">
 			{#each steps as step (step.label)}
-				<li class="flex items-center gap-x-3 text-sm/6 {step.state === 'todo' ? 'text-gray-500' : 'text-white'}">
+				<li class="flex items-center gap-x-3 text-sm/6 {step.state === 'todo' ? 'text-fg-subtle' : 'text-fg'}">
 					{#if step.state === 'done'}
-						<Check class="size-4 text-green-400" aria-hidden="true" />
+						<Check class="size-4 text-success" aria-hidden="true" />
 					{:else if step.state === 'failed'}
-						<CircleAlert class="size-4 text-red-400" aria-hidden="true" />
+						<CircleAlert class="size-4 text-danger" aria-hidden="true" />
 					{:else if step.state === 'active'}
-						<LoaderCircle class="size-4 animate-spin text-indigo-400" aria-hidden="true" />
+						<LoaderCircle class="size-4 animate-spin text-link" aria-hidden="true" />
 					{:else}
-						<span class="size-4 rounded-full border border-white/20" aria-hidden="true"></span>
+						<span class="size-4 rounded-full border border-line-strong" aria-hidden="true"></span>
 					{/if}
 					{step.label}
 				</li>

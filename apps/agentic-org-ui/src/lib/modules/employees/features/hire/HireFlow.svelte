@@ -252,7 +252,7 @@
 					<h3
 						id="hire-step-heading"
 						tabindex="-1"
-						class="mb-6 text-base/7 font-semibold text-white outline-none {gutters}"
+						class="mb-6 text-base/7 font-semibold text-fg outline-none {gutters}"
 					>
 						{heading}
 					</h3>

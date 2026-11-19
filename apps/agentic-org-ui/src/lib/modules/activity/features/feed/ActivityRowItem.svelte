@@ -50,34 +50,34 @@
 	data-kind={row.kind}
 	tabindex="-1"
 	class="relative flex gap-x-3 px-4 py-4 outline-none transition-colors duration-700 min-[640px]:px-6 min-[1024px]:px-8 motion-reduce:transition-none {fresh
-		? 'bg-indigo-500/10 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2'
+		? 'bg-primary/10 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2'
 		: ''}"
 >
 	<Avatar name={row.actor.name} size="sm" class="mt-0.5" />
 	<div class="min-w-0 flex-1 min-[640px]:flex min-[640px]:gap-x-4">
 		<div class="min-w-0 flex-1">
-			<p class="text-sm/6 text-gray-200 [overflow-wrap:anywhere]">
-				<span class="font-semibold text-white">{row.actor.name}</span>
+			<p class="text-sm/6 text-fg-body [overflow-wrap:anywhere]">
+				<span class="font-semibold text-fg">{row.actor.name}</span>
 				<span class="sr-only">, {row.actor.kind === 'agent' ? 'Agent' : 'Person'},</span>
 				{parts[0]}{#if row.href}<a
 						href={resolve(row.href.path as '/')}
-						class="rounded-sm font-medium text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+						class="rounded-sm font-medium text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 						>{row.href.label}</a
 					>{parts[1]}{/if}
 				{#if runWords}
-					<span class="text-gray-400">·</span>
+					<span class="text-fg-muted">·</span>
 					<span
 						class="whitespace-nowrap {run?.state === 'running'
-							? 'text-indigo-300'
+							? 'text-brand-text'
 							: run?.state === 'failed'
-								? 'text-red-300'
-								: 'text-gray-300'}"
+								? 'text-danger-text'
+								: 'text-fg-secondary'}"
 						data-testid="run-words">{runWords}</span
 					>
 				{/if}
 			</p>
 			{#if row.preview}
-				<p class="mt-1 text-sm/6 text-gray-400 [overflow-wrap:anywhere]">“{row.preview}”</p>
+				<p class="mt-1 text-sm/6 text-fg-muted [overflow-wrap:anywhere]">“{row.preview}”</p>
 			{/if}
 			{#if run}
 				<button
@@ -85,7 +85,7 @@
 					aria-expanded={expanded}
 					aria-controls="{id}-run"
 					onclick={() => (expanded = !expanded)}
-					class="mt-1 -ml-1 inline-flex min-h-6 items-center gap-x-1 rounded-sm px-1 text-xs/5 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+					class="mt-1 -ml-1 inline-flex min-h-6 items-center gap-x-1 rounded-sm px-1 text-xs/5 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 				>
 					{expanded ? 'Hide run details' : 'Show run details'}
 					<MiniIcon
@@ -98,28 +98,28 @@
 				{#if expanded}
 					<dl
 						id="{id}-run"
-						class="mt-2 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 rounded-md border border-white/10 bg-white/[0.03] p-3 text-sm/6"
+						class="mt-2 grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 rounded-md border border-line bg-tint/[0.03] p-3 text-sm/6"
 						data-testid="run-details"
 					>
-						<dt class="text-gray-400">Started by</dt>
-						<dd class="text-gray-200 [overflow-wrap:anywhere]">{run!.trigger}</dd>
-						<dt class="text-gray-400">Started</dt>
-						<dd class="text-gray-200">{formatFull(new Date(run!.started_at), accountZone.zone)}</dd>
-						<dt class="text-gray-400">Duration</dt>
-						<dd class="text-gray-200">
+						<dt class="text-fg-muted">Started by</dt>
+						<dd class="text-fg-body [overflow-wrap:anywhere]">{run!.trigger}</dd>
+						<dt class="text-fg-muted">Started</dt>
+						<dd class="text-fg-body">{formatFull(new Date(run!.started_at), accountZone.zone)}</dd>
+						<dt class="text-fg-muted">Duration</dt>
+						<dd class="text-fg-body">
 							{durationWords(new Date(run!.started_at), new Date(run!.ended_at ?? now))}{run!
 								.state === 'running'
 								? ' so far'
 								: ''}
 						</dd>
-						<dt class="text-gray-400">Outcome</dt>
-						<dd class="text-gray-200 [overflow-wrap:anywhere]">
+						<dt class="text-fg-muted">Outcome</dt>
+						<dd class="text-fg-body [overflow-wrap:anywhere]">
 							{run!.state === 'running' ? 'Still running' : (run!.outcome ?? '')}
 						</dd>
 						{#if run!.log?.length}
-							<dt class="text-gray-400">Log summary</dt>
+							<dt class="text-fg-muted">Log summary</dt>
 							<dd class="min-w-0">
-								<ul class="space-y-1 text-gray-200">
+								<ul class="space-y-1 text-fg-body">
 									{#each run!.log as line, index (index)}
 										<li class="font-mono text-xs/5 [overflow-wrap:anywhere]">{line}</li>
 									{/each}
@@ -129,14 +129,14 @@
 					</dl>
 					<a
 						href={resolve(`/members/${run!.memberId}/runs/${run!.id}` as '/')}
-						class="mt-2 inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+						class="mt-2 inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 						>Open session log</a
 					>
 				{/if}
 			{/if}
 		</div>
 		<div
-			class="mt-1 flex flex-wrap items-baseline gap-x-3 text-xs/5 text-gray-400 min-[640px]:order-first min-[640px]:mt-0.5 min-[640px]:block min-[640px]:w-28 min-[640px]:shrink-0"
+			class="mt-1 flex flex-wrap items-baseline gap-x-3 text-xs/5 text-fg-muted min-[640px]:order-first min-[640px]:mt-0.5 min-[640px]:block min-[640px]:w-28 min-[640px]:shrink-0"
 		>
 			<time datetime={when.iso} title={when.full} class="tabular-nums"
 				>{when.text}<span class="sr-only"> ({when.full})</span></time

@@ -58,25 +58,25 @@
 	aria-label={label}
 	aria-pressed={selected}
 	onclick={() => onselect?.(member.id)}
-	class="relative inline-flex shrink-0 items-center justify-center text-xs font-semibold outline-1 -outline-offset-1 focus-visible:outline-2 focus-visible:outline-indigo-400 {box}
-		{agent ? 'rounded-md bg-indigo-500/20 text-indigo-200 outline-indigo-400/30' : 'rounded-full bg-emerald-500/15 text-emerald-200 outline-emerald-400/30'}
-		{selected ? 'ring-2 ring-white' : ringed ? 'ring-2 ring-amber-300' : searchHit ? 'ring-2 ring-sky-300' : ''} {dimmed || searchMiss ? 'opacity-40' : member.agent?.status === 'paused' ? 'opacity-60' : ''}"
+	class="relative inline-flex shrink-0 items-center justify-center text-xs font-semibold outline-1 -outline-offset-1 focus-visible:outline-2 focus-visible:outline-focus {box}
+		{agent ? 'rounded-md bg-primary/20 text-brand-text-strong outline-brand/30' : 'rounded-full bg-positive-emphasis/15 text-positive-text-strong outline-positive/30'}
+		{selected ? 'ring-2 ring-fg' : ringed ? 'ring-2 ring-warning-text' : searchHit ? 'ring-2 ring-info-text' : ''} {dimmed || searchMiss ? 'opacity-40' : member.agent?.status === 'paused' ? 'opacity-60' : ''}"
 >
 	<span aria-hidden="true">{initialsOf(member.name)}</span>
 	{#if agent}
 		<!-- A square tile with a small robot: told apart from a person by shape and glyph, not color or initials alone. -->
-		<Bot class="absolute top-0 left-0.5 size-2.5 text-indigo-200" aria-hidden="true" />
+		<Bot class="absolute top-0 left-0.5 size-2.5 text-brand-text-strong" aria-hidden="true" />
 	{/if}
 	{#if member.agent?.status === 'paused'}
-		<Pause class="absolute -right-1 -bottom-1 size-3.5 rounded-full bg-gray-700 p-0.5 text-amber-200" aria-hidden="true" data-testid="paused-mark" />
+		<Pause class="absolute -right-1 -bottom-1 size-3.5 rounded-full bg-surface-chip p-0.5 text-warning-text-strong" aria-hidden="true" data-testid="paused-mark" />
 	{/if}
 	{#if ringed}
-		<span class="absolute -bottom-2 left-1/2 max-w-16 -translate-x-1/2 truncate rounded bg-amber-300 px-1 text-[0.55rem] leading-3 font-bold text-gray-900" aria-hidden="true">{tag}</span>
+		<span class="absolute -bottom-2 left-1/2 max-w-16 -translate-x-1/2 truncate rounded bg-warning-text px-1 text-[0.55rem] leading-3 font-bold text-on-warning" aria-hidden="true">{tag}</span>
 	{/if}
 </button>
 	<!-- Beside the tile, in the flow: it never covers the next tile. The tile's label already says "also in …". -->
 	{#if alsoIn.length > 0}
-		<span data-fit-text class="rounded-sm bg-gray-700 px-1 text-xs leading-4 font-semibold whitespace-nowrap text-white outline-1 outline-white/20" aria-hidden="true">
+		<span data-fit-text class="rounded-sm bg-surface-chip px-1 text-xs leading-4 font-semibold whitespace-nowrap text-fg outline-1 outline-line-strong" aria-hidden="true">
 			+{alsoIn.length} {alsoIn.length === 1 ? 'team' : 'teams'}
 		</span>
 	{/if}

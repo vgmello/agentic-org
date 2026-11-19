@@ -120,21 +120,21 @@
 			{#if blocked}
 				<div
 					id="{ids}-blocked"
-					class="rounded-md bg-white/5 p-3 text-sm/6 text-gray-300 ring-1 ring-white/10 ring-inset"
+					class="rounded-md bg-surface-raised p-3 text-sm/6 text-fg-secondary ring-1 ring-line ring-inset"
 				>
-					<p class="font-semibold text-white">{profile.openTurn ? 'Busy' : "Can't start"}</p>
+					<p class="font-semibold text-fg">{profile.openTurn ? 'Busy' : "Can't start"}</p>
 					<p class="mt-1 [overflow-wrap:anywhere]">{blocked}</p>
 					{#if !profile.openTurn && profile.status === 'active'}
 						<a
 							href={resolve('/settings/agents')}
-							class="mt-2 inline-flex rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+							class="mt-2 inline-flex rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 							>Open Agent setup</a
 						>
 					{/if}
 				</div>
 			{/if}
 			{#if refusal && !blocked}
-				<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">
+				<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">
 					{refusal.code === 'busy'
 						? 'Busy: '
 						: refusal.code === 'cannot_start'

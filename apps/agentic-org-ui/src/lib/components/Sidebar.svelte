@@ -80,18 +80,18 @@
 		(item.sublist === 'teams' ? collapsed < 1 : collapsed < 2);
 
 	const statusDot = {
-		ok: 'bg-green-400',
-		info: 'bg-sky-400',
-		muted: 'bg-gray-400',
-		warn: 'bg-amber-400',
-		bad: 'bg-red-400'
+		ok: 'bg-success',
+		info: 'bg-info',
+		muted: 'bg-quiet',
+		warn: 'bg-warning',
+		bad: 'bg-danger'
 	} as const;
 	const focusRing =
-		'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400';
+		'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus';
 	const itemClass = (active: boolean) =>
-		`group flex items-center gap-x-3 rounded-md p-2 text-sm/6 font-semibold ${active ? 'bg-white/5 text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`;
+		`group flex items-center gap-x-3 rounded-md p-2 text-sm/6 font-semibold ${active ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:bg-surface-raised hover:text-fg'}`;
 	const subClass = (active: boolean) =>
-		`flex min-h-8 items-center rounded-md py-1 pr-2 pl-11 text-sm/6 ${active ? 'bg-white/5 font-semibold text-white' : 'text-gray-400 hover:bg-white/5 hover:text-white'} max-[639px]:min-h-11`;
+		`flex min-h-8 items-center rounded-md py-1 pr-2 pl-11 text-sm/6 ${active ? 'bg-surface-raised font-semibold text-fg' : 'text-fg-muted hover:bg-surface-raised hover:text-fg'} max-[639px]:min-h-11`;
 
 	function revealRailLink(event: FocusEvent) {
 		if (!rail || !(event.currentTarget instanceof HTMLElement)) return;
@@ -106,7 +106,7 @@
 </script>
 
 <Tooltip.Provider delayDuration={150}>
-	<div class="flex min-h-0 min-w-0 grow flex-col bg-black/10 ring-1 ring-white/5">
+	<div class="flex min-h-0 min-w-0 grow flex-col bg-shade/10 ring-1 ring-line-subtle">
 		<!-- Application identity: the logo and organization lead Home. -->
 		<div
 			class="flex h-16 shrink-0 items-center px-4 {responsive
@@ -123,13 +123,13 @@
 							type={undefined}
 							href={resolve('/home')}
 							aria-label={homeLabel}
-							class="flex min-h-11 min-w-0 items-center gap-x-3 rounded-md px-2 hover:bg-white/5 {focusRing} {responsive
+							class="flex min-h-11 min-w-0 items-center gap-x-3 rounded-md px-2 hover:bg-surface-raised {focusRing} {responsive
 								? 'max-[960px]:size-12 max-[960px]:justify-center max-[960px]:px-0'
 								: ''}"
 						>
 							<Logo class="size-8 shrink-0" />
 							<span
-								class="truncate text-base/7 font-semibold text-white {responsive
+								class="truncate text-base/7 font-semibold text-fg {responsive
 									? 'max-[960px]:sr-only'
 									: ''}"
 								title={connection.organization.name}>{connection.organization.name}</span
@@ -142,7 +142,7 @@
 						role="tooltip"
 						side="right"
 						sideOffset={12}
-						class="z-[100] max-w-xs rounded-md bg-gray-950 px-3 py-2 text-xs text-white wrap-break-word"
+						class="z-[100] max-w-xs rounded-md bg-tooltip px-3 py-2 text-xs text-fg wrap-break-word"
 						>{homeLabel}</Tooltip.Content
 					></Tooltip.Portal
 				>
@@ -190,8 +190,8 @@
 											stroke-width="1.5"
 											aria-hidden="true"
 											class="size-6 shrink-0 {active
-												? 'text-white'
-												: 'text-gray-400 group-hover:text-white'}"
+												? 'text-fg'
+												: 'text-fg-muted group-hover:text-fg'}"
 										>
 											<path d={icons[item.icon]} stroke-linecap="round" stroke-linejoin="round" />
 										</svg>
@@ -202,7 +202,7 @@
 											<span id={badgeId} hidden>{item.badge.label}</span>
 											<span
 												aria-hidden="true"
-												class="ml-auto shrink-0 rounded-full bg-amber-300 px-1.5 text-xs/5 font-semibold text-gray-950 {responsive
+												class="ml-auto shrink-0 rounded-full bg-warning-text px-1.5 text-xs/5 font-semibold text-on-warning-strong {responsive
 													? 'max-[960px]:absolute max-[960px]:top-0.5 max-[960px]:right-0.5 max-[960px]:text-xs/4'
 													: ''}">{item.badge.text}</span
 											>
@@ -215,7 +215,7 @@
 									role="tooltip"
 									side="right"
 									sideOffset={12}
-									class="z-[100] rounded-md bg-gray-950 px-3 py-2 text-xs text-white"
+									class="z-[100] rounded-md bg-tooltip px-3 py-2 text-xs text-fg"
 									>{item.name}</Tooltip.Content
 								></Tooltip.Portal
 							>
@@ -249,7 +249,7 @@
 		</nav>
 
 		<div
-			class="shrink-0 space-y-1 border-t border-white/5 px-4 py-3 {responsive
+			class="shrink-0 space-y-1 border-t border-line-subtle px-4 py-3 {responsive
 				? 'max-[960px]:flex max-[960px]:justify-center max-[960px]:px-2'
 				: ''}"
 		>
@@ -257,7 +257,7 @@
 			<a
 				href={resolve('/settings/offices')}
 				onclick={(event) => onNavigate?.(event, '/settings/offices')}
-				class="flex min-h-9 items-center gap-x-2 rounded-md px-2 py-1 text-xs/5 text-gray-400 hover:bg-white/5 hover:text-white {focusRing} {responsive
+				class="flex min-h-9 items-center gap-x-2 rounded-md px-2 py-1 text-xs/5 text-fg-muted hover:bg-surface-raised hover:text-fg {focusRing} {responsive
 					? 'max-[960px]:hidden'
 					: ''} max-[639px]:min-h-11"
 			>

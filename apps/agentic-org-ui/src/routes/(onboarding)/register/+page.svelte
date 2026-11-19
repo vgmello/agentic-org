@@ -79,32 +79,31 @@
 <svelte:head><title>Create your account · Agentic Org</title></svelte:head>
 
 {#if !linkPresent}
-	<h1 class="text-2xl/9 font-semibold tracking-tight text-white">{LINK_USED_COPY}</h1>
-	<p class="mt-4 text-sm/6 text-gray-300">
-		For the administrator: on the HQ machine, run <code class="text-gray-100"
+	<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">{LINK_USED_COPY}</h1>
+	<p class="mt-4 text-sm/6 text-fg-secondary">
+		For the administrator: on the HQ machine, run <code class="text-fg-bright"
 			>agentic-org admin reset --name &lt;instance&gt;</code
 		>.
 	</p>
-	<p class="mt-2 text-sm/6 text-gray-300">
+	<p class="mt-2 text-sm/6 text-fg-secondary">
 		For anyone else: ask the owner of your organization for a new link.
 	</p>
 	<a
 		href={resolve('/sign-in')}
-		class="mt-6 inline-block text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300"
-		>Sign in</a
+		class="mt-6 inline-block text-sm/6 font-semibold text-link hover:text-brand-text">Sign in</a
 	>
 {:else}
-	<h1 class="text-2xl/9 font-semibold tracking-tight text-white">
+	<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">
 		Create your account on HQ at {address}
 	</h1>
-	<p class="mt-2 text-sm/6 text-gray-400">It will be this instance's administrator.</p>
+	<p class="mt-2 text-sm/6 text-fg-muted">It will be this instance's administrator.</p>
 
 	<div aria-live="assertive">
 		{#if failure}
 			<div
 				id="register-error"
 				role="alert"
-				class="mt-6 border-l-4 border-red-400 bg-red-500/10 p-3 text-sm/6 text-red-200"
+				class="mt-6 border-l-4 border-danger bg-danger-emphasis/10 p-3 text-sm/6 text-danger-text-strong"
 			>
 				<p>{failure.message}</p>
 				{#if failure.kind === 'out_of_date'}
@@ -124,7 +123,7 @@
 
 	<form id="register-form" class="mt-6 space-y-6" novalidate onsubmit={submit}>
 		<div>
-			<label for="login" class="block text-sm/6 font-medium text-white">Username</label>
+			<label for="login" class="block text-sm/6 font-medium text-fg">Username</label>
 			<input
 				id="login"
 				bind:this={loginInput}
@@ -135,9 +134,9 @@
 				readonly={busy}
 				aria-invalid={loginError ? 'true' : undefined}
 				aria-describedby={loginError ? 'login-error' : undefined}
-				class="mt-2 block w-full rounded-md bg-white/5 px-3 py-1.5 text-base text-white outline-1 -outline-offset-1 outline-white/10 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-500 sm:text-sm/6"
+				class="mt-2 block w-full rounded-md bg-surface-raised px-3 py-1.5 text-base text-fg outline-1 -outline-offset-1 outline-line focus:outline-2 focus:-outline-offset-2 focus:outline-ring sm:text-sm/6"
 			/>
-			{#if loginError}<p id="login-error" class="mt-2 text-sm/6 text-red-400">{loginError}</p>{/if}
+			{#if loginError}<p id="login-error" class="mt-2 text-sm/6 text-danger">{loginError}</p>{/if}
 		</div>
 		<PasswordField
 			id="password"
@@ -158,7 +157,7 @@
 		<button
 			type="submit"
 			disabled={busy}
-			class="flex w-full justify-center rounded-md bg-indigo-500 px-3 py-1.5 text-sm/6 font-semibold text-white hover:bg-indigo-600 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500"
+			class="flex w-full justify-center rounded-md bg-primary px-3 py-1.5 text-sm/6 font-semibold text-on-emphasis hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
 			>{busy ? 'Creating account…' : 'Create account'}</button
 		>
 	</form>

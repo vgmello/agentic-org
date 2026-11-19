@@ -87,14 +87,14 @@
 			<div class="space-y-2">
 				<Label for="edit-person-name">Name</Label>
 				<Input id="edit-person-name" bind:value={name} disabled={busy} autocomplete="off" aria-invalid={nameError ? true : undefined} aria-describedby="edit-person-name-help" />
-				{#if nameError}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{nameError}</p>{/if}
-				{#if renamed}<p id="edit-person-name-help" class="text-xs/5 text-gray-300" data-testid="rename-note">Agents will address them as {check.ok ? check.name : ''} from now on.</p>{/if}
+				{#if nameError}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{nameError}</p>{/if}
+				{#if renamed}<p id="edit-person-name-help" class="text-xs/5 text-fg-secondary" data-testid="rename-note">Agents will address them as {check.ok ? check.name : ''} from now on.</p>{/if}
 			</div>
 			<div class="space-y-2">
-				<Label for="edit-person-contact">Contact <span class="font-normal text-gray-400">(clear it to remove)</span></Label>
+				<Label for="edit-person-contact">Contact <span class="font-normal text-fg-muted">(clear it to remove)</span></Label>
 				<Input id="edit-person-contact" bind:value={contact} disabled={busy} autocomplete="off" />
 			</div>
-			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
 				<Button type="submit" disabled={busy || !check.ok}>Save</Button>

@@ -116,56 +116,56 @@
 
 <div class="space-y-5 px-4 py-6 sm:px-8">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<p class="text-sm/6 text-gray-400">{tab === 'requests' ? 'Requests across every project.' : 'Tasks and bugs across every project.'} <Badge variant="secondary">Sample data</Badge></p>
-		<p class="text-sm/6 {waiting > 0 ? 'font-semibold text-amber-200' : 'text-gray-400'}" data-testid="needs-you">{waiting === 0 ? 'Nothing needs you.' : `${waiting} ${waiting === 1 ? 'item needs' : 'items need'} you`}</p>
+		<p class="text-sm/6 text-fg-muted">{tab === 'requests' ? 'Requests across every project.' : 'Tasks and bugs across every project.'} <Badge variant="secondary">Sample data</Badge></p>
+		<p class="text-sm/6 {waiting > 0 ? 'font-semibold text-warning-text-strong' : 'text-fg-muted'}" data-testid="needs-you">{waiting === 0 ? 'Nothing needs you.' : `${waiting} ${waiting === 1 ? 'item needs' : 'items need'} you`}</p>
 	</div>
 
-	<div role="tablist" aria-label="Work" class="flex flex-wrap gap-x-1 border-b border-white/10">
+	<div role="tablist" aria-label="Work" class="flex flex-wrap gap-x-1 border-b border-line">
 		{#each [['tasks', 'Tasks'], ['bugs', 'Bugs']] as const as [id, name] (id)}
-			<button type="button" role="tab" aria-selected={tab === id} onclick={() => pick(id)} class="min-h-11 px-3 py-2 text-sm/6 sm:min-h-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 {tab === id ? 'border-b-2 border-indigo-400 font-semibold text-white' : 'text-gray-300 hover:text-white'}">{name}</button>
+			<button type="button" role="tab" aria-selected={tab === id} onclick={() => pick(id)} class="min-h-11 px-3 py-2 text-sm/6 sm:min-h-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {tab === id ? 'border-b-2 border-brand font-semibold text-fg' : 'text-fg-secondary hover:text-fg'}">{name}</button>
 		{/each}
 		{#each ['Debt'] as name (name)}
-			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="inline-flex min-h-11 cursor-not-allowed items-center px-3 py-2 text-sm/6 text-gray-500 sm:min-h-0">{name}</span>
+			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="inline-flex min-h-11 cursor-not-allowed items-center px-3 py-2 text-sm/6 text-fg-subtle sm:min-h-0">{name}</span>
 		{/each}
 		{#if requestsOn}
-			<button type="button" role="tab" aria-selected={tab === 'requests'} onclick={() => pick('requests')} class="min-h-11 px-3 py-2 text-sm/6 sm:min-h-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 {tab === 'requests' ? 'border-b-2 border-indigo-400 font-semibold text-white' : 'text-gray-300 hover:text-white'}">Requests{#if requestsWaiting > 0}<span class="ml-1.5 rounded-full bg-amber-500/20 px-1.5 text-xs/5 text-amber-200" data-testid="requests-badge">{requestsWaiting}</span>{/if}</button>
+			<button type="button" role="tab" aria-selected={tab === 'requests'} onclick={() => pick('requests')} class="min-h-11 px-3 py-2 text-sm/6 sm:min-h-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {tab === 'requests' ? 'border-b-2 border-brand font-semibold text-fg' : 'text-fg-secondary hover:text-fg'}">Requests{#if requestsWaiting > 0}<span class="ml-1.5 rounded-full bg-warning-emphasis/20 px-1.5 text-xs/5 text-warning-text-strong" data-testid="requests-badge">{requestsWaiting}</span>{/if}</button>
 		{/if}
 		{#if !requestsOn}
-			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="inline-flex min-h-11 cursor-not-allowed items-center px-3 py-2 text-sm/6 text-gray-500 sm:min-h-0">Requests</span>
+			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="inline-flex min-h-11 cursor-not-allowed items-center px-3 py-2 text-sm/6 text-fg-subtle sm:min-h-0">Requests</span>
 		{/if}
 	</div>
 
 	{#if loadError}
-		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-red-300" role="alert">{tab === 'requests' ? "Can't load requests." : loadError} <button class="underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400" onclick={load}>{tab === 'requests' ? 'Retry' : 'Try again'}</button></p>
+		<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-danger-text" role="alert">{tab === 'requests' ? "Can't load requests." : loadError} <button class="underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus" onclick={load}>{tab === 'requests' ? 'Retry' : 'Try again'}</button></p>
 	{:else if items === undefined}
 		{#if tab === 'requests'}
-			<ul class="divide-y divide-white/5 rounded-xl bg-white/5" aria-busy="true" aria-label="Loading requests" data-testid="requests-loading">
-				{#each [0, 1, 2] as n (n)}<li class="flex items-center gap-x-3 px-4 py-3"><span class="h-4 w-14 animate-pulse rounded bg-white/10"></span><span class="h-4 flex-1 animate-pulse rounded bg-white/10"></span><span class="h-4 w-24 animate-pulse rounded bg-white/10"></span></li>{/each}
+			<ul class="divide-y divide-line-subtle rounded-xl bg-surface-raised" aria-busy="true" aria-label="Loading requests" data-testid="requests-loading">
+				{#each [0, 1, 2] as n (n)}<li class="flex items-center gap-x-3 px-4 py-3"><span class="h-4 w-14 animate-pulse rounded bg-surface-overlay"></span><span class="h-4 flex-1 animate-pulse rounded bg-surface-overlay"></span><span class="h-4 w-24 animate-pulse rounded bg-surface-overlay"></span></li>{/each}
 			</ul>
 		{:else}
-			<p class="text-sm/6 text-gray-400">Loading work…</p>
+			<p class="text-sm/6 text-fg-muted">Loading work…</p>
 		{/if}
 	{:else if tab === 'requests'}
 		{#key organizationId}<RequestsPanel items={items} {snapshot} {me} {now} {organizationId} onopen={(id, start) => ((requestId = id), (requestStart = start), (requestOpen = true))} onnew={() => (newRequestOpen = true)} />{/key}
 	{:else if (snapshot.projects ?? []).length === 0}
-		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-300" data-testid="no-projects">No projects yet. Work items live in projects.</p>
+		<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-secondary" data-testid="no-projects">No projects yet. Work items live in projects.</p>
 	{:else}
 		<div class="grid gap-5 md:grid-cols-[14rem_1fr]">
 			<nav aria-label="Saved filters" class="space-y-1">
 				{#each filters as f (f.id)}
-					<button type="button" aria-pressed={active.id === f.id} data-filter={f.id} onclick={() => ((chosen = true), (filterId = f.id))} class="flex w-full items-center justify-between rounded-md px-3 py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:outline-indigo-400 {active.id === f.id ? 'bg-white/10 font-semibold text-white' : 'text-gray-300 hover:bg-white/5'}">
-						<span>{f.label}</span><span class="text-gray-400">{countOf(items, f)}</span>
+					<button type="button" aria-pressed={active.id === f.id} data-filter={f.id} onclick={() => ((chosen = true), (filterId = f.id))} class="flex w-full items-center justify-between rounded-md px-3 py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:outline-focus {active.id === f.id ? 'bg-surface-overlay font-semibold text-fg' : 'text-fg-secondary hover:bg-surface-raised'}">
+						<span>{f.label}</span><span class="text-fg-muted">{countOf(items, f)}</span>
 					</button>
 				{/each}
 			</nav>
 
 			{#if shown.length === 0}
-				<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-400" data-testid="no-match">Nothing here.</p>
+				<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-muted" data-testid="no-match">Nothing here.</p>
 			{:else}
-				<div class="overflow-x-auto rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10">
+				<div class="overflow-x-auto rounded-xl bg-surface-raised outline-1 -outline-offset-1 outline-line">
 					<table class="w-full text-left text-sm/6" data-testid="work-list">
 						<caption class="sr-only">{active.label}</caption>
-						<thead class="text-xs/5 text-gray-400">
+						<thead class="text-xs/5 text-fg-muted">
 							<tr>
 								<th scope="col" class="px-4 py-2 font-medium">Item</th>
 								<th scope="col" class="px-4 py-2 font-medium">Title</th>
@@ -175,15 +175,15 @@
 								<th scope="col" class="px-4 py-2 font-medium">Assignee</th>
 							</tr>
 						</thead>
-						<tbody class="divide-y divide-white/5 text-gray-200">
+						<tbody class="divide-y divide-line-subtle text-fg-body">
 							{#each shown as item (item.id)}
 								<tr data-testid="work-row" data-item={item.id}>
-									<td class="px-4 py-2 text-gray-400">{item.kind === 'bug' ? bugRef(item, projectKey(item.project_id)) : taskRef(item, projectKey(item.project_id))}</td>
-									<th scope="row" class="px-4 py-2 font-normal"><button type="button" class="text-left font-semibold text-white hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]" onclick={() => (item.kind === 'bug' ? ((bugId = item.id), (bugOpen = true)) : ((taskId = item.id), (taskOpen = true)))}>{item.title}</button></th>
+									<td class="px-4 py-2 text-fg-muted">{item.kind === 'bug' ? bugRef(item, projectKey(item.project_id)) : taskRef(item, projectKey(item.project_id))}</td>
+									<th scope="row" class="px-4 py-2 font-normal"><button type="button" class="text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-focus [overflow-wrap:anywhere]" onclick={() => (item.kind === 'bug' ? ((bugId = item.id), (bugOpen = true)) : ((taskId = item.id), (taskOpen = true)))}>{item.title}</button></th>
 									<td class="px-4 py-2" data-testid="work-project">{projectName(item.project_id)}</td>
 									<td class="px-4 py-2">{item.kind === 'bug' ? severityWord(item.severity) : (priorityWord(item.priority) ?? '')}</td>
 									<td class="px-4 py-2">{item.kind === 'bug' ? (BUG_STATUS_LABEL[item.status] ?? item.status) : (STATUS_LABEL[item.status as 'todo'] ?? item.status)}</td>
-									<td class="px-4 py-2 text-gray-400">{nameOf(snapshot, item.assignee_id)}</td>
+									<td class="px-4 py-2 text-fg-muted">{nameOf(snapshot, item.assignee_id)}</td>
 								</tr>
 							{/each}
 						</tbody>

@@ -71,7 +71,7 @@
 				<span class="block">{shown?.name} won't be started or woken, and new tasks and messages wait until you resume.</span>
 				{#if teams.length > 0}<span class="block">{shown?.name} stays in {teams.join(', ')}.</span>{/if}
 			</DialogDescription>
-			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 		</DialogHeader>
 		<DialogFooter>
 			<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>

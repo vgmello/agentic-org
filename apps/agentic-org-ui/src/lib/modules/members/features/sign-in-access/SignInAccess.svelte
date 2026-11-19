@@ -130,7 +130,7 @@
 						>{issuing === 'reset' ? 'Making link…' : 'New sign-in link'}</Button
 					>
 					{#if profile.owner}
-						<p class="text-sm/6 text-gray-400">
+						<p class="text-sm/6 text-fg-muted">
 							Remove access isn't available for the owner. Hand over ownership first.
 						</p>
 					{:else}
@@ -146,13 +146,13 @@
 				{/if}
 			</div>
 			{#if profile.invitePending && !profile.canSignIn}
-				<p class="mt-2 px-4 text-xs/5 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8">
+				<p class="mt-2 px-4 text-xs/5 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
 					Inviting again cancels the previous link.
 				</p>
 			{/if}
 			{#if refusal}
 				<p
-					class="mt-3 px-4 text-sm/6 text-red-300 [overflow-wrap:anywhere] min-[640px]:px-6 min-[1024px]:px-8"
+					class="mt-3 px-4 text-sm/6 text-danger-text [overflow-wrap:anywhere] min-[640px]:px-6 min-[1024px]:px-8"
 					role="alert"
 				>
 					{refusal}

@@ -4,7 +4,7 @@
 
 <!-- Agency mark: three agents linked into one org. -->
 <svg viewBox="0 0 32 32" class={klass} aria-hidden="true">
-	<rect width="32" height="32" rx="8" class="fill-indigo-500" />
+	<rect width="32" height="32" rx="8" class="fill-primary" />
 	<path
 		d="M16 9.5 9.5 22M16 9.5 22.5 22M9.5 22h13"
 		class="stroke-on-emphasis"

@@ -77,7 +77,7 @@
 	description="What needs you and what is happening across {organizationName}."
 />
 
-<div class="divide-y divide-white/5">
+<div class="divide-y divide-line-subtle">
 	<HomeSection
 		title="Needs you"
 		what="your Inbox"
@@ -94,15 +94,15 @@
 		{/snippet}
 		{#if needs.length === 0}
 			<div class="px-4 min-[640px]:px-6 min-[1024px]:px-8" data-testid="needs-empty">
-				<p class="text-sm/6 font-semibold text-white">Nothing needs you</p>
-				<p class="mt-1 text-sm/6 text-gray-400">
+				<p class="text-sm/6 font-semibold text-fg">Nothing needs you</p>
+				<p class="mt-1 text-sm/6 text-fg-muted">
 					When an agent needs your approval, an answer or a decision, it shows up here.
 				</p>
 			</div>
 		{:else}
 			<ul
 				role="list"
-				class="divide-y divide-white/5 border-y border-white/5"
+				class="divide-y divide-line-subtle border-y border-line-subtle"
 				data-testid="needs-list"
 			>
 				{#each needs.slice(0, NEEDS_YOU) as item (item.id)}
@@ -115,7 +115,7 @@
 				{/each}
 			</ul>
 			{#if needs.length > NEEDS_YOU}
-				<p class="px-4 pt-3 text-xs/5 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8">
+				<p class="px-4 pt-3 text-xs/5 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
 					{needs.length - NEEDS_YOU} more in the Inbox.
 				</p>
 			{/if}
@@ -136,8 +136,8 @@
 		{/snippet}
 		{#if (projects.value ?? []).length === 0}
 			<div class="px-4 min-[640px]:px-6 min-[1024px]:px-8" data-testid="projects-empty">
-				<p class="text-sm/6 font-semibold text-white">No projects yet</p>
-				<p class="mt-1 text-sm/6 text-gray-400">Projects hold the work your teams do.</p>
+				<p class="text-sm/6 font-semibold text-fg">No projects yet</p>
+				<p class="mt-1 text-sm/6 text-fg-muted">Projects hold the work your teams do.</p>
 			</div>
 		{:else}
 			<ul
@@ -147,19 +147,19 @@
 				{#each projects.value ?? [] as project (project.id)}
 					{@const pct = project.total > 0 ? Math.round((project.done / project.total) * 100) : 0}
 					<li
-						class="relative rounded-xl bg-white/5 p-4 outline-1 -outline-offset-1 outline-white/10 hover:bg-white/[0.07]"
+						class="relative rounded-xl bg-surface-raised p-4 outline-1 -outline-offset-1 outline-line hover:bg-tint/[0.07]"
 						data-testid="project-card"
 						data-project={project.id}
 					>
-						<h4 class="text-sm/6 font-semibold text-white [overflow-wrap:anywhere]">
+						<h4 class="text-sm/6 font-semibold text-fg [overflow-wrap:anywhere]">
 							<a
 								href={resolve(`/projects/${project.id}` as '/')}
-								class="rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+								class="rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 								><span class="absolute inset-0" aria-hidden="true"></span>{project.name}</a
 							>
 						</h4>
 						{#if project.total === 0}
-							<p class="mt-3 text-sm/6 text-gray-400">No work yet</p>
+							<p class="mt-3 text-sm/6 text-fg-muted">No work yet</p>
 						{:else}
 							<div
 								class="mt-3"
@@ -169,14 +169,14 @@
 								aria-valuemax={project.total}
 								aria-valuenow={project.done}
 							>
-								<div class="h-1.5 overflow-hidden rounded-full bg-white/10">
-									<div class="h-full rounded-full bg-indigo-500" style:width="{pct}%"></div>
+								<div class="h-1.5 overflow-hidden rounded-full bg-surface-overlay">
+									<div class="h-full rounded-full bg-primary" style:width="{pct}%"></div>
 								</div>
 							</div>
-							<p class="mt-2 text-sm/6 text-gray-200">{project.done} of {project.total} done</p>
-							<p class="text-xs/5 text-gray-400">{project.open} open · {project.blocked} blocked</p>
+							<p class="mt-2 text-sm/6 text-fg-body">{project.done} of {project.total} done</p>
+							<p class="text-xs/5 text-fg-muted">{project.open} open · {project.blocked} blocked</p>
 						{/if}
-						<p class="mt-2 text-xs/5 text-gray-400">
+						<p class="mt-2 text-xs/5 text-fg-muted">
 							{[
 								`${project.members} ${project.members === 1 ? 'member' : 'members'}`,
 								project.lead ? `Lead ${project.lead.name}` : '',
@@ -202,14 +202,14 @@
 	>
 		{#if working.value && !working.value.live}
 			<p
-				class="px-4 text-sm/6 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8"
+				class="px-4 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8"
 				data-testid="presence-unavailable"
 			>
 				Live status isn't available yet.
 			</p>
 		{:else if (working.value?.agents ?? []).length === 0}
 			<p
-				class="px-4 text-sm/6 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8"
+				class="px-4 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8"
 				data-testid="nobody-working"
 			>
 				No one is working right now.
@@ -217,30 +217,30 @@
 		{:else}
 			<ul
 				role="list"
-				class="divide-y divide-white/5 border-y border-white/5"
+				class="divide-y divide-line-subtle border-y border-line-subtle"
 				data-testid="working-list"
 			>
 				{#each working.value?.agents ?? [] as agent (agent.member.id)}
 					<li class="flex items-center gap-x-3 px-4 py-3 min-[640px]:px-6 min-[1024px]:px-8">
 						<Avatar name={agent.member.name} size="sm" />
-						<p class="min-w-0 flex-1 text-sm/6 text-gray-200 [overflow-wrap:anywhere]">
+						<p class="min-w-0 flex-1 text-sm/6 text-fg-body [overflow-wrap:anywhere]">
 							<a
 								href={resolve(`/members/${agent.member.id}` as '/')}
-								class="rounded-sm font-semibold text-white hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+								class="rounded-sm font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 								>{agent.member.name}</a
 							>
 							{#if agent.task}
-								<span class="text-gray-400">on</span>
+								<span class="text-fg-muted">on</span>
 								<a
 									href={resolve(`/work/${agent.task.ref}` as '/')}
-									class="rounded-sm text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+									class="rounded-sm text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 									><span class="font-mono text-xs/5">{agent.task.ref}</span> {agent.task.title}</a
 								>
 							{:else}
-								<span class="text-gray-400">no task reported</span>
+								<span class="text-fg-muted">no task reported</span>
 							{/if}
 						</p>
-						<p class="shrink-0 text-xs/5 text-gray-400">
+						<p class="shrink-0 text-xs/5 text-fg-muted">
 							for {durationWords(new Date(agent.since), now)}
 						</p>
 					</li>
@@ -263,15 +263,15 @@
 		{/snippet}
 		{#if feed.length === 0}
 			<div class="px-4 min-[640px]:px-6 min-[1024px]:px-8" data-testid="activity-empty">
-				<p class="text-sm/6 font-semibold text-white">No activity yet</p>
-				<p class="mt-1 text-sm/6 text-gray-400">
+				<p class="text-sm/6 font-semibold text-fg">No activity yet</p>
+				<p class="mt-1 text-sm/6 text-fg-muted">
 					When your agents start working, everything they do shows up here.
 				</p>
 			</div>
 		{:else}
 			<ul
 				role="list"
-				class="divide-y divide-white/5 border-y border-white/5"
+				class="divide-y divide-line-subtle border-y border-line-subtle"
 				data-testid="recent-list"
 			>
 				{#each feed as row (row.id)}
@@ -288,14 +288,14 @@
 
 	{#if month.phase === 'ready' && month.value}
 		<p
-			class="px-4 py-6 text-sm/6 text-gray-300 min-[640px]:px-6 min-[1024px]:px-8"
+			class="px-4 py-6 text-sm/6 text-fg-secondary min-[640px]:px-6 min-[1024px]:px-8"
 			data-testid="month-line"
 		>
 			This month: ≈ ${month.value.cost.toLocaleString('en-US')} · {month.value.tasksDone} tasks done ·
 			{month.value.waitingHours} h waiting on you
 			<a
 				href={resolve('/insights')}
-				class="ml-2 rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+				class="ml-2 rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 				>Insights</a
 			>
 		</p>

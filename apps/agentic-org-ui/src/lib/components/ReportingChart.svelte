@@ -57,23 +57,23 @@
 	{@const reports = directReports(node)}
 	{@const open = !collapsed.has(member.id)}
 	<div class="flex w-52 flex-col items-center" data-testid="report-node" data-member={member.id}>
-		<div class="flex w-full items-start gap-x-3 rounded-xl bg-gray-800/50 p-3 text-left outline-1 -outline-offset-1 outline-white/10 {selected === member.id ? 'ring-2 ring-white' : ''}">
+		<div class="flex w-full items-start gap-x-3 rounded-xl bg-surface/50 p-3 text-left outline-1 -outline-offset-1 outline-line {selected === member.id ? 'ring-2 ring-fg' : ''}">
 			{#if member.owner}
-				<span aria-hidden="true" class="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-gray-800 text-sm font-semibold text-gray-300 outline-1 -outline-offset-1 outline-white/10">{initialsOf(member.name)}</span>
+				<span aria-hidden="true" class="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-surface text-sm font-semibold text-fg-secondary outline-1 -outline-offset-1 outline-line">{initialsOf(member.name)}</span>
 			{:else}
 				<MemberTile {member} selected={selected === member.id} {onselect} />
 			{/if}
 			<div class="min-w-0">
-				<p class="truncate text-sm/5 font-semibold text-white">{member.name}</p>
-				<p class="text-xs/5 text-gray-400">
+				<p class="truncate text-sm/5 font-semibold text-fg">{member.name}</p>
+				<p class="text-xs/5 text-fg-muted">
 					{member.owner ? 'Owner (you)' : kindWord(member.kind)}
 				</p>
 				{#if !member.owner}
-					<p class="truncate text-xs/5 text-gray-400" title={teams.map((t) => t.name).join(', ')}>
+					<p class="truncate text-xs/5 text-fg-muted" title={teams.map((t) => t.name).join(', ')}>
 						{teams.length ? teams.map((t) => t.name).join(', ') : 'Not in a team'}
 					</p>
 				{/if}
-				<p class="text-xs/5 text-gray-400">{reports} {reports === 1 ? 'report' : 'reports'}</p>
+				<p class="text-xs/5 text-fg-muted">{reports} {reports === 1 ? 'report' : 'reports'}</p>
 			</div>
 		</div>
 		{#if node.children.length > 0}
@@ -82,7 +82,7 @@
 				onclick={() => toggle(member.id)}
 				aria-expanded={open}
 				aria-label="{reports} {reports === 1 ? 'report' : 'reports'}: {open ? 'collapse' : 'expand'} the people reporting to {member.name}"
-				class="-mt-px flex h-6 items-center gap-x-1 rounded-b-md bg-gray-800/70 px-2 text-xs text-gray-300 outline-1 -outline-offset-1 outline-white/10 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-500"
+				class="-mt-px flex h-6 items-center gap-x-1 rounded-b-md bg-surface/70 px-2 text-xs text-fg-secondary outline-1 -outline-offset-1 outline-line hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-ring"
 			>
 				{reports}
 				<ChevronDown class="size-3.5 transition-transform {open ? '' : '-rotate-90'}" aria-hidden="true" />

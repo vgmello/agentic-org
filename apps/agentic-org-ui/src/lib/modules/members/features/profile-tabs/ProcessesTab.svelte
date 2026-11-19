@@ -24,7 +24,7 @@
 	emptyDescription="Write down how your agents work. Start with how changes get reviewed and merged."
 >
 	{#snippet children(view)}
-		<p class="px-4 pt-6 pb-2 text-sm/6 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8">
+		<p class="px-4 pt-6 pb-2 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
 			{view.hasCurrentWork
 				? `What ${ctx.profile.name} follows for its current work, and where each process comes from.`
 				: "No current work. Showing the organization's processes. Team and project processes apply when it starts a task."}

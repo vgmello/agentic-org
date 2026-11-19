@@ -86,20 +86,20 @@
 	{@const card = peopleCard(snapshot, node.team)}
 	{@const open = !collapsed.has(node.team.id)}
 	<div class="flex flex-col items-center" data-testid="people-card" data-team={node.team.id}>
-		<div class="w-56 rounded-xl bg-gray-800/50 p-3 text-left outline-1 -outline-offset-1 outline-white/10">
-			<h3 data-fit-text class="truncate text-sm/6 font-semibold text-white">{node.team.name}</h3>
+		<div class="w-56 rounded-xl bg-surface/50 p-3 text-left outline-1 -outline-offset-1 outline-line">
+			<h3 data-fit-text class="truncate text-sm/6 font-semibold text-fg">{node.team.name}</h3>
 			{#if card.lead}
 				<!-- The lead is named whatever its kind; an agent shows here only for that (PEOPLE-1). -->
-				<p data-fit-text class="text-xs/5 text-gray-400">Lead: <span class="text-gray-200">{card.lead.name}</span>{card.lead.kind === 'agent' ? ' (agent)' : ''}</p>
+				<p data-fit-text class="text-xs/5 text-fg-muted">Lead: <span class="text-fg-body">{card.lead.name}</span>{card.lead.kind === 'agent' ? ' (agent)' : ''}</p>
 			{/if}
 			{#if card.people.length === 0}
-				<p data-fit-text class="mt-1 text-xs/5 text-gray-400">No people</p>
+				<p data-fit-text class="mt-1 text-xs/5 text-fg-muted">No people</p>
 			{:else}
 				<ul class="mt-2 space-y-1.5" aria-label="People in {node.team.name}">
 					{#each card.people as person (person.id)}
 						<li class="flex items-center gap-x-2">
 							<MemberTile member={person} teamLead={card.lead?.id === person.id} size="sm" selected={selected === person.id} alsoIn={otherTeamsOf(snapshot, person.id, node.team.id)} {onselect} />
-							<span data-fit-text class="truncate text-sm/5 text-gray-200" aria-hidden="true">{person.name}</span>{#if card.lead?.id === person.id}<span data-fit-text class="rounded bg-white/10 px-1 text-xs leading-4 text-gray-300">lead</span>{/if}
+							<span data-fit-text class="truncate text-sm/5 text-fg-body" aria-hidden="true">{person.name}</span>{#if card.lead?.id === person.id}<span data-fit-text class="rounded bg-surface-overlay px-1 text-xs leading-4 text-fg-secondary">lead</span>{/if}
 						</li>
 					{/each}
 				</ul>
@@ -112,7 +112,7 @@
 				onclick={() => toggle(node.team.id)}
 				aria-expanded={open}
 				aria-label="{subTeamCount(node)} {subTeamCount(node) === 1 ? 'team' : 'teams'}: {open ? 'collapse' : 'expand'} the teams under {node.team.name}"
-				class="-mt-px flex h-6 items-center gap-x-1 rounded-b-md bg-gray-800/70 px-2 text-xs text-gray-300 outline-1 -outline-offset-1 outline-white/10 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-500"
+				class="-mt-px flex h-6 items-center gap-x-1 rounded-b-md bg-surface/70 px-2 text-xs text-fg-secondary outline-1 -outline-offset-1 outline-line hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-ring"
 			>
 				{subTeamCount(node)} {subTeamCount(node) === 1 ? 'team' : 'teams'}
 				<ChevronDown class="size-3.5 transition-transform {open ? '' : '-rotate-90'}" aria-hidden="true" />

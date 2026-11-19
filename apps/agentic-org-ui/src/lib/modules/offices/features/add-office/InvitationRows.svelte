@@ -38,23 +38,23 @@
 
 {#each invitations as invitation (invitation.id)}
 	<li
-		class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-white/5 px-4 py-4 last:border-b-0 min-[640px]:px-6 min-[1024px]:px-8"
+		class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-line-subtle px-4 py-4 last:border-b-0 min-[640px]:px-6 min-[1024px]:px-8"
 		data-testid="invitation-row"
 		data-invitation={invitation.id}
 	>
 		<div class="min-w-0 flex-1 basis-56">
 			<p
-				class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 font-semibold text-white [overflow-wrap:anywhere]"
+				class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 font-semibold text-fg [overflow-wrap:anywhere]"
 			>
 				{invitation.officeName}
 				<StatusPill label={label(invitation)} class={live(invitation) ? '' : tone.owner}>
 					{#snippet icon()}{#if live(invitation)}<Mail
-								class="size-3.5 text-gray-400"
+								class="size-3.5 text-fg-muted"
 								aria-hidden="true"
-							/>{:else}<MailX class="size-3.5 text-amber-400" aria-hidden="true" />{/if}{/snippet}
+							/>{:else}<MailX class="size-3.5 text-warning" aria-hidden="true" />{/if}{/snippet}
 				</StatusPill>
 			</p>
-			<p class="mt-1 text-xs/5 text-gray-400 [overflow-wrap:anywhere]">
+			<p class="mt-1 text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
 				{#if live(invitation)}invitation · {expiresText(
 						invitation.expiresAt,
 						now

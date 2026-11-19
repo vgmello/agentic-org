@@ -10,13 +10,13 @@
 
 {#if accountZone.status === 'unsaved-utc'}
 	<p
-		class="px-4 pt-4 text-xs/5 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8"
+		class="px-4 pt-4 text-xs/5 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8"
 		data-testid="zone-notice"
 	>
 		Times show in unsaved UTC. Time zone not detected: set it in
 		<a
 			href={resolve('/preferences')}
-			class="rounded-sm text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+			class="rounded-sm text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 			>Your preferences</a
 		>.
 	</p>

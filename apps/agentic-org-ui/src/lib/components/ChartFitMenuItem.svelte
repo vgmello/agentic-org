@@ -28,7 +28,7 @@
 <Tooltip.Provider delayDuration={0}>
 	<Tooltip.Root disabled={!unavailable} bind:open={explanationOpen}>
 		<!-- Keep one enabled menu item mounted; Tooltip's disabled flag must not hide it from roving focus. -->
-		<DropdownMenuItem id={itemId} closeOnSelect={!unavailable} onSelect={(event) => unavailable ? event.preventDefault() : ontoggle()} class={unavailable ? 'text-gray-400 focus:text-gray-400' : undefined}>
+		<DropdownMenuItem id={itemId} closeOnSelect={!unavailable} onSelect={(event) => unavailable ? event.preventDefault() : ontoggle()} class={unavailable ? 'text-fg-muted focus:text-fg-muted' : undefined}>
 			{#snippet child({ props: itemProps })}
 				<Tooltip.Trigger id={itemId} type={undefined} bind:ref={item} onkeydown={dismissExplanation}>
 					{#snippet child({ props: tooltipProps })}
@@ -38,6 +38,6 @@
 			{/snippet}
 		</DropdownMenuItem>
 		<!-- Keep the description available after activation; outside pointer dismisses the parent menu. -->
-		<Tooltip.Portal><Tooltip.Content id={descriptionId} role="tooltip" forceMount interactOutsideBehavior="defer-otherwise-close" sideOffset={6} class="z-[100] max-w-xs max-w-[calc(100vw-2rem)] rounded-md bg-gray-950 px-3 py-2 text-xs/5 text-white shadow-lg wrap-break-word data-[state=closed]:hidden">{reason}</Tooltip.Content></Tooltip.Portal>
+		<Tooltip.Portal><Tooltip.Content id={descriptionId} role="tooltip" forceMount interactOutsideBehavior="defer-otherwise-close" sideOffset={6} class="z-[100] max-w-xs max-w-[calc(100vw-2rem)] rounded-md bg-tooltip px-3 py-2 text-xs/5 text-fg shadow-lg wrap-break-word data-[state=closed]:hidden">{reason}</Tooltip.Content></Tooltip.Portal>
 	</Tooltip.Root>
 </Tooltip.Provider>

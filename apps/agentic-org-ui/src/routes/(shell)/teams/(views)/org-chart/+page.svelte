@@ -525,7 +525,7 @@
 
 	<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
 		<label
-			class="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 text-gray-300 max-[640px]:w-full"
+			class="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 text-fg-secondary max-[640px]:w-full"
 		>
 			Search
 			<input
@@ -536,21 +536,21 @@
 				placeholder="Search members…"
 				aria-label="Search members"
 				autocomplete="off"
-				class="w-64 min-w-0 max-w-full rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400 max-[640px]:basis-full"
+				class="w-64 min-w-0 max-w-full rounded-md bg-surface px-2 py-1 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus max-[640px]:basis-full"
 			/>
 		</label>
 		{#if anyPaused}
-			<label class="flex items-center gap-x-2 text-sm/6 text-gray-300"
+			<label class="flex items-center gap-x-2 text-sm/6 text-fg-secondary"
 				><input type="checkbox" bind:checked={showPaused} /> Show paused</label
 			>
 		{/if}
-		<p class="text-sm/6 text-sky-200" role="status" data-testid="search-status">
+		<p class="text-sm/6 text-info-text-strong" role="status" data-testid="search-status">
 			{#if matches}{matches.size === 0
 					? 'No one matches.'
 					: `${matches.size} ${matches.size === 1 ? 'match' : 'matches'}`} ·
 				<button
 					type="button"
-					class="font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-indigo-400"
+					class="font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-focus"
 					onclick={() => ((query = ''), searchInput?.focus())}>Clear</button
 				>{/if}
 		</p>
@@ -560,7 +560,7 @@
 		<div
 			role="tablist"
 			aria-label="Org chart views"
-			class="inline-flex max-w-full flex-wrap rounded-lg bg-white/5 p-1 outline-1 -outline-offset-1 outline-white/10"
+			class="inline-flex max-w-full flex-wrap rounded-lg bg-surface-raised p-1 outline-1 -outline-offset-1 outline-line"
 		>
 			{#each TABS as t (t.id)}
 				<button
@@ -572,10 +572,10 @@
 					tabindex={tab === t.id ? 0 : -1}
 					onclick={() => (tab = t.id)}
 					onkeydown={onTabKey}
-					class="rounded-md px-3 py-1.5 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:outline-indigo-400 {tab ===
+					class="rounded-md px-3 py-1.5 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:outline-focus {tab ===
 					t.id
-						? 'bg-white/10 text-white'
-						: 'text-gray-400 hover:text-white'}"
+						? 'bg-surface-overlay text-fg'
+						: 'text-fg-muted hover:text-fg'}"
 				>
 					{t.label}
 				</button>
@@ -584,17 +584,17 @@
 		{#if data.sample}
 			<!-- TEMPORARY: until the real office answers org.snapshot, this page shows an invented organization. -->
 			<p
-				class="flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-xs/5 text-gray-400"
+				class="flex max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-xs/5 text-fg-muted"
 				data-testid="sample-data-note"
 			>
 				<Badge variant="secondary">Sample data</Badge> An invented organization, not yours.
 			</p>
 		{/if}
-		<p class="text-sm/6 text-gray-400">
-			<span class="font-semibold text-white">{counts.agents}</span> agents ·
-			<span class="font-semibold text-white">{counts.people}</span> people ·
-			{#if counts.others > 0}<span class="font-semibold text-white">{counts.others}</span> other ·{/if}
-			<span class="font-semibold text-white">{counts.teams}</span> teams
+		<p class="text-sm/6 text-fg-muted">
+			<span class="font-semibold text-fg">{counts.agents}</span> agents ·
+			<span class="font-semibold text-fg">{counts.people}</span> people ·
+			{#if counts.others > 0}<span class="font-semibold text-fg">{counts.others}</span> other ·{/if}
+			<span class="font-semibold text-fg">{counts.teams}</span> teams
 		</p>
 	</div>
 
@@ -623,13 +623,13 @@
 				<h2 class="sr-only">Teams</h2>
 				<div class="flex flex-wrap items-center gap-3">
 					<label
-						class="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 text-gray-300"
+						class="flex min-w-0 max-w-full flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 text-fg-secondary"
 					>
 						Office
 						<select
 							aria-label="Office filter"
 							bind:value={filterValue}
-							class="min-w-0 max-w-full rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"
+							class="min-w-0 max-w-full rounded-md bg-surface px-2 py-1 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus"
 						>
 							<option value="all">All offices</option>
 							{#each offices as office (office.id)}<option value={office.id}
@@ -662,13 +662,13 @@
 						: `Highlighting ${highlightedCount} ${highlightedCount === 1 ? 'agent' : 'agents'} ${filter.kind === 'unplaced' ? 'not placed in an office' : `at ${highlightLabel}`}`}
 				</p>
 				{#if filter.kind !== 'all'}
-					<p class="text-sm/6 text-amber-200" data-testid="filter-status">
+					<p class="text-sm/6 text-warning-text-strong" data-testid="filter-status">
 						Highlighting {highlightedCount}
 						{highlightedCount === 1 ? 'agent' : 'agents'}
 						{filter.kind === 'unplaced' ? 'not placed in an office' : `at ${highlightLabel}`} ·
 						<button
 							type="button"
-							class="font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-indigo-400"
+							class="font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-focus"
 							onclick={() => (filterValue = 'all')}>Clear</button
 						>
 					</p>
@@ -683,10 +683,10 @@
 
 				{#if tree.length === 0}
 					<div
-						class="rounded-xl bg-white/5 px-6 py-10 text-center outline-1 -outline-offset-1 outline-white/10"
+						class="rounded-xl bg-surface-raised px-6 py-10 text-center outline-1 -outline-offset-1 outline-line"
 					>
-						<p class="text-sm/6 font-semibold text-white">No teams yet</p>
-						<p class="mx-auto mt-1 max-w-sm text-sm/6 text-gray-400">
+						<p class="text-sm/6 font-semibold text-fg">No teams yet</p>
+						<p class="mx-auto mt-1 max-w-sm text-sm/6 text-fg-muted">
 							Teams group your agents and people. A team can be part of another team, so a whole
 							division is just a team with teams under it.
 						</p>
@@ -713,7 +713,7 @@
 						aria-label="Teams chart"
 						tabindex="0"
 						onkeydown={onChartFrameKey}
-						class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"
+						class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus"
 					>
 						<TeamsChart
 							{snapshot}
@@ -735,11 +735,11 @@
 				{#if lone.length > 0}
 					<section
 						aria-labelledby="no-team"
-						class="rounded-xl bg-gray-800/50 p-3 outline-1 -outline-offset-1 outline-white/10"
+						class="rounded-xl bg-surface/50 p-3 outline-1 -outline-offset-1 outline-line"
 						data-testid="not-in-a-team"
 					>
-						<h3 id="no-team" class="text-sm/6 font-semibold text-white">
-							Not in a team <span class="font-normal text-gray-400">{lone.length}</span>
+						<h3 id="no-team" class="text-sm/6 font-semibold text-fg">
+							Not in a team <span class="font-normal text-fg-muted">{lone.length}</span>
 						</h3>
 						<div class="mt-2 flex flex-wrap gap-2">
 							{#each lone as m (m.id)}
@@ -760,11 +760,11 @@
 				{#if unassigned.length > 0}
 					<section
 						aria-labelledby="unassigned"
-						class="rounded-xl bg-gray-800/50 p-3 outline-1 -outline-offset-1 outline-white/10"
+						class="rounded-xl bg-surface/50 p-3 outline-1 -outline-offset-1 outline-line"
 						data-testid="unassigned-projects"
 					>
-						<h3 id="unassigned" class="text-sm/6 font-semibold text-white">Unassigned projects</h3>
-						<ul class="mt-2 space-y-1 text-sm/6 text-gray-300">
+						<h3 id="unassigned" class="text-sm/6 font-semibold text-fg">Unassigned projects</h3>
+						<ul class="mt-2 space-y-1 text-sm/6 text-fg-secondary">
 							{#each unassigned as project (project.id)}
 								<li class="flex max-w-full flex-wrap items-center gap-x-3 gap-y-2 wrap-anywhere">
 									{project.name}
@@ -790,7 +790,7 @@
 				<h2 class="sr-only">People</h2>
 				<!-- PEOPLE-2: always said, so nobody expects an agent to reach someone who isn't listed. -->
 				<p
-					class="rounded-lg bg-sky-500/10 px-4 py-3 text-sm/6 text-sky-100 outline-1 -outline-offset-1 outline-sky-400/20"
+					class="rounded-lg bg-info-emphasis/10 px-4 py-3 text-sm/6 text-info-text-stronger outline-1 -outline-offset-1 outline-info/20"
 					data-testid="people-note"
 				>
 					Agents can only reach the people listed in your organization.
@@ -804,9 +804,9 @@
 				</div>
 				{#if tree.length === 0}
 					<div
-						class="rounded-xl bg-white/5 px-6 py-10 text-center outline-1 -outline-offset-1 outline-white/10"
+						class="rounded-xl bg-surface-raised px-6 py-10 text-center outline-1 -outline-offset-1 outline-line"
 					>
-						<p class="text-sm/6 font-semibold text-white">No teams yet</p>
+						<p class="text-sm/6 font-semibold text-fg">No teams yet</p>
 					</div>
 				{:else}
 					<div
@@ -820,7 +820,7 @@
 						aria-label="People chart"
 						tabindex="0"
 						onkeydown={onChartFrameKey}
-						class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"
+						class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus"
 					>
 						<PeopleChart
 							{snapshot}
@@ -836,11 +836,11 @@
 				{#if lone.some((m) => m.kind === 'person')}
 					<section
 						aria-labelledby="people-no-team"
-						class="rounded-xl bg-gray-800/50 p-3 outline-1 -outline-offset-1 outline-white/10"
+						class="rounded-xl bg-surface/50 p-3 outline-1 -outline-offset-1 outline-line"
 						data-testid="people-not-in-a-team"
 					>
-						<h3 id="people-no-team" class="text-sm/6 font-semibold text-white">
-							Not in a team <span class="font-normal text-gray-400"
+						<h3 id="people-no-team" class="text-sm/6 font-semibold text-fg">
+							Not in a team <span class="font-normal text-fg-muted"
 								>{lone.filter((m) => m.kind === 'person').length}</span
 							>
 						</h3>
@@ -857,7 +857,7 @@
 				<h2 class="sr-only">Reporting lines</h2>
 				<!-- REPORT-5: reporting lines and teams are separate things. -->
 				<p
-					class="rounded-lg bg-sky-500/10 px-4 py-3 text-sm/6 text-sky-100 outline-1 -outline-offset-1 outline-sky-400/20"
+					class="rounded-lg bg-info-emphasis/10 px-4 py-3 text-sm/6 text-info-text-stronger outline-1 -outline-offset-1 outline-info/20"
 					data-testid="reporting-note"
 				>
 					Reporting lines show who reports to whom. They are separate from teams: changing a team or
@@ -875,7 +875,7 @@
 						aria-label="Reporting chart"
 						tabindex="0"
 						onkeydown={onChartFrameKey}
-						class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"
+						class="max-w-full overflow-x-auto rounded-lg p-1 pb-4 outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus"
 					>
 						<ReportingChart
 							{snapshot}
@@ -895,18 +895,18 @@
 {#if former.length > 0}
 	<div class="px-8 pb-6">
 		<details
-			class="rounded-xl bg-gray-800/50 p-3 outline-1 -outline-offset-1 outline-white/10"
+			class="rounded-xl bg-surface/50 p-3 outline-1 -outline-offset-1 outline-line"
 			data-testid="former-members"
 		>
-			<summary class="cursor-pointer text-sm/6 font-semibold text-white"
-				>Former members <span class="font-normal text-gray-400">{former.length}</span></summary
+			<summary class="cursor-pointer text-sm/6 font-semibold text-fg"
+				>Former members <span class="font-normal text-fg-muted">{former.length}</span></summary
 			>
-			<ul class="mt-2 space-y-1 text-sm/6 text-gray-300">
+			<ul class="mt-2 space-y-1 text-sm/6 text-fg-secondary">
 				{#each former as m (m.id)}
 					<li class="flex flex-wrap items-baseline gap-x-3">
-						<span class="font-medium text-white [overflow-wrap:anywhere]">{m.name}</span>
-						<span class="text-gray-400">{m.agent?.title ?? ''}</span>
-						<span class="text-xs/5 text-gray-400"
+						<span class="font-medium text-fg [overflow-wrap:anywhere]">{m.name}</span>
+						<span class="text-fg-muted">{m.agent?.title ?? ''}</span>
+						<span class="text-xs/5 text-fg-muted"
 							>left {m.agent?.offboarded_at
 								? new Date(m.agent.offboarded_at).toLocaleDateString(undefined, {
 										dateStyle: 'medium'

@@ -27,9 +27,9 @@
 </script>
 
 <div class="px-4 py-16 text-center min-[640px]:px-6 min-[1024px]:px-8 {className}">
-	<svelte:element this={`h${level}`} class="text-base/7 font-semibold text-white"
+	<svelte:element this={`h${level}`} class="text-base/7 font-semibold text-fg"
 		>{title}</svelte:element
 	>
-	{#if description}<p class="mx-auto mt-1 max-w-md text-sm/6 text-gray-400">{description}</p>{/if}
+	{#if description}<p class="mx-auto mt-1 max-w-md text-sm/6 text-fg-muted">{description}</p>{/if}
 	{#if action}<div class="mt-6 flex flex-wrap justify-center gap-3">{@render action()}</div>{/if}
 </div>

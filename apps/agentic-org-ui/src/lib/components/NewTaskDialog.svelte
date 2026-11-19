@@ -102,30 +102,30 @@
 			<div class="space-y-2">
 				<Label for="new-task-title">Title</Label>
 				<Input id="new-task-title" bind:value={title} maxlength={WORK_LIMITS.title * 2} disabled={busy} autocomplete="off" aria-invalid={titleError ? true : undefined} />
-				{#if titleError}<p class="text-sm/6 text-red-400" role="alert">{titleError}</p>{/if}
+				{#if titleError}<p class="text-sm/6 text-danger" role="alert">{titleError}</p>{/if}
 			</div>
 			<DraftableText id="new-task-description" label="Description" hint="(optional)" rows={3} bind:value={description} limit={WORK_LIMITS.description} disabled={busy} />
 			<div class="space-y-2">
-				<Label for="new-task-dod">Definition of done <span class="font-normal text-gray-400">(optional)</span></Label>
-				<textarea id="new-task-dod" bind:value={definitionOfDone} rows="2" maxlength={WORK_LIMITS.definitionOfDone * 2} disabled={busy} placeholder="The goal the agent works to" class="w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"></textarea>
+				<Label for="new-task-dod">Definition of done <span class="font-normal text-fg-muted">(optional)</span></Label>
+				<textarea id="new-task-dod" bind:value={definitionOfDone} rows="2" maxlength={WORK_LIMITS.definitionOfDone * 2} disabled={busy} placeholder="The goal the agent works to" class="w-full rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus"></textarea>
 			</div>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div class="space-y-2">
 					<Label for="new-task-priority">Priority</Label>
-					<select id="new-task-priority" bind:value={priority} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<select id="new-task-priority" bind:value={priority} disabled={busy} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus">
 						{#each PRIORITIES as p (p.id)}<option value={p.id}>{p.label}</option>{/each}
 					</select>
 				</div>
 				<div class="space-y-2">
-					<Label for="new-task-assignee">Assignee <span class="font-normal text-gray-400">(optional)</span></Label>
-					<select id="new-task-assignee" bind:value={assignee} onchange={() => (confirmed = false)} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+					<Label for="new-task-assignee">Assignee <span class="font-normal text-fg-muted">(optional)</span></Label>
+					<select id="new-task-assignee" bind:value={assignee} onchange={() => (confirmed = false)} disabled={busy} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus">
 						<option value="">Unassigned</option>
 						{#each people as p (p.member.id)}<option value={p.member.id}>{p.label}</option>{/each}
 					</select>
 				</div>
 			</div>
-			{#if confirmed && assignWarning(snapshot, assignee)}<p class="rounded-md bg-amber-500/10 px-3 py-2 text-sm/6 text-amber-100" role="alert" data-testid="assign-warning">{assignWarning(snapshot, assignee)} Create it anyway?</p>{/if}
-			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if confirmed && assignWarning(snapshot, assignee)}<p class="rounded-md bg-warning-emphasis/10 px-3 py-2 text-sm/6 text-warning-text-stronger" role="alert" data-testid="assign-warning">{assignWarning(snapshot, assignee)} Create it anyway?</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
 				<Button type="submit" disabled={busy}>{confirmed && assignWarning(snapshot, assignee) ? "Create anyway" : "Create task"}</Button>

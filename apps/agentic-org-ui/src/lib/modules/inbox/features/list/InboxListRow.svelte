@@ -32,28 +32,28 @@
 
 <li
 	class="relative flex gap-x-3 px-4 py-4 min-[640px]:px-6 {current
-		? 'bg-white/5'
-		: 'hover:bg-white/[0.03]'} {className}"
+		? 'bg-surface-raised'
+		: 'hover:bg-tint/[0.03]'} {className}"
 	data-testid="inbox-row"
 	data-item={item.id}
 >
 	<Avatar name={item.who.name} size="md" />
 	<div class="min-w-0 flex-1">
-		<p class="text-xs/5 text-gray-400">
-			<span class="font-semibold text-gray-300">{KIND_WORD[item.kind]}</span>
+		<p class="text-xs/5 text-fg-muted">
+			<span class="font-semibold text-fg-secondary">{KIND_WORD[item.kind]}</span>
 			{#if item.state === 'handled' && item.handled}<span> · {item.handled.outcome}</span>{/if}
 		</p>
-		<p class="mt-0.5 text-sm/6 font-semibold text-white [overflow-wrap:anywhere]">
+		<p class="mt-0.5 text-sm/6 font-semibold text-fg [overflow-wrap:anywhere]">
 			<a
 				href={resolve(href as '/')}
 				aria-current={current ? 'true' : undefined}
-				class="focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
+				class="focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
 				><span class="absolute inset-0" aria-hidden="true"></span>{item.title}</a
 			>
 		</p>
-		<p class="mt-0.5 text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{whoLine(item)}</p>
+		<p class="mt-0.5 text-xs/5 text-fg-muted [overflow-wrap:anywhere]">{whoLine(item)}</p>
 		{#if item.state === 'open'}
-			<p class="mt-1 text-xs/5 text-gray-400">
+			<p class="mt-1 text-xs/5 text-fg-muted">
 				{#if expiry}
 					<time datetime={expiry.toISOString()} title={formatFull(expiry, accountZone.zone)}
 						>Expires {relativeUntil(expiry, now)}<span class="sr-only">

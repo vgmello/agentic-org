@@ -54,7 +54,7 @@
 		<DialogHeader>
 			<DialogTitle text={`Remove ${shown?.projectName ?? ''} from ${shown?.teamName ?? ''}?`} />
 			<DialogDescription class="[overflow-wrap:anywhere]">It will have no team and show under Unassigned projects.</DialogDescription>
-			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 		</DialogHeader>
 		<DialogFooter>
 			<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>

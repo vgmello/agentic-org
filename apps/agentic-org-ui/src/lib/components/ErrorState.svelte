@@ -27,11 +27,13 @@
 </script>
 
 <div role="alert" class="px-4 py-12 min-[640px]:px-6 min-[1024px]:px-8 {className}">
-	<div class="max-w-xl rounded-md border border-white/10 bg-white/[0.03] p-4">
-		<svelte:element this={`h${level}`} class="text-sm/6 font-semibold text-red-300"
+	<div class="max-w-xl rounded-md border border-line bg-tint/[0.03] p-4">
+		<svelte:element this={`h${level}`} class="text-sm/6 font-semibold text-danger-text"
 			>{title}</svelte:element
 		>
-		{#if message}<p class="mt-1 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">{message}</p>{/if}
+		{#if message}<p class="mt-1 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">
+				{message}
+			</p>{/if}
 		{#if onretry}
 			<Button
 				variant="outline"

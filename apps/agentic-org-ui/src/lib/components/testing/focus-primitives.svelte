@@ -4,7 +4,7 @@
 	const variants: ButtonVariant[] = ['default', 'outline', 'secondary', 'ghost', 'destructive', 'link'];
 	let activations = $state(0), selected = $state('Nothing selected');
 </script>
-<section aria-label="Focus contracts" class="fixed inset-2 z-40 overflow-auto rounded-md bg-gray-900 p-4">
+<section aria-label="Focus contracts" class="fixed inset-2 z-40 overflow-auto rounded-md bg-surface-sunken p-4">
 	<button data-testid="focus-start">Start here</button>
 	{#each variants as variant}
 		<div role="group" aria-label={variant} class="my-3 flex flex-wrap gap-3 p-1">
@@ -16,7 +16,7 @@
 		<Button disabled>Disabled</Button>
 		<Button href="#disabled" disabled>Disabled link</Button>
 		<Button aria-invalid="true">Invalid</Button>
-		<Button class="focus-visible:outline-emerald-400">Override</Button>
+		<Button class="focus-visible:outline-positive">Override</Button>
 		<DropdownMenu.Root>
 			<DropdownMenu.Trigger>Commands</DropdownMenu.Trigger>
 			<DropdownMenu.Content>

@@ -13,7 +13,7 @@
 	const info = $derived(statusInfo(status));
 	const glyph = $derived(statusIcon(status));
 	// The word is always shown: neither the icon nor its color alone carries the status.
-	const color = { ok: 'text-green-400', info: 'text-sky-400', muted: 'text-gray-400', warn: 'text-amber-400', bad: 'text-red-400' } as const;
+	const color = { ok: 'text-success', info: 'text-info', muted: 'text-fg-muted', warn: 'text-warning', bad: 'text-danger' } as const;
 </script>
 
 <StatusPill class="min-w-0 max-w-full shrink whitespace-nowrap" label={info.label} data-status-icon={glyph}>

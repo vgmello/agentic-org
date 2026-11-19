@@ -84,31 +84,31 @@
 
 		<fieldset class="space-y-1" disabled={busy}>
 			<legend class="sr-only">Teams</legend>
-			<ul class="max-h-64 divide-y divide-white/5 overflow-y-auto rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Teams">
+			<ul class="max-h-64 divide-y divide-line-subtle overflow-y-auto rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line" aria-label="Teams">
 				{#each teams as option (option.team.id)}
 					<li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 pr-3" style="padding-left: {0.75 + option.depth * 1.25}rem">
 						<label class="flex min-w-0 cursor-pointer items-center gap-x-3 text-sm/6">
 							<Checkbox checked={wanted.has(option.team.id)} onCheckedChange={(on) => (on === true ? wanted.set(option.team.id, wanted.get(option.team.id) ?? '') : wanted.delete(option.team.id))} aria-label={option.path} />
-							<span class="min-w-0 text-white [overflow-wrap:anywhere]">{option.team.name}</span>
+							<span class="min-w-0 text-fg [overflow-wrap:anywhere]">{option.team.name}</span>
 						</label>
 						{#if wanted.has(option.team.id)}
 							<Input class="h-7 max-w-44 text-xs" value={wanted.get(option.team.id) ?? ''} oninput={(e) => wanted.set(option.team.id, e.currentTarget.value)} placeholder="Title (optional)" aria-label="Title in {option.team.name}" autocomplete="off" />
 						{/if}
 					</li>
 				{:else}
-					<li class="px-3 py-2 text-sm/6 text-gray-400">There are no teams yet.</li>
+					<li class="px-3 py-2 text-sm/6 text-fg-muted">There are no teams yet.</li>
 				{/each}
 			</ul>
 		</fieldset>
 
 		{#if leaving.length > 0}
-			<p class="flex gap-x-2 rounded-lg bg-amber-500/10 px-3 py-2 text-sm/6 text-amber-100 outline-1 -outline-offset-1 outline-amber-400/20 [overflow-wrap:anywhere]" data-testid="clears-lead">
+			<p class="flex gap-x-2 rounded-lg bg-warning-emphasis/10 px-3 py-2 text-sm/6 text-warning-text-stronger outline-1 -outline-offset-1 outline-warning/20 [overflow-wrap:anywhere]" data-testid="clears-lead">
 				<TriangleAlert class="mt-1 size-4 shrink-0" aria-hidden="true" />
 				<span>{#each leaving as t, i (t.id)}{i > 0 ? ' ' : ''}{shown?.name} leads {t.name}. Removing {shown?.name} also clears {t.name}'s lead.{/each}</span>
 			</p>
 		{/if}
 		{#if problems.length > 0}
-			<ul class="space-y-1 text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">
+			<ul class="space-y-1 text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">
 				{#each problems as problem (problem)}<li>{problem}</li>{/each}
 			</ul>
 		{/if}

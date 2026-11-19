@@ -25,11 +25,11 @@
 		todo: { word: 'To do', class: '' },
 		in_progress: {
 			word: 'In progress',
-			class: 'bg-indigo-400/10 text-indigo-300 ring-indigo-400/30'
+			class: 'bg-brand/10 text-brand-text ring-brand/30'
 		},
-		in_review: { word: 'In review', class: 'bg-indigo-400/10 text-indigo-300 ring-indigo-400/30' },
-		blocked: { word: 'Blocked', class: 'bg-red-400/10 text-red-300 ring-red-400/20' },
-		done: { word: 'Done', class: 'bg-green-400/10 text-green-300 ring-green-400/20' }
+		in_review: { word: 'In review', class: 'bg-brand/10 text-brand-text ring-brand/30' },
+		blocked: { word: 'Blocked', class: 'bg-danger/10 text-danger-text ring-danger/20' },
+		done: { word: 'Done', class: 'bg-success/10 text-success-text ring-success/20' }
 	};
 	const PRIORITY = {
 		urgent: 'Urgent',
@@ -53,19 +53,19 @@
 				description="Tasks {team.teamName} is accountable for, or that are assigned to it, show here."
 			/>
 		{:else}
-			<ul role="list" class="divide-y divide-white/5">
+			<ul role="list" class="divide-y divide-line-subtle">
 				{#each rows as row (row.ref)}
 					<li
 						class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8"
 					>
 						<div class="min-w-0 flex-1 basis-60">
-							<p class="text-sm/6 font-semibold text-white">
-								<span class="font-mono font-normal text-gray-400">{row.ref}</span>
+							<p class="text-sm/6 font-semibold text-fg">
+								<span class="font-mono font-normal text-fg-muted">{row.ref}</span>
 								<span class="[overflow-wrap:anywhere]">{row.title}</span>
 							</p>
 							<div class="mt-1">
 								<div class={factsWrap}>
-									<ul role="list" class="{factsList} text-xs/5 text-gray-400">
+									<ul role="list" class="{factsList} text-xs/5 text-fg-muted">
 										{#if row.project}<li class={fact}>{row.project}</li>{/if}
 										<li class={fact}>{row.assignee ?? 'Unassigned'}</li>
 										{#if row.priority}<li class={fact}>{PRIORITY[row.priority]}</li>{/if}

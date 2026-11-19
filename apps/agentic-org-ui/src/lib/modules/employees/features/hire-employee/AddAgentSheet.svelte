@@ -157,27 +157,27 @@
 			<div class="space-y-2">
 				<Label for="new-agent-name">Name</Label>
 				<Input id="new-agent-name" bind:value={name} disabled={busy} autocomplete="off" aria-invalid={nameError ? true : undefined} />
-				{#if nameError}<p class="text-sm/6 text-red-400" role="alert">{nameError}</p>{/if}
+				{#if nameError}<p class="text-sm/6 text-danger" role="alert">{nameError}</p>{/if}
 			</div>
 			<div class="space-y-2">
 				<Label for="new-agent-handle">Messaging name</Label>
 				<Input id="new-agent-handle" bind:value={handle} oninput={() => (handleEdited = true)} disabled={busy} autocomplete="off" class="font-mono" aria-invalid={handleError ? true : undefined} aria-describedby={handleError ? 'new-agent-handle-error' : 'new-agent-handle-help'} />
 				{#if handleError}
-					<p id="new-agent-handle-error" class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{handleError}</p>
+					<p id="new-agent-handle-error" class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{handleError}</p>
 				{:else}
-					<p id="new-agent-handle-help" class="text-xs/5 text-gray-400">What others write to reach it (--to {handle || 'name'}). Unique, and stays reserved even after the agent is offboarded.</p>
+					<p id="new-agent-handle-help" class="text-xs/5 text-fg-muted">What others write to reach it (--to {handle || 'name'}). Unique, and stays reserved even after the agent is offboarded.</p>
 				{/if}
 			</div>
 			<div class="space-y-2">
 				<Label for="new-agent-runtime">Runs on</Label>
-				<select id="new-agent-runtime" bind:value={runtime} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+				<select id="new-agent-runtime" bind:value={runtime} disabled={busy} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus">
 					{#each RUNTIMES as r (r)}<option value={r}>{runtimeLabel(r)}</option>{/each}
 					<option value="other">Another runtime…</option>
 				</select>
 				{#if runtime === 'other'}<Input aria-label="Runtime name" bind:value={otherRuntime} disabled={busy} autocomplete="off" placeholder="Its name" />{/if}
 			</div>
 			<div class="space-y-2">
-				<Label for="new-agent-model">Model <span class="font-normal text-gray-400">(optional)</span></Label>
+				<Label for="new-agent-model">Model <span class="font-normal text-fg-muted">(optional)</span></Label>
 				<Input id="new-agent-model" bind:value={model} disabled={busy} autocomplete="off" />
 			</div>
 			<div class="grid gap-4 sm:grid-cols-2">
@@ -186,28 +186,28 @@
 					<Input id="new-agent-role" bind:value={role} disabled={busy} autocomplete="off" placeholder="software engineer" />
 				</div>
 				<div class="space-y-2">
-					<Label for="new-agent-title">Title <span class="font-normal text-gray-400">(optional)</span></Label>
+					<Label for="new-agent-title">Title <span class="font-normal text-fg-muted">(optional)</span></Label>
 					<Input id="new-agent-title" bind:value={title} disabled={busy} autocomplete="off" />
 				</div>
 			</div>
 			<fieldset class="space-y-2" disabled={busy}>
-				<legend class="text-sm/6 font-medium text-white">Teams <span class="font-normal text-gray-400">(optional)</span></legend>
-				<ul class="max-h-36 divide-y divide-white/5 overflow-y-auto rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10" aria-label="Teams">
+				<legend class="text-sm/6 font-medium text-fg">Teams <span class="font-normal text-fg-muted">(optional)</span></legend>
+				<ul class="max-h-36 divide-y divide-line-subtle overflow-y-auto rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line" aria-label="Teams">
 					{#each teams as option (option.team.id)}
 						<li>
 							<label class="flex cursor-pointer items-center gap-x-3 py-1.5 pr-3 text-sm/6" style="padding-left: {0.75 + option.depth * 1.25}rem">
 								<Checkbox checked={teamIds.has(option.team.id)} onCheckedChange={(on) => (on === true ? teamIds.add(option.team.id) : teamIds.delete(option.team.id))} aria-label={option.path} />
-								<span class="min-w-0 text-white [overflow-wrap:anywhere]">{option.team.name}</span>
+								<span class="min-w-0 text-fg [overflow-wrap:anywhere]">{option.team.name}</span>
 							</label>
 						</li>
 					{:else}
-						<li class="px-3 py-2 text-sm/6 text-gray-400">There are no teams yet.</li>
+						<li class="px-3 py-2 text-sm/6 text-fg-muted">There are no teams yet.</li>
 					{/each}
 				</ul>
 			</fieldset>
 			<div class="space-y-2">
 				<Label for="new-agent-run">How it runs</Label>
-				<select id="new-agent-run" bind:value={runMode} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+				<select id="new-agent-run" bind:value={runMode} disabled={busy} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus">
 					<option value="on_call">On call: wakes when it's needed</option>
 					<option value="always_on">Always on: keeps a session running</option>
 					<option value="">Started by a person: the office never starts it</option>
@@ -215,13 +215,13 @@
 			</div>
 			<div class="space-y-2">
 				<Label for="new-agent-manager">Reports to</Label>
-				<select id="new-agent-manager" bind:value={manager} onchange={() => (managerEdited = true)} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400">
+				<select id="new-agent-manager" bind:value={manager} onchange={() => (managerEdited = true)} disabled={busy} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus">
 					<option value="">{ownerName} (you)</option>
 					{#each managers as m (m.id)}<option value={m.id}>{m.name}</option>{/each}
 				</select>
 			</div>
 			<div class="space-y-2">
-				<Label for="new-agent-home">Home folder <span class="font-normal text-gray-400">(optional, an absolute path on {officeName})</span></Label>
+				<Label for="new-agent-home">Home folder <span class="font-normal text-fg-muted">(optional, an absolute path on {officeName})</span></Label>
 				<Input id="new-agent-home" bind:value={home} disabled={busy} autocomplete="off" class="font-mono" placeholder="/Users/you/agents/name" />
 			</div>
 

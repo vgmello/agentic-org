@@ -109,18 +109,18 @@
 	</div>
 {:else}
 	<div class="max-w-3xl space-y-6">
-		<p class="px-4 text-sm/6 text-gray-300 min-[640px]:px-6 min-[1024px]:px-8">
+		<p class="px-4 text-sm/6 text-fg-secondary min-[640px]:px-6 min-[1024px]:px-8">
 			Nothing has been created yet. Confirming creates exactly this.
 		</p>
 		{#if warning}
 			<div class="px-4 min-[640px]:px-6 min-[1024px]:px-8">
 				<Callout>
-					<p class="text-sm/6 text-white">{warning}</p>
+					<p class="text-sm/6 text-fg">{warning}</p>
 				</Callout>
 			</div>
 		{/if}
-		<DescriptionList items={rows} class="border-y border-white/5" />
-		<p class="px-4 text-sm/6 text-gray-300 min-[640px]:px-6 min-[1024px]:px-8">
+		<DescriptionList items={rows} class="border-y border-line-subtle" />
+		<p class="px-4 text-sm/6 text-fg-secondary min-[640px]:px-6 min-[1024px]:px-8">
 			{proposal.name} can be reached by everyone in {organizationName}.
 		</p>
 		{#if refusal}
@@ -128,13 +128,13 @@
 				id="hire-refusal"
 				tabindex="-1"
 				role="alert"
-				class="mx-4 rounded-md border border-red-400/30 px-4 py-3 text-sm/6 text-red-300 outline-none min-[640px]:mx-6 min-[1024px]:mx-8 [overflow-wrap:anywhere]"
+				class="mx-4 rounded-md border border-danger/30 px-4 py-3 text-sm/6 text-danger-text outline-none min-[640px]:mx-6 min-[1024px]:mx-8 [overflow-wrap:anywhere]"
 			>
 				{refusal}
 			</p>
 		{/if}
 		<div
-			class="flex flex-wrap items-center gap-3 border-t border-white/5 px-4 pt-6 min-[640px]:px-6 min-[1024px]:px-8"
+			class="flex flex-wrap items-center gap-3 border-t border-line-subtle px-4 pt-6 min-[640px]:px-6 min-[1024px]:px-8"
 		>
 			<Button variant="outline" class={mobileButton} disabled={busy} onclick={onback}>Back</Button>
 			<Button class="min-w-32 {mobileButton}" aria-busy={busy} onclick={confirm}

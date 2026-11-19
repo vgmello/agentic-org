@@ -298,27 +298,27 @@
 					aria-haspopup="listbox"
 					aria-controls={completions.length > 0 ? 'at-list' : undefined}
 					aria-activedescendant={completions.length > 0 ? `at-opt-${Math.min(activeAt, completions.length - 1)}` : undefined}
-					class="field-sizing-content max-h-72 min-h-28 w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
+					class="field-sizing-content max-h-72 min-h-28 w-full rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
 				></textarea>
-				{#if textError}<p class="text-sm/6 text-red-400" role="alert">{textError}</p>{/if}
-				{#if cannotSend}<p id="handle-problem" class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" aria-live="polite" data-testid="no-such-handle">{unknownHandle !== undefined ? `No one called @${unknownHandle}. Pick someone from the list or remove it.` : `@${ambiguous?.token ?? ''} could be ${ambiguous?.matches.map((m) => m.name).join(', ') ?? 'several agents'}. Pick one from the list or remove it.`}</p>{/if}
+				{#if textError}<p class="text-sm/6 text-danger" role="alert">{textError}</p>{/if}
+				{#if cannotSend}<p id="handle-problem" class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" aria-live="polite" data-testid="no-such-handle">{unknownHandle !== undefined ? `No one called @${unknownHandle}. Pick someone from the list or remove it.` : `@${ambiguous?.token ?? ''} could be ${ambiguous?.matches.map((m) => m.name).join(', ') ?? 'several agents'}. Pick one from the list or remove it.`}</p>{/if}
 				{#if completions.length > 0}
 					<ul id="at-list" role="listbox" aria-label="Agents you could mean" class="flex flex-wrap gap-2" data-testid="at-matches">
 						{#each completions as m, i (m.id)}
 							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<li id="at-opt-{i}" role="option" aria-selected={i === Math.min(activeAt, completions.length - 1)} class="cursor-pointer rounded-md px-2 py-1 text-sm/6 text-gray-100 hover:bg-white/10 {i === Math.min(activeAt, completions.length - 1) ? 'bg-white/15 outline-2 outline-indigo-400' : 'bg-white/5'}" onmousedown={(e) => e.preventDefault()} onclick={() => complete(m)}>{m.name} <span class="text-gray-300">@{handleFor(m)}{m.agent?.title ? ` · ${m.agent.title}` : ''}{m.agent?.status === 'paused' ? ' · paused' : ''}</span></li>
+							<li id="at-opt-{i}" role="option" aria-selected={i === Math.min(activeAt, completions.length - 1)} class="cursor-pointer rounded-md px-2 py-1 text-sm/6 text-fg-bright hover:bg-surface-overlay {i === Math.min(activeAt, completions.length - 1) ? 'bg-tint/15 outline-2 outline-focus' : 'bg-surface-raised'}" onmousedown={(e) => e.preventDefault()} onclick={() => complete(m)}>{m.name} <span class="text-fg-secondary">@{handleFor(m)}{m.agent?.title ? ` · ${m.agent.title}` : ''}{m.agent?.status === 'paused' ? ' · paused' : ''}</span></li>
 						{/each}
 					</ul>
-					<p class="text-xs/5 text-gray-400">↑↓ to choose, Enter or Tab to pick, Esc to close the list.</p>
+					<p class="text-xs/5 text-fg-muted">↑↓ to choose, Enter or Tab to pick, Esc to close the list.</p>
 				{/if}
 				<div aria-live="polite">
 				{#if similar.length > 0}
-					<ul class="space-y-1 rounded-md bg-white/5 px-3 py-2 text-sm/6" aria-label="Similar requests" data-testid="similar">
+					<ul class="space-y-1 rounded-md bg-surface-raised px-3 py-2 text-sm/6" aria-label="Similar requests" data-testid="similar">
 						{#each similar as r (r.id)}
-							<li class="flex flex-wrap items-center gap-x-2 text-gray-200"><span>Looks like {requestRef(r)}: <span class="[overflow-wrap:anywhere]">{r.title}</span></span><Button type="button" size="sm" variant="outline" disabled={busy || tooLong || noteBody.trim() === ''} aria-label="Add to {requestRef(r)}" aria-describedby={tooLong ? 'too-long-note' : undefined} onclick={() => void addTo(r)}>Add to {requestRef(r)}</Button></li>
+							<li class="flex flex-wrap items-center gap-x-2 text-fg-body"><span>Looks like {requestRef(r)}: <span class="[overflow-wrap:anywhere]">{r.title}</span></span><Button type="button" size="sm" variant="outline" disabled={busy || tooLong || noteBody.trim() === ''} aria-label="Add to {requestRef(r)}" aria-describedby={tooLong ? 'too-long-note' : undefined} onclick={() => void addTo(r)}>Add to {requestRef(r)}</Button></li>
 						{/each}
 					</ul>
-					{#if tooLong}<p id="too-long-note" class="text-xs/5 text-red-300" data-testid="too-long-note">Too long to add as a note: a note can be {WORK_LIMITS.text.toLocaleString('en-US')} characters at most.</p>{/if}
+					{#if tooLong}<p id="too-long-note" class="text-xs/5 text-danger-text" data-testid="too-long-note">Too long to add as a note: a note can be {WORK_LIMITS.text.toLocaleString('en-US')} characters at most.</p>{/if}
 				{/if}
 				</div>
 			</div>
@@ -326,13 +326,13 @@
 			<div class="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2">
 				<div class="space-y-2">
 					<Label for="new-request-kind">Kind</Label>
-					<select id="new-request-kind" bind:value={kind} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400">
+					<select id="new-request-kind" bind:value={kind} disabled={busy} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus">
 						{#each KINDS as k (k)}<option value={k}>{KIND_WORD[k]}</option>{/each}
 					</select>
 				</div>
 				<div class="space-y-2">
-					<Label for="new-request-project" class="flex-wrap">Project <span class="font-normal text-gray-400">(optional)</span></Label>
-					<select id="new-request-project" bind:value={projectId} disabled={busy} class="w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400">
+					<Label for="new-request-project" class="flex-wrap">Project <span class="font-normal text-fg-muted">(optional)</span></Label>
+					<select id="new-request-project" bind:value={projectId} disabled={busy} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus">
 						<option value="">No project yet</option>
 						{#each projects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
 					</select>
@@ -340,23 +340,23 @@
 			</div>
 
 			<fieldset class="min-w-0 space-y-2" disabled={busy}>
-				<legend class="flex max-w-full flex-wrap items-center gap-x-2 text-sm/6 font-medium text-white">Who scopes it {#if atMember && (picked === undefined || !pickStands)}<Badge variant="secondary" class="h-auto min-h-5 max-w-full whitespace-normal text-wrap [overflow-wrap:anywhere]" data-testid="by-at">You wrote @{at?.kind === 'exact' ? at.token : ''}</Badge>{:else if suggestions.length > 0 && (picked === undefined || !pickStands)}<Badge variant="secondary" class="h-auto min-h-5 max-w-full whitespace-normal text-wrap" data-testid="by-rule">Suggested by rule</Badge>{/if}</legend>
+				<legend class="flex max-w-full flex-wrap items-center gap-x-2 text-sm/6 font-medium text-fg">Who scopes it {#if atMember && (picked === undefined || !pickStands)}<Badge variant="secondary" class="h-auto min-h-5 max-w-full whitespace-normal text-wrap [overflow-wrap:anywhere]" data-testid="by-at">You wrote @{at?.kind === 'exact' ? at.token : ''}</Badge>{:else if suggestions.length > 0 && (picked === undefined || !pickStands)}<Badge variant="secondary" class="h-auto min-h-5 max-w-full whitespace-normal text-wrap" data-testid="by-rule">Suggested by rule</Badge>{/if}</legend>
 				{#if atMember && !suggestions.some((x) => x.member.id === atMember.id)}
-					<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-						<input type="radio" name="scoper" value={atMember.id} checked={choice === atMember.id} onclick={() => ((picked = atMember.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-400" />
-						<span><span class="font-semibold text-white">{atMember.name}</span>, you wrote @{at?.kind === 'exact' ? at.token : ''}</span>
+					<label class="flex items-start gap-2 text-sm/6 text-fg-body">
+						<input type="radio" name="scoper" value={atMember.id} checked={choice === atMember.id} onclick={() => ((picked = atMember.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus:outline-2 focus:outline-offset-2 focus:outline-focus" />
+						<span><span class="font-semibold text-fg">{atMember.name}</span>, you wrote @{at?.kind === 'exact' ? at.token : ''}</span>
 					</label>
 				{/if}
 				{#each suggestions as s (s.member.id)}
-					<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-						<input type="radio" name="scoper" value={s.member.id} checked={choice === s.member.id} onclick={() => ((picked = s.member.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-400" />
-						<span><span class="font-semibold text-white">{s.member.name}</span>, {s.why}</span>
+					<label class="flex items-start gap-2 text-sm/6 text-fg-body">
+						<input type="radio" name="scoper" value={s.member.id} checked={choice === s.member.id} onclick={() => ((picked = s.member.id), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus:outline-2 focus:outline-offset-2 focus:outline-focus" />
+						<span><span class="font-semibold text-fg">{s.member.name}</span>, {s.why}</span>
 					</label>
 				{/each}
-				<label class="flex items-start gap-2 text-sm/6 text-gray-200">
-					<input type="radio" name="scoper" value="other" checked={choice === 'other'} onclick={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus:outline-2 focus:outline-offset-2 focus:outline-indigo-400" />
+				<label class="flex items-start gap-2 text-sm/6 text-fg-body">
+					<input type="radio" name="scoper" value="other" checked={choice === 'other'} onclick={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="mt-1.5 focus:outline-2 focus:outline-offset-2 focus:outline-focus" />
 					<span class="flex min-w-0 flex-wrap items-center gap-2">Someone else…
-						<select aria-label="Someone else" bind:value={other} onchange={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="max-w-full min-w-0 rounded-md bg-gray-800 px-2 py-1 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400">
+						<select aria-label="Someone else" bind:value={other} onchange={() => ((picked = 'other'), (pickedAt = atKey), (confirmed = false))} class="max-w-full min-w-0 rounded-md bg-surface px-2 py-1 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus">
 							<option value="">Choose…</option>
 							{#each agents as a (a.id)}<option value={a.id}>{a.name}{a.agent?.status === 'paused' ? ' (paused)' : ''}</option>{/each}
 						</select>
@@ -364,12 +364,12 @@
 				</label>
 			</fieldset>
 
-			{#if warning}<p class="rounded-md bg-red-500/10 px-3 py-2 text-sm/6 text-red-200" role="alert" data-testid="route-warning">{warning}</p>{/if}
-			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if warning}<p class="rounded-md bg-danger-emphasis/10 px-3 py-2 text-sm/6 text-danger-text-strong" role="alert" data-testid="route-warning">{warning}</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			</div>
 			<DialogFooter class="min-w-0 shrink-0 flex-row flex-wrap justify-end pb-1">
 				{#if asking}
-					<p class="mr-auto self-center text-sm/6 text-gray-200" role="alert" data-testid="keep-draft">Keep as a draft?</p>
+					<p class="mr-auto self-center text-sm/6 text-fg-body" role="alert" data-testid="keep-draft">Keep as a draft?</p>
 					<Button type="button" variant="outline" onclick={back}>Back</Button>
 					<Button type="button" variant="outline" onclick={() => ((asking = false), (text = ''), (open = false))}>Discard</Button>
 					<Button type="button" disabled={busy} onclick={() => void submit(false)}>Keep</Button>
