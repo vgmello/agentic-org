@@ -3,6 +3,7 @@
   Run now (agent-run-modes-ux §1, RUN-4, RUN-9): starts one explicit turn, with an optional note. While a turn is open
   the run is Busy: the original turn is kept and nothing queues. When the agent can't start (paused, not configured,
   not signed in…) the reason is shown and Run stays off. A refusal from the office keeps the note and says why.
+  Mount it in a {#key} that changes on each opening.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -19,8 +20,8 @@
 	import { Label } from '$lib/components/ui/label';
 	import { toAppError } from '$lib/office/api';
 	import { membersApi } from '../../api';
-	import { ageText } from '../../present';
-	import type { MemberProfile, Turn } from '../../types';
+	import { busyText } from '../../present';
+	import type { MemberProfile, RunNowResult } from '../../types';
 
 	let {
 		open = $bindable(false),
@@ -33,7 +34,8 @@
 		open: boolean;
 		organizationId: string;
 		profile: MemberProfile;
-		onstarted: (turn: Turn) => void;
+		/** HQ recorded the request: the turn (accepted until the office confirms) and the profile after it. */
+		onstarted: (result: RunNowResult) => void;
 		onCloseAutoFocus?: (event: Event) => void;
 		/** The office refused (busy, can't start): the profile reloads to show why. */
 		onrefused?: () => void;
@@ -44,11 +46,19 @@
 	let refusal = $state<{ code: string; message: string } | undefined>();
 	const ids = $props.id();
 
+	/**
+	 * This opening's own request went through: the dialog is closing, and the open turn the new profile shows is that
+	 * request, not a reason to say Busy. The caller mounts a fresh dialog ({#key}) for each opening.
+	 */
+	let requested = $state(false);
+
 	/** Known before trying: an open turn (Busy) or a reason it can't start. */
 	const blocked = $derived(
-		profile.openTurn
-			? `${profile.name} is already running a turn (started ${ageText(profile.openTurn.startedAt)}). It takes new input when that turn ends; nothing is queued.`
-			: profile.cannotStart
+		requested
+			? undefined
+			: profile.openTurn
+				? busyText(profile.name, profile.openTurn)
+				: profile.cannotStart
 	);
 
 	function changeOpen(next: boolean) {
@@ -62,11 +72,12 @@
 		busy = true;
 		refusal = undefined;
 		try {
-			const turn = await membersApi.runNow(organizationId, profile.id, note.trim());
+			const result = await membersApi.runNow(organizationId, profile.id, note.trim());
 			note = '';
+			requested = true;
 			open = false;
 			refusal = undefined;
-			onstarted(turn);
+			onstarted(result);
 		} catch (e) {
 			const failure = toAppError(e);
 			refusal = { code: failure.code ?? '', message: failure.message };
@@ -78,13 +89,16 @@
 </script>
 
 <Dialog bind:open onOpenChange={changeOpen}>
-	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+	<DialogContent
+		{onCloseAutoFocus}
+		class="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto max-[639px]:max-w-[calc(100%-1rem)] max-[639px]:p-4"
+	>
 		<form
 			onsubmit={run}
 			class="grid gap-4"
 			aria-describedby={blocked ? `${ids}-blocked` : undefined}
 		>
-			<DialogHeader>
+			<DialogHeader class="pr-8">
 				<DialogTitle text="Run {profile.name} now" />
 				<DialogDescription>
 					Starts one turn with {profile.name}'s current setup. It works on what it has been given,
@@ -98,6 +112,7 @@
 					bind:value={note}
 					rows="3"
 					maxlength="2000"
+					disabled={busy}
 					class="mt-2 {textareaClass}"
 					aria-describedby="{ids}-help"></textarea>
 				<p id="{ids}-help" class={helpClass}>Optional.</p>
@@ -144,7 +159,7 @@
 					aria-busy={busy}
 					disabled={!!blocked}
 					aria-describedby={blocked ? `${ids}-blocked` : undefined}
-					>{busy ? 'Starting…' : 'Run now'}</Button
+					>{busy ? 'Requesting…' : 'Run now'}</Button
 				>
 			</DialogFooter>
 		</form>

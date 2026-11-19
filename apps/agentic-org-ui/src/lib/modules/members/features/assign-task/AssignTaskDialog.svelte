@@ -82,9 +82,12 @@
 </script>
 
 <Dialog bind:open onOpenChange={changeOpen}>
-	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+	<DialogContent
+		{onCloseAutoFocus}
+		class="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto max-[639px]:max-w-[calc(100%-1rem)] max-[639px]:p-4"
+	>
 		<form onsubmit={assign} class="grid gap-4">
-			<DialogHeader>
+			<DialogHeader class="pr-8">
 				<DialogTitle text="Assign work to {profile.name}" />
 				<DialogDescription>
 					Open work items without an assignee. Assigning doesn't change the item's team or project.

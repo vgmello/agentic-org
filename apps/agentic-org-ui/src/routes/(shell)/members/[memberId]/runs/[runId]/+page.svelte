@@ -9,6 +9,7 @@
 	<SessionLogView
 		organizationId={data.connection.organization.id}
 		memberId={page.params.memberId ?? ''}
+		memberName={data.memberName}
 		runId={page.params.runId ?? ''}
 	/>
 {/key}

@@ -133,7 +133,13 @@ export interface MemberProfile extends MemberRow {
 	supervision?: Supervision;
 	execution?: ExecutionView;
 	/** The open turn, when one exists: a second Run is Busy (RUN-4). */
-	openTurn?: { id: string; startedAt: string };
+	openTurn?: {
+		id: string;
+		/** When it was requested (HQ recorded it); for a running turn, also when it started. */
+		startedAt: string;
+		/** `accepted`: requested, the office hasn't started it yet. Never described as running until it is. */
+		state: TurnState;
+	};
 	/** Why Run now can't start: paused, not configured, not signed in. */
 	cannotStart?: string;
 	/** People without an account: an invitation that is still open (Inviting again cancels it). */
@@ -189,6 +195,16 @@ export interface Turn {
 	attempts: Attempt[];
 	/** Whether a session log can be opened for it. */
 	hasLog: boolean;
+}
+
+/**
+ * What Run now answers (RUN-4): the turn as HQ recorded it and the profile as it stands after the request, so the
+ * header's presence, Health and the Runs tab show the same moment. `accepted` means HQ recorded the request and the
+ * office has not confirmed a start yet; only `running` (or later) is a started turn.
+ */
+export interface RunNowResult {
+	turn: Turn;
+	profile: MemberProfile;
 }
 
 export interface ActivityEntry {

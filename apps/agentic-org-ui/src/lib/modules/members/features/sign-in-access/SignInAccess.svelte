@@ -163,7 +163,10 @@
 </div>
 
 <Dialog bind:open={linkOpen} onOpenChange={(next) => !next && void onchanged()}>
-	<DialogContent onCloseAutoFocus={restore} class="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+	<DialogContent
+		onCloseAutoFocus={restore}
+		class="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto max-[639px]:max-w-[calc(100%-1rem)] max-[639px]:p-4"
+	>
 		<DialogHeader>
 			<DialogTitle
 				text={link?.kind === 'reset'
