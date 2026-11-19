@@ -1,7 +1,7 @@
 <!--
   @component
   A team's page `/teams/:teamId` (offices-and-teams-ux §7.2): back to Teams; the name and TEAM- reference, where it
-  sits, its lead, real people and agent counts and its purpose; Add a person (Hire an agent waits for the Hire flow), and the team's menu (Move, Rename,
+  sits, its lead, real people and agent counts and its purpose; Hire an agent (the Hire flow with this team preset) and Add a person, and the team's menu (Move, Rename,
   Change lead, Add team under, Archive, Delete). Above the tabs at most six members and All N members. Tabs are
   links (Work, Projects, Activity, Conversations, Processes); changing tab focuses the tab's heading.
   States: loading, unavailable (the route's placeholder), error with Retry, not found, archived.
@@ -17,6 +17,8 @@
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import TabsNav from '$lib/components/TabsNav.svelte';
+	import { Button } from '$lib/components/ui/button';
+	import { hireUrl } from '$lib/modules/employees';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { pageTitle } from '$lib/nav';
 	import { orgApi } from '$lib/org/api';
@@ -158,6 +160,11 @@
 				{/snippet}
 				{#snippet actions()}
 					{#if !archived}
+						<Button
+							href={resolve(hireUrl({ teamId: d.team.id }) as '/')}
+							variant="outline"
+							class="max-[639px]:h-11">Hire an agent</Button
+						>
 						<AddPersonToTeam
 							{connection}
 							{snapshot}

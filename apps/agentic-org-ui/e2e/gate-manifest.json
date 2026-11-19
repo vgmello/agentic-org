@@ -439,10 +439,11 @@
 			]
 		},
 		"org-chart": {
-			"specs": ["org-chart*.spec.ts", "agents-roster.spec.ts"],
+			"specs": ["org-chart*.spec.ts", "agents-roster.spec.ts", "hire.spec.ts"],
 			"sources": [
 				"src/routes/(shell)/teams/(views)/org-chart/**",
 				"src/routes/(shell)/teams/(views)/members/**",
+				"src/routes/(shell)/teams/{hire,hires}/**",
 				"src/lib/modules/employees/**",
 				"src/lib/org/people-edit*",
 				"src/lib/org/team-edit*",
@@ -610,6 +611,11 @@
 			"from": "src/lib/modules/teams/features/{team-actions/TeamDialogs,team-page/AddPersonToTeam}.svelte",
 			"to": "src/lib/components/{NewTeamSheet,MoveTeamDialog,RenameTeamDialog,DeleteTeamDialog,AddPersonSheet}.svelte",
 			"why": "The Teams index and a team's page reuse the org chart's team dialogs (new, move, rename, delete) through TeamDialogs, and a team's page opens the existing add-a-person flow as the top-bar New does, without owning them; the org-chart specs cover those dialogs and flows."
+		},
+		{
+			"from": "src/lib/modules/teams/features/{browse-teams/TeamsIndex,team-page/TeamPage}.svelte",
+			"to": "src/lib/modules/employees/index.ts",
+			"why": "The Teams index and a team's page link to the Hire flow and Hire requests through the employees module's public URL helpers (hireUrl, HIRE_REQUESTS_URL); the org-chart category owns and tests the employees module."
 		},
 		{
 			"from": "src/routes/(shell)/settings/offices/+page.svelte",

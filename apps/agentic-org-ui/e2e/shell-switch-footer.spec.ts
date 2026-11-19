@@ -18,7 +18,8 @@ async function openOffice(page: Page, createPath = '/create') {
 	await visit(page, createPath);
 	await page.getByLabel('Organization name').fill('Footer reference');
 	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/agents$/);
+	// Creating lands on /agents, which redirects to the Teams area's Members view (app-shell-ux §0).
+	await expect(page).toHaveURL(/\/teams\/members$/);
 	await visit(page, '/offices');
 }
 async function switchLink(page: Page, width: number) {

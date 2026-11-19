@@ -1,7 +1,7 @@
 <!--
   @component
   Top-bar New (app-shell-ux §0.2): an outline menu button that opens the creation flows that exist, in the
-  spec's order: Project, Work item, Request, Message, a separator, Hire an agent, Add a person. Project and
+  spec's order: Project, Work item, Request, Message, a separator, Hire an agent (the Hire page), Add a person. Project and
   Work item are omitted until a flow exists that does not need a project page (New project is not built;
   New task needs its project). Below 640 px it is a 44 px icon button named New. `openMenu()` is what the
   N / Shift+N shortcut calls. Closing or finishing a flow returns focus to this button.
@@ -14,7 +14,8 @@
 	import NewRequestDialog from '$lib/components/NewRequestDialog.svelte';
 	import AddPersonSheet from '$lib/components/AddPersonSheet.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
-	import { AddAgentSheet } from '$lib/modules/employees';
+	import { hireUrl } from '$lib/modules/employees';
+	import { focusDestinationHeading } from './focus-destination';
 	import { NewMessageDialog } from '$lib/modules/messaging';
 	import { chatMembers } from '$lib/modules/messaging/model';
 	import { sender as chatSender } from '$lib/modules/messaging/legacy-api';
@@ -32,7 +33,7 @@
 	let menuOpen = $state(false);
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let snapshot = $state.raw<OrgSnapshot | undefined>();
-	let flow = $state<'request' | 'message' | 'agent' | 'person' | undefined>();
+	let flow = $state<'request' | 'message' | 'person' | undefined>();
 	let loading = $state(false);
 
 	/** Opens the menu; the N / Shift+N shortcut calls this. */
@@ -112,7 +113,10 @@
 			>Message</DropdownMenu.Item
 		>
 		<DropdownMenu.Separator class="bg-white/10" />
-		<DropdownMenu.Item class={itemClass} onSelect={() => start('agent')}
+		<!-- Hire is a page of its own (our-org-in-the-app §7): opening it moves focus to its heading. -->
+		<DropdownMenu.Item
+			class={itemClass}
+			onSelect={() => goto(resolve(hireUrl() as '/')).then(focusDestinationHeading)}
 			>Hire an agent</DropdownMenu.Item
 		>
 		<DropdownMenu.Item class={itemClass} onSelect={() => start('person')}
@@ -135,16 +139,6 @@
 		bind:open={() => flow === 'message', (open) => (flow = open ? 'message' : undefined)}
 		members={chatMembers(snapshot)}
 		onsubmit={openDm}
-	/>
-	<AddAgentSheet
-		bind:open={() => flow === 'agent', (open) => (flow = open ? 'agent' : undefined)}
-		snapshot={withoutFormer(snapshot)}
-		fullSnapshot={snapshot}
-		{session}
-		officeId={connection.office.id}
-		officeName={connection.office.name}
-		organization={connection.organization.name}
-		ondone={added}
 	/>
 	<AddPersonSheet
 		bind:open={() => flow === 'person', (open) => (flow = open ? 'person' : undefined)}

@@ -3,10 +3,21 @@
 		"id": "h4",
 		"state": "drafting",
 		"name": "Marlowe",
-		"role": "QA engineer",
+		"role": "QA engineer (senior)",
 		"requestedBy": "you",
 		"homeTeam": "web",
-		"agoMin": 15
+		"agoMin": 15,
+		"reason": "Someone to test checkout end to end before each release."
+	},
+	{
+		"id": "h5",
+		"state": "drafting",
+		"name": "Ellis",
+		"role": "Platform engineer",
+		"requestedBy": "sam",
+		"homeTeam": "platform",
+		"agoMin": 40,
+		"reason": "Someone to keep the build machines patched."
 	},
 	{
 		"id": "h3",
@@ -16,8 +27,9 @@
 		"requestedBy": "sam",
 		"homeTeam": "platform",
 		"agoMin": 90,
-		"failedStep": "couldn't register with messaging",
-		"doneSteps": ["Created Rowan's record", "Set up the home folder"]
+		"reason": "Weekly numbers on deploys and build times.",
+		"failedStep": "messaging",
+		"doneSteps": ["record", "home"]
 	},
 	{
 		"id": "h2",
@@ -27,6 +39,8 @@
 		"requestedBy": "you",
 		"homeTeam": "eng",
 		"agoMin": 4320,
+		"reason": "Research for the Beacon launch.",
+		"doneSteps": ["record", "home", "messaging"],
 		"employeeId": "quinn"
 	},
 	{
@@ -37,6 +51,7 @@
 		"requestedBy": "juno",
 		"homeTeam": "design",
 		"agoMin": 8000,
+		"reason": "Answer design questions from other teams.",
 		"closedReason": "Withdrawn by Juno Park"
 	}
 ]

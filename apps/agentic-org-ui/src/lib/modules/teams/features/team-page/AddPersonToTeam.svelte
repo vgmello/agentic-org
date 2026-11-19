@@ -1,7 +1,7 @@
 <!--
   @component
   A team page's one primary action (§7.2, Hire or add): Add a person, opening the organization's existing flow
-  with this team chosen. Hire an agent joins it once the Hire flow (our-org-in-the-app §7) is built.
+  with this team chosen. Hire an agent beside it opens the Hire flow (our-org-in-the-app §7) with this team preset.
   Success is said only after HQ accepts it.
 -->
 <script lang="ts">

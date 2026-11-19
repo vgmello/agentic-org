@@ -2,7 +2,7 @@
   @component
   The Teams index (offices-and-teams-ux §7.2, TEAM-1): the recursive team tree as indented divided rows, each
   with its TEAM- reference, optional lead, People and Agents counts (home team only) and projects marked Owner
-  or Contributor. New team, and each row's menu: Move, Rename, Change lead, Add team under, Archive, Delete.
+  or Contributor. Hire requests, Hire an agent and New team, and each row's menu: Move, Rename, Change lead, Add team under, Archive, Delete.
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
@@ -13,6 +13,7 @@
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { HIRE_REQUESTS_URL, hireUrl } from '$lib/modules/employees';
 	import { orgApi } from '$lib/org/api';
 	import { sessionFor } from '$lib/org/session';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
@@ -76,6 +77,12 @@
 	description="Who works in which team. Each team can sit under another; a team's lead manages everything under it."
 >
 	{#snippet actions()}
+		<Button href={resolve(HIRE_REQUESTS_URL as '/')} variant="outline" class="max-[639px]:h-11"
+			>Hire requests</Button
+		>
+		<Button href={resolve(hireUrl() as '/')} variant="outline" class="max-[639px]:h-11"
+			>Hire an agent</Button
+		>
 		<Button class="max-[639px]:h-11" onclick={() => dialogs?.openNew()}>
 			<MiniIcon name="plus" class="-ml-0.5 size-5" /> New team
 		</Button>
