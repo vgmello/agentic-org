@@ -91,8 +91,7 @@
 		<div class="min-w-0 flex-1 basis-64">
 			<h3 id={headingId} class="text-base/7 font-semibold text-fg">Organization cost</h3>
 			<p class="mt-1 max-w-3xl text-sm/6 text-fg-muted">
-				What agent work cost, by project, consumer and work type. Amounts are estimates at API list
-				prices in US dollars, not invoices.
+				What agent work cost in a period, by project, consumer and work type.
 			</p>
 		</div>
 		{#if !scopedCost || scopedCost.allowed}
@@ -100,7 +99,7 @@
 		{/if}
 	</div>
 
-	<div class="mt-4" aria-busy={resource.reloading}>
+	<div class="mt-4">
 		{#if resource.state === 'loading'}
 			<div
 				role="status"
@@ -133,101 +132,119 @@
 			/>
 		{:else if scopedCost && !scopedCost.allowed}
 			<p class="max-w-3xl text-sm/6 text-fg-secondary {gutters}" data-testid="cost-not-yours">
-				Only the organization's owner sees its cost. Project managers see their projects' cost on
-				each project's Insights; nobody else sees amounts.
+				Only the organization's owner sees the organization's cost.
 			</p>
 		{:else if cost}
 			{@const totals = cost.totals}
 			{@const incomplete = incompleteText(totals, cost.coverage)}
-			<p class="text-xs/5 text-fg-muted {gutters}" data-testid="period-range">
-				{periodLabel(cost.period.kind)} · {periodRange(cost.period)} · {cost.period.timeZone}
-			</p>
-			{#if totals.records === 0}
-				<EmptyState
-					level={4}
-					title="No spend in this period"
-					description="No usage records were counted for these dates. Usage that hasn't reported yet isn't here, so this is not proof that nothing ran."
-					class="py-12"
-				/>
-			{:else}
-				<dl
-					class="mt-3 grid grid-cols-1 gap-px border-y border-line-subtle bg-surface-raised min-[640px]:grid-cols-3"
-					data-testid="cost-totals"
+			<!-- A new period is loading: the figures shown are the previous period's, so they are dimmed and named
+				 as loading, never presented under the new label. -->
+			{#if resource.reloading}
+				<p
+					role="status"
+					class="pb-2 text-xs/5 font-semibold text-fg-secondary {gutters}"
+					data-testid="period-loading"
 				>
-					<StatTile
-						label="Cost"
-						value={costValue(totals)}
-						detail={totals.knownCostMicroUsd === null
-							? unknownCostReason(totals)
-							: changeText(totals.knownCostMicroUsd, cost.previous)}
+					Loading {periodLabel(period.kind)}…
+				</p>
+			{/if}
+			<div
+				data-testid="cost-figures"
+				aria-busy={resource.reloading}
+				class="transition-opacity duration-150 motion-reduce:transition-none {resource.reloading
+					? 'opacity-50'
+					: ''}"
+			>
+				<p class="text-xs/5 text-fg-muted {gutters}" data-testid="period-range">
+					{periodLabel(cost.period.kind)} · {periodRange(cost.period)} · {cost.period.timeZone}
+				</p>
+				{#if totals.records === 0}
+					<EmptyState
+						level={4}
+						title="No spend in this period"
+						description="No usage records were counted for these dates. Usage that hasn't reported yet isn't here, so this is not proof that nothing ran."
+						class="py-12"
 					/>
-					<StatTile
-						label="Tokens"
-						value={formatTokens(totals.knownTokens)}
-						detail={cacheShareText(totals)}
-					/>
-					<StatTile label="Usage records" value={formatCount(totals.records)} />
-				</dl>
-				<div class="mt-3 flex flex-col gap-1 text-xs/5 {gutters}">
-					{#if totals.includesApiEquivalent}<p class="text-fg-secondary">
-							{API_EQUIVALENT_NOTE}
-						</p>{/if}
-					{#if incomplete}<p class="text-fg-secondary" data-testid="totals-incomplete">
-							{incomplete}
-						</p>{/if}
-					{#each cost.coverage.gaps as gap (gap.source)}
-						<p class="text-fg-muted">{gap.source}: {gap.reason}</p>
-					{/each}
-					<p class="text-fg-muted">
-						Counted up to the ledger checkpoint of {formatDayTime(
-							new Date(cost.coverage.checkpointAt),
-							cost.period.timeZone
-						)}.
-						<button
-							type="button"
-							class="inline-flex min-h-6 items-center rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-							onclick={(e) =>
-								onopenrecords({ key: { all: true }, label: 'all usage' }, e.currentTarget)}
-							>Open all {formatCount(totals.records)} records</button
-						>
-					</p>
-				</div>
-
-				<div class="mt-6 border-b border-line-subtle {gutters}">
-					<div
-						role="tablist"
-						aria-label="Break the cost down by"
-						class="-mb-px flex flex-wrap gap-x-6"
+				{:else}
+					<dl
+						class="mt-3 grid grid-cols-1 gap-px border-y border-line-subtle bg-surface-raised min-[640px]:grid-cols-3"
+						data-testid="cost-totals"
 					>
-						{#each DIMENSIONS as d, i (d.id)}
+						<StatTile
+							label="Cost"
+							value={costValue(totals)}
+							detail={totals.knownCostMicroUsd === null
+								? unknownCostReason(totals)
+								: changeText(totals.knownCostMicroUsd, cost.previous)}
+						/>
+						<StatTile
+							label="Tokens"
+							value={formatTokens(totals.knownTokens)}
+							detail={cacheShareText(totals)}
+						/>
+						<StatTile label="Usage records" value={formatCount(totals.records)} />
+					</dl>
+					<div class="mt-3 flex flex-col gap-1 text-xs/5 {gutters}">
+						{#if totals.includesApiEquivalent}<p class="text-fg-secondary">
+								{API_EQUIVALENT_NOTE}
+							</p>{/if}
+						{#if incomplete}<p class="text-fg-secondary" data-testid="totals-incomplete">
+								{incomplete}
+							</p>{/if}
+						{#each cost.coverage.gaps as gap (gap.source)}
+							<p class="text-fg-muted">{gap.source}: {gap.reason}</p>
+						{/each}
+						<p class="text-fg-muted">
+							Counted up to the ledger checkpoint of {formatDayTime(
+								new Date(cost.coverage.checkpointAt),
+								cost.period.timeZone
+							)}.
 							<button
 								type="button"
-								role="tab"
-								id="{headingId}-tab-{d.id}"
-								aria-selected={dimension === d.id}
-								aria-controls="{headingId}-panel"
-								tabindex={dimension === d.id ? 0 : -1}
-								onclick={() => (dimension = d.id)}
-								onkeydown={(e) => tabKey(e, i)}
-								class="inline-flex min-h-11 items-center border-b-2 px-1 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus min-[640px]:min-h-10 {dimension ===
-								d.id
-									? 'border-brand text-fg'
-									: 'border-transparent text-fg-muted hover:border-line-strong hover:text-fg'}"
-								>{d.label}</button
+								class="inline-flex min-h-6 items-center rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
+								onclick={(e) =>
+									onopenrecords({ key: { all: true }, label: 'all usage' }, e.currentTarget)}
+								>Open all {formatCount(totals.records)} records</button
 							>
-						{/each}
+						</p>
 					</div>
-				</div>
-				<div id="{headingId}-panel" role="tabpanel" aria-labelledby="{headingId}-tab-{dimension}">
-					<CostBreakdown
-						{rows}
-						total={totals}
-						nameHeader={current.header}
-						caption="Cost by {current.label.toLowerCase()}, {periodLabel(cost.period.kind)}"
-						onopen={(row, opener) => onopenrecords({ key: row.key, label: row.label }, opener)}
-					/>
-				</div>
-			{/if}
+
+					<div class="mt-6 border-b border-line-subtle {gutters}">
+						<div
+							role="tablist"
+							aria-label="Break the cost down by"
+							class="-mb-px flex flex-wrap gap-x-6"
+						>
+							{#each DIMENSIONS as d, i (d.id)}
+								<button
+									type="button"
+									role="tab"
+									id="{headingId}-tab-{d.id}"
+									aria-selected={dimension === d.id}
+									aria-controls="{headingId}-panel"
+									tabindex={dimension === d.id ? 0 : -1}
+									onclick={() => (dimension = d.id)}
+									onkeydown={(e) => tabKey(e, i)}
+									class="inline-flex min-h-11 items-center border-b-2 px-1 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus min-[640px]:min-h-10 {dimension ===
+									d.id
+										? 'border-brand text-fg'
+										: 'border-transparent text-fg-muted hover:border-line-strong hover:text-fg'}"
+									>{d.label}</button
+								>
+							{/each}
+						</div>
+					</div>
+					<div id="{headingId}-panel" role="tabpanel" aria-labelledby="{headingId}-tab-{dimension}">
+						<CostBreakdown
+							{rows}
+							total={totals}
+							nameHeader={current.header}
+							caption="Cost by {current.label.toLowerCase()}, {periodLabel(cost.period.kind)}"
+							onopen={(row, opener) => onopenrecords({ key: row.key, label: row.label }, opener)}
+						/>
+					</div>
+				{/if}
+			</div>
 		{/if}
 	</div>
 </section>

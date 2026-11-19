@@ -33,10 +33,12 @@ export interface UsageTotals {
 	cacheReadTokens: number | null;
 	/** Records whose token counts are partial or unavailable. */
 	tokenIncompleteRecords: number;
-	/** Records whose cost is partial or unavailable (unpriced included). */
+	/** Records whose cost is partial or unavailable (unpriced and unknown included). */
 	costIncompleteRecords: number;
-	/** Records with no known cost at all: they add no known dollars. */
+	/** Records valued `unpriced`: no rate for their model, so they add no known dollars. Adding a price can fix them. */
 	unpricedRecords: number;
+	/** Records valued `unknown`: the runtime reported no cost. A price cannot fix them. */
+	unknownCostRecords: number;
 	/** Some records are valued at API-equivalent prices for a subscription plan. */
 	includesApiEquivalent: boolean;
 }
@@ -219,7 +221,7 @@ export type BudgetUnit = 'usd' | 'tokens';
 /** One agent calendar budget in its current period (document 17). */
 export interface BudgetPeriodState {
 	unit: BudgetUnit;
-	/** Integer micro-USD or tokens, as `unit` says. Positive. */
+	/** The effective limit in integer micro-USD or tokens, as `unit` says. Positive. */
 	limit: number;
 	/** Known spend in the period; a lower bound when `complete` is false. */
 	spent: number;
@@ -232,8 +234,10 @@ export interface BudgetPeriodState {
 	period: { key: string; startsAt: string; endsAt: string };
 	/** Reached: stop_pending until stopping is verified, then held. */
 	hold?: 'stop_pending' | 'held';
-	/** The one 20% extension was used in this period. */
+	/** The one 20% extension was used in this period: `limit` is then the effective limit, base + floor(base / 5). */
 	extended?: boolean;
+	/** The policy's own limit, set when it differs from `limit` (after the extension). */
+	baseLimit?: number;
 	/** The 80% notice went out in this period. */
 	warned?: boolean;
 }

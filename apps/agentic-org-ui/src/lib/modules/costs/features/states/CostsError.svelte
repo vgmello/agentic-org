@@ -34,7 +34,7 @@
 			</p>{/if}
 		<Button
 			variant="outline"
-			class="mt-4 min-w-24 max-[639px]:min-h-11"
+			class="mt-4 min-w-24 max-w-full max-[639px]:min-h-11"
 			disabled={retrying}
 			aria-busy={retrying}
 			onclick={onretry}>{retrying ? 'Trying again…' : 'Try again'}</Button

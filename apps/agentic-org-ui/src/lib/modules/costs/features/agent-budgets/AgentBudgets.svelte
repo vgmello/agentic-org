@@ -71,11 +71,11 @@
 				>
 					Agent budgets can't run yet: {zoneSourceText(data.zone.source)} isn't known, and budget days
 					and months are never counted in UTC by default.
-					<a
-						href={resolve('/preferences')}
-						class="font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-						>Set your time zone</a
-					>
+					{#if data.zone.source === 'owner_account'}<a
+							href={resolve('/preferences')}
+							class="font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+							>Set your time zone</a
+						>{/if}
 				</p>
 			{:else if data.agents.length === 0}
 				<p class="px-4 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
@@ -117,7 +117,7 @@
 						<p class="text-sm/6 text-fg-secondary">
 							No budget set: {#each withoutBudget as agent, i (agent.memberId)}<a
 									href={resolve(memberHref(agent.memberId) as '/')}
-									class="inline-flex min-h-6 items-center rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
+									class="inline-flex min-h-6 items-center rounded-sm font-semibold text-fg hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 									>{agent.name}</a
 								>{i < withoutBudget.length - 1 ? ', ' : ''}{/each}
 						</p>

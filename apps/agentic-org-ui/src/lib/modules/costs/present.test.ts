@@ -3,6 +3,8 @@ import {
 	attributionText,
 	basisText,
 	budgetAmountText,
+	budgetBoundsText,
+	extensionText,
 	budgetPercent,
 	budgetState,
 	changeText,
@@ -24,6 +26,7 @@ const totals = (over: Partial<UsageTotals> = {}): UsageTotals => ({
 	tokenIncompleteRecords: 0,
 	costIncompleteRecords: 0,
 	unpricedRecords: 0,
+	unknownCostRecords: 0,
 	includesApiEquivalent: false,
 	...over
 });
@@ -76,6 +79,9 @@ describe('periods', () => {
 		expect(checkCustomRange('2026-02-30', '', '2026-11-19').from).toBe(
 			'Enter a date, such as 2026-11-01.'
 		);
+		expect(checkCustomRange('2026-11-01', '2026-11-20', '2026-11-19')).toEqual({
+			to: "The last day can't be after today."
+		});
 		expect(checkCustomRange('2026-11-01', '', '2026-11-19')).toEqual({});
 		expect(checkCustomRange('2026-11-01', '2026-11-01', '2026-11-19')).toEqual({});
 	});
@@ -98,6 +104,18 @@ describe('totals say what is known (decision 2)', () => {
 		expect(incompleteText(totals({ unpricedRecords: 1, costIncompleteRecords: 1 }))).toBe(
 			'Usage incomplete: excludes 1 unpriced record'
 		);
+	});
+	it('keeps unknown cost apart from unpriced (decision 2)', () => {
+		expect(
+			incompleteText(
+				totals({ unpricedRecords: 2, unknownCostRecords: 9, costIncompleteRecords: 13 })
+			)
+		).toBe(
+			'Usage incomplete: excludes 2 unpriced records · 9 records with unknown cost · 2 records with a partial cost'
+		);
+		expect(
+			unknownCostReason(totals({ records: 3, knownCostMicroUsd: null, unknownCostRecords: 3 }))
+		).toBe('Cost unknown: the runtime reported no cost for 3 records');
 	});
 	it('explains an unknown sum instead of showing zero', () => {
 		expect(unknownCostReason(totals({ knownCostMicroUsd: null, unpricedRecords: 10 }))).toBe(
@@ -168,6 +186,14 @@ describe('budgets (document 17)', () => {
 		expect(budgetState(budget({ spent: 11_000_000, hold: 'held' }))?.word).toBe(
 			'Paused · Budget reached'
 		);
+	});
+	it('shows the period bounds and the extended limit (§4, document 17)', () => {
+		expect(budgetBoundsText(budget({}), 'America/New_York')).toBe(
+			'19 Nov 2026, 00:00 up to 20 Nov 2026, 00:00'
+		);
+		expect(
+			extensionText(budget({ limit: 24_000_000, baseLimit: 20_000_000, extended: true }))
+		).toBe('limit $20.00 + $4.00 = $24.00');
 	});
 	it('floors the percentage and qualifies an incomplete spend', () => {
 		expect(budgetPercent({ spent: 7_999_999, limit: 10_000_000 })).toBe(79);

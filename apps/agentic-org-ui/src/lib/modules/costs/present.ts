@@ -69,7 +69,10 @@ export function incompleteText(totals: UsageTotals, coverage?: Coverage): string
 	const parts: string[] = [];
 	if (totals.unpricedRecords > 0)
 		parts.push(`excludes ${plural(totals.unpricedRecords, 'unpriced record')}`);
-	const partialCost = totals.costIncompleteRecords - totals.unpricedRecords;
+	if (totals.unknownCostRecords > 0)
+		parts.push(`${plural(totals.unknownCostRecords, 'record')} with unknown cost`);
+	const partialCost =
+		totals.costIncompleteRecords - totals.unpricedRecords - totals.unknownCostRecords;
 	if (partialCost > 0) parts.push(`${plural(partialCost, 'record')} with a partial cost`);
 	if (totals.tokenIncompleteRecords > 0)
 		parts.push(`${plural(totals.tokenIncompleteRecords, 'record')} without full token counts`);
@@ -83,7 +86,9 @@ export function unknownCostReason(totals: UsageTotals): string {
 	if (totals.records === 0) return 'No usage records';
 	if (totals.unpricedRecords === totals.records)
 		return `No known dollars: ${plural(totals.records, 'record')}, none priced`;
-	return 'Cost unknown';
+	if (totals.unknownCostRecords === totals.records)
+		return `Cost unknown: the runtime reported no cost for ${plural(totals.records, 'record')}`;
+	return `No known dollars: ${totals.unpricedRecords} unpriced, ${totals.unknownCostRecords} with unknown cost`;
 }
 
 /** "74% cache reads" when the share is known. */
@@ -200,9 +205,15 @@ export function budgetPeriodLabel(kind: 'daily' | 'monthly', zone: string): stri
 	return `${kind === 'daily' ? 'Today' : 'This month'} (${zone})`;
 }
 
-/** "From 19 Nov 2026, 00:00 to 20 Nov 2026, 00:00" in the budget zone: inclusive start, exclusive end. */
+/** "19 Nov 2026, 00:00 up to 20 Nov 2026, 00:00" in the budget zone (named in the label): inclusive start, exclusive end. */
 export function budgetBoundsText(b: BudgetPeriodState, zone: string): string {
-	return `From ${formatDayTime(new Date(b.period.startsAt), zone)} to ${formatDayTime(new Date(b.period.endsAt), zone)} (${zone})`;
+	return `${formatDayTime(new Date(b.period.startsAt), zone)} up to ${formatDayTime(new Date(b.period.endsAt), zone)}`;
+}
+
+/** "limit $20.00 + $4.00 = $24.00": the base and the one extension (document 17: L + floor(L/5)). */
+export function extensionText(b: BudgetPeriodState): string {
+	const base = b.baseLimit ?? b.limit;
+	return `limit ${formatBudgetAmount(b.unit, base)} + ${formatBudgetAmount(b.unit, b.limit - base)} = ${formatBudgetAmount(b.unit, b.limit)}`;
 }
 
 export const NO_USAGE_RUNTIME =
@@ -266,6 +277,7 @@ export function checkCustomRange(from: string, to: string, today: string): Custo
 	else if (from > today) errors.from = "The first day can't be after today.";
 	if (to !== '') {
 		if (!isDayKey(to)) errors.to = 'Enter a date, such as 2026-11-19.';
+		else if (to > today) errors.to = "The last day can't be after today.";
 		else if (!errors.from && to < from) errors.to = "The last day can't be before the first day.";
 	}
 	return errors;
