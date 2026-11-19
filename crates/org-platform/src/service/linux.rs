@@ -33,7 +33,9 @@
 //!   meanwhile**: a temporary file, flushed, then a hard link, all relative to the unit
 //!   directory held open, which must be this user's and not writable by other users. The
 //!   one file register replaces is an exact earlier rendering of a unit under the same
-//!   name, which holds the instance's ID: its unit is disabled and stopped first.
+//!   name, which holds the instance's ID: its unit is disabled and stopped first, and
+//!   when that fails the earlier rendering is put back, so the file on disk is still what
+//!   systemd runs from.
 //! - **Nothing is written for a manager that would not read it**: the manager's
 //!   `UnitPath` must name the placement's directory (`available` and register ask).
 //! - **The location variables the unit does not set are unset** (`UnsetEnvironment=`, for
@@ -575,7 +577,8 @@ impl ServiceManager for Systemd {
         let file = self.file(&name);
         let bytes = render(&name, unit);
         let shown = self.show_ours(&name, true)?;
-        let replace = match self.read_definition(&name)? {
+        // The earlier rendering this call replaces, if any.
+        let earlier = match self.read_definition(&name)? {
             // An earlier rendering of a unit under this name, which holds the instance's
             // ID: what this adapter wrote for the same instance with another program,
             // arguments or environment (setup run again with what the service lacked, X5
@@ -588,7 +591,7 @@ impl ServiceManager for Systemd {
                         file.display()
                     )));
                 }
-                true
+                Some(existing)
             }
             Some(_) if shown.as_ref().is_some_and(Shown::settled) => {
                 return Ok(Registration::Unchanged)
@@ -599,7 +602,7 @@ impl ServiceManager for Systemd {
                     "systemd still has {name} from a definition that is gone"
                 )))
             }
-            None => false,
+            None => None,
         };
         // Nothing is written for a manager that would never read it.
         self.reads_placement()?;
@@ -609,9 +612,23 @@ impl ServiceManager for Systemd {
         // Published first: a write that fails leaves the earlier rendering as it was, and
         // running. Then what systemd runs from the earlier one stops and loses its
         // enablement, and the new one is loaded as a first registration's would be.
-        directory.publish(&name, &bytes, replace)?;
-        if replace && shown.is_some() {
-            self.expect_ok(&["disable".as_ref(), "--now".as_ref(), name.as_ref()])?;
+        directory.publish(&name, &bytes, earlier.is_some())?;
+        if let (Some(earlier), Some(_)) = (&earlier, &shown) {
+            if let Err(refused) =
+                self.expect_ok(&["disable".as_ref(), "--now".as_ref(), name.as_ref()])
+            {
+                // The earlier rendering may still be running: it is put back, so the file
+                // on disk is again what systemd runs from, and the next register replaces
+                // it again from the start. Left as the new rendering, that register would
+                // find it current and only enable it, which never restarts the earlier
+                // program (X5 final review).
+                return Err(match directory.publish(&name, earlier, true) {
+                    Ok(()) => refused,
+                    Err(restore) => ServiceError::System(format!(
+                        "{refused}; the earlier definition could not be put back: {restore}"
+                    )),
+                });
+            }
         }
         match self.load(&name, &file) {
             Ok(()) => Ok(Registration::Loaded),
