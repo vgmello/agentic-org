@@ -354,6 +354,12 @@ impl Supervisor {
             .server_check
             .may_spawn()
             .map_err(CreateStartError::NotStarted)?;
+        // Before its key is read: a create needs the writer custody provisioning reserved
+        // for this office and organization.
+        self.spawner()
+            .map_err(|e| CreateStartError::NotStarted(e.to_string()))?
+            .custody(&first.office.office_id, Some(&first.org_id))
+            .map_err(|e| CreateStartError::NotStarted(e.to_string()))?;
         let office_secrets_key = self
             .config
             .keys
@@ -725,13 +731,32 @@ pub(crate) mod tests {
     use crate::test_programs::{image_identity, recorded_starts, recorded_stdin, recording_worker};
     use org_platform_host::admission::ImageIdentity;
 
-    const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+    const OFFICE: &str = "01900000-0000-7000-8000-0000000000aa";
+    const B: &str = "01900000-0000-7000-8000-0000000000bb";
+    const C: &str = "01900000-0000-7000-8000-0000000000cc";
+    /// An office this host holds no writer custody for.
+    const NO_CUSTODY: &str = "01900000-0000-7000-8000-0000000000dd";
 
     fn supervisor(dir: &Path, program: PathBuf, keys: &Arc<MemoryKeys>) -> Supervisor {
         checked_supervisor(dir, program, keys, ServerCheck::Skip)
     }
 
+    /// Real writer custody for `OFFICE`, `B` and `C` (never `NO_CUSTODY`), under `dir`.
+    fn custody(dir: &Path) -> crate::writer::TestCustody {
+        crate::writer::TestCustody::reserve(dir, INSTANCE, &[OFFICE, B, C])
+    }
+
     fn checked_supervisor(
+        dir: &Path,
+        program: PathBuf,
+        keys: &Arc<MemoryKeys>,
+        check: ServerCheck,
+    ) -> Supervisor {
+        uncustodied_supervisor(dir, program, keys, check).with_writers(custody(dir).writers)
+    }
+
+    /// A supervisor of a host with no writer custody at all (no protected registry).
+    fn uncustodied_supervisor(
         dir: &Path,
         program: PathBuf,
         keys: &Arc<MemoryKeys>,
@@ -831,14 +856,12 @@ pub(crate) mod tests {
         supervisor.start_office(OFFICE).unwrap();
         wait_for_spawn(OFFICE);
         // An item that isn't a key: the same.
-        const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
         keys.create(B, &OfficeSecretsKey::from_bytes([1; 32]))
             .unwrap();
         keys.fail(Op::Load, Fault::Corrupt);
         supervisor.start_office(B).unwrap();
         wait_for_spawn(B);
         // A store that fails otherwise: `storage_error`, retried with backoff.
-        const C: &str = "01CCCCCCCCCCCCCCCCCCCCCCCC";
         keys.fail(Op::Load, Fault::Io);
         supervisor.start_office(C).unwrap();
         wait_for_state(&supervisor, C, |s| {
@@ -862,7 +885,6 @@ pub(crate) mod tests {
     /// fails and keeps the key.
     #[test]
     fn a_server_that_isnt_the_signed_one_gets_nothing() {
-        const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
         let dir = short_tempdir();
         let got = dir.path().join("got");
         let program = script(dir.path(), "server", &format!("cat >> '{}'", got.display()));
@@ -1346,28 +1368,65 @@ pub(crate) mod tests {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
 
-    fn hq_create_line() -> org_office_launch::CreateLine {
+    /// The selected HQ create of `office`, for the organization `custody` holds it for.
+    fn hq_create_line(
+        custody: &crate::writer::TestCustody,
+        office: &str,
+    ) -> org_office_launch::CreateLine {
+        use org_proto::selected_bootstrap::{CreatorV1, PlanV1, PreparedV1};
+        let prepared = PreparedV1 {
+            plan: PlanV1 {
+                version: 1,
+                name: "Acme".into(),
+                slug: "acme".into(),
+                repository_remote_url: "https://example.test/org.git".into(),
+                state_branch: "org/state".into(),
+            },
+            organization_id: custody.organization.clone(),
+            office_id: office.into(),
+            repository_id: crate::ids::uuid_v7().unwrap(),
+            home_team_id: crate::ids::uuid_v7().unwrap(),
+            hr_employee_id: crate::ids::uuid_v7().unwrap(),
+            creator: CreatorV1::from_login(custody.member.clone(), "Ana"),
+        };
         org_office_launch::CreateLine {
             office: org_office_launch::OfficeLine {
-                id_profile: None,
-                selected_writer_required: false,
+                id_profile: Some(org_office_launch::IdProfile::SelectedV1),
                 instance_id: INSTANCE.into(),
-                office_id: OFFICE.into(),
+                office_id: office.into(),
                 rendezvous: String::new(),
             },
-            org_id: "01ORG".into(),
+            org_id: custody.organization.clone(),
             org_name: "Acme".into(),
             office_name: "HQ".into(),
             role: org_proto::OfficeRole::Hq,
-            owner_member_id: "01M72N8MG00000000000000M01".into(),
-            hq_creation: None,
+            owner_member_id: custody.member.clone(),
+            hq_creation: Some(org_office_launch::HqCreationV1 {
+                version: org_office_launch::HqCreationV1::VERSION,
+                operation_id: crate::ids::generate().unwrap(),
+                escrow_profile: 1,
+                bootstrap: Some(Box::new(prepared)),
+            }),
         }
+    }
+
+    /// A supervisor over real custody for `OFFICE`, `B` and `C`, with that custody.
+    fn custodied_supervisor(
+        dir: &Path,
+        program: PathBuf,
+        keys: &Arc<MemoryKeys>,
+    ) -> (Supervisor, crate::writer::TestCustody) {
+        let custody = custody(dir);
+        let supervisor = uncustodied_supervisor(dir, program, keys, ServerCheck::ByPath)
+            .with_writers(Arc::clone(&custody.writers));
+        (supervisor, custody)
     }
 
     /// Not a test: a launch HQ `--create` server, as the real worker speaks it (first line on
     /// stdin, the rendezvous connect, `ready_for_secrets`, the handoff header, the transfer
-    /// socket after its marker, the receipt), that reports `created` at once and keeps running.
-    /// Without its variable it does nothing.
+    /// socket after its marker, the receipt, then the writer control on the transfer socket
+    /// and its receipt), that reports `created` at once and keeps running. Without its
+    /// variable it does nothing.
     #[test]
     #[ignore = "run only as the launch HQ create server of a supervisor test"]
     fn hq_create_server() {
@@ -1422,7 +1481,7 @@ pub(crate) mod tests {
             std::process::exit(5);
         };
         crate::secrets::zero(&mut header);
-        let (_, _transfer) = receive(fds.len(), true);
+        let (_, mut transfer) = receive(fds.len(), true);
         drop(receiver);
         stream.set_nonblocking(false).unwrap();
         org_office_launch::write_rendezvous_event(
@@ -1432,19 +1491,56 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
+        // Every create receives its writer control before it creates anything.
+        let Some(transfer) = transfer.pop() else {
+            std::process::exit(6);
+        };
+        let mut control = org_socket::rights::DatagramReceiver::new(
+            std::os::unix::net::UnixDatagram::from(transfer),
+        );
+        let mut payload = [0; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let received = loop {
+            match control.receive_up_to(&mut payload, 1, &fence) {
+                Ok(received) => break received,
+                Err(org_socket::rights::ReceiveError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                Err(_) => std::process::exit(7),
+            }
+        };
+        let Ok(org_office_launch::TransferRecord::WriterControl {
+            office_id,
+            channel_id,
+        }) = org_office_launch::decode_transfer_record(&payload[..received.bytes])
+        else {
+            std::process::exit(8);
+        };
+        if office_id != create.office.office_id || received.descriptors.len() != 1 {
+            std::process::exit(9);
+        }
+        // Held for the server's life: the host's custody channel stays open.
+        let _writer = received.descriptors;
+        org_office_launch::write_rendezvous_event(
+            &mut stream,
+            &org_office_launch::RendezvousEvent::FdsReceived { of: channel_id },
+        )
+        .unwrap();
         if std::env::var_os(CREATE_HANG).is_some() {
             // Never reports, and ignores its closed stdin: only a SIGKILL ends it.
             std::thread::sleep(Duration::from_secs(600));
             std::process::exit(0);
         }
-        let office = OfficeFile::new(
+        let Ok(office) = OfficeFile::selected(
             &create.office.office_id,
             &create.office_name,
             create.role,
             &create.org_id,
             &create.org_name,
             "2026-11-08T00:00:00.000Z",
-        );
+        ) else {
+            std::process::exit(10);
+        };
         org_office_launch::write_rendezvous_event(
             &mut stream,
             &org_office_launch::RendezvousEvent::Server(ServerEvent::Created { office }),
@@ -1467,8 +1563,8 @@ pub(crate) mod tests {
         let pid_file = dir.path().join("pid");
         let program = dir.path().join("server");
         write_create_server(&program, &pid_file, false);
-        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
-        let first = hq_create_line();
+        let (supervisor, custody) = custodied_supervisor(dir.path(), program, &keys);
+        let first = hq_create_line(&custody, OFFICE);
         let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
         let pending = supervisor.begin_hq_create(first, recovery).unwrap();
         let CreateOutcome::Created(adoptable) = pending.wait(Duration::from_secs(10)) else {
@@ -1502,10 +1598,10 @@ pub(crate) mod tests {
         let pid_file = dir.path().join("pid");
         let program = dir.path().join("server");
         write_create_server(&program, &pid_file, true);
-        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
+        let (supervisor, custody) = custodied_supervisor(dir.path(), program, &keys);
         let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
         let pending = supervisor
-            .begin_hq_create(hq_create_line(), recovery)
+            .begin_hq_create(hq_create_line(&custody, OFFICE), recovery)
             .unwrap();
         let pid: libc::pid_t = fs::read_to_string(&pid_file).unwrap().parse().unwrap();
         thread::scope(|scope| {
@@ -1523,7 +1619,7 @@ pub(crate) mod tests {
         });
         assert!(supervisor
             .begin_hq_create(
-                hq_create_line(),
+                hq_create_line(&custody, OFFICE),
                 org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap()
             )
             .is_err());
@@ -1553,6 +1649,109 @@ pub(crate) mod tests {
         assert!(!seen.exists(), "a server started");
         assert!(keys.has(OFFICE));
         assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Delete));
+    }
+
+    /// M8: every office needs writer custody. An office without a valid record is never
+    /// spawned and its key is never read; it is `unavailable` (`storage_error`) at once, not
+    /// retried with backoff, and `office.restart` tries once more without a loop. A host with
+    /// no writer custody at all starts no office either.
+    #[test]
+    fn an_office_without_writer_custody_never_starts_and_is_not_restarted_in_a_loop() {
+        let unavailable = |s: &OfficeState| {
+            s.status == OfficeStatus::Unavailable
+                && s.reason == Some(OfficeStatusReason::StorageError)
+                && s.next_restart_at.is_none()
+        };
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        for id in [OFFICE, NO_CUSTODY] {
+            keys.create(id, &OfficeSecretsKey::from_bytes([8; 32]))
+                .unwrap();
+        }
+        let supervisor = supervisor(dir.path(), recording_worker(), &keys);
+        supervisor.start_office(NO_CUSTODY).unwrap();
+        wait_for_state(&supervisor, NO_CUSTODY, unavailable);
+        // Longer than the first backoff: still unavailable, still never spawned.
+        thread::sleep(Duration::from_millis(500));
+        assert!(unavailable(&supervisor.state(NO_CUSTODY).unwrap()));
+        assert_eq!(
+            recorded_starts(dir.path()),
+            0,
+            "a server started without custody"
+        );
+        assert_eq!(supervisor.restart(NO_CUSTODY), RestartOutcome::Restarting);
+        thread::sleep(Duration::from_millis(300));
+        wait_for_state(&supervisor, NO_CUSTODY, unavailable);
+        assert_eq!(recorded_starts(dir.path()), 0);
+        assert!(!keys
+            .calls()
+            .iter()
+            .any(|(op, id)| *op == Op::Load && id == NO_CUSTODY));
+        // The control: an office with custody is started.
+        supervisor.start_office(OFFICE).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while recorded_starts(dir.path()) == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "the office with custody never ran"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        supervisor.shutdown();
+
+        // A host with no writer custody at all.
+        let dir = short_tempdir();
+        let bare = uncustodied_supervisor(dir.path(), recording_worker(), &keys, ServerCheck::Skip);
+        bare.start_office(OFFICE).unwrap();
+        wait_for_state(&bare, OFFICE, unavailable);
+        thread::sleep(Duration::from_millis(300));
+        assert!(unavailable(&bare.state(OFFICE).unwrap()));
+        bare.shutdown();
+        assert_eq!(recorded_starts(dir.path()), 0);
+        assert!(keys.has(OFFICE) && keys.has(NO_CUSTODY));
+    }
+
+    /// A create needs the custody provisioning reserved for that office and that
+    /// organization: otherwise nothing is spawned and the key is not read.
+    #[test]
+    fn a_create_without_its_custody_starts_nothing() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        for id in [OFFICE, NO_CUSTODY] {
+            keys.create(id, &OfficeSecretsKey::from_bytes([2; 32]))
+                .unwrap();
+        }
+        let (supervisor, custody) = custodied_supervisor(dir.path(), recording_worker(), &keys);
+        let recovery = || org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
+        // No record for the office: refused, and the host log says why.
+        let (refused, logged) = host_log::capture(|| {
+            supervisor
+                .begin_hq_create(hq_create_line(&custody, NO_CUSTODY), recovery())
+                .is_err()
+        });
+        assert!(refused);
+        assert!(
+            logged
+                .iter()
+                .any(|line| line.contains(NO_CUSTODY) && line.contains("no valid writer custody")),
+            "{logged:?}"
+        );
+        // A record, but for another organization.
+        let mut other = hq_create_line(&custody, OFFICE);
+        let organization = crate::ids::uuid_v7().unwrap();
+        other.org_id = organization.clone();
+        other
+            .hq_creation
+            .as_mut()
+            .unwrap()
+            .bootstrap
+            .as_mut()
+            .unwrap()
+            .organization_id = organization;
+        assert!(supervisor.begin_hq_create(other, recovery()).is_err());
+        assert_eq!(recorded_starts(dir.path()), 0, "a create server ran");
+        assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Load));
+        supervisor.shutdown();
     }
 
     /// G1: a host with no registered instance spawns nothing: no discard, no office start.

@@ -638,7 +638,6 @@ fn startup_protected_services(
                     Arc::clone(keys),
                     Arc::clone(writers),
                     instance.id(),
-                    instance.root(),
                     &layout.home,
                 )
                 .with_shutdown_grace(timings.shutdown_grace),

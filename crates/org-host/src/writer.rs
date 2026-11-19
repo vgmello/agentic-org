@@ -1,12 +1,17 @@
-//! Host-owned selected writer continuity. Custody is outside the instance root;
-//! this ledger does not allocate work events or make domain decisions.
+//! Host-owned writer custody for each office's journal. Custody is outside the instance
+//! root; this ledger does not allocate positions or make domain decisions.
+//!
+//! One record per office (schema 3, wire version 2): the writer identity minted at the
+//! protected reservation, the organization's data roots, the owner binding and the last
+//! journal head the office confirmed. Every office needs one to start: the host never
+//! creates a missing record for an existing office, and an older record is refused, not
+//! migrated (nothing has shipped).
 use crate::{
     host_secrets::{HostSecrets, Name, Value},
     hostdb::HostDb,
     sync::lock,
 };
-use org_office_launch::writer::{self as wire, Admission, Request, Response};
-use org_proto::work::JournalPosition;
+use org_office_launch::writer::{self as wire, Admission, Head, Identity, Request, Response};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -55,6 +60,10 @@ impl Root {
         Ok(())
     }
 }
+/// The only record schema. Schema 2 (one origin high-water, public and protected roots,
+/// a ULID incarnation) is refused.
+const SCHEMA_VERSION: u32 = 3;
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
@@ -62,7 +71,16 @@ struct Record {
     operation_id: String,
     root: Root,
     admission: Admission,
-    position: Option<JournalPosition>,
+    head: Option<Head>,
+}
+
+/// What protected provisioning binds an office's writer to. The host mints the rest: the
+/// journal incarnation, the epoch, the device identity and the data roots.
+pub(crate) struct Binding<'a> {
+    pub(crate) organization_id: &'a str,
+    pub(crate) office_id: &'a str,
+    pub(crate) owner_account: &'a str,
+    pub(crate) owner_member: &'a str,
 }
 pub(crate) struct Writers {
     custody: Arc<dyn HostSecrets>,
@@ -197,15 +215,16 @@ impl Writers {
     fn verify(&self, record: &Record, office: &str) -> io::Result<()> {
         self.root.verify()?;
         let a = &record.admission;
-        if record.schema_version != 2
+        let (durable, runtime) = self.data_roots(&a.identity.organization_id)?;
+        if record.schema_version != SCHEMA_VERSION
             || org_proto::ulid_time_ms(&record.operation_id).is_none()
-            || a.version != wire::VERSION
+            || !a.check()
             || record.root != self.root
             || a.identity.instance_id != self.instance
             || a.identity.office_id != office
-            || a.identity.writer_epoch <= 0
-            || a.identity.journal_incarnation.is_empty()
-            || record.position.as_ref().is_some_and(|p| !p.valid())
+            || Path::new(&a.durable_root) != durable
+            || Path::new(&a.runtime_root) != runtime
+            || record.head.as_ref().is_some_and(|h| !h.check())
         {
             return Err(refused());
         }
@@ -224,6 +243,15 @@ impl Writers {
                 &a.owner_member,
             )
             .map_err(private)
+    }
+    /// The organization's data roots: `<instance-root>/<organization-id>/durable` and
+    /// `.../runtime`. Only a canonical UUIDv7 organization has them.
+    pub(crate) fn data_roots(&self, organization: &str) -> io::Result<(PathBuf, PathBuf)> {
+        if !org_proto::is_uuid_v7(organization) {
+            return Err(refused());
+        }
+        let base = self.root.path.join(organization);
+        Ok((base.join("durable"), base.join("runtime")))
     }
     fn marker(&self, office: &str) -> io::Result<PathBuf> {
         if !org_office_launch::is_storage_id(office) {
@@ -287,44 +315,43 @@ impl Writers {
         }
         result
     }
-    /// Called only by protected provisioning/adoption after owner binding. Missing
-    /// custody on a normal start never takes this path. Existing records cannot
-    /// be replaced, reset or rotated. An exact operation replay may finish the
-    /// marker publication after a crash; it retains every authority/checkpoint.
-    pub(crate) fn reserve(
-        &self,
-        operation: &str,
-        mut admission: Admission,
-    ) -> io::Result<Admission> {
+    /// Called only by protected provisioning after owner binding. Missing custody on a
+    /// normal start never takes this path. Existing records cannot be replaced, reset or
+    /// rotated. An exact operation replay may finish the marker publication after a crash;
+    /// it retains every authority and the confirmed head.
+    ///
+    /// At the first reservation the office folder and both data roots must be absent or
+    /// empty: retained data without its record needs explicit recovery, never a new writer.
+    pub(crate) fn reserve(&self, operation: &str, binding: &Binding<'_>) -> io::Result<Admission> {
         let _gate = lock(&self.gate);
         self.root.verify()?;
-        if admission.version != wire::VERSION
-            || admission.identity.instance_id != self.instance
-            || org_proto::ulid_time_ms(operation).is_none()
+        let (durable, runtime) = self.data_roots(binding.organization_id)?;
+        if org_proto::ulid_time_ms(operation).is_none() || !org_proto::is_uuid_v7(binding.office_id)
         {
             return Err(refused());
         }
-        if let Some(record) = self.load(&admission.identity.office_id)? {
-            self.verify(&record, &admission.identity.office_id)?;
+        if let Some(record) = self.load(binding.office_id)? {
+            self.verify(&record, binding.office_id)?;
             let prior = &record.admission;
             if record.operation_id != operation
-                || prior.identity.organization_id != admission.identity.organization_id
-                || prior.protected_root != admission.protected_root
-                || prior.public_root != admission.public_root
-                || prior.owner_account != admission.owner_account
-                || prior.owner_member != admission.owner_member
+                || prior.identity.organization_id != binding.organization_id
+                || prior.owner_account != binding.owner_account
+                || prior.owner_member != binding.owner_member
             {
                 return Err(refused());
             }
-            self.install_marker(&admission.identity.office_id)?;
+            self.install_marker(binding.office_id)?;
             return Ok(record.admission);
         }
-        self.require_uncommitted(&admission)?;
+        let marker = self.marker(binding.office_id)?;
+        for path in [marker.parent().ok_or_else(refused)?, &durable, &runtime] {
+            empty_reservation_root(path)?;
+        }
         self.db
             .verify_selected_owner(
-                &admission.identity.organization_id,
-                &admission.owner_account,
-                &admission.owner_member,
+                binding.organization_id,
+                binding.owner_account,
+                binding.owner_member,
             )
             .map_err(private)?;
         let device_name = Name::parse("writer-device").map_err(private)?;
@@ -356,71 +383,56 @@ impl Writers {
             .load(&device_name)
             .map_err(private)?
             .ok_or_else(refused)?;
-        admission.identity.machine_id =
-            String::from_utf8(device.expose().to_vec()).map_err(private)?;
-        admission.identity.writer_epoch = 1;
-        admission.identity.journal_incarnation = crate::ids::generate()?;
-        self.validate_reserved_roots(&admission)?;
+        let admission = Admission {
+            version: wire::VERSION,
+            identity: Identity {
+                instance_id: self.instance.clone(),
+                organization_id: binding.organization_id.into(),
+                office_id: binding.office_id.into(),
+                // A store ID: canonical lowercase UUIDv7, never a ULID (P1).
+                journal_incarnation: crate::ids::uuid_v7()?,
+                writer_epoch: 1,
+                machine_id: String::from_utf8(device.expose().to_vec()).map_err(private)?,
+            },
+            durable_root: durable.to_str().ok_or_else(refused)?.into(),
+            runtime_root: runtime.to_str().ok_or_else(refused)?.into(),
+            owner_account: binding.owner_account.into(),
+            owner_member: binding.owner_member.into(),
+        };
         let record = Record {
-            schema_version: 2,
+            schema_version: SCHEMA_VERSION,
             operation_id: operation.into(),
             root: self.root.clone(),
             admission: admission.clone(),
-            position: None,
+            head: None,
         };
-        self.verify(&record, &admission.identity.office_id)?;
-        self.save(&admission.identity.office_id, &record)?;
-        self.install_marker(&admission.identity.office_id)?;
+        self.verify(&record, binding.office_id)?;
+        self.save(binding.office_id, &record)?;
+        self.install_marker(binding.office_id)?;
         Ok(admission)
     }
-    fn require_uncommitted(&self, admission: &Admission) -> io::Result<()> {
-        self.validate_reserved_roots(admission)?;
-        // These directories are prepared empty before the first binding. Any
-        // retained marker, office state, public projection or journal requires
-        // the original custody record; a pending SQL operation cannot replace it.
-        let marker = self.marker(&admission.identity.office_id)?;
-        for path in [
-            marker.parent().ok_or_else(refused)?,
-            Path::new(&admission.protected_root),
-            Path::new(&admission.public_root),
-        ] {
-            empty_reservation_root(path)?;
-        }
-        Ok(())
+    /// Whether `office` may start or be created: it has a valid record of this schema and
+    /// its reservation marker. Every office needs both; the host never creates them here.
+    /// Returns the organization the office's writer is bound to.
+    pub(crate) fn admit(&self, office: &str) -> io::Result<String> {
+        Ok(self.admitted(office)?.admission.identity.organization_id)
     }
-    fn validate_reserved_roots(&self, admission: &Admission) -> io::Result<()> {
-        let protected = Path::new(&admission.protected_root);
-        let public = Path::new(&admission.public_root);
-        if !protected.is_absolute()
-            || !public.is_absolute()
-            || protected.starts_with(public)
-            || public.starts_with(protected)
-            || !protected.starts_with(&self.root.path)
-            || !public.starts_with(&self.root.path)
-            || [protected, public].iter().any(|p| {
-                p.components()
-                    .any(|c| matches!(c, std::path::Component::ParentDir))
-            })
-        {
-            return Err(refused());
-        }
-        Ok(())
+    fn admitted(&self, office: &str) -> io::Result<Record> {
+        let record = self.load(office)?.ok_or_else(refused)?;
+        self.verify(&record, office)?;
+        // The exact marker: a regular owner-only file with one link and the exact bytes.
+        existing_marker(&self.marker(office)?)?.ok_or_else(refused)?;
+        Ok(record)
     }
-    /// Retain one live host-side control connection per office. A protected
-    /// binding must already exist; legacy offices are deliberately not promoted.
+    /// Retain one live host-side control connection per office. A protected binding must
+    /// already exist ([`Self::admit`]); an office without one is never promoted.
     pub(crate) fn serve(
         self: &Arc<Self>,
         office: &str,
         stream: UnixStream,
         live: Arc<AtomicBool>,
     ) -> io::Result<()> {
-        let record = self.load(office)?.ok_or_else(refused)?;
-        self.verify(&record, office)?;
-        if !fs::symlink_metadata(self.marker(office)?).is_ok_and(|m| {
-            m.is_file() && m.uid() == crate::home::euid() && m.mode() & 0o7777 == 0o600
-        }) {
-            return Err(refused());
-        }
+        let record = self.admitted(office)?;
         if !lock(&self.active).insert(office.into()) {
             return Err(refused());
         }
@@ -436,15 +448,6 @@ impl Writers {
                 let _ = lease.run(stream);
             })?;
         Ok(())
-    }
-    pub(crate) fn required(&self, office: &str) -> io::Result<bool> {
-        if self.load(office)?.is_some() {
-            return Ok(true);
-        }
-        match fs::symlink_metadata(self.marker(office)?) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
-            _ => Err(refused()),
-        }
     }
 }
 impl Lease {
@@ -484,25 +487,18 @@ impl Lease {
         }
         match request {
             Request::Checkpoint { .. } => Ok(Response::Checkpoint {
-                position: self.record.position.clone(),
+                head: self.record.head.clone(),
             }),
             Request::Owner { .. } => Ok(Response::Owner {
                 account: self.record.admission.owner_account.clone(),
                 member: self.record.admission.owner_member.clone(),
             }),
             Request::Confirm { before, after, .. } => {
-                if before != self.record.position || !after.valid() {
+                if !wire::confirms(self.record.head.as_ref(), before.as_ref(), &after) {
                     return Err(refused());
                 }
-                let valid = match &before {
-                    None => after.ordinal == 0,
-                    Some(p) => &after == p || after.follows(p),
-                };
-                if !valid {
-                    return Err(refused());
-                }
-                if before.as_ref() != Some(&after) {
-                    self.record.position = Some(after);
+                if self.record.head.as_ref() != Some(&after) {
+                    self.record.head = Some(after);
                     self.writers.save(&self.office, &self.record)?;
                 }
                 Ok(Response::Confirmed)
@@ -513,3 +509,80 @@ impl Lease {
 
 #[cfg(test)]
 mod tests;
+
+/// Real writer custody for tests that start offices: a development custody directory and a
+/// host registry under `dir`, one organization owned by a seeded administrator, and a
+/// reservation for each of `offices` (canonical UUIDv7 IDs).
+#[cfg(test)]
+pub(crate) struct TestCustody {
+    pub(crate) writers: Arc<Writers>,
+    pub(crate) organization: String,
+    pub(crate) member: String,
+}
+
+#[cfg(test)]
+impl TestCustody {
+    pub(crate) fn reserve(dir: &Path, instance: &str, offices: &[&str]) -> Self {
+        use std::os::unix::fs::DirBuilderExt;
+        let private = |path: &Path| {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(path)
+                .unwrap();
+        };
+        // Its own folder each time: one test may build several supervisors in one `dir`.
+        let base = dir.join(format!("custody-{}", crate::ids::generate().unwrap()));
+        let root = base.join("instance");
+        let home = root.join("office-state");
+        let keys = base.join("keys");
+        private(&home);
+        private(&keys);
+        let custody: Arc<dyn HostSecrets> =
+            Arc::new(crate::host_secrets::dev::DevSecrets::open(&keys, &home, instance).unwrap());
+        let init = crate::hostdb::HostDbInit {
+            instance_id: instance.into(),
+            clock_high_ms: 1,
+        };
+        let db = Arc::new(HostDb::create(&home, &*custody, &init).unwrap());
+        let account = crate::ids::generate().unwrap();
+        let password =
+            org_host_control::Password::new("synthetic custody password".into()).unwrap();
+        db.seed_account(
+            &account,
+            "Owner",
+            &crate::service::authentication::hash_password(&password).unwrap(),
+            true,
+            1,
+        )
+        .unwrap();
+        let admin = db
+            .account_authority(&crate::accounts::identity::AccountId::parse(&account).unwrap())
+            .unwrap()
+            .unwrap();
+        let organization = crate::ids::uuid_v7().unwrap();
+        let member = crate::ids::uuid_v7().unwrap();
+        db.establish_organization_owner(&admin, &organization, &member)
+            .unwrap();
+        let writers = Writers::open(custody, db, instance, &root.canonicalize().unwrap()).unwrap();
+        for office in offices {
+            fs::create_dir_all(home.join("offices").join(office)).unwrap();
+            writers
+                .reserve(
+                    &crate::ids::generate().unwrap(),
+                    &Binding {
+                        organization_id: &organization,
+                        office_id: office,
+                        owner_account: &account,
+                        owner_member: &member,
+                    },
+                )
+                .unwrap();
+        }
+        Self {
+            writers,
+            organization,
+            member,
+        }
+    }
+}

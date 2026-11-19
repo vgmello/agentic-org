@@ -134,7 +134,6 @@ struct Parts {
     keys: Arc<crate::keys::memory::MemoryKeys>,
     writers: Arc<Writers>,
     instance: String,
-    root: std::path::PathBuf,
     office_home: std::path::PathBuf,
 }
 impl Parts {
@@ -145,7 +144,6 @@ impl Parts {
             self.keys.clone(),
             Arc::clone(&self.writers),
             &self.instance,
-            &self.root,
             &self.office_home,
         ))
     }
@@ -183,7 +181,6 @@ fn host(worker: Worker) -> Host {
         keys: Arc::new(crate::keys::memory::MemoryKeys::default()),
         writers: Writers::open(custody.clone(), db.clone(), &instance, &state_root).unwrap(),
         instance,
-        root: state_root,
         office_home,
     };
     let provisioning = parts.provisioning(&db, &custody);

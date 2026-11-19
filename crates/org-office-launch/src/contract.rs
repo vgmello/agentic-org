@@ -92,8 +92,6 @@ pub enum HostFirstLine {
 pub struct OfficeLine {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_profile: Option<IdProfile>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub selected_writer_required: bool,
     /// The instance the office belongs to: canonical lowercase UUIDv7 text (a ULID is refused).
     /// The server stores it at create and refuses a `start` naming another; an office created
     /// before instance ids adopts it on its first `start`.
@@ -117,8 +115,6 @@ pub enum IdProfile {
 struct RawOfficeLine {
     #[serde(default)]
     id_profile: Option<IdProfile>,
-    #[serde(default)]
-    selected_writer_required: bool,
     #[serde(default, rename = "v")]
     _version: Option<IgnoredAny>,
     instance_id: String,
@@ -132,7 +128,6 @@ impl TryFrom<RawOfficeLine> for OfficeLine {
     fn try_from(raw: RawOfficeLine) -> Result<Self, Self::Error> {
         let line = OfficeLine {
             id_profile: raw.id_profile,
-            selected_writer_required: raw.selected_writer_required,
             instance_id: raw.instance_id,
             office_id: raw.office_id,
             rendezvous: raw.rendezvous,
@@ -181,35 +176,28 @@ pub struct CreateLine {
     pub hq_creation: Option<HqCreationV1>,
 }
 
+/// The protected creation context of an HQ create, version 2. It names no path: the
+/// organization's data roots travel only in the writer admission
+/// ([`crate::writer::Admission`]), which the host sends before the worker creates anything.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HqCreationV1 {
     pub version: u32,
     pub operation_id: String,
     pub escrow_profile: u32,
-    /// Host-resolved canonical state root; never supplied by a browser request.
-    pub public_root: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bootstrap: Option<Box<org_proto::selected_bootstrap::PreparedV1>>,
 }
 
 impl HqCreationV1 {
+    /// The only version: 2 (version 1 carried a public root).
+    pub const VERSION: u32 = 2;
+
     fn check(&self) -> Result<(), &'static str> {
         if self.bootstrap.as_ref().is_some_and(|b| !b.valid())
-            || self.version != 1
+            || self.version != Self::VERSION
             || self.escrow_profile != 1
             || org_proto::ulid_time_ms(&self.operation_id).is_none()
-            || !std::path::Path::new(&self.public_root).is_absolute()
-            || self.public_root.contains('\0')
-            || std::path::Path::new(&self.public_root).parent().is_none()
-            || std::path::Path::new(&self.public_root)
-                .components()
-                .any(|c| {
-                    !matches!(
-                        c,
-                        std::path::Component::RootDir | std::path::Component::Normal(_)
-                    )
-                })
         {
             return Err("unsupported HQ creation context");
         }
@@ -223,8 +211,6 @@ impl HqCreationV1 {
 struct RawCreateLine {
     #[serde(default)]
     id_profile: Option<IdProfile>,
-    #[serde(default)]
-    selected_writer_required: bool,
     #[serde(default, rename = "v")]
     _version: Option<IgnoredAny>,
     instance_id: String,
@@ -247,7 +233,6 @@ impl TryFrom<RawCreateLine> for CreateLine {
         let line = CreateLine {
             office: OfficeLine {
                 id_profile: raw.id_profile,
-                selected_writer_required: raw.selected_writer_required,
                 instance_id: raw.instance_id,
                 office_id: raw.office_id,
                 rendezvous: raw.rendezvous,
@@ -287,14 +272,16 @@ impl CreateLine {
     }
 
     fn check_bootstrap_context(&self) -> Result<(), &'static str> {
-        if self.office.selected_writer_required
+        // Every selected create is a protected HQ creation with its bootstrap: it is the
+        // only create the host reserves writer custody for.
+        if self.office.id_profile == Some(IdProfile::SelectedV1)
             && self
                 .hq_creation
                 .as_ref()
                 .and_then(|c| c.bootstrap.as_ref())
                 .is_none()
         {
-            return Err("selected writer admission requires the explicit bootstrap profile");
+            return Err("a selected create requires the explicit bootstrap profile");
         }
         if let Some(context) = &self.hq_creation {
             context.check()?;
@@ -304,7 +291,6 @@ impl CreateLine {
                     || b.plan.name != self.org_name
                     || b.creator.employee_id != self.owner_member_id
                     || self.office.id_profile != Some(IdProfile::SelectedV1)
-                    || !self.office.selected_writer_required
                 {
                     return Err("selected bootstrap scope mismatch");
                 }

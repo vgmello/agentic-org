@@ -110,10 +110,14 @@ impl Broker {
             writers: None,
         }
     }
-    pub fn writer_required(&self, office: &str) -> io::Result<bool> {
+    /// Every office needs writer custody to start or be created: returns the organization
+    /// its writer is bound to. A host without writer custody (no protected registry) starts
+    /// no office.
+    pub fn custody(&self, office: &str) -> io::Result<String> {
         self.writers
             .as_ref()
-            .map_or(Ok(false), |writers| writers.required(office))
+            .ok_or_else(|| io::Error::other("no writer custody on this host"))?
+            .admit(office)
     }
     pub fn bind(&self) -> io::Result<Rendezvous> {
         let directory = self.runtime.join("r");
@@ -159,12 +163,26 @@ impl Broker {
         generation: u64,
         signals: Sender<Signal>,
     ) -> io::Result<Arc<Endpoint>> {
+        // Every start and create needs writer custody. No custody, no office.
+        let writers = self.writers.as_ref().ok_or_else(invalid)?;
         let (stream, deadline) = Self::connect(rendezvous, Instant::now() + DEADLINE, &mut || {
             child.try_wait().unwrap_or(false)
         })?;
-        self.handoff(
+        let endpoint = self.handoff(
             stream, office, admission, child, secrets, generation, signals, deadline,
-        )
+        )?;
+        // The writer control goes first after the handoff, before the worker opens or
+        // creates anything.
+        let (host, worker) = {
+            let _fence = lock(&SPAWN_LOCK);
+            UnixStream::pair()?
+        };
+        phase(
+            "writer authority channel",
+            writers.serve(office, host, Arc::clone(&endpoint.live)),
+        )?;
+        phase("writer descriptor receipt", endpoint.writer_control(worker))?;
+        Ok(endpoint)
     }
     /// The one connection to a bound rendezvous, by `deadline`, with blocking I/O bounded by
     /// what is left of it. The wait ends early when `exited` says the worker is gone: a worker
@@ -396,19 +414,6 @@ impl Broker {
                 }
                 receiving.fail();
             })?;
-        if let Some(writers) = &self.writers {
-            if writers.required(office)? {
-                let (host, worker) = {
-                    let _fence = lock(&SPAWN_LOCK);
-                    UnixStream::pair()?
-                };
-                phase(
-                    "writer authority channel",
-                    writers.serve(office, host, Arc::clone(&endpoint.live)),
-                )?;
-                phase("writer descriptor receipt", endpoint.writer_control(worker))?;
-            }
-        }
         Ok(endpoint)
     }
 }

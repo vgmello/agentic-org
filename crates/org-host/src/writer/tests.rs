@@ -1,9 +1,31 @@
 use super::*;
 use crate::{accounts::identity::AccountId, hostdb::HostDbInit};
-use org_proto::work::WriterIdentity;
+use org_office_launch::writer::HighWaters;
 use std::os::unix::fs::PermissionsExt;
 
-fn fixture() -> (tempfile::TempDir, Arc<Writers>, Admission) {
+const OPERATION: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+/// What a reservation binds, owned so a test child process can receive it.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct Input {
+    instance: String,
+    organization: String,
+    office: String,
+    account: String,
+    member: String,
+}
+impl Input {
+    fn binding(&self) -> Binding<'_> {
+        Binding {
+            organization_id: &self.organization,
+            office_id: &self.office,
+            owner_account: &self.account,
+            owner_member: &self.member,
+        }
+    }
+}
+
+fn fixture() -> (tempfile::TempDir, Arc<Writers>, Input) {
     let root = tempfile::tempdir().unwrap();
     let instance_root = root.path().join("instance");
     fs::create_dir(&instance_root).unwrap();
@@ -11,22 +33,28 @@ fn fixture() -> (tempfile::TempDir, Arc<Writers>, Admission) {
     let home = instance_root.join("office-state");
     fs::create_dir(&home).unwrap();
     fs::set_permissions(&home, fs::Permissions::from_mode(0o700)).unwrap();
-    fs::create_dir_all(home.join("offices/office")).unwrap();
     let keys = root.path().join("keys");
     fs::create_dir(&keys).unwrap();
     fs::set_permissions(&keys, fs::Permissions::from_mode(0o700)).unwrap();
-    let instance = crate::ids::uuid_v7().unwrap();
-    let account = crate::ids::generate().unwrap();
-    let custody: Arc<dyn HostSecrets> =
-        Arc::new(crate::host_secrets::dev::DevSecrets::open(&keys, &home, &instance).unwrap());
+    let input = Input {
+        instance: crate::ids::uuid_v7().unwrap(),
+        organization: crate::ids::uuid_v7().unwrap(),
+        office: crate::ids::uuid_v7().unwrap(),
+        account: crate::ids::generate().unwrap(),
+        member: crate::ids::uuid_v7().unwrap(),
+    };
+    fs::create_dir_all(home.join("offices").join(&input.office)).unwrap();
+    let custody: Arc<dyn HostSecrets> = Arc::new(
+        crate::host_secrets::dev::DevSecrets::open(&keys, &home, &input.instance).unwrap(),
+    );
     let password = org_host_control::Password::new("synthetic writer password".into()).unwrap();
     let init = HostDbInit {
-        instance_id: instance.clone(),
+        instance_id: input.instance.clone(),
         clock_high_ms: 1,
     };
     let db = Arc::new(HostDb::create(&home, &*custody, &init).unwrap());
     db.seed_account(
-        &account,
+        &input.account,
         "Owner",
         &crate::service::authentication::hash_password(&password).unwrap(),
         true,
@@ -34,87 +62,150 @@ fn fixture() -> (tempfile::TempDir, Arc<Writers>, Admission) {
     )
     .unwrap();
     let admin = db
-        .account_authority(&AccountId::parse(&account).unwrap())
+        .account_authority(&AccountId::parse(&input.account).unwrap())
         .unwrap()
         .unwrap();
-    db.establish_organization_owner(&admin, "org", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
+    db.establish_organization_owner(&admin, &input.organization, &input.member)
         .unwrap();
-    let writers = Writers::open(custody, db, &instance, &instance_root).unwrap();
-    let admission = Admission {
-        version: wire::VERSION,
-        identity: WriterIdentity {
-            instance_id: instance,
-            organization_id: "org".into(),
-            office_id: "office".into(),
-            journal_incarnation: String::new(),
-            writer_epoch: 0,
-            machine_id: String::new(),
-        },
-        protected_root: instance_root.join("recovery").to_str().unwrap().into(),
-        public_root: instance_root.join("public").to_str().unwrap().into(),
-        owner_account: account,
-        owner_member: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
-    };
-    (root, writers, admission)
+    let writers = Writers::open(custody, db, &input.instance, &instance_root).unwrap();
+    (root, writers, input)
 }
-fn anchor() -> JournalPosition {
-    JournalPosition {
+fn anchor() -> Head {
+    Head {
         ordinal: 0,
         sha256: "a".repeat(64),
-        previous_sha256: None,
-        origin_incarnation: "original-work-origin".into(),
-        origin_high_water: 73,
+        high_waters: HighWaters {
+            organization: 0,
+            work: 73,
+            message_content: 0,
+            message_state: 0,
+        },
     }
 }
-fn next(before: &JournalPosition, event_count: i64) -> JournalPosition {
-    JournalPosition {
-        ordinal: before.ordinal + 1,
-        sha256: format!("{:064x}", before.ordinal + 1),
-        previous_sha256: Some(before.sha256.clone()),
-        origin_incarnation: before.origin_incarnation.clone(),
-        origin_high_water: before.origin_high_water + event_count,
+/// The head `entries` ordinals after `before`, with `events` more work positions.
+fn later(before: &Head, entries: u64, events: u64) -> Head {
+    let ordinal = before.ordinal + entries;
+    Head {
+        ordinal,
+        sha256: format!("{ordinal:064x}"),
+        high_waters: HighWaters {
+            work: before.high_waters.work + events,
+            ..before.high_waters
+        },
     }
 }
-fn lease(writers: &Arc<Writers>) -> Lease {
+fn lease(writers: &Arc<Writers>, office: &str) -> Lease {
     Lease {
         writers: Arc::clone(writers),
-        office: "office".into(),
-        record: writers.load("office").unwrap().unwrap(),
+        office: office.into(),
+        record: writers.load(office).unwrap().unwrap(),
         live: Arc::new(AtomicBool::new(true)),
     }
 }
-fn confirm(
-    lease: &mut Lease,
-    before: Option<JournalPosition>,
-    after: JournalPosition,
-) -> io::Result<Response> {
+fn confirm(lease: &mut Lease, before: Option<Head>, after: Head) -> io::Result<Response> {
     lease.answer(Request::Confirm {
         identity: lease.record.admission.identity.clone(),
         before,
         after,
     })
 }
+fn checkpoint(lease: &mut Lease) -> Option<Head> {
+    match lease
+        .answer(Request::Checkpoint {
+            identity: lease.record.admission.identity.clone(),
+        })
+        .unwrap()
+    {
+        Response::Checkpoint { head } => head,
+        other => panic!("{other:?}"),
+    }
+}
 
+/// P1: the reservation mints what the store's `OfficeIdentity` accepts (a UUIDv7
+/// incarnation, a 64-hex device, epoch 1) and the contract's data roots.
 #[test]
-fn protected_device_binding_preserves_zero_one_multi_mapping_and_reopen() {
+fn a_reservation_mints_a_uuid_v7_incarnation_and_the_contract_roots() {
     let (_root, writers, input) = fixture();
-    assert!(!writers.required("office").unwrap());
-    let admission = writers
-        .reserve("01ARZ3NDEKTSV4RRFFQ69G5FAV", input)
-        .unwrap();
-    assert!(writers.required("office").unwrap());
-    assert_eq!(admission.identity.writer_epoch, 1);
-    assert!(!admission.identity.machine_id.is_empty());
-    let mut control = lease(&writers);
+    assert!(writers.admit(&input.office).is_err());
+    let admission = writers.reserve(OPERATION, &input.binding()).unwrap();
+    writers.admit(&input.office).unwrap();
+    assert!(admission.check());
+    let identity = &admission.identity;
+    assert!(org_proto::is_uuid_v7(&identity.journal_incarnation));
+    assert_eq!(identity.writer_epoch, 1);
+    assert_eq!(identity.machine_id.len(), 64);
+    assert_eq!(
+        (
+            &identity.instance_id,
+            &identity.organization_id,
+            &identity.office_id
+        ),
+        (&input.instance, &input.organization, &input.office)
+    );
+    let base = writers.root.path.join(&input.organization);
+    assert_eq!(Path::new(&admission.durable_root), base.join("durable"));
+    assert_eq!(Path::new(&admission.runtime_root), base.join("runtime"));
+    assert_eq!(
+        (
+            admission.owner_account.as_str(),
+            admission.owner_member.as_str()
+        ),
+        (input.account.as_str(), input.member.as_str())
+    );
+    // The record is schema 3 and starts with no head.
+    let record = writers.load(&input.office).unwrap().unwrap();
+    assert_eq!(record.schema_version, 3);
+    assert_eq!(record.head, None);
+    // Each office gets its own incarnation.
+    let (_other_root, other, other_input) = fixture();
+    let second = other.reserve(OPERATION, &other_input.binding()).unwrap();
+    assert_ne!(
+        second.identity.journal_incarnation,
+        identity.journal_incarnation
+    );
+}
+
+/// F4: one confirmation per flush may advance many ordinals; an equal, identical one is
+/// accepted; a lower high-water and a `before` that is not the stored head are refused,
+/// and a refused confirmation stores nothing.
+#[test]
+fn confirmations_follow_the_custody_rule_and_persist_across_reopen() {
+    let (_root, writers, input) = fixture();
+    let admission = writers.reserve(OPERATION, &input.binding()).unwrap();
+    let mut control = lease(&writers, &input.office);
+    assert_eq!(checkpoint(&mut control), None);
+    // The first confirmation is the anchor, and nothing else.
+    assert!(confirm(&mut control, None, later(&anchor(), 1, 0)).is_err());
     let a = anchor();
     confirm(&mut control, None, a.clone()).unwrap();
-    let one = next(&a, 1);
-    confirm(&mut control, Some(a), one.clone()).unwrap();
-    let rejected = next(&one, 0);
-    confirm(&mut control, Some(one), rejected.clone()).unwrap();
-    let multi = next(&rejected, 3);
-    confirm(&mut control, Some(rejected), multi.clone()).unwrap();
-    assert_eq!((multi.ordinal, multi.origin_high_water), (3, 77));
+    // Several ordinals at once.
+    let three = later(&a, 3, 5);
+    confirm(&mut control, Some(a.clone()), three.clone()).unwrap();
+    // The same head again.
+    confirm(&mut control, Some(three.clone()), three.clone()).unwrap();
+    // A lower high-water.
+    let mut lower = later(&three, 1, 0);
+    lower.high_waters.work -= 1;
+    assert!(confirm(&mut control, Some(three.clone()), lower).is_err());
+    // A `before` that is not the stored head.
+    assert!(confirm(&mut control, Some(a.clone()), later(&three, 1, 0)).is_err());
+    assert!(confirm(&mut control, None, later(&three, 1, 0)).is_err());
+    // The same ordinal with another hash, and going back.
+    let mut forked = three.clone();
+    forked.sha256 = "c".repeat(64);
+    assert!(confirm(&mut control, Some(three.clone()), forked).is_err());
+    assert!(confirm(&mut control, Some(three.clone()), a.clone()).is_err());
+    // Another identity.
+    let mut wrong = admission.identity.clone();
+    wrong.writer_epoch += 1;
+    assert!(control
+        .answer(Request::Confirm {
+            identity: wrong,
+            before: Some(three.clone()),
+            after: later(&three, 1, 0),
+        })
+        .is_err());
+    assert_eq!(checkpoint(&mut control), Some(three.clone()));
     drop(control);
     let reopened = Writers::open(
         Arc::clone(&writers.custody),
@@ -123,31 +214,201 @@ fn protected_device_binding_preserves_zero_one_multi_mapping_and_reopen() {
         &writers.root.path,
     )
     .unwrap();
-    let mut control = lease(&reopened);
-    assert!(
-        matches!(control.answer(Request::Checkpoint {identity:admission.identity}).unwrap(),Response::Checkpoint {position:Some(p)} if p==multi)
-    );
-    assert!(confirm(&mut control, Some(anchor()), next(&multi, 1)).is_err());
-    let max = JournalPosition {
-        ordinal: i64::MAX,
-        ..multi.clone()
-    };
-    assert!(!JournalPosition {
-        ordinal: 1,
-        ..multi
-    }
-    .follows(&max));
+    let mut control = lease(&reopened, &input.office);
+    assert_eq!(checkpoint(&mut control), Some(three.clone()));
+    confirm(&mut control, Some(three.clone()), later(&three, 2, 1)).unwrap();
 }
+
+/// A retried reservation must be the same request: another organization (so other data
+/// roots), owner or operation is refused, and the record is unchanged.
+#[test]
+fn a_retried_reservation_with_other_inputs_is_refused() {
+    let (_root, writers, input) = fixture();
+    let admission = writers.reserve(OPERATION, &input.binding()).unwrap();
+    let credential = name(&input.office).unwrap();
+    let original = writers.custody.load(&credential).unwrap().unwrap();
+    let mut other_org = input.clone();
+    other_org.organization = crate::ids::uuid_v7().unwrap();
+    let mut other_member = input.clone();
+    other_member.member = crate::ids::uuid_v7().unwrap();
+    for (operation, changed) in [
+        (OPERATION, other_org),
+        (OPERATION, other_member),
+        ("01ARZ3NDEKTSV4RRFFQ69G5FAW", input.clone()),
+    ] {
+        assert!(writers.reserve(operation, &changed.binding()).is_err());
+        assert_eq!(
+            writers.custody.load(&credential).unwrap().unwrap().expose(),
+            original.expose()
+        );
+    }
+    assert_eq!(
+        writers.reserve(OPERATION, &input.binding()).unwrap(),
+        admission
+    );
+}
+
+/// The data roots and the office folder are required empty at the first reservation:
+/// retained data without its record is never given a new writer.
+#[test]
+fn a_first_reservation_over_retained_data_is_refused() {
+    for retained in ["office", "durable", "runtime", "durable-file"] {
+        let (root, writers, input) = fixture();
+        let (durable, runtime) = writers.data_roots(&input.organization).unwrap();
+        let path = match retained {
+            "office" => writers
+                .marker(&input.office)
+                .unwrap()
+                .with_file_name("leftover"),
+            "durable" => durable.join("state/organization.yaml"),
+            "runtime" => runtime.join(&input.office).join("office.db"),
+            _ => durable.clone(),
+        };
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"retained").unwrap();
+        let before = retained_files(root.path());
+        assert!(
+            writers.reserve(OPERATION, &input.binding()).is_err(),
+            "{retained}"
+        );
+        assert!(writers.load(&input.office).unwrap().is_none());
+        assert_eq!(retained_files(root.path()), before, "{retained}");
+    }
+}
+
+/// Only schema 3 is read. An older record (schema 2: one origin high-water, public and
+/// protected roots, a ULID incarnation) is refused for a start and for a retry, and it is
+/// kept as it is: no migration, no replacement.
+#[test]
+fn an_older_writer_record_is_refused_and_kept() {
+    let (_root, writers, input) = fixture();
+    writers.reserve(OPERATION, &input.binding()).unwrap();
+    let credential = name(&input.office).unwrap();
+    let current: serde_json::Value =
+        serde_json::from_slice(writers.custody.load(&credential).unwrap().unwrap().expose())
+            .unwrap();
+    let mut schema_two = current.clone();
+    schema_two["schema_version"] = serde_json::json!(2);
+    let mut old_shape = current.clone();
+    old_shape.as_object_mut().unwrap().remove("head");
+    old_shape["schema_version"] = serde_json::json!(2);
+    old_shape["position"] = serde_json::Value::Null;
+    old_shape["admission"]["version"] = serde_json::json!(1);
+    old_shape["admission"]["identity"]["journal_incarnation"] =
+        serde_json::json!("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    let mut wrong_roots = current.clone();
+    wrong_roots["admission"]["durable_root"] =
+        serde_json::json!(writers.root.path.join("durable").to_str().unwrap());
+    for planted in [schema_two, old_shape, wrong_roots] {
+        let bytes = serde_json::to_vec(&planted).unwrap();
+        writers
+            .custody
+            .put(&credential, &Value::new(bytes.clone()).unwrap())
+            .unwrap();
+        assert!(writers.admit(&input.office).is_err());
+        let (host, _worker) = UnixStream::pair().unwrap();
+        assert!(writers
+            .serve(&input.office, host, Arc::new(AtomicBool::new(true)))
+            .is_err());
+        assert!(writers.reserve(OPERATION, &input.binding()).is_err());
+        assert_eq!(
+            writers.custody.load(&credential).unwrap().unwrap().expose(),
+            &bytes[..]
+        );
+    }
+}
+
+/// The served channel speaks version 2: the admission first, then checkpoint and confirm
+/// with heads; a refused request is answered `denied` and closes the channel.
+#[test]
+fn the_served_channel_speaks_version_two() {
+    use std::io::BufReader;
+    let (_root, writers, input) = fixture();
+    let reserved = writers.reserve(OPERATION, &input.binding()).unwrap();
+    let (host, worker) = UnixStream::pair().unwrap();
+    writers
+        .serve(&input.office, host, Arc::new(AtomicBool::new(true)))
+        .unwrap();
+    // One live channel per office.
+    let (second, _peer) = UnixStream::pair().unwrap();
+    assert!(writers
+        .serve(&input.office, second, Arc::new(AtomicBool::new(true)))
+        .is_err());
+    let mut worker = BufReader::new(worker);
+    let admission: Admission = wire::read(&mut worker).unwrap().unwrap();
+    assert_eq!(admission, reserved);
+    let identity = admission.identity;
+    let ask = |worker: &mut BufReader<UnixStream>, request: &Request| {
+        wire::write(worker.get_mut(), request).unwrap();
+        wire::read::<Response>(worker).unwrap()
+    };
+    assert!(matches!(
+        ask(
+            &mut worker,
+            &Request::Checkpoint {
+                identity: identity.clone()
+            }
+        ),
+        Some(Response::Checkpoint { head: None })
+    ));
+    assert!(matches!(
+        ask(
+            &mut worker,
+            &Request::Confirm {
+                identity: identity.clone(),
+                before: None,
+                after: anchor(),
+            }
+        ),
+        Some(Response::Confirmed)
+    ));
+    let three = later(&anchor(), 3, 2);
+    assert!(matches!(
+        ask(
+            &mut worker,
+            &Request::Confirm {
+                identity: identity.clone(),
+                before: Some(anchor()),
+                after: three.clone(),
+            }
+        ),
+        Some(Response::Confirmed)
+    ));
+    assert!(matches!(
+        ask(&mut worker, &Request::Checkpoint { identity: identity.clone() }),
+        Some(Response::Checkpoint { head: Some(h) }) if h == three
+    ));
+    assert!(matches!(
+        ask(&mut worker, &Request::Owner { identity: identity.clone() }),
+        Some(Response::Owner { account, member }) if account == input.account && member == input.member
+    ));
+    // A stale `before`: denied, and the channel ends.
+    assert!(matches!(
+        ask(
+            &mut worker,
+            &Request::Confirm {
+                identity,
+                before: Some(anchor()),
+                after: later(&three, 1, 0),
+            }
+        ),
+        Some(Response::Denied)
+    ));
+    assert!(wire::read::<Response>(&mut worker).unwrap().is_none());
+    assert_eq!(
+        writers.load(&input.office).unwrap().unwrap().head,
+        Some(three)
+    );
+}
+
 #[test]
 fn copied_root_missing_custody_replaced_root_and_changed_epoch_never_promote() {
     let (root, writers, input) = fixture();
-    let admission = writers
-        .reserve("01ARZ3NDEKTSV4RRFFQ69G5FAV", input.clone())
-        .unwrap();
+    let admission = writers.reserve(OPERATION, &input.binding()).unwrap();
     assert!(writers
-        .reserve("01ARZ3NDEKTSV4RRFFQ69G5FAW", input)
+        .reserve("01ARZ3NDEKTSV4RRFFQ69G5FAW", &input.binding())
         .is_err());
-    let mut control = lease(&writers);
+    let mut control = lease(&writers, &input.office);
     let mut wrong = admission.identity.clone();
     wrong.writer_epoch += 1;
     assert!(control
@@ -156,13 +417,13 @@ fn copied_root_missing_custody_replaced_root_and_changed_epoch_never_promote() {
     let record = control.record.clone();
     let device = Name::parse("writer-device").unwrap();
     writers.custody.delete(&device).unwrap();
-    assert!(writers.verify(&record, "office").is_err());
-    assert!(writers.required("office").unwrap());
+    assert!(writers.verify(&record, &input.office).is_err());
+    assert!(writers.admit(&input.office).is_err());
     let moved = root.path().join("retained-instance");
     fs::rename(&writers.root.path, &moved).unwrap();
     fs::create_dir(&writers.root.path).unwrap();
     fs::set_permissions(&writers.root.path, fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(writers.verify(&record, "office").is_err());
+    assert!(writers.verify(&record, &input.office).is_err());
     assert!(!writers
         .root
         .path
@@ -173,9 +434,7 @@ fn copied_root_missing_custody_replaced_root_and_changed_epoch_never_promote() {
 #[test]
 fn missing_registry_cannot_sweep_retained_writer_custody() {
     let (_root, writers, input) = fixture();
-    writers
-        .reserve("01ARZ3NDEKTSV4RRFFQ69G5FAV", input)
-        .unwrap();
+    writers.reserve(OPERATION, &input.binding()).unwrap();
     let home = writers.root.path.join("office-state");
     // Actual restoration loss; preserve the complete old DB and every secret.
     fs::rename(home.join("host-registry.db"), home.join("retained.db")).unwrap();
@@ -195,39 +454,34 @@ fn missing_registry_cannot_sweep_retained_writer_custody() {
 #[test]
 fn protected_operation_resume_repairs_missing_marker_without_resetting_epoch_or_ack() {
     let (_root, writers, input) = fixture();
-    let operation = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-    let admission = writers.reserve(operation, input.clone()).unwrap();
-    let mut control = lease(&writers);
+    let admission = writers.reserve(OPERATION, &input.binding()).unwrap();
+    let mut control = lease(&writers, &input.office);
     let anchor = anchor();
     confirm(&mut control, None, anchor.clone()).unwrap();
-    let accepted = next(&anchor, 1);
+    let accepted = later(&anchor, 1, 1);
     confirm(&mut control, Some(anchor), accepted.clone()).unwrap();
     // Interrupted setup's marker publication is resumable only by its protected
     // operation. This is not adoption of an unknown/missing authority record.
-    fs::remove_file(writers.marker("office").unwrap()).unwrap();
+    fs::remove_file(writers.marker(&input.office).unwrap()).unwrap();
+    assert!(writers.admit(&input.office).is_err());
     let abandoned = writers
-        .marker("office")
+        .marker(&input.office)
         .unwrap()
         .with_file_name(".selected-writer-abandoned.tmp");
     fs::write(&abandoned, b"selected").unwrap();
-    let resumed = writers.reserve(operation, input.clone()).unwrap();
+    let resumed = writers.reserve(OPERATION, &input.binding()).unwrap();
+    assert_eq!(resumed, admission);
     assert_eq!(
-        serde_json::to_vec(&resumed).unwrap(),
-        serde_json::to_vec(&admission).unwrap()
-    );
-    assert_eq!(
-        writers.load("office").unwrap().unwrap().position,
+        writers.load(&input.office).unwrap().unwrap().head,
         Some(accepted)
     );
-    assert!(writers.marker("office").unwrap().is_file());
+    assert!(writers.marker(&input.office).unwrap().is_file());
+    writers.admit(&input.office).unwrap();
     assert_eq!(fs::read(abandoned).unwrap(), b"selected");
     assert_eq!(
-        serde_json::to_vec(&writers.reserve(operation, input.clone()).unwrap()).unwrap(),
-        serde_json::to_vec(&admission).unwrap()
+        writers.reserve(OPERATION, &input.binding()).unwrap(),
+        admission
     );
-    let mut changed = input;
-    changed.public_root.push_str("-other");
-    assert!(writers.reserve(operation, changed).is_err());
 }
 
 fn retained_files(path: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
@@ -245,29 +499,28 @@ fn retained_files(path: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
 
 #[test]
 fn missing_committed_writer_custody_never_reallocates_on_original_operation_retry() {
-    for retained in ["marker", "office", "public", "journal"] {
+    for retained in ["marker", "office", "durable", "runtime"] {
         for lose_device in [false, true] {
             let (root, writers, input) = fixture();
-            let operation = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-            let admission = writers.reserve(operation, input.clone()).unwrap();
-            let mut control = lease(&writers);
+            let admission = writers.reserve(OPERATION, &input.binding()).unwrap();
+            let mut control = lease(&writers, &input.office);
             let initial = anchor();
             confirm(&mut control, None, initial.clone()).unwrap();
-            confirm(&mut control, Some(initial.clone()), next(&initial, 3)).unwrap();
+            confirm(&mut control, Some(initial.clone()), later(&initial, 1, 3)).unwrap();
             drop(control);
-            let credential = name("office").unwrap();
+            let credential = name(&input.office).unwrap();
             let original = writers.custody.load(&credential).unwrap().unwrap();
             if retained != "marker" {
-                fs::remove_file(writers.marker("office").unwrap()).unwrap();
+                fs::remove_file(writers.marker(&input.office).unwrap()).unwrap();
                 let directory = match retained {
                     "office" => writers
-                        .marker("office")
+                        .marker(&input.office)
                         .unwrap()
                         .parent()
                         .unwrap()
                         .to_owned(),
-                    "public" => PathBuf::from(&admission.public_root),
-                    "journal" => PathBuf::from(&admission.protected_root),
+                    "durable" => PathBuf::from(&admission.durable_root),
+                    "runtime" => PathBuf::from(&admission.runtime_root),
                     _ => unreachable!(),
                 };
                 fs::create_dir_all(&directory).unwrap();
@@ -282,7 +535,7 @@ fn missing_committed_writer_custody_never_reallocates_on_original_operation_retr
             }
             let before = retained_files(root.path());
             assert!(
-                writers.reserve(operation, input).is_err(),
+                writers.reserve(OPERATION, &input.binding()).is_err(),
                 "{retained}/{lose_device}"
             );
             assert!(writers.custody.load(&credential).unwrap().is_none());
@@ -290,26 +543,25 @@ fn missing_committed_writer_custody_never_reallocates_on_original_operation_retr
             // Retained original custody is evidence, never an automatically restored item.
             let original: Record = serde_json::from_slice(original.expose()).unwrap();
             assert_eq!(original.admission.identity, admission.identity);
-            assert_eq!(original.position, Some(next(&initial, 3)));
+            assert_eq!(original.head, Some(later(&initial, 1, 3)));
         }
     }
 }
 
 #[test]
 fn missing_device_cannot_be_recreated_while_another_writer_record_survives() {
-    let (root, writers, mut input) = fixture();
-    writers
-        .reserve("01ARZ3NDEKTSV4RRFFQ69G5FAV", input.clone())
-        .unwrap();
+    let (root, writers, input) = fixture();
+    writers.reserve(OPERATION, &input.binding()).unwrap();
     writers
         .custody
         .delete(&Name::parse("writer-device").unwrap())
         .unwrap();
-    input.identity.office_id = "second".into();
-    fs::create_dir(writers.marker("second").unwrap().parent().unwrap()).unwrap();
+    let mut second = input.clone();
+    second.office = crate::ids::uuid_v7().unwrap();
+    fs::create_dir(writers.marker(&second.office).unwrap().parent().unwrap()).unwrap();
     let before = retained_files(root.path());
     assert!(writers
-        .reserve("01ARZ3NDEKTSV4RRFFQ69G5FAW", input)
+        .reserve("01ARZ3NDEKTSV4RRFFQ69G5FAW", &second.binding())
         .is_err());
     assert_eq!(retained_files(root.path()), before);
 }
@@ -327,11 +579,10 @@ fn marker_replay_never_clobbers_malformed_or_unsafe_existing_entries() {
         "hardlink",
     ] {
         let (_root, writers, input) = fixture();
-        let operation = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-        writers.reserve(operation, input.clone()).unwrap();
-        let credential = name("office").unwrap();
+        writers.reserve(OPERATION, &input.binding()).unwrap();
+        let credential = name(&input.office).unwrap();
         let original = writers.custody.load(&credential).unwrap().unwrap();
-        let path = writers.marker("office").unwrap();
+        let path = writers.marker(&input.office).unwrap();
         fs::remove_file(&path).unwrap();
         match kind {
             "directory" => fs::create_dir(&path).unwrap(),
@@ -366,7 +617,11 @@ fn marker_replay_never_clobbers_malformed_or_unsafe_existing_entries() {
         } else {
             None
         };
-        assert!(writers.reserve(operation, input).is_err(), "{kind}");
+        assert!(
+            writers.reserve(OPERATION, &input.binding()).is_err(),
+            "{kind}"
+        );
+        assert!(writers.admit(&input.office).is_err(), "{kind}");
         let after = fs::symlink_metadata(&path).unwrap();
         assert_eq!(
             (before.ino(), before.mode(), before.len(), before.nlink()),
@@ -385,23 +640,19 @@ fn marker_replay_never_clobbers_malformed_or_unsafe_existing_entries() {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct MarkerChild {
     root: PathBuf,
-    input: Admission,
+    input: Input,
     limit: Option<u64>,
 }
 
-fn reopen_marker_writer(root: &Path, input: &Admission) -> Arc<Writers> {
+fn reopen_marker_writer(root: &Path, input: &Input) -> Arc<Writers> {
     let instance_root = root.join("instance");
     let home = instance_root.join("office-state");
     let custody = Arc::new(
-        crate::host_secrets::dev::DevSecrets::open(
-            &root.join("keys"),
-            &home,
-            &input.identity.instance_id,
-        )
-        .unwrap(),
+        crate::host_secrets::dev::DevSecrets::open(&root.join("keys"), &home, &input.instance)
+            .unwrap(),
     );
     let db = Arc::new(HostDb::open(&home, &*custody).unwrap());
-    Writers::open(custody, db, &input.identity.instance_id, &instance_root).unwrap()
+    Writers::open(custody, db, &input.instance, &instance_root).unwrap()
 }
 
 extern "C" fn stop_marker_child(_: libc::c_int) {
@@ -434,7 +685,7 @@ fn marker_interruption_child() {
         println!("MARKER_BOUNDARY_REACHED");
         std::io::stdout().flush().unwrap();
     }
-    let result = writers.reserve("01ARZ3NDEKTSV4RRFFQ69G5FAV", input.input);
+    let result = writers.reserve(OPERATION, &input.input.binding());
     assert_eq!(result.is_err(), input.limit.is_some());
     println!("MARKER_BOUNDARY_REACHED");
     std::io::stdout().flush().unwrap();
@@ -459,16 +710,15 @@ fn marker_write_failure_and_sigkill_resume_original_checkpoint_without_partial_p
     }
     for limit in [Some(0), Some(7), None] {
         let (root, writers, input) = fixture();
-        let operation = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-        let admission = writers.reserve(operation, input.clone()).unwrap();
-        let mut control = lease(&writers);
+        let admission = writers.reserve(OPERATION, &input.binding()).unwrap();
+        let mut control = lease(&writers, &input.office);
         let initial = anchor();
         confirm(&mut control, None, initial.clone()).unwrap();
-        confirm(&mut control, Some(initial.clone()), next(&initial, 2)).unwrap();
+        confirm(&mut control, Some(initial.clone()), later(&initial, 1, 2)).unwrap();
         drop(control);
-        let credential = name("office").unwrap();
+        let credential = name(&input.office).unwrap();
         let original = writers.custody.load(&credential).unwrap().unwrap();
-        let marker = writers.marker("office").unwrap();
+        let marker = writers.marker(&input.office).unwrap();
         fs::remove_file(&marker).unwrap();
         drop(writers); // The disposable child owns the actual registry lock until SIGKILL.
         let mut child = Kill(
@@ -534,18 +784,15 @@ fn marker_write_failure_and_sigkill_resume_original_checkpoint_without_partial_p
             assert_eq!(fs::read(&marker).unwrap(), b"selected-writer/1\n");
         }
         let writers = reopen_marker_writer(root.path(), &input);
-        let resumed = writers.reserve(operation, input).unwrap();
-        assert_eq!(
-            serde_json::to_vec(&resumed).unwrap(),
-            serde_json::to_vec(&admission).unwrap()
-        );
+        let resumed = writers.reserve(OPERATION, &input.binding()).unwrap();
+        assert_eq!(resumed, admission);
         assert_eq!(
             writers.custody.load(&credential).unwrap().unwrap().expose(),
             original.expose()
         );
         assert_eq!(
-            writers.load("office").unwrap().unwrap().position,
-            Some(next(&initial, 2))
+            writers.load(&input.office).unwrap().unwrap().head,
+            Some(later(&initial, 1, 2))
         );
         assert_eq!(fs::read(marker).unwrap(), b"selected-writer/1\n");
     }

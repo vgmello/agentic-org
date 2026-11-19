@@ -3,7 +3,9 @@
 //! restarting on a fatal failure or when it keeps failing (the give-up rule), until
 //! `office.restart` or the next host run.
 //!
-//! Every start loads the office's secrets key from the key store first. A missing item, or one
+//! Every start first requires the office's writer custody: without it nothing is started and
+//! the office is `unavailable` (`storage_error`) until `office.restart` or the next host run,
+//! never restarted in a loop. It then loads the office's secrets key. A missing item, or one
 //! that isn't a key, still starts the server: its handoff carries `null` and the office serves
 //! its data, with only what the key unwraps unavailable. Any other key store error is a
 //! `storage_error`, retried with backoff. The key is dropped once its line is written.
@@ -163,6 +165,15 @@ impl OfficeRunner {
     /// watches it. Without its key (no item, or one that isn't a key) the start proceeds with
     /// none; only a key store that can't be read starts nothing.
     fn start(&self, generation: &mut u64) -> Ending {
+        // An office without writer custody never starts, and no restart on its own can fix
+        // it: `unavailable` until `office.restart` or the next host run, not a restart loop.
+        if let Err(SpawnError::NoCustody) = self.spawner.custody(&self.office_id, None) {
+            return Ending::Ended {
+                reason: OfficeStatusReason::StorageError,
+                fatal: true,
+                uptime: None,
+            };
+        }
         let key = match self.keys.load(&self.office_id) {
             Ok(key) => key,
             Err(e) if e.means_no_key() => None,
@@ -206,13 +217,14 @@ impl OfficeRunner {
                 // A server that isn't the signed one (`server_check`) is a storage error: not
                 // fatal, retried with backoff (a wrong program isn't fixed by itself, so the
                 // give-up rule ends it), and it never got the key.
-                let reason = match e {
-                    SpawnError::Untrusted(_) => OfficeStatusReason::StorageError,
-                    SpawnError::Io(_) => OfficeStatusReason::Crashed,
+                let (reason, fatal) = match e {
+                    SpawnError::Untrusted(_) => (OfficeStatusReason::StorageError, false),
+                    SpawnError::NoCustody => (OfficeStatusReason::StorageError, true),
+                    SpawnError::Io(_) => (OfficeStatusReason::Crashed, false),
                 };
                 Ending::Ended {
                     reason,
-                    fatal: false,
+                    fatal,
                     uptime: None,
                 }
             }
