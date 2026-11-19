@@ -719,8 +719,7 @@
       "scheme": "http_published",
       "address": "0.0.0.0",
       "port": 8443,
-      "result": "published_host"
-    ,
+      "result": "published_host",
       "why": "a name can resolve to ::1, where the port is not published"
     },
     {
@@ -735,8 +734,7 @@
       "scheme": "http_published",
       "address": "::",
       "port": 8443,
-      "result": "published_host"
-    ,
+      "result": "published_host",
       "why": "the documented publication is on 127.0.0.1 alone"
     },
     {

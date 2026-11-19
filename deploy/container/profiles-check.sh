@@ -10,11 +10,15 @@
 # It checks that, under the two profiles together:
 #   1. the service sets an instance up, serves and stops within 2.5 s with exit code 0;
 #   2. a vendor-style sandbox runs in the container as the service user:
-#      `bwrap --unshare-all --ro-bind / / --dev /dev --tmpfs /tmp true`, and the same with
-#      `--proc /proc` once the container also has `--security-opt systempaths=unconfined`;
-#      without it a fresh /proc is refused (Docker's masked /proc paths), as the README says;
+#      `bwrap --unshare-all --ro-bind / / --dev /dev --tmpfs /tmp true`; one that mounts a
+#      fresh /proc (`--proc /proc`) is refused, as the README says (Docker's masked /proc
+#      paths stay);
 #   3. with Docker's default profiles the same sandbox cannot start (the profiles are what
-#      lets it).
+#      lets it);
+#   4. the mount calls the profiles allow work only in a user namespace of one's own:
+#      neither the service user nor root in the container mounts anything without one, and
+#      root, in a user and mount namespace of its own, cannot write /proc/sys through a
+#      bind mount of it (Docker keeps it read-only there too).
 # bubblewrap is not in the image: a derived image adds it for this check. Every container
 # and image it makes is removed at the end, pass or fail.
 set -euo pipefail
@@ -83,14 +87,29 @@ sandbox() {
 out=$(sandbox "${profiles[@]}" --)
 echo "  without a fresh /proc: $(tr '\n' ' ' <<<"$out")"
 has '^61000$' "$out" && has '^exit 0$' "$out" || fail "bwrap did not run under the profiles: $out"
-out=$(sandbox "${profiles[@]}" --security-opt systempaths=unconfined -- --proc /proc)
-echo "  with --proc /proc and systempaths=unconfined: $(tr '\n' ' ' <<<"$out")"
-has '^exit 0$' "$out" || fail "bwrap --proc /proc did not run with systempaths=unconfined: $out"
 out=$(sandbox "${profiles[@]}" -- --proc /proc)
-echo "  with --proc /proc, Docker's masked /proc paths kept: $(tr '\n' ' ' <<<"$out")"
-has "Can't mount proc" "$out" || fail "a fresh /proc under masked paths: $out"
+echo "  with --proc /proc (not supported): $(tr '\n' ' ' <<<"$out")"
+has "Can't mount proc" "$out" || fail "a fresh /proc under Docker's masked paths: $out"
 
 echo "== 3. the same sandbox with Docker's default profiles"
 out=$(sandbox --)
 echo "  $(tr '\n' ' ' <<<"$out")"
 if has '^exit 0$' "$out"; then fail "bwrap ran without the profiles: the check proves nothing"; fi
+
+echo "== 4. no mount outside a user namespace of one's own, and /proc/sys stays read-only"
+# as <user> <shell text>: the text's output under both profiles, and "exit <code>" last.
+as() {
+    docker run --rm "${profiles[@]}" -u "$1" --entrypoint /bin/sh "$sandbox" -c \
+        "$2"' 2>&1; echo "exit $?"' 2>&1
+}
+for user in 61000 0; do
+    out=$(as "$user" 'mkdir -p /tmp/m && mount -t tmpfs none /tmp/m')
+    echo "  uid $user, mount without a namespace: $(tr '\n' ' ' <<<"$out")"
+    if has '^exit 0$' "$out"; then fail "uid $user mounted outside a user namespace"; fi
+done
+# The value is written back unchanged, so a write that wrongly succeeds changes nothing.
+out=$(as 0 'unshare -Urm sh -c "mkdir -p /tmp/s && mount --bind /proc/sys /tmp/s && cat /tmp/s/kernel/printk_ratelimit > /tmp/s/kernel/printk_ratelimit"')
+echo "  root, own user and mount namespace, writing /proc/sys through a bind: $(tr '\n' ' ' <<<"$out")"
+if has '^exit 0$' "$out"; then fail "root wrote /proc/sys through a bind mount of its own"; fi
+has 'Read-only file system|Permission denied|Operation not permitted' "$out" ||
+    fail "the write to /proc/sys failed for another reason: $out"

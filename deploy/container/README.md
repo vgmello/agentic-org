@@ -189,18 +189,20 @@ profiles the service serves and stops within 2.5 s with exit code 0, and
 `bwrap --unshare-all --ro-bind / / --dev /dev --tmpfs /tmp true` runs in the container as
 the service user; with Docker's default profiles it cannot create its namespace.
 
-**A sandbox that mounts a fresh `/proc`** (`bwrap ... --proc /proc`) is refused by the
-kernel while Docker masks paths of the container's `/proc` (`Can't mount proc on /proc:
-Operation not permitted`). It runs with one more option, `--security-opt
-systempaths=unconfined`, which unmasks them. Use it only together with the AppArmor
-profile, whose denials keep `/proc/sys` (but `kernel/shm*`), `/proc/sysrq-trigger`,
-`/proc/kcore` and `/sys/firmware` closed; without AppArmor it would leave `/proc/sys`
-writable to root in the container.
+**A sandbox that mounts a fresh `/proc` does not run in the container** (`bwrap ... --proc
+/proc`: `Can't mount proc on /proc: Operation not permitted`). The kernel refuses a new
+`/proc` while Docker masks paths of the container's own, and those masks stay: never add
+`--security-opt systempaths=unconfined`. With the paths unmasked, root in the container
+could bind `/proc/sys` to another place in a mount namespace of its own and write kernel
+settings there, where the AppArmor path rules do not look. A sandbox that binds the
+container's `/proc` (`--ro-bind /proc /proc`) is not affected. `profiles-check.sh` checks
+that neither the service user nor root in the container can mount outside a user
+namespace, nor write `/proc/sys` through such a mount.
 
-Leave `--security-opt apparmor=…` out on a Docker host without AppArmor (and with it
-`systempaths=unconfined`). Never use `seccomp=unconfined`, `apparmor=unconfined`,
-`--privileged` or `--cap-add SYS_ADMIN`. The image does not include bubblewrap or any
-vendor tool's other packages.
+Leave `--security-opt apparmor=…` out on a Docker host without AppArmor. Never use
+`seccomp=unconfined`, `apparmor=unconfined`, `systempaths=unconfined`, `--privileged` or
+`--cap-add SYS_ADMIN`. The image does not include bubblewrap or any vendor tool's other
+packages.
 
 ## Optional: less for the container to hold
 
@@ -255,7 +257,12 @@ image sets no `ORG_OFFICE_DEV_KEY_DIR`, and one given with `-e` is not used.
 
 ## Known limits
 
-- A first start that is refused before the instance is reserved leaves nothing. A
+- A first start that is refused before the instance is reserved leaves nothing. One case
+  is refused only after: a secrets volume that is a folder of the data volume, with the
+  data folder `/data/instance` a volume of its own mounted inside it. Setup does not yet
+  compare the secrets volume with the instance's records, so it reserves the instance and
+  leaves its lock file `.lock` in that folder; the host then refuses the start, and no key
+  is written. A
   registered-mode setup (on a machine, not this image) that fails later, when its service
   is registered, keeps its record: correct the cause and run the same file again; another
   file is refused until the instance is removed.

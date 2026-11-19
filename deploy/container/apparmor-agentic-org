@@ -21,12 +21,17 @@
 #
 # The rules below, up to `userns`, are docker-default's (moby,
 # profiles/apparmor/template.go), written out for a profile named agentic-org.
-# Verified on Ubuntu 26.04 (AppArmor enforcing, Docker 29.1.3): loaded with
-# `apparmor_parser -r -W`, the service serves and stops under it with seccomp.json, and
+# Docker's masked and read-only /proc and /sys paths must stay as Docker sets them: never
+# run this profile with --security-opt systempaths=unconfined. With them unmasked, root in
+# the container could bind /proc/sys elsewhere in a mount namespace of its own and write
+# it there, where the path rules below do not see it. So a sandbox that mounts a fresh
+# /proc (bwrap --proc /proc) does not run in the container (README.md).
+#
+# Checked on Ubuntu 26.04 (AppArmor enforcing, Docker 29.1.3) by profiles-check.sh: the
+# service serves and stops under this profile with seccomp.json;
 # `bwrap --unshare-all --ro-bind / / --dev /dev --tmpfs /tmp true` runs in the container as
-# the service user; with --proc /proc as well, the container also needs
-# --security-opt systempaths=unconfined (README.md, "Optional: profiles for agents'
-# sandboxes").
+# the service user; and neither the service user nor root in the container can mount
+# outside a user namespace, or write /proc/sys through a mount of its own.
 
 #include <tunables/global>
 

@@ -887,15 +887,19 @@ serves no HTTPS on any system yet.
   Ubuntu 26.04 with AppArmor enforcing and Docker 29.1.3 (`deploy/container/profiles-check.sh`,
   LNX-2 step 10): the service serves and stops within 2.5 s under both profiles, and
   `bwrap --unshare-all --ro-bind / / --dev /dev --tmpfs /tmp true` runs as the service
-  user. A sandbox that mounts a fresh `/proc` (`--proc /proc`) is refused by the kernel
-  while Docker masks paths of the container's `/proc`; it runs with
-  `--security-opt systempaths=unconfined` added, which is allowed only together with
-  the AppArmor profile, whose denials keep `/proc/sys` and the rest closed. With
+  user; neither the service user nor root in the container can mount outside a user
+  namespace, or write `/proc/sys` through a bind mount in a namespace of its own (Docker's
+  read-only `/proc/sys` stays read-only there). A sandbox that mounts a fresh `/proc`
+  (`--proc /proc`) does not run: the kernel refuses it while Docker masks paths of the
+  container's `/proc`, and `systempaths=unconfined` is never used (with the paths
+  unmasked, root in the container could bind `/proc/sys` elsewhere in its own mount
+  namespace and write it past the AppArmor path rules). With
   Docker's default profiles bubblewrap cannot create its namespace. Being a static
   file, the AppArmor profile admits signals from an unconfined Docker daemon and the
   Docker snap's (`snap.docker.dockerd`) where Moby's template names the running
   daemon's label; another daemon label is added by the operator. `seccomp=unconfined`,
-  `apparmor=unconfined`, `--privileged` and `--cap-add SYS_ADMIN` are never used.
+  `apparmor=unconfined`, `systempaths=unconfined`, `--privileged` and
+  `--cap-add SYS_ADMIN` are never used.
 - **The first registration link.** Non-interactive setup prints none, and nothing is
   written to the container log. The administrator runs
   `docker exec -it -u 0 agentic-org agentic-org admin reset --user agentic` (root, at a
@@ -923,8 +927,7 @@ that, and Ubuntu 24.04 and later restrict it through AppArmor
 that grants `userns`. A runtime adapter reports whether its sandbox is available, and
 the office does not start an agent whose sandbox is unavailable; it is never started
 without one. The container's optional seccomp and AppArmor profiles (section 3.4) allow
-it in a container, for a sandbox that does not mount a fresh `/proc`, and for one that
-does with `systempaths=unconfined` added beside the AppArmor profile. On a Linux host with the AppArmor restriction, setup reports it and
+it in a container, for a sandbox that does not mount a fresh `/proc`. On a Linux host with the AppArmor restriction, setup reports it and
 ships `deploy/apparmor/agentic-org-agents`, a profile granting `userns` to the vendor
 sandbox helper, which an administrator installs; until then no agent starts there.
 

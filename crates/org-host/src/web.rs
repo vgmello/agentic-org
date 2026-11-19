@@ -340,10 +340,6 @@ fn confined_by(
     }
 }
 
-/// The cause of a start that failed before the ready line, with the reason of the
-/// child's own refusal when it left one. Only a child that has ended by itself is
-/// asked: one that is already reaped, or, when its control stream ended, one that
-/// exits within [`EXIT_GRACE`]. Any other child is left to be killed at once.
 /// What an ended child's standard error says of its end.
 enum Ending {
     /// Its refusal line's reason: it could not confine itself.
@@ -366,6 +362,11 @@ fn last_line(captured: &[u8]) -> Option<&str> {
         .map(|line| std::str::from_utf8(line).unwrap_or("(not text)"))
 }
 
+/// The cause of a start that failed before the ready line, with the reason of the
+/// child's own refusal when it left one, or else the last whole line it wrote. Only a
+/// child that has ended by itself is asked: one that is already reaped, or, when its
+/// control stream ended, one that exits within [`EXIT_GRACE`]. Any other child is left
+/// to be killed at once.
 fn with_refusal(error: io::Error, captured: &Stderr, child: &mut Child) -> io::Error {
     let went_away = error
         .get_ref()
