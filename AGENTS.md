@@ -52,7 +52,7 @@ Engineers and their agents make architectural decisions themselves, inside the
    - Start feature branches from `origin/v1`. Use separate worktrees for concurrent writers; otherwise work in the dedicated current checkout.
    - Each lead keeps one active implementation branch at a time. Preserve blocked branches/checkpoints and move to independent work rather than stopping all delivery.
    - Review completed work locally, then merge `origin/v1` into your branch, tell the other lead sessions, `git merge --no-ff` into `v1` and push it. `v1` is the integration branch for **all v1 features** (owner, 2026-11-18; `v1-integration` is retired). Do not wait for a pull request or an outside reviewer.
-   - Never push to `main` without an explicit release instruction. Never delete unmerged work; verify integration before cleaning up merged branches/worktrees.
+   - Never push to `main` without an explicit release instruction. Never delete unmerged work. After merging, clean up your merged worktrees and local and remote branches as `docs/processes/branch-and-merge.md` §5 describes.
 3. **Checks and local review:** use the installed kit's task-routing, skill-routing and review-cycle. Keep the original author context, fix confirmed findings, validate original intent and obtain the separate fresh final local review for the exact commit. The lead merges after current checks and local acceptance pass.
    - For Rust changes, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass.
    - For app changes, the type check, tests, build and relevant browser checks pass; capture UI evidence where applicable.
