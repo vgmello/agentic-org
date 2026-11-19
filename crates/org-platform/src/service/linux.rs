@@ -594,10 +594,13 @@ impl ServiceManager for Systemd {
         let directory = self
             .directory(true)?
             .expect("a directory this call makes exists");
+        // Published first: a write that fails leaves the earlier rendering as it was, and
+        // running. Then what systemd runs from the earlier one stops and loses its
+        // enablement, and the new one is loaded as a first registration's would be.
+        directory.publish(&name, &bytes, replace)?;
         if replace && shown.is_some() {
             self.expect_ok(&["disable".as_ref(), "--now".as_ref(), name.as_ref()])?;
         }
-        directory.publish(&name, &bytes, replace)?;
         match self.load(&name, &file) {
             Ok(()) => Ok(Registration::Loaded),
             Err(refused) => {

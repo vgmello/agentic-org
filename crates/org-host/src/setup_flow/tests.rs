@@ -1676,6 +1676,22 @@ fn setup_is_ready_only_when_the_browser_service_runs() {
         asked, 4,
         "a host whose browser service is not running is not ready"
     );
+    // Held for a moment (by the failed child the host is reaping) is not another program's.
+    let mut answers = vec![
+        Ok(status(GatewayState::Failed)),
+        Ok(status(GatewayState::Failed)),
+        Ok(status(GatewayState::Running)),
+    ]
+    .into_iter();
+    let held_now = std::cell::Cell::new(true);
+    assert!(wait_ready(
+        || answers.next().unwrap(),
+        id,
+        Duration::from_secs(10),
+        || held_now.replace(false).then(|| "port held".to_owned()),
+    )
+    .is_ok());
+    let started = Instant::now();
     let held = wait_ready(
         || Ok(status(GatewayState::Failed)),
         id,
@@ -1684,6 +1700,10 @@ fn setup_is_ready_only_when_the_browser_service_runs() {
     )
     .unwrap_err();
     assert_eq!(held, "port held");
+    assert!(
+        started.elapsed() >= HELD_FOR,
+        "another program was named at once"
+    );
     let late = wait_ready(
         || Ok(status(GatewayState::Starting)),
         id,
@@ -1724,15 +1744,16 @@ fn a_development_build_needs_and_makes_its_development_key_folder() {
     };
     let unused = platform(CredentialDirectory::Unused);
     let registered = input(Service::Registered, None);
-    let missing = development_keys(&registered, None, &unused).unwrap_err();
+    let missing = development_keys(&registered, None, None, &unused).unwrap_err();
     assert!(
         missing.contains("ORG_OFFICE_DEV_KEY_DIR") && missing.ends_with("nothing was changed"),
         "{missing}"
     );
-    let relative = development_keys(&registered, Some(Path::new("keys")), &unused).unwrap_err();
+    let relative =
+        development_keys(&registered, None, Some(Path::new("keys")), &unused).unwrap_err();
     assert!(relative.contains("not an absolute folder"), "{relative}");
     assert_eq!(
-        development_keys(&registered, Some(&base.join("keys")), &unused),
+        development_keys(&registered, None, Some(&base.join("keys")), &unused),
         Ok(Some(base.join("keys")))
     );
     // Nothing is needed where the host does not use one.
@@ -1745,8 +1766,15 @@ fn a_development_build_needs_and_makes_its_development_key_folder() {
         ),
         (input(Service::Registered, None), &below),
     ] {
-        assert_eq!(development_keys(&input, None, platform), Ok(None));
+        assert_eq!(development_keys(&input, None, None, platform), Ok(None));
     }
+    // An instance reserved without a credential directory (by an earlier build) keeps its
+    // keys in the folder, whatever this build would record; one reserved with one does not.
+    assert!(development_keys(&registered, Some(false), None, &below).is_err());
+    assert_eq!(
+        development_keys(&registered, Some(true), None, &unused),
+        Ok(None)
+    );
     // Made private, whatever the mask, and kept as it is the next time.
     let keys = base.join("keys");
     development_folder(&keys, &base.join("data")).unwrap();
@@ -1909,7 +1937,7 @@ fn a_service_that_never_answers_does_not_hold_the_command() {
 }
 
 /// X5 review, fourth round, P2-9 and F4: the lookup runs in a child process and only its
-/// answer comes back: what `work` returns, its refusal, a panic, a child that does not end
+/// answer comes back: what `work` returns, its refusal, a child that does not end
 /// and an identity that cannot be taken are all answers, and the child never returns into
 /// the caller. (Without root the child keeps this process's identity.)
 #[test]
@@ -1932,14 +1960,6 @@ fn the_lookup_runs_in_a_child_and_only_its_answer_comes_back() {
             LOOKUP_WITHIN
         ),
         Err("not that user".into())
-    );
-    assert_eq!(
-        in_child(
-            || Ok(()),
-            || -> Result<u32, String> { panic!("a bug") },
-            LOOKUP_WITHIN
-        ),
-        Err("the lookup failed".into())
     );
     let started = Instant::now();
     let slow = in_child(

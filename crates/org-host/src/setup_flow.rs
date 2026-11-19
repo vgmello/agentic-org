@@ -345,7 +345,7 @@ fn credential_directory(
                     .and_then(|path| store_directories::open_directory(None, &path).ok())
             }
         }
-        .filter(|store| !store_directories::holds(store.as_fd(), c".lock"))
+        .filter(|store| store_directories::lacks(store.as_fd(), c".lock"))
     };
     // Open it once as the host does, so that a directory the host would refuse is refused
     // now, with the same words, and not at the service's first start.
@@ -354,13 +354,15 @@ fn credential_directory(
         data_root,
         mount_point_required: mounted,
         expect_items: false,
-    })
-    .map(drop);
-    if let Some(store) = lock_made_here {
+    });
+    // While the store is still locked by this check, so that no other opener holds a lock
+    // on the file that goes.
+    if let (Some(store), Ok(_)) = (lock_made_here, &checked) {
         use std::os::fd::AsRawFd;
         // SAFETY: the held store directory and a NUL-terminated single name.
         unsafe { libc::unlinkat(store.as_raw_fd(), c".lock".as_ptr(), 0) };
     }
+    let checked = checked.map(drop);
     match (checked, made) {
         (Ok(()), Some(made)) if !keep => made.remove(),
         (Ok(()), _) => {}
@@ -462,8 +464,9 @@ mod store_directories {
         }
     }
 
-    /// Whether `directory` holds an entry `name` (of any kind, a link not followed).
-    pub(super) fn holds(directory: BorrowedFd<'_>, name: &std::ffi::CStr) -> bool {
+    /// Whether `directory` certainly has no entry `name` (of any kind, a link not
+    /// followed): only an answer that it does not exist says so.
+    pub(super) fn lacks(directory: BorrowedFd<'_>, name: &std::ffi::CStr) -> bool {
         // SAFETY: plain data that fstatat fills in.
         let mut found: libc::stat = unsafe { std::mem::zeroed() };
         // SAFETY: an open directory, a NUL-terminated name and a writable stat.
@@ -475,7 +478,7 @@ mod store_directories {
                 libc::AT_SYMLINK_NOFOLLOW,
             )
         };
-        status == 0
+        status != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ENOENT)
     }
 
     /// `name` as a directory, below `parent` or (without one) as a whole path: never a
@@ -1091,8 +1094,14 @@ pub(crate) fn run_at(
     let existing = journal.read().map_err(|e| fail("reading setup", e))?;
     // Before anything is saved or reserved: what a development build's registered service
     // needs, for the input this run continues or freezes.
-    let development_needed =
-        |input: &Input| development_keys(input, request.development_keys.as_deref(), platform);
+    let development_needed = |input: &Input, recorded: Option<bool>| {
+        development_keys(
+            input,
+            recorded,
+            request.development_keys.as_deref(),
+            platform,
+        )
+    };
     // A record without a reserved instance is what an earlier run froze and could not
     // continue. It pins nothing: a corrected file replaces it (X5 review V1). A record
     // that names its instance is the instance's configuration and never changes.
@@ -1129,7 +1138,16 @@ pub(crate) fn run_at(
             ));
         }
         Some(record) => {
-            development = development_needed(&record.input)?;
+            // A reserved instance is judged by what its record names, which never changes:
+            // one reserved without a credential directory (by an earlier build) keeps its
+            // keys in the development key folder whatever this build would record.
+            development = development_needed(
+                &record.input,
+                record
+                    .instance_id
+                    .is_some()
+                    .then_some(record.credentials.is_some()),
+            )?;
             if request
                 .port
                 .is_some_and(|p| p != record.input.listen.port())
@@ -1151,7 +1169,7 @@ pub(crate) fn run_at(
             // Offline: nothing is asked and nothing is fetched. The address is the file's.
             let input = configured.expect("checked above");
             // Everything that can refuse this input is asked before anything is saved.
-            development = development_needed(&input)?;
+            development = development_needed(&input, None)?;
             held = Some(preflight(&input, records.as_fd())?);
             froze_from_file = true;
             journal
@@ -1190,7 +1208,7 @@ pub(crate) fn run_at(
                 credentials: None,
                 listen: loopback(port)?,
             };
-            development = development_needed(&input)?;
+            development = development_needed(&input, None)?;
             journal
                 .freeze(input, false, pin)
                 .map_err(|e| fail("saving setup", e))?
@@ -1484,11 +1502,15 @@ fn refused_reservation(
 /// path is refused: the service does not run in the folder setup ran in.
 fn development_keys(
     input: &Input,
+    recorded: Option<bool>,
     folder: Option<&Path>,
     platform: &Platform,
 ) -> Result<Option<PathBuf>, String> {
-    let named = input.credentials.is_some()
-        || matches!(platform.credentials, CredentialDirectory::Below(_));
+    // `recorded`: whether the record of a reserved instance names a credential directory;
+    // `None` before the reservation, when this run decides it.
+    let named = recorded.unwrap_or_else(|| {
+        input.credentials.is_some() || matches!(platform.credentials, CredentialDirectory::Below(_))
+    });
     if !cfg!(debug_assertions) || input.service == Service::Foreground || named {
         return Ok(None);
     }
@@ -1772,6 +1794,9 @@ fn wait_ready(
 ) -> Result<InstanceStatusResult, String> {
     let deadline = Instant::now() + within;
     let mut browser = None;
+    // Since when a failed browser service's address is held: by its own child for a moment
+    // after the failure (the host reaps it), so only one held for a while is another's.
+    let mut held_since: Option<Instant> = None;
     loop {
         let why = match ask() {
             Ok(status) if status.instance_id != instance_id => {
@@ -1779,10 +1804,14 @@ fn wait_ready(
             }
             Ok(status) if status.gateway.state == GatewayState::Running => return Ok(status),
             Ok(status) => {
-                if status.gateway.state == GatewayState::Failed {
-                    if let Some(why) = failed() {
-                        return Err(why);
-                    }
+                let held = (status.gateway.state == GatewayState::Failed)
+                    .then(&failed)
+                    .flatten();
+                match (held, held_since) {
+                    (Some(why), Some(since)) if since.elapsed() >= HELD_FOR => return Err(why),
+                    (Some(_), None) => held_since = Some(Instant::now()),
+                    (Some(_), Some(_)) => {}
+                    (None, _) => held_since = None,
                 }
                 browser = Some(status.gateway.state);
                 None
@@ -1812,6 +1841,10 @@ fn wait_ready(
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+/// How long a failed browser service's address must stay held before [`wait_ready`] names
+/// another program as the reason.
+const HELD_FOR: Duration = Duration::from_secs(1);
 
 /// Finds the registered instance `name`: its ID and `host.sock`.
 fn registered(paths: &Paths, name: Option<&str>) -> Result<(Record, String, PathBuf), String> {
@@ -2310,11 +2343,14 @@ fn in_child<T: serde::Serialize + serde::de::DeserializeOwned>(
         // SAFETY: the child this call made.
         unsafe { libc::kill(pid, libc::SIGKILL) };
     }
+    // Reaped within a bound too: a child the kill cannot end at once (stuck in a filesystem
+    // that does not answer) is left to the system, and the command goes on.
+    let reap = Instant::now() + Duration::from_secs(1);
     let mut status = 0;
-    // SAFETY: the child this call made, reaped once.
-    while unsafe { libc::waitpid(pid, &mut status, 0) } < 0
-        && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
-    {}
+    // SAFETY: the child this call made, reaped once, without waiting.
+    while unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) } == 0 && Instant::now() < reap {
+        std::thread::sleep(Duration::from_millis(10));
+    }
     read?;
     serde_json::from_slice::<Result<T, String>>(&bytes)
         .map_err(|_| "the lookup did not answer".to_owned())?

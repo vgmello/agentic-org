@@ -147,16 +147,24 @@ fn apply(
     configuration: setup_flow::Configuration,
     name: Option<&str>,
 ) -> Result<Option<org_host::BrowserListener>, String> {
-    let platform = platform(configuration.foreground())?;
+    let foreground = configuration.foreground();
+    let platform = platform(foreground)?;
+    // The foreground mode registers no service: nothing is given an environment, and its
+    // host takes its development key folder as `serve` does.
+    let (env, development_keys) = if foreground {
+        (Vec::new(), None)
+    } else {
+        (service_environment()?, development_keys()?)
+    };
     let request = Request {
         name: name.map(str::to_owned),
         port: None,
         prompt: None,
         named_port_base: named_port_base()?,
         program: own_program()?,
-        env: service_environment()?,
+        env,
         terminal: false,
-        development_keys: development_keys()?,
+        development_keys,
         configuration: Some(configuration),
     };
     let mut out = std::io::stdout().lock();
