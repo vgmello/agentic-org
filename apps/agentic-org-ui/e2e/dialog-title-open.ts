@@ -5,18 +5,17 @@ import { enterMockedOrganization } from './mock-organization';
 
 // The team dialogs open from Teams (/teams) and the member dialogs from the member's profile; the dialogs that only the
 // retired org-chart canvas opened (team members, add project, change manager, member teams, how it runs, remove
-// person) have no caller left.
+// person) have no caller left, nor do the project-team dialogs (assign a team, remove a project from a team): a
+// project's teams are edited in its Settings tab, in one save.
 export const titles = {
 	'delete-refused': "Can't delete Engineering",
 	task: 'New task',
 	report: 'Report a bug',
-	assign: 'Assign a team to Scratchpad',
 	delete: 'Delete Spare?',
 	'edit-person': 'Edit Hana Weiss',
 	'move-member': "Move Sam Okafor's home team",
 	'move-team': 'Move Engineering to…',
 	'new-request': 'New request',
-	'remove-project': 'Remove Atlas from Platform?',
 	'rename-team': 'Rename Web',
 	'block-task': 'Block T-1',
 	'edit-agent': 'Edit Sam Okafor',
@@ -69,9 +68,6 @@ export async function openTitle(page: Page, kind: TitleCase, width: number, scal
 		await page
 			.getByRole('button', { name: kind === 'task' ? 'New task' : 'Report a bug', exact: true })
 			.click();
-	} else if (kind === 'assign') {
-		await visit(page, '/projects');
-		await page.getByRole('button', { name: 'Assign a team to Scratchpad', exact: true }).click();
 	} else if (kind === 'delete' || kind === 'delete-refused') {
 		// Every sample team has members or work (offices-and-teams-ux §7.10), so Delete gets an empty team of its own.
 		if (kind === 'delete') await createSpareTeam(page);
@@ -105,9 +101,6 @@ export async function openTitle(page: Page, kind: TitleCase, width: number, scal
 			await visit(page, '/work');
 			await page.getByRole('tab', { name: /^Requests/ }).click();
 			await page.getByTestId('new-request').click();
-		} else if (kind === 'remove-project') {
-			await visit(page, '/projects');
-			await page.getByRole('button', { name: 'Remove Atlas from Platform', exact: true }).click();
 		} else if (kind === 'block-task') {
 			await visit(page, '/projects/atlas/work');
 			await page.getByRole('tab', { name: 'Tasks', exact: true }).click();

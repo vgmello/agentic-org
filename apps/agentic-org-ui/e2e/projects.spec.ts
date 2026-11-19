@@ -162,8 +162,13 @@ test(
 
 		await tabs(page).filter({ hasText: 'Work' }).click();
 		await expect(page).toHaveURL(/\/projects\/beacon\/work$/);
-		await expect(page.getByText("Work isn't built yet")).toBeVisible();
-		await expect(page.getByText("It's coming in this release.")).toBeVisible();
+		// Until step 5, the Work tab shows v1's task board and bug list as its Tasks and Bugs tabs.
+		const workViews = page.getByRole('tablist', { name: 'Work', exact: true });
+		await expect(workViews.getByRole('tab')).toHaveText(['Tasks', 'Bugs']);
+		await expect(workViews.getByRole('tab', { name: 'Tasks' })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
 
 		await tabs(page).filter({ hasText: 'Activity' }).click();
 		await expect(

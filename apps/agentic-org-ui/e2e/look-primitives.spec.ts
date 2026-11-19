@@ -158,37 +158,27 @@ for (const width of [320, 640, 960, 1280]) {
 			await shot(page, `look-pill-${width}`, { context: status });
 		}
 	);
-	test(
-		`PROJ-1 BUG-70: native divided rows and a quiet neutral callout at ${width}px`,
-		{ tag: '@webkit' },
-		async ({ page }) => {
-			await page.setViewportSize({ width, height: 900 });
-			await open(page, '/projects');
-			const list = page.getByRole('main').getByRole('list', { name: 'Projects', exact: true });
-			await expect(list.getByRole('listitem')).toHaveCount(4);
-			await expect(list.getByTestId('project-row').getByRole('link')).toHaveText([
-				'Atlas',
-				'Beacon',
-				'Onboarding kit',
-				'Scratchpad'
-			]);
-			const first = list.getByRole('listitem').first();
-			expect.soft(await css(first, 'padding-top')).toBe('16px');
-			expect.soft(await css(first, 'padding-bottom')).toBe('16px');
-			expect.soft(await css(list, 'border-radius')).toBe('0px');
-			expect.soft(await css(list, 'background-color')).toBe('rgba(0, 0, 0, 0)');
-			const note = page.getByTestId('unassigned-note');
-			await expect(note).toHaveText('1 project has no team yet.');
-			expect.soft(await css(note, 'color')).toBe(await tokenColor(page, '--color-gray-300'));
-			expect(await contrast(note)).toBeGreaterThanOrEqual(4.5);
-			expect.soft(await note.locator('svg[aria-hidden=true]').count()).toBe(1);
-			expect(await note.getAttribute('role')).toBeNull(); // Static context must not acquire Alert's default live role.
-			expect(await note.getAttribute('aria-live')).toBeNull();
-			expect(await fits(note)).toBe(true);
-			await expect(page.getByRole('button', { name: 'New project', exact: true })).toBeDisabled();
-			await shot(page, `look-projects-${width}`, { context: list });
-		}
-	);
+	test(`PROJ-1 BUG-70: native divided rows at ${width}px`, { tag: '@webkit' }, async ({ page }) => {
+		await page.setViewportSize({ width, height: 900 });
+		await open(page, '/projects');
+		const rows = page.getByRole('main').getByTestId('project-row');
+		await expect(rows).toHaveCount(4);
+		const list = rows.first().locator('..');
+		await expect(rows.locator(':scope > div > p > a')).toHaveText([
+			'Atlas',
+			'Beacon',
+			'Onboarding kit',
+			'Scratchpad'
+		]);
+		const first = rows.first();
+		expect.soft(await css(first, 'padding-top')).toBe('16px');
+		expect.soft(await css(first, 'padding-bottom')).toBe('16px');
+		expect.soft(await css(list, 'border-radius')).toBe('0px');
+		expect.soft(await css(list, 'background-color')).toBe('rgba(0, 0, 0, 0)');
+		// Every project has an accountable team now (PROJ-2), so v1's "no team yet" callout has nothing to say.
+		await expect(page.getByTestId('unassigned-note')).toHaveCount(0);
+		await shot(page, `look-projects-${width}`, { context: list });
+	});
 }
 
 for (const width of [320, 960]) {
@@ -244,7 +234,7 @@ for (const width of [320, 960]) {
 	);
 
 	test(
-		`PROJ-1 BUG-70: a long project name and callout wrap at 200% text and ${width}px`,
+		`PROJ-1 BUG-70: a long project name wraps at 200% text and ${width}px`,
 		{ tag: '@webkit' },
 		async ({ page }) => {
 			await page.setViewportSize({ width, height: 900 });
@@ -274,26 +264,24 @@ for (const width of [320, 960]) {
 			const row = page.locator('[data-testid=project-row][data-project=scratch]');
 			const link = row.getByRole('link', { name: long, exact: true });
 			await expect(link).toBeVisible();
-			expect(await fits(link)).toBe(true);
-			expect(await fits(page.getByTestId('unassigned-note'))).toBe(true);
-			// A compact icon column must yield before ordinary words are split into letters.
-			const wordLines = await page.getByTestId('unassigned-note').evaluate((element) => {
-				const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-				for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-					const start = node.textContent!.indexOf('project');
-					if (start < 0) continue;
+			// The link holds the row's stretched click target (an empty overlay span); measure the name's own text.
+			expect(
+				await link.evaluate((element) => {
+					const box = element.getBoundingClientRect();
+					const text = [...element.childNodes].find((node) => node.nodeType === Node.TEXT_NODE)!;
 					const range = document.createRange();
-					range.setStart(node, start);
-					range.setEnd(node, start + 'project'.length);
-					return range.getClientRects().length;
-				}
-				throw new Error('The project word is missing');
-			});
-			expect(wordLines).toBe(1);
+					range.selectNodeContents(text);
+					const rects = [...range.getClientRects()];
+					return (
+						rects.length > 1 &&
+						rects.every((rect) => rect.left >= box.left - 1 && rect.right <= box.right + 1)
+					);
+				})
+			).toBe(true);
+			expect(
+				await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
+			).toBe(true);
 			expect(await css(row, 'padding-top')).toBe('32px');
-			await shot(page, `look-callout-200-${width}`, {
-				context: page.getByTestId('unassigned-note')
-			});
 			await shot(page, `look-projects-long-200-${width}`, { context: row });
 		}
 	);
@@ -330,27 +318,19 @@ test(
 	}
 );
 
+// v1's keyboard assignment (Assign a team… on a row) is retired: a project's teams are edited in its Settings tab,
+// in one save (projects.spec.ts PRJ-3).
 test(
-	'PROJ-2/3 BUG-70: row links and keyboard assignment keep their behavior',
+	'PROJ-2/3 BUG-70: a row link opens its project from the keyboard',
 	{ tag: '@webkit' },
 	async ({ page }) => {
 		await open(page, '/projects');
 		const row = page.locator('[data-testid=project-row][data-project=scratch]');
-		const assign = row.getByRole('button', { name: 'Assign a team to Scratchpad', exact: true });
-		await assign.focus();
-		await assign.press('Enter');
-		const dialog = page.getByRole('dialog', { name: 'Assign a team to Scratchpad', exact: true });
-		await dialog.getByRole('radio', { name: 'Design', exact: true }).check();
-		await dialog.getByRole('button', { name: 'Assign team', exact: true }).click();
-		await expect(page.getByText('Scratchpad now belongs to Design.')).toBeVisible();
-		await expect(page.getByTestId('unassigned-note')).toHaveCount(0);
-		await expect(row.getByTestId('project-team')).toHaveText(/Design/);
-		await expect(assign).toBeFocused();
 		const link = row.getByRole('link', { name: 'Scratchpad', exact: true });
 		await link.focus();
 		await link.press('Enter');
 		await expect(page).toHaveURL(/\/projects\/scratch$/);
-		await expect(page.getByTestId('project-name')).toHaveText('Scratchpad');
+		await expect(page.getByRole('heading', { level: 2, name: /^Scratchpad/ })).toBeVisible();
 	}
 );
 

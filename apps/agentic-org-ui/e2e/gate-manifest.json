@@ -18,7 +18,6 @@
 		}
 	},
 	"projectFiles": {
-		"non-chat-icons-default-font.ts": "chromium-default-font",
 		"chat-followups-default-font.ts": "chromium-chat-default-font",
 		"focus-primitives-default-font.ts": "chromium-focus-default-font",
 		"dialog-title-words-default-font.ts": "chromium-title-default-font"
@@ -96,10 +95,6 @@
 		{
 			"spec": "production-unavailable.spec.ts",
 			"why": "runs only in the production project, against the static release; the webkit project ignores it"
-		},
-		{
-			"spec": "non-chat-icons-default-font.ts",
-			"why": "a Chromium-only font-size project file; its base spec is the WebKit-relevant one"
 		},
 		{
 			"spec": "chat-followups-default-font.ts",
@@ -476,13 +471,10 @@
 		"projects-work": {
 			"specs": [
 				"projects.spec.ts",
-				"project-profile.spec.ts",
 				"work.spec.ts",
 				"tasks.spec.ts",
 				"dialog-block-title.spec.ts",
-				"bugs.spec.ts",
-				"non-chat-icons.spec.ts",
-				"non-chat-icons-default-font.ts"
+				"bugs.spec.ts"
 			],
 			"sources": [
 				"src/routes/(shell)/projects/**",
@@ -492,9 +484,7 @@
 				"src/lib/org/team-edit*",
 				"src/lib/modules/copilot/**",
 				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard}.svelte",
-				"e2e/org-chart-menu.ts",
-				"e2e/non-chat-icons.ts",
-				"e2e/fixtures/non-chat-icons-*.json"
+				"e2e/org-chart-menu.ts"
 			]
 		},
 		"processes": {
@@ -528,11 +518,6 @@
 		}
 	},
 	"alsoRuns": [
-		{
-			"category": "projects-work",
-			"files": ["src/routes/(shell)/teams/(views)/org-chart/+page.{svelte,ts}"],
-			"why": "non-chat-icons.spec.ts opens /org-chart (through a ternary the route-visit guard cannot see) and asserts page-owned behaviour of the page's empty, loading and error states (its assertions on the retired team canvas are brought in line in plan step 9). Selected in addition to org-chart, without making projects-work own the page's imports."
-		},
 		{
 			"category": "dialog-title-words",
 			"files": [

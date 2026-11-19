@@ -28,7 +28,7 @@ for (const kind of Object.keys(titles) as TitleCase[])
 			);
 		}
 
-for (const kind of ['remove-project', 'move-team', 'assign'] as const) {
+for (const kind of ['move-team'] as const) {
 	test(
 		`BUG-143/144 B: ${kind} atomic words beside future A float at320/root40`,
 		{ tag: '@webkit' },
