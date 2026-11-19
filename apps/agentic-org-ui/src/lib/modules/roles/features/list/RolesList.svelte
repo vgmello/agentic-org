@@ -2,9 +2,10 @@
   @component
   Organization settings › Roles (roles-ux §1): every shared role with its revision and how many employees reference
   it, A–Z. New role… is the one primary action; Ask HR to draft… is offered when the HR lead can run and otherwise
-  disabled with the reason. A role file whose details aren't recognized says so on its row, with Fix.
-  States: loading, unavailable, error with Retry, no roles, organization data unreachable (the last copy), and a
-  viewer without edit rights (no actions).
+  disabled with the reason beneath it. A role file whose details aren't recognized says so on its row, with Fix.
+  With no roles the empty state holds the actions, so the view still has one primary.
+  States: loading, unavailable, error with Retry, no roles, organization data unreachable (the last copy: the actions
+  stay, disabled with the reason, RL-8), and a viewer without edit rights (no actions, §0.1).
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
@@ -20,15 +21,16 @@
 	import { toAppError } from '$lib/office/api';
 	import { rolesApi } from '../../api';
 	import {
+		CHANGES_PAUSED,
 		HR_CANT_RUN,
 		emptyRolesText,
 		employeesText,
 		invalidText,
 		sortRoles
 	} from '../../present';
-	import type { Role, RoleDraft, RoleSummary } from '../../types';
+	import type { Role, RoleDraft, RoleSummary, RolesOverview } from '../../types';
 	import AskHrDialog from '../ask-hr/AskHrDialog.svelte';
-	import RoleEditor, { type EditorMode } from '../editor/RoleEditor.svelte';
+	import RoleEditor from '../editor/RoleEditor.svelte';
 	import StaleNotice from '../stale/StaleNotice.svelte';
 	import { roleHref } from '../../urls';
 	import { focusHeading } from '../../heading';
@@ -39,12 +41,15 @@
 	$effect(() => void accountZone.ensure(organizationId));
 
 	const overview = $derived(resource.data);
-	const canChange = $derived(!!overview?.viewer.canEdit && !overview.stale);
+	/** The viewer may change roles at all; viewers without the right see no actions (§0.1). */
+	const mayEdit = $derived(!!overview?.viewer.canEdit);
+	/** Changes are paused while organization data can't be reached: the actions say why (RL-8). */
+	const paused = $derived(!!overview?.stale);
+	const canChange = $derived(mayEdit && !paused);
 	const roles = $derived(overview ? sortRoles(overview.roles) : []);
 
-	let editorOpen = $state(false);
-	let editorMode = $state.raw<EditorMode>({ kind: 'new' });
-	let askOpen = $state(false);
+	let editor = $state<ReturnType<typeof RoleEditor>>();
+	let askDialog = $state<ReturnType<typeof AskHrDialog>>();
 	let pendingDraft: RoleDraft | undefined;
 	let opener: HTMLElement | null = null;
 	let leaving = false;
@@ -53,21 +58,20 @@
 
 	function newRole(event: MouseEvent) {
 		opener = event.currentTarget as HTMLElement;
-		editorMode = { kind: 'new' };
-		editorOpen = true;
+		editor?.start({ kind: 'new' });
 	}
 
 	function askHr(event: MouseEvent) {
 		opener = event.currentTarget as HTMLElement;
-		askOpen = true;
+		askDialog?.start();
 	}
 
 	// The draft opens in the editor once the dialog has finished closing: one overlay at a time.
 	function afterAsk() {
 		if (!pendingDraft) return;
-		editorMode = { kind: 'new', draft: pendingDraft, fromHr: true };
+		const draft = pendingDraft;
 		pendingDraft = undefined;
-		editorOpen = true;
+		editor?.start({ kind: 'new', draft, fromHr: true });
 	}
 
 	async function fix(event: MouseEvent, summary: RoleSummary) {
@@ -77,8 +81,7 @@
 		fixError = undefined;
 		try {
 			const detail = await rolesApi.role(organizationId, summary.id);
-			editorMode = { kind: 'edit', role: detail.role, employeeCount: detail.employees.length };
-			editorOpen = true;
+			editor?.start({ kind: 'edit', role: detail.role, employeeCount: detail.employees.length });
 		} catch (e) {
 			fixError = { id: summary.id, message: toAppError(e).message };
 		} finally {
@@ -110,6 +113,46 @@
 	}
 </script>
 
+<!-- Ask HR to draft… and New role…, each disabled with its reason beside it when it can't be used now. -->
+{#snippet roleActions(data: RolesOverview, idPrefix: string)}
+	{@const hrReason = paused ? undefined : data.hr.canRun ? undefined : `${idPrefix}-hr-reason`}
+	{@const pausedReason = paused ? `${idPrefix}-paused-reason` : undefined}
+	<div class="flex flex-wrap items-start gap-3 {idPrefix === 'empty' ? 'justify-center' : ''}">
+		<div class="flex max-w-60 flex-col items-start gap-y-1">
+			<Button
+				variant="outline"
+				class={mobileButton}
+				disabled={paused || !data.hr.canRun}
+				aria-describedby={pausedReason ?? hrReason}
+				onclick={askHr}>Ask HR to draft…</Button
+			>
+			{#if hrReason}
+				<p
+					id={hrReason}
+					class="text-xs/5 text-gray-400 {idPrefix === 'empty' ? 'text-center' : 'text-left'}"
+					data-testid="hr-reason"
+				>
+					{HR_CANT_RUN}
+				</p>
+			{/if}
+		</div>
+		<Button class={mobileButton} disabled={paused} aria-describedby={pausedReason} onclick={newRole}
+			><MiniIcon name="plus" class="-ml-0.5 size-5" />New role…</Button
+		>
+		{#if pausedReason}
+			<p
+				id={pausedReason}
+				class="w-0 min-w-full basis-full text-xs/5 text-gray-400 {idPrefix === 'empty'
+					? 'text-center'
+					: 'text-left'}"
+				data-testid="paused-reason"
+			>
+				{CHANGES_PAUSED}
+			</p>
+		{/if}
+	</div>
+{/snippet}
+
 <PageHeader
 	id="roles-heading"
 	title="Roles"
@@ -118,26 +161,8 @@
 	description="What each employee is for. A role describes work for teammates; it grants no tools, budgets or authority."
 >
 	{#snippet actions()}
-		{#if canChange && overview}
-			<Button
-				variant="outline"
-				class={mobileButton}
-				disabled={!overview.hr.canRun}
-				aria-describedby={overview.hr.canRun ? undefined : 'roles-hr-reason'}
-				onclick={askHr}>Ask HR to draft…</Button
-			>
-			<Button class={mobileButton} onclick={newRole}
-				><MiniIcon name="plus" class="-ml-0.5 size-5" />New role…</Button
-			>
-			{#if !overview.hr.canRun}
-				<p
-					id="roles-hr-reason"
-					class="w-0 min-w-full basis-full text-xs/5 text-gray-400 min-[640px]:text-right"
-					data-testid="hr-reason"
-				>
-					{HR_CANT_RUN}
-				</p>
-			{/if}
+		{#if overview && mayEdit && overview.roles.length > 0}
+			{@render roleActions(overview, 'roles')}
 		{/if}
 	{/snippet}
 </PageHeader>
@@ -159,13 +184,15 @@
 >
 	{#snippet children(data)}
 		{#if data.roles.length === 0}
-			<EmptyState title="No roles yet" description={emptyRolesText(data.hr.canRun)} level={3}>
+			<!-- The empty state owns the actions (the header has none), so there is one primary. Its words only
+				 invite what the viewer can do now (ROLE-10). -->
+			<EmptyState
+				title="No roles yet"
+				description={emptyRolesText(data.hr.canRun, canChange)}
+				level={3}
+			>
 				{#snippet action()}
-					{#if canChange}
-						<Button class={mobileButton} onclick={newRole}
-							><MiniIcon name="plus" class="-ml-0.5 size-5" />New role…</Button
-						>
-					{/if}
+					{#if mayEdit}{@render roleActions(data, 'empty')}{/if}
 				{/snippet}
 			</EmptyState>
 		{:else}
@@ -206,12 +233,14 @@
 									<span class="text-xs/5 text-red-300 [overflow-wrap:anywhere]"
 										>{invalidText(role.name, role.invalid.field)}</span
 									>
-									{#if canChange}
+									{#if mayEdit}
 										<Button
 											variant="outline"
 											size="sm"
 											class="min-w-16 {mobileButton}"
 											aria-label="Fix {role.name}"
+											disabled={paused}
+											aria-describedby={paused ? 'roles-paused-reason' : undefined}
 											aria-busy={fixing === role.id}
 											onclick={(e: MouseEvent) => fix(e, role)}
 											>{fixing === role.id ? 'Opening…' : 'Fix'}</Button
@@ -245,16 +274,10 @@
 </Loaded>
 
 <AskHrDialog
-	bind:open={askOpen}
+	bind:this={askDialog}
 	{organizationId}
 	ondrafted={(draft) => (pendingDraft = draft)}
 	onclosed={afterAsk}
-	onCloseAutoFocus={(e) => (pendingDraft || editorOpen ? e.preventDefault() : restoreFocus(e))}
+	onCloseAutoFocus={(e) => (pendingDraft ? e.preventDefault() : restoreFocus(e))}
 />
-<RoleEditor
-	bind:open={editorOpen}
-	{organizationId}
-	mode={editorMode}
-	onsaved={saved}
-	onCloseAutoFocus={restoreFocus}
-/>
+<RoleEditor bind:this={editor} {organizationId} onsaved={saved} onCloseAutoFocus={restoreFocus} />

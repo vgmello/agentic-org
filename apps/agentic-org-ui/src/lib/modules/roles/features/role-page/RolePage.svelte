@@ -3,7 +3,8 @@
   One role, `/settings/roles/:roleId` (roles-ux §1, ROLE-1, ROLE-5): back to Roles; its name, key, revision and last
   update; Edit (the one primary action); its text; the employees that reference it; its revision history, earlier
   text one step away; and the record's provenance. States: loading, unavailable, error with Retry, not found,
-  organization data unreachable (the last copy, no changes), details not recognized (with Fix), read-only viewer.
+  organization data unreachable (the last copy; Edit stays, disabled with the reason, RL-8), details not recognized
+  (with Fix), read-only viewer (no Edit, §0.1).
 -->
 <script lang="ts">
 	import { afterNavigate } from '$app/navigation';
@@ -23,7 +24,7 @@
 	import { eventTime } from '$lib/modules/preferences/time';
 	import { pageTitle } from '$lib/nav';
 	import { rolesApi } from '../../api';
-	import { actorName, employeesText, invalidText } from '../../present';
+	import { CHANGES_PAUSED, actorName, employeesText, invalidText } from '../../present';
 	import type { Attribution, Role } from '../../types';
 	import { ROLES_URL } from '../../urls';
 	import RoleEditor from '../editor/RoleEditor.svelte';
@@ -38,7 +39,8 @@
 	$effect(() => void accountZone.ensure(organizationId));
 
 	const detail = $derived(resource.data?.found ? resource.data.detail : undefined);
-	const canChange = $derived(!!detail?.viewer.canEdit && !detail.stale);
+	const mayEdit = $derived(!!detail?.viewer.canEdit);
+	const paused = $derived(!!detail?.stale);
 	const title = $derived(
 		resource.state !== 'ready'
 			? pageTitle('Role', 'Roles', 'Organization settings')
@@ -48,7 +50,7 @@
 	);
 	const now = new Date();
 
-	let editorOpen = $state(false);
+	let editor = $state<ReturnType<typeof RoleEditor>>();
 	let opener: HTMLElement | null = null;
 
 	// Arriving by a link or Back, the role's heading takes focus once the role has loaded: after the shell's own
@@ -71,7 +73,8 @@
 
 	function edit(event: MouseEvent) {
 		opener = event.currentTarget as HTMLElement;
-		editorOpen = true;
+		if (detail)
+			editor?.start({ kind: 'edit', role: detail.role, employeeCount: detail.employees.length });
 	}
 
 	async function saved(role: Role) {
@@ -92,7 +95,7 @@
 	<div class="px-4 pt-6 min-[640px]:px-6 min-[1024px]:px-8">
 		<a
 			href={resolve(ROLES_URL)}
-			class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+			class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
 			>Roles</a
 		>
 	</div>
@@ -145,8 +148,24 @@
 					</p>
 				{/snippet}
 				{#snippet actions()}
-					{#if canChange}
-						<Button class="min-w-20 {mobileButton}" onclick={edit}>Edit</Button>
+					{#if mayEdit}
+						<div class="flex max-w-60 flex-col items-start gap-y-1">
+							<Button
+								class="min-w-20 {mobileButton}"
+								disabled={paused}
+								aria-describedby={paused ? 'role-paused-reason' : undefined}
+								onclick={edit}>Edit</Button
+							>
+							{#if paused}
+								<p
+									id="role-paused-reason"
+									class="text-xs/5 text-gray-400"
+									data-testid="paused-reason"
+								>
+									{CHANGES_PAUSED}
+								</p>
+							{/if}
+						</div>
 					{/if}
 				{/snippet}
 			</PageHeader>
@@ -166,7 +185,7 @@
 						<p class="mt-1 text-sm/6">
 							The office couldn't read this detail in the role's file, so it isn't shown.
 						</p>
-						{#if canChange}
+						{#if mayEdit}
 							<Button variant="outline" class="mt-3 min-w-16 {mobileButton}" onclick={edit}
 								>Fix</Button
 							>
@@ -175,12 +194,14 @@
 				</div>
 			{/if}
 
+			<!-- Its own h3, so the body's sections (h4) read as part of the text, not as page sections. -->
 			<section
-				aria-label="Text of {role.name}"
+				aria-labelledby="role-text-heading"
 				class="border-b border-white/5 px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8"
 				data-testid="role-body"
 			>
-				<RoleBody body={role.bodyMarkdown} level={3} />
+				<h3 id="role-text-heading" class="sr-only">Role text</h3>
+				<RoleBody body={role.bodyMarkdown} level={4} />
 			</section>
 
 			<Section
@@ -294,14 +315,8 @@
 					]}
 				/>
 			</Section>
-
-			<RoleEditor
-				bind:open={editorOpen}
-				{organizationId}
-				mode={{ kind: 'edit', role, employeeCount: d.employees.length }}
-				onsaved={saved}
-				onCloseAutoFocus={restoreFocus}
-			/>
 		{/if}
 	{/snippet}
 </Loaded>
+
+<RoleEditor bind:this={editor} {organizationId} onsaved={saved} onCloseAutoFocus={restoreFocus} />

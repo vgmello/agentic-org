@@ -22,6 +22,13 @@ import type {
 } from '../../../src/lib/modules/roles/types';
 import { mockMode } from '../mock-mode';
 import data from '../data/roles/roles.json' with { type: 'json' };
+// Who references which role matches the member profile's Role tab (e2e/fakes/data/members/roles.json); people's
+// titles come from the members mock, as the profile's do.
+import membersData from '../data/members/members.json' with { type: 'json' };
+
+const memberTitles = membersData.members as Record<string, { title?: string | null }>;
+const titleOf = (m: { id: string; agent?: { title?: string } }) =>
+	m.agent?.title || memberTitles[m.id]?.title || undefined;
 
 type Stored = {
 	id: string;
@@ -151,7 +158,8 @@ export const rolesApi: RolesApi = {
 				id: m.id,
 				name: m.name,
 				kind: m.kind as 'agent' | 'person',
-				...(m.agent?.title ? { title: m.agent.title } : {})
+				// Titles as the member profile shows them: the agent's profile title, else the member's recorded title.
+				...(titleOf(m) ? { title: titleOf(m) } : {})
 			}))
 			.toSorted((a, b) => a.name.localeCompare(b.name));
 		const history: RoleRevision[] = [];
