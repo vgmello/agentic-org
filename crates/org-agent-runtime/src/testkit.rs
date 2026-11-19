@@ -287,8 +287,13 @@ pub fn check_plan(plan: &LaunchPlan, spec: &SessionSpec, ctx: &LaunchContext, ca
         "plan rule broken: the cwd must be the spec's workspace"
     );
     assert!(
-        !ctx.tmpdir.is_root() && !ctx.runtime_dir.is_root(),
-        "plan rule broken: the run's TMPDIR or runtime dir is `/`"
+        !ctx.tmpdir.is_root()
+            && !ctx.runtime_dir.is_root()
+            && !ctx
+                .config_dir
+                .as_ref()
+                .is_some_and(crate::SpecPath::is_root),
+        "plan rule broken: the run's TMPDIR, runtime dir, or config dir is `/`"
     );
     // Whether the plan names `path` the way a root list would.
     let mentions = |path: &str| {

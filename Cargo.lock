@@ -624,6 +624,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "org-agent-runtime-claude"
+version = "0.0.0"
+dependencies = [
+ "org-agent-runtime",
+ "org-platform",
+ "org-supervise",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "org-client"
 version = "0.0.0"
 dependencies = [

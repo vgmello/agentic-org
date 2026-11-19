@@ -435,6 +435,11 @@ pub struct LaunchContext {
     /// It's per run rather than part of the [`SessionSpec`], so resuming a session replays
     /// the same spec with the same [`SessionSpec::spec_hash`] as its first start.
     pub resume: Option<SessionId>,
+    /// Optional non-secret real path to the agent's private vendor config directory
+    /// (`CLAUDE_CONFIG_DIR` for Claude, `CODEX_HOME` for Codex; ADR-0015 decision 10).
+    /// Never `/` (an adapter refuses one with [`crate::PlanError::InvalidSpec`]) and never a
+    /// credential value.
+    pub config_dir: Option<SpecPath>,
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ documents decide behavior; recheck before relying on a detail.
   [implementation plan](../docs/implementation-plan.md),
   [architecture rules](../docs/architecture-rules.md) and the
   [documentation authority map](../docs/design/documentation-authority.md).
-- `Cargo.toml` has 23 workspace members; `rust-toolchain.toml` pins Rust 1.99.1.
+- `Cargo.toml` has 24 workspace members; `rust-toolchain.toml` pins Rust 1.99.1.
   `apps/agentic-org` composes `crates/org-host` (`serve`); `apps/agentic-org-office`
   is the office worker; `apps/agentic-org-web` serves the browser application and
   `/api/v1`; `apps/agent-os` is the agents' command line.
@@ -16,8 +16,9 @@ documents decide behavior; recheck before relying on a detail.
   Markdown documents with front matter; `org-copilot` the copilot's rules; `org-client` and
   `org-socket` support local IPC; `org-supervise` process supervision; `org-sync` and
   `org-sync-proto` replication between offices; `org-release` release verification;
-  `org-pki` recovery escrow. Shared contracts: `org-proto`, `org-office-launch`,
-  `org-agent-runtime`, `org-host-control`.
+  `org-pki` recovery escrow; `org-agent-runtime-claude` the sans-I/O Claude Code
+  adapter. Shared contracts: `org-proto`, `org-office-launch`, `org-agent-runtime`,
+  `org-host-control`.
 - `crates/org-spool` is the file queue `agent-os` still uses; increment B6 deletes it.
 - `apps/agentic-org-ui` is static SvelteKit 2, Svelte 5, TypeScript 6, Tailwind 4 and
   shadcn-svelte, with Bun. Read its `AGENTS.md` and `components.json`. No Node backend.

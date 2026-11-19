@@ -134,7 +134,12 @@ pub fn prepare_probe(
 }
 
 // Runtime-policy names belong at this mapping boundary, never in generic Environment.
-const REVIEWED_ENV_SWITCHES: &[&str] = &["DISABLE_AUTOUPDATER", "ENABLE_TOOL_SEARCH"];
+const REVIEWED_ENV_SWITCHES: &[&str] = &[
+    "DISABLE_AUTOUPDATER",
+    "ENABLE_TOOL_SEARCH",
+    "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
+];
 
 /// The runtime-only lifecycle metadata, retained for the pump/stop layer.
 pub struct Lifecycle {

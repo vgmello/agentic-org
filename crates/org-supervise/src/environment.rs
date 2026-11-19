@@ -100,6 +100,31 @@ impl Environment {
         Ok(self)
     }
 
+    /// Add caller-owned runtime authentication variables resolved from the office's wrapped
+    /// credential store (ADR-0015 decision 11, ADR-0032, RT-P3). Kept separate from
+    /// [`with_context`](Self::with_context) so auth probes can carry runtime credentials
+    /// without borrowing office or agent context (`ORG_*`, `AGENT_OS_*`, `GIT_CONFIG_*`).
+    pub fn with_runtime_auth(mut self, auth: &[(OsString, OsString)]) -> io::Result<Self> {
+        for (name, value) in auth {
+            if !matches!(
+                name.to_str(),
+                Some(
+                    "CLAUDE_CODE_OAUTH_TOKEN"
+                        | "CLAUDE_SECURESTORAGE_CONFIG_DIR"
+                        | "ANTHROPIC_API_KEY"
+                        | "OPENAI_API_KEY"
+                        | "CODEX_API_KEY"
+                )
+            ) {
+                return Err(invalid(
+                    "name is not in the runtime auth environment allowlist",
+                ));
+            }
+            self.insert(name.clone(), value.clone())?;
+        }
+        Ok(self)
+    }
+
     /// Probes reject the whole context namespace, including names that are not
     /// admitted by the more precise caller-context allowlist above.
     pub(crate) fn carries_context(&self) -> bool {
@@ -143,7 +168,10 @@ impl Environment {
 
 fn is_context_name(name: &OsStr) -> bool {
     let name = name.as_encoded_bytes();
-    name.starts_with(b"ORG_") || name.starts_with(b"GIT_CONFIG_") || name == b"GH_CONFIG_DIR"
+    name.starts_with(b"ORG_")
+        || name.starts_with(b"AGENT_OS_")
+        || name.starts_with(b"GIT_CONFIG_")
+        || name == b"GH_CONFIG_DIR"
 }
 
 fn indexed(name: &str, prefix: &str) -> bool {

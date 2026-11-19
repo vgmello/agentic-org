@@ -28,8 +28,8 @@ Evidence describes what the code holds, read from the source; "(not verified)" m
 | Status | Rows |
 | --- | ---: |
 | Done | 9 |
-| In progress | 67 |
-| Planned | 68 |
+| In progress | 68 |
+| Planned | 67 |
 | Blocked | 1 |
 | Deferred | 44 |
 | Needs verification | 0 |
@@ -229,7 +229,7 @@ Full requirements: [Execution, providers and supervision](specs/agent-run-modes-
 | [ ] | FC-098 | [Provider subscriptions and ordered connection pools](design/organization-data/14-model-providers-and-connection-pools.md) | Planned | C1 sign-in spike recorded on macOS (`docs/research/c1-sign-in-spike.md`; Linux unverified) and ADR-0032 accepted for per-office binding + optional HQ distribution. [Supervisor] excludes ordered pool services; actual routing/bindings, enrollment and pool transactions remain to be implemented. |
 | [ ] | FC-099 | [Shared quota permits, cooldown and failover](design/organization-data/11-model-profiles-and-agent-execution.md) | Planned | Requires HQ admission and actual attempt identity; native process primitives do not implement routing. |
 | [ ] | FC-100 | [Single open turn, attempts and placement fencing](design/organization-data/11-model-profiles-and-agent-execution.md) | Planned | Integrate durable generations, occupied unknown cleanup and proof before reassignment [supervisor]. |
-| [ ] | FC-101 | [Claude, Codex and Agy native runtime adapters](design/agent-sessions.md) | Planned | No native Claude/Codex/Agy adapters or office session runner; generic contracts/process primitives are separate. |
+| [ ] | FC-101 | [Claude, Codex and Agy native runtime adapters](design/agent-sessions.md) | In progress | `crates/org-agent-runtime-claude` implements the sans-I/O `org-agent-runtime` adapter for Claude Code (passing `org_agent_runtime::testkit`, `org-supervise` probe/launch preparation, and an opt-in live Claude Code `2.1.311` `initialize` smoke handshake), and `RT-P3` (`config_dir`, reviewed `CLAUDE_CONFIG_DIR`/`CODEX_HOME` switches, runtime auth allowlist, and `AGENT_OS_*` context env) is in `org-agent-runtime` and `org-supervise`. Remaining: `crates/org-agent-runtime-codex`, `crates/org-agent-runtime-agy`, and the office session runner. |
 | [ ] | FC-102 | [Progress, health, waiting and stale-run detection](specs/employee-supervision-ux.md) | In progress | Process health/recovery primitives exist in `crates/org-supervise`. The office's owned-process recovery records (`apps/agentic-org-office/src/owned_recovery.rs` over the old store) were deleted in B1b; process ownership records return with C3. Real-session observation, stale-run detection and supervision view remain. |
 | [ ] | FC-103 | [Per-task repository workspace isolation](design/organization-data/04-agent-structure.md) | Planned | No selected task/repository workspace admission or native sandbox enforcement; generic path/process primitives are separate. |
 | [ ] | FC-104 | [Scheduled and always-on run modes](specs/agent-run-modes-ux.md) | Deferred | Schedules and always-on processes remain unselected. Starting an agent on what is addressed to it is selected separately (FC-186). |

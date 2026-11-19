@@ -691,8 +691,10 @@ on the offers of design section 10.
   [ADR-0003](adr/0003-agent-messaging-office-first.md) decision 12,
   [employee supervision UX](specs/employee-supervision-ux.md) (EMP criteria). Rows FC-031,
   FC-098, FC-100, FC-101, FC-189.
-- **Code today:** `crates/org-agent-runtime` is the contract; only `crates/org-supervise`
-  uses its types, and nothing launches an agent.
+- **Code today:** `crates/org-agent-runtime` is the contract and `crates/org-agent-runtime-claude`
+  implements the sans-I/O Claude Code adapter (with `RT-P3` `config_dir` and runtime-auth
+  supervision plumbing in `org-agent-runtime` and `org-supervise`); `crates/org-agent-runtime-codex`
+  and the office session runner remain to be built.
   `crates/org-supervise` starts, stops and cleans up processes; it is used only to
   recover processes the office owned before a restart, not to launch an agent.
 - **Done when:** a hired agent completes an instruction given from its page, the HR

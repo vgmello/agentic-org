@@ -23,6 +23,7 @@ fn context(root: &Path) -> LaunchContext {
         office_env_names: vec![],
         new_session_id: None,
         resume: None,
+        config_dir: None,
     }
 }
 
@@ -350,13 +351,111 @@ fn runtime_mapper_rejects_injection_and_duplicate_switches_before_writes() {
         assert!(prepare(&root, launch, &context(&root)).is_err());
     }
     let mut launch = plan(&root);
-    launch.env_add = ["DISABLE_AUTOUPDATER", "ENABLE_TOOL_SEARCH"]
-        .map(|name| {
-            (
-                org_agent_runtime::EnvName::try_from(name).unwrap(),
-                "false".into(),
-            )
-        })
-        .into();
+    launch.env_add = [
+        "DISABLE_AUTOUPDATER",
+        "ENABLE_TOOL_SEARCH",
+        "CLAUDE_CONFIG_DIR",
+        "CODEX_HOME",
+    ]
+    .map(|name| {
+        (
+            org_agent_runtime::EnvName::try_from(name).unwrap(),
+            "false".into(),
+        )
+    })
+    .into();
     prepare(&root, launch, &context(&root)).unwrap();
+}
+
+#[test]
+fn runtime_auth_allowlist_and_agent_os_context_and_probe_config_dir_switches() {
+    use org_agent_runtime::{EnvName, ProbeContext, ProbePlan};
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let probe_tmp = root.join("probe-tmp");
+    fs::create_dir(&probe_tmp).unwrap();
+    fs::set_permissions(&probe_tmp, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let make_env = || {
+        Environment::new(
+            SearchPath::new(
+                Path::new("/usr/bin"),
+                "/bin".as_ref(),
+                std::slice::from_ref(&root),
+            )
+            .unwrap(),
+            &[],
+        )
+        .unwrap()
+    };
+
+    // Reviewed runtime auth names are accepted and do not mark the environment as carrying
+    // agent context (so auth probes may use them).
+    let auth_env = make_env()
+        .with_runtime_auth(&[
+            ("CLAUDE_CODE_OAUTH_TOKEN".into(), "tok-1".into()),
+            ("CLAUDE_SECURESTORAGE_CONFIG_DIR".into(), "/tmp/sec".into()),
+            ("ANTHROPIC_API_KEY".into(), "sk-ant-test".into()),
+            ("OPENAI_API_KEY".into(), "sk-openai-test".into()),
+            ("CODEX_API_KEY".into(), "sk-codex-test".into()),
+        ])
+        .unwrap();
+
+    // Unreviewed names must be refused by with_runtime_auth.
+    for bad in ["PATH", "HOME", "ORG_SESSION_TOKEN", "AGENT_OS_TOKEN", "FOO"] {
+        assert!(
+            make_env()
+                .with_runtime_auth(&[(bad.into(), "val".into())])
+                .is_err(),
+            "with_runtime_auth must reject {bad}"
+        );
+    }
+
+    // AGENT_OS_* is accepted by with_context and marks the env as carrying context, so
+    // prepare_probe refuses it while prepare accepts it.
+    let ctx_env = make_env()
+        .with_context(&[("AGENT_OS_SESSION_TOKEN".into(), "sess-tok".into())])
+        .unwrap();
+
+    let probe_ctx = ProbeContext::new("/bin/cat".into());
+    let probe_plan = ProbePlan {
+        program: "/bin/cat".into(),
+        args: vec![],
+        env_add: vec![
+            (
+                EnvName::try_from("CLAUDE_CONFIG_DIR").unwrap(),
+                root.to_str().unwrap().to_owned(),
+            ),
+            (
+                EnvName::try_from("CODEX_HOME").unwrap(),
+                root.to_str().unwrap().to_owned(),
+            ),
+        ],
+        stdin_lines: vec![],
+        timeout_ms: 5_000,
+    };
+    let mark = SessionMark::new("probe-rtp3-00000000000000000000000000000001".to_owned()).unwrap();
+    runtime::prepare_probe(
+        probe_plan.clone(),
+        &probe_ctx,
+        auth_env,
+        mark.clone(),
+        &probe_tmp,
+        runtime::ProbeMode::OneShot,
+    )
+    .expect("prepare_probe accepts reviewed CLAUDE_CONFIG_DIR, CODEX_HOME, and runtime auth");
+
+    assert!(
+        runtime::prepare_probe(
+            probe_plan,
+            &probe_ctx,
+            ctx_env,
+            mark,
+            &probe_tmp,
+            runtime::ProbeMode::OneShot,
+        )
+        .is_err(),
+        "prepare_probe must refuse AGENT_OS_* context variables"
+    );
 }
