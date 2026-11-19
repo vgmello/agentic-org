@@ -703,14 +703,6 @@ impl Drop for Endpoint {
     }
 }
 
-/// Sets `stream`'s read timeout, except where the worker has already closed its end.
-///
-/// Darwin's `setsockopt` answers `EINVAL` on a socket whose both directions are shut down,
-/// which is what a unix stream becomes once its peer has closed. A worker may report a fatal
-/// `failed` right after `fds_received` (or after a discard header) and exit before the host
-/// changes the timeout. Its buffered events stay readable and the read then ends at EOF without
-/// blocking, so the timeout no longer matters: treating that as an error would lose the
-/// worker's failure report and turn it into a crash. Any other error is still an error.
 /// A launch read bounded by one deadline, however slowly the worker's bytes come: each read
 /// from the socket waits only for what is left of `deadline` (the socket's single timeout
 /// would restart with every byte a trickling worker sends). Bytes already buffered are served
@@ -756,6 +748,14 @@ impl BufRead for ByDeadline<'_> {
     }
 }
 
+/// Sets `stream`'s read timeout, except where the worker has already closed its end.
+///
+/// Darwin's `setsockopt` answers `EINVAL` on a socket whose both directions are shut down,
+/// which is what a unix stream becomes once its peer has closed. A worker may report a fatal
+/// `failed` right after `fds_received` (or after a discard header) and exit before the host
+/// changes the timeout. Its buffered events stay readable and the read then ends at EOF without
+/// blocking, so the timeout no longer matters: treating that as an error would lose the
+/// worker's failure report and turn it into a crash. Any other error is still an error.
 pub(crate) fn set_timeout_unless_peer_closed(
     stream: &UnixStream,
     timeout: Option<Duration>,

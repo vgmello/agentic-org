@@ -931,12 +931,18 @@ fn a_create_retried_after_its_worker_was_killed_completes_with_one_ca() {
 fn a_launch_without_valid_writer_custody_is_refused_and_never_ready() {
     let _process = process_isolation();
     // A create checks the admission's owner against its line; a start checks the roots
-    // against the intent its creation froze.
+    // against the intent its creation froze, and the owner against the office's owner.
     for (op, modes) in [
-        (FirstLine::Create, ["missing", "scope", "account", "owner"]),
-        (FirstLine::Start, ["missing", "scope", "account", "roots"]),
+        (
+            FirstLine::Create,
+            &["missing", "scope", "account", "owner"][..],
+        ),
+        (
+            FirstLine::Start,
+            &["missing", "scope", "account", "roots", "owner"][..],
+        ),
     ] {
-        for mode in modes {
+        for &mode in modes {
             let world = World::new();
             if op == FirstLine::Start {
                 seed(&world);
@@ -953,6 +959,9 @@ fn a_launch_without_valid_writer_custody_is_refused_and_never_ready() {
                 _ => {}
             }
             let writer = FakeWriter::new(admission);
+            // The host's custody of the seeded office: the head its creation confirmed, so
+            // only the changed admission field can refuse the start.
+            writer.set_head(world.writer.head());
             let mut session = handshake_as(
                 &world,
                 op,
@@ -964,6 +973,12 @@ fn a_launch_without_valid_writer_custody_is_refused_and_never_ready() {
             let failed = session.event();
             assert_eq!(failed["event"], "failed", "{op:?} {mode}: {failed}");
             assert_eq!(failed["code"], "storage_error", "{op:?} {mode}");
+            if mode != "roots" {
+                assert_eq!(
+                    failed["message"], "protected writer admission requires recovery",
+                    "{op:?} {mode}"
+                );
+            }
             assert!(!session.run.wait().success(), "{op:?} {mode}");
             session.no_stdout();
             assert!(!socket(&world).exists(), "{op:?} {mode}");
@@ -971,6 +986,21 @@ fn a_launch_without_valid_writer_custody_is_refused_and_never_ready() {
                 assert!(
                     !world.folder(OFFICE).exists(),
                     "{op:?} {mode}: a create without custody stored something"
+                );
+            } else if mode == "owner" {
+                // The owner is known only once the office is open: opening it may rewrite
+                // SQLite's shared-memory index of the runtime projection, and the clean-stop
+                // marker it consumes is written back unchanged by the orderly stop.
+                let without_shm = |bytes: std::collections::BTreeMap<PathBuf, Vec<u8>>| {
+                    bytes
+                        .into_iter()
+                        .filter(|(path, _)| !path.to_string_lossy().ends_with("-shm"))
+                        .collect::<std::collections::BTreeMap<_, _>>()
+                };
+                assert_eq!(
+                    without_shm(stored_bytes(&world)),
+                    without_shm(before),
+                    "{op:?} {mode}"
                 );
             } else {
                 assert_eq!(stored_bytes(&world), before, "{op:?} {mode}");

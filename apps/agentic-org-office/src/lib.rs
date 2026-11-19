@@ -332,6 +332,27 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),
     };
+    // The admission is for this office's owner, as a create checks it: the snapshot marks
+    // the owner the creation intent froze.
+    let owner = office
+        .org_snapshot()
+        .map(|snapshot| snapshot.members.into_iter().find(|member| member.owner));
+    match owner {
+        Ok(Some(owner)) if owner.id == admitted.admission.owner_member => {}
+        Ok(_) => {
+            // Nothing was appended: the orderly stop puts back the clean-stop marker the
+            // opening consumed.
+            if let Err(error) = office.close() {
+                eprintln!("agentic-org-office: closing the refused office failed: {error}");
+            }
+            return fail(
+                &mut control,
+                FailCode::StorageError,
+                "protected writer admission requires recovery",
+            );
+        }
+        Err(e) => return fail_with(&mut control, &e),
+    }
     match hq_creation::verify_existing(&office) {
         Ok(hq_creation::CaStatus::Unavailable) => {
             // No key material, path or SQL in the log: the office keeps serving its data.
