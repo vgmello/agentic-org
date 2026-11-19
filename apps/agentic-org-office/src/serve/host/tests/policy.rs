@@ -12,7 +12,9 @@ fn shared() -> Shared {
             .unwrap(),
         )
     }));
-    ports.submit = Box::new(|_| {
+    ports.submit = Box::new(|member, _| {
+        // The command runs as the member the caller's grant is bound to.
+        assert_eq!(member, OWNER_ID);
         Ok(Ok(serde_json::from_value(
             json!({"status":"committed","position":{"epoch":1,"seq":2}}),
         )
@@ -473,7 +475,7 @@ fn inbox_rechecking_owner_cannot_reveal_that_grant_authority_passed() {
 #[test]
 fn host_keeps_operation_result_refusals_distinct_from_channel_authority_refusals() {
     let mut shared = shared();
-    shared.ports.submit = Box::new(|_| {
+    shared.ports.submit = Box::new(|_, _| {
         Ok(Err(ApiError::new(
             ErrorCode::NotAuthorized,
             "org operation refusal",
@@ -514,7 +516,7 @@ fn what_the_office_answers_is_what_the_grant_bound_owner_gets() {
     let answers = std::sync::Arc::clone(&calls);
     shared.ports.submit =
         Box::new(
-            move |_| match answers.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            move |_, _| match answers.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
                 0 => Ok(Err(ApiError::new(ErrorCode::AlreadyExists, "taken"))),
                 _ => Err("disk on fire at /secret/path".to_owned()),
             },

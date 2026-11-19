@@ -150,14 +150,20 @@ command and `organization.provision.v1` are deleted.
   (`crates/org-host/src/human/recovery.rs`), which today signs the person in with a
   password typed at the terminal; that sign-in is interim
   ([FC-016](../FEATURES.md)).
-- **Files.** The organization's files are written under
-  `<instance-root>/durable/state/<org-id>/`, on the office store as it is. The
-  journal and the data-root layout are the office store's (implementation plan B1b),
-  so creation is not yet the first accepted transaction of a journal.
+- **Files.** Creation is the first entry of the HQ's acceptance journal on the office
+  store (B1b; `CreateOrganizationOp` in `crates/org-office/src/store/open/operations.rs`).
+  The host gives the office its organization's data roots,
+  `<instance-root>/<org-id>/durable` and `<instance-root>/<org-id>/runtime`
+  (`crates/org-host/src/writer.rs` `data_roots`), and the entry writes the
+  organization's files under `<org-id>/durable/state/`, with the public escrow package
+  at `state/security/ca-escrow.v1.bin` and the CA key record, wrapped by the office
+  secrets key, at `<org-id>/durable/local/offices/<office-id>/security/ca-key.v1.json`.
+  The office answers `created` only after those files are written
+  (`org_office::Office::provision_hq`). Its projection,
+  `<org-id>/runtime/<office-id>/office.db`, is rebuilt from them when deleted.
 - **Not built.** No call cancels a create, so a reserved name and slug stay reserved
-  until the create completes (FC-188). Organizations created before the HR profile
-  change keep `agent_status: paused`; nothing migrates them. The UI's create flow
-  still runs against fakes (`apps/agentic-org-ui/src/lib/create-flow.ts`) until
-  A4.5.
+  until the create completes (FC-188). An organization created before B1b, on the old
+  `org.db` and `office.db`, is refused at its office's start and not migrated; it is
+  created again.
 
 Real-process evidence: `crates/org-host/src/web_process_tests/organizations.rs`.

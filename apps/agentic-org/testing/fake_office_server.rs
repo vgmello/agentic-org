@@ -6,13 +6,29 @@
 //! (`org_office_launch::read_first_line`): the first stdin line names the rendezvous socket. The fake connects
 //! to it, sends `ready_for_secrets`, receives the handoff header byte by byte (no descriptor on
 //! any header byte), then, when the header names descriptors (create and start), receives the
-//! transfer socket on its marker byte and answers `fds_received`. A discard names none: no
+//! transfer socket on its marker byte and answers `fds_received`, then takes the host's writer
+//! control on the transfer socket as the real server does (every office needs it, before it
+//! creates or opens anything): the `writer_control` record, the custody channel it carries and
+//! the host's admission on that channel, which must be valid and name this office (for a
+//! create, its organization and owner member; for a start, the stored office's organization),
+//! or the run fails with `storage_error` as the real server's does (the organization and owner
+//! after the channel's receipt, as there); it answers `fds_received` for the channel and holds
+//! the channel, never sending a request on it. Known gaps against the real server, which no
+//! host test here relies on: a start checks neither the admission's owner member nor the
+//! instance against what the create stored (the fake stores neither); a create does not
+//! resume a folder a failed create left (anything but the custody marker or its staging files
+//! there is `already_exists`, where the real server allows other plain files and resumes); a
+//! fatal descriptor receive is reported as `storage_error` rather than a silent exit; the
+//! create line's content (names, role, `hq_creation`, socket length) is checked only by the
+//! shared launch decoder, so where the real server refuses such a line before the writer
+//! control (without its receipt), the fake takes the control and creates; nor does it make
+//! the HQ binding checks the real server makes after the receipt (`storage_error`). A discard names none: no
 //! marker is read and no `fds_received` is sent. Events then go on the rendezvous stream; stdout
 //! carries nothing, and a refusal before the rendezvous is connected is only recorded. The
 //! host's lifetime is stdin or the rendezvous stream, whichever ends first (the real server
 //! watches only the rendezvous; the host's shutdown closes both).
-//! The transfer socket is held but never read: a host that transfers a channel or writer
-//! control descriptor gets no receipt, so offices needing those can't run on the fake.
+//! Past the writer control the transfer socket is held but never read: a host that transfers a
+//! channel descriptor gets no receipt, so offices needing those can't run on the fake.
 //!
 //! The script is `<ORG_OFFICE_HOME>/fake-script.json`:
 //! ```json
@@ -41,7 +57,8 @@
 //! - `delay_ms`: wait this long before `created` / `ready`.
 //! - `ready_delay_ms`: wait this long more just before `ready` (after `created`).
 //! - `report` (`--create`): fields of the office it stores and reports in `created` that
-//!   differ from the create message: `office_id`, `org_id`, `org_name`, `office_name` or `role`.
+//!   differ from the create message: `office_id`, `org_id` (both UUIDv7, or the create fails
+//!   with `storage_error`), `org_name`, `office_name` or `role`.
 //!
 //! Its first stdin line must match its flag, as the contract says: a launch `create` line with
 //! `--create`, a `start` line with `--office`, a `discard` line with `--discard`. A malformed,
@@ -52,19 +69,22 @@
 //! 64-bit FNV-1a hash of the 32 bytes, as 16 hex digits) in `fake.log`, so tests can tell
 //! secrets apart without seeing them.
 //!
-//! On `--create` it makes the office folder and holds `office.lock` before anything else (so a
-//! failure or crash leaves an unfinished folder, like a real server could), then writes a `db`
-//! file (its stand-in for the databases, holding no secret), and writes `office.json` last.
+//! On `--create` it uses the office folder the host reserved custody in (or makes it), refusing
+//! one that holds anything but the host's custody marker (`already_exists`), and holds
+//! `office.lock` before anything else (so a failure or crash leaves an unfinished folder, like
+//! a real server could), then writes a `db` file (its stand-in for the databases, holding no
+//! secret), and writes `office.json` (version 2, UUIDv7 IDs) last.
 //! `ready` binds a real socket that answers `hello`. `--discard <id>` takes the office lock
-//! (with the usual wait), refuses a folder holding `office.json` (`already_exists`), refuses a
-//! folder with a `db` file when its line has no key (`storage_error`, as a real server can't
-//! check databases without their key), removes the folder and reports `discarded` (`fail`,
+//! (with the usual wait), refuses a folder holding the host's custody marker (`storage_error`,
+//! checked first, as the real server refuses a reserved folder whatever it holds) or
+//! `office.json` (`already_exists`), removes the folder and reports `discarded` (`fail`,
 //! `crash` and `hang` work there too).
 //!
 //! It records what it does in `<home>/fake.log`, one line each:
 //! `start <key> <pid> <run> <unix ms>`, `launch <key> <pid> v1`, `instance <key> <pid> <id>`,
 //! `grant <key> <pid> <fingerprint>`, `recovery <key> <pid> present` (create),
 //! `transfer <key> <pid> received` (create and start),
+//! `writer <key> <pid> <organization id>` (create and start: the admission it was given),
 //! `secrets-key <key> <pid> <fingerprint or null>` (`secrets-key discard <pid> <fingerprint or null> <id>`
 //! for `--discard`), `env <key> <pid> <its environment variables' names>`,
 //! `fds <key> <pid> <inherited fds above 2, or ->`, `first-line-refused <key> <pid>`,
@@ -77,28 +97,27 @@ use std::io::Read;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use org_office_launch::writer::{marker, Admission};
 use org_office_launch::{
     office_dir, FailCode, FirstLine, OfficeFile, ServerEvent, CREATE_FLAG, DISCARD_FLAG,
     OFFICE_FILE_NAME, OFFICE_FLAG, OFFICE_LOCK_FILE_NAME, OFFICE_LOCK_WAIT,
 };
-use org_office_launch::{Handoff, HostFirstLine, RendezvousEvent};
+use org_office_launch::{Handoff, HostFirstLine, RendezvousEvent, TransferRecord};
 use org_proto::frame;
-use org_proto::location::{
-    office_socket_in, office_socket_path, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV,
-};
+use org_proto::location::{selected_office_socket_in, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::OfficeRole;
 use org_proto::{
     ApiError, ErrorCode, Hello, HelloResult, OfficeHello, OfficeInfo, OfficeSecretsKey,
     OfficeStatus, Request, Response,
 };
-use org_socket::rights::{ReceiveError, StreamReceiver};
+use org_socket::rights::{DatagramReceiver, ReceiveError, StreamReceiver};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -109,8 +128,13 @@ const CRASH: i32 = 3;
 
 /// The rendezvous stream, once connected: every event goes here.
 static RENDEZVOUS: OnceLock<Mutex<UnixStream>> = OnceLock::new();
-/// The launch transfer socket, held (never read) for the process's life.
+/// The launch transfer socket, held for the process's life (read only for the writer control).
 static TRANSFER: OnceLock<OwnedFd> = OnceLock::new();
+/// The host's writer-custody channel, held (never written) for the process's life.
+static WRITER: OnceLock<UnixStream> = OnceLock::new();
+/// The organization and owner member the host's writer admission named: a create checks its
+/// line's, a start its stored office's organization.
+static ADMITTED: OnceLock<(String, String)> = OnceLock::new();
 
 /// A first line and its handoff, the secrets noted as fingerprints only.
 enum Launch {
@@ -125,6 +149,7 @@ enum Launch {
 struct CreateFields {
     office_id: String,
     org_id: String,
+    owner_member_id: String,
     org_name: String,
     office_name: String,
     role: OfficeRole,
@@ -219,12 +244,20 @@ fn main() {
                 Launch::Create(create) => create,
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             };
+            // As the real server, after the custody receipt: the admission is for this
+            // organization and this owner.
+            if ADMITTED.get() != Some(&(create.org_id.clone(), create.owner_member_id.clone())) {
+                fail(FailCode::StorageError);
+            }
             let create_id = create.office_id.clone();
             let dir = office_dir(&home, &create.office_id).unwrap_or_else(|| {
                 fail(FailCode::InvalidRequest);
             });
-            if fs::DirBuilder::new().mode(0o700).create(&dir).is_err() {
-                fail(FailCode::AlreadyExists);
+            match fs::DirBuilder::new().mode(0o700).create(&dir) {
+                Ok(()) => {}
+                // The folder the host reserved custody in: only its marker may be there.
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists && only_custody(&dir) => {}
+                Err(_) => fail(FailCode::AlreadyExists),
             }
             let lock = take_lock(&dir);
             if fs::write(dir.join(DB_FILE_NAME), b"the fake's databases").is_err() {
@@ -241,14 +274,16 @@ fn main() {
                 .get("role")
                 .and_then(|role| serde_json::from_value(role.clone()).ok())
                 .unwrap_or(create.role);
-            let office = OfficeFile::new(
+            let office = OfficeFile::selected(
                 reported("office_id", create.office_id),
                 reported("office_name", create.office_name),
                 role,
                 reported("org_id", create.org_id),
                 reported("org_name", create.org_name),
                 now_rfc3339(),
-            );
+            )
+            // As the real server, a marker it can't write is a storage error.
+            .unwrap_or_else(|_| fail(FailCode::StorageError));
             act_before(&step, &home, &key, &mut stdin);
             if step.corrupt_office_file {
                 if fs::write(dir.join(OFFICE_FILE_NAME), b"{not an office").is_err() {
@@ -283,21 +318,33 @@ fn main() {
                 _ => refuse_first_line(&home, &key, FailCode::InvalidRequest),
             }
             let dir = office_dir(&home, &id).unwrap_or_else(|| fail(FailCode::InvalidRequest));
+            // As the real server: an office that isn't there is an invalid start (fatal),
+            // decided under its lock.
+            if !dir.is_dir() {
+                fail(FailCode::InvalidRequest);
+            }
             let lock = take_lock(&dir);
+            if !dir.join(OFFICE_FILE_NAME).exists() {
+                fail(FailCode::InvalidRequest);
+            }
             let bytes = fs::read(dir.join(OFFICE_FILE_NAME))
                 .unwrap_or_else(|_| fail(FailCode::StorageError));
             let office = OfficeFile::from_slice(&bytes).unwrap_or_else(|e| fail(e.fail_code()));
+            // As the real server: the admission is for the stored office's organization.
+            if ADMITTED.get().map(|(org, _)| org) != Some(&office.org_id) {
+                fail(FailCode::StorageError);
+            }
             act_before(&step, &home, &key, &mut stdin);
             let socket_id = office.office_id.clone();
             (office, lock, socket_id)
         }
     };
 
-    let socket = match std::env::var_os(OFFICE_RUNTIME_DIR_ENV) {
-        Some(runtime) => office_socket_in(Path::new(&runtime), &socket_id),
-        None => office_socket_path(&home, &socket_id),
-    }
-    .expect("a plain id");
+    // Every office the host starts is named by UUIDv7: its socket is the selected one.
+    let runtime =
+        std::env::var_os(OFFICE_RUNTIME_DIR_ENV).map_or_else(|| home.join("run"), PathBuf::from);
+    let socket = selected_office_socket_in(&runtime, &socket_id)
+        .unwrap_or_else(|| fail(FailCode::InvalidRequest));
     let listener = bind(&socket);
     let served = office.clone();
     thread::spawn(move || serve(&listener, &served));
@@ -445,6 +492,7 @@ fn first_line(
             Launch::Create(CreateFields {
                 office_id: create.office.office_id,
                 org_id: create.org_id,
+                owner_member_id: create.owner_member_id,
                 org_name: create.org_name,
                 office_name: create.office_name,
                 role: create.role,
@@ -537,6 +585,7 @@ fn rendezvous(home: &Path, key: &str, line: &HostFirstLine, path: &str) -> Hando
         if org_office_launch::write_rendezvous_event(&mut stream, &receipt).is_err() {
             bail(&stream, FailCode::StorageError);
         }
+        writer_control(home, key, line, &stream, &fence);
     }
     // The receiver set the shared descriptor non-blocking. With it gone, the stream blocks
     // again, so events are written whole and the lifetime read waits for the host's end.
@@ -552,6 +601,114 @@ fn rendezvous(home: &Path, key: &str, line: &HostFirstLine, path: &str) -> Hando
 fn bail(stream: &UnixStream, code: FailCode) -> ! {
     let _ = stream.set_nonblocking(false);
     fail(code)
+}
+
+/// The host's writer control, the first record on the transfer socket after the handoff, as the
+/// real server takes it: the `writer_control` record naming this office with one descriptor,
+/// the host's admission first on that channel (valid, for this instance and office; the
+/// admission's organization and owner are checked after the receipt, in `main`), then
+/// `fds_received` for the channel. Anything else fails the run with `storage_error`, as the
+/// real server fails it (custody that needs recovery; the host retries it): an office without
+/// custody never opens.
+fn writer_control(
+    home: &Path,
+    key: &str,
+    line: &HostFirstLine,
+    stream: &UnixStream,
+    fence: &Mutex<()>,
+) {
+    let Some(office) = line.office() else {
+        bail(stream, FailCode::InvalidRequest)
+    };
+    let transfer = TRANSFER
+        .get()
+        .and_then(|fd| fd.try_clone().ok())
+        .unwrap_or_else(|| bail(stream, FailCode::StorageError));
+    let mut receiver = DatagramReceiver::new(UnixDatagram::from(transfer));
+    let mut payload = [0; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut received = loop {
+        match receiver.receive_up_to(&mut payload, 1, fence) {
+            Ok(received) => break received,
+            Err(ReceiveError::WouldBlock) if Instant::now() < deadline => {
+                let fd = receiver
+                    .fd()
+                    .unwrap_or_else(|| bail(stream, FailCode::StorageError));
+                match org_socket::poll_readable(fd.as_raw_fd(), org_socket::READ_TICK) {
+                    Ok(_) => {}
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => bail(stream, FailCode::StorageError),
+                }
+            }
+            Err(_) => bail(stream, FailCode::StorageError),
+        }
+    };
+    let Ok(TransferRecord::WriterControl {
+        office_id,
+        channel_id,
+    }) = org_office_launch::decode_transfer_record(&payload[..received.bytes])
+    else {
+        bail(stream, FailCode::StorageError)
+    };
+    let Some(descriptor) = received.descriptors.pop() else {
+        bail(stream, FailCode::StorageError)
+    };
+    if office_id != office.office_id || !received.descriptors.is_empty() {
+        bail(stream, FailCode::StorageError);
+    }
+    let writer = org_socket::rights::connected_unix_stream(descriptor)
+        .unwrap_or_else(|_| bail(stream, FailCode::StorageError));
+    if writer.set_nonblocking(false).is_err()
+        || writer
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .is_err()
+    {
+        bail(stream, FailCode::StorageError);
+    }
+    let mut reader = BufReader::new(
+        writer
+            .try_clone()
+            .unwrap_or_else(|_| bail(stream, FailCode::StorageError)),
+    );
+    let admission = match org_office_launch::writer::read::<Admission>(&mut reader) {
+        Ok(Some(admission)) => admission,
+        _ => bail(stream, FailCode::StorageError),
+    };
+    // Only the admission's own rules and its scope here, as the real server's install: the
+    // organization and owner are compared after the receipt (`main`).
+    if !admission.check()
+        || admission.identity.instance_id != office.instance_id
+        || admission.identity.office_id != office.office_id
+    {
+        bail(stream, FailCode::StorageError);
+    }
+    let _ = WRITER.set(writer);
+    let _ = ADMITTED.set((
+        admission.identity.organization_id.clone(),
+        admission.owner_member.clone(),
+    ));
+    record(
+        home,
+        &format!(
+            "writer {key} {} {}",
+            std::process::id(),
+            admission.identity.organization_id
+        ),
+    );
+    let mut out = stream;
+    let receipt = RendezvousEvent::FdsReceived { of: channel_id };
+    if org_office_launch::write_rendezvous_event(&mut out, &receipt).is_err() {
+        bail(stream, FailCode::StorageError);
+    }
+}
+
+/// Whether `dir` holds nothing but the host's custody marker (or its staging files).
+fn only_custody(dir: &Path) -> bool {
+    fs::read_dir(dir).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .all(|entry| marker::is_custody_entry(&entry.file_name().to_string_lossy()))
+    })
 }
 
 /// One receive on the (non-blocking) rendezvous, waiting for readiness while it would block,
@@ -654,6 +811,11 @@ fn discard_office(home: &Path, id: &str, step: &Step, key: &str, stdin: &mut imp
     let dir = office_dir(home, id).unwrap_or_else(|| fail(FailCode::InvalidRequest));
     act_before(step, home, key, stdin);
     if dir.exists() {
+        // As the real server: a folder the host reserved custody in is never discarded,
+        // whatever else it holds, with the same fixed storage error.
+        if marker::holds_custody(&dir).unwrap_or(true) {
+            fail(FailCode::StorageError);
+        }
         let lock = take_lock(&dir);
         if dir.join(OFFICE_FILE_NAME).exists() {
             fail(FailCode::AlreadyExists);

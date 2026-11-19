@@ -140,7 +140,7 @@ would be declared four times.
 | `agentic-org-office` | Its end of the rendezvous: receive descriptors | `org-socket/src/rights.rs`, `rights/send.rs`, `rights/stream.rs` | `socket` |
 | `agentic-org-office` | Admit same-user peers on its local socket | `org-socket/src/peer.rs` (`peer_allowed`), called from `apps/agentic-org-office/src/serve.rs` | `socket` |
 | `agentic-org-office` | Start, watch, stop and recover agent processes | `org-supervise/src/lib.rs`, `platform.rs`, `spawn.rs`, `child.rs`, `recovery.rs`, `recovery/scan.rs`, `recovery/native/` | `process`, `isolation` |
-| `agentic-org-office` | Durable flush of accepted work | `org-office/src/store/acceptance/durable.rs` | `fs` |
+| `agentic-org-office` | Durable flush of accepted work: since B1b the office store's journal and files under `<instance-root>/<org-id>/durable/`, and the single-file publications (creation intent `hq-creation.v1.json`, `office.json`) in the office folder `<home>/offices/<office-id>/`, which also holds the office lock and the host's writer-custody marker; the projection `<instance-root>/<org-id>/runtime/<office-id>/office.db` can be deleted and rebuilt from the journal | `org-store/src/disk.rs` (`flush_full`) and `org-store/src/files.rs` (`publish_one`), both through `org_platform::fs::full_sync`, with no conditional | `fs` |
 | `agentic-org-web` | Confine itself before input | `org-platform/src/confinement/` since X1c (was `org-socket/src/confinement.rs`, `confinement/macos.rs`) | `confinement` |
 | `agentic-org-web` | Which platform's release it is, when it authenticates its own image | `apps/agentic-org-web/src/release.rs` (`policy`, a `cfg!` on the system) | `admission` (X1c, with `org-host/src/release.rs`) |
 | `agentic-org-web` | Check the inherited listener and received descriptors | `org-socket/src/rights/stream.rs` (`listening`), `rights.rs` | `socket` |
@@ -156,9 +156,9 @@ above.
 
 Count when the check was written (X1a): 79 `.rs` files outside `org-platform` have a
 platform predicate. 45 are source files: 29 in `org-host`, 6 in `org-socket`, 6 in
-`org-supervise`, and `org-office/src/store/acceptance/durable.rs`,
-`org-client/src/agent.rs`, `org-spool/src/safe_read.rs` and
-`apps/agentic-org-web/src/release.rs`; each is in a row above. One is an example
+`org-supervise`, and `org-office/src/store/acceptance/durable.rs` (deleted in B1b; its
+row now names the office store's flush), `org-client/src/agent.rs`,
+`org-spool/src/safe_read.rs` and `apps/agentic-org-web/src/release.rs`; each is in a row above. One is an example
 (`org-socket/examples/gateway_confinement.rs`; it stayed in `org-socket` in X1c, because it needs that crate's descriptor passing, and lost its predicates),
 and 33 are test files. The list is at 78 files and 491 predicates since A1 removed
 SQLCipher from the office store. Milestone-one work in these files adds no new
@@ -1095,7 +1095,8 @@ same three adapters, and LNX-5's check covers them.
   `require_disk(dir)`: refuses `tmpfs`, `ramfs` and `hugetlbfs` where data must
   persist. These replace the copies in `org-host` (`writer.rs`, `hostdb.rs`,
   `release/files.rs`, `release/files/output.rs`, `human/recovery.rs`,
-  `instance/directory.rs`), `org-office/src/store/acceptance/durable.rs`,
+  `instance/directory.rs`), `org-office/src/store/acceptance/durable.rs` (deleted in B1b;
+  the office store's flush in `org-store` calls `full_sync`),
   `org-client/src/agent.rs` and `org-spool/src/safe_read.rs`.
 - **`dirs`.** The application base, the default office home, the user temp base and
   the runtime base for sockets, with the socket path limit. Built in X1b:
@@ -1262,7 +1263,7 @@ increments are in the [implementation plan](../implementation-plan.md#milestone-
 | Increment | Files it changes | Also changed by |
 | --- | --- | --- |
 | X1a check and layout | `crates/org-platform/tests/platform_conditionals.rs`, `.github/platform-conditionals.allow`, `.github/scripts/platform_allowlist_shrinks.py`, `.github/workflows/ci.yml`; the layout text and `From<Refused> for io::Error` in `crates/org-platform/src/lib.rs` | A2 B0 created the crate, the `service` contract and its launchd adapter in `org-platform/src/service/` |
-| X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs` (or `org-store/src/files.rs`, where B1a carries its flush); `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
+| X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs` (deleted in B1b: the office store's flush is in `org-store/src/disk.rs` and `files.rs`); `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
 | X1c `admission`, `confinement`, `presence` | `org-platform/src/{admission,confinement,presence}/`, `org-platform/build.rs`; `org-socket/src/{confinement.rs, confinement/, image.rs}`; `org-host/src/{spawn.rs, server_check.rs, code_signing.rs, peer.rs, app_auth.rs, human.rs (verify_host), recovery.rs, recovery/presence.rs, release.rs, release/platform.rs, release/runtime.rs, supervisor/child.rs, supervisor/channels.rs, supervisor/mod.rs, offices.rs, lib.rs}`, `org-host/build.rs`, `org-host/Cargo.toml` | A1: `supervisor/child.rs`, `supervisor/channels.rs`, `supervisor/mod.rs`. A2 and A3: `org-host/src/lib.rs`, `instance/`, `hostdb`. A3: the web process's start and its confinement call. A4: `offices.rs` |
 | X1d `credentials` | `org-platform/src/credentials/`; `org-host/src/{keys/, host_secrets.rs, host_secrets/}` | A1 (`keys/`, the office secrets key) |
 | X2 first worker | `org-platform/src/{admission,fs,dirs,process,socket}/linux.rs`, `org-platform/src/testing.rs`; the tests in `org-host/src/supervisor/` and `apps/agentic-org/tests/`; `ci.yml` | the tests in `apps/agentic-org/tests/` that A1 and A2 also edit |

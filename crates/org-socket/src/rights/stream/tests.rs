@@ -1,10 +1,15 @@
 mod typed;
 use super::*;
 use std::io::{Read, Write};
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsFd, FromRawFd};
 use std::os::unix::net::{UnixDatagram, UnixListener};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+use org_platform::socket::testing::{
+    bind_path, seqpacket_pair, CONNECTED_STREAM_CAN_LISTEN, SEQPACKET,
+};
+use org_platform::socket::PEER_CLOSED_IS_EINVAL;
 
 #[test]
 fn connected_pair_is_owned_usable_and_keeps_cloexec() {
@@ -45,31 +50,42 @@ fn syscall_status_accepts_zero_and_positive_but_refuses_every_negative() {
     }
 }
 
+/// Whether this system can build the socket of `case`: some exist on one system only.
+fn this_system_has(case: &str) -> bool {
+    match case {
+        // Unix seqpacket sockets (not on macOS).
+        "seqpacket" => SEQPACKET,
+        // A connected stream that then listens (macOS only).
+        "listener-crafted" | "listener-crafted-queued" => CONNECTED_STREAM_CAN_LISTEN,
+        // A peer-query EINVAL that is a refusal, not a closed peer (not on macOS).
+        "fault-peer-einval" => !PEER_CLOSED_IS_EINVAL,
+        _ => true,
+    }
+}
+
 #[test]
 fn wrong_descriptor_classes_are_refused_and_owned_fds_close() {
     for case in [
         "pipe",
         "file",
         "datagram",
-        #[cfg(target_os = "linux")]
         "seqpacket",
         "listener",
         "listener-queued",
-        #[cfg(target_os = "macos")]
         "listener-crafted",
-        #[cfg(target_os = "macos")]
         "listener-crafted-queued",
         "inet",
         "never-connected",
         "no-cloexec",
         "fault-peer",
-        #[cfg(target_os = "linux")]
         "fault-peer-einval",
         "fault-listener",
         "fault-family",
         "fault-flags",
     ] {
-        run_case(case);
+        if this_system_has(case) {
+            run_case(case);
+        }
     }
 }
 
@@ -81,16 +97,15 @@ fn native_platform_state_table_checks_real_peer_errno_and_adoption_outcome() {
         "never-connected",
         "listener",
         "listener-queued",
-        #[cfg(target_os = "macos")]
         "listener-crafted",
-        #[cfg(target_os = "macos")]
         "listener-crafted-queued",
         "datagram",
         "pipe",
-        #[cfg(target_os = "linux")]
         "seqpacket",
     ] {
-        run_case(case);
+        if this_system_has(case) {
+            run_case(case);
+        }
     }
     // SAFETY: querying -1 owns no resource and reports the real EBADF result.
     assert_eq!(unsafe { libc::fcntl(-1, libc::F_GETFD) }, -1);
@@ -161,55 +176,32 @@ fn adoption_child() {
             drop(peer);
             socket.into()
         }
-        #[cfg(target_os = "linux")]
         "seqpacket" => {
-            let mut fds = [-1; 2];
-            // SAFETY: socketpair writes two fresh owned fds into a live two-item array.
-            assert_eq!(
-                unsafe {
-                    libc::socketpair(
-                        libc::AF_UNIX,
-                        libc::SOCK_SEQPACKET | libc::SOCK_CLOEXEC,
-                        0,
-                        fds.as_mut_ptr(),
-                    )
-                },
-                0
-            );
-            // SAFETY: socketpair succeeded; wrap each returned fd exactly once.
-            let socket = unsafe { OwnedFd::from_raw_fd(fds[0]) };
-            // SAFETY: the other fresh fd likewise gets exactly one owner, retained through refusal.
-            unix_peer = Some(UnixStream::from(unsafe { OwnedFd::from_raw_fd(fds[1]) }));
+            let (socket, peer) = seqpacket_pair()
+                .unwrap()
+                .expect("a system with Unix seqpacket sockets");
+            unix_peer = Some(UnixStream::from(peer));
             socket
         }
-        #[cfg(target_os = "macos")]
         "listener-crafted" | "listener-crafted-queued" => {
-            use std::os::unix::ffi::OsStrExt;
             let (stream, peer) = UnixStream::pair().unwrap();
             let path = dir.join("crafted");
-            let bytes = path.as_os_str().as_bytes();
-            // SAFETY: zero initializes a valid sockaddr_un, including its path terminator.
-            let mut address: libc::sockaddr_un = unsafe { mem::zeroed() };
-            assert!(bytes.len() < address.sun_path.len());
-            address.sun_len = mem::size_of_val(&address).try_into().unwrap();
-            address.sun_family = libc::AF_UNIX as _;
-            for (slot, byte) in address.sun_path.iter_mut().zip(bytes) {
-                *slot = *byte as _;
-            }
-            // SAFETY: the test owns fd and the initialized UNIX address is fully covered.
-            assert_eq!(
-                unsafe {
-                    libc::bind(
-                        stream.as_raw_fd(),
-                        (&address as *const libc::sockaddr_un).cast(),
-                        mem::size_of_val(&address) as _,
-                    )
-                },
-                0
-            );
+            bind_path(stream.as_fd(), &path).unwrap();
             drop(peer);
-            // SAFETY: this test-owned bound socket has no connected peer; macOS permits listen.
-            assert_eq!(unsafe { libc::listen(stream.as_raw_fd(), 1) }, 0);
+            // macOS has been seen to refuse listen (EINVAL) for a moment after the peer
+            // closed, under load; org-platform's probe of this fact retries the same way.
+            let listened = (0..100).any(|_| {
+                // SAFETY: this test-owned bound socket's peer has closed; this system
+                // permits listen.
+                let status = unsafe { libc::listen(stream.as_raw_fd(), 1) };
+                if status != 0 {
+                    let error = io::Error::last_os_error();
+                    assert_eq!(error.raw_os_error(), Some(libc::EINVAL), "{error}");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                status == 0
+            });
+            assert!(listened, "listen kept answering EINVAL");
             let listener = UnixListener::from(OwnedFd::from(stream));
             let connected = UnixStream::connect(path).unwrap();
             if case == "listener-crafted-queued" {
@@ -301,7 +293,7 @@ fn adoption_child() {
         let expected = match case.as_str() {
             "connected" => None,
             "peer-closed" | "listener-crafted" | "listener-crafted-queued"
-                if cfg!(target_os = "macos") =>
+                if PEER_CLOSED_IS_EINVAL =>
             {
                 Some(libc::EINVAL)
             }

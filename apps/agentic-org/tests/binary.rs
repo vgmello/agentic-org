@@ -36,7 +36,10 @@ const WAIT: Duration = Duration::from_secs(10);
 /// itself wait the full 10 s shutdown grace for a server before SIGKILLing it; on a loaded
 /// machine a server can be that slow. A host still running after this is stuck.
 const EXIT_WAIT: Duration = Duration::from_secs(30);
-const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+/// The stored office, named by canonical UUIDv7 as every launch line names it, and its
+/// organization.
+const A: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
+const ORG_A: &str = "0190a5d2-7c3e-7000-8000-00000000010a";
 
 /// A host process that is killed (and reaped) when dropped, so a failed assertion never leaves
 /// one running.
@@ -66,7 +69,7 @@ impl Drop for HostProcess {
 
 /// A registered instance (setup's steps 2 and 3, through A2's fixture) under a short temporary
 /// base `<tmp>/a`, its development keys under `<tmp>/k`, and one stored office the fake server
-/// runs. `agentic-org serve --name default` serves it, as the account's service does after
+/// runs under the writer custody the host reserved for it. `agentic-org serve --name default` serves it, as the account's service does after
 /// setup.
 #[cfg(debug_assertions)]
 struct Registered {
@@ -91,7 +94,7 @@ impl Registered {
         };
         let account = registered_account(&root.join("a"), None, port).unwrap();
         let registered = Self { dir, account };
-        registered.store_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+        registered.store_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
         registered
     }
 
@@ -104,12 +107,25 @@ impl Registered {
         &self.account.office_home
     }
 
-    /// Stores an office as if the host had provisioned it: its `office.json` in the instance's
-    /// office home and a key in the instance's development key folder (the layout
-    /// `TestHome::write_office` uses for a registered home).
+    /// Stores an office as if the host had provisioned it: its writer custody (reserved as
+    /// protected provisioning reserves it, which also creates the instance's registry), its
+    /// `office.json` in the instance's office home and a key in the instance's development key
+    /// folder (the layout `TestHome::write_office` uses for a registered home).
     fn store_office(&self, office: &OfficeFile) {
+        let at = org_host::test_support::custody::InstanceAt::account(
+            &self.base().join("a"),
+            None,
+            &self.base().join("k"),
+        )
+        .unwrap();
+        org_host::test_support::custody::reserve_office(
+            &at,
+            &office.org_id,
+            &office.office_id,
+            None,
+        )
+        .unwrap();
         let dir = self.home().join("offices").join(&office.office_id);
-        fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("office.json"), office.to_vec().unwrap()).unwrap();
         let keys = self.base().join("k").join(&self.account.instance_id);
         fs::DirBuilder::new()
@@ -200,7 +216,7 @@ impl Registered {
             UnixStream::connect(&socket).is_ok()
         });
         let office_socket =
-            org_proto::location::office_socket_in(&self.account.runtime, A).unwrap();
+            org_proto::location::selected_office_socket_in(&self.account.runtime, A).unwrap();
         eventually(WAIT, "the supervised worker to answer hello", || {
             if UnixStream::connect(&office_socket).is_err() {
                 return false;

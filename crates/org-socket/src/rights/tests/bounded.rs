@@ -109,16 +109,18 @@ fn bounded_capacity_order_cloexec_and_retry_use_the_shared_receiver() {
                 calls += 1;
                 assert_eq!(control_len(message), control_space(2).unwrap());
                 assert_ne!(flags & libc::MSG_DONTWAIT, 0);
-                #[cfg(target_os = "linux")]
-                {
-                    assert_ne!(flags & libc::MSG_CMSG_CLOEXEC, 0);
-                    assert!(fence.try_lock().is_ok(), "Linux must not acquire the fence");
+                if let Some(flag) = atomic_close_on_exec() {
+                    assert_eq!(flags & flag, flag);
+                    assert!(
+                        fence.try_lock().is_ok(),
+                        "an atomic close-on-exec must not acquire the fence"
+                    );
+                } else {
+                    assert!(matches!(
+                        fence.try_lock(),
+                        Err(std::sync::TryLockError::WouldBlock)
+                    ));
                 }
-                #[cfg(not(target_os = "linux"))]
-                assert!(matches!(
-                    fence.try_lock(),
-                    Err(std::sync::TryLockError::WouldBlock)
-                ));
                 if calls == 1 {
                     message.msg_controllen = 0;
                     Err(io::Error::from_raw_os_error(libc::EINTR))
@@ -139,7 +141,14 @@ fn bounded_capacity_order_cloexec_and_retry_use_the_shared_receiver() {
         .unwrap();
     drop(originals);
     assert_eq!(calls, 2);
-    assert_eq!(set_calls, if cfg!(target_os = "linux") { 0 } else { 2 });
+    assert_eq!(
+        set_calls,
+        if atomic_close_on_exec().is_some() {
+            0
+        } else {
+            2
+        }
+    );
     assert!(fence.try_lock().is_ok());
     assert_eq!(received.descriptors.len(), 2);
     for (descriptor, tag) in received.descriptors.into_iter().zip(*b"AB") {
@@ -231,15 +240,20 @@ pub(super) fn fatal_case(case: &str) {
     ));
 }
 
-#[cfg(not(target_os = "linux"))]
 #[test]
 fn bounded_public_api_uses_the_original_caller_fence() {
-    run_fatal_child("bounded-poisoned-fence");
+    // Only where the fence is taken (macOS).
+    if atomic_close_on_exec().is_none() {
+        run_fatal_child("bounded-poisoned-fence");
+    }
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 fn bounded_linux_atomic_cloexec_does_not_acquire_a_poisoned_fence() {
+    // Only where the receive sets close-on-exec itself (Linux).
+    if atomic_close_on_exec().is_none() {
+        return;
+    }
     let fence = Mutex::new(());
     let _ = std::panic::catch_unwind(|| {
         let _guard = fence.lock().unwrap();

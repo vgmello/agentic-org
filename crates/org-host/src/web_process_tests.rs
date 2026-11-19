@@ -22,7 +22,6 @@ use crate::{
     home::{HostLock, Layout},
     hostdb::{HostDb, HostDbInit},
     instance::registry::Registry,
-    service::authentication::hash_password,
     Config, Host,
 };
 use org_host_control::{
@@ -52,7 +51,7 @@ const WAIT: Duration = Duration::from_secs(60);
 /// How long the real-host tests keep asking for the HQ whose worker must start within the
 /// host's launch deadline ([`create_hq_beside`]).
 const HQ_WAIT: Duration = Duration::from_secs(300);
-const PASSWORD: &str = "synthetic first password";
+const PASSWORD: &str = crate::setup_flow::seed::PASSWORD;
 
 struct Reply {
     status: u16,
@@ -291,15 +290,7 @@ fn start_registered_host(
         let db = HostDb::create(home, custody, &init).unwrap();
         match seed {
             Seed::Administrator => {
-                let verifier = hash_password(&Password::new(PASSWORD.into()).unwrap()).unwrap();
-                db.seed_account(
-                    &crate::ids::generate().unwrap(),
-                    "Owner",
-                    &verifier,
-                    true,
-                    now,
-                )
-                .unwrap();
+                crate::setup_flow::seed::administrator(&db, PASSWORD, now).unwrap();
             }
             Seed::RegistrationLink => {
                 use crate::links::{LinkKind, OneTimeLinks, Subject};

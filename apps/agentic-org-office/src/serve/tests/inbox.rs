@@ -90,7 +90,7 @@ fn owner() -> Binding {
 }
 fn shared() -> Shared {
     let mut ports = ports(Box::new(|| panic!("not an inbox source")));
-    ports.submit = Box::new(|_| panic!("inbox must never submit org writes"));
+    ports.submit = Box::new(|_, _| panic!("inbox must never submit org writes"));
     ports.work = Box::new(|_, _| panic!("inbox must never write work"));
     ports.status = Box::new(|_, _| panic!("inbox must never set status"));
     Shared::new(&test_info(), Path::new("unused.sock"), ports, launch_key())

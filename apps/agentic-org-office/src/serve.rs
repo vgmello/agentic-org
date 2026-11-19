@@ -57,10 +57,11 @@ pub enum SnapshotFailure {
 
 pub type SnapshotFn = Box<dyn Fn() -> Result<OrgSnapshot, SnapshotFailure> + Send + Sync>;
 
-/// Runs one organization command (the office's `submit_org`): HQ's answer, or why it could not
-/// answer at all (storage).
-pub type SubmitFn =
-    Box<dyn Fn(OrgCommand) -> Result<Result<CommandAccepted, ApiError>, String> + Send + Sync>;
+/// Runs one organization command from a member (the office's `submit_org`): the member the
+/// caller's grant is bound to. HQ's answer, or why it could not answer at all (storage).
+pub type SubmitFn = Box<
+    dyn Fn(&str, OrgCommand) -> Result<Result<CommandAccepted, ApiError>, String> + Send + Sync,
+>;
 
 /// Reads a retained owner operation, after the office socket checks the binding.
 pub type OperationFn = Box<
@@ -1169,7 +1170,11 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
         }
         Err(refusal) => return Response::error(request.id, refusal),
         Ok(Some(command)) => {
-            return match (shared.ports.submit)(command) {
+            // Only a grant-bound member reaches here (checked above).
+            let Some(member) = binding.member() else {
+                return internal(request.id);
+            };
+            return match (shared.ports.submit)(member, command) {
                 // Every organization command answers with `CommandAccepted`; any command's call
                 // type serializes the same way.
                 Ok(Ok(accepted)) => Response::ok::<TeamCreate>(request.id, &accepted)
@@ -2249,7 +2254,7 @@ mod tests {
                 )))
             }),
             snapshot,
-            submit: Box::new(|_| Err("none".to_owned())),
+            submit: Box::new(|_, _| Err("none".to_owned())),
             who: Box::new(|_| Err("none".to_owned())),
             status: Box::new(|_, _| Err("none".to_owned())),
             feed: Some(Box::new(Arc::new(FakeFeed::default()))),
@@ -2700,7 +2705,7 @@ mod tests {
                     )))
                 }),
                 snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
-                submit: Box::new(move |_| {
+                submit: Box::new(move |_, _| {
                     counter.fetch_add(1, Ordering::SeqCst);
                     answer()
                 }),
@@ -3173,7 +3178,7 @@ mod tests {
                         )))
                     }),
                     snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
-                    submit: Box::new(|_| Err("none".to_owned())),
+                    submit: Box::new(|_, _| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
                     status: Box::new(|_, _| Err("none".to_owned())),
                     feed: Some(Box::new(Arc::clone(&feed))),
@@ -3663,7 +3668,7 @@ mod tests {
                     )))
                 }),
                 snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
-                submit: Box::new(|_| Err("none".to_owned())),
+                submit: Box::new(|_, _| Err("none".to_owned())),
                 who: Box::new(move |params| {
                     counter.fetch_add(1, Ordering::SeqCst);
                     answer(params)
@@ -3796,7 +3801,7 @@ mod tests {
     ) {
         let (mailbox, directory) = messaging();
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.submit = Box::new(|_| committed());
+        ports.submit = Box::new(|_, _| committed());
         ports.mailbox = Some(Arc::clone(&mailbox));
         ports.directory = directory.clone();
         let shared = Arc::new(Shared::new(&test_info(), path, ports, launch_key()));

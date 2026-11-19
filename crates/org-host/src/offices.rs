@@ -307,11 +307,7 @@ impl Offices {
     ) -> Result<(), ApiError> {
         let deadline = Instant::now() + self.create_wait;
         self.wait_for_startup(deadline)?;
-        let p = first
-            .hq_creation
-            .as_ref()
-            .and_then(|c| c.bootstrap.as_ref())
-            .ok_or_else(storage_error)?;
+        let p = &first.hq_creation.bootstrap;
         let office = p.office_id.clone();
         let stored = lock(&self.catalog).office(&office).cloned();
         if let Some(stored) = stored {
@@ -524,12 +520,13 @@ fn move_refused(home: &Path, office_id: &str, why: &str) {
 
 /// The one cleanup of an unfinished create, at startup and after a failed create: a server
 /// discards it (`--discard`, with the office's key, or `null` when the host has none), because
-/// only a server can open its databases to check that no organization was committed. Its key
-/// is deleted only after `discarded` (see `Supervisor::discard`). A folder holding
-/// `office.json` is never discarded. A failure is logged, not retried: the next host start
-/// tries again, once, with the key it kept. `already_exists` (an organization committed in the
-/// folder's databases) and `storage_error` (databases the server can't open or check) mean the
-/// folder may be a real office that lost its `office.json`: it is left for a person, with its key.
+/// only the server's discard removes the folder under the office lock, after checking that it
+/// holds nothing an office makes. Its key is deleted only after `discarded` (see
+/// `Supervisor::discard`). A folder holding `office.json` is never discarded. A failure is
+/// logged, not retried: the next host start tries again, once, with the key it kept.
+/// `already_exists` (the folder holds a creation intent, `office.json` or the host's custody
+/// marker) and `storage_error` (a folder the server can't read or check) mean the folder may be
+/// a real office: it is left for a person, with its key.
 pub(crate) fn discard_unfinished(home: &Path, supervisor: &Supervisor, office_id: &str) {
     if catalog::is_stored(home, office_id) {
         host_log::log(&format!("kept office {office_id}: it is stored"));
@@ -546,7 +543,7 @@ pub(crate) fn discard_unfinished(home: &Path, supervisor: &Supervisor, office_id
         Ok(DiscardOutcome::Failed(code @ (FailCode::AlreadyExists | FailCode::StorageError))) => {
             host_log::log(&format!(
                 "kept unfinished office {office_id}: its server refused to discard it ({code:?}): \
-                 its databases may hold an organization, so it is left for a person"
+                 it may be an office, so it is left for a person"
             ));
         }
         Ok(outcome) => host_log::log(&format!(
@@ -630,7 +627,9 @@ mod tests {
             },
             INSTANCE,
         );
-        for (id, stored) in [("STORED", true), ("UNFINISHED", false)] {
+        const STORED: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071d1";
+        const UNFINISHED: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071d2";
+        for (id, stored) in [(STORED, true), (UNFINISHED, false)] {
             let folder = home.join("offices").join(id);
             fs::create_dir_all(&folder).unwrap();
             if stored {
@@ -639,7 +638,7 @@ mod tests {
             discard_unfinished(home, &supervisor, id);
         }
         let ran = fs::read_to_string(home.join("ran")).unwrap_or_default();
-        assert_eq!(ran, "--discard UNFINISHED\n");
+        assert_eq!(ran, format!("--discard {UNFINISHED}\n"));
     }
 
     const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";

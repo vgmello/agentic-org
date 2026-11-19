@@ -19,10 +19,8 @@ use org_host_control::{
     },
     HostOpResult,
 };
-use org_office_launch::writer::Admission;
 use org_proto::{
     selected_bootstrap::{PlanV1, PreparedV1},
-    work::WriterIdentity,
     ApiError, ErrorCode, RecoveryCode,
 };
 use serde::{Deserialize, Serialize};
@@ -39,7 +37,6 @@ pub(crate) struct Provisioning {
     keys: Arc<dyn OfficeSecretsKeys>,
     writers: Arc<Writers>,
     instance: String,
-    root: PathBuf,
     office_home: PathBuf,
     /// Held for admission only, never while an organization is being created.
     gate: Mutex<()>,
@@ -152,14 +149,14 @@ fn private(path: &Path) -> Result<(), ApiError> {
     Ok(())
 }
 impl Provisioning {
-    #[allow(clippy::too_many_arguments)]
+    /// The organizations' data roots come from `writers` (its instance root), never from a
+    /// caller.
     pub(crate) fn new(
         db: Arc<HostDb>,
         custody: Arc<dyn HostSecrets>,
         keys: Arc<dyn OfficeSecretsKeys>,
         writers: Arc<Writers>,
         instance: &str,
-        root: &Path,
         office_home: &Path,
     ) -> Self {
         Self {
@@ -168,7 +165,6 @@ impl Provisioning {
             keys,
             writers,
             instance: instance.into(),
-            root: root.into(),
             office_home: office_home.into(),
             gate: Mutex::new(()),
             hq: std::sync::OnceLock::new(),
@@ -572,11 +568,9 @@ impl Provisioning {
         }
         let folder = org_office_launch::office_dir(&self.office_home, &r.prepared.office_id)
             .ok_or_else(unavailable)?;
-        let public = self.reserve_writer(account, r, &folder)?;
+        self.reserve_writer(account, r, &folder)?;
         let first = org_office_launch::CreateLine {
             office: org_office_launch::OfficeLine {
-                id_profile: Some(org_office_launch::IdProfile::SelectedV1),
-                selected_writer_required: true,
                 instance_id: self.instance.clone(),
                 office_id: r.prepared.office_id.clone(),
                 rendezvous: String::new(),
@@ -586,13 +580,12 @@ impl Provisioning {
             office_name: "HQ".into(),
             role: org_proto::OfficeRole::Hq,
             owner_member_id: r.owner_member.clone(),
-            hq_creation: Some(org_office_launch::HqCreationV1 {
-                version: 1,
+            hq_creation: org_office_launch::HqCreationV1 {
+                version: org_office_launch::HqCreationV1::VERSION,
                 operation_id: r.operation_id.clone(),
                 escrow_profile: 1,
-                public_root: public.to_str().ok_or_else(unavailable)?.into(),
-                bootstrap: Some(Box::new(r.prepared.clone())),
-            }),
+                bootstrap: Box::new(r.prepared.clone()),
+            },
         };
         hq.provision_hq(first, pending.code)?;
         // The link and its announcement are one critical section of the web connections'
@@ -616,7 +609,7 @@ impl Provisioning {
         account: &Account,
         r: &Reservation,
         folder: &Path,
-    ) -> Result<PathBuf, ApiError> {
+    ) -> Result<(), ApiError> {
         let key = match self.keys.load(&r.prepared.office_id).map_err(storage)? {
             Some(key) => key,
             None if r.key_fingerprint.is_none()
@@ -639,21 +632,17 @@ impl Provisioning {
             return Err(unavailable());
         }
         self.db.provision_key_stored(r, &key_fp).map_err(storage)?;
-        // All paths derive from protected instance/identity facts. No caller
-        // or browser chooses a local path, and every parent is checked.
-        private(&self.root.join("durable"))?;
-        private(&self.root.join("durable/state"))?;
-        private(&self.root.join("durable/authority"))?;
-        let public = self
-            .root
-            .join("durable/state")
-            .join(&r.prepared.organization_id);
-        private(&public)?;
-        let protected = self
-            .root
-            .join("durable/authority")
-            .join(&r.prepared.office_id);
-        private(&protected)?;
+        // All paths derive from protected instance/identity facts. No caller or browser
+        // chooses a local path, and every parent is checked. The organization's data roots
+        // are `<instance-root>/<organization-id>/{durable,runtime}`, owner-only; the writer
+        // reservation requires them empty unless it already holds this office's record.
+        let (durable, runtime) = self
+            .writers
+            .data_roots(&r.prepared.organization_id)
+            .map_err(storage)?;
+        private(durable.parent().ok_or_else(unavailable)?)?;
+        private(&durable)?;
+        private(&runtime)?;
         private(folder)?;
         self.db
             .establish_organization_owner(account, &r.prepared.organization_id, &r.owner_member)
@@ -661,24 +650,15 @@ impl Provisioning {
         self.writers
             .reserve(
                 &r.operation_id,
-                Admission {
-                    version: org_office_launch::writer::VERSION,
-                    identity: WriterIdentity {
-                        instance_id: self.instance.clone(),
-                        organization_id: r.prepared.organization_id.clone(),
-                        office_id: r.prepared.office_id.clone(),
-                        machine_id: String::new(),
-                        writer_epoch: 1,
-                        journal_incarnation: String::new(),
-                    },
-                    protected_root: protected.to_str().ok_or_else(unavailable)?.into(),
-                    public_root: public.to_str().ok_or_else(unavailable)?.into(),
-                    owner_account: r.account.clone(),
-                    owner_member: r.owner_member.clone(),
+                &crate::writer::Binding {
+                    organization_id: &r.prepared.organization_id,
+                    office_id: &r.prepared.office_id,
+                    owner_account: &r.account,
+                    owner_member: &r.owner_member,
                 },
             )
             .map_err(storage)?;
-        Ok(public)
+        Ok(())
     }
 
     fn new_pending(

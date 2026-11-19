@@ -10,8 +10,8 @@
 //! the interim sign-in `recovery` uses until command-line sign-in is approved in the browser,
 //! FC-173), so the command sends it only to a host whose program it could identify
 //! ([`crate::human::verify_host`]): where a peer is known by its user alone (GNU/Linux,
-//! containers) it refuses before a password is asked or anything is sent. Root has no route: the call does
-//! not admit it.
+//! containers) it refuses before a password is asked or anything is sent. Root has no
+//! route: the call does not admit it.
 //!
 //! The files are read as setup reads them (`web_tls::read_pem_file`: the last component not
 //! followed, a regular file of at most 64 KiB) and checked in `tls.set`'s order before the

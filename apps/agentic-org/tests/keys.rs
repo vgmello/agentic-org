@@ -20,8 +20,11 @@ use org_proto::{OfficeStatus, OfficeStatusReason};
 use support::{hq, office_info, TestHome};
 
 const WAIT: Duration = Duration::from_secs(10);
-const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
-const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
+// Offices and organizations are named by canonical UUIDv7, as every launch line names them.
+const A: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
+const B: &str = "0190a5d2-7c3e-7000-8000-00000000000b";
+const ORG_A: &str = "0190a5d2-7c3e-7000-8000-00000000010a";
+const ORG_B: &str = "0190a5d2-7c3e-7000-8000-00000000010b";
 const T: &str = "2026-11-08T00:00:00.000Z";
 
 fn wait_for_state(
@@ -64,9 +67,9 @@ fn a_debug_host_without_a_dev_key_folder_refuses_to_start() {
 #[test]
 fn a_missing_or_unreadable_key_still_starts_the_office_with_a_null_key() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", T));
+    home.write_office(&hq(A, ORG_A, "Acme", T));
     home.remove_key(A);
-    home.write_office(&hq(B, "01ORGB", "Beta", T));
+    home.write_office(&hq(B, ORG_B, "Beta", T));
     home.write_key_text(B, "not a key");
     let host = home.start(home.config()).unwrap();
     // The data is plain SQLite: each office serves it, its handoff's key `null`.

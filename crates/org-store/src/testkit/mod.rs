@@ -20,6 +20,11 @@ pub use memory::{FamilyTable, MemoryEngine, MemorySnapshot, MemoryTx};
 pub use probe::Probe;
 pub use rng::Rng;
 
+/// How long a test waits for a held flush or a held confirmation to arrive before it
+/// fails. A failure bound, never a wait on the passing path: when the thread meant to
+/// reach the hold dies first, the test fails here instead of hanging the run.
+pub const HELD_BOUND: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// A canonical listing of every row of a projection, sorted. Compared only between two
 /// projections of the same engine.
 pub trait Dump {

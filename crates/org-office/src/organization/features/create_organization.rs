@@ -263,6 +263,3 @@ where
         )
         .reply(reply(&created)))
 }
-
-#[cfg(test)]
-mod bootstrap_bytes;
