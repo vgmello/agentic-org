@@ -36,6 +36,9 @@ pub mod organization_family {
     pub use crate::organization::{operation_id, snapshot, wire};
 }
 mod error;
+/// The office on its store (B1b): beside the office of the old databases until the worker
+/// switches to it (block 6) and the old one is deleted (block 4b).
+pub mod journal_office;
 mod key;
 mod messaging;
 mod model;
@@ -59,7 +62,8 @@ pub use store::open::Testing;
 /// run on it whichever engine that is.
 pub use store::open::{
     open_store, CreateOrganizationOp, CreateTeamOp, DirectoryGeneration, DirectorySnapshot,
-    EngineChoice, OfficeEngine, OfficeStore, Opened, ReadOp, StoreConfig, StoreOp,
+    EngineChoice, OfficeEngine, OfficeStanding, OfficeStore, Opened, ReadOp, Standing, StoreConfig,
+    StoreOp,
 };
 /// The SQLite engine of the office store: the projection as one plain database file.
 pub use store::sqlite::{SqliteEngine, SqliteSnapshot, SqliteTx};

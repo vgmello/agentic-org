@@ -99,7 +99,7 @@ fn bootstrap_files() -> BTreeMap<String, Vec<u8>> {
     let folder = root.join(&prepared.office_id);
     let key = Key::from_bytes([63; 32]);
     let office = Office::provision_hq_for_instance(&folder, &new, key, INSTANCE, &binding, |_| {
-        LocalRecord::new(
+        LocalRecord::legacy(
             prepared.organization_id.clone(),
             OPERATION.into(),
             [4; 65],

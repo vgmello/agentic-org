@@ -38,9 +38,9 @@ use org_work::{Caller, StoreError, TxnOutput, WorkActivityReads, WorkCall, WorkS
 /// server and its replacement never overlap.
 pub const LOCK_WAIT: Duration = Duration::from_secs(10);
 
-const LOCK_FILE: &str = "office.lock";
-const ORG_DB: &str = "org.db";
-const OFFICE_DB: &str = "office.db";
+pub(crate) const LOCK_FILE: &str = "office.lock";
+pub(crate) const ORG_DB: &str = "org.db";
+pub(crate) const OFFICE_DB: &str = "office.db";
 const WORKSPACE: &str = "workspace";
 
 /// Everything an office folder can hold besides its lock; `create` refuses a folder with any
@@ -862,7 +862,7 @@ fn meta(store: &Store, key: &'static str) -> Result<Option<String>, OfficeError>
 }
 
 /// The office folder must be named by the office id, so an id never points outside `offices/`.
-fn check_named_by(folder: &Path, office_id: &str) -> Result<(), OfficeError> {
+pub(crate) fn check_named_by(folder: &Path, office_id: &str) -> Result<(), OfficeError> {
     if folder.file_name().and_then(|name| name.to_str()) == Some(office_id) {
         Ok(())
     } else {
@@ -875,7 +875,7 @@ fn check_named_by(folder: &Path, office_id: &str) -> Result<(), OfficeError> {
 /// Takes the folder's exclusive lock, waiting up to `wait` for another process to let go.
 /// The lock file is close-on-exec (Rust opens every file that way), so a child never keeps
 /// the lock after the server dies.
-fn lock_folder(folder: &Path, wait: Duration) -> Result<File, OfficeError> {
+pub(crate) fn lock_folder(folder: &Path, wait: Duration) -> Result<File, OfficeError> {
     lock_folder_with(folder, wait, &|| {})
 }
 
@@ -927,7 +927,7 @@ fn is_the_file_at(file: &File, path: &Path) -> bool {
 /// Removes the lock file and then the folder, which must be empty by now. Not recursive: if a
 /// create of the same id slipped in while the lock file was unlinked, the folder is no longer
 /// empty and is left to it.
-fn remove_the_empty_folder(folder: &Path) -> Result<(), OfficeError> {
+pub(crate) fn remove_the_empty_folder(folder: &Path) -> Result<(), OfficeError> {
     match fs::remove_file(folder.join(LOCK_FILE)) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -981,14 +981,14 @@ fn empty_folder_but_the_lock(
 
 /// The folder as an absolute path with no trailing separator or `.` components, so the link
 /// check looks at the folder itself: `link/` would resolve the link and look like a folder.
-fn plain_folder(folder: PathBuf) -> Result<PathBuf, OfficeError> {
+pub(crate) fn plain_folder(folder: PathBuf) -> Result<PathBuf, OfficeError> {
     let absolute = absolute(folder).map_err(OfficeError::storage)?;
     Ok(absolute.components().collect())
 }
 
 /// Refuses a folder path that is a link (or anything but a directory): an office folder is
 /// never reached through one, so nothing is created, locked or removed through a planted link.
-fn check_not_a_link(folder: &Path) -> Result<(), OfficeError> {
+pub(crate) fn check_not_a_link(folder: &Path) -> Result<(), OfficeError> {
     match fs::symlink_metadata(folder) {
         Ok(metadata) if metadata.is_dir() => Ok(()),
         Ok(_) => Err(OfficeError::Invalid(
@@ -1042,7 +1042,7 @@ fn remove_entries(folder: &Path) -> std::io::Result<()> {
 
 /// Whether anything is at `path` (a dangling link counts). Anything but "not found" is an
 /// error, so a create never mistakes an unreadable entry for a missing one.
-fn exists(path: &Path) -> Result<bool, OfficeError> {
+pub(crate) fn exists(path: &Path) -> Result<bool, OfficeError> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),

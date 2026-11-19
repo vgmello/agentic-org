@@ -58,7 +58,51 @@ impl std::fmt::Debug for LocalRecord {
 impl LocalRecord {
     /// The worker must validate the cryptographic package/key with org-pki
     /// before handing frozen bytes to storage. The domain owns only persistence.
+    ///
+    /// `operation_id` is the store operation that creates the organization, as it is on
+    /// disk: a UUIDv7 in lowercase text. The creation request's ULID maps to it through
+    /// `organization::operation_id::from_wire_ulid`.
     pub fn new(
+        organization_id: String,
+        operation_id: String,
+        public_key: [u8; 65],
+        package: Vec<u8>,
+        wrapped_ca_key: Vec<u8>,
+    ) -> Result<Self, OfficeError> {
+        if !org_proto::is_uuid_v7(&operation_id) {
+            return Err(invalid());
+        }
+        Self::checked(
+            organization_id,
+            operation_id,
+            public_key,
+            package,
+            wrapped_ca_key,
+        )
+    }
+
+    /// The record of an office made by the old databases, whose operation is the creation
+    /// request's ULID. Only the old store reads and writes these; it goes with it (B1b 4b).
+    pub(crate) fn legacy(
+        organization_id: String,
+        operation_id: String,
+        public_key: [u8; 65],
+        package: Vec<u8>,
+        wrapped_ca_key: Vec<u8>,
+    ) -> Result<Self, OfficeError> {
+        if org_proto::ulid_time_ms(&operation_id).is_none() {
+            return Err(invalid());
+        }
+        Self::checked(
+            organization_id,
+            operation_id,
+            public_key,
+            package,
+            wrapped_ca_key,
+        )
+    }
+
+    fn checked(
         organization_id: String,
         operation_id: String,
         public_key: [u8; 65],
@@ -67,7 +111,6 @@ impl LocalRecord {
     ) -> Result<Self, OfficeError> {
         if organization_id.is_empty()
             || organization_id.len() > 255
-            || org_proto::ulid_time_ms(&operation_id).is_none()
             || public_key[0] != 4
             || package.is_empty()
             || package.len() > 4475

@@ -26,7 +26,7 @@ fn material(prior: Option<LocalRecord>) -> Result<LocalRecord, OfficeError> {
     // Synthetic persistence-only fixture. Worker tests validate actual crypto.
     let mut public = [9; 65];
     public[0] = 4;
-    LocalRecord::new(
+    LocalRecord::legacy(
         "ORG".into(),
         "01ARZ3NDEKTSV4RRFFQ69G5FAW".into(),
         public,

@@ -63,7 +63,7 @@ fn canonical_bootstrap_is_one_zero_event_commit_and_reopen_never_resets_director
     let key = Key::from_bytes([63; 32]);
     let office =
         Office::provision_hq_for_instance(&folder, &new, key.clone(), INSTANCE, &binding, |_| {
-            LocalRecord::new(
+            LocalRecord::legacy(
                 p.organization_id.clone(),
                 OP.into(),
                 [4; 65],
@@ -358,7 +358,7 @@ fn selected_bootstrap_open_and_admission_reject_lost_or_incoherent_prepared_stat
             key.clone(),
             INSTANCE,
             &bound,
-            move |_| LocalRecord::new(org, OP.into(), [4; 65], vec![7; 140], vec![1; 138]),
+            move |_| LocalRecord::legacy(org, OP.into(), [4; 65], vec![7; 140], vec![1; 138]),
         )
         .unwrap();
         let path = folder.join("hq-creation.v1.json");
