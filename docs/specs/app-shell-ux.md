@@ -215,18 +215,22 @@ the modal.
 **Surfaces and text.** Use a dark gray canvas and one indigo accent. Lists are
 flat divided rows, not individually tinted cards; Home's mixed decision/project
 cards and the owner account card are exceptions. No gradients, glows or shadows
-on dark surfaces. Shared palette tokens, rather than independent hex literals
-or department colors, define these roles:
+on dark surfaces. Shared look tokens (defined in `apps/agentic-org-ui/src/app.css`,
+listed in `src/lib/components/README-screens.md` "Look tokens"), rather than raw
+palette classes, independent hex literals or department colors, define these
+roles. A restyle changes the token values and this table together:
 
-| Role | Design value |
-| --- | --- |
-| Page, top bar, dialogs and popovers; primary text | gray-800; white |
-| Sidebar/profile header | black at 10% over the page |
-| Row/header dividers; section outlines | white at 5%; white at 10% |
-| Meta/help/placeholders | gray-400 on the page; increase contrast on tints |
-| Primary button | indigo-500/white; hover indigo-500 at 80%, never white on indigo-400 |
-| Links/focus; text on indigo tints | indigo-400; indigo-300 |
-| Form boundaries; error/destructive text | gray-500; red-300 |
+| Role | Token | Design value |
+| --- | --- | --- |
+| Page, top bar, dialogs and popovers; primary text | `surface`; `fg` | gray-800; white |
+| Sidebar/profile header | `shade` at 10% (`sidebar`) | black at 10% over the page |
+| Row/header dividers; section outlines | `line-subtle`; `line` | white at 5%; white at 10% |
+| Raised and overlay layers (fields, hover; chips) | `surface-raised`; `surface-overlay` | white at 5%; white at 10% |
+| Body text; secondary text | `fg-body`; `fg-secondary` | gray-200; gray-300 |
+| Meta/help/placeholders | `fg-muted` | gray-400 on the page; increase contrast on tints |
+| Primary button | `primary`, `on-emphasis` | indigo-500/white; hover indigo-500 at 80%, never white on indigo-400 |
+| Links/focus; text on indigo tints | `link`, `focus`; `brand-text` | indigo-400; indigo-300 |
+| Form boundaries; error/destructive text | `field-border`; `danger-text` | gray-500; red-300 |
 
 Inter Variable is the body font; system mono is for IDs, paths, hashes and code.
 Use scalable font units: body/controls 14/24 px, metadata 12/20 px and shell
@@ -250,9 +254,11 @@ together on a line; never shrink them or leave a stranded icon.
 **Rows and state.** Show one trailing status pill, optionally with its matching
 leading dot. Severity, priority, member kind and version are separate textual
 facts, not competing status pills. Amber pills/dots/counts mean **waiting on the
-owner**, not generic urgency or a reopened item. Working/in-progress is indigo,
-completion/online green, ordinary blocked/error states red, neutral states gray,
-and starting/checking sky. Every signal has words; color alone never identifies
+owner**, not generic urgency or a reopened item. Working/in-progress is indigo
+(`brand`), completion/online green (`success`), ordinary blocked/error states red
+(`danger`), neutral states gray (`quiet`), and starting/checking sky (`info`);
+amber is the `warning` tone. Each tone token has the same steps (base, `-emphasis`,
+`-text` …; README-screens.md "Look tokens"). Every signal has words; color alone never identifies
 the state. Never infer presence from task assignment or an administrative flag.
 Agents and people use initial avatars; kind is the word Agent or Person, not a
 robot glyph or avatar shape. A team has no invented status. Linked rows have one
@@ -294,7 +300,7 @@ never show invented data or functioning-looking no-op buttons.
 
 **Callouts.** Use quiet neutral callouts by default, with neutral fill, border and text; only the icon carries the tone. At most one attention callout appears at the top below the page header. The shell-wide banner is reserved for live updates paused. User-caused failures use the appropriate status/alert announcement, without duplicating the same message in a live region and toast. Paragraph notes never become amber blocks.
 
-**Focus and overlays.** Keyboard controls use a 2 px indigo-400 outline, 2 px
+**Focus and overlays.** Keyboard controls use a 2 px indigo-400 (`focus`) outline, 2 px
 offset, inset where rows/tabs/menus would clip it; replace low-contrast default
 half-opacity rings. Native `:focus-visible` determines the outline. App-focused
 headings with `tabindex=-1` show no control ring. Skip to content is first in
@@ -310,8 +316,9 @@ the browser's native focus-visible state.
 
 **Contrast and motion.** Require WCAG 2.2 AA: text 4.5:1, qualifying large text
 3:1, meaningful icons/control boundaries/focus 3:1, in hover/selected/tinted
-states too. Gray-500 is decorative/border color, not ordinary text. Use red-300
-and indigo-300 status text where darker values fail on tints. Only a reported
+states too. Gray-500 (`fg-subtle`, `field-border`) is decorative/border color, not
+ordinary text. Use red-300 (`danger-text`) and indigo-300 (`brand-text`) status text
+where darker values fail on tints. Only a reported
 Working dot may pulse (two seconds); With you does not. Reduced motion stops
 pulses, spinners and skeleton animation, removes overlay zoom and smooth
 scrolling, and retains state words. Hover/press does not move controls; no

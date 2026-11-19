@@ -637,6 +637,7 @@
 			"e2e-real/**",
 			"src/**/*.{test,spec}.{js,ts}",
 			"scripts/ui-gate*.ts",
+			"scripts/look-tokens*.ts",
 			".gitignore",
 			".mcp.json",
 			"eslint.config.js",
