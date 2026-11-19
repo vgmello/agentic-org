@@ -35,5 +35,8 @@ export const stateWord: Record<AccessState, string> = {
 /** Shown to viewers who may read the lists but not change them (app-shell-ux §0.1: no actions they can't use). */
 export const MANAGERS_ONLY = 'Only the owner or the administrator changes sign-in access.';
 
+/** Shown for a person whose home team the record doesn't give: the data is missing, not guessed. */
+export const NOT_HOME_TEAM = 'Home team not recorded';
+
 /** Refusal shown when an action names a person who has left the organization since the list loaded. */
 export const NOT_IN_ORGANIZATION = "That person isn't in this organization any more.";

@@ -4,19 +4,29 @@
   §7.4): who can sign in to this organization and with what authority. The owner and the administrator are shown as
   facts; then three lists of people: Can sign in, Invited but not signed in yet, No account yet. Agents never appear.
   The owner and the administrator see the sign-in actions; everyone else sees the lists and why they have no actions.
-  States: loading skeleton, unavailable, error with Retry, no people, and per action: busy labels and inline refusals.
+  The page hosts the sign-in dialogs once, so a person who moves between lists keeps focus: after a change the focus
+  goes to that person's row in its new list. Refusals are announced above the lists.
 -->
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { Button } from '$lib/components/ui/button';
 	import DescriptionList from '$lib/components/DescriptionList.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import Section from '$lib/components/Section.svelte';
+	import { mobileButton } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { pageTitle } from '$lib/nav';
+	import { toAppError } from '$lib/office/api';
+	import {
+		SignInAccessDialogs,
+		type SignInAction,
+		type SignInOutcome,
+		type SignInPerson
+	} from '$lib/modules/members';
 	import { accessApi } from '../../api';
-	import { MANAGERS_ONLY, groupPeople } from '../../present';
+	import { MANAGERS_ONLY, NOT_IN_ORGANIZATION, groupPeople } from '../../present';
 	import type { AccessOverview, AccessPerson } from '../../types';
 	import AccessRow from './AccessRow.svelte';
 
@@ -24,20 +34,83 @@
 
 	const resource = new Resource(() => accessApi.overview(organizationId));
 
-	// After a client navigation the shell focuses the area's h1 on the next tick; this page's own heading takes focus
-	// after that, so the person lands on what the page is for (app-shell-ux §6a).
+	let host = $state<ReturnType<typeof SignInAccessDialogs>>();
+	/** The link being made for one person, so its button can say so. */
+	let busy = $state<{ memberId: string; kind: 'invite' | 'reset' } | undefined>();
+	/** A refusal or a person who has left, announced above the lists. */
+	let alert = $state<string | undefined>();
+
+	// After a client navigation the shell focuses the area's h1 on the next tick; this page's heading takes focus after
+	// that, so the person lands on what the page is for (app-shell-ux §6a).
 	onMount(() => {
 		const timer = setTimeout(() => {
 			const active = document.activeElement;
 			if (active && active !== document.body && !active.matches('main h1')) return;
-			const heading = document.getElementById('access-heading');
-			if (heading) {
-				heading.tabIndex = -1;
-				heading.focus({ preventScroll: true });
-			}
+			focusHeading('access-heading');
 		}, 0);
 		return () => clearTimeout(timer);
 	});
+
+	/** Headings take focus as a place to read from; the ring is hidden by the header's class. */
+	function focusHeading(id: string) {
+		const heading = document.getElementById(id);
+		if (!heading) return false;
+		heading.tabIndex = -1;
+		heading.focus({ preventScroll: true });
+		return true;
+	}
+
+	function asSignIn(person: AccessPerson): SignInPerson {
+		return {
+			id: person.memberId,
+			name: person.name,
+			owner: person.owner,
+			canSignIn: person.state === 'signed_in',
+			...(person.state === 'invited' && person.inviteExpiresAt
+				? { invitePending: { expiresAt: person.inviteExpiresAt } }
+				: {})
+		};
+	}
+
+	async function act(person: AccessPerson, kind: SignInAction, event: MouseEvent) {
+		if (busy) return;
+		alert = undefined;
+		if (kind !== 'remove') busy = { memberId: person.memberId, kind };
+		try {
+			await host?.start(kind, asSignIn(person), event.currentTarget as HTMLElement);
+		} catch (e) {
+			const failure = toAppError(e);
+			alert = failure.message;
+			// The person has left since the list loaded: the list is out of date, so it reloads.
+			if (failure.code === 'not_found') await resource.reload();
+		} finally {
+			busy = undefined;
+		}
+	}
+
+	async function settled(memberId: string, outcome: SignInOutcome, from: HTMLElement | null) {
+		if (outcome === 'cancelled') {
+			if (from?.isConnected) from.focus();
+			return;
+		}
+		if (outcome === 'gone') {
+			alert = NOT_IN_ORGANIZATION;
+			await resource.reload();
+			return;
+		}
+		// Linked or removed: the person moves to another list, so focus follows the person to its row.
+		await resource.reload();
+		await tick();
+		const row = document.querySelector<HTMLElement>(
+			`[data-access-row][data-member-id="${CSS.escape(memberId)}"]`
+		);
+		const control = row?.querySelector<HTMLElement>('button, a');
+		if (control) control.focus();
+		else if (row) {
+			row.tabIndex = -1;
+			row.focus();
+		} else focusHeading('access-heading');
+	}
 
 	function ownerName(o: AccessOverview) {
 		return o.people.find((p) => p.owner)?.name;
@@ -46,12 +119,16 @@
 
 <svelte:head><title>{pageTitle('Members and access', 'Organization settings')}</title></svelte:head>
 
-<PageHeader
-	title="Members and access"
-	level={2}
-	id="access-heading"
-	description="Who can sign in to this organization, and with what authority. Accounts are given person by person; nothing here lists every account on this server."
-/>
+{#if resource.state !== 'unavailable'}
+	<!-- The heading takes focus programmatically; it shows no ring of its own (app-shell-ux §6a). -->
+	<PageHeader
+		title="Members and access"
+		level={2}
+		id="access-heading"
+		class="[&_h2:focus]:outline-none"
+		description="Who can sign in to this organization, and with what authority. Accounts are given person by person; nothing here lists every account on this server."
+	/>
+{/if}
 
 <Loaded
 	{resource}
@@ -65,9 +142,32 @@
 	emptyLevel={3}
 	errorLevel={3}
 >
+	{#snippet emptyAction()}
+		<Button variant="outline" class={mobileButton} href={resolve('/teams/members' as '/')}
+			>Open Members</Button
+		>
+	{/snippet}
+
 	{#snippet children(overview)}
 		{@const groups = groupPeople(overview.people)}
 		{@const canManage = overview.viewer.canManage}
+
+		<SignInAccessDialogs
+			bind:this={host}
+			organizationName={overview.organization.name}
+			issueLink={(memberId, kind) => accessApi.issueLink(organizationId, memberId, kind)}
+			removeAccess={(memberId) => accessApi.removeAccess(organizationId, memberId)}
+			onsettled={settled}
+		/>
+
+		{#if alert}
+			<p
+				class="px-4 pt-6 text-sm/6 text-red-300 [overflow-wrap:anywhere] min-[640px]:px-6 min-[1024px]:px-8"
+				role="alert"
+			>
+				{alert}
+			</p>
+		{/if}
 
 		{#snippet ownerNameSnippet()}
 			{ownerName(overview) ?? 'No owner is recorded for this organization'}{overview.viewer.isOwner
@@ -101,11 +201,9 @@
 					{#each people as person (person.memberId)}
 						<AccessRow
 							{person}
-							organizationName={overview.organization.name}
 							{canManage}
-							issueLink={(memberId, kind) => accessApi.issueLink(organizationId, memberId, kind)}
-							removeAccess={(memberId) => accessApi.removeAccess(organizationId, memberId)}
-							onchanged={() => resource.reload()}
+							busy={busy?.memberId === person.memberId ? busy.kind : undefined}
+							onact={(kind, event) => act(person, kind, event)}
 						/>
 					{/each}
 				</ul>
@@ -115,7 +213,7 @@
 		<Section
 			level={3}
 			title="Owner and administrator"
-			description="The owner has full access to the organization. The administrator creates organizations and collects recovery codes, and opens no organization by itself."
+			description="The owner has full access to the organization. The administrator creates organizations and collects recovery codes, and also invites people to sign in, makes new sign-in links and removes access. Neither opens an organization by itself."
 		>
 			<DescriptionList
 				items={[
@@ -178,7 +276,7 @@
 					{
 						term: 'Administrator',
 						value:
-							'Creates organizations, collects recovery codes and hands the administrator role to another account.'
+							'Creates organizations, collects recovery codes, hands the administrator role to another account, invites people to sign in, makes new sign-in links and removes access.'
 					},
 					{
 						term: 'People with an account',

@@ -67,14 +67,16 @@
   - `index.ts` — public entry (route imports only from here).
   - `features/overview/` — AccessPage (loads, composes), list rows, lists by state, who-can-do-what section.
   - `present.ts` + `present.test.ts` — pure grouping (state partition, sort by name) and state words.
-- Shared dialogs: `members/features/sign-in-access/SignInAccessActions.svelte` is extracted from SignInAccess.svelte.
-  It takes the person and two callbacks (issue link, remove access) instead of the members API, so the members profile
-  and the access page both reuse it. The members index exports it. SignInAccess keeps the profile's Section and
-  DescriptionList and behaves as before.
+- Shared dialogs: `members/features/sign-in-access/SignInAccessDialogs.svelte` is the dialog host (one-time link,
+  Remove access confirmation). It takes two callbacks (issue link, remove access) and reports each started action's
+  outcome once (`linked`, `removed`, `cancelled`, `gone`). The access page mounts one host and keeps it across list
+  reloads, so focus follows the person to its new row. `SignInAccessActions.svelte` (the profile's buttons plus a host)
+  and SignInAccess keep the profile's Section and DescriptionList and behave as before. The members index exports both.
 - Mock: `e2e/fakes/modules/access.ts`, data under `e2e/fakes/data/access/` (accounts, invitations, owner and
   administrator keyed by member id). People and names come from `orgApi.view` (the org snapshot), as the other fakes do.
   Switches: `?mock=slow|fails|empty|unavailable|viewer` (viewer = no manage rights).
-- Coupling declared in `e2e/gate-manifest.json` with a reason (access → members public index, via the dialog).
+- Coupling: access imports the members public index (the dialog host, expiryText). No `allowedCoupling` entry is needed:
+  both are in the same e2e category and `ui-gate.test` passes.
 - Not changed: settings module (its `access`, `issueLink`, `removeAccess` methods and `AccessOverview` in
   settings/types.ts are now unused by the UI; the settings owner should remove them: flagged to lead).
 

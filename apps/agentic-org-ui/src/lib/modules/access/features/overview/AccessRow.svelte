@@ -1,43 +1,31 @@
 <!--
   @component
-  One person in a Members and access list: name, handle and home team, Owner and Administrator marks in words, the
-  sign-in state in words, and, for the owner or the administrator, the sign-in actions (the members module's shared
-  SignInAccessActions). Below 1024 px the actions sit under the text; from 1024 px they sit to the right.
+  One person in a Members and access list: an avatar, the name (a link to the member profile), the handle and home team,
+  Owner and Administrator marks in words, the sign-in state in words, and for the owner or the administrator the sign-in
+  actions. The row reports each action to the page, which owns the dialogs, the refusals and where focus goes.
 -->
 <script lang="ts">
-	import { SignInAccessActions, expiryText, type SignInPerson } from '$lib/modules/members';
-	import { tone } from '$lib/components/pills';
+	import { resolve } from '$app/paths';
+	import Avatar from '$lib/components/Avatar.svelte';
+	import StatusPill from '$lib/components/StatusPill.svelte';
+	import { mobileButton } from '$lib/components/classes';
+	import { Button } from '$lib/components/ui/button';
+	import { expiryText } from '$lib/modules/members';
 	import { stateWord } from '../../present';
 	import type { AccessPerson } from '../../types';
 
 	let {
 		person,
-		organizationName,
 		canManage,
-		issueLink,
-		removeAccess,
-		onchanged
+		busy,
+		onact
 	}: {
 		person: AccessPerson;
-		organizationName: string;
 		canManage: boolean;
-		issueLink: (
-			memberId: string,
-			kind: 'invite' | 'reset'
-		) => Promise<{ url: string; expiresAt: string }>;
-		removeAccess: (memberId: string) => Promise<void>;
-		onchanged: () => Promise<void>;
+		/** The action this row's person is running right now, while its link is being made. */
+		busy?: 'invite' | 'reset';
+		onact: (kind: 'invite' | 'reset' | 'remove', event: MouseEvent) => void;
 	} = $props();
-
-	const signInPerson: SignInPerson = $derived({
-		id: person.memberId,
-		name: person.name,
-		owner: person.owner,
-		canSignIn: person.state === 'signed_in',
-		...(person.state === 'invited' && person.inviteExpiresAt
-			? { invitePending: { expiresAt: person.inviteExpiresAt } }
-			: {})
-	});
 
 	const stateLine = $derived(
 		person.state === 'signed_in'
@@ -50,35 +38,68 @@
 					: stateWord.invited
 				: stateWord.no_account
 	);
-	const mark =
-		'inline-flex items-center rounded-full px-2 py-1 text-xs/4 font-medium ring-1 ring-inset';
 </script>
 
 <li
 	data-access-row
+	data-member-id={person.memberId}
 	data-testid="access-row"
 	class="flex flex-col gap-y-3 px-4 py-4 min-[640px]:px-6 min-[1024px]:flex-row min-[1024px]:items-start min-[1024px]:justify-between min-[1024px]:gap-x-8 min-[1024px]:px-8"
 >
-	<div class="min-w-0">
-		<p class="flex flex-wrap items-center gap-2 text-sm/6 font-semibold text-white">
-			<span class="min-w-0 [overflow-wrap:anywhere]">{person.name}</span>
-			{#if person.owner}<span class="{mark} {tone.ok}">Owner</span>{/if}
-			{#if person.administrator}<span class="{mark} {tone.info}">Administrator</span>{/if}
-		</p>
-		<p class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]">
-			@{person.handle} · {person.homeTeam}
-		</p>
-		<p class="mt-1 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">{stateLine}</p>
+	<div class="flex min-w-0 flex-1 items-start gap-3">
+		<Avatar name={person.name} size="md" />
+		<div class="min-w-0">
+			<p class="flex flex-wrap items-center gap-2 text-sm/6 font-semibold text-white">
+				<a
+					href={resolve(`/members/${person.memberId}` as '/')}
+					class="min-w-0 rounded-sm [overflow-wrap:anywhere] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+					>{person.name}</a
+				>
+				{#if person.owner}
+					<StatusPill label="Owner" class="bg-indigo-400/10 text-indigo-300 ring-indigo-400/30" />
+				{/if}
+				{#if person.administrator}<StatusPill label="Administrator" />{/if}
+			</p>
+			<p class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]">
+				<span class="font-mono">@{person.handle}</span> · {person.homeTeam}
+			</p>
+			<p class="mt-1 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">{stateLine}</p>
+		</div>
 	</div>
 	{#if canManage}
-		<div class="min-w-0 max-w-full">
-			<SignInAccessActions
-				{organizationName}
-				person={signInPerson}
-				{issueLink}
-				{removeAccess}
-				{onchanged}
-			/>
+		<div class="flex min-w-0 shrink-0 flex-col gap-y-2 min-[1024px]:items-end">
+			<div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+				{#if person.state !== 'signed_in'}
+					<Button
+						variant="outline"
+						class={mobileButton}
+						aria-busy={busy === 'invite'}
+						onclick={(e) => onact('invite', e)}
+						>{busy === 'invite' ? 'Inviting…' : 'Invite to sign in'}</Button
+					>
+				{:else}
+					<Button
+						variant="outline"
+						class={mobileButton}
+						aria-busy={busy === 'reset'}
+						onclick={(e) => onact('reset', e)}
+						>{busy === 'reset' ? 'Making link…' : 'New sign-in link'}</Button
+					>
+					{#if !person.owner}
+						<Button variant="outline" class={mobileButton} onclick={(e) => onact('remove', e)}
+							>Remove access…</Button
+						>
+					{/if}
+				{/if}
+			</div>
+			{#if person.owner && person.state === 'signed_in'}
+				<p class="text-xs/5 text-gray-400 min-[1024px]:text-right">Hand over ownership first.</p>
+			{/if}
+			{#if person.state === 'invited'}
+				<p class="text-xs/5 text-gray-400 min-[1024px]:text-right">
+					Inviting again cancels the previous link.
+				</p>
+			{/if}
 		</div>
 	{/if}
 </li>

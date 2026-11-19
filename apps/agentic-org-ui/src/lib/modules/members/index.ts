@@ -23,10 +23,13 @@ export {
 	default as OneTimeLink,
 	type OneTimeLinkValue
 } from './features/sign-in-access/OneTimeLink.svelte';
+export { default as SignInAccessActions } from './features/sign-in-access/SignInAccessActions.svelte';
 export {
-	default as SignInAccessActions,
+	default as SignInAccessDialogs,
+	type SignInAction,
+	type SignInOutcome,
 	type SignInPerson
-} from './features/sign-in-access/SignInAccessActions.svelte';
+} from './features/sign-in-access/SignInAccessDialogs.svelte';
 export { expiryText } from './features/sign-in-access/expiry';
 export { profileBase, tabHref } from './features/profile/tabs';
 export { default as MembersDirectory } from './features/directory/MembersDirectory.svelte';

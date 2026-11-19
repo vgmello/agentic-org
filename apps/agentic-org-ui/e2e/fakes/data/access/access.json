@@ -1,5 +1,5 @@
 {
 	"owner": "you",
-	"administrator": { "username": "alex", "memberId": "you" },
-	"accounts": { "you": "alex", "avery": "avery", "hana": "hana.weiss" }
+	"administrator": { "memberId": "you", "username": "alex" },
+	"usernames": { "you": "alex", "avery": "avery" }
 }
