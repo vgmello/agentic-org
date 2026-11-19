@@ -480,11 +480,13 @@ checks and a lock.
   and with both views opened below it from its held descriptor, in the release layout.
   So the development image refuses a start on a new, empty secrets volume, a volume
   mounted inside the secrets volume is refused wherever it is, and a registered
-  development service started by systemd uses the directory its setup recorded. A
-  development build uses its development key folder (`ORG_OFFICE_DEV_KEY_DIR`) only
-  where the record names no credential directory (macOS, which keeps a release's
-  secrets in the Keychain), and admits its unpinned runtime when the record names a
-  directory as it does with that folder. The image sets no `ORG_OFFICE_DEV_KEY_DIR`.
+  development service started by systemd uses the directory its setup recorded, where
+  setup recorded one. A development build uses its development key folder
+  (`ORG_OFFICE_DEV_KEY_DIR`) only where the record names no credential directory (macOS,
+  which keeps a release's secrets in the Keychain; and, until setup records one in every
+  Linux build, a Linux development setup whose configuration names no `credentials`), and
+  admits its unpinned runtime when the record names a directory as it does with that
+  folder. The image sets no `ORG_OFFICE_DEV_KEY_DIR`.
 
 **Built in X3** (`org_platform_host::credentials`: `protected_store()` answers
 `Keychain` or `ReleaseDirectory`; `release_directory(ReleaseDirectory { path,

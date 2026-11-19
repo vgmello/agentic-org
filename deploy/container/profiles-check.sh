@@ -16,8 +16,8 @@
 #   3. with Docker's default profiles the same sandbox cannot start (the profiles are what
 #      lets it);
 #   4. the mount calls the profiles allow work only in a user namespace of one's own:
-#      neither the service user nor root in the container can make a mount namespace
-#      without one, and in a user and mount namespace of its own neither can write
+#      neither the service user nor root in the container can mount in the container's own
+#      mount namespace or make one without a user namespace, and in a user and mount namespace of its own neither can write
 #      /proc/sys through a bind mount of it (Docker keeps it read-only there too).
 # bubblewrap is not in the image: a derived image adds it for this check. Every container
 # and image it makes is removed at the end, pass or fail.
@@ -105,8 +105,16 @@ as() {
         "$2"' 2>&1; echo "exit $?"' 2>&1
 }
 for user in 61000 0; do
-    # A mount namespace without a user namespace takes CAP_SYS_ADMIN in the container's
-    # own, which no process of it has: nothing can be mounted there.
+    # mount(2) itself, in the container's own mount namespace, which the profiles allow:
+    # the kernel refuses it without CAP_SYS_ADMIN there, which no process of the container
+    # has. (LIBMOUNT_FORCE_MOUNT2 makes mount(8) make that call rather than the newer mount
+    # API, and run as the service user it refuses before any call: either is a refusal.)
+    out=$(as "$user" 'mkdir -p /tmp/m && LIBMOUNT_FORCE_MOUNT2=always mount -t tmpfs none /tmp/m')
+    echo "  uid $user, mount(2) in the container's own mount namespace: $(tr '\n' ' ' <<<"$out")"
+    if has '^exit 0$' "$out"; then fail "uid $user mounted outside a user namespace"; fi
+    has 'permission denied|Operation not permitted|must be superuser' "$out" ||
+        fail "uid $user: the mount failed for another reason: $out"
+    # Nor can it make a mount namespace without a user namespace of its own.
     out=$(as "$user" 'unshare -m true')
     echo "  uid $user, a mount namespace without a user namespace: $(tr '\n' ' ' <<<"$out")"
     if has '^exit 0$' "$out"; then fail "uid $user made a mount namespace outside a user namespace"; fi
