@@ -170,12 +170,13 @@ fn all_files(root: &Path) -> Vec<PathBuf> {
 }
 
 /// The organization's files as the office wrote them: path under its state folder → bytes.
+/// The office on its store publishes them at `<data root>/<organization>/durable/state/`.
 fn state_files(base: &Path, organization: &str) -> (PathBuf, Vec<(PathBuf, Vec<u8>)>) {
     let root = all_files(base)
         .into_iter()
         .find(|p| {
             p.file_name().unwrap() == "organization.yaml"
-                && p.parent().unwrap().file_name().unwrap() == organization
+                && p.ends_with(format!("{organization}/durable/state/organization.yaml"))
         })
         .unwrap_or_else(|| panic!("no organization.yaml for {organization}"))
         .parent()
@@ -196,7 +197,7 @@ fn state_files(base: &Path, organization: &str) -> (PathBuf, Vec<(PathBuf, Vec<u
 fn assert_organization_files(base: &Path, organization: &str, creator: &str, slug: &str) {
     let (root, found) = state_files(base, organization);
     assert!(
-        root.ends_with(format!("durable/state/{organization}")),
+        root.ends_with(format!("{organization}/durable/state")),
         "{root:?}"
     );
     let read = |path: &Path| {
@@ -445,9 +446,11 @@ fn actual_host_stopped_in_the_middle_of_a_create_finishes_it_at_its_next_start_w
     assert_eq!(posted.body["outcome"], "accepted");
     stop(host, &base);
     assert!(!linked_on_disk(&base, &operation), "held until the stop");
-    let state = base.join("instance/durable/state");
+    // The office on its store publishes at `<data root>/<organization>/durable/state/`.
     assert!(
-        !state.exists() || all_files(&state).is_empty(),
+        !all_files(&base.join("instance")).iter().any(|p| p
+            .ancestors()
+            .any(|folder| folder.ends_with("durable/state"))),
         "nothing of the organization was written before the stop"
     );
 
@@ -958,15 +961,17 @@ fn actual_recovery_code_is_released_once_natively_and_no_credential_reaches_http
             assert_eq!(mode & 0o077, 0, "private key in {path:?} ({mode:o})");
             assert!(!bytes.starts_with(b"SQLite format 3\0"), "{path:?}");
             assert!(
-                !path.starts_with(base.join("instance/durable/state")),
+                !path
+                    .ancestors()
+                    .any(|folder| folder.ends_with("durable/state")),
                 "private key in Git content: {path:?}"
             );
         }
     }
-    // Positive controls: the scan read the registry and both office databases, and the
-    // custody file does hold the key in a scanned form.
+    // Positive controls: the scan read the registry and the office's projection database,
+    // and the custody file does hold the key in a scanned form.
     assert!(
-        databases >= 3,
+        databases >= 2,
         "{databases} databases among {scanned} files"
     );
     assert!(contains(&fs::read(&key_file).unwrap(), &encodings(&key)[1]));
