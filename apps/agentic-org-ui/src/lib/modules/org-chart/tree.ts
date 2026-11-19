@@ -18,7 +18,7 @@ export interface TreeNode {
 export interface ReportingTree {
 	roots: TreeNode[];
 	byId: Map<string, TreeNode>;
-	/** Every node, in the order they are drawn when nothing is collapsed. */
+	/** How many nodes the tree has: every employee, once. */
 	count: number;
 }
 

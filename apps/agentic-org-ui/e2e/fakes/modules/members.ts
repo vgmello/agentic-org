@@ -199,10 +199,19 @@ export function homeTeamId(s: OrgSnapshot, memberId: string): string | undefined
 	return s.memberships.find((m) => m.member_id === memberId && exists(m.team_id))?.team_id;
 }
 
+/**
+ * Handles chosen when a person was added (teams.ts Add a person): the one map every page reads, so People, the
+ * profile, the team page and the org chart show the same @handle, and uniqueness is checked against it.
+ */
+const chosenHandles = new Map<string, string>();
+export const recordHandle = (memberId: string, handle: string) =>
+	chosenHandles.set(memberId, handle);
+
 export const handleOf = (m: Member) =>
-	m.kind === 'agent'
+	chosenHandles.get(m.id) ??
+	(m.kind === 'agent'
 		? (m.agent?.messaging_name ?? m.id)
-		: (extras[m.id]?.handle ?? m.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+		: (extras[m.id]?.handle ?? m.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')));
 
 const hasAccount = (id: string) => state.access.get(id)?.account ?? extras[id]?.canSignIn ?? false;
 

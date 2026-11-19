@@ -18,6 +18,7 @@ import {
 	fail,
 	gate,
 	processesForTeam,
+	recordHandle,
 	rows as memberRows,
 	scenario,
 	snapshotFor,
@@ -32,8 +33,6 @@ const extras = teamsData as Record<
 const archived = new Set<string>();
 /** Numbers for teams created while the mock runs: stable once given, after the fixture's. */
 const numbers = new Map<string, number>();
-/** Handles chosen in Add a person, until the members mock records them itself. */
-const handles = new Map<string, string>();
 const RESERVED = new Set(['owner', 'all', 'everyone', 'here', 'channel', 'hr', 'me']);
 
 function numberOf(teamId: string): number {
@@ -121,7 +120,7 @@ export const teamsApi: TeamsApi = {
 				name: m.name,
 				kind: m.kind,
 				role: m.role,
-				handle: handles.get(m.id) ?? m.handle,
+				handle: m.handle,
 				presence: m.presence?.id,
 				lead: m.id === team.lead?.id
 			}))
@@ -203,21 +202,27 @@ export const teamsApi: TeamsApi = {
 	async addPerson(organizationId, person) {
 		await gate();
 		const s = await snapshotFor(organizationId);
-		if (!s.teams.some((t) => t.id === person.homeTeamId))
+		const home = s.teams.find((t) => t.id === person.homeTeamId);
+		if (!home)
 			throw fail('invalid_request', 'Choose a home team that is still in the organization.');
+		// An archived team takes no new home employees (§7.10, PEOPLE-3), whatever the form offered.
+		if (archived.has(home.id))
+			throw fail(
+				'conflict',
+				`${home.name} is archived, so it can't be a home team. Choose a team that is still active.`
+			);
 		const handle = person.handle.trim();
 		if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(handle))
 			throw handleRefusal(
 				'invalid_request',
 				`@${handle} isn't a handle: use lowercase letters, digits, dots, underscores and hyphens.`
 			);
-		const taken =
-			RESERVED.has(handle) ||
-			[...handles.values()].includes(handle) ||
-			(await memberRows(organizationId)).some((m) => m.handle === handle);
-		if (taken) {
+		// One namespace across people and agents, with the handles chosen here (members.ts recordHandle) included.
+		const inUse = new Set((await memberRows(organizationId)).map((m) => m.handle));
+		const taken = (h: string) => RESERVED.has(h) || inUse.has(h);
+		if (taken(handle)) {
 			let n = 2;
-			while ((await memberRows(organizationId)).some((m) => m.handle === `${handle}-${n}`)) n++;
+			while (taken(`${handle}-${n}`)) n++;
 			throw handleRefusal('already_exists', `@${handle} is taken. Try @${handle}-${n}.`);
 		}
 		const memberId = newId();
@@ -229,7 +234,7 @@ export const teamsApi: TeamsApi = {
 				contact: person.contact || undefined
 			}
 		});
-		handles.set(memberId, handle);
+		recordHandle(memberId, handle);
 		await orgApi.command(organizationId, {
 			method: 'team.add_member',
 			params: { membership_id: newId(), team_id: person.homeTeamId, member_id: memberId }

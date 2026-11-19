@@ -4,17 +4,24 @@
 // expected revision, refusing a stale revision or a reporting loop as HQ would.
 // `?mock=slow|fails|empty|unavailable` exercises the page states; `?mock=large` adds invented agents so the tree has
 // more than 50 nodes; `?mock=stale` and `?mock=loop` make someone else change the record just before the first
-// Change manager is saved, so it is refused with the latest lines.
+// Change manager is saved, so it is refused with the latest lines. `?mock=drop`: HQ answers the first read, then
+// refuses a Change manager and every later read, as if it went away while a dialog was open. `?mock=solo` leaves the
+// owner nobody with an account to hand over to; `?mock=hr` adds the built-in HR lead.
 import { orgApi } from '$lib/org/api';
 import { officeApi } from '$lib/office/api';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgChartApi } from '../../../src/lib/modules/org-chart/api';
 import type { ChartEmployee } from '../../../src/lib/modules/org-chart/types';
+import hr from '../data/org-chart/hr.json' with { type: 'json' };
 import large from '../data/org-chart/large.json' with { type: 'json' };
 import { fail, gate, rows, scenario, snapshotFor, teamRef, viewerId } from './members';
 
 /** `?mock=stale|loop` interfere once per page load, on the first save. */
 let interfered = false;
+/** `?mock=drop`: reads answered so far; only the first one succeeds. */
+let dropReads = 0;
+const hqGone = () =>
+	fail('unavailable_now', "HQ didn't answer. Check that the office is running, then try again.");
 
 function invented(): ChartEmployee[] {
 	const out: ChartEmployee[] = large.managers.map((m) => ({
@@ -56,6 +63,7 @@ export const orgChartApi: OrgChartApi = {
 		if (scenario() === 'slow') await new Promise((r) => setTimeout(r, 3000));
 		// Exactly what the production adapter answers, so the page shows its unavailable state.
 		if (scenario() === 'unavailable') await unavailableCall();
+		if (scenario() === 'drop' && ++dropReads > 1) throw hqGone();
 		const s = await snapshotFor(organizationId);
 		const connection = (await officeApi.connections()).find(
 			(c) => c.organization.id === organizationId
@@ -87,6 +95,16 @@ export const orgChartApi: OrgChartApi = {
 								]
 					);
 		if (scenario() === 'large') employees.push(...invented());
+		if (scenario() === 'solo') for (const e of employees) if (e.id !== ownerId) e.canSignIn = false;
+		if (scenario() === 'hr')
+			employees.push({
+				...(hr.employee as Pick<ChartEmployee, 'id' | 'kind' | 'name' | 'handle' | 'status'>),
+				homeTeam: teamRef(s, hr.employee.homeTeamId),
+				leads: [],
+				office: null,
+				canSignIn: false,
+				revision: 1
+			});
 		return {
 			organization: { id: organizationId, name: connection?.organization.name ?? '' },
 			ownerId,
@@ -98,6 +116,7 @@ export const orgChartApi: OrgChartApi = {
 	async changeManager(organizationId, employeeId, managerId, expectedRevision) {
 		await gate();
 		if (scenario() === 'unavailable') await unavailableCall();
+		if (scenario() === 'drop') throw hqGone();
 		let s = await snapshotFor(organizationId);
 		const find = (id: string | null | undefined) => s.members.find((m) => m.id === id);
 		const employee = find(employeeId);

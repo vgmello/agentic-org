@@ -15,7 +15,7 @@
 	import type { TeamRef } from '$lib/modules/members';
 	import { teamPageContext } from './context';
 	import { reloadOnChange } from './reload.svelte';
-	import { fact, factsList, factsWrap } from './facts';
+	import { fact, factsList, factsWrap, linkInLine } from './facts';
 
 	const team = teamPageContext();
 
@@ -28,8 +28,7 @@
 <!-- A team named in a row's facts: a link inside the line, above the row's stretched link (TEAM-13). -->
 {#snippet teamLink(t: TeamRef)}<a
 		href={resolve(teamHref(t.id) as '/')}
-		class="relative rounded-sm text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
-		>{t.name}</a
+		class="relative {linkInLine.xs}">{t.name}</a
 	>{#if t.ref}<span class="ml-1 font-mono">{t.ref}</span>{/if}{/snippet}
 
 <Loaded

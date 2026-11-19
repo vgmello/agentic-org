@@ -25,6 +25,7 @@
 	import { membersApi } from '$lib/modules/members';
 	import { toAppError } from '$lib/office/api';
 	import type { ChartEmployee } from '../../types';
+	import BusyLabel from '../../components/BusyLabel.svelte';
 
 	let {
 		open = $bindable(false),
@@ -185,7 +186,7 @@
 						onclick={() => (open = false)}>Cancel</Button
 					>
 					<Button type="submit" class="{mobileButton} [overflow-wrap:anywhere]" aria-busy={busy}
-						>{busy ? 'Handing over…' : 'Hand over ownership'}</Button
+						><BusyLabel {busy} idle="Hand over ownership" working="Handing over…" /></Button
 					>
 				</DialogFooter>
 			{/if}

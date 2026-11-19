@@ -44,7 +44,12 @@
 	} = $props();
 
 	const organization = $derived(connection.organization);
-	const teams = $derived(teamOptions(snapshot));
+	/**
+	 * Archived teams take no new home employees (§7.10, PEOPLE-3): read which are archived each time the sheet opens
+	 * and leave them out. Until that read answers, or if it fails, HQ still refuses an archived team on submit.
+	 */
+	let archived = $state.raw<ReadonlySet<string>>(new Set());
+	const teams = $derived(teamOptions(snapshot).filter((o) => !archived.has(o.team.id)));
 	// Every current employee, the owner's person included: ownership is no employee field (§7.1, OWNER-2).
 	const managers = $derived(
 		withoutFormer(snapshot)
@@ -83,6 +88,12 @@
 		handleRefusal = undefined;
 		failure = undefined;
 		open = true;
+		void teamsApi.list(organization.id).then(
+			(rows) => {
+				archived = new Set(rows.filter((t) => t.status === 'archived').map((t) => t.id));
+			},
+			() => {}
+		);
 	}
 
 	async function submit(event: SubmitEvent) {

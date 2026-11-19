@@ -339,6 +339,8 @@ test.describe('states', () => {
 			page.getByRole('heading', { name: 'No one is on the org chart yet' })
 		).toBeVisible();
 		await expect(page.getByText('The org chart shows who reports to whom.')).toBeVisible();
+		// The page's one next step stays offered: Add a person in the header.
+		await expect(page.getByRole('button', { name: 'Add a person' })).toBeVisible();
 	});
 
 	test('a large organization starts collapsed below level two and still opens', async ({
@@ -353,7 +355,82 @@ test.describe('states', () => {
 	});
 });
 
+test('REPORT-4 §6a: HQ going away after a refused save keeps the dialog, the choice and its message', async ({
+	page
+}) => {
+	await openChart(page, '/teams/org-chart?mock=drop');
+	const dialog = await nodeAction(page, 'Leo Brandt', 'Change manager…');
+	await dialog.getByRole('radio', { name: /^Sam Okafor/ }).check();
+	await dialog.getByRole('button', { name: 'Save manager' }).click();
+	// The re-read failed too: the page says so behind the dialog, which stays as it was.
+	await expect(page.getByRole('heading', { name: "Couldn't load the org chart" })).toBeVisible();
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByRole('alert')).toContainText("HQ didn't answer.");
+	await expect(dialog.getByRole('radio', { name: /^Sam Okafor/ })).toBeChecked();
+	// Its node is gone with the chart: focus goes to the page heading, never body.
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(page.getByRole('heading', { name: /^Org chart/, level: 2 })).toBeFocused();
+});
+
+test('OWNER-2: with nobody else holding an account, Hand over explains how and offers nothing that cannot work', async ({
+	page
+}) => {
+	await openChart(page, '/teams/org-chart?mock=solo');
+	await page.getByRole('button', { name: 'Hand over ownership…' }).click();
+	const dialog = page.getByRole('dialog');
+	await expect(dialog).toContainText(
+		'Nobody can take over yet: only a person with an account can own Lumen Labs.'
+	);
+	await expect(dialog.getByRole('radio')).toHaveCount(0);
+	await expect(dialog.getByLabel('Your password')).toHaveCount(0);
+	await expect(dialog.getByRole('button')).toHaveText(['Close', 'Close']);
+});
+
+test('§7.10: a live change re-reads in place, keeping what is collapsed and where focus is', async ({
+	page
+}) => {
+	await openChart(page);
+	await page.getByRole('button', { name: "Collapse Hana Weiss's reports" }).click();
+	const juno = page.getByRole('link', { name: 'Juno Park, agent' });
+	await juno.focus();
+	const organizationId = await page.evaluate(() => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+		return saved[saved.length - 1].organization.id as string;
+	});
+	// Someone else makes Mira report to Avery.
+	await page.evaluate(
+		(id) =>
+			(
+				window as unknown as {
+					__mockOrgChange: (id: string, command: object) => Promise<unknown>;
+				}
+			).__mockOrgChange(id, {
+				method: 'member.set_reports_to',
+				params: { member_id: 'mira', expected_version: 1, reports_to_member_id: 'avery' }
+			}),
+		organizationId
+	);
+	await expect(reportsOf(page, 'avery')).toHaveCount(4);
+	await expect(reportsOf(page, 'sam')).toHaveCount(2);
+	await expect(page.getByRole('button', { name: "Expand Hana Weiss's reports" })).toHaveAttribute(
+		'aria-expanded',
+		'false'
+	);
+	await expect(juno).toBeFocused();
+});
+
+test('§7.0 §7.1: the built-in HR lead is an employee in the tree, once, with its home team', async ({
+	page
+}) => {
+	await openChart(page, '/teams/org-chart?mock=hr');
+	await expect(page.getByRole('link', { name: 'HR lead, agent' })).toHaveCount(1);
+	await expect(tree(page).locator(':scope > li[data-node="hr-lead"]')).toHaveCount(1);
+	await expect(row(page, 'hr-lead')).toContainText('Agent · @hr · Engineering');
+	await expect(page.getByRole('heading', { name: /^Org chart/ })).toContainText('13');
+});
+
 for (const [width, scale] of [
+	[1440, 1],
 	[1024, 1],
 	[640, 1],
 	[390, 1],
@@ -385,7 +462,15 @@ for (const [width, scale] of [
 			expect(box.x).toBeGreaterThanOrEqual(0);
 			expect(box.x + box.width).toBeLessThanOrEqual(width);
 		}
-		// The name keeps a readable width beside its controls.
-		const name = (await page.getByRole('link', { name: 'Noor Haddad, agent' }).boundingBox())!;
-		expect(name.width).toBeGreaterThan(60);
+		// app-shell §2: no text column under 200 px. Every node's facts keep at least that, at every level.
+		const narrowest = await tree(page)
+			.locator('[data-facts]')
+			.evaluateAll((facts) =>
+				Math.min(
+					...facts
+						.filter((f) => (f as HTMLElement).offsetParent)
+						.map((f) => f.getBoundingClientRect().width)
+				)
+			);
+		expect(narrowest).toBeGreaterThanOrEqual(200);
 	});

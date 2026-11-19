@@ -3,7 +3,7 @@
 // person with one home team and a handle, live changes applied in place, the Conversations destination, the
 // unavailable state and a new team's reference. Engineering has two teams under it and three home employees; Web
 // has two home employees, owns Beacon and has three open tasks.
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { signInAsAdmin } from './web-session';
 
@@ -217,3 +217,148 @@ test('TEAM-REF: a team created here gets the next TEAM reference on its page', a
 	await expect(page.getByRole('heading', { name: 'QA', exact: true })).toBeVisible();
 	await expect(page.locator('header')).toContainText('TEAM-6');
 });
+
+/** Adds a team under Engineering from its page and opens the new team's page, all without a reload. */
+async function newTeamUnderEngineering(page: Page, name: string): Promise<string> {
+	await openTeam(page, '/teams/eng');
+	await teamAction(page, 'Engineering', 'Add team under Engineering…');
+	const sheet = page.getByRole('dialog', { name: 'New team' });
+	await sheet.getByLabel('Name').fill(name);
+	await sheet.getByRole('button', { name: 'Create team' }).click();
+	await expect(sheet).toBeHidden();
+	await page.getByRole('main').getByRole('link', { name: 'Teams', exact: true }).click();
+	await page.getByRole('link', { name: new RegExp(`^${name} , level 2`) }).click();
+	await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+	return new URL(page.url()).pathname.split('/').pop()!;
+}
+
+const orgChange = (page: Page, command: object) =>
+	page.evaluate(async (command) => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+		const id = saved[saved.length - 1].organization.id as string;
+		await (
+			window as unknown as { __mockOrgChange: (id: string, command: object) => Promise<unknown> }
+		).__mockOrgChange(id, command);
+	}, command);
+
+test('TEAM-ARCHIVE PEOPLE-3: an archived team is kept, focused, and never taken as a home team', async ({
+	page
+}) => {
+	const qa = await newTeamUnderEngineering(page, 'QA');
+	const dialog = await teamAction(page, 'QA', 'Archive…');
+	await dialog.getByRole('button', { name: 'Archive QA' }).click();
+	await expect(page.getByText('Archived QA. Its ID and history stay.')).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'QA', exact: true })).toBeFocused();
+
+	await page.getByRole('main').getByRole('link', { name: 'Teams', exact: true }).click();
+	await page.getByRole('link', { name: /^Web , level 2/ }).click();
+	await page.getByRole('button', { name: 'Add a person' }).click();
+	const sheet = page.getByRole('dialog', { name: 'Add person' });
+	const home = sheet.getByLabel('Home team');
+	await expect(home.locator('option', { hasText: 'Engineering › Web' })).toHaveCount(1);
+	await expect(home.locator('option', { hasText: 'QA' })).toHaveCount(0);
+	// HQ refuses it on its own, whatever a form sends.
+	await home.evaluate((select, id) => {
+		const option = document.createElement('option');
+		option.value = id;
+		option.text = 'Engineering › QA';
+		select.append(option);
+	}, qa);
+	await home.selectOption(qa);
+	await sheet.getByLabel('Name').fill('Ivo Marsh');
+	await sheet.getByRole('button', { name: 'Add person' }).click();
+	await expect(sheet.getByRole('alert')).toContainText(
+		"QA is archived, so it can't be a home team. Choose a team that is still active."
+	);
+	await expect(sheet).toBeVisible();
+	await expect(sheet.getByLabel('Name')).toHaveValue('Ivo Marsh');
+});
+
+test('TEAM-9: Delete leaves for Teams without showing the team as not found, and focuses the Teams heading', async ({
+	page
+}) => {
+	await newTeamUnderEngineering(page, 'Temp');
+	await page.evaluate(() => {
+		const seen = { notFound: false };
+		(window as unknown as { __seen: typeof seen }).__seen = seen;
+		new MutationObserver(() => {
+			if (document.querySelector('main h2')?.textContent?.includes('Team not found'))
+				seen.notFound = true;
+		}).observe(document.body, { subtree: true, childList: true, characterData: true });
+	});
+	const dialog = await teamAction(page, 'Temp', 'Delete…');
+	await dialog.getByRole('button', { name: 'Delete Temp' }).click();
+	await expect(page).toHaveURL(/\/teams$/);
+	await expect(page.getByText('Deleted Temp.')).toBeVisible();
+	await expect(page.getByRole('heading', { level: 1, name: 'Teams' })).toBeFocused();
+	await expect(page.getByRole('link', { name: /^Temp , level 2/ })).toHaveCount(0);
+	expect(
+		await page.evaluate(
+			() => (window as unknown as { __seen: { notFound: boolean } }).__seen.notFound
+		)
+	).toBe(false);
+});
+
+for (const removal of ['Archive', 'Delete'] as const)
+	test(`TEAM-9: HQ refuses a ${removal.toLowerCase()} that became blocked after the check, and keeps the team`, async ({
+		page
+	}) => {
+		const temp = await newTeamUnderEngineering(page, 'Temp');
+		const dialog = await teamAction(page, 'Temp', `${removal}…`);
+		await expect(dialog.getByRole('button', { name: `${removal} Temp` })).toBeEnabled();
+		// Someone adds a team under Temp after the dialog checked.
+		await orgChange(page, {
+			method: 'team.create',
+			params: { team_id: 'temp-child', name: 'Child', owner_team_id: temp }
+		});
+		await dialog.getByRole('button', { name: `${removal} Temp` }).click();
+		await expect(dialog.getByRole('alert')).toHaveText(
+			'Temp still has 1 child team. Resolve them first.'
+		);
+		await dialog.getByRole('button', { name: 'Cancel' }).click();
+		await expect(page).toHaveURL(new RegExp(`/teams/${temp}$`));
+		await expect(page.getByRole('heading', { name: 'Temp', exact: true })).toBeVisible();
+		await expect(page.getByText('Archived')).toHaveCount(0);
+	});
+
+for (const width of [390, 1024])
+	test(`SHELL-33: team links inside lines are full-size targets at ${width} px without growing the line`, async ({
+		page
+	}) => {
+		await page.setViewportSize({ width, height: 900 });
+		const min = width < 640 ? 44 : 24;
+		const reachable = async (link: Locator) => {
+			const box = (await link.boundingBox())!;
+			expect(box.height).toBeGreaterThanOrEqual(min);
+			// Not clipped by the line's wrapper: the target's top and bottom edges hit the link.
+			for (const y of [box.y + 1, box.y + box.height - 1])
+				expect(
+					await link.evaluate(
+						(a, [x, y]) => a.contains(document.elementFromPoint(x, y)),
+						[box.x + box.width / 2, y]
+					)
+				).toBe(true);
+		};
+		await openTeam(page, '/teams/web', 'Web');
+		const header = page.getByRole('main').locator('header').first();
+		for (const name of ['Noor Haddad', 'Engineering']) {
+			const link = header.getByRole('link', { name, exact: true });
+			await reachable(link);
+			// The fact holding the link is one line tall, like its neighbours.
+			const lineHeight = await link.evaluate(
+				(a) => a.closest('li')!.getBoundingClientRect().height
+			);
+			expect(lineHeight).toBeLessThanOrEqual(24);
+		}
+		await page.getByRole('main').getByRole('link', { name: 'Teams', exact: true }).click();
+		await page.getByRole('link', { name: /^Design , level 1/ }).click();
+		await page
+			.getByRole('navigation', { name: 'Design views' })
+			.getByRole('link', { name: 'Projects', exact: true })
+			.click();
+		const owned = page.getByRole('main').getByRole('link', { name: 'Web', exact: true });
+		await reachable(owned);
+		expect(
+			await owned.evaluate((a) => a.closest('li')!.getBoundingClientRect().height)
+		).toBeLessThanOrEqual(20);
+	});
