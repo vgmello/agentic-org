@@ -428,6 +428,96 @@ fn admission_tells_a_refusal_from_unreadable_custody() {
     assert_eq!(writers.admit(&office), Err(AdmitError::Refused));
 }
 
+/// Lasting store states are refusals, never retried as unreadable: a symlinked custody
+/// item and a removed store directory.
+#[test]
+fn lasting_custody_failures_are_refusals_not_unreadable() {
+    use std::os::unix::fs::symlink;
+    // The development store keeps each item at `<keys>/host-secrets/<instance>/<name>`.
+    let store = |root: &tempfile::TempDir, input: &Input| {
+        root.path().join("keys/host-secrets").join(&input.instance)
+    };
+    let (root, writers, input) = fixture();
+    writers.reserve(OPERATION, &input.binding()).unwrap();
+    writers.admit(&input.office).unwrap();
+    let item = store(&root, &input).join(name(&input.office).unwrap().as_str());
+    assert!(item.is_file(), "{item:?}");
+    let target = root.path().join("linked-record");
+    fs::rename(&item, &target).unwrap();
+    symlink(&target, &item).unwrap();
+    assert_eq!(writers.admit(&input.office), Err(AdmitError::Refused));
+
+    let (root, writers, input) = fixture();
+    writers.reserve(OPERATION, &input.binding()).unwrap();
+    fs::rename(store(&root, &input), root.path().join("moved-store")).unwrap();
+    assert_eq!(writers.admit(&input.office), Err(AdmitError::Refused));
+}
+
+/// Only failures that pass on their own are unreadable; every lasting store or registry
+/// state is a refusal. (A corrupted registry file is not read again while the host holds
+/// it open, so its classification is checked here directly.)
+#[test]
+fn only_transient_store_and_registry_failures_are_unreadable() {
+    use crate::{host_secrets::Error as S, hostdb::Error as D};
+    use io::ErrorKind as K;
+    use rusqlite::ErrorCode as C;
+    let of = |error: io::Error| AdmitError::from(error);
+    for kind in [K::Interrupted, K::WouldBlock, K::TimedOut, K::ResourceBusy] {
+        assert_eq!(of(store(S::Io(kind))), AdmitError::Unreadable, "{kind:?}");
+        assert_eq!(
+            of(registry(D::Io(kind))),
+            AdmitError::Unreadable,
+            "{kind:?}"
+        );
+    }
+    assert_eq!(of(store(S::Os(-25308))), AdmitError::Unreadable);
+    assert_eq!(of(store(S::InUse)), AdmitError::Unreadable);
+    for code in [
+        C::DatabaseBusy,
+        C::DatabaseLocked,
+        C::SystemIoFailure,
+        C::OutOfMemory,
+    ] {
+        assert_eq!(
+            of(registry(D::Sql(code))),
+            AdmitError::Unreadable,
+            "{code:?}"
+        );
+    }
+    for kind in [
+        K::PermissionDenied,
+        K::NotFound,
+        K::Unsupported,
+        K::Other,
+        K::InvalidData,
+    ] {
+        assert_eq!(of(store(S::Io(kind))), AdmitError::Refused, "{kind:?}");
+        assert_eq!(of(registry(D::Io(kind))), AdmitError::Refused, "{kind:?}");
+    }
+    for error in [
+        S::Corrupt,
+        S::Unsafe,
+        S::CaseAlias,
+        S::InvalidName,
+        S::TooLarge,
+    ] {
+        assert_eq!(of(store(error)), AdmitError::Refused);
+    }
+    for code in [
+        C::NotADatabase,
+        C::DatabaseCorrupt,
+        C::SchemaChanged,
+        C::ConstraintViolation,
+        C::PermissionDenied,
+        C::ReadOnly,
+    ] {
+        assert_eq!(of(registry(D::Sql(code))), AdmitError::Refused, "{code:?}");
+    }
+    for error in [D::Unsafe, D::Version, D::Outdated] {
+        assert_eq!(of(registry(error)), AdmitError::Refused);
+    }
+}
+
 #[test]
 fn copied_root_missing_custody_replaced_root_and_changed_epoch_never_promote() {
     let (root, writers, input) = fixture();

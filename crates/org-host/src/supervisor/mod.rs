@@ -355,7 +355,7 @@ impl Supervisor {
             .may_spawn()
             .map_err(CreateStartError::NotStarted)?;
         // Before its key is read: a create needs the writer custody provisioning reserved
-        // for this office and organization.
+        // for this office, organization and owner member.
         self.spawner()
             .map_err(|e| CreateStartError::NotStarted(e.to_string()))?
             .custody(

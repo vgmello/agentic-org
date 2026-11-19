@@ -125,21 +125,37 @@ impl std::error::Error for Unreadable {}
 fn unreadable() -> io::Error {
     io::Error::other(Unreadable)
 }
-/// A custody store error: a passing I/O or OS failure is [`Unreadable`]; anything else
-/// (corrupt, unsafe, wrong name) is a refusal.
+/// An I/O failure that passes on its own. Every other kind (a symlinked or unreadable
+/// item, a missing store, no adapter) is a lasting state: a refusal.
+fn transient(kind: io::ErrorKind) -> bool {
+    use io::ErrorKind as K;
+    matches!(
+        kind,
+        K::Interrupted | K::WouldBlock | K::TimedOut | K::ResourceBusy
+    )
+}
+/// A custody store error: a transient I/O failure, an OS keychain error or an item in use
+/// is [`Unreadable`]; anything else (corrupt, unsafe, linked, missing, unsupported) is a
+/// refusal.
 fn store(error: crate::host_secrets::Error) -> io::Error {
     use crate::host_secrets::Error as E;
     match error {
-        E::Io(_) | E::Os(_) | E::InUse => unreadable(),
+        E::Io(kind) if transient(kind) => unreadable(),
+        E::Os(_) | E::InUse => unreadable(),
         _ => refused(),
     }
 }
-/// A host registry error: a database or I/O failure is [`Unreadable`]; a binding the
-/// registry does not hold is a refusal.
+/// A host registry error: a busy or locked database, an OS I/O failure, no memory or a
+/// transient I/O failure is [`Unreadable`]; anything else (a corrupt or tampered registry,
+/// another schema, a binding it does not hold) is a refusal.
 fn registry(error: crate::hostdb::Error) -> io::Error {
     use crate::hostdb::Error as E;
+    use rusqlite::ErrorCode as C;
     match error {
-        E::Io(_) | E::Sql(_) => unreadable(),
+        E::Io(kind) if transient(kind) => unreadable(),
+        E::Sql(C::DatabaseBusy | C::DatabaseLocked | C::SystemIoFailure | C::OutOfMemory) => {
+            unreadable()
+        }
         _ => refused(),
     }
 }
@@ -577,11 +593,11 @@ pub(crate) struct TestCustody {
     pub(crate) writers: Arc<Writers>,
     pub(crate) organization: String,
     pub(crate) member: String,
-    /// While set, every read of the custody store fails with an I/O error.
+    /// While set, every read of the custody store fails with a transient I/O error.
     pub(crate) unreadable: Arc<AtomicBool>,
 }
 
-/// A custody store whose reads fail with an I/O error while `fail` is set.
+/// A custody store whose reads time out while `fail` is set.
 #[cfg(test)]
 struct Faulty {
     inner: Arc<dyn HostSecrets>,
@@ -594,7 +610,7 @@ impl HostSecrets for Faulty {
     }
     fn load(&self, name: &Name) -> Result<Option<Value>, crate::host_secrets::Error> {
         if self.fail.load(Ordering::SeqCst) {
-            return Err(crate::host_secrets::Error::Io(io::ErrorKind::Other));
+            return Err(crate::host_secrets::Error::Io(io::ErrorKind::TimedOut));
         }
         self.inner.load(name)
     }
