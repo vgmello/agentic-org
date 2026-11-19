@@ -105,11 +105,6 @@
       "count": 12
     }
   },
-  "src/lib/modules/processes/features/inspect-effective/ProcessSheet.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 3
-    }
-  },
   "src/lib/office/mock.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 2
@@ -225,12 +220,9 @@
       "count": 1
     }
   },
-  "src/routes/(shell)/settings/processes/+page.svelte": {
+  "src/routes/(shell)/teams/(views)/members/+page.svelte": {
     "svelte/no-navigation-without-resolve": {
-      "count": 1
-    },
-    "svelte/no-useless-mustaches": {
-      "count": 1
+      "count": 3
     }
   },
   "src/routes/(shell)/work/+page.svelte": {

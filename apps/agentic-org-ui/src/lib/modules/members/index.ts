@@ -6,7 +6,6 @@ export { default as PresenceBadge } from './components/PresenceBadge.svelte';
 export { default as WorkRows } from './components/WorkRows.svelte';
 export { default as ActivityRows } from './components/ActivityRows.svelte';
 export { default as ConversationRows } from './components/ConversationRows.svelte';
-export { default as ProcessRows } from './components/ProcessRows.svelte';
 export { default as ProfileFrame } from './features/profile/ProfileFrame.svelte';
 export { default as OverviewTab } from './features/profile-tabs/OverviewTab.svelte';
 export { default as WorkTab } from './features/profile-tabs/WorkTab.svelte';
