@@ -80,12 +80,11 @@ const SEARCH: [&str; 2] = ["/usr/bin", "/bin"];
 /// itself returns only when the unit has stopped (`TimeoutStopSec=15`).
 const UNLOAD_WAIT: Duration = Duration::from_secs(20);
 pub(super) const USER_PREFIX: &str = "agentic-org-";
-/// What the adapter reads of a unit, in one `systemctl show`: its state, and the values
-/// the service depends on ([`EFFECTIVE`]).
 /// The first systemd that knows `Type=exec`. An older one ignores the line, runs the unit as
 /// `Type=simple`, and so would run something other than what the definition says.
 const MINIMUM_VERSION: u32 = 240;
-
+/// What the adapter reads of a unit, in one `systemctl show`: its state, and the values
+/// the service depends on ([`EFFECTIVE`]).
 const PROPERTIES: &str = "--property=LoadState,ActiveState,MainPID,FragmentPath,UnitFileState,\
      NeedDaemonReload,DropInPaths,ExecStart,ExecStartPre,ExecStartPost,ExecCondition,ExecStop,\
      ExecStopPost,Environment,EnvironmentFiles,PassEnvironment,UnsetEnvironment,Type,KillMode,\
@@ -956,7 +955,7 @@ fn recent_enough(out: &Outcome) -> Result<(), ServiceError> {
     match digits.parse::<u32>() {
         Ok(major) if major < MINIMUM_VERSION => Err(ServiceError::Unavailable(format!(
             "systemd's user manager is version {major}, and the service's unit needs \
-             {MINIMUM_VERSION} or later (Type=exec); nothing was changed"
+             {MINIMUM_VERSION} or later (Type=exec)"
         ))),
         _ => Ok(()),
     }

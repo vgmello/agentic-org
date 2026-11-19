@@ -230,10 +230,9 @@ impl<'a> Table<'a> {
                 continue;
             }
             let root = unescape(root).ok_or(MountDoubt::Malformed)?;
-            if root.first() != Some(&b'/')
-                || root.ends_with(DELETED_ROOT)
-                || root.ends_with(DELETED_PATH)
-            {
+            // Only the kernel's own mark of a deleted root (`//deleted`) is passed over: a
+            // folder may be named `… (deleted)`, and a mount of it still shows the store.
+            if root.first() != Some(&b'/') || root.ends_with(DELETED_ROOT) {
                 continue;
             }
             let mount_point = unescape(mount_point).ok_or(MountDoubt::Malformed)?;
@@ -574,11 +573,14 @@ mod tests {
             "70 27 254:0 / /sysroot rw - ext4 /dev/vda rw",
             "71 27 254:0 /home/a/.local/state/agentic-org/credentials/i /home/a/data/keys rw - ext4 /dev/vda rw",
             r"72 27 254:0 /home/a/.local/state/agentic-org/credentials/i/office-keys /mnt/k\040eys rw - ext4 /dev/vda rw",
+            // A folder named as a deleted root would be by the older mark: still a mount of
+            // the store, and found.
+            r"73 27 254:0 /home/a/.local/state/agentic-org/credentials/i/x\040(deleted) /mnt/x rw - ext4 /dev/vda rw",
         ]);
         let aliases = aliases_of(&text, store).unwrap();
         assert_eq!(
             points(&aliases),
-            ["/sysroot", "/home/a/data/keys", "/mnt/k eys"]
+            ["/sysroot", "/home/a/data/keys", "/mnt/k eys", "/mnt/x"]
         );
         assert_eq!(
             aliases[0].shows,
