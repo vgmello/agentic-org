@@ -186,3 +186,6 @@ fn sql_in_a_concat_piece() {
 
 #[some_attribute(query = "INSERT INTO teams (id) VALUES (?1)")]
 fn sql_in_an_attribute() {}
+
+#[cfg_attr(test, doc = "x", some_attribute(query = "INSERT INTO teams (id) VALUES (?1)"))]
+fn sql_beside_a_doc_in_cfg_attr() {}
