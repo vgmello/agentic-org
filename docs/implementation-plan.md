@@ -305,7 +305,15 @@ Three things to know about the order:
   removed from `apps/agent-os/tests/office.rs` return there against a running office
   (their agent comes from B2): an agent the office does not know is refused at its bind
   (exit 1, naming the office and the agent, nothing spooled); an office named by mistake
-  is still told at once.
+  is still told at once. With A5's client, two B1b checks that ran short of the real
+  host return through it (row FC-146): (a) create, `team.create`, stop, delete
+  `runtime/<office-id>/`, restart, then an equal `org.snapshot` and the same
+  `team.create` command ID returns its original answer, where B1b proves this at worker
+  level and through the host only without office calls; (b) a flipped journal byte at
+  or below the confirmed head, an older segment copy behind the host checkpoint and a
+  closed custody channel are each refused through the real host (the flipped byte
+  naming its ordinal; the closed channel failing closed), where B1b proves them at the
+  custody adapter with a fake writer and in the host's custody unit tests.
 - **Needs:** A4, K1.
 
 ---
