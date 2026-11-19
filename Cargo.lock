@@ -707,9 +707,11 @@ dependencies = [
  "org-platform",
  "org-proto",
  "org-store",
+ "proc-macro2",
  "rusqlite",
  "serde",
  "serde_json",
+ "syn 2.0.119",
  "tempfile",
 ]
 

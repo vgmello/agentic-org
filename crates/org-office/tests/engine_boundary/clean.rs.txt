@@ -1,0 +1,37 @@
+// Prose and ordinary code the engine-boundary guard must not report.
+// This file is not compiled; it is read as text by the guard.
+
+/// Doc comments may describe the engine and its SQL: `rusqlite`, "SELECT x FROM t",
+/// INSERT INTO teams, CREATE TABLE and DELETE FROM are prose here.
+fn prose() {
+    let _ = "select a team from the list";
+    let _ = "Select the organization";
+    let _ = "delete the runtime folder and restart";
+    let _ = "update the record";
+    let _ = "create the organization and its HQ office";
+    let _ = "drop the old store";
+    let _ = "insert a line";
+    let _ = "the commit was answered";
+    let _ = "commit";
+    let _ = "begin the creation";
+    let _ = "no rusqlite here";
+    let _ = "rusqlite";
+    let _ = "a table of contents";
+    let _ = "the engine named in the error";
+    let _ = "office.db";
+    let _ = "schema.sql.bak";
+    let _ = "pragmatic choice";
+    let _ = "From the HQ, select a person";
+    assert!(true, "the store was opened from {} and closed", "disk");
+}
+
+mod engine_free {
+    pub struct Sqlite;
+    pub fn rusqlite_like() {}
+}
+
+fn a_name_close_to_the_engine() {
+    engine_free::rusqlite_like();
+    let sqlite = engine_free::Sqlite;
+    let _ = sqlite;
+}

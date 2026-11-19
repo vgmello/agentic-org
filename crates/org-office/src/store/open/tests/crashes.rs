@@ -257,7 +257,7 @@ fn another_schema_digest_rebuilds_the_projection_and_changes_no_journal_or_file_
 
     // Another build: this one's schema and one more index.
     let mut other = office.place.config(EngineChoice::Sqlite, Opening::Existing);
-    other.testing.extra_ddl = Some("CREATE INDEX teams_by_name ON teams(organization_id, name);");
+    other.testing.extra_ddl = Some(crate::store::sqlite::ANOTHER_BUILDS_DDL);
     let store = open_store(&other).expect("the store on the other schema");
     assert_ne!(store.schema_digest(), digest);
     assert_eq!(directory(&store), read);

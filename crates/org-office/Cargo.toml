@@ -29,3 +29,6 @@ org-platform = { path = "../org-platform", features = ["test-support"] }
 org-store = { path = "../org-store", features = ["testkit"] }
 serde_json.workspace = true
 tempfile.workspace = true
+# Only `tests/engine_boundary.rs`: the ENG-1 scan parses the crate's Rust files.
+syn = { version = "=2.0.119", features = ["full", "visit"] }
+proc-macro2 = "=1.0.107"
