@@ -10,6 +10,10 @@ struct State {
     calls: Vec<Vec<String>>,
     /// `bootstrap` fails (launchd's code 5) and loads nothing.
     refuse_bootstrap: bool,
+    /// `bootstrap` fails (code 5) and launchd lists the job all the same.
+    half_bootstrap: bool,
+    /// `bootout` fails and the job stays listed.
+    refuse_bootout: bool,
 }
 
 /// A launchd stand-in: `bootstrap` loads and starts (RunAtLoad), `kill` stops cleanly,
@@ -45,6 +49,12 @@ impl Launchctl for Fake {
                 None => format!("{} = {{\n\tpath = {}\n\tstate = not running\n}}\n", args[1], s.path),
             }),
             "bootstrap" if s.refuse_bootstrap => Ok(Outcome { code: 5, stdout: String::new() }),
+            "bootstrap" if s.half_bootstrap => {
+                s.loaded = true;
+                s.path = args[2].clone();
+                Ok(Outcome { code: 5, stdout: String::new() })
+            }
+            "bootout" if s.refuse_bootout => Ok(Outcome { code: 1, stdout: String::new() }),
             "bootstrap" => {
                 s.loaded = true;
                 s.path = args[2].clone();
@@ -499,6 +509,35 @@ fn a_definition_launchd_refuses_is_removed() {
     fake.0.lock().unwrap().refuse_bootstrap = false;
     assert_eq!(launchd.register(&fixed).unwrap(), Registration::Loaded);
     assert_eq!(fs::read(&file).unwrap(), render(LABEL, &fixed));
+}
+
+/// X5 final review (round 5): when launchd lists the job after a refused bootstrap and will
+/// not boot it out, the definition stays, so that launchd never runs a job whose file is
+/// gone (and the next registration does not mistake it for another definition's job).
+#[test]
+fn a_refused_definition_whose_job_cannot_be_booted_out_is_kept() {
+    let temp = tempfile::tempdir().unwrap();
+    let (launchd, fake) = launchd(temp.path());
+    let file = temp.path().join(format!("LaunchAgents/{LABEL}.plist"));
+    {
+        let mut s = fake.0.lock().unwrap();
+        s.half_bootstrap = true;
+        s.refuse_bootout = true;
+    }
+    assert!(matches!(
+        launchd.register(&unit()),
+        Err(ServiceError::System(_))
+    ));
+    assert_eq!(fs::read(&file).unwrap(), render(LABEL, &unit()));
+    // Once launchd lets the job go, the same refusal removes it.
+    fake.0.lock().unwrap().refuse_bootout = false;
+    fake.0.lock().unwrap().loaded = false;
+    fs::remove_file(&file).unwrap();
+    assert!(matches!(
+        launchd.register(&unit()),
+        Err(ServiceError::System(_))
+    ));
+    assert!(!file.exists(), "the refused definition was left");
 }
 
 /// X5 review V-b: a definition that is exactly an earlier rendering of a job for the same

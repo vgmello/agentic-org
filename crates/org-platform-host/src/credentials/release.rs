@@ -302,7 +302,14 @@ pub struct RootRefusal {
 
 impl fmt::Display for RootRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.path.display(), self.rule)
+        // The path can come from the mount table (another mount of the store), where any
+        // byte but a slash and NUL can be in a name: control characters are escaped.
+        write!(
+            f,
+            "{}: {}",
+            self.path.display().to_string().escape_debug(),
+            self.rule
+        )
     }
 }
 

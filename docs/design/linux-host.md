@@ -464,7 +464,11 @@ checks and a lock.
     account's records (`RootRule::MountedInData`). A mount elsewhere on an ordinary
     machine is allowed: an image-based system (Fedora CoreOS, for one) mounts its whole
     disk a second time at `/sysroot`. These are checked after the rules above, so a store
-    inside the data is reported as that.
+    inside the data is reported as that. A mount is matched by the store's device: a view
+    through another filesystem (an overlay with the store as a lower layer, a FUSE bind
+    such as bindfs, an NFS export of it mounted back) has a device of its own and is not
+    found. Such a layout is an operator's deliberate choice; it is not one the image or
+    the documented commands make.
   - When `expect_items` is set and the store holds no item, the store refuses with
     "credentials missing", and the host does not start: it never creates fresh keys
     for offices that already have wrapped records.
