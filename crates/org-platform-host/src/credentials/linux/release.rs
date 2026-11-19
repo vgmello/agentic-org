@@ -20,7 +20,7 @@
 
 use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fs::{File, Permissions, TryLockError};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -32,13 +32,14 @@ use crate::credentials::mounts::{self, Mount, Place, Table};
 use crate::credentials::rules::{self, Ancestor, Identity};
 use crate::credentials::{
     directory, valid_name, CredentialError, ItemStore, MountDoubt, ReleaseDirectory, ReleaseItems,
-    RootRefusal, RootRule,
+    RootRefusal, RootRule, MAX_NAME_BYTES,
 };
 
 /// The lock file's name. An item store's directory has the syntax of an item name,
 /// which never starts with `.`, so none can be the lock.
 const LOCK: &CStr = c".lock";
 const LOCK_NAME: &str = ".lock";
+const INSTANCE_MARKER: &CStr = c".instance";
 
 /// The kernel's table of this process's mounts.
 const MOUNT_TABLE: &str = "/proc/self/mountinfo";
@@ -78,17 +79,34 @@ pub(in crate::credentials) fn release_directory(
     item_stores: &[ItemStore<'_>],
     account_data: &[BorrowedFd<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
-    // Before anything is opened.
-    let names = rules::components(location.path).map_err(|rule| refused(rule, location.path))?;
     declared(item_stores)?;
-    let start = Path::new("/");
-    let root = open_absolute(start).map_err(|error| refused(component_rule(&error), start))?;
     open(
-        Walk { start, root, names },
+        absolute_walk(location.path)?,
         location,
         item_stores,
         account_data,
     )
+}
+
+pub(in crate::credentials) fn check_unused_release_directory(
+    location: &ReleaseDirectory<'_>,
+    item_stores: &[ItemStore<'_>],
+    account_data: &[BorrowedFd<'_>],
+) -> Result<(), CredentialError> {
+    declared(item_stores)?;
+    check_unused(
+        absolute_walk(location.path)?,
+        location,
+        item_stores,
+        account_data,
+    )
+}
+
+fn absolute_walk(path: &Path) -> Result<Walk<'_>, CredentialError> {
+    let names = rules::components(path).map_err(|rule| refused(rule, path))?;
+    let start = Path::new("/");
+    let root = open_absolute(start).map_err(|error| refused(component_rule(&error), start))?;
+    Ok(Walk { start, root, names })
 }
 
 /// The declared item stores as the root keeps them, or [`CredentialError::InvalidName`]
@@ -158,6 +176,63 @@ fn open(
     item_stores: &[ItemStore<'_>],
     account_data: &[BorrowedFd<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
+    if location.instance_id.is_some_and(|id| !valid_name(id)) {
+        return Err(CredentialError::InvalidName);
+    }
+    let (directory, path, service_user) = checked_directory(walk, location, account_data)?;
+    let existing = item_store_directories(&directory, &path, item_stores, service_user)?;
+    if location.expect_items {
+        let mut items = 0;
+        for (store, store_path, store_directory) in &existing {
+            items += count_items(store, store_path, store_directory)?;
+        }
+        rules::items_present(true, items).map_err(|rule| refused(rule, &path))?;
+    }
+    if let Some(id) = location.instance_id {
+        check_binding(&directory, &path, &existing, Some(id))?;
+    }
+
+    let lock = open_lock(&directory, &path, service_user, true)?
+        .expect("opening with creation always takes the lock or refuses");
+    if let Some(id) = location.instance_id {
+        // Reopen the item directories under the lock: another host may have used the
+        // volume since the checks above. Only a still-unused directory can be claimed.
+        let existing = item_store_directories(&directory, &path, item_stores, service_user)?;
+        if !check_binding(&directory, &path, &existing, Some(id))? {
+            publish_binding(&directory, id)
+                .map_err(|_| refused(RootRule::InstanceMarker, &path))?;
+        }
+        // Also retry the directory flush if an earlier start failed after the rename.
+        directory
+            .sync_all()
+            .map_err(|_| refused(RootRule::InstanceMarker, &path))?;
+    }
+    Ok(ReleaseRoot(Arc::new(Root {
+        directory,
+        path,
+        lock,
+        stores: declared(item_stores)?,
+    })))
+}
+
+fn check_unused(
+    walk: Walk<'_>,
+    location: &ReleaseDirectory<'_>,
+    item_stores: &[ItemStore<'_>],
+    account_data: &[BorrowedFd<'_>],
+) -> Result<(), CredentialError> {
+    let (directory, path, service_user) = checked_directory(walk, location, account_data)?;
+    // An existing lock can be taken briefly; a preflight must never create or unlink one.
+    let _lock = open_lock(&directory, &path, service_user, false)?;
+    let existing = item_store_directories(&directory, &path, item_stores, service_user)?;
+    check_binding(&directory, &path, &existing, None).map(|_| ())
+}
+
+fn checked_directory(
+    walk: Walk<'_>,
+    location: &ReleaseDirectory<'_>,
+    account_data: &[BorrowedFd<'_>],
+) -> Result<(File, PathBuf, u32), CredentialError> {
     // SAFETY: no arguments and no side effects; it cannot fail.
     let service_user = unsafe { libc::geteuid() };
     let mut private_group = PrivateGroup::NotAsked;
@@ -233,42 +308,65 @@ fn open(
             mounts::separate_volumes(&store_place, &other_volume).map_err(apart)?;
         }
     }
-    // The host's item stores that exist, each judged by its own rule and named.
-    let existing = item_store_directories(&directory, &path, item_stores, service_user)?;
-    if location.expect_items {
-        let mut items = 0;
-        for (store, store_path, store_directory) in &existing {
-            items += count_items(store, store_path, store_directory)?;
+    Ok((directory, path, service_user))
+}
+
+/// Whether the marker already matches. A missing marker is allowed only on a store
+/// with no credentials. With no expected ID, any existing binding refuses.
+fn check_binding(
+    directory: &File,
+    path: &Path,
+    existing: &[ExistingStore<'_, '_>],
+    instance_id: Option<&str>,
+) -> Result<bool, CredentialError> {
+    let unsafe_marker = |_| refused(RootRule::InstanceMarker, path);
+    if let Some(marker) = directory::open_item(directory, ".instance").map_err(unsafe_marker)? {
+        let mut bytes = Vec::new();
+        marker
+            .take(MAX_NAME_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| refused(RootRule::InstanceMarker, path))?;
+        let owner = std::str::from_utf8(&bytes)
+            .ok()
+            .filter(|name| valid_name(name))
+            .ok_or_else(|| refused(RootRule::InstanceMarker, path))?;
+        if Some(owner) != instance_id {
+            return Err(refused(RootRule::WrongInstance, path));
         }
-        rules::items_present(true, items).map_err(refuse)?;
+        return Ok(true);
     }
-    drop(existing);
-    // The first thing that is made, after every check of the directory has passed.
-    let lock = open_lock(&directory, &path, service_user)?;
-    let lock_is = lock
-        .metadata()
-        .map_err(|error| refuse(RootRule::LockUnavailable(error.kind())))?;
-    rules::lock_file(
-        lock_is.is_file(),
-        lock_is.uid(),
-        lock_is.mode(),
-        lock_is.nlink(),
-        service_user,
-    )
-    .map_err(refuse)?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(TryLockError::WouldBlock) => return Err(refuse(RootRule::InUse)),
-        Err(TryLockError::Error(error)) => {
-            return Err(refuse(RootRule::LockUnavailable(error.kind())))
+    for (_, path, store) in existing {
+        let entries =
+            entries(store.as_fd()).map_err(|e| refused(RootRule::Unavailable(e.kind()), path))?;
+        // A temporary or malformed item also prevents claiming an unbound store. Opening
+        // its item stores could otherwise clean up files from an earlier host.
+        if entries.iter().any(|name| name != LOCK_NAME) {
+            return Err(refused(RootRule::CredentialsPresent, path));
         }
     }
-    Ok(ReleaseRoot(Arc::new(Root {
+    Ok(false)
+}
+
+fn publish_binding(directory: &File, instance_id: &str) -> Result<(), CredentialError> {
+    let temporary = directory::temporary_name()?;
+    let mut file = directory::at(
         directory,
-        path,
-        lock,
-        stores: declared(item_stores)?,
-    })))
+        &temporary,
+        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+    )?;
+    let temporary = CString::new(temporary).map_err(|_| CredentialError::InvalidName)?;
+    let mut publish = || -> io::Result<()> {
+        file.set_permissions(Permissions::from_mode(0o600))?;
+        file.write_all(instance_id.as_bytes())?;
+        file.sync_all()?;
+        org_platform::fs::rename_noreplace_at(directory, &temporary, directory, INSTANCE_MARKER)
+    };
+    let result = publish();
+    if result.is_err() {
+        // SAFETY: the held directory and the name this call created.
+        unsafe { libc::unlinkat(directory.as_raw_fd(), temporary.as_ptr(), 0) };
+    }
+    result.map_err(Into::into)
 }
 
 impl ReleaseRoot {
@@ -613,7 +711,7 @@ impl Drop for Stream {
     }
 }
 
-/// Opens the lock file of the release directory `directory` (at `path`), never
+/// Opens and takes the lock file of the release directory `directory` (at `path`), never
 /// following a link. `O_NONBLOCK`: a FIFO at the name must not block the host; the
 /// lock rule then refuses it.
 ///
@@ -629,30 +727,39 @@ fn open_lock(
     directory: &File,
     path: &Path,
     service_user: libc::uid_t,
-) -> Result<File, CredentialError> {
+    create: bool,
+) -> Result<Option<File>, CredentialError> {
     let flags = libc::O_RDWR | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
     let at = directory.as_raw_fd();
     // SAFETY: a valid directory descriptor and a NUL-terminated name; the mode is
-    // read because `O_CREAT` is set.
-    let made = owned(unsafe {
-        libc::openat(
-            at,
-            LOCK.as_ptr(),
-            flags | libc::O_CREAT | libc::O_EXCL,
-            0o600,
-        )
-    });
-    let opened = match made {
-        Ok(lock) => lock
-            .set_permissions(Permissions::from_mode(0o600))
-            .map(|()| lock),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            // SAFETY: a valid directory descriptor and a NUL-terminated name.
-            owned(unsafe { libc::openat(at, LOCK.as_ptr(), flags) })
+    // read only with O_CREAT.
+    let opened = if create {
+        match owned(unsafe {
+            libc::openat(
+                at,
+                LOCK.as_ptr(),
+                flags | libc::O_CREAT | libc::O_EXCL,
+                0o600,
+            )
+        }) {
+            Ok(lock) => lock
+                .set_permissions(Permissions::from_mode(0o600))
+                .map(|()| lock),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                // SAFETY: the same descriptor and name, without O_CREAT.
+                owned(unsafe { libc::openat(at, LOCK.as_ptr(), flags) })
+            }
+            Err(error) => Err(error),
         }
-        Err(error) => Err(error),
+    } else {
+        // SAFETY: the same descriptor and name, without O_CREAT.
+        match owned(unsafe { libc::openat(at, LOCK.as_ptr(), flags) }) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            opened => opened,
+        }
     };
-    opened.map_err(|error| {
+    let unavailable = |kind| refused(RootRule::LockUnavailable(kind), path);
+    let lock = opened.map_err(|error| {
         let broken = match error.raw_os_error() {
             // A link, a directory or a device node at the lock's name is no lock file.
             Some(libc::ELOOP | libc::EISDIR | libc::ENXIO) => true,
@@ -674,7 +781,21 @@ fn open_lock(
             RootRule::LockUnavailable(error.kind())
         };
         refused(rule, path)
-    })
+    })?;
+    let found = lock.metadata().map_err(|error| unavailable(error.kind()))?;
+    rules::lock_file(
+        found.is_file(),
+        found.uid(),
+        found.mode(),
+        found.nlink(),
+        service_user,
+    )
+    .map_err(|rule| refused(rule, path))?;
+    match lock.try_lock() {
+        Ok(()) => Ok(Some(lock)),
+        Err(TryLockError::WouldBlock) => Err(refused(RootRule::InUse, path)),
+        Err(TryLockError::Error(error)) => Err(unavailable(error.kind())),
+    }
 }
 
 /// The bytes of the kernel's mount table of this process, or the doubt that not

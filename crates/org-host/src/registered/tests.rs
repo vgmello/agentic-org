@@ -447,6 +447,60 @@ fn a_recorded_credential_directory_holds_a_development_builds_custody() {
     assert!(f.custody().is_empty());
 }
 
+#[test]
+fn a_host_refuses_a_credential_directory_bound_to_another_instance() {
+    use org_platform_host::credentials::{protected_store, ProtectedStore};
+    if protected_store() != Ok(ProtectedStore::ReleaseDirectory) {
+        return;
+    }
+    let (_temp, secrets) = credential_directory();
+    let owner = fixture();
+    let other = fixture();
+    let listen = listen(7420);
+    let owner_id = owner.reserve(Some(&listen));
+    let other_id = other.reserve(Some(&listen));
+    assert_ne!(owner_id, other_id);
+    for (fixture, id) in [(&owner, &owner_id), (&other, &other_id)] {
+        fixture.record_with_credentials(
+            id.clone(),
+            listen.clone(),
+            crate::instance::setup::Service::Registered,
+            &secrets,
+        );
+    }
+    let start = |fixture: &Fixture| walking_from(secrets.parent().unwrap(), || fixture.start());
+    match start(&owner) {
+        Ok(host) => host.shutdown(),
+        Err(error) if this_machine_cannot_hold_one(&error.to_string()) => return,
+        Err(error) => panic!("{error}"),
+    }
+
+    // A first start on the other data root must not open custody. Creating a host
+    // registry would clean up this writer item.
+    let writer = secrets.join("host-secrets/writer-device");
+    fs::write(&writer, b"writer of the original instance").unwrap();
+    fs::set_permissions(&writer, fs::Permissions::from_mode(0o600)).unwrap();
+    let refused = match start(&other) {
+        Err(error) => error.to_string(),
+        Ok(host) => {
+            host.shutdown();
+            panic!("started with another instance's credential directory");
+        }
+    };
+    assert!(refused.contains("bound to another instance"), "{refused}");
+    assert!(!other.registry_db().exists());
+    assert_eq!(
+        fs::read(&writer).unwrap(),
+        b"writer of the original instance"
+    );
+    let marker = secrets.join(".instance");
+    assert_eq!(fs::read_to_string(&marker).unwrap(), owner_id);
+    assert_eq!(
+        fs::metadata(marker).unwrap().permissions().mode() & 0o7777,
+        0o600
+    );
+}
+
 /// X5 review, fourth round (Sol P1-3): the credential directory is kept apart from the
 /// account's records as it is from the data folder: one inside the records' directory is
 /// refused, and nothing is made in it.

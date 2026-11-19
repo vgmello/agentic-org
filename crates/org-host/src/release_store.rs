@@ -36,6 +36,8 @@ pub(crate) const ITEM_STORES: [ItemStore<'static>; 2] = [
 
 /// What the host knows of its credential directory when it starts.
 pub(crate) struct Facts<'a> {
+    /// The reserved instance that must own this store.
+    pub(crate) instance_id: &'a str,
     /// The absolute path the setup record holds, if it holds one.
     pub(crate) recorded: Option<&'a Path>,
     /// The instance's data root, as the descriptor the host holds its lock on.
@@ -109,6 +111,7 @@ fn open_with(
         data_root: facts.data_root,
         mount_point_required: facts.foreground,
         expect_items: facts.expect_items,
+        instance_id: Some(facts.instance_id),
     })
     .map(Some)
     // The platform's text: the directory, then the rule it broke.

@@ -55,6 +55,7 @@ fn release_directory_system() -> bool {
         true,
         protected_store(),
         Facts {
+            instance_id: "unused",
             recorded: Some(Path::new("/no-such-credential-directory")),
             data_root: std::os::fd::AsFd::as_fd(&anywhere),
             foreground: false,
@@ -105,6 +106,7 @@ impl World {
 
     fn facts(&self, expect_items: bool) -> Facts<'_> {
         Facts {
+            instance_id: self.instance.id(),
             recorded: Some(&self.credentials),
             data_root: self.instance.root_descriptor(),
             foreground: false,
@@ -188,6 +190,7 @@ fn holds(bytes: &[u8], needle: &[u8]) -> bool {
 fn a_development_build_and_a_keychain_system_open_no_release_directory() {
     let anywhere = fs::File::open("/").unwrap();
     let facts = || Facts {
+        instance_id: "fixture-instance",
         recorded: Some(Path::new("/no-such-credential-directory")),
         data_root: std::os::fd::AsFd::as_fd(&anywhere),
         foreground: true,
@@ -249,6 +252,7 @@ fn a_release_host_without_a_recorded_directory_does_not_start() {
         true,
         Ok(ProtectedStore::ReleaseDirectory),
         Facts {
+            instance_id: "fixture-instance",
             recorded: None,
             data_root: std::os::fd::AsFd::as_fd(&anywhere),
             foreground: false,

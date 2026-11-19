@@ -111,8 +111,11 @@ These settle what the decisions above left open. The detail is in the
    disjoint from the data root by device and inode and by its place in the mount
    table (and, in a container, from the whole data volume); a mount point in a
    container; and
-   an empty store for an instance whose records say keys exist refuses. Anything else
-   refuses. The same engine is every development build's store. A development build on
+   an empty store for an instance whose records say keys exist refuses. Before opening
+   either item store, the host checks the instance ID in a private `.instance` marker,
+   or binds an unused directory under the store lock. Setup refuses a new foreground
+   reservation on a secrets volume already bound or holding credentials. The same
+   engine is every development build's store. A development build on
    Linux records and uses the credential directory as a release build does; on macOS a
    development build's registered setup needs an absolute `ORG_OFFICE_DEV_KEY_DIR`, which
    setup makes, with mode 700, before it registers the service.
@@ -140,8 +143,9 @@ These settle what the decisions above left open. The detail is in the
     vendor sandboxes create user namespaces. **For now the container serves plain
     HTTP** (owner, 2026-11-18: "http for now is fine"): a listener mode of its own,
     allowed only in the foreground mode and chosen explicitly in the setup file; the
-    documented command publishes it on `127.0.0.1` only, and published on another
-    interface sign-in and sessions travel unencrypted. **Pending, recorded by the
+    documented Docker command publishes it on `127.0.0.1` only. Every machine that
+    can reach the listen address can reach sign-in and sessions in plain text,
+    including with foreground mode on a bare host. **Pending, recorded by the
     owner the same day:** HTTPS for the container with a certificate the instance
     makes for itself at first start, or one the operator supplies (implementation
     plan, X7); the product serves no HTTPS on any system yet. Its first registration link

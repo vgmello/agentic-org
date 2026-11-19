@@ -754,7 +754,9 @@ impl Host {
             None => HostLock::acquire(&layout)?,
         };
         // Decided only by the host that holds the home.
-        // An unregistered host reads no catalog, so it may never judge a key an orphan.
+        // With an instance, either the key store is scoped by ID or the release directory
+        // was opened with a verified instance binding. An unregistered host cannot judge
+        // which keys are orphans.
         let sweep_orphans = instance.is_some();
         let server_check = startup_server_check(&config)?;
         let io = |context| move |source| HostError::Io { context, source };

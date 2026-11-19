@@ -12,6 +12,7 @@
 //! ```text
 //! <path>/                            the release directory, mode 0700
 //!     .lock                          mode 0600, empty; locked while a host has the directory open
+//!     .instance                      mode 0600; the instance ID, when the host binds the directory
 //!     <item store>/                  one directory per item store, mode 0700 (a directory store)
 //! ```
 //!
@@ -95,6 +96,12 @@
 //!     whatever the process's file-creation mask is; an existing one is never
 //!     changed.
 //!
+//! 12. When the host supplies an instance ID, `.instance` must name it. The marker is a
+//!     regular file of the service user with mode `0600` and one link. The host can publish
+//!     it only while holding the lock and while the item directories hold no files other
+//!     than their locks. New foreground setup requires an unused store and makes no lock
+//!     or marker.
+//!
 //! # What the private-group exception does not establish
 //!
 //! "Private" is what two entries of the account database say: the group is the
@@ -154,6 +161,9 @@ pub struct ReleaseDirectory<'a> {
     pub mount_point_required: bool,
     /// Whether the host's records say that keys exist. An empty store is then refused.
     pub expect_items: bool,
+    /// If given, require this instance's binding before opening any item store. A host
+    /// claims an unbound directory only if it holds no credentials.
+    pub instance_id: Option<&'a str>,
 }
 
 // No path in the `Debug` output of a location.
@@ -219,6 +229,16 @@ pub fn release_directory_apart_from(
     account_data: &[BorrowedFd<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
     native::release_directory(&location, item_stores, account_data).map(|root| ReleaseRoot { root })
+}
+
+/// Preflight for a new foreground reservation. Check the same directory and placement rules
+/// as a host, and refuse a binding or any credentials already there. Creates nothing.
+pub fn check_unused_release_directory(
+    location: ReleaseDirectory<'_>,
+    item_stores: &[ItemStore<'_>],
+    account_data: &[BorrowedFd<'_>],
+) -> Result<(), CredentialError> {
+    native::check_unused_release_directory(&location, item_stores, account_data)
 }
 
 /// [`release_directory_with_stores`] for a caller that opens no item store: the
@@ -344,6 +364,12 @@ pub enum RootRule {
     MountPointUnknown,
     /// The host's records say keys exist, and the release directory holds no item.
     CredentialsMissing,
+    /// A directory with no instance binding already holds credentials.
+    CredentialsPresent,
+    /// The binding is to another instance, or setup requires an unused store.
+    WrongInstance,
+    /// The owner-only instance marker could not be safely read or persisted.
+    InstanceMarker,
     /// The release directory is, is inside or contains one of the account's other data
     /// directories ([`release_directory_apart_from`]), inside one filesystem or as this
     /// process sees them, or, where a mount point is required, is on the volume one of them
@@ -458,6 +484,20 @@ impl fmt::Display for RootRule {
             Self::CredentialsMissing => f.write_str(
                 "credentials missing: the host's records say keys exist, and the credential \
                  directory holds none; restore the directory, nothing was created",
+            ),
+            Self::CredentialsPresent => f.write_str(
+                "the credential directory already holds items without an instance binding; \
+                 keep the original volumes together and use an unused secrets volume for a \
+                 new instance",
+            ),
+            Self::WrongInstance => f.write_str(
+                "the credential directory is already bound to another instance; use the \
+                 matching data and secrets volumes, or use an unused secrets volume for a \
+                 new instance",
+            ),
+            Self::InstanceMarker => f.write_str(
+                "the credential directory's instance marker (.instance) is unsafe or could \
+                 not be persisted",
             ),
             Self::AccountData => f.write_str(
                 "the credential directory is in the volume that holds the account's records, \

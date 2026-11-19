@@ -298,7 +298,7 @@ fn admin_reset_acts_for_the_named_service_user_only_when_root_runs_it() {
         0 => Some(Account { uid: 0, gid: 0 }),
         _ => None,
     };
-    let decide = |me, named, sudo| service_account(me, named, sudo, by_name, by_id);
+    let decide = |me, named, sudo| service_account(me, true, named, sudo, by_name, by_id);
     // Root: the named account, or the one sudo names; --user wins.
     assert_eq!(decide(0, Some("agentic"), None), Ok(Some(agentic)));
     assert_eq!(decide(0, None, Some("61000")), Ok(Some(agentic)));
@@ -318,6 +318,23 @@ fn admin_reset_acts_for_the_named_service_user_only_when_root_runs_it() {
         .unwrap_err()
         .contains("does not run as root"));
     assert!(decide(0, None, Some("0")).is_err());
+    // Where peers are identified by image, root has no route to the service user.
+    for named in [None, Some("agentic")] {
+        let refused = service_account(
+            0,
+            false,
+            named,
+            Some("61000"),
+            |_| panic!("root must be refused before looking up the service user"),
+            |_| panic!("root must be refused before looking up the service user"),
+        )
+        .unwrap_err();
+        assert_eq!(refused, "Run agentic-org admin reset as the service user.");
+    }
+    assert_eq!(
+        service_account(61000, false, None, None, by_name, by_id),
+        Ok(None)
+    );
     // Anyone else: itself, with or without its own name; never another account.
     assert_eq!(decide(61000, None, None), Ok(None));
     assert_eq!(
@@ -433,10 +450,15 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
         "{out}"
     );
     assert!(out.contains("agentic-org serve --setup <file>"), "{out}");
-    assert!(
-        out.contains("run as root: agentic-org admin reset --user "),
-        "{out}"
-    );
+    let reset = match crate::test_programs::image_identity() {
+        org_platform_host::admission::ImageIdentity::VerifiedBytes => {
+            "run as root: agentic-org admin reset --user "
+        }
+        org_platform_host::admission::ImageIdentity::CodeSignature => {
+            "run as the service user: agentic-org admin reset"
+        }
+    };
+    assert!(out.contains(reset), "{out}");
     assert!(!out.contains("/register"), "{out}");
     assert!(!out.contains("Service registered"), "{out}");
     let record = Journal::snapshot(&base, None).unwrap();
@@ -460,7 +482,18 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
     // host binds it. It does not walk the instance's data again for its modes (X5 review
     // F5): that is the first run's report.
     assert!(out.contains("File permissions: "), "{out}");
-    let (result, again) = run(&input);
+    let locator = std::fs::File::options()
+        .write(true)
+        .open(paths.locator.join("registry.lock"))
+        .unwrap();
+    locator.lock().unwrap();
+    let (result, again) = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            locator.unlock().unwrap();
+        });
+        run(&input)
+    });
     assert!(result.unwrap().is_none());
     let reported: Vec<&str> = out
         .lines()
@@ -497,19 +530,18 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
     assert_eq!(Journal::snapshot(&base, None).unwrap(), record);
 }
 
-/// What setup and the host say of a published plain-HTTP listener: the loopback to publish
-/// on, what happens on another interface, the address to open, and that there is no HTTPS.
+/// The notice covers anyone who can reach the listen address, including on a bare host.
 #[test]
-fn a_published_plain_http_listener_is_announced_with_where_it_is_safe() {
+fn a_published_plain_http_listener_warns_every_reachable_peer() {
     let listen: ListenConfig = serde_json::from_str(
         r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://127.0.0.1:8443","hsts":"off"}"#,
     )
     .unwrap();
     assert_eq!(
         published_http_notice(&listen),
-        "serving plain HTTP on a published port (0.0.0.0:8443): publish it on the Docker \
-         host's 127.0.0.1 only (docker run -p 127.0.0.1:8443:8443); published on another \
-         interface, sign-in and every session travel unencrypted on that network. Open \
+        "serving plain HTTP on a published port (0.0.0.0:8443). Every machine that can \
+         reach the listen address can reach sign-in and sessions in plain text. In Docker, \
+         publish only on the host's 127.0.0.1 (docker run -p 127.0.0.1:8443:8443). Open \
          http://127.0.0.1:8443. HTTPS is not available yet."
     );
 }
@@ -1064,7 +1096,7 @@ mod credentials {
         let credentials = account.base.join("state/agentic-org/credentials/x");
         let before = tree(&account.base);
         assert_eq!(
-            credential_directory(&credentials, false, data_fd(), &account.base, false, enter),
+            credential_directory(&credentials, data_fd(), &account.base, false, enter),
             Ok(credentials.clone())
         );
         assert_eq!(tree(&account.base), before, "the probe left what it made");
@@ -1080,13 +1112,13 @@ mod credentials {
         }
         let before = tree(&account.base);
         assert_eq!(
-            credential_directory(&credentials, false, data_fd(), &account.base, false, enter),
+            credential_directory(&credentials, data_fd(), &account.base, false, enter),
             Ok(credentials.clone())
         );
         assert_eq!(tree(&account.base), before, "the probe left its lock file");
         // The reservation's own check keeps them.
         assert_eq!(
-            use_credential_directory(&credentials, false, data_fd(), &account.base, enter),
+            use_credential_directory(&credentials, data_fd(), &account.base, enter),
             Ok(credentials.clone())
         );
         assert!(credentials.join(".lock").exists());
@@ -1318,8 +1350,7 @@ mod credentials {
             assert!(!location.path.exists(), "setup made the directory");
             Err(org_platform_host::credentials::CredentialError::Unsafe)
         };
-        let refused = use_credential_directory(&secrets, true, data_fd(), &account.base, refusing)
-            .unwrap_err();
+        let refused = check_mounted_store(&secrets, data_fd(), refusing).unwrap_err();
         assert_eq!(asked.get(), 1);
         assert!(
             refused.starts_with("the credential directory cannot be used: ")
@@ -1335,8 +1366,8 @@ mod credentials {
             assert!(location.path.is_dir());
             Err(org_platform_host::credentials::CredentialError::Unsafe)
         };
-        let refused = use_credential_directory(&secrets, false, data_fd(), &account.base, lenient)
-            .unwrap_err();
+        let refused =
+            use_credential_directory(&secrets, data_fd(), &account.base, lenient).unwrap_err();
         assert!(!refused.contains("mounted volume"), "{refused}");
         assert_eq!(tree(&account.base), before, "a refused directory was kept");
         // On this system, with the platform's own check: a plain directory is not a mount.
@@ -1346,12 +1377,13 @@ mod credentials {
             let enter = |location: org_platform_host::credentials::ReleaseDirectory<'_>| {
                 release_directory_below(&account.base, location)
             };
-            let refused = use_credential_directory(&secrets, true, data_fd(), &account.base, enter)
-                .unwrap_err();
+            let refused =
+                check_mounted_store(&secrets, data_fd(), |location| enter(location).map(drop))
+                    .unwrap_err();
             println!("a plain directory in the foreground mode: {refused}");
             assert!(refused.contains("mount"), "{refused}");
             assert_eq!(
-                use_credential_directory(&secrets, false, data_fd(), &account.base, enter),
+                use_credential_directory(&secrets, data_fd(), &account.base, enter),
                 Ok(secrets.clone())
             );
         }

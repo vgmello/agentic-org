@@ -457,7 +457,14 @@ checks and a lock.
   - When `expect_items` is set and the store holds no item, the store refuses with
     "credentials missing", and the host does not start: it never creates fresh keys
     for offices that already have wrapped records.
-  - An exclusive `flock` on `lock` admits one host per instance.
+  - An exclusive `flock` on `.lock` admits one host per store.
+  - An owner-only mode-`0600` `.instance` file must name the instance. The first
+    host atomically writes and flushes this marker under the lock before opening
+    either item store. It may claim an unmarked store only if the declared item
+    folders are empty apart from their locks. A new foreground setup checks for an
+    unused store without writing a lock or marker. Existing credentials with no
+    marker and records for a different instance both refuse before the host can
+    use or sweep any key.
 - **Checks on every item.** A regular file opened with `openat` and `O_NOFOLLOW`,
   owned by the service user, mode exactly `0600`, one link, at most 16 KiB. A write
   goes to a new temporary file, `fsync`, then `renameat2` with `RENAME_NOREPLACE`
@@ -538,7 +545,7 @@ it). As built, where the text above is not exact:
 - Whatever an open makes gets its mode set, whatever the process's mask is (the lock
   and item files on their descriptor; an item store's directory by name in its parent,
   which is the checked owner-only directory); nothing that exists is changed.
-- The lock file is `.lock`, the engine's name. The layout is `<dir>/.lock`,
+- The layout is `<dir>/.lock`, `<dir>/.instance` (the instance ID),
   `<dir>/office-keys/<office id>.key` (the raw 32 bytes, as in the Keychain) and
   `<dir>/host-secrets/<name>`.
 - The empty-store rule is checked over the whole store before any view exists. The
@@ -845,10 +852,11 @@ reaped and the stop signal reaches `serve`.
 **The container as built** (X5; the owner's direction of 2026-11-18: a plain `docker
 run` that publishes the port, and plain HTTP for now). The image declares its volumes;
 the seccomp and AppArmor profiles are optional and exist for agents' vendor sandboxes.
-The container serves plain HTTP through a listener mode of its own (`http_published`)
-that only the foreground mode may choose. HTTPS with a certificate the instance makes for
-itself, or one the operator supplies, is pending (implementation plan, X7): the product
-serves no HTTPS on any system yet.
+The `http_published` listener is available in foreground mode on bare macOS and
+Linux machines and in containers. Every machine that can reach the listen address
+can reach sign-in and sessions in plain text. A bare host using `0.0.0.0` listens on
+all IPv4 interfaces, including those on the LAN. HTTPS with a certificate made by
+the instance or supplied by the operator is pending (implementation plan, X7).
 
 **The container file** (`deploy/container/Dockerfile`, `deploy/container/README.md`):
 
@@ -927,6 +935,8 @@ serves no HTTPS on any system yet.
 input as one strict JSON object: `version`, `service` (`registered` or `foreground`),
 `root`, `credentials` (the absolute store directory of section 3.2, required with
 `foreground` on Linux) and `listen` (`address`, `port`, `scheme`, `origin`, `hsts`).
+Configuration files require an explicit `service`. Persisted v1 setup records that
+predate that field resume in `registered` mode.
 
 ### 3.5 Agent isolation
 

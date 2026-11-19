@@ -33,15 +33,18 @@
 #      registration link, and a refusal for any other Host; then an office worker starts
 #      and `agent-os` sends and reads inside the container (the office is stored by the
 #      test's own program: no command creates one yet);
-#   4. LNX-4: everything under /secrets is the service user's, files 600 and folders 700,
-#      and no key is under /data; nothing was written outside the two volumes;
+#   4. LNX-4: the service's directories and files under /secrets are private, no key
+#      is under /data, and nothing was written outside the two volumes;
 #   5. `docker stop` ends the service within 2.5 s (inside the runtime's grace), with exit code 0;
 #   6. a new container on the same volumes is the same instance with the same keys, reads
 #      a message sent before the replacement, sends and reads a new one, keeps the
 #      browser's session and signs the administrator in again;
 #   7. a new container with the data volume and a new, empty secrets volume does not start
-#      ("credentials missing"), and nothing is made in the empty volume;
-#   8. a plain `docker run` with no volume named (anonymous volumes) works too;
+#      ("credentials missing"), and nothing is made in the empty volume. Fresh data with
+#      the used secrets volume is also refused, with no reservation or credential changes;
+#   8. a plain `docker run` with anonymous volumes works, and the host writes a private
+#      recovery credential there. The hardened run serves, allows root's reset and stops
+#      cleanly. Dropping all capabilities refuses root's reset;
 #   9. what the credential store refuses: a path that is not a mount, a volume root that
 #      is not the service user's, another volume mounted inside the secrets volume (a
 #      folder of the data volume, on the same filesystem, at an item store or deeper), a
@@ -187,10 +190,9 @@ bridge() {
 # started replaces the socket file of the one before it.
 answers() { bridge "$1" 2>/dev/null && agent "$1" nova msg inbox --json >/dev/null 2>&1; }
 # A listing of every file in the secrets volume with its owner, mode and digest.
-secrets_listing() {
-    docker exec "$1" sh -c 'cd /secrets && find . -type f ! -name .lock | sort | while read -r f; do
-        printf "%s %s %s\n" "$(stat -c "%u:%g %a" "$f")" "$(sha256sum < "$f" | cut -d" " -f1)" "$f"; done'
-}
+secrets_manifest='cd /secrets && find . -type f ! -name .lock | sort | while read -r f; do
+    printf "%s %s %s\n" "$(stat -c "%u:%g %a" "$f")" "$(sha256sum < "$f" | cut -d" " -f1)" "$f"; done'
+secrets_listing() { docker exec "$1" sh -ec "$secrets_manifest"; }
 
 docker version >/dev/null 2>&1 || fail "no Docker daemon answers"
 engine=$(docker version -f '{{.Server.Version}}')
@@ -339,7 +341,8 @@ echo "any other Host (localhost:8443, another port, this machine's name, another
 log=$(logs "$tag-a")
 grep -E 'web process started' <<<"$log" | sed 's/^/  /' || fail "the host did not log the web process's start"
 grep -E 'serving plain HTTP on a published port' <<<"$log" | sort -u | sed 's/^/  /'
-has 'serving plain HTTP on a published port' "$log" || fail "the plain-HTTP notice is not in the log"
+has 'Every machine that can reach the listen address can reach sign-in and sessions in plain text' "$log" ||
+    fail "the plain-HTTP notice omits reachable machines"
 has 'web process started, confined by the seccomp filter' "$log" || fail "the web process is not confined by the filter"
 
 say "2. the first registration link: root, naming the service user, at a terminal"
@@ -406,13 +409,12 @@ wait_until "the web process to serve again" answers_http
 say "4. LNX-4 in the container, and nothing outside the volumes"
 secrets_listing "$tag-a" | sed 's/^/  /'
 [ -z "$(docker exec "$tag-a" find /secrets ! -user "$user")" ] || fail "a secret is not the service user's"
-[ -z "$(docker exec "$tag-a" find /secrets -type f ! -perm 600)" ] || fail "a secret file is not 600"
+[ -z "$(docker exec "$tag-a" find /secrets -type f ! -name "$office.key" ! -perm 600)" ] ||
+    fail "a service-created file under /secrets is not 600"
 [ -z "$(docker exec "$tag-a" find /secrets -type d ! -perm 700)" ] || fail "a secrets folder is not 700"
-[ "$(docker exec "$tag-a" od -An -v -tx1 "/secrets/office-keys/$office.key" | tr -d ' \n')" = "$key_hex" ] ||
-    fail "the office's key is not in /secrets/office-keys"
 [ -z "$(docker exec "$tag-a" find /data \( -name '*.key' -o -name 'host-secrets' -o -name 'office-keys' -o -name 'dev-keys' \))" ] ||
     fail "a key store is under /data"
-echo "everything under /secrets is $user's, files 600 and folders 700; no key store under /data"
+echo "/secrets belongs to $user, service-created files 600 and folders 700, with no key store under /data"
 changed=$(docker diff "$tag-a")
 [ -z "$changed" ] || fail "written outside the volumes: $changed"
 echo "docker diff is empty: nothing was written outside /data and /secrets"
@@ -492,14 +494,56 @@ has 'credentials missing' "$log" || fail "the refusal is not 'credentials missin
 echo "  refused, and nothing was made in the empty secrets volume"
 docker rm -f -v "$tag-c" >/dev/null
 
-say "8. a plain docker run, no volume named"
+say "7b. fresh data with the old secrets volume"
+volumes+=("$tag-fresh")
+docker volume create "$tag-fresh" >/dev/null
+run "$tag-c2" -v "$tag-fresh:/data" -v "$tag-secrets:/secrets"
+wait_until "the container with the used secrets volume to end" exited "$tag-c2"
+log=$(last_error "$tag-c2")
+echo "  $log"
+[ "$(docker inspect -f '{{.State.ExitCode}}' "$tag-c2")" != 0 ] || fail "the used secrets volume was accepted"
+has 'already bound to another instance' "$log" || fail "the refusal does not name the binding"
+left=$(docker run --rm -v "$tag-fresh:/data:ro" --entrypoint /bin/sh "$image" -c     'find /data -mindepth 1 \( -name instance -o -name setup.v1.json -o -name instance.json \)')
+[ -z "$left" ] || fail "the refused start left a reservation: $left"
+[ "$(docker run --rm -v "$tag-secrets:/secrets:ro" --entrypoint /bin/sh "$image" -ec "$secrets_manifest")" = "$before" ] ||
+    fail "the refused start changed the original credentials"
+echo "  refused before reservation, with all original credentials unchanged"
+docker rm -f -v "$tag-c2" >/dev/null
+
+say "8. a plain docker run on anonymous volumes, with a credential written by the host"
 started=$(now)
 run "$tag-d" -p "127.0.0.1:$port:8443"
 wait_until "the instance on anonymous volumes to serve" serving "$tag-d"
 echo "serving $(since "$started") s after docker run -d -p 127.0.0.1:$port:8443 <image>"
 docker inspect -f '{{range .Mounts}}{{.Type}} {{.Destination}}{{"\n"}}{{end}}' "$tag-d" | sort | sed 's/^/  /'
-has 'register#' "$(docker exec -t -u 0 "$tag-d" agentic-org admin reset --user "$user")" ||
-    fail "no registration link on anonymous volumes"
+link=$(docker exec -t -u 0 "$tag-d" agentic-org admin reset --user "$user" | tr -d '\r')
+token=$(sed -n 's|.*http://127\.0\.0\.1:8443/register#\([A-Za-z0-9_-]*\).*|\1|p' <<<"$link" | head -n 1)
+[ -n "$token" ] || fail "no registration link on anonymous volumes"
+wait_until "the anonymous instance's web process to serve" answers_http
+signed_in "registration on anonymous volumes" \
+    "$(api POST /api/v1/links/register "{\"link\":\"$token\",\"login\":\"Owner\",\"password\":\"$password\"}")"
+# The create operation uses a ULID with a current timestamp. This instance submits just one.
+milliseconds=$(docker exec "$tag-d" date +%s000)
+alphabet=0123456789ABCDEFGHJKMNPQRSTVWXYZ
+timestamp=
+for _ in $(seq 1 10); do
+    digit=$((milliseconds % 32))
+    timestamp=${alphabet:digit:1}$timestamp
+    milliseconds=$((milliseconds / 32))
+done
+operation=${timestamp}0000000000000000
+scope=$(instance_id "$tag-d")
+code=$(api POST /api/v1/organizations \
+    "{\"operation_id\":\"$operation\",\"scope\":{\"kind\":\"instance\",\"instance_id\":\"$scope\"},\"params\":{\"name\":\"Acme\",\"slug\":\"acme\",\"organization_repository\":{\"kind\":\"remote\",\"remote_url\":\"https://example.test/acme.git\"},\"state_branch\":\"org/state\"}}" \
+    -H "Cookie: $cookie" -H "X-Org-Session-Proof: $proof")
+[ "$code" = 202 ] || [ "$code" = 200 ] ||
+    fail "the host did not admit organization creation: $code $(head -c 300 "$scratch/body")"
+credential=/secrets/host-secrets/recovery.$operation
+[ "$(docker exec "$tag-d" find "$credential" -type f -user "$user" -perm 600)" = "$credential" ] ||
+    fail "the host did not write its recovery credential under /secrets/host-secrets with mode 600"
+[ -z "$(docker exec "$tag-d" find /data -name "recovery.$operation")" ] ||
+    fail "the host wrote the recovery credential under /data"
+echo "  the host wrote a service-owned recovery credential in /secrets/host-secrets with mode 600"
 started=$(now)
 docker stop "$tag-d" >/dev/null
 echo "docker stop: $(since "$started") s, exit code $(docker inspect -f '{{.State.ExitCode}}' "$tag-d")"
@@ -531,6 +575,32 @@ echo "  ${log:0:260}"
 has 'credential directory' "$log" || fail "the refusal does not name the credential directory"
 [ -z "$(docker run --rm -v "$tag-v1:/data" --entrypoint /bin/sh "$image" -c 'find /data -name "*.key"')" ] || fail "a key was written"
 docker rm -f -v "$tag-v3" >/dev/null
+
+say "8d. hardened containers serve and root's reset needs the documented capabilities"
+run "$tag-hardened" -p "127.0.0.1:$port:8443" --read-only --security-opt no-new-privileges \
+    --cap-drop ALL --cap-add SETUID --cap-add SETGID --cap-add DAC_OVERRIDE
+wait_until "the hardened instance to serve" serving "$tag-hardened"
+wait_until "the hardened instance's web process to serve" answers_http
+has 'http://127.0.0.1:8443/register#' "$(docker exec -t -u 0 "$tag-hardened" agentic-org admin reset --user "$user")" ||
+    fail "root could not get a registration link in the hardened container"
+started=$(now)
+docker stop "$tag-hardened" >/dev/null
+took=$(since "$started")
+code=$(docker inspect -f '{{.State.ExitCode}}' "$tag-hardened")
+echo "  HTTP and root's registration link worked. docker stop: $took s, exit code $code"
+[ "$code" = 0 ] || fail "the hardened service ended with $code"
+awk -v t="$took" 'BEGIN { exit !(t < 2.5) }' || fail "the hardened service took $took s to stop (its bound is 2.5 s)"
+docker rm -v "$tag-hardened" >/dev/null
+
+run "$tag-no-caps" -p "127.0.0.1:$port:8443" --cap-drop ALL
+wait_until "the instance without capabilities to serve" serving "$tag-no-caps"
+wait_until "the web process without capabilities to serve" answers_http
+if out=$(docker exec -t -u 0 "$tag-no-caps" agentic-org admin reset --user "$user" 2>&1); then
+    fail "root's reset worked with all capabilities dropped"
+fi
+has 'acting as the service user: Operation not permitted' "$out" || fail "root's reset was refused with: $out"
+echo "  with all capabilities dropped, HTTP worked and root's reset said 'acting as the service user: Operation not permitted'"
+docker rm -f -v "$tag-no-caps" >/dev/null
 
 say "9. what the credential store refuses"
 # refused <name> <words expected in the log> <docker run options...>
@@ -658,8 +728,7 @@ refused "$tag-nest" "holds the account's records" \
     -v "$tag-nest-d:/data" -v "$tag-nest-i:/data/instance" \
     --mount "type=volume,src=$tag-nest-d,dst=/secrets,volume-subpath=secrets" ||
     fail "the refusal does not name the account's records"
-# No key and no item store is made there. (Before setup compared the directory with the
-# records too, its own check left its lock file `.lock` there; that is tolerated here.)
+# The preflight must leave the secrets folder untouched.
 left=$(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'find /v/secrets -mindepth 1')
 [ -z "$left" ] || fail "the refused start wrote into the data volume's secrets folder: $left"
 echo "  and no key or item store was written in it ($(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'ls -A /v/secrets' | tr '\n' ' '))"

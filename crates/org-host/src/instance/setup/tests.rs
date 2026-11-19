@@ -32,6 +32,33 @@ fn base() -> (tempfile::TempDir, PathBuf) {
     (temp, base)
 }
 #[test]
+fn v1_setup_record_resumes_as_registered_but_configuration_still_requires_service() {
+    let bytes = include_bytes!("setup-v1-record.json");
+    let (_temp, base) = base();
+    let journal = Journal::open(&base, None).unwrap();
+    journal.directory.publish(FILE, bytes, None).unwrap();
+
+    let mut record = Journal::snapshot(&base, None).unwrap();
+    assert_eq!(record.input.service, Service::Registered);
+    assert!(record.service_registered && record.registry_created);
+    assert_eq!(journal.read().unwrap(), Some(record.clone()));
+    record.initial_link_issued = true;
+    journal.write(&record).unwrap();
+    assert_eq!(journal.read().unwrap(), Some(record));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(
+            &fs::read(base.join("setup/default").join(FILE)).unwrap()
+        )
+        .unwrap()["input"]["service"],
+        "registered"
+    );
+
+    let raw: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    let omitted = serde_json::to_vec(&raw["input"]).unwrap();
+    assert!(Input::from_configuration(&omitted).is_err());
+}
+
+#[test]
 fn original_operation_survives_reopen_and_input_is_frozen() {
     let (_temp, base) = base();
     let original = input(base.join("instance"));
