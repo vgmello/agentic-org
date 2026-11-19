@@ -344,6 +344,15 @@ pub fn archive_needs_an_empty_team<E: OrganizationEngine, G>(open: &dyn Fn() -> 
     let refused = bench.refused(7, &bench.archive(0x21));
     assert_eq!(refused.code, RejectCode::NotEmpty);
     bench.deactivate(8, 0x31);
+    // An active child team alone keeps it too.
+    bench.created_team(10, 0x23, 0x21);
+    let refused = bench.refused(11, &bench.archive(0x21));
+    assert_eq!(refused.code, RejectCode::NotEmpty);
+    assert!(
+        refused.message.contains("1 active teams and 0 employees"),
+        "{refused:?}"
+    );
+    bench.done(12, &bench.archive(0x23));
     let archived = bench.done(9, &bench.archive(0x21));
     assert_eq!(archived.revision, 2);
     let team = bench.team(0x21);
@@ -817,6 +826,24 @@ pub fn every_write_raises_the_revision_by_one_and_is_receipted<E: OrganizationEn
         assert_eq!(receipt.actor, Actor::Employee(id(CREATOR)));
         assert_eq!(receipt.outcome, Outcome::Completed);
     };
+    // Last changed by the system at no recorded instant: a change by the owner says so.
+    let mut team = bench.team(0x21);
+    team.meta.updated_by = By::System;
+    team.meta.updated_at = None;
+    let mut person = bench.employee(0x31);
+    person.meta.updated_by = By::System;
+    person.meta.updated_at = None;
+    let change = Change::new(Op::CreateTeam.ack())
+        .put(
+            durable(&team_file(&[TEAM, 0x21])),
+            records::encode_team(&team),
+        )
+        .put(
+            durable(&profile_file(&[TEAM, 0x21], EmployeeKind::Person, 0x31)),
+            records::encode_employee(&person),
+        );
+    let written = bench.write(change).expect("written");
+    assert_eq!(written.outcome, Outcome::Completed);
     let generation = bench.generation();
     let r = bench.done(10, &UpdateTeam::new(id(0x21), 1));
     assert_eq!(r.revision, 2);
