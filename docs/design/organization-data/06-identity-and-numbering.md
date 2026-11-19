@@ -1,6 +1,6 @@
 # Identity and numbering
 
-Status: **selected** data contract, revision 2.10. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
+Status: **selected** data contract, revision 2.11. This document owns readable reference allocation data. See the [identity summary](README.md), [task scopes](03-features-and-work.md) and [office placement](04-agent-structure.md). It specifies a data contract and required atomicity; it does not deploy a service or implement failover.
 
 ## Stable IDs, readable references and scopes
 

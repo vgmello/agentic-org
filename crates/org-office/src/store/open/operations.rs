@@ -39,6 +39,15 @@ impl StoreOp for CreateOrganizationOp {
         let key = ca.record(&here, &operation_id);
         key.check()
             .map_err(|why| StoreError::invalid(format!("the CA key record: {why}")))?;
+        // The package must be this organization's and carry this public key: a mismatch
+        // committed in entry 1 would leave an HQ that can never open (and nothing is
+        // generated again).
+        let sealed = records::ca_escrow_public_key(&ca.package, &here.organization_id)
+            .map_err(|why| StoreError::invalid(format!("the CA escrow package: {why}")))?;
+        if sealed != ca.public_key {
+            let why = "the CA public key is not the escrow package's";
+            return Err(StoreError::invalid(why));
+        }
         let operation = key.bind(command.operation(operation_id));
         let key_path = office_local::records::ca_key_path(&here.office_id);
         let key = office_local::records::encode_ca_key(&key);

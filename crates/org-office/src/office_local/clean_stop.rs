@@ -16,17 +16,20 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use org_store::{Files, FilesError, Id};
+use org_store::{Files, Id};
 
 use super::records::{self, CleanStop};
 
 /// The marker `office`'s last stop left, as read before the store opens. `None` when
-/// there is none. A marker that is not in its form is `Some(None)`: there, and not clean.
-pub fn read(files: &Files, office: &Id) -> Result<Option<Option<CleanStop>>, FilesError> {
-    let Some(bytes) = files.read(&records::clean_stop_path(office))? else {
-        return Ok(None);
-    };
-    Ok(Some(records::decode_clean_stop(&bytes).ok()))
+/// there is none. Something there that is not a marker in its form, or that cannot be
+/// read as one (a link, a folder, a file over the size limit), is `Some(None)`: there,
+/// and not clean. Reading it never fails the opening.
+pub fn read(files: &Files, office: &Id) -> Option<Option<CleanStop>> {
+    match files.read(&records::clean_stop_path(office)) {
+        Ok(None) => None,
+        Ok(Some(bytes)) => Some(records::decode_clean_stop(&bytes).ok()),
+        Err(_) => Some(None),
+    }
 }
 
 /// Whether the marker `found` says the last stop was clean: there, in its form, for this
@@ -43,15 +46,43 @@ fn file(durable: &Path, office: &Id) -> PathBuf {
     durable.join(records::clean_stop_path(office).as_str())
 }
 
-/// Removes `office`'s marker, if there is one, and syncs its folder so a crash after the
-/// next write cannot bring it back.
+/// Removes whatever stands at `office`'s marker path, and syncs its folder so a crash
+/// after the next write cannot bring it back. A link is removed, never followed; an empty
+/// folder is removed; a folder with anything in it is refused, never emptied.
 pub fn remove(durable: &Path, office: &Id) -> io::Result<()> {
     let path = file(durable, office);
-    match fs::remove_file(&path) {
-        Ok(()) => sync_dir(path.parent().expect("the marker is in a folder")),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e),
+    let folder = path.parent().expect("the marker is in a folder");
+    match real_folders(durable, folder) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        checked => checked?,
     }
+    let removed = match fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => Err(e),
+        Ok(meta) if meta.is_dir() => fs::remove_dir(&path).map_err(|e| {
+            let refused = format!(
+                "a folder that is not empty stands where the clean-stop marker goes ({}): {e}",
+                path.display()
+            );
+            io::Error::new(e.kind(), refused)
+        }),
+        Ok(_) => fs::remove_file(&path),
+    };
+    removed?;
+    sync_dir(folder)
+}
+
+/// Every folder from `folder` up to the durable root is a folder, never a link.
+fn real_folders(durable: &Path, folder: &Path) -> io::Result<()> {
+    let mut below = folder;
+    while below != durable {
+        if !fs::symlink_metadata(below)?.is_dir() {
+            let refused = "a folder of the clean-stop marker is not a folder";
+            return Err(io::Error::new(io::ErrorKind::InvalidData, refused));
+        }
+        below = below.parent().expect("under the durable root");
+    }
+    Ok(())
 }
 
 /// Writes `office`'s marker: the store is closed, flushed and materialized through
@@ -63,15 +94,7 @@ pub fn write(durable: &Path, office: &Id, marker: &CleanStop) -> io::Result<()> 
         .recursive(true)
         .mode(0o700)
         .create(folder)?;
-    // Every folder from the durable root down is a folder, never a link.
-    let mut below = folder;
-    while below != durable {
-        if !fs::symlink_metadata(below)?.is_dir() {
-            let refused = "a folder of the clean-stop marker is not a folder";
-            return Err(io::Error::new(io::ErrorKind::InvalidData, refused));
-        }
-        below = below.parent().expect("under the durable root");
-    }
+    real_folders(durable, folder)?;
     let mut out = OpenOptions::new()
         .write(true)
         .create(true)

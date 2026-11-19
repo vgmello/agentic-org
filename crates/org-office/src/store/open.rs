@@ -236,7 +236,7 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     }
     // The last stop's marker is read before the store opens, and removed only once it
     // has: an opening that fails leaves it for the next.
-    let marker = clean_stop::read(&Files::open(&config.durable_root)?, &here.office_id)?;
+    let marker = clean_stop::read(&Files::open(&config.durable_root)?, &here.office_id);
     let store = Store::open(parts)?;
     let head = store.status().flushed;
     let stopped_cleanly = clean_stop::was_clean(marker.as_ref(), &here.journal_incarnation, head);

@@ -150,13 +150,14 @@ fn ca_material_that_breaks_a_rule_is_refused_and_records_nothing() {
         let foreign = ca_material(&id(0xB2), CA);
         let mut cut = ca_material(&organization, CA);
         cut.package.pop();
-        for (n, bad) in [compressed, short, foreign, cut].into_iter().enumerate() {
+        // A well-formed package sealed for another public key than the one given.
+        let mut mismatched = ca_material(&organization, CA);
+        mismatched.public_key = ca_material(&organization, 2).public_key;
+        let cases = [compressed, short, foreign, cut, mismatched];
+        for (n, bad) in cases.into_iter().enumerate() {
             let refused = create_organization_with(&store, 1, bad);
             assert!(
-                matches!(
-                    refused,
-                    Err(StoreError::Invalid(_) | StoreError::Projection(_))
-                ),
+                matches!(refused, Err(StoreError::Invalid(_))),
                 "{engine:?} {n}: {refused:?}"
             );
         }
@@ -738,4 +739,57 @@ fn only_an_active_person_leading_the_parent_or_above_creates_a_team() {
         assert_eq!(code(ask(&person, inactive)), ErrorCode::NotAuthorized);
         store.close().unwrap();
     }
+}
+
+/// Something at the marker path that cannot be read as a marker means "not clean", and
+/// the opening removes it without following it.
+#[test]
+fn an_unreadable_marker_is_not_clean_and_is_removed_without_being_followed() {
+    // An empty folder: on both engines, the memory one rebuilding past it.
+    for engine in ENGINES {
+        let place = Place::new();
+        let store = place.create(engine);
+        create_organization(&store, 1).unwrap();
+        store.close().unwrap();
+        std::fs::remove_file(marker_file(&place)).unwrap();
+        std::fs::create_dir(marker_file(&place)).unwrap();
+        let store = place.reopen(engine);
+        assert!(!store.stopped_cleanly(), "{engine:?}");
+        assert!(!marker_file(&place).exists(), "{engine:?}");
+        store.close().unwrap();
+    }
+
+    // A link and a file over the size limit, on SQLite, whose projection needs no rebuild
+    // (a rebuild refuses both as it refuses any such object under `durable/`).
+    let place = Place::new();
+    let store = place.create(EngineChoice::Sqlite);
+    create_organization(&store, 1).unwrap();
+    store.close().unwrap();
+    let target = place.root.join("elsewhere");
+    let real = "{\"journal_incarnation\":\"x\",\"head_ordinal\":1}\n";
+    std::fs::write(&target, real).unwrap();
+    std::fs::remove_file(marker_file(&place)).unwrap();
+    std::os::unix::fs::symlink(&target, marker_file(&place)).unwrap();
+    let store = place.reopen(EngineChoice::Sqlite);
+    assert!(!store.stopped_cleanly());
+    assert!(std::fs::symlink_metadata(marker_file(&place)).is_err());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), real);
+    store.close().unwrap();
+
+    let oversize = std::fs::File::create(marker_file(&place)).unwrap();
+    oversize.set_len(org_store::MAX_FILE_BYTES + 1).unwrap();
+    drop(oversize);
+    let store = place.reopen(EngineChoice::Sqlite);
+    assert!(!store.stopped_cleanly());
+    assert!(!marker_file(&place).exists());
+    store.close().unwrap();
+
+    // A folder with something in it is never emptied: the opening refuses and says why.
+    std::fs::remove_file(marker_file(&place)).unwrap();
+    std::fs::create_dir(marker_file(&place)).unwrap();
+    std::fs::write(marker_file(&place).join("kept"), b"x").unwrap();
+    let refused = open_store(&place.config(EngineChoice::Sqlite, Opening::Existing));
+    let error = refused.err().expect("refused").to_string();
+    assert!(error.contains("clean-stop marker"), "{error}");
+    assert!(marker_file(&place).join("kept").is_file());
 }

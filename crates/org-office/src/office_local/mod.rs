@@ -157,3 +157,6 @@ pub fn read_ca(files: &Files, office: &Id) -> Result<Option<CaRecords>, CaError>
         package: package.to_vec(),
     }))
 }
+
+#[cfg(test)]
+mod tests;
