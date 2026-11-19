@@ -1732,8 +1732,9 @@ mod tests {
         stream
             .write_all(b"{\"id\":1,\"method\":\"hello\"}\n")
             .unwrap();
-        // The accept thread sees the connection within its poll and waits for the lock.
-        std::thread::sleep(ACCEPT_POLL * 3);
+        // The accept thread sees the connection at once (its poll returns when one waits)
+        // and waits for the lock. The margin is for a loaded machine.
+        std::thread::sleep(ACCEPT_POLL * 10);
         let stopping = std::thread::spawn(move || {
             let asked = std::time::Instant::now();
             listener.close();

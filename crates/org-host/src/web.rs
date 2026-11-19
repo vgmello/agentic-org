@@ -684,8 +684,9 @@ fn supervise<S: Serving>(
     let mut failures = 0usize;
     loop {
         // First protected bootstrap starts the host before HQ exists. Wait without
-        // binding or spending restart attempts; the same controller observes actual
-        // completed provisioning.
+        // spending restart attempts (and without binding, unless setup handed this host
+        // its listener: that one stays held, and browsers wait in its backlog); the same
+        // controller observes actual completed provisioning.
         while !stopping.load(Ordering::SeqCst) && !eligible() {
             *lock(state) = GatewayState::Starting;
             thread::park_timeout(POLL);

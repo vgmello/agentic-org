@@ -51,12 +51,16 @@
 //!   exits 0.
 //! - A start (setup, or the host's) that has not returned
 //!   [`stop_ends_within`](org_host::Timings::stop_ends_within) (2 s) after the signal (a
-//!   slow volume, say) ends the process there, with status 128 + the signal's number (143
-//!   for SIGTERM) and a line that says so, inside the 2.5 s. What setup or the start
-//!   completed is kept: setup and every store the host writes recover from a process that
-//!   ends at any point, as from the container runtime's own kill a moment later, and the next
-//!   start continues. Office servers and the web process started meanwhile end with it (the
-//!   end of their input and of their control connection).
+//!   slow volume, say) ends the process there, with a line that says so, inside the 2.5 s.
+//!   Its status is 0 too: the stop was asked for, and a service manager must not take the
+//!   exit for a failure (launchd restarts a job that does not exit 0, and systemd marks the
+//!   unit failed). What setup or the start completed is kept: setup and every store the host
+//!   writes recover from a process that ends at any point, as from the container runtime's
+//!   own kill a moment later, and the next start continues. Office servers and the web
+//!   process started meanwhile end with it (the end of their input and of their control
+//!   connection).
+//! - Waiting for the signal failing (it cannot, in practice) is an error, whenever it is
+//!   found: `serve` stops what it started and exits non-zero.
 //!
 //! A debug build keeps the offices' secrets keys as files in the folder `ORG_OFFICE_DEV_KEY_DIR`
 //! names, never in the Keychain, and refuses to start without it. Release builds ignore the
@@ -144,13 +148,19 @@ fn run_as(
         move || signals.wait(),
         bound,
         move |signal| {
-            eprintln!(
+            let line = format!(
                 "agentic-org: stopped by signal {signal} while starting, which had not ended \
-                 {bound:?} after it; exiting with status {}. What setup or the start completed \
-                 is kept, and the next start continues from it",
-                128 + signal
+                 {bound:?} after it; the process ends now. What setup or the start completed \
+                 is kept, and the next start continues from it\n"
             );
-            std::process::exit(128 + signal)
+            // Neither std's stderr lock nor the exit handlers, which a thread blocked in a
+            // write (or in anything else) could hold up: one write, best effort, then the
+            // end of the process.
+            // SAFETY: a write of an owned buffer to fd 2, then `_exit`, which never returns.
+            unsafe {
+                libc::write(2, line.as_ptr().cast(), line.len());
+                libc::_exit(0)
+            }
         },
     )?;
     serve_until_stopped(
@@ -211,12 +221,12 @@ fn start_unless_stopped<H>(
     setup: impl FnOnce() -> Result<Option<BrowserListener>, String>,
     start: impl FnOnce(Option<BrowserListener>) -> Result<H, String>,
 ) -> Result<Option<H>, String> {
-    if stop.asked() {
+    if stop.asked()? {
         return Ok(None);
     }
     let held = setup()?;
     // A stop that came during setup: what setup did is kept, and nothing is started.
-    if stop.asked() {
+    if stop.asked()? {
         return Ok(None);
     }
     start(held).map(Some)
@@ -285,9 +295,12 @@ impl Stop {
         Ok(Self { shared })
     }
 
-    /// Whether a stop has been asked for (or waiting for one failed).
-    fn asked(&self) -> bool {
-        lock(&self.shared.0).asked.is_some()
+    /// Whether a stop has been asked for, or why waiting for one failed.
+    fn asked(&self) -> Result<bool, String> {
+        match &lock(&self.shared.0).asked {
+            None => Ok(false),
+            Some(asked) => asked.as_ref().map(|_| true).map_err(Clone::clone),
+        }
     }
 
     /// The start has ended: a stop no longer bounds it.
@@ -646,7 +659,7 @@ mod tests {
     fn stop_now(stop: &Stop, send: &std::sync::mpsc::Sender<i32>) -> Instant {
         let before = Instant::now();
         send.send(libc::SIGTERM).unwrap();
-        while !stop.asked() {
+        while !stop.asked().unwrap() {
             std::thread::sleep(Duration::from_millis(1));
         }
         before
@@ -694,6 +707,46 @@ mod tests {
             "the stop was dated from the end of the start, not from the signal"
         );
         assert!(overruns.lock().unwrap().is_empty());
+    }
+
+    /// Waiting for the signal failing is an error, before the start as after it: `serve`
+    /// stops what it started and says why, and never takes it for a stop that ends with 0.
+    #[test]
+    fn a_failed_wait_for_the_signal_is_an_error_not_a_stop() {
+        let failing = || {
+            Stop::watch(
+                || Err(std::io::Error::other("no signals here")),
+                Duration::from_secs(10),
+                |_| panic!("no signal was taken, so nothing overran"),
+            )
+            .unwrap()
+        };
+        let stop = failing();
+        let until = Instant::now() + Duration::from_secs(10);
+        while stop.asked().is_ok() {
+            assert!(Instant::now() < until, "the failed wait was not reported");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let result = serve_until_stopped(
+            &stop,
+            || panic!("set up after the wait failed"),
+            |_| -> Result<(), String> { panic!("the host started after the wait failed") },
+            |_, _| panic!("nothing started, so nothing is shut down"),
+        );
+        assert_eq!(
+            result,
+            Err("waiting for a signal: no signals here".to_owned())
+        );
+
+        // Found once the host serves: it is shut down, and the error is returned.
+        let stop = failing();
+        let shut = std::cell::Cell::new(false);
+        let result = serve_until_stopped(&stop, || Ok(None), |_| Ok(()), |(), _| shut.set(true));
+        assert!(shut.get(), "the host was left running");
+        assert_eq!(
+            result,
+            Err("waiting for a signal: no signals here".to_owned())
+        );
     }
 
     /// X5 review, third round, P1: a start that has not ended `bound` after the stop is

@@ -3,8 +3,8 @@
 //!
 //! Setup is held at its first line of output: the binary's standard output is a pipe this
 //! test filled, so that line waits until the test reads the pipe. A start that waits like
-//! that (as one waiting for a slow volume does) ends at the stop's bound with status 143;
-//! one that the test lets finish ends without starting the host, with status 0.
+//! that (as one waiting for a slow volume does) ends at the stop's bound; one that the test
+//! lets finish ends without starting the host. Both exit 0: the stop was asked for.
 //!
 //! Each instance is set up under a temporary application base (`ORG_DEV_ACCOUNT_BASE`),
 //! which only a debug build reads, so every test runs in debug builds only.
@@ -27,6 +27,11 @@ use std::time::{Duration, Instant};
 use support::{eventually, fake_server, may_run_the_service};
 
 const WAIT: Duration = Duration::from_secs(30);
+
+/// The tests of this file one at a time: a pipe is inheritable while it is made (it has
+/// no close-on-exec flag until `full_pipe` sets it), and a `serve` started by the other
+/// test meanwhile would hold its write end open.
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// A started `serve`, killed (and reaped) when dropped so a failed assertion never leaves one.
 struct Serve(Child);
@@ -151,6 +156,11 @@ fn full_pipe() -> (File, OwnedFd) {
         (File::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1]))
     };
     use std::os::fd::AsRawFd;
+    for fd in [read.as_raw_fd(), write.as_raw_fd()] {
+        // SAFETY: fcntl on a descriptor this function owns. The child's standard output is
+        // a copy of the write end, which does not keep the flag.
+        unsafe { assert_ne!(libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC), -1) };
+    }
     let fd = write.as_raw_fd();
     // SAFETY: plain fcntl and write calls on a descriptor this function owns.
     unsafe {
@@ -187,21 +197,22 @@ fn stop(serve: &mut Serve) -> (ExitStatus, Duration) {
 }
 
 /// A start that has not ended when the stop's bound passes (here setup, waiting to write
-/// its first line) ends there, 2 s after the signal: status 128 + 15, and a line that says
-/// why, within the design's 2.5 s. Before X5's third round the signal stayed pending until
-/// setup and the host's start had ended, which here is never.
+/// its first line) ends there, 2 s after the signal, with a line that says why, within the
+/// design's 2.5 s, and with status 0: the stop was asked for. Before X5's third round the
+/// signal stayed pending until setup and the host's start had ended, which here is never.
 #[cfg(debug_assertions)]
 #[test]
-fn a_start_that_does_not_end_is_ended_at_the_stop_s_bound_with_status_143() {
+fn a_start_that_does_not_end_is_ended_at_the_stop_s_bound() {
     if !may_run_the_service("a_start_that_does_not_end_is_ended_at_the_stop_s_bound") {
         return;
     }
+    let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|p| p.into_inner());
     let instance = Foreground::new();
     let (output, write) = full_pipe();
     let mut serve = instance.spawn(write);
     let (status, took) = stop(&mut serve);
     println!("serve exited {took:?} after SIGTERM, held in setup: {status}");
-    assert_eq!(status.code(), Some(143), "{status}: {}", instance.stderr());
+    assert_eq!(status.code(), Some(0), "{status}: {}", instance.stderr());
     let stderr = instance.stderr();
     assert!(
         stderr.contains("stopped by signal 15 while starting, which had not ended"),
@@ -221,6 +232,7 @@ fn a_stop_during_setup_ends_serve_with_0_once_setup_ends_and_starts_no_host() {
     if !may_run_the_service("a_stop_during_setup_ends_serve_with_0") {
         return;
     }
+    let _alone = ONE_AT_A_TIME.lock().unwrap_or_else(|p| p.into_inner());
     let instance = Foreground::new();
     if instance.needs_volume {
         println!(
