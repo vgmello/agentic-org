@@ -1,11 +1,11 @@
-//! The creation intent, `hq-creation.v1.json`, version 2: the request an HQ creation
+//! The creation intent, `hq-creation.v1.json`, version 3: the request an HQ creation
 //! froze before it touched anything under the data roots. A retry of the same request
 //! resumes from it; another request is refused. Opening checks the office against it.
 //!
 //! The file keeps its name so the host's catalog still knows an unfinished create by it;
-//! its content is version 2, with the organization's data roots. It records the request
-//! as it was received: `operation` is the launch binding's ULID, not the store operation
-//! it maps to.
+//! its content is version 3, with the organization's data roots and the host's custody
+//! reservation. It records the request as it was received: `operation` is the launch
+//! binding's ULID, not the store operation it maps to.
 
 use std::path::{Path, PathBuf};
 
@@ -17,13 +17,20 @@ use crate::{error::OfficeError, model::OfficeInfo};
 pub(crate) const FILE: &str = "hq-creation.v1.json";
 /// The most an intent may hold.
 const LIMIT: u64 = 16 * 1024;
-pub(crate) const VERSION: u32 = 2;
+/// Version 3 adds the reservation (journal incarnation, writer epoch, machine) to
+/// version 2; an intent of another version is an older build's.
+pub(crate) const VERSION: u32 = 3;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Intent {
     pub version: u32,
     pub instance: String,
+    /// The journal incarnation, writer epoch and machine the host reserved for this
+    /// creation: a retry under another reservation is another request.
+    pub journal_incarnation: String,
+    pub writer_epoch: u64,
+    pub machine_id: String,
     /// The launch binding's operation: a ULID.
     pub operation: String,
     /// The owner member: the creator's person record.
@@ -71,7 +78,7 @@ impl Intent {
 }
 
 /// `folder`'s intent: `None` when there is none, an older build's error when it is not
-/// version 2.
+/// version 3.
 pub(crate) fn read(folder: &Path) -> Result<Option<Intent>, OfficeError> {
     let Some(bytes) = org_store::read_one(folder, FILE, LIMIT).map_err(OfficeError::storage)?
     else {
