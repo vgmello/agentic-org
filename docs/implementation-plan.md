@@ -603,12 +603,12 @@ on the offers of design section 10.
   [ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md).
 - **Recorded result (2026-11-19):** [C1 sign-in spike](research/c1-sign-in-spike.md)
   records live findings on Claude Code `2.1.311` and Codex `0.169.0` (companion POC in
-  `pocs/console-attach/`) and selects **`org-runtime-claude`** as the first adapter for C3
+  `pocs/console-attach/`) and selects **`org-agent-runtime-claude`** as the first adapter for C3
   (persistent `stream-json` keeping background commands and sub-agents alive across turns
   per ADR-0025 decision 6 amended 2026-11-19, plus `CLAUDE_CODE_OAUTH_TOKEN` for
   portable/private-`HOME` sign-in). Remaining before `dedicated-user` becomes default:
   the macOS second-OS-account + Xcode check (ADR-0015 decision 7 / `ISO-6`), and Codex
-  sub-agent isolation verification when `org-runtime-codex` begins.
+  sub-agent isolation verification when `org-agent-runtime-codex` begins.
 - **Done when:** the result is recorded and the first adapter to build is chosen.
 - **Needs nothing else and can start at any time.**
 
@@ -683,7 +683,7 @@ on the offers of design section 10.
   [ADR-0003](adr/0003-agent-messaging-office-first.md) decision 12,
   [employee supervision UX](specs/employee-supervision-ux.md) (EMP criteria). Rows FC-031,
   FC-098, FC-100, FC-101.
-- **Code today:** `crates/org-runtime` is the contract; only `crates/org-supervise`
+- **Code today:** `crates/org-agent-runtime` is the contract; only `crates/org-supervise`
   uses its types, and nothing launches an agent.
   `crates/org-supervise` starts, stops and cleans up processes; it is used only to
   recover processes the office owned before a restart, not to launch an agent.

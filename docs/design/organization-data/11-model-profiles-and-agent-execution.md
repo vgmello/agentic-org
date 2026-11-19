@@ -69,7 +69,7 @@ flowchart TD
 
 The OS service manager starts/restarts agentic-org serve. Its host module starts and monitors office workers and the optional web child. Each office worker acquires its exclusive office/ownership locks, replays its acceptance journal and reconciles marked children before admitting starts. After a worker restart the office continues each interrupted turn by itself once it has proved the run's processes are gone ([ADR-0030](../../adr/0030-an-agent-works-while-it-has-work.md) decisions 8 and 9); a process does not survive the restart. Host and worker generations are distinct from employee placement generation. Host shutdown stops workers in order; host reconciliation must not race the live worker's ownership of agent children.
 
-Inside agentic-org-office, the agent supervisor owns employee lifecycle, readiness, environment setup and recovery. The connection router owns pool selection, cooldown/permit decisions and failover. The session runner owns protocol pumping and invokes org-supervise for OS operations. Existing org-runtime remains the adapter contract; the planned org-office-sessions integration composes these capabilities without changing pure domain modules into process-control code. Binaries remain thin. New shared wire/launch contracts follow the repository's existing contract ownership/review rules.
+Inside agentic-org-office, the agent supervisor owns employee lifecycle, readiness, environment setup and recovery. The connection router owns pool selection, cooldown/permit decisions and failover. The session runner owns protocol pumping and invokes org-supervise for OS operations. Existing org-agent-runtime remains the adapter contract; the planned org-office-sessions integration composes these capabilities without changing pure domain modules into process-control code. Binaries remain thin. New shared wire/launch contracts follow the repository's existing contract ownership/review rules.
 
 The worker has one SQLite writer and one agent recovery owner. Its internal supervisor submits its changes through the office data service; it does not open another writer, keep a journal of its own or communicate with a sibling supervisor daemon. The execution record files, written through the office's acceptance journal, are authoritative for process ownership, turn/attempt changes and command receipts; SQL rows are projections. Integrate existing owned-recovery records into this path before enabling launches. Organization configuration and HQ coordination keep their authorities (§3/§6).
 
@@ -263,7 +263,7 @@ This qualifies source FR-6 deliberately: automatic mid-turn failover is required
 
 ## 8. Driver contract and failures
 
-Each registered driver supplies versioned preflight/discovery, capabilities, launch planning, normalized protocol events, checkpoint export/import and stop instructions. Reuse org-runtime's sans-I/O separation: adapters plan/translate, the supervisor performs I/O and org-supervise owns OS control. The HTTP-worker protocol adapter follows the same boundary. The connection's runtime_driver selects a registered implementation; unknown or unverified installed versions cannot run.
+Each registered driver supplies versioned preflight/discovery, capabilities, launch planning, normalized protocol events, checkpoint export/import and stop instructions. Reuse org-agent-runtime's sans-I/O separation: adapters plan/translate, the supervisor performs I/O and org-supervise owns OS control. The HTTP-worker protocol adapter follows the same boundary. The connection's runtime_driver selects a registered implementation; unknown or unverified installed versions cannot run.
 
 Driver manifest requirements are auth modes, supported isolation mechanism (the modes of [ADR-0015](../../adr/0015-agent-isolation-modes.md): `same-user` and `dedicated-user` in v1, with the mode carried in the launch contract and digest), model discovery evidence, tool/policy enforcement, context limits, side-effect visibility, checkpoint formats/portability, usage semantics and stop/cleanup support. A runtime cannot become eligible merely because it answers text requests. The adapter test suite uses fake drivers for deterministic core tests and installed-version fixtures for every production driver. Do not claim a model or variable is supported without that evidence.
 
@@ -948,7 +948,7 @@ GROUP BY m.organization_id,m.office_id,p.model_profile_id,m.model_id;
 | Component | Role in the code |
 | --- | --- |
 | `crates/org-supervise` | A library for explicit environments, child spawning, ownership, stopping, cleanup and recovery primitives. It is not a supervisor daemon or a routing engine, and it does not launch agents today. |
-| `crates/org-runtime` | The runtime-adapter contract: `AgentRuntime::plan_session` produces a launch plan; the adapter does not spawn or do I/O. It has no caller. |
+| `crates/org-agent-runtime` | The runtime-adapter contract: `AgentRuntime::plan_session` produces a launch plan; the adapter does not spawn or do I/O. It has no caller. |
 | `apps/agentic-org-office` | No process ownership: B1b removed the recovery adapter over office-owned process rows (C3 rebuilds it on the new store). The agent launch loop is not wired. |
 
 The office hosts the logical employee supervisor, router and runner defined above; there is no separate supervisor executable.

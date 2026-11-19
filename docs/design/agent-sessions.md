@@ -33,7 +33,7 @@ The decisions this design applies:
    - **Antigravity:** `agy acp` (the Agent Client Protocol), with `agy` stream-json
      as the fallback only if ACP is not ready.
 2. **One port, one adapter per runtime, one supervisor.**
-   - `org-runtime` is the **port**: `AgentRuntime`, an optional `RuntimeHost`,
+   - `org-agent-runtime` is the **port**: `AgentRuntime`, an optional `RuntimeHost`,
      `Session`, `SessionSpec`, `LaunchContext`, `LaunchPlan`, the normalized
      `SessionEvent`, `Capabilities`, usage types, and the one line framer and encoder
      every adapter and the pump share. It is a contract and does no I/O. The port is
@@ -50,16 +50,16 @@ The decisions this design applies:
      stdin), `Event`, `CloseStdin` or `Abort` (stop the process now with the fast
      stop). It never spawns, reads, writes, sleeps or reads the clock, so it is tested
      from recorded fixtures alone.
-   - Adapters (`org-runtime-claude`, `org-runtime-codex`, `org-runtime-agy`) build a
+   - Adapters (`org-agent-runtime-claude`, `org-agent-runtime-codex`, `org-agent-runtime-agy`) build a
      launch plan (argv, environment additions, files to write) and a `Session`. They
-     never spawn or touch a pipe, and depend only on `org-runtime`.
+     never spawn or touch a pipe, and depend only on `org-agent-runtime`.
    - `org-supervise` is the one place that spawns agent runtimes and their probes. It
      owns process groups, the environment allowlist, the stop sequence, reaping and
      orphan cleanup, and speaks no runtime protocol. In `dedicated-user` mode it starts
      and stops agents through the privileged launcher (ADR-0015 decision 4).
    - **The lock** on an agent is released only after verified cleanup and reaping of
      its owned processes and their descendants.
-   - **`org-office` depends on neither `org-runtime` nor `org-supervise`.** It holds
+   - **`org-office` depends on neither `org-agent-runtime` nor `org-supervise`.** It holds
      the execution rules as domain logic and defines the small trait it needs
      (`SessionControl`: start, send, interrupt and stop a session by ID, and probe a
      runtime). The integration library `org-office-sessions` implements it with
@@ -724,8 +724,8 @@ real runtime is opt-in.
 
 ## What the code does today
 
-`crates/org-runtime` implements the synchronous sans-I/O contract: `SessionSpec` with
-validated paths and `spec_hash` (`crates/org-runtime/src/spec.rs`), events, framing
+`crates/org-agent-runtime` implements the synchronous sans-I/O contract: `SessionSpec` with
+validated paths and `spec_hash` (`crates/org-agent-runtime/src/spec.rs`), events, framing
 and probes. It has no `isolation_mode` yet, and it still has a one-off session
 kind, which is not part of v1. `crates/org-supervise` implements piped
 spawn, identity ordering, stop and reap and the recovery API. No adapter crate exists;

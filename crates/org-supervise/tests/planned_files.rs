@@ -4,7 +4,7 @@ use std::io::Read;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use org_runtime::{
+use org_agent_runtime::{
     FileLocation, LaunchContext, LaunchPlan, PlannedDir, PlannedFile, RelPath, SpecPath, Stdio,
     StopPlan,
 };
@@ -144,14 +144,17 @@ fn unsupported_plan_parts_fail_before_file_writes_and_lifecycle_is_retained() {
     launch
         .stop
         .steps
-        .push(org_runtime::StopStep::CloseStdin { grace_ms: 100 });
+        .push(org_agent_runtime::StopStep::CloseStdin { grace_ms: 100 });
     launch.cleanup_after_exit.push(
-        org_runtime::CleanupPath::new(path(&root), &format!("{}/{{pid}}.sock", root.display()))
-            .unwrap(),
+        org_agent_runtime::CleanupPath::new(
+            path(&root),
+            &format!("{}/{{pid}}.sock", root.display()),
+        )
+        .unwrap(),
     );
     launch
         .secret_env_names
-        .push(org_runtime::EnvName::try_from("RUNTIME_SECRET").unwrap());
+        .push(org_agent_runtime::EnvName::try_from("RUNTIME_SECRET").unwrap());
     let expected = launch.clone();
     let mapped = prepare(&root, launch, &context(&root)).unwrap();
     assert_eq!(mapped.lifecycle.stop, expected.stop);
@@ -325,7 +328,7 @@ fn runtime_mapper_rejects_injection_and_duplicate_switches_before_writes() {
     ] {
         let mut launch = plan(&root);
         launch.env_add.push((
-            org_runtime::EnvName::try_from(name).unwrap(),
+            org_agent_runtime::EnvName::try_from(name).unwrap(),
             "secret".into(),
         ));
         launch.files.push(file("must-not-exist", b"settings"));
@@ -336,11 +339,11 @@ fn runtime_mapper_rejects_injection_and_duplicate_switches_before_writes() {
         let mut launch = plan(&root);
         launch.env_add = vec![
             (
-                org_runtime::EnvName::try_from("ENABLE_TOOL_SEARCH").unwrap(),
+                org_agent_runtime::EnvName::try_from("ENABLE_TOOL_SEARCH").unwrap(),
                 "false".into(),
             ),
             (
-                org_runtime::EnvName::try_from("ENABLE_TOOL_SEARCH").unwrap(),
+                org_agent_runtime::EnvName::try_from("ENABLE_TOOL_SEARCH").unwrap(),
                 second.into(),
             ),
         ];
@@ -354,7 +357,7 @@ fn runtime_mapper_rejects_injection_and_duplicate_switches_before_writes() {
     ]
     .map(|name| {
         (
-            org_runtime::EnvName::try_from(name).unwrap(),
+            org_agent_runtime::EnvName::try_from(name).unwrap(),
             "false".into(),
         )
     })

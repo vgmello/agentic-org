@@ -104,12 +104,12 @@ model turn.
 
 **Advanced settings (sandbox and permissions):** under an agent's or connection's
 Advanced Settings, the UI presents user-friendly security presets mapped strictly to
-`org-runtime::PermissionMode`, defaulting to a sandboxed workspace with interactive
+`org-agent-runtime::PermissionMode`, defaulting to a sandboxed workspace with interactive
 approval routing (`safe_ask`, alongside `read_only`, `workspace_edits`, and
 `autonomous_sandboxed`;
 [ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)).
 The product never exposes a bypass / unrestricted skip-permissions switch, preserving
-the `org-runtime` no-bypass invariant. Browser-driven one-time subscription sign-in for
+the `org-agent-runtime` no-bypass invariant. Browser-driven one-time subscription sign-in for
 connections (Claude paste-code / `setup-token` and Codex device-code) is also defined
 in ADR-0032 without exposing a browser terminal for agent sessions (ADR-0004).
 

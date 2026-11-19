@@ -1,7 +1,7 @@
-//! # org-runtime: the agent runtime port
+//! # org-agent-runtime: the agent runtime port
 //!
-//! The contract every agent runtime adapter implements (`org-runtime-claude`,
-//! `org-runtime-codex`, `org-runtime-agy`), and the office's session layer
+//! The contract every agent runtime adapter implements (`org-agent-runtime-claude`,
+//! `org-agent-runtime-codex`, `org-agent-runtime-agy`), and the office's session layer
 //! (`org-office-sessions`) drives. See `docs/design/agent-sessions.md`, decision 2.
 //!
 //! **A contract: keep it small, stable, additive-only.** Every change goes through ada

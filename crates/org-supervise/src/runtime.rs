@@ -6,7 +6,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use org_runtime::{
+use org_agent_runtime::{
     CleanupPath, EnvName, FileLocation, LaunchContext, LaunchPlan, ProbeContext, ProbePlan,
     SessionId, Stdio, StopPlan,
 };
@@ -19,21 +19,21 @@ pub fn stop_policy(plan: &StopPlan) -> io::Result<crate::StopPolicy> {
         .steps
         .iter()
         .map(|step| match *step {
-            org_runtime::StopStep::CloseStdin { grace_ms } => crate::StopStep::CloseStdin {
+            org_agent_runtime::StopStep::CloseStdin { grace_ms } => crate::StopStep::CloseStdin {
                 grace: Duration::from_millis(grace_ms),
             },
-            org_runtime::StopStep::Signal {
+            org_agent_runtime::StopStep::Signal {
                 signal,
                 target,
                 grace_ms,
             } => crate::StopStep::Signal {
                 signal: match signal {
-                    org_runtime::StopSignal::Interrupt => crate::StopSignal::Interrupt,
-                    org_runtime::StopSignal::Terminate => crate::StopSignal::Terminate,
+                    org_agent_runtime::StopSignal::Interrupt => crate::StopSignal::Interrupt,
+                    org_agent_runtime::StopSignal::Terminate => crate::StopSignal::Terminate,
                 },
                 target: match target {
-                    org_runtime::SignalTarget::Leader => crate::SignalTarget::Leader,
-                    org_runtime::SignalTarget::Group => crate::SignalTarget::Group,
+                    org_agent_runtime::SignalTarget::Leader => crate::SignalTarget::Leader,
+                    org_agent_runtime::SignalTarget::Group => crate::SignalTarget::Group,
                 },
                 grace: Duration::from_millis(grace_ms),
             },
@@ -71,7 +71,7 @@ pub struct RuntimeProbe {
     /// Record mark, spawn, then record identity with the same callbacks as sessions.
     pub prepared: PreparedSpawn,
     /// Initial stdin lines, in order.
-    pub stdin_lines: Vec<org_runtime::Line>,
+    pub stdin_lines: Vec<org_agent_runtime::Line>,
     /// Stdin/protocol shape.
     pub mode: ProbeMode,
     /// Overall deadline duration, fixed by the caller when the process starts.

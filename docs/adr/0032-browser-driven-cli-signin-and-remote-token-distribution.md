@@ -44,15 +44,15 @@ and the [C1 sign-in spike](../research/c1-sign-in-spike.md).
    - **Offline trade-off ("Works alone"):** Under centralized refresh, a satellite disconnected from HQ can keep running Codex until its current ~1-hour `access_token` expires. An office that must run Codex disconnected from HQ for days at a time uses its own independent per-office `codex login --device-auth` binding instead.
    - **Never copy rotating `auth.json`:** Two offices or two concurrent processes must never independently refresh copies of the same Codex `refresh_token`.
 
-### 3. Friendly Advanced Settings presets (preserving `org-runtime` invariants)
+### 3. Friendly Advanced Settings presets (preserving `org-agent-runtime` invariants)
 
-7. **Secure by default, no bypass mode in product code.** The UI exposes friendly permission and sandbox presets under Advanced Settings (defaulting to workspace OS sandbox enabled + interactive approval routing) mapped strictly onto `org-runtime::PermissionMode`:
+7. **Secure by default, no bypass mode in product code.** The UI exposes friendly permission and sandbox presets under Advanced Settings (defaulting to workspace OS sandbox enabled + interactive approval routing) mapped strictly onto `org-agent-runtime::PermissionMode`:
    - `safe_ask` *(default)* — workspace sandbox on; tool/command approvals routed to the owner/policy bridge.
    - `read_only` — workspace sandbox on; planning/inspection only, no mutating edits or shell writes.
    - `workspace_edits` — workspace sandbox on; workspace file edits allowed, shell commands routed for approval.
    - `autonomous_sandboxed` — workspace sandbox on; workspace edits and sandboxed commands allowed automatically within policy rules.
-   - **No `unrestricted` / bypass preset in product code.** The `org-runtime` invariant prohibiting skip-permissions / bypass modes (`crates/org-runtime/src/lib.rs`) remains unchanged.
-8. **Persistent sessions with background tasks and sub-agents enabled.** `org-runtime-claude` keeps the bidirectional `stream-json` process alive across turns (with `stdin` open) and does **not** set `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` by default, so an agent can run background commands and background sub-agents while remaining responsive to new user/agent messages ([ADR-0025](0025-agents-start-sub-agents.md) decision 6, amended 2026-11-19). The office tracks active background work via `task_started` / `task_notification` / `background_tasks_changed`, treats reactive `system/init` wakeups as attributed turns under the same employee/run, and stops and reaps all remaining background tasks and sub-agents on Pause, Stop, Offboard, or stall timeout.
+   - **No `unrestricted` / bypass preset in product code.** The `org-agent-runtime` invariant prohibiting skip-permissions / bypass modes (`crates/org-agent-runtime/src/lib.rs`) remains unchanged.
+8. **Persistent sessions with background tasks and sub-agents enabled.** `org-agent-runtime-claude` keeps the bidirectional `stream-json` process alive across turns (with `stdin` open) and does **not** set `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` by default, so an agent can run background commands and background sub-agents while remaining responsive to new user/agent messages ([ADR-0025](0025-agents-start-sub-agents.md) decision 6, amended 2026-11-19). The office tracks active background work via `task_started` / `task_notification` / `background_tasks_changed`, treats reactive `system/init` wakeups as attributed turns under the same employee/run, and stops and reaps all remaining background tasks and sub-agents on Pause, Stop, Offboard, or stall timeout.
 
 ## Acceptance criteria
 
@@ -64,7 +64,7 @@ and the [C1 sign-in spike](../research/c1-sign-in-spike.md).
 | ENROLL-4 | A satellite office runs a Claude turn using a `CLAUDE_CODE_OAUTH_TOKEN` delivered by HQ over Organization-CA mTLS and continues working after HQ is disconnected. |
 | ENROLL-5 | A satellite office runs a Codex turn using HQ-delivered `chatgptAuthTokens` with no `auth.json` written to disk, handles an `account/chatgptAuthTokens/refresh` callback via HQ's single-lock refresher, and rejects concurrent refresh races cleanly. |
 | ENROLL-6 | Revoking a satellite's Organization-CA certificate immediately causes HQ to refuse subsequent token fetch/refresh requests from that office. |
-| ENROLL-7 | Advanced Settings exposes only the four `org-runtime`-backed presets, defaults to `safe_ask` with OS sandbox enabled, and rejects any bypass/unrestricted request. |
+| ENROLL-7 | Advanced Settings exposes only the four `org-agent-runtime`-backed presets, defaults to `safe_ask` with OS sandbox enabled, and rejects any bypass/unrestricted request. |
 
 ## Consequences
 

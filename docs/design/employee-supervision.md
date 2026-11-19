@@ -18,7 +18,7 @@ satellite completed an operation.
 
 1. **One office owns execution.** `agentic-org-office` contains the supervisor,
    router and session runner; there is no separate supervisor daemon. `org-supervise`
-   is the OS process library and `org-runtime` the vendor runtime contract. Domain
+   is the OS process library and `org-agent-runtime` the vendor runtime contract. Domain
    modules have no process-control dependencies.
 2. **Employee identity is the organization's.** The home team, role and reporting
    line are in `profile.md`; model profile, model, tools and prompt are in
@@ -173,7 +173,7 @@ real organization.
 ## What the code does today
 
 `crates/org-supervise` starts, stops and cleans up processes with ownership marks, and
-`crates/org-runtime` defines the runtime contract. The office does not use `org-supervise`:
+`crates/org-agent-runtime` defines the runtime contract. The office does not use `org-supervise`:
 B1b deleted the worker's owned-process recovery adapter, which only tests invoked;
 C3 wires production recovery. Nothing launches an agent, and there is no permit or placement code
 (implementation plan C3).

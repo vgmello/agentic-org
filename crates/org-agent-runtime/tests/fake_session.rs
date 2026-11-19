@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use org_runtime::testkit::{self, Script, ScriptApproval};
-use org_runtime::{
+use org_agent_runtime::testkit::{self, Script, ScriptApproval};
+use org_agent_runtime::{
     encode_line, Activity, AgentIdentity, AgentName, AgentRuntime, ApprovalId, ApprovalKind,
     ApprovalRequest, Capabilities, CommandPrefix, Control, ControlError, CostBasis, Decision,
     EnvName, Escalation, ExitInfo, FileLocation, Frame, LaunchContext, LaunchPlan, LimitStatus,
@@ -229,7 +229,7 @@ impl Session for EchoSession {
                 if self.bug == Some(Bug::UsageAfterTurnEnded) {
                     return vec![
                         Output::Event(ended),
-                        Output::Event(SessionEvent::Usage(org_runtime::Usage::new(
+                        Output::Event(SessionEvent::Usage(org_agent_runtime::Usage::new(
                             UsageScope::TurnDelta,
                             UsageScope::TurnDelta,
                         ))),
@@ -1022,12 +1022,12 @@ fn oversized_lines_reach_the_session_as_truncated() {
     let t0 = Instant::now();
     session.start(t0);
     let mut framer = LineFramer::new();
-    let mut big = vec![b'x'; org_runtime::MAX_LINE_BYTES + 10];
+    let mut big = vec![b'x'; org_agent_runtime::MAX_LINE_BYTES + 10];
     big.push(b'\n');
     assert_eq!(
         events(feed(session.as_mut(), &mut framer, &big, t0)),
         vec![SessionEvent::Truncated {
-            len: org_runtime::MAX_LINE_BYTES + 10
+            len: org_agent_runtime::MAX_LINE_BYTES + 10
         }]
     );
 }
@@ -1043,7 +1043,7 @@ fn plans_refuse_what_they_cant_honour() {
     ));
     let mut one_off = spec();
     one_off.kind = SessionKind::OneOff {
-        run_id: org_runtime::PlainId::try_from("r1").unwrap(),
+        run_id: org_agent_runtime::PlainId::try_from("r1").unwrap(),
     };
     let err = runtime
         .plan_take_over(&one_off, &ctx(), 80, 24)

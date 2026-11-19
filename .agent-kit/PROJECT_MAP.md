@@ -17,7 +17,7 @@ documents decide behavior; recheck before relying on a detail.
   `org-socket` support local IPC; `org-supervise` process supervision; `org-sync` and
   `org-sync-proto` replication between offices; `org-release` release verification;
   `org-pki` recovery escrow. Shared contracts: `org-proto`, `org-office-launch`,
-  `org-runtime`, `org-host-control`.
+  `org-agent-runtime`, `org-host-control`.
 - `crates/org-spool` is the file queue `agent-os` still uses; increment B6 deletes it.
 - `apps/agentic-org-ui` is static SvelteKit 2, Svelte 5, TypeScript 6, Tailwind 4 and
   shadcn-svelte, with Bun. Read its `AGENTS.md` and `components.json`. No Node backend.

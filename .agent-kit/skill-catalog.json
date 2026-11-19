@@ -82,11 +82,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "2b0695362034836bff00b6b2129d941f80ada7f81eef63c51872b1c1289f284b"
+      "sha256": "996243958763c89beaf490e11da5132e0c10bd45628728d4fd91ceb12db73b7a"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "8263b161ef70997e168ab09ff8074ae276869044ff62957e9946be184d34c1da"
+      "sha256": "e0047252bcabd34b3c1991c9e61ef49077c36c64e0c284600bcd5ed2c36ca10d"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -190,7 +190,7 @@
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "c857c6e75485c6a303389e8df3501f09e1fb22fe0cc2d4265c83cc771f8d660c"
+      "sha256": "4125065e4872e4803c06ba85c9348de8b870234fc0e94ae1171cda8d05746224"
     },
     {
       "path": "docs/independent-delivery.md",
@@ -321,7 +321,7 @@
         "crates/org-proto",
         "crates/org-sync-proto",
         "crates/org-office-launch",
-        "crates/org-runtime",
+        "crates/org-agent-runtime",
         "crates/org-host-control",
         "crates/org-release"
       ],

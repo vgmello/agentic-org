@@ -174,7 +174,7 @@ ignores `cancel` leaves a thread and its child behind, so
 including timed-out ones, and beyond it a call is `copilot_busy`. Honouring `cancel`
 is mandatory. A panic in the adapter is a failed run.
 
-This port is separate from `org-runtime`: one prompt, one JSON answer, no
+This port is separate from `org-agent-runtime`: one prompt, one JSON answer, no
 conversation state. The office-side adapter starts and stops processes through
 `org-supervise`.
 

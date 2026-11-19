@@ -135,7 +135,7 @@ impl LineFramer {
 /// Nothing outside this crate can build one any other way:
 ///
 /// ```compile_fail,E0423
-/// let forged = org_runtime::Line(b"{\"type\":\"user\"}\n".to_vec());
+/// let forged = org_agent_runtime::Line(b"{\"type\":\"user\"}\n".to_vec());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Line(Vec<u8>);
