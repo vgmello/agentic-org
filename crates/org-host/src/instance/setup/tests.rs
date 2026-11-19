@@ -33,6 +33,7 @@ fn base() -> (tempfile::TempDir, PathBuf) {
 }
 #[test]
 fn v1_setup_record_resumes_as_registered_but_configuration_still_requires_service() {
+    // The bytes published by origin/v1's Journal::write.
     let bytes = include_bytes!("setup-v1-record.json");
     let (_temp, base) = base();
     let journal = Journal::open(&base, None).unwrap();
