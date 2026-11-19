@@ -481,12 +481,13 @@ checks and a lock.
   So the development image refuses a start on a new, empty secrets volume, a volume
   mounted inside the secrets volume is refused wherever it is, and a registered
   development service started by systemd uses the directory its setup recorded, where
-  setup recorded one. A development build uses its development key folder
+  setup recorded one. A development build on Linux records and uses the credential
+  directory as a release build does. A development build uses its development key folder
   (`ORG_OFFICE_DEV_KEY_DIR`) only where the record names no credential directory (macOS,
-  which keeps a release's secrets in the Keychain; and, until setup records one in every
-  Linux build, a Linux development setup whose configuration names no `credentials`), and
-  admits its unpinned runtime when the record names a directory as it does with that
-  folder. The image sets no `ORG_OFFICE_DEV_KEY_DIR`.
+  which keeps a release's secrets in the Keychain), and admits its unpinned runtime when
+  the record names a directory as it does with that folder. On macOS, a development
+  build's registered setup needs an absolute `ORG_OFFICE_DEV_KEY_DIR`; setup makes that
+  folder, with mode 700, before it registers the service. The image sets no `ORG_OFFICE_DEV_KEY_DIR`.
 
 **Built in X3** (`org_platform_host::credentials`: `protected_store()` answers
 `Keychain` or `ReleaseDirectory`; `release_directory(ReleaseDirectory { path,
@@ -746,7 +747,8 @@ A2 writes the launchd registration behind this contract. A2 B0 built it as shown
 path syntax in the instance ID and loader variables (`DYLD_*`, `LD_*`,
 `GLIBC_TUNABLES`) in the unit's environment. `Foreground` refuses everywhere until X5.
 
-`agentic-org serve` is the same foreground process in every mode; it stops on
+`agentic-org serve` is the same foreground process in every mode, with file-creation mask
+`077` set at its start in every mode (a container's runtime would give it `022`); it stops on
 `SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, stops the web
 process and the workers (`SIGTERM`, then `SIGKILL` after 1.5 s), flushes its logs and
 exits 0 within 2.5 s, inside the shortest default grace of a container runtime (Docker
@@ -797,6 +799,16 @@ instance runs only while the user is logged in and print
 for themselves; setup does not run it without being asked. The unit file is writable
 by the same user, like the executable path it names (section 5).
 
+`register` writes nothing unless the user manager's `UnitPath` names
+`~/.config/systemd/user`; otherwise it refuses, naming the manager's unit path. The
+definition is published relative to the unit directory held open, which must belong to
+the user and not be writable by others; its mode is set on the open file. A file that is
+exactly an earlier rendering of a unit under the same name, which holds the instance ID, is
+replaced: the new file is published first, then the old unit is disabled and stopped, then
+the new one is loaded. Any other file is a conflict. The unit carries a location variable
+only when it moves a location away from its default. Setup's readiness waits until the
+browser service runs.
+
 The unit sets the location variables setup gave it (`dirs::location_variables`) and
 unsets the others (`UnsetEnvironment=`), so a value the user manager holds cannot move
 the instance's locations away from the ones setup reserved. A drop-in that applies to
@@ -808,8 +820,8 @@ disk, what it reports for `ExecStart`, `ExecStartPre`, `ExecStartPost`,
 `TimeoutStopUSec`, `Restart`, `UMask` and `NoNewPrivileges` must be what the file says
 (read back only from an exact rendering of a unit), or register, start and status are a
 conflict; stop and unregister still end and remove the unit. No command runs unregister
-yet, so a unit written by an earlier build (before `UnsetEnvironment=`) is removed by
-hand, then setup registers it again:
+yet. The manual removal steps are needed only for a file that is not an earlier rendering
+of the unit (which register replaces), and then setup registers it again:
 `systemctl --user disable --now agentic-org-<instance-id>.service`, remove
 `~/.config/systemd/user/agentic-org-<instance-id>.service`, and
 `systemctl --user daemon-reload`. The
@@ -1001,7 +1013,12 @@ same three adapters, and LNX-5's check covers them.
   `local_authority` decides who may reset the administrator: on macOS the OS dialog
   at the console, as for the recovery code; on Linux a peer whose `SO_PEERCRED` UID
   is 0, acting on the instance of the user that `sudo` names (`SUDO_UID`) or that
-  `--user` names (SIGN-33). Root is admitted on `host.sock` for this method only.
+  `--user` names (SIGN-33). Root is admitted on `host.sock` for this method only. Root
+  reads the service user's instance in a child process with that user's whole identity
+  (all its groups; it cannot become root again), within 10 s. Connect, greeting and call
+  share one 30 s deadline. An instance with an administrator gets no link; the command
+  says to sign in (resetting a forgotten administrator password is A3's, not available
+  yet).
 
 ## 5. What a local attacker can still do on Linux
 

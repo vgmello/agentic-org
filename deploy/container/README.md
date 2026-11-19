@@ -139,8 +139,12 @@ records are in `/data` too ("the credential directory is in the volume that hold
 account's records"). Mount nothing inside `/secrets` either: a start with anything mounted
 inside it, at any depth, is refused, naming the mount point.
 
-A first start that is refused leaves nothing in the data volume: correct the mistake and
-start again. Once an instance is set up, its configuration does not change.
+A first start that is refused before the instance is reserved saves no setup record,
+reserves nothing and writes nothing in `/secrets`. It leaves only empty folders of the
+service user: `/data/.local/share/agentic-org` (an empty `locator` folder and
+`setup/default/setup.lock`) and `/data/.cache/agentic-org/tmp`. A corrected start uses
+them. Correct the mistake and start again. Once an instance is set up, its
+configuration does not change.
 
 ## Who can reach the volumes
 
@@ -261,12 +265,11 @@ image sets no `ORG_OFFICE_DEV_KEY_DIR`, and one given with `-e` is not used.
 
 ## Known limits
 
-- A first start that is refused before the instance is reserved leaves nothing. One case
-  is refused only after: a secrets volume that is a folder of the data volume, with the
-  data folder `/data/instance` a volume of its own mounted inside it. Setup does not yet
-  compare the secrets volume with the instance's records, so it reserves the instance and
-  leaves its lock file `.lock` in that folder; the host then refuses the start, and no key
-  is written. A
+- A first start that is refused before the instance is reserved saves no setup record,
+  reserves nothing and writes nothing in `/secrets`. It leaves only empty folders of the
+  service user: `/data/.local/share/agentic-org` (an empty `locator` folder and
+  `setup/default/setup.lock`) and `/data/.cache/agentic-org/tmp`. A corrected start uses
+  them. A
   registered-mode setup (on a machine, not this image) that fails later, when its service
   is registered, keeps its record: correct the cause and run the same file again; another
   file is refused until the instance is removed.
