@@ -135,7 +135,7 @@ would be declared four times.
 | `agentic-org` (`serve`) | Durable flush and exclusive rename | `org-host/src/writer.rs`, `hostdb.rs`, `release/files.rs`, `release/files/output.rs`, `human/recovery.rs`, `host_secrets/dev.rs` | `fs` |
 | `agentic-org` (`serve`) | Office catalog tests gated by system | `org-host/src/offices.rs` | `testing` support |
 | `agentic-org` (`recovery`) | Local presence and confirmation for the recovery code (ADR-0011) | `org-host/src/recovery/presence.rs`, the bridge in `org-host/build.rs` | `presence` |
-| `agentic-org` (`admin reset`) | Local authority to reset the administrator: the OS dialog at the Mac, root on Linux (SIGN-33) | On Linux, root's registration-link recovery since X5 (section 4); the macOS dialog and password reset are A3's | `presence` |
+| `agentic-org` (`admin reset`) | Local authority to reset the administrator: the OS dialog at the Mac, root on Linux (SIGN-33) | On macOS, the OS dialog since A2; on Linux, root's registration-link recovery since X5 (section 4); resetting an existing administrator's password is A3's | `presence` |
 | `agentic-org-office` | Socket locations | `org-proto/src/location.rs` through `apps/agentic-org-office/src/lib.rs` | `dirs` |
 | `agentic-org-office` | Its end of the rendezvous: receive descriptors | `org-socket/src/rights.rs`, `rights/send.rs`, `rights/stream.rs` | `socket` |
 | `agentic-org-office` | Admit same-user peers on its local socket | `org-socket/src/peer.rs` (`peer_allowed`), called from `apps/agentic-org-office/src/serve.rs` | `socket` |
