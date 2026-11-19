@@ -22,6 +22,13 @@ fn prose() {
     let _ = "schema.sql.bak";
     let _ = "pragmatic choice";
     let _ = "From the HQ, select a person";
+    let _ = "release the segment once every consumer has passed it";
+    let _ = "rollback to the previous version is not offered";
+    let _ = "with the office secrets key";
+    let _ = "explain why the office stopped";
+    let _ = "update or create the record";
+    let _ = b"the store's bytes";
+    let _ = "Analyze";
     assert!(true, "the store was opened from {} and closed", "disk");
 }
 

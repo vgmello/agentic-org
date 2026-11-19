@@ -16,9 +16,9 @@
 //! The dev key file holds the office secrets key as lowercase hex (its stored and handoff
 //! form); once that file is deleted, no remaining file holds the key as raw bytes or
 //! lowercase/uppercase hex. The wrapped CA key, in any of those forms, is in the local
-//! record and may be in the protected journal under `<organization-id>/durable/recovery/`
-//! (creation's journal entry carries the record until its segment is released); it is in
-//! no other file: not the projection, not `durable/state/` (the organization's Git
+//! record and may be in the office's acceptance journal under `<organization-id>/durable/
+//! recovery/offices/<office-id>/journals/acceptance/` (creation's journal entry carries
+//! the record until its segment is released); it is in no other file: not the projection, not `durable/state/` (the organization's Git
 //! content), not the host's registry, logs or runtime files.
 use crate::web_process_tests::{create_hq, start_signed_in, Started};
 use org_proto::{OfficeInfo, OfficeStatus};
@@ -233,10 +233,14 @@ fn actual_host_restarts_a_killed_worker_and_starts_it_without_its_key_on_plain_s
 
     // ENC-5: with its dev key file deleted, the office secrets key, raw or hex, appears
     // in no remaining file, so neither the office nor the host stored it elsewhere. The
-    // wrapped CA key, raw or hex, is only in the local record and the protected journal,
+    // wrapped CA key, raw or hex, is only in the local record and the acceptance journal,
     // so no rendezvous event or handoff carried it to anything the host wrote (registry,
     // logs, runtime files).
-    let journal = durable.join("recovery");
+    // Only the office's acceptance journal may carry it, not the rest of `recovery/`.
+    let journal = durable
+        .join("recovery/offices")
+        .join(&office_id)
+        .join("journals/acceptance");
     assert!(journal.is_dir(), "{journal:?}");
     let mut all = Vec::new();
     files(&base, &mut all);

@@ -96,6 +96,7 @@ enum Shape {
     AttachDatabase,
     BeginTransaction,
     SelectFrom,
+    CapitalStatement,
 }
 
 const OBJECTS: [&str; 4] = ["table", "index", "view", "trigger"];
@@ -107,8 +108,12 @@ const OBJECTS: [&str; 4] = ["table", "index", "view", "trigger"];
 /// prose such as "delete the folder" or "update the record" does not count. `SELECT`
 /// needs a later `FROM` and is either written in capitals, or opens the text and is
 /// followed by a clause (`WHERE`, `ORDER`, `GROUP`, `LIMIT`, `JOIN`) or a `*` or `?`:
-/// "select a team from the list" is prose. A one-word statement (`COMMIT`, `BEGIN`, ...)
-/// counts only in capitals. A literal naming a `.sql` file counts, so
+/// "select a team from the list" is prose (a lower-case `select` may also follow an
+/// opening `with` or `explain`). `SELECT` in capitals counts anywhere, with or without
+/// `FROM`, and so does a statement opened in capitals by `WITH`, `EXPLAIN`, `RELEASE`,
+/// `ROLLBACK`, `ANALYZE` or `REINDEX`. A one-word statement (`COMMIT`, `BEGIN`, ...)
+/// counts only in capitals. A lower-case `select a, b from t` with no clause, `*` or `?`
+/// is not recognized: it reads like prose. A literal naming a `.sql` file counts, so
 /// `include_str!("schema.sql")` outside the adapter is caught too.
 fn sql_shape(text: &str) -> Option<Shape> {
     let trimmed = text.trim();
@@ -127,9 +132,23 @@ fn sql_shape(text: &str) -> Option<Shape> {
     if raw.len() == 1
         && capitals(0)
         && statement.len() == raw[0].len()
-        && matches!(at(0), "begin" | "commit" | "rollback" | "end" | "vacuum")
+        && matches!(
+            at(0),
+            "begin" | "commit" | "rollback" | "end" | "vacuum" | "analyze" | "reindex"
+        )
     {
         return Some(Shape::Transaction);
+    }
+    // A statement opened by a keyword in capitals: `SELECT 1`, `WITH t AS (...)`,
+    // `RELEASE sp`, `ROLLBACK TO sp`, `EXPLAIN ...`, `ANALYZE t`, `REINDEX t`.
+    if raw.len() >= 2
+        && capitals(0)
+        && matches!(
+            at(0),
+            "select" | "with" | "explain" | "analyze" | "reindex" | "release" | "rollback"
+        )
+    {
+        return Some(Shape::CapitalStatement);
     }
     if raw.len() >= 2 && matches!(at(0), "pragma" | "savepoint") {
         return Some(Shape::PragmaOrSavepoint);
@@ -142,6 +161,9 @@ fn sql_shape(text: &str) -> Option<Shape> {
             "replace" if next == "into" => Some(Shape::ReplaceInto),
             "delete" if next == "from" => Some(Shape::DeleteFrom),
             "update" if !next.is_empty() && at(index + 2) == "set" => Some(Shape::UpdateSet),
+            "update" if next == "or" && !at(index + 3).is_empty() && at(index + 4) == "set" => {
+                Some(Shape::UpdateSet)
+            }
             "create"
                 if OBJECTS.contains(&next)
                     || (matches!(next, "unique" | "temp" | "temporary" | "virtual")
@@ -155,6 +177,7 @@ fn sql_shape(text: &str) -> Option<Shape> {
             "begin" if matches!(next, "immediate" | "exclusive" | "deferred" | "transaction") => {
                 Some(Shape::BeginTransaction)
             }
+            "select" if capitals(index) => Some(Shape::SelectFrom),
             "select" if words[index + 1..].iter().any(|word| word == "from") => {
                 let clause = words[index + 1..].iter().any(|word| {
                     matches!(
@@ -162,7 +185,8 @@ fn sql_shape(text: &str) -> Option<Shape> {
                         "where" | "order" | "group" | "limit" | "join"
                     )
                 }) || trimmed.contains(['*', '?']);
-                (capitals(index) || (index == 0 && clause)).then_some(Shape::SelectFrom)
+                let opens = index == 0 || matches!(at(0), "with" | "explain");
+                (opens && clause).then_some(Shape::SelectFrom)
             }
             _ => None,
         };
@@ -203,11 +227,13 @@ impl Scan {
                 TokenTree::Ident(ident) if ident == ENGINE_CRATE => {
                     self.engine("in a macro's tokens")
                 }
-                TokenTree::Literal(literal) => {
-                    if let syn::Lit::Str(text) = syn::Lit::new(literal) {
-                        self.literal(&text.value());
+                TokenTree::Literal(literal) => match syn::Lit::new(literal) {
+                    syn::Lit::Str(text) => self.literal(&text.value()),
+                    syn::Lit::ByteStr(bytes) => {
+                        self.literal(&String::from_utf8_lossy(&bytes.value()))
                     }
-                }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -217,9 +243,14 @@ impl Scan {
 impl<'ast> Visit<'ast> for Scan {
     // Doc comments are prose about the code, not literals in it.
     fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
-        if !attribute.path().is_ident("doc") {
-            syn::visit::visit_attribute(self, attribute);
+        if attribute.path().is_ident("doc") {
+            return;
         }
+        // An attribute's argument list is tokens to `syn`, like a macro's.
+        if let syn::Meta::List(list) = &attribute.meta {
+            self.tokens(list.tokens.clone());
+        }
+        syn::visit::visit_attribute(self, attribute);
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
@@ -263,15 +294,19 @@ impl<'ast> Visit<'ast> for Scan {
         self.literal(&literal.value());
     }
 
+    fn visit_lit_byte_str(&mut self, literal: &'ast syn::LitByteStr) {
+        self.literal(&String::from_utf8_lossy(&literal.value()));
+    }
+
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         syn::visit::visit_macro(self, mac);
         self.tokens(mac.tokens.clone());
     }
 }
 
-/// The violations in one Rust source text.
-fn violations(source: &str) -> Vec<String> {
-    let file = syn::parse_file(source).expect("the source parses");
+/// The violations in one Rust source text; `name` says where it came from.
+fn violations(source: &str, name: &str) -> Vec<String> {
+    let file = syn::parse_file(source).unwrap_or_else(|error| panic!("{name}: {error}"));
     let mut scan = Scan::default();
     scan.visit_file(&file);
     scan.violations
@@ -306,7 +341,7 @@ fn crate_violations() -> (Vec<String>, usize) {
         }
         scanned += 1;
         let text = fs::read_to_string(&file).expect("a source file");
-        for violation in violations(&text) {
+        for violation in violations(&text, &relative) {
             found.push(format!("{relative}: {violation}"));
         }
     }
@@ -368,7 +403,8 @@ fn the_scan_finds_the_engine_and_its_sql_in_the_adapter() {
     let mut named = 0;
     let mut statements = 0;
     for file in files(&adapter, |name| name.ends_with(".rs")) {
-        for violation in violations(&fs::read_to_string(&file).expect("a source file")) {
+        let text = fs::read_to_string(&file).expect("a source file");
+        for violation in violations(&text, &file.display().to_string()) {
             if violation.starts_with("SQL string literal") {
                 statements += 1;
             } else {
@@ -403,7 +439,7 @@ fn the_scan_reports_each_kind_of_violation() {
 
 #[test]
 fn the_scan_lets_prose_and_ordinary_code_through() {
-    let found = violations(&fixture("clean.rs.txt"));
+    let found = violations(&fixture("clean.rs.txt"), "clean.rs.txt");
     assert!(
         found.is_empty(),
         "prose was taken for a violation: {found:#?}"
