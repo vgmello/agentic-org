@@ -106,11 +106,26 @@ pub(crate) fn set(
     }
     let now = crate::web_tls::now().ok_or("the clock is unavailable")?;
     let checked = crate::web_tls::read_supplied(cert, key, target.origin, now)?;
-    // Before a password is asked for: it is sent only to a host this command identified.
+    // Made before a session exists, so that nothing between the sign-in and its end can
+    // return early.
+    let key =
+        TlsPrivateKey::new(checked.key().to_owned()).map_err(|_| "the TLS key cannot be sent")?;
+    let operation_id = crate::ids::generate().map_err(|_| "no operation ID could be generated")?;
+    // Before a password is asked for: it is sent only to a host this command identified. A
+    // host it may not send one to is refused in its own words; only a failure to reach the
+    // service says that the service is not running.
+    let refused = std::cell::RefCell::new(None);
     let mut wire = connect_verified(target.socket, target.instance_id, |stream: &UnixStream| {
-        crate::human::verify_host(stream)?.may_receive_secrets()
+        crate::human::verify_host(stream)
+            .and_then(|host| host.may_receive_secrets())
+            .inspect_err(|why| *refused.borrow_mut() = Some(why.clone()))
     })
-    .map_err(|why| not_running(target.name, why))?;
+    .map_err(|why| {
+        refused
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| not_running(target.name, why))
+    })?;
     let signed = match wire.call_answer::<AccountVerify>(
         &AccountVerifyParams {
             login: login.to_owned(),
@@ -122,14 +137,13 @@ pub(crate) fn set(
         Err(ErrorCode::RateLimited) => {
             return Err("too many failed sign-ins; try again later".into())
         }
+        Err(ErrorCode::Unavailable) => {
+            return Err("the service cannot sign anyone in now (it has no registry yet)".into())
+        }
         Err(_) => return Err("the login or password is not the administrator's".into()),
     };
     let session = || SessionHandle::new(signed.session.expose().into()).expect("a live handle");
     let answer = if signed.admin {
-        let key = TlsPrivateKey::new(checked.key().to_owned())
-            .map_err(|_| "the TLS key cannot be sent")?;
-        let operation_id =
-            crate::ids::generate().map_err(|_| "no operation ID could be generated")?;
         wire.call_answer::<TlsSet>(
             &TlsSetParams {
                 session: session(),

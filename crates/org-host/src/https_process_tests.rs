@@ -436,7 +436,9 @@ fn the_admin_tls_set_command_replaces_the_pair_where_it_may_send_the_password() 
     );
     if !by_code {
         let (result, out) = run(&cert_path, PASSWORD);
-        assert!(result.unwrap_err().contains("browser"), "{out}");
+        let refusal = result.unwrap_err();
+        assert!(refusal.contains("browser"), "{refusal} {out}");
+        assert!(!refusal.contains("not running"), "{refusal}");
         assert_eq!(asked.get(), 0, "no password is asked for");
         assert_eq!(leaf_of(&stored_chain(&host)), made);
         drop(host);
