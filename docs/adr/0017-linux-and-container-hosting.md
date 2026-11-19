@@ -145,12 +145,48 @@ These settle what the decisions above left open. The detail is in the
     allowed only in the foreground mode and chosen explicitly in the setup file; the
     documented Docker command publishes it on `127.0.0.1` only. Every machine that
     can reach the listen address can reach sign-in and sessions in plain text,
-    including with foreground mode on a bare host. **Pending, recorded by the
-    owner the same day:** HTTPS for the container with a certificate the instance
-    makes for itself at first start, or one the operator supplies (implementation
-    plan, X7); the product serves no HTTPS on any system yet. Its first registration link
+    including with foreground mode on a bare host. Its first registration link
     comes only from
     `docker exec -u 0 <container> agentic-org admin reset --user <service user>`.
+
+    **HTTPS with the instance's own certificate** (X7, decided 2026-11-19; recorded
+    by the owner on 2026-11-18 as pending). Any instance, in a container or on a
+    machine, may listen with `scheme: "https"` on any address:
+    - *Made by the instance.* When the setup file names no pair, the host makes,
+      at the instance's first start, an ECDSA P-256 key and a self-signed X.509
+      certificate whose only subject alternative name is the origin's host (a DNS
+      name or an IP literal), valid 397 days (rcgen over ring; nothing uses aws-lc).
+      Setup says so; the host logs the certificate's SHA-256 fingerprint
+      (uppercase colon hex of the leaf's DER, as browsers show it) at every start,
+      so that `docker logs` shows it. It renews itself, with a new key and a new
+      fingerprint, at a start or while it runs when fewer than 30 days remain, and
+      the web process swaps the new pair in (`tls.renew`). A lost self-made key is
+      made again, and the log says so.
+    - *Supplied by the operator.* The setup file may name `"tls": {"cert":
+      <path>, "key": <path>}`: absolute paths of a PEM chain (leaf first) and its
+      unencrypted key. Setup reads them (opened without following a link, regular
+      files, at most 64 KiB each) and verifies the pair with `tls.set`'s checks
+      before it saves anything: both parse (`tls_invalid`), the key is the leaf's
+      (`tls_key_mismatch`), the leaf is valid now (`tls_not_valid`) and names the
+      origin's host by a subject alternative name (`tls_name_mismatch`). Only the
+      paths are recorded. The host imports the pair at its first start, verified
+      again, and never reads the files after that. A supplied key that is gone,
+      or a supplied pair that no longer verifies, refuses the start: it is never
+      made again or replaced by the instance.
+    - *Custody.* The key is a host secret, `tls.<pair fingerprint>` (the secrets
+      volume in a container; never the data volume, an argument, the environment
+      or a log). The registry's `web_tls_pair` row holds the chain in a normal form
+      (its certificates only, re-encoded), the pair fingerprint naming the key and
+      whether the pair was made or supplied. The administrator replaces a pair
+      with `tls.set` on `host.sock` (journaled; the same checks), after which the
+      host sends `tls.renew` and the web process serves it for new handshakes.
+    - *Start gate.* Before the web process is spawned: the listener fields and
+      origin, `hsts`, a stored pair (`tls_missing`) and its coverage of the origin
+      (`tls_name_mismatch`); `tls.fetch` answers `https` with the stored pair after
+      the same re-check.
+    - *Plain HTTP on a published port stays,* as an explicit choice
+      (`http_published`). The container's shipped setup file and its README move to
+      `https` once B1b has landed (they are being rewritten in that increment).
 11. **Recovery, reset and native clients on Linux.** A native client on `host.sock` is
     admitted by its kernel UID; Linux has no code identity for it, so the "verified
     signed `agentic-org` client" of ADR-0011 means, on Linux, a peer with the service

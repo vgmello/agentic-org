@@ -91,6 +91,7 @@ fn refused_web_start_never_becomes_ready() {
             check: ServerCheck::gateway_for_build(false, None).unwrap(),
             critical_paths: vec![],
             release: None,
+            tls: None,
         },
         None,
         Arc::new(NoOps),
@@ -136,6 +137,7 @@ fn an_admission_refusal_inside_start_keeps_its_cause() {
         check: ServerCheck::gateway_for_build(false, None).unwrap(),
         critical_paths: vec![],
         release: None,
+        tls: None,
     };
     let Err(error) = start(&config, Arc::new(NoOps)) else {
         panic!("a release build without a team or a selected release never spawns")
@@ -778,6 +780,7 @@ fn scripted_config(
         check,
         critical_paths: vec![],
         release: None,
+        tls: None,
     };
     (dir, config)
 }
@@ -1196,7 +1199,7 @@ fn free_port() -> u16 {
 }
 
 #[test]
-fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
+fn the_supervisor_refuses_an_https_listener_without_a_stored_pair() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let https = serde_json::from_str(
@@ -1213,6 +1216,7 @@ fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
             check: ServerCheck::gateway_for_build(true, None).unwrap(),
             critical_paths: vec![],
             release: None,
+            tls: None,
         },
         None,
         Arc::new(NoOps),
@@ -1220,18 +1224,34 @@ fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
         Arc::new(|| true),
     );
     let Err(error) = started else {
-        panic!("an HTTPS listener never starts the web process")
+        panic!("an HTTPS listener without a pair never starts the web process")
     };
     // The confinement question comes first: where it refuses, the listener is not
     // looked at, and that refusal is the next test's.
     if org_platform::confinement::web_confinement_supported().is_ok() {
         assert_eq!(
             error.to_string(),
-            "the web process requires a plain HTTP listener (http_loopback, or http_published \
-             in the foreground mode): HTTPS has no verified certificate yet"
+            "the web process requires a verified TLS pair for its https listener: tls_missing"
         );
     }
     assert_eq!(*lock(&state), GatewayState::NotConfigured);
+}
+
+/// The `https` gate (X-02 §2, pre-spawn): a stored pair that names the origin passes; none
+/// is `tls_missing`, one for another host `tls_name_mismatch`, one whose key is gone is
+/// `tls_missing` too. Nothing is bound or spawned on a refusal.
+#[test]
+fn the_https_gate_admits_only_a_stored_pair_that_names_the_origin() {
+    use crate::web_tls::tests::started;
+    let (_kept, tls) = started("https://127.0.0.1:48125");
+    https_gate(Some(&*tls)).unwrap();
+    let refusal = |result: io::Result<()>| result.unwrap_err().to_string();
+    assert!(refusal(https_gate(None)).ends_with(": tls_missing"));
+    let (kept, other) = started("https://org.example:48125");
+    crate::web_tls::tests::store_pair_of(&kept, &other, "https://elsewhere.example");
+    assert!(refusal(https_gate(Some(&*other))).contains("tls_name_mismatch"));
+    crate::web_tls::tests::lose_keys(&kept);
+    assert!(refusal(https_gate(Some(&*other))).contains("tls_missing"));
 }
 
 /// The listener gate admits the two plain HTTP modes: a published listener of a foreground
@@ -1279,6 +1299,7 @@ fn startable(dir: &Path) -> Configuration {
         check: ServerCheck::gateway_for_build(true, None).unwrap(),
         critical_paths: vec![],
         release: None,
+        tls: None,
     }
 }
 
@@ -1895,6 +1916,7 @@ fn unchecked(dir: &Path, program: PathBuf) -> Configuration {
         check: ServerCheck::Skip,
         critical_paths: vec![],
         release: None,
+        tls: None,
     }
 }
 
@@ -2555,6 +2577,7 @@ fn real_web() -> RealWeb {
             check: ServerCheck::gateway_for_build(true, None).unwrap(),
             critical_paths: vec![root.join("critical")],
             release: None,
+            tls: None,
         },
         handler,
         offices,

@@ -1,6 +1,7 @@
 //! host.sock's private control boundary: registered-instance hello and count-only status.
-//! Registered hosts additionally dispatch live account sign-in, renewal and logout, and the
-//! administrator link calls (`admin.link.initial`, `admin.reset`; see `crate::admin`).
+//! Registered hosts additionally dispatch live account sign-in, renewal and logout, the
+//! administrator link calls (`admin.link.initial`, `admin.reset`; see `crate::admin`) and,
+//! for an `https` listener, the administrator's `tls.set` (`crate::web_tls`).
 
 pub(crate) mod authentication;
 pub(crate) mod listener;
@@ -29,6 +30,9 @@ pub(crate) struct Service {
     gateway: Arc<std::sync::Mutex<GatewayState>>,
     provisioning: Option<Arc<crate::provisioning::Provisioning>>,
     recovery: Option<Arc<crate::recovery::Recovery>>,
+    /// The `https` listener's pair: `tls.fetch`, `tls.set` and `instance.view`'s `tls`.
+    /// `None` for a plain HTTP listener.
+    web_tls: Option<Arc<crate::web_tls::WebTls>>,
     /// Installed once by the registered start after composition; until then the admin calls
     /// answer `unavailable`.
     admin: std::sync::OnceLock<Arc<crate::admin::Admin>>,
@@ -58,6 +62,7 @@ impl Service {
             authentication: None,
             provisioning: None,
             recovery: None,
+            web_tls: None,
             admin: std::sync::OnceLock::new(),
             instance_name: std::sync::OnceLock::new(),
             #[cfg(test)]
@@ -87,6 +92,23 @@ impl Service {
     ) -> Self {
         self.recovery = recovery;
         self
+    }
+    pub(crate) fn with_web_tls(mut self, web_tls: Option<Arc<crate::web_tls::WebTls>>) -> Self {
+        self.web_tls = web_tls;
+        self
+    }
+    #[cfg(test)]
+    pub(crate) fn web_tls_for_test(&self) -> Option<&Arc<crate::web_tls::WebTls>> {
+        self.web_tls.as_ref()
+    }
+    /// `tls.renew` to the web process: its pair was replaced or renewed, and it fetches it
+    /// again. Only the admitted web connection subscribes to these events.
+    pub(crate) fn announce_tls_renewal(&self) {
+        if let Some(provisioning) = &self.provisioning {
+            provisioning
+                .web()
+                .publish_named(org_host_control::event::TLS_RENEW, serde_json::json!({}));
+        }
     }
     /// The registered host's administrator link calls. Installed at most once.
     #[cfg(test)]
@@ -125,7 +147,110 @@ impl Service {
             status: InstanceMode::Service,
             web_status: *crate::sync::lock(&self.gateway),
             administrator: self.administrator()?,
+            tls: self.web_tls.as_ref().map(|tls| {
+                crate::web_tls::now().map_or(org_proto::gateway::TlsStatus::Missing, |now| {
+                    tls.status(now)
+                })
+            }),
         })
+    }
+    /// `tls.set` (`host.sock` only; an administrator's session; journaled; X-02 §6.2): the
+    /// pair is checked and installed by [`crate::web_tls::WebTls::set`], and a pair it
+    /// installs is announced to the web process with `tls.renew`. Refused with
+    /// `not_authorized` on the web connection, without a registry or for an account that is
+    /// not the administrator; `unavailable` on an instance whose listener is not `https`.
+    fn set_tls(&self, request: &Request, connection: &Arc<Connection>) -> bool {
+        use org_host_control::ops::TlsSet;
+        if !request.is::<TlsSet>() {
+            return false;
+        }
+        let (None, Some(authentication)) = (connection.gateway_listen(), &self.authentication)
+        else {
+            connection.send_response(not_authorized(request.id));
+            return true;
+        };
+        connection.send_response(answer::<TlsSet>(request, |params| {
+            let account = authentication.authorize(connection, &params.session)?;
+            if !account.admin() {
+                return Err(ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "only the instance's administrator sets its TLS pair",
+                ));
+            }
+            let tls = self.web_tls.as_ref().ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::Unavailable,
+                    "this instance's listener is not https; it has no TLS pair",
+                )
+            })?;
+            let now = crate::web_tls::now()
+                .ok_or_else(|| ApiError::new(ErrorCode::Unavailable, "clock unavailable"))?;
+            let (result, installed) = tls.set(&params, account.account_id(), now)?;
+            if installed {
+                self.announce_tls_renewal();
+            }
+            Ok(result)
+        }));
+        true
+    }
+    /// `tls.fetch` (the web connection only): the listener's snapshot and, in `https`, the
+    /// stored pair, re-checked for the snapshot's origin. A pair that does not cover it is
+    /// `unavailable` with `tls_name_mismatch`; one that cannot be read (its key is gone) is
+    /// `storage_error`. An answer with a key goes out on the secret-line path.
+    fn fetch_tls(&self, request: &Request, connection: &Arc<Connection>) {
+        use crate::web_tls::Unservable;
+        use org_host_control::listen::ListenMode;
+        use org_host_control::ops::{TlsFetch, TlsFetchResult};
+        if request.params::<TlsFetch>().is_err() {
+            connection.send_response(params_dont_fit(request.id));
+            return;
+        }
+        let Some(snapshot) = connection.gateway_listen() else {
+            connection.send_response(Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "private gateway connection required",
+                ),
+            ));
+            return;
+        };
+        // The two plain HTTP modes carry no pair. Which of them a listener has was judged
+        // against the instance's service mode when the host started (`registered`), before
+        // the listener was bound.
+        let (origin, hsts) = (snapshot.origin().clone(), snapshot.hsts());
+        let answer = match snapshot.scheme() {
+            ListenMode::HttpLoopback => TlsFetchResult::HttpLoopback { origin, hsts },
+            ListenMode::HttpPublished => TlsFetchResult::HttpPublished { origin, hsts },
+            ListenMode::Https => match self.web_tls.as_deref().map(|tls| tls.fetch()) {
+                Some(Ok((cert, key))) => TlsFetchResult::Https {
+                    cert,
+                    key,
+                    origin,
+                    hsts,
+                },
+                Some(Err(Unservable::Failure(failure))) => {
+                    connection.send_response(ok::<TlsFetch>(
+                        request.id,
+                        &TlsFetchResult::Unavailable(failure),
+                    ));
+                    return;
+                }
+                Some(Err(Unservable::Missing | Unservable::Storage)) | None => {
+                    connection.send_response(Response::error(
+                        request.id,
+                        ApiError::new(ErrorCode::StorageError, "the TLS pair cannot be read"),
+                    ));
+                    return;
+                }
+            },
+        };
+        connection.note_listener_fetched();
+        if matches!(answer, TlsFetchResult::Https { .. }) {
+            secret_response(connection, request.id, &answer);
+        } else {
+            connection.send_response(ok::<TlsFetch>(request.id, &answer));
+        }
     }
     fn administer(
         &self,
@@ -607,32 +732,10 @@ impl Handler for Service {
             return;
         }
         if request.is::<org_host_control::ops::TlsFetch>() {
-            connection.send_response(answer::<org_host_control::ops::TlsFetch>(&request, |_| {
-                let snapshot = connection.gateway_listen().ok_or_else(|| {
-                    ApiError::new(
-                        ErrorCode::NotAuthorized,
-                        "private gateway connection required",
-                    )
-                })?;
-                use org_host_control::listen::ListenMode;
-                use org_host_control::ops::TlsFetchResult;
-                // The two plain HTTP modes carry no pair. Which of them a listener has was
-                // judged against the instance's service mode when the host started
-                // (`registered`), before the listener was bound.
-                let (origin, hsts) = (snapshot.origin().clone(), snapshot.hsts());
-                let answer = match snapshot.scheme() {
-                    ListenMode::HttpLoopback => TlsFetchResult::HttpLoopback { origin, hsts },
-                    ListenMode::HttpPublished => TlsFetchResult::HttpPublished { origin, hsts },
-                    ListenMode::Https => {
-                        return Err(ApiError::new(
-                            ErrorCode::Unavailable,
-                            "verified TLS pair unavailable",
-                        ));
-                    }
-                };
-                connection.note_listener_fetched();
-                Ok(answer)
-            }));
+            self.fetch_tls(&request, connection);
+            return;
+        }
+        if self.set_tls(&request, connection) {
             return;
         }
         if self.administer(&request, connection, received) {
@@ -1141,6 +1244,79 @@ pub(crate) mod tests {
         offices.shutdown();
     }
 
+    /// An `https` listener with its stored pair: `tls.fetch` answers the chain and the key
+    /// for the snapshot's origin, and the web process may then report that it serves. A pair
+    /// that does not name the origin is `unavailable` with `tls_name_mismatch`, and one whose
+    /// key is gone `storage_error`.
+    #[test]
+    fn tls_fetch_on_an_https_listener_answers_the_stored_pair_and_enables_serving() {
+        use org_host_control::listen::ListenFailure;
+        use org_host_control::ops::{TlsFetch, TlsFetchResult, WebServing};
+        let listen = r#"{"address":"127.0.0.1","port":8443,"scheme":"https","origin":"https://127.0.0.1:8443","hsts":"on"}"#;
+        let home = tempfile::tempdir().unwrap();
+        let (kept, tls) = crate::web_tls::tests::started("https://127.0.0.1:8443");
+        let (web, mut peer, offices) = web_peer_for(
+            service(home.path()).with_web_tls(Some(Arc::clone(&tls))),
+            listen,
+        );
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let fetched = exchange::<TlsFetch>(&mut peer, 2, &Default::default())
+            .unwrap()
+            .into_result::<TlsFetch>()
+            .unwrap();
+        let TlsFetchResult::Https {
+            cert,
+            key,
+            origin,
+            hsts,
+        } = fetched
+        else {
+            panic!("not the https mode: {fetched:?}");
+        };
+        assert_eq!(origin.as_str(), "https://127.0.0.1:8443");
+        assert_eq!(hsts, org_host_control::listen::Hsts::On);
+        let (chain, stored) = tls.fetch().unwrap();
+        assert_eq!(cert, chain);
+        assert_eq!(key.expose(), stored.expose());
+        exchange::<WebServing>(&mut peer, 3, &Default::default())
+            .unwrap()
+            .into_result::<WebServing>()
+            .unwrap();
+        assert!(web.reported_serving());
+        drop(web);
+        offices.shutdown();
+        // Another host's pair, then no key.
+        crate::web_tls::tests::store_pair_of(&kept, &tls, "https://elsewhere.example");
+        let home = tempfile::tempdir().unwrap();
+        let (web, mut peer, offices) = web_peer_for(
+            service(home.path()).with_web_tls(Some(Arc::clone(&tls))),
+            listen,
+        );
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        let fetched = exchange::<TlsFetch>(&mut peer, 2, &Default::default())
+            .unwrap()
+            .into_result::<TlsFetch>()
+            .unwrap();
+        let TlsFetchResult::Unavailable(ListenFailure::TlsNameMismatch { uncovered }) = fetched
+        else {
+            panic!("not a name mismatch: {fetched:?}");
+        };
+        assert_eq!(uncovered.origins()[0].as_str(), "https://127.0.0.1:8443");
+        crate::web_tls::tests::lose_keys(&kept);
+        assert!(refused(
+            exchange::<TlsFetch>(&mut peer, 3, &Default::default()),
+            ErrorCode::StorageError
+        ));
+        drop(web);
+        offices.shutdown();
+    }
+
     /// A published plain-HTTP listener is answered as that mode, with its origin and no
     /// pair, and the web process may then report that it serves.
     #[test]
@@ -1173,8 +1349,10 @@ pub(crate) mod tests {
         offices.shutdown();
     }
 
+    /// An `https` listener on a host without its pair (no registry): `tls.fetch` is the plain
+    /// error `storage_error`, and the web process may not report that it serves.
     #[test]
-    fn tls_fetch_off_an_http_loopback_listener_is_unavailable_and_never_enables_serving() {
+    fn tls_fetch_on_an_https_listener_without_a_pair_is_refused_and_never_enables_serving() {
         use org_host_control::ops::{TlsFetch, WebServing};
         let home = tempfile::tempdir().unwrap();
         let (web, mut peer, offices) = web_peer_on(
@@ -1187,7 +1365,7 @@ pub(crate) mod tests {
             .unwrap();
         assert!(refused(
             exchange::<TlsFetch>(&mut peer, 2, &Default::default()),
-            ErrorCode::Unavailable
+            ErrorCode::StorageError
         ));
         assert!(refused(
             exchange::<WebServing>(&mut peer, 3, &Default::default()),
@@ -1367,6 +1545,7 @@ pub(crate) mod tests {
                 status: InstanceMode::Service,
                 web_status: GatewayState::NotConfigured,
                 administrator: Administrator::Present,
+                tls: None,
             }
         );
         assert_eq!(service.browser_ops(), 2);
@@ -1481,6 +1660,134 @@ pub(crate) mod tests {
             .sign_in_browser(&browser_sign_in(4), now, &mut ended)
             .unwrap();
         assert!(ended.is_empty());
+    }
+
+    /// `tls.set` is the administrator's, on `host.sock` only: a bad session, an account that
+    /// is not the administrator and the web connection are `not_authorized`; an instance
+    /// without an `https` pair is `unavailable`; the administrator's pair is installed.
+    #[test]
+    fn tls_set_needs_the_administrators_session_on_host_sock() {
+        use org_host_control::ops::{AccountVerify, AccountVerifyParams, TlsSet, TlsSetParams};
+        use org_host_control::{HostOpResult, Password, SessionHandle, TlsPrivateKey};
+        let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
+        let authentication = Arc::new(authentication);
+        let verifier = authentication::hash_password(
+            &Password::new("synthetic test password".into()).unwrap(),
+        )
+        .unwrap();
+        authentication
+            .provisioning_storage()
+            .0
+            .seed_account(
+                &crate::ids::generate().unwrap(),
+                "Member",
+                &verifier,
+                false,
+                1,
+            )
+            .unwrap();
+        let (_kept, tls) = crate::web_tls::tests::started("https://127.0.0.1:8443");
+        let now = crate::web_tls::now().unwrap();
+        let (cert, key) =
+            crate::web_tls::tests::pair_for(&["127.0.0.1"], now - 60, now + 30 * 86_400);
+        let params = |session: SessionHandle| TlsSetParams {
+            session,
+            operation_id: crate::ids::generate().unwrap(),
+            cert: cert.clone(),
+            key: TlsPrivateKey::new(key.clone()).unwrap(),
+        };
+        let local = |web_tls: Option<Arc<crate::web_tls::WebTls>>| {
+            let home = tempfile::tempdir().unwrap();
+            let mut service = service(home.path())
+                .with_authentication(Some(Arc::clone(&authentication)))
+                .with_web_tls(web_tls);
+            service.instance_id = Some(crate::ids::uuid_v7().unwrap());
+            let offices = service.offices.clone();
+            let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+            let local = listener::LocalConnection::start(host, Arc::new(service)).unwrap();
+            peer.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .unwrap();
+            let mut peer = std::io::BufReader::new(peer);
+            exchange::<Hello>(&mut peer, 1, &Default::default())
+                .unwrap()
+                .into_result::<Hello>()
+                .unwrap();
+            (home, local, peer, offices)
+        };
+        let sign_in = |peer: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
+                       login: &str| {
+            exchange::<AccountVerify>(
+                peer,
+                2,
+                &AccountVerifyParams {
+                    login: login.into(),
+                    password: Password::new("synthetic test password".into()).unwrap(),
+                },
+            )
+            .unwrap()
+            .into_result::<AccountVerify>()
+            .unwrap()
+            .session
+        };
+        let (_home, connection, mut peer, offices) = local(Some(Arc::clone(&tls)));
+        let bogus = SessionHandle::new("A".repeat(43)).unwrap();
+        assert!(refused(
+            exchange::<TlsSet>(&mut peer, 3, &params(bogus)),
+            ErrorCode::NotAuthorized
+        ));
+        let member = sign_in(&mut peer, "Member");
+        assert!(refused(
+            exchange::<TlsSet>(&mut peer, 4, &params(member)),
+            ErrorCode::NotAuthorized
+        ));
+        let before = tls.fetch().unwrap().0;
+        let owner = sign_in(&mut peer, "Owner");
+        let answered = exchange::<TlsSet>(&mut peer, 5, &params(owner))
+            .unwrap()
+            .into_result::<TlsSet>()
+            .unwrap();
+        assert_eq!(
+            answered,
+            HostOpResult::Completed {
+                result: org_proto::Empty {}
+            }
+        );
+        let after = tls.fetch().unwrap().0;
+        assert_ne!(after, before);
+        drop(connection);
+        offices.shutdown();
+        // Without an https pair.
+        let (_home, connection, mut peer, offices) = local(None);
+        let owner = sign_in(&mut peer, "Owner");
+        assert!(refused(
+            exchange::<TlsSet>(&mut peer, 3, &params(owner)),
+            ErrorCode::Unavailable
+        ));
+        drop(connection);
+        offices.shutdown();
+        // On the web connection: refused before its params are read.
+        let home = tempfile::tempdir().unwrap();
+        let (web, mut peer, offices) = web_peer_for(
+            service(home.path())
+                .with_authentication(Some(Arc::clone(&authentication)))
+                .with_web_tls(Some(Arc::clone(&tls))),
+            r#"{"address":"127.0.0.1","port":8443,"scheme":"https","origin":"https://127.0.0.1:8443","hsts":"off"}"#,
+        );
+        exchange::<Hello>(&mut peer, 1, &Default::default())
+            .unwrap()
+            .into_result::<Hello>()
+            .unwrap();
+        assert!(refused(
+            exchange::<TlsSet>(
+                &mut peer,
+                2,
+                &params(SessionHandle::new("A".repeat(43)).unwrap())
+            ),
+            ErrorCode::NotAuthorized
+        ));
+        assert_eq!(tls.fetch().unwrap().0, after);
+        drop(web);
+        offices.shutdown();
     }
 
     /// Before the registered start installs the administrator service, both admin calls

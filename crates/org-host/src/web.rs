@@ -466,6 +466,8 @@ pub(crate) struct Configuration {
     pub check: ServerCheck,
     pub critical_paths: Vec<PathBuf>,
     pub release: Option<org_host_control::gateway::WebRelease>,
+    /// The `https` listener's pair (`crate::web_tls`); `None` for plain HTTP.
+    pub tls: Option<Arc<crate::web_tls::WebTls>>,
 }
 /// The selected release's web process image pin (`Err`: the release has none) and the
 /// release identity bound into the web process's first line.
@@ -572,6 +574,29 @@ fn unconfinable(reason: io::Error) -> io::Error {
     ))
 }
 
+/// The pre-spawn check of an `https` listener (X-02 §2), after its listener fields, origin and
+/// `hsts`, which the snapshot passed when it was read: a stored pair is present
+/// (`tls_missing`), covers the origin (`tls_name_mismatch`) and its key can be read. The
+/// refusal names the reason for the host log.
+fn https_gate(tls: Option<&crate::web_tls::WebTls>) -> io::Result<()> {
+    use crate::web_tls::Unservable;
+    let refused = |reason: &str| {
+        io::Error::other(format!(
+            "the web process requires a verified TLS pair for its https listener: {reason}"
+        ))
+    };
+    match tls.map(crate::web_tls::WebTls::servable) {
+        Some(Ok(())) => Ok(()),
+        None | Some(Err(Unservable::Missing)) => Err(refused("tls_missing")),
+        Some(Err(Unservable::Failure(_))) => Err(refused(
+            "tls_name_mismatch: the stored certificate does not name the origin's host",
+        )),
+        Some(Err(Unservable::Storage)) => Err(refused(
+            "tls_missing: the stored pair or its key cannot be read",
+        )),
+    }
+}
+
 pub(crate) struct Supervisor {
     stop: Arc<AtomicBool>,
     state: Arc<Mutex<GatewayState>>,
@@ -594,15 +619,9 @@ impl Supervisor {
         org_platform::confinement::web_confinement_supported().map_err(unconfinable)?;
         // Plain HTTP, in one of its two modes: on loopback, or on the published port of a
         // foreground instance, which the registered start has already judged against the
-        // instance's service mode. HTTPS needs a verified pair, which no host has yet.
-        if !matches!(
-            config.listen.scheme(),
-            ListenMode::HttpLoopback | ListenMode::HttpPublished
-        ) {
-            return Err(io::Error::other(
-                "the web process requires a plain HTTP listener (http_loopback, or \
-                 http_published in the foreground mode): HTTPS has no verified certificate yet",
-            ));
+        // instance's service mode. HTTPS needs the stored pair, verified now.
+        if config.listen.scheme() == ListenMode::Https {
+            https_gate(config.tls.as_deref())?;
         }
         config
             .check
