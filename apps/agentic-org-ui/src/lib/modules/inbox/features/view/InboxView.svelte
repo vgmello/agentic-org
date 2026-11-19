@@ -28,8 +28,7 @@
 		DropdownMenuSeparator,
 		DropdownMenuTrigger
 	} from '$lib/components/ui/dropdown-menu';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import ZoneNotice from '$lib/modules/preferences/ZoneNotice.svelte';
+	import { accountZone, ZoneNotice } from '$lib/modules/preferences';
 	import { inboxApi } from '../../api';
 	import { neighbour, openCount, scopeOptions, tabCounts, tabItems } from '../../items';
 	import { TABS, type InboxItem, type InboxRequest, type InboxTab } from '../../types';

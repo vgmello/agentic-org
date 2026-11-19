@@ -6,7 +6,7 @@ import { enterMockedOrganization } from './mock-organization';
 async function openBoard(page: Page) {
 	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/teams\/members$/);
-	await expect(page.getByRole('table', { name: 'Agents', exact: true })).toBeVisible();
+	await expect(page.getByRole('list', { name: 'Members', exact: true })).toBeVisible();
 	await visit(page, '/projects/atlas');
 	await page.getByRole('tab', { name: 'Tasks', exact: true }).click();
 }

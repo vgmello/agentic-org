@@ -8,22 +8,24 @@ async function createOrganization(page: Page) {
 	await expect(page).toHaveURL(/\/teams\/members$/);
 }
 
-async function openOffices(page: Page) {
+async function openActivity(page: Page) {
 	await createOrganization(page);
 	await page
 		.getByRole('navigation', { name: 'Main', exact: true })
-		.getByRole('link', { name: 'Offices', exact: true })
+		.getByRole('link', { name: 'Activity', exact: true })
 		.click();
-	await expect(page.getByRole('heading', { name: 'Offices', exact: true })).toBeVisible();
+	await expect(
+		page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
+	).toBeVisible();
 }
 
 for (const width of [960, 1440]) {
 	test(`BUG-52: the full navigation remains at ${width}px`, async ({ page }) => {
-		await openOffices(page);
+		await openActivity(page);
 		await page.setViewportSize({ width, height: 900 });
 		const nav = page.getByRole('navigation', { name: 'Main', exact: true });
 		expect((await nav.locator('..').boundingBox())?.width).toBe(288);
-		await expect(nav.getByRole('link', { name: 'Offices', exact: true })).toHaveAttribute(
+		await expect(nav.getByRole('link', { name: 'Activity', exact: true })).toHaveAttribute(
 			'aria-current',
 			'page'
 		);
@@ -36,41 +38,41 @@ for (const width of [959, 720]) {
 	test(`BUG-52: the icon rail keeps navigation names and tooltips at ${width}px`, async ({
 		page
 	}) => {
-		await openOffices(page);
+		await openActivity(page);
 		await page.setViewportSize({ width, height: width === 720 ? 450 : 900 });
 		const nav = page.getByRole('navigation', { name: 'Main', exact: true });
 		await shot(page, `shell-rail-${width}`);
 		expect((await nav.locator('..').boundingBox())?.width).toBe(64);
-		await expect(nav.getByRole('link', { name: 'Offices', exact: true })).toHaveAttribute(
+		await expect(nav.getByRole('link', { name: 'Activity', exact: true })).toHaveAttribute(
 			'aria-current',
 			'page'
 		);
 		for (const name of [
-			'Chat',
-			'Agents',
-			'Org chart',
+			'Home',
+			'Inbox',
 			'Projects',
 			'Work',
-			'Sessions',
+			'Chat',
 			'Activity',
-			'Processes',
-			'Offices',
-			'Settings'
+			'Teams',
+			'Organization settings'
 		]) {
 			await expect(nav.getByRole('link', { name, exact: true })).toBeVisible();
 		}
 		await expect(
-			page.getByRole('link', { name: /^Switch organization/ }).locator('svg')
+			page.getByRole('button', { name: 'You · Owner, account menu', exact: true }).locator('svg')
 		).toBeVisible();
-		const office = nav.getByRole('link', { name: 'Offices', exact: true });
+		const office = nav.getByRole('link', { name: 'Activity', exact: true });
 		await office.hover();
-		await expect(page.getByRole('tooltip', { name: 'Offices', exact: true })).toHaveText('Offices');
+		await expect(page.getByRole('tooltip', { name: 'Activity', exact: true })).toHaveText(
+			'Activity'
+		);
 		await shot(page, `shell-rail-hover-${width}`);
 		await office.focus();
 		await page.keyboard.press('Tab');
-		await expect(nav.getByRole('link', { name: 'Settings', exact: true })).toBeFocused();
-		await expect(page.getByRole('tooltip', { name: 'Settings', exact: true })).toBeVisible();
-		await expect(page.getByRole('tooltip', { name: 'Offices', exact: true })).not.toBeVisible();
+		await expect(nav.getByRole('link', { name: 'Teams', exact: true })).toBeFocused();
+		await expect(page.getByRole('tooltip', { name: 'Teams', exact: true })).toBeVisible();
+		await expect(page.getByRole('tooltip', { name: 'Activity', exact: true })).not.toBeVisible();
 		await shot(page, `shell-rail-focus-${width}`);
 	});
 }
@@ -79,7 +81,7 @@ for (const width of [639, 600, 320]) {
 	test(`BUG-52: the mobile Menu traps and restores navigation focus at ${width}px`, async ({
 		page
 	}) => {
-		await openOffices(page);
+		await openActivity(page);
 		await page.setViewportSize({ width, height: 900 });
 		const menu = page.getByRole('button', { name: 'Menu', exact: true });
 		await shot(page, `shell-mobile-closed-${width}`);
@@ -102,7 +104,7 @@ for (const width of [639, 600, 320]) {
 		await expect(dialog).toHaveCSS('width', `${Math.min(288, width - 56)}px`);
 		await expect(menu).toHaveAttribute('aria-expanded', 'true');
 		await expect(dialog).toHaveAttribute('id', (await menu.getAttribute('aria-controls'))!);
-		await expect(dialog.getByRole('link', { name: 'Offices', exact: true })).toBeFocused();
+		await expect(dialog.getByRole('link', { name: 'Activity', exact: true })).toBeFocused();
 		await shot(page, `shell-mobile-open-${width}`);
 		const focusables = await dialog.locator('a[href], button:not([disabled])').count();
 		for (let i = 0; i < focusables + 2; i++) {
@@ -113,24 +115,26 @@ for (const width of [639, 600, 320]) {
 		await expect(dialog).not.toBeVisible();
 		await expect(menu).toBeFocused();
 		await menu.click();
-		await dialog.getByRole('link', { name: 'Offices', exact: true }).click();
+		await dialog.getByRole('link', { name: 'Activity', exact: true }).click();
 		await expect(
-			page.getByRole('heading', { level: 1, name: 'Offices', exact: true })
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
 		).toBeFocused();
 		await expect(dialog).not.toBeVisible();
 		await menu.click();
-		await dialog.getByRole('link', { name: 'Settings', exact: true }).click();
+		await dialog.getByRole('link', { name: 'Organization settings', exact: true }).click();
 		await expect(page).toHaveURL(/\/settings$/);
 		await expect(dialog).not.toBeVisible();
 		await expect(
-			page.getByRole('heading', { level: 1, name: 'Settings', exact: true })
+			page.getByRole('heading', { level: 1, name: 'Organization settings', exact: true })
 		).toBeFocused();
 		await expect(page.getByRole('main')).toHaveCount(1);
 		await expect(menu).toHaveAttribute('aria-expanded', 'false');
 		await shot(page, `shell-mobile-destination-${width}`);
 		await page.goBack();
-		await expect(page).toHaveURL(/\/offices$/);
-		await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+		await expect(page).toHaveURL(/\/activity$/);
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
+		).toBeVisible();
 		await page.goBack();
 		await expect(page).toHaveURL(/\/(agents|teams\/members)$/);
 	});
@@ -139,7 +143,7 @@ for (const width of [639, 600, 320]) {
 test('BUG-52: the scrim dismisses Menu and widening the window releases the focus trap', async ({
 	page
 }) => {
-	await openOffices(page);
+	await openActivity(page);
 	await page.setViewportSize({ width: 600, height: 900 });
 	const menu = page.getByRole('button', { name: 'Menu', exact: true });
 	await menu.click();
@@ -155,7 +159,7 @@ test('BUG-52: the scrim dismisses Menu and widening the window releases the focu
 	await expect(
 		page
 			.getByRole('navigation', { name: 'Main', exact: true })
-			.getByRole('link', { name: 'Offices', exact: true })
+			.getByRole('link', { name: 'Activity', exact: true })
 	).toBeFocused();
 	await expect(menu).toHaveCount(0);
 	await shot(page, 'shell-menu-resized-to-rail');
@@ -166,7 +170,7 @@ for (const dismissal of ['Escape', 'scrim', 'Close']) {
 		`BUG-59: pointer-open Menu restores focus after ${dismissal}`,
 		{ tag: '@webkit' },
 		async ({ page }) => {
-			await openOffices(page);
+			await openActivity(page);
 			await page.setViewportSize({ width: 600, height: 900 });
 			const menu = page.getByRole('button', { name: 'Menu', exact: true });
 			await menu.click();
@@ -189,7 +193,7 @@ test(
 	'BUG-59: browser Back dismisses Menu before leaving the page',
 	{ tag: ['@journey', '@webkit'] },
 	async ({ page }) => {
-		await openOffices(page);
+		await openActivity(page);
 		await page.setViewportSize({ width: 600, height: 900 });
 		const menu = page.getByRole('button', { name: 'Menu', exact: true });
 		await menu.click();
@@ -197,8 +201,10 @@ test(
 		await expect(dialog).toBeVisible();
 		await page.evaluate(() => window.history.back());
 		await expect(dialog).not.toBeVisible();
-		await expect(page).toHaveURL(/\/offices$/);
-		await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+		await expect(page).toHaveURL(/\/activity$/);
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
+		).toBeVisible();
 		await expect(menu).toBeFocused();
 		await shot(page, 'shell-menu-back-stays-on-page');
 		await page.goBack();
@@ -211,7 +217,7 @@ test(
 	'BUG-59: opening and dismissing Menu preserves Forward history',
 	{ tag: '@webkit' },
 	async ({ page }) => {
-		await openOffices(page);
+		await openActivity(page);
 		await page.goBack();
 		await expect(page).toHaveURL(/\/(agents|teams\/members)$/);
 		await page.setViewportSize({ width: 600, height: 900 });
@@ -223,8 +229,10 @@ test(
 		await expect(dialog).not.toBeVisible();
 		await expect(menu).toBeFocused();
 		await page.goForward();
-		await expect(page).toHaveURL(/\/offices$/);
-		await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+		await expect(page).toHaveURL(/\/activity$/);
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
+		).toBeVisible();
 		await shot(page, 'shell-menu-keeps-forward-history');
 	}
 );
@@ -240,19 +248,19 @@ for (const legacy of [false, true]) {
 				await page.addInitScript(() =>
 					Object.defineProperty(window, 'navigation', { value: undefined })
 				);
-			await openOffices(page);
+			await openActivity(page);
 			await page.setViewportSize({ width: 600, height: 900 });
 			await page.evaluate(() => {
 				window.location.hash = 'shell-page-title';
 			});
-			await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+			await expect(page).toHaveURL(/\/activity#shell-page-title$/);
 			const menu = page.getByRole('button', { name: 'Menu', exact: true });
 			await menu.click();
 			const dialog = page.getByRole('dialog', { name: 'Main navigation' });
 			await expect(dialog).toBeVisible();
 			await page.evaluate(() => window.history.back());
 			await expect(dialog).not.toBeVisible();
-			await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+			await expect(page).toHaveURL(/\/activity#shell-page-title$/);
 			await expect(menu).toBeFocused();
 			await shot(page, legacy ? 'shell-menu-back-fragment-legacy' : 'shell-menu-back-fragment');
 			await menu.click();
@@ -260,9 +268,9 @@ for (const legacy of [false, true]) {
 			await page.keyboard.press('Escape');
 			await expect(dialog).not.toBeVisible();
 			await expect(menu).toBeFocused();
-			await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+			await expect(page).toHaveURL(/\/activity#shell-page-title$/);
 			await page.goBack();
-			await expect(page).toHaveURL(/\/offices$/);
+			await expect(page).toHaveURL(/\/activity$/);
 		}
 	);
 }
@@ -271,7 +279,7 @@ test(
 	'BUG-59: Back keeps the fragment reached by Forward while Menu is open',
 	{ tag: '@webkit' },
 	async ({ page }) => {
-		await openOffices(page);
+		await openActivity(page);
 		await page.setViewportSize({ width: 600, height: 900 });
 		for (const fragment of ['one', 'two']) {
 			await page.evaluate((value) => {
@@ -303,7 +311,7 @@ test(
 		await page.addInitScript(() =>
 			Object.defineProperty(window, 'navigation', { value: undefined })
 		);
-		await openOffices(page);
+		await openActivity(page);
 		await page.setViewportSize({ width: 600, height: 900 });
 		for (const fragment of ['one', 'two', 'three']) {
 			await page.evaluate((value) => {
@@ -335,9 +343,11 @@ test(
 		await expect(page).toHaveURL(/\/(agents|teams\/members)#shell-page-title$/);
 		await page
 			.getByRole('navigation', { name: 'Main', exact: true })
-			.getByRole('link', { name: 'Offices', exact: true })
+			.getByRole('link', { name: 'Activity', exact: true })
 			.click();
-		await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
+		).toBeVisible();
 		await page.setViewportSize({ width: 600, height: 900 });
 		const menu = page.getByRole('button', { name: 'Menu', exact: true });
 		await menu.click();
@@ -345,11 +355,13 @@ test(
 		await expect(dialog).toBeVisible();
 		await page.evaluate(() => window.history.back());
 		await expect(dialog).not.toBeVisible();
-		await expect(page).toHaveURL(/\/offices$/);
-		await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+		await expect(page).toHaveURL(/\/activity$/);
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
+		).toBeVisible();
 		await expect(menu).toBeFocused();
 		await expect(
-			page.getByRole('heading', { level: 1, name: 'Offices', exact: true })
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
 		).toBeVisible();
 		await shot(page, 'shell-menu-back-to-previous-route-fragment');
 	}
@@ -366,9 +378,11 @@ test(
 		await expect(page).toHaveURL(/\/(agents|teams\/members)#shell-page-title$/);
 		await page
 			.getByRole('navigation', { name: 'Main', exact: true })
-			.getByRole('link', { name: 'Offices', exact: true })
+			.getByRole('link', { name: 'Activity', exact: true })
 			.click();
-		await expect(page.getByRole('heading', { name: 'Offices', exact: true })).toBeVisible();
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
+		).toBeVisible();
 		await page.setViewportSize({ width: 600, height: 900 });
 		const menu = page.getByRole('button', { name: 'Menu', exact: true });
 		await menu.click();
@@ -376,11 +390,13 @@ test(
 		await expect(dialog).toBeVisible();
 		await page.evaluate(() => window.history.go(-2));
 		await expect(dialog).not.toBeVisible();
-		await expect(page).toHaveURL(/\/offices$/);
+		await expect(page).toHaveURL(/\/activity$/);
 		await expect(
-			page.getByRole('heading', { level: 1, name: 'Offices', exact: true })
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
 		).toBeVisible();
-		await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
+		).toBeVisible();
 		await expect(menu).toBeFocused();
 		await shot(page, 'shell-menu-back-across-two-entries');
 	}
@@ -393,29 +409,31 @@ test(
 		await page.addInitScript(() =>
 			Object.defineProperty(window, 'navigation', { value: undefined })
 		);
-		await openOffices(page);
+		await openActivity(page);
 		await page.evaluate(() => {
 			window.location.hash = 'shell-page-title';
 		});
-		await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+		await expect(page).toHaveURL(/\/activity#shell-page-title$/);
 		await page.setViewportSize({ width: 600, height: 900 });
 		const menu = page.getByRole('button', { name: 'Menu', exact: true });
 		const dialog = page.getByRole('dialog', { name: 'Main navigation' });
 		await menu.click();
-		await dialog.getByRole('link', { name: 'Offices', exact: true }).click();
-		await expect(page).toHaveURL(/\/offices$/);
+		await dialog.getByRole('link', { name: 'Activity', exact: true }).click();
+		await expect(page).toHaveURL(/\/activity$/);
 		await menu.click();
-		await dialog.getByRole('link', { name: 'Settings', exact: true }).click();
+		await dialog.getByRole('link', { name: 'Organization settings', exact: true }).click();
 		await expect(page).toHaveURL(/\/settings$/);
 		await page.evaluate(() => window.history.go(-2));
-		await expect(page).toHaveURL(/\/offices#shell-page-title$/);
+		await expect(page).toHaveURL(/\/activity#shell-page-title$/);
 		await menu.click();
 		await expect(dialog).toBeVisible();
 		await page.evaluate(() => window.history.forward());
-		await expect(page).toHaveURL(/\/offices$/);
-		await expect(page.getByRole('list', { name: 'Offices', exact: true })).toBeVisible();
+		await expect(page).toHaveURL(/\/activity$/);
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'Activity', exact: true })
+		).toBeVisible();
 		await shot(page, 'shell-menu-forward-to-unfragmented-entry');
-		await expect(page).toHaveURL(/\/offices$/);
+		await expect(page).toHaveURL(/\/activity$/);
 	}
 );
 
@@ -425,17 +443,18 @@ test(
 	async ({ page, browserName }) => {
 		await page.setViewportSize({ width: 720, height: 450 });
 		await createOrganization(page);
-		await visit(page, '/offices');
+		await visit(page, '/activity');
 		const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-		const rail = nav.locator('..');
-		await nav.getByRole('link', { name: 'Chat', exact: true }).focus();
-		await expect(page.getByRole('tooltip', { name: 'Chat', exact: true })).toBeVisible();
+		// The navigation list scrolls inside the rail; the logo and the footer stay put.
+		const rail = nav;
+		await nav.getByRole('link', { name: 'Home', exact: true }).focus();
+		await expect(page.getByRole('tooltip', { name: 'Home', exact: true })).toBeVisible();
 		const initial = await rail.evaluate((el) => el.scrollTop);
 		const key = browserName === 'webkit' ? 'Alt+Tab' : 'Tab';
-		for (const name of ['Agents', 'Org chart', 'Projects', 'Work', 'Sessions', 'Activity']) {
+		for (const name of ['Inbox', 'Projects', 'Work', 'Chat', 'Activity', 'Teams']) {
 			await page.keyboard.press(key);
 			await expect(nav.getByRole('link', { name, exact: true })).toBeFocused();
-			if (name !== 'Activity')
+			if (name !== 'Teams')
 				await expect(page.getByRole('tooltip', { name, exact: true })).toBeVisible();
 		}
 		await expect.poll(() => rail.evaluate((el) => el.scrollTop)).toBeGreaterThan(initial);
@@ -446,11 +465,11 @@ test(
 				})
 		);
 		await shot(page, 'shell-rail-keyboard-scroll', { settle: false });
-		const tooltip = page.getByRole('tooltip', { name: 'Activity', exact: true });
+		const tooltip = page.getByRole('tooltip', { name: 'Teams', exact: true });
 		await expect(tooltip).toBeVisible();
 		await page.keyboard.press('Escape');
 		await expect(tooltip).not.toBeVisible();
-		await expect(nav.getByRole('link', { name: 'Activity', exact: true })).toBeFocused();
+		await expect(nav.getByRole('link', { name: 'Teams', exact: true })).toBeFocused();
 	}
 );
 
@@ -468,7 +487,7 @@ test(
 				text: '3',
 				label: '3 need you'
 			};
-			const link = Object.assign(document.createElement('a'), { href: '/agents' });
+			const link = Object.assign(document.createElement('a'), { href: '/teams/members' });
 			document.body.append(link);
 			link.click();
 		});

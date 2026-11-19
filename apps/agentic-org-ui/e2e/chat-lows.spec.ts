@@ -114,8 +114,8 @@ for (const kind of ['channel', 'DM'] as const) {
 		page
 	}) => {
 		await open(page);
-		await mainNav(page).getByRole('link', { name: 'Agents', exact: true }).click();
-		await expect(page).toHaveURL(/\/teams\/members$/);
+		await mainNav(page).getByRole('link', { name: 'Teams', exact: true }).click();
+		await expect(page).toHaveURL(/\/teams$/);
 		await page.evaluate(async () => {
 			const path = '/src/lib/modules/messaging/legacy-api.ts';
 			const { chatApi } = await import(path);
@@ -241,8 +241,8 @@ test('CHAT-27: thread draft survives same-tab navigation, then send and reload c
 	await openReleaseThread(page);
 	const composer = thread(page).getByTestId('composer');
 	await composer.fill('Still here on return');
-	await mainNav(page).getByRole('link', { name: 'Agents', exact: true }).click();
-	await expect(page).toHaveURL(/\/teams\/members$/);
+	await mainNav(page).getByRole('link', { name: 'Teams', exact: true }).click();
+	await expect(page).toHaveURL(/\/teams$/);
 	await mainNav(page).getByRole('link', { name: 'Chat', exact: true }).click();
 	await expect(side(page)).toBeVisible();
 	await openReleaseThread(page);
@@ -388,8 +388,8 @@ test(
 for (const action of ['Reply', 'Reject'] as const) {
 	test(`CHAT-27: a refresh keeps the thread ask ${action} form and focus`, async ({ page }) => {
 		await open(page);
-		await mainNav(page).getByRole('link', { name: 'Agents', exact: true }).click();
-		await expect(page).toHaveURL(/\/teams\/members$/);
+		await mainNav(page).getByRole('link', { name: 'Teams', exact: true }).click();
+		await expect(page).toHaveURL(/\/teams$/);
 		await page.evaluate(async () => {
 			const path = '/src/lib/modules/messaging/legacy-api.ts';
 			const { chatApi } = await import(path);

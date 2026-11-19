@@ -17,7 +17,7 @@
 	import { mobileButton } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
+	import { accountZone } from '$lib/modules/preferences';
 	import { toAppError } from '$lib/office/api';
 	import { rolesApi } from '../../api';
 	import {

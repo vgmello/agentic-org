@@ -20,8 +20,7 @@
 	import { mobileButton } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import { eventTime } from '$lib/modules/preferences/time';
+	import { accountZone, eventTime } from '$lib/modules/preferences';
 	import { pageTitle } from '$lib/nav';
 	import { rolesApi } from '../../api';
 	import { CHANGES_PAUSED, actorName, employeesText, invalidText } from '../../present';

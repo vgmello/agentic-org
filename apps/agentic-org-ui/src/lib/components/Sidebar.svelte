@@ -7,7 +7,7 @@
   Ported from the Tailwind Plus sidebar layout (licensed; allowed inside apps/agentic-org-ui only).
 -->
 <script lang="ts">
-	import { tick, untrack } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { innerHeight, innerWidth } from 'svelte/reactivity/window';
@@ -93,8 +93,21 @@
 	const subClass = (active: boolean) =>
 		`flex min-h-8 items-center rounded-md py-1 pr-2 pl-11 text-sm/6 ${active ? 'bg-surface-raised font-semibold text-fg' : 'text-fg-muted hover:bg-surface-raised hover:text-fg'} max-[639px]:min-h-11`;
 
+	// While focus scrolls the rail, the link that slides under a resting pointer must not open its tooltip and take
+	// over from the focused link's: pointer tooltips other than the focused one wait until the scroll has settled.
+	let focusScroll = $state<{ href: string; timer: ReturnType<typeof setTimeout> } | undefined>();
+	const pointerHeld = (href: string) => !!focusScroll && focusScroll.href !== href;
+	function holdPointerTooltips(href: string) {
+		if (focusScroll) clearTimeout(focusScroll.timer);
+		focusScroll = { href, timer: setTimeout(() => (focusScroll = undefined), 400) };
+	}
+	onDestroy(() => {
+		if (focusScroll) clearTimeout(focusScroll.timer);
+	});
+
 	function revealRailLink(event: FocusEvent) {
 		if (!rail || !(event.currentTarget instanceof HTMLElement)) return;
+		holdPointerTooltips(event.currentTarget.getAttribute('href') ?? '');
 		// Scroll before Bits UI opens the tooltip. WebKit can otherwise deliver the
 		// focus scroll after the provider's frame guard and dismiss the tooltip.
 		event.currentTarget.scrollIntoView({
@@ -113,7 +126,7 @@
 				? 'max-[960px]:justify-center max-[960px]:px-2'
 				: ''}"
 		>
-			<Tooltip.Root disabled={!rail}>
+			<Tooltip.Root disabled={!rail || pointerHeld(resolve('/home'))}>
 				<Tooltip.Trigger>
 					{#snippet child({ props })}
 						<a
@@ -161,7 +174,7 @@
 						active && !!currentSub && !!item.sublist && sublists[item.sublist].includes(currentSub)}
 					{@const badgeId = `${sidebarId}-badge-${index}`}
 					<li>
-						<Tooltip.Root disabled={!rail}>
+						<Tooltip.Root disabled={!rail || pointerHeld(resolve(item.href as '/'))}>
 							<Tooltip.Trigger>
 								{#snippet child({ props })}
 									{@const tooltipDescription =

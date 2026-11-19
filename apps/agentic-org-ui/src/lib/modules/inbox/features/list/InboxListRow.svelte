@@ -6,8 +6,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import Avatar from '$lib/components/Avatar.svelte';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import { eventTime, formatFull, relativeUntil } from '$lib/modules/preferences/time';
+	import { accountZone, eventTime, formatFull, relativeUntil } from '$lib/modules/preferences';
 	import { whoLine } from '../../items';
 	import { KIND_WORD, type InboxItem } from '../../types';
 

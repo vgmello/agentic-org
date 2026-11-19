@@ -24,7 +24,7 @@
 	import { focusHeading } from '$lib/components/focus';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
+	import { accountZone } from '$lib/modules/preferences';
 	import { pageTitle } from '$lib/nav';
 	import Glyph from '../../components/Glyph.svelte';
 	import StaleNotice from '../../components/StaleNotice.svelte';

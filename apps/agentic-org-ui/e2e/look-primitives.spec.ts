@@ -164,7 +164,7 @@ for (const width of [320, 640, 960, 1280]) {
 		async ({ page }) => {
 			await page.setViewportSize({ width, height: 900 });
 			await open(page, '/projects');
-			const list = page.getByRole('list', { name: 'Projects', exact: true });
+			const list = page.getByRole('main').getByRole('list', { name: 'Projects', exact: true });
 			await expect(list.getByRole('listitem')).toHaveCount(4);
 			await expect(list.getByTestId('project-row').getByRole('link')).toHaveText([
 				'Atlas',
@@ -303,14 +303,13 @@ test(
 	'AC-IA08 BUG-70: Paused keeps its word, neutral tint and keyboard filter in the directory',
 	{ tag: '@webkit' },
 	async ({ page }) => {
-		await open(page, '/org-chart');
-		await page
-			.locator('[data-testid=team-card][data-team=web]')
-			.getByRole('button', { name: /^Noor Haddad/ })
-			.click();
-		await page.getByTestId('selected-member').getByRole('button', { name: 'Pause…' }).click();
-		await page.getByRole('dialog').getByRole('button', { name: 'Pause Noor Haddad' }).click();
-		await expect(page.getByText('Paused Noor Haddad.')).toBeVisible();
+		await open(page);
+		// Pause from the agent's profile (More › Pause…).
+		await visit(page, '/members/noor');
+		await page.getByRole('button', { name: /^More/ }).click();
+		await page.getByRole('menuitem', { name: 'Pause…', exact: true }).click();
+		await page.getByRole('dialog').getByRole('button', { name: 'Pause', exact: true }).click();
+		await expect(page.getByText('Pause requested for Noor Haddad.')).toBeVisible();
 		await visit(page, '/teams/members');
 		const agents = page
 			.getByRole('group', { name: 'Show members', exact: true })
@@ -489,23 +488,19 @@ for (const width of [320, 640, 960, 1280])
 				await open(page);
 				expect((await page.request.get('/e2e/fakes/org-api.ts')).status()).toBe(200);
 				// Existing user flows provide real Paused and Former rows in the test-owned org.
-				await visit(page, '/org-chart');
+				// Pause and Offboard from each member's profile (More menu).
+				await visit(page, '/members/noor');
+				await page.getByRole('button', { name: /^More/ }).click();
+				await page.getByRole('menuitem', { name: 'Pause…', exact: true }).click();
+				await page.getByRole('dialog').getByRole('button', { name: 'Pause', exact: true }).click();
+				await expect(page.getByText('Pause requested for Noor Haddad.')).toBeVisible();
+				await visit(page, '/members/sam');
+				await page.getByRole('button', { name: /^More/ }).click();
+				await page.getByRole('menuitem', { name: 'Offboard…', exact: true }).click();
 				await page
-					.locator('[data-testid=team-card][data-team=web]')
-					.getByRole('button', { name: /^Noor Haddad/ })
+					.getByRole('dialog')
+					.getByRole('button', { name: 'Offboard', exact: true })
 					.click();
-				await page.getByTestId('selected-member').getByRole('button', { name: 'Pause…' }).click();
-				await page.getByRole('dialog').getByRole('button', { name: 'Pause Noor Haddad' }).click();
-				await expect(page.getByText('Paused Noor Haddad.')).toBeVisible();
-				await page
-					.locator('[data-testid=team-card][data-team=eng]')
-					.getByRole('button', { name: /^Sam Okafor/ })
-					.click();
-				await page
-					.getByTestId('selected-member')
-					.getByRole('button', { name: 'Offboard…' })
-					.click();
-				await page.getByRole('dialog').getByRole('button', { name: 'Offboard Sam Okafor' }).click();
 				await expect(page.getByText('Offboarded Sam Okafor.')).toBeVisible();
 				await visit(page, '/teams/members');
 				await page.setViewportSize({ width, height: 900 });

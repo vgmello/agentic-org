@@ -10,8 +10,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { accountZone } from '$lib/modules/preferences/account-zone.svelte';
-	import { durationWords, eventTime, formatFull } from '$lib/modules/preferences/time';
+	import { accountZone, durationWords, eventTime, formatFull } from '$lib/modules/preferences';
 	import { KIND_WORD, type ActivityRow } from '../../types';
 
 	let {

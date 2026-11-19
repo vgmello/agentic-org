@@ -19,7 +19,6 @@
 	import { focusDestinationHeading } from './focus-destination';
 	import { NewMessageDialog } from '$lib/modules/messaging';
 	import { chatMembers } from '$lib/modules/messaging/model';
-	import { sender as chatSender } from '$lib/modules/messaging/legacy-api';
 	import { toAppError } from '$lib/office/api';
 	import { orgApi } from '$lib/org/api';
 	import { withoutFormer } from '$lib/org/model';
@@ -62,6 +61,9 @@
 	const session = $derived(sessionFor(orgApi, organizationId));
 
 	async function openDm(ids: string[]) {
+		// Chat's temporary composition (still a browser mock until plan step 8) loads only when a message is sent, so the
+		// shell never bundles it into every page. Production never gets here: the form needs orgApi.view, which refuses.
+		const { sender: chatSender } = await import('$lib/modules/messaging/legacy-api');
 		const accepted = await chatSender(organizationId)({ method: 'dm.open', members: ids });
 		flow = undefined;
 		await goto(

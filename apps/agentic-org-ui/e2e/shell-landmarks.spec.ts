@@ -12,16 +12,14 @@ test(
 		await enterMockedOrganization(page);
 		await expect(page).toHaveURL(/\/teams\/members$/);
 		const sections = [
-			['Agents', 'agents'],
-			['Org chart', 'org-chart'],
+			['Home', 'home'],
+			['Inbox', 'inbox'],
 			['Projects', 'projects'],
 			['Work', 'work'],
 			['Chat', 'chat'],
-			['Sessions', 'sessions'],
 			['Activity', 'activity'],
-			['Processes', 'processes'],
-			['Offices', 'offices'],
-			['Settings', 'settings']
+			['Teams', 'teams'],
+			['Organization settings', 'settings']
 		];
 		for (const [name, path] of sections) {
 			await page

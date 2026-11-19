@@ -3,6 +3,8 @@
   The sticky top bar (app-shell-ux §0.2, §1.3, §6a): the drawer's Menu button below 640 px, the page's `h1`
   (the area name; `main` is named by it), Search and the outline New menu. It owns the single-key shortcuts:
   N / Shift+N opens New and / focuses Search, outside editable text, while the device setting allows them.
+  Below 640 px the bar is 56 px at the normal text size. A title that needs more room wraps instead of being cut off,
+  and when larger text leaves it less than 4 rem, Search and New move to a second row (SHELL-6, §6a).
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
@@ -45,17 +47,19 @@
 
 <div
 	data-shell-header
-	class="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-x-3 border-b border-line-subtle bg-surface px-4 min-[640px]:h-16 min-[640px]:gap-x-6 min-[640px]:px-6 min-[1024px]:px-8"
+	class="sticky top-0 z-40 flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line-subtle bg-surface px-4 py-1 min-[640px]:h-16 min-[640px]:flex-nowrap min-[640px]:gap-x-6 min-[640px]:px-6 min-[640px]:py-0 min-[1024px]:px-8"
 >
 	{@render children()}
 	<h1
 		id="shell-page-title"
 		tabindex="-1"
-		class="min-w-0 flex-1 truncate text-base/7 font-semibold text-fg focus:outline-none min-[640px]:flex-none min-[640px]:shrink"
+		class="min-w-16 flex-1 text-base/7 font-semibold wrap-break-word text-fg focus:outline-none min-[640px]:min-w-0 min-[640px]:flex-none min-[640px]:shrink min-[640px]:truncate"
 	>
 		{heading}
 	</h1>
-	<div class="flex min-w-0 items-center justify-end gap-x-2 min-[640px]:flex-1 min-[640px]:gap-x-4">
+	<div
+		class="ml-auto flex min-w-0 items-center justify-end gap-x-2 min-[640px]:ml-0 min-[640px]:flex-1 min-[640px]:gap-x-4"
+	>
 		<ShellSearch
 			bind:this={search}
 			organizationId={connection.organization.id}
