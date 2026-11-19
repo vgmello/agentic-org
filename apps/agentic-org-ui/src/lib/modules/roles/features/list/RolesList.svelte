@@ -33,7 +33,7 @@
 	import RoleEditor from '../editor/RoleEditor.svelte';
 	import StaleNotice from '../stale/StaleNotice.svelte';
 	import { roleHref } from '../../urls';
-	import { focusHeading } from '../../heading';
+	import { focusHeading } from '$lib/components/focus';
 
 	let { organizationId }: { organizationId: string } = $props();
 

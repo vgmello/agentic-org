@@ -51,34 +51,39 @@
 - Empty: no people in the organization: EmptyState "No people yet" with the link to Teams › Members (one real next
   action). Empty inside a single list ("No one is waiting for an invitation.") is a line, not an EmptyState.
 - Action busy: "Making link…", "Inviting…", "Removing access…" with aria-busy.
-- Refusal inline: role="alert" message under the section.
+- Refusal inline: role="alert" message in the person's row, under the action that was refused (focus stays on it).
 - Not found: an action on a person removed since the list loaded refuses with "That person isn't in this organization
-  any more." and the list reloads.
+  any more.", said in the list they were in; the list reloads and focus moves to the next row, else the previous one,
+  else the page heading.
+- Deactivated: a deactivated person is listed apart ("Deactivated"), with no sign-in action (deactivating removes
+  access, offices-and-teams-ux §7.4); the list is shown only when someone is deactivated.
 
 ## Routes
 
-- `/settings/access` only: `src/routes/(shell)/settings/access/+page.svelte` (thin: title, organization id, component).
+- `/settings/access` only: `src/routes/(shell)/settings/access/+page.svelte` (thin: title, organization id, component)
+  and `+page.ts` (depends on `app:org` and counts its loads, so the page re-reads when the organization changes).
 
 ## Architecture and ownership
 
 - New module `src/lib/modules/access/`:
-  - `types.ts` — AccessOverview, AccessPerson, AccessState, IssuedLink (access's own shapes).
-  - `api.ts` — `accessApi`: overview, issueLink, removeAccess. Production object answers every call with unavailableCall.
+  - `types.ts` — AccessOverview, AccessPerson (with `active`), AccessState (access's own read shapes).
+  - `api.ts` — `accessApi`: overview only. Production object answers every call with unavailableCall. The sign-in
+    actions are the members module's (`membersApi.inviteToSignIn`, `newSignInLink`, `removeAccess`): one contract for
+    the profile and this page; the settings module's former copies are deleted.
   - `index.ts` — public entry (route imports only from here).
   - `features/overview/` — AccessPage (loads, composes), list rows, lists by state, who-can-do-what section.
   - `present.ts` + `present.test.ts` — pure grouping (state partition, sort by name) and state words.
 - Shared dialogs: `members/features/sign-in-access/SignInAccessDialogs.svelte` is the dialog host (one-time link,
-  Remove access confirmation). It takes two callbacks (issue link, remove access) and reports each started action's
-  outcome once (`linked`, `removed`, `cancelled`, `gone`). The access page mounts one host and keeps it across list
-  reloads, so focus follows the person to its new row. `SignInAccessActions.svelte` (the profile's buttons plus a host)
-  and SignInAccess keep the profile's Section and DescriptionList and behave as before. The members index exports both.
-- Mock: `e2e/fakes/modules/access.ts`, data under `e2e/fakes/data/access/` (accounts, invitations, owner and
-  administrator keyed by member id). People and names come from `orgApi.view` (the org snapshot), as the other fakes do.
-  Switches: `?mock=slow|fails|empty|unavailable|viewer` (viewer = no manage rights).
-- Coupling: access imports the members public index (the dialog host, expiryText). No `allowedCoupling` entry is needed:
-  both are in the same e2e category and `ui-gate.test` passes.
-- Not changed: settings module (its `access`, `issueLink`, `removeAccess` methods and `AccessOverview` in
-  settings/types.ts are now unused by the UI; the settings owner should remove them: flagged to lead).
+  Remove access confirmation) and the one caller of the members API's sign-in actions. It reports each started
+  action's outcome once (`linked`, `removed`, `cancelled`, `gone`), after its dialog has closed and released focus.
+  The access page mounts one host and keeps it across list reloads; the profile's `SignInAccessActions` (internal to
+  members) mounts its own. The members index exports the host, its types, `NOT_IN_ORGANIZATION` and `expiryUntil`.
+- Mock: `e2e/fakes/modules/access.ts` keeps no state: people, handles, home teams, sign-in state and the owner come
+  from the members mock (`signInOf`, `ownerIdOf`), the administrator and usernames from the settings mock, so the
+  profile, Members, General and this page agree in one session. Switches: `?mock=slow|fails|empty|unavailable|viewer|
+  invited|deactivated|refuse|gone`.
+- Coupling: access imports the members public index (the dialog host, expiryUntil). No `allowedCoupling` entry is
+  needed: both are in the same e2e category and `ui-gate.test` passes.
 
 ## Non-goals
 

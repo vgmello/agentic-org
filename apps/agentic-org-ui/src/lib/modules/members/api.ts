@@ -48,11 +48,16 @@ export interface MembersApi {
 	moveHomeTeam(organizationId: string, memberId: string, toTeamId: string): Promise<void>;
 	assignableTasks(organizationId: string): Promise<AssignableTask[]>;
 	assignTask(organizationId: string, memberId: string, ref: string): Promise<void>;
-	/** A one-time registration link, shown once. Inviting again cancels the previous link. */
+	/*
+	 * Sign-in access (offices-and-teams-ux §7.4): the one contract for it. The member profile and Settings › Members and
+	 * access both call these through SignInAccessDialogs. Each refuses `not_authorized` for anyone but the owner or the
+	 * administrator, and `not_found` for a person no longer in the organization.
+	 */
+	/** A one-time registration link, shown once. Inviting again cancels the previous link. Refused for a deactivated person. */
 	inviteToSignIn(organizationId: string, memberId: string): Promise<SignInLink>;
 	/** A one-time set-new-password link, shown once. Refused for anyone without an account. */
 	newSignInLink(organizationId: string, memberId: string): Promise<SignInLink>;
-	/** Signs the person out everywhere. Refused for the owner ("Hand over ownership first.") and without an account. */
+	/** Signs the person out everywhere. Refused `conflict` for the owner ("Hand over ownership first."), and without an account. */
 	removeAccess(organizationId: string, memberId: string): Promise<void>;
 	/** Moves ownership in one operation, after the owner's password. */
 	handOverOwnership(organizationId: string, toMemberId: string, password: string): Promise<void>;

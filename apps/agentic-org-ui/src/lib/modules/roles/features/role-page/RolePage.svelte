@@ -29,7 +29,7 @@
 	import { ROLES_URL } from '../../urls';
 	import RoleEditor from '../editor/RoleEditor.svelte';
 	import StaleNotice from '../stale/StaleNotice.svelte';
-	import { focusHeading } from '../../heading';
+	import { focusHeading } from '$lib/components/focus';
 	import { lookUpRole } from './lookup';
 	import RoleBody from './RoleBody.svelte';
 

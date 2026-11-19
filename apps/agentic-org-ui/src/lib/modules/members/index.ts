@@ -23,14 +23,15 @@ export {
 	default as OneTimeLink,
 	type OneTimeLinkValue
 } from './features/sign-in-access/OneTimeLink.svelte';
-export { default as SignInAccessActions } from './features/sign-in-access/SignInAccessActions.svelte';
+// Sign-in access (offices-and-teams-ux §7.4): the one owner of Invite to sign in, New sign-in link and Remove access.
 export {
 	default as SignInAccessDialogs,
+	NOT_IN_ORGANIZATION,
 	type SignInAction,
 	type SignInOutcome,
 	type SignInPerson
 } from './features/sign-in-access/SignInAccessDialogs.svelte';
-export { expiryText } from './features/sign-in-access/expiry';
+export { expiryUntil } from './features/sign-in-access/expiry';
 export { profileBase, tabHref } from './features/profile/tabs';
 export { default as MembersDirectory } from './features/directory/MembersDirectory.svelte';
 export { default as MoveHomeTeamDialog } from './features/profile/MoveHomeTeamDialog.svelte';

@@ -26,10 +26,6 @@
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
 	"webkitExempt": [
 		{
-			"spec": "access.spec.ts",
-			"why": "new spec; not yet run on WebKit (BUG-169b)"
-		},
-		{
 			"spec": "agents-roster.spec.ts",
 			"why": "not yet run on WebKit (BUG-169b)"
 		},

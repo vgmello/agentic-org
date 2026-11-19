@@ -2,12 +2,16 @@
 // mock (so IDs, names and edits made through the existing dialogs match every page); what the org snapshot does not
 // carry yet (handles for people, presence, readiness, turns, sign-in access) is JSON in e2e/fakes/data/members.
 // `?mock=slow|fails|empty` on the page's URL exercises the loading, error and empty states; the directory also answers
-// `?mock=unavailable|no-agents|all-former|race`.
+// `?mock=unavailable|no-agents|all-former|race`. Sign-in access is kept here only, so Members, the profile and
+// Settings › Members and access agree in one session; those three sign-in actions also answer
+// `?mock=refuse|viewer` (refused: not the owner or the administrator), `?mock=gone` (the first action on Leo Brandt
+// finds he has left the organization) and `?mock=deactivated` (Hana Weiss is deactivated: no access, no actions).
 import { invalidate } from '$app/navigation';
 import { orgApi } from '$lib/org/api';
 import { newId } from '$lib/org/commands';
 import { officeApi } from '$lib/office/api';
 import type { Member, OrgSnapshot } from '$lib/proto';
+import { mockLatency, mockMode } from '../mock-mode';
 import type { MembersApi } from '../../../src/lib/modules/members/api';
 import { busyText } from '../../../src/lib/modules/members/present';
 import type {
@@ -89,6 +93,8 @@ const state = {
 	allowHiring: new Map<string, boolean>(),
 	/** Sign-in access changed here: an account, or an open invitation until the person registers. */
 	access: new Map<string, { account: boolean; invitedUntil?: string }>(),
+	/** People who left the organization during this session (`?mock=gone`): no page lists them any more. */
+	left: new Set<string>(),
 	added: new Map<string, Turn[]>(),
 	/** One Run now check fails once under `?mock=refresh_fails_once` (the profile keeps its page). */
 	refreshFailed: false,
@@ -213,14 +219,47 @@ export const handleOf = (m: Member) =>
 		? (m.agent?.messaging_name ?? m.id)
 		: (extras[m.id]?.handle ?? m.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')));
 
-const hasAccount = (id: string) => state.access.get(id)?.account ?? extras[id]?.canSignIn ?? false;
+const modes = () => mockMode().split(',');
+/** `?mock=deactivated`: Hana Weiss is a deactivated person (the org snapshot records deactivation only for agents). */
+const deactivatedPerson = (m: Member) =>
+	m.kind === 'person' && m.id === 'hana' && modes().includes('deactivated');
 
 const statusOf = (m: Member): MemberRow['status'] =>
 	m.agent?.status === 'paused'
 		? 'paused'
-		: m.agent?.status === 'offboarded'
+		: m.agent?.status === 'offboarded' || deactivatedPerson(m)
 			? 'inactive'
 			: 'active';
+
+// Deactivating a person also removes their access (offices-and-teams-ux §7.4).
+const hasAccount = (id: string) =>
+	!(id === 'hana' && modes().includes('deactivated')) &&
+	(state.access.get(id)?.account ?? extras[id]?.canSignIn ?? false);
+
+/**
+ * A person's sign-in access as every page reads it: an account, or an open invitation until the person registers.
+ * Settings › Members and access (access.ts) and General (settings.ts) read it from here, never from their own copy.
+ */
+export function signInOf(memberId: string): { account: boolean; invitedUntil?: string } {
+	const account = hasAccount(memberId);
+	const invitedUntil = account ? undefined : state.access.get(memberId)?.invitedUntil;
+	return { account, ...(invitedUntil ? { invitedUntil } : {}) };
+}
+
+/** `?mock=invited` on Settings › Members and access: an open invitation, as if made earlier; once only. */
+export function seedInvitation(memberId: string, inMs: number) {
+	if (hasAccount(memberId) || state.access.has(memberId)) return;
+	state.access.set(memberId, {
+		account: false,
+		invitedUntil: new Date(Date.now() + inMs).toISOString()
+	});
+}
+
+/** Deactivated (`inactive`), as the directory and the profile say it. */
+export const isInactive = (m: Member) => statusOf(m) === 'inactive';
+
+/** Members still in the organization: someone who left this session is no longer listed anywhere. */
+export const present = (m: Member) => !state.left.has(m.id);
 
 function presenceOf(m: Member): MemberRow['presence'] {
 	if (statusOf(m) === 'inactive') return undefined;
@@ -242,7 +281,7 @@ export async function rows(organizationId: string): Promise<MemberRow[]> {
 	const offices = await officesFor(organizationId);
 	const ownerId = ownerIdOf(s);
 	return s.members
-		.filter((m) => m.kind === 'agent' || m.kind === 'person')
+		.filter((m) => (m.kind === 'agent' || m.kind === 'person') && present(m))
 		.map((m): MemberRow => {
 			const x = extras[m.id] ?? {};
 			const office = m.kind === 'agent' ? offices.find((o) => o.id === m.office_id) : undefined;
@@ -474,10 +513,22 @@ export function processesForTeam(s: OrgSnapshot, teamId: string | undefined): Pr
 
 const member = async (organizationId: string, memberId: string) => {
 	const s = await snapshotFor(organizationId);
-	const m = s.members.find((x) => x.id === memberId);
+	const m = s.members.find((x) => x.id === memberId && present(x));
 	if (!m) throw fail('not_found', "That member isn't in this organization.");
 	return { s, m };
 };
+
+/**
+ * The sign-in actions' own switches, read when a call is made: `refuse` and `viewer` refuse as the web API does for
+ * anyone but the owner or the administrator; `gone` makes Leo Brandt leave the organization on the first action.
+ */
+async function signInGate(memberId: string) {
+	await gate();
+	await mockLatency(250);
+	if (modes().includes('refuse') || modes().includes('viewer'))
+		throw fail('not_authorized', 'Only the owner or the administrator changes sign-in access.');
+	if (modes().includes('gone') && memberId === 'leo') state.left.add('leo');
+}
 
 const link = (kind: string) => ({
 	url: `http://127.0.0.1:7420/${kind}#${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}`,
@@ -728,9 +779,11 @@ export const membersApi: MembersApi = {
 		state.assigned.set(ref, memberId);
 	},
 	async inviteToSignIn(organizationId, memberId) {
-		await gate();
+		await signInGate(memberId);
 		const { m } = await member(organizationId, memberId);
 		if (m.kind !== 'person') throw fail('invalid', 'An account is never tied to an agent.');
+		if (statusOf(m) === 'inactive')
+			throw fail('conflict', `${m.name} is deactivated. Reactivate ${m.name} first.`);
 		if (hasAccount(memberId))
 			throw fail('conflict', `${m.name} can already sign in. Make a new sign-in link instead.`);
 		// Inviting again cancels the previous link: only the newest one is remembered.
@@ -739,7 +792,7 @@ export const membersApi: MembersApi = {
 		return issued;
 	},
 	async newSignInLink(organizationId, memberId) {
-		await gate();
+		await signInGate(memberId);
 		const { m } = await member(organizationId, memberId);
 		if (m.kind !== 'person') throw fail('invalid', 'An account is never tied to an agent.');
 		if (!hasAccount(memberId))
@@ -747,11 +800,11 @@ export const membersApi: MembersApi = {
 		return link('reset');
 	},
 	async removeAccess(organizationId, memberId) {
-		await gate();
+		await signInGate(memberId);
 		const { s, m } = await member(organizationId, memberId);
 		if (m.kind !== 'person') throw fail('invalid', 'An account is never tied to an agent.');
 		if (!hasAccount(memberId)) throw fail('invalid', `${m.name} has no account to remove.`);
-		if (ownerIdOf(s) === memberId) throw fail('not_authorized', 'Hand over ownership first.');
+		if (ownerIdOf(s) === memberId) throw fail('conflict', 'Hand over ownership first.');
 		state.access.set(memberId, { account: false });
 	},
 	async handOverOwnership(organizationId, toMemberId, password) {

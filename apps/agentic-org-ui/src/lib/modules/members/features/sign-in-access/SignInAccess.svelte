@@ -7,9 +7,8 @@
 <script lang="ts">
 	import DescriptionList from '$lib/components/DescriptionList.svelte';
 	import Section from '$lib/components/Section.svelte';
-	import { membersApi } from '../../api';
 	import type { MemberProfile } from '../../types';
-	import { expiryText } from './expiry';
+	import { expiryUntil } from './expiry';
 	import SignInAccessActions from './SignInAccessActions.svelte';
 
 	let {
@@ -31,7 +30,7 @@
 		profile.canSignIn
 			? 'Can sign in'
 			: profile.invitePending
-				? `No account yet. Invited: the link works until ${expiryText(profile.invitePending.expiresAt).replace(/^at /, '')}.`
+				? `No account yet. Invited: the link works until ${expiryUntil(profile.invitePending.expiresAt)}.`
 				: 'No account yet'
 	);
 </script>
@@ -44,16 +43,7 @@
 	<DescriptionList items={[{ term: 'Access', value: status }]} />
 	{#if canManage}
 		<div class="px-4 pt-4 min-[640px]:px-6 min-[1024px]:px-8">
-			<SignInAccessActions
-				{organizationName}
-				person={profile}
-				issueLink={(memberId, kind) =>
-					kind === 'invite'
-						? membersApi.inviteToSignIn(organizationId, memberId)
-						: membersApi.newSignInLink(organizationId, memberId)}
-				removeAccess={(memberId) => membersApi.removeAccess(organizationId, memberId)}
-				{onchanged}
-			/>
+			<SignInAccessActions {organizationId} {organizationName} person={profile} {onchanged} />
 		</div>
 	{/if}
 </Section>
