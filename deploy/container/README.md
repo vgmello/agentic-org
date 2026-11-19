@@ -40,14 +40,17 @@ and the host say the same in the log at every start ("serving plain HTTP on a pu
 port").
 
 **Other containers reach the port whatever `-p` says.** `-p` decides what the Docker host
-publishes; every container on the same Docker network connects to the instance's own
-address and port 8443 directly, unencrypted, and the web process's address checks stop
-browsers, not those programs. That is why the command above gives the instance a network
-of its own (`--network agentic-org`): a container on the default bridge, or on any other
-network, has no route to it (LNX-2 checks both). **Until HTTPS, that network is the
-boundary: attach to it nothing that may not see the administrator's sign-in.** Without
-`--network` the instance is on Docker's default bridge, which every container started
-without a network shares.
+publishes; a container on the same Docker network connects to the instance's own address
+and port 8443 directly, unencrypted, and the web process's address checks stop browsers,
+not those programs. The command above gives the instance a network of its own
+(`--network agentic-org`), so that at least no container started without a network (on
+Docker's default bridge) shares one with it. Whether a container on another network can
+still reach a published container port depends on the engine: measured for this build,
+Docker Engine 29.1.3 on Linux isolates the networks (no route), and Docker Desktop 29.9.3
+on a Mac does not (a container on any network reaches it). LNX-2 reports which case its
+engine is. **Until HTTPS (X7), every container of the Docker host is inside the boundary
+of the sign-in: run the instance on a Docker host whose other containers you trust with
+the administrator's password and sessions, and attach nothing else to its network.**
 
 The address is exactly `http://127.0.0.1:8443`: keep the port 8443 on both sides of `-p`.
 The web process answers only requests for that origin; `http://localhost:8443`,
@@ -257,8 +260,8 @@ image sets no `ORG_OFFICE_DEV_KEY_DIR`, and one given with `-e` is not used.
   is registered, keeps its record: correct the cause and run the same file again; another
   file is refused until the instance is removed.
 - The image is a development image (above): the worker has no publisher check.
-- Until HTTPS, every container on the instance's Docker network can reach its plain-HTTP
-  port (above).
+- Until HTTPS, other containers of the Docker host can reach its plain-HTTP port: on its
+  network always, and on Docker Desktop from every network (above).
 - HTTPS is not available; the container serves plain HTTP for a port published on the
   Docker host's `127.0.0.1`.
 
@@ -269,8 +272,8 @@ containers: the plain run, the link, a worker with an `agent-os` send and read, 
 browser address over plain HTTP from the Docker host (the API, the UI's index, `400` for
 any other Host, the web process's confinement in the host log), the modes in `/secrets`,
 that nothing is written outside the volumes, the stop, the replaced container, the empty
-secrets volume, anonymous volumes, the store's refusals, and that only a container on the
-instance's network reaches its port. With `LNX2_PROFILES=1`, on a Docker host that enforces
+secrets volume, anonymous volumes, the store's refusals, that a container on the
+instance's network reaches its port, and whether one on the default bridge does. With `LNX2_PROFILES=1`, on a Docker host that enforces
 AppArmor with the profile loaded, it also runs `profiles-check.sh` (step 10). It builds the executables and
 its own office program for Linux itself (`build.sh`); it needs the UI built, Docker
 Engine 28 or later and `curl`.

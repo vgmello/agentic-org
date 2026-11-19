@@ -22,8 +22,9 @@
 #
 # It builds the image, then checks, in order:
 #   1. the documented `docker run`, on two named volumes and a network of its own, sets the
-#      instance up and serves; a container on the default bridge cannot reach its port,
-#      and one on the same network can (the trust boundary of plain HTTP until X7);
+#      instance up and serves; a container on the same network reaches its plain-HTTP port
+#      directly, and whether one on the default bridge does is reported (it depends on the
+#      engine: README.md, "Other containers reach the port");
 #   2. the first registration link comes from `docker exec -u 0 ... admin reset --user`,
 #      and only from root at a terminal; a browser at the origin registers the
 #      administrator from it and signs in, through the web API as the UI calls it;
@@ -235,9 +236,11 @@ run "$tag-a" --network "$network" -p "127.0.0.1:$port:8443" -v "$tag-data:/data"
 wait_until "the instance to serve" serving "$tag-a"
 echo "serving $(since "$started") s after docker run"
 # The listener is on the container's own interface, where a published port arrives. A
-# container on the default bridge has no route to this network; one attached to the same
-# network reaches the plain-HTTP port directly, whatever -p says. The network is the
-# boundary until HTTPS (X7): attach nothing to it that is not trusted with the sign-in.
+# container attached to the same network reaches the plain-HTTP port directly, whatever -p
+# says. Whether a container on another network does depends on the engine: measured, Docker
+# Engine 29.1.3 on Linux isolates the networks, and Docker Desktop 29.9.3 lets a published
+# container port be reached from every network. So the trust boundary until HTTPS (X7) is
+# every container of the Docker host (README.md); this reports which case this engine is.
 address=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$tag-a")
 [ -n "$address" ] || fail "the container has no address on $network"
 reach() {
@@ -246,8 +249,11 @@ reach() {
 }
 port_answers() { reach "$network"; }
 wait_until "the port on the container's network" port_answers
-if reach bridge; then fail "a container on the default bridge reached $address:8443"; fi
-echo "port 8443 at $address: reached from a container on $network, not from one on the default bridge"
+if reach bridge; then
+    echo "port 8443 at $address: reached from a container on $network, and from one on the default bridge (this engine routes a published port from every network)"
+else
+    echo "port 8443 at $address: reached from a container on $network, not from one on the default bridge"
+fi
 id=$(instance_id "$tag-a")
 [ -n "$id" ] || fail "the setup record names no instance"
 echo "instance $id"

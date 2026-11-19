@@ -862,10 +862,14 @@ serves no HTTPS on any system yet.
   own address, where sign-in and sessions travel unencrypted, and the web process's
   Host and Origin checks stop browsers, not those peers. The documented run therefore
   gives the instance a user-defined network of its own (`docker network create
-  agentic-org`, `--network agentic-org`): a container on the default bridge or on
-  another network has no route to it. Until HTTPS (X7), that network is the trust
-  boundary: attach nothing to it that may not see the sign-in. LNX-2 checks both
-  sides (step 1).
+  agentic-org`, `--network agentic-org`), so that no container started without a network
+  shares Docker's default bridge with it. A container on another network is kept out only
+  where the engine isolates networks for a published port: measured, Docker Engine 29.1.3
+  on Linux does (no route), Docker Desktop 29.9.3 does not (a container on any network
+  reaches the published container port). Until HTTPS (X7) the trust boundary of the
+  sign-in is every container of the Docker host. LNX-2 step 1 checks that a container on
+  the instance's network reaches the port and reports whether one on the default bridge
+  does.
 - **The run command**, documented and used by LNX-2:
   `docker network create agentic-org` and
   `docker run -d --name agentic-org --network agentic-org -p 127.0.0.1:8443:8443 -v agentic-org-data:/data -v agentic-org-secrets:/secrets agentic-org`.
