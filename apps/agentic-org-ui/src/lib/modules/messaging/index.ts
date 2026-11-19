@@ -8,17 +8,10 @@ export { default as AskCard } from './features/answer-ask/AskCard.svelte';
 export { default as ChannelDialog } from './features/manage-channel/ChannelDialog.svelte';
 export { default as MembersPanel } from './features/manage-channel/MembersPanel.svelte';
 export { default as CommandDialog } from './features/run-command/CommandDialog.svelte';
-export { default as BrowseChannelsDialog } from './features/browse-channels/BrowseChannelsDialog.svelte';
-export { default as PinsPanel } from './features/pin-message/PinsPanel.svelte';
 export { commandForm, turnForm, type CommandEnv, type CommandForm } from './commands';
 export {
-	browseChannels,
-	cannotRunFor,
-	cannotRunWords,
 	chatContext,
-	clockTime,
 	composerState,
-	pinsIn,
 	conversationView,
 	dayLabel,
 	locate,
@@ -40,7 +33,6 @@ export type {
 	ChatSnapshot,
 	Conversation,
 	MuteMode,
-	QuestionAnswer,
 	Reaction
 } from './types';
 export { provideDraftStore, useDraftStore } from './drafts/context';

@@ -215,14 +215,8 @@ for (const [path, heading, state] of [
 				const composer = page.getByTestId('composer').first();
 				await composer.fill('Header failure fixture');
 				await composer.press('Control+Enter');
-				// chat-ux §6: no answer is an unknown outcome; Check status finds the office never got it.
-				await expect(page.getByTestId('not-confirmed')).toContainText('Delivery not confirmed');
-				await page
-					.getByTestId('not-confirmed')
-					.getByRole('button', { name: 'Check status' })
-					.click();
 				await expect(page.getByTestId('not-delivered')).toContainText(
-					'Not delivered: the office has no record of it. Retry sends it once.'
+					"Not delivered: The office didn't answer."
 				);
 			}
 			await expectHeaderFits(page, heading, 320, 1);

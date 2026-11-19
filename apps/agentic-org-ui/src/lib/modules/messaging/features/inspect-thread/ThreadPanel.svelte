@@ -2,14 +2,13 @@
 	import type { Snippet } from 'svelte';
 	import X from '@lucide/svelte/icons/x';
 	import { Button } from '$lib/components/ui/button';
-	import { OFFICE, SYSTEM_NO_REPLY, type ChatContext } from '$lib/modules/messaging/engine';
+	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import { composerState, titleOf } from '$lib/modules/messaging/model';
 	import type {
 		ChatMessage,
 		ChatState,
 		Conversation,
 		MuteMode,
-		QuestionAnswer,
 		Reaction
 	} from '$lib/modules/messaging/types';
 	import Composer from '$lib/modules/messaging/features/send-message/Composer.svelte';
@@ -38,10 +37,7 @@
 		onmute,
 		onpin,
 		onanswer,
-		onaccept,
-		onhandback,
-		onwithdraw,
-		cannotRun = []
+		onaccept
 	}: {
 		root: ChatMessage;
 		conversation: Conversation;
@@ -68,25 +64,16 @@
 		onpin: (m: ChatMessage) => void;
 		onanswer: (
 			m: ChatMessage,
-			answer: { option_id?: string; text?: string; answers?: QuestionAnswer[] }
+			answer: { option_id?: string; text?: string }
 		) => Promise<void> | void;
 		onaccept: (m: ChatMessage) => Promise<void> | void;
-		onhandback?: (m: ChatMessage, reason: string) => Promise<void> | void;
-		onwithdraw?: (m: ChatMessage, reason: string) => Promise<void> | void;
-		/** Agents that can't run right now: the composer says so. */
-		cannotRun?: readonly string[];
 	} = $props();
 
 	const draftStore = useDraftStore();
 	const threadId = $derived(root.id);
 	const drafts = $derived(draftStore.forThread(threadId));
 	const replies = $derived(rows.forMessage(root).replies);
-	// A System notice takes no replies (chat-ux §4.2).
-	const compose = $derived(
-		root.from === OFFICE
-			? { canWrite: false, note: SYSTEM_NO_REPLY, wakes: [] }
-			: composerState(chatState, ctx, conversation, officeRunning, cannotRun)
-	);
+	const compose = $derived(composerState(chatState, ctx, conversation, officeRunning));
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
 	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
 	export function focusClose() {
@@ -146,8 +133,6 @@
 					{onpin}
 					{onanswer}
 					{onaccept}
-					{onhandback}
-					{onwithdraw}
 				/>
 				<p class="px-2 pt-2 text-xs/5 text-fg-muted" aria-live="off" data-testid="thread-count">
 					{replies.length}
@@ -171,8 +156,6 @@
 						{onpin}
 						{onanswer}
 						{onaccept}
-						{onhandback}
-						{onwithdraw}
 					/>
 				{/each}
 			</div>

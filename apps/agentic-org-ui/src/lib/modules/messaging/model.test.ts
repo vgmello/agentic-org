@@ -97,12 +97,11 @@ describe('CHAT-1 · the sidebar', () => {
 		const status = Object.fromEntries(
 			bar.dms.filter((d) => d.other).map((d) => [d.other!.name, d.presence])
 		);
-		// People have no runtime presence in this release (our-org-in-the-app §5, CHAT-3).
 		expect(status).toMatchObject({
 			'Sam Okafor': 'working',
 			'Inês Duarte': 'asleep',
 			'Pax Moreau': 'paused',
-			'Avery Stone': undefined
+			'Avery Stone': 'online'
 		});
 		expect(bar.dms.find((d) => d.conversation.kind === 'group_dm')?.title).toBe(
 			'Sam Okafor, Noor Haddad'
@@ -126,12 +125,12 @@ describe('CHAT-1 · the sidebar', () => {
 });
 
 describe("CHAT-3 · DMs show each member's status", () => {
-	it('CHAT-3 · an unplaced presence reads Offline for an agent; a person gets no invented presence', () => {
+	it('CHAT-3 · an unplaced presence reads Offline for an agent and Online for a person', () => {
 		const s = fresh();
 		const row = (id: string) =>
 			sidebar({ ...s, presence: {} }, ctx).dms.find((d) => d.conversation.id === id)!;
 		expect(row('c-dm-sam').presence).toBe('offline');
-		expect(row('c-dm-avery').presence).toBeUndefined();
+		expect(row('c-dm-avery').presence).toBe('online');
 	});
 });
 
@@ -203,12 +202,14 @@ describe('CHAT-6 · an ask with a default shows its deadline', () => {
 });
 
 describe('CHAT-7 · the composer says when a message wakes an agent', () => {
-	// ADR-0028 / chat-ux decision 8: an agent that isn't working is Available and the composer says nothing about waiting.
-	it('CHAT-7 · an agent that is not working shows Available, and the composer adds no note', () => {
+	it('CHAT-7 · an asleep agent: "Inês Duarte is asleep. Your message will wake it."', () => {
 		const s = fresh();
 		const c = composerState(s, ctx, conv(s, 'c-dm-ines'), true);
-		expect(PRESENCE_WORD[s.presence.ines]).toBe('Available');
-		expect(c).toEqual({ canWrite: true, wakes: [] });
+		expect(c).toEqual({
+			canWrite: true,
+			note: 'Inês Duarte is asleep. Your message will wake it.',
+			wakes: ['ines']
+		});
 		expect(composerState(s, ctx, conv(s, 'c-dm-sam'), true)).toEqual({ canWrite: true, wakes: [] });
 	});
 	it('CHAT-7 · a paused agent says it will not read the message', () => {
@@ -401,16 +402,16 @@ describe("CHAT-18 · hand-off states and a person's status as a word", () => {
 			'Accepted by Noor Haddad'
 		);
 	});
-	it('CHAT-18 · a DM with an agent shows its presence as a word; a person shows none (CHAT-3)', () => {
+	it('CHAT-18 · a DM with a person shows Online or Offline as a word, an agent its own word', () => {
 		const dms = sidebar(fresh(), ctx).dms;
 		const word = (id: string) =>
 			PRESENCE_WORD[dms.find((d) => d.conversation.id === id)!.presence!];
+		expect(word('c-dm-avery')).toBe('Online');
 		expect(word('c-dm-sam')).toBe('Working');
-		expect(dms.find((d) => d.conversation.id === 'c-dm-avery')!.presence).toBeUndefined();
 		const gone = sidebar({ ...fresh(), presence: { avery: 'offline' } }, ctx).dms.find(
 			(d) => d.conversation.id === 'c-dm-avery'
 		)!;
-		expect(gone.presence).toBeUndefined();
+		expect(PRESENCE_WORD[gone.presence!]).toBe('Offline');
 	});
 });
 

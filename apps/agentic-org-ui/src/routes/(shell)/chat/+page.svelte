@@ -8,8 +8,6 @@
 	import Info from '@lucide/svelte/icons/info';
 	import Unplug from '@lucide/svelte/icons/unplug';
 	import Callout from '$lib/components/Callout.svelte';
-	import { resolve } from '$app/paths';
-	import { shellApi } from '$lib/modules/shell/api';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	// D-F14a: temporary route composition root; Jules's F1-02 factory cutover removes this exception.
@@ -24,8 +22,6 @@
 		ChannelDialog,
 		MembersPanel,
 		CommandDialog,
-		BrowseChannelsDialog,
-		browseChannels,
 		commandForm,
 		turnForm,
 		type CommandEnv,
@@ -55,7 +51,6 @@
 		ChatSnapshot,
 		Conversation,
 		MuteMode,
-		QuestionAnswer,
 		Reaction
 	} from '$lib/modules/messaging';
 	import { newId } from '$lib/org/commands';
@@ -72,16 +67,13 @@
 	let chat = $state<ChatSnapshot | undefined>();
 	let loadError = $state<string | undefined>();
 	let now = $state(new Date().toISOString());
-	const ctx = $derived(chatContext(snapshot, { now, directory: chat?.directory }));
-	const cannotRun = $derived(chat?.cannot_run ?? []);
-	// The Inbox count the navigation shows: Chat links to Inbox and keeps no second queue (chat-ux §2, CHAT-1).
-	let inboxCount = $state<number | undefined>();
+	const ctx = $derived(chatContext(snapshot, { now }));
 	const chatState = $derived(chat?.state);
 	const rows = $derived(chatState ? messageRows(chatState, ctx) : undefined);
 	const bar = $derived(chatState ? sidebar(chatState, ctx) : undefined);
 	const officeRunning = $derived(chat?.office_running ?? true);
 
-	let view = $state<ChatView>({ type: 'mentions' });
+	let view = $state<ChatView>({ type: 'needs' });
 	let threadRoot = $state<string | undefined>();
 	let threadOpener: HTMLElement | undefined;
 	const rowActivity = new RowActivity();
@@ -106,7 +98,7 @@
 	let started = false;
 	let lastSearch = '';
 	let pendingPlace = $state.raw<URL>();
-	let documentPlace = $state('Chat');
+	let documentPlace = $state('Needs you');
 	let listEl = $state<HTMLElement | undefined>();
 	let chatEl = $state<HTMLElement | undefined>();
 	let heading = $state<HTMLHeadingElement | undefined>();
@@ -244,7 +236,7 @@
 	});
 	const compose = $derived(
 		conversation && chatState
-			? composerState(chatState, ctx, conversation, officeRunning, cannotRun)
+			? composerState(chatState, ctx, conversation, officeRunning)
 			: undefined
 	);
 	const typing = $derived(
@@ -277,13 +269,15 @@
 	const viewTitle = $derived(
 		searching
 			? 'Search'
-			: view.type === 'mentions'
-				? 'Mentions'
-				: view.type === 'threads'
-					? 'Threads'
-					: conversation
-						? titleOf(conversation, ctx, ctx.owner)
-						: 'Chat'
+			: view.type === 'needs'
+				? 'Needs you'
+				: view.type === 'mentions'
+					? 'Mentions'
+					: view.type === 'threads'
+						? 'Threads'
+						: conversation
+							? titleOf(conversation, ctx, ctx.owner)
+							: 'Chat'
 	);
 
 	$effect(() => {
@@ -306,10 +300,6 @@
 		const syncCompactPanels = () => (compactPanels = media.matches);
 		syncCompactPanels();
 		media.addEventListener('change', syncCompactPanels);
-		shellApi.navigation(organizationId).then(
-			(n) => (inboxCount = n.inboxOpen ?? undefined),
-			() => (inboxCount = undefined)
-		);
 		void load().then(() => {
 			openLocation(urlLocation(page.url.search));
 			lastSearch = page.url.search;
@@ -358,15 +348,17 @@
 		const found = locate(chatState, loc);
 		if (!found.conversation) {
 			const virtual = loc.view;
-			// Needs you lives in Inbox: an old Needs you link opens Inbox (chat-ux §1.2).
-			if (virtual === 'needs') {
-				void goto(resolve('/inbox'), { replaceState: true });
-				return;
-			}
-			const general = chatState.conversations.find((c) => c.auto?.type === 'general');
-			if (virtual === 'mentions' || virtual === 'threads' || !general)
-				select({ type: virtual === 'threads' ? 'threads' : 'mentions' }, false);
-			else select({ type: 'conversation', id: general.id }, false);
+			const implicitPlace = !loc.conversation && !loc.message && virtual === undefined;
+			const general =
+				implicitPlace && bar?.needsYou.length === 0
+					? chatState.conversations.find((c) => c.auto?.type === 'general')
+					: undefined;
+			if (general) select({ type: 'conversation', id: general.id }, false);
+			else
+				select(
+					{ type: virtual === 'mentions' || virtual === 'threads' ? virtual : 'needs' },
+					false
+				);
 			query = loc.query ?? '';
 			return;
 		}
@@ -551,8 +543,7 @@
 		also_in_channel?: boolean;
 		body: string;
 		attachments: string[];
-		/** `unknown`: the office's answer was lost, so the outcome is checked by change id before any retry (chat-ux §6, CHAT-40). */
-		status: 'sending' | 'failed' | 'unknown' | 'checking';
+		status: 'sending' | 'failed';
 		error?: string;
 	}
 	let pending = $state<Pending[]>([]);
@@ -656,13 +647,8 @@
 			pending = pending.filter((x) => x.key !== p.key);
 			await load();
 		} catch (e) {
-			const error = toAppError(e);
-			// No answer from the office is an unknown outcome, never a verified failure.
-			if (error.code === 'unavailable') p.status = 'unknown';
-			else {
-				p.status = 'failed';
-				p.error = error.message;
-			}
+			p.status = 'failed';
+			p.error = toAppError(e).message;
 		}
 		if (origin)
 			await restoreFocus(
@@ -673,24 +659,6 @@
 						`[data-id="${CSS.escape(deliveredId ?? `pending-${p.key}`)}"]`
 					) ?? null
 			);
-	}
-
-	/** Check status: reconcile the retained change id first; a retry reuses it, so nothing is sent twice. */
-	async function checkStatus(p: Pending) {
-		p.status = 'checking';
-		try {
-			const known = await chatApi.status(organizationId, p.change_id);
-			if (known.state === 'applied') {
-				pending = pending.filter((x) => x.key !== p.key);
-				await load();
-				toast.success('Delivered.');
-			} else {
-				p.status = 'failed';
-				p.error = 'the office has no record of it. Retry sends it once.';
-			}
-		} catch {
-			p.status = 'unknown';
-		}
 	}
 
 	// ---- message actions -----------------------------------------------------------------------
@@ -747,33 +715,27 @@
 			else clear();
 		}
 	}
-	/** A card call: a refusal (first close wins) refreshes the card, so it shows the winning outcome (chat-ux §2.1). */
-	async function cardCall(draft: Parameters<typeof send>[0]) {
+	async function answer(m: ChatMessage, a: { option_id?: string; text?: string }) {
 		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
-		try {
-			await send(draft);
-		} catch (e) {
-			await load();
-			throw toAppError(e);
-		}
-		await load();
-	}
-	async function answer(
-		m: ChatMessage,
-		a: { option_id?: string; text?: string; answers?: QuestionAnswer[] }
-	) {
 		const origin = document.activeElement;
 		const area = origin?.closest('[data-focus-scope]');
 		const place = focusPlace();
-		await cardCall({ method: 'chat.answer', ask_id: m.id, ...a });
+		await send({ method: 'chat.answer', ask_id: m.id, ...a });
+		await load();
 		toast.success(`Answer sent to ${nameOf(ctx, m.from)}.`);
-		await restoreFocus(
-			origin,
-			place,
-			() => area?.querySelector<HTMLElement>(`[data-ask-id="${CSS.escape(m.id)}"]`) ?? null
+		await restoreFocus(origin, place, () =>
+			view.type === 'needs' && !searching
+				? document.querySelector<HTMLElement>(
+						'[data-testid="needs-you-list"] [data-testid="ask-card"] button, [data-testid="nothing-needs-you"]'
+					)
+				: (area?.querySelector<HTMLElement>(`[data-ask-id="${CSS.escape(m.id)}"]`) ?? null)
 		);
 	}
-	const accept = (m: ChatMessage) => cardCall({ method: 'chat.accept_handoff', message_id: m.id });
+	async function accept(m: ChatMessage) {
+		if (!officeRunning) throw new Error("The office isn't running. Restart it from Offices.");
+		await send({ method: 'chat.accept_handoff', message_id: m.id });
+		await load();
+	}
 	function openThread(m: ChatMessage, opener: HTMLElement) {
 		if (chatState && (searching || view.type !== 'conversation' || view.id !== m.conversation_id)) {
 			select({ type: 'conversation', id: m.conversation_id }, false);
@@ -798,10 +760,7 @@
 	let channelDialog = $state<{ dismiss: () => void } | undefined>();
 	let dmDialog = $state<{ dismiss: () => void } | undefined>();
 	beforeNavigate((navigation) => {
-		if (
-			navigation.type !== 'popstate' ||
-			(!sidebarOpen && !channelOpen && !dmOpen && !commandOpen && !browseOpen)
-		)
+		if (navigation.type !== 'popstate' || (!sidebarOpen && !channelOpen && !dmOpen && !commandOpen))
 			return;
 		// Back dismisses the modal first; the next Back leaves the conversation.
 		navigation.cancel();
@@ -809,7 +768,6 @@
 			sidebarReturn = 'toggle';
 			sidebarOpen = false;
 		}
-		if (browseOpen) browseDialog?.dismiss();
 		if (channelOpen) channelDialog?.dismiss();
 		if (dmOpen) dmDialog?.dismiss();
 		commandOpen = false;
@@ -842,52 +800,6 @@
 			await load();
 		}
 	}
-	// ---- Browse channels (chat-ux §4.1) ------------------------------------------------------------
-	let browseOpen = $state(false);
-	let browseDialog = $state<{ dismiss: () => void } | undefined>();
-	let browseOpener: HTMLElement | undefined;
-	const browseRows = $derived(
-		chatState ? browseChannels(chatState, ctx, snapshot.projects ?? [], snapshot.teams) : []
-	);
-	function openBrowse(opener: HTMLElement) {
-		browseOpener = opener;
-		if (sidebarOpen) {
-			sidebarReturn = 'dialog';
-			sidebarOpen = false;
-		}
-		browseOpen = true;
-	}
-	function browseReturn() {
-		const opener = browseOpener;
-		browseOpener = undefined;
-		void tick().then(() => {
-			if (document.activeElement !== document.body) return;
-			if (opener?.isConnected) opener.focus();
-			else if (sidebarInline) conversationNavigation?.focusSelected();
-			else focusVisible(sidebarToggle);
-		});
-	}
-	function browseShow(id: string) {
-		browseOpener = undefined;
-		browseOpen = false;
-		select({ type: 'conversation', id });
-		void tick().then(() => focusVisible(heading));
-	}
-	async function browseJoin(id: string) {
-		requireRunningOffice();
-		await send({ method: 'channel.join', id });
-		await load();
-		const c = chatState?.conversations.find((x) => x.id === id);
-		toast.success(`You joined #${c?.name ?? 'the channel'}.`);
-		browseShow(id);
-	}
-	async function browseRequest(id: string) {
-		requireRunningOffice();
-		await send({ method: 'channel.request_invitation', id });
-		await load();
-		toast.success('Invitation requested. A member of the channel can add you.');
-	}
-
 	async function dmSubmit(ids: string[]) {
 		requireRunningOffice();
 		const accepted = await send({ method: 'dm.open', members: ids });
@@ -913,8 +825,7 @@
 			!sidebarOpen &&
 			!channelOpen &&
 			!dmOpen &&
-			!commandOpen &&
-			!browseOpen
+			!commandOpen
 		) {
 			const field = event.target;
 			const textField =
@@ -964,7 +875,6 @@
 			{inThread}
 			{officeRunning}
 			delivery={{ status: p.status, error: p.error }}
-			oncheck={() => void checkStatus(p)}
 			onretry={(button) => void deliver(p, true, button)}
 			ondismiss={() => (pending = pending.filter((x) => x.key !== p.key))}
 		/>
@@ -988,7 +898,6 @@
 			{view}
 			{ctx}
 			{officeRunning}
-			{inboxCount}
 			container={chatEl}
 			id={conversationsId}
 			bind:inline={sidebarInline}
@@ -997,7 +906,6 @@
 			onselect={select}
 			onnewchannel={(opener) => startSidebarDialog('channel', opener)}
 			onnewmessage={(opener) => startSidebarDialog('dm', opener)}
-			onbrowse={openBrowse}
 		/>
 
 		<section
@@ -1410,16 +1318,6 @@
 	bind:open={dmOpen}
 	members={ctx.members}
 	onsubmit={dmSubmit}
-/>
-<BrowseChannelsDialog
-	bind:this={browseDialog}
-	bind:open={browseOpen}
-	rows={browseRows}
-	{officeRunning}
-	returnFocus={browseReturn}
-	onopen={browseShow}
-	onjoin={browseJoin}
-	onrequest={browseRequest}
 />
 <CommandDialog
 	returnFocus={commandOpener ? returnCommandFocus : undefined}

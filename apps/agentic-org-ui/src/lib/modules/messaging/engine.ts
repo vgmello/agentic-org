@@ -3,9 +3,6 @@
 import {
 	AGENT_KINDS,
 	ANNOUNCEMENT_REASONS,
-	ASK_QUESTIONS_MAX,
-	type AskQuestion,
-	type QuestionAnswer,
 	CHAT_LIMITS,
 	REACTIONS,
 	type AskOption,
@@ -61,47 +58,6 @@ export const APPROVAL_OPTIONS: AskOption[] = [
 
 /** The reserved sender of what the office itself says (ADR-0003: `"office"` is never a member). */
 export const OFFICE = 'office';
-
-/** Product notices can't be answered (chat-ux §4.2). */
-export const SYSTEM_NO_REPLY = "System messages can't be replied to.";
-
-/** An ask's questions (REQ-04): a stored list, or the one choice question older asks carry in `body` and `options`. */
-export function questionsOf(
-	m: Pick<ChatMessage, 'id' | 'body' | 'options' | 'questions' | 'default_option'>
-): AskQuestion[] {
-	if (m.questions?.length) return m.questions;
-	if (m.options?.length)
-		return [
-			{
-				id: 'q1',
-				question_type: 'choice',
-				prompt: m.body,
-				options: m.options,
-				...(m.default_option ? { default_option: m.default_option } : {})
-			}
-		];
-	return [{ id: 'q1', question_type: 'free_text', prompt: m.body }];
-}
-
-const YES_NO: AskOption[] = [
-	{ id: 'yes', label: 'Yes' },
-	{ id: 'no', label: 'No' }
-];
-/** The options a question offers: its own, or Yes and No. */
-export const optionsOf = (q: AskQuestion): AskOption[] =>
-	q.question_type === 'yes_no' ? YES_NO : q.question_type === 'choice' ? (q.options ?? []) : [];
-
-/** One answer in words: "Staging", "Staging, Production", or the text. */
-export function answerText(q: AskQuestion, a: QuestionAnswer | undefined): string {
-	if (!a) return 'No answer';
-	const labels = (a.option_ids ?? []).map(
-		(id) =>
-			optionsOf(q)
-				.find((o) => o.id === id)
-				?.label.replace(/…$/, '') ?? id
-	);
-	return [labels.join(', '), a.text].filter(Boolean).join(': ');
-}
 
 export const emptyChat = (): ChatState => ({
 	seq: 0,
@@ -276,8 +232,7 @@ export const feedFor = (state: ChatState, ctx: ChatContext, viewer: string): Cha
 		return !!c && canRead(ctx, viewer, c);
 	});
 
-export const label = (c: Conversation) =>
-	c.kind === 'channel' ? `#${c.name}` : 'this conversation';
+const label = (c: Conversation) => (c.kind === 'channel' ? `#${c.name}` : 'this conversation');
 
 // ---- applying a call -------------------------------------------------------------------------------
 
@@ -328,74 +283,6 @@ export function applyChat(
 		case 'chat.answer':
 			accepted = answer(s, call, ctx);
 			break;
-		case 'chat.withdraw': {
-			const ask = s.messages.find((m) => m.id === call.ask_id && m.kind === 'request');
-			if (!ask) return refuse('not_found', 'There is no such ask.');
-			if (ask.from !== ctx.actor)
-				return refuse('not_authorized', 'Only the one who asked can withdraw it.');
-			if (ask.withdrawn) return refuse('already_exists', 'Already withdrawn');
-			closedRefusal(ask, ctx);
-			const reason = call.reason?.trim() || undefined;
-			ask.withdrawn = { by: ctx.actor, at: ctx.now, ...(reason ? { reason } : {}) };
-			accepted = { id: ask.id };
-			break;
-		}
-		case 'chat.hand_back': {
-			const m = s.messages.find((x) => x.id === call.message_id && x.kind === 'handoff');
-			if (!m) return refuse('not_found', 'There is no such hand-off.');
-			if (m.accepted_by)
-				return refuse(
-					'already_exists',
-					`Already accepted by ${memberOf(ctx, m.accepted_by)?.name ?? 'someone'}`
-				);
-			if (m.handed_back) return refuse('already_exists', 'Already handed back');
-			if (ctx.actor !== m.addressed_to)
-				return refuse('not_authorized', 'Only the one it is handed to can hand it back.');
-			const home = s.conversations.find((x) => x.id === m.conversation_id)!;
-			mustBeIn(ctx, home);
-			const reason = call.reason.trim();
-			if (!reason) return refuse('invalid_request', 'Say why you hand it back.');
-			m.handed_back = { by: ctx.actor, at: ctx.now, reason };
-			// The reason is published as a reply once the hand-back went through (chat-ux §2.2).
-			const reply: ChatMessage = {
-				id: newIdOf(s, ctx, 'm'),
-				conversation_id: home.id,
-				from: ctx.actor,
-				kind: 'reply',
-				body: `Handed back: ${reason}`,
-				created_at: ctx.now
-			};
-			if (home.kind !== 'dm') reply.thread_root_id = m.thread_root_id ?? m.id;
-			s.messages.push(reply);
-			accepted = { id: m.id };
-			break;
-		}
-		case 'channel.join':
-		case 'channel.request_invitation': {
-			const c = s.conversations.find(
-				(x) => x.id === call.id && x.kind === 'channel' && !x.archived
-			);
-			// A restricted channel is not discoverable: it answers like one that doesn't exist.
-			if (!c || (c.access === 'restricted' && !isMember(c, ctx.actor)))
-				return refuse('not_found', 'There is no such channel.');
-			if (isMember(c, ctx.actor)) return refuse('already_exists', `You're already in #${c.name}.`);
-			if (c.auto)
-				return refuse(
-					'invalid_request',
-					`#${c.name} follows the organization: its members change with the ${c.auto.type === 'general' ? 'organization' : c.auto.type}.`
-				);
-			if (call.method === 'channel.join') {
-				if ((c.access ?? 'open') !== 'open')
-					return refuse('not_authorized', `#${c.name} is joined by invitation.`);
-				c.members.push(ctx.actor);
-				c.invite_requests = c.invite_requests?.filter((id) => id !== ctx.actor);
-			} else {
-				if (c.access !== 'invite') return refuse('invalid_request', `#${c.name} is open: join it.`);
-				c.invite_requests = unique([...(c.invite_requests ?? []), ctx.actor]);
-			}
-			accepted = { id: c.id, conversation_id: c.id };
-			break;
-		}
 		case 'chat.accept_handoff': {
 			const m = s.messages.find((x) => x.id === call.message_id && x.kind === 'handoff');
 			if (!m) return refuse('not_found', 'There is no such hand-off.');
@@ -404,7 +291,6 @@ export function applyChat(
 					'already_exists',
 					`Already accepted by ${memberOf(ctx, m.accepted_by)?.name ?? 'someone'}.`
 				);
-			if (m.handed_back) return refuse('already_exists', 'Already handed back');
 			// Only its recipient accepts it (the owner when it is handed to the owner); the owner reading as the owner only replies.
 			if (ctx.actor !== m.addressed_to)
 				return refuse('not_authorized', 'Only the person it is handed to can accept it.');
@@ -517,8 +403,7 @@ function send(
 		return refuse('not_authorized', 'A bridge reaches only the channels chosen for it.');
 	if (!c) return refuse('not_found', 'There is no such conversation.');
 	if (c.archived) return refuse('conversation_archived', `${label(c)} is archived.`);
-	// Reading as the owner gives no right to post (chat-ux decision 5): posting needs membership.
-	if (!canRead(ctx, ctx.actor, c) || !isMember(c, ctx.actor))
+	if (!canRead(ctx, ctx.actor, c))
 		return refuse(
 			'not_in_conversation',
 			`You can post in ${label(c)} only while you are a member of it.`
@@ -584,8 +469,6 @@ function send(
 		const found = s.messages.find((m) => m.id === root && m.conversation_id === c.id);
 		if (!found) return refuse('not_found', 'There is no such thread.');
 		root = found.thread_root_id ?? found.id;
-		if (s.messages.find((m) => m.id === root)?.from === OFFICE)
-			return refuse('invalid_request', SYSTEM_NO_REPLY);
 	}
 	if (call.also_in_channel && root === undefined)
 		return refuse('invalid_request', 'Only a thread reply can also be sent to the channel.');
@@ -623,16 +506,6 @@ function send(
 				return refuse('invalid_request', 'An approval is asked of the owner.');
 			m.approval = true;
 			m.options = APPROVAL_OPTIONS;
-		} else if (call.questions?.length) {
-			m.questions = validQuestions(call.questions);
-			if (
-				m.questions.length === 1 &&
-				m.questions[0].question_type === 'choice' &&
-				!m.questions[0].allow_multiple
-			) {
-				// One single choice is the plain card: its options are buttons.
-				m.options = m.questions[0].options;
-			}
 		} else if (call.options?.length) {
 			if (call.options.length > CHAT_LIMITS.askOptionsMax)
 				return refuse(
@@ -642,35 +515,9 @@ function send(
 			const ids = new Set(call.options.map((o) => o.id));
 			if (ids.size !== call.options.length || call.options.some((o) => !o.id || !o.label.trim()))
 				return refuse('invalid_request', 'Each option needs its own id and a label.');
-			m.options = call.options.map((o) => ({
-				id: o.id,
-				label: o.label.trim(),
-				...(o.description?.trim() ? { description: o.description.trim() } : {})
-			}));
+			m.options = call.options.map((o) => ({ id: o.id, label: o.label.trim() }));
 		}
-		if (call.required) {
-			// A required ask has no deadline: a default never answers it (ADR-0020 decision 14).
-			if (call.default_at !== undefined)
-				return refuse(
-					'invalid_request',
-					'A required ask has no deadline: a default never answers it.'
-				);
-			m.required = true;
-		}
-		if (call.wait_until !== undefined) {
-			if (Number.isNaN(ms(call.wait_until)))
-				return refuse('invalid_request', 'The end of the wait is not a time.');
-			m.wait_until = call.wait_until;
-		}
-		if (call.default_at !== undefined && m.questions) {
-			if (Number.isNaN(ms(call.default_at)))
-				return refuse('invalid_request', 'A default needs the time it applies.');
-			if (!m.questions.some((q) => q.default_option))
-				return refuse('invalid_request', 'A deadline needs a default on at least one question.');
-			m.default_at = call.default_at;
-			const single = m.questions.length === 1 ? m.questions[0].default_option : undefined;
-			if (single && m.options) m.default_option = single;
-		} else if (call.default_option !== undefined || call.default_at !== undefined) {
+		if (call.default_option !== undefined || call.default_at !== undefined) {
 			if (
 				call.default_option === undefined ||
 				call.default_at === undefined ||
@@ -741,81 +588,6 @@ function send(
 	};
 }
 
-/** REQ-04 validation, with a reason the asker can act on. */
-function validQuestions(questions: AskQuestion[]): AskQuestion[] {
-	if (questions.length > ASK_QUESTIONS_MAX)
-		return refuse('invalid_request', `An ask has one to ${ASK_QUESTIONS_MAX} questions.`);
-	const ids = new Set(questions.map((q) => q.id));
-	if (ids.size !== questions.length || questions.some((q) => !q.id))
-		return refuse('invalid_request', 'Each question needs its own id.');
-	return questions.map((q) => {
-		if (!q.prompt?.trim()) return refuse('invalid_request', `Question ${q.id} needs a prompt.`);
-		if (!['choice', 'yes_no', 'free_text'].includes(q.question_type))
-			return refuse(
-				'invalid_request',
-				`Question ${q.id}: the type is choice, yes_no or free_text.`
-			);
-		const out: AskQuestion = {
-			id: q.id,
-			question_type: q.question_type,
-			prompt: q.prompt.trim(),
-			...(q.optional ? { optional: true } : {})
-		};
-		if (q.question_type === 'choice') {
-			const opts = q.options ?? [];
-			if (!opts.length || opts.length > CHAT_LIMITS.askOptionsMax)
-				return refuse(
-					'invalid_request',
-					`Question ${q.id}: a choice has one to ${CHAT_LIMITS.askOptionsMax} options.`
-				);
-			if (
-				new Set(opts.map((o) => o.id)).size !== opts.length ||
-				opts.some((o) => !o.id || !o.label.trim())
-			)
-				return refuse(
-					'invalid_request',
-					`Question ${q.id}: each option needs its own id and a label.`
-				);
-			out.options = opts.map((o) => ({
-				id: o.id,
-				label: o.label.trim(),
-				...(o.description?.trim() ? { description: o.description.trim() } : {})
-			}));
-			if (q.allow_multiple) out.allow_multiple = true;
-		} else if (q.options?.length)
-			return refuse(
-				'invalid_request',
-				`Question ${q.id}: ${q.question_type === 'yes_no' ? 'yes or no' : 'free text'} takes no options.`
-			);
-		if (q.default_option !== undefined) {
-			if (q.question_type === 'free_text' || !optionsOf(out).some((o) => o.id === q.default_option))
-				return refuse(
-					'invalid_request',
-					`Question ${q.id}: the default must be ${q.question_type === 'yes_no' ? 'yes or no' : 'one of its options'}.`
-				);
-			out.default_option = q.default_option;
-		}
-		return out;
-	});
-}
-
-/** Who closed an ask, as a refusal says it (chat-ux §2.1). */
-function closedRefusal(ask: ChatMessage, ctx: ChatContext): never | undefined {
-	if (ask.withdrawn)
-		return refuse(
-			'already_exists',
-			`Withdrawn by ${ask.withdrawn.by === OFFICE ? 'System' : (memberOf(ctx, ask.withdrawn.by)?.name ?? 'someone')}`
-		);
-	if (ask.answer)
-		return refuse(
-			'already_exists',
-			ask.answer.by === 'default'
-				? 'Already answered: default applied'
-				: `Already answered by ${memberOf(ctx, ask.answer.by)?.name ?? 'someone'}`
-		);
-	return undefined;
-}
-
 function answer(
 	s: ChatState,
 	call: Extract<ChatCall, { method: 'chat.answer' }>,
@@ -824,7 +596,11 @@ function answer(
 	const ask = s.messages.find((m) => m.id === call.ask_id && m.kind === 'request');
 	const c = ask && s.conversations.find((x) => x.id === ask.conversation_id);
 	if (!ask || !c) return refuse('not_found', 'There is no such ask.');
-	closedRefusal(ask, ctx);
+	if (ask.answer)
+		return refuse(
+			'already_exists',
+			`Already answered by ${ask.answer.by === 'default' ? 'its default' : (memberOf(ctx, ask.answer.by)?.name ?? 'someone')}.`
+		);
 	// Asks addressed to the owner, and every approval, are answered only in the app, never through a bridge (CHAT-17, decision 11).
 	if (
 		(ask.addressed_to === ctx.owner || ask.approval) &&
@@ -834,11 +610,9 @@ function answer(
 			'not_authorized',
 			'Open Agentic Org to answer this: asks to the owner and approvals are answered only in the app.'
 		);
-	// Only the addressed actor answers: the owner reading an ask to someone else gains no answer (chat-ux §2.1).
-	if (ctx.actor !== ask.addressed_to)
+	if (ctx.actor !== ctx.owner && ctx.actor !== ask.addressed_to)
 		return refuse('not_authorized', 'Only the person it is asked of can answer it.');
 	mustBeIn(ctx, c);
-	if (call.answers) return answerForm(s, ask, c, call.answers, ctx);
 	const text = call.text?.trim() || undefined;
 	if (text && bytes(text) > CHAT_LIMITS.bodyMax)
 		return refuse('invalid_request', 'That reply is too long.');
@@ -867,69 +641,6 @@ function answer(
 		from: ctx.actor,
 		kind: 'reply',
 		body: said,
-		created_at: ctx.now
-	};
-	if (c.kind !== 'dm') reply.thread_root_id = ask.thread_root_id ?? ask.id;
-	s.messages.push(reply);
-	return { id: ask.id, conversation_id: c.id };
-}
-
-/** An ask with several questions is answered at once, every question that is not optional included (REQ-04, CHAT-44). */
-function answerForm(
-	s: ChatState,
-	ask: ChatMessage,
-	c: Conversation,
-	given: QuestionAnswer[],
-	ctx: ChatContext
-): ChatAccepted {
-	const questions = questionsOf(ask);
-	const valid = questions.map((q) => q.id).join(', ');
-	const answers: QuestionAnswer[] = [];
-	for (const a of given) {
-		const q = questions.find((x) => x.id === a.question_id);
-		if (!q)
-			return refuse(
-				'invalid_request',
-				`There is no question ${a.question_id}. The questions are ${valid}.`
-			);
-		const ids = [...new Set(a.option_ids ?? [])];
-		const text = a.text?.trim() || undefined;
-		if (
-			q.question_type === 'free_text'
-				? ids.length > 0
-				: ids.some((id) => !optionsOf(q).some((o) => o.id === id))
-		)
-			return refuse('invalid_request', `That answer doesn't fit question ${q.id}.`);
-		if (ids.length > 1 && !q.allow_multiple)
-			return refuse('invalid_request', `Question ${q.id} takes one answer.`);
-		if (!ids.length && !text) continue;
-		answers.push({
-			question_id: q.id,
-			...(ids.length ? { option_ids: ids } : {}),
-			...(text ? { text } : {})
-		});
-	}
-	const missing = questions.filter(
-		(q) => !q.optional && !answers.some((a) => a.question_id === q.id)
-	);
-	if (missing.length)
-		return refuse('invalid_request', `Answer ${missing.map((q) => q.id).join(', ')} first.`);
-	ask.answer = { by: ctx.actor, at: ctx.now, answers };
-	const body = questions
-		.map(
-			(q) =>
-				`${q.prompt}: ${answerText(
-					q,
-					answers.find((a) => a.question_id === q.id)
-				)}`
-		)
-		.join('\n');
-	const reply: ChatMessage = {
-		id: newIdOf(s, ctx, 'm'),
-		conversation_id: c.id,
-		from: ctx.actor,
-		kind: 'reply',
-		body,
 		created_at: ctx.now
 	};
 	if (c.kind !== 'dm') reply.thread_root_id = ask.thread_root_id ?? ask.id;
@@ -1023,14 +734,11 @@ function channelCall(
  * The office does this itself; the app only shows it.
  */
 export function tick(state: ChatState, now: string): ChatState {
-	// A required ask is never closed by a default; a withdrawn one is closed already.
 	const due = state.messages.filter(
 		(m) =>
 			m.kind === 'request' &&
 			!m.answer &&
-			!m.withdrawn &&
-			!m.required &&
-			(m.default_option || m.questions?.some((q) => q.default_option)) &&
+			m.default_option &&
 			m.default_at &&
 			ms(m.default_at) <= ms(now)
 	);
@@ -1040,27 +748,12 @@ export function tick(state: ChatState, now: string): ChatState {
 	for (const ask of due) {
 		const m = s.messages.find((x) => x.id === ask.id)!;
 		const c = s.conversations.find((x) => x.id === m.conversation_id);
-		const defaults = questionsOf(m)
-			.filter((q) => q.default_option)
-			.map((q) => ({ question_id: q.id, option_ids: [q.default_option!] }));
-		m.answer = {
-			by: 'default',
-			at: m.default_at!,
-			...(m.default_option ? { option_id: m.default_option } : { answers: defaults })
-		};
+		m.answer = { by: 'default', at: m.default_at!, option_id: m.default_option };
 		// The default goes back to the agent like any answer (`msg.reply`), from the office, under the ask.
 		s.seq += 1;
-		const label = m.default_option
-			? (m.options?.find((o) => o.id === m.default_option)?.label.replace(/…$/, '') ??
-				m.default_option)
-			: questionsOf(m)
-					.map((q) =>
-						answerText(
-							q,
-							defaults.find((d) => d.question_id === q.id)
-						)
-					)
-					.join('; ');
+		const label =
+			m.options?.find((o) => o.id === m.default_option)?.label.replace(/…$/, '') ??
+			m.default_option;
 		const reply: ChatMessage = {
 			id: `m-d${s.seq}`,
 			conversation_id: m.conversation_id,
