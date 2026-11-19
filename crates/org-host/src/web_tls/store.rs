@@ -217,9 +217,11 @@ impl WebTls {
     ) -> Result<(), String> {
         let pair = self.stored(checked, source)?;
         self.add_key(checked)?;
-        self.db
-            .set_web_tls_pair(&pair)
-            .map_err(|e| format!("storing the TLS pair: {e:?}"))?;
+        if let Err(e) = self.db.set_web_tls_pair(&pair) {
+            // The row still names the previous pair: the key just added is no one's.
+            self.drop_unnamed(checked);
+            return Err(format!("storing the TLS pair: {e:?}"));
+        }
         self.forget(previous, &pair);
         Ok(())
     }
@@ -240,6 +242,21 @@ impl WebTls {
         self.secrets
             .put(&name, &value)
             .map_err(|e| format!("keeping the TLS key in the host's secrets: {e:?}"))
+    }
+
+    /// Deletes `checked`'s key after its row could not be written (unless the row already
+    /// names that pair); the next start's sweep deletes it if this fails.
+    fn drop_unnamed(&self, checked: &Checked) {
+        let named =
+            matches!(self.db.web_tls_pair(), Ok(Some(row)) if row.pair_fp == checked.pair());
+        if named {
+            return;
+        }
+        if let Ok(name) = secret_name(&checked.pair()) {
+            if self.secrets.delete(&name).is_err() {
+                log("could not delete an unused TLS key; the next start deletes it");
+            }
+        }
     }
 
     /// Deletes the key of `previous` once `now` names another.
@@ -449,11 +466,11 @@ impl WebTls {
         let completed: TlsStored = HostOpResult::Completed {
             result: serde_json::json!({}),
         };
-        match self
-            .db
-            .tls_set_write(&op, wall, &completed, Some(&pair))
-            .map_err(journal)?
-        {
+        let written = self.db.tls_set_write(&op, wall, &completed, Some(&pair));
+        if written.is_err() {
+            self.drop_unnamed(&checked);
+        }
+        match written.map_err(journal)? {
             None => {
                 self.forget(previous.as_ref(), &pair);
                 log(&format!(

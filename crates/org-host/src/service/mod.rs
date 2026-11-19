@@ -1763,18 +1763,25 @@ pub(crate) mod tests {
             .session
         };
         // Before the administrator service is installed, and for a peer it does not admit
-        // (an unsigned process of the same user), even with the administrator's session.
+        // (an unsigned process of the same user, where the system names a peer's code), even
+        // with the administrator's session. Where it names a peer by its user alone (Linux),
+        // the user is the admission, as for every administrator call.
+        let by_code = matches!(
+            crate::test_programs::image_identity(),
+            org_platform_host::admission::ImageIdentity::CodeSignature
+        );
         for admits in [None, Some(false)] {
             let (_home, connection, mut peer, offices) = local(Some(Arc::clone(&tls)), admits);
             let owner = sign_in(&mut peer, "Owner");
-            assert!(refused(
-                exchange::<TlsSet>(&mut peer, 3, &params(owner)),
-                if admits.is_none() {
-                    ErrorCode::Unavailable
-                } else {
-                    ErrorCode::NotAuthorized
-                }
-            ));
+            let answer = exchange::<TlsSet>(&mut peer, 3, &params(owner));
+            match admits {
+                None => assert!(refused(answer, ErrorCode::Unavailable)),
+                Some(_) if by_code => assert!(refused(answer, ErrorCode::NotAuthorized)),
+                Some(_) => assert!(answer
+                    .unwrap()
+                    .into_result::<TlsSet>()
+                    .is_ok_and(|r| matches!(r, HostOpResult::Completed { .. }))),
+            }
             drop(connection);
             offices.shutdown();
         }

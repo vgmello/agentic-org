@@ -202,6 +202,20 @@ fn get(
     )
 }
 
+/// The live processes executing exactly `program` (a unique temp path).
+fn pids_of(program: &Path) -> Vec<String> {
+    let out = std::process::Command::new("/usr/bin/pgrep")
+        .arg("-f")
+        .arg(program)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect()
+}
+
 fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
     let until = Instant::now() + WAIT;
     while !done() {
@@ -303,7 +317,10 @@ fn a_real_host_serves_the_browser_over_tls_with_its_own_certificate_and_a_suppli
         .to_owned();
     assert!(cookie.contains("; Secure"), "{cookie}");
 
-    // `tls.set` from the administrator: the running web process serves the new pair.
+    // `tls.set` from the administrator: the running web process serves the new pair, without
+    // a restart (the same process).
+    let web = pids_of(&base.join("bin/agentic-org-web"));
+    assert_eq!(web.len(), 1, "one web process: {web:?}");
     let stream = UnixStream::connect(&socket).unwrap();
     stream.set_read_timeout(Some(WAIT)).unwrap();
     let mut wire = BufReader::new(stream);
@@ -341,6 +358,7 @@ fn a_real_host_serves_the_browser_over_tls_with_its_own_certificate_and_a_suppli
         get(address, &supplied, "/api/v1/version").is_ok()
     });
     assert!(get(address, &leaf, "/api/v1/version").is_err());
+    assert_eq!(pids_of(&base.join("bin/agentic-org-web")), web);
     assert_eq!(leaf_of(&stored_chain(&host)), supplied);
     drop(wire);
 

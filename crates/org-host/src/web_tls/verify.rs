@@ -72,6 +72,18 @@ pub(crate) fn check(
     if normal.len() > CHAIN_LIMIT {
         return Err(TlsRefusal::TlsInvalid);
     }
+    // Sized up front, so the text is never moved to a larger buffer and left behind.
+    let der = typed.secret_der();
+    let mut key = Zeroizing::new(String::with_capacity(
+        der.len() * 4 / 3 + der.len() / 32 + 128,
+    ));
+    encode(&mut key, label, der);
+    // The host's secrets keep the key in this form, and no larger than an item they hold.
+    // (No key the signing provider loads is this large today, RSA ending at 8192 bits; the
+    // bound keeps setup from accepting one the first start could not keep.)
+    if key.len() > crate::host_secrets::MAX_BYTES {
+        return Err(TlsRefusal::TlsInvalid);
+    }
     let provider = rustls::crypto::ring::default_provider();
     let signing = provider
         .key_provider
@@ -124,12 +136,6 @@ pub(crate) fn check(
     let mut pair = Sha256::new();
     pair.update(chain_hash.finalize());
     pair.update(Sha256::digest(typed.secret_der()));
-    // Sized up front, so the text is never moved to a larger buffer and left behind.
-    let der = typed.secret_der();
-    let mut key = Zeroizing::new(String::with_capacity(
-        der.len() * 4 / 3 + der.len() / 32 + 128,
-    ));
-    encode(&mut key, label, der);
     Ok(Checked {
         chain: normal,
         key,
