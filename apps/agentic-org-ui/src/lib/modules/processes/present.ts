@@ -64,6 +64,14 @@ export function parsePlace(value: string | null | undefined): Place {
 export const placeParam = (place: Place): string | undefined =>
 	place.kind === 'organization' ? undefined : `${place.kind}:${place.id}`;
 
+/** Where a document is written: its team, its project or the organization. */
+export const placeOfDocument = (doc: Pick<ProcessDocument, 'teamId' | 'projectId'>): Place =>
+	doc.teamId
+		? { kind: 'team', id: doc.teamId }
+		: doc.projectId
+			? { kind: 'project', id: doc.projectId }
+			: { kind: 'organization' };
+
 export const samePlace = (a: Place, b: Place) => placeParam(a) === placeParam(b);
 
 /** "Organization", "Web (team)", "Atlas (project)", "Noor Haddad (agent)" (PROC-34). */
@@ -340,7 +348,9 @@ export const KEY_HELP =
 export type Block =
 	| { kind: 'heading'; text: string }
 	| { kind: 'list'; ordered: boolean; items: string[] }
-	| { kind: 'paragraph'; text: string };
+	| { kind: 'paragraph'; text: string }
+	/** A fenced code block, its lines kept as written. */
+	| { kind: 'code'; text: string };
 
 /** Headings, lists and paragraphs of a Markdown body; everything else reads as text. */
 export function markdownBlocks(body: string): Block[] {
@@ -350,8 +360,21 @@ export function markdownBlocks(body: string): Block[] {
 		if (paragraph.length) blocks.push({ kind: 'paragraph', text: paragraph.join(' ') });
 		paragraph = [];
 	};
+	let code: string[] | undefined;
 	for (const raw of body.split(/\r?\n/)) {
 		const line = raw.trim();
+		if (code) {
+			if (/^(```|~~~)/.test(line)) {
+				blocks.push({ kind: 'code', text: code.join('\n') });
+				code = undefined;
+			} else code.push(raw);
+			continue;
+		}
+		if (/^(```|~~~)/.test(line)) {
+			flush();
+			code = [];
+			continue;
+		}
 		const heading = /^#{1,6}(?:\s+(.*?))?\s*#*$/.exec(line);
 		const bullet = /^[-*+]\s+(.*)$/.exec(line);
 		const numbered = /^\d+[.)]\s+(.*)$/.exec(line);
@@ -369,19 +392,44 @@ export function markdownBlocks(body: string): Block[] {
 		} else paragraph.push(line);
 	}
 	flush();
+	if (code) blocks.push({ kind: 'code', text: code.join('\n') });
 	return blocks;
 }
 
-/** A skill file: its front matter and body (document 18). */
+/** A YAML scalar as written: plain only when it can't be read as anything but this text. */
+export function yamlScalar(value: string): string {
+	const plain =
+		/^[A-Za-z][\w ./()-]*$/.test(value) &&
+		!/\s$/.test(value) &&
+		!/^(?:y|yes|n|no|true|false|on|off|null|~)$/i.test(value);
+	return plain ? value : JSON.stringify(value);
+}
+
+/** A skill file: its front matter and body (document 18). Without a key, the key line is added when it is saved. */
 export function skillFileText(skill: {
-	key: string;
+	key?: string;
 	title: string;
 	description: string;
 	roles: string[];
 	bodyMarkdown: string;
 }): string {
-	const text = (v: string) => (/^[\w ./()-]*$/.test(v) ? v : JSON.stringify(v));
-	return `---\nschema_version: 1\nkey: ${skill.key}\ntitle: ${text(skill.title)}\ndescription: ${text(skill.description)}\nroles: [${skill.roles.join(', ')}]\n---\n${skill.bodyMarkdown}`;
+	const key = skill.key ? `key: ${skill.key}\n` : '';
+	return `---\nschema_version: 1\n${key}title: ${yamlScalar(skill.title)}\ndescription: ${yamlScalar(skill.description)}\nroles: [${skill.roles.join(', ')}]\n---\n${skill.bodyMarkdown}`;
+}
+
+/** The skill file with `key` set in its front matter to the key it is saved under. */
+export function withSkillKey(text: string, key: string): string {
+	const match = /^---\n([\s\S]*?)\n---/.exec(text);
+	if (!match) return text;
+	const lines = match[1].split('\n').filter((line) => !/^key:/.test(line));
+	const at = lines.findIndex((line) => /^schema_version:/.test(line));
+	lines.splice(at + 1, 0, `key: ${key}`);
+	return `---\n${lines.join('\n')}\n---${text.slice(match[0].length)}`;
+}
+
+/** "roles/product-lead.md", "process.yaml". */
+export function partPath(part: { kind: string; key?: string }): string {
+	return part.kind === 'manifest' ? 'process.yaml' : `${part.kind}s/${part.key}.md`;
 }
 
 export const NEW_SKILL_BODY = '## When\n\n## Steps\n\n## Done when\n';

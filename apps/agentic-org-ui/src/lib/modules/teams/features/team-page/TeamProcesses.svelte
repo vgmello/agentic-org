@@ -18,4 +18,4 @@
 	reloadOnChange(processes, () => team.loads);
 </script>
 
-<PlaceProcesses resource={processes} {place} name={team.teamName} headingLevel={3} />
+<PlaceProcesses resource={processes} {place} name={team.teamName} headingLevel={4} />

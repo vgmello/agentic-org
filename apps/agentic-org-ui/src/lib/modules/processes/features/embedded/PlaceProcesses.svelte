@@ -92,7 +92,10 @@
 					{/if}
 					{#if view.developmentProcess}
 						<p data-testid="dev-process-line">
-							This project follows <a
+							{view.agent?.work?.projectName
+								? `Its project, ${view.agent.work.projectName}, follows`
+								: 'This project follows'}
+							<a
 								href={resolve(devProcessHref(view.developmentProcess.id) as '/')}
 								class="rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 								>{view.developmentProcess.name}</a

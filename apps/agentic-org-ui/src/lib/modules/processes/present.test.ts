@@ -226,3 +226,39 @@ describe('development process files', () => {
 		expect(skillRolesText(['product-lead', 'other'], names)).toBe('Product lead, other');
 	});
 });
+
+describe('review fixes', () => {
+	it('quotes YAML values that could read as something else', async () => {
+		const { yamlScalar } = await import('./present');
+		expect(yamlScalar('Staff the project')).toBe('Staff the project');
+		for (const v of ['- x', 'yes', 'No', 'null', '123', '', 'a: b', 'trailing '])
+			expect(yamlScalar(v)).toBe(JSON.stringify(v));
+	});
+
+	it('saves a skill under the key typed for it', async () => {
+		const { withSkillKey } = await import('./present');
+		const text = skillFileText({ title: 'T', description: 'D', roles: [], bodyMarkdown: 'B\n' });
+		expect(text).not.toContain('key:');
+		expect(withSkillKey(text, 'qa')).toBe(
+			'---\nschema_version: 1\nkey: qa\ntitle: T\ndescription: D\nroles: []\n---\nB\n'
+		);
+		expect(withSkillKey(withSkillKey(text, 'old'), 'new')).toContain('key: new\ntitle');
+	});
+
+	it('keeps the lines of a fenced code block', () => {
+		expect(markdownBlocks('Run:\n```sh\nbun run check\nbun run test\n```\nDone.')).toEqual([
+			{ kind: 'paragraph', text: 'Run:' },
+			{ kind: 'code', text: 'bun run check\nbun run test' },
+			{ kind: 'paragraph', text: 'Done.' }
+		]);
+	});
+
+	it('places a document by its scope', async () => {
+		const { placeOfDocument, partPath } = await import('./present');
+		expect(placeOfDocument({ teamId: 'web' })).toEqual({ kind: 'team', id: 'web' });
+		expect(placeOfDocument({ projectId: 'atlas' })).toEqual({ kind: 'project', id: 'atlas' });
+		expect(placeOfDocument({})).toEqual({ kind: 'organization' });
+		expect(partPath({ kind: 'role', key: 'qa' })).toBe('roles/qa.md');
+		expect(partPath({ kind: 'manifest' })).toBe('process.yaml');
+	});
+});

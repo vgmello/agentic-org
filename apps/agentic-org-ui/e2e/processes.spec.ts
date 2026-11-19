@@ -201,7 +201,10 @@ test('PROC-1/PROC-3: override an inherited process for a team, with the inherite
 	await shot(page, 'processes-override-editor');
 	await page.getByRole('button', { name: 'Create process' }).click();
 	await expect(page).toHaveURL(/\/settings\/processes\?place=team%3Aweb$/);
-	await expect(heading(page)).toBeFocused();
+	await expect(page.getByTestId('arrival')).toHaveText('Created Review and merge for Web (team).');
+	await expect(
+		row(page, 'review-and-merge').getByRole('button', { name: 'Review and merge' })
+	).toBeFocused();
 	const review = row(page, 'review-and-merge');
 	await expect(review.getByTestId('level-badge')).toHaveText('Team Web rev 1');
 	await expect(review.getByTestId('relation')).toHaveText('replaces Organization');
@@ -479,4 +482,107 @@ test('a team’s and an agent’s Processes tabs read through the processes modu
 	await expect(page.getByTestId('agent-work')).toHaveText(
 		"No current work. Showing the organization's processes. Team and project processes apply when it starts a task."
 	);
+});
+
+test('review P2-4: a document written for another place lands on that place’s list, its row focused', async ({
+	page
+}) => {
+	await open(page, '/settings/processes');
+	await page.getByRole('link', { name: 'New process' }).click();
+	await page.getByLabel('Title').fill('Web review');
+	await page.getByLabel('Written for').selectOption('team:web');
+	await page.getByLabel('Owner').selectOption('noor');
+	await page.getByRole('button', { name: 'Create process' }).click();
+	await expect(page).toHaveURL(/\/settings\/processes\?place=team%3Aweb$/);
+	await expect(heading(page)).toHaveText('Processes · Web (team)');
+	await expect(page.getByTestId('arrival')).toHaveText('Created Web review for Web (team).');
+	await expect(page.getByRole('button', { name: 'Web review', exact: true })).toBeFocused();
+});
+
+test('review P2-3: every refusal is shown: on the lifecycle, and a form-level one for a field the editor has no place for', async ({
+	page
+}) => {
+	await open(page, '/settings/processes');
+	await visit(page, '/settings/processes/documents/new?kind=process&mock=refuse-status');
+	await page.getByLabel('Title').fill('Asking for help');
+	await page.getByLabel('Owner').selectOption('avery');
+	await page.getByRole('button', { name: 'Create process' }).click();
+	await expect(
+		page.getByText(
+			'The owner has left the organization. Save it as a draft, or choose another owner.'
+		)
+	).toBeVisible();
+	await expect(page.locator('fieldset[role=radiogroup]')).toHaveAttribute('aria-invalid', 'true');
+	await expect(page.getByRole('radio', { name: /^Draft/ })).toBeFocused();
+
+	await visit(
+		page,
+		'/settings/processes/documents/new?place=team:web&kind=process&mock=refuse-scope'
+	);
+	await page.getByLabel('Title').fill('Web notes');
+	await page.getByLabel('Owner').selectOption('noor');
+	await page.getByRole('button', { name: 'Create process' }).click();
+	await expect(page.getByTestId('save-failure')).toHaveText(
+		'Web is archived, so nothing can be written there.'
+	);
+	await expect(page.getByLabel('Title')).toHaveValue('Web notes');
+});
+
+test('review P2-2: a new role, skill or template with a taken key is refused on the key, never written over', async ({
+	page
+}) => {
+	await open(page, '/settings/processes/development/0193a000-0000-7000-8000-0000000000d0');
+	await expect(page.getByTestId('dev-role')).toHaveCount(4);
+	await page.getByRole('button', { name: 'New role…' }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByLabel('Key').fill('product-lead');
+	await sheet.getByRole('button', { name: 'Save' }).click();
+	await expect(
+		sheet.getByText('roles/product-lead.md already exists. Edit it, or choose another key.')
+	).toBeVisible();
+	await expect(sheet.getByLabel('Key')).toBeFocused();
+	await sheet.getByLabel('Key').fill('qa-lead');
+	await sheet.getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByTestId('saved')).toContainText('roles/qa-lead.md');
+	await expect(page.getByTestId('dev-role')).toHaveCount(5);
+
+	// A new skill's front matter is saved under the key typed for it.
+	await page.getByRole('button', { name: 'New skill…' }).click();
+	await page.getByRole('dialog').getByLabel('Key').fill('pci-review');
+	await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByText('skills/pci-review.md already exists.')).toBeVisible();
+	await page.getByRole('dialog').getByLabel('Key').fill('qa-checks');
+	await page.getByRole('dialog').getByRole('button', { name: 'Save' }).click();
+	await page.getByRole('button', { name: 'Edit the skill New skill' }).click();
+	await expect(page.getByRole('dialog').getByRole('textbox', { name: 'Text' })).toHaveValue(
+		/^---\nschema_version: 1\nkey: qa-checks\n/
+	);
+});
+
+test('review P3: no frame around an unavailable page; no zero counts; Back and Forward keep focus off the body', async ({
+	page
+}) => {
+	await open(page, '/settings/processes?mock=unavailable');
+	await expect(page.getByText("Processes isn't built yet")).toBeVisible();
+	await expect(page.getByRole('navigation', { name: 'Processes and standards' })).toHaveCount(0);
+	await expect(page.getByLabel('Show processes for')).toHaveCount(0);
+	await expect(page.locator('title')).toHaveCount(1);
+	await expect(page).toHaveTitle('Processes · Organization settings · Agentic Org');
+
+	await visit(page, '/settings/processes?mock=empty');
+	await expect(
+		page
+			.getByRole('navigation', { name: 'Processes and standards' })
+			.getByRole('link', { name: 'Processes', exact: true })
+	).toHaveText('Processes');
+
+	await visit(page, '/settings/processes');
+	await expect(page.getByTestId('process-row').first()).toBeVisible();
+	await show(page).selectOption('team:web');
+	await expect(heading(page)).toHaveText('Processes · Web (team)');
+	await page.locator('body').click({ position: { x: 1, y: 1 } });
+	await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+	await page.goBack();
+	await expect(heading(page)).toHaveText('Processes · Organization');
+	await expect(heading(page)).toBeFocused();
 });

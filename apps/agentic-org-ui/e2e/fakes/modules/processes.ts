@@ -6,6 +6,7 @@
 // Scenarios (`?mock=` on the page's URL, several joined with commas):
 //   slow · fails (reads fail) · empty (no documents) · unavailable · stale (organization repository unreachable: the
 //   last copy) · viewer (no edit rights) · conflict (someone saves first, once) · save-fails (writes fail)
+//   refuse-status, refuse-scope (writes refused on the lifecycle, or on a field the editor has no place for)
 import { orgApi } from '$lib/org/api';
 import type { OrgSnapshot } from '$lib/proto';
 import { unavailableCall } from '$lib/platform/unavailable-api';
@@ -96,6 +97,19 @@ async function write() {
 	if (on('save-fails'))
 		throw fail('storage_error', "HQ couldn't write the file. Your text is kept; try again.");
 	if (on('viewer')) throw fail('not_authorized', "You don't have access to change processes.");
+	// The office refuses a field the browser can't check, or one with no field of its own in the editor.
+	if (on('refuse-status'))
+		throw fail(
+			'invalid_request',
+			'The owner has left the organization. Save it as a draft, or choose another owner.',
+			{
+				field: 'status'
+			}
+		);
+	if (on('refuse-scope'))
+		throw fail('invalid_request', 'Web is archived, so nothing can be written there.', {
+			field: 'teamId'
+		});
 }
 
 const stale = () =>

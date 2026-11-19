@@ -27,6 +27,9 @@
 				>
 					{#each block.items as item, j (j)}<li>{item}</li>{/each}
 				</svelte:element>
+			{:else if block.kind === 'code'}
+				<pre
+					class="overflow-x-auto rounded-md bg-surface-sunken p-3 font-mono text-xs/5 whitespace-pre-wrap text-fg-bright outline-1 -outline-offset-1 outline-line [overflow-wrap:anywhere]">{block.text}</pre>
 			{:else}
 				<p>{block.text}</p>
 			{/if}

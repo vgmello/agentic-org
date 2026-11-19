@@ -23,6 +23,7 @@
 	import { pageTitle } from '$lib/nav';
 	import { processesApi } from '../../api';
 	import StaleNotice from '../../components/StaleNotice.svelte';
+	import PageTitle from '../../components/PageTitle.svelte';
 	import {
 		CHANGES_PAUSED,
 		DEV_HEADING,
@@ -63,8 +64,6 @@
 	}
 </script>
 
-<svelte:head><title>{pageTitle(DEV_HEADING, 'Processes')}</title></svelte:head>
-
 {#snippet actions(data: DevProcessCatalogue, idPrefix: string)}
 	<div class="flex flex-wrap gap-3 {idPrefix === 'empty' ? 'justify-center' : ''}">
 		<Button
@@ -92,27 +91,30 @@
 	{/if}
 {/snippet}
 
-<PageHeader
-	id="dev-heading"
-	title="{DEV_HEADING}: {DEV_SUBTITLE.charAt(0).toLowerCase()}{DEV_SUBTITLE.slice(1)}"
-	count={catalogue?.processes.length}
-	countLabel={catalogue?.processes.length === 1 ? 'development process' : 'development processes'}
-	back={{ href: PROCESSES_URL, label: 'Organization processes and standards' }}
-	class="[&_h2:focus]:outline-none"
->
-	{#snippet description()}
-		<p>
-			A project follows at most one, chosen on the project. It names the roles that start the
-			project, what each role does, and the tabs and sections the project has. It grants nothing,
-			and never overrides a process or standard marked not overridable.
-		</p>
-	{/snippet}
-	{#snippet actions()}
-		{#if catalogue && canEdit && catalogue.processes.length > 0}
-			{@render actionsBar(catalogue)}
-		{/if}
-	{/snippet}
-</PageHeader>
+{#if resource.state !== 'unavailable'}
+	<PageTitle title={pageTitle(DEV_HEADING, 'Processes')} />
+	<PageHeader
+		id="dev-heading"
+		title="{DEV_HEADING}: {DEV_SUBTITLE.charAt(0).toLowerCase()}{DEV_SUBTITLE.slice(1)}"
+		count={catalogue?.processes.length}
+		countLabel={catalogue?.processes.length === 1 ? 'development process' : 'development processes'}
+		back={{ href: PROCESSES_URL, label: 'Organization processes and standards' }}
+		class="[&_h2:focus]:outline-none"
+	>
+		{#snippet description()}
+			<p>
+				A project follows at most one, chosen on the project. It names the roles that start the
+				project, what each role does, and the tabs and sections the project has. It grants nothing,
+				and never overrides a process or standard marked not overridable.
+			</p>
+		{/snippet}
+		{#snippet actions()}
+			{#if catalogue && canEdit && catalogue.processes.length > 0}
+				{@render actionsBar(catalogue)}
+			{/if}
+		{/snippet}
+	</PageHeader>
+{/if}
 
 {#snippet actionsBar(data: DevProcessCatalogue)}{@render actions(data, 'header')}{/snippet}
 

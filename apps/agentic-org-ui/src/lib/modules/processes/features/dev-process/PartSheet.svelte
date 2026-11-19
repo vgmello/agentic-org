@@ -10,7 +10,17 @@
 
 	export type PartMode =
 		| { kind: 'read'; title: string; body: string; meta?: string }
-		| { kind: 'edit'; part: DevPart; title: string; content: string; isNew?: boolean };
+		| {
+				kind: 'edit';
+				part: DevPart;
+				title: string;
+				content: string;
+				/** A new file: its key is asked for, and must not be one of `taken` (a write would replace that file). */
+				isNew?: boolean;
+				taken?: string[];
+				/** Shown under the title of a new file, e.g. what else a new role needs. */
+				note?: string;
+		  };
 </script>
 
 <script lang="ts">
@@ -35,7 +45,7 @@
 	import { toAppError } from '$lib/office/api';
 	import { registerModalBack } from '$lib/platform/shell/modal-back';
 	import DocumentText from '../../components/DocumentText.svelte';
-	import { KEY_HELP, validKey } from '../../present';
+	import { KEY_HELP, partPath, validKey, withSkillKey } from '../../present';
 
 	let {
 		revision,
@@ -94,13 +104,19 @@
 				return void setTimeout(() => keyField?.focus(), 0);
 			}
 			part = { ...part, key: k } as DevPart;
+			if (editing.taken?.includes(k)) {
+				// `dev_process.write` creates or changes: a taken key would replace that file without a word.
+				keyError = `${partPath(part)} already exists. Edit it, or choose another key.`;
+				return void setTimeout(() => keyField?.focus(), 0);
+			}
 		}
 		busy = true;
 		error = undefined;
 		keyError = undefined;
 		try {
 			// After a conflict the next save goes over the revision the page has read since.
-			await onsave(part, content, conflict ? revision : expected);
+			const text = part.kind === 'skill' ? withSkillKey(content, part.key) : content;
+			await onsave(part, text, conflict ? revision : expected);
 			open = false;
 		} catch (e) {
 			busy = false;
@@ -134,6 +150,8 @@
 				>
 				{#if mode.kind === 'read' && mode.meta}
 					<SheetDescription class="[overflow-wrap:anywhere]">{mode.meta}</SheetDescription>
+				{:else if editing?.note}
+					<SheetDescription class="[overflow-wrap:anywhere]">{editing.note}</SheetDescription>
 				{:else if editing}
 					<SheetDescription>
 						{isManifest
