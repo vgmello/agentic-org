@@ -282,7 +282,6 @@ impl World {
             stdin.as_mut().unwrap(),
             &HostFirstLine::Start(OfficeLine {
                 id_profile: None,
-                selected_writer_required: false,
                 instance_id: INSTANCE.into(),
                 office_id: OFFICE.into(),
                 rendezvous: rendezvous.to_str().unwrap().into(),
