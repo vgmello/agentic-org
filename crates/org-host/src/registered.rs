@@ -247,7 +247,7 @@ pub(crate) const REGISTRY_MISSING: &str = "host registry missing: restore host-r
      which uninstall does not offer yet (FC-022)";
 
 #[derive(Debug, PartialEq, Eq)]
-enum RegistryState {
+pub(crate) enum RegistryState {
     /// The first start: neither the registry nor the host's marker exists.
     Absent,
     /// The registry exists (its marker may still need writing).
@@ -258,7 +258,7 @@ enum RegistryState {
 /// and `host.lock`, so no other host can race these checks. A registry recorded as created
 /// but now missing is refused with an explicit recovery message: recreating it empty would
 /// reopen the initial administrator link and drop the accounts and custody bound to it.
-fn registry_state(
+pub(crate) fn registry_state(
     instance: &crate::instance::registry::Instance,
     office_home: &Path,
 ) -> Result<RegistryState, HostError> {
@@ -286,7 +286,7 @@ fn registry_state(
 }
 
 /// Creates the host registry at the instance's first start, under the same locks.
-fn create_registry(
+pub(crate) fn create_registry(
     office_home: &Path,
     custody: &dyn crate::host_secrets::HostSecrets,
     instance_id: &str,

@@ -57,6 +57,8 @@ use crate::release::ReleasePin;
 
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub mod fixture;
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
+pub mod seed;
 #[cfg(test)]
 mod tests;
 

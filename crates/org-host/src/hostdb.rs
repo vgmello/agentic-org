@@ -320,7 +320,7 @@ fn require_schema(db: &Connection, source: &str) -> Result<(), Error> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 impl HostDb {
     /// Tests only: an account as a redeemed registration link will create it (A3).
     pub(crate) fn seed_account(
