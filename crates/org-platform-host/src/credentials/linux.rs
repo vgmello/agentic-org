@@ -19,7 +19,7 @@ use super::{
 
 #[cfg(any(test, feature = "test-support"))]
 pub(super) use release::release_directory_below;
-pub(super) use release::{release_directory, ReleaseRoot};
+pub(super) use release::{check_unused_release_directory, release_directory, ReleaseRoot};
 
 /// One open directory store.
 pub(super) struct Store {

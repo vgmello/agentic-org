@@ -1,0 +1,89 @@
+# AppArmor profile "agentic-org": Docker's docker-default profile plus what an agent's
+# vendor sandbox (bubblewrap) needs inside the user namespace it creates: `userns`, and the
+# mount calls (`mount`, `pivot_root`) in place of docker-default's `deny mount`.
+#
+# OPTIONAL. The container runs with Docker's own default profile and needs nothing here.
+# This profile is only for agents whose vendor sandbox creates a user namespace and mounts
+# in it, on a Docker host with AppArmor (Ubuntu 24.04 and later also restrict unprivileged
+# user namespaces through it: kernel.apparmor_restrict_unprivileged_userns = 1). It is used
+# together with seccomp.json; see README.md in this folder.
+#
+# Allowing the mount calls here does not let the container mount: the kernel admits a mount
+# only to a process with CAP_SYS_ADMIN over the mount namespace, which a container process
+# (Docker drops CAP_SYS_ADMIN; never add it back) has only in a user namespace of its own,
+# and there only for the filesystems a user namespace may mount. The other denials of
+# docker-default stay: no write to /proc/sys (but kernel/shm*), /proc/sysrq-trigger,
+# /proc/kcore, /sys/firmware and the rest below.
+#
+#   sudo apparmor_parser -r -W deploy/container/apparmor-agentic-org
+#   docker run ... --security-opt apparmor=agentic-org \
+#                  --security-opt seccomp=deploy/container/seccomp.json agentic-org
+#
+# The rules below, up to `userns`, are docker-default's (moby,
+# profiles/apparmor/template.go), written out for a profile named agentic-org.
+# Docker's masked and read-only /proc and /sys paths must stay as Docker sets them: never
+# run this profile with --security-opt systempaths=unconfined. With them unmasked, root in
+# the container could bind /proc/sys elsewhere in a mount namespace of its own and write
+# it there, where the path rules below do not see it. So a sandbox that mounts a fresh
+# /proc (bwrap --proc /proc) does not run in the container (README.md).
+#
+# Checked on Ubuntu 26.04 (AppArmor enforcing, Docker 29.1.3) by profiles-check.sh: the
+# service serves and stops under this profile with seccomp.json;
+# `bwrap --unshare-all --ro-bind / / --dev /dev --tmpfs /tmp true` runs in the container as
+# the service user; and neither the service user nor root in the container can mount
+# outside a user namespace, or write /proc/sys through a mount of its own.
+
+#include <tunables/global>
+
+profile agentic-org flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network,
+  capability,
+  file,
+  umount,
+
+  # Host (privileged) processes and the runtime may send signals to container processes
+  # (docker stop).
+  signal (receive) peer=unconfined,
+  signal (receive) peer=runc,
+  signal (receive) peer=crun,
+  # So may the Docker daemon (docker kill), under the AppArmor label it runs with. Moby's
+  # template writes the daemon's own label here; a static file cannot read it, so: an
+  # unconfined daemon is covered above, and the Docker snap's daemon runs as
+  # snap.docker.dockerd. Where dockerd runs under another label
+  # (cat /proc/$(pidof dockerd)/attr/current), add a line for it before loading:
+  #   signal (receive) peer=<that label>,
+  signal (receive) peer=snap.docker.dockerd,
+  # Container processes may send signals amongst themselves.
+  signal (send,receive) peer=agentic-org,
+
+  # No write to files directly in /proc, nor outside /proc/<pid>/** and /proc/sys/**.
+  deny @{PROC}/* w,
+  deny @{PROC}/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9/]*}/** w,
+  # /proc/sys only below /proc/sys/kernel/shm*.
+  deny @{PROC}/sys/[^k]** w,
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  # docker-default denies every mount here. A vendor sandbox mounts in the mount
+  # namespace it created, which the kernel admits only there (see the head of this file).
+  mount,
+  pivot_root,
+
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/devices/virtual/powercap/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  # `ps` inside the container, and `docker ps`, read other processes of the container.
+  ptrace (trace,read,tracedby,readby) peer=agentic-org,
+
+  # A process may create a user namespace.
+  userns,
+}

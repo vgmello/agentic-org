@@ -20,7 +20,7 @@ pub(crate) fn run(arguments: &[String]) -> Result<(), String> {
         _ => return Err(HELP.into()),
     };
     let options = crate::options(rest, &["--name"])?;
-    let platform = crate::setup::platform()?;
+    let platform = crate::setup::platform(false)?;
     let mut out = std::io::stdout().lock();
     org_host::setup_flow::service(
         options.get("--name").map(String::as_str),

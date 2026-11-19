@@ -3,7 +3,7 @@
 //! APFS encrypts per volume, so the boot volume's `fdesetup isactive` would misreport a
 //! root on another volume. When `diskutil` gives no answer the state is `Unknown`, never
 //! guessed.
-use super::{DiskEncryption, EncryptionState};
+use super::{DiskEncryption, EncryptionState, Wording};
 use crate::Refused;
 use std::{
     path::{Path, PathBuf},
@@ -11,6 +11,11 @@ use std::{
 };
 
 const DISKUTIL: &str = "/usr/sbin/diskutil";
+
+pub(super) const WORDING: Wording = Wording {
+    name: "FileVault",
+    setting: "FileVault in System Settings › Privacy & Security",
+};
 
 pub(super) fn disk_encryption() -> Result<Box<dyn DiskEncryption>, Refused> {
     Ok(Box::new(FileVault))

@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::instance::registry::Registry;
-use crate::instance::setup::{Input, Journal, Paths};
+use crate::instance::setup::{Input, Journal, Paths, Service};
 
 /// Where a registered instance's files are, for tests that wait on its sockets.
 #[derive(Clone, Debug)]
@@ -52,7 +52,9 @@ pub fn registered_account(
     let root = paths.instance_root(name).map_err(|e| e.to_string())?;
     let input = Input {
         version: 1,
+        service: Service::Registered,
         root: root.clone(),
+        credentials: None,
         listen: super::loopback(port)?,
     };
     let mut record = journal

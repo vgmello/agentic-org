@@ -254,6 +254,32 @@ fn a_server_that_ignores_eof_is_killed_after_the_grace_period() {
     assert!(!alive(pid), "it survived shutdown");
 }
 
+/// X5 review, third round, P1: a stop asked for while the host was still starting (a signal
+/// `serve` took then) counts the servers' grace from when it was asked for, not from when
+/// the host could begin to stop: the stop still ends within its bound of the signal.
+#[test]
+fn a_stop_asked_for_during_the_start_counts_the_grace_from_then() {
+    let home = TestHome::registered();
+    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.script(json!({ A: {"do": "ready", "ignore_eof": true} }));
+    let mut config = home.config();
+    config.timings.shutdown_grace = Duration::from_secs(2);
+    let host = home.start(config).unwrap();
+    wait_for(&host, A, OfficeStatus::Active);
+    // Asked for 1.8 s ago: 0.2 s of the grace is left.
+    let asked = Instant::now()
+        .checked_sub(Duration::from_millis(1800))
+        .expect("this machine has run for 1.8 s");
+    let started = Instant::now();
+    host.shutdown_from(asked);
+    let took = started.elapsed();
+    assert!(took >= Duration::from_millis(150), "{took:?}");
+    assert!(took < Duration::from_secs(1), "{took:?}");
+    let pid = home.pids(A)[0];
+    assert_eq!(home.eof_ignored(A), [pid], "it never saw EOF");
+    assert!(!alive(pid), "it survived shutdown");
+}
+
 #[test]
 fn a_home_too_long_for_its_sockets_refuses_to_start() {
     let home = TestHome::new();

@@ -30,8 +30,9 @@
 //! corrected clock, see them as long past.
 //!
 //! This is the one exception to "a key is deleted only after `discarded`", and it is safe only
-//! when the key store belongs to this office home alone: `Host::start` decides whether it runs
-//! (`may_sweep_orphan_keys`: release builds, on the account's own office home).
+//! when the key store belongs to this office home alone. A registered instance's Keychain
+//! service or development store is scoped by ID. A release directory must be bound to
+//! the instance before the host opens either item store.
 //!
 //! It fails safe: if the store can't list, or `find_orphans` can't tell (e.g. an `office.json`
 //! it can't read) or won't (an empty `offices/`, or more than half of the keys orphaned at once:

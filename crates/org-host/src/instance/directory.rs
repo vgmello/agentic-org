@@ -545,6 +545,104 @@ impl Directory {
     }
 }
 
+/// An instance root opened for a question asked before the root is reserved (setup's
+/// preflight compares a credential directory with it): reached by the same walk as a
+/// reservation, from `/` without following any link and with the platform's rules for each
+/// folder on the way; made when it is missing, and then removed again when this is dropped,
+/// from its parent's descriptor and only while that name is still the folder this made.
+/// Nothing else is made or removed.
+pub(crate) struct RootProbe {
+    root: File,
+    made: Option<(File, CString)>,
+}
+
+impl RootProbe {
+    pub(crate) fn open(path: &Path) -> Result<Self, Error> {
+        let path = absolute(path)?;
+        let (parent_path, name) = match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) => (parent.to_owned(), cstring(name)?),
+            _ => {
+                return Err(Error::Invalid(
+                    "the filesystem root cannot be an instance root",
+                ))
+            }
+        };
+        let parent = Directory::walk_with_probe(&parent_path, false, false, check_path_component)?;
+        let open = || {
+            // SAFETY: a retained parent descriptor and a validated single component.
+            from_fd(unsafe {
+                libc::openat(
+                    parent.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            })
+        };
+        let (root, made) = match open() {
+            Ok(root) => (root, false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                // As a reservation would: the filesystem it would be made on is judged first.
+                check_path_component(&parent, &parent_path, true)?;
+                // SAFETY: as above.
+                if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+                    return Err(io::Error::last_os_error().into());
+                }
+                match open() {
+                    Ok(root) => (root, true),
+                    Err(error) => {
+                        // SAFETY: as above; the folder this call just made.
+                        unsafe {
+                            libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR)
+                        };
+                        return Err(error.into());
+                    }
+                }
+            }
+            Err(error) => return Err(error.into()),
+        };
+        // Built before the root's own check, so that a refusal there still removes what
+        // this made.
+        let probe = Self {
+            root,
+            made: made.then_some((parent, name)),
+        };
+        check_path_component(&probe.root, &path, true)?;
+        Ok(probe)
+    }
+
+    pub(crate) fn descriptor(&self) -> std::os::fd::BorrowedFd<'_> {
+        std::os::fd::AsFd::as_fd(&self.root)
+    }
+}
+
+impl Drop for RootProbe {
+    fn drop(&mut self) {
+        let Some((parent, name)) = &self.made else {
+            return;
+        };
+        // SAFETY: plain data that fstatat fills in.
+        let mut found: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: a retained parent descriptor, a NUL-terminated name and a writable stat.
+        let named = unsafe {
+            libc::fstatat(
+                parent.as_raw_fd(),
+                name.as_ptr(),
+                &mut found,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } == 0;
+        let ours = named
+            && matches!(
+                (Identity::of(&self.root), org_platform::fs::device_and_inode(&found)),
+                (Ok(ours), Ok((device, inode))) if ours.device == device && ours.inode == inode
+            );
+        if ours {
+            // SAFETY: as above; a folder that is no longer empty stays.
+            unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) };
+        }
+    }
+}
+
 /// The platform's rules for one directory on the way to an instance root
 /// (`org_platform::fs::check_instance_root`): on Linux no case-folding directory and a
 /// supported root filesystem; none on macOS.
@@ -689,6 +787,36 @@ mod tests {
                 b"replacement"
             );
         }
+    }
+
+    /// X5 review, fourth round, P2-6: a root opened for a question before its reservation
+    /// is reached without following a link, and only a folder the probe made is removed
+    /// again, and only while its name still holds that folder.
+    #[test]
+    fn a_root_probe_removes_only_the_folder_it_made() {
+        let fixture = super::super::test_directory();
+        let base = fixture.path().canonicalize().unwrap();
+        let made = base.join("new");
+        let probe = RootProbe::open(&made).unwrap();
+        assert!(made.is_dir());
+        drop(probe);
+        assert!(!made.exists(), "the folder the probe made was left");
+        // An existing folder stays, and so does what is in it.
+        std::fs::create_dir(&made).unwrap();
+        std::fs::write(made.join("x"), b"x").unwrap();
+        drop(RootProbe::open(&made).unwrap());
+        assert!(made.join("x").exists());
+        // A folder put in the place of the one the probe made is not removed.
+        let replaced = base.join("replaced");
+        let probe = RootProbe::open(&replaced).unwrap();
+        std::fs::rename(&replaced, base.join("moved")).unwrap();
+        std::fs::create_dir(&replaced).unwrap();
+        drop(probe);
+        assert!(replaced.is_dir() && base.join("moved").is_dir());
+        // A link on the way is never followed, and nothing is made through it.
+        std::os::unix::fs::symlink(&base, base.join("link")).unwrap();
+        assert!(RootProbe::open(&base.join("link/through")).is_err());
+        assert!(!base.join("through").exists());
     }
 
     /// What each directory is checked for is the platform's rule (`org_platform::fs`, tested

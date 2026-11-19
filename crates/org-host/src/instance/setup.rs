@@ -1,5 +1,7 @@
 //! Bounded nonsecret setup continuation. No password/session/custody bytes, no account and
-//! no organization: setup asks for none (A2). The frozen input is the root and the address;
+//! no organization: setup asks for none (A2). The frozen input is the service mode, the
+//! root, the address and, where a file gave it, the credential directory; the same input, as a strict JSON file, is the configuration
+//! of non-interactive setup (`setup --non-interactive --config`, `serve --setup`);
 //! progress only moves forward, in the order the setup flow takes it:
 //! instance reserved (`instance_id`), service registered, registry created by the service
 //! host at its first start (D1), initial registration link issued (at most once).
@@ -20,11 +22,30 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 const FILE: &str = "setup.v1.json";
 const LIMIT: usize = 64 * 1024;
+/// Who starts and restarts the instance (Linux host design section 3.4). It is data in the
+/// configuration: nothing detects a container.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Service {
+    /// The account's service manager (launchd, a systemd user unit).
+    Registered,
+    /// Nothing is registered: whoever runs `agentic-org serve` is the supervisor (a
+    /// container runtime). The credential directory is then a mounted volume.
+    Foreground,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
     pub version: u32,
+    pub service: Service,
     pub root: PathBuf,
+    /// The credential directory, where the configuration names it: required in the
+    /// foreground mode on a system that keeps a host's secrets in a directory, optional in
+    /// the registered mode (setup then makes it in the account's state folder), and
+    /// refused on a system that keeps them elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials: Option<PathBuf>,
     #[serde(deserialize_with = "strict_listen")]
     pub listen: ListenConfig,
 }
@@ -45,33 +66,148 @@ fn strict_listen<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ListenConfig,
     serde_json::from_value(value).map_err(serde::de::Error::custom)
 }
 impl Input {
+    /// What every input must satisfy, whoever wrote it. The rules that depend on the
+    /// system (whether it keeps secrets in a directory) are [`Input::fits`].
     pub fn validate(&self) -> Result<(), Error> {
-        if self.version != 1 || super::directory::absolute(&self.root)? != self.root {
-            return Err(Error::Invalid("invalid version-1 setup configuration"));
+        // Spelled exactly as it is walked: the bytes are compared, since two spellings of
+        // one path are equal as paths.
+        let spelled = |path: &Path| {
+            super::directory::absolute(path)
+                .ok()
+                .is_some_and(|normal| normal.as_os_str() == path.as_os_str())
+        };
+        if self.version != 1 {
+            return Err(Error::Invalid(
+                "the setup configuration's \"version\" must be 1",
+            ));
         }
-        // The existing actual gateway composition only supports this profile.
-        if self.listen.scheme() != org_host_control::listen::ListenMode::HttpLoopback
-            || self
-                .listen
-                .origin()
-                .check(
-                    self.listen.scheme(),
-                    self.listen.address(),
-                    self.listen.port(),
-                )
-                .is_err()
+        if !spelled(&self.root) {
+            return Err(Error::Invalid(
+                "the data folder (\"root\") must be an absolute, normalized path",
+            ));
+        }
+        if self
+            .credentials
+            .as_deref()
+            .is_some_and(|path| !spelled(path))
         {
             return Err(Error::Invalid(
-                "this setup adapter requires valid loopback HTTP; HTTPS setup is unavailable",
+                "the credential directory must be an absolute, normalized path",
             ));
+        }
+        // Loopback HTTP; HTTPS on any address; or, chosen by its own name, plain HTTP on a
+        // published port, which only a foreground instance may have. Plain HTTP with a
+        // non-loopback address is never implied (`ListenOrigin::check`).
+        if self
+            .listen
+            .origin()
+            .check(
+                self.listen.scheme(),
+                self.listen.address(),
+                self.listen.port(),
+            )
+            .is_err()
+        {
+            return Err(Error::Invalid(
+                "the listener must be loopback HTTP on its own address (http_loopback), plain \
+                 HTTP on a published port with a loopback origin (http_published), or HTTPS, \
+                 with an origin that names its scheme and port",
+            ));
+        }
+        if self
+            .listen
+            .scheme()
+            .fits_service(self.service == Service::Foreground)
+            .is_err()
+        {
+            return Err(Error::Invalid(PUBLISHED_NEEDS_FOREGROUND));
+        }
+        // No build serves HTTPS yet (no host can make or verify the listener's
+        // certificate), so no instance is set up for it: refused when the input is read,
+        // before anything is made, and not half-recorded for a later build to find.
+        if self.listen.scheme() == org_host_control::listen::ListenMode::Https {
+            return Err(Error::Invalid(HTTPS_NOT_AVAILABLE));
         }
         Ok(())
     }
+
+    /// Whether this input fits a system whose protected store for a release build is
+    /// `store` (`None`: it has none), pure. A directory is named only where the system
+    /// keeps secrets in one, and the foreground mode needs it named there: a container has
+    /// no account state folder to derive one from.
+    pub fn fits(&self, store: Option<ProtectedStore>) -> Result<(), &'static str> {
+        match (store, self.service, self.credentials.is_some()) {
+            (Some(ProtectedStore::ReleaseDirectory), Service::Foreground, false) => Err(
+                "the foreground mode needs \"credentials\": the absolute path of the mounted \
+                 secrets volume",
+            ),
+            (Some(ProtectedStore::ReleaseDirectory), _, _) => Ok(()),
+            (_, _, true) => Err(
+                "\"credentials\" names a directory, and this system does not keep a host's \
+                 secrets in one; remove it",
+            ),
+            (_, _, false) => Ok(()),
+        }
+    }
+
+    /// The configuration of non-interactive setup: this input as one strict JSON object,
+    /// at most [`LIMIT`] bytes. Unknown and repeated properties are refused, and so is
+    /// any version but 1.
+    pub fn from_configuration(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() > LIMIT {
+            return Err(Error::Invalid("the setup configuration is too large"));
+        }
+        let input: Input =
+            serde_json::from_slice(bytes).map_err(|_| Error::Invalid(CONFIGURATION_SHAPE))?;
+        input.validate()?;
+        Ok(input)
+    }
 }
+
+/// What an input, a configuration or a record is told when its listener is plain HTTP on a
+/// published port and its service mode is not `foreground` (`ListenMode::fits_service`).
+/// Refused when the input is read, before anything is made, and again whenever the record
+/// is read, so a record edited by hand does not start a host.
+pub(crate) const PUBLISHED_NEEDS_FOREGROUND: &str = "\"scheme\": \"http_published\" (plain HTTP \
+     on a published port) is only for \"service\": \"foreground\", the main process of a \
+     container; a registered service listens with http_loopback";
+
+/// What an input whose listener is HTTPS is told.
+pub(crate) const HTTPS_NOT_AVAILABLE: &str = "\"scheme\": \"https\" is not available in this \
+     build: nothing can make or verify the listener's certificate yet. On a machine use \
+     \"http_loopback\"; in a container (\"service\": \"foreground\") use \"http_published\" and \
+     publish the port on the Docker host's 127.0.0.1";
+
+/// What a configuration that does not parse is told: the whole shape, since a strict
+/// reader cannot say which property a person meant.
+pub(crate) const CONFIGURATION_SHAPE: &str = "the setup configuration is not valid: it is one \
+     JSON object with \"version\": 1, \"service\": \"registered\" or \"foreground\", \"root\": an \
+     absolute path, \"listen\": {\"address\", \"port\", \"scheme\": \"http_loopback\" or \"http_published\", \
+     \"origin\", \"hsts\": \"off\", \"on\" or \"clear\"}, and optionally \"credentials\": an \
+     absolute path; no other property is accepted";
+// Before setup recorded a service mode, every instance used the service manager.
+#[derive(Deserialize)]
+#[serde(remote = "Input", deny_unknown_fields)]
+struct RecordedInput {
+    version: u32,
+    #[serde(default = "registered_service")]
+    service: Service,
+    root: PathBuf,
+    #[serde(default)]
+    credentials: Option<PathBuf>,
+    #[serde(deserialize_with = "strict_listen")]
+    listen: ListenConfig,
+}
+
+fn registered_service() -> Service {
+    Service::Registered
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Record {
     pub version: u32,
+    #[serde(deserialize_with = "RecordedInput::deserialize")]
     pub input: Input,
     pub offline: bool,
     pub release: ReleasePin,
@@ -104,6 +240,14 @@ impl Record {
             {
                 return Err(Error::Invalid(
                     "the credential directory must be an absolute, normalized path",
+                ));
+            }
+        }
+        // A directory the configuration names is the one that is recorded.
+        if let (Some(configured), Some(recorded)) = (&self.input.credentials, &self.credentials) {
+            if configured != recorded {
+                return Err(Error::Unsafe(
+                    "the recorded credential directory is not the configured one",
                 ));
             }
         }
@@ -178,6 +322,13 @@ pub(crate) fn credentials_rule(
             Ok(())
         }
     }
+}
+
+/// `path` in the one spelling a record accepts: absolute, UTF-8, without `.`, `..`, a
+/// repeated or a trailing separator. `.` and repeated separators are dropped; `..` is
+/// refused, never resolved.
+pub(crate) fn normalized(path: &Path) -> Result<PathBuf, Error> {
+    super::directory::absolute(path)
 }
 
 pub(crate) struct Journal {
@@ -289,6 +440,22 @@ impl Journal {
         };
         self.write(&r)?;
         Ok(r)
+    }
+    /// Takes away a record that pins nothing yet: one without a reserved instance, which a
+    /// setup run froze and then could not continue. A record that names its instance is
+    /// never removed: its configuration is the instance's. Returns whether one was removed.
+    pub fn abandon(&self) -> Result<bool, Error> {
+        match self.read()? {
+            None => Ok(false),
+            Some(record) if record.instance_id.is_some() => Err(Error::Conflict(
+                "setup reserved an instance for this record; it is not removed",
+            )),
+            Some(_) => {
+                std::fs::remove_file(self.directory.path().join(FILE))?;
+                self.verify()?;
+                Ok(true)
+            }
+        }
     }
     pub fn write(&self, next: &Record) -> Result<(), Error> {
         self.verify()?;

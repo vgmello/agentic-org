@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 /// The folder of this product inside an XDG base directory.
 const PRODUCT: &str = "agentic-org";
 
+/// The XDG base directory variable of each location.
+const DATA_HOME: &str = "XDG_DATA_HOME";
+const CACHE_HOME: &str = "XDG_CACHE_HOME";
+const STATE_HOME: &str = "XDG_STATE_HOME";
+
 pub(super) fn application_base(home: &Path) -> Result<PathBuf, Refused> {
-    Ok(application_base_from(
-        std::env::var_os("XDG_DATA_HOME"),
-        home,
-    ))
+    Ok(application_base_from(std::env::var_os(DATA_HOME), home))
 }
 
 pub(super) fn account_application_base(home: &Path) -> Result<PathBuf, Refused> {
@@ -18,19 +20,24 @@ pub(super) fn account_application_base(home: &Path) -> Result<PathBuf, Refused> 
 }
 
 pub(super) fn application_base_variables() -> Result<&'static [&'static str], Refused> {
-    Ok(&["XDG_DATA_HOME"])
+    Ok(&[DATA_HOME])
+}
+
+pub(super) fn location_variables() -> Result<&'static [&'static str], Refused> {
+    Ok(&[DATA_HOME, CACHE_HOME, STATE_HOME])
+}
+
+pub(super) fn location_overrides(home: &Path) -> Result<Vec<(&'static str, OsString)>, Refused> {
+    Ok(overrides_from(|name| std::env::var_os(name), home))
 }
 
 pub(super) fn user_temp_base(home: &Path) -> Result<PathBuf, UserTempError> {
-    Ok(user_temp_base_from(
-        std::env::var_os("XDG_CACHE_HOME"),
-        home,
-    ))
+    Ok(user_temp_base_from(std::env::var_os(CACHE_HOME), home))
 }
 
 pub(super) fn credential_directory_base(home: &Path) -> Result<PathBuf, Refused> {
     Ok(credential_directory_base_from(
-        std::env::var_os("XDG_STATE_HOME"),
+        std::env::var_os(STATE_HOME),
         home,
     ))
 }
@@ -53,6 +60,36 @@ pub(super) fn disk_backed_temp() -> Result<PathBuf, Refused> {
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn memory_backed_temp() -> Result<Option<PathBuf>, Refused> {
     Ok(Some(PathBuf::from("/dev/shm")))
+}
+
+/// Each XDG base directory variable with the default it replaces.
+const DEFAULTS: [(&str, &str); 3] = [
+    (DATA_HOME, ".local/share"),
+    (CACHE_HOME, ".cache"),
+    (STATE_HOME, ".local/state"),
+];
+
+/// The variables `value` gives that move their base away from its default below `home`:
+/// absolute, and naming another folder than the default, by its spelling (a repeated
+/// separator, a `.` component and a trailing separator do not count) and, where both
+/// exist, by what they resolve to.
+fn overrides_from(
+    value: impl Fn(&str) -> Option<OsString>,
+    home: &Path,
+) -> Vec<(&'static str, OsString)> {
+    DEFAULTS
+        .iter()
+        .filter_map(|(name, default)| {
+            let set = value(name).filter(|v| Path::new(v).is_absolute())?;
+            let default = home.join(default);
+            let same = Path::new(&set) == default
+                || matches!(
+                    (std::fs::canonicalize(&set), std::fs::canonicalize(&default)),
+                    (Ok(a), Ok(b)) if a == b
+                );
+            (!same).then_some((*name, set))
+        })
+        .collect()
 }
 
 /// `<XDG_DATA_HOME>/agentic-org`, or `<home>/.local/share/agentic-org`.
@@ -115,6 +152,63 @@ mod tests {
             Path::new("/home/a/.local/share/agentic-org")
         );
         assert_eq!(application_base_variables().unwrap(), ["XDG_DATA_HOME"]);
+    }
+
+    /// The variables that move the three locations, the application base's among them.
+    #[test]
+    fn the_location_variables_are_the_three_xdg_bases() {
+        assert_eq!(
+            location_variables().unwrap(),
+            ["XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"]
+        );
+        for name in application_base_variables().unwrap() {
+            assert!(location_variables().unwrap().contains(name));
+        }
+    }
+
+    /// X5 review F8: two environments that resolve the same locations give the same
+    /// overrides, so a service unit rendered from either is the same.
+    #[test]
+    fn only_a_variable_that_moves_a_location_is_an_override() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        std::fs::create_dir_all(home.join(".local/share")).unwrap();
+        std::os::unix::fs::symlink(home.join(".local/share"), temp.path().join("linked")).unwrap();
+        let from = |pairs: &[(&str, String)]| {
+            let pairs: Vec<(String, String)> = pairs
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), v.clone()))
+                .collect();
+            overrides_from(
+                |name| {
+                    pairs
+                        .iter()
+                        .find(|(k, _)| k == name)
+                        .map(|(_, v)| OsString::from(v))
+                },
+                &home,
+            )
+        };
+        let shown = |p: &Path| p.display().to_string();
+        assert!(from(&[]).is_empty());
+        for same in [
+            shown(&home.join(".local/share")),
+            format!("{}/", shown(&home.join(".local/share"))),
+            format!("{}//./.local/share", shown(&home)),
+            shown(&temp.path().join("linked")),
+        ] {
+            assert!(from(&[(DATA_HOME, same.clone())]).is_empty(), "{same}");
+        }
+        assert!(from(&[(CACHE_HOME, "relative".into())]).is_empty());
+        assert!(from(&[(STATE_HOME, shown(&home.join(".local/state")))]).is_empty());
+        let elsewhere = shown(&temp.path().join("xdg"));
+        assert_eq!(
+            from(&[
+                (CACHE_HOME, elsewhere.clone()),
+                (DATA_HOME, shown(&home.join(".local/share")))
+            ]),
+            [(CACHE_HOME, OsString::from(&elsewhere))]
+        );
     }
 
     #[test]

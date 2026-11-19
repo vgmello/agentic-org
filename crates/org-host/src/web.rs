@@ -117,6 +117,10 @@ fn refused(step: &'static str) -> impl FnOnce(String) -> io::Error {
 fn failed(cause: &str) -> io::Error {
     io::Error::other(format!("web process start failed: {cause}"))
 }
+/// A start that ended because the host is stopping.
+fn host_stopping() -> io::Error {
+    failed("the host is stopping")
+}
 /// A failed start step caused by an OS error. Only the error's kind is kept, never
 /// its text, so the cause stays fixed and secret-free.
 fn os_failed(cause: &'static str) -> impl FnOnce(io::Error) -> io::Error {
@@ -288,14 +292,17 @@ impl Stderr {
         Ok(captured)
     }
 
-    /// The reason of the child's refusal line, once its standard error has ended or
-    /// `wait` has passed.
-    fn refusal(&self, wait: Duration) -> Option<String> {
+    /// What the child said of its end, once its standard error has ended or `wait` has
+    /// passed: the reason of its refusal line, or else the last whole line it wrote.
+    fn ending(&self, wait: Duration) -> Ending {
         let (kept, _) = self
             .changed
             .wait_timeout_while(lock(&self.kept), wait, |kept| !kept.1)
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        refusal_reason(&kept.0).map(shown)
+        match refusal_reason(&kept.0) {
+            Some(reason) => Ending::Refused(shown(reason)),
+            None => last_line(&kept.0).map_or(Ending::Silent, |line| Ending::Said(shown(line))),
+        }
     }
 
     /// The reason of the child's "landlock not applied" line, as soon as the line is
@@ -333,10 +340,33 @@ fn confined_by(
     }
 }
 
+/// What an ended child's standard error says of its end.
+enum Ending {
+    /// Its refusal line's reason: it could not confine itself.
+    Refused(String),
+    /// No refusal line: the last whole line it wrote (its one failure line, such as the UI
+    /// build's refusal or the fixed "startup unavailable"), shown as printable ASCII.
+    Said(String),
+    /// Nothing whole.
+    Silent,
+}
+
+/// The last whole, non-empty line of `captured`: the one the child wrote as it ended, after
+/// any notice before it. Only the kept start of its standard error is looked at.
+fn last_line(captured: &[u8]) -> Option<&str> {
+    let whole = &captured[..captured.iter().rposition(|byte| *byte == b'\n')?];
+    whole
+        .split(|byte| *byte == b'\n')
+        .rev()
+        .find(|line| !line.is_empty())
+        .map(|line| std::str::from_utf8(line).unwrap_or("(not text)"))
+}
+
 /// The cause of a start that failed before the ready line, with the reason of the
-/// child's own refusal when it left one. Only a child that has ended by itself is
-/// asked: one that is already reaped, or, when its control stream ended, one that
-/// exits within [`EXIT_GRACE`]. Any other child is left to be killed at once.
+/// child's own refusal when it left one, or else the last whole line it wrote. Only a
+/// child that has ended by itself is asked: one that is already reaped, or, when its
+/// control stream ended, one that exits within [`EXIT_GRACE`]. Any other child is left
+/// to be killed at once.
 fn with_refusal(error: io::Error, captured: &Stderr, child: &mut Child) -> io::Error {
     let went_away = error
         .get_ref()
@@ -353,11 +383,14 @@ fn with_refusal(error: io::Error, captured: &Stderr, child: &mut Child) -> io::E
         }
         thread::sleep(Duration::from_millis(5));
     }
-    match captured.refusal(STDERR_GRACE) {
-        Some(reason) => io::Error::other(format!(
+    match captured.ending(STDERR_GRACE) {
+        Ending::Refused(reason) => io::Error::other(format!(
             "{error}; it reported that it cannot confine itself: {reason}"
         )),
-        None => error,
+        // X5 review, fourth round (V-c): any other end says what the child last wrote, so
+        // that the log says why it ended before it connected.
+        Ending::Said(line) => io::Error::other(format!("{error}; it wrote: {line}")),
+        Ending::Silent => error,
     }
 }
 
@@ -394,6 +427,35 @@ fn still_running(child: &mut Child) -> io::Result<()> {
         ))),
         Err(error) => Err(os_failed("wait for the child")(error)),
     }
+}
+
+/// An instance's browser listener, bound before its host started: setup binds it when it
+/// checks that the address it is about to reserve is free, and the web process's first
+/// start takes it (X5 review, third round, P2). The address never changes once reserved,
+/// so it is held from that check on, through the reservation, and no other program can
+/// take the port before the web process serves it. It is handed over once: a clone shares
+/// the one socket, and the first start that takes it leaves none.
+#[derive(Clone, Debug)]
+pub struct BrowserListener(Arc<Mutex<Option<TcpListener>>>);
+
+impl BrowserListener {
+    /// Binds the address of `listen`, as every start of the web process binds it.
+    pub(crate) fn bind(listen: &ListenConfig) -> io::Result<Self> {
+        bind(listen).map(|listener| Self(Arc::new(Mutex::new(Some(listener)))))
+    }
+
+    /// The listener, once.
+    pub(crate) fn take(&self) -> Option<TcpListener> {
+        lock(&self.0).take()
+    }
+}
+
+/// Binds the browser listener of `listen`: its exact address and port (a port of zero is
+/// refused before this, when the address is validated).
+fn bind(listen: &ListenConfig) -> io::Result<TcpListener> {
+    // See `cloexec`: on macOS the socket is made close-on-exec in a second step.
+    let _fence = lock(&SPAWN_LOCK);
+    TcpListener::bind((listen.address(), listen.port()))
 }
 
 pub(crate) struct Configuration {
@@ -516,8 +578,12 @@ pub(crate) struct Supervisor {
     thread: Option<JoinHandle<()>>,
 }
 impl Supervisor {
+    /// Supervises the web process of `config`. Its first start serves on `first` when it is
+    /// given (the listener setup bound, [`BrowserListener`]); every other start binds the
+    /// configured address itself.
     pub(crate) fn start(
         config: Configuration,
+        first: Option<TcpListener>,
         handler: Arc<dyn Handler>,
         state: Arc<Mutex<GatewayState>>,
         eligible: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -526,9 +592,16 @@ impl Supervisor {
         // web process cannot be confined.
         // Each refusal names its cause for the host log.
         org_platform::confinement::web_confinement_supported().map_err(unconfinable)?;
-        if config.listen.scheme() != ListenMode::HttpLoopback {
+        // Plain HTTP, in one of its two modes: on loopback, or on the published port of a
+        // foreground instance, which the registered start has already judged against the
+        // instance's service mode. HTTPS needs a verified pair, which no host has yet.
+        if !matches!(
+            config.listen.scheme(),
+            ListenMode::HttpLoopback | ListenMode::HttpPublished
+        ) {
             return Err(io::Error::other(
-                "the web process requires a verified HTTP loopback listener",
+                "the web process requires a plain HTTP listener (http_loopback, or \
+                 http_published in the foreground mode): HTTPS has no verified certificate yet",
             ));
         }
         config
@@ -542,6 +615,7 @@ impl Supervisor {
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let observing = Arc::clone(&state);
+        let mut first = first;
         let thread = thread::Builder::new()
             .name("org-browser-supervisor".into())
             .spawn(move || {
@@ -551,7 +625,10 @@ impl Supervisor {
                     &*eligible,
                     Timing::PRODUCTION,
                     &|line| crate::host_log::log(line),
-                    || Running::start(&config, &image, Arc::clone(&handler), WAIT),
+                    || {
+                        let held = first.take();
+                        Running::start(&config, &image, held, Arc::clone(&handler), WAIT, &stopping)
+                    },
                 )
             })
             .map_err(os_failed("start the supervisor thread"))?;
@@ -562,11 +639,40 @@ impl Supervisor {
         })
     }
 }
+impl Supervisor {
+    /// Asks the supervision to stop and returns at once. A start under way ends at its next
+    /// step (within [`POLL`] of a wait for the web process), and the web process is stopped
+    /// as for any failed start; a running one ends its sessions and is killed and reaped.
+    pub(crate) fn stop(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = &self.thread {
+            thread.thread().unpark();
+        }
+    }
+
+    /// Whether the supervision has ended: it was stopped, or it gave up after its limit of
+    /// failed starts.
+    #[cfg(test)]
+    pub(crate) fn ended(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+
+    /// [`Supervisor::stop`], then waits for the supervision to end until `until` at the
+    /// latest, and says whether it did. It is left running only while a request of the web
+    /// process's control connection still runs (one waiting for a write lock of the
+    /// registry, say): the web process has been killed and reaped by then, and the request
+    /// ends with the host's process, its answer dropped.
+    pub(crate) fn join_by(mut self, until: Instant) -> bool {
+        self.stop();
+        self.thread
+            .take()
+            .is_none_or(|thread| crate::sync::join_by(thread, until))
+    }
+}
 impl Drop for Supervisor {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
+        self.stop();
         if let Some(thread) = self.thread.take() {
-            thread.thread().unpark();
             let _ = thread.join();
         }
         *lock(&self.state) = GatewayState::Failed;
@@ -607,8 +713,9 @@ fn supervise<S: Serving>(
     let mut failures = 0usize;
     loop {
         // First protected bootstrap starts the host before HQ exists. Wait without
-        // binding or spending restart attempts; the same controller observes actual
-        // completed provisioning.
+        // spending restart attempts (and without binding, unless setup handed this host
+        // its listener: that one stays held, and browsers wait in its backlog); the same
+        // controller observes actual completed provisioning.
         while !stopping.load(Ordering::SeqCst) && !eligible() {
             *lock(state) = GatewayState::Starting;
             thread::park_timeout(POLL);
@@ -651,7 +758,7 @@ fn supervise<S: Serving>(
                             failures = 0; // a stable run resets the count, as documented
                         }
                         *lock(state) = GatewayState::Starting;
-                        drop(child); // end sessions/control, then kill/reap
+                        drop(child); // kill/reap, then end control and its sessions
                         log("authenticated browser stopped because the host is no longer eligible; it starts again once eligible");
                         continue;
                     }
@@ -663,7 +770,7 @@ fn supervise<S: Serving>(
                     format!("it stopped before serving: {}", child.ended())
                 };
                 *lock(state) = GatewayState::Failed;
-                drop(child); // end sessions/control, then kill/reap before restart
+                drop(child); // kill/reap, then end control, before restart
                 reason
             }
             Err(error) => error.to_string(),
@@ -718,8 +825,17 @@ impl Rendezvous {
         bound.listener.set_nonblocking(true)?;
         Ok(bound)
     }
-    fn accept(&self, process: &mut Child, until: Instant) -> io::Result<UnixStream> {
+    /// The child's connection, until `until` or until `stop` is set.
+    fn accept(
+        &self,
+        process: &mut Child,
+        until: Instant,
+        stop: &AtomicBool,
+    ) -> io::Result<UnixStream> {
         loop {
+            if stop.load(Ordering::SeqCst) {
+                return Err(host_stopping());
+            }
             match self.listener.accept() {
                 Ok((stream, _)) => {
                     stream
@@ -760,9 +876,13 @@ impl Drop for Rendezvous {
 }
 
 struct Running {
-    // Drop order: close control/revoke first, then kill/reap the child.
-    control: WebConnection,
+    // Drop order: kill and reap the child first, then close the control connection and wait
+    // for its threads. A request of it still running (one waiting for a write lock of the
+    // registry, say) is waited for only then: it never keeps the web process alive, past a
+    // host's stop or into the next start (X5 review, third round, P1). The child makes no
+    // request after it is killed; the request's answer is dropped.
     process: Child,
+    control: WebConnection,
     _stdin: fs::File,
     /// The layers of the report the host verified.
     layers: org_platform::confinement::Layers,
@@ -801,29 +921,34 @@ fn ended_cause(serving_refused: bool, exit: Option<String>, live: bool) -> Strin
     }
 }
 impl Running {
-    /// Starts the web process of `config` through `image`, the host's one admission of it.
-    /// `wait` bounds the steps from spawn through the handoff ACK.
+    /// Starts the web process of `config` through `image`, the host's one admission of it,
+    /// serving on `held` when it is given (the listener setup bound) and on a listener it
+    /// binds otherwise. `wait` bounds the steps from spawn through the handoff ACK; a start
+    /// that waits for the web process ends as soon as `stop` is set, as a failed start.
     fn start(
         config: &Configuration,
         image: &Image,
+        held: Option<TcpListener>,
         handler: Arc<dyn Handler>,
         wait: Duration,
+        stop: &AtomicBool,
     ) -> io::Result<Self> {
         config
             .check
             .may_spawn()
             .map_err(refused("the pre-spawn check"))?;
         // Validated configuration is frozen before bind. No port-zero substitution.
-        let listener = {
-            let _fence = lock(&SPAWN_LOCK);
-            TcpListener::bind((config.listen.address(), config.listen.port()))
-                .map_err(os_failed("bind the browser listener"))?
+        let listener = match held {
+            Some(listener) => listener,
+            None => bind(&config.listen).map_err(os_failed("bind the browser listener"))?,
         };
         let bound = listener
             .local_addr()
             .map_err(os_failed("read the browser listener address"))?;
-        if bound.port() != config.listen.port() {
-            return Err(failed("the browser listener is not on its configured port"));
+        if bound.ip() != config.listen.address() || bound.port() != config.listen.port() {
+            return Err(failed(
+                "the browser listener is not on its configured address and port",
+            ));
         }
         let rendezvous =
             Rendezvous::bind(&config.runtime).map_err(os_failed("bind the rendezvous"))?;
@@ -881,7 +1006,7 @@ impl Running {
             .map_err(os_failed("start the stderr drain"))?;
         let until = Instant::now() + wait;
         let mut stream = rendezvous
-            .accept(&mut spawned.child, until)
+            .accept(&mut spawned.child, until, stop)
             .map_err(|error| with_refusal(error, &captured, &mut spawned.child))?;
         crate::supervisor::channels::reader_is_child(&checked, &spawned.child, &stream)
             .map_err(|_| not_the_reader(&captured, &mut spawned.child))?;
@@ -890,7 +1015,7 @@ impl Running {
                 .try_clone()
                 .map_err(os_failed("clone the control stream"))?,
         );
-        let ready = line(&mut receiver, until, "ready line")
+        let ready = line(&mut receiver, until, stop, "ready line")
             .map_err(|error| with_refusal(error, &captured, &mut spawned.child))?;
         let ready: GatewayReadyForSecrets = serde_json::from_slice(&ready)
             .map_err(|_| failed("the ready line does not match ready_for_secrets"))?;
@@ -930,7 +1055,7 @@ impl Running {
         let (transfer, child) = transfer_pair().map_err(os_failed("create the transfer pair"))?;
         send_handoff(&mut stream, &child, &listener, until)
             .map_err(os_failed("send the descriptor handoff"))?;
-        check_ack(&line(&mut receiver, until, "handoff ACK")?)?;
+        check_ack(&line(&mut receiver, until, stop, "handoff ACK")?)?;
         drop(receiver);
         drop(child);
         drop(listener);
@@ -1016,9 +1141,12 @@ fn send_handoff(
 // recvmsg reads exactly through LF, never consuming a pipelined hello or silently
 // discarding early descriptors. A fatal ancillary frame terminates the host as
 // required by X-02; none of its possibly unreported descriptors may survive.
+//
+// It waits until `until`, and ends as soon as `stop` is set: the host is stopping.
 fn line(
     receiver: &mut org_socket::rights::StreamReceiver,
     until: Instant,
+    stop: &AtomicBool,
     what: &str,
 ) -> io::Result<Vec<u8>> {
     let timed_out = || failed(&format!("the {what} did not arrive before the deadline"));
@@ -1029,14 +1157,19 @@ fn line(
             Ok((b, _)) if bytes.len() < 1023 => bytes.push(b),
             Ok(_) => return Err(failed(&format!("the {what} exceeds 1023 bytes"))),
             Err(org_socket::rights::ReceiveError::WouldBlock) => {
+                if stop.load(Ordering::SeqCst) {
+                    return Err(host_stopping());
+                }
                 let left = until
                     .checked_duration_since(Instant::now())
                     .ok_or_else(timed_out)?;
                 let fd = receiver
                     .fd()
                     .ok_or_else(|| failed(&format!("the {what} stream is closed")))?;
-                if !org_socket::poll_readable(fd.as_raw_fd(), left)
+                // In slices of `POLL`, so a stop is seen while the line is awaited.
+                if !org_socket::poll_readable(fd.as_raw_fd(), left.min(POLL))
                     .map_err(os_failed("poll the control stream"))?
+                    && left <= POLL
                 {
                     return Err(timed_out());
                 }

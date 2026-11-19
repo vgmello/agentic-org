@@ -12,6 +12,7 @@
 //! ```text
 //! <path>/                            the release directory, mode 0700
 //!     .lock                          mode 0600, empty; locked while a host has the directory open
+//!     .instance                      mode 0600; the instance ID, when the host binds the directory
 //!     <item store>/                  one directory per item store, mode 0700 (a directory store)
 //! ```
 //!
@@ -54,8 +55,27 @@
 //!    filesystem must not be equal or inside each other. Where the place of one of
 //!    the two cannot be had, the directory is refused ([`RootRule::Undetermined`]),
 //!    never accepted on doubt. The two are found in the table by the mount ids the
-//!    kernel gives for their descriptors, so the machine's other mounts are not read
-//!    beyond their ids and cannot refuse a store, whatever they are.
+//!    kernel gives for their descriptors, so for this check the machine's other mounts
+//!    are not read beyond their ids and cannot refuse a store, whatever they are.
+//!
+//!    Nothing is mounted inside it either: no mount of the mount table has a mount
+//!    point below its path ([`RootRule::MountInside`], naming that mount point). A
+//!    volume mounted there, whatever its filesystem, owner or mode, would take whatever
+//!    is written below it out of the store's volume (two volumes of one filesystem share
+//!    a device number, so nothing else tells them apart). Only for this is every line's
+//!    mount point read; a line whose mount point cannot be read refuses
+//!    ([`RootRule::Undetermined`]).
+//!
+//!    Nor can it be reached through another mount ([`RootRule::MountedElsewhere`],
+//!    [`RootRule::MountedInData`], each naming that mount's mount point): every line's
+//!    device, root and mount point are read to find a mount that shows the release
+//!    directory, a directory inside it or one that contains it. Where a mount point is
+//!    required there must be none: the secrets volume is mounted once (`-v S:/secrets -v
+//!    S:/data/extra` puts every key in a copy of `/data`). Everywhere, none may show any
+//!    of it at or below the data root or the account's other data directories. A mount
+//!    elsewhere on an ordinary machine is allowed: an image-based system mounts its whole
+//!    disk again at `/sysroot`. These are asked after checks 8 and the account's data,
+//!    so a store inside the data is named as that.
 //! 8. When a mount point is required (a container's mounted secrets volume), it is
 //!    the root of a mount (`statx`, `STATX_ATTR_MOUNT_ROOT`; a kernel that cannot say
 //!    refuses), and it is on another volume than the data: it is not inside the
@@ -67,6 +87,12 @@
 //!    beside the instance root and inside the data volume. Where no mount point is
 //!    required this is not asked: the data root's mount is then the disk's own, which
 //!    shows everything on it.
+//!
+//!    Where the host keeps persistent data in more directories than its data root (the
+//!    account's records, [`release_directory_apart_from`]), checks 6 to 8 are made against
+//!    each of them as well ([`RootRule::AccountData`]): with the data root on a volume of its
+//!    own mounted inside the account's (`-v D:/data -v I:/data/instance`), the store must not
+//!    be a directory of `D` either, or a copy of `D` holds the keys.
 //! 9. Each of the host's item stores that exists is a directory of the service user
 //!    with mode exactly `0700`, not followed if it is a link
 //!    ([`RootRule::ItemStoreOwner`], [`RootRule::ItemStoreMode`],
@@ -80,6 +106,12 @@
 //!     missing lock is made, and its mode is set on the descriptor that made it,
 //!     whatever the process's file-creation mask is; an existing one is never
 //!     changed.
+//!
+//! 12. When the host supplies an instance ID, `.instance` must name it. The marker is a
+//!     regular file of the service user with mode `0600` and one link. The host can publish
+//!     it only while holding the lock and while the item directories hold no files other
+//!     than their locks. New foreground setup requires an unused store and makes no lock
+//!     or marker.
 //!
 //! # What the private-group exception does not establish
 //!
@@ -140,6 +172,9 @@ pub struct ReleaseDirectory<'a> {
     pub mount_point_required: bool,
     /// Whether the host's records say that keys exist. An empty store is then refused.
     pub expect_items: bool,
+    /// If given, require this instance's binding before opening any item store. A host
+    /// claims an unbound directory only if it holds no credentials.
+    pub instance_id: Option<&'a str>,
 }
 
 // No path in the `Debug` output of a location.
@@ -191,7 +226,30 @@ pub fn release_directory_with_stores(
     location: ReleaseDirectory<'_>,
     item_stores: &[ItemStore<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
-    native::release_directory(&location, item_stores).map(|root| ReleaseRoot { root })
+    release_directory_apart_from(location, item_stores, &[])
+}
+
+/// [`release_directory_with_stores`] for a host that keeps persistent data in more
+/// directories than its data root: `account_data` are those directories, as descriptors the
+/// host holds (the account's records, for one). The release directory must be apart from
+/// each of them as it must be from the data root, and, where a mount point is required,
+/// apart from the volume each of them is on ([`RootRule::AccountData`]).
+pub fn release_directory_apart_from(
+    location: ReleaseDirectory<'_>,
+    item_stores: &[ItemStore<'_>],
+    account_data: &[BorrowedFd<'_>],
+) -> Result<ReleaseRoot, CredentialError> {
+    native::release_directory(&location, item_stores, account_data).map(|root| ReleaseRoot { root })
+}
+
+/// Preflight for a new foreground reservation. Check the same directory and placement rules
+/// as a host, and refuse a binding or any credentials already there. Creates nothing.
+pub fn check_unused_release_directory(
+    location: ReleaseDirectory<'_>,
+    item_stores: &[ItemStore<'_>],
+    account_data: &[BorrowedFd<'_>],
+) -> Result<(), CredentialError> {
+    native::check_unused_release_directory(&location, item_stores, account_data)
 }
 
 /// [`release_directory_with_stores`] for a caller that opens no item store: the
@@ -244,7 +302,14 @@ pub struct RootRefusal {
 
 impl fmt::Display for RootRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.path.display(), self.rule)
+        // The path can come from the mount table (another mount of the store), where any
+        // byte but a slash and NUL can be in a name: control characters are escaped.
+        write!(
+            f,
+            "{}: {}",
+            self.path.display().to_string().escape_debug(),
+            self.rule
+        )
     }
 }
 
@@ -310,11 +375,35 @@ pub enum RootRule {
     ContainsDataVolume,
     /// A mount point is required and the release directory is not the root of a mount.
     NotAMountPoint,
+    /// Something is mounted inside the release directory. The path is the mount point.
+    MountInside,
+    /// A mount point is required, and another mount shows the release directory, a
+    /// directory inside it or one that contains it: the secrets volume is mounted twice.
+    /// The path is the other mount's mount point.
+    MountedElsewhere,
+    /// Another mount shows the release directory, or a directory inside it, at or below
+    /// the data root or one of the account's other data directories. The path is that
+    /// mount's mount point.
+    MountedInData,
     /// A mount point is required and this kernel does not say whether a directory is
     /// one (before Linux 5.8).
     MountPointUnknown,
     /// The host's records say keys exist, and the release directory holds no item.
     CredentialsMissing,
+    /// A directory with no instance binding already holds credentials.
+    CredentialsPresent,
+    /// The binding is to another instance, or setup requires an unused store.
+    WrongInstance,
+    /// The owner-only instance marker could not be safely read or persisted.
+    InstanceMarker,
+    /// The release directory is, is inside or contains one of the account's other data
+    /// directories ([`release_directory_apart_from`]), inside one filesystem or as this
+    /// process sees them, or, where a mount point is required, is on the volume one of them
+    /// is on.
+    AccountData,
+    /// One of the account's other data directories could not be examined, with this kind
+    /// of error.
+    AccountDataUnavailable(io::ErrorKind),
     /// One of the host's item stores is not owned by the service user. The path is
     /// the item store's.
     ItemStoreOwner,
@@ -410,6 +499,21 @@ impl fmt::Display for RootRule {
                 "the credential directory must be a mount point (a mounted secrets volume) and \
                  is not one",
             ),
+            Self::MountInside => f.write_str(
+                "another volume is mounted here, inside the credential directory; the keys \
+                 stay in the credential directory's own volume, so mount nothing inside it",
+            ),
+            Self::MountedElsewhere => f.write_str(
+                "the secrets volume is also mounted here (this mount shows the credential \
+                 directory, a directory inside it or one that contains it), so the keys can be \
+                 reached outside the credential directory; mount the secrets volume once, at \
+                 the credential directory only",
+            ),
+            Self::MountedInData => f.write_str(
+                "the credential directory, or a directory inside it, is also mounted here, in \
+                 the data root or the account's records, so a copy of the data would hold the \
+                 keys; remove this mount",
+            ),
             Self::MountPointUnknown => f.write_str(
                 "the credential directory must be a mount point, and this kernel does not say \
                  whether it is one",
@@ -417,6 +521,31 @@ impl fmt::Display for RootRule {
             Self::CredentialsMissing => f.write_str(
                 "credentials missing: the host's records say keys exist, and the credential \
                  directory holds none; restore the directory, nothing was created",
+            ),
+            Self::CredentialsPresent => f.write_str(
+                "the credential directory already holds items without an instance binding; \
+                 keep the original volumes together and use an unused secrets volume for a \
+                 new instance",
+            ),
+            Self::WrongInstance => f.write_str(
+                "the credential directory is already bound to another instance; use the \
+                 matching data and secrets volumes, or use an unused secrets volume for a \
+                 new instance",
+            ),
+            Self::InstanceMarker => f.write_str(
+                "the credential directory's instance marker (.instance) is unsafe or could \
+                 not be persisted",
+            ),
+            Self::AccountData => f.write_str(
+                "the credential directory is in the volume that holds the account's records, \
+                 or holds them; the secrets and the data must be two separate volumes, not \
+                 one inside the other (with the data folder mounted inside the data volume, \
+                 the secrets volume must still be apart from the data volume itself)",
+            ),
+            Self::AccountDataUnavailable(kind) => write!(
+                f,
+                "the account's records could not be compared with the credential directory: \
+                 {kind}"
             ),
             Self::ItemStoreOwner => f.write_str(
                 "this item store of the credential directory is not owned by the service user",
