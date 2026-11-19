@@ -48,30 +48,6 @@ export interface GeneralSettings {
 	handOverCandidates: HandOverCandidate[];
 }
 
-export interface AccessPerson {
-	memberId: string;
-	name: string;
-	title?: string;
-	/** Set when the person has an account tied to them in this organization. */
-	username?: string;
-	owner: boolean;
-	administrator: boolean;
-}
-
-export interface AccessOverview {
-	people: AccessPerson[];
-	/** The administrator and the owner manage sign-in; everyone else sees the list without actions. */
-	viewerCanManage: boolean;
-}
-
-/** A one-time link, shown once. */
-export interface IssuedLink {
-	url: string;
-	/** RFC 3339. */
-	expiresAt: string;
-	kind: 'invite' | 'reset';
-}
-
 export interface PriceRate {
 	id: string;
 	provider: string;

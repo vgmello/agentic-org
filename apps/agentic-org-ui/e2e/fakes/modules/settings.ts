@@ -1,13 +1,12 @@
 // Mock for src/lib/modules/settings/api.ts under `bun run dev:mock`. People, agents and projects come from the org mock so
-// the ids match the other pages; everything else is JSON. Mutations change the answers in memory.
+// the ids match the other pages; who has an account comes from the members mock (signInOf), so General, Members and
+// Settings › Members and access agree; everything else is JSON. Mutations change the answers in memory.
 // Scenarios (query string): ?recovery=preparing|waiting|shown|shown_again|collected|collected_again|failed|unknown,
 // ?admin=other (the viewer is the owner but not the administrator), ?settings=fails|slow|empty.
 import { officeApi } from '$lib/office/api';
 import { orgApi } from '$lib/org/api';
 import type { SettingsApi } from '../../../src/lib/modules/settings/api';
 import type {
-	AccessOverview,
-	AccessPerson,
 	CostPeriod,
 	GeneralSettings,
 	PriceRate,
@@ -16,6 +15,7 @@ import type {
 import general from '../data/settings/general.json' with { type: 'json' };
 import prices0 from '../data/settings/prices.json' with { type: 'json' };
 import costs from '../data/settings/costs.json' with { type: 'json' };
+import { signInOf } from './members';
 
 const query = () => new URLSearchParams(location.search);
 const wait = () =>
@@ -31,11 +31,17 @@ async function gate() {
 }
 
 let administrator = { memberId: 'you', username: general.administrator.username };
+/** Usernames of accounts tied to people here; whether the account still exists is `signInOf` (the members mock). */
 const accounts: Record<string, string> = {
 	...general.accounts,
 	you: general.administrator.username
 };
-const links = new Map<string, string>();
+
+/** The instance's administrator account (handed over in General); Settings › Members and access reads it too. */
+export const administratorAccount = () => ({ ...administrator });
+/** The username of a person's account, when they have one. */
+export const usernameOf = (memberId: string): string | undefined =>
+	signInOf(memberId).account ? accounts[memberId] : undefined;
 let prices: PriceRate[] = structuredClone(prices0) as PriceRate[];
 
 async function snapshot(organizationId: string) {
@@ -68,24 +74,9 @@ async function general_(organizationId: string): Promise<GeneralSettings> {
 			isYou: isAdministrator
 		},
 		handOverCandidates: members
-			.filter((m) => m.kind === 'person' && accounts[m.id] && m.id !== administrator.memberId)
+			.filter((m) => m.kind === 'person' && usernameOf(m.id) && m.id !== administrator.memberId)
 			.map((m) => ({ memberId: m.id, name: m.name, username: accounts[m.id] }))
 	};
-}
-
-async function access(organizationId: string): Promise<AccessOverview> {
-	const { members } = await snapshot(organizationId);
-	const people: AccessPerson[] = members
-		.filter((m) => m.kind === 'person')
-		.map((m) => ({
-			memberId: m.id,
-			name: m.name,
-			...(m.contact ? { title: m.contact } : {}),
-			...(accounts[m.id] ? { username: accounts[m.id] } : {}),
-			owner: !!m.owner,
-			administrator: administrator.memberId === m.id
-		}));
-	return { people, viewerCanManage: query().get('admin') !== 'viewer' };
 }
 
 const micro = (n: number | null | undefined) => (n === undefined ? null : n);
@@ -103,31 +94,14 @@ export const settingsApi: SettingsApi = {
 				code: 'wrong_password',
 				message: "That password doesn't match. Try again."
 			};
-		if (!accounts[memberId])
+		if (!usernameOf(memberId))
 			throw {
 				source: 'app',
 				code: 'not_found',
 				message: "That person doesn't have an account any more."
 			};
-		administrator = { memberId, username: accounts[memberId] };
+		administrator = { memberId, username: accounts[memberId]! };
 		return general_(organizationId);
-	},
-	async access(organizationId) {
-		await gate();
-		return access(organizationId);
-	},
-	async issueLink(organizationId, memberId, kind) {
-		await wait();
-		const secret =
-			Math.random().toString(36).slice(2, 14) + Math.random().toString(36).slice(2, 10);
-		const url = `http://127.0.0.1:7420/${kind === 'invite' ? 'register' : 'set-password'}#${secret}`;
-		links.set(memberId, url);
-		return { url, kind, expiresAt: new Date(Date.now() + 24 * 3600_000).toISOString() };
-	},
-	async removeAccess(organizationId, memberId) {
-		await wait();
-		delete accounts[memberId];
-		return access(organizationId);
 	},
 	async prices() {
 		await gate();

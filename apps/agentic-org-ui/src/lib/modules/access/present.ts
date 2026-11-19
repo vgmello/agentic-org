@@ -1,27 +1,34 @@
-// Pure helpers for Members and access: the three lists and the words that say each person's state.
+// Pure helpers for Members and access: the lists and the words that say each person's state.
 import type { AccessPerson, AccessState } from './types';
 
 export interface AccessGroups {
 	signedIn: AccessPerson[];
 	invited: AccessPerson[];
 	noAccount: AccessPerson[];
+	/** Deactivated people: deactivation removed their access, and they can't be invited (offices-and-teams-ux §7.4). */
+	deactivated: AccessPerson[];
 }
+
+/** Which list a person is in. */
+export type AccessList = keyof AccessGroups;
 
 const byName = (a: AccessPerson, b: AccessPerson) =>
 	a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) ||
 	a.memberId.localeCompare(b.memberId);
 
-/** Splits people into the three lists the page shows, each sorted A–Z by name. */
+/** The list a person belongs in: deactivated people apart, whatever a stale state says. */
+export function listOf(person: AccessPerson): AccessList {
+	if (!person.active) return 'deactivated';
+	if (person.state === 'signed_in') return 'signedIn';
+	if (person.state === 'invited') return 'invited';
+	return 'noAccount';
+}
+
+/** Splits people into the lists the page shows, each sorted A–Z by name. */
 export function groupPeople(people: AccessPerson[]): AccessGroups {
-	const groups: AccessGroups = { signedIn: [], invited: [], noAccount: [] };
-	for (const person of people) {
-		if (person.state === 'signed_in') groups.signedIn.push(person);
-		else if (person.state === 'invited') groups.invited.push(person);
-		else groups.noAccount.push(person);
-	}
-	groups.signedIn.sort(byName);
-	groups.invited.sort(byName);
-	groups.noAccount.sort(byName);
+	const groups: AccessGroups = { signedIn: [], invited: [], noAccount: [], deactivated: [] };
+	for (const person of people) groups[listOf(person)].push(person);
+	for (const list of Object.values(groups)) list.sort(byName);
 	return groups;
 }
 
@@ -34,9 +41,3 @@ export const stateWord: Record<AccessState, string> = {
 
 /** Shown to viewers who may read the lists but not change them (app-shell-ux §0.1: no actions they can't use). */
 export const MANAGERS_ONLY = 'Only the owner or the administrator changes sign-in access.';
-
-/** Shown for a person whose home team the record doesn't give: the data is missing, not guessed. */
-export const NOT_HOME_TEAM = 'Home team not recorded';
-
-/** Refusal shown when an action names a person who has left the organization since the list loaded. */
-export const NOT_IN_ORGANIZATION = "That person isn't in this organization any more.";

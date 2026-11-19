@@ -1,10 +1,14 @@
 <!--
   @component
   The dialogs behind a person's sign-in actions (offices-and-teams-ux §7.4, SIGN-25, SIGN-36, SIGN-37): the one-time
-  link, shown once, and the Remove access confirmation that names its effect. The host is mounted once by its caller and
-  started with `start(kind, person, opener)`, so the caller can keep it mounted while a list reloads: a person who moves
-  from one list to another keeps the dialog (and its focus) alive. Every started action reports how it ended through
-  `onsettled`, once. The caller decides where focus goes.
+  link, shown once, and the Remove access confirmation that names its effect. This is the one place that calls the
+  members API's sign-in actions (inviteToSignIn, newSignInLink, removeAccess): the member profile and Settings › Members
+  and access both use it.
+
+  The caller mounts it once and starts an action with `start(kind, person, opener)`, so it can stay mounted while a list
+  reloads. Every started action reports how it ended through `onsettled`, once, after its dialog has closed and its
+  focus trap has let go: the caller then decides where focus goes.
+  Usage: <SignInAccessDialogs bind:this={host} {organizationId} organizationName="Lumen Labs" onsettled={settled} />
 -->
 <script lang="ts" module>
 	import type { OneTimeLinkValue } from './OneTimeLink.svelte';
@@ -24,6 +28,9 @@
 	 * `gone`: the person is no longer in the organization, so nothing changed here.
 	 */
 	export type SignInOutcome = 'linked' | 'removed' | 'cancelled' | 'gone';
+
+	/** Said when an action names a person who has left the organization since the page loaded. */
+	export const NOT_IN_ORGANIZATION = "That person isn't in this organization any more.";
 </script>
 
 <script lang="ts">
@@ -39,21 +46,17 @@
 		DialogTitle
 	} from '$lib/components/ui/dialog';
 	import { toAppError } from '$lib/office/api';
+	import { membersApi } from '../../api';
 	import OneTimeLink from './OneTimeLink.svelte';
 
 	let {
+		organizationId,
 		organizationName,
-		issueLink,
-		removeAccess,
 		onsettled
 	}: {
+		organizationId: string;
 		organizationName: string;
-		/** A one-time link for this person. A refusal rejects and is shown by the caller. */
-		issueLink: (
-			memberId: string,
-			kind: OneTimeLinkValue['kind']
-		) => Promise<Omit<OneTimeLinkValue, 'kind'>>;
-		removeAccess: (memberId: string) => Promise<void>;
+		/** Called once per started action, after its dialog has closed. */
 		onsettled: (memberId: string, outcome: SignInOutcome, from: HTMLElement | null) => void;
 	} = $props();
 
@@ -61,6 +64,8 @@
 	let shown = $state.raw<SignInPerson | undefined>();
 	let from: HTMLElement | null = null;
 	let active = false;
+	/** How the open action ended; reported once its dialog has closed. */
+	let outcome: SignInOutcome | undefined;
 	let link = $state.raw<OneTimeLinkValue | undefined>();
 	let linkOpen = $state(false);
 	let removeOpen = $state(false);
@@ -69,7 +74,7 @@
 
 	/**
 	 * Starts an action on `person`. A link resolves once it is issued and shown; a removal resolves once it is asked
-	 * for. A refusal rejects, and nothing is shown.
+	 * for. A refusal rejects, nothing is shown, and `onsettled` is not called: the caller shows the refusal.
 	 */
 	export async function start(
 		kind: SignInAction,
@@ -78,13 +83,17 @@
 	): Promise<void> {
 		shown = person;
 		from = opener;
+		outcome = undefined;
 		active = true;
 		if (kind === 'remove') {
 			removeOpen = true;
 			return;
 		}
 		try {
-			const made = await issueLink(person.id, kind);
+			const made =
+				kind === 'invite'
+					? await membersApi.inviteToSignIn(organizationId, person.id)
+					: await membersApi.newSignInLink(organizationId, person.id);
 			link = { ...made, kind };
 			linkOpen = true;
 		} catch (e) {
@@ -93,44 +102,56 @@
 		}
 	}
 
-	function settle(outcome: SignInOutcome) {
-		if (!active || !shown) return;
-		active = false;
-		const opener = from;
-		from = null;
-		onsettled(shown.id, outcome, opener);
-	}
-
-	// The one-time link is shown only once: it goes when its dialog closes, and the outcome follows.
+	// The one-time link is shown only once: Done, Escape or the close button end it.
 	function finishLink() {
 		if (!linkOpen) return;
+		outcome = 'linked';
 		linkOpen = false;
-		link = undefined;
-		settle('linked');
 	}
 
 	async function confirmRemove() {
 		const person = shown;
 		if (!person) return;
 		try {
-			await removeAccess(person.id);
+			await membersApi.removeAccess(organizationId, person.id);
 		} catch (e) {
 			if (toAppError(e).code === 'not_found') {
+				outcome = 'gone';
 				removeOpen = false;
-				settle('gone');
 				return;
 			}
 			// Any other refusal stays inside the confirmation, which stays open.
 			throw e;
 		}
+		outcome = 'removed';
 		toast.success(
 			`Removed ${person.name}'s access. ${person.name.split(/\s+/)[0] || person.name} is signed out everywhere.`
 		);
-		settle('removed');
 	}
 
-	// Focus belongs to the caller: the dialogs never restore it themselves.
-	const keepFocusWithCaller = (event: Event) => event.preventDefault();
+	/**
+	 * A dialog is closing. Focus belongs to the caller, so the dialog doesn't restore it; the link goes with the dialog.
+	 * The dialog's content still holds focus while it animates out, so the caller hears how the action ended once that
+	 * content is gone (at most a second later) and focus is free to move.
+	 */
+	function closed(event: Event) {
+		event.preventDefault();
+		link = undefined;
+		const person = shown;
+		if (!active || !person) return;
+		active = false;
+		const opener = from;
+		const ended = outcome ?? 'cancelled';
+		from = null;
+		const holder = document.activeElement;
+		const until = performance.now() + 1000;
+		const settle = () => {
+			if (holder?.isConnected && document.activeElement === holder && performance.now() < until)
+				requestAnimationFrame(settle);
+			else onsettled(person.id, ended, opener);
+		};
+		requestAnimationFrame(settle);
+	}
 </script>
 
 <Dialog
@@ -140,7 +161,7 @@
 	}}
 >
 	<DialogContent
-		onCloseAutoFocus={keepFocusWithCaller}
+		onCloseAutoFocus={closed}
 		class="max-h-[calc(100dvh-2rem)] grid-cols-[minmax(0,1fr)] overflow-y-auto max-[639px]:max-w-[calc(100%-1rem)] max-[639px]:p-4"
 	>
 		<DialogHeader>
@@ -165,8 +186,5 @@
 	busyLabel="Removing access…"
 	destructive
 	onconfirm={confirmRemove}
-	onCloseAutoFocus={(event) => {
-		keepFocusWithCaller(event);
-		settle('cancelled');
-	}}
+	onCloseAutoFocus={closed}
 />

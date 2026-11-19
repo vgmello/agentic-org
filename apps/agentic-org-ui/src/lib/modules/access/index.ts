@@ -2,4 +2,3 @@
 export { accessApi, type AccessApi } from './api';
 export type * from './types';
 export { default as AccessPage } from './features/overview/AccessPage.svelte';
-export { groupPeople, stateWord, MANAGERS_ONLY } from './present';

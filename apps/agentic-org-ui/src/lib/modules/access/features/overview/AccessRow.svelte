@@ -1,8 +1,13 @@
 <!--
   @component
-  One person in a Members and access list: an avatar, the name (a link to the member profile), the handle and home team,
-  Owner and Administrator marks in words, the sign-in state in words, and for the owner or the administrator the sign-in
-  actions. The row reports each action to the page, which owns the dialogs, the refusals and where focus goes.
+  One person in a Members and access list: an avatar, the name (the row's one stretched link, to the member profile),
+  the Owner pill, the handle, home team and Administrator as text, the sign-in state in words, and for the owner or the
+  administrator the sign-in actions, with any refusal right under them. The row reports each action to the page, which
+  owns the dialogs and where focus goes.
+
+  Layout follows the Members directory: the list is the container. Stacked by default; side by side (text, then the
+  actions) once the list is at least 44rem wide, a container query in rem, so a narrow window or 200% text keeps the
+  stacked row. Under 20rem of list (320 px at 200% text) the avatar sits above the text, so the words keep the width.
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
@@ -10,7 +15,7 @@
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { mobileButton } from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
-	import { expiryText } from '$lib/modules/members';
+	import { expiryUntil, type SignInAction } from '$lib/modules/members';
 	import { stateWord } from '../../present';
 	import type { AccessPerson } from '../../types';
 
@@ -18,57 +23,71 @@
 		person,
 		canManage,
 		busy,
+		refusal,
 		onact
 	}: {
 		person: AccessPerson;
 		canManage: boolean;
 		/** The action this row's person is running right now, while its link is being made. */
 		busy?: 'invite' | 'reset';
-		onact: (kind: 'invite' | 'reset' | 'remove', event: MouseEvent) => void;
+		/** Why the last action on this person was refused, shown under the actions. */
+		refusal?: string;
+		onact: (kind: SignInAction, event: MouseEvent) => void;
 	} = $props();
 
 	const stateLine = $derived(
-		person.state === 'signed_in'
-			? person.username
-				? `${stateWord.signed_in} · username ${person.username}`
-				: stateWord.signed_in
-			: person.state === 'invited'
-				? person.inviteExpiresAt
-					? `${stateWord.invited}. The link works until ${expiryText(person.inviteExpiresAt).replace(/^at /, '')}.`
-					: stateWord.invited
-				: stateWord.no_account
+		!person.active
+			? 'Deactivated · no access'
+			: person.state === 'signed_in'
+				? person.username
+					? `${stateWord.signed_in} · username ${person.username}`
+					: stateWord.signed_in
+				: person.state === 'invited'
+					? person.inviteExpiresAt
+						? `${stateWord.invited}. The link works until ${expiryUntil(person.inviteExpiresAt)}.`
+						: stateWord.invited
+					: stateWord.no_account
 	);
+	const actions = $derived(canManage && person.active);
 </script>
 
 <li
 	data-access-row
 	data-member-id={person.memberId}
-	data-testid="access-row"
-	class="flex flex-col gap-y-3 px-4 py-4 min-[640px]:px-6 min-[1024px]:flex-row min-[1024px]:items-start min-[1024px]:justify-between min-[1024px]:gap-x-8 min-[1024px]:px-8"
+	class="relative flex flex-col gap-y-3 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8 @min-[44rem]:flex-row @min-[44rem]:items-start @min-[44rem]:justify-between @min-[44rem]:gap-x-8"
 >
-	<div class="flex min-w-0 flex-1 items-start gap-3">
+	<div class="flex min-w-0 flex-1 items-start gap-x-4 gap-y-2 @max-[20rem]:flex-col">
 		<Avatar name={person.name} size="md" />
-		<div class="min-w-0">
-			<p class="flex flex-wrap items-center gap-2 text-sm/6 font-semibold text-white">
+		<div class="min-w-0 flex-1">
+			<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6">
 				<a
-					href={resolve(`/members/${person.memberId}` as '/')}
-					class="min-w-0 rounded-sm [overflow-wrap:anywhere] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
-					>{person.name}</a
+					href={resolve(`/members/${encodeURIComponent(person.memberId)}` as '/')}
+					class="rounded-sm font-semibold text-white [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
+					><span class="absolute inset-0" aria-hidden="true"></span>{person.name}</a
 				>
-				{#if person.owner}
-					<StatusPill label="Owner" class="bg-indigo-400/10 text-indigo-300 ring-indigo-400/30" />
-				{/if}
-				{#if person.administrator}<StatusPill label="Administrator" />{/if}
+				<!-- The member profile's Owner badge, so the owner reads the same everywhere; one pill per row. -->
+				{#if person.owner}<StatusPill
+						label="Owner"
+						class="bg-indigo-400/10 text-indigo-300 ring-indigo-400/30"
+					/>{/if}
 			</p>
-			<p class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]">
-				<span class="font-mono">@{person.handle}</span> · {person.homeTeam}
+			<p class="flex flex-wrap gap-x-2 text-xs/5 text-gray-400">
+				<span class="font-mono [overflow-wrap:anywhere]">@{person.handle}</span>
+				<span aria-hidden="true">·</span>
+				{#if person.homeTeam}<span class="[overflow-wrap:anywhere]">{person.homeTeam}</span
+					>{:else}<span class="text-red-300">No home team on record: this record is invalid</span
+					>{/if}
+				{#if person.administrator}<span aria-hidden="true">·</span><span class="text-gray-300"
+						>Administrator</span
+					>{/if}
 			</p>
 			<p class="mt-1 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">{stateLine}</p>
 		</div>
 	</div>
-	{#if canManage}
-		<div class="flex min-w-0 shrink-0 flex-col gap-y-2 min-[1024px]:items-end">
-			<div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+	{#if actions}
+		<!-- Above the stretched name link, so each action stays its own target. -->
+		<div class="relative flex min-w-0 flex-col gap-y-2 @min-[44rem]:items-end">
+			<div class="flex flex-wrap items-center gap-x-6 gap-y-3 @min-[44rem]:justify-end">
 				{#if person.state !== 'signed_in'}
 					<Button
 						variant="outline"
@@ -93,11 +112,19 @@
 				{/if}
 			</div>
 			{#if person.owner && person.state === 'signed_in'}
-				<p class="text-xs/5 text-gray-400 min-[1024px]:text-right">Hand over ownership first.</p>
+				<p class="text-xs/5 text-gray-400 @min-[44rem]:text-right">Hand over ownership first.</p>
 			{/if}
 			{#if person.state === 'invited'}
-				<p class="text-xs/5 text-gray-400 min-[1024px]:text-right">
+				<p class="text-xs/5 text-gray-400 @min-[44rem]:text-right">
 					Inviting again cancels the previous link.
+				</p>
+			{/if}
+			{#if refusal}
+				<p
+					class="text-sm/6 text-red-300 [overflow-wrap:anywhere] @min-[44rem]:text-right"
+					role="alert"
+				>
+					{refusal}
 				</p>
 			{/if}
 		</div>

@@ -39,7 +39,7 @@
 	import { agentSetupApi } from '../../api';
 	import HealthBadge from '../../components/HealthBadge.svelte';
 	import { health, healthText } from '../../health';
-	import { focusHeading, focusHeadingAfterShell } from '../../heading';
+	import { focusHeading, focusHeadingAfterShell } from '$lib/components/focus';
 	import {
 		CONNECTION_STATE,
 		ageText,
