@@ -27,6 +27,7 @@
 	import { processesApi } from '../../api';
 	import StaleNotice from '../../components/StaleNotice.svelte';
 	import When from '../../components/When.svelte';
+	import PageTitle from '../../components/PageTitle.svelte';
 	import {
 		CHANGES_PAUSED,
 		DEV_HEADING,
@@ -123,61 +124,63 @@
 	const readButton = `${mobileButton} shrink-0`;
 </script>
 
-<svelte:head><title>{pageTitle(detail?.name, DEV_HEADING, 'Processes')}</title></svelte:head>
+{#if resource.state !== 'unavailable'}
+	<PageTitle title={pageTitle(detail?.name, DEV_HEADING, 'Processes')} />
 
-<PageHeader
-	id="dev-process-heading"
-	title={detail?.name ?? (notFound ? 'Development process not found' : 'Development process')}
-	back={{ href: DEV_PROCESSES_URL, label: 'Development processes' }}
-	description={detail?.summary || undefined}
-	class="[&_h2:focus]:outline-none"
->
-	{#snippet actions()}
-		{#if detail}
-			<div class="flex flex-wrap gap-3">
-				{#if canWrite}
+	<PageHeader
+		id="dev-process-heading"
+		title={detail?.name ?? (notFound ? 'Development process not found' : 'Development process')}
+		back={{ href: DEV_PROCESSES_URL, label: 'Development processes' }}
+		description={detail?.summary || undefined}
+		class="[&_h2:focus]:outline-none"
+	>
+		{#snippet actions()}
+			{#if detail}
+				<div class="flex flex-wrap gap-3">
+					{#if canWrite}
+						<Button
+							class={mobileButton}
+							disabled={paused}
+							aria-describedby={paused ? 'dev-process-paused' : undefined}
+							onclick={(e: MouseEvent) =>
+								openPart(e, {
+									kind: 'edit',
+									part: { kind: 'manifest' },
+									title: `Edit process.yaml`,
+									content: detail!.manifestYaml
+								})}>Edit process.yaml</Button
+						>
+					{/if}
+					{#if canEdit}
+						<Button
+							variant={builtIn ? 'default' : 'outline'}
+							class={mobileButton}
+							disabled={paused}
+							aria-describedby={paused ? 'dev-process-paused' : undefined}
+							onclick={(e: MouseEvent) => {
+								opener = e.currentTarget as HTMLElement;
+								copier?.start({ key: `${detail!.key}-copy`, name: `${detail!.name} (copy)` });
+							}}>Copy…</Button
+						>
+					{/if}
 					<Button
-						class={mobileButton}
-						disabled={paused}
-						aria-describedby={paused ? 'dev-process-paused' : undefined}
-						onclick={(e: MouseEvent) =>
-							openPart(e, {
-								kind: 'edit',
-								part: { kind: 'manifest' },
-								title: `Edit process.yaml`,
-								content: detail!.manifestYaml
-							})}>Edit process.yaml</Button
+						variant="outline"
+						class="min-w-28 {mobileButton}"
+						aria-busy={downloading}
+						aria-disabled={downloading}
+						onclick={download}>{downloading ? 'Downloading…' : 'Download'}</Button
 					>
-				{/if}
-				{#if canEdit}
-					<Button
-						variant={builtIn ? 'default' : 'outline'}
-						class={mobileButton}
-						disabled={paused}
-						aria-describedby={paused ? 'dev-process-paused' : undefined}
-						onclick={(e: MouseEvent) => {
-							opener = e.currentTarget as HTMLElement;
-							copier?.start({ key: `${detail!.key}-copy`, name: `${detail!.name} (copy)` });
-						}}>Copy…</Button
-					>
-				{/if}
-				<Button
-					variant="outline"
-					class="min-w-28 {mobileButton}"
-					aria-busy={downloading}
-					aria-disabled={downloading}
-					onclick={download}>{downloading ? 'Downloading…' : 'Download'}</Button
-				>
-			</div>
-			{#if paused && canEdit}<p id="dev-process-paused" class="w-full text-xs/5 text-fg-muted">
-					{CHANGES_PAUSED}
-				</p>{/if}
-			{#if downloadError}<p class="w-full text-xs/5 text-danger-text" role="alert">
-					{downloadError}
-				</p>{/if}
-		{/if}
-	{/snippet}
-</PageHeader>
+				</div>
+				{#if paused && canEdit}<p id="dev-process-paused" class="w-full text-xs/5 text-fg-muted">
+						{CHANGES_PAUSED}
+					</p>{/if}
+				{#if downloadError}<p class="w-full text-xs/5 text-danger-text" role="alert">
+						{downloadError}
+					</p>{/if}
+			{/if}
+		{/snippet}
+	</PageHeader>
+{/if}
 
 {#if detail?.stale}
 	<StaleNotice
@@ -309,7 +312,9 @@
 							part: { kind: 'role', key: '' },
 							title: 'New role',
 							content: NEW_ROLE_BODY,
-							isNew: true
+							isNew: true,
+							taken: detail!.roles.map((r) => r.key),
+							note: "The role's definition. Add the role to process.yaml's roles too, with its name and whether it is a seed role."
 						})}>New role…</Button
 				>{/if}
 		</div>
@@ -380,13 +385,13 @@
 							part: { kind: 'skill', key: '' },
 							title: 'New skill',
 							content: skillFileText({
-								key: 'new-skill',
 								title: 'New skill',
 								description: 'Use when …',
 								roles: [],
 								bodyMarkdown: NEW_SKILL_BODY
 							}),
-							isNew: true
+							isNew: true,
+							taken: detail!.skills.map((x) => x.key)
 						})}>New skill…</Button
 				>{/if}
 		</div>
@@ -518,7 +523,8 @@
 								part: { kind: 'template', key: '' },
 								title: 'New template',
 								content: '',
-								isNew: true
+								isNew: true,
+								taken: detail!.templates.map((t) => t.key)
 							})}>New template…</Button
 					>{/if}
 			</dd>

@@ -26,7 +26,6 @@
 		selectClass,
 		textareaClass
 	} from '$lib/components/classes';
-	import { focusHeadingAfterShell } from '$lib/components/focus';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
@@ -35,6 +34,7 @@
 	import { pageTitle } from '$lib/nav';
 	import { processesApi } from '../../api';
 	import DiffView from '../../components/DiffView.svelte';
+	import PageTitle from '../../components/PageTitle.svelte';
 	import { wrapButton } from '../../components/classes';
 	import {
 		KIND_TAB,
@@ -47,12 +47,14 @@
 		listHref,
 		normalizeDraft,
 		placeLabel,
+		placeOfDocument,
 		placeParam,
 		refusedField,
 		sameDraft,
 		sourceText
 	} from '../../present';
 	import type { DocumentDraft, DocumentField, Lifecycle, ProcessDocument } from '../../types';
+	import { arriveWith } from '../place-view/arrival';
 	import { discardDraft, draftSlot, keepDraft, keptDraft } from './kept-drafts';
 	import { loadEditor, type EditorMode, type EditorStart } from './load';
 
@@ -195,8 +197,13 @@
 				: await processesApi.create(organizationId, clean);
 			leaving = true;
 			discardDraft(slot);
-			await goto(resolve(listHref(mode.place, saved.kind) as '/'));
-			focusHeadingAfterShell('processes-heading');
+			// The list of the place it was written for, with its row focused and where it went said (P2-4).
+			const to = placeOfDocument(saved);
+			arriveWith({
+				documentId: saved.id,
+				message: `${editing ? 'Saved' : 'Created'} ${saved.title} for ${scopeName}.`
+			});
+			await goto(resolve(listHref(to, saved.kind) as '/'));
 		} catch (e) {
 			busy = false;
 			const newer = conflictLatest(e);
@@ -223,18 +230,20 @@
 	};
 </script>
 
-<svelte:head><title>{pageTitle(heading, 'Processes')}</title></svelte:head>
+{#if resource.state !== 'unavailable'}
+	<PageTitle title={pageTitle(heading, 'Processes')} />
 
-<PageHeader
-	id="editor-heading"
-	title={start
-		? heading
-		: `${mode.kind === 'edit' ? 'Edit' : 'New'} ${KIND_WORD[mode.documentKind]}`}
-	back={{ href: back, label: 'Back to Processes' }}
-	description={start && draft
-		? `${KIND_TAB[draft.kind] === 'Standards' ? 'Standard' : 'Organization process'} · ${scopeName}`
-		: undefined}
-/>
+	<PageHeader
+		id="editor-heading"
+		title={start
+			? heading
+			: `${mode.kind === 'edit' ? 'Edit' : 'New'} ${KIND_WORD[mode.documentKind]}`}
+		back={{ href: back, label: 'Back to Processes' }}
+		description={start && draft
+			? `${KIND_TAB[draft.kind] === 'Standards' ? 'Standard' : 'Organization process'} · ${scopeName}`
+			: undefined}
+	/>
+{/if}
 
 {#if resource.state === 'loading'}
 	<SkeletonRows label="the editor" rows={5} lines={2} />
@@ -371,16 +380,24 @@
 				</p>{/if}
 		</div>
 
-		<fieldset>
+		<fieldset
+			role="radiogroup"
+			aria-invalid={errors.status ? true : undefined}
+			aria-describedby={errors.status ? 'doc-status-error' : undefined}
+		>
 			<legend class="text-sm/6 font-medium text-fg">Lifecycle</legend>
 			<div class="mt-2 space-y-2">
-				{#each LIFECYCLES as status (status)}
+				{#each LIFECYCLES as status, i (status)}
 					<label class="flex items-start gap-x-3 text-sm/6 max-[639px]:min-h-11">
 						<input
 							type="radio"
 							name="doc-status"
 							value={status}
 							bind:group={draft.status}
+							{@attach (el) => {
+								// The first choice takes focus when the office refuses the lifecycle.
+								if (i === 0) fields.status = el;
+							}}
 							class="mt-1 size-4 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 						/>
 						<span
@@ -390,6 +407,7 @@
 					</label>
 				{/each}
 			</div>
+			{#if errors.status}<p id="doc-status-error" class={errorClass}>{errors.status}</p>{/if}
 		</fieldset>
 
 		<div class="flex items-start gap-x-3">
@@ -399,7 +417,10 @@
 				type="checkbox"
 				bind:checked={draft.overridable}
 				class="mt-1 size-4 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:size-5"
-				aria-describedby="doc-overridable-help"
+				aria-describedby={errors.overridable
+					? 'doc-overridable-help doc-overridable-error'
+					: 'doc-overridable-help'}
+				aria-invalid={errors.overridable ? true : undefined}
 			/>
 			<div>
 				<Label for="doc-overridable">Teams and projects below may replace it</Label>
@@ -407,6 +428,9 @@
 					Off: it is not overridable. Every agent below gets it in full as must-follow, and a lower
 					version with its key is refused.
 				</p>
+				{#if errors.overridable}<p id="doc-overridable-error" class={errorClass}>
+						{errors.overridable}
+					</p>{/if}
 			</div>
 		</div>
 
@@ -431,12 +455,14 @@
 				rows="16"
 				bind:value={draft.bodyMarkdown}
 				class="mt-2 font-mono {textareaClass}"
-				aria-describedby="doc-body-help"
+				aria-describedby={errors.bodyMarkdown ? 'doc-body-help doc-body-error' : 'doc-body-help'}
 				aria-invalid={errors.bodyMarkdown ? true : undefined}></textarea>
 			<p id="doc-body-help" class={helpClass}>
 				Markdown. Agents read it as written: say what to do, and how to tell it is done.
 			</p>
-			{#if errors.bodyMarkdown}<p class={errorClass}>{errors.bodyMarkdown}</p>{/if}
+			{#if errors.bodyMarkdown}<p id="doc-body-error" class={errorClass}>
+					{errors.bodyMarkdown}
+				</p>{/if}
 			{#if comparing && parent}
 				<div class="mt-4">
 					<DiffView

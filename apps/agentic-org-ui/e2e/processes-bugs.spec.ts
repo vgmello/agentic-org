@@ -115,3 +115,18 @@ test('§6a: a long unbroken title and key wrap inside the row and the sheet', as
 	const box = (await title.boundingBox())!;
 	expect(box.x + box.width).toBeLessThanOrEqual(360);
 });
+
+for (const width of [960, 1024]) {
+	test(`review P2-1: at ${width} px the title column of a row stays at least 200 px wide`, async ({
+		page
+	}) => {
+		await page.setViewportSize({ width, height: 800 });
+		await open(page, '/settings/processes?place=agent:noor');
+		const title = page.getByTestId('process-row').first().locator(':scope > div').first();
+		await expect(title).toBeVisible();
+		for (const row of await page.getByTestId('process-row').all()) {
+			const box = (await row.locator(':scope > div').first().boundingBox())!;
+			expect(box.width).toBeGreaterThanOrEqual(200);
+		}
+	});
+}
