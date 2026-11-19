@@ -185,3 +185,6 @@ pub(crate) fn install(stream: UnixStream, instance: &str, office_id: &str) -> io
         admission,
     })
 }
+
+#[cfg(test)]
+mod tests;
