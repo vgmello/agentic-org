@@ -13,6 +13,7 @@
 //! narrows the replacement window; it is not an atomic inode compare-and-swap.
 
 mod directory;
+pub(crate) use directory::RootProbe;
 pub(crate) mod registry;
 pub(crate) mod setup;
 mod temp;

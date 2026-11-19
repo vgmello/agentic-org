@@ -139,8 +139,11 @@ fn no_link_is_issued_while_an_administrator_exists() {
         admin.initial_link(OPERATION, 1).unwrap(),
         AdminLinkResult::AdministratorPresent
     ));
-    let error = admin.reset_with(true, || Ok(())).unwrap_err();
-    assert_eq!(error.code, ErrorCode::Unavailable);
+    // X5 review, fourth round, P2-10: an answer the command can act on, not an error.
+    assert!(matches!(
+        admin.reset_with(true, || Ok(())).unwrap(),
+        AdminLinkResult::AdministratorPresent
+    ));
     assert_eq!(
         admin
             .db
@@ -196,13 +199,13 @@ fn reset_replaces_the_previous_link_and_only_the_newest_redeems() {
 #[test]
 fn a_dialog_that_sees_a_new_administrator_issues_nothing() {
     let (_home, admin) = admin();
-    let error = admin
+    let answer = admin
         .reset_with(true, || {
             seed_administrator(&admin);
             Ok(())
         })
-        .unwrap_err();
-    assert_eq!(error.code, ErrorCode::Unavailable);
+        .unwrap();
+    assert!(matches!(answer, AdminLinkResult::AdministratorPresent));
     assert_eq!(
         admin
             .db
@@ -221,13 +224,13 @@ fn a_reset_refused_for_an_administrator_keeps_the_pending_link() {
         .pending(LinkKind::Registration, &subject(), 1)
         .unwrap()
         .expect("pending link");
-    let error = admin
+    let answer = admin
         .reset_with(true, || {
             seed_administrator(&admin);
             Ok(())
         })
-        .unwrap_err();
-    assert_eq!(error.code, ErrorCode::Unavailable);
+        .unwrap();
+    assert!(matches!(answer, AdminLinkResult::AdministratorPresent));
     // The administrator check and the replacement share one transaction: a refused reset
     // neither cancels the pending link nor writes a new one.
     let after = admin
@@ -286,4 +289,133 @@ fn only_the_local_channel_may_administer_even_when_the_policy_would_allow() {
             .code,
         ErrorCode::NotAuthorized
     );
+}
+
+/// A presence adapter that says yes to everything: what a later Linux adapter might answer
+/// for a process of the service's own user.
+struct Approving;
+impl Presence for Approving {
+    fn local(&self, _: &Connection) -> bool {
+        true
+    }
+    fn confirm(&self, _: &dyn Fn() -> bool) -> Result<(), ()> {
+        Ok(())
+    }
+}
+
+/// SIGN-33 on a system that names a peer by its user alone: `admin.reset` is root's. A
+/// connection the listener admitted as root gets a link with no dialog, even where the
+/// presence adapter refuses everything; a connection of the host's own user is refused
+/// even where the presence adapter would approve, because any process of that user could
+/// ask. Where the system identifies a peer's image, the host's own user goes to the dialog
+/// as before, and root has no connection to be judged.
+#[test]
+fn where_a_peer_is_named_by_its_user_alone_only_root_resets_the_administrator() {
+    use std::os::unix::net::UnixStream;
+    let received = Received {
+        sent_at: 0,
+        buffered_after: 0,
+    };
+    let (host, _peer) = UnixStream::pair().unwrap();
+    let by_user_alone = crate::peer::identity(&host).is_ok_and(|identity| identity.uid.is_some());
+
+    // Root, admitted by the listener: no presence is asked (this adapter refuses).
+    let (_home, refusing) = admin();
+    let root = Connection::accepted_for_tests(&host);
+    root.mark_root_authority();
+    let issued = refusing.reset(&root, received).unwrap();
+    let (first, _) = token(issued);
+    // A second reset replaces the link; an administrator ends it.
+    let (second, _) = token(refusing.reset(&root, received).unwrap());
+    assert_ne!(first, second);
+    seed_administrator(&refusing);
+    assert!(matches!(
+        refusing.reset(&root, received).unwrap(),
+        AdminLinkResult::AdministratorPresent
+    ));
+    // Bytes already waiting behind the request deny it, as for every caller.
+    let (_home, fresh) = admin();
+    let (busy_host, mut busy_peer) = UnixStream::pair().unwrap();
+    let busy = Connection::accepted_for_tests(&busy_host);
+    busy.mark_root_authority();
+    std::io::Write::write_all(&mut busy_peer, b"x").unwrap();
+    assert_eq!(
+        fresh.reset(&busy, received).unwrap_err().code,
+        ErrorCode::NotAuthorized
+    );
+
+    // The host's own user, with a presence adapter that approves everything.
+    let (home, admin) = self::admin();
+    let approving = Admin::new(
+        Arc::clone(&admin.db),
+        OPERATION,
+        ListenOrigin::parse("http://127.0.0.1:7420").unwrap(),
+        AppPolicy::new(crate::HOST_SIGNING_ID, None).unwrap(),
+        Arc::new(Approving),
+    );
+    let own = Connection::accepted_for_tests(&host);
+    let answer = approving.reset(&own, received);
+    if by_user_alone {
+        let error = answer.unwrap_err();
+        assert_eq!(error.code, ErrorCode::NotAuthorized);
+        assert!(error.message.contains("by root"), "{}", error.message);
+        assert_eq!(
+            admin
+                .db
+                .pending(LinkKind::Registration, &subject(), 1)
+                .unwrap(),
+            None,
+            "no link was issued for the service's own user"
+        );
+    } else {
+        // An unsigned test binary does not pass the signing policy there: refused before
+        // any dialog, as it always was.
+        assert_eq!(answer.unwrap_err().code, ErrorCode::NotAuthorized);
+    }
+    drop(home);
+}
+
+/// X5 review V5: an instance that runs in the foreground never gives the initial link,
+/// whoever names its setup operation: its first link comes only from root's reset. A
+/// registered instance's setup takes it as before.
+#[test]
+fn a_foreground_instance_never_gives_the_initial_link() {
+    use std::os::unix::net::UnixStream;
+    let received = Received {
+        sent_at: 0,
+        buffered_after: 0,
+    };
+    let (host, _peer) = UnixStream::pair().unwrap();
+    let connection = Connection::accepted_for_tests(&host);
+    let params = || AdminLinkInitialParams {
+        setup_operation: OPERATION.into(),
+    };
+    let (_home, admin) = self::admin();
+    // Whether this system's policy admits this test process as a caller at all decides
+    // the registered answer; the foreground refusal must not depend on it.
+    let registered = admin.initial(&connection, received, params());
+    admin.foreground_instance();
+    let refused = admin.initial(&connection, received, params()).unwrap_err();
+    assert_eq!(refused.code, ErrorCode::NotAuthorized);
+    if registered.is_ok() {
+        assert!(
+            refused.message.contains("foreground"),
+            "{}",
+            refused.message
+        );
+        // Nothing more was issued for the refused call.
+        assert!(matches!(
+            admin.initial_link(OPERATION, wall().unwrap()).unwrap(),
+            AdminLinkResult::AlreadyIssued
+        ));
+    }
+    // Root's reset is unaffected.
+    let (_home, fresh) = self::admin();
+    fresh.foreground_instance();
+    let root = Connection::accepted_for_tests(&host);
+    root.mark_root_authority();
+    assert!(matches!(
+        fresh.reset(&root, received).unwrap(),
+        AdminLinkResult::Issued { .. }
+    ));
 }

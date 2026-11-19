@@ -8,15 +8,20 @@
 //! admits one host (`org_platform_host::credentials::release_directory`); a refusal names
 //! the directory and the rule it broke, and the host does not start.
 //!
-//! A development build keeps its development stores on every system and opens none, and a
-//! system whose protected store is the Keychain has none to open.
+//! A development build on such a system opens the directory too when its setup record names
+//! one, with every check a release build makes, and then keeps its keys there exactly as a
+//! release build does (X5 review, fourth round: a lost secrets volume, a volume mounted
+//! inside it and a registered service's recorded directory are judged the same in every
+//! build). A development build whose record names none keeps its development stores in the
+//! folder its environment names, and a system whose protected store is the Keychain has none
+//! to open.
 
 use std::os::fd::BorrowedFd;
 use std::path::Path;
 
 use org_platform::Refused;
 use org_platform_host::credentials::{
-    release_directory_with_stores, CredentialError, ItemStore, ProtectedStore, ReleaseDirectory,
+    release_directory_apart_from, CredentialError, ItemStore, ProtectedStore, ReleaseDirectory,
     ReleaseRoot,
 };
 
@@ -31,6 +36,8 @@ pub(crate) const ITEM_STORES: [ItemStore<'static>; 2] = [
 
 /// What the host knows of its credential directory when it starts.
 pub(crate) struct Facts<'a> {
+    /// The reserved instance that must own this store.
+    pub(crate) instance_id: &'a str,
     /// The absolute path the setup record holds, if it holds one.
     pub(crate) recorded: Option<&'a Path>,
     /// The instance's data root, as the descriptor the host holds its lock on.
@@ -40,43 +47,71 @@ pub(crate) struct Facts<'a> {
     pub(crate) foreground: bool,
     /// Whether the host's records say that keys exist: the store must then hold some.
     pub(crate) expect_items: bool,
+    /// The account's records (the setup record and the instance locator), as a descriptor
+    /// the host holds: the directory must be apart from them, and from their volume, as it
+    /// is from the data root's.
+    pub(crate) records: Option<BorrowedFd<'a>>,
 }
 
 /// The release directory this host keeps its secrets in, opened, checked and locked, or
-/// `None` where it keeps them elsewhere: a development build (`release_build` is false), and
-/// a system whose protected store is not a directory (`store`). Where it is a directory
-/// and the record names none, or the directory breaks a rule, the text says which directory
-/// and why, and nothing was created.
+/// `None` where it keeps them elsewhere: a system whose protected store is not a directory
+/// (`store`), and a development build (`release_build` is false) whose record names none.
+/// Where it is a directory and a release build's record names none, or the directory breaks
+/// a rule, the text says which directory and why, and nothing was created.
 pub(crate) fn open(
     release_build: bool,
     store: Result<ProtectedStore, Refused>,
     facts: Facts<'_>,
 ) -> Result<Option<ReleaseRoot>, String> {
+    let account_data: Vec<BorrowedFd<'_>> = facts.records.into_iter().collect();
     open_with(release_build, store, facts, |location| {
-        release_directory_with_stores(location, &ITEM_STORES)
+        #[cfg(test)]
+        if let Some(base) = WALK_FROM.with(|from| from.borrow().clone()) {
+            return org_platform_host::testing::credentials::release_directory_below_apart_from(
+                &base,
+                location,
+                &ITEM_STORES,
+                &account_data,
+            );
+        }
+        release_directory_apart_from(location, &ITEM_STORES, &account_data)
     })
 }
 
+// A test's host start walks to its credential directory from this directory instead of from
+// `/`: a shared temporary directory is writable by others, which the ancestor rule refuses.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static WALK_FROM: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// [`open`] with the platform's entry as a parameter: the host's is
-/// `release_directory_with_stores` for [`ITEM_STORES`], which walks from `/`; a test passes
-/// the platform's test entry, which starts the same walk at the test's own directory.
+/// `release_directory_apart_from` for [`ITEM_STORES`] and the account's records, which walks
+/// from `/`; a test passes the platform's test entry, which starts the same walk at the
+/// test's own directory.
 fn open_with(
     release_build: bool,
     store: Result<ProtectedStore, Refused>,
     facts: Facts<'_>,
     enter: impl FnOnce(ReleaseDirectory<'_>) -> Result<ReleaseRoot, CredentialError>,
 ) -> Result<Option<ReleaseRoot>, String> {
-    if !release_build || store != Ok(ProtectedStore::ReleaseDirectory) {
+    if store != Ok(ProtectedStore::ReleaseDirectory) {
         return Ok(None);
     }
     let Some(path) = facts.recorded else {
-        return Err(NOT_RECORDED.into());
+        return if release_build {
+            Err(NOT_RECORDED.into())
+        } else {
+            Ok(None)
+        };
     };
     enter(ReleaseDirectory {
         path,
         data_root: facts.data_root,
         mount_point_required: facts.foreground,
         expect_items: facts.expect_items,
+        instance_id: Some(facts.instance_id),
     })
     .map(Some)
     // The platform's text: the directory, then the rule it broke.

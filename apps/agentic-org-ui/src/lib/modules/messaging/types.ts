@@ -13,7 +13,13 @@ export type MessageKind = 'msg' | 'request' | 'handoff' | 'announcement' | 'repl
 /** What an agent may post (the office refuses anything else, section 6.5). */
 export const AGENT_KINDS = ['request', 'handoff', 'announcement', 'reply'] as const;
 
-export const ANNOUNCEMENT_REASONS = ['delivered', 'ready_for_review', 'blocked', 'report', 'decision_needed'] as const;
+export const ANNOUNCEMENT_REASONS = [
+	'delivered',
+	'ready_for_review',
+	'blocked',
+	'report',
+	'decision_needed'
+] as const;
 export type AnnouncementReason = (typeof ANNOUNCEMENT_REASONS)[number];
 export const REASON_LABEL: Record<AnnouncementReason, string> = {
 	delivered: 'Delivered',
@@ -23,7 +29,8 @@ export const REASON_LABEL: Record<AnnouncementReason, string> = {
 	decision_needed: 'Decision needed'
 };
 
-export type AutoChannel = { type: 'general' } | { type: 'project'; project_id: string } | { type: 'team'; team_id: string };
+export type AutoChannel =
+	{ type: 'general' } | { type: 'project'; project_id: string } | { type: 'team'; team_id: string };
 
 export interface Conversation {
 	id: string;
@@ -167,7 +174,13 @@ export type ChatCall =
 	| { method: 'chat.answer'; change_id: string; ask_id: string; option_id?: string; text?: string }
 	| { method: 'chat.accept_handoff'; change_id: string; message_id: string }
 	| { method: 'chat.react'; change_id: string; message_id: string; reaction: Reaction }
-	| { method: 'chat.mute'; change_id: string; conversation_id: string; member_id: string; mode: MuteMode }
+	| {
+			method: 'chat.mute';
+			change_id: string;
+			conversation_id: string;
+			member_id: string;
+			mode: MuteMode;
+	  }
 	| { method: 'chat.mark_read'; change_id: string; conversation_id: string }
 	| { method: 'chat.pin'; change_id: string; message_id: string }
 	| { method: 'dm.open'; change_id: string; members: string[] }

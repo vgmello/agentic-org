@@ -121,6 +121,13 @@ where
                 ours(&scope)?;
                 tx.remove_team_allocation(number)?;
             }
+            // The package is a source and no row: it is read from its file, never on a
+            // hot path. Its framing must hold, sealed for this organization.
+            (Kind::CaEscrow, Some(bytes)) => {
+                let package = records::ca_escrow_public_key(bytes, &self.organization_id);
+                decoded(path, package)?;
+            }
+            (Kind::CaEscrow, None) => {}
         }
         Ok(())
     }

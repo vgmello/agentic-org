@@ -40,6 +40,8 @@ the checklist row is FC-164. Every handoff and review of this track also carries
 
 ## Increments
 
+> Superseded: the current status of every Track X increment is in `docs/workstreams/linux.md` (2026-11-19). The table below is history.
+
 | Increment | State | Evidence |
 | --- | --- | --- |
 | X1a check, list, CI guards, layout | Built and accepted 2026-11-18 | See below |
@@ -1327,3 +1329,38 @@ read-only, effort xhigh) at the owner's request, after two Claude Opus 5.5 revie
   real-process creates pass on Linux), and the behaviour is covered at supervisor level
   on Linux by the shutdown test this merge enabled there. Follow-up (Track X with
   Track A): a compiled stand-in program, so the end-to-end test runs on Linux too.
+
+## Session of 2026-11-19: X5 reviewed to stability and integrated
+
+- **Integrated:** `x/x5-service` at `380d7f86` merged into `v1` as `de960b2c` (tree equal
+  to the reviewed commit; `origin/v1` was `9536d845` and had not moved).
+- **Rounds and models** (owner's direction: review until the reviews find no real
+  problem; reviews on fresh Claude Opus at medium effort, not Codex, from round 3 on):
+  - Round 3 (findings from a full GPT 6.2 Sol review, a Claude review and runs on a
+    real Ubuntu 26.04 VM): two Claude Opus implementers (setup/service/root reset;
+    custody/stop logging/origin/container/docs). Every Linux build records and uses a
+    credential directory; setup never registers a unit that cannot start and replaces
+    its own earlier rendering; root's lookup runs in a forked child with the target's
+    full identity; published origin `http://127.0.0.1:<port>` only.
+  - Round 4 (two Opus full reviews: no P1; P2 key loss through an unbound secrets volume,
+    P2 v1 setup records no longer parsed): implemented by GPT 6.2 Sol at max effort (the
+    owner's request; OpenAI's cyber filter ended its run before its report, after its
+    commits and checks), follow-ups and an Opus review by Claude.
+  - Round 5 (two Opus final reviews of `0acaaf3e`: no P1/P2, five P3s): a Claude Opus
+    implementer (the alias rule for a second mount of the secrets volume, bounded last
+    stderr lines, launchd rollback, the systemd 240 gate, docs), its Opus review's
+    follow-ups by the lead, root-only mount tests run as root on Linux.
+  - Final: two Opus whole-change reviews of `0b09883c` (no P1/P2) and an Opus merge
+    review of `380d7f86` (ACCEPT) after v1's B1b block 3 came in.
+- **Evidence at `380d7f86`:** Linux clippy clean, 4083 tests pass (0 failed), LNX-3 3/3;
+  LNX-2 passes on Docker Desktop (scratch logs `rx5l.keep.log`,
+  `lnx2-380d7f86-c.keep.log`). A first LNX-2 after a cold `target/linux` can fail with
+  E0463 over Docker Desktop's file share, and a first start can exceed `wait_until`'s
+  30 s under a load average near 40; reruns passed. Track A's
+  `inspected_session_uses_current_protected_facts_and_monotonic_absolute_limit` failed
+  once under load (a 200 ms window) and passed 10/10 alone.
+- **Follow-ups (P3, in FC-164):** the web process reports `http_loopback` as the listen
+  scheme of a published listener; a failed `disable --now` while replacing a running
+  systemd unit leaves the old process running until its next restart. Open: rerun the
+  kit's UI check on a quiet machine (vitest 5 s timeouts under load); X6 (CI container
+  job, empty platform list) and X7 (HTTPS).

@@ -11,7 +11,9 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -249,44 +251,271 @@ def finding_signature(review):
     return sorted((f["file"], f["priority"], f["title"].strip(), f["detail"].strip()) for f in review["findings"])
 
 
+REVIEW_SANDBOX = ".agent-kit/policy/review-sandbox.json"
+# Never copied into a review clone: the clones themselves, logs, and large derived indexes/build output.
+CLONE_ALWAYS_EXCLUDED = (".agent-kit/reviews", ".agent-kit/logs", ".agent-kit/tools")
+
+
+def review_sandbox(repo, base):
+    """The fresh-review sandbox, read from the task's BASE commit so the change under review cannot widen it.
+    None keeps the original read-only review."""
+    shown = subprocess.run(["git", "-C", str(repo), "show", f"{base}:{REVIEW_SANDBOX}"], capture_output=True)
+    if shown.returncode != 0:
+        return None
+    try:
+        value = json.loads(shown.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid {REVIEW_SANDBOX} at {base}: {exc}") from exc
+    if not isinstance(value, dict) or value.get("version") != 2 or value.get("mode") != "clone" \
+            or not isinstance(value.get("network_access"), bool) or not isinstance(value.get("exclude"), list):
+        raise ValueError(f"Invalid {REVIEW_SANDBOX} at {base}")
+    for relative in value["exclude"]:
+        parts = Path(relative).parts if isinstance(relative, str) else ()
+        if not parts or Path(relative).is_absolute() or ".." in parts:
+            raise ValueError(f"{REVIEW_SANDBOX}: exclude {relative!r} must be a relative path inside the checkout")
+    sandbox = value.get("sandbox", "workspace-write")
+    if sandbox not in {"workspace-write", "danger-full-access"}:
+        raise ValueError(f"{REVIEW_SANDBOX}: sandbox must be workspace-write or danger-full-access")
+    if sandbox == "danger-full-access" and not value["network_access"]:
+        raise ValueError(f"{REVIEW_SANDBOX}: danger-full-access always has network; set network_access true")
+    protected = value.get("protected_refs", [])
+    if not isinstance(protected, list) or not all(isinstance(ref, str) and ref.startswith("refs/") for ref in protected):
+        raise ValueError(f"{REVIEW_SANDBOX}: protected_refs must be a list of refs/... patterns")
+    if sandbox == "danger-full-access" and not protected:
+        raise ValueError(f"{REVIEW_SANDBOX}: danger-full-access needs protected_refs (the branches and tags to guard)")
+    return {"mode": "clone", "sandbox": sandbox, "network_access": value["network_access"],
+            "exclude": sorted(set(value["exclude"]) | set(CLONE_ALWAYS_EXCLUDED)), "protected_refs": protected}
+
+
+# Copy-on-write where the platform has it: APFS clonefile on macOS, reflinks elsewhere (a plain copy when unsupported).
+CLONE_COPY = ["cp", "-cRP"] if sys.platform == "darwin" else ["cp", "-a", "--reflink=auto"]
+
+
+def clone_checkout(repo, dest, exclude):
+    """A disposable copy of the checkout. Only directories that contain an excluded path are walked; everything else
+    is copied whole."""
+    skip = {Path(p) for p in exclude}
+    walk = {parent for p in skip for parent in p.parents if parent != Path(".")}
+
+    def copy(relative):
+        for entry in sorted((repo / relative).iterdir()):
+            rel = relative / entry.name
+            if rel in skip:
+                continue
+            if rel in walk and entry.is_dir() and not entry.is_symlink():
+                (dest / rel).mkdir()
+                copy(rel)
+            elif subprocess.run([*CLONE_COPY, str(entry), str(dest / rel)], capture_output=True).returncode != 0:
+                remove_clone(dest / rel)  # a partial copy would make the fallback copy into it
+                subprocess.run(["cp", "-RP", str(entry), str(dest / rel)], check=True, capture_output=True)
+
+    dest.mkdir()
+    copy(Path("."))
+
+
+def git_guard(repo, protected_refs=()):
+    """What git itself would run, obey or merge later and the source fingerprint does not cover, as named entries:
+    where the git dirs are, config and config.worktree, hooks and info with file modes (the shared ones and this
+    worktree's), shallow, object alternates, every linked worktree's pointers, and the refs matching protected_refs
+    (for-each-ref patterns). A symlink records its target, not the target's contents. Compare with guard_changed."""
+    def where(flag):
+        path = Path(os.fsdecode(git(repo, "rev-parse", flag)).strip())
+        return (path if path.is_absolute() else repo / path).resolve()
+    common, own = where("--git-common-dir"), where("--git-dir")
+    entries = {"git dirs": f"{common}\0{own}"}
+    dot = repo / ".git"
+    if dot.is_file() or dot.is_symlink():
+        entries[".git"] = os.readlink(dot) if dot.is_symlink() else digest(dot.read_bytes())
+    paths = [common / "config", common / "config.worktree", common / "shallow", common / "objects/info/alternates",
+             own / "config.worktree"]
+    for root in sorted({common, own}):
+        for folder in ("hooks", "info"):
+            place = root / folder
+            entries[str(place)] = f"link {os.readlink(place)}" if place.is_symlink() else "dir" if place.is_dir() else "-"
+            if place.is_dir() and not place.is_symlink():
+                paths += place.rglob("*")
+    if (common / "worktrees").is_dir():
+        for tree in (common / "worktrees").iterdir():
+            entries[f"worktree\0{tree}"] = "present"
+            paths += [tree / name for name in ("commondir", "gitdir", "config.worktree")]
+    # Upstream tracking ([branch "x"] remote/merge) and gh's remote.*.gh-resolved are written by ordinary branch work
+    # elsewhere; config files are compared by setting, without those, unless the branch is protected.
+    kept = {ref[len("refs/heads/"):] for ref in protected_refs if ref.startswith("refs/heads/") and not ref.endswith("/")}
+    def setting(entry):
+        key = entry.split("\n", 1)[0].lower()
+        if key.endswith(".gh-resolved") and key.startswith("remote."):
+            return False
+        if key.startswith("branch.") and key.count(".") >= 2:
+            return entry.split("\n", 1)[0][len("branch."):].rsplit(".", 1)[0] in kept
+        return True
+    for path in sorted(set(paths)):
+        if path.is_symlink():
+            entries[str(path)] = f"link {os.readlink(path)}"
+        elif path.is_dir():
+            entries[str(path)] = "dir"
+        elif path.is_file() and path.name in ("config", "config.worktree"):
+            listed = git(repo, "config", "--file", str(path), "--no-includes", "--null", "--list")
+            values = [entry for entry in os.fsdecode(listed).split("\0") if entry and setting(entry)]
+            entries[str(path)] = f"{stat.S_IMODE(path.lstat().st_mode):o}\0{digest(chr(0).join(values).encode())}"
+        elif path.is_file():
+            entries[str(path)] = f"{stat.S_IMODE(path.lstat().st_mode):o}\0{digest(path.read_bytes())}"
+    if protected_refs:
+        refs = git(repo, "for-each-ref", "--format=%(refname) %(objectname)", *protected_refs)
+        entries["protected refs"] = digest(refs)
+    return entries
+
+
+def guard_changed(before, after):
+    """Changed guarded entries. A linked worktree added or removed while the review ran is other work: its own
+    entries are ignored. Every other entry, including those of a worktree present before and after, must match."""
+    def tree(key):
+        return key.split("\0", 1)[1] if key.startswith("worktree\0") else str(Path(key).parent)
+    came_or_went = {tree(key) for key in set(before) ^ set(after) if key.startswith("worktree\0")}
+    return [key for key in sorted(set(before) | set(after)) if before.get(key) != after.get(key)
+            and not (key.startswith("worktree\0") or tree(key) in came_or_went)]
+
+
+def remove_clone(path):
+    """Delete a review clone or scratch folder even if the reviewer locked files in it. Links are removed, never
+    followed, so this never touches the real checkout."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return
+    if not path.exists():
+        return
+    if shutil.which("chflags"):
+        subprocess.run(["chflags", "-R", "nouchg,nouappnd", str(path)], capture_output=True)
+    if sys.platform == "darwin":
+        subprocess.run(["chmod", "-R", "-N", str(path)], capture_output=True)  # ACLs, after the flags allow it
+    subprocess.run(["chmod", "-R", "u+rwx", str(path)], capture_output=True)
+    shutil.rmtree(path, ignore_errors=True)
+    if path.exists():
+        print(f"warning: could not fully remove review clone {path}", file=sys.stderr)
+
+
+def sweep(paths):
+    """Best effort: kill processes that escaped the turn's process group (setsid) but still work in its clone or
+    scratch folder, judged by their working directory."""
+    # lsof reports resolved paths (/private/var/... for /var/...).
+    prefixes = [os.path.realpath(p) for p in paths if p is not None]
+    if not prefixes or not shutil.which("lsof"):
+        return
+    listing = subprocess.run(["lsof", "-d", "cwd", "-Fpn"], capture_output=True, text=True).stdout
+    pid = None
+    for line in listing.splitlines():
+        if line.startswith("p"):
+            pid = int(line[1:])
+        elif line.startswith("n") and pid not in (None, os.getpid()) and any(
+                line[1:] == p or line[1:].startswith(p + os.sep) for p in prefixes):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+
 def review_model(state):
     return state.get("review_model", LEGACY_REVIEW_MODEL)
 
 
-def invoke(repo, directory, phase, prompt, effort, timeout, model, session=None, executable="codex"):
+def invoke(repo, directory, phase, prompt, effort, timeout, model, session=None, executable="codex", review_box=None):
     schema = FIX_SCHEMA if phase == "fix" else REVIEW_SCHEMA
     write(directory / f"{phase}-schema.json", schema)
-    write(directory / f"{phase}-prompt.txt", prompt)
-    result_path = directory / f"{phase}.json"
-    args = [executable, "exec"] + (["resume"] if session else [])
-    args += ["-m", model, "-c", f'model_reasoning_effort="{effort}"',
-             "-c", "agents.enabled=false",
-             "-c", "features.hooks=false", "-c", "mcp_servers.hindsight.enabled=false",
-             "-c", 'approval_policy="never"', "-c", f'sandbox_mode="{"workspace-write" if session else "read-only"}"',
-             "--json", "--output-schema", str(directory / f"{phase}-schema.json"),
-             "--output-last-message", str(result_path)]
-    if session:
-        args.append(session)
-    args.append("-")
-    write(directory / f"{phase}-command.json", {"argv": args, "cwd": str(repo)})
     started = time.monotonic()
-    for name in (f"{phase}-events.jsonl", f"{phase}-stderr.txt"):
-        write(directory / name, "")
     process, reason = None, "error"
     ids, completed, failed, usage = [], 0, False, []
+    clone, scratch, env, before, guarded = None, None, {}, [], None
     try:
-        with (directory / f"{phase}-events.jsonl").open("w") as events, (directory / f"{phase}-stderr.txt").open("w") as errors:
-            process = subprocess.Popen(args, cwd=repo, stdin=subprocess.PIPE, stdout=events,
-                                       stderr=errors, text=True, start_new_session=True,
-                                       env={**os.environ, "AGENT_KIT_MEMORY_ACCESS": "review",
-                                            "HINDSIGHT_DISABLED": "true"})
+        try:
+            if session:
+                # A repair turn writes the real checkout (-C pins it even though the review ran elsewhere).
+                cwd, before, sandbox = repo, ["-C", str(repo)], ["-c", 'sandbox_mode="workspace-write"']
+            elif review_box is None:
+                cwd, sandbox = repo, ["-c", 'sandbox_mode="read-only"']
+            else:
+                # A fresh review works in a disposable clone of the checkout, so it can run every project check,
+                # and the clone is deleted afterwards. The user's Codex config (and its MCP servers, which run outside
+                # the sandbox) is not loaded. In workspace-write the real checkout, the run folder and shared temp
+                # folders are read-only and network follows the pinned policy. In danger-full-access (owner decision,
+                # so browsers can launch) nothing is enforced by the sandbox: the runner detects changes to source
+                # files, HEAD and the index (fingerprint) and to git config, hooks, info (with modes), shallow,
+                # alternates, worktree links and the policy's protected refs (git_guard; worktrees added or removed
+                # meanwhile, and other branches' upstream tracking settings, are ignored); not to other refs, ignored
+                # files, the run folder, git objects, a core.hooksPath
+                # target, included, global or submodule git config, anything outside the checkout, or later writes
+                # by a process that escaped the turn.
+                clone = directory / f"{phase}-clone"
+                remove_clone(clone)
+                # A private temp folder outside any repository (tests may expect git to fail in a temp folder).
+                scratch = Path(tempfile.mkdtemp(prefix="agent-kit-review-")).resolve()
+                clone_checkout(repo, clone, review_box["exclude"])
+                cwd, env = clone, {"TMPDIR": str(scratch)}
+                before = ["--ignore-user-config"]
+                full = review_box.get("sandbox") == "danger-full-access"
+                sandbox = ["-c", 'sandbox_mode="danger-full-access"', "--skip-git-repo-check"] if full else [
+                           "-c", 'sandbox_mode="workspace-write"',
+                           "-c", f"sandbox_workspace_write.writable_roots={json.dumps([str(scratch)])}",
+                           "-c", f"sandbox_workspace_write.network_access={'true' if review_box['network_access'] else 'false'}",
+                           "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
+                           "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+                           "--skip-git-repo-check"]
+                guard = ("must not be modified: the runner rejects the review if source files, HEAD, the index, git "
+                         "config, hooks, info, shallow, alternates, worktree links or protected branches, tags and replace refs "
+                         "change; other branches are not checked, and you must not change them either" if full else "are read-only for you")
+                prompt = (f"You are in {clone}, a disposable copy of the checkout {repo} at the commit under review "
+                          f"(without {', '.join(review_box['exclude'])}). Read {clone / codex_instruction_file(repo).name} "
+                          f"first. Run any project checks, including browser checks, in this copy; it is deleted afterwards, "
+                          f"and the real checkout and the run folder {guard}. Project MCP tools (code lookup, language servers) are not "
+                          "available here: use shell search and the checks. Paths below name the real checkout or the run "
+                          "folder; read them as given.\n\n" + prompt)
+            write(directory / f"{phase}-prompt.txt", prompt)
+            result_path = directory / f"{phase}.json"
+            args = [executable, "exec", *before] + (["resume"] if session else [])
+            args += ["-m", model, "-c", f'model_reasoning_effort="{effort}"',
+                     "-c", "agents.enabled=false", "-c", "features.hooks=false",
+                     # The user config defines hindsight; without it (clone turns) the override would be an invalid entry.
+                     *([] if clone is not None else ["-c", "mcp_servers.hindsight.enabled=false"]),
+                     "-c", 'approval_policy="never"', *sandbox,
+                     "--json", "--output-schema", str(directory / f"{phase}-schema.json"),
+                     "--output-last-message", str(result_path)]
+            if session:
+                args.append(session)
+            args.append("-")
+            write(directory / f"{phase}-command.json", {"argv": args, "cwd": str(cwd)})
+            for name in (f"{phase}-events.jsonl", f"{phase}-stderr.txt"):
+                write(directory / name, "")
+            guarded = (git_guard(repo, review_box.get("protected_refs", ())) if clone is not None
+                       and review_box.get("sandbox") == "danger-full-access" else None)
+            with (directory / f"{phase}-events.jsonl").open("w") as events, (directory / f"{phase}-stderr.txt").open("w") as errors:
+                process = subprocess.Popen(args, cwd=cwd, stdin=subprocess.PIPE, stdout=events,
+                                           stderr=errors, text=True, start_new_session=True,
+                                           env={**os.environ, "AGENT_KIT_MEMORY_ACCESS": "review",
+                                                "HINDSIGHT_DISABLED": "true", **env})
+                try:
+                    process.communicate(prompt, timeout=timeout)
+                except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
+                    reason = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "interrupted"
+                    raise ValueError(f"Codex {phase} interrupted/timed out; no approval") from exc
+        finally:
             try:
-                process.communicate(prompt, timeout=timeout)
-            except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
-                reason = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "interrupted"
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-                raise ValueError(f"Codex {phase} interrupted/timed out; no approval") from exc
+                if process is not None:
+                    # Leftover children of the turn never outlive it.
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                    process.wait()
+                sweep([clone, scratch])
+                for path in (clone, scratch):
+                    if path is not None:
+                        remove_clone(path)
+            finally:
+                # Also on timeout, interrupt or a failed cleanup, so a stalled turn cannot leave a planted hook as
+                # the next baseline; an exception in flight stays attached as __context__.
+                changed = (guard_changed(guarded, git_guard(repo, review_box.get("protected_refs", ())))
+                           if guarded is not None else [])
+                if changed:
+                    raise ValueError(f"Git state the runner guards changed in the real checkout during Codex {phase} "
+                                     f"(by the reviewer or concurrent git activity): {', '.join(changed)}; no approval")
         with (directory / f"{phase}-events.jsonl").open() as events:
             for line in events:
                 if len(line) > 2_000_000:
@@ -386,7 +615,8 @@ def start(args):
                  "effort": args.effort, "final_effort": args.final_effort, "codex_version": version,
                  "scopes": scopes, "max_rounds": args.rounds, "rounds": [], "source": before,
                  "routing": selection, "skill_packets": skill_packets,
-                 "config_sha256": config_hash, "task_sha256": digest(task.encode())}
+                 "config_sha256": config_hash, "task_sha256": digest(task.encode()),
+                 "review_sandbox": review_sandbox(repo, base)}
         write(directory / "task.md", task)
         write(directory / "assessment.json", assessment)
         write(directory / "routing.json", selection)
@@ -410,7 +640,8 @@ def start(args):
                 prompt = (f"Review only. Do not edit, stage, commit, push, delegate, or invoke the review runner. "
                           f"Read {codex_instruction_file(repo).name} and relevant project guidance. Review the complete task diff from {base} "
                           f"to HEAD ({current['head']}) and relevant surrounding source, tests and user-facing outputs. "
-                          f"Read the task contract at {directory / 'task.md'}. Use search and configured navigation tools. "
+                          f"Read the task contract at {directory / 'task.md'}. "
+                          f"{'Use shell search. ' if state.get('review_sandbox') else 'Use search and configured navigation tools. '}"
                           f"Read {directory / 'review-skills.json'} and its required project-role/skill sources. "
                           "Apply the listed critical-area review procedures; missing skill evidence means incomplete. "
                           "Do not read earlier review-round artifacts: independently inspect the code in this fresh session. "
@@ -419,7 +650,7 @@ def start(args):
                           "Return only the required JSON. Clean means no actionable findings; it is not final acceptance.")
                 review, session = invoke(repo, round_dir, "review", prompt, args.effort,
                                          min(args.timeout, max(1, deadline - time.monotonic())), review_model(state),
-                                         executable=args.codex)
+                                         executable=args.codex, review_box=review_sandbox(repo, state["base"]))
                 validate_review(review)
                 if session in {r.get("session_id") for r in state["rounds"]}:
                     raise ValueError("Each review round must start a fresh session")
@@ -443,7 +674,9 @@ def start(args):
                 previous_findings = signature
                 if time.monotonic() >= deadline:
                     raise ValueError("Review run time budget exhausted before fixes")
-                prompt = ("Now verify each finding against the task contract and apply confirmed fixes in this SAME session. "
+                moved = (f"You now run in the real checkout {repo} with write access to it; the earlier note about a "
+                         "disposable copy no longer applies, and fixes belong here. ") if state.get("review_sandbox") else ""
+                prompt = (moved + "Now verify each finding against the task contract and apply confirmed fixes in this SAME session. "
                           f"Read {round_dir / 'review.json'} if needed. Authorized paths: {json.dumps(scopes)}. "
                           f"Read {directory / 'implementation-skills.json'} and its required role/skill sources before repairs. "
                           "Make only fixes necessary for reproducible or clearly evidenced bugs, including meaningful regression checks. "
@@ -579,7 +812,7 @@ def final_review(args):
         try:
             review, session = invoke(repo, directory / "final", "final", prompt,
                                      state["final_effort"], args.timeout, state["final_model"],
-                                     executable=args.codex)
+                                     executable=args.codex, review_box=review_sandbox(repo, state["base"]))
             state = current_run(directory)
             record_final(directory, state, {"head": state["head"], "session_id": session,
                          "model": state["final_model"], "effort": state["final_effort"], "review": review})

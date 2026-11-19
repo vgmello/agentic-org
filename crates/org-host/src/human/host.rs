@@ -68,6 +68,26 @@ pub(crate) fn verify_host(stream: &UnixStream) -> Result<VerifiedHost, String> {
     })
 }
 
+/// What root, acting for the service user `uid`, accepts as that user's host on
+/// `host.sock`: a peer the system names by its user alone, and that user is `uid`. Where
+/// the system identifies a peer's image instead, root has no route to another user's host
+/// (SIGN-33 is the dialog at the console there), and this refuses.
+pub(crate) fn verify_service_host(stream: &UnixStream, uid: u32) -> Result<(), String> {
+    match crate::peer::identity(stream) {
+        Ok(host) if host.uid == Some(uid) => Ok(()),
+        Ok(_) => Err("the socket is not served by that user's service".into()),
+        Err(_) => Err("host identity unavailable".into()),
+    }
+}
+
+/// Whether this system names a peer by its user alone, asked of a connection of this
+/// process to itself: what a command needs to know to say who may reset the administrator.
+pub(crate) fn host_is_named_by_user_alone() -> bool {
+    UnixStream::pair().is_ok_and(|(one, _other)| {
+        crate::peer::identity(&one).is_ok_and(|identity| identity.uid.is_some())
+    })
+}
+
 /// The decision: `signed` is whether the host's image satisfies the signed host's
 /// requirement; `this_user_alone` whether the system names it by its user alone, and that
 /// user is this one; `own_executable` whether a debug build finds its own executable there

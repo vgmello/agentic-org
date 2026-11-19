@@ -89,26 +89,26 @@
 				{#if mode === 'unknown'}
 					<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6">
 						<input type="radio" name="run-mode" value="unknown" class="mt-1" checked disabled />
-						<span><span class="block text-white">Not recognised</span><span class="block text-xs/5 text-gray-400">This app can't read how it runs. Choose one.</span></span>
+						<span><span class="block text-fg">Not recognised</span><span class="block text-xs/5 text-fg-muted">This app can't read how it runs. Choose one.</span></span>
 					</label>
 				{/if}
 				{#each RUN_MODES as m (m.id)}
-					<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-white/5">
+					<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-surface-raised">
 						<input type="radio" name="run-mode" value={m.id} class="mt-1" bind:group={mode} />
-						<span><span class="block text-white">{m.label}</span><span class="block text-xs/5 text-gray-400">{m.help}</span></span>
+						<span><span class="block text-fg">{m.label}</span><span class="block text-xs/5 text-fg-muted">{m.help}</span></span>
 					</label>
 				{/each}
-				<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-white/5">
+				<label class="flex items-start gap-x-3 rounded-md px-2 py-1.5 text-sm/6 hover:bg-surface-raised">
 					<input type="radio" name="run-mode" value="" class="mt-1" bind:group={mode} />
-					<span><span class="block text-white">Started by a person</span><span class="block text-xs/5 text-gray-400">The office never starts it: you start it by hand.</span></span>
+					<span><span class="block text-fg">Started by a person</span><span class="block text-xs/5 text-fg-muted">The office never starts it: you start it by hand.</span></span>
 				</label>
 			</fieldset>
 			{#if mode === 'scheduled'}
-				<div class="grid gap-3 rounded-lg bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10">
+				<div class="grid gap-3 rounded-lg bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line">
 					<div class="space-y-2">
 						<Label for="run-spec">When</Label>
 						<Input id="run-spec" bind:value={spec} disabled={busy} autocomplete="off" placeholder="Weekdays at 9, every 30 minutes…" aria-describedby={spec.trim() === '' ? 'run-spec-help' : undefined} />
-						{#if spec.trim() === ''}<p id="run-spec-help" class="text-xs/5 text-gray-400" data-testid="run-spec-help">Add when it runs to save.</p>{/if}
+						{#if spec.trim() === ''}<p id="run-spec-help" class="text-xs/5 text-fg-muted" data-testid="run-spec-help">Add when it runs to save.</p>{/if}
 					</div>
 					<div class="space-y-2">
 						<Label for="run-zone">Time zone</Label>
@@ -116,8 +116,8 @@
 					</div>
 				</div>
 			{/if}
-			{#if limits}<p class="text-xs/5 text-gray-400" data-testid="run-limits">{limits}</p>{/if}
-			{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if limits}<p class="text-xs/5 text-fg-muted" data-testid="run-limits">{limits}</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
 				<Button type="submit" disabled={busy || scheduleMissing}>Save</Button>

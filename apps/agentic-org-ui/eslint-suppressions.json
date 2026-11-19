@@ -9,11 +9,6 @@
       "count": 1
     }
   },
-  "e2e/org-chart-responsive.spec.ts": {
-    "prefer-const": {
-      "count": 1
-    }
-  },
   "src/lib/components/HeroIcon.svelte": {
     "svelte/require-each-key": {
       "count": 1
@@ -37,11 +32,6 @@
       "count": 1
     }
   },
-  "src/lib/components/Sidebar.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 3
-    }
-  },
   "src/lib/components/TaskSheet.svelte": {
     "@typescript-eslint/no-unused-expressions": {
       "count": 1
@@ -55,11 +45,6 @@
       "count": 1
     }
   },
-  "src/lib/components/testing/office-status.svelte": {
-    "svelte/require-each-key": {
-      "count": 1
-    }
-  },
   "src/lib/components/ui/button/button.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 1
@@ -67,16 +52,6 @@
   },
   "src/lib/modules/copilot/features/draft-text/DraftableText.svelte": {
     "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/lib/modules/employees/AgentsTabs.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    }
-  },
-  "src/lib/modules/employees/AgentsTabs.test.ts": {
-    "@typescript-eslint/no-empty-object-type": {
       "count": 1
     }
   },
@@ -125,19 +100,9 @@
       "count": 12
     }
   },
-  "src/lib/modules/processes/features/inspect-effective/ProcessSheet.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 3
-    }
-  },
   "src/lib/office/mock.ts": {
     "@typescript-eslint/no-unused-vars": {
       "count": 2
-    }
-  },
-  "src/lib/offices/OfficeRepairLocation.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
     }
   },
   "src/lib/org/reducer.ts": {
@@ -219,11 +184,6 @@
       "count": 1
     }
   },
-  "src/routes/(shell)/agents/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 3
-    }
-  },
   "src/routes/(shell)/chat/+page.svelte": {
     "no-undef": {
       "count": 2
@@ -233,34 +193,6 @@
     },
     "svelte/no-useless-mustaches": {
       "count": 1
-    }
-  },
-  "src/routes/(shell)/offices/+page.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/routes/(shell)/org-chart/+page.svelte": {
-    "@typescript-eslint/no-unused-expressions": {
-      "count": 7
-    }
-  },
-  "src/routes/(shell)/processes/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    },
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/routes/(shell)/projects/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    }
-  },
-  "src/routes/(shell)/projects/[id]/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 2
     }
   },
   "src/routes/(shell)/work/+page.svelte": {

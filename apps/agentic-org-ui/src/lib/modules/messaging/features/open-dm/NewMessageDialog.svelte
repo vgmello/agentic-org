@@ -56,16 +56,16 @@
 				<ul class="max-h-64 space-y-1 overflow-y-auto" data-testid="dm-members">
 					{#each choices as m (m.id)}
 						<li>
-							<label class="flex items-center gap-x-2 rounded-md px-2 py-1 text-sm/6 text-gray-200 hover:bg-white/5">
-								<input type="checkbox" value={m.id} bind:group={picked} disabled={busy || (picked.length >= max && !picked.includes(m.id))} class="accent-indigo-500" />
-								{m.name} <span class="text-xs/5 text-gray-400">{m.kind === 'agent' ? 'agent' : 'person'}</span>
+							<label class="flex items-center gap-x-2 rounded-md px-2 py-1 text-sm/6 text-fg-body hover:bg-surface-raised">
+								<input type="checkbox" value={m.id} bind:group={picked} disabled={busy || (picked.length >= max && !picked.includes(m.id))} class="accent-primary" />
+								{m.name} <span class="text-xs/5 text-fg-muted">{m.kind === 'agent' ? 'agent' : 'person'}</span>
 							</label>
 						</li>
 					{/each}
 				</ul>
 			</fieldset>
-			{#if picked.length >= max}<p class="text-xs/5 text-gray-400">A group has up to {CHAT_LIMITS.groupDmMax} members, you included.</p>{/if}
-			{#if error}<p class="text-sm/6 text-red-400" role="alert">{error}</p>{/if}
+			{#if picked.length >= max}<p class="text-xs/5 text-fg-muted">A group has up to {CHAT_LIMITS.groupDmMax} members, you included.</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
 				<Button type="submit" disabled={busy || picked.length === 0}>{picked.length > 1 ? 'Start group' : 'Open'}</Button>

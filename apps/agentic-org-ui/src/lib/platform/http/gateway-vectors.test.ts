@@ -632,3 +632,16 @@ for (const [name, read] of Object.entries(terminatorReaders)) {
 		}
 	);
 }
+it('reads each listen scheme the host serves and keeps an unknown one unknown', () => {
+	const canonical = fixtures['gateway-views'].cases.find(
+		(c) => c.name === 'instance canonical view'
+	);
+	const view = record(record(canonical?.wire).result);
+	for (const scheme of ['https', 'http_loopback', 'http_published'] as const) {
+		expect(wire.readInstance({ ...view, listen_scheme: scheme }).listen_scheme).toBe(scheme);
+	}
+	for (const scheme of ['http', 'HTTPS', 'http_published ', 'future_scheme']) {
+		expect(wire.readInstance({ ...view, listen_scheme: scheme }).listen_scheme).toBe('unknown');
+	}
+	expect(() => wire.readInstance({ ...view, listen_scheme: 1 })).toThrow(wire.WireDecodeError);
+});

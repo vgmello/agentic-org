@@ -278,28 +278,25 @@ fn real_datagram_readiness_records_empty_payload_and_peer_close_are_distinct_sta
         "measured datagram peer-close: {closed:?}; receiver_open={}",
         receiver.fd().is_some()
     );
-    #[cfg(target_os = "macos")]
-    // Isolated probes observed RESET; the 7952aabc full-workspace gate observed
-    // WouldBlock instead. Retain its owned fd; a following poll is only logged,
-    // since state can change between calls. No eventual RESET is promised.
-    // Rendezvous owns host lifetime; this makes no kernel-cause claim.
+    // macOS: isolated probes observed RESET; the 7952aabc full-workspace gate observed
+    // WouldBlock instead. Retain its owned fd; a following poll is only logged, since
+    // state can change between calls. No eventual RESET is promised. Rendezvous owns
+    // host lifetime; this makes no kernel-cause claim. Linux only finds nothing to read.
     match closed {
         Err(ReceiveError::WouldBlock) => {
             assert_eq!(receiver.fd().unwrap().as_raw_fd(), raw);
             let readable = org_socket::poll_readable(raw, Duration::from_millis(1)).unwrap();
-            eprintln!("measured Mac datagram peer-close WouldBlock: POLLIN={readable}");
+            eprintln!("measured datagram peer-close WouldBlock: POLLIN={readable}");
+            if !org_platform::socket::DATAGRAM_PEER_CLOSE_MAY_RESET {
+                assert!(!readable);
+            }
         }
-        Err(ReceiveError::Fatal(error)) => {
+        Err(ReceiveError::Fatal(error)) if org_platform::socket::DATAGRAM_PEER_CLOSE_MAY_RESET => {
             assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
             assert_eq!(error.raw_os_error(), Some(libc::ECONNRESET));
             assert!(receiver.fd().is_none());
         }
-        other => panic!("Mac datagram peer close: {other:?}"),
-    }
-    #[cfg(target_os = "linux")]
-    {
-        assert!(matches!(closed, Err(ReceiveError::WouldBlock)));
-        assert!(!org_socket::poll_readable(raw, Duration::from_millis(1)).unwrap());
+        other => panic!("datagram peer close: {other:?}"),
     }
     eprintln!("measured transfer: idle WouldBlock/poll=false; record readable/6bytes/0fds; empty datagram=0bytes/0fds and strict refusal");
 }
@@ -332,10 +329,11 @@ fn real_datagram_sender_full_buffer_and_oversize_report_distinct_errors() {
         "measured sender full: queued={queued} bytes=866 kind={:?} errno={:?} poll={polled} revents={}",
         full.kind(), full.raw_os_error(), readiness.revents
     );
-    #[cfg(target_os = "macos")]
-    assert_eq!(full.raw_os_error(), Some(libc::ENOBUFS));
-    #[cfg(target_os = "linux")]
-    assert_eq!(full.kind(), io::ErrorKind::WouldBlock);
+    // macOS: ENOBUFS; Linux: EAGAIN, the send would block.
+    assert_eq!(
+        full.raw_os_error(),
+        Some(org_platform::socket::DATAGRAM_PEER_FULL)
+    );
     let large = vec![0; 1024 * 1024];
     let oversized = host.send(&large).unwrap_err();
     eprintln!(

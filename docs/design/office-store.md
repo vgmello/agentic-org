@@ -102,7 +102,8 @@ module grows.
 | Family | Home | Built in |
 | --- | --- | --- |
 | Receipts and sequence positions | `org-store` (core) | B1a |
-| Organization and people: organization, offices, office codes, teams, employees, roles, HQ counters and allocations | `org-office/src/organization/` | B1a, B2 |
+| Organization and people: organization, offices, office codes, teams, employees, roles, HQ counters and allocations; the HQ's public CA escrow package `state/security/ca-escrow.v1.bin` | `org-office/src/organization/` | B1a, B2 |
+| Office-local records: the HQ's CA key record `local/offices/<office-id>/security/ca-key.v1.json` and the clean-stop marker `local/offices/<office-id>/clean-stop` (two files, no rows) | `org-office/src/office_local/` | B1b |
 | Projects | `org-office/src/projects/` | B3 |
 | Work: tasks, task events, the office task counter | `org-work` | B4 |
 | Messaging: conversations, messages, participant state, status | `org-mailbox` | B6 |
@@ -111,21 +112,27 @@ module grows.
 
 **Dependencies** point from composition to families to the foundation. `org-store` has no
 edge to `org-proto`: it checks only that an ID is one safe path component, and each
-family validates the form of its own IDs (UUIDv7):
+family validates the form of its own IDs (UUIDv7). Since B1b (`crates/org-office/Cargo.toml`,
+`apps/agentic-org-office/Cargo.toml`):
 
 ```text
-apps/agentic-org-office ─> org-office ─┬─> org-store    (─> org-platform once X1b lands)
-                                       ├─> org-work ────> org-store, org-docs, org-proto
-                                       ├─> org-mailbox ─> org-store, org-proto
-                                       ├─> org-docs
-                                       └─> rusqlite        (only from src/store/sqlite/)
-org-sync (parked) ─> org-store          (from S1)
+apps/agentic-org-office ─┬─> org-office ─┬─> org-store ──> org-platform
+                         │               ├─> org-docs, org-proto, org-platform
+                         │               ├─> org-office-launch (only writer::marker, the host's custody marker)
+                         │               └─> rusqlite          (only from src/store/sqlite/)
+                         ├─> org-store    (WriterAuthority over the host channel)
+                         └─> org-work, org-mailbox            (not on the store yet)
 ```
 
-`org-office/src/store/mod.rs` is the one composition seam: `open_store(&StoreConfig)`
-builds the office's store with the engine the configuration names. Production builds
-know `Sqlite`; `Memory` exists only with the `testkit` feature; any other name is
-refused at composition.
+`org-office` no longer depends on `org-work`, `org-mailbox` or `org-sync`. Its edges to
+`org-work` (B4) and `org-mailbox` (B6) come back when those families move onto the store,
+each family crate then depending on `org-store`; `org-sync` (parked) depends on
+`org-store` from S1.
+
+The composition seam is `open_store(&StoreConfig)` in `org-office/src/store/open.rs`
+(`store/mod.rs` only declares `open` and `sqlite`): it builds the office's store with
+the engine the configuration names. Production builds know `Sqlite`; `Memory` exists
+only with the `testkit` feature; any other name is refused at composition.
 
 **Target layout** (B1a to B1c; later families add the parts marked):
 
@@ -147,8 +154,10 @@ crates/org-office/src/
   organization/     # records.rs ports.rs projector.rs features/ testkit.rs
   projects/         # same shape (B3)
   employees/        # same shape (C2, C3)
+  office_local/     # the office-local records: CA key record, clean-stop marker (B1b)
   store/
-    mod.rs          # open_store: the seam
+    mod.rs          # declares open and sqlite
+    open.rs         # open_store: the seam; open/operations.rs, the family operations it runs
     sqlite/
       mod.rs        # SqliteEngine: connections, pragmas, cursor, sources, reader pool
       schema.rs     # the contract's schema.sql, the adapter's tables and indexes, digest
@@ -162,7 +171,7 @@ crates/org-mailbox/src/   # the same (B6)
 **What happens to what exists.**
 
 - `crates/org-office/src/store.rs` and `store/`: deleted whole in B1b and replaced by
-  `store/mod.rs` and `store/sqlite/` (section 11).
+  `store/mod.rs`, `store/open.rs` with `store/open/`, and `store/sqlite/` (section 11).
 - `crates/org-docs`: kept as it is: the strict front-matter parser and the
   source-preserving editor that family codecs call. It does no I/O and knows no family.
 - `org-work`'s `WorkStore`, `WorkTxn`, `WorkReads` and `OrgView`: replaced in B4 by
@@ -174,8 +183,12 @@ crates/org-mailbox/src/   # the same (B6)
 - `org-sync`'s `OrgStore`, `MessageStore` and `LocalStreamStore`: parked; S1 re-expresses
   them over the remote apply and outbox of section 10.
 - The conformance suites keep their form: a macro in the family's testkit, invoked once
-  per engine (today `mailbox_conformance_tests!` in `crates/org-office/src/messaging.rs`
-  and the replication suite in `store/org/replication/conformance.rs`).
+  per engine. Today `organization_conformance_tests!` (`org-office/src/organization/testkit.rs`)
+  and `org_store::engine_conformance_tests!` run on the memory engine and on
+  `store/sqlite/`. B1b deleted the old store's runs of `org-mailbox`'s suites
+  (`crates/org-office/src/messaging.rs`) and the replication suite
+  (`store/org/replication/conformance.rs`); `org-mailbox`'s suites stay in its testkit
+  for B6.
 
 ## 3. The contracts
 
@@ -286,8 +299,9 @@ Receipts are the core's own family: a receipt is the file
 source is the adapter's own table `store_receipts`: the receipt whole, with its
 acknowledgement class, its journal ordinal and its original reply. The store must hold
 receipts before an organization exists, and every row of the contract's
-`mutation_receipts` refers to an organization. B1a does not write `mutation_receipts`;
-the increment that first reads it (B1b or B2) projects into it. This is a deviation from
+`mutation_receipts` refers to an organization. B1a and B1b do not write
+`mutation_receipts`; B2, the increment that first reads it (`operation.get` for
+organization commands answers `unsupported` until then), projects into it. This is a deviation from
 this design's earlier text, which had the core projector fill `mutation_receipts`
 directly (decided in B1a's review, finding F2).
 
@@ -851,14 +865,50 @@ three adds an operation kind and a consumer, not another store.
 
 ## 11. What is deleted and what is kept
 
-Today's store is `crates/org-office/src/store.rs` and `store/`: 14,694 lines outside
+The old store was `crates/org-office/src/store.rs` and `store/`: 14,694 lines outside
 test files and 33,948 with them, over two SQLite databases (`org.db` and `office.db`
-under the host home's `offices/<office-id>/`, `crates/org-office/src/office.rs`), with the
-old tables as the source of truth. **B1b deletes all of it**, rather than family by
-family, so that the office has one writer, one database and one place for SQL. Calls
-that only the old tables served answer `unsupported` until their family is rebuilt on
-the new store: work in B4; messaging and status in B6; process ownership in C3. Nobody
-uses them yet.
+under the host home's `offices/<office-id>/`, then `crates/org-office/src/office.rs`), with
+the old tables as the source of truth. **B1b deleted all of it**, rather than family by
+family, so that the office has one writer, one database and one place for SQL.
+
+**What the code does since B1b.**
+
+- `org_office::Office` (`crates/org-office/src/office/mod.rs`) opens its store through
+  `open_store` (`store/open.rs`) on the organization's data roots,
+  `<data-root>/<org-id>/durable` and `<data-root>/<org-id>/runtime`, under the host's
+  writer custody: `apps/agentic-org-office/src/transfer/writer.rs` implements
+  `org_store::WriterAuthority` over the writer-control wire (version 2); the store reads
+  the confirmed head once at opening and confirms once per group flush, which the host
+  checks (`crates/org-host/src/writer.rs`). Every office needs custody to start.
+- HQ creation is the journal's first entry (`CreateOrganizationOp` in
+  `store/open/operations.rs`): the organization family's files, the public escrow package
+  `state/security/ca-escrow.v1.bin` and the CA key record
+  `local/offices/<office-id>/security/ca-key.v1.json`, which holds the CA private key
+  only wrapped by the office secrets key (ADR-0016). The office folder under the host home
+  keeps only `office.lock`, the creation intent `hq-creation.v1.json`, `office.json` and
+  the host's custody marker (`office/mod.rs`). An office folder the old databases made is
+  refused, not migrated (`office/folder.rs`).
+- The office's native calls answer from the projection: `org.snapshot`, `who`,
+  `inbox.list`, `msg.bind`'s directory lookup (`apps/agentic-org-office/src/directory.rs`)
+  and `team.create` (`Office::submit_org`). Every other call the old tables served
+  answers `unsupported` until its family is rebuilt on the new store: work in B4;
+  operation lookup and the other organization commands in B2; messaging, status lines
+  and `subscribe` in B6 (`apps/agentic-org-office/src/lib.rs`, `msg_calls.rs`,
+  `serve.rs`). Process ownership (C3) is not served at all.
+- ENG-1 for the office: `crates/org-office/tests/engine_boundary.rs` parses every Rust
+  file of `org-office` with `syn` and fails on a `rusqlite` path or an SQL string outside
+  `src/store/sqlite/`, with an empty allowlist. ENG-2: `TestOffice` opens on the memory
+  engine by default (`office/testkit.rs`) and `office/tests.rs` runs its cases on both
+  engines.
+- Deleting `runtime/<office-id>/` and starting again rebuilds the projection with nothing
+  lost: in process (`office/tests.rs`
+  `deleting_the_runtime_folder_rebuilds_an_equal_projection`), through the real worker
+  (`apps/agentic-org-office/tests/launch/activation/owner.rs`
+  `deleting_the_runtime_folder_rebuilds_the_same_organization_on_restart`) and through the
+  real host and web process (`crates/org-host/src/web_process_tests/organizations.rs`
+  `actual_office_runtime_deleted_while_stopped_is_rebuilt_and_the_organization_stays_listed`,
+  ignored, run with the built binaries). A team answered and then killed survives
+  (`owner.rs` `a_committed_team_survives_killing_the_worker_after_its_answer`).
 
 | Deleted in B1b | Replaced by |
 | --- | --- |
@@ -866,7 +916,7 @@ uses them yet.
 | `store/org.rs`, `store/org/` (activity, operation, snapshot, work view, replication and its tests) | The organization family; replication in S1 (section 10) |
 | `store/acceptance.rs`, `store/acceptance/` (`rows.rs` capture triggers, `schema.rs`, `crash.rs`, `durable.rs`, tests) | `org-store` journal, flusher, files and crash points |
 | `store/origin.rs` | `org-store` sequences |
-| `store/hq_creation.rs` (`local_hq_creation`) | The organization family; the CA key as a protected record wrapped by the office secrets key (ADR-0016) under `local/offices/<office-id>/` |
+| `store/hq_creation.rs` (`local_hq_creation`) | The organization family (the escrow package `state/security/ca-escrow.v1.bin`) and the office-local family (`office_local/`: the CA key record `local/offices/<office-id>/security/ca-key.v1.json`, wrapped by the office secrets key, ADR-0016), both written by creation's journal entry |
 | `store/work.rs`, `store/work/` | The work family (B4) |
 | `store/messages.rs`, `store/status.rs`, `crates/org-office/src/messaging.rs` | The messaging family (B6) |
 | `store/owned_processes.rs` | Process cleanup records as files under `recovery/offices/<office-id>/cleanup/` (C3, document 16) |
@@ -896,8 +946,10 @@ SQLCipher-initialization tests) with SQLCipher (ADR-0016).
   request fails alone; when SQLite ends the transaction the others run again; a failed
   commit fails every request): ported to `org-store`'s writer suite.
 - **`WriterAuthority`** and its host channel adapter in
-  `apps/agentic-org-office/src/transfer/writer.rs`: moved to `org-store` unchanged in
-  shape.
+  `apps/agentic-org-office/src/transfer/writer.rs`: the trait is `org-store`'s; the
+  adapter speaks the writer-control wire version 2 (`org_office_launch::writer`), with
+  per-stream high-waters and the organization's data roots, and the host confirms once
+  per flush.
 - **The conformance suites** of `org-mailbox` (`testkit/conformance.rs`,
   `triage_conformance.rs`) and `org-sync`: restated over the new ports in B6 and S1.
   `org-work`'s `MemStore` becomes the work family's memory port in B4.
@@ -930,8 +982,8 @@ SQLCipher-initialization tests) with SQLCipher (ADR-0016).
 
 Each needs a decision during B1; the recommendation is what this design assumes.
 
-1. **Generic office or trait objects.** Decided in B1a: static dispatch, `Office` stays
-   non-generic. `store/open.rs` holds `enum OfficeStore` with one arm per engine (`Sqlite`,
+1. **Generic office or trait objects.** Decided in B1a and kept in B1b: static dispatch,
+   `Office` stays non-generic. `store/open.rs` holds `enum OfficeStore` with one arm per engine (`Sqlite`,
    and `Memory` under `testkit`). An operation is a `StoreOp`, a read is a `ReadOp`; each
    is generic over the engine and compiled once per arm. `OfficeEngine` is a blanket
    supertrait that grows by one bound per family. Nothing above `open_store` is generic,
@@ -966,6 +1018,12 @@ Each needs a decision during B1; the recommendation is what this design assumes.
    30 days. Recommendation: keep the contract's layout in v1 and count files in B1c; if
    it hurts, propose daily receipt segments to the contract owner.
 7. **The clean-stop marker** that tells the work family to jump its task counter to the
-   mark. Recommendation: a file under `local/offices/<office-id>/` written after the last
-   flush of an orderly stop and removed at open.
+   mark. Decided in B1b: `local/offices/<office-id>/clean-stop`, owned by the office-local
+   family (`crates/org-office/src/office_local/clean_stop.rs`). It is read before the
+   store opens and removed, with its folder synced, once the store is open and before
+   anything is submitted; an orderly stop (`Office::close`) writes it after the store has
+   closed, flushed in place and not through the journal, since a lost marker only means
+   "not clean". It holds the journal incarnation and head ordinal; a marker that is torn,
+   in another form or for another incarnation or head counts as not clean.
+   `Office::stopped_cleanly` reports it for B4.
 

@@ -1,0 +1,73 @@
+[
+	{
+		"id": "0193a000-0000-7000-8000-000000000301",
+		"provider": "anthropic",
+		"model": "claude-sonnet-4-5",
+		"effectiveFrom": "2026-09-01T04:00:00Z",
+		"inputMicroUsdPerMillion": 3000000,
+		"outputMicroUsdPerMillion": 15000000,
+		"cacheReadMicroUsdPerMillion": 300000,
+		"cacheWriteMicroUsdPerMillion": 3750000,
+		"created": {
+			"at": "2026-08-30T12:00:00Z",
+			"byName": "Alex Kim"
+		}
+	},
+	{
+		"id": "0193a000-0000-7000-8000-000000000302",
+		"provider": "anthropic",
+		"model": "claude-opus-4-1",
+		"effectiveFrom": "2026-09-01T04:00:00Z",
+		"inputMicroUsdPerMillion": 15000000,
+		"outputMicroUsdPerMillion": 75000000,
+		"cacheReadMicroUsdPerMillion": 1500000,
+		"cacheWriteMicroUsdPerMillion": 18750000,
+		"created": {
+			"at": "2026-08-30T12:00:00Z",
+			"byName": "Alex Kim"
+		}
+	},
+	{
+		"id": "0193a000-0000-7000-8000-000000000303",
+		"provider": "anthropic",
+		"model": "claude-opus-4-1",
+		"effectiveFrom": "2026-10-15T04:00:00Z",
+		"inputMicroUsdPerMillion": 5000000,
+		"outputMicroUsdPerMillion": 25000000,
+		"cacheReadMicroUsdPerMillion": 500000,
+		"cacheWriteMicroUsdPerMillion": 6250000,
+		"created": {
+			"at": "2026-10-14T16:30:00Z",
+			"byName": "Alex Kim"
+		}
+	},
+	{
+		"id": "0193a000-0000-7000-8000-000000000304",
+		"provider": "openai",
+		"model": "gpt-5-codex",
+		"effectiveFrom": "2026-09-01T04:00:00Z",
+		"inputMicroUsdPerMillion": 1250000,
+		"outputMicroUsdPerMillion": 10000000,
+		"cacheReadMicroUsdPerMillion": 125000,
+		"cacheWriteMicroUsdPerMillion": null,
+		"created": {
+			"at": "2026-08-30T12:00:00Z",
+			"byName": "Alex Kim"
+		}
+	},
+	{
+		"id": "0193a000-0000-7000-8000-000000000305",
+		"provider": "openai",
+		"model": "gpt-5-codex",
+		"effectiveFrom": "2026-12-01T05:00:00Z",
+		"inputMicroUsdPerMillion": 1000000,
+		"outputMicroUsdPerMillion": 8000000,
+		"cacheReadMicroUsdPerMillion": 100000,
+		"cacheWriteMicroUsdPerMillion": null,
+		"created": {
+			"at": "2026-11-10T09:00:00Z",
+			"byName": "Alex Kim"
+		},
+		"scheduled": true
+	}
+]

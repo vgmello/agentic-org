@@ -3,10 +3,10 @@ process: branch-and-merge
 name: Branch, review and integration
 kind: process
 level: organization
-version: 3
+version: 5
 owner: lead
 status: active
-summary: Branch from origin/v1-integration, verify and review locally, then merge into v1-integration.
+summary: Branch from origin/v1, verify and review locally, merge into v1, then clean up.
 applies_to: every agent that changes this repository
 overridable: true
 ---
@@ -22,7 +22,7 @@ no outside reviewer is required.
 
 ## 1. Branch and plan
 
-- Start each increment's branch from `origin/v1-integration`.
+- Start each increment's branch from `origin/v1`.
 - Before code, write the increment's short plan: the outcome, the files you own, what
   you will delete, and the decisions you take where the documents are silent.
 - One writer per file at a time. A file that two increments need is handed over
@@ -57,11 +57,43 @@ change needs current checks and review again.
 
 ## 4. Integrate
 
-After the checks and the final review pass, the lead merges with
-`git merge --no-ff` into `v1-integration` and pushes that branch. Verify the pushed
-commit. Then start the next increment from the updated `origin/v1-integration`.
+After the checks and the final review pass, the lead merges `origin/v1` into the branch,
+tells the other lead sessions, then merges with `git merge --no-ff` into `v1` and pushes it. Verify the pushed commit. Then
+start the next increment from the updated `origin/v1`.
 
-- `v1-integration` is the integration branch for all v1 work.
-- Never push to `main` or merge into the release branch `v1` without an explicit
-  release instruction.
+- `v1` is the integration branch for all v1 work (owner, 2026-11-18). `v1-integration`
+  is retired; don't branch from it or merge into it.
+- Never push to `main` without an explicit release instruction.
 - Clean up a branch or worktree only after confirming it is fully merged.
+
+## 5. Clean up
+
+Once the work is merged into `v1`, and before reporting it finished or ending the session, the
+lead removes what it created for the work. Start with `git fetch --prune origin`, so every check
+below reads the current remote.
+
+Never delete `main`, `v1`, unmerged work, or a branch kept on purpose (for example a WIP branch
+whose code was later removed). Clean up only what you created; tell other leads which of their
+branches are merged instead of deleting them.
+
+- **Merged:** a local branch counts as merged when
+  `git merge-base --is-ancestor <branch> origin/v1` succeeds; a remote branch when
+  `git merge-base --is-ancestor origin/<branch> origin/v1` succeeds.
+- **Worktrees:** remove a worktree only when its current commit is merged
+  (`git -C <worktree> merge-base --is-ancestor HEAD origin/v1`, which also covers a detached
+  worktree) and it has no uncommitted, untracked or needed ignored files. Check `git -C <worktree> status --short --ignored` for anything to keep,
+  such as a local `HANDOVER.md`. Then `git worktree remove <path>` without `--force`, and
+  `git worktree prune`. A worktree with files to keep stays and is reported.
+- **Local branches:** delete your merged branches with `git branch -d <branch>`, never `-D`.
+- **Remote branches:** after the fetch, take `sha=$(git rev-parse origin/<branch>)`, check that
+  same commit (`git merge-base --is-ancestor $sha origin/v1`), then delete with a lease on it, so
+  commits pushed since are never lost:
+  `git push --force-with-lease=<branch>:$sha origin --delete <branch>`.
+- **Stale tracking branches:** a local branch that tracks a deleted or retired remote branch is
+  deleted only if it is merged (`git branch -d`), so a later push can't recreate it. If it isn't,
+  it is unmerged work: push it under a new name and keep it.
+- **Unmerged work:** commit it (as WIP if needed), push it, keep it and list it in your stream's
+  handover; never delete it. Leave stashes alone unless the owner says to drop them.
+- **Processes:** stop background loops, dev servers and headless sessions you started.
+- **Main checkout:** leave it on `v1`, clean.
+- Report what you removed and what you kept.

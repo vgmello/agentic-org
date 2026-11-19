@@ -4,7 +4,7 @@
 	import StatusPill from '$lib/components/StatusPill.svelte';
 </script>
 
-<section aria-label="Primitive contracts" class="fixed inset-x-4 top-20 z-[100] space-y-3 rounded-lg bg-gray-800 p-4">
+<section aria-label="Primitive contracts" class="fixed inset-x-4 top-20 z-[100] space-y-3 rounded-lg bg-surface p-4">
 	<Callout data-testid="quiet-contract">Static information</Callout>
 	<Callout role="status" data-testid="status-contract">Saved progress</Callout>
 	<Callout role="alert" data-testid="alert-contract">Failed update</Callout>

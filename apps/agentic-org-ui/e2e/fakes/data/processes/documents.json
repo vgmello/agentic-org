@@ -1,0 +1,442 @@
+{
+	"documents": [
+		{
+			"id": "0193a000-0000-7000-8000-000000000001",
+			"key": "security-basics",
+			"revision": 1,
+			"kind": "process",
+			"title": "Security basics",
+			"status": "current",
+			"owner_employee_id": "you",
+			"team_id": null,
+			"project_id": null,
+			"overridable": false,
+			"body_markdown": "## Purpose\nKeep secrets, credentials and customer data out of code, logs and messages.\n\n## Procedure\n1. Never paste a secret into a task, a message or a commit.\n2. Read credentials only through the office's connections.\n3. Report anything that looks like a leaked secret to the owner at once.\n\n## Review and completion\nA reviewer checks every change for secrets before it is merged.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000002",
+			"key": "review-and-merge",
+			"revision": 3,
+			"kind": "process",
+			"title": "Review and merge",
+			"status": "current",
+			"owner_employee_id": "avery",
+			"team_id": null,
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## Purpose\nHow a change gets from a task branch into the integration branch.\n\n## Procedure\n1. Keep the change to one task.\n2. Run the project's checks before asking for review.\n3. Ask a teammate who did not write the change to review it.\n\n## Review and completion\nMerged when its checks pass and the reviewer approved it.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000003",
+			"key": "code-review",
+			"revision": 1,
+			"kind": "process",
+			"title": "Code review",
+			"status": "current",
+			"owner_employee_id": "sam",
+			"team_id": null,
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## Purpose\nWhat a reviewer looks at.\n\n## Procedure\n1. Read the task first, then the change.\n2. Check that every fix has a test.\n3. Say what must change and what is only a suggestion.\n\n## Review and completion\nApprove when nothing must change.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000004",
+			"key": "pii-handling",
+			"revision": 2,
+			"kind": "process",
+			"title": "PII handling",
+			"status": "current",
+			"owner_employee_id": "hana",
+			"team_id": null,
+			"project_id": null,
+			"overridable": false,
+			"body_markdown": "## Purpose\nHow personal data is handled, whatever is being built.\n\n## Procedure\n1. Store personal data only where the project's design says.\n2. Never copy personal data into a test or a log.\n\n## Review and completion\nThe people lead reviews any change to where personal data is stored.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000005",
+			"key": "asking-for-help",
+			"revision": 1,
+			"kind": "process",
+			"title": "Asking for help",
+			"status": "draft",
+			"owner_employee_id": null,
+			"team_id": null,
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## Purpose\nWhen you are stuck, ask in the team's channel first.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000006",
+			"key": "old-deploy-steps",
+			"revision": 1,
+			"kind": "process",
+			"title": "Old deploy steps",
+			"status": "deprecated",
+			"owner_employee_id": "avery",
+			"team_id": null,
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## Purpose\nReplaced by the deployment pattern standard.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000010",
+			"key": "technology-stack",
+			"revision": 2,
+			"kind": "standard",
+			"title": "Technology stack",
+			"status": "current",
+			"owner_employee_id": "sam",
+			"team_id": null,
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## What we use\n- TypeScript and Svelte for web apps.\n- Rust for services.\n- SQLite for local state.\n\n## Why\nOne stack per kind of work keeps reviews fast.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000011",
+			"key": "deployment-pattern",
+			"revision": 1,
+			"kind": "standard",
+			"title": "Deployment pattern",
+			"status": "current",
+			"owner_employee_id": "kai",
+			"team_id": null,
+			"project_id": null,
+			"overridable": false,
+			"body_markdown": "## How we deploy\n1. Build once, promote the same artifact.\n2. Every deploy can be rolled back in one step.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000012",
+			"key": "observability",
+			"revision": 1,
+			"kind": "standard",
+			"title": "Observability",
+			"status": "current",
+			"owner_employee_id": "kai",
+			"team_id": null,
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## What every service has\n- Structured logs.\n- A health check.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000020",
+			"key": "incident-response",
+			"revision": 1,
+			"kind": "process",
+			"title": "Incident response",
+			"status": "current",
+			"owner_employee_id": "sam",
+			"team_id": "eng",
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## Purpose\nWhat to do when something is broken for users.\n\n## Procedure\n1. Say so in the team's channel.\n2. Roll back first, investigate second.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000021",
+			"key": "code-review",
+			"revision": 2,
+			"kind": "process",
+			"title": "Code review",
+			"status": "current",
+			"owner_employee_id": "noor",
+			"team_id": "web",
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## Purpose\nWhat a reviewer looks at.\n\n## Procedure\n1. Read the task first, then the change.\n2. Check that every fix has a test.\n3. Attach a screenshot of any UI change.\n4. Say what must change and what is only a suggestion.\n\n## Review and completion\nApprove when nothing must change.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000022",
+			"key": "design-handoff",
+			"revision": 1,
+			"kind": "process",
+			"title": "Design handoff",
+			"status": "current",
+			"owner_employee_id": "noor",
+			"team_id": "web",
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## Purpose\nHow designs reach the web team.\n\n## Procedure\n1. The designer shares the flow and every state.\n2. The web team asks questions in the task.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			},
+			"invalid_field": "overridable"
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000023",
+			"key": "security-basics",
+			"revision": 1,
+			"kind": "process",
+			"title": "Security basics",
+			"status": "current",
+			"owner_employee_id": "kai",
+			"team_id": "platform",
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## Purpose\nPlatform's own take on secrets.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000024",
+			"key": "release-checklist",
+			"revision": 1,
+			"kind": "process",
+			"title": "Release checklist",
+			"status": "current",
+			"owner_employee_id": "kai",
+			"team_id": "platform",
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## Procedure\n1. Changelog written.\n2. Rollback tested.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000025",
+			"key": "technology-stack",
+			"revision": 1,
+			"kind": "standard",
+			"title": "Technology stack",
+			"status": "current",
+			"owner_employee_id": "kai",
+			"team_id": "platform",
+			"project_id": null,
+			"overridable": true,
+			"body_markdown": "## What we use\n- Rust for services.\n- systemd units on Linux, launchd on macOS.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000030",
+			"key": "standup",
+			"revision": 1,
+			"kind": "process",
+			"title": "Standup",
+			"status": "current",
+			"owner_employee_id": "noor",
+			"team_id": null,
+			"project_id": "beacon",
+			"overridable": true,
+			"body_markdown": "## Procedure\nPost what you did, what's next and what blocks you, once a day.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000031",
+			"key": "standup",
+			"revision": 1,
+			"kind": "process",
+			"title": "Daily standup",
+			"status": "current",
+			"owner_employee_id": "mira",
+			"team_id": null,
+			"project_id": "beacon",
+			"overridable": true,
+			"body_markdown": "## Procedure\nA short daily note in the project channel.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000032",
+			"key": "release-checklist",
+			"revision": 1,
+			"kind": "process",
+			"title": "Release checklist",
+			"status": "current",
+			"owner_employee_id": "noor",
+			"team_id": null,
+			"project_id": "beacon",
+			"overridable": true,
+			"body_markdown": "## Procedure\n1. Every feature flag named in the changelog.\n2. The checkout flow tested end to end.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		},
+		{
+			"id": "0193a000-0000-7000-8000-000000000033",
+			"key": "observability",
+			"revision": 1,
+			"kind": "standard",
+			"title": "Observability",
+			"status": "current",
+			"owner_employee_id": "kai",
+			"team_id": null,
+			"project_id": "atlas",
+			"overridable": true,
+			"body_markdown": "## What every service has\n- Structured logs.\n- A health check.\n- A dashboard of deploy attempts.\n",
+			"created": {
+				"at": "2026-11-02T09:00:00Z",
+				"byKind": "employee",
+				"byId": "you"
+			},
+			"updated": {
+				"at": "2026-11-15T10:00:00Z",
+				"byKind": "employee",
+				"byId": "avery"
+			}
+		}
+	]
+}

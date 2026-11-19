@@ -3002,7 +3002,14 @@ fn the_agent_commands_are_read_from_their_requests() {
     for (request, method) in requests.iter().zip(methods) {
         let command = OrgCommand::parse(request).unwrap().expect(method);
         assert_eq!(command.command_id(), "cmd-1");
-        assert_eq!(command.method_and_params().0, method);
+        let parsed = match command {
+            OrgCommand::MemberAddAgent(_) => MemberAddAgent::METHOD,
+            OrgCommand::MemberOffboard(_) => MemberOffboard::METHOD,
+            OrgCommand::MemberSetAgentStatus(_) => MemberSetAgentStatus::METHOD,
+            OrgCommand::MemberSetRunMode(_) => MemberSetRunMode::METHOD,
+            _ => "another command",
+        };
+        assert_eq!(parsed, method);
     }
     // The update has a request of its own, with its optional fields left out.
     let update = Request {

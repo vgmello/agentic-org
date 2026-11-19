@@ -112,6 +112,114 @@ jobs:
           esac
           python3 .github/scripts/platform_allowlist_shrinks.py "$base"
 
+  # ADR-0017 LNX-2: the container image built from deploy/container and checked in real containers
+  # by deploy/container/lnx2.sh, which builds the image itself. This job only builds what the
+  # script needs (the UI, and the Linux executables with deploy/container/build.sh, in the Rust
+  # toolchain's Debian image) and runs it, so it does not depend on what the script checks.
+  # It also records the one-shot `agent-os` timings on Linux (CLI-15: recorded, not bounded).
+  container:
+    name: Container (LNX-2) and agent-os timings
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Docker
+        run: docker version
+
+      # build.sh keeps its cargo home and its output in target/linux. Saved only on v1, as the
+      # rust job's cache is; the key changes with what decides how the dependencies build.
+      - name: Restore the Linux build cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/linux/cargo/registry/index
+            target/linux/cargo/registry/cache
+            target/linux/debug
+            target/linux/release
+          key: container-linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'deploy/container/build.sh') }}
+          restore-keys: container-linux-
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+
+      - name: Build the UI
+        working-directory: apps/agentic-org-ui
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Build the Linux executables
+        run: deploy/container/build.sh
+
+      # The release build, as an agent runs it: fifty runs of each command. The table goes to
+      # the job summary and the samples to an artifact.
+      - name: agent-os one-shot timings (Linux)
+        run: |
+          deploy/container/build.sh --release -p agent-os
+          mkdir -p "$RUNNER_TEMP/timings"
+          python3 .github/scripts/agent_os_timings.py target/linux/release/agent-os --runs 50 \
+            --json "$RUNNER_TEMP/timings/agent-os-timings.json" --markdown "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the timings
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-os-timings-linux-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/timings/agent-os-timings.json
+          retention-days: 90
+          if-no-files-found: error
+
+      # Step 10 of LNX-2, the optional seccomp and AppArmor profiles, needs a Docker host that
+      # enforces AppArmor, with the profile loaded. GitHub's Ubuntu runners enforce it; on one
+      # that does not, the step is skipped with the reason in the log and the job summary. Where
+      # the runner can load profiles, a profile the parser refuses fails the job: it is this
+      # repository's file, and a skip would hide that it no longer loads.
+      - name: Load the optional AppArmor profile (LNX-2 step 10)
+        run: |
+          reason=
+          if [ "$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null)" != Y ]; then
+            reason="the kernel does not enforce AppArmor"
+          elif ! docker info -f '{{.SecurityOptions}}' | grep -q apparmor; then
+            reason="Docker does not apply AppArmor profiles"
+          elif ! sudo -n true 2>/dev/null; then
+            reason="sudo is not available without a password"
+          elif ! sudo -n sh -c 'command -v apparmor_parser' >/dev/null; then
+            reason="apparmor_parser is not installed"
+          fi
+          if [ -n "$reason" ]; then
+            echo "::warning::LNX-2 step 10 is skipped: $reason"
+            echo "LNX-2 step 10 (the optional profiles) was skipped: $reason." >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          sudo apparmor_parser -r -W deploy/container/apparmor-agentic-org
+          echo "LNX2_PROFILES=1" >>"$GITHUB_ENV"
+
+      - name: LNX-2 (deploy/container/lnx2.sh)
+        run: deploy/container/lnx2.sh
+
+      # The incremental state of the workspace's own crates is not worth its size in the cache.
+      - name: Drop incremental state before the cache is saved
+        if: github.ref == 'refs/heads/v1'
+        run: rm -rf target/linux/debug/incremental target/linux/release/incremental
+
+      - name: Save the Linux build cache
+        if: github.ref == 'refs/heads/v1'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/linux/cargo/registry/index
+            target/linux/cargo/registry/cache
+            target/linux/debug
+            target/linux/release
+          key: container-linux-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'deploy/container/build.sh') }}
+
   # The UI checks run in a browser against the app's own code and fakes, with no Tauri and nothing
   # platform-specific, so they run on Linux only. Node and Bun are both pinned.
   ui:

@@ -12,4 +12,7 @@ org-platform = { path = "../org-platform" }
 org-agent-runtime = { path = "../org-agent-runtime" }
 
 [dev-dependencies]
+# test-support: the before-main hook of tests/support/core_limit.rs and the process
+# test helpers (subreaper, stopped state, argv[0]).
+org-platform = { path = "../org-platform", features = ["test-support"] }
 tempfile.workspace = true

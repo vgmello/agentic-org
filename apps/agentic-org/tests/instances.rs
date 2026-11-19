@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use org_host::{start_instance_for_test, Config};
 use org_proto::OfficeStatus;
 
-const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+const OFFICE: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
 
 fn private_dir(path: &Path) {
     fs::DirBuilder::new().mode(0o700).create(path).unwrap();
@@ -58,14 +58,24 @@ fn two_long_root_instances_run_the_same_office_id_with_separate_data_sockets_and
         .unwrap();
         fs::set_permissions(&key_file, fs::Permissions::from_mode(0o600)).unwrap();
         key_files.push(key_file);
-        let office_dir = root.join("office-state/offices").join(OFFICE);
-        private_dir(&office_dir);
-        let office = support::hq(
+        // Each instance holds its own writer custody for the same office ID, reserved as
+        // protected provisioning reserves it; that makes the office's folder.
+        let organization = support::uuid7(0x10a + index as u64);
+        org_host::test_support::custody::reserve_office(
+            &org_host::test_support::custody::InstanceAt::new(
+                &locator,
+                &temporary,
+                Some(name),
+                root,
+                &keys,
+            ),
+            &organization,
             OFFICE,
-            if index == 0 { "ORGA" } else { "ORGB" },
-            name,
-            "2026-11-10T00:00:00.000Z",
-        );
+            None,
+        )
+        .unwrap();
+        let office_dir = root.join("office-state/offices").join(OFFICE);
+        let office = support::hq(OFFICE, &organization, name, "2026-11-10T00:00:00.000Z");
         fs::write(office_dir.join("office.json"), office.to_vec().unwrap()).unwrap();
         fs::write(root.join("sentinel"), name).unwrap();
     }

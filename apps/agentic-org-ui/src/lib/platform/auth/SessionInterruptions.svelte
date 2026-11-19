@@ -117,7 +117,7 @@
 {#if ended && dismissed}
 	<div
 		role="status"
-		class="fixed inset-x-0 top-0 z-40 flex items-center justify-center gap-x-4 bg-amber-500/15 px-4 py-2 text-sm/6 text-amber-100 backdrop-blur"
+		class="fixed inset-x-0 top-0 z-40 flex items-center justify-center gap-x-4 bg-warning-emphasis/15 px-4 py-2 text-sm/6 text-warning-text-stronger backdrop-blur"
 	>
 		<p>
 			{editable
@@ -138,11 +138,11 @@
 		event.preventDefault();
 		notNow();
 	}}
-	class="m-auto w-full max-w-md rounded-lg bg-gray-900 p-6 text-white outline-1 outline-white/10 backdrop:bg-gray-950/80"
+	class="m-auto w-full max-w-md rounded-lg bg-surface-sunken p-6 text-fg outline-1 outline-line backdrop:bg-scrim/80"
 >
 	{#if ended}
 		<h2 id="sign-in-again-title" class="text-lg/7 font-semibold">Sign in again</h2>
-		<div id="sign-in-again-reason" class="mt-2 text-sm/6 text-gray-300">
+		<div id="sign-in-again-reason" class="mt-2 text-sm/6 text-fg-secondary">
 			<p>Your session ended. Sign in again to carry on.</p>
 			{#if editable}<p>Text you haven't saved stays on this page.</p>{/if}
 		</div>
@@ -150,18 +150,18 @@
 			<div
 				role="alertdialog"
 				aria-labelledby="discard-title"
-				class="mt-4 rounded-md bg-white/5 p-3"
+				class="mt-4 rounded-md bg-surface-raised p-3"
 			>
 				<p id="discard-title" class="text-sm/6">Discard text you haven't saved on this page?</p>
 				<div class="mt-3 flex justify-end gap-x-3">
 					<button
 						type="button"
-						class="rounded-md bg-white/10 px-3 py-1.5 text-sm font-semibold"
+						class="rounded-md bg-surface-overlay px-3 py-1.5 text-sm font-semibold"
 						onclick={() => (discardAsk = false)}>Keep editing</button
 					>
 					<button
 						type="button"
-						class="rounded-md bg-red-500 px-3 py-1.5 text-sm font-semibold"
+						class="rounded-md bg-danger-emphasis px-3 py-1.5 text-sm font-semibold"
 						onclick={() => someoneElse(true)}>Discard and sign in</button
 					>
 				</div>
@@ -172,7 +172,7 @@
 				<div
 					id="sign-in-again-error"
 					role="alert"
-					class="mt-4 border-l-4 border-red-400 bg-red-500/10 p-3 text-sm/6 text-red-200"
+					class="mt-4 border-l-4 border-danger bg-danger-emphasis/10 p-3 text-sm/6 text-danger-text-strong"
 				>
 					<p>{failure.message}</p>
 					{#if failure.kind === 'out_of_date'}<button
@@ -203,18 +203,18 @@
 			<div class="flex items-center gap-x-3">
 				<button
 					type="button"
-					class="mr-auto text-sm/6 font-semibold text-indigo-300 underline"
+					class="mr-auto text-sm/6 font-semibold text-brand-text underline"
 					onclick={() => someoneElse()}>Sign in as someone else</button
 				>
 				<button
 					type="button"
-					class="rounded-md bg-white/10 px-3 py-1.5 text-sm font-semibold"
+					class="rounded-md bg-surface-overlay px-3 py-1.5 text-sm font-semibold"
 					onclick={notNow}>Not now</button
 				>
 				<button
 					type="submit"
 					disabled={busy}
-					class="rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-semibold hover:bg-indigo-600 disabled:opacity-60"
+					class="rounded-md bg-primary px-3 py-1.5 text-sm font-semibold hover:bg-primary-hover disabled:opacity-60"
 					>{busy ? 'Signing in…' : 'Sign in'}</button
 				>
 			</div>
@@ -229,7 +229,7 @@
 		event.preventDefault();
 		signOutFlow.stay();
 	}}
-	class="m-auto w-full max-w-md rounded-lg bg-gray-900 p-6 text-white outline-1 outline-white/10 backdrop:bg-gray-950/80"
+	class="m-auto w-full max-w-md rounded-lg bg-surface-sunken p-6 text-fg outline-1 outline-line backdrop:bg-scrim/80"
 >
 	<h2 id="sign-out-confirm-title" class="text-sm/6">
 		Sign out? Text you haven't saved in any open tab of this HQ will be lost.
@@ -237,12 +237,12 @@
 	<div class="mt-4 flex justify-end gap-x-3">
 		<button
 			type="button"
-			class="rounded-md bg-white/10 px-3 py-1.5 text-sm font-semibold"
+			class="rounded-md bg-surface-overlay px-3 py-1.5 text-sm font-semibold"
 			onclick={() => signOutFlow.stay()}>Stay</button
 		>
 		<button
 			type="button"
-			class="rounded-md bg-red-500 px-3 py-1.5 text-sm font-semibold"
+			class="rounded-md bg-danger-emphasis px-3 py-1.5 text-sm font-semibold"
 			onclick={() => signOutFlow.confirm()}>Sign out</button
 		>
 	</div>
@@ -251,7 +251,7 @@
 {#if signOutFlow.failed && !elsewhere}
 	<div
 		role="alert"
-		class="fixed inset-x-0 top-0 z-40 flex items-center justify-center gap-x-4 bg-red-500/15 px-4 py-2 text-sm/6 text-red-200"
+		class="fixed inset-x-0 top-0 z-40 flex items-center justify-center gap-x-4 bg-danger-emphasis/15 px-4 py-2 text-sm/6 text-danger-text-strong"
 	>
 		<p>Couldn't sign out: HQ can't be reached. Try again when it's back.</p>
 		<button type="button" class="font-semibold underline" onclick={() => signOutFlow.request()}

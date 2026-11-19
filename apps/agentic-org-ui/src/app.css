@@ -1,54 +1,189 @@
 @import 'tailwindcss';
-@import "tw-animate-css";
-@import "shadcn-svelte/tailwind.css";
-@import "@fontsource-variable/inter";
+@import 'tw-animate-css';
+@import 'shadcn-svelte/tailwind.css';
+@import '@fontsource-variable/inter';
 
 /* The app is dark only: <html class="dark"> is set in app.html. Tailwind Plus markup uses its
    `dark:` classes as written. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * shadcn-svelte tokens, mapped onto the Tailwind Plus dark palette the app's look is built on
- * (gray-800 surfaces, white/5-10 borders, indigo-500 accent), so shadcn components sit
- * next to the Tailwind Plus markup without a visible seam.
+ * Look tokens: every colour in the app comes from these, named for their role, never raw palette
+ * classes (src/lib/components/README-screens.md "Look tokens"; the guard is
+ * src/lib/platform/tooling/look-tokens.test.ts). A new scheme, or a light mode later, changes
+ * these values and docs/specs/app-shell-ux.md §6a together, not component markup. Each value is
+ * the Tailwind Plus dark palette colour the screens used before the tokens existed.
  */
 :root {
 	color-scheme: dark;
-	--background: var(--color-gray-800);
-	--foreground: var(--color-white);
-	--card: var(--color-gray-800);
-	--card-foreground: var(--color-white);
-	--popover: var(--color-gray-800);
-	--popover-foreground: var(--color-white);
-	--primary: var(--color-indigo-500);
-	--primary-foreground: var(--color-white);
-	--secondary: rgb(255 255 255 / 0.1);
-	--secondary-foreground: var(--color-white);
-	--muted: rgb(255 255 255 / 0.05);
-	--muted-foreground: var(--color-gray-400);
-	--accent: rgb(255 255 255 / 0.05);
-	--accent-foreground: var(--color-white);
-	--destructive: var(--color-red-400);
-	--border: rgb(255 255 255 / 0.1);
-	--input: rgb(255 255 255 / 0.1);
-	--ring: var(--color-indigo-500);
+
+	/* Surfaces. The translucent layers mix `tint` (or `shade`) over whatever is below them, the
+	   way Tailwind's opacity modifier does (in oklab), so `bg-tint/[0.03]` and these agree. */
+	--surface: var(--color-gray-800); /* page, top bar, dialogs, popovers */
+	--surface-sunken: var(--color-gray-900); /* floating menus and toolbars, code panels */
+	--surface-chip: var(--color-gray-700); /* small labels on org chart tiles */
+	--tooltip: var(--color-gray-950);
+	--scrim: var(--color-gray-950); /* behind a modal, used with an opacity */
+	--tint: var(--color-white); /* light layers over the surface, used with an opacity */
+	--shade: var(--color-black); /* dark layers: sidebar, profile header, code blocks */
+	/* fields, quiet panels, hover */
+	--surface-raised: color-mix(in oklab, var(--tint) 5%, transparent);
+	/* chips, secondary buttons, stronger hover */
+	--surface-overlay: color-mix(in oklab, var(--tint) 10%, transparent);
+
+	/* Lines */
+	/* row and header dividers */
+	--line-subtle: color-mix(in oklab, var(--tint) 5%, transparent);
+	/* section and card outlines */
+	--line: color-mix(in oklab, var(--tint) 10%, transparent);
+	/* outlines that must show on a tint */
+	--line-strong: color-mix(in oklab, var(--tint) 20%, transparent);
+	--field-border: var(--color-gray-500); /* form field boundary */
+
+	/* Text, from most to least contrast */
+	--fg: var(--color-white); /* headings, primary text */
+	--fg-bright: var(--color-gray-100); /* code and chip text on a tint */
+	--fg-body: var(--color-gray-200); /* reading text: messages, descriptions */
+	--fg-secondary: var(--color-gray-300); /* secondary labels, pill text */
+	--fg-muted: var(--color-gray-400); /* meta, help, placeholders */
+	--fg-subtle: var(--color-gray-500); /* disabled and decorative text, list markers */
+	--on-emphasis: var(--color-white); /* text and marks on a solid primary or danger fill */
+	--on-warning: var(--color-gray-900); /* text on a solid warning badge */
+	--on-warning-strong: var(--color-gray-950);
+
+	/* Accent: one indigo. Primary is the solid fill; brand is the lighter accent for focus, links, selection and working tints. */
+	--primary: var(--color-indigo-500); /* primary button, solid accent fills, checkboxes */
+	--primary-hover: var(--color-indigo-600); /* hover of the onboarding primary buttons */
+	--ring: var(--color-indigo-500); /* focus outline of the onboarding and auth controls */
+	--brand: var(--color-indigo-400); /* selection underline, working tints, highlight rings */
+	--focus: var(--brand); /* keyboard focus outline */
+	--link: var(--brand); /* links */
+	--brand-text: var(--color-indigo-300); /* text on indigo tints, links in messages */
+	--brand-text-strong: var(--color-indigo-200); /* avatar initials, hover of brand text */
+	--brand-text-stronger: var(--color-indigo-100); /* body text inside an indigo callout */
+
+	/* Status tones (app-shell-ux §6a "Rows and state"). Each tone has the same steps:
+	   <tone> base colour for icons, dots, borders and tints (with an opacity); -emphasis the solid
+	   fill; -deep a darker fill; -text the readable text step (also small marks that need that
+	   contrast); -text-strong and -text-stronger the higher-contrast text inside a tinted callout. */
+	--quiet: var(--color-gray-400); /* neutral states */
+	--quiet-emphasis: var(--color-gray-500);
+	--danger: var(--color-red-400); /* blocked and error */
+	--danger-emphasis: var(--color-red-500);
+	--danger-text: var(--color-red-300);
+	--danger-text-strong: var(--color-red-200);
+	--danger-text-stronger: var(--color-red-100);
+	--warning: var(--color-amber-400); /* waiting on the owner */
+	--warning-emphasis: var(--color-amber-500);
+	--warning-deep: var(--color-amber-600);
+	--warning-text: var(--color-amber-300);
+	--warning-text-strong: var(--color-amber-200);
+	--warning-text-stronger: var(--color-amber-100);
+	--success: var(--color-green-400); /* completion, online */
+	--success-emphasis: var(--color-green-500);
+	--success-text: var(--color-green-300);
+	--positive: var(--color-emerald-400); /* presence dots, person tiles, accepted and applies */
+	--positive-emphasis: var(--color-emerald-500);
+	--positive-text: var(--color-emerald-300);
+	--positive-text-strong: var(--color-emerald-200);
+	--info: var(--color-sky-400); /* starting and checking */
+	--info-emphasis: var(--color-sky-500);
+	--info-text: var(--color-sky-300);
+	--info-text-strong: var(--color-sky-200);
+	--info-text-stronger: var(--color-sky-100);
+
+	/* shadcn-svelte's variables, mapped onto the look tokens so its primitives follow a restyle.
+	   Its translucent values mix in sRGB, as the rgb() values it shipped with did, so its
+	   primitives render exactly as before; `--border` is the default border colour, not a role. */
+	--background: var(--surface);
+	--foreground: var(--fg);
+	--card: var(--surface);
+	--card-foreground: var(--fg);
+	--popover: var(--surface);
+	--popover-foreground: var(--fg);
+	--primary-foreground: var(--on-emphasis);
+	--secondary: color-mix(in srgb, var(--tint) 10%, transparent);
+	--secondary-foreground: var(--fg);
+	--muted: color-mix(in srgb, var(--tint) 5%, transparent);
+	--muted-foreground: var(--fg-muted);
+	--accent: color-mix(in srgb, var(--tint) 5%, transparent);
+	--accent-foreground: var(--fg);
+	--destructive: var(--danger);
+	--border: color-mix(in srgb, var(--tint) 10%, transparent);
+	--input: color-mix(in srgb, var(--tint) 10%, transparent);
 	--radius: 0.5rem;
-	--sidebar: rgb(0 0 0 / 0.1);
-	--sidebar-foreground: var(--color-white);
-	--sidebar-primary: var(--color-indigo-500);
-	--sidebar-primary-foreground: var(--color-white);
-	--sidebar-accent: rgb(255 255 255 / 0.05);
-	--sidebar-accent-foreground: var(--color-white);
-	--sidebar-border: rgb(255 255 255 / 0.05);
-	--sidebar-ring: var(--color-indigo-500);
+	--sidebar: color-mix(in srgb, var(--shade) 10%, transparent);
+	--sidebar-foreground: var(--fg);
+	--sidebar-primary: var(--primary);
+	--sidebar-primary-foreground: var(--on-emphasis);
+	--sidebar-accent: color-mix(in srgb, var(--tint) 5%, transparent);
+	--sidebar-accent-foreground: var(--fg);
+	--sidebar-border: color-mix(in srgb, var(--tint) 5%, transparent);
+	--sidebar-ring: var(--ring);
 }
 
 html {
-	background: var(--color-gray-800);
+	background: var(--surface);
 }
 
 @theme inline {
 	--font-sans: 'Inter Variable', sans-serif;
+	/* Look tokens as colour utilities: bg-surface-raised, text-fg-muted, outline-focus, bg-danger-emphasis/10 … */
+	--color-surface: var(--surface);
+	--color-surface-sunken: var(--surface-sunken);
+	--color-surface-chip: var(--surface-chip);
+	--color-tooltip: var(--tooltip);
+	--color-scrim: var(--scrim);
+	--color-tint: var(--tint);
+	--color-shade: var(--shade);
+	--color-surface-raised: var(--surface-raised);
+	--color-surface-overlay: var(--surface-overlay);
+	--color-line-subtle: var(--line-subtle);
+	--color-line: var(--line);
+	--color-line-strong: var(--line-strong);
+	--color-field-border: var(--field-border);
+	--color-fg: var(--fg);
+	--color-fg-bright: var(--fg-bright);
+	--color-fg-body: var(--fg-body);
+	--color-fg-secondary: var(--fg-secondary);
+	--color-fg-muted: var(--fg-muted);
+	--color-fg-subtle: var(--fg-subtle);
+	--color-on-emphasis: var(--on-emphasis);
+	--color-on-warning: var(--on-warning);
+	--color-on-warning-strong: var(--on-warning-strong);
+	--color-primary-hover: var(--primary-hover);
+	--color-brand: var(--brand);
+	--color-focus: var(--focus);
+	--color-link: var(--link);
+	--color-brand-text: var(--brand-text);
+	--color-brand-text-strong: var(--brand-text-strong);
+	--color-brand-text-stronger: var(--brand-text-stronger);
+	--color-quiet: var(--quiet);
+	--color-quiet-emphasis: var(--quiet-emphasis);
+	--color-danger: var(--danger);
+	--color-danger-emphasis: var(--danger-emphasis);
+	--color-danger-text: var(--danger-text);
+	--color-danger-text-strong: var(--danger-text-strong);
+	--color-danger-text-stronger: var(--danger-text-stronger);
+	--color-warning: var(--warning);
+	--color-warning-emphasis: var(--warning-emphasis);
+	--color-warning-deep: var(--warning-deep);
+	--color-warning-text: var(--warning-text);
+	--color-warning-text-strong: var(--warning-text-strong);
+	--color-warning-text-stronger: var(--warning-text-stronger);
+	--color-success: var(--success);
+	--color-success-emphasis: var(--success-emphasis);
+	--color-success-text: var(--success-text);
+	--color-positive: var(--positive);
+	--color-positive-emphasis: var(--positive-emphasis);
+	--color-positive-text: var(--positive-text);
+	--color-positive-text-strong: var(--positive-text-strong);
+	--color-info: var(--info);
+	--color-info-emphasis: var(--info-emphasis);
+	--color-info-text: var(--info-text);
+	--color-info-text-strong: var(--info-text-strong);
+	--color-info-text-stronger: var(--info-text-stronger);
+	/* shadcn-svelte */
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

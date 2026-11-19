@@ -12,6 +12,19 @@ use crate::Refused;
 /// No peer-query error is accepted: the caller refuses the descriptor.
 pub(super) const PEER_CLOSED_IS_EINVAL: bool = false;
 
+/// No receive begins.
+pub(super) const RECEIVED_CLOSE_ON_EXEC: super::ReceivedCloseOnExec =
+    super::ReceivedCloseOnExec::Unavailable;
+
+/// Nothing is sent: no claim about `SIGPIPE`.
+pub(super) const SEND_SUPPRESSES_SIGPIPE: bool = false;
+
+/// The POSIX answer for a send that cannot proceed without blocking.
+pub(super) const DATAGRAM_PEER_FULL: i32 = libc::EAGAIN;
+
+/// No claim beyond POSIX: a receive finds nothing to read.
+pub(super) const DATAGRAM_PEER_CLOSE_MAY_RESET: bool = false;
+
 pub(super) fn peer_uid(_fd: RawFd) -> io::Result<u32> {
     Err(Refused::unsupported("socket").into())
 }
@@ -46,6 +59,21 @@ pub(super) fn send_flags() -> io::Result<libc::c_int> {
 
 pub(super) fn listening(_fd: RawFd) -> io::Result<bool> {
     Err(Refused::unsupported("socket").into())
+}
+
+/// What `socket::testing` needs of this system (`test-support`): no claim beyond POSIX.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) mod testing {
+    pub(in crate::socket) const SEQPACKET: bool = false;
+    pub(in crate::socket) const CONNECTED_STREAM_CAN_LISTEN: bool = false;
+
+    pub(in crate::socket) fn set_address_length(_address: &mut libc::sockaddr_un) {}
+
+    /// No Unix seqpacket sockets here.
+    pub(in crate::socket) fn seqpacket_pair(
+    ) -> std::io::Result<Option<(std::os::fd::OwnedFd, std::os::fd::OwnedFd)>> {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]

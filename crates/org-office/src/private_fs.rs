@@ -27,14 +27,6 @@ pub(crate) fn tighten_dir(path: &Path) -> std::io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
 }
 
-/// Makes `path` owner-only (0600) if it exists; a missing file is fine.
-pub(crate) fn tighten_file_if_present(path: &Path) -> std::io::Result<()> {
-    match fs::set_permissions(path, fs::Permissions::from_mode(0o600)) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-        _ => Ok(()),
-    }
-}
-
 /// Makes `path` absolute without touching the filesystem. Needed because the database path
 /// goes to SQLite, whose bundled build reads any path starting with `file:` as a URI.
 pub(crate) fn absolute(path: PathBuf) -> std::io::Result<PathBuf> {

@@ -1,23 +1,23 @@
 {
   "version": 2,
-  "policy_id": "codex-only-2026-11-14",
+  "policy_id": "codex-only-2026-11-18",
   "planner": {
-    "model": "gpt-6.1-sol",
+    "model": "gpt-6.2-sol",
     "default_effort": "high",
     "risk_effort": "xhigh"
   },
   "implementation": {
     "role": "fullstack-engineer",
     "familiar": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-6.2-sol",
       "effort": "medium"
     },
     "default": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-6.2-sol",
       "effort": "high"
     },
     "difficult": {
-      "model": "gpt-6.1-sol",
+      "model": "gpt-6.2-sol",
       "effort": "xhigh"
     },
     "familiar_requires_all": [
@@ -32,19 +32,19 @@
   },
   "lookup": {
     "role": "codebase-scout",
-    "model": "gpt-6.1-sol",
+    "model": "gpt-6.2-sol",
     "effort": "low",
     "implementation_allowed": false
   },
   "review": {
-    "model": "gpt-6.1-sol",
+    "model": "gpt-6.2-sol",
     "effort": "high",
     "optional_effort": "xhigh",
     "default_rounds": 3,
     "maximum_rounds": 5,
     "stop_on_repeated_findings": true,
     "original_author_required": true,
-    "final_model": "gpt-6.1-sol",
+    "final_model": "gpt-6.2-sol",
     "final_default_effort": "high",
     "final_risk_effort": "xhigh"
   },
@@ -65,7 +65,7 @@
   ],
   "mode": "codex-only",
   "architecture_review": {
-    "model": "gpt-6.1-sol",
+    "model": "gpt-6.2-sol",
     "effort": "xhigh"
   }
 }

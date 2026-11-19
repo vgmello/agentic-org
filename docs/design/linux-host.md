@@ -102,7 +102,7 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   than its count, and on a listed file with fewer than its count or none, so the
   list always equals the sources. A second CI job
   (`.github/scripts/platform_allowlist_shrinks.py`) compares the list with the commit
-  where the branch left `v1-integration` and fails on a raised count or a raised
+  where the branch left `v1` and fails on a raised count or a raised
   total, so the list only shrinks (a renamed or split file may appear under new paths
   while the total does not rise). X1b to X1d remove the source files, X2 and the `testing`
   module remove the test files, and the list is empty at X6.
@@ -135,12 +135,12 @@ would be declared four times.
 | `agentic-org` (`serve`) | Durable flush and exclusive rename | `org-host/src/writer.rs`, `hostdb.rs`, `release/files.rs`, `release/files/output.rs`, `human/recovery.rs`, `host_secrets/dev.rs` | `fs` |
 | `agentic-org` (`serve`) | Office catalog tests gated by system | `org-host/src/offices.rs` | `testing` support |
 | `agentic-org` (`recovery`) | Local presence and confirmation for the recovery code (ADR-0011) | `org-host/src/recovery/presence.rs`, the bridge in `org-host/build.rs` | `presence` |
-| `agentic-org` (`admin reset`) | Local authority to reset the administrator: the OS dialog at the Mac, root on Linux (SIGN-33) | Not built (A3) | `presence` |
+| `agentic-org` (`admin reset`) | Local authority to reset the administrator: the OS dialog at the Mac, root on Linux (SIGN-33) | On macOS, the OS dialog since A2; on Linux, root's registration-link recovery since X5 (section 4); resetting an existing administrator's password is A3's | `presence` |
 | `agentic-org-office` | Socket locations | `org-proto/src/location.rs` through `apps/agentic-org-office/src/lib.rs` | `dirs` |
 | `agentic-org-office` | Its end of the rendezvous: receive descriptors | `org-socket/src/rights.rs`, `rights/send.rs`, `rights/stream.rs` | `socket` |
 | `agentic-org-office` | Admit same-user peers on its local socket | `org-socket/src/peer.rs` (`peer_allowed`), called from `apps/agentic-org-office/src/serve.rs` | `socket` |
 | `agentic-org-office` | Start, watch, stop and recover agent processes | `org-supervise/src/lib.rs`, `platform.rs`, `spawn.rs`, `child.rs`, `recovery.rs`, `recovery/scan.rs`, `recovery/native/` | `process`, `isolation` |
-| `agentic-org-office` | Durable flush of accepted work | `org-office/src/store/acceptance/durable.rs` | `fs` |
+| `agentic-org-office` | Durable flush of accepted work: since B1b the office store's journal and files under `<instance-root>/<org-id>/durable/`, and the single-file publications (creation intent `hq-creation.v1.json`, `office.json`) in the office folder `<home>/offices/<office-id>/`, which also holds the office lock and the host's writer-custody marker; the projection `<instance-root>/<org-id>/runtime/<office-id>/office.db` can be deleted and rebuilt from the journal | `org-store/src/disk.rs` (`flush_full`) and `org-store/src/files.rs` (`publish_one`), both through `org_platform::fs::full_sync`, with no conditional | `fs` |
 | `agentic-org-web` | Confine itself before input | `org-platform/src/confinement/` since X1c (was `org-socket/src/confinement.rs`, `confinement/macos.rs`) | `confinement` |
 | `agentic-org-web` | Which platform's release it is, when it authenticates its own image | `apps/agentic-org-web/src/release.rs` (`policy`, a `cfg!` on the system) | `admission` (X1c, with `org-host/src/release.rs`) |
 | `agentic-org-web` | Check the inherited listener and received descriptors | `org-socket/src/rights/stream.rs` (`listening`), `rights.rs` | `socket` |
@@ -156,9 +156,9 @@ above.
 
 Count when the check was written (X1a): 79 `.rs` files outside `org-platform` have a
 platform predicate. 45 are source files: 29 in `org-host`, 6 in `org-socket`, 6 in
-`org-supervise`, and `org-office/src/store/acceptance/durable.rs`,
-`org-client/src/agent.rs`, `org-spool/src/safe_read.rs` and
-`apps/agentic-org-web/src/release.rs`; each is in a row above. One is an example
+`org-supervise`, and `org-office/src/store/acceptance/durable.rs` (deleted in B1b; its
+row now names the office store's flush), `org-client/src/agent.rs`,
+`org-spool/src/safe_read.rs` and `apps/agentic-org-web/src/release.rs`; each is in a row above. One is an example
 (`org-socket/examples/gateway_confinement.rs`; it stayed in `org-socket` in X1c, because it needs that crate's descriptor passing, and lost its predicates),
 and 33 are test files. The list is at 78 files and 491 predicates since A1 removed
 SQLCipher from the office store. Milestone-one work in these files adds no new
@@ -325,9 +325,8 @@ signed manifest digest alone, after its ELF header check. Built in X2: the host'
 peer policy has one path (`app_auth`), in which a peer the platform names by its user
 alone is admitted when that user is the host's own, and a command accepts a host of
 its own user the same way (`human::verify_host`); the platform says which kind of
-system it is with each identity (`Peer::uid`). Root for `admin reset` is not built:
-the listener refuses every other user when it accepts (X5, with the container's
-`docker exec -u 0` path).
+system it is with each identity (`Peer::uid`). Root is admitted for `admin reset` alone
+since X5 (section 4, `presence`); the listener refuses every other user when it accepts.
 
 The worker's `current_exe()` is `/memfd:… (deleted)`, so a worker cannot find sibling
 executables (for example `agent-os`) next to itself. The host passes the release's
@@ -443,10 +442,44 @@ checks and a lock.
     descriptors, walking `..` from each up to `/`: neither may contain the other.
   - In a container (setup's `service` is `foreground`) the store directory must be a
     mount point (`statx` `STATX_ATTR_MOUNT_ROOT`).
+  - Nothing is mounted inside the store directory, at any depth: every mount point of
+    the mount table is read, and one below the store refuses with that mount point
+    (two named volumes of one filesystem share a device number, so a folder of the
+    data volume mounted at `/secrets/office-keys`, or below it, is otherwise
+    indistinguishable).
+  - The store is apart from the account's records as well (the setup record and the
+    instance locator, `${XDG_DATA_HOME}/agentic-org`), by the same three rules as from
+    the data root, and, when a mount point is required, from the volume they are on
+    (`release_directory_apart_from`, `RootRule::AccountData`). With the data folder on a
+    volume of its own mounted inside the account's (`-v D:/data -v I:/data/instance`),
+    a secrets volume that is a folder of `D` is otherwise apart from the data root and
+    its volume, and a copy of `D` would hold the keys (X5 review, fourth round).
+  - The store is reached through no other mount (X5 final review). The device, root
+    and mount point of every line of the mount table are read to find a mount that
+    shows the store directory, a directory inside it or one that contains it. When a
+    mount point is required there must be none, and the refusal names that mount
+    (`RootRule::MountedElsewhere`): `-v S:/secrets -v S:/data/extra`, or a
+    `volume-subpath` of `S` mounted anywhere, puts every key in a copy of `/data`.
+    Everywhere, none may show any of the store at or below the data root or the
+    account's records (`RootRule::MountedInData`). A mount elsewhere on an ordinary
+    machine is allowed: an image-based system (Fedora CoreOS, for one) mounts its whole
+    disk a second time at `/sysroot`. These are checked after the rules above, so a store
+    inside the data is reported as that. A mount is matched by the store's device: a view
+    through another filesystem (an overlay with the store as a lower layer, a FUSE bind
+    such as bindfs, an NFS export of it mounted back) has a device of its own and is not
+    found. Such a layout is an operator's deliberate choice; it is not one the image or
+    the documented commands make.
   - When `expect_items` is set and the store holds no item, the store refuses with
     "credentials missing", and the host does not start: it never creates fresh keys
     for offices that already have wrapped records.
-  - An exclusive `flock` on `lock` admits one host per instance.
+  - An exclusive `flock` on `.lock` admits one host per store.
+  - An owner-only mode-`0600` `.instance` file must name the instance. The first
+    host atomically writes and flushes this marker under the lock before opening
+    either item store. It may claim an unmarked store only if the declared item
+    folders are empty apart from their locks. A new foreground setup checks for an
+    unused store without writing a lock or marker. Existing credentials with no
+    marker and records for a different instance both refuse before the host can
+    use or sweep any key.
 - **Checks on every item.** A regular file opened with `openat` and `O_NOFOLLOW`,
   owned by the service user, mode exactly `0600`, one link, at most 16 KiB. A write
   goes to a new temporary file, `fsync`, then `renameat2` with `RENAME_NOREPLACE`
@@ -459,7 +492,24 @@ checks and a lock.
   documentation says never to rely on anonymous volumes (a replaced container gets
   new, empty ones, and the empty-store check then refuses rather than silently losing
   the keys) and never to bind-mount a macOS folder (refused by the filesystem rule).
-  Without a mounted secrets volume, setup refuses.
+  Without a mounted secrets volume, setup refuses, and a foreground record that names
+  no secrets volume does not start on Linux.
+- **Every build keeps a recorded directory's keys there** (X5 review, fourth round).
+  Where the setup record names a credential directory, the host opens it at every
+  start in a development build as in a release build: with every check above (in the
+  foreground mode as a mounted volume), with "credentials missing" for a lost store,
+  and with both views opened below it from its held descriptor, in the release layout.
+  So the development image refuses a start on a new, empty secrets volume, a volume
+  mounted inside the secrets volume is refused wherever it is, and a registered
+  development service started by systemd uses the directory its setup recorded. A
+  development build on Linux records and uses the credential directory as a release build
+  does. A development build uses its development key folder (`ORG_OFFICE_DEV_KEY_DIR`)
+  only where the record names no credential directory (macOS, which keeps a release's
+  secrets in the Keychain, and the development test stand-ins that record none), and
+  admits its unpinned runtime when the record names a directory as it does with that
+  folder. On macOS, a development build's registered setup needs an absolute
+  `ORG_OFFICE_DEV_KEY_DIR`; setup makes that folder, with mode 700, before it registers
+  the service. The image sets no `ORG_OFFICE_DEV_KEY_DIR`.
 
 **Built in X3** (`org_platform_host::credentials`: `protected_store()` answers
 `Keychain` or `ReleaseDirectory`; `release_directory(ReleaseDirectory { path,
@@ -510,7 +560,7 @@ it). As built, where the text above is not exact:
 - Whatever an open makes gets its mode set, whatever the process's mask is (the lock
   and item files on their descriptor; an item store's directory by name in its parent,
   which is the checked owner-only directory); nothing that exists is changed.
-- The lock file is `.lock`, the engine's name. The layout is `<dir>/.lock`,
+- The layout is `<dir>/.lock`, `<dir>/.instance` (the instance ID),
   `<dir>/office-keys/<office id>.key` (the raw 32 bytes, as in the Keychain) and
   `<dir>/host-secrets/<name>`.
 - The empty-store rule is checked over the whole store before any view exists. The
@@ -526,9 +576,11 @@ it). As built, where the text above is not exact:
   an account with umask `002` starts its own build.
 - The record's `credentials` path is byte-exact normalized and frozen; setup creates
   the directory, opens it once as the host will, and prints `Secrets: <path>`.
-- Open: `mount_point_required` is not asked for until the record has a service mode
-  (X5); a whole release-profile host on a release directory runs in no test; setup
-  itself still stops on Linux until X5's service and disk-encryption adapters.
+- `mount_point_required` is asked for by the record's service mode (X5): the
+  foreground mode (the container) requires a mounted volume, and the registered mode
+  does not. Setup runs on Linux with X5's service and disk-encryption adapters. Open:
+  a whole release-profile host on a release directory runs in no test (no release
+  image yet).
 
 **What it proves.** Only the service user and root can read the items, none is in
 the data volume, a wrong setup refuses, and a lost store is noticed (LNX-4). **What it
@@ -717,12 +769,33 @@ A2 writes the launchd registration behind this contract. A2 B0 built it as shown
 (`crates/org-platform/src/service/`), before X1a: `ServiceStatus` is `NotRegistered`,
 `Unloaded`, `Stopped` or `Running { pid }`; every adapter refuses a relative program,
 path syntax in the instance ID and loader variables (`DYLD_*`, `LD_*`,
-`GLIBC_TUNABLES`) in the unit's environment. `Foreground` refuses everywhere until X5.
+`GLIBC_TUNABLES`) in the unit's environment. Since X5, `Foreground` is the container's
+mode on every system: nothing is registered, and `agentic-org serve --setup <file>` is the
+service (`crates/org-platform/src/service/foreground.rs`).
 
-`agentic-org serve` is the same foreground process in every mode; it stops on
-`SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, stops the web
-process and the workers (`SIGTERM`, then `SIGKILL` after 5 s), flushes its logs and
-exits 0 within 8 s, inside a container runtime's default 10-second grace.
+`agentic-org serve` is the same foreground process in every mode, with file-creation mask
+`077` set at its start in every mode (a container's runtime would give it `022`); it stops on
+`SIGTERM` or `SIGINT` (`org-host/src/signals.rs`): it stops accepting, kills and reaps
+the web process at once (`SIGKILL`, then its control connection closes), asks every worker
+to stop by closing its standard input and its rendezvous connection and `SIGKILL`s any
+still running 1.5 s after the signal (`Timings::shutdown_grace`), flushes its logs and
+exits 0 within 2.5 s, inside the shortest default grace of a container runtime (Docker
+Desktop's 3 s, `default-stop-timeout`; Docker Engine's is 10 s). A worker killed at the
+deadline loses nothing: the office store recovers from a kill at any point. Every wait of
+the stop ends by one deadline fixed when the signal is taken: a web process start and a
+worker's launch handshake under way end at once (that child is killed), and a thread still
+waiting 0.5 s after the workers' grace (a request or a create waiting for a lock of the
+registry) is logged and left to end with the process.
+
+The stop is taken from the moment `serve` blocks the signals, before setup
+(`org-host/src/stop.rs`). A stop during setup lets setup end, keeps what it did, starts
+no host and exits 0 ("stopped before serving"). A stop during the host's start stops the
+host with the deadline counted from the signal. A start still running 2.0 s after the
+signal, or a stop still running 2.4 s after it, ends the process with status 0 and one
+line saying so. Every stop exits 0, so neither launchd nor systemd counts it a failure. A
+foreground setup holds the browser port from its first check until the web process's
+first start (`BrowserListener`), so another process cannot take it in between; until HQ
+exists a browser waits in the listener's backlog.
 
 **macOS adapter.** A per-user launchd agent (written by A2 behind this contract):
 `~/Library/LaunchAgents/com.ellosoft.agentic-org.instance.<instance-id>.plist` with
@@ -734,7 +807,10 @@ must name our definition file; `register`, `start`, `stop`, `status` and `unregi
 all refuse such a job. The definition is published by hard-linking a complete temporary
 file, so a file that appears meanwhile is never replaced (a conflict). `start` never
 loads a definition: on `Unloaded` it refuses, and the caller runs `register` again,
-which loads the file only when its bytes equal the rendered unit. `unregister` waits
+which loads the file only when its bytes equal the rendered unit. A definition that
+`register` wrote and launchd refuses to load (a first one, or one that replaced an
+earlier rendering whose job it booted out) is removed again, as the systemd adapter
+removes its unit, so the next `register` starts clean. `unregister` waits
 up to 15 s for launchd to drop the job after `bootout`. The plist has no
 `ProcessType`, so the host is not throttled as a background job. Program, arguments
 and environment must be valid XML text (no NUL or other C0 control except tab, line
@@ -744,15 +820,53 @@ nearest existing ancestor of the root.
 
 **Linux adapter, `Registered`.** A systemd user unit,
 `~/.config/systemd/user/agentic-org-<instance-id>.service`, with
-`ExecStart=<pinned agentic-org> serve --instance <id>`, `Type=exec`,
+`ExecStart=<pinned agentic-org> serve --name <instance name>`, `Type=exec`,
 `KillMode=mixed`, `TimeoutStopSec=15`, `Restart=on-failure`, `UMask=0077` and
 `NoNewPrivileges=yes`, registered with `systemctl --user daemon-reload` and
 `enable --now`, as the launchd agent starts when it is loaded. Without a user manager (no `XDG_RUNTIME_DIR` or user bus) it refuses
-and names `Foreground`. When lingering is off, `status` and setup report that the
+and names `Foreground`. It needs systemd 240 or later, the first that knows `Type=exec`: an
+older user manager (its `Version`, which `available` asks for before anything is written)
+is refused the same way, by its version, and one found later (a unit it loaded reports
+`Type=simple`) is named as too old, not as a drop-in that changes the type. When lingering is off, `status` and setup report that the
 instance runs only while the user is logged in and print
 `loginctl enable-linger <user>`, which polkit normally lets a local, active user run
 for themselves; setup does not run it without being asked. The unit file is writable
 by the same user, like the executable path it names (section 5).
+
+`register` writes nothing unless the user manager's `UnitPath` names
+`~/.config/systemd/user`; otherwise it refuses, naming the manager's unit path. The
+definition is published relative to the unit directory held open, which must belong to
+the user and not be writable by others; its mode is set on the open file. A file that is
+exactly an earlier rendering of a unit under the same name, which holds the instance ID, is
+replaced: the new file is published first, then the old unit is disabled and stopped, then
+the new one is loaded. Any other file is a conflict. The unit carries a location variable
+only when it moves a location away from its default. Setup's readiness waits until the
+browser service runs.
+
+The unit sets the location variables setup gave it (`dirs::location_variables`) and
+unsets the others (`UnsetEnvironment=`), so a value the user manager holds cannot move
+the instance's locations away from the ones setup reserved. A drop-in that applies to
+the unit by its name is a conflict for every operation; a drop-in for every service
+(`service.d/`) is accepted, but whenever systemd has the unit file loaded as it is on
+disk, what it reports for `ExecStart`, `ExecStartPre`, `ExecStartPost`,
+`ExecCondition`, `ExecStop`, `ExecStopPost`, `Environment`, `EnvironmentFiles`,
+`PassEnvironment`, `UnsetEnvironment`, `Type`, `KillMode`, `KillSignal`, `SendSIGKILL`,
+`TimeoutStopUSec`, `Restart`, `UMask` and `NoNewPrivileges` must be what the file says
+(read back only from an exact rendering of a unit), or register, start and status are a
+conflict; stop and unregister still end and remove the unit. No command runs unregister
+yet. The manual removal steps are needed only for a file that is not an earlier rendering
+of the unit (which register replaces), and then setup registers it again:
+`systemctl --user disable --now agentic-org-<instance-id>.service`, remove
+`~/.config/systemd/user/agentic-org-<instance-id>.service`, and
+`systemctl --user daemon-reload`. The
+program, its arguments and its environment values carry no control character, which
+`systemctl show` would print raw. Known limits: `ExecStart`'s arguments are compared as
+systemd prints them, joined by spaces, so a drop-in that only regroups words around a
+space is not seen; and a systemd that quotes `Environment=` differently from systemd 257
+refuses a unit whose values hold a space or a shell character, never accepts it. A
+registration whose `enable --now` enabled the unit and then failed to start it removes
+that enablement (`disable --now`, or `disable` for a unit that was already running)
+before it removes the file it wrote.
 
 **`Foreground`, the container mode.** Nothing is registered: the container runtime
 is the supervisor. Setup is told the mode explicitly; nothing detects a container.
@@ -762,50 +876,181 @@ offline setup (`setup --non-interactive --config`), which repeats as a no-op lat
 then serves. The image's entry point is `tini`, so orphaned agent processes are
 reaped and the stop signal reaches `serve`.
 
-**Amended by the owner's direction of 2026-11-18, to be rewritten with X5:** the
-container starts with a plain `docker run` that publishes the port. The image declares
-its volumes; the seccomp and AppArmor options below are optional and only let agents'
-vendor sandboxes create user namespaces. The listener paragraph below (HTTPS with an
-operator's certificate) is NOT what is built: for now the container serves plain HTTP
-through a listener mode of its own that only the foreground mode may choose, and the
-run command publishes it on `127.0.0.1` only. HTTPS with a certificate the instance
-makes for itself, or one the operator supplies, is pending (implementation plan, X7):
-the product serves no HTTPS on any system yet.
+**The container as built** (X5; the owner's direction of 2026-11-18: a plain `docker
+run` that publishes the port, and plain HTTP for now). The image declares its volumes;
+the seccomp and AppArmor profiles are optional and exist for agents' vendor sandboxes.
+The `http_published` listener is available in foreground mode on bare macOS and
+Linux machines and in containers. Every machine that can reach the listen address
+can reach sign-in and sessions in plain text. A bare host using `0.0.0.0` listens on
+all IPv4 interfaces, including those on the LAN.
 
-**The container file** (`deploy/container/Dockerfile`):
+**HTTPS** (X7; ADR-0017 decision 10). `scheme: "https"` is available to every
+instance, on any address. The pair is the host's (`crates/org-host/src/web_tls/`):
 
-- A Debian (glibc) base; the release installed under root-owned `/opt/agentic-org`;
-  a service user with a dedicated high UID and GID, 61000, so that it is unlikely to
-  match an account on the Docker host; `USER 61000:61000`.
-- Volumes `/data` and `/secrets`, owned by 61000 with mode `0700`.
-- `/etc/agentic-org/setup.json`: `service: foreground`, `root: /data`,
+- **Made at first start** when the setup file names none: an ECDSA P-256 key and a
+  self-signed certificate whose only subject alternative name is the origin's host
+  (DNS name or IP literal), `CN=Agentic Org`, not a CA, server authentication, a random
+  128-bit serial, valid 397 days from five minutes before the start. Setup prints that
+  the instance makes it; the host logs `the TLS certificate for <origin>: made by this
+  instance, SHA-256 fingerprint AB:…, valid from … until …` at every start (stderr: the
+  container log). At a start, or every six hours while it runs, a self-made certificate
+  with fewer than 30 days left is replaced by a new key and certificate (a new
+  fingerprint, logged), and the host sends `tls.renew` to the web process. A lost
+  self-made key is made again, and logged as such.
+- **Supplied** by `"tls": {"cert": "<path>", "key": "<path>"}` in the setup file (absolute
+  paths; only with `https`). Setup opens each without following a symbolic link in its
+  last component (such a link is refused: name the file itself; a link among its parent
+  directories is followed), as a regular file of at most 64 KiB, and verifies
+  the pair in `tls.set`'s order (`tls_invalid`, `tls_key_mismatch`, `tls_not_valid`,
+  `tls_name_mismatch`) before it saves anything; setup prints its fingerprint. The paths
+  are recorded beside the frozen input, never the key. The host imports the pair at its
+  first start (verified again) and does not read the files after that. A supplied key
+  missing from the host's secrets refuses the start, naming the cause: it is never made
+  again. A supplied pair that no longer verifies (expired, say) is never replaced by the
+  instance: the host starts and logs why, and no browser is served until the
+  administrator replaces the pair with `tls.set` (a start with fewer than 30 days left
+  logs a warning).
+- **Custody.** The key is the host secret `tls.<pair fingerprint>` (add-only; in a
+  container, in the secrets volume); the registry's `web_tls_pair` row holds the chain
+  (its `CERTIFICATE` blocks only, re-encoded: text around them, such as a key in a
+  combined file, is dropped), the pair fingerprint and `made` or `supplied`. A new pair
+  is installed by adding its key, pointing the row at it, then deleting the old key; a
+  start deletes any TLS key the row does not name. The registry of an instance created
+  before X7 gains the table at open. Every registry keeps the unused `tls_pair` table of
+  earlier builds (a new one creates it too): a build from before X7 requires it and leaves
+  the `web_tls_pair` it does not know alone, so it can still open a registry this build
+  created. The rule for later additive tables is the same: never drop a table an earlier
+  build requires.
+- **Replacement.** `tls.set` on `host.sock` from the administrator's session (journaled,
+  X-02 §6.2's checks) installs a supplied pair; the host then sends `tls.renew`, and the
+  web process fetches the pair and swaps it for new handshakes, without a restart. When
+  the web process keeps its current pair instead (the fetch failed, the host answered
+  `unavailable`, the pair did not load or the swap failed), it writes one line naming the
+  reason, and the host logs it (a known reason only, at most 16 per web process; no key or
+  certificate bytes). On an
+  instance whose listener is not `https` it answers `unavailable` (decided with X7: no
+  plain-HTTP listener serves a pair, and the scheme never changes, so none is stored). A
+  chain longer than 64 KiB in its normal form is `tls_invalid`.
+- **Command.** `agentic-org admin tls set --cert <file> --key <file> --login <login>
+  [--name <instance>]` reads the files with setup's rules, checks the pair in `tls.set`'s
+  order (a refusal names the files, before a password is asked), signs the administrator in
+  with the password typed at the terminal (native `account.verify`, the interim sign-in
+  `recovery` uses until FC-173), calls `tls.set`, ends the session and prints only the new
+  certificate's SHA-256 fingerprint. It is admitted as the call is and no wider: on
+  `host.sock`, as the service's user, by the administrators' admission (the signed
+  `agentic-org` on a Mac); root has no route. It sends the password only to a host whose
+  program it identified, so where a peer is known by its user alone (GNU/Linux, a
+  container) it refuses before asking for the password or sending anything, until
+  command-line sign-in is approved in the browser (FC-173).
+- **Start gate and `tls.fetch`.** The web process is spawned only while the stored pair is
+  present (`tls_missing`), names the origin's host (`tls_name_mismatch`) and is valid now;
+  the gate is part of the web start's eligibility (asked at most every two seconds, each
+  change logged once), so the web process waits for a replacement rather than failing, and
+  a running one stops when its pair can no longer be served. `tls.fetch` re-checks coverage
+  and answers `https` with the chain and the key on the secret-line path.
+- The web process sets `Secure` session cookies and, for a named host with `hsts` on,
+  `Strict-Transport-Security`; an IP-literal origin never gets HSTS.
+
+Known limits: the self-made certificate is trusted by no browser until the operator
+accepts it (compare the fingerprint first); on Linux and in a container `admin tls set`
+refuses until FC-173 (no password is sent to a host known by its user alone), so a
+supplied pair is replaced there only by an administrator's `tls.set` from another client of
+`host.sock`, or by a new instance; a supplied pair that expires
+stops the browser service until it is replaced; a supplied pair already expired at the
+instance's first start refuses that start (setup verified it moments before; the operator
+replaces the files at the recorded paths and starts again), while one
+that expires later only stops the browser; a supplied pair nearing its end is warned
+about at a start, not while the host runs; and a clock set back more than five minutes
+before a self-made certificate's start, or a self-made key deleted from the secrets while
+the host runs, keeps the browser down until the next six-hourly renewal look (a restart
+remakes it at once). While the gate holds the web process its status stays `starting`;
+the reason is in the host log and `instance.view` reports `tls: missing` (a status
+reason for it belongs to the host status of move 2b). The gate checks in `tls.set`'s order,
+validity before coverage, so an expired pair that also does not name the origin is
+reported as `tls_not_valid` rather than `tls_name_mismatch` (X-02 §2's order); the origin
+never changes, so it does not arise.
+
+**The container file** (`deploy/container/Dockerfile`, `deploy/container/README.md`):
+
+- A Debian (glibc) base pinned by digest; the four executables and the UI under
+  root-owned `/opt/agentic-org`; a service user with a dedicated high UID and GID, 61000,
+  unlikely to match an account on the Docker host, whose home is `/data`;
+  `USER 61000:61000`; `tini` as PID 1.
+- Volumes `/data` and `/secrets`, owned by 61000 with mode `0700`. The instance's data
+  folder is `/data/instance`, its records are in `/data/.local/share/agentic-org` and its
+  sockets in `/data/.cache/agentic-org/tmp`; every key is in `/secrets` (section 3.2:
+  the development image keeps them there as a release image does, in the release
+  layout, and sets no `ORG_OFFICE_DEV_KEY_DIR`).
+- `/etc/agentic-org/setup.json`: `service: foreground`, `root: /data/instance`,
   `credentials: /secrets`, and the listener below.
-- **The listener.** A published port arrives on the container's network interface,
-  not its loopback, and the web process refuses plain HTTP off loopback. So the
-  container listens with HTTPS on `0.0.0.0:8443`; the configured Origin is
-  `https://localhost:8443`; the operator publishes it as
-  `-p 127.0.0.1:8443:8443`. The certificate and key are a pair the operator places
-  in the secrets volume (made with a local CA the Mac's browser trusts, for example
-  `mkcert localhost`); setup imports them into the credential store. This needs the
-  host's verifier for a supplied certificate pair, which X5 builds unless A3 has.
+- **The listener** (until the container moves to `https` after B1b). A published port
+  arrives on the container's network interface, not its loopback. The container listens
+  on `0.0.0.0:8443` with `http_published`, whose
+  origin's host is exactly `127.0.0.1`: the configured origin is
+  `http://127.0.0.1:8443`, and the operator publishes the port as
+  `-p 127.0.0.1:8443:8443` (Docker Engine 28 or later, which keeps a port published on
+  `127.0.0.1` to the Docker host). `localhost` and `[::1]` are refused as the origin's
+  host: the name can resolve to `::1`, where the port is not published and another
+  program of the machine could listen (plan A-10's rule, as for `http_loopback`).
+- **Who else reaches the port.** `-p` decides only what the Docker host publishes. Every
+  container attached to the same Docker network reaches the listener on the container's
+  own address, where sign-in and sessions travel unencrypted, and the web process's
+  Host and Origin checks stop browsers, not those peers. The documented run therefore
+  gives the instance a user-defined network of its own (`docker network create
+  agentic-org`, `--network agentic-org`), so that no container started without a network
+  shares Docker's default bridge with it. A container on another network is kept out only
+  where the engine isolates networks for a published port: measured, Docker Engine 29.1.3
+  on Linux does (no route), Docker Desktop 29.9.3 does not (a container on any network
+  reaches the published container port). Until HTTPS (X7) the trust boundary of the
+  sign-in is every container of the Docker host. LNX-2 step 1 checks that a container on
+  the instance's network reaches the port and reports whether one on the default bridge
+  does.
 - **The run command**, documented and used by LNX-2:
-  `docker run -d --name agentic-org -v agentic-org-data:/data -v agentic-org-secrets:/secrets -p 127.0.0.1:8443:8443 --security-opt seccomp=deploy/container/seccomp.json --security-opt apparmor=agentic-org agentic-org`.
-  `seccomp.json` is Docker's default profile plus unprivileged user-namespace
-  creation (`unshare` and `clone` with `CLONE_NEWUSER`), which the vendor tools'
-  sandboxes need (section 3.5). The `agentic-org` AppArmor profile is
-  `docker-default` plus `userns`, for Docker hosts that restrict unprivileged user
-  namespaces through AppArmor (Ubuntu 24.04 and later); on a Docker host without
-  AppArmor that option is left out. `apparmor=unconfined` and `--privileged` are
-  never used.
+  `docker network create agentic-org` and
+  `docker run -d --name agentic-org --network agentic-org -p 127.0.0.1:8443:8443 -v agentic-org-data:/data -v agentic-org-secrets:/secrets agentic-org`.
+- **The optional profiles** (`deploy/container/seccomp.json`,
+  `deploy/container/apparmor-agentic-org`), for agents whose vendor sandbox (bubblewrap)
+  creates a user namespace and mounts in it. `seccomp.json` is Docker's default profile
+  (moby v28.0.0) plus `unshare` and `clone` with `CLONE_NEWUSER`, and `mount`,
+  `umount2` and `pivot_root`. The AppArmor profile is `docker-default` plus `userns`,
+  with `mount` and `pivot_root` allowed instead of `deny mount`. Neither lets the
+  container mount: the kernel admits a mount only with `CAP_SYS_ADMIN` over the mount
+  namespace, which a container process (Docker drops it; it is never added back) has
+  only in a user namespace it created, and there only for the filesystems a user
+  namespace may mount. The cost is kernel surface: those filesystems' mount code
+  (overlayfs, tmpfs, bind, devpts) inside the container's own namespaces, where escapes
+  have been found (CVE-2023-0386, CVE-2023-2640, CVE-2023-32629); the README asks for a
+  patched kernel. The rest of `docker-default` stays (no write to `/proc/sys` but
+  `kernel/shm*`, to `/proc/sysrq-trigger`, `/proc/kcore`, `/sys/firmware`). Verified on
+  Ubuntu 26.04 with AppArmor enforcing and Docker 29.1.3 (`deploy/container/profiles-check.sh`,
+  LNX-2 step 10): the service serves and stops within 2.5 s under both profiles, and
+  `bwrap --unshare-all --ro-bind / / --dev /dev --tmpfs /tmp true` runs as the service
+  user; neither the service user nor root in the container can mount outside a user
+  namespace, or write `/proc/sys` through a bind mount in a namespace of its own (Docker's
+  read-only `/proc/sys` stays read-only there). A sandbox that mounts a fresh `/proc`
+  (`--proc /proc`) does not run: the kernel refuses it while Docker masks paths of the
+  container's `/proc`, and `systempaths=unconfined` is never used (with the paths
+  unmasked, root in the container could bind `/proc/sys` elsewhere in its own mount
+  namespace and write it past the AppArmor path rules). With
+  Docker's default profiles bubblewrap cannot create its namespace. Being a static
+  file, the AppArmor profile admits signals from an unconfined Docker daemon and the
+  Docker snap's (`snap.docker.dockerd`) where Moby's template names the running
+  daemon's label; another daemon label is added by the operator. `seccomp=unconfined`,
+  `apparmor=unconfined`, `systempaths=unconfined`, `--privileged` and
+  `--cap-add SYS_ADMIN` are never used.
 - **The first registration link.** Non-interactive setup prints none, and nothing is
   written to the container log. The administrator runs
-  `docker exec -u 0 agentic-org agentic-org admin reset --user agentic` (root, naming
-  the service user, as SIGN-33 requires), which prints the link on that terminal.
+  `docker exec -it -u 0 agentic-org agentic-org admin reset --user agentic` (root, at a
+  terminal, naming the service user, as SIGN-33 requires), which prints the link on
+  that terminal.
 
-**Without a terminal.** `setup --non-interactive --config <file>` gains two
-properties: `service` (`registered` or `foreground`) and `credentials` (the absolute
-store directory of section 3.2, required on Linux). The listener's certificate pair
-is named by a path in the secrets volume, never carried in the configuration.
+**Without a terminal.** `setup --non-interactive --config <file>` takes the setup record's
+input as one strict JSON object: `version`, `service` (`registered` or `foreground`),
+`root`, `credentials` (the absolute store directory of section 3.2, required with
+`foreground` on Linux), `listen` (`address`, `port`, `scheme`, `origin`, `hsts`) and,
+with `https` only, an optional `tls` (`cert`, `key`: the paths of a supplied pair).
+Configuration files require an explicit `service`. Persisted v1 setup records that
+predate that field resume in `registered` mode.
 
 ### 3.5 Agent isolation
 
@@ -822,8 +1067,8 @@ that, and Ubuntu 24.04 and later restrict it through AppArmor
 (`kernel.apparmor_restrict_unprivileged_userns = 1`) for any program without a profile
 that grants `userns`. A runtime adapter reports whether its sandbox is available, and
 the office does not start an agent whose sandbox is unavailable; it is never started
-without one. The container file's seccomp and AppArmor profiles (section 3.4) allow
-it in a container. On a Linux host with the AppArmor restriction, setup reports it and
+without one. The container's optional seccomp and AppArmor profiles (section 3.4) allow
+it in a container, for a sandbox that does not mount a fresh `/proc`. On a Linux host with the AppArmor restriction, setup reports it and
 ships `deploy/apparmor/agentic-org-agents`, a profile granting `userns` to the vendor
 sandbox helper, which an administrator installs; until then no agent starts there.
 
@@ -850,14 +1095,18 @@ same three adapters, and LNX-5's check covers them.
   `require_disk(dir)`: refuses `tmpfs`, `ramfs` and `hugetlbfs` where data must
   persist. These replace the copies in `org-host` (`writer.rs`, `hostdb.rs`,
   `release/files.rs`, `release/files/output.rs`, `human/recovery.rs`,
-  `instance/directory.rs`), `org-office/src/store/acceptance/durable.rs`,
+  `instance/directory.rs`), `org-office/src/store/acceptance/durable.rs` (deleted in B1b;
+  the office store's flush in `org-store` calls `full_sync`),
   `org-client/src/agent.rs` and `org-spool/src/safe_read.rs`.
 - **`dirs`.** The application base, the default office home, the user temp base and
   the runtime base for sockets, with the socket path limit. Built in X1b:
   `application_base` and, with the environment left out, `account_application_base`
   (a release host is pinned to the second and refuses when the first differs, so
   `XDG_DATA_HOME` cannot move it), `user_temp_base`, `environment_spelling`,
-  `socket_path_limit`. The runtime base for sockets is built when X2 needs it. macOS:
+  `socket_path_limit`; and `location_variables`, every variable that can move one of
+  the locations (none on macOS; the three XDG base variables on Linux), which setup
+  gives a registered unit with their values so that the service resolves what setup
+  resolved. The runtime base for sockets is built when X2 needs it. macOS:
   `~/Library/Application Support/agentic.org`, `_CS_DARWIN_USER_TEMP_DIR`, 103 bytes.
   Linux: `${XDG_DATA_HOME:-~/.local/share}/agentic-org/`,
   `${XDG_CACHE_HOME:-~/.cache}/agentic-org/tmp/` (on disk; `require_disk` applies)
@@ -889,7 +1138,12 @@ same three adapters, and LNX-5's check covers them.
   `local_authority` decides who may reset the administrator: on macOS the OS dialog
   at the console, as for the recovery code; on Linux a peer whose `SO_PEERCRED` UID
   is 0, acting on the instance of the user that `sudo` names (`SUDO_UID`) or that
-  `--user` names (SIGN-33). Root is admitted on `host.sock` for this method only.
+  `--user` names (SIGN-33). Root is admitted on `host.sock` for this method only. Root
+  reads the service user's instance in a child process with that user's whole identity
+  (all its groups; it cannot become root again), within 10 s. Connect, greeting and call
+  share one 30 s deadline. An instance with an administrator gets no link; the command
+  says to sign in (resetting a forgotten administrator password is A3's, not available
+  yet).
 
 ## 5. What a local attacker can still do on Linux
 
@@ -1009,7 +1263,7 @@ increments are in the [implementation plan](../implementation-plan.md#milestone-
 | Increment | Files it changes | Also changed by |
 | --- | --- | --- |
 | X1a check and layout | `crates/org-platform/tests/platform_conditionals.rs`, `.github/platform-conditionals.allow`, `.github/scripts/platform_allowlist_shrinks.py`, `.github/workflows/ci.yml`; the layout text and `From<Refused> for io::Error` in `crates/org-platform/src/lib.rs` | A2 B0 created the crate, the `service` contract and its launchd adapter in `org-platform/src/service/` |
-| X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs` (or `org-store/src/files.rs`, where B1a carries its flush); `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
+| X1b `fs`, `dirs`, `process`, `socket` | `org-platform/src/{fs,dirs,process,socket}/`; `org-proto/src/location.rs`; `org-socket/src/{peer.rs, rights.rs, rights/}`; `org-supervise/src/{lib.rs, platform.rs, spawn.rs, child.rs, recovery.rs, recovery/scan.rs, recovery/native/}`; `org-host/src/{home.rs, writer.rs, hostdb.rs, release/files.rs, release/files/output.rs, human/recovery.rs, instance/directory.rs, instance/mod.rs, instance/temp.rs, instance/setup.rs, instance/registry.rs, human.rs (paths)}`; `org-office/src/store/acceptance/durable.rs` (deleted in B1b: the office store's flush is in `org-store/src/disk.rs` and `files.rs`); `org-client/src/agent.rs`; `org-spool/src/safe_read.rs`; `apps/agent-os/src/office.rs`, `apps/agentic-org-office/src/lib.rs`, `apps/agentic-org/src/serve.rs` (location call sites) | A2: `instance/`, `human.rs`, `home.rs`, `hostdb`, `apps/agentic-org/src/serve.rs`. A3: `hostdb`. A5: `org-client` |
 | X1c `admission`, `confinement`, `presence` | `org-platform/src/{admission,confinement,presence}/`, `org-platform/build.rs`; `org-socket/src/{confinement.rs, confinement/, image.rs}`; `org-host/src/{spawn.rs, server_check.rs, code_signing.rs, peer.rs, app_auth.rs, human.rs (verify_host), recovery.rs, recovery/presence.rs, release.rs, release/platform.rs, release/runtime.rs, supervisor/child.rs, supervisor/channels.rs, supervisor/mod.rs, offices.rs, lib.rs}`, `org-host/build.rs`, `org-host/Cargo.toml` | A1: `supervisor/child.rs`, `supervisor/channels.rs`, `supervisor/mod.rs`. A2 and A3: `org-host/src/lib.rs`, `instance/`, `hostdb`. A3: the web process's start and its confinement call. A4: `offices.rs` |
 | X1d `credentials` | `org-platform/src/credentials/`; `org-host/src/{keys/, host_secrets.rs, host_secrets/}` | A1 (`keys/`, the office secrets key) |
 | X2 first worker | `org-platform/src/{admission,fs,dirs,process,socket}/linux.rs`, `org-platform/src/testing.rs`; the tests in `org-host/src/supervisor/` and `apps/agentic-org/tests/`; `ci.yml` | the tests in `apps/agentic-org/tests/` that A1 and A2 also edit |

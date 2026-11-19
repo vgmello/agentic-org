@@ -1,0 +1,14 @@
+# The image is built from prebuilt Linux executables (deploy/container/build.sh, then
+# deploy/container/Dockerfile): the build context is the repository root, and only these
+# files are sent to the Docker daemon.
+*
+!deploy/container/setup.json
+!target/linux/debug/agentic-org
+!target/linux/debug/agentic-org-office
+!target/linux/debug/agentic-org-web
+!target/linux/debug/agent-os
+!target/linux/release/agentic-org
+!target/linux/release/agentic-org-office
+!target/linux/release/agentic-org-web
+!target/linux/release/agent-os
+!apps/agentic-org-ui/build

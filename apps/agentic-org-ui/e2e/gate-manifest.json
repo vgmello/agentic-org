@@ -11,20 +11,31 @@
 		"maxJourneyTests": 60,
 		"maxChromiumSeconds": 300,
 		"measured": {
-			"tests": 51,
+			"tests": 49,
 			"chromiumSeconds": 99,
 			"workers": 2,
 			"date": "2026-11-18"
 		}
 	},
 	"projectFiles": {
-		"non-chat-icons-default-font.ts": "chromium-default-font",
 		"chat-followups-default-font.ts": "chromium-chat-default-font",
 		"focus-primitives-default-font.ts": "chromium-focus-default-font",
 		"dialog-title-words-default-font.ts": "chromium-title-default-font"
 	},
 	"cspIgnoredSpecs": ["shot.spec.ts", "production-unavailable.spec.ts"],
 	"webkitExempt": [
+		{
+			"spec": "projects.spec.ts",
+			"why": "rewritten for the new Projects screens; not yet run on WebKit (BUG-169b)"
+		},
+		{
+			"spec": "costs.spec.ts",
+			"why": "new spec; not yet run on WebKit (BUG-169b)"
+		},
+		{
+			"spec": "updates.spec.ts",
+			"why": "new spec; not yet run on WebKit (BUG-169b)"
+		},
 		{
 			"spec": "agents-roster.spec.ts",
 			"why": "not yet run on WebKit (BUG-169b)"
@@ -66,22 +77,6 @@
 			"why": "not yet run on WebKit (BUG-169b)"
 		},
 		{
-			"spec": "org-chart-agents.spec.ts",
-			"why": "not yet run on WebKit (BUG-169b)"
-		},
-		{
-			"spec": "org-chart-teams-edit.spec.ts",
-			"why": "not yet run on WebKit (BUG-169b)"
-		},
-		{
-			"spec": "org-chart-toolbar.spec.ts",
-			"why": "not yet run on WebKit (BUG-169b)"
-		},
-		{
-			"spec": "org-chart-views.spec.ts",
-			"why": "not yet run on WebKit (BUG-169b)"
-		},
-		{
 			"spec": "processes-bugs.spec.ts",
 			"why": "not yet run on WebKit (BUG-169b)"
 		},
@@ -100,10 +95,6 @@
 		{
 			"spec": "production-unavailable.spec.ts",
 			"why": "runs only in the production project, against the static release; the webkit project ignores it"
-		},
-		{
-			"spec": "non-chat-icons-default-font.ts",
-			"why": "a Chromium-only font-size project file; its base spec is the WebKit-relevant one"
 		},
 		{
 			"spec": "chat-followups-default-font.ts",
@@ -198,57 +189,47 @@
 		},
 		{
 			"name": "agents-roster",
-			"why": "List agents, add an agent, open one in the org chart.",
+			"why": "Members directory: list people and agents, add a person, open a member's profile.",
 			"tests": [
 				{
 					"spec": "agents-roster.spec.ts",
-					"match": "the Agents screen lists every agent",
+					"match": "Members lists people and agents A–Z",
 					"count": 1
 				},
 				{
 					"spec": "agents-roster.spec.ts",
-					"match": "a name opens the org chart",
+					"match": "a name in the directory opens",
 					"count": 1
 				},
 				{
 					"spec": "agents-roster.spec.ts",
-					"match": "Add agent from the Agents screen",
+					"match": "Add a person adds the row once",
 					"count": 1
 				}
 			]
 		},
 		{
 			"name": "org-chart",
-			"why": "Teams tree and reporting tree; add a person, change a manager (with Undo), create and delete a team.",
+			"why": "One reporting tree under the owner bar; change a manager, hand over ownership, add a person.",
 			"tests": [
 				{
 					"spec": "org-chart.spec.ts",
-					"match": "the Teams view draws the ownership tree",
+					"match": "the owner bar sits above one reporting tree",
 					"count": 1
 				},
 				{
-					"spec": "org-chart-views.spec.ts",
-					"match": "the owner is the root, and everyone appears exactly once",
+					"spec": "org-chart.spec.ts",
+					"match": "a changed manager moves the node",
 					"count": 1
 				},
 				{
-					"spec": "org-chart-people-edit.spec.ts",
-					"match": "Add person takes a name, contact",
+					"spec": "org-chart.spec.ts",
+					"match": "Hand over ownership names the effect",
 					"count": 1
 				},
 				{
-					"spec": "org-chart-people-edit.spec.ts",
-					"match": "a changed manager shows a toast with Undo",
-					"count": 1
-				},
-				{
-					"spec": "org-chart-teams-edit.spec.ts",
-					"match": "New team takes a name",
-					"count": 1
-				},
-				{
-					"spec": "org-chart-teams-edit.spec.ts",
-					"match": "deleting another team names who moves",
+					"spec": "org-chart.spec.ts",
+					"match": "Add a person starts at the top-level team",
 					"count": 1
 				}
 			]
@@ -264,12 +245,12 @@
 				},
 				{
 					"spec": "projects.spec.ts",
-					"match": "PROJ-2: Assign team",
+					"match": "PROJ-2: New project creates its own team",
 					"count": 1
 				},
 				{
 					"spec": "projects.spec.ts",
-					"match": "PROJ-3: a project page shows its name",
+					"match": "PROJ-3: a project page has its header",
 					"count": 1
 				},
 				{
@@ -439,26 +420,25 @@
 			]
 		},
 		"org-chart": {
-			"specs": ["org-chart*.spec.ts", "agents-roster.spec.ts"],
+			"specs": ["org-chart*.spec.ts", "agents-roster.spec.ts", "hire.spec.ts"],
 			"sources": [
-				"src/routes/(shell)/org-chart/**",
-				"src/routes/(shell)/agents/**",
+				"src/routes/(shell)/teams/(views)/org-chart/**",
+				"src/routes/(shell)/teams/(views)/members/**",
+				"src/routes/(shell)/teams/{hire,hires}/**",
 				"src/lib/modules/employees/**",
 				"src/lib/org/people-edit*",
 				"src/lib/org/team-edit*",
-				"src/lib/components/{AddPersonSheet,AgentStatusIcon,ChangeManagerDialog,ChartFitMenuItem,DeleteTeamDialog,EditMembersDialog,EditMemberTeamsDialog,EditPersonDialog,MemberTile,MoveMemberDialog,MoveTeamDialog,NewTeamSheet,PeopleChart,ProjectTeamDialog,RemovePersonDialog,RemoveProjectDialog,RenameTeamDialog,ReportingChart,SelectedMember,TeamMenu,TeamsChart,TeamsList}.svelte",
-				"src/lib/components/org-tree.css",
-				"src/lib/components/chart-measurement.ts",
+				"src/lib/modules/org-chart/**",
+				"src/lib/components/{AddPersonSheet,MoveTeamDialog,NewTeamSheet,ProjectTeamDialog,RemoveProjectDialog,RenameTeamDialog}.svelte",
 				"e2e/org-chart-menu.ts"
 			]
 		},
 		"offices": {
 			"specs": ["offices.spec.ts", "office-status-refresh.spec.ts"],
 			"sources": [
-				"src/routes/(shell)/offices/**",
+				"src/routes/(shell)/settings/offices/**",
 				"src/lib/offices/**",
-				"src/lib/components/Office*.svelte",
-				"src/lib/components/testing/office-status.*"
+				"src/lib/modules/offices/**"
 			]
 		},
 		"shell-look": {
@@ -466,13 +446,23 @@
 				"navigation.spec.ts",
 				"shell-*.spec.ts",
 				"desktop-navigation-focus.spec.ts",
+				"team-page.spec.ts",
 				"look-primitives.spec.ts",
 				"focus-primitives.spec.ts",
 				"focus-primitives-default-font.ts",
-				"shot.spec.ts"
+				"shot.spec.ts",
+				"member-profile.spec.ts",
+				"roles.spec.ts",
+				"access.spec.ts",
+				"agent-setup.spec.ts",
+				"costs.spec.ts",
+				"updates.spec.ts"
 			],
 			"sources": [
-				"src/routes/(shell)/[section=section]/**",
+				"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
+				"src/routes/(shell)/teams/(views)/+page.svelte",
+				"src/routes/(shell)/teams/[teamId]/**",
+				"src/routes/(shell)/settings/{+page.svelte,agents/**,roles/**,access/**,costs/**,updates/**}",
 				"src/lib/components/testing/look-primitives.*",
 				"src/lib/components/testing/focus-primitives.*",
 				"e2e/focus-primitives.ts"
@@ -481,31 +471,25 @@
 		"projects-work": {
 			"specs": [
 				"projects.spec.ts",
-				"project-profile.spec.ts",
 				"work.spec.ts",
 				"tasks.spec.ts",
 				"dialog-block-title.spec.ts",
-				"bugs.spec.ts",
-				"non-chat-icons.spec.ts",
-				"non-chat-icons-default-font.ts"
+				"bugs.spec.ts"
 			],
 			"sources": [
 				"src/routes/(shell)/projects/**",
+				"src/lib/modules/projects/**",
 				"src/routes/(shell)/work/**",
 				"src/lib/org/projects*",
 				"src/lib/org/team-edit*",
 				"src/lib/modules/copilot/**",
 				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard}.svelte",
-				"src/lib/components/{TeamsChart,MemberTile}.svelte",
-				"src/lib/components/org-tree.css",
-				"e2e/org-chart-menu.ts",
-				"e2e/non-chat-icons.ts",
-				"e2e/fixtures/non-chat-icons-*.json"
+				"e2e/org-chart-menu.ts"
 			]
 		},
 		"processes": {
 			"specs": ["processes.spec.ts", "processes-bugs.spec.ts"],
-			"sources": ["src/routes/(shell)/processes/**", "src/lib/modules/processes/**"]
+			"sources": ["src/routes/(shell)/settings/processes/**", "src/lib/modules/processes/**"]
 		},
 		"requests-copilot": {
 			"specs": ["requests.spec.ts", "copilot.spec.ts"],
@@ -535,27 +519,12 @@
 	},
 	"alsoRuns": [
 		{
-			"category": "projects-work",
-			"files": [
-				"src/routes/(shell)/org-chart/+page.{svelte,ts}",
-				"src/lib/components/ChartFitMenuItem.svelte"
-			],
-			"why": "non-chat-icons.spec.ts opens /org-chart (through a ternary the route-visit guard cannot see) and asserts page-owned behaviour: the take-off toast and last-team dialog, the View menu with Actual size, and the empty, loading and error states. Selected in addition to org-chart, without making projects-work own the page's many imports."
-		},
-		{
 			"category": "dialog-title-words",
 			"files": [
-				"src/lib/components/ChangeManagerDialog.svelte",
-				"src/lib/components/DeleteTeamDialog.svelte",
-				"src/lib/components/EditMemberTeamsDialog.svelte",
-				"src/lib/components/EditMembersDialog.svelte",
-				"src/lib/components/EditPersonDialog.svelte",
-				"src/lib/components/MoveMemberDialog.svelte",
 				"src/lib/components/MoveTeamDialog.svelte",
 				"src/lib/components/NewRequestDialog.svelte",
 				"src/lib/components/NewTaskDialog.svelte",
 				"src/lib/components/ProjectTeamDialog.svelte",
-				"src/lib/components/RemovePersonDialog.svelte",
 				"src/lib/components/RemoveProjectDialog.svelte",
 				"src/lib/components/RenameTeamDialog.svelte",
 				"src/lib/components/ReportBugDialog.svelte",
@@ -573,9 +542,39 @@
 	],
 	"allowedCoupling": [
 		{
-			"from": "e2e/focus-primitives.spec.ts",
-			"to": "src/routes/(shell)/processes/+page.svelte",
-			"why": "Dedicated ProcessSheet caller-override regression for the shared Button outline. The helper also samples nine consumer families (documented route-scanner limit); shared primitive changes select FULL, page-only changes retain their category and journey coverage."
+			"from": "src/lib/modules/projects/features/work/ProjectWork.svelte",
+			"to": "src/lib/components/{BugsPanel,TasksBoard}.svelte",
+			"why": "Until Work items (plan step 5) builds the project board and list, the project's Work tab shows v1's task board and bug list so the release keeps them; the tasks, bugs, copilot and dialog-title specs keep covering them. Removed when step 5 replaces them."
+		},
+		{
+			"from": "src/lib/modules/projects/{components/ProcessSelect,features/overview/ProjectOverview}.svelte",
+			"to": "src/lib/modules/processes/index.ts",
+			"why": "A project chooses its development process from the processes module's catalogue and links to it (development-processes §3, PKG-4), through that module's public index; the processes specs cover the catalogue, the projects spec covers the choice."
+		},
+		{
+			"from": "src/lib/modules/members/features/directory/MembersDirectory.svelte",
+			"to": "src/lib/components/AddPersonSheet.svelte",
+			"why": "The Members directory's Add a person opens the organization's existing add-a-person flow, as the top-bar New and a team's page do, without owning it; the org-chart specs cover that flow. It moves into the members module when the org chart slice is rebuilt."
+		},
+		{
+			"from": "src/lib/modules/members/features/profile/{IdentityDialog,MoveHomeTeamDialog}.svelte",
+			"to": "src/lib/org/{people-edit,team-edit}.ts",
+			"why": "The profile's own Edit and Move home team dialogs check a person's name and list the team tree with the organization's existing rules instead of copying them; the org-chart and projects-work specs keep covering those rules."
+		},
+		{
+			"from": "src/lib/modules/settings/recovery.ts",
+			"to": "src/lib/platform/organizations/command.ts",
+			"why": "The Recovery row's commands quote names with the one POSIX quoting rule the organization pages own (shellQuote) instead of a copy; selection.test.ts covers the rule and recovery.test.ts the Recovery row's commands."
+		},
+		{
+			"from": "src/lib/platform/shell/NewMenu.svelte",
+			"to": "src/lib/{components/{NewRequestDialog,AddPersonSheet}.svelte,modules/employees/index.ts,modules/messaging/{index,model,legacy-api}.ts}",
+			"why": "The top-bar New menu opens the existing creation flows (request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
+		},
+		{
+			"from": "src/routes/(shell)/+layout.svelte",
+			"to": "src/lib/offices/{model,probe}.ts",
+			"why": "The footer's office line uses the same status words and live-check rule as Offices (displayStatus, statusInfo); offices specs cover that model."
 		},
 		{
 			"from": "src/routes/(shell)/+layout.svelte",
@@ -589,33 +588,63 @@
 		},
 		{
 			"from": "e2e/{shell-*,desktop-navigation-focus}.spec.ts",
-			"to": "src/routes/(shell)/{offices,chat}/+page.svelte",
+			"to": "src/routes/(shell)/{settings/offices,chat}/+page.svelte",
 			"why": "These specs open Offices or Chat mainly for shell chrome (topbar, footer, navigation focus, Back), but they also assert page-owned states (for example a stopped office or an offline chat shown inside the shell). Accepted speed tradeoff: a page change does not re-run them; a shared or unknown change does."
 		},
 		{
-			"from": "e2e/look-primitives.spec.ts",
-			"to": "src/routes/(shell)/{agents,org-chart}/+page.svelte",
-			"why": "Checks the shared look primitives on the roster and chart pages, and also asserts page-owned roster states and filters. Accepted speed tradeoff: a page change does not re-run it; a primitive change is shared and runs everything."
-		},
-		{
 			"from": "e2e/{tasks,copilot}.spec.ts",
-			"to": "src/routes/(shell)/{org-chart,projects}/+page.svelte",
+			"to": "src/routes/(shell)/{teams/(views)/org-chart,projects}/+page.svelte",
 			"why": "tasks pauses an agent through the org chart; copilot opens a project page only to reach the report and task dialogs, which requests-copilot owns too."
 		},
 		{
-			"from": "e2e/agents-roster.spec.ts",
-			"to": "src/routes/(shell)/projects/+page.svelte",
-			"why": "Opens Projects to check the Agents views navigation leaves the roster."
+			"from": "src/lib/modules/teams/features/{team-actions/TeamDialogs,team-page/AddPersonToTeam}.svelte",
+			"to": "src/lib/{components/{NewTeamSheet,MoveTeamDialog,RenameTeamDialog}.svelte,org/team-edit.ts}",
+			"why": "The Teams index and a team's page reuse the org chart's team dialogs (new, move, rename) through TeamDialogs, and read the org chart's team helpers (the team list for Home team, Delete's effects on contributed projects), without owning them; the org-chart specs cover those dialogs and helpers. Archive, Delete and Add a person from a team are the teams module's own (team-page.spec.ts)."
 		},
 		{
-			"from": "e2e/org-chart-agents.spec.ts",
-			"to": "src/routes/(shell)/offices/+page.svelte",
-			"why": "Visits Offices to show the mock office keeps an agent change in browser storage."
+			"from": "src/lib/modules/teams/features/{browse-teams/TeamsIndex,team-page/TeamPage}.svelte",
+			"to": "src/lib/modules/employees/index.ts",
+			"why": "The Teams index and a team's page link to the Hire flow and Hire requests through the employees module's public URL helpers (hireUrl, HIRE_REQUESTS_URL); the org-chart category owns and tests the employees module."
 		},
 		{
-			"from": "e2e/production-unavailable.spec.ts",
-			"to": "src/routes/(shell)/org-chart/+page.svelte",
-			"why": "Asserts the static release ignores fake-enabling query flags on the org chart; the production journeys always run."
+			"from": "src/routes/(shell)/settings/agents/+page.svelte",
+			"to": "src/lib/modules/employees/index.ts",
+			"why": "The Agent setup route composes Hire an agent from the employees module's public URL helper (hireUrl) and hands it to the agent-setup list, so agent-setup itself depends on no module that depends on members (members links to agent setup; no cycle). The org-chart category owns and tests the employees module."
+		},
+		{
+			"from": "src/lib/modules/offices/features/list/OfficesPage.svelte",
+			"to": "src/lib/modules/employees/index.ts",
+			"why": "Offices lists unplaced agents and opens the employees module's Offboard agent dialog; the org-chart category owns and tests that dialog."
+		},
+		{
+			"from": "e2e/fakes/modules/employees.ts",
+			"to": "src/lib/modules/employees/{api,types}.ts",
+			"why": "The dev-mock fake implements the employees module's api contract and only needs its types; the fake is never part of a production build."
+		},
+		{
+			"from": "e2e/fakes/modules/offices.ts",
+			"to": "src/lib/modules/offices/{api,types}.ts",
+			"why": "The dev-mock fake implements the offices module's api contract and only needs its types; the fake is never part of a production build."
+		},
+		{
+			"from": "e2e/fakes/modules/org-chart.ts",
+			"to": "src/lib/modules/org-chart/{api,types}.ts",
+			"why": "The dev-mock fake implements the org chart module's api contract and only needs its types; the fake is never part of a production build."
+		},
+		{
+			"from": "src/lib/modules/{teams/features/team-page/TeamProcesses,members/features/profile-tabs/ProcessesTab}.svelte",
+			"to": "src/lib/modules/processes/index.ts",
+			"why": "A team's and an agent's Processes tab (processes-ux §2 \"Where\") embed the processes module's own view through its public index (PlaceProcesses, readPlace), so the inheritance view has one owner; the processes specs cover it and team-page/member-profile specs open those tabs."
+		},
+		{
+			"from": "e2e/fakes/modules/processes.ts",
+			"to": "src/lib/modules/processes/{api,types}.ts",
+			"why": "The processes mock stands in for the module's api.ts by name under dev:mock (README-screens \"Mock data\") and so implements its interface and types; e2e/fakes is shared, so a change to it runs the full suite anyway."
+		},
+		{
+			"from": "e2e/processes{,-bugs}.spec.ts",
+			"to": "src/routes/(shell)/settings/+page.svelte",
+			"why": "The route scanner reads only the first path segment, so /settings/processes/** (owned by processes) is seen as the General settings page; the processes specs never open General itself."
 		}
 	],
 	"rules": {
@@ -624,6 +653,7 @@
 			"e2e-real/**",
 			"src/**/*.{test,spec}.{js,ts}",
 			"scripts/ui-gate*.ts",
+			"scripts/look-tokens*.ts",
 			".gitignore",
 			".mcp.json",
 			"eslint.config.js",
@@ -666,7 +696,14 @@
 			"src/lib/platform/auth/**",
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
-			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,OwnerBar,LiveBanner,Logo}.*",
+			"src/lib/modules/shell/**",
+			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,projects,workitems,docs,features,releases,insights,costs,budgets,access,updates}/**",
+			"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
+			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
+			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",
+			"src/routes/(shell)/settings/+layout.svelte",
+			"src/lib/components/{MiniIcon,PageHeader,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt,Loaded,ConfirmDialog,CopyButton}.svelte",
+			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,LiveBanner,Logo,resource,classes,focus,pills}.*",
 			"static/**",
 			"vite.config.ts",
 			"svelte.config.js",

@@ -117,11 +117,11 @@
 
 <div class="space-y-4">
 	<div class="flex items-center justify-between gap-3">
-		<p class="text-sm/6 text-gray-400">Tasks in {projectName}. <span class="rounded bg-white/10 px-1.5 text-xs/5 text-gray-200">Sample data</span></p>
+		<p class="text-sm/6 text-fg-muted">Tasks in {projectName}. <span class="rounded bg-surface-overlay px-1.5 text-xs/5 text-fg-body">Sample data</span></p>
 		<div class="flex items-center gap-x-2">
-			<div role="group" aria-label="View" class="inline-flex rounded-lg bg-white/5 p-1 outline-1 -outline-offset-1 outline-white/10">
+			<div role="group" aria-label="View" class="inline-flex rounded-lg bg-surface-raised p-1 outline-1 -outline-offset-1 outline-line">
 				{#each [['board', 'Board'], ['list', 'List']] as const as [id, name] (id)}
-					<button type="button" aria-pressed={view === id} onclick={() => setView(id)} class="rounded-md px-3 py-1 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:outline-indigo-400 {view === id ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}">{name}</button>
+					<button type="button" aria-pressed={view === id} onclick={() => setView(id)} class="rounded-md px-3 py-1 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:outline-focus {view === id ? 'bg-surface-overlay text-fg' : 'text-fg-muted hover:text-fg'}">{name}</button>
 				{/each}
 			</div>
 			<Button onclick={() => (adding = true)}><Plus aria-hidden="true" /> New task</Button>
@@ -129,15 +129,15 @@
 	</div>
 
 	{#if loadError}
-		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-red-300" role="alert">{loadError} <button class="underline" onclick={load}>Try again</button></p>
+		<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-danger-text" role="alert">{loadError} <button class="underline" onclick={load}>Try again</button></p>
 	{:else if tasks === undefined}
-		<p class="text-sm/6 text-gray-400">Loading tasks…</p>
+		<p class="text-sm/6 text-fg-muted">Loading tasks…</p>
 	{:else}
 		{#if view === 'list'}
-			<div class="overflow-x-auto rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10">
+			<div class="overflow-x-auto rounded-xl bg-surface-raised outline-1 -outline-offset-1 outline-line">
 				<table class="w-full text-left text-sm/6" data-testid="task-list">
 					<caption class="sr-only">Tasks</caption>
-					<thead class="text-xs/5 text-gray-400">
+					<thead class="text-xs/5 text-fg-muted">
 						<tr>
 							<th scope="col" class="px-4 py-2 font-medium">Task</th>
 							<th scope="col" class="px-4 py-2 font-medium">Title</th>
@@ -147,15 +147,15 @@
 							<th scope="col" class="px-4 py-2 font-medium">Steps</th>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-white/5 text-gray-200">
+					<tbody class="divide-y divide-line-subtle text-fg-body">
 						{#each cols.flatMap((c) => c.tasks) as task (task.id)}
 							<tr data-testid="task-row" data-task={task.id}>
-								<td class="px-4 py-2 text-gray-400">{taskRef(task)}</td>
-								<th scope="row" class="px-4 py-2 font-normal"><button type="button" class="text-left font-semibold text-white hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]" onclick={() => ((startSheet = undefined), (openId = task.id), (sheetOpen = true))}>{task.title}</button></th>
+								<td class="px-4 py-2 text-fg-muted">{taskRef(task)}</td>
+								<th scope="row" class="px-4 py-2 font-normal"><button type="button" class="text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-focus [overflow-wrap:anywhere]" onclick={() => ((startSheet = undefined), (openId = task.id), (sheetOpen = true))}>{task.title}</button></th>
 								<td class="px-4 py-2">{STATUS_LABEL[task.status as TaskStatus]}{task.blocked_reason ? `: ${task.blocked_reason}` : ''}</td>
-								<td class="px-4 py-2 {task.priority === 'urgent' ? 'font-semibold text-amber-300' : ''}">{priorityWord(task.priority) ?? ''}</td>
+								<td class="px-4 py-2 {task.priority === 'urgent' ? 'font-semibold text-warning-text' : ''}">{priorityWord(task.priority) ?? ''}</td>
 								<td class="px-4 py-2">{nameOf(snapshot, task.assignee_id)}</td>
-								<td class="px-4 py-2 text-gray-400">{checklistWords(task)}</td>
+								<td class="px-4 py-2 text-fg-muted">{checklistWords(task)}</td>
 							</tr>
 						{/each}
 					</tbody>
@@ -164,25 +164,25 @@
 		{:else}
 		<div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4" data-testid="task-board">
 			{#each cols as col (col.status)}
-				<section class="rounded-xl bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10" aria-labelledby={`col-${col.status}`} data-testid="task-column" data-status={col.status}>
-					<h3 id={`col-${col.status}`} class="flex items-center justify-between text-sm/6 font-semibold text-white">{col.label} <span class="font-normal text-gray-400">{col.tasks.length}</span></h3>
+				<section class="rounded-xl bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line" aria-labelledby={`col-${col.status}`} data-testid="task-column" data-status={col.status}>
+					<h3 id={`col-${col.status}`} class="flex items-center justify-between text-sm/6 font-semibold text-fg">{col.label} <span class="font-normal text-fg-muted">{col.tasks.length}</span></h3>
 					<ul class="mt-2 space-y-2">
 						{#each col.tasks as task (task.id)}
 							{@const word = priorityWord(task.priority)}
-							<li class="rounded-lg bg-gray-800 p-2.5 text-sm/6 outline-1 -outline-offset-1 outline-white/10" data-testid="task-card" data-task={task.id}>
-								<button type="button" class="block w-full text-left focus-visible:outline-2 focus-visible:outline-indigo-400" onclick={() => ((startSheet = undefined), (openId = task.id), (sheetOpen = true))}>
-									<span class="text-xs/5 text-gray-400">{taskRef(task)}</span>
-									<span class="block font-semibold text-white [overflow-wrap:anywhere]">{task.title}</span>
+							<li class="rounded-lg bg-surface p-2.5 text-sm/6 outline-1 -outline-offset-1 outline-line" data-testid="task-card" data-task={task.id}>
+								<button type="button" class="block w-full text-left focus-visible:outline-2 focus-visible:outline-focus" onclick={() => ((startSheet = undefined), (openId = task.id), (sheetOpen = true))}>
+									<span class="text-xs/5 text-fg-muted">{taskRef(task)}</span>
+									<span class="block font-semibold text-fg [overflow-wrap:anywhere]">{task.title}</span>
 								</button>
-								<p class="mt-1 flex flex-wrap items-center gap-x-2 text-xs/5 text-gray-400">
-									{#if word}<span class={task.priority === 'urgent' ? 'font-semibold text-amber-300' : 'text-gray-200'} data-testid="priority">{word}</span>{/if}
+								<p class="mt-1 flex flex-wrap items-center gap-x-2 text-xs/5 text-fg-muted">
+									{#if word}<span class={task.priority === 'urgent' ? 'font-semibold text-warning-text' : 'text-fg-body'} data-testid="priority">{word}</span>{/if}
 									<span>{nameOf(snapshot, task.assignee_id)}</span>
 									{#if checklistWords(task)}<span>{checklistWords(task)}</span>{/if}
 								</p>
-								{#if task.status === 'blocked' && task.blocked_reason}<p class="mt-1 text-xs/5 text-amber-200" data-testid="card-blocked">Blocked: {task.blocked_reason}</p>{/if}
+								{#if task.status === 'blocked' && task.blocked_reason}<p class="mt-1 text-xs/5 text-warning-text-strong" data-testid="card-blocked">Blocked: {task.blocked_reason}</p>{/if}
 								<div class="mt-1 flex justify-end">
 									<DropdownMenu>
-										<DropdownMenuTrigger class="rounded p-1 text-gray-400 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400" aria-label={`Actions for ${taskRef(task)}`}><Ellipsis class="size-4" aria-hidden="true" /></DropdownMenuTrigger>
+										<DropdownMenuTrigger class="rounded p-1 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-focus" aria-label={`Actions for ${taskRef(task)}`}><Ellipsis class="size-4" aria-hidden="true" /></DropdownMenuTrigger>
 										<DropdownMenuContent align="end">
 											<DropdownMenuGroup>
 												<DropdownMenuLabel>Move {taskRef(task)} to</DropdownMenuLabel>
@@ -195,7 +195,7 @@
 								</div>
 							</li>
 						{:else}
-							<li class="px-1 py-2 text-xs/5 text-gray-500">No tasks.</li>
+							<li class="px-1 py-2 text-xs/5 text-fg-subtle">No tasks.</li>
 						{/each}
 					</ul>
 					{#if col.status === 'done'}
@@ -206,7 +206,7 @@
 		</div>
 		{/if}
 		{#if tasks.length === 0}
-			<p class="text-sm/6 text-gray-400" data-testid="no-tasks">No tasks yet. Create the first one.</p>
+			<p class="text-sm/6 text-fg-muted" data-testid="no-tasks">No tasks yet. Create the first one.</p>
 		{/if}
 	{/if}
 	<p class="sr-only" role="status" aria-live="polite">{announcement}</p>
@@ -224,7 +224,7 @@
 		<form class="space-y-3" onsubmit={confirmBlock} novalidate>
 			<Label for="block-reason">Blocked on</Label>
 			<Input id="block-reason" bind:value={blockReason} maxlength={WORK_LIMITS.blockedReason * 2} autocomplete="off" />
-			{#if blockError}<p class="text-sm/6 text-red-400" role="alert">{blockError}</p>{/if}
+			{#if blockError}<p class="text-sm/6 text-danger" role="alert">{blockError}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" onclick={() => (blocking = undefined)}>Cancel</Button>
 				<Button type="submit" disabled={blockReason.trim() === ''}>Block task</Button>

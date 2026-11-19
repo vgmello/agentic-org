@@ -17,7 +17,8 @@ macro_rules! view_enum {
 view_enum!(GatewayStatus { Ok, Degraded });
 view_enum!(ListenScheme {
     Https,
-    HttpLoopback
+    HttpLoopback,
+    HttpPublished
 });
 view_enum!(TlsStatus {
     Ok,

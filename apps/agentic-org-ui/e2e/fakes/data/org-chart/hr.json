@@ -1,0 +1,11 @@
+{
+	"why": "?mock=hr: the built-in HR lead, made with the organization (our-org-in-the-app §2a), a member of the top-level team with no explicit manager. Read-only: it exists only in this read.",
+	"employee": {
+		"id": "hr-lead",
+		"kind": "agent",
+		"name": "HR lead",
+		"handle": "hr",
+		"status": "active",
+		"homeTeamId": "eng"
+	}
+}

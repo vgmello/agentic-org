@@ -1,0 +1,12 @@
+{
+  "name": "agentic-org",
+  "description": "Repository-local Claude Code plugins for Agentic Org",
+  "owner": { "name": "Agentic Org" },
+  "plugins": [
+    {
+      "name": "svelte-lsp",
+      "source": "./plugins/svelte-lsp",
+      "description": "Svelte language server (svelteserver) for .svelte files; no MCP server or skills"
+    }
+  ]
+}

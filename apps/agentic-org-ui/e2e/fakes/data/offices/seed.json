@@ -1,0 +1,101 @@
+{
+	"checkCode": "K7QP4MZT",
+	"satellites": [
+		{
+			"key": "studio",
+			"name": "Studio Mac",
+			"host": "Studio Mac",
+			"status": "active",
+			"where": "from 192.168.1.31",
+			"lastSeenMinutesAgo": 0,
+			"sync": {
+				"kind": "up_to_date"
+			},
+			"version": "0.1.0",
+			"follows": ["Atlas", "Beacon"],
+			"tasks": 5,
+			"agents": ["noor", "kai"]
+		},
+		{
+			"key": "build",
+			"name": "Build box",
+			"host": "build-box.local",
+			"status": "offline",
+			"where": "build-box.local",
+			"lastSeenMinutesAgo": 125,
+			"sync": {
+				"kind": "behind",
+				"changes": 34
+			},
+			"version": "0.1.0",
+			"follows": ["Atlas"],
+			"tasks": 1,
+			"agents": ["pax"]
+		},
+		{
+			"key": "lab",
+			"name": "Lab mini",
+			"host": "lab-mini.local",
+			"status": "update_needed",
+			"where": "lab-mini.local",
+			"lastSeenMinutesAgo": 5,
+			"sync": {
+				"kind": "up_to_date"
+			},
+			"version": "0.0.9",
+			"follows": ["Atlas"],
+			"tasks": 0,
+			"agents": []
+		}
+	],
+	"joinRequests": [
+		{
+			"id": "join-laptop",
+			"officeName": "Laptop",
+			"fromAddress": "192.168.1.44",
+			"requestedMinutesAgo": 2,
+			"invitationCreatedMinutesAgo": 35
+		}
+	],
+	"invitations": [
+		{
+			"id": "inv-field",
+			"officeName": "Field Mac",
+			"state": "invited",
+			"createdMinutesAgo": 180,
+			"expiresInMinutes": 1260
+		},
+		{
+			"id": "inv-mini",
+			"officeName": "Old mini",
+			"state": "expired",
+			"createdMinutesAgo": 4000,
+			"expiresInMinutes": -1200
+		},
+		{
+			"id": "inv-pi",
+			"officeName": "Lab Pi",
+			"state": "rejected",
+			"createdMinutesAgo": 700,
+			"expiresInMinutes": 500,
+			"note": "The join for Lab Pi was declined at HQ. Nothing was added to this organization."
+		}
+	],
+	"outbox": [
+		{
+			"id": "ob-1",
+			"officeKey": "build",
+			"description": "Assign T-A12 to Pax Moreau",
+			"state": "blocked",
+			"reason": "Build box is offline, so HQ can't confirm it.",
+			"sinceMinutesAgo": 95
+		},
+		{
+			"id": "ob-2",
+			"officeKey": "studio",
+			"description": "Message to Noor Haddad in #web",
+			"state": "pending",
+			"sinceMinutesAgo": 1
+		}
+	]
+}

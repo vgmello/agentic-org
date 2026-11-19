@@ -3,9 +3,16 @@
 //! `admin.link.initial` gives setup the one registration link, bound to the frozen setup
 //! operation; a replay answers `already_issued` with no secret. `admin.reset` asks for local
 //! presence and confirmation at the host, then issues a registration link that cancels the
-//! previous one. Setting a new administrator password is A3's branch and answers
-//! `unavailable` here. Both calls require the signing check `recovery` uses; hello, the
+//! previous one. An instance that has an administrator answers `administrator_present` and
+//! issues nothing: a registration link is for an instance without one, and setting a new
+//! administrator password (A3's branch) is not offered here (X5 review, fourth round,
+//! P2-10). Both calls require the signing check `recovery` uses; hello, the
 //! registered instance and the host's effective UID are enforced before dispatch.
+//!
+//! On a system that names a peer by its user alone (GNU/Linux, ADR-0017 decision 11) there
+//! is no dialog and no code identity: `admin.reset` is authorized by root, the one user
+//! besides the host's own that `host.sock` admits, and for that call only (SIGN-33). A peer
+//! of the host's own user is refused there, whatever its program.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -49,6 +56,9 @@ pub(crate) struct Admin {
     policy: AppPolicy,
     presence: Arc<dyn Presence>,
     resetting: AtomicBool,
+    /// The instance's service mode is `foreground`: its setup never asks for the initial
+    /// link, and its first link comes only from root (ADR-0017 decision 10).
+    foreground: AtomicBool,
 }
 
 struct Resetting<'a>(&'a AtomicBool);
@@ -72,6 +82,12 @@ pub(crate) fn admit_with(
     } else {
         Err(denied())
     }
+}
+
+/// Whether the system names this connection's peer by its user alone (GNU/Linux), so that
+/// no fact tells a command a person ran from any other process of that user.
+fn named_by_user_alone(c: &Connection) -> bool {
+    crate::peer::identity(c.socket()).is_ok_and(|identity| identity.uid.is_some())
 }
 
 fn denied() -> ApiError {
@@ -109,12 +125,27 @@ impl Admin {
             policy,
             presence,
             resetting: AtomicBool::new(false),
+            foreground: AtomicBool::new(false),
         }
+    }
+
+    /// Marks the instance as one that runs in the foreground (a container): from then on
+    /// `admin.link.initial` is refused, whoever names the setup operation. Setup in that
+    /// mode never asks for it, so the only caller would be another process of the service
+    /// user, and the container's first link comes only from root's `admin reset`.
+    pub(crate) fn foreground_instance(&self) {
+        self.foreground.store(true, Ordering::SeqCst);
     }
 
     #[cfg(test)]
     pub(crate) fn issues_for(&self, setup_operation: &str, origin: &str) -> bool {
         self.setup_operation == setup_operation && self.origin.as_str() == origin
+    }
+
+    /// The admission of every administrator's host call (`tls.set` too): a local
+    /// `host.sock` client that passes the host's signing check.
+    pub(crate) fn admit_peer(&self, c: &Connection, received: Received) -> Result<(), ApiError> {
+        self.admit(c, received)
     }
 
     /// The caller is a local `host.sock` client that passes the host's signing check.
@@ -137,6 +168,13 @@ impl Admin {
         params: AdminLinkInitialParams,
     ) -> Result<AdminLinkResult, ApiError> {
         self.admit(c, received)?;
+        if self.foreground.load(Ordering::SeqCst) {
+            return Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "this instance runs in the foreground: its first registration link comes \
+                 from admin reset, run by root",
+            ));
+        }
         self.initial_link(&params.setup_operation, wall()?)
     }
 
@@ -145,7 +183,26 @@ impl Admin {
         c: &Connection,
         received: Received,
     ) -> Result<AdminLinkResult, ApiError> {
+        if c.root_authority() {
+            // SIGN-33 on a system that names a peer by its user alone: root at the server
+            // machine is the local authority, attested by the kernel when the connection
+            // was accepted. There is no dialog to show; nothing else of root's is read.
+            admit_with(c.channel_kind(), || true)?;
+            if !c.recovery_peer_idle() {
+                return Err(denied());
+            }
+            return self.reset_with(true, || Ok(()));
+        }
         self.admit(c, received)?;
+        if named_by_user_alone(c) {
+            // The same user as the service is not an authority over its administrator:
+            // any process of that user, an agent included, could ask. Whatever a later
+            // presence adapter answers there, only root resets.
+            return Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "on this system the administrator is reset by root at the server machine",
+            ));
+        }
         if !c.recovery_peer_idle() {
             return Err(denied());
         }
@@ -209,7 +266,7 @@ impl Admin {
             })?;
         let _resetting = Resetting(&self.resetting);
         if self.db.administrator_exists().map_err(unavailable)? {
-            return Err(set_password_unavailable());
+            return Ok(AdminLinkResult::AdministratorPresent);
         }
         confirm().map_err(|()| denied())?;
         // Re-checked after the dialog, in the transaction that issues the link: an
@@ -220,7 +277,7 @@ impl Admin {
             .map_err(unavailable)?
         {
             Some(issued) => self.issued(issued),
-            None => Err(set_password_unavailable()),
+            None => Ok(AdminLinkResult::AdministratorPresent),
         }
     }
 
@@ -243,13 +300,6 @@ impl Admin {
 
 fn subject() -> Result<Subject, ApiError> {
     Subject::new(SUBJECT).map_err(unavailable)
-}
-
-fn set_password_unavailable() -> ApiError {
-    ApiError::new(
-        ErrorCode::Unavailable,
-        "an administrator exists; setting a new administrator password is not available yet",
-    )
 }
 
 #[cfg(test)]

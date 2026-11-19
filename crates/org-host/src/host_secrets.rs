@@ -8,8 +8,8 @@
 //! Data Protection Keychain, in the access group compiled in and under this instance's
 //! service, after the host checked its own signature; or `host-secrets/<name>` below the
 //! credential directory setup recorded, which the host opened and checked at its start
-//! (`release_store`). A debug build uses the platform's directory store under the development
-//! key folder.
+//! (`release_store`). A debug build uses that credential directory too where its setup record
+//! names one, and otherwise the platform's directory store under the development key folder.
 //!
 //! The development store is plain files: `<base>/host-secrets/<instance id>/<name>`, held by
 //! one host at a time. A put error can follow publication: the value may be visible but not
@@ -244,11 +244,7 @@ impl Custody {
 impl Custody {
     /// The custody of `instance` below the release directory `root`: its `host-secrets` item
     /// store, opened (and made, if it is missing) now and held by this handle alone. The
-    /// release directory is one instance's, so the instance is not part of the layout.
-    #[cfg_attr(
-        all(debug_assertions, not(test)),
-        expect(dead_code, reason = "release selection")
-    )]
+    /// host has already verified the directory's binding to this instance.
     fn release_directory(root: &ReleaseRoot, instance: &str) -> Result<Self, SelectionError> {
         if !org_proto::is_uuid_v7(instance) {
             return Err(SelectionError::InvalidInstance);
@@ -328,8 +324,9 @@ pub(crate) enum SelectionError {
     Storage(Error),
 }
 /// The host secrets of `instance` (see the module docs). `release_directory` is the
-/// credential directory the host opened at its start, where a release build's protected
-/// store is one; a debug build ignores it.
+/// credential directory the host opened at its start, where this system's protected store
+/// is one and the setup record names it: a debug build uses it too, and its development
+/// folder only without one.
 pub(crate) fn store_for(
     dev_base: Option<&std::path::Path>,
     home: &std::path::Path,
@@ -342,7 +339,12 @@ pub(crate) fn store_for(
     }
     #[cfg(debug_assertions)]
     {
-        let _ = (own_signing, release_directory);
+        let _ = own_signing;
+        // A credential directory the host opened (its setup record names one) holds this
+        // build's secrets as it holds a release build's.
+        if let Some(root) = release_directory {
+            return Custody::release_directory(root, instance).map(|s| std::sync::Arc::new(s) as _);
+        }
         let base = dev_base.ok_or(SelectionError::NoDevBase)?;
         Custody::open(base, home, instance)
             .map(|s| std::sync::Arc::new(s) as _)

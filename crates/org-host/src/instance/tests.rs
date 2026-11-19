@@ -291,6 +291,69 @@ fn rebind_refuses_a_third_identity_on_preflight_and_after_a_crash_then_second_mo
     }
 }
 
+/// The locator's lock is held only for a moment (a command locating its instance, a service
+/// host reserving it at its start): a registry call that meets it held waits for it rather
+/// than failing. Without that, a command run while a service starts (`agentic-org service
+/// start`, then `service status`) made the start fail with the instance "busy". An instance's
+/// root lock, which its host holds for as long as it runs, is still refused at once.
+#[test]
+fn a_registry_call_waits_for_the_locator_lock_a_moment_and_refuses_a_held_root_at_once() {
+    const HELD: Duration = Duration::from_millis(300);
+    let fixture = Fixture::new();
+    let id = fixture.reserve("lab").id().to_owned();
+    let root = fixture.root("lab");
+    type Call<'a> = (&'a str, &'a dyn Fn() -> Result<(), Error>);
+    let calls: [Call; 6] = [
+        ("restore_temp_folders", &|| {
+            fixture.registry.restore_temp_folders().map(drop)
+        }),
+        ("locate", &|| {
+            let (located, _) = fixture.registry.locate(Some("lab"), &root)?;
+            assert_eq!(located, id);
+            Ok(())
+        }),
+        ("reserved", &|| {
+            fixture.registry.reserved(Some("lab")).map(|r| assert!(r))
+        }),
+        ("saved_browser_ports", &|| {
+            fixture.registry.saved_browser_ports().map(drop)
+        }),
+        ("reserve", &|| {
+            assert_eq!(fixture.registry.reserve(Some("lab"), &root)?.id(), id);
+            Ok(())
+        }),
+        // Its preview and confirmation take no lock; its revalidation waits for it.
+        ("rebind", &|| {
+            fixture.registry.rebind(Some("lab"), |_| Ok(()))
+        }),
+    ];
+    for (name, call) in calls {
+        let held = fixture.registry.directory.lock_file(LOCK).unwrap();
+        let taken = Instant::now();
+        let releaser = thread::spawn(move || {
+            thread::sleep(HELD);
+            drop(held);
+        });
+        let result = call();
+        let waited = taken.elapsed();
+        releaser.join().unwrap();
+        assert!(result.is_ok(), "{name}: {result:?}");
+        assert!(
+            waited >= HELD,
+            "{name} did not wait for the lock: {waited:?}"
+        );
+    }
+
+    let running = fixture.reserve("lab");
+    let asked = Instant::now();
+    assert!(matches!(
+        fixture.registry.reserve(Some("lab"), &root),
+        Err(Error::Busy(_))
+    ));
+    assert!(asked.elapsed() < LOCK_WAIT / 2, "{:?}", asked.elapsed());
+    drop(running);
+}
+
 #[test]
 fn rebind_confirms_without_locks_then_preserves_the_instance_and_office_handles() {
     let (fixture, id) = restored_fixture();

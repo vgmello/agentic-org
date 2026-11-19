@@ -27,7 +27,14 @@ export {
 	unreadIn,
 	type ChatView
 } from './model';
-export type { ChatCall, ChatMessage, ChatSnapshot, Conversation, MuteMode, Reaction } from './types';
+export type {
+	ChatCall,
+	ChatMessage,
+	ChatSnapshot,
+	Conversation,
+	MuteMode,
+	Reaction
+} from './types';
 export { provideDraftStore, useDraftStore } from './drafts/context';
 
 export { messageRows, type MessageRows } from './row-data';

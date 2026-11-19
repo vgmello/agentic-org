@@ -1,0 +1,215 @@
+{
+	"sam": [
+		{
+			"id": "t-s3",
+			"startedAgoMin": 2,
+			"startedBy": {
+				"kind": "assignment",
+				"by": "avery"
+			},
+			"state": "running",
+			"attempts": [
+				{
+					"connection": "Anthropic \u00b7 subscription A",
+					"model": "claude-sonnet-5",
+					"outcome": "running",
+					"usageComplete": false
+				}
+			],
+			"cost": null,
+			"hasLog": false
+		},
+		{
+			"id": "t-s2",
+			"startedAgoMin": 180,
+			"durationS": 1460,
+			"startedBy": {
+				"kind": "message",
+				"by": "noor"
+			},
+			"state": "succeeded",
+			"summary": "Answered Noor about the checkout API shape and updated the T-A40 notes.",
+			"attempts": [
+				{
+					"connection": "Anthropic \u00b7 subscription A",
+					"model": "claude-sonnet-5",
+					"outcome": "succeeded",
+					"input": 38120,
+					"output": 2210,
+					"usageComplete": true
+				}
+			],
+			"cost": {
+				"usd": 0.84,
+				"complete": true
+			},
+			"hasLog": false
+		}
+	],
+	"noor": [
+		{
+			"id": "t-n4",
+			"startedAgoMin": 75,
+			"durationS": 122,
+			"startedBy": {
+				"kind": "run",
+				"by": "you"
+			},
+			"state": "succeeded",
+			"summary": "Let the Pay button wrap at 320 px; the new check couldn't run (no browser in my home).",
+			"attempts": [
+				{
+					"connection": "Anthropic \u00b7 subscription B",
+					"model": "claude-sonnet-5",
+					"outcome": "succeeded",
+					"input": 27140,
+					"output": 576,
+					"usageComplete": true
+				}
+			],
+			"cost": {
+				"usd": 0.31,
+				"complete": true
+			},
+			"hasLog": true
+		},
+		{
+			"id": "t-n3",
+			"startedAgoMin": 300,
+			"durationS": 4,
+			"startedBy": {
+				"kind": "mention",
+				"by": "sam"
+			},
+			"state": "failed",
+			"failure": "Claude Code isn't signed in on HQ (This Mac). Sign in there, then Run now.",
+			"attempts": [
+				{
+					"connection": "Anthropic \u00b7 subscription B",
+					"model": "claude-sonnet-5",
+					"outcome": "failed",
+					"reason": "Not signed in",
+					"usageComplete": true,
+					"input": 0,
+					"output": 0
+				}
+			],
+			"cost": {
+				"usd": 0,
+				"complete": true
+			},
+			"hasLog": false
+		},
+		{
+			"id": "t-n2",
+			"startedAgoMin": 1500,
+			"durationS": 610,
+			"startedBy": {
+				"kind": "assignment",
+				"by": "sam"
+			},
+			"state": "succeeded",
+			"summary": "Built the empty state for saved carts (T-A31) and opened it for review.",
+			"attempts": [
+				{
+					"connection": "Anthropic \u00b7 subscription A",
+					"model": "claude-sonnet-5",
+					"outcome": "switched",
+					"reason": "Rate limited (429) before any effect",
+					"usageComplete": true,
+					"input": 3100,
+					"output": 0
+				},
+				{
+					"connection": "Anthropic \u00b7 subscription B",
+					"model": "claude-sonnet-5",
+					"outcome": "succeeded",
+					"usageComplete": false,
+					"input": 41000
+				}
+			],
+			"cost": {
+				"usd": 1.12,
+				"complete": false
+			},
+			"hasLog": false
+		},
+		{
+			"id": "t-n1",
+			"startedAgoMin": 2900,
+			"durationS": 45,
+			"startedBy": {
+				"kind": "handoff",
+				"by": "juno"
+			},
+			"state": "cancelled",
+			"summary": "Cancelled by Alex Kim before any change.",
+			"attempts": [
+				{
+					"connection": "Anthropic \u00b7 subscription A",
+					"model": "claude-sonnet-5",
+					"outcome": "cancelled",
+					"usageComplete": true,
+					"input": 2100,
+					"output": 40
+				}
+			],
+			"cost": {
+				"usd": 0.05,
+				"complete": true
+			},
+			"hasLog": false
+		}
+	],
+	"kai": [
+		{
+			"id": "t-k2",
+			"startedAgoMin": 40,
+			"durationS": 65,
+			"startedBy": {
+				"kind": "ask",
+				"by": "mira"
+			},
+			"state": "succeeded",
+			"summary": "The deploy script now gives up after 5 tries; scripts/deploy.test.sh checks it.",
+			"attempts": [
+				{
+					"connection": "OpenAI \u00b7 subscription C",
+					"model": "gpt-5.1-codex",
+					"outcome": "succeeded",
+					"input": 3310,
+					"usageComplete": false
+				}
+			],
+			"cost": {
+				"usd": 0.09,
+				"complete": false
+			},
+			"hasLog": true
+		},
+		{
+			"id": "t-k1",
+			"startedAgoMin": 900,
+			"durationS": 300,
+			"startedBy": {
+				"kind": "recovery"
+			},
+			"state": "recovery_required",
+			"failure": "the office restarted during a tool call whose effect is unknown; the workspace is kept",
+			"attempts": [
+				{
+					"connection": "OpenAI \u00b7 subscription C",
+					"model": "gpt-5.1-codex",
+					"outcome": "failed",
+					"reason": "Process lost in office restart",
+					"usageComplete": false
+				}
+			],
+			"cost": {
+				"usd": 0.4,
+				"complete": false
+			},
+			"hasLog": false
+		}
+	]
+}

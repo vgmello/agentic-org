@@ -72,14 +72,35 @@ fn offices(
     check: ServerCheck,
     program: PathBuf,
 ) -> Arc<Offices> {
-    for name in ["offices", "logs", "run"] {
+    offices_in(
+        root,
+        &root.join("run"),
+        keys,
+        writers,
+        instance,
+        check,
+        program,
+    )
+}
+/// As [`offices`], with the launch rendezvous in `runtime` (short enough for a socket path).
+fn offices_in(
+    root: &Path,
+    runtime: &Path,
+    keys: Arc<dyn OfficeSecretsKeys>,
+    writers: Arc<Writers>,
+    instance: &str,
+    check: ServerCheck,
+    program: PathBuf,
+) -> Arc<Offices> {
+    for name in ["offices", "logs"] {
         private(&root.join(name)).unwrap();
     }
+    private(runtime).unwrap();
     let supervisor = Supervisor::new(
         SupervisorConfig {
             program,
             home: root.into(),
-            runtime_dir: Some(root.join("run")),
+            runtime_dir: Some(runtime.into()),
             logs_dir: root.join("logs"),
             log_max_bytes: 1024 * 1024,
             timings: Timings::default(),
@@ -123,7 +144,6 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
         keys.clone(),
         writers.clone(),
         &instance,
-        &root,
         &office_home,
     ));
     controller.start(offices.clone());
@@ -152,7 +172,7 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
     assert_eq!(r.prepared.creator.employee_id, r.owner_member);
     assert_eq!(r.prepared.creator.name, actor.login());
     assert_eq!(r.prepared.creator.handle, "owner-1");
-    assert!(writers.required(&r.prepared.office_id).unwrap());
+    writers.admit(&r.prepared.office_id).unwrap();
     assert!(crate::catalog::unfinished_folders(&office_home)
         .unwrap()
         .is_empty());
@@ -182,9 +202,177 @@ fn failed_worker_retains_bound_code_key_owner_and_writer_and_never_replaces_miss
     offices.shutdown();
 }
 
+/// R2-B2: the host's reservation marker keeps a reserved create safe across a host restart.
+/// Custody is reserved, the worker is killed before it wrote its intent, the host restarts:
+/// the folder is not an unfinished create (so it is never discarded), the key and the
+/// custody record are kept, and the retried create completes over the same custody.
+#[test]
+fn a_reserved_create_killed_before_its_intent_survives_a_host_restart_and_completes() {
+    use crate::supervisor::tests::write_create_server;
+    let instance = crate::ids::uuid_v7().unwrap();
+    let (dir, auth, _) = crate::service::authentication::tests::fixture_for(&instance);
+    let root = dir.path().canonicalize().unwrap();
+    let (db, custody) = auth.provisioning_storage();
+    let keys = Arc::new(crate::keys::memory::MemoryKeys::default());
+    let home = root.join("office-state");
+    private(&home).unwrap();
+    // Under /tmp: the rendezvous path must fit a socket address.
+    let short = tempfile::Builder::new()
+        .prefix("pv")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let short_path = short.path().canonicalize().unwrap();
+    let pid_file = short_path.join("pid");
+    let p = params();
+    let actor = account(&db);
+    let fp = fp(&p);
+    let wall = org_proto::ulid_time_ms(&p.operation_id).unwrap() as i64;
+
+    // The first host: its worker takes the create, custody included, and is killed.
+    let hanging = short_path.join("hanging");
+    write_create_server(&hanging, &pid_file, true);
+    let writers = Writers::open(custody.clone(), db.clone(), &instance, &root).unwrap();
+    let first = offices_in(
+        &home,
+        &short_path.join("run1"),
+        keys.clone(),
+        writers.clone(),
+        &instance,
+        ServerCheck::ByPath,
+        hanging,
+    );
+    let controller = Arc::new(Provisioning::new(
+        db.clone(),
+        custody.clone(),
+        keys.clone(),
+        writers.clone(),
+        &instance,
+        &home,
+    ));
+    controller.start(first.clone());
+    controller
+        .create(&actor, &p.operation_id, &p.plan, fp)
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let pid: libc::pid_t = loop {
+        if let Ok(text) = std::fs::read_to_string(&pid_file) {
+            if let Ok(pid) = text.trim().parse() {
+                break pid;
+            }
+        }
+        assert!(std::time::Instant::now() < deadline, "the worker never ran");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    // SAFETY: SIGKILL to the disposable worker this test started.
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+    while controller.driving_now() != 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "a creation never ended"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let r = db
+        .provisioning(&actor, &p.operation_id, &fp, wall)
+        .unwrap()
+        .unwrap();
+    assert!(!r.linked);
+    let office = r.prepared.office_id.clone();
+    let folder = home.join("offices").join(&office);
+    // Killed before its intent: no `office.json`, no intent; only the host's marker.
+    assert!(!folder.join(org_office_launch::OFFICE_FILE_NAME).exists());
+    assert!(!folder.join("hq-creation.v1.json").exists());
+    assert!(folder.join("selected-writer.required").is_file());
+    writers.admit(&office).unwrap();
+    let credential = {
+        use sha2::{Digest, Sha256};
+        let hash = org_office_launch::recovery::hex(&Sha256::digest(office.as_bytes()));
+        Name::parse(&format!("writer.{hash}")).unwrap()
+    };
+    let reserved = custody
+        .load(&credential)
+        .unwrap()
+        .unwrap()
+        .expose()
+        .to_vec();
+    let key = fingerprint(&keys.load(&office).unwrap().unwrap());
+    controller.stop_by(std::time::Instant::now());
+    first.shutdown();
+    drop((controller, first, writers));
+
+    // The host restarts. Its startup discards only unfinished folders, and this is not one:
+    // the marker is what keeps it (without it, the folder would be discarded).
+    assert!(crate::catalog::unfinished_folders(&home)
+        .unwrap()
+        .is_empty());
+    let marker = folder.join("selected-writer.required");
+    let aside = folder.with_file_name("marker-aside");
+    std::fs::rename(&marker, &aside).unwrap();
+    assert_eq!(
+        crate::catalog::unfinished_folders(&home).unwrap(),
+        std::slice::from_ref(&office)
+    );
+    std::fs::rename(&aside, &marker).unwrap();
+    assert!(db.provisioning_offices().unwrap().contains(&office));
+    assert!(folder.is_dir());
+    assert_eq!(fingerprint(&keys.load(&office).unwrap().unwrap()), key);
+
+    // The retried create completes over the same custody.
+    let seen = short_path.join("pid.admission");
+    let _ = std::fs::remove_file(&seen);
+    let creating = short_path.join("creating");
+    write_create_server(&creating, &pid_file, false);
+    let writers = Writers::open(custody.clone(), db.clone(), &instance, &root).unwrap();
+    let second = offices_in(
+        &home,
+        &short_path.join("run2"),
+        keys.clone(),
+        writers.clone(),
+        &instance,
+        ServerCheck::ByPath,
+        creating,
+    );
+    let controller = Arc::new(Provisioning::new(
+        db.clone(),
+        custody.clone(),
+        keys.clone(),
+        writers,
+        &instance,
+        &home,
+    ));
+    controller.start(second.clone());
+    assert!(creates(&controller, &actor, &p));
+    assert_eq!(
+        custody.load(&credential).unwrap().unwrap().expose(),
+        &reserved[..]
+    );
+    // What the worker received on its custody channel: a valid admission naming this
+    // organization and its data roots, which exist, owner-only, for the host's user.
+    let admission: org_office_launch::writer::Admission =
+        serde_json::from_slice(&std::fs::read(&seen).unwrap()).unwrap();
+    assert!(admission.check());
+    assert_eq!(
+        admission.identity.organization_id,
+        r.prepared.organization_id
+    );
+    assert_eq!(admission.identity.office_id, office);
+    assert_eq!(admission.owner_member, r.owner_member);
+    let data = root.join(&r.prepared.organization_id);
+    assert_eq!(Path::new(&admission.durable_root), data.join("durable"));
+    assert_eq!(Path::new(&admission.runtime_root), data.join("runtime"));
+    for path in [&admission.durable_root, &admission.runtime_root] {
+        let meta = std::fs::symlink_metadata(path).unwrap();
+        assert!(meta.is_dir(), "{path}");
+        assert_eq!(meta.uid(), crate::home::euid(), "{path}");
+        assert_eq!(meta.mode() & 0o7777, 0o700, "{path}");
+    }
+    assert_eq!(fingerprint(&keys.load(&office).unwrap().unwrap()), key);
+    controller.stop_by(std::time::Instant::now());
+    second.shutdown();
+}
+
 fn confirm_pending_checkpoint(writers: &Arc<Writers>, office: &str) {
-    use org_office_launch::writer::{self as wire, Request, Response};
-    use org_proto::work::JournalPosition;
+    use org_office_launch::writer::{self as wire, Head, HighWaters, Request, Response};
     use std::{io::BufReader, os::unix::net::UnixStream, sync::atomic::AtomicBool};
     let (host, worker) = UnixStream::pair().unwrap();
     writers
@@ -192,12 +380,13 @@ fn confirm_pending_checkpoint(writers: &Arc<Writers>, office: &str) {
         .unwrap();
     let mut worker = BufReader::new(worker);
     let admission: wire::Admission = wire::read(&mut worker).unwrap().unwrap();
-    let checkpoint = JournalPosition {
+    let checkpoint = Head {
         ordinal: 0,
         sha256: "a".repeat(64),
-        previous_sha256: None,
-        origin_incarnation: "retained-origin".into(),
-        origin_high_water: 73,
+        high_waters: HighWaters {
+            work: 73,
+            ..HighWaters::default()
+        },
     };
     wire::write(
         worker.get_mut(),
@@ -264,7 +453,6 @@ fn pending_recovery_survives_registry_loss_before_writer_reservation() {
             Arc::new(crate::keys::memory::MemoryKeys::default()),
             writers,
             &instance,
-            &root,
             &root,
         );
         let p = params();
@@ -368,7 +556,6 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
             keys.clone(),
             writers.clone(),
             &instance,
-            &root,
             &home,
         ));
         controller.start(offices.clone());
@@ -394,13 +581,10 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
         if !keep_marker {
             std::fs::remove_file(&marker).unwrap();
         }
+        let data = root.join(&reservation.prepared.organization_id);
         let material = [
-            root.join("durable/authority")
-                .join(office)
-                .join("checkpoint-evidence"),
-            root.join("durable/state")
-                .join(&reservation.prepared.organization_id)
-                .join("public-package"),
+            data.join("durable/checkpoint-evidence"),
+            data.join("runtime/projection"),
             home.join("offices")
                 .join(office)
                 .join("private-office-state"),
@@ -432,7 +616,7 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
             assert_eq!(std::fs::read(path).unwrap(), b"retained exact material");
         }
         let retained: serde_json::Value = serde_json::from_slice(original.expose()).unwrap();
-        assert_eq!(retained["position"]["origin_high_water"], 73);
+        assert_eq!(retained["head"]["high_waters"]["work"], 73);
         assert!(
             !db.provisioning(&actor, &p.operation_id, &fp, wall)
                 .unwrap()
@@ -536,6 +720,8 @@ fn actual_selected_hq_creation_and_exact_retry() {
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
     let keys = Arc::new(crate::keys::memory::MemoryKeys::default());
     let writers = Writers::open(custody.clone(), db.clone(), &instance, &root).unwrap();
+    let (keys_for_restart, writers_for_restart): (Arc<dyn OfficeSecretsKeys>, _) =
+        (keys.clone(), writers.clone());
     let office_home = root.join("office-state");
     private(&office_home).unwrap();
     let offices = offices(
@@ -552,7 +738,6 @@ fn actual_selected_hq_creation_and_exact_retry() {
         keys,
         writers,
         &instance,
-        &root,
         &office_home,
     ));
     controller.start(offices.clone());
@@ -580,7 +765,7 @@ fn actual_selected_hq_creation_and_exact_retry() {
             _ => panic!("unexpected create result"),
         }
     };
-    let state = root.join("durable/state").join(&result.id);
+    let state = root.join(&result.id).join("durable/state");
     let initial = std::fs::read(state.join("organization.yaml")).unwrap();
     assert!(!initial.is_empty());
     let replay = controller
@@ -596,4 +781,68 @@ fn actual_selected_hq_creation_and_exact_retry() {
         initial
     );
     assert!(state.join("security/ca-escrow.v1.bin").is_file());
+
+    // The office the create made is served, under the host's custody.
+    let office = |offices: &Offices| {
+        offices
+            .offices()
+            .into_iter()
+            .find(|office| office.organization_id == result.id)
+            .expect("the organization's HQ")
+    };
+    let active = |offices: &Offices, what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(25);
+        loop {
+            let found = office(offices);
+            if found.status == org_proto::OfficeStatus::Active {
+                return found;
+            }
+            assert!(Instant::now() < deadline, "{what}: {found:?}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let hq = active(&offices, "after the create");
+    // The host restarts: the office starts again from its folder and custody.
+    offices.shutdown();
+    let again = |what: &str| {
+        let started = Offices::start(
+            &office_home,
+            Catalog::scan(&office_home).unwrap(),
+            vec![],
+            Supervisor::new(
+                SupervisorConfig {
+                    program: std::env::var_os("ORG_TEST_OFFICE_BIN").unwrap().into(),
+                    home: office_home.clone(),
+                    runtime_dir: Some(office_home.join("run")),
+                    logs_dir: office_home.join("logs"),
+                    log_max_bytes: 1024 * 1024,
+                    timings: Timings::default(),
+                    keys: keys_for_restart.clone(),
+                    server_check: Arc::new(ServerCheck::Skip),
+                    sweep_orphans: false,
+                },
+                &instance,
+            )
+            .with_writers(writers_for_restart.clone()),
+            Arc::new(Broadcast::default()),
+            &Timings::default(),
+        );
+        let found = active(&started, what);
+        (started, found)
+    };
+    let (restarted, found) = again("after a host restart");
+    assert_eq!(found.id, hq.id);
+    restarted.shutdown();
+    // The projection is disposable: deleted, the next start rebuilds it from the journal.
+    let projection = root.join(&result.id).join("runtime").join(&hq.id);
+    assert!(projection.is_dir(), "{}", projection.display());
+    std::fs::remove_dir_all(&projection).unwrap();
+    let (rebuilt, found) = again("after the projection was deleted");
+    assert_eq!(found.id, hq.id);
+    assert!(projection.is_dir());
+    rebuilt.shutdown();
+    assert_eq!(
+        std::fs::read(state.join("organization.yaml")).unwrap(),
+        initial
+    );
 }

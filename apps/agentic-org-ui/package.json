@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
+		"dev:mock": "vite dev --mode e2e",
 		"build": "vite build && bun run check:build-assets",
 		"check:build-assets": "bun scripts/check-build-assets.ts",
 		"preview": "vite preview",

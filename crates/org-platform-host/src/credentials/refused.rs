@@ -26,7 +26,16 @@ pub(super) fn protected_store() -> Result<ProtectedStore, Refused> {
 pub(super) fn release_directory(
     _location: &ReleaseDirectory<'_>,
     _item_stores: &[ItemStore<'_>],
+    _account_data: &[std::os::fd::BorrowedFd<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
+    Err(refusal().into())
+}
+
+pub(super) fn check_unused_release_directory(
+    _location: &ReleaseDirectory<'_>,
+    _item_stores: &[ItemStore<'_>],
+    _account_data: &[std::os::fd::BorrowedFd<'_>],
+) -> Result<(), CredentialError> {
     Err(refusal().into())
 }
 
@@ -36,6 +45,7 @@ pub(super) fn release_directory_below(
     _base: &std::path::Path,
     _location: &ReleaseDirectory<'_>,
     _item_stores: &[ItemStore<'_>],
+    _account_data: &[std::os::fd::BorrowedFd<'_>],
 ) -> Result<ReleaseRoot, CredentialError> {
     Err(refusal().into())
 }
@@ -118,6 +128,7 @@ mod tests {
                 data_root: std::os::fd::AsFd::as_fd(&data_root),
                 mount_point_required,
                 expect_items,
+                instance_id: None,
             };
             let stores = [ItemStore {
                 directory: "office-keys",
@@ -125,9 +136,9 @@ mod tests {
                 is_item: |_| true,
             }];
             for item_stores in [&stores[..], &[]] {
-                let refused = release_directory(&location, item_stores);
+                let refused = release_directory(&location, item_stores, &[]);
                 assert_eq!(refused.err(), Some(CredentialError::Refused(refusal())));
-                let refused = release_directory_below(&anchor, &location, item_stores);
+                let refused = release_directory_below(&anchor, &location, item_stores, &[]);
                 assert_eq!(refused.err(), Some(CredentialError::Refused(refusal())));
             }
         }
