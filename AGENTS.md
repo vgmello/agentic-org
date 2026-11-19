@@ -58,6 +58,7 @@ Engineers and their agents make architectural decisions themselves, inside the
    - For app changes, the type check, tests, build and relevant browser checks pass; capture UI evidence where applicable.
    - For documentation/workflow-only changes, run relevant kit/catalog checks and review the changed instructions; no unrelated application test run is required.
 4. **Never write to a user's organization workspace from tests.** Use temporary directories.
+5. **Pull request descriptions are short:** sections **Why**, **What**, **Notes** and **Breaking changes** ("None" when nothing breaks), at most 2,000 characters in total; shorter is better, about two or three short paragraphs (owner, 2026-11-19).
 5. **Required tools are green before any work starts.** See [Tools for agents](#tools-for-agents).
 
 ## Tools for agents
