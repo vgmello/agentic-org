@@ -720,6 +720,8 @@ fn actual_selected_hq_creation_and_exact_retry() {
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
     let keys = Arc::new(crate::keys::memory::MemoryKeys::default());
     let writers = Writers::open(custody.clone(), db.clone(), &instance, &root).unwrap();
+    let (keys_for_restart, writers_for_restart): (Arc<dyn OfficeSecretsKeys>, _) =
+        (keys.clone(), writers.clone());
     let office_home = root.join("office-state");
     private(&office_home).unwrap();
     let offices = offices(
@@ -779,4 +781,68 @@ fn actual_selected_hq_creation_and_exact_retry() {
         initial
     );
     assert!(state.join("security/ca-escrow.v1.bin").is_file());
+
+    // The office the create made is served, under the host's custody.
+    let office = |offices: &Offices| {
+        offices
+            .offices()
+            .into_iter()
+            .find(|office| office.organization_id == result.id)
+            .expect("the organization's HQ")
+    };
+    let active = |offices: &Offices, what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(25);
+        loop {
+            let found = office(offices);
+            if found.status == org_proto::OfficeStatus::Active {
+                return found;
+            }
+            assert!(Instant::now() < deadline, "{what}: {found:?}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let hq = active(&offices, "after the create");
+    // The host restarts: the office starts again from its folder and custody.
+    offices.shutdown();
+    let again = |what: &str| {
+        let started = Offices::start(
+            &office_home,
+            Catalog::scan(&office_home).unwrap(),
+            vec![],
+            Supervisor::new(
+                SupervisorConfig {
+                    program: std::env::var_os("ORG_TEST_OFFICE_BIN").unwrap().into(),
+                    home: office_home.clone(),
+                    runtime_dir: Some(office_home.join("run")),
+                    logs_dir: office_home.join("logs"),
+                    log_max_bytes: 1024 * 1024,
+                    timings: Timings::default(),
+                    keys: keys_for_restart.clone(),
+                    server_check: Arc::new(ServerCheck::Skip),
+                    sweep_orphans: false,
+                },
+                &instance,
+            )
+            .with_writers(writers_for_restart.clone()),
+            Arc::new(Broadcast::default()),
+            &Timings::default(),
+        );
+        let found = active(&started, what);
+        (started, found)
+    };
+    let (restarted, found) = again("after a host restart");
+    assert_eq!(found.id, hq.id);
+    restarted.shutdown();
+    // The projection is disposable: deleted, the next start rebuilds it from the journal.
+    let projection = root.join(&result.id).join("runtime").join(&hq.id);
+    assert!(projection.is_dir(), "{}", projection.display());
+    std::fs::remove_dir_all(&projection).unwrap();
+    let (rebuilt, found) = again("after the projection was deleted");
+    assert_eq!(found.id, hq.id);
+    assert!(projection.is_dir());
+    rebuilt.shutdown();
+    assert_eq!(
+        std::fs::read(state.join("organization.yaml")).unwrap(),
+        initial
+    );
 }
