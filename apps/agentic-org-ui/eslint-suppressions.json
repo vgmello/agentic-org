@@ -9,11 +9,6 @@
       "count": 1
     }
   },
-  "e2e/org-chart-responsive.spec.ts": {
-    "prefer-const": {
-      "count": 1
-    }
-  },
   "src/lib/components/HeroIcon.svelte": {
     "svelte/require-each-key": {
       "count": 1

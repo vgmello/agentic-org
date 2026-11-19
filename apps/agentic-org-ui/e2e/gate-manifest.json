@@ -11,7 +11,7 @@
 		"maxJourneyTests": 60,
 		"maxChromiumSeconds": 300,
 		"measured": {
-			"tests": 51,
+			"tests": 49,
 			"chromiumSeconds": 99,
 			"workers": 2,
 			"date": "2026-11-18"
@@ -63,22 +63,6 @@
 		},
 		{
 			"spec": "org-chart.spec.ts",
-			"why": "not yet run on WebKit (BUG-169b)"
-		},
-		{
-			"spec": "org-chart-agents.spec.ts",
-			"why": "not yet run on WebKit (BUG-169b)"
-		},
-		{
-			"spec": "org-chart-teams-edit.spec.ts",
-			"why": "not yet run on WebKit (BUG-169b)"
-		},
-		{
-			"spec": "org-chart-toolbar.spec.ts",
-			"why": "not yet run on WebKit (BUG-169b)"
-		},
-		{
-			"spec": "org-chart-views.spec.ts",
 			"why": "not yet run on WebKit (BUG-169b)"
 		},
 		{
@@ -219,36 +203,26 @@
 		},
 		{
 			"name": "org-chart",
-			"why": "Teams tree and reporting tree; add a person, change a manager (with Undo), create and delete a team.",
+			"why": "One reporting tree under the owner bar; change a manager, hand over ownership, add a person.",
 			"tests": [
 				{
 					"spec": "org-chart.spec.ts",
-					"match": "the Teams view draws the ownership tree",
+					"match": "the owner bar sits above one reporting tree",
 					"count": 1
 				},
 				{
-					"spec": "org-chart-views.spec.ts",
-					"match": "the owner is the root, and everyone appears exactly once",
+					"spec": "org-chart.spec.ts",
+					"match": "a changed manager moves the node",
 					"count": 1
 				},
 				{
-					"spec": "org-chart-people-edit.spec.ts",
-					"match": "Add person takes a name, contact",
+					"spec": "org-chart.spec.ts",
+					"match": "Hand over ownership names the effect",
 					"count": 1
 				},
 				{
-					"spec": "org-chart-people-edit.spec.ts",
-					"match": "a changed manager shows a toast with Undo",
-					"count": 1
-				},
-				{
-					"spec": "org-chart-teams-edit.spec.ts",
-					"match": "New team takes a name",
-					"count": 1
-				},
-				{
-					"spec": "org-chart-teams-edit.spec.ts",
-					"match": "deleting another team names who moves",
+					"spec": "org-chart.spec.ts",
+					"match": "Add a person starts at the top-level team",
 					"count": 1
 				}
 			]
@@ -447,9 +421,8 @@
 				"src/lib/modules/employees/**",
 				"src/lib/org/people-edit*",
 				"src/lib/org/team-edit*",
-				"src/lib/components/{AddPersonSheet,AgentStatusIcon,ChangeManagerDialog,ChartFitMenuItem,DeleteTeamDialog,EditMembersDialog,EditMemberTeamsDialog,EditPersonDialog,MemberTile,MoveMemberDialog,MoveTeamDialog,NewTeamSheet,PeopleChart,ProjectTeamDialog,RemovePersonDialog,RemoveProjectDialog,RenameTeamDialog,ReportingChart,SelectedMember,TeamMenu,TeamsChart,TeamsList}.svelte",
-				"src/lib/components/org-tree.css",
-				"src/lib/components/chart-measurement.ts",
+				"src/lib/modules/org-chart/**",
+				"src/lib/components/{AddPersonSheet,MoveTeamDialog,NewTeamSheet,ProjectTeamDialog,RemoveProjectDialog,RenameTeamDialog}.svelte",
 				"e2e/org-chart-menu.ts"
 			]
 		},
@@ -503,8 +476,6 @@
 				"src/lib/org/team-edit*",
 				"src/lib/modules/copilot/**",
 				"src/lib/components/{BugSheet,BugsPanel,NewRequestDialog,NewTaskDialog,ProjectTeamDialog,ProjectTeams,RemoveProjectDialog,ReportBugDialog,RequestSheet,RequestsPanel,SeverityIcon,TaskSheet,TasksBoard}.svelte",
-				"src/lib/components/{TeamsChart,MemberTile}.svelte",
-				"src/lib/components/org-tree.css",
 				"e2e/org-chart-menu.ts",
 				"e2e/non-chat-icons.ts",
 				"e2e/fixtures/non-chat-icons-*.json"
@@ -534,26 +505,16 @@
 	"alsoRuns": [
 		{
 			"category": "projects-work",
-			"files": [
-				"src/routes/(shell)/teams/(views)/org-chart/+page.{svelte,ts}",
-				"src/lib/components/ChartFitMenuItem.svelte"
-			],
+			"files": ["src/routes/(shell)/teams/(views)/org-chart/+page.{svelte,ts}"],
 			"why": "non-chat-icons.spec.ts opens /org-chart (through a ternary the route-visit guard cannot see) and asserts page-owned behaviour: the take-off toast and last-team dialog, the View menu with Actual size, and the empty, loading and error states. Selected in addition to org-chart, without making projects-work own the page's many imports."
 		},
 		{
 			"category": "dialog-title-words",
 			"files": [
-				"src/lib/components/ChangeManagerDialog.svelte",
-				"src/lib/components/DeleteTeamDialog.svelte",
-				"src/lib/components/EditMemberTeamsDialog.svelte",
-				"src/lib/components/EditMembersDialog.svelte",
-				"src/lib/components/EditPersonDialog.svelte",
-				"src/lib/components/MoveMemberDialog.svelte",
 				"src/lib/components/MoveTeamDialog.svelte",
 				"src/lib/components/NewRequestDialog.svelte",
 				"src/lib/components/NewTaskDialog.svelte",
 				"src/lib/components/ProjectTeamDialog.svelte",
-				"src/lib/components/RemovePersonDialog.svelte",
 				"src/lib/components/RemoveProjectDialog.svelte",
 				"src/lib/components/RenameTeamDialog.svelte",
 				"src/lib/components/ReportBugDialog.svelte",
@@ -629,6 +590,11 @@
 			"from": "e2e/fakes/modules/employees.ts",
 			"to": "src/lib/modules/employees/{api,types}.ts",
 			"why": "The dev-mock fake implements the employees module's api contract and only needs its types; the fake is never part of a production build."
+		},
+		{
+			"from": "e2e/fakes/modules/org-chart.ts",
+			"to": "src/lib/modules/org-chart/{api,types}.ts",
+			"why": "The dev-mock fake implements the org chart module's api contract and only needs its types; the fake is never part of a production build."
 		}
 	],
 	"rules": {
@@ -686,7 +652,7 @@
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",
 			"src/routes/(shell)/settings/+layout.svelte",
 			"src/lib/components/{MiniIcon,PageHeader,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt,Loaded,ConfirmDialog,CopyButton}.svelte",
-			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,OwnerBar,LiveBanner,Logo,resource,classes,focus,pills}.*",
+			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,LiveBanner,Logo,resource,classes,focus,pills}.*",
 			"static/**",
 			"vite.config.ts",
 			"svelte.config.js",
