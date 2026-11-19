@@ -10,7 +10,7 @@
 //! the interim sign-in `recovery` uses until command-line sign-in is approved in the browser,
 //! FC-173), so the command sends it only to a host whose program it could identify
 //! ([`crate::human::verify_host`]): where a peer is known by its user alone (GNU/Linux,
-//! containers) it refuses before anything is read or sent. Root has no route: the call does
+//! containers) it refuses before a password is asked or anything is sent. Root has no route: the call does
 //! not admit it.
 //!
 //! The files are read as setup reads them (`web_tls::read_pem_file`: the last component not
@@ -138,7 +138,7 @@ pub(crate) fn set(
             return Err("too many failed sign-ins; try again later".into())
         }
         Err(ErrorCode::Unavailable) => {
-            return Err("the service cannot sign anyone in now (it has no registry yet)".into())
+            return Err("the service cannot sign anyone in now; try again".into())
         }
         Err(_) => return Err("the login or password is not the administrator's".into()),
     };
