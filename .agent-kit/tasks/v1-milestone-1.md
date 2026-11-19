@@ -226,3 +226,73 @@ This session works backend and non-UI only (crates, office worker, host/CLI, ser
 - 2026-11-19: PUSHED v1 5f9941f1 = B1b integrated (worktree-b1b-final 3f164f72 incl. channel-test custody port; merged on X6 701d8460; conflicts: allow-list -> 2 office files/11 predicates, FC-164 sentence 3-way). Gates: merged-tree fmt, clippy, platform_conditionals, kit validate; branch: workspace 3584/0, ignored org-host 15/15. linux-dev + ui-dev told. PR 17 review posted as a comment (owner request). Owner: tokens short, commit and merge what we can. Next per plan: B2.
 - 2026-11-19: B2 plan .agent-kit/slices/b2-organization-teams-people-plan.md; owner answered Q1 forest (flexible), Q2 refuse, Q3 refuse until cleared, Q4 max_members hires only, Q5 archive empty. linux-dev: X7 in v1 a31248ca (+ registry lock wait fix); follow-ups for me: office-host-boundary.md still says HTTPS unavailable; supervisor::tests::an_admission_that_could_not_be_built_is_asked_for_again flaky under load on Linux; container https switch not done (owner: no new X work).
 - 2026-11-19 OWNER: no new features; only review, verify and merge what is done. B2.1 stopped; partial work saved as WIP on origin wip/b2-1-checkpoint (does not build, not merged). B2 plan + owner answers kept in .agent-kit/slices/b2-organization-teams-people-plan.md. Browser-to-office path (A3 Build, unbuilt) = new feature, not started.
+
+## WHERE WE ARE / HOW TO CONTINUE (written 2026-11-19, end of session)
+
+**Read this section first in a new session.** It is the committed copy of the handover;
+`.agent-kit/tasks/HANDOVER.md` (local, ignored by Git) points here.
+
+### State
+- `origin/v1` = 4d747ab7. It contains A1-A4, B1a, **B1b** (merge 5f9941f1: the office runs on the
+  journal store under host writer custody; old store deleted), Track X X5/X6/X7 (Linux service,
+  CI on both systems, container HTTPS) and the UI lead's merges. Never push `main`.
+- B1b gates passed: workspace 3584/0, org-host ignored real-process 15/15, LNX-1 on macOS, LNX-2 steps
+  1-9 in Docker Desktop on a Mac. Not yet run on Linux: rewritten LNX-1, LNX-2 step 10.
+- **Paused by the owner (2026-11-19): "no new features; only review, verify and merge what is done".**
+  Do not start B2 or anything new until the owner says so.
+
+### Unfinished work (kept, not merged)
+- **B2.1** partial code: branch `wip/b2-1-checkpoint` on origin (does NOT build; deletions half done).
+  Also local branch `worktree-b2-1` in worktree slot-1. Plan:
+  `.agent-kit/slices/b2-organization-teams-people-plan.md`, with "Owner decisions (2026-11-19)" at the end
+  (Q1 team forest, Q2 refuse deactivating a lead/manager, Q3 refuse moving a lead until cleared,
+  Q4 max_members default 6 on hires only, Q5 archive only empty teams). Blocks: B2.1 store rules,
+  B2.2 wire/dry-run/operation.get (needs ui-dev mirror update at the same time), B2.3a browser-to-office
+  path (UNBUILT in A3: no browser request reaches an office today; a new feature: owner must approve and
+  decide with the other Track A lead who builds it), B2.3b /api/v1 routes, B2.4 CLI (waits for A5).
+  Open owner questions: Q8 (who builds B2.3a), Q9 (move agent-placed done-when cases to C3).
+
+### How to continue when the owner says go
+1. Read AGENTS.md "Session start" and this section; summarize to the owner; ask before resuming.
+2. B2: start from `wip/b2-1-checkpoint` (or restart B2.1 from origin/v1 using the plan), finish B2.1,
+   fresh review, merge; then B2.2 (coordinate with ui-dev), then B2.3 after Q8. Order after B2 per
+   docs/implementation-plan.md: B3, A5, O1, A6, then C2/C3 (another agent builds the agent runtime: ask the
+   owner before planning C1/C3), B4, B6.
+3. Process the owner set: writers Opus high, every review a fresh Claude `code-reviewer` on Opus medium
+   (no Codex/Sol); one fresh review per change and a whole-change review before every merge; verify
+   findings. Backend + documented web API only (ui-dev owns apps/agentic-org-ui; send UI mirror changes
+   to ui-dev). Gates: per-block checks must include `cargo test -p agentic-org` and the org-host
+   `--ignored` real-process set whenever host/worker launch changes (two B1b gaps came from skipping
+   them): `ORG_TEST_OFFICE_BIN=$PWD/target/debug/agentic-org-office
+   ORG_TEST_WEB_BIN=$PWD/target/debug/agentic-org-web cargo test -p org-host --lib -- --ignored
+   --test-threads=2`.
+
+### Pending (not new features: small follow-ups, do when allowed)
+- docs/design/office-host-boundary.md still says HTTPS is unavailable (X7 added it).
+- Kit: manifest hash of skill-catalog.json stale (needs owner override for the overlay guard);
+  kit_codex.py labels old review runs without a model as 6.1 (cosmetic); catalog rationale cites "HEAD:".
+- B1b left for B2: organization/apply.rs and people::owner_bootstrap unused; custody wire
+  Request::Owner unused (keep for A6 or delete); creation.rs TEMPORARY duplicates org-store TEMP_PREFIX.
+- B1c measurements: per-confirmation keychain write; a transient custody read failure while serving
+  is fatal (worker exits, host restarts).
+- Narrowed to A5 (recorded in FC-146 and A5 done-when): delete-runtime with office calls and journal
+  corruption/rollback through the real host. agent-os office cases return with B2/A5/B6; LNX-2 agent-os
+  steps with B2/C2.
+- Platform allow-list: two office test files keep 11 predicates (startup/tests.rs,
+  tests/launch/activation/transfer.rs); Track X will not take them; fold in when convenient.
+- Container HTTPS switch (setup.json, README, lnx2.sh) not done (Track X stopped).
+- Flaky under heavy load only (pass alone): serve::tests::a_log_that_cannot_be_read_closes_...,
+  supervisor::tests::an_admission_that_could_not_be_built_is_asked_for_again (Linux),
+  web::tests::a_child_that_exited_without_a_refusal_line_... .
+- Security design question for the owner: macOS admission relies on the audit token; the fd-holder
+  check (crates/org-platform-host admission/macos.rs verify_reader) is unscheduled.
+- AGENTS.md and docs/processes/branch-and-merge.md still name `v1-integration`; the branch is `v1`.
+
+### PR 17 (runtime rename, C1 spike, ADR-0032; built by another agent)
+Reviewed and commented on GitHub (one review comment). Rename commit 97526ed9 is mergeable; the docs
+commit 751ee234 has 4 blocking issues (non-negotiable 12, data-contract doc 14 / ADR-0016, ADR-0025
+background work not carried through, spike evidence overstated). Owner decides; not our branch.
+
+### Other sessions
+- ui-dev (UI lead; branch v1-ui): told B1b is in v1; merges v1-ui into v1 after its own review.
+- linux-dev (Track X lead): X5-X7 done; told B1b is in v1; stopped by the owner (no new work).
