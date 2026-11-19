@@ -50,11 +50,17 @@ impl FakeCustody {
         while state.held_confirmations == 0 {
             assert!(state.hold_confirmations, "no hold is set");
             let left = deadline.saturating_duration_since(Instant::now());
-            assert!(
-                !left.is_zero(),
-                "no confirmation reached the hold within {bound:?}: \
+            if left.is_zero() {
+                // Lift the hold first: a store dropped while this panic unwinds joins its
+                // threads, and one that reached the hold meanwhile must not wait forever.
+                state.hold_confirmations = false;
+                self.changed.notify_all();
+                drop(state);
+                panic!(
+                    "no confirmation reached the hold within {bound:?}: \
                  the thread meant to confirm may have died before it"
-            );
+                );
+            }
             let (next, _) = self
                 .changed
                 .wait_timeout(state, left)
@@ -237,5 +243,18 @@ mod tests {
         let custody = FakeCustody::new();
         custody.hold_confirmations();
         custody.wait_for_held_confirmation_within(Duration::from_millis(50));
+    }
+
+    /// The failed wait lifts the hold, so a store dropped while the panic unwinds never
+    /// joins a thread that reached the hold in the meantime.
+    #[test]
+    fn a_failed_wait_lifts_the_hold() {
+        let custody = FakeCustody::new();
+        custody.hold_confirmations();
+        let waited = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            custody.wait_for_held_confirmation_within(Duration::from_millis(50))
+        }));
+        assert!(waited.is_err());
+        assert!(!custody.state().hold_confirmations);
     }
 }

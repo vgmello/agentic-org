@@ -392,11 +392,17 @@ impl Faults {
         while state.blocked_flushes == 0 {
             assert!(state.hold_flushes, "no hold is set");
             let left = deadline.saturating_duration_since(Instant::now());
-            assert!(
-                !left.is_zero(),
-                "no segment flush reached the hold within {bound:?}: \
+            if left.is_zero() {
+                // Lift the hold first: a store dropped while this panic unwinds joins its
+                // threads, and one that reached the hold meanwhile must not wait forever.
+                state.hold_flushes = false;
+                self.changed.notify_all();
+                drop(state);
+                panic!(
+                    "no segment flush reached the hold within {bound:?}: \
                  the thread meant to flush may have died before it"
-            );
+                );
+            }
             let (next, _) = self
                 .changed
                 .wait_timeout(state, left)
@@ -745,8 +751,21 @@ mod tests {
         faults.wait_for_held_flush_within(Duration::from_millis(50));
     }
 
+    /// The failed wait lifts the hold, so a store dropped while the panic unwinds never
+    /// joins a flusher that reached the hold in the meantime.
     #[test]
-    fn a_flush_already_held_ends_the_wait_at_once() {
+    fn a_failed_wait_lifts_the_hold() {
+        let faults = Faults::new();
+        faults.hold_flushes();
+        let waited = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            faults.wait_for_held_flush_within(Duration::from_millis(50))
+        }));
+        assert!(waited.is_err());
+        assert!(!faults.lock().hold_flushes);
+    }
+
+    #[test]
+    fn a_flush_reaching_the_hold_ends_the_wait() {
         let dir = tempfile::tempdir().unwrap();
         let segments = dir.path().canonicalize().unwrap().join("segments");
         std::fs::create_dir(&segments).unwrap();

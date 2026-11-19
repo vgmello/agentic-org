@@ -313,7 +313,8 @@ Three things to know about the order:
   or below the confirmed head, an older segment copy behind the host checkpoint and a
   closed custody channel are each refused through the real host (the flipped byte
   naming its ordinal; the closed channel failing closed), where B1b proves them at the
-  custody adapter with a fake writer and in the host's custody unit tests.
+  worker's custody adapter with a fake writer, and the host's custody unit tests prove
+  only the confirmation rule that adapter relies on.
 - **Needs:** A4, K1.
 
 ---
