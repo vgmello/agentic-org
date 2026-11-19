@@ -1,5 +1,5 @@
 // What the Organization settings screens read and change. Shapes follow docs/design/organization-data (accounts and
-// recovery: server-installation-and-access-ux §4a; prices: costs-and-insights-ux §5).
+// recovery: server-installation-and-access-ux §4a). Prices and costs belong to the costs module.
 
 /** The recovery code's state as HQ reports it (§4a.6). The code itself never reaches the browser (RCV-1). */
 export type RecoveryState =
@@ -46,57 +46,4 @@ export interface GeneralSettings {
 	administrator: { username: string; person?: string; isYou: boolean };
 	/** Accounts tied to a person in one of the administrator's organizations: who the role can be handed to. */
 	handOverCandidates: HandOverCandidate[];
-}
-
-export interface PriceRate {
-	id: string;
-	provider: string;
-	model: string;
-	/** US dollars per million tokens, at API list prices. */
-	inputPerMTok: number;
-	outputPerMTok: number;
-	cacheReadPerMTok?: number;
-	cacheWritePerMTok?: number;
-	/** `YYYY-MM-DD`: the day the rate takes effect. */
-	effectiveFrom: string;
-}
-
-export type NewPriceRate = Omit<PriceRate, 'id'>;
-
-export type CostPeriod = 'this_month' | 'last_month';
-
-export interface CostLine {
-	label: string;
-	/** Integer micro-USD, or null when the amount is unpriced or unknown (shown as a dash). */
-	microUsd: number | null;
-	/** Build / Run where recorded; unknown stays unknown. */
-	workType?: 'Build' | 'Run' | 'Unknown';
-	apiEquivalent?: boolean;
-}
-
-export interface BudgetBar {
-	label: string;
-	spentMicroUsd: number;
-	limitMicroUsd: number;
-}
-
-export interface AgentBudgets {
-	memberId: string;
-	name: string;
-	daily?: BudgetBar;
-	monthly?: BudgetBar;
-}
-
-export interface CostSummary {
-	period: CostPeriod;
-	totalMicroUsd: number | null;
-	includesApiEquivalent: boolean;
-	/** Records that are missing or unpriced: every total they touch repeats it. */
-	excluded: { missing: number; unpriced: number };
-	byProject: CostLine[];
-	byConsumer: CostLine[];
-	notOnTaskMicroUsd: number | null;
-	budgets: AgentBudgets[];
-	/** The zone the day and month budgets run in, with who set it. */
-	budgetZone: string;
 }

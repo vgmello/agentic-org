@@ -1,9 +1,9 @@
 import { unavailableCall } from '$lib/platform/unavailable-api';
-import type { CostPeriod, CostSummary, GeneralSettings, NewPriceRate, PriceRate } from './types';
+import type { GeneralSettings } from './types';
 
 /**
- * What the Organization settings screens (General, Costs) read and change. Members and access has its own module
- * (`$lib/modules/access`); the sign-in actions themselves belong to the members module.
+ * What Organization settings › General reads and changes. Costs has its own module (`$lib/modules/costs`), Members
+ * and access too (`$lib/modules/access`); the sign-in actions belong to the members module.
  */
 export interface SettingsApi {
 	general(organizationId: string): Promise<GeneralSettings>;
@@ -13,19 +13,11 @@ export interface SettingsApi {
 		memberId: string,
 		password: string
 	): Promise<GeneralSettings>;
-
-	prices(organizationId: string): Promise<PriceRate[]>;
-	addPrice(organizationId: string, rate: NewPriceRate): Promise<PriceRate[]>;
-	/** The owner's organization cost summary; refuses anyone else with `not_authorized`. */
-	costSummary(organizationId: string, period: CostPeriod): Promise<CostSummary>;
 }
 
 // The web API does not serve these yet: every call refuses, and each screen says so.
 // Under `bun run dev:mock`, e2e/fakes/modules/settings.ts stands in for this file.
 export const settingsApi: SettingsApi = {
 	general: unavailableCall,
-	handOverAdministrator: unavailableCall,
-	prices: unavailableCall,
-	addPrice: unavailableCall,
-	costSummary: unavailableCall
+	handOverAdministrator: unavailableCall
 };
