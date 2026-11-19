@@ -446,7 +446,8 @@
 				"focus-primitives-default-font.ts",
 				"shot.spec.ts",
 				"member-profile.spec.ts",
-				"roles.spec.ts"
+				"roles.spec.ts",
+				"agent-setup.spec.ts"
 			],
 			"sources": [
 				"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
@@ -582,6 +583,11 @@
 			"why": "The Teams index and a team's page link to the Hire flow and Hire requests through the employees module's public URL helpers (hireUrl, HIRE_REQUESTS_URL); the org-chart category owns and tests the employees module."
 		},
 		{
+			"from": "src/lib/modules/agent-setup/features/list/AgentSetupList.svelte",
+			"to": "src/lib/modules/employees/index.ts",
+			"why": "Agent setup's Hire an agent opens the existing reviewed hire flow (AC-IA07-3) through the employees module's public URL helper (hireUrl), without owning it; the org-chart category owns and tests the employees module."
+		},
+		{
 			"from": "src/routes/(shell)/settings/offices/+page.svelte",
 			"to": "src/lib/modules/employees/index.ts",
 			"why": "Offices lists unplaced agents and opens the employees module's Offboard agent dialog; the org-chart category owns and tests that dialog."
@@ -646,7 +652,7 @@
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
 			"src/lib/modules/shell/**",
-			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,offices,projects,workitems,docs,features,releases,insights,costs,budgets,access}/**",
+			"src/lib/modules/{home,inbox,activity,preferences,search,teams,members,settings,roles,agent-setup,offices,projects,workitems,docs,features,releases,insights,costs,budgets,access}/**",
 			"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
 			"src/routes/{agents,org-chart,offices,processes,sessions}/+page.ts",
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",
