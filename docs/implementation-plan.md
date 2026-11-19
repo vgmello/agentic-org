@@ -1260,7 +1260,7 @@ Recorded by the owner on 2026-11-18. Built for every instance on its branch (hos
 process, setup; ADR-0017 decision 10 records the decisions: the instance's own ECDSA
 P-256 certificate, a supplied pair, custody, `tls.set` and `tls.renew`; plain HTTP on a
 published port stays as an explicit choice). Until the container's setup file, README
-and LNX-2 move to `https` (after B1b lands) the container serves the browser over plain
+and LNX-2 move to `https` (unblocked now that B1b has landed) the container serves the browser over plain
 HTTP (X5), and the documented run command publishes that port on `127.0.0.1` only.
 
 - **Outcome:** the container serves the browser over HTTPS without the operator making
