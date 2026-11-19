@@ -193,10 +193,10 @@
 		<legend class="sr-only">Show members</legend>
 		{#each DIRECTORY_FILTERS as f (f.id)}
 			<label
-				class="inline-flex min-h-9 cursor-pointer items-center gap-x-1.5 rounded-md px-3 text-sm/6 font-semibold ring-1 ring-inset has-checked:bg-white/10 has-checked:text-white has-checked:ring-white/20 has-checked:underline has-checked:underline-offset-4 has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-indigo-400 max-[639px]:min-h-11 {filter ===
+				class="inline-flex min-h-9 cursor-pointer items-center gap-x-1.5 rounded-md px-3 text-sm/6 font-semibold ring-1 ring-inset has-checked:bg-surface-overlay has-checked:text-fg has-checked:ring-line-strong has-checked:underline has-checked:underline-offset-4 has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-focus max-[639px]:min-h-11 {filter ===
 				f.id
 					? ''
-					: 'text-gray-400 ring-white/10 hover:text-white'}"
+					: 'text-fg-muted ring-line hover:text-fg'}"
 			>
 				<input
 					type="radio"
@@ -206,7 +206,7 @@
 					class="sr-only"
 				/>
 				{f.label}
-				<span class="font-normal text-gray-400 tabular-nums">{view.counts[f.id]}</span>
+				<span class="font-normal text-fg-muted tabular-nums">{view.counts[f.id]}</span>
 			</label>
 		{/each}
 		<p class="sr-only" role="status">{shownText(view.current.length, filter)}</p>
@@ -214,36 +214,36 @@
 
 	{#if view.current.length === 0}
 		<div
-			class="border-t border-white/5 px-4 py-8 min-[640px]:px-6 min-[1024px]:px-8"
+			class="border-t border-line-subtle px-4 py-8 min-[640px]:px-6 min-[1024px]:px-8"
 			data-testid="members-filtered-empty"
 		>
 			{#if filter === 'agents'}
-				<p class="text-sm/6 text-gray-400">
+				<p class="text-sm/6 text-fg-muted">
 					{view.former.length > 0
 						? `No current agents in ${organizationName}.`
 						: `No agents in ${organizationName} yet.`} An agent joins only through Hire.
 				</p>
 				<div class="mt-4">{@render hireAgent()}</div>
 			{:else if filter === 'people'}
-				<p class="text-sm/6 text-gray-400">
+				<p class="text-sm/6 text-fg-muted">
 					{view.former.length > 0
 						? `No current people in ${organizationName}.`
 						: `No people in ${organizationName} yet.`}
 				</p>
 				{#if snapshot}<div class="mt-4">{@render addPerson(false)}</div>{/if}
 			{:else}
-				<p class="text-sm/6 text-gray-400">
+				<p class="text-sm/6 text-fg-muted">
 					No current members: everyone listed here is a former member.
 				</p>
 				{#if snapshot}<div class="mt-4">{@render addPerson(false)}</div>{/if}
 			{/if}
 		</div>
 	{:else}
-		<div class="@container border-t border-white/5" data-testid="members-list">
+		<div class="@container border-t border-line-subtle" data-testid="members-list">
 			<div class={GRID}>
 				<div
 					aria-hidden="true"
-					class="hidden border-b border-white/10 px-4 py-3 text-xs/5 font-semibold text-gray-400 min-[640px]:px-6 min-[1024px]:px-8 {SUBGRID}"
+					class="hidden border-b border-line px-4 py-3 text-xs/5 font-semibold text-fg-muted min-[640px]:px-6 min-[1024px]:px-8 {SUBGRID}"
 				>
 					<span class="col-span-2">Member</span><span>Home team</span><span>Working on</span><span
 						>Presence</span
@@ -251,7 +251,7 @@
 				</div>
 				<ul
 					role="list"
-					class="divide-y divide-white/5 border-b border-white/5 {SUBGRID}"
+					class="divide-y divide-line-subtle border-b border-line-subtle {SUBGRID}"
 					aria-label="Members"
 				>
 					{#each view.current as member (member.id)}
@@ -263,29 +263,29 @@
 	{/if}
 
 	{#if view.former.length > 0}
-		<details class="group border-b border-white/5" data-testid="former-members">
+		<details class="group border-b border-line-subtle" data-testid="former-members">
 			<summary
-				class="flex min-h-6 cursor-pointer list-none items-center gap-x-1 px-4 py-4 text-sm/6 font-semibold text-white focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11 min-[640px]:px-6 min-[1024px]:px-8 [&::-webkit-details-marker]:hidden"
+				class="flex min-h-6 cursor-pointer list-none items-center gap-x-1 px-4 py-4 text-sm/6 font-semibold text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 min-[640px]:px-6 min-[1024px]:px-8 [&::-webkit-details-marker]:hidden"
 			>
 				<svg
 					viewBox="0 0 20 20"
 					fill="currentColor"
 					aria-hidden="true"
-					class="size-5 shrink-0 text-gray-400 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+					class="size-5 shrink-0 text-fg-muted transition-transform group-open:rotate-90 motion-reduce:transition-none"
 					><path
 						fill-rule="evenodd"
 						d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z"
 						clip-rule="evenodd"
 					/></svg
 				>
-				Former members <span class="ml-1 font-normal text-gray-400">{view.former.length}</span>
+				Former members <span class="ml-1 font-normal text-fg-muted">{view.former.length}</span>
 			</summary>
-			<p class="-mt-2 px-4 pb-3 text-xs/5 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8">
+			<p class="-mt-2 px-4 pb-3 text-xs/5 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
 				Their profiles, handles and history stay.
 			</p>
-			<div class="@container border-t border-white/5">
+			<div class="@container border-t border-line-subtle">
 				<div class={GRID}>
-					<ul role="list" class="divide-y divide-white/5 {SUBGRID}" aria-label="Former members">
+					<ul role="list" class="divide-y divide-line-subtle {SUBGRID}" aria-label="Former members">
 						{#each view.former as member (member.id)}
 							<DirectoryRow {member} />
 						{/each}

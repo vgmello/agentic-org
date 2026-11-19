@@ -52,40 +52,40 @@
 
 <div class="space-y-4">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<p class="text-sm/6 text-gray-400">Bugs in {projectName}. <span class="rounded bg-white/10 px-1.5 text-xs/5 text-gray-200">Sample data</span></p>
+		<p class="text-sm/6 text-fg-muted">Bugs in {projectName}. <span class="rounded bg-surface-overlay px-1.5 text-xs/5 text-fg-body">Sample data</span></p>
 		<Button onclick={() => (reporting = true)}><Plus aria-hidden="true" /> Report a bug</Button>
 	</div>
 
 	{#if loadError}
-		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-red-300" role="alert">{loadError} <button class="underline" onclick={load}>Try again</button></p>
+		<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-danger-text" role="alert">{loadError} <button class="underline" onclick={load}>Try again</button></p>
 	{:else if all === undefined}
-		<p class="text-sm/6 text-gray-400">Loading bugs…</p>
+		<p class="text-sm/6 text-fg-muted">Loading bugs…</p>
 	{:else}
-		<div role="group" aria-label="Show bugs" class="inline-flex flex-wrap rounded-lg bg-white/5 p-1 outline-1 -outline-offset-1 outline-white/10">
+		<div role="group" aria-label="Show bugs" class="inline-flex flex-wrap rounded-lg bg-surface-raised p-1 outline-1 -outline-offset-1 outline-line">
 			{#each FILTERS as f (f.id)}
-				<button type="button" aria-pressed={filter === f.id} onclick={() => (filter = f.id)} class="rounded-md px-3 py-1.5 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:outline-indigo-400 {filter === f.id ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}">
-					{f.label} <span class="font-normal text-gray-400">{counts[f.id]}</span>
+				<button type="button" aria-pressed={filter === f.id} onclick={() => (filter = f.id)} class="rounded-md px-3 py-1.5 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:outline-focus {filter === f.id ? 'bg-surface-overlay text-fg' : 'text-fg-muted hover:text-fg'}">
+					{f.label} <span class="font-normal text-fg-muted">{counts[f.id]}</span>
 				</button>
 			{/each}
 		</div>
 
 		{#if bugs.length === 0}
-			<p class="text-sm/6 text-gray-400" data-testid="no-bugs">No bugs reported yet.</p>
+			<p class="text-sm/6 text-fg-muted" data-testid="no-bugs">No bugs reported yet.</p>
 		{:else if shown.length === 0}
-			<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-400" data-testid="no-match">Nothing here.</p>
+			<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-muted" data-testid="no-match">Nothing here.</p>
 		{:else}
 			<div class="space-y-4" data-testid="bug-list">
 				{#each groups as group (group.areaId)}
-					<section aria-labelledby={`area-${group.areaId}`} class="overflow-hidden rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10">
-						<h3 id={`area-${group.areaId}`} class="px-4 py-2 text-sm/6 font-semibold text-white">{group.name} <span class="font-normal text-gray-400">{group.bugs.length}</span></h3>
-						<ul class="divide-y divide-white/5">
+					<section aria-labelledby={`area-${group.areaId}`} class="overflow-hidden rounded-xl bg-surface-raised outline-1 -outline-offset-1 outline-line">
+						<h3 id={`area-${group.areaId}`} class="px-4 py-2 text-sm/6 font-semibold text-fg">{group.name} <span class="font-normal text-fg-muted">{group.bugs.length}</span></h3>
+						<ul class="divide-y divide-line-subtle">
 							{#each group.bugs as bug (bug.id)}
 								<li class="flex flex-wrap items-center gap-x-3 px-4 py-2 text-sm/6" data-testid="bug-row" data-bug={bug.id}>
-									<span class="text-gray-400">{bugRef(bug)}</span>
-									<button type="button" class="min-w-0 flex-1 text-left font-semibold text-white hover:underline focus-visible:outline-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]" onclick={() => open(bug.id)}>{bug.title}</button>
-									<span class={bug.severity === 'critical' ? 'font-semibold text-amber-300' : 'text-gray-300'}><SeverityIcon severity={bug.severity} /> {severityWord(bug.severity)}{bug.severity_confirmed ? '' : '?'}</span>
-									<span class="text-gray-300">{BUG_STATUS_LABEL[bug.status] ?? bug.status}{bug.status === 'closed' ? ` · ${closedWord(bug, bugs.find((b) => b.id === bug.duplicate_of))}` : ''}</span>
-									<span class="text-gray-400">{nameOf(snapshot, bug.assignee_id)}</span>
+									<span class="text-fg-muted">{bugRef(bug)}</span>
+									<button type="button" class="min-w-0 flex-1 text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-focus [overflow-wrap:anywhere]" onclick={() => open(bug.id)}>{bug.title}</button>
+									<span class={bug.severity === 'critical' ? 'font-semibold text-warning-text' : 'text-fg-secondary'}><SeverityIcon severity={bug.severity} /> {severityWord(bug.severity)}{bug.severity_confirmed ? '' : '?'}</span>
+									<span class="text-fg-secondary">{BUG_STATUS_LABEL[bug.status] ?? bug.status}{bug.status === 'closed' ? ` · ${closedWord(bug, bugs.find((b) => b.id === bug.duplicate_of))}` : ''}</span>
+									<span class="text-fg-muted">{nameOf(snapshot, bug.assignee_id)}</span>
 								</li>
 							{/each}
 						</ul>

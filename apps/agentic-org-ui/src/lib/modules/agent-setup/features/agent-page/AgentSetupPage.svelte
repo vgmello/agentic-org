@@ -19,6 +19,8 @@
 	import Loaded from '$lib/components/Loaded.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import Section from '$lib/components/Section.svelte';
+	import StatusPill from '$lib/components/StatusPill.svelte';
+	import { tone } from '$lib/components/pills';
 	import { mobileButton } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
@@ -30,6 +32,7 @@
 		DropdownMenuTrigger
 	} from '$lib/components/ui/dropdown-menu';
 	import { pageTitle } from '$lib/nav';
+	import { cn } from '$lib/utils';
 	import { toAppError } from '$lib/office/api';
 	import { offboardAgent, setAgentStatus } from '$lib/org/actions';
 	import { offboardSummary } from '$lib/org/agents';
@@ -39,9 +42,10 @@
 	import { agentSetupApi } from '../../api';
 	import HealthBadge from '../../components/HealthBadge.svelte';
 	import { health, healthText } from '../../health';
-	import { focusHeading, focusHeadingAfterShell } from '../../heading';
+	import { focusHeading, focusHeadingAfterShell } from '$lib/components/focus';
 	import {
 		CONNECTION_STATE,
+		CONNECTION_TONE,
 		ageText,
 		codeParts,
 		isStale,
@@ -117,9 +121,7 @@
 		shown = {
 			version: record?.version,
 			lines:
-				record && detail
-					? offboardLines(offboardSummary(snapshot, record, false), detail.name, detail.handle)
-					: []
+				record && detail ? offboardLines(offboardSummary(snapshot, record, false), detail.name) : []
 		};
 	}
 
@@ -243,11 +245,11 @@
 	}
 
 	const linkClass =
-		'rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400';
+		'rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
 	/** A value that is a link: a 44 px target below 640 px (app-shell-ux §6a), without growing the row on desktop. */
 	const valueLink = `${linkClass} inline-flex items-center max-[639px]:min-h-11`;
 	const backClass =
-		'inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11';
+		'inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11';
 </script>
 
 <svelte:head><title>{title}</title></svelte:head>
@@ -346,7 +348,7 @@
 						<HealthBadge health={hh} aria-hidden="true" />
 						<span class="sr-only">{healthText(hh)}</span>
 						{#if d.readiness.known}
-							<span class="text-xs/5 text-gray-400"
+							<span class="text-xs/5 text-fg-muted"
 								>Office checked {ageText(d.readiness.checkedAt, now)}</span
 							>
 						{/if}
@@ -355,10 +357,10 @@
 						<ul role="list" class="mt-3 max-w-3xl space-y-3">
 							{#each hh.reasons as reason (reason.code)}
 								<li class="[overflow-wrap:anywhere]">
-									<p class="font-medium text-white">{reason.text}</p>
-									{#if reason.fix}<p class="text-gray-400">
+									<p class="font-medium text-fg">{reason.text}</p>
+									{#if reason.fix}<p class="text-fg-muted">
 											{#each codeParts(reason.fix) as part, i (i)}{#if part.code}<code
-														class="rounded-sm bg-white/5 px-1 font-mono text-gray-200"
+														class="rounded-sm bg-surface-raised px-1 font-mono text-fg-body"
 														>{part.text}</code
 													>{:else}{part.text}{/if}{/each}
 										</p>{/if}
@@ -366,27 +368,27 @@
 							{/each}
 						</ul>
 					{:else if hh.kind === 'paused'}
-						<p class="mt-3 max-w-3xl text-gray-300">
+						<p class="mt-3 max-w-3xl text-fg-secondary">
 							Paused: {d.name} starts nothing until it's resumed. It keeps its home team and its assignments.
 						</p>
 					{:else if hh.kind === 'unknown'}
-						<p class="mt-3 max-w-3xl text-gray-300 [overflow-wrap:anywhere]">{hh.why}</p>
-						<p class="max-w-3xl text-gray-400">
+						<p class="mt-3 max-w-3xl text-fg-secondary [overflow-wrap:anywhere]">{hh.why}</p>
+						<p class="max-w-3xl text-fg-muted">
 							Nothing here is known to stop it; it isn't shown as ready until the office says so.
 						</p>
 					{:else}
-						<p class="mt-3 max-w-3xl text-gray-300">
+						<p class="mt-3 max-w-3xl text-fg-secondary">
 							{d.name} can start when it's called. The office checks again before each turn.
 						</p>
 					{/if}
 					{#if d.stopPending}
-						<p class="mt-3 max-w-3xl text-gray-300" data-testid="stop-pending">
+						<p class="mt-3 max-w-3xl text-fg-secondary" data-testid="stop-pending">
 							Stop pending: HQ accepted the pause; the office hasn't confirmed the process stopped
 							yet.
 						</p>
 					{/if}
 					{#if d.holds.length}
-						<p class="mt-3 text-gray-400">Holds: {d.holds.join(' · ')}</p>
+						<p class="mt-3 text-fg-muted">Holds: {d.holds.join(' · ')}</p>
 					{/if}
 				</div>
 			</Section>
@@ -397,7 +399,7 @@
 				description={d.execution
 					? `Execution configuration, rev ${d.execution.revision}${d.execution.updated?.byName ? ` · updated by ${d.execution.updated.byName}${d.execution.updated.at ? ` ${ageText(d.execution.updated.at, now)}` : ''}` : ''}. Changes take effect from its next turn.`
 					: 'An agent without an execution configuration is not runnable. Nothing is chosen for it.'}
-				class="border-t border-white/5"
+				class="border-t border-line-subtle"
 			>
 				{#snippet actions()}
 					{#if canChange}
@@ -444,16 +446,16 @@
 					<ol role="list" class="space-y-2">
 						{#each d.execution.connections as c, i (c.id)}
 							<li class="[overflow-wrap:anywhere]">
-								<span class="text-gray-300">{i + 1}. {c.name}</span>
+								<span class="text-fg-secondary">{i + 1}. {c.name}</span>
 								<span class="block text-xs/5"
 									>{c.runtime} ·
-									<span
-										class={c.state === 'ready'
-											? 'text-green-300'
-											: c.state === 'unknown'
-												? ''
-												: 'text-amber-200'}>{CONNECTION_STATE[c.state]}</span
-									>{#if c.checkedAt}, checked {ageText(c.checkedAt, now)}{/if}</span
+									<StatusPill
+										label={CONNECTION_STATE[c.state]}
+										class={cn(
+											tone[CONNECTION_TONE[c.state]],
+											'[&>span]:overflow-visible [&>span]:whitespace-normal'
+										)}
+									/>{#if c.checkedAt}, checked {ageText(c.checkedAt, now)}{/if}</span
 								>
 							</li>
 						{/each}
@@ -465,7 +467,7 @@
 				level={3}
 				title="Where it runs"
 				description="What the owning office observes. The managed home is resolved by the office and can't be changed here."
-				class="border-t border-white/5"
+				class="border-t border-line-subtle"
 			>
 				<DescriptionList
 					class="mt-4"
@@ -481,7 +483,7 @@
 
 			{#snippet office()}
 				{#if d.placement}
-					<span class="text-gray-300"
+					<span class="text-fg-secondary"
 						>{d.placement.office.name} · placement generation {d.placement.generation}</span
 					>
 					<span class="block text-xs/5"
@@ -491,7 +493,7 @@
 							date.{/if}</span
 					>
 				{:else}
-					<span class="font-medium text-amber-200">Unplaced</span>
+					<span class="font-medium text-fg-secondary">Unplaced</span>
 					<span class="block"
 						>No office runs {d.name}. Choose one in
 						<a href={resolve('/settings/offices')} class={linkClass}>Offices</a>, under Place or
@@ -507,7 +509,7 @@
 				level={3}
 				title="Employee record"
 				description="Who {d.name} is, rev {d.employeeRevision}: separate from how it runs. Name, title and focus are edited on its profile."
-				class="border-t border-white/5"
+				class="border-t border-line-subtle"
 			>
 				{#snippet actions()}
 					{#if canChange}
@@ -530,7 +532,7 @@
 			</Section>
 
 			{#snippet role()}
-				{#if d.role}<span class="text-gray-300">{d.role}</span>{:else}No role on record{/if}
+				{#if d.role}<span class="text-fg-secondary">{d.role}</span>{:else}No role on record{/if}
 				{#if !d.role && d.roleText}<span class="block text-xs/5">Role as written: {d.roleText}</span
 					>{/if}
 			{/snippet}
@@ -540,7 +542,7 @@
 						>{d.homeTeam.name}</a
 					>
 				{:else}
-					<span class="text-red-300">Home team missing: this record is invalid.</span>
+					<span class="text-danger-text">Home team missing: this record is invalid.</span>
 				{/if}
 			{/snippet}
 			{#snippet reportsTo()}

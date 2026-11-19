@@ -79,7 +79,7 @@
 				>
 			</DialogHeader>
 			<div>
-				<Label for="place-office" class="block text-sm/6 font-medium text-white">Office</Label>
+				<Label for="place-office" class="block text-sm/6 font-medium text-fg">Office</Label>
 				<div class="mt-2">
 					<select
 						id="place-office"

@@ -6,7 +6,7 @@
   refusal stays inline. Mount it in a {#key} that changes on each opening.
 -->
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { helpClass, mobileButton, selectClass } from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
 	import {
@@ -44,6 +44,7 @@
 	let busy = $state(false);
 	let error = $state<string | undefined>();
 	let nowSaved = $state<string | undefined>();
+	let alertElement = $state<HTMLElement | null>(null);
 
 	function changeOpen(next: boolean) {
 		if (!next && busy) open = true;
@@ -70,6 +71,10 @@
 				nowSaved = `Saved now, rev ${latest.employeeRevision}: ${latest.role ?? 'no role'}.`;
 			} else nowSaved = undefined;
 			error = failure.message;
+			busy = false;
+			// A refusal focuses its reason (app-shell-ux §6a); the next Tab reaches Cancel and Save.
+			await tick();
+			alertElement?.focus();
 		} finally {
 			busy = false;
 		}
@@ -107,9 +112,14 @@
 					Roles are written in Organization settings › Roles.
 				</p>
 			</div>
-			{#if error}<div role="alert" class="text-sm/6 [overflow-wrap:anywhere]">
-					<p class="text-red-300">{error}</p>
-					{#if nowSaved}<p class="mt-1 text-gray-300">{nowSaved}</p>{/if}
+			{#if error}<div
+					role="alert"
+					tabindex="-1"
+					bind:this={alertElement}
+					class="text-sm/6 [overflow-wrap:anywhere] focus:outline-hidden"
+				>
+					<p class="text-danger-text">{error}</p>
+					{#if nowSaved}<p class="mt-1 text-fg-secondary">{nowSaved}</p>{/if}
 				</div>{/if}
 			<DialogFooter>
 				<Button
@@ -119,7 +129,7 @@
 					disabled={busy}
 					onclick={() => (open = false)}>Cancel</Button
 				>
-				<Button type="submit" class="min-w-20 {mobileButton}" aria-busy={busy} disabled={busy}
+				<Button type="submit" class="min-w-20 {mobileButton}" aria-busy={busy} aria-disabled={busy}
 					>{busy ? 'Saving…' : 'Save'}</Button
 				>
 			</DialogFooter>

@@ -67,7 +67,7 @@ Data from the org snapshot (members, teams, projects): import `orgApi` from `$li
 		onretry={load}
 	/>
 {:else if rows.length === 0}<EmptyState title="No members yet" description="…">…</EmptyState>
-{:else}<ul role="list" class="divide-y divide-white/5">…</ul>{/if}
+{:else}<ul role="list" class="divide-y divide-line-subtle">…</ul>{/if}
 ```
 
 The shell's top bar holds the page `h1` (the area name, from `areaFor` in `$lib/nav`); page headings are h2.
@@ -76,10 +76,63 @@ Use `resolve()` from `$app/paths` for every `href`/`goto` (lint enforces it); ca
 
 ## Class strings
 
-- Gutters: `px-4 min-[640px]:px-6 min-[1024px]:px-8`. Body `text-sm/6`, meta `text-xs/5 text-gray-400`, headings `text-base/7 font-semibold text-white`.
-- Divided row: `relative flex items-center gap-x-4 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8` in `ul.divide-y.divide-white/5`; one stretched title link `<a class="…"><span class="absolute inset-0"></span>{name}</a>`.
-- Table header: `text-left text-xs/5 font-semibold text-gray-400 border-b border-white/10 py-3`; rows `border-b border-white/5`; below 640 px render divided rows instead.
+- Gutters: `px-4 min-[640px]:px-6 min-[1024px]:px-8`. Body `text-sm/6`, meta `text-xs/5 text-fg-muted`, headings `text-base/7 font-semibold text-fg`.
+- Divided row: `relative flex items-center gap-x-4 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8` in `ul.divide-y.divide-line-subtle`; one stretched title link `<a class="…"><span class="absolute inset-0"></span>{name}</a>`.
+- Table header: `text-left text-xs/5 font-semibold text-fg-muted border-b border-line py-3`; rows `border-b border-line-subtle`; below 640 px render divided rows instead.
 - Filter bar: `flex flex-wrap items-center gap-3 px-4 py-4 …gutters`; search input full width below 640 px.
-- Field: `<Label for>` + `<Input class="max-[639px]:text-base max-[639px]:h-11" aria-invalid aria-describedby>` + help `mt-2 text-xs/5 text-gray-400` / error `mt-2 text-xs/5 text-red-300`.
-- Focus: `focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400` (inset `-outline-offset-2` in rows, tabs, menus).
-- Targets: controls `h-9` desktop, `max-[639px]:min-h-11` below 640 px. No shadows or gradients; one indigo primary per view; global New stays outline.
+- Field: `<Label for>` + `<Input class="max-[639px]:text-base max-[639px]:h-11" aria-invalid aria-describedby>` + help `mt-2 text-xs/5 text-fg-muted` / error `mt-2 text-xs/5 text-danger-text`.
+- Focus: `focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus` (inset `-outline-offset-2` in rows, tabs, menus).
+- Targets: controls `h-9` desktop, `max-[639px]:min-h-11` below 640 px. No shadows or gradients; one primary (`bg-primary`) per view; global New stays outline.
+
+## Look tokens
+
+Every colour comes from a look token in `src/app.css`, named for its role. **Never use raw palette classes**
+(`text-gray-400`, `bg-white/5`, `outline-indigo-400`, `text-red-300` …) or colour literals: the unit test
+`src/lib/platform/tooling/look-tokens.test.ts` fails on them and names the token to use, and
+`bun scripts/look-tokens.ts` rewrites them (rerunnable; it prints anything it cannot map). A restyle or a light
+mode changes the token values in `app.css` and `docs/specs/app-shell-ux.md` §6a together, not your markup.
+Use a token with any colour utility (`bg-`, `text-`, `border-`, `divide-`, `outline-`, `ring-`, `fill-`) and
+with an opacity where the role calls for a tint (`bg-danger-emphasis/10`, `ring-brand/30`).
+
+| Token                                | For                                                                                 | Value today                                                                                          |
+| ------------------------------------ | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `surface`                            | page, top bar, dialogs, popovers (`bg-surface`, `bg-surface/50` for chart cards)    | gray-800                                                                                             |
+| `surface-sunken`                     | floating menus and toolbars, code panels                                            | gray-900                                                                                             |
+| `surface-raised`                     | fields, quiet panels, row hover                                                     | white 5%                                                                                             |
+| `surface-overlay`                    | chips, secondary buttons, stronger hover                                            | white 10%                                                                                            |
+| `surface-chip`                       | small labels on org chart tiles                                                     | gray-700                                                                                             |
+| `tint` / `shade`                     | other light / dark layers, always with an opacity (`bg-tint/[0.03]`, `bg-shade/10`) | white / black                                                                                        |
+| `tooltip`; `scrim`                   | tooltip fill; behind a modal (`backdrop:bg-scrim/80`)                               | gray-950                                                                                             |
+| `line-subtle`                        | row and header dividers (`divide-line-subtle`, `border-line-subtle`)                | white 5%                                                                                             |
+| `line`                               | section and card outlines (`outline-line`, `border-line`, `ring-line`)              | white 10%                                                                                            |
+| `line-strong`                        | outlines that must show on a tint                                                   | white 20%                                                                                            |
+| `field-border`                       | form field boundary (`outline-field-border`)                                        | gray-500                                                                                             |
+| `fg`                                 | headings and primary text                                                           | white                                                                                                |
+| `fg-bright`                          | code and chip text on a tint                                                        | gray-100                                                                                             |
+| `fg-body`                            | reading text: messages, descriptions                                                | gray-200                                                                                             |
+| `fg-secondary`                       | secondary labels, pill text                                                         | gray-300                                                                                             |
+| `fg-muted`                           | meta, help, placeholders                                                            | gray-400                                                                                             |
+| `fg-subtle`                          | disabled or decorative text, list markers; not ordinary text                        | gray-500                                                                                             |
+| `on-emphasis`                        | text and marks on a solid `primary` or `danger-emphasis` fill                       | white                                                                                                |
+| `on-warning`, `on-warning-strong`    | text on a solid warning badge                                                       | gray-900, gray-950                                                                                   |
+| `primary`; `primary-hover`           | primary button and solid accent fills, checkboxes; hover of the onboarding buttons  | indigo-500; indigo-600                                                                               |
+| `focus`                              | keyboard focus outline (`focus-visible:outline-focus`)                              | indigo-400                                                                                           |
+| `ring`                               | focus outline of the onboarding and auth controls (shadcn's ring)                   | indigo-500                                                                                           |
+| `link`                               | links                                                                               | indigo-400                                                                                           |
+| `brand`                              | selection underline, working tints, highlight rings                                 | indigo-400                                                                                           |
+| `brand-text`, `-strong`, `-stronger` | text on indigo tints; initials and hover; callout body                              | indigo-300, 200, 100                                                                                 |
+| `quiet`, `quiet-emphasis`            | neutral status dots and pill tints                                                  | gray-400, gray-500                                                                                   |
+| `danger` ramp                        | blocked and error                                                                   | red: base 400, `-emphasis` 500, `-text` 300, `-text-strong` 200, `-text-stronger` 100                |
+| `warning` ramp                       | waiting on the owner (amber means only that)                                        | amber: base 400, `-emphasis` 500, `-deep` 600, `-text` 300, `-text-strong` 200, `-text-stronger` 100 |
+| `success` ramp                       | completion, online                                                                  | green: base 400, `-emphasis` 500, `-text` 300                                                        |
+| `positive` ramp                      | presence dots, person tiles, accepted/applies                                       | emerald: base 400, `-emphasis` 500, `-text` 300, `-text-strong` 200                                  |
+| `info` ramp                          | starting and checking                                                               | sky: base 400, `-emphasis` 500, `-text` 300, `-text-strong` 200, `-text-stronger` 100                |
+
+Every tone ramp has the same steps: the base colour for icons, dots, borders and tints (with an opacity);
+`-emphasis` the solid fill; `-text` the readable text step (also small marks that need that contrast, such as
+rings and spinners); `-text-strong`/`-stronger` the higher-contrast text inside a tinted callout. Status text is
+`-text` (error text is `text-danger-text`, as §6a says); new code does not add another step. shadcn-svelte's own
+variables (`background`, `foreground`, `primary`, `muted`, `accent`, `border`, `input`, `ring`, `destructive`, …)
+are mapped onto these tokens, so `ui/` primitives follow a restyle too; shadcn's `border` is the default
+border colour of the base layer, not a role, so markup uses `line`. Buttons: `ui/button`'s variants and the
+`classes.ts` helpers use tokens only; colour, radius (`--radius`) and weight live there.

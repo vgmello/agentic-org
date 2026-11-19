@@ -962,33 +962,33 @@ for (const scale of [1, 2]) {
 			});
 			const fixture = page.getByRole('region', { name: 'Office status contracts', exact: true });
 			const cases = [
-				['active', 'Online', 'circle', 'text-green-400', undefined],
-				['starting', 'Starting', 'loader', 'text-sky-400', 'M12 2v4'],
-				['pending', 'Invited', 'mail', 'text-gray-400', 'm22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7'],
-				['offline', 'Offline', 'circle-outline', 'text-gray-400', undefined],
-				['unavailable', 'Stopped', 'circle-x', 'text-red-400', 'm15 9-6 6'],
-				['update_needed', 'Update needed', 'circle-arrow-up', 'text-amber-400', 'm16 12-4-4-4 4'],
-				['unreachable', 'Unreachable', 'wifi-off', 'text-red-400', 'M12 20h.01'],
-				['checking', 'Checking…', 'loader', 'text-sky-400', 'M12 2v4'],
+				['active', 'Online', 'circle', 'text-success', undefined],
+				['starting', 'Starting', 'loader', 'text-info', 'M12 2v4'],
+				['pending', 'Invited', 'mail', 'text-fg-muted', 'm22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7'],
+				['offline', 'Offline', 'circle-outline', 'text-fg-muted', undefined],
+				['unavailable', 'Stopped', 'circle-x', 'text-danger', 'm15 9-6 6'],
+				['update_needed', 'Update needed', 'circle-arrow-up', 'text-warning', 'm16 12-4-4-4 4'],
+				['unreachable', 'Unreachable', 'wifi-off', 'text-danger', 'M12 20h.01'],
+				['checking', 'Checking…', 'loader', 'text-info', 'M12 2v4'],
 				[
 					'status_unknown',
 					'Status unknown',
 					'circle-help',
-					'text-gray-400',
+					'text-fg-muted',
 					'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3'
 				],
 				[
 					'undefined',
 					'Status unknown',
 					'circle-help',
-					'text-gray-400',
+					'text-fg-muted',
 					'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3'
 				],
 				[
 					'future',
 					'Status unknown',
 					'circle-help',
-					'text-gray-400',
+					'text-fg-muted',
 					'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3'
 				]
 			] as const;

@@ -67,13 +67,13 @@
 	const groups = $derived(groupRequests(shown));
 	const total = $derived(requests.length);
 	const matching = $derived(shown.length);
-	const selectClass = 'h-11 max-w-full min-w-0 rounded-md bg-gray-800 px-2 py-1.5 text-sm/6 sm:h-9 text-white outline-1 -outline-offset-1 outline-gray-500 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400';
+	const selectClass = 'h-11 max-w-full min-w-0 rounded-md bg-surface px-2 py-1.5 text-sm/6 sm:h-9 text-fg outline-1 -outline-offset-1 outline-field-border focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus';
 	const projectName = (id: string | undefined) => (id ? ((snapshot.projects ?? []).find((p) => p.id === id)?.name ?? '') : '');
 </script>
 
 <div class="space-y-4" data-testid="requests-queue">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<p class="text-sm/6 text-gray-300">Ideas and needs that aren't tasks yet. Someone scopes each one, then you approve it.</p>
+		<p class="text-sm/6 text-fg-secondary">Ideas and needs that aren't tasks yet. Someone scopes each one, then you approve it.</p>
 		<Button size="sm" class="min-h-11 sm:min-h-0" onclick={onnew} data-testid="new-request">New request</Button>
 	</div>
 
@@ -90,32 +90,32 @@
 				<option value="">All projects</option><option value="none">No project</option>
 				{#each allProjects as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
 			</select>
-			<Input type="search" aria-label="Search requests" placeholder="Search" bind:value={filter.query} class="min-h-11 max-w-56 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 sm:min-h-0" autocomplete="off" />
+			<Input type="search" aria-label="Search requests" placeholder="Search" bind:value={filter.query} class="min-h-11 max-w-56 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-focus sm:min-h-0" autocomplete="off" />
 			{#if filterActive(live)}<Button size="sm" variant="outline" class="min-h-11 sm:min-h-0" onclick={() => (filter = { ...NO_FILTER })}>Clear</Button>{/if}
-			<span class="text-sm/6 text-gray-400" aria-live="polite" data-testid="request-count">{matching === total ? `${total} ${total === 1 ? 'request' : 'requests'}` : `${matching} of ${total}`}</span>
+			<span class="text-sm/6 text-fg-muted" aria-live="polite" data-testid="request-count">{matching === total ? `${total} ${total === 1 ? 'request' : 'requests'}` : `${matching} of ${total}`}</span>
 		</div>
 	{/if}
 
 	{#if total === 0}
-		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-300" data-testid="no-requests">No requests yet. Capture one when something comes to mind: write what you need and choose who scopes it.</p>
+		<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-secondary" data-testid="no-requests">No requests yet. Capture one when something comes to mind: write what you need and choose who scopes it.</p>
 	{:else if matching === 0 && live.state === 'open' && !narrowed(live)}
-		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-300" data-testid="nothing-open">Nothing is open. <button type="button" class="inline-flex min-h-11 items-center underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 sm:min-h-0" onclick={() => (filter.state = 'all')}>Show all requests</button></p>
+		<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-secondary" data-testid="nothing-open">Nothing is open. <button type="button" class="inline-flex min-h-11 items-center underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-0" onclick={() => (filter.state = 'all')}>Show all requests</button></p>
 	{:else if matching === 0}
-		<p class="rounded-xl bg-white/5 px-6 py-8 text-center text-sm/6 text-gray-300" data-testid="no-request-match">No requests match. <button type="button" class="inline-flex min-h-11 items-center underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 sm:min-h-0" onclick={() => (filter = { ...NO_FILTER })}>Clear filters</button></p>
+		<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-secondary" data-testid="no-request-match">No requests match. <button type="button" class="inline-flex min-h-11 items-center underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus sm:min-h-0" onclick={() => (filter = { ...NO_FILTER })}>Clear filters</button></p>
 	{:else}
 		{#each REQUEST_GROUPS as group (group.id)}
 			{@const list = groups[group.id]}
 			{#if list.length > 0}
-				<details open={!group.collapsed || narrowed(live) || live.state === group.id} class="group rounded-xl bg-white/5 outline-1 -outline-offset-1 outline-white/10" data-testid="request-group" data-group={group.id}>
-					<summary class="flex min-h-11 cursor-pointer items-center gap-2 px-4 py-2 text-xs/5 font-semibold tracking-wide text-gray-300 uppercase focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400">{group.label} · {list.length}</summary>
-					<ul class="divide-y divide-white/5">
+				<details open={!group.collapsed || narrowed(live) || live.state === group.id} class="group rounded-xl bg-surface-raised outline-1 -outline-offset-1 outline-line" data-testid="request-group" data-group={group.id}>
+					<summary class="flex min-h-11 cursor-pointer items-center gap-2 px-4 py-2 text-xs/5 font-semibold tracking-wide text-fg-secondary uppercase focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus">{group.label} · {list.length}</summary>
+					<ul class="divide-y divide-line-subtle">
 						{#each list as r (r.id)}
 							<li class="flex flex-col gap-x-3 gap-y-1 px-4 py-2 text-sm/6 sm:flex-row sm:flex-wrap sm:items-center" data-testid="request-row" data-item={r.id}>
-								<span class="w-16 shrink-0 text-gray-400">{requestRef(r)}</span>
-								<button type="button" class="min-h-11 min-w-0 flex-1 text-left font-semibold text-white hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 [overflow-wrap:break-word] sm:min-h-0" onclick={() => onopen(r.id)}>{r.title}</button>
-								<span class="text-gray-300" data-testid="request-words-state">{#if r.status === 'scoped'}<Badge variant="secondary" class="gap-1 bg-gray-400/10 text-gray-300 ring-1 ring-gray-400/20 ring-inset"><FileCheck class="size-3.5" aria-hidden="true" />Scoped</Badge> by {nameOf(snapshot, r.assignee_id)}{:else}{stateWords(r, snapshot)}{/if}</span>
+								<span class="w-16 shrink-0 text-fg-muted">{requestRef(r)}</span>
+								<button type="button" class="min-h-11 min-w-0 flex-1 text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:break-word] sm:min-h-0" onclick={() => onopen(r.id)}>{r.title}</button>
+								<span class="text-fg-secondary" data-testid="request-words-state">{#if r.status === 'scoped'}<Badge variant="secondary" class="gap-1 bg-quiet/10 text-fg-secondary ring-1 ring-quiet/20 ring-inset"><FileCheck class="size-3.5" aria-hidden="true" />Scoped</Badge> by {nameOf(snapshot, r.assignee_id)}{:else}{stateWords(r, snapshot)}{/if}</span>
 								{#if projectName(r.project_id)}<Badge variant="secondary">{projectName(r.project_id)}</Badge>{/if}
-								<span class="w-16 shrink-0 text-right text-gray-400">{ageWord(r.created_at, now)}</span>
+								<span class="w-16 shrink-0 text-right text-fg-muted">{ageWord(r.created_at, now)}</span>
 								{#if nextAction(r)}<Button size="sm" variant="outline" class="min-h-11 sm:min-h-0" aria-label="{nextAction(r)} {requestRef(r)}" onclick={() => onopen(r.id, r.status === 'new' ? 'route' : undefined)}>{nextAction(r)}</Button>{/if}
 							</li>
 						{/each}

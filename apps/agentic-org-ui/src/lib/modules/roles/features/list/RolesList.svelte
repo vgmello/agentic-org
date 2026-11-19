@@ -33,7 +33,7 @@
 	import RoleEditor from '../editor/RoleEditor.svelte';
 	import StaleNotice from '../stale/StaleNotice.svelte';
 	import { roleHref } from '../../urls';
-	import { focusHeading } from '../../heading';
+	import { focusHeading } from '$lib/components/focus';
 
 	let { organizationId }: { organizationId: string } = $props();
 
@@ -129,7 +129,7 @@
 			{#if hrReason}
 				<p
 					id={hrReason}
-					class="text-xs/5 text-gray-400 {idPrefix === 'empty' ? 'text-center' : 'text-left'}"
+					class="text-xs/5 text-fg-muted {idPrefix === 'empty' ? 'text-center' : 'text-left'}"
 					data-testid="hr-reason"
 				>
 					{HR_CANT_RUN}
@@ -142,7 +142,7 @@
 		{#if pausedReason}
 			<p
 				id={pausedReason}
-				class="w-0 min-w-full basis-full text-xs/5 text-gray-400 {idPrefix === 'empty'
+				class="w-0 min-w-full basis-full text-xs/5 text-fg-muted {idPrefix === 'empty'
 					? 'text-center'
 					: 'text-left'}"
 				data-testid="paused-reason"
@@ -197,40 +197,40 @@
 			</EmptyState>
 		{:else}
 			<div
-				class="hidden border-b border-white/10 px-4 py-3 text-xs/5 font-semibold text-gray-400 min-[640px]:flex min-[640px]:gap-x-4 min-[640px]:px-6 min-[1024px]:px-8"
+				class="hidden border-b border-line px-4 py-3 text-xs/5 font-semibold text-fg-muted min-[640px]:flex min-[640px]:gap-x-4 min-[640px]:px-6 min-[1024px]:px-8"
 				aria-hidden="true"
 			>
 				<span class="min-w-0 flex-1">Role</span>
 				<span class="w-16 shrink-0">Revision</span>
 				<span class="w-36 shrink-0">Employees</span>
 			</div>
-			<ul role="list" class="divide-y divide-white/5" aria-labelledby="roles-heading">
+			<ul role="list" class="divide-y divide-line-subtle" aria-labelledby="roles-heading">
 				{#each roles as role (role.id)}
 					<li
-						class="relative flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-4 transition-colors duration-150 hover:bg-white/[0.02] motion-reduce:transition-none min-[640px]:flex-nowrap min-[640px]:px-6 min-[1024px]:px-8"
+						class="relative flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-4 transition-colors duration-150 hover:bg-tint/[0.02] motion-reduce:transition-none min-[640px]:flex-nowrap min-[640px]:px-6 min-[1024px]:px-8"
 						data-role={role.id}
 					>
 						<div class="min-w-0 flex-1 basis-full min-[640px]:basis-auto">
-							<p class="text-sm/6 font-semibold text-white">
+							<p class="text-sm/6 font-semibold text-fg">
 								<a
 									href={resolve(roleHref(role.id) as '/')}
-									class="rounded-sm [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400"
+									class="rounded-sm [overflow-wrap:anywhere] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
 									><span class="absolute inset-0" aria-hidden="true"></span>{role.name}</a
 								>
 							</p>
 							{#if role.key}<p
-									class="mt-1 font-mono text-xs/5 text-gray-400 [overflow-wrap:anywhere]"
+									class="mt-1 font-mono text-xs/5 text-fg-muted [overflow-wrap:anywhere]"
 								>
 									{role.key}
 								</p>{/if}
 							<!-- Wide rows show these in their columns; the text stays for screen readers. -->
-							<p class="mt-1 text-xs/5 text-gray-400 min-[640px]:sr-only">
+							<p class="mt-1 text-xs/5 text-fg-muted min-[640px]:sr-only">
 								<span class="whitespace-nowrap">rev {role.revision}</span> ·
 								<span class="whitespace-nowrap">{employeesText(role.employeeCount)}</span>
 							</p>
 							{#if role.invalid}
 								<div class="relative mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-									<span class="text-xs/5 text-red-300 [overflow-wrap:anywhere]"
+									<span class="text-xs/5 text-danger-text [overflow-wrap:anywhere]"
 										>{invalidText(role.name, role.invalid.field)}</span
 									>
 									{#if mayEdit}
@@ -248,20 +248,20 @@
 									{/if}
 								</div>
 								{#if fixError?.id === role.id}
-									<p class="relative mt-2 text-xs/5 text-red-300" role="alert">
+									<p class="relative mt-2 text-xs/5 text-danger-text" role="alert">
 										{fixError.message}
 									</p>
 								{/if}
 							{/if}
 						</div>
 						<p
-							class="hidden w-16 shrink-0 text-sm/6 text-gray-300 tabular-nums min-[640px]:block"
+							class="hidden w-16 shrink-0 text-sm/6 text-fg-secondary tabular-nums min-[640px]:block"
 							aria-hidden="true"
 						>
 							rev {role.revision}
 						</p>
 						<p
-							class="hidden w-36 shrink-0 text-sm/6 text-gray-300 min-[640px]:block"
+							class="hidden w-36 shrink-0 text-sm/6 text-fg-secondary min-[640px]:block"
 							aria-hidden="true"
 						>
 							{employeesText(role.employeeCount)}

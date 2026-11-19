@@ -23,11 +23,11 @@
 >
 	<div class="px-4 min-[640px]:px-6 min-[1024px]:px-8">
 		<div
-			class="flex items-center justify-between gap-x-6 gap-y-3 border-y border-white/5 py-4 max-[639px]:flex-wrap"
+			class="flex items-center justify-between gap-x-6 gap-y-3 border-y border-line-subtle py-4 max-[639px]:flex-wrap"
 		>
 			<div class="min-w-0 basis-64 flex-1">
-				<p id={labelId} class="text-sm/6 font-medium text-white">Single-key shortcuts</p>
-				<p id={helpId} class="mt-1 text-sm/6 text-gray-400">
+				<p id={labelId} class="text-sm/6 font-medium text-fg">Single-key shortcuts</p>
+				<p id={helpId} class="mt-1 text-sm/6 text-fg-muted">
 					N opens New and / moves to Search when you are not typing in a field. Turn this off if
 					single keys get in the way of your screen reader or voice control.
 				</p>
@@ -39,18 +39,17 @@
 				aria-labelledby={labelId}
 				aria-describedby={helpId}
 				onclick={toggle}
-				class="group relative inline-flex min-h-11 shrink-0 items-center gap-x-3 rounded-md px-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+				class="group relative inline-flex min-h-11 shrink-0 items-center gap-x-3 rounded-md px-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 			>
-				<span class="w-7 text-sm/6 font-medium text-white" aria-hidden="true"
-					>{on ? 'On' : 'Off'}</span
+				<span class="w-7 text-sm/6 font-medium text-fg" aria-hidden="true">{on ? 'On' : 'Off'}</span
 				>
 				<span
-					class="relative inline-flex h-6 w-11 shrink-0 rounded-full p-0.5 outline-1 -outline-offset-1 outline-white/10 transition-colors duration-200 motion-reduce:transition-none {on
-						? 'bg-indigo-500'
-						: 'bg-white/10'}"
+					class="relative inline-flex h-6 w-11 shrink-0 rounded-full p-0.5 outline-1 -outline-offset-1 outline-line transition-colors duration-200 motion-reduce:transition-none {on
+						? 'bg-primary'
+						: 'bg-surface-overlay'}"
 				>
 					<span
-						class="size-5 rounded-full bg-white transition-transform duration-200 motion-reduce:transition-none {on
+						class="size-5 rounded-full bg-on-emphasis transition-transform duration-200 motion-reduce:transition-none {on
 							? 'translate-x-5'
 							: 'translate-x-0'}"
 					></span>
@@ -58,7 +57,7 @@
 			</button>
 		</div>
 		{#if refused}
-			<p role="alert" class="mt-3 text-sm/6 text-red-300">
+			<p role="alert" class="mt-3 text-sm/6 text-danger-text">
 				This browser would not keep the change, so single-key shortcuts stay {on ? 'on' : 'off'}.
 				Check that site data is allowed for this page, then try again.
 			</p>

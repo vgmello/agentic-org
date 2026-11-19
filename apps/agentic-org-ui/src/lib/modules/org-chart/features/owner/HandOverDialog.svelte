@@ -102,7 +102,7 @@
 			</DialogHeader>
 
 			{#if candidates.length === 0}
-				<p class="text-sm/6 text-gray-300">
+				<p class="text-sm/6 text-fg-secondary">
 					Nobody can take over yet: only a person with an account can own {organizationName}. Open a
 					person's profile and choose Invite to sign in, then come back once they have signed in.
 				</p>
@@ -119,12 +119,12 @@
 					disabled={busy}
 					aria-describedby={choiceError ? `${ids}-choice-error` : undefined}
 				>
-					<legend class="text-sm/6 font-medium text-white">New owner</legend>
-					<ul role="list" class="mt-2 divide-y divide-white/5 rounded-md ring-1 ring-white/10">
+					<legend class="text-sm/6 font-medium text-fg">New owner</legend>
+					<ul role="list" class="mt-2 divide-y divide-line-subtle rounded-md ring-1 ring-line">
 						{#each candidates as c (c.id)}
 							<li>
 								<label
-									class="flex cursor-pointer items-center gap-x-3 px-3 py-2 text-sm/6 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+									class="flex cursor-pointer items-center gap-x-3 px-3 py-2 text-sm/6 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-focus max-[639px]:min-h-11"
 								>
 									<input
 										type="radio"
@@ -133,11 +133,11 @@
 										bind:group={choice}
 										data-invalid={choiceError ? true : undefined}
 										onchange={() => (choiceError = undefined)}
-										class="size-4 shrink-0 accent-indigo-500 focus-visible:outline-none"
+										class="size-4 shrink-0 accent-primary focus-visible:outline-none"
 									/>
 									<span class="min-w-0">
-										<span class="block text-white [overflow-wrap:anywhere]">{c.name}</span>
-										<span class="block text-xs/5 text-gray-400 [overflow-wrap:anywhere]"
+										<span class="block text-fg [overflow-wrap:anywhere]">{c.name}</span>
+										<span class="block text-xs/5 text-fg-muted [overflow-wrap:anywhere]"
 											>@{c.handle}{c.homeTeam ? ` · ${c.homeTeam.name}` : ''}</span
 										>
 									</span>
@@ -149,7 +149,7 @@
 				</fieldset>
 
 				{#if chosen}
-					<p class="text-sm/6 text-white [overflow-wrap:anywhere]" data-handover-effect>
+					<p class="text-sm/6 text-fg [overflow-wrap:anywhere]" data-handover-effect>
 						Make {chosen.name} the owner of {organizationName}? You'll stay in {organizationName} as a
 						person, without the owner's access.
 					</p>
@@ -174,7 +174,7 @@
 				</div>
 
 				{#if failure}
-					<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">{failure}</p>
+					<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">{failure}</p>
 				{/if}
 
 				<DialogFooter>

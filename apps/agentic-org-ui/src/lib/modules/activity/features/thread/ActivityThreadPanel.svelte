@@ -64,7 +64,7 @@
 
 <Sheet bind:open>
 	<SheetContent side="right" class="w-full gap-0 sm:max-w-md" {onCloseAutoFocus}>
-		<SheetHeader class="border-b border-white/10 pr-14">
+		<SheetHeader class="border-b border-line pr-14">
 			<SheetTitle class="text-base/7 font-semibold [overflow-wrap:anywhere]"
 				>Thread with {title}</SheetTitle
 			>
@@ -73,7 +73,7 @@
 					You are in this conversation.
 					<a
 						href={resolve('/chat')}
-						class="rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+						class="rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 						>Reply in Chat</a
 					>
 				{:else}
@@ -92,19 +92,19 @@
 				/>
 			{:else if thread}
 				{#if thread.messages.length === 0}
-					<p class="px-4 py-8 text-sm/6 text-gray-400">No messages in this thread yet.</p>
+					<p class="px-4 py-8 text-sm/6 text-fg-muted">No messages in this thread yet.</p>
 				{:else}
-					<ol class="divide-y divide-white/5" aria-label="Messages">
+					<ol class="divide-y divide-line-subtle" aria-label="Messages">
 						{#each thread.messages as message (message.id)}
 							{@const at = new Date(message.at)}
 							<li class="flex gap-x-3 px-4 py-4">
 								<Avatar name={message.from.name} size="sm" class="mt-0.5" />
 								<div class="min-w-0 flex-1">
 									<p class="text-sm/6">
-										<span class="font-semibold text-white">{message.from.name}</span>
+										<span class="font-semibold text-fg">{message.from.name}</span>
 										<time
 											datetime={at.toISOString()}
-											class="ml-2 text-xs/5 text-gray-400"
+											class="ml-2 text-xs/5 text-fg-muted"
 											title={formatFull(at, accountZone.zone)}
 											>{formatDate(at, accountZone.zone, now)}, {formatClock(
 												at,
@@ -113,11 +113,11 @@
 										>
 									</p>
 									{#if message.body !== undefined}
-										<p class="mt-1 text-sm/6 text-gray-200 [overflow-wrap:anywhere]">
+										<p class="mt-1 text-sm/6 text-fg-body [overflow-wrap:anywhere]">
 											{message.body}
 										</p>
 									{:else}
-										<p class="mt-1 text-sm/6 text-gray-400">This message isn't shared with you.</p>
+										<p class="mt-1 text-sm/6 text-fg-muted">This message isn't shared with you.</p>
 									{/if}
 								</div>
 							</li>

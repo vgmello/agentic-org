@@ -1,0 +1,45 @@
+{
+	"instance": {
+		"name": "default",
+		"version": "0.2.0"
+	},
+	"hq": {
+		"name": "HQ",
+		"host": "This Mac"
+	},
+	"check": {
+		"available": {
+			"state": "available",
+			"version": "0.3.0",
+			"checkedMinutesAgo": 95,
+			"staged": true
+		},
+		"current": {
+			"state": "up_to_date",
+			"checkedMinutesAgo": 12
+		},
+		"failed": {
+			"state": "failed",
+			"checkedMinutesAgo": 3000,
+			"reason": "HQ couldn't reach the release server"
+		},
+		"offline": {
+			"state": "offline"
+		},
+		"unknown": {
+			"state": "unknown"
+		}
+	},
+	"offices": {
+		"studio": {
+			"version": "0.2.0",
+			"holdsBack": false,
+			"instance": "default"
+		},
+		"build": {
+			"version": "0.1.0",
+			"holdsBack": true,
+			"instance": "build"
+		}
+	}
+}

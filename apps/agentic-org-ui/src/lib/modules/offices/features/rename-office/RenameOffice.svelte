@@ -86,7 +86,7 @@
 	</form>
 {:else}
 	<div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-		<span class="min-w-0 text-white [overflow-wrap:anywhere]">{name}</span>
+		<span class="min-w-0 text-fg [overflow-wrap:anywhere]">{name}</span>
 		<Button
 			bind:ref={renameButton}
 			variant="outline"

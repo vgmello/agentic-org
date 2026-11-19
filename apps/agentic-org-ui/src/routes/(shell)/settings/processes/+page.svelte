@@ -73,24 +73,24 @@
 <div class="min-w-0 space-y-5 px-8 py-6">
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div class="min-w-0 flex-1 space-y-1">
-			<h2 class="text-base/7 font-semibold text-white [overflow-wrap:anywhere]">
+			<h2 class="text-base/7 font-semibold text-fg [overflow-wrap:anywhere]">
 				{view?.title ?? 'Processes'}
 			</h2>
-			<p class="max-w-2xl text-sm/6 text-gray-400 [overflow-wrap:anywhere]">
+			<p class="max-w-2xl text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
 				{view?.subtitle ?? 'How agents work, written down and inherited.'}
 			</p>
-			<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="sample-data-note">
+			<p class="flex items-center gap-x-2 text-xs/5 text-fg-muted" data-testid="sample-data-note">
 				<Badge variant="secondary">Sample data</Badge> An invented organization's processes, not yours.
 			</p>
 		</div>
 		{#if world}
-			<label class="flex min-w-0 max-w-full items-center gap-x-2 text-sm/6 text-gray-300">
+			<label class="flex min-w-0 max-w-full items-center gap-x-2 text-sm/6 text-fg-secondary">
 				Show
 				<select
 					aria-label="Show processes for"
 					value={placeKey(place)}
 					onchange={(e) => choose(e.currentTarget.value)}
-					class="min-w-0 max-w-64 truncate rounded-md bg-gray-800 px-2 py-1.5 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400"
+					class="min-w-0 max-w-64 truncate rounded-md bg-surface px-2 py-1.5 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus"
 				>
 					<option value="organization">Organization</option>
 					{#if world.teams.length > 0}<optgroup label="Team"
@@ -112,14 +112,14 @@
 	</div>
 
 	{#if resolved.missing}
-		<p class="text-sm/6 text-amber-200" role="status" data-testid="place-missing">
+		<p class="text-sm/6 text-warning-text-strong" role="status" data-testid="place-missing">
 			That place isn't here any more. Showing the organization's processes.
 		</p>
 	{/if}
 
 	{#if handbookDown && world}
 		<p
-			class="flex items-center gap-x-2 rounded-lg bg-amber-400/10 px-3 py-2 text-sm/6 text-amber-200 outline-1 -outline-offset-1 outline-amber-400/20"
+			class="flex items-center gap-x-2 rounded-lg bg-warning/10 px-3 py-2 text-sm/6 text-warning-text-strong outline-1 -outline-offset-1 outline-warning/20"
 			role="status"
 			data-testid="handbook-down"
 		>
@@ -135,18 +135,20 @@
 			aria-busy="true"
 			data-testid="processes-loading"
 		>
-			{#each SKELETON as i (i)}<li class="h-14 animate-pulse rounded-lg bg-white/5"></li>{/each}
+			{#each SKELETON as i (i)}<li
+					class="h-14 animate-pulse rounded-lg bg-surface-raised"
+				></li>{/each}
 		</ul>
 	{:else}
 		{#if view.rule}
-			<p class="text-sm/6 text-gray-300 [overflow-wrap:anywhere]" data-testid="branch-rule">
-				One open branch per agent: <span class="font-medium text-white">{view.rule.text}</span>
+			<p class="text-sm/6 text-fg-secondary [overflow-wrap:anywhere]" data-testid="branch-rule">
+				One open branch per agent: <span class="font-medium text-fg">{view.rule.text}</span>
 			</p>
 		{/if}
 
 		{#each view.set.conflicts as c (c.key)}
 			<p
-				class="flex items-start gap-x-2 rounded-lg bg-amber-400/10 px-3 py-2 text-sm/6 text-amber-200 outline-1 -outline-offset-1 outline-amber-400/20"
+				class="flex items-start gap-x-2 rounded-lg bg-warning/10 px-3 py-2 text-sm/6 text-warning-text-strong outline-1 -outline-offset-1 outline-warning/20"
 				data-testid="conflict"
 			>
 				<TriangleAlert class="mt-1 size-4 shrink-0" aria-hidden="true" />
@@ -158,18 +160,19 @@
 
 		{#if view.set.entries.length === 0 && view.set.turnedOff.length === 0 && view.set.problems.length === 0}
 			<div class="flex flex-col items-center px-8 py-16 text-center" data-testid="no-processes">
-				<span class="flex size-12 items-center justify-center rounded-full bg-white/5 text-gray-300"
+				<span
+					class="flex size-12 items-center justify-center rounded-full bg-surface-raised text-fg-secondary"
 					><FileText class="size-6" aria-hidden="true" /></span
 				>
-				<h3 class="mt-4 text-base/7 font-semibold text-white">No processes yet</h3>
-				<p class="mt-1 max-w-sm text-sm/6 text-gray-400">
+				<h3 class="mt-4 text-base/7 font-semibold text-fg">No processes yet</h3>
+				<p class="mt-1 max-w-sm text-sm/6 text-fg-muted">
 					Write down how your agents work. Start with how changes get reviewed and merged.
 				</p>
 			</div>
 		{:else}
 			{#if view.set.entries.length > 0 || view.set.turnedOff.length > 0}
 				<ul
-					class="divide-y divide-white/5 rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10"
+					class="divide-y divide-line-subtle rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line"
 					aria-label="Processes"
 					data-testid="process-list"
 				>
@@ -178,14 +181,14 @@
 						<li data-testid="process-row" data-key={entry.key}>
 							<button
 								type="button"
-								class="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-indigo-400"
+								class="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-focus"
 								onclick={() => openEntry(entry)}
 							>
 								<span class="min-w-48 flex-1">
-									<span class="block font-semibold text-white [overflow-wrap:anywhere]"
+									<span class="block font-semibold text-fg [overflow-wrap:anywhere]"
 										>{entry.doc.name}</span
 									>
-									<span class="block text-xs/5 text-gray-400 [overflow-wrap:anywhere]"
+									<span class="block text-xs/5 text-fg-muted [overflow-wrap:anywhere]"
 										>{entry.doc.summary}</span
 									>
 								</span>
@@ -196,7 +199,7 @@
 										version={entry.doc.version}
 									/>
 									{#if KindIcon}<span
-											class="inline-flex items-center gap-x-1 text-xs/5 text-gray-300"
+											class="inline-flex items-center gap-x-1 text-xs/5 text-fg-secondary"
 											data-testid="kind"
 											><KindIcon class="size-3.5" aria-hidden="true" />
 											{KIND_WORD[entry.kind]}{entry.kind === 'override' && entry.doc.overrides
@@ -210,13 +213,13 @@
 												: ''}</span
 										>{/if}
 									{#if entry.sealed}<span
-											class="inline-flex items-center gap-x-1 text-xs/5 text-amber-200"
+											class="inline-flex items-center gap-x-1 text-xs/5 text-warning-text-strong"
 											data-testid="sealed"
 											><Lock class="size-3.5" aria-hidden="true" />
 											{entry.sealedNote ?? 'Sealed'}</span
 										>{/if}
 									{#if entry.drift}<span
-											class="inline-flex items-center gap-x-1 text-xs/5 text-amber-200"
+											class="inline-flex items-center gap-x-1 text-xs/5 text-warning-text-strong"
 											data-testid="drift"
 											><TriangleAlert class="size-3.5" aria-hidden="true" /> Parent changed: {entry
 												.drift.parentName} is now v{entry.drift.parentVersion}</span
@@ -225,14 +228,14 @@
 										{@const read = Object.hasOwn(view.agent.reads, entry.key)
 											? view.agent.reads[entry.key]
 											: undefined}
-										<span class="text-xs/5 text-gray-400" data-testid="read"
+										<span class="text-xs/5 text-fg-muted" data-testid="read"
 											>{read
 												? `Read v${read.version} at ${hhmm(read.at)}${read.docId !== entry.doc.id || read.version !== entry.doc.version ? ` · now ${entry.source === 'organization' ? '' : `${entry.scopeName ?? entry.source} `}v${entry.doc.version}` : ''}`
 												: 'Not read yet'}</span
 										>
 									{/if}
 									{#if entry.driftUnknown}<span
-											class="text-xs/5 text-gray-400"
+											class="text-xs/5 text-fg-muted"
 											data-testid="drift-unknown">Parent changes unknown</span
 										>{/if}
 								</span>
@@ -243,10 +246,11 @@
 						<li data-testid="turned-off-row" data-key={off.key}>
 							<button
 								type="button"
-								class="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-indigo-400"
+								class="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-focus"
 								onclick={() => openOff(off)}
 							>
-								<span class="min-w-0 flex-1 font-semibold text-gray-300 [overflow-wrap:anywhere]"
+								<span
+									class="min-w-0 flex-1 font-semibold text-fg-secondary [overflow-wrap:anywhere]"
 									>{off.name}</span
 								>
 								<span class="flex min-w-0 max-w-full flex-wrap items-center gap-2"
@@ -255,7 +259,7 @@
 										scopeName={off.scopeName}
 										version={off.doc.version}
 									/><span
-										class="inline-flex items-center gap-x-1 text-xs/5 text-gray-300 [overflow-wrap:anywhere]"
+										class="inline-flex items-center gap-x-1 text-xs/5 text-fg-secondary [overflow-wrap:anywhere]"
 										><PowerOff class="size-3.5 shrink-0" aria-hidden="true" /> Turned off{off.scopeName
 											? ` for ${off.scopeName}`
 											: ''}: {off.reason}</span
@@ -269,11 +273,11 @@
 
 			{#if view.set.problems.length > 0}
 				<section aria-labelledby="problems-title" class="space-y-2">
-					<h3 id="problems-title" class="text-sm/6 font-semibold text-white">Needs attention</h3>
+					<h3 id="problems-title" class="text-sm/6 font-semibold text-fg">Needs attention</h3>
 					<ul class="space-y-2">
 						{#each view.set.problems as p, i (i)}
 							<li
-								class="flex items-start gap-x-2 rounded-lg bg-red-500/10 px-3 py-2 text-sm/6 text-red-200 outline-1 -outline-offset-1 outline-red-400/20"
+								class="flex items-start gap-x-2 rounded-lg bg-danger-emphasis/10 px-3 py-2 text-sm/6 text-danger-text-strong outline-1 -outline-offset-1 outline-danger/20"
 								data-testid="problem"
 								data-kind={p.kind}
 							>
@@ -293,7 +297,7 @@
 		{/if}
 
 		{#if view.agent && !view.noCurrentWork}
-			<p class="text-xs/5 text-gray-400">
+			<p class="text-xs/5 text-fg-muted">
 				Reads are recorded when the agent starts a task or wakes.
 			</p>
 		{/if}

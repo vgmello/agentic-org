@@ -25,7 +25,7 @@
 	<TabsNav label="Organization settings" tabs={sections} class="min-[960px]:hidden" />
 	<nav
 		aria-label="Organization settings"
-		class="hidden w-56 shrink-0 border-r border-white/5 px-4 py-6 min-[960px]:block"
+		class="hidden w-56 shrink-0 border-r border-line-subtle px-4 py-6 min-[960px]:block"
 	>
 		<ul role="list" class="space-y-1">
 			{#each sections as section (section.href)}
@@ -34,9 +34,9 @@
 					<a
 						href={resolve(section.href as '/')}
 						aria-current={current ? 'page' : undefined}
-						class="flex min-h-9 items-center rounded-md border-l-2 px-3 py-1.5 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 {current
-							? 'border-indigo-400 bg-white/5 text-white'
-							: 'border-transparent text-gray-400 hover:bg-white/5 hover:text-white'}"
+						class="flex min-h-9 items-center rounded-md border-l-2 px-3 py-1.5 text-sm/6 font-semibold focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {current
+							? 'border-brand bg-surface-raised text-fg'
+							: 'border-transparent text-fg-muted hover:bg-surface-raised hover:text-fg'}"
 						>{section.label}</a
 					>
 				</li>

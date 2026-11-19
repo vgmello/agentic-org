@@ -31,7 +31,7 @@
 </script>
 
 <section aria-labelledby="outbox-title" class="space-y-3" data-testid="outbox">
-	<h2 id="outbox-title" class="text-xs/6 font-semibold text-gray-400">
+	<h2 id="outbox-title" class="text-xs/6 font-semibold text-fg-muted">
 		Waiting on offices · {items.length}
 	</h2>
 	<ul class="{bleed} -mx-4 sm:-mx-6 lg:-mx-8" aria-label="Waiting on offices">
@@ -42,7 +42,7 @@
 			>
 				<div class="min-w-0 flex-1 basis-56">
 					<p
-						class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 font-semibold text-white [overflow-wrap:anywhere]"
+						class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6 font-semibold text-fg [overflow-wrap:anywhere]"
 					>
 						{item.description}
 						<StatusPill
@@ -50,7 +50,7 @@
 							class={item.state === 'blocked' ? tone.owner : ''}
 						/>
 					</p>
-					<p class="mt-1 text-xs/5 text-gray-400 [overflow-wrap:anywhere]">
+					<p class="mt-1 text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
 						{item.officeName} · {agoText(item.since, now)}{item.reason ? ` · ${item.reason}` : ''}
 					</p>
 				</div>

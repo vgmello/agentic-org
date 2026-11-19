@@ -93,13 +93,13 @@
 			</DialogHeader>
 
 			<fieldset disabled={busy} aria-describedby={error ? `${ids}-error` : undefined}>
-				<legend class="text-sm/6 font-medium text-white">Move to</legend>
-				<ul role="list" class="mt-2 divide-y divide-white/5 rounded-md ring-1 ring-white/10">
+				<legend class="text-sm/6 font-medium text-fg">Move to</legend>
+				<ul role="list" class="mt-2 divide-y divide-line-subtle rounded-md ring-1 ring-line">
 					{#each options as option (option.team.id)}
 						{@const blocked = moveBlock(snapshot, member, fromTeamId, option.team.id)}
 						<li>
 							<label
-								class="flex cursor-pointer items-start gap-x-3 py-2 pr-3 text-sm/6 has-disabled:cursor-default has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-indigo-400 max-[639px]:min-h-11 max-[639px]:items-center"
+								class="flex cursor-pointer items-start gap-x-3 py-2 pr-3 text-sm/6 has-disabled:cursor-default has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-focus max-[639px]:min-h-11 max-[639px]:items-center"
 								style:padding-left="{0.75 + option.depth * 1.25}rem"
 							>
 								<input
@@ -108,11 +108,11 @@
 									value={option.team.id}
 									bind:group={target}
 									disabled={!!blocked}
-									class="mt-1 size-4 shrink-0 accent-indigo-500 focus-visible:outline-none max-[639px]:mt-0"
+									class="mt-1 size-4 shrink-0 accent-primary focus-visible:outline-none max-[639px]:mt-0"
 								/>
 								<span class="min-w-0">
-									<span class="block text-white [overflow-wrap:anywhere]">{option.team.name}</span>
-									{#if blocked}<span class="block text-xs/5 text-gray-400">{blocked}</span>{/if}
+									<span class="block text-fg [overflow-wrap:anywhere]">{option.team.name}</span>
+									{#if blocked}<span class="block text-xs/5 text-fg-muted">{blocked}</span>{/if}
 								</span>
 							</label>
 						</li>
@@ -122,14 +122,18 @@
 
 			{#if preview.length}
 				<div
-					class="grid gap-1 text-sm/6 text-gray-300 [overflow-wrap:anywhere]"
+					class="grid gap-1 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]"
 					data-testid="move-member-summary"
 				>
 					{#each preview as line (line)}<p>{line}</p>{/each}
 				</div>
 			{/if}
 			{#if error}
-				<p id="{ids}-error" class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">
+				<p
+					id="{ids}-error"
+					class="text-sm/6 text-danger-text [overflow-wrap:anywhere]"
+					role="alert"
+				>
 					{error}
 				</p>
 			{/if}

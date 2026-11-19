@@ -99,34 +99,34 @@
 {#snippet yourChoice(show: boolean)}
 	{#if show}
 		<span
-			class="ml-2 inline-flex items-center rounded-full bg-indigo-400/10 px-2 text-xs/5 font-medium text-indigo-300 ring-1 ring-indigo-400/30 ring-inset"
+			class="ml-2 inline-flex items-center rounded-full bg-brand/10 px-2 text-xs/5 font-medium text-brand-text ring-1 ring-brand/30 ring-inset"
 			>Your choice needed</span
 		>
 	{/if}
 {/snippet}
 
 {#snippet optional()}
-	<span class="ml-1 text-xs/5 font-normal text-gray-400">Optional</span>
+	<span class="ml-1 text-xs/5 font-normal text-fg-muted">Optional</span>
 {/snippet}
 
 <div class="max-w-2xl space-y-8">
 	{#if manual}
 		{#if reason.trim()}
-			<figure class="rounded-md border border-white/10 px-4 py-3">
-				<figcaption class="text-xs/5 text-gray-400">You asked for</figcaption>
-				<blockquote class="mt-1 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">
+			<figure class="rounded-md border border-line px-4 py-3">
+				<figcaption class="text-xs/5 text-fg-muted">You asked for</figcaption>
+				<blockquote class="mt-1 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">
 					{reason}
 				</blockquote>
 			</figure>
 		{/if}
 	{:else if request?.hrReason}
-		<figure class="rounded-md border border-white/10 px-4 py-3">
-			<figcaption class="text-xs/5 text-gray-400">The HR lead's reasons</figcaption>
-			<blockquote class="mt-1 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">
+		<figure class="rounded-md border border-line px-4 py-3">
+			<figcaption class="text-xs/5 text-fg-muted">The HR lead's reasons</figcaption>
+			<blockquote class="mt-1 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">
 				{request.hrReason}
 			</blockquote>
 			{#if request.reason}
-				<p class="mt-2 text-xs/5 text-gray-400 [overflow-wrap:anywhere]">
+				<p class="mt-2 text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
 					You asked for: {request.reason}
 				</p>
 			{/if}
@@ -134,9 +134,9 @@
 	{/if}
 
 	<fieldset class="space-y-6">
-		<legend class="float-left mb-4 w-full text-base/7 font-semibold text-white">Who</legend>
+		<legend class="float-left mb-4 w-full text-base/7 font-semibold text-fg">Who</legend>
 		<div class="clear-left mt-0!">
-			<Label for="hire-name" class="text-sm/6 font-medium text-white"
+			<Label for="hire-name" class="text-sm/6 font-medium text-fg"
 				>Name{@render yourChoice(needed(fields.name))}</Label
 			>
 			<Input
@@ -148,7 +148,7 @@
 			/>
 		</div>
 		<div>
-			<Label for="hire-handle" class="text-sm/6 font-medium text-white"
+			<Label for="hire-handle" class="text-sm/6 font-medium text-fg"
 				>Handle{@render yourChoice(needed(fields.handle))}</Label
 			>
 			<Input
@@ -167,9 +167,7 @@
 			</p>
 		</div>
 		<div>
-			<Label for="hire-role" class="text-sm/6 font-medium text-white"
-				>Role{@render optional()}</Label
-			>
+			<Label for="hire-role" class="text-sm/6 font-medium text-fg">Role{@render optional()}</Label>
 			<select
 				id="hire-role"
 				class="mt-2 {selectClass}"
@@ -184,8 +182,7 @@
 			</p>
 		</div>
 		<div>
-			<Label for="hire-title" class="text-sm/6 font-medium text-white"
-				>Title{@render optional()}</Label
+			<Label for="hire-title" class="text-sm/6 font-medium text-fg">Title{@render optional()}</Label
 			>
 			<Input
 				id="hire-title"
@@ -198,17 +195,16 @@
 			</p>
 		</div>
 		<div>
-			<Label for="hire-focus" class="text-sm/6 font-medium text-white"
-				>Focus{@render optional()}</Label
+			<Label for="hire-focus" class="text-sm/6 font-medium text-fg">Focus{@render optional()}</Label
 			>
 			<Input id="hire-focus" class="mt-2 {inputClass}" bind:value={fields.focus} />
 		</div>
 	</fieldset>
 
-	<fieldset class="space-y-6 border-t border-white/5 pt-6">
-		<legend class="float-left mb-4 w-full text-base/7 font-semibold text-white">Where</legend>
+	<fieldset class="space-y-6 border-t border-line-subtle pt-6">
+		<legend class="float-left mb-4 w-full text-base/7 font-semibold text-fg">Where</legend>
 		<div class="clear-left mt-0!">
-			<Label for="hire-home" class="text-sm/6 font-medium text-white">Home team</Label>
+			<Label for="hire-home" class="text-sm/6 font-medium text-fg">Home team</Label>
 			<select
 				id="hire-home"
 				class="mt-2 {selectClass}"
@@ -228,7 +224,7 @@
 					{full}
 					<a
 						href={resolve(`/teams/${encodeURIComponent(team.id)}` as '/')}
-						class="rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+						class="rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 						>Open {team.name}</a
 					>
 				</p>
@@ -237,7 +233,7 @@
 			{/if}
 		</div>
 		<div>
-			<Label for="hire-reports" class="text-sm/6 font-medium text-white"
+			<Label for="hire-reports" class="text-sm/6 font-medium text-fg"
 				>Reports to{@render optional()}</Label
 			>
 			<select
@@ -254,7 +250,7 @@
 					<span>The HR lead suggests {suggested.name}. It isn't recorded until you choose it.</span>
 					<button
 						type="button"
-						class="inline-flex min-h-6 items-center rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+						class="inline-flex min-h-6 items-center rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
 						onclick={() => (fields.reportsToId = suggested.id)}>Use {suggested.name}</button
 					>
 				{:else}
@@ -264,13 +260,13 @@
 		</div>
 	</fieldset>
 
-	<fieldset class="space-y-6 border-t border-white/5 pt-6">
-		<legend class="float-left mb-4 w-full text-base/7 font-semibold text-white">How it runs</legend>
-		<p class="clear-left mt-0! text-sm/6 text-gray-400">
+	<fieldset class="space-y-6 border-t border-line-subtle pt-6">
+		<legend class="float-left mb-4 w-full text-base/7 font-semibold text-fg">How it runs</legend>
+		<p class="clear-left mt-0! text-sm/6 text-fg-muted">
 			Chosen apart from who the agent is: changing these later doesn't change its identity.
 		</p>
 		<div>
-			<Label for="hire-profile" class="text-sm/6 font-medium text-white">Execution profile</Label>
+			<Label for="hire-profile" class="text-sm/6 font-medium text-fg">Execution profile</Label>
 			<select
 				id="hire-profile"
 				class="mt-2 {selectClass}"
@@ -283,10 +279,10 @@
 			</select>
 		</div>
 		<div>
-			<Label for="hire-model" class="text-sm/6 font-medium text-white">Model</Label>
+			<Label for="hire-model" class="text-sm/6 font-medium text-fg">Model</Label>
 			<select
 				id="hire-model"
-				class="mt-2 {selectClass} disabled:cursor-not-allowed disabled:text-gray-400 disabled:outline-white/10"
+				class="mt-2 {selectClass} disabled:cursor-not-allowed disabled:text-fg-muted disabled:outline-line"
 				disabled={!profile}
 				aria-describedby="hire-model-help"
 				bind:value={fields.model}
@@ -299,7 +295,7 @@
 			{/if}
 		</div>
 		<div>
-			<Label for="hire-office" class="text-sm/6 font-medium text-white">Office</Label>
+			<Label for="hire-office" class="text-sm/6 font-medium text-fg">Office</Label>
 			<select
 				id="hire-office"
 				class="mt-2 {selectClass}"
@@ -312,7 +308,7 @@
 			</select>
 			<p id="hire-office-help" class={helpClass}>
 				{#if runtime}
-					<span class={runtime.check === 'ready' ? 'text-green-300' : 'text-gray-300'}
+					<span class={runtime.check === 'ready' ? 'text-success-text' : 'text-fg-secondary'}
 						>{runtime.text}.</span
 					>
 					{runtime.check === 'ready' ? '' : 'You can still hire; Review says what it means.'}
@@ -323,7 +319,7 @@
 		</div>
 	</fieldset>
 
-	<div class="flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-white/5 pt-6">
+	<div class="flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-line-subtle pt-6">
 		<Button variant="outline" class={mobileButton} onclick={onback}>Back</Button>
 		<Button
 			class="min-w-24 {mobileButton}"
@@ -334,7 +330,7 @@
 		{#if blocked}
 			<p
 				id="hire-proposal-blocked"
-				class="basis-full text-xs/5 text-gray-400 min-[640px]:basis-auto"
+				class="basis-full text-xs/5 text-fg-muted min-[640px]:basis-auto"
 			>
 				{blocked}
 			</p>

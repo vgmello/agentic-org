@@ -1,0 +1,48 @@
+{
+	"zone": {
+		"name": "America/New_York",
+		"source": "owner_account"
+	},
+	"budgets": {
+		"sam": {
+			"daily": {
+				"unit": "usd",
+				"limit": 9000000,
+				"warned": true
+			},
+			"monthly": {
+				"unit": "usd",
+				"limit": 80000000
+			}
+		},
+		"mira": {
+			"daily": {
+				"unit": "usd",
+				"limit": 6000000,
+				"warned": true,
+				"hold": "stop_pending"
+			}
+		},
+		"kai": {
+			"monthly": {
+				"unit": "usd",
+				"limit": 20000000,
+				"warned": true,
+				"hold": "held",
+				"extended": true
+			}
+		},
+		"noor": {
+			"monthly": {
+				"unit": "tokens",
+				"limit": 25000000
+			}
+		},
+		"juno": {
+			"monthly": {
+				"unit": "usd",
+				"limit": 40000000
+			}
+		}
+	}
+}

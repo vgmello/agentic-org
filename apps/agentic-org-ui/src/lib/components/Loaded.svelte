@@ -56,8 +56,8 @@
 		<NotBuilt title={place} {place} {area} />
 	{:else}
 		<div class="px-4 py-12 min-[640px]:px-6 min-[1024px]:px-8">
-			<p class="text-sm/6 font-semibold text-white">Not available yet</p>
-			<p class="mt-1 max-w-xl text-sm/6 text-gray-400">
+			<p class="text-sm/6 font-semibold text-fg">Not available yet</p>
+			<p class="mt-1 max-w-xl text-sm/6 text-fg-muted">
 				This server doesn't serve {label} yet. Nothing is shown rather than a guess.
 			</p>
 		</div>

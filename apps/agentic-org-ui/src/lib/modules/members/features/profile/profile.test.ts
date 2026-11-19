@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { roleBlocks } from '../role/role-body';
-import { expiryText } from '../sign-in-access/expiry';
+import { expiryText, expiryUntil } from '../sign-in-access/expiry';
 import { tabHref, tabOf, tabsFor } from './tabs';
 
 describe('profile tabs', () => {
@@ -62,5 +62,10 @@ describe('expiryText', () => {
 			/^at 14.02 tomorrow$/
 		);
 		expect(expiryText(new Date(2026, 10, 21, 9, 5).toISOString(), now)).toMatch(/^at 09.05 on /);
+	});
+	it('gives the moment alone for "the link works until …"', () => {
+		expect(expiryUntil(new Date(2026, 10, 19, 14, 2).toISOString(), now)).toMatch(
+			/^14.02 tomorrow$/
+		);
 	});
 });

@@ -42,7 +42,6 @@ export function missingText(form: ExecutionForm): string | undefined {
 
 export const unchanged = (form: ExecutionForm, d: Pick<AgentSetupDetail, 'execution'>) =>
 	!!d.execution &&
-	d.execution.enabled &&
 	form.profileId === d.execution.profile.id &&
 	form.modelId === d.execution.modelId;
 

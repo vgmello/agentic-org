@@ -211,23 +211,23 @@
 				class="grid grid-cols-1 gap-x-6 gap-y-2 px-4 text-sm/6 min-[480px]:grid-cols-[auto_1fr] min-[480px]:gap-y-3"
 				data-testid="office-details"
 			>
-				<dt class="text-gray-400">Name</dt>
-				<dd class="min-w-0 text-white">
+				<dt class="text-fg-muted">Name</dt>
+				<dd class="min-w-0 text-fg">
 					{#if onrename}<RenameOffice name={office.name} onsave={onrename} />{:else}<span
 							class="[overflow-wrap:anywhere]">{office.name}</span
 						>{/if}
 				</dd>
-				<dt class="text-gray-400">Role</dt>
-				<dd class="text-white">{roleInfo(office).label}</dd>
-				<dt class="text-gray-400">Where</dt>
-				<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
+				<dt class="text-fg-muted">Role</dt>
+				<dd class="text-fg">{roleInfo(office).label}</dd>
+				<dt class="text-fg-muted">Where</dt>
+				<dd class="min-w-0 text-fg [overflow-wrap:anywhere]">
 					{secondaryText(office) + (here ? " (you're here)" : '')}
 				</dd>
-				<dt class="text-gray-400">Status</dt>
+				<dt class="text-fg-muted">Status</dt>
 				<dd><OfficeStatusBadge {status} /></dd>
 				{#if why}
-					<dt class="text-gray-400">Why</dt>
-					<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
+					<dt class="text-fg-muted">Why</dt>
+					<dd class="min-w-0 text-fg [overflow-wrap:anywhere]">
 						<p data-testid="office-why">
 							{#if office.status_reason === 'unsupported_version'}{repairReasonCopy.before}<OfficeRepairLocation
 									{office}
@@ -243,10 +243,9 @@
 							>
 								{repairOpen ? 'Hide repair instructions' : 'Show local CLI repair instructions'}
 							</Button>
-							<div id={repairId} hidden={!repairOpen} class="mt-3 space-y-2 text-gray-300">
+							<div id={repairId} hidden={!repairOpen} class="mt-3 space-y-2 text-fg-secondary">
 								<p>On <OfficeRepairLocation {office} />, run:</p>
-								<pre
-									class="overflow-x-auto rounded-md bg-black/20 px-3 py-2 text-xs text-white"><code
+								<pre class="overflow-x-auto rounded-md bg-shade/20 px-3 py-2 text-xs text-fg"><code
 										>{repairCommand}</code
 									></pre>
 								<Button variant="outline" size="sm" onclick={copyRepairCommand}
@@ -265,23 +264,23 @@
 					</dd>
 				{/if}
 				{#if details}
-					<dt class="text-gray-400">Last seen</dt>
-					<dd class="text-white" data-testid="office-last-seen">
+					<dt class="text-fg-muted">Last seen</dt>
+					<dd class="text-fg" data-testid="office-last-seen">
 						{details.lastSeenAt ? agoText(details.lastSeenAt, Date.now()) : 'Not known'}
 					</dd>
-					<dt class="text-gray-400">Sync</dt>
-					<dd class="text-white" data-testid="office-sync">{syncText(details)}</dd>
+					<dt class="text-fg-muted">Sync</dt>
+					<dd class="text-fg" data-testid="office-sync">{syncText(details)}</dd>
 					{#if details.version}
-						<dt class="text-gray-400">Version</dt>
-						<dd class="text-white">Agentic Org {details.version}</dd>
+						<dt class="text-fg-muted">Version</dt>
+						<dd class="text-fg">Agentic Org {details.version}</dd>
 					{/if}
-					<dt class="text-gray-400">Follows</dt>
-					<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
+					<dt class="text-fg-muted">Follows</dt>
+					<dd class="min-w-0 text-fg [overflow-wrap:anywhere]">
 						{details.follows.length === 0 ? 'No projects yet' : details.follows.join(', ')}
 					</dd>
 				{/if}
-				<dt class="text-gray-400">Agents here</dt>
-				<dd class="min-w-0 text-white [overflow-wrap:anywhere]">
+				<dt class="text-fg-muted">Agents here</dt>
+				<dd class="min-w-0 text-fg [overflow-wrap:anywhere]">
 					{#if !snapshot}{counting ? 'Counting…' : "Couldn't be counted"}{:else}{agents.length === 0
 							? 'None'
 							: agents.map((a) => a.name).join(', ')}{/if}
@@ -293,12 +292,12 @@
 			</dl>
 			<p class="sr-only" role="status">{restarting ? 'Restarting…' : ''}</p>
 			{#if why && (action.note || unsupported)}
-				<p class="px-4 text-sm/6 text-gray-300" data-testid="restart-note">
+				<p class="px-4 text-sm/6 text-fg-secondary" data-testid="restart-note">
 					{action.note ?? 'Update Agentic Org to restart offices from here'}
 				</p>
 			{/if}
 			{#if restartNote}<p
-					class="px-4 text-sm/6 text-red-300"
+					class="px-4 text-sm/6 text-danger-text"
 					role="alert"
 					data-testid="restart-error"
 				>
@@ -308,7 +307,7 @@
 				<div class="px-4">
 					<Button
 						variant="outline"
-						class="text-red-300 max-[639px]:min-h-11"
+						class="text-danger-text max-[639px]:min-h-11"
 						onclick={onremove}
 						data-testid="remove-office">Remove office…</Button
 					>

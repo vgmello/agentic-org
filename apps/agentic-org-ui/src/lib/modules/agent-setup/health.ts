@@ -55,7 +55,14 @@ export function setupReasons(facts: HealthFacts): HealthReason[] {
 		reasons.push({
 			code: 'EXECUTION_DISABLED',
 			text: 'Execution is turned off in its configuration',
-			fix: 'Saving a model profile and model with Edit turns it back on.'
+			// Document 11: admission rejects a disabled execution configuration. No write here turns it on.
+			fix: "The office admits no turn while it's off. Turning it on isn't available here yet."
+		});
+	if (e && e.runtimes.length === 0)
+		reasons.push({
+			code: 'NO_RUNTIME',
+			text: `${e.profile.name} has no connection to run on`,
+			fix: 'Choose a model profile with a connection with Edit.'
 		});
 	if (!facts.placement)
 		reasons.push({

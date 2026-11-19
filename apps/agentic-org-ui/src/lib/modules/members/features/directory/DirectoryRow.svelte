@@ -42,7 +42,7 @@
 
 <li
 	class="relative grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-4 @max-[20rem]:grid-cols-1 gap-y-1 px-4 py-4 transition-colors duration-150 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8 @min-[56rem]:col-span-full @min-[56rem]:grid-cols-subgrid @min-[56rem]:items-center {highlight
-		? 'bg-indigo-500/10'
+		? 'bg-primary/10'
 		: ''}"
 	data-member={member.id}
 	data-kind={member.kind}
@@ -55,16 +55,13 @@
 				href={resolve(`/members/${encodeURIComponent(member.id)}` as '/')}
 				data-member-link={member.id}
 				aria-label="{member.name}, {kindWord(member.kind).toLowerCase()}"
-				class="rounded-sm font-semibold text-white focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]"
+				class="rounded-sm font-semibold text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 				><span class="absolute inset-0" aria-hidden="true"></span>{member.name}</a
 			>
 			<!-- The member profile's Owner badge (ProfileFrame), so the owner reads the same everywhere. -->
-			{#if owner}<StatusPill
-					label="Owner"
-					class="bg-indigo-400/10 text-indigo-300 ring-indigo-400/30"
-				/>{/if}
+			{#if owner}<StatusPill label="Owner" class="bg-brand/10 text-brand-text ring-brand/30" />{/if}
 		</p>
-		<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-gray-400">
+		<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-fg-muted">
 			<span aria-hidden="true">{kindWord(member.kind)}</span>
 			{#if member.role}<span aria-hidden="true">·</span><span class="[overflow-wrap:anywhere]"
 					>{member.role}</span
@@ -72,11 +69,12 @@
 			<span aria-hidden="true">·</span><span class="font-mono [overflow-wrap:anywhere]"
 				>@{member.handle}</span
 			>
-			{#if canSignIn}<span aria-hidden="true">·</span><span class="text-gray-300">Can sign in</span
+			{#if canSignIn}<span aria-hidden="true">·</span><span class="text-fg-secondary"
+					>Can sign in</span
 				>{/if}
 		</p>
 		{#if placement}
-			<p class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{placement}</p>
+			<p class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]">{placement}</p>
 		{/if}
 	</div>
 
@@ -90,25 +88,25 @@
 	{/if}
 
 	<p
-		class="col-start-2 text-xs/5 @max-[20rem]:col-start-1 text-gray-400 @min-[56rem]:col-start-3 @min-[56rem]:row-start-1 @min-[56rem]:text-sm/6 [overflow-wrap:anywhere]"
+		class="col-start-2 text-xs/5 @max-[20rem]:col-start-1 text-fg-muted @min-[56rem]:col-start-3 @min-[56rem]:row-start-1 @min-[56rem]:text-sm/6 [overflow-wrap:anywhere]"
 	>
 		{#if former}
 			{formerText(member)}
 		{:else if member.homeTeam}
 			<span class="@min-[56rem]:sr-only">Home team</span>
-			<span class="@min-[56rem]:text-gray-300">{member.homeTeam.name}</span>
+			<span class="@min-[56rem]:text-fg-secondary">{member.homeTeam.name}</span>
 		{:else}
-			<span class="text-red-300">No home team on record: this record is invalid</span>
+			<span class="text-danger-text">No home team on record: this record is invalid</span>
 		{/if}
 	</p>
 
 	{#if working}
 		<p
-			class="col-start-2 text-xs/5 @max-[20rem]:col-start-1 text-gray-400 @min-[56rem]:col-start-4 @min-[56rem]:row-start-1 @min-[56rem]:text-sm/6 [overflow-wrap:anywhere]"
+			class="col-start-2 text-xs/5 @max-[20rem]:col-start-1 text-fg-muted @min-[56rem]:col-start-4 @min-[56rem]:row-start-1 @min-[56rem]:text-sm/6 [overflow-wrap:anywhere]"
 		>
 			<span class="@min-[56rem]:sr-only">Working on</span>
 			<span class="font-mono @min-[56rem]:text-xs/5">{working.ref}</span>
-			<span class="text-gray-300">{working.title}</span>
+			<span class="text-fg-secondary">{working.title}</span>
 		</p>
 	{/if}
 </li>

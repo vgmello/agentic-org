@@ -58,9 +58,9 @@
 	} = $props();
 
 	const item =
-		'flex w-full items-start gap-x-[min(.75rem,12px)] rounded-md px-[min(.5rem,8px)] py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-500';
-	const on = 'bg-white/10 text-white';
-	const off = 'text-gray-300 hover:bg-white/5 hover:text-white';
+		'flex w-full items-start gap-x-[min(.75rem,12px)] rounded-md px-[min(.5rem,8px)] py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring';
+	const on = 'bg-surface-overlay text-fg';
+	const off = 'text-fg-secondary hover:bg-surface-raised hover:text-fg';
 	const here = (v: ChatView, id?: string) =>
 		view.type === v.type &&
 		(v.type !== 'conversation' || (view.type === 'conversation' && view.id === id));
@@ -147,22 +147,22 @@
 			<span class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
 				<span
 					class="min-w-0 max-w-full whitespace-normal [overflow-wrap:anywhere] {r.unread
-						? 'font-semibold text-white'
+						? 'font-semibold text-fg'
 						: ''}">{r.conversation.kind === 'channel' ? r.title.slice(1) : r.title}</span
 				>
 				{#if r.other && r.presence}<span
-						class="max-w-full shrink-0 text-xs/5 text-gray-300"
+						class="max-w-full shrink-0 text-xs/5 text-fg-secondary"
 						data-testid="dm-status">{PRESENCE_WORD[r.presence]}</span
 					>{/if}
 				{#if r.mentions > 0}
 					<span
-						class="shrink-0 rounded-full bg-indigo-500 px-1.5 text-xs/5 font-semibold text-white"
+						class="shrink-0 rounded-full bg-primary px-1.5 text-xs/5 font-semibold text-on-emphasis"
 						aria-label="{r.mentions} mentions"
 						data-testid="mention-count">{r.mentions}</span
 					>
 				{:else if r.unread > 0}
 					<span
-						class="shrink-0 text-xs/5 font-semibold text-gray-200"
+						class="shrink-0 text-xs/5 font-semibold text-fg-body"
 						aria-label="{r.unread} unread"
 						data-testid="unread-count">{r.unread}</span
 					>
@@ -175,7 +175,7 @@
 {#snippet navigation()}
 	<nav
 		bind:this={nav}
-		class="flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-white/10 bg-black/10 p-[min(.75rem,12px)]"
+		class="flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-line bg-shade/10 p-[min(.75rem,12px)]"
 		aria-label="Chat"
 	>
 		<ul class="space-y-0.5">
@@ -200,11 +200,11 @@
 					<span class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
 						<span
 							class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal] {inboxCount
-								? 'font-semibold text-white'
+								? 'font-semibold text-fg'
 								: ''}">Inbox</span
 						>
 						{#if inboxCount}<span
-								class="shrink-0 rounded-full bg-amber-400 px-1.5 text-xs/5 font-semibold text-gray-900"
+								class="shrink-0 rounded-full bg-warning px-1.5 text-xs/5 font-semibold text-on-warning"
 								aria-hidden="true"
 								data-testid="inbox-count">{inboxCount}</span
 							>{/if}
@@ -228,7 +228,7 @@
 						<span class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal]"
 							>Mentions</span
 						>
-						{#if bar.mentions.length}<span class="shrink-0 text-xs/5 font-semibold text-gray-200"
+						{#if bar.mentions.length}<span class="shrink-0 text-xs/5 font-semibold text-fg-body"
 								>{bar.mentions.length}</span
 							>{/if}
 					</span>
@@ -251,7 +251,7 @@
 						<span class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal]"
 							>Threads</span
 						>
-						{#if unreadThreads}<span class="shrink-0 text-xs/5 font-semibold text-gray-200"
+						{#if unreadThreads}<span class="shrink-0 text-xs/5 font-semibold text-fg-body"
 								>{unreadThreads}</span
 							>{/if}
 					</span>
@@ -260,7 +260,7 @@
 		</ul>
 
 		<div>
-			<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-gray-400 uppercase">Channels</h2>
+			<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">Channels</h2>
 			<ul class="mt-1 space-y-0.5" data-testid="channels">
 				{#each bar.channels as r (r.conversation.id)}{@render row(r)}{/each}
 			</ul>
@@ -287,7 +287,7 @@
 		</div>
 
 		<div>
-			<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-gray-400 uppercase">
+			<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">
 				Direct messages
 			</h2>
 			<ul class="mt-1 space-y-0.5" data-testid="dms">
@@ -306,10 +306,10 @@
 
 		{#if bar.asOwner.length}
 			<div data-testid="as-owner">
-				<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-gray-400 uppercase">
+				<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">
 					Between agents
 				</h2>
-				<p class="px-2 text-xs/5 text-gray-400">You read these as the owner.</p>
+				<p class="px-2 text-xs/5 text-fg-muted">You read these as the owner.</p>
 				<ul class="mt-1 space-y-0.5">
 					{#each bar.asOwner as r (r.conversation.id)}{@render row(r)}{/each}
 				</ul>
@@ -325,7 +325,7 @@
 		<SheetContent
 			{id}
 			side="left"
-			class="gap-0 border-white/10 bg-gray-800 p-0 text-white"
+			class="gap-0 border-line bg-surface p-0 text-fg"
 			style={`left:${bounds.left}px;top:${bounds.top}px;width:${Math.min(256, bounds.width)}px;height:${bounds.height}px;bottom:auto;right:auto;`}
 			onOpenAutoFocus={(event) => {
 				event.preventDefault();
@@ -338,7 +338,7 @@
 				onCloseFocus();
 			}}
 		>
-			<SheetHeader class="shrink-0 border-b border-white/10 p-4 pr-12">
+			<SheetHeader class="shrink-0 border-b border-line p-4 pr-12">
 				<SheetTitle class="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
 					>Conversations</SheetTitle
 				>

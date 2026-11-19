@@ -67,7 +67,7 @@
 		>
 			<ul
 				role="list"
-				class="divide-y divide-white/5 border-y border-white/5"
+				class="divide-y divide-line-subtle border-y border-line-subtle"
 				data-testid="runtimes"
 			>
 				{#each general.runtimes as runtime (runtime.id)}
@@ -75,8 +75,8 @@
 						class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8"
 					>
 						<div class="min-w-0">
-							<p class="text-sm/6 font-semibold text-white">{runtime.label}</p>
-							<p class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{runtime.note}</p>
+							<p class="text-sm/6 font-semibold text-fg">{runtime.label}</p>
+							<p class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]">{runtime.note}</p>
 						</div>
 						<StatusPill
 							label={availability[runtime.availability].word}
@@ -93,7 +93,7 @@
 				title="Recovery"
 				description="The organization's recovery code. Only its owner sees this row."
 			>
-				<div class="border-y border-white/5"><RecoveryRow {general} /></div>
+				<div class="border-y border-line-subtle"><RecoveryRow {general} /></div>
 			</Section>
 		{/if}
 

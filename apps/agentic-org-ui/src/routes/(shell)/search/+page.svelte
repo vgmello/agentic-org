@@ -83,19 +83,19 @@
 			<section aria-labelledby="search-{group.key}" class="pt-6">
 				<h3
 					id="search-{group.key}"
-					class="px-4 text-base/7 font-semibold text-white min-[640px]:px-6 min-[1024px]:px-8"
+					class="px-4 text-base/7 font-semibold text-fg min-[640px]:px-6 min-[1024px]:px-8"
 				>
-					{group.label} <span class="text-sm/6 font-normal text-gray-400">{hits.length}</span>
+					{group.label} <span class="text-sm/6 font-normal text-fg-muted">{hits.length}</span>
 				</h3>
-				<ul role="list" class="mt-3 divide-y divide-white/5 border-y border-white/5">
+				<ul role="list" class="mt-3 divide-y divide-line-subtle border-y border-line-subtle">
 					{#each hits as hit (hit.id)}
-						<li class="relative px-4 py-4 hover:bg-white/[0.03] min-[640px]:px-6 min-[1024px]:px-8">
+						<li class="relative px-4 py-4 hover:bg-tint/[0.03] min-[640px]:px-6 min-[1024px]:px-8">
 							<a
 								href={resolve(hit.href as '/')}
-								class="text-sm/6 font-semibold text-white focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]"
+								class="text-sm/6 font-semibold text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 								><span class="absolute inset-0" aria-hidden="true"></span>{hit.title}</a
 							>
-							{#if hit.meta}<p class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]">
+							{#if hit.meta}<p class="text-xs/5 text-fg-muted [overflow-wrap:anywhere]">
 									{hit.meta}
 								</p>{/if}
 						</li>

@@ -69,7 +69,7 @@
 		);
 	}
 	const choice =
-		'flex items-start gap-x-3 rounded-md px-2.5 py-2 text-sm/6 outline-1 -outline-offset-1 outline-white/10 has-[:checked]:bg-indigo-500/10 has-[:checked]:outline-indigo-400/60 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-indigo-400';
+		'flex items-start gap-x-3 rounded-md px-2.5 py-2 text-sm/6 outline-1 -outline-offset-1 outline-line has-[:checked]:bg-primary/10 has-[:checked]:outline-brand/60 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-focus';
 </script>
 
 <form
@@ -79,7 +79,7 @@
 	aria-label="Answer the questions"
 >
 	{#if stepped}
-		<p class="text-xs/5 text-gray-400" aria-live="polite" data-testid="question-step">
+		<p class="text-xs/5 text-fg-muted" aria-live="polite" data-testid="question-step">
 			Question {step + 1} of {questions.length}
 		</p>
 	{/if}
@@ -89,11 +89,11 @@
 			<legend
 				bind:this={legend}
 				tabindex="-1"
-				class="text-sm/6 font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+				class="text-sm/6 font-semibold text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 			>
-				{#if !stepped && questions.length > 1}<span class="text-gray-400"
+				{#if !stepped && questions.length > 1}<span class="text-fg-muted"
 						>{index + 1}.
-					</span>{/if}{q.prompt}{#if q.optional}<span class="font-normal text-gray-400">
+					</span>{/if}{q.prompt}{#if q.optional}<span class="font-normal text-fg-muted">
 						(optional)</span
 					>{/if}
 			</legend>
@@ -106,14 +106,14 @@
 							size="sm"
 							variant="outline"
 							class="h-auto min-h-8 px-2.5 py-1 max-[640px]:min-h-11 {on
-								? 'bg-indigo-500/15 text-white outline-indigo-400/60'
+								? 'bg-primary/15 text-fg outline-brand/60'
 								: ''}"
 							aria-pressed={on}
 							{disabled}
 							onclick={() => toggle(q, o.id, true)}
 						>
 							{o.label}{#if q.default_option === o.id}<span
-									class="text-xs/5 font-normal text-indigo-200">Default</span
+									class="text-xs/5 font-normal text-brand-text-strong">Default</span
 								>{/if}
 						</Button>
 					{/each}
@@ -126,24 +126,24 @@
 								type={q.allow_multiple ? 'checkbox' : 'radio'}
 								name="{askId}-{q.id}"
 								value={o.id}
-								class="mt-1 size-4 shrink-0 accent-indigo-500"
+								class="mt-1 size-4 shrink-0 accent-primary"
 								checked={values[q.id].option_ids.includes(o.id)}
 								{disabled}
 								onchange={(event) => toggle(q, o.id, event.currentTarget.checked)}
 							/>
 							<span class="min-w-0">
-								<span class="block font-medium text-white"
+								<span class="block font-medium text-fg"
 									>{o.label}{#if q.default_option === o.id}<span
-											class="ml-2 text-xs/5 font-normal text-indigo-200">Default</span
+											class="ml-2 text-xs/5 font-normal text-brand-text-strong">Default</span
 										>{/if}</span
 								>
-								{#if o.description}<span class="block text-xs/5 text-gray-400">{o.description}</span
+								{#if o.description}<span class="block text-xs/5 text-fg-muted">{o.description}</span
 									>{/if}
 							</span>
 						</label>
 					{/each}
 				</div>
-				{#if q.allow_multiple}<p class="mt-1 text-xs/5 text-gray-400">
+				{#if q.allow_multiple}<p class="mt-1 text-xs/5 text-fg-muted">
 						Choose any that apply.
 					</p>{/if}
 			{:else}
@@ -154,7 +154,7 @@
 					rows="2"
 					maxlength={20000}
 					{disabled}
-					class="mt-2 block w-full rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus-visible:outline-2 focus-visible:outline-indigo-400 max-[639px]:text-base"
+					class="mt-2 block w-full rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus max-[639px]:text-base"
 				></textarea>
 			{/if}
 		</fieldset>
@@ -173,7 +173,7 @@
 				disabled={disabled || missing.length > 0}
 				data-testid="send-answers">Send answers</Button
 			>
-			{#if missing.length}<p class="text-xs/5 text-gray-400" aria-live="polite">
+			{#if missing.length}<p class="text-xs/5 text-fg-muted" aria-live="polite">
 					{missing.length === 1
 						? '1 question needs an answer'
 						: `${missing.length} questions need an answer`}

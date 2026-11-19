@@ -21,13 +21,13 @@
 	let { items, class: className = '' }: { items: DescriptionItem[]; class?: string } = $props();
 </script>
 
-<dl class="divide-y divide-white/5 {className}">
+<dl class="divide-y divide-line-subtle {className}">
 	{#each items as item (item.term)}
 		<div
 			class="px-4 py-4 min-[640px]:grid min-[640px]:grid-cols-3 min-[640px]:gap-4 min-[640px]:px-6 min-[1024px]:px-8"
 		>
-			<dt class="text-sm/6 font-medium text-white">{item.term}</dt>
-			<dd class="mt-1 flex gap-x-4 text-sm/6 text-gray-400 min-[640px]:col-span-2 min-[640px]:mt-0">
+			<dt class="text-sm/6 font-medium text-fg">{item.term}</dt>
+			<dd class="mt-1 flex gap-x-4 text-sm/6 text-fg-muted min-[640px]:col-span-2 min-[640px]:mt-0">
 				<span
 					class="min-w-0 flex-1 {item.mono
 						? 'font-mono [overflow-wrap:anywhere]'

@@ -69,7 +69,7 @@
 	);
 
 	const pill = (s: RequestStatus) =>
-		s.tone === 'working' ? 'bg-indigo-400/10 text-indigo-300 ring-indigo-400/30' : tone[s.tone];
+		s.tone === 'working' ? 'bg-brand/10 text-brand-text ring-brand/30' : tone[s.tone];
 
 	/** Where a row's name leads: a hire still in the flow opens there, a hired agent opens its profile. */
 	function linkOf(r: HireRequest): string | undefined {
@@ -147,11 +147,11 @@
 	{#snippet children(first)}
 		{@const rows = rowsOf(first)}
 		{#if refreshError}
-			<p role="status" class="py-3 text-xs/5 text-red-300 {gutters} [overflow-wrap:anywhere]">
+			<p role="status" class="py-3 text-xs/5 text-danger-text {gutters} [overflow-wrap:anywhere]">
 				Couldn't check on hires: {refreshError} Checking again.
 			</p>
 		{/if}
-		<ul role="list" class="divide-y divide-white/5" aria-label="Hire requests">
+		<ul role="list" class="divide-y divide-line-subtle" aria-label="Hire requests">
 			{#each rows as r (r.id)}
 				{@const name = requestName(r)}
 				{@const status = requestStatus(r, r.name)}
@@ -165,20 +165,19 @@
 								<a
 									id="hire-{r.id}"
 									href={resolve(href as '/')}
-									class="rounded-sm font-semibold text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 [overflow-wrap:anywhere]"
+									class="rounded-sm font-semibold text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 									><span class="absolute inset-0" aria-hidden="true"></span>{name}</a
 								>
 							{:else}
 								<span
 									id="hire-{r.id}"
 									tabindex="-1"
-									class="font-semibold text-white outline-none [overflow-wrap:anywhere]"
-									>{name}</span
+									class="font-semibold text-fg outline-none [overflow-wrap:anywhere]">{name}</span
 								>
 							{/if}
-							{#if r.role}<span class="text-gray-400 [overflow-wrap:anywhere]">{r.role}</span>{/if}
+							{#if r.role}<span class="text-fg-muted [overflow-wrap:anywhere]">{r.role}</span>{/if}
 						</p>
-						<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-gray-400">
+						<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-fg-muted">
 							<span>By {r.requestedBy.name}</span>
 							<span aria-hidden="true">·</span>
 							<span>Into {r.homeTeam.name}</span>
@@ -186,16 +185,18 @@
 							<time datetime={r.createdAt}>{ageWords(r.createdAt)}</time>
 						</p>
 						{#if status.detail}
-							<p class="mt-1 text-xs/5 text-red-300 [overflow-wrap:anywhere]">{status.detail}</p>
+							<p class="mt-1 text-xs/5 text-danger-text [overflow-wrap:anywhere]">
+								{status.detail}
+							</p>
 						{/if}
 						{#if (r.failedStep || r.state === 'failed') && r.doneSteps.length > 0}
-							<p class="mt-1 text-xs/5 text-gray-400">Already done: {doneText(r, name)}.</p>
+							<p class="mt-1 text-xs/5 text-fg-muted">Already done: {doneText(r, name)}.</p>
 						{/if}
 						{#if r.state === 'withdrawn' && r.closedReason}
-							<p class="mt-1 text-xs/5 text-gray-400 [overflow-wrap:anywhere]">{r.closedReason}</p>
+							<p class="mt-1 text-xs/5 text-fg-muted [overflow-wrap:anywhere]">{r.closedReason}</p>
 						{/if}
 						{#if rowError?.id === r.id}
-							<p role="alert" class="mt-1 text-xs/5 text-red-300 [overflow-wrap:anywhere]">
+							<p role="alert" class="mt-1 text-xs/5 text-danger-text [overflow-wrap:anywhere]">
 								{rowError.message}
 							</p>
 						{/if}

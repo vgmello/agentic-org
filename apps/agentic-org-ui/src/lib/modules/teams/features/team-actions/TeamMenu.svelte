@@ -25,7 +25,7 @@
 				{...props}
 				variant="ghost"
 				size="icon"
-				class="relative text-gray-400 hover:text-white max-[639px]:size-11"
+				class="relative text-fg-muted hover:text-fg max-[639px]:size-11"
 				aria-label="Actions for {team.name}"
 			>
 				<svg viewBox="0 0 20 20" fill="currentColor" class="size-5" aria-hidden="true"

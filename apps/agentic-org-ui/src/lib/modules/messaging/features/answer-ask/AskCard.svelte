@@ -172,21 +172,21 @@
 	<div
 		data-ask-id={message.id}
 		class="rounded-lg border {closed
-			? 'border-white/10 bg-white/[0.03]'
-			: 'border-amber-400/40 bg-amber-400/5'} p-4 max-[640px]:px-[8px] max-[640px]:py-3"
+			? 'border-line bg-tint/[0.03]'
+			: 'border-warning/40 bg-warning/5'} p-4 max-[640px]:px-[8px] max-[640px]:py-3"
 		data-testid="ask-card"
 		data-answered={closed ? 'true' : 'false'}
 	>
-		<p class="text-xs/5 font-semibold text-amber-200">
+		<p class="text-xs/5 font-semibold text-warning-text-strong">
 			<HeroIcon variant="micro" name={message.approval ? 'check-circle' : 'question-mark-circle'} />
 			{message.approval ? 'Approval' : 'Ask'}: {nameOf(ctx, message.from)} asks {to}
-			{#if where}<span class="font-normal text-gray-400">{' · in ' + where}</span>{/if}
+			{#if where}<span class="font-normal text-fg-muted">{' · in ' + where}</span>{/if}
 		</p>
 		<div class="mt-2">
 			<Rich body={expanded ? message.body : long.shown} />
 			{#if long.hidden > 0}<button
 					type="button"
-					class="mt-1 text-sm/6 font-semibold text-indigo-300 hover:text-indigo-200"
+					class="mt-1 text-sm/6 font-semibold text-brand-text hover:text-brand-text-strong"
 					aria-expanded={expanded}
 					onclick={() => (expanded = !expanded)}
 					>{expanded ? 'Show less' : `Show more (${long.hidden} more lines)`}</button
@@ -195,22 +195,26 @@
 
 		{#if !closed}
 			<!-- eslint-disable svelte/no-useless-mustaches -- the spaces must be inside a mustache: Svelte trims a block's leading whitespace -->
-			<p class="mt-2 text-xs/5 text-gray-400" aria-live="off">
+			<p class="mt-2 text-xs/5 text-fg-muted" aria-live="off">
 				<span data-testid="waiting">{waitingFor(message, now)}</span
 				>{#if message.blocks}{' · blocks '}<span
-						class="rounded bg-white/10 px-1.5 py-0.5 font-mono font-semibold text-gray-100"
+						class="rounded bg-surface-overlay px-1.5 py-0.5 font-mono font-semibold text-fg-bright"
 						>{message.blocks}</span
 					>{/if}
 			</p>
 			<!-- eslint-enable svelte/no-useless-mustaches -->
 			{#if required}<p
-					class="mt-1 text-xs/5 font-semibold text-amber-200"
+					class="mt-1 text-xs/5 font-semibold text-warning-text-strong"
 					aria-live="off"
 					data-testid="required"
 				>
 					{required}
 				</p>{/if}
-			{#if deadline}<p class="mt-1 text-xs/5 text-amber-100" aria-live="off" data-testid="deadline">
+			{#if deadline}<p
+					class="mt-1 text-xs/5 text-warning-text-stronger"
+					aria-live="off"
+					data-testid="deadline"
+				>
 					{deadline.text}
 				</p>{/if}
 		{/if}
@@ -218,14 +222,14 @@
 		{#if closed}
 			<p
 				class="mt-3 text-sm/6 {message.answer && message.answer.by !== 'default'
-					? 'text-emerald-300'
-					: 'text-gray-300'}"
+					? 'text-positive-text'
+					: 'text-fg-secondary'}"
 				data-testid="answered"
 			>
 				{outcome}
 			</p>
 			{#if message.answer?.by === 'default'}<p
-					class="text-xs/5 text-gray-400"
+					class="text-xs/5 text-fg-muted"
 					data-testid="default-note"
 				>
 					Nobody answered. {nameOf(ctx, message.from)} continued with the default.
@@ -234,8 +238,8 @@
 				<dl class="mt-2 space-y-1 text-xs/5">
 					{#each questions as q (q.id)}
 						<div class="flex flex-wrap gap-x-2">
-							<dt class="text-gray-400">{q.prompt}</dt>
-							<dd class="text-gray-200">
+							<dt class="text-fg-muted">{q.prompt}</dt>
+							<dd class="text-fg-body">
 								{answerText(
 									q,
 									message.answer.answers.find((x) => x.question_id === q.id)
@@ -247,12 +251,12 @@
 			{/if}
 		{:else if blockedHere}
 			<p
-				class="mt-3 rounded-md bg-white/5 px-3 py-2 text-sm/6 text-gray-300"
+				class="mt-3 rounded-md bg-surface-raised px-3 py-2 text-sm/6 text-fg-secondary"
 				data-testid="app-only"
 			>
 				This is answered only in Agentic Org. <a
 					href="/chat"
-					class="font-semibold text-indigo-300 underline">Open in Agentic Org</a
+					class="font-semibold text-brand-text underline">Open in Agentic Org</a
 				>
 			</p>
 		{:else if canAnswer}
@@ -282,7 +286,7 @@
 								type="button"
 								size="sm"
 								class="{btn} {o.description ? 'flex-col gap-0' : ''} {isDefault
-									? 'bg-indigo-500/15 outline-indigo-400/60'
+									? 'bg-primary/15 outline-brand/60'
 									: ''}"
 								variant={message.approval ? 'default' : 'outline'}
 								disabled={busy || !officeRunning}
@@ -290,10 +294,10 @@
 							>
 								<span
 									>{o.label}{#if isDefault && !/default/i.test(o.label)}<span
-											class="ml-1.5 text-xs/5 font-normal text-indigo-200">Default</span
+											class="ml-1.5 text-xs/5 font-normal text-brand-text-strong">Default</span
 										>{/if}</span
 								>
-								{#if o.description}<span class="text-xs/5 font-normal text-gray-400"
+								{#if o.description}<span class="text-xs/5 font-normal text-fg-muted"
 										>{o.description}</span
 									>{/if}
 							</Button>
@@ -313,7 +317,9 @@
 				</div>
 			{/if}
 		{:else}
-			<p class="mt-3 text-sm/6 text-gray-300" data-testid="not-yours">Waiting for {to}'s answer.</p>
+			<p class="mt-3 text-sm/6 text-fg-secondary" data-testid="not-yours">
+				Waiting for {to}'s answer.
+			</p>
 		{/if}
 		{#if !closed && isAsker && onwithdraw && !blockedHere}
 			<div class="mt-2">
@@ -340,7 +346,7 @@
 					maxlength={20000}
 					disabled={busy}
 					placeholder={textLabel}
-					class="min-w-0 flex-1 rounded-md bg-gray-800 px-3 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400 max-[639px]:text-base"
+					class="min-w-0 flex-1 rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus max-[639px]:text-base"
 				></textarea>
 				<Button
 					type="submit"
@@ -350,6 +356,6 @@
 				>
 			</form>
 		{/if}
-		{#if error}<p class="mt-2 text-sm/6 text-red-400" role="alert">{error}</p>{/if}
+		{#if error}<p class="mt-2 text-sm/6 text-danger" role="alert">{error}</p>{/if}
 	</div>
 {/if}

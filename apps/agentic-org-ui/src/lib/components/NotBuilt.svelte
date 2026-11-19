@@ -28,10 +28,10 @@
 <svelte:head><title>{pageTitle(place, area)}</title></svelte:head>
 
 <div class="px-4 py-16 min-[640px]:px-6 min-[1024px]:px-8">
-	<h2 class="text-base/7 font-semibold text-white">
+	<h2 class="text-base/7 font-semibold text-fg">
 		{notInRelease ? 'Not in this release' : `${title} isn't built yet`}
 	</h2>
-	<p class="mt-1 max-w-xl text-sm/6 text-gray-400">
+	<p class="mt-1 max-w-xl text-sm/6 text-fg-muted">
 		{notInRelease ?? "It's coming in this release."}
 	</p>
 </div>

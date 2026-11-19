@@ -106,25 +106,25 @@
 					{#snippet children(list)}
 						<fieldset aria-describedby={refusal ? `${ids}-error` : undefined}>
 							<legend class="sr-only">Work item</legend>
-							<ul role="list" class="divide-y divide-white/5 rounded-md ring-1 ring-white/10">
+							<ul role="list" class="divide-y divide-line-subtle rounded-md ring-1 ring-line">
 								{#each list as task (task.ref)}
 									<li>
 										<label
-											class="flex cursor-pointer items-start gap-x-3 px-3 py-3 text-sm/6 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-indigo-400 max-[639px]:min-h-11"
+											class="flex cursor-pointer items-start gap-x-3 px-3 py-3 text-sm/6 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 has-focus-visible:outline-focus max-[639px]:min-h-11"
 										>
 											<input
 												type="radio"
 												name="task"
 												value={task.ref}
 												bind:group={picked}
-												class="mt-1 size-4 accent-indigo-500 focus-visible:outline-none"
+												class="mt-1 size-4 accent-primary focus-visible:outline-none"
 											/>
 											<span class="min-w-0">
-												<span class="font-mono text-gray-400">{task.ref}</span>
-												<span class="font-semibold text-white [overflow-wrap:anywhere]"
+												<span class="font-mono text-fg-muted">{task.ref}</span>
+												<span class="font-semibold text-fg [overflow-wrap:anywhere]"
 													>{task.title}</span
 												>
-												{#if task.project}<span class="block text-xs/5 text-gray-400"
+												{#if task.project}<span class="block text-xs/5 text-fg-muted"
 														>{task.project}</span
 													>{/if}
 											</span>
@@ -137,7 +137,11 @@
 				</Loaded>
 			{/if}
 			{#if refusal}
-				<p id="{ids}-error" class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">
+				<p
+					id="{ids}-error"
+					class="text-sm/6 text-danger-text [overflow-wrap:anywhere]"
+					role="alert"
+				>
 					{refusal}
 				</p>
 			{/if}

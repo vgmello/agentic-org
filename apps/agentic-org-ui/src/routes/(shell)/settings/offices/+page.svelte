@@ -414,7 +414,7 @@
 	<div class="{compactRow.gutters} space-y-5 px-4 py-6 sm:px-6 lg:px-8">
 		{#if sample}
 			<!-- TEMPORARY: agent counts and placement come from the invented organization until the real snapshot is wired in. -->
-			<p class="flex items-center gap-x-2 text-xs/5 text-gray-400" data-testid="sample-data-note">
+			<p class="flex items-center gap-x-2 text-xs/5 text-fg-muted" data-testid="sample-data-note">
 				<Badge variant="secondary">Sample data</Badge> The agents below are invented, not yours.
 			</p>
 		{/if}
@@ -422,7 +422,7 @@
 		{#if extra.state === 'error'}
 			<p
 				id="overview-error"
-				class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-red-500/10 px-4 py-3 text-sm/6 text-red-100 outline-1 -outline-offset-1 outline-red-400/20"
+				class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-danger-emphasis/10 px-4 py-3 text-sm/6 text-danger-text-stronger outline-1 -outline-offset-1 outline-danger/20"
 				role="alert"
 				data-testid="overview-error"
 			>
@@ -465,11 +465,11 @@
 				<DividedRow
 					data-testid="office-row"
 					data-office={office.id}
-					class="{compactRow.gutters} {compactRow.gap} flex flex-wrap items-center justify-end gap-x-4 gap-y-2 hover:bg-white/[0.025]"
+					class="{compactRow.gutters} {compactRow.gap} flex flex-wrap items-center justify-end gap-x-4 gap-y-2 hover:bg-tint/[0.025]"
 				>
 					<button
 						type="button"
-						class="{compactRow.name} min-w-[min(6ch,100%)] flex-1 basis-[6ch] text-left outline-none [&:focus-visible>.absolute]:outline-2 [&:focus-visible>.absolute]:outline-solid [&:focus-visible>.absolute]:-outline-offset-2 [&:focus-visible>.absolute]:outline-indigo-400 max-[639px]:order-first max-[639px]:w-full max-[639px]:flex-none"
+						class="{compactRow.name} min-w-[min(6ch,100%)] flex-1 basis-[6ch] text-left outline-none [&:focus-visible>.absolute]:outline-2 [&:focus-visible>.absolute]:outline-solid [&:focus-visible>.absolute]:-outline-offset-2 [&:focus-visible>.absolute]:outline-focus max-[639px]:order-first max-[639px]:w-full max-[639px]:flex-none"
 						aria-label={rowLabel(
 							shownOffice(office),
 							agents,
@@ -480,12 +480,12 @@
 						aria-haspopup="dialog"
 						onclick={(event) => open(office.id, event.currentTarget)}
 					>
-						<span class="block truncate text-sm/6 font-semibold text-white" title={office.name}
+						<span class="block truncate text-sm/6 font-semibold text-fg" title={office.name}
 							>{office.name}{#if isHq(office) && office.name !== 'HQ'}<span
-									class="font-normal text-gray-400">{' · HQ'}</span
+									class="font-normal text-fg-muted">{' · HQ'}</span
 								>{/if}</span
 						>
-						<span class="mt-3 flex flex-wrap items-baseline gap-x-2 text-xs/5 text-gray-400">
+						<span class="mt-3 flex flex-wrap items-baseline gap-x-2 text-xs/5 text-fg-muted">
 							<span
 								class="max-w-full [overflow-wrap:anywhere]"
 								title={whyOf(office.id)}
@@ -503,7 +503,7 @@
 								{#if agents !== undefined}{agents} {agents === 1 ? 'agent' : 'agents'}
 								{:else if countError}—
 								{:else}<span
-										class="inline-block h-4 w-14 animate-pulse rounded bg-white/10 align-middle motion-reduce:animate-none"
+										class="inline-block h-4 w-14 animate-pulse rounded bg-surface-overlay align-middle motion-reduce:animate-none"
 										data-testid="count-skeleton"
 									></span>{/if}
 							</span>
@@ -533,14 +533,14 @@
 							>
 						{/if}
 						<ChevronRight
-							class="{compactRow.chevron} ml-2 size-5 shrink-0 text-gray-400"
+							class="{compactRow.chevron} ml-2 size-5 shrink-0 text-fg-muted"
 							aria-hidden="true"
 						/>
 					</span>
 				</DividedRow>
 			{:else}
 				<DividedRow
-					class="{compactRow.gutters} py-12 text-center text-sm/6 text-gray-400"
+					class="{compactRow.gutters} py-12 text-center text-sm/6 text-fg-muted"
 					data-testid="no-offices">No offices to show.</DividedRow
 				>
 			{/each}
@@ -571,19 +571,19 @@
 		{/if}
 
 		{#each offices.filter((o) => o.status === 'update_needed' && satelliteIds.has(o.id)) as stale (stale.id)}
-			<p class="text-xs/5 text-gray-400" data-testid="version-note">
+			<p class="text-xs/5 text-fg-muted" data-testid="version-note">
 				{stale.name} runs an older version of Agentic Org, so new features wait until it updates.
 			</p>
 		{/each}
 		{#if overview && offices.length === 1 && overview.invitations.length === 0 && overview.pendingAdds.length === 0 && overview.joinRequests.length === 0}
-			<p class="text-xs/5 text-gray-400" data-testid="hq-only-hint">
+			<p class="text-xs/5 text-fg-muted" data-testid="hq-only-hint">
 				Add an office to run agents on another machine, or to keep a copy of the records there.
 			</p>
 		{/if}
 
 		{#if countError}
 			<p
-				class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-red-500/10 px-4 py-3 text-sm/6 text-red-100 outline-1 -outline-offset-1 outline-red-400/20"
+				class="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-danger-emphasis/10 px-4 py-3 text-sm/6 text-danger-text-stronger outline-1 -outline-offset-1 outline-danger/20"
 				role="alert"
 				data-testid="count-error"
 			>
@@ -621,7 +621,7 @@
 				ondiscard={(item, button) => (via(button), (discarding = item), (discardOpen = true))}
 			/>
 		{/if}
-		<p class="text-xs/5 text-gray-400">Shown from HQ. Statuses include last-seen information.</p>
+		<p class="text-xs/5 text-fg-muted">Shown from HQ. Statuses include last-seen information.</p>
 	</div>
 </div>
 

@@ -67,13 +67,13 @@
 	};
 	const ROLE = $derived({ user: 'Prompt', assistant: name ?? 'Agent', system: 'System' } as const);
 	const linkClass =
-		'rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400';
+		'rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
 	const pre =
-		'mt-2 overflow-x-auto rounded-md bg-black/20 p-3 font-mono text-xs/5 whitespace-pre-wrap text-gray-300 ring-1 ring-white/10 ring-inset [overflow-wrap:anywhere]';
+		'mt-2 overflow-x-auto rounded-md bg-shade/20 p-3 font-mono text-xs/5 whitespace-pre-wrap text-fg-secondary ring-1 ring-line ring-inset [overflow-wrap:anywhere]';
 	const toggle =
-		'inline-flex min-h-9 cursor-pointer items-center gap-x-2 text-sm/6 text-gray-300 max-[639px]:min-h-11';
+		'inline-flex min-h-9 cursor-pointer items-center gap-x-2 text-sm/6 text-fg-secondary max-[639px]:min-h-11';
 	const checkbox =
-		'size-4 rounded-sm accent-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400';
+		'size-4 rounded-sm accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
 </script>
 
 <svelte:head><title>{pageTitle('Session log', name ?? 'Member', 'Teams')}</title></svelte:head>
@@ -92,13 +92,13 @@
 	<div class="min-h-6">
 		{#if run.data}
 			<div class={factsWrap}>
-				<ul role="list" class="{factsList} text-sm/6 text-gray-300" aria-label="This run">
+				<ul role="list" class="{factsList} text-sm/6 text-fg-secondary" aria-label="This run">
 					{#each runFacts(run.data) as text, i (i)}<li class={fact}>{text}</li>{/each}
 				</ul>
 			</div>
 		{:else if run.state === 'loading'}
 			<span
-				class="mt-1 block h-4 w-64 max-w-full animate-pulse rounded bg-white/10 motion-reduce:animate-none"
+				class="mt-1 block h-4 w-64 max-w-full animate-pulse rounded bg-surface-overlay motion-reduce:animate-none"
 				aria-hidden="true"
 			></span>
 		{/if}
@@ -130,9 +130,9 @@
 		{@const shown = visibleEntries(l.entries, { tools: showTools, files: showFiles })}
 		{@const files = touchedFiles(l.entries)}
 		{@const usage = usageTotals(l.entries)}
-		<div class="border-b border-white/5 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
+		<div class="border-b border-line-subtle px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
 			<div class={factsWrap}>
-				<ul role="list" class="{factsList} text-xs/5 text-gray-400">
+				<ul role="list" class="{factsList} text-xs/5 text-fg-muted">
 					<li class={fact}>{formatName(l)}</li>
 					{#if l.startedAt}<li class={fact}>
 							started <time datetime={l.startedAt}>{whenText(l.startedAt)}</time>
@@ -154,7 +154,7 @@
 
 		{#if usage}
 			<dl
-				class="grid grid-cols-1 gap-px border-b border-white/5 bg-white/5 min-[640px]:grid-cols-2"
+				class="grid grid-cols-1 gap-px border-b border-line-subtle bg-surface-raised min-[640px]:grid-cols-2"
 			>
 				<StatTile label="Input tokens" value={tokens(usage.input)} />
 				<StatTile
@@ -166,12 +166,12 @@
 		{/if}
 
 		{#if showFiles && files.length}
-			<section aria-labelledby="{ids}-files" class="border-b border-white/5 py-4">
+			<section aria-labelledby="{ids}-files" class="border-b border-line-subtle py-4">
 				<h3
 					id="{ids}-files"
-					class="px-4 text-sm/6 font-semibold text-white min-[640px]:px-6 min-[1024px]:px-8"
+					class="px-4 text-sm/6 font-semibold text-fg min-[640px]:px-6 min-[1024px]:px-8"
 				>
-					Files touched <span class="font-normal text-gray-400">{files.length}</span>
+					Files touched <span class="font-normal text-fg-muted">{files.length}</span>
 				</h3>
 				<ul role="list" class="mt-2">
 					{#each files as f (f.path)}
@@ -182,11 +182,11 @@
 								href="#entry-{f.entryIds[0]}"
 								class="font-mono font-normal [overflow-wrap:anywhere] {linkClass}">{f.path}</a
 							>
-							<span class="text-xs/5 text-gray-400"
-								>{ACTION[f.action]}{#if f.added || f.removed}&nbsp;· <span class="text-green-300"
+							<span class="text-xs/5 text-fg-muted"
+								>{ACTION[f.action]}{#if f.added || f.removed}&nbsp;· <span class="text-success-text"
 										>+{f.added}</span
 									>
-									<span class="text-red-300">−{f.removed}</span><span class="sr-only">
+									<span class="text-danger-text">−{f.removed}</span><span class="sr-only">
 										({f.added} lines added, {f.removed} removed)</span
 									>{/if}</span
 							>
@@ -197,13 +197,13 @@
 		{/if}
 
 		{#if shown.length === 0}
-			<p class="px-4 py-8 text-sm/6 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8">
+			<p class="px-4 py-8 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
 				{l.entries.length === 0
 					? 'This log has no entries.'
 					: 'Every entry is hidden by the toggles above.'}
 			</p>
 		{:else}
-			<ol role="list" class="divide-y divide-white/5" aria-label="Entries">
+			<ol role="list" class="divide-y divide-line-subtle" aria-label="Entries">
 				{#each shown as e (e.id)}
 					<li
 						id="entry-{e.id}"
@@ -218,7 +218,7 @@
 </Loaded>
 
 {#snippet meta(label: string, at: string | undefined)}
-	<p class="flex flex-wrap gap-x-2 text-xs/5 font-semibold text-gray-400">
+	<p class="flex flex-wrap gap-x-2 text-xs/5 font-semibold text-fg-muted">
 		<span>{label}</span>
 		{#if at}<span aria-hidden="true">·</span><time datetime={at} class="font-normal"
 				>{whenText(at)}</time
@@ -243,14 +243,14 @@
 {#snippet entry(e: SessionEntry)}
 	{#if e.kind === 'message'}
 		{@render meta(ROLE[e.role], e.at)}
-		<p class="mt-1 whitespace-pre-wrap text-gray-200 [overflow-wrap:anywhere]">{e.text}</p>
+		<p class="mt-1 whitespace-pre-wrap text-fg-body [overflow-wrap:anywhere]">{e.text}</p>
 	{:else if e.kind === 'tool_call'}
 		{@render meta(`Tool call · ${e.tool}`, e.at)}
-		<p class="mt-1 font-mono text-xs/5 text-gray-300 [overflow-wrap:anywhere]">{e.summary}</p>
+		<p class="mt-1 font-mono text-xs/5 text-fg-secondary [overflow-wrap:anywhere]">{e.summary}</p>
 		{#if e.input}
 			<details class="mt-1">
 				<summary
-					class="inline-flex cursor-pointer rounded-sm text-xs/5 text-gray-400 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
+					class="inline-flex cursor-pointer rounded-sm text-xs/5 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 					>Input</summary
 				>
 				<pre class={pre}>{e.input}</pre>
@@ -261,13 +261,13 @@
 		{@render long(e.id, e.output)}
 	{:else if e.kind === 'file'}
 		{@render meta(`File · ${ACTION[e.action]}`, e.at)}
-		<p class="mt-1 font-mono text-xs/5 text-gray-200 [overflow-wrap:anywhere]">{e.path}</p>
+		<p class="mt-1 font-mono text-xs/5 text-fg-body [overflow-wrap:anywhere]">{e.path}</p>
 		{#if e.diff?.length}
 			<pre class={pre}>{#each e.diff as line, i (i)}<span
 						class="block {line.op === 'add'
-							? 'bg-green-500/10 text-green-300'
+							? 'bg-success-emphasis/10 text-success-text'
 							: line.op === 'remove'
-								? 'bg-red-500/10 text-red-300'
+								? 'bg-danger-emphasis/10 text-danger-text'
 								: ''}"
 						><span class="sr-only"
 							>{line.op === 'add' ? 'Added: ' : line.op === 'remove' ? 'Removed: ' : ''}</span
@@ -278,14 +278,14 @@
 		{/if}
 	{:else if e.kind === 'usage'}
 		{@render meta('Usage', e.at)}
-		<p class="mt-1 text-xs/5 text-gray-400">
+		<p class="mt-1 text-xs/5 text-fg-muted">
 			{tokens(e.inputTokens)} in · {tokens(e.outputTokens)} out{e.cachedTokens !== undefined
 				? ` · ${tokens(e.cachedTokens)} cached`
 				: ''}{e.complete ? '' : ' · incomplete'}
 		</p>
 	{:else if e.kind === 'notice'}
 		{@render meta('Notice', e.at)}
-		<p class="mt-1 text-gray-400 [overflow-wrap:anywhere]">{e.text}</p>
+		<p class="mt-1 text-fg-muted [overflow-wrap:anywhere]">{e.text}</p>
 	{:else}
 		{@render meta('Not recognised: shown as written', e.at)}
 		<pre class={pre}>{e.source}</pre>

@@ -85,26 +85,26 @@
 				<div class="space-y-2">
 					<Label for="channel-name">Name</Label>
 					<Input id="channel-name" bind:value={name} maxlength={60} disabled={busy} autocomplete="off" placeholder="release-v2" aria-invalid={nameError || error ? true : undefined} aria-describedby={nameError ? 'channel-name-error' : error ? 'channel-submit-error' : undefined} oninput={() => (error = undefined)} />
-					{#if clean && clean !== name}<p class="text-xs/5 text-gray-400">It will be #{clean}.</p>{/if}
-					{#if nameError}<p id="channel-name-error" class="text-sm/6 text-red-400" role="alert">{nameError}</p>{/if}
+					{#if clean && clean !== name}<p class="text-xs/5 text-fg-muted">It will be #{clean}.</p>{/if}
+					{#if nameError}<p id="channel-name-error" class="text-sm/6 text-danger" role="alert">{nameError}</p>{/if}
 				</div>
 			{/if}
 			{#if mode !== 'rename'}
 				<fieldset class="space-y-1">
-					<legend class="text-sm/6 font-medium text-white">Members</legend>
+					<legend class="text-sm/6 font-medium text-fg">Members</legend>
 					<ul class="max-h-56 space-y-1 overflow-y-auto" data-testid="channel-members">
 						{#each choices as m (m.id)}
 							<li>
-								<label class="flex items-center gap-x-2 rounded-md px-2 py-1 text-sm/6 text-gray-200 hover:bg-white/5">
-									<input type="checkbox" value={m.id} bind:group={picked} disabled={busy} class="accent-indigo-500" />
-									{m.name} <span class="text-xs/5 text-gray-400">{m.kind === 'agent' ? 'agent' : 'person'}</span>
+								<label class="flex items-center gap-x-2 rounded-md px-2 py-1 text-sm/6 text-fg-body hover:bg-surface-raised">
+									<input type="checkbox" value={m.id} bind:group={picked} disabled={busy} class="accent-primary" />
+									{m.name} <span class="text-xs/5 text-fg-muted">{m.kind === 'agent' ? 'agent' : 'person'}</span>
 								</label>
 							</li>
 						{/each}
 					</ul>
 				</fieldset>
 			{/if}
-			{#if error}<p id="channel-submit-error" class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if error}<p id="channel-submit-error" class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
 				<Button type="submit" disabled={busy}>{mode === 'create' ? 'Add channel' : mode === 'rename' ? 'Rename' : 'Save members'}</Button>

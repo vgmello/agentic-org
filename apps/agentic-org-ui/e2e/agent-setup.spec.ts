@@ -36,9 +36,9 @@ test('AS-1, AS-2: the list shows each agent with runtime, model, profile, office
 	await openOrganization(page);
 	await visit(page, '/settings/agents');
 	await expect(page).toHaveTitle('Agent setup · Organization settings · Agentic Org');
-	await expect(page.getByRole('heading', { level: 2, name: /^Agent setup/ })).toContainText('8');
-	await expect(rows(page)).toHaveCount(8);
-	await expect(page.getByText(/4 of 8 need setup\./)).toBeVisible();
+	await expect(page.getByRole('heading', { level: 2, name: /^Agent setup/ })).toContainText('9');
+	await expect(rows(page)).toHaveCount(9);
+	await expect(page.getByText(/4 of 9 need setup\./)).toBeVisible();
 
 	await expect(row(page, 'noor')).toContainText('Claude Code · claude-sonnet-5');
 	await expect(row(page, 'noor')).toContainText('Primary pool');
@@ -63,6 +63,23 @@ test('AS-1, AS-2: the list shows each agent with runtime, model, profile, office
 	);
 });
 
+test('AS-10: the built-in HR lead is listed first as Built-in, and can be paused but not offboarded', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/agents');
+	// Created with the organization (our-org-in-the-app §2a): always in the list, before the hired agents.
+	await expect(rows(page).first()).toContainText('HR lead');
+	await expect(rows(page).first()).toContainText('@hr');
+	await expect(rows(page).first()).toContainText('Built-in');
+	await rows(page).first().getByRole('link', { name: 'HR lead' }).click();
+	await expect(heading(page)).toHaveText('HR lead');
+	await expect(page.getByText('Agent, built in')).toBeVisible();
+	await page.getByRole('button', { name: /^More/ }).click();
+	await expect(page.getByRole('menuitem', { name: 'Pause…' })).toBeVisible();
+	await expect(page.getByRole('menuitem', { name: 'Offboard…' })).toHaveCount(0);
+});
+
 test(
 	'AS-4, AS-12: an agent page shows health with fixes, how and where it runs, and its record',
 	{ tag: '@webkit' },
@@ -85,8 +102,9 @@ test(
 		await expect(page.getByText('HQ · placement generation 1')).toBeVisible();
 		await expect(page.getByText('/srv/agentic-org/lumen/agents/kai')).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Copy path' })).toBeVisible();
+		// Kai has no role on record in the roles data, as on his member profile.
 		await expect(
-			page.getByRole('region', { name: 'Employee record' }).getByText('Software Engineer')
+			page.getByRole('region', { name: 'Employee record' }).getByText('No role on record')
 		).toBeVisible();
 
 		await page.getByRole('link', { name: 'View profile' }).click();
@@ -110,6 +128,8 @@ test('AS-5: Edit saves the profile and model; a new profile never keeps a model 
 	await expect(dialog.getByRole('radio', { name: /claude-sonnet-5/ })).not.toBeChecked();
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(dialog.getByText('Choose a model to save.')).toBeVisible();
+	// The refusal focuses the field it is about (app-shell-ux §6a).
+	await expect(dialog.getByRole('radio', { name: /claude-sonnet-5/ })).toBeFocused();
 	await dialog.getByRole('radio', { name: /claude-opus-5/ }).check();
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(dialog).toBeHidden();
@@ -139,6 +159,7 @@ test('AS-5: a conflicting save shows the newer revision and keeps the choice; a 
 	await dialog.getByRole('radio', { name: /claude-opus-5/ }).check();
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(dialog.getByRole('alert')).toContainText('changed while you were editing');
+	await expect(dialog.getByRole('alert')).toBeFocused();
 	await expect(dialog.getByRole('radio', { name: /claude-opus-5/ })).toBeChecked();
 	await expect(dialog.getByTestId('now-saved')).toHaveText(
 		'Saved now, rev 3 by Sam Okafor: Primary pool · claude-sonnet-5.'
@@ -155,7 +176,29 @@ test('AS-5: a conflicting save shows the newer revision and keeps the choice; a 
 	await dialog.getByRole('radio', { name: /claude-opus-5/ }).check();
 	await dialog.getByRole('button', { name: 'Save' }).click();
 	await expect(dialog.getByRole('alert')).toContainText("HQ couldn't write the agent's files");
+	await expect(dialog.getByRole('alert')).toBeFocused();
+	await page.keyboard.press('Tab');
+	await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
 	await expect(dialog).toBeVisible();
+});
+
+test('AS-3, AS-5: a turned-off execution configuration needs setup, and nothing promises a save turns it on', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/agents/noor?mock=disabled');
+	await expect(health(page)).toContainText('Execution is turned off in its configuration');
+	await expect(health(page)).toContainText("Turning it on isn't available here yet.");
+	await expect(page.getByText('Turned off in its configuration', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: 'Edit', exact: true }).click();
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.getByRole('heading', { name: 'Edit how Noor Haddad runs' })).toBeVisible();
+	await expect(dialog).not.toContainText(/back on|turns? (it|its execution) on/i);
+	// Saving the same profile and model is no change: the dialog closes without a write.
+	await dialog.getByRole('button', { name: 'Save' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByText('Execution configuration, rev 2')).toBeVisible();
+	await expect(health(page)).toContainText('Execution is turned off in its configuration');
 });
 
 test('AS-6: Change role writes the role only; no role reads No role on record', async ({
@@ -173,6 +216,18 @@ test('AS-6: Change role writes the role only; no role reads No role on record', 
 	await expect(page.getByText("Quinn Adeyemi's role is QA Engineer.")).toBeVisible();
 	await expect(page.getByText(/Who Quinn Adeyemi is, rev 2/)).toBeVisible();
 	await expect(page.getByText('Execution configuration, rev 2')).toBeVisible();
+});
+
+test('AS-6: a refused role change keeps the dialog and focuses its reason', async ({ page }) => {
+	await openOrganization(page);
+	await visit(page, '/settings/agents/noor?mock=save-fails');
+	await page.getByRole('button', { name: 'Change role…' }).click();
+	const dialog = page.getByRole('dialog');
+	await dialog.getByLabel('Role').selectOption({ label: 'QA Engineer' });
+	await dialog.getByRole('button', { name: 'Save' }).click();
+	await expect(dialog.getByRole('alert')).toContainText("HQ couldn't write the agent's files");
+	await expect(dialog.getByRole('alert')).toBeFocused();
+	await expect(dialog.getByLabel('Role')).toHaveValue('role-qa');
 });
 
 test('AS-7: Pause names the effect, shows Paused and stop pending; Resume; Offboard previews and leaves', async ({
@@ -197,10 +252,12 @@ test('AS-7: Pause names the effect, shows Paused and stop pending; Resume; Offbo
 
 	await page.getByRole('button', { name: /^More/ }).click();
 	await page.getByRole('menuitem', { name: 'Offboard…' }).click();
-	await expect(dialog).toContainText('The handle @juno stays reserved');
+	await expect(dialog).toContainText(
+		"Juno Park's profile and home-team history stay in organization data. The handle stays reserved."
+	);
 	await dialog.getByRole('button', { name: 'Offboard' }).click();
 	await expect(page).toHaveURL(/\/settings\/agents$/);
-	await expect(rows(page)).toHaveCount(7);
+	await expect(rows(page)).toHaveCount(8);
 	await expect(row(page, 'juno')).toHaveCount(0);
 });
 
@@ -240,18 +297,47 @@ test('AS-11: loading, error with Retry, empty, unavailable, not found and a read
 	await expect(page.getByRole('link', { name: 'View profile' })).toBeVisible();
 });
 
+/**
+ * The whole row is the agent's link (the stretched title link): a tap anywhere on the row, away from the name, lands
+ * on that link. Measured where the name isn't, so it fails if the row-wide target is missing.
+ */
+async function rowIsTarget(page: Page, id: string) {
+	const target = await row(page, id).evaluate((li) => {
+		li.scrollIntoView({ block: 'center' });
+		const box = li.getBoundingClientRect();
+		const link = li.querySelector('a')!;
+		const hit = document.elementFromPoint(box.right - 8, box.bottom - 8);
+		return { height: box.height, onLink: !!hit && (hit === link || link.contains(hit)) };
+	});
+	expect(target.height).toBeGreaterThanOrEqual(44);
+	expect(target.onLink, `${id}'s row is its link's target`).toBe(true);
+}
+
+async function targetsAtLeast44(page: Page, controls: [role: 'link' | 'button', name: string][]) {
+	for (const [role, name] of controls) {
+		const box = await page.getByRole(role, { name, exact: true }).boundingBox();
+		expect(box, name).not.toBeNull();
+		expect(box!.height, name).toBeGreaterThanOrEqual(44);
+	}
+}
+
+const agentPageControls: [role: 'link' | 'button', name: string][] = [
+	['link', 'View profile'],
+	['button', 'Edit'],
+	['button', 'Change role…'],
+	['button', 'Copy path']
+];
+
 test('AS-13: 320 px and 200% text reflow without sideways scroll, with 44 px targets', async ({
 	page
 }) => {
 	await openOrganization(page);
 	await page.setViewportSize({ width: 320, height: 800 });
 	await visit(page, '/settings/agents');
-	await expect(rows(page)).toHaveCount(8);
+	await expect(rows(page)).toHaveCount(9);
 	await noSidewaysScroll(page);
-	const link = await row(page, 'kai').getByRole('link').boundingBox();
-	expect(link).not.toBeNull();
-	const hire = await page.getByRole('link', { name: 'Hire an agent' }).boundingBox();
-	expect(hire!.height).toBeGreaterThanOrEqual(44);
+	await rowIsTarget(page, 'kai');
+	await targetsAtLeast44(page, [['link', 'Hire an agent']]);
 	// The Health pill keeps whole words.
 	const pill = row(page, 'mira').locator('[data-health]');
 	expect(await pill.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
@@ -259,16 +345,22 @@ test('AS-13: 320 px and 200% text reflow without sideways scroll, with 44 px tar
 	await visit(page, '/settings/agents/kai');
 	await expect(heading(page)).toHaveText('Kai Lindqvist');
 	await noSidewaysScroll(page);
-	for (const name of ['View profile', 'Edit', 'Change role…', 'Copy path']) {
-		const box = await page
-			.getByRole(name === 'View profile' ? 'link' : 'button', { name, exact: true })
-			.boundingBox();
-		expect(box!.height, name).toBeGreaterThanOrEqual(44);
-	}
+	await targetsAtLeast44(page, agentPageControls);
 
-	await page.evaluate(() => (document.documentElement.style.fontSize = '200%'));
+	// 200% text: the same pages, again without sideways scroll, with the same targets and whole-word pills.
+	const largeText = () => page.evaluate(() => (document.documentElement.style.fontSize = '200%'));
+	await largeText();
+	await expect(heading(page)).toHaveText('Kai Lindqvist');
 	await noSidewaysScroll(page);
+	await targetsAtLeast44(page, agentPageControls);
+	const badge = page.getByTestId('health').locator('[data-health]');
+	expect(await badge.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+
 	await visit(page, '/settings/agents');
-	await page.evaluate(() => (document.documentElement.style.fontSize = '200%'));
+	await expect(rows(page)).toHaveCount(9);
+	await largeText();
 	await noSidewaysScroll(page);
+	await rowIsTarget(page, 'kai');
+	await targetsAtLeast44(page, [['link', 'Hire an agent']]);
+	expect(await pill.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 });

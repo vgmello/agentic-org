@@ -166,52 +166,53 @@
 	const describedBy = (field: CreateField, ...always: string[]) =>
 		[...always, errors[field] ? `${field}-error` : ''].filter(Boolean).join(' ') || undefined;
 	const secondary =
-		'rounded-md bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-500';
+		'rounded-md bg-surface-overlay px-3 py-2 text-sm font-semibold text-fg hover:bg-tint/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring';
 </script>
 
 <svelte:head><title>Create organization · Agentic Org</title></svelte:head>
 
 {#snippet fieldError(field: CreateField)}
 	{#if errors[field]}
-		<p id="{field}-error" class="text-sm/6 text-red-400" role="alert">{errors[field]}</p>
+		<p id="{field}-error" class="text-sm/6 text-danger" role="alert">{errors[field]}</p>
 	{/if}
 {/snippet}
 
 {#if !session}
-	<p class="text-sm/6 text-gray-400" aria-live="polite">Loading…</p>
+	<p class="text-sm/6 text-fg-muted" aria-live="polite">Loading…</p>
 {:else if !session.admin}
-	<h1 class="text-2xl/9 font-semibold tracking-tight text-white">Create organization</h1>
-	<p class="mt-4 text-base/7 text-gray-300" role="alert">{NOT_ADMINISTRATOR}</p>
+	<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">Create organization</h1>
+	<p class="mt-4 text-base/7 text-fg-secondary" role="alert">{NOT_ADMINISTRATOR}</p>
 	<div class="mt-6"><a href={resolve('/welcome')} class={secondary}>Back to organizations</a></div>
 {:else if created}
 	<h1
 		bind:this={heading}
 		tabindex="-1"
-		class="text-2xl/9 font-semibold tracking-tight text-white focus:outline-none"
+		class="text-2xl/9 font-semibold tracking-tight text-fg focus:outline-none"
 	>
 		Created {created.name}. You own it.
 	</h1>
-	<p class="mt-2 text-base/7 text-gray-400">
+	<p class="mt-2 text-base/7 text-fg-muted">
 		{created.name} is starting. This usually takes a few seconds.
 	</p>
 	<section
 		aria-labelledby="recovery-title"
-		class="mt-8 rounded-lg bg-white/5 p-4 outline-1 -outline-offset-1 outline-white/10"
+		class="mt-8 rounded-lg bg-surface-raised p-4 outline-1 -outline-offset-1 outline-line"
 	>
-		<h2 id="recovery-title" class="text-sm/6 font-semibold text-white">
+		<h2 id="recovery-title" class="text-sm/6 font-semibold text-fg">
 			Recovery code: waiting to be collected
 		</h2>
-		<p class="mt-1 text-sm/6 text-gray-300">
+		<p class="mt-1 text-sm/6 text-fg-secondary">
 			The recovery code is never shown in the browser. Collect it once on the HQ machine{instance
 				? ` (HQ instance ${instance.name})`
 				: ''}, in a terminal:
 		</p>
-		<pre class="mt-3 overflow-x-auto rounded-md bg-gray-900 p-3 text-sm/6 text-gray-100"><code
+		<pre
+			class="mt-3 overflow-x-auto rounded-md bg-surface-sunken p-3 text-sm/6 text-fg-bright"><code
 				data-testid="recovery-command">{command}</code
 			></pre>
 		<div class="mt-3 flex items-center gap-x-3">
 			<button type="button" class={secondary} onclick={() => copy('command')}>Copy command</button>
-			<span class="text-sm/6 text-gray-300" aria-live="polite"
+			<span class="text-sm/6 text-fg-secondary" aria-live="polite"
 				>{copied === 'command' ? 'Copied.' : ''}</span
 			>
 		</div>
@@ -220,7 +221,7 @@
 		<Button onclick={() => goto(resolve('/'))}>Open {created.name}</Button>
 	</div>
 {:else}
-	<h1 class="text-3xl/9 font-semibold tracking-tight text-white">Create organization</h1>
+	<h1 class="text-3xl/9 font-semibold tracking-tight text-fg">Create organization</h1>
 
 	<form class="mt-8 space-y-6" onsubmit={submit} novalidate>
 		<div class="space-y-2">
@@ -255,7 +256,7 @@
 				aria-invalid={errors.slug ? true : undefined}
 				aria-describedby={describedBy('slug', 'slug-rule')}
 			/>
-			<p id="slug-rule" class="text-sm/6 text-gray-400">
+			<p id="slug-rule" class="text-sm/6 text-fg-muted">
 				Lowercase letters, numbers and hyphens. It names the organization in addresses and is not
 				changed by a rename.
 			</p>
@@ -277,7 +278,7 @@
 				aria-invalid={errors.organization_repository ? true : undefined}
 				aria-describedby={describedBy('organization_repository', 'repository-rule')}
 			/>
-			<p id="repository-rule" class="text-sm/6 text-gray-400">
+			<p id="repository-rule" class="text-sm/6 text-fg-muted">
 				The remote repository that holds the organization's files (https:// or ssh://). Nothing is
 				fetched or pushed yet.
 			</p>
@@ -303,18 +304,18 @@
 
 		<div
 			id="create-note"
-			class="flex gap-x-3 border-l-2 border-indigo-400 bg-white/5 px-4 py-3 text-sm/6 text-gray-200"
+			class="flex gap-x-3 border-l-2 border-brand bg-surface-raised px-4 py-3 text-sm/6 text-fg-body"
 		>
-			<Info class="mt-0.5 size-4 shrink-0 text-indigo-300" aria-hidden="true" />
+			<Info class="mt-0.5 size-4 shrink-0 text-brand-text" aria-hidden="true" />
 			<p>
 				It will be stored on {instance ? `HQ instance ${instance.name}` : 'this HQ instance'}, and
 				you'll own it. Its recovery code is then collected on that machine.
 			</p>
 		</div>
 
-		<p class="flex min-h-6 items-center gap-x-2 text-sm/6 text-gray-200" aria-live="polite">
+		<p class="flex min-h-6 items-center gap-x-2 text-sm/6 text-fg-body" aria-live="polite">
 			{#if working}
-				<LoaderCircle class="size-4 animate-spin text-indigo-300" aria-hidden="true" />
+				<LoaderCircle class="size-4 animate-spin text-brand-text" aria-hidden="true" />
 			{/if}
 			{progress}
 		</p>
@@ -324,10 +325,10 @@
 				bind:this={alert}
 				role="alert"
 				tabindex="-1"
-				class="rounded-md bg-red-500/10 p-4 outline-1 -outline-offset-1 outline-red-400/40 focus-visible:outline-2 focus-visible:outline-red-300"
+				class="rounded-md bg-danger-emphasis/10 p-4 outline-1 -outline-offset-1 outline-danger/40 focus-visible:outline-2 focus-visible:outline-danger-text"
 			>
-				<p class="flex gap-x-2 text-sm/6 text-red-100">
-					<CircleAlert class="mt-0.5 size-4 shrink-0 text-red-300" aria-hidden="true" />
+				<p class="flex gap-x-2 text-sm/6 text-danger-text-stronger">
+					<CircleAlert class="mt-0.5 size-4 shrink-0 text-danger-text" aria-hidden="true" />
 					<span>{failure.message}</span>
 				</p>
 				<div class="mt-3 flex flex-wrap items-center gap-3">
@@ -343,7 +344,7 @@
 					<button type="button" class={secondary} onclick={() => copy('details')}
 						>Copy details</button
 					>
-					<span class="text-sm/6 text-red-100" aria-live="polite"
+					<span class="text-sm/6 text-danger-text-stronger" aria-live="polite"
 						>{copied === 'details' ? 'Copied.' : ''}</span
 					>
 				</div>
@@ -356,7 +357,7 @@
 			</Button>
 			<a href={resolve('/welcome')} class={secondary}>{working ? 'Close' : 'Cancel'}</a>
 			{#if working}
-				<span class="text-sm/6 text-gray-300">Closing this panel doesn't stop it.</span>
+				<span class="text-sm/6 text-fg-secondary">Closing this panel doesn't stop it.</span>
 			{/if}
 		</div>
 	</form>

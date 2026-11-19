@@ -27,7 +27,7 @@
 
 <div class="px-4 pt-6 min-[640px]:px-6 min-[1024px]:px-8">
 	<Callout data-testid="stale">
-		<p class="text-sm/6 font-semibold text-white">
+		<p class="text-sm/6 font-semibold text-fg">
 			{staleText(shown)}<span class="sr-only"> ({formatFull(at, accountZone.zone)})</span>
 		</p>
 		<Button

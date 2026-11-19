@@ -87,7 +87,7 @@
 	} = $props();
 
 	const actionFocus =
-		'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 focus-visible:ring-0';
+		'focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:ring-0';
 	const kindIcon: Partial<Record<ChatMessage['kind'], MicroIconName>> = {
 		request: 'question-mark-circle',
 		announcement: 'megaphone',
@@ -153,7 +153,7 @@
 		onfocusout={(event) =>
 			(focusWithin =
 				event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))}
-		class="group relative grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-2 max-[640px]:gap-x-[12px] max-[640px]:px-[8px] hover:bg-white/[0.03] focus-within:bg-white/[0.03]"
+		class="group relative grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-2 max-[640px]:gap-x-[12px] max-[640px]:px-[8px] hover:bg-tint/[0.03] focus-within:bg-tint/[0.03]"
 		data-testid="message"
 		data-kind={message.kind}
 		data-id={message.id}
@@ -167,12 +167,12 @@
 		<div
 			class="col-start-2 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-sm/6 @max-[10.765625rem]:col-span-2 @max-[10.765625rem]:col-start-1"
 		>
-			<span class="font-semibold text-white">{nameOf(ctx, message.from)}</span>
-			<time class="text-xs/5 text-gray-400" datetime={message.created_at}
+			<span class="font-semibold text-fg">{nameOf(ctx, message.from)}</span>
+			<time class="text-xs/5 text-fg-muted" datetime={message.created_at}
 				>{clockTime(message.created_at)}</time
 			>
 			{#if metadata}
-				{#if mark}<span class="text-xs/5 text-gray-300" title={KIND_WORD[message.kind]}
+				{#if mark}<span class="text-xs/5 text-fg-secondary" title={KIND_WORD[message.kind]}
 						><span class="inline-flex items-center gap-x-1 whitespace-nowrap"
 							><HeroIcon class="text-current" variant="micro" name={mark} />{KIND_WORD[
 								message.kind
@@ -180,16 +180,16 @@
 						>{#if message.reason}{' · ' + REASON_LABEL[message.reason]}{/if}</span
 					>{/if}
 				{#if message.bridge}<span
-						class="rounded bg-white/10 px-1.5 text-[10px]/4 font-semibold text-gray-200"
+						class="rounded bg-surface-overlay px-1.5 text-[10px]/4 font-semibold text-fg-body"
 						data-testid="bridge-badge"
 						title="Posted from {bridgeName} as {nameOf(ctx, message.from)}, never as the owner"
 						>{bridgeName}</span
 					>{/if}
-				{#if message.also_in_channel}<span class="text-xs/5 text-gray-400">replied to a thread</span
+				{#if message.also_in_channel}<span class="text-xs/5 text-fg-muted">replied to a thread</span
 					>{/if}
-				{#if message.pinned}<span class="text-xs/5 text-gray-400" title="Pinned">Pinned</span>{/if}
-				{#if where}<span class="text-xs/5 text-gray-400">{'in ' + where}</span>{/if}
-				{#if mode !== 'none'}<span class="text-xs/5 text-gray-400"
+				{#if message.pinned}<span class="text-xs/5 text-fg-muted" title="Pinned">Pinned</span>{/if}
+				{#if where}<span class="text-xs/5 text-fg-muted">{'in ' + where}</span>{/if}
+				{#if mode !== 'none'}<span class="text-xs/5 text-fg-muted"
 						>{mode === 'muted' ? 'muted' : 'digest'}</span
 					>{/if}
 			{/if}
@@ -216,7 +216,7 @@
 					<Rich body={expanded ? message.body : long.shown} />{#if long.hidden > 0}
 						<button
 							type="button"
-							class="mt-1 text-sm/6 font-semibold text-indigo-300 hover:text-indigo-200"
+							class="mt-1 text-sm/6 font-semibold text-brand-text hover:text-brand-text-strong"
 							aria-expanded={expanded}
 							onclick={() => (expanded = !expanded)}
 							>{expanded ? 'Show less' : `Show more (${long.hidden} more lines)`}</button
@@ -227,7 +227,7 @@
 				{#if message.attachments?.length}
 					<ul class="mt-1 flex flex-wrap gap-1.5" aria-label="Attachments">
 						{#each message.attachments as a (a)}<li
-								class="inline-flex max-w-full items-start gap-x-1 rounded bg-white/10 px-2 py-0.5 text-xs/5 text-gray-200"
+								class="inline-flex max-w-full items-start gap-x-1 rounded bg-surface-overlay px-2 py-0.5 text-xs/5 text-fg-body"
 							>
 								<HeroIcon class="mt-0.5" variant="micro" name="paper-clip" /><span
 									class="min-w-0 [overflow-wrap:anywhere]">{a}</span
@@ -242,11 +242,11 @@
 							{#if r.who.length || acknowledge}
 								<button
 									type="button"
-									class="inline-flex items-center gap-x-1 rounded-full px-2 py-0.5 text-xs/5 disabled:opacity-50 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 outline-1 -outline-offset-1 {r.who.includes(
+									class="inline-flex items-center gap-x-1 rounded-full px-2 py-0.5 text-xs/5 disabled:opacity-50 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus outline-1 -outline-offset-1 {r.who.includes(
 										ctx.actor
 									)
-										? 'bg-indigo-500/20 text-indigo-100 outline-indigo-400/50'
-										: 'bg-white/5 text-gray-200 outline-white/10'}"
+										? 'bg-primary/20 text-brand-text-stronger outline-brand/50'
+										: 'bg-surface-raised text-fg-body outline-line'}"
 									disabled={!officeRunning || readOnly}
 									aria-pressed={r.who.includes(ctx.actor)}
 									aria-label="{r.label}, {r.who.length}"
@@ -256,7 +256,7 @@
 									onclick={() => onreact?.(message, r.id)}
 									data-testid="reaction"
 									><HeroIcon class="text-current" variant="micro" name={reactionIcon[r.id]} />
-									{r.label}{#if r.who.length}<span class="text-gray-400" aria-hidden="true"
+									{r.label}{#if r.who.length}<span class="text-fg-muted" aria-hidden="true"
 											>{' · ' + whoWords(r.who)}</span
 										>{/if}</button
 								>
@@ -268,7 +268,7 @@
 				{#if replies.length && onthread}
 					<button
 						type="button"
-						class="mt-1 text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200"
+						class="mt-1 text-xs/5 font-semibold text-brand-text hover:text-brand-text-strong"
 						aria-live="off"
 						onclick={(event) => onthread?.(message, event.currentTarget)}
 						data-testid="replies-link"
@@ -280,17 +280,21 @@
 				{#if onopen}
 					<button
 						type="button"
-						class="mt-1 block text-xs/5 font-semibold text-indigo-300 hover:text-indigo-200"
+						class="mt-1 block text-xs/5 font-semibold text-brand-text hover:text-brand-text-strong"
 						onclick={() => onopen?.(message)}>Open in conversation</button
 					>
 				{/if}
 
 				{#if delivery?.status === 'sending' || delivery?.status === 'checking' || message.queued}
-					<p class="mt-1 text-xs/5 text-gray-400" data-testid="sending">
+					<p class="mt-1 text-xs/5 text-fg-muted" data-testid="sending">
 						{delivery?.status === 'checking' ? 'Checking status…' : 'Sending…'}
 					</p>
 				{:else if delivery?.status === 'unknown'}
-					<p class="mt-1 text-xs/5 text-amber-200" role="alert" data-testid="not-confirmed">
+					<p
+						class="mt-1 text-xs/5 text-warning-text-strong"
+						role="alert"
+						data-testid="not-confirmed"
+					>
 						Delivery not confirmed <button
 							type="button"
 							class="font-semibold underline"
@@ -298,7 +302,7 @@
 						>
 					</p>
 				{:else if delivery?.status === 'failed'}
-					<p class="mt-1 text-xs/5 text-red-400" role="alert" data-testid="not-delivered">
+					<p class="mt-1 text-xs/5 text-danger" role="alert" data-testid="not-delivered">
 						Not delivered: {delivery.error}
 						<button
 							type="button"
@@ -313,7 +317,7 @@
 
 		{#if !delivery && !readOnly}
 			<div
-				class="absolute -top-3 right-2 flex items-center gap-0.5 rounded-md bg-gray-900 p-0.5 shadow ring-1 ring-white/10 {toolbar
+				class="absolute -top-3 right-2 flex items-center gap-0.5 rounded-md bg-surface-sunken p-0.5 shadow ring-1 ring-line {toolbar
 					? 'opacity-100'
 					: 'opacity-0'}"
 				role="toolbar"

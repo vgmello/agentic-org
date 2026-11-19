@@ -91,28 +91,28 @@
 				aria-label="New"
 				aria-busy={loading}
 				aria-keyshortcuts={shortcutHint ? 'N Shift+N' : undefined}
-				class="inline-flex shrink-0 items-center justify-center gap-x-1.5 rounded-md text-sm/6 font-semibold text-white outline-1 -outline-offset-1 outline-gray-500 hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:size-11 min-[640px]:h-9 min-[640px]:px-3"
+				class="inline-flex shrink-0 items-center justify-center gap-x-1.5 rounded-md text-sm/6 font-semibold text-fg outline-1 -outline-offset-1 outline-field-border hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:size-11 min-[640px]:h-9 min-[640px]:px-3"
 			>
-				<MiniIcon name="plus" class="size-5 text-gray-400" />
+				<MiniIcon name="plus" class="size-5 text-fg-muted" />
 				<span class="max-[639px]:sr-only" aria-hidden="true">New</span>
 				{#if shortcutHint}
 					<kbd
 						aria-hidden="true"
-						class="rounded border border-white/10 px-1.5 font-sans text-xs/5 font-normal text-gray-400 max-[1023px]:hidden"
+						class="rounded border border-line px-1.5 font-sans text-xs/5 font-normal text-fg-muted max-[1023px]:hidden"
 						>N</kbd
 					>
 				{/if}
 			</button>
 		{/snippet}
 	</DropdownMenu.Trigger>
-	<DropdownMenu.Content align="end" class="w-56 bg-gray-800 ring-white/10">
+	<DropdownMenu.Content align="end" class="w-56 bg-surface ring-line">
 		<DropdownMenu.Item class={itemClass} onSelect={() => start('request')}
 			>Request</DropdownMenu.Item
 		>
 		<DropdownMenu.Item class={itemClass} onSelect={() => start('message')}
 			>Message</DropdownMenu.Item
 		>
-		<DropdownMenu.Separator class="bg-white/10" />
+		<DropdownMenu.Separator class="bg-surface-overlay" />
 		<!-- Hire is a page of its own (our-org-in-the-app §7): opening it moves focus to its heading. -->
 		<DropdownMenu.Item
 			class={itemClass}

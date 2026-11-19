@@ -41,7 +41,7 @@
 	<div
 		class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 min-[640px]:px-6 min-[1024px]:px-8"
 	>
-		<h3 {id} class="text-base/7 font-semibold text-white">{title}</h3>
+		<h3 {id} class="text-base/7 font-semibold text-fg">{title}</h3>
 		{#if actions && phase === 'ready'}<div class="flex flex-wrap items-center gap-3">
 				{@render actions()}
 			</div>{/if}
@@ -54,8 +54,8 @@
 				role="alert"
 				class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 min-[640px]:px-6 min-[1024px]:px-8"
 			>
-				<p class="min-w-0 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">
-					<span class="font-semibold text-red-300">Couldn't load {what}.</span>
+				<p class="min-w-0 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">
+					<span class="font-semibold text-danger-text">Couldn't load {what}.</span>
 					{message ?? ''}
 				</p>
 				<Button
@@ -68,7 +68,7 @@
 				>
 			</div>
 		{:else if phase === 'unavailable'}
-			<p class="px-4 text-sm/6 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8">
+			<p class="px-4 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
 				{unavailable ?? `${title} isn't available yet.`}
 			</p>
 		{:else}

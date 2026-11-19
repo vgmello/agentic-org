@@ -35,9 +35,9 @@
 	const currentLabel = $derived(sections.find((s) => s.id === current)?.label ?? 'Choose');
 </script>
 
-<nav aria-label={label} class="border-b border-white/10 px-4 py-3 {className}">
+<nav aria-label={label} class="border-b border-line px-4 py-3 {className}">
 	<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-		<span aria-hidden="true" class="text-sm/6 font-medium text-gray-300">Section</span>
+		<span aria-hidden="true" class="text-sm/6 font-medium text-fg-secondary">Section</span>
 		<DropdownMenu bind:open>
 			<DropdownMenuTrigger>
 				{#snippet child({ props })}
@@ -48,7 +48,7 @@
 						aria-label="Section: {currentLabel}"
 					>
 						<span class="min-w-0 [overflow-wrap:anywhere]">{currentLabel}</span>
-						<MiniIcon name="chevronDown" class="size-5 text-gray-400" />
+						<MiniIcon name="chevronDown" class="size-5 text-fg-muted" />
 					</Button>
 				{/snippet}
 			</DropdownMenuTrigger>

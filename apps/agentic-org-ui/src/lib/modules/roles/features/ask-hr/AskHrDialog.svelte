@@ -97,7 +97,7 @@
 				</DialogDescription>
 			</DialogHeader>
 			<div>
-				<Label for="role-ask" class="block text-sm/6 font-medium text-white"
+				<Label for="role-ask" class="block text-sm/6 font-medium text-fg"
 					>What should this role do?</Label
 				>
 				<textarea
@@ -116,7 +116,7 @@
 				{#if error}<p id="role-ask-error" class={errorClass}>{error}</p>{/if}
 			</div>
 			{#if failure}
-				<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">{failure}</p>
+				<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">{failure}</p>
 			{/if}
 			<DialogFooter>
 				<Button

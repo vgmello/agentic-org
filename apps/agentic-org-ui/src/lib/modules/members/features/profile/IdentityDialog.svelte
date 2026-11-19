@@ -123,7 +123,7 @@
 	}
 
 	const linkClass =
-		'rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400';
+		'rounded-sm font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus';
 </script>
 
 {#snippet field(
@@ -134,7 +134,7 @@
 )}
 	<div>
 		<Label for="{ids}-{key}" class="flex-wrap gap-x-2 gap-y-0 leading-6"
-			>{label}{#if note}<span class="font-normal text-gray-400">{note}</span>{/if}</Label
+			>{label}{#if note}<span class="font-normal text-fg-muted">{note}</span>{/if}</Label
 		>
 		<Input
 			id="{ids}-{key}"
@@ -177,7 +177,7 @@
 				<div>
 					<Label for="{ids}-handle">Handle</Label>
 					<div class="mt-2 flex items-center gap-x-1">
-						<span class="font-mono text-sm/6 text-gray-400" aria-hidden="true">@</span>
+						<span class="font-mono text-sm/6 text-fg-muted" aria-hidden="true">@</span>
 						<Input
 							id="{ids}-handle"
 							bind:value={form.handle}
@@ -193,7 +193,7 @@
 						{#if handleError}
 							<p class={errorClass} role="alert">{handleError}</p>
 						{:else if form.handle !== oldHandle && form.handle !== ''}
-							<p class="{helpClass} text-amber-200" data-testid="handle-change-warning">
+							<p class="{helpClass} text-warning-text-strong" data-testid="handle-change-warning">
 								Others reach {member.name} as <code class="font-mono">@{oldHandle}</code> today.
 								After saving they use <code class="font-mono">@{form.handle}</code>, and
 								<code class="font-mono">@{oldHandle}</code> stays reserved.
@@ -206,7 +206,7 @@
 			{:else}
 				<div>
 					<Label for="{ids}-contact" class="flex-wrap gap-x-2 gap-y-0 leading-6"
-						>Contact <span class="font-normal text-gray-400">(optional; clear it to remove)</span
+						>Contact <span class="font-normal text-fg-muted">(optional; clear it to remove)</span
 						></Label
 					>
 					<Input
@@ -219,7 +219,7 @@
 				</div>
 			{/if}
 
-			{#if error}<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">
+			{#if error}<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">
 					{error}
 				</p>{/if}
 			<DialogFooter>

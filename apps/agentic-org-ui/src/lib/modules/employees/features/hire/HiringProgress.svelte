@@ -112,13 +112,13 @@
 	<h3
 		id="hire-step-heading"
 		tabindex="-1"
-		class="text-base/7 font-semibold text-white outline-none [overflow-wrap:anywhere]"
+		class="text-base/7 font-semibold text-fg outline-none [overflow-wrap:anywhere]"
 	>
 		{heading}
 	</h3>
 	{#if current.state === 'hired'}
 		<div class="space-y-2">
-			<p class="text-sm/6 text-gray-300">
+			<p class="text-sm/6 text-fg-secondary">
 				Hired doesn't mean started: {name}'s profile shows whether it can run, and Activity records
 				the hire.
 			</p>
@@ -141,27 +141,27 @@
 				<li class="flex items-start gap-x-3 text-sm/6">
 					<span class="flex size-6 shrink-0 items-center justify-center" aria-hidden="true">
 						{#if s.state === 'done'}
-							<HeroIcon variant="micro" name="check-circle" class="size-4 text-green-400" />
+							<HeroIcon variant="micro" name="check-circle" class="size-4 text-success" />
 						{:else if s.state === 'doing'}
 							<span
-								class="size-4 rounded-full border-2 border-sky-300/30 border-t-sky-300 motion-safe:animate-spin"
+								class="size-4 rounded-full border-2 border-info-text/30 border-t-info-text motion-safe:animate-spin"
 							></span>
 						{:else if s.state === 'failed'}
-							<span class="flex size-4 items-center justify-center rounded-full bg-red-400/20">
-								<span class="size-1.5 rounded-full bg-red-300"></span>
+							<span class="flex size-4 items-center justify-center rounded-full bg-danger/20">
+								<span class="size-1.5 rounded-full bg-danger-text"></span>
 							</span>
 						{:else}
-							<span class="size-3 rounded-full outline-1 -outline-offset-1 outline-white/30"></span>
+							<span class="size-3 rounded-full outline-1 -outline-offset-1 outline-tint/30"></span>
 						{/if}
 					</span>
 					<span
 						class={s.state === 'waiting'
-							? 'text-gray-400'
+							? 'text-fg-muted'
 							: s.state === 'failed'
-								? 'text-red-300'
+								? 'text-danger-text'
 								: s.state === 'doing'
-									? 'text-white'
-									: 'text-gray-300'}
+									? 'text-fg'
+									: 'text-fg-secondary'}
 					>
 						{s.state === 'done'
 							? words.done
@@ -185,7 +185,7 @@
 
 		{#if givenUp}
 			<div class="space-y-3">
-				<p class="text-sm/6 text-gray-300 [overflow-wrap:anywhere]">
+				<p class="text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">
 					{failureText ||
 						(current.doneSteps.length ? `Already done: ${doneText(current, name)}.` : '')}
 					Given up: {givenUpText(current)}. Nothing more happens with it, and {name} isn't a member.
@@ -196,16 +196,16 @@
 			</div>
 		{:else if current.failedStep}
 			<div role="alert" class="space-y-1">
-				<p class="text-sm/6 font-semibold text-red-300 [overflow-wrap:anywhere]">
+				<p class="text-sm/6 font-semibold text-danger-text [overflow-wrap:anywhere]">
 					{failureText}
 				</p>
-				<p class="text-sm/6 text-gray-300">
+				<p class="text-sm/6 text-fg-secondary">
 					{name} isn't a member until the hire finishes. Try again picks up from the step that failed;
 					it doesn't need a new confirmation.
 				</p>
 			</div>
 			{#if retryError}
-				<p role="alert" class="text-sm/6 text-red-300 [overflow-wrap:anywhere]">{retryError}</p>
+				<p role="alert" class="text-sm/6 text-danger-text [overflow-wrap:anywhere]">{retryError}</p>
 			{/if}
 			{#if current.state === 'hiring'}
 				<Button class="min-w-24 {mobileButton}" aria-busy={retrying} onclick={tryAgain}
@@ -213,13 +213,13 @@
 				>
 			{/if}
 		{:else}
-			<p class="text-sm/6 text-gray-400">
+			<p class="text-sm/6 text-fg-muted">
 				The office is setting {name} up. You can leave this page: the hire carries on, and Hire requests
 				shows how it went.
 			</p>
 		{/if}
 		{#if pollError}
-			<p class="text-xs/5 text-red-300 [overflow-wrap:anywhere]">
+			<p class="text-xs/5 text-danger-text [overflow-wrap:anywhere]">
 				Couldn't check on the hire: {pollError} Checking again.
 			</p>
 		{/if}

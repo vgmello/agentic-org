@@ -70,6 +70,20 @@
 	],
 	"tools": ["org.messages", "org.tasks", "workspace.shell", "workspace.git"],
 	"byMember": {
+		"hr": {
+			"profileId": "primary-pool",
+			"modelId": "claude-sonnet-5",
+			"revision": 1,
+			"employeeRevision": 1,
+			"generation": 1,
+			"observedAgoS": 40,
+			"observedRuntime": "Claude Code 2.1.4",
+			"readiness": "known",
+			"updated": {
+				"byName": "Agentic Org",
+				"agoH": 500
+			}
+		},
 		"sam": {
 			"profileId": "primary-pool",
 			"modelId": "claude-sonnet-5",

@@ -77,10 +77,10 @@
 					>{description}</DialogDescription
 				>{/if}
 		</DialogHeader>
-		{#if body}<div class="space-y-2 text-sm/6 text-gray-300 [overflow-wrap:anywhere]">
+		{#if body}<div class="space-y-2 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]">
 				{@render body()}
 			</div>{/if}
-		{#if error}<p class="text-sm/6 text-red-300 [overflow-wrap:anywhere]" role="alert">
+		{#if error}<p class="text-sm/6 text-danger-text [overflow-wrap:anywhere]" role="alert">
 				{error}
 			</p>{/if}
 		<DialogFooter>

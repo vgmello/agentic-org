@@ -176,7 +176,7 @@ test('WCAG 3.2.2 §7.4: a row arriving late does not take focus from where the p
 	await expect(people).toBeFocused();
 	await expect(rows(page).filter({ hasText: 'Vale Example' })).toHaveCount(1);
 	// The row is shown and highlighted, but focus stays where the person put it.
-	await expect(list(page).locator('li.bg-indigo-500\\/10')).toHaveCount(1);
+	await expect(list(page).locator('li.bg-primary\\/10')).toHaveCount(1);
 	await expect(people).toBeFocused();
 });
 

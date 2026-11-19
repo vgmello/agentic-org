@@ -82,7 +82,7 @@
 			<div class="space-y-2">
 				<Label for="rename-team">Name</Label>
 				<Input id="rename-team" bind:value={name} disabled={busy} autocomplete="off" aria-invalid={error ? true : undefined} aria-describedby={error ? 'rename-team-error' : undefined} oninput={() => (error = undefined)} />
-				{#if error}<p id="rename-team-error" class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+				{#if error}<p id="rename-team-error" class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 			</div>
 			<DialogFooter>
 				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
