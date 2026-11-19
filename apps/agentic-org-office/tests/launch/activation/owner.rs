@@ -594,7 +594,7 @@ fn who_lists_the_directory_with_cards_for_the_owner_and_not_for_an_unbound_conne
     live.stop();
 }
 
-/// Messaging, status lines, work, `subscribe` and operation lookup lived only in the old
+/// Messaging, status lines, work writes, `subscribe` and operation lookup lived only in the old
 /// tables. Until their families are rebuilt on the office store (work B4, messaging and status
 /// B6, operation lookup B2) the real worker answers each of them `unsupported`, for an agent and
 /// for the owner alike, while binding, the directory and organization commands keep working.
@@ -606,7 +606,9 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
         MsgInbox, MsgInboxParams, MsgRead, MsgReadParams, MsgSend, MsgSendParams, MsgWait,
         MsgWaitParams, KIND_MSG,
     };
-    use org_proto::work::{TaskCreate, TaskCreateParams, WorkDelete, WorkDeleteParams};
+    use org_proto::work::{
+        TaskCreate, TaskCreateParams, WorkDelete, WorkDeleteParams, WorkGet, WorkGetParams,
+    };
     use org_proto::{ErrorCode, OperationGet, OperationGetParams, OperationKind};
     let world = World::new();
     let owner_id = seeded(&world);
@@ -681,6 +683,16 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
             .unwrap_err()
     ));
     assert!(unsupported(agent.call::<TaskCreate>(&task).unwrap_err()));
+    assert_eq!(
+        api_code(
+            agent
+                .call::<WorkGet>(&WorkGetParams {
+                    item: task.item_id.clone(),
+                })
+                .unwrap_err()
+        ),
+        ErrorCode::UnknownMethod
+    );
     // `subscribe` on the office socket, bound or not. (Host channels refuse it by their own
     // policy, before the office is asked.)
     let subscribe = org_proto::SubscribeParams {

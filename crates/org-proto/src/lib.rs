@@ -11,9 +11,10 @@
 //! - **An office server** (`agentic-org-office`), one process per office. An organization's
 //!   first office is its HQ. The current worker answers `hello` with its identity, supports
 //!   `msg.bind` and `who`, and serves authorized organization requests ([`org`]). The wire
-//!   contract also defines [work calls][`work`]. The current worker returns
-//!   [`ErrorCode::Unsupported`] for authorized work calls with valid parameters until work
-//!   is rebuilt on the office store.
+//!   contract also defines [work calls][`work`]. Until work is rebuilt on the office store,
+//!   valid, authorized writes the worker previously served return [`ErrorCode::Unsupported`].
+//!   Work reads such as `work.get`, `work.list`, and `work.snapshot` return
+//!   [`ErrorCode::UnknownMethod`].
 //!
 //! ## Who may call what
 //! The wire never carries the caller's identity: the office knows whose connection a call came

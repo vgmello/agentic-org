@@ -1,6 +1,9 @@
 use super::*;
+use org_office::{NewOffice, Office, OfficeRole};
+use org_proto::inbox::InboxListParams;
 use org_proto::OrgSnapshot;
 use serde_json::json;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -43,20 +46,13 @@ fn source(snapshot: OrgSnapshot) -> OrgSource {
     OrgSource::new(Box::new(move || Ok(snapshot.clone())), "HQ".into())
 }
 
-#[test]
-fn inbox_list_position_advances_after_offboarding_without_hints() {
-    let _spawn = crate::transfer::tests::without_process_spawn();
-    use org_office::{rules::OrgCommand, NewOffice, Office, OfficeRole};
-    use org_proto::inbox::InboxListParams;
-    use org_proto::org::MemberOffboardParams;
-
-    let root = tempfile::tempdir().unwrap();
-    let office = Arc::new(
+fn office(root: &Path, id: &str) -> Arc<Office> {
+    Arc::new(
         Office::create(
-            root.path().join("HQ"),
+            root.join(id),
             &NewOffice {
-                office_id: "HQ".into(),
-                office_name: "HQ".into(),
+                office_id: id.into(),
+                office_name: id.into(),
                 role: OfficeRole::Hq,
                 org_id: "ORG".into(),
                 org_name: "Acme".into(),
@@ -64,24 +60,65 @@ fn inbox_list_position_advances_after_offboarding_without_hints() {
             None,
         )
         .unwrap(),
-    );
+    )
+}
+
+fn open_items() -> InboxListParams {
+    InboxListParams {
+        state: InboxState::Open,
+        kinds: None,
+        project: None,
+        team: None,
+        cursor: None,
+        limit: None,
+    }
+}
+
+#[test]
+fn inbox_list_reports_a_degraded_source_when_the_org_head_cannot_be_read() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let root = tempfile::tempdir().unwrap();
+    let replica = office(root.path(), "REPLICA");
+    let inbox = super::super::Hq::for_office(Arc::clone(&replica)).unwrap();
+    let before = inbox.list(open_items()).unwrap();
+    assert!(before.degraded.is_empty());
+    assert!(before.as_of.seq > 0);
+
+    // An awaiting-snapshot store gives the real org reader a deterministic error.
+    let hq = office(root.path(), "HQ");
+    hq.bind_replication_hq(Default::default(), 1024 * 1024)
+        .unwrap();
+    let pin = hq.replication_checkpoint().unwrap();
+    replica
+        .bind_replication_satellite(pin.hq_office, pin.ca, pin.highest_epoch, Default::default())
+        .unwrap();
+    assert!(matches!(
+        replica.org_head(),
+        Err(org_office::OfficeError::SnapshotPending)
+    ));
+
+    let page = inbox.list(open_items()).unwrap();
+    assert_eq!(page.degraded, ["org"]);
+    assert_eq!(page.counts, InboxCounts::default());
+    assert!(page.items.is_empty());
+    assert!(page.next_cursor.is_none());
+    assert_eq!(page.as_of, before.as_of);
+}
+
+#[test]
+fn inbox_list_position_advances_after_offboarding_without_hints() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    use org_office::rules::OrgCommand;
+    use org_proto::org::MemberOffboardParams;
+
+    let root = tempfile::tempdir().unwrap();
+    let office = office(root.path(), "HQ");
     let mut snapshot = office.org_snapshot().unwrap();
     let agent_id = org_mailbox::testkit::fixture::ADA_ID;
     snapshot.members.push(member(agent_id, "agent", None));
     office.seed_organization_for_test(&snapshot.members, snapshot.position);
     let inbox = super::super::Hq::for_office(Arc::clone(&office)).unwrap();
-    let list = || {
-        inbox
-            .list(InboxListParams {
-                state: InboxState::Open,
-                kinds: None,
-                project: None,
-                team: None,
-                cursor: None,
-                limit: None,
-            })
-            .unwrap()
-    };
+    let list = || inbox.list(open_items()).unwrap();
 
     let before = list();
     assert_eq!(before.counts.problems, 1);

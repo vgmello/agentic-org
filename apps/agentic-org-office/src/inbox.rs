@@ -181,6 +181,10 @@ impl Clock {
             seq: self.seq.load(Ordering::Acquire),
         }
     }
+    fn observe_org_head(&self, seq: u64) {
+        self.seq.fetch_max(seq, Ordering::AcqRel);
+    }
+
     /// a2 calls this after a committed relevant change, independently of emission throttling.
     pub fn changed(&self) {
         self.seq
