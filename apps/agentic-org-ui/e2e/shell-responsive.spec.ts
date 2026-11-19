@@ -516,9 +516,7 @@ test(
 			.getByRole('navigation', { name: 'Main', exact: true })
 			.getByRole('link', { name: 'Chat', exact: true })
 			.click();
-		// Chat opens on its first place (a work-in-progress choice until plan step 8); the test needs only its title.
-		await expect(page).toHaveTitle(/ · Chat · Agentic Org$/);
-		const landing = await page.title();
+		await expect(page).toHaveTitle('Needs you · Chat · Agentic Org');
 		await page.evaluate(() => {
 			window.location.hash = 'shell-page-title';
 		});
@@ -526,11 +524,11 @@ test(
 		await page
 			.getByRole('navigation', { name: 'Chat', exact: true })
 			.getByTestId('conversation-link')
-			.filter({ hasText: 'release-v1' })
+			.filter({ hasText: 'general' })
 			.first()
 			.click();
 		const composer = page.getByTestId('composer');
-		await expect(page).toHaveURL(/c=c-release-v1/);
+		await expect(page).toHaveURL(/c=c-general/);
 		await composer.fill('Keep this unsent draft');
 		await page.setViewportSize({ width: 600, height: 900 });
 		const menu = page.getByRole('button', { name: 'Menu', exact: true });
@@ -539,14 +537,14 @@ test(
 		await expect(dialog).toBeVisible();
 		await page.evaluate(() => window.history.back());
 		await expect(dialog).not.toBeVisible();
-		await expect(page).toHaveURL(/c=c-release-v1/);
+		await expect(page).toHaveURL(/c=c-general/);
 		await expect(menu).toBeFocused();
 		await expect(composer).toHaveValue('Keep this unsent draft');
 		await shot(page, 'shell-menu-back-preserves-chat-draft');
 		await page.evaluate(() => window.history.back());
 		await expect(page).toHaveURL(/\/chat#shell-page-title$/);
-		await expect(page).toHaveTitle(landing);
-		await expect(composer).not.toHaveValue('Keep this unsent draft');
+		await expect(page).toHaveTitle('Needs you · Chat · Agentic Org');
+		await expect(composer).toHaveCount(0);
 	}
 );
 

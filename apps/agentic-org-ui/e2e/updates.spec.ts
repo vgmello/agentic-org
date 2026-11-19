@@ -89,7 +89,7 @@ test('UPD-1 to UPD-5: the instance, its update check, every office and how to up
 	await expect(page.getByText('On the HQ machine (This Mac), run:')).toBeVisible();
 	await expect(page.getByTestId('upgrade-effects')).toContainText('You stay signed in.');
 
-	await expect(offices(page)).toHaveCount(3);
+	await expect(offices(page)).toHaveCount(4);
 	await expect(offices(page).nth(0)).toContainText('HQ');
 	await expect(offices(page).nth(0)).toContainText('This Mac · Version 0.2.0');
 	await expect(offices(page).nth(1)).toContainText('Build box');
@@ -99,8 +99,11 @@ test('UPD-1 to UPD-5: the instance, its update check, every office and how to up
 	await expect(offices(page).nth(1).getByTestId('office-hint')).toHaveText(
 		'To update it, run agentic-org upgrade --name build on build-box.local.'
 	);
-	await expect(offices(page).nth(2)).toContainText('Studio Mac');
-	await expect(offices(page).nth(2)).toContainText('Same as HQ');
+	// Lab mini (the Offices mock's third satellite) is older but does not hold features back.
+	await expect(offices(page).nth(2)).toContainText('Lab mini');
+	await expect(offices(page).nth(2)).toContainText('Version 0.0.9');
+	await expect(offices(page).nth(3)).toContainText('Studio Mac');
+	await expect(offices(page).nth(3)).toContainText('Same as HQ');
 	const note = page.getByTestId('hold-back-note');
 	await expect(note).toHaveText(
 		'Build box runs an older version of Agentic Org, so new features wait until it updates.'
@@ -211,7 +214,7 @@ for (const width of [1440, 1024, 640, 390, 320]) {
 		await page.setViewportSize({ width, height: 900 });
 		await openOrganization(page);
 		await visit(page, '/settings/updates');
-		await expect(offices(page)).toHaveCount(3);
+		await expect(offices(page)).toHaveCount(4);
 		await noSidewaysScroll(page);
 		const pill = offices(page).nth(1).getByTestId('version-pill');
 		await expect(pill).toHaveText('Needs update');
@@ -229,7 +232,7 @@ test('UPD-7: at 320 px with 200% text nothing scrolls sideways', async ({ page }
 	await openOrganization(page);
 	await visit(page, '/settings/updates');
 	await page.evaluate(() => (document.documentElement.style.fontSize = '200%'));
-	await expect(offices(page)).toHaveCount(3);
+	await expect(offices(page)).toHaveCount(4);
 	await noSidewaysScroll(page);
 	// Wherever the pills wrap, they wrap between words: no word is split across lines.
 	for (const pill of await page.getByTestId('version-pill').all())

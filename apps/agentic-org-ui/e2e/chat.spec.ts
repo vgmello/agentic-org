@@ -522,7 +522,7 @@ for (const fail of [false, true]) {
 		await page.evaluate(
 			() => (window as unknown as { __heldChatRead: HeldChatRead }).__heldChatRead.started
 		);
-		await expect(page.getByRole('status')).toHaveText('Loading chat…');
+		await expect(page.getByRole('status').filter({ hasText: /\S/ })).toHaveText('Loading chat…');
 		await shot(page, 'chat-snapshot-loading', { settle: false });
 		await page.evaluate(() =>
 			(window as unknown as { __heldChatRead: HeldChatRead }).__heldChatRead.release()
