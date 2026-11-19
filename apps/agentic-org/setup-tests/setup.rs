@@ -257,7 +257,10 @@ fn installed(base: &std::path::Path) -> PathBuf {
             from.display()
         );
         // A copy, not a link: a program is known by its one path (the CLI accepts its
-        // own executable as the development host).
+        // own executable as the development host). Under the descriptor lock: a child
+        // forked by a parallel test meanwhile would hold the copy open for writing, and
+        // executing it would then fail ("text file busy").
+        let _held = descriptors();
         std::fs::copy(&from, bin.join(name)).unwrap();
     }
     for dir in [bin.clone(), bin.join("ui")] {
