@@ -16,9 +16,11 @@
 //!   right after `decide`, in the same transaction that logs the entry, and a satellite calls
 //!   it on a received entry, so the two cannot drift.
 //!
-//! State is read through [`OrgView`] and written through [`OrgWrite`], which `store.rs`
-//! implements over a transaction (so a later command in the same batch sees an earlier
-//! one's effects). Tests use an in-memory implementation.
+//! State is read through [`OrgView`] and written through [`OrgWrite`]. Nothing in the
+//! office implements them since B1b deleted the old store: the only implementation is the
+//! in-memory one these tests use (`rules/memory.rs`). The organization family on the office
+//! store (`crate::organization`) serves the commands that run today; B2 deletes or replaces
+//! these rules when it moves membership to one home team.
 //!
 //! Errors follow the one precedence rule in `org_proto::org` (`not_found`, `invalid_request`,
 //! `invalid_name`, `conflict`, `already_exists`), which also places the domain codes
