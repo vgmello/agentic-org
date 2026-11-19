@@ -64,6 +64,10 @@ fn named_port_base() -> u16 {
 
 struct Account {
     base: PathBuf,
+    /// This account's `agentic-org`, with the office and web programs beside it and a UI
+    /// folder for the web process (`installed`): setup is ready only once the instance's
+    /// browser service runs (X5 review, fourth round, P2-1).
+    bin: PathBuf,
     /// Set: the system's own service adapter with stand-in programs from this folder,
     /// instead of the detached-child adapter.
     programs: Option<PathBuf>,
@@ -88,6 +92,7 @@ impl Account {
                 .unwrap();
         }
         Self {
+            bin: installed(&base),
             base,
             programs: None,
             port_base: named_port_base(),
@@ -96,7 +101,7 @@ impl Account {
     }
 
     fn command(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(BIN);
+        let mut command = Command::new(&self.bin);
         command
             .args(args)
             .env_clear()
@@ -229,6 +234,36 @@ impl Drop for Account {
             unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
         }
     }
+}
+
+/// The built `agentic-org`, `agentic-org-office` and `agentic-org-web` in `<base>/bin`,
+/// with a UI folder beside them as an installation has one, so that the service's web
+/// process starts. Returns the `agentic-org` there.
+fn installed(base: &std::path::Path) -> PathBuf {
+    let built = std::path::Path::new(BIN).parent().unwrap();
+    let bin = base.join("bin");
+    std::fs::create_dir_all(bin.join("ui")).unwrap();
+    // The web process refuses an entry without its inline bootstrap, as for a real build.
+    std::fs::write(
+        bin.join("ui/index.html"),
+        "<html><body>setup test<script>/* bootstrap */</script></body></html>",
+    )
+    .unwrap();
+    for name in ["agentic-org", "agentic-org-office", "agentic-org-web"] {
+        let from = built.join(name);
+        assert!(
+            from.is_file(),
+            "{} is not built: build agentic-org-office and agentic-org-web first",
+            from.display()
+        );
+        // A copy, not a link: a program is known by its one path (the CLI accepts its
+        // own executable as the development host).
+        std::fs::copy(&from, bin.join(name)).unwrap();
+    }
+    for dir in [bin.clone(), bin.join("ui")] {
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    bin.join("agentic-org")
 }
 
 fn text(output: &Output) -> (String, String) {
@@ -470,6 +505,44 @@ fn an_occupied_port_is_refused_and_nothing_is_saved() {
     assert!(err.contains("is in use") && err.contains("--port"), "{err}");
     assert!(!account.base.join("app/setup/lab/setup.v1.json").exists());
     assert!(account.service_pids().is_empty());
+}
+
+/// X5 review V-a and P3-1: a development build's service is given its key folder by its
+/// absolute path; a relative one, which would name another folder where the service runs,
+/// or none at all where its host keeps its keys there, is refused before anything is saved.
+/// A missing folder is made, private, before the service is registered.
+#[test]
+fn the_development_key_folder_is_absolute_and_made_before_the_service_starts() {
+    let account = Account::new();
+    let port = free_port().to_string();
+    let mut relative = account.command(&["setup", "--port", &port]);
+    relative.env("ORG_OFFICE_DEV_KEY_DIR", "keys");
+    let refused = output(&mut relative);
+    let (out, err) = text(&refused);
+    assert!(!refused.status.success(), "{out}");
+    assert!(
+        err.contains("ORG_OFFICE_DEV_KEY_DIR (keys) is not an absolute path")
+            && err.contains("nothing was changed"),
+        "{err}"
+    );
+    assert!(!account
+        .base
+        .join("app/setup/default/setup.v1.json")
+        .exists());
+    assert!(account.service_pids().is_empty());
+    // A folder that does not exist yet is made before the service is registered, which
+    // then starts with it.
+    let fresh = account.base.join("fresh-keys");
+    let mut absent = account.command(&["setup", "--port", &port]);
+    absent.env("ORG_OFFICE_DEV_KEY_DIR", &fresh);
+    let made = output(&mut absent);
+    let (out, err) = text(&made);
+    assert!(made.status.success(), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.contains("Service running."), "{out}");
+    assert_eq!(
+        std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o7777,
+        0o700
+    );
 }
 
 #[test]

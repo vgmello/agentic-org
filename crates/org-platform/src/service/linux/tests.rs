@@ -256,6 +256,21 @@ impl Commands for Fake {
         let unit = call.last().cloned().unwrap_or_default();
         match call[2].as_str() {
             "show" if call[3] == "--property=Version" => done(0, "Version=255\n".into(), ""),
+            // The manager's unit path: the directory it reads, among others it would read.
+            "show" if call[3] == "--property=UnitPath" => {
+                let read = s
+                    .search
+                    .clone()
+                    .unwrap_or_else(|| "/elsewhere/systemd/user".into());
+                done(
+                    0,
+                    format!(
+                        "UnitPath=/run/user/1000/systemd/user.control {} /etc/systemd/user\n",
+                        read.display()
+                    ),
+                    "",
+                )
+            }
             "show" => {
                 assert_eq!(call[4], PROPERTIES);
                 let name = call[3].clone();
@@ -640,6 +655,12 @@ fn registering_twice_writes_and_enables_once_and_never_restarts_a_healthy_servic
             vec![
                 "systemctl".to_string(),
                 "--user".into(),
+                "show".into(),
+                "--property=UnitPath".into(),
+            ],
+            vec![
+                "systemctl".to_string(),
+                "--user".into(),
                 "daemon-reload".into()
             ],
             show.clone(),
@@ -849,9 +870,10 @@ fn publishing_never_replaces_a_definition_that_appeared_meanwhile() {
     let temp = tempfile::tempdir().unwrap();
     let (systemd, _fake) = systemd(temp.path());
     let file = temp.path().join(format!("systemd/user/{NAME}"));
-    systemd.write_definition(&file, b"first").unwrap();
+    let directory = systemd.directory(true).unwrap().unwrap();
+    directory.publish(NAME, b"first", false).unwrap();
     assert!(matches!(
-        systemd.write_definition(&file, b"second"),
+        directory.publish(NAME, b"second", false),
         Err(ServiceError::Conflict(_))
     ));
     assert_eq!(fs::read(&file).unwrap(), b"first");
@@ -930,7 +952,10 @@ fn unregister_disables_stops_and_removes_the_definition_and_is_repeatable() {
     let (unread, fake) = self::systemd(&temp.path().join("unread"));
     let file = temp.path().join(format!("unread/systemd/user/{NAME}"));
     unread
-        .write_definition(&file, &render(NAME, &unit()))
+        .directory(true)
+        .unwrap()
+        .unwrap()
+        .publish(NAME, &render(NAME, &unit()), false)
         .unwrap();
     fake.set(|s| s.search = None);
     unread.unregister(ID).unwrap();
@@ -1250,6 +1275,7 @@ fn a_definition_whose_load_fails_is_not_left_behind() {
     assert_eq!(
         fake.verbs(),
         [
+            "show",
             "show",
             "daemon-reload",
             "show",
@@ -1653,4 +1679,120 @@ fn a_failed_enable_of_a_running_unit_takes_back_the_link_and_leaves_it_running()
     let state = fake.0.lock().unwrap();
     assert!(!state.enabled, "the link this call made was left");
     assert_eq!(state.pid, Some(42), "a running unit was stopped");
+}
+
+/// X5 review (fourth round, P2-4): a user manager that reads its units from another
+/// directory (its `XDG_CONFIG_HOME` names another folder) is refused before anything is
+/// written, by `available` (which setup asks before it reserves anything) and by `register`.
+#[test]
+fn a_manager_that_does_not_read_the_placement_is_refused_before_anything_is_written() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    fake.set(|s| s.search = Some("/home/a/elsewhere/systemd/user".into()));
+    for call in [systemd.available(), systemd.register(&unit()).map(drop)] {
+        let error = call.unwrap_err();
+        assert!(
+            matches!(&error, ServiceError::System(why) if why.contains("does not read unit files from")
+                && why.contains("/home/a/elsewhere/systemd/user")),
+            "{error}"
+        );
+    }
+    assert!(
+        !temp.path().join("systemd").exists(),
+        "something was written"
+    );
+    for verb in ["daemon-reload", "enable"] {
+        assert!(!fake.verbs().contains(&verb.to_string()), "{verb} ran");
+    }
+    // The directory it reads, named through a link, is the placement's.
+    let linked = temp.path().join("linked");
+    fs::create_dir_all(temp.path().join("systemd/user")).unwrap();
+    std::os::unix::fs::symlink(temp.path().join("systemd"), &linked).unwrap();
+    fake.set(|s| s.search = Some(linked.join("user")));
+    assert!(systemd.available().is_ok());
+}
+
+/// X5 review V-b: a definition that is exactly an earlier rendering of a unit for the same
+/// instance (another program or environment, as when setup runs again with what the service
+/// lacked) is replaced: what systemd runs from it is disabled and stopped first, the new
+/// rendering is published and loaded. A file that is no rendering is still never taken over.
+#[test]
+fn an_earlier_rendering_for_the_same_instance_is_replaced() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    systemd.register(&unit()).unwrap();
+    let file = temp.path().join(format!("systemd/user/{NAME}"));
+    let fixed = Unit {
+        env: vec![
+            ("HOME".into(), "/home/a".into()),
+            ("ORG_OFFICE_DEV_KEY_DIR".into(), "/home/a/keys".into()),
+        ],
+        ..unit()
+    };
+    fake.clear();
+    assert_eq!(systemd.register(&fixed).unwrap(), Registration::Loaded);
+    assert_eq!(fs::read(&file).unwrap(), render(NAME, &fixed));
+    assert_eq!(
+        fake.verbs(),
+        ["show", "show", "disable", "daemon-reload", "show", "enable"]
+    );
+    assert!(fake.calls().contains(
+        &["systemctl", "--user", "disable", "--now", NAME]
+            .map(String::from)
+            .to_vec()
+    ));
+    assert_eq!(
+        systemd.status(ID).unwrap(),
+        ServiceStatus::Running { pid: 42 }
+    );
+    let leftovers: Vec<_> = fs::read_dir(temp.path().join("systemd/user"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(
+        leftovers.len(),
+        1,
+        "a temporary file remains: {leftovers:?}"
+    );
+    // The same rendering again is left alone.
+    assert_eq!(systemd.register(&fixed).unwrap(), Registration::Unchanged);
+    // A file that is not a rendering (edited by hand) is not replaced.
+    let edited = String::from_utf8(render(NAME, &fixed))
+        .unwrap()
+        .replace("Restart=on-failure", "Restart=always");
+    fs::write(&file, &edited).unwrap();
+    fake.set(|s| s.read = Some(edited.clone().into_bytes()));
+    fake.clear();
+    assert!(matches!(
+        systemd.register(&unit()),
+        Err(ServiceError::Conflict(_))
+    ));
+    assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+    assert!(!fake.verbs().contains(&"disable".to_string()));
+}
+
+/// X5 review (fourth round, P2-5): the definitions are written only in a directory of this
+/// user that other users cannot write to, relative to that directory, and the mode is set
+/// on the open file.
+#[test]
+fn a_unit_directory_other_users_can_write_to_holds_no_definition() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    let directory = temp.path().join("systemd/user");
+    fs::create_dir_all(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o777)).unwrap();
+    let error = systemd.register(&unit()).unwrap_err();
+    assert!(
+        matches!(&error, ServiceError::Conflict(why) if why.contains("writable by other users")),
+        "{error}"
+    );
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), 0);
+    assert!(!fake.verbs().contains(&"enable".to_string()));
+    // A directory setup makes is private, whatever the process's mask.
+    fs::remove_dir(&directory).unwrap();
+    systemd.register(&unit()).unwrap();
+    assert_eq!(
+        fs::metadata(&directory).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
 }

@@ -3,8 +3,10 @@
 //! `admin.link.initial` gives setup the one registration link, bound to the frozen setup
 //! operation; a replay answers `already_issued` with no secret. `admin.reset` asks for local
 //! presence and confirmation at the host, then issues a registration link that cancels the
-//! previous one. Setting a new administrator password is A3's branch and answers
-//! `unavailable` here. Both calls require the signing check `recovery` uses; hello, the
+//! previous one. An instance that has an administrator answers `administrator_present` and
+//! issues nothing: a registration link is for an instance without one, and setting a new
+//! administrator password (A3's branch) is not offered here (X5 review, fourth round,
+//! P2-10). Both calls require the signing check `recovery` uses; hello, the
 //! registered instance and the host's effective UID are enforced before dispatch.
 //!
 //! On a system that names a peer by its user alone (GNU/Linux, ADR-0017 decision 11) there
@@ -258,7 +260,7 @@ impl Admin {
             })?;
         let _resetting = Resetting(&self.resetting);
         if self.db.administrator_exists().map_err(unavailable)? {
-            return Err(set_password_unavailable());
+            return Ok(AdminLinkResult::AdministratorPresent);
         }
         confirm().map_err(|()| denied())?;
         // Re-checked after the dialog, in the transaction that issues the link: an
@@ -269,7 +271,7 @@ impl Admin {
             .map_err(unavailable)?
         {
             Some(issued) => self.issued(issued),
-            None => Err(set_password_unavailable()),
+            None => Ok(AdminLinkResult::AdministratorPresent),
         }
     }
 
@@ -292,13 +294,6 @@ impl Admin {
 
 fn subject() -> Result<Subject, ApiError> {
     Subject::new(SUBJECT).map_err(unavailable)
-}
-
-fn set_password_unavailable() -> ApiError {
-    ApiError::new(
-        ErrorCode::Unavailable,
-        "an administrator exists; setting a new administrator password is not available yet",
-    )
 }
 
 #[cfg(test)]

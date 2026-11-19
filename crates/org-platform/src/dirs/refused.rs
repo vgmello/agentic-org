@@ -22,6 +22,12 @@ pub(super) fn location_variables() -> Result<&'static [&'static str], Refused> {
     Err(refusal())
 }
 
+pub(super) fn location_overrides(
+    _home: &Path,
+) -> Result<Vec<(&'static str, std::ffi::OsString)>, Refused> {
+    Err(refusal())
+}
+
 pub(super) fn user_temp_base(_home: &Path) -> Result<PathBuf, UserTempError> {
     Err(UserTempError::Unsupported(refusal()))
 }

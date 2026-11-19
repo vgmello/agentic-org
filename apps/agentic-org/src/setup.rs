@@ -20,7 +20,7 @@ use std::io::{BufRead, IsTerminal, Write};
 
 use org_host::setup_flow::{self, Platform, Request};
 
-pub(crate) const HELP: &str = "Set up this Mac's instance and register its service:\n  \
+pub(crate) const HELP: &str = "Set up this computer's instance and register its service:\n  \
 agentic-org setup [--name <instance>] [--port <port>]\nWithout --name the instance is \
 \"default\" on port 7420; a named instance takes the first free port from 7421.\n\
 Without a terminal, from a file (service mode, data folder, credential directory, \
@@ -97,8 +97,9 @@ fn run_as(
         prompt: if interactive { Some(&mut ask) } else { None },
         named_port_base: named_port_base()?,
         program,
-        env: service_environment(),
+        env: service_environment()?,
         terminal,
+        development_keys: development_keys()?,
         configuration: None,
     };
     let mut out = std::io::stdout().lock();
@@ -153,8 +154,9 @@ fn apply(
         prompt: None,
         named_port_base: named_port_base()?,
         program: own_program()?,
-        env: service_environment(),
+        env: service_environment()?,
         terminal: false,
+        development_keys: development_keys()?,
         configuration: Some(configuration),
     };
     let mut out = std::io::stdout().lock();
@@ -201,21 +203,43 @@ fn ask_port(address: &str) -> Result<Option<u16>, String> {
 /// The service's explicit environment: the home, and the variables that decided this
 /// instance's locations when setup ran, so that the service resolves the same paths
 /// (`setup_flow::path_environment`). Development builds pass on their development settings
-/// so the service finds the same instance and development key folder.
-fn service_environment() -> Vec<(OsString, OsString)> {
+/// so the service finds the same instance and development key folder, which must be an
+/// absolute path ([`development_keys`]).
+fn service_environment() -> Result<Vec<(OsString, OsString)>, String> {
     let mut env = Vec::new();
     if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
         env.push(("HOME".into(), home));
     }
     env.extend(setup_flow::path_environment());
     if cfg!(debug_assertions) {
-        for key in ["ORG_DEV_ACCOUNT_BASE", "ORG_OFFICE_DEV_KEY_DIR"] {
-            if let Some(value) = std::env::var_os(key).filter(|v| !v.is_empty()) {
-                env.push((key.into(), value));
-            }
+        if let Some(value) = std::env::var_os("ORG_DEV_ACCOUNT_BASE").filter(|v| !v.is_empty()) {
+            env.push(("ORG_DEV_ACCOUNT_BASE".into(), value));
+        }
+        if let Some(folder) = development_keys()? {
+            env.push(("ORG_OFFICE_DEV_KEY_DIR".into(), folder.into()));
         }
     }
-    env
+    Ok(env)
+}
+
+/// A development build's key folder, `ORG_OFFICE_DEV_KEY_DIR`, which the service is given:
+/// an absolute path, or refused before anything is changed (X5 review P3-1): the service
+/// does not run in the folder setup ran in, so a relative one would name another folder
+/// there. A release build has none.
+fn development_keys() -> Result<Option<std::path::PathBuf>, String> {
+    if !cfg!(debug_assertions) {
+        return Ok(None);
+    }
+    match std::env::var_os("ORG_OFFICE_DEV_KEY_DIR").filter(|v| !v.is_empty()) {
+        None => Ok(None),
+        Some(folder) if std::path::Path::new(&folder).is_absolute() => Ok(Some(folder.into())),
+        Some(folder) => Err(format!(
+            "ORG_OFFICE_DEV_KEY_DIR ({}) is not an absolute path: the service does not run in \
+             this folder; name the development key folder by its absolute path; nothing was \
+             changed",
+            std::path::Path::new(&folder).display()
+        )),
+    }
 }
 
 /// The platform adapters setup and the service commands compose. `foreground`: the
@@ -310,6 +334,15 @@ mod tests {
     /// before its options are even parsed, so no instance is reserved, no custody is made
     /// and no service is registered. Help and the satellite refusal read nothing and are
     /// answered to anyone.
+    /// X5 review V-d: the help says what setup does on every system it runs on.
+    #[test]
+    fn the_help_names_no_one_system() {
+        for help in [HELP, crate::HELP] {
+            assert!(!help.contains("Mac"), "{help}");
+        }
+        assert!(HELP.starts_with("Set up this computer's instance"));
+    }
+
     #[test]
     fn a_user_who_may_not_run_the_service_is_refused_before_setup_reads_anything() {
         let refusal = || Err("the service does not run as this user".to_owned());

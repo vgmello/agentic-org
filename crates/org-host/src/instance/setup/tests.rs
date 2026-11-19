@@ -365,7 +365,7 @@ fn a_configuration_file_is_the_strict_input_and_names_its_shape_when_it_is_wrong
       "version": 1, "service": "foreground", "root": "/data/instance",
       "credentials": "/secrets",
       "listen": {"address": "0.0.0.0", "port": 8443, "scheme": "http_published",
-                 "origin": "http://localhost:8443", "hsts": "off"}
+                 "origin": "http://127.0.0.1:8443", "hsts": "off"}
     }"#;
     let input = Input::from_configuration(text.as_bytes()).unwrap();
     assert_eq!(input.service, Service::Foreground);
@@ -406,7 +406,7 @@ fn a_configuration_file_is_the_strict_input_and_names_its_shape_when_it_is_wrong
         }),
         ("plain HTTP off loopback", &|v| {
             v["listen"]["scheme"] = "http_loopback".into();
-            v["listen"]["origin"] = "http://localhost:8443".into();
+            v["listen"]["origin"] = "http://127.0.0.1:8443".into();
         }),
         ("an unknown certificate property", &|v| {
             v["certificate"] = serde_json::json!({"chain": "/c", "key": "/k", "pass": "x"});
@@ -478,7 +478,7 @@ fn an_input_names_a_credential_directory_only_where_the_system_keeps_one() {
 #[test]
 fn http_published_is_only_for_the_foreground_mode_and_is_never_implied() {
     let published: ListenConfig = serde_json::from_str(
-        r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://localhost:8443","hsts":"off"}"#,
+        r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://127.0.0.1:8443","hsts":"off"}"#,
     )
     .unwrap();
     let mut foreground = input(PathBuf::from("/data/instance"));
@@ -503,13 +503,6 @@ fn http_published_is_only_for_the_foreground_mode_and_is_never_implied() {
         "foreground",
         "http_published",
         "0.0.0.0",
-        "http://localhost:8443"
-    )
-    .is_ok());
-    assert!(read(
-        "foreground",
-        "http_published",
-        "0.0.0.0",
         "http://127.0.0.1:8443"
     )
     .is_ok());
@@ -517,7 +510,7 @@ fn http_published_is_only_for_the_foreground_mode_and_is_never_implied() {
         "registered",
         "http_published",
         "0.0.0.0",
-        "http://localhost:8443",
+        "http://127.0.0.1:8443",
     )
     .unwrap_err()
     .to_string();

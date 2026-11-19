@@ -573,6 +573,17 @@ impl Registry {
         self.finish(locator, index, root, &registry_lock, previous.as_ref())
     }
 
+    /// Whether the locator binds a reservation to `name`, read under the locator's lock:
+    /// the durable evidence a failed setup reports, whatever that setup got to before it
+    /// failed (X5 review, fourth round, P2-7).
+    pub(crate) fn reserved(&self, name: Option<&str>) -> Result<bool, Error> {
+        let name = Name::parse(name)?;
+        let lock = self.directory.lock_file(LOCK)?;
+        let (locator, _) = self.load()?;
+        self.directory.verify_file(LOCK, &lock)?;
+        Ok(locator.entries.iter().any(|e| e.binding.name == name))
+    }
+
     /// Read-only routing to an already reserved instance while its writer owns
     /// the root lock. This does not create/repair/promote a root or grant access.
     pub(crate) fn locate(

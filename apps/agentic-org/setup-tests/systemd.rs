@@ -91,7 +91,8 @@ fn setup_registers_a_systemd_user_unit_starts_it_once_and_reports_lingering() {
     let unit = std::fs::read_to_string(&file).unwrap();
     assert!(
         unit.contains(&format!(
-            "ExecStart=\"{BIN}\" \"serve\" \"--name\" \"default\"\n"
+            "ExecStart=\"{}\" \"serve\" \"--name\" \"default\"\n",
+            account.bin.display()
         )),
         "{unit}"
     );
@@ -123,20 +124,32 @@ fn setup_registers_a_systemd_user_unit_starts_it_once_and_reports_lingering() {
         .unwrap_or_default();
     assert!(!log.contains(&token), "{log}");
 
-    // What was asked of systemd, in order: whether it answers, the unit's state, a reload,
-    // the state again, enable and start; then only questions. Nothing ran `enable-linger`.
+    // What was asked of systemd, in order: whether it answers and reads the unit
+    // directory, the unit's state, the unit directory again before the file is written, a
+    // reload, the state again, enable and start; then only questions. Nothing ran
+    // `enable-linger`.
     let first = calls(&account);
     let verbs: Vec<&str> = first
         .iter()
         .map(|call| call.split(' ').nth(2).unwrap_or(""))
         .collect();
     assert_eq!(
-        verbs[..5],
-        ["show", "show", "daemon-reload", "show", "enable"],
+        verbs[..7],
+        [
+            "show",
+            "show",
+            "show",
+            "show",
+            "daemon-reload",
+            "show",
+            "enable"
+        ],
         "{first:#?}"
     );
     assert_eq!(first[0], "systemctl --user show --property=Version");
-    assert_eq!(first[4], format!("systemctl --user enable --now {name}"));
+    assert_eq!(first[1], "systemctl --user show --property=UnitPath");
+    assert_eq!(first[3], "systemctl --user show --property=UnitPath");
+    assert_eq!(first[6], format!("systemctl --user enable --now {name}"));
     assert!(
         first.iter().all(|call| !call.contains("enable-linger")),
         "{first:#?}"

@@ -65,14 +65,46 @@ fn ports_other_instances_saved_are_never_chosen() {
 }
 
 #[test]
-fn a_held_saved_port_names_the_port_and_the_way_out() {
-    let why = port_held_elsewhere(7425, Some("lab"));
+fn a_held_saved_port_names_the_address_and_the_way_out() {
+    let why = port_held_elsewhere(&loopback(7425).unwrap(), Some("lab"));
     assert!(
-        why.contains("port 7425") && why.contains("another program"),
+        why.contains("port 7425 on 127.0.0.1") && why.contains("another program"),
         "{why}"
     );
     assert!(why.ends_with("run agentic-org setup --name lab"), "{why}");
-    assert!(port_held_elsewhere(7420, None).ends_with("run agentic-org setup"));
+    assert!(port_held_elsewhere(&loopback(7420).unwrap(), None).ends_with("run agentic-org setup"));
+    // X5 review, fourth round, P2-2: the instance's own address, in its own family.
+    let six: ListenConfig = serde_json::from_str(
+        r#"{"address":"::1","port":7426,"scheme":"http_loopback","origin":"http://[::1]:7426","hsts":"off"}"#,
+    )
+    .unwrap();
+    assert!(port_held_elsewhere(&six, None).contains("port 7426 on ::1"));
+}
+
+/// X5 review, fourth round, P2-2: whether a saved address is free is asked of that address,
+/// in its own family: an IPv4 listener on the same port does not hold an IPv6 address.
+#[test]
+fn a_saved_address_is_probed_in_its_own_family() {
+    let Ok(six) = std::net::TcpListener::bind(("::1", 0)) else {
+        println!("skipped: this machine has no IPv6 loopback");
+        return;
+    };
+    let port = six.local_addr().unwrap().port();
+    drop(six);
+    let Ok(four) = std::net::TcpListener::bind(("127.0.0.1", port)) else {
+        println!("skipped: the port was taken meanwhile");
+        return;
+    };
+    let listen: ListenConfig = serde_json::from_str(&format!(
+        r#"{{"address":"::1","port":{port},"scheme":"http_loopback","origin":"http://[::1]:{port}","hsts":"off"}}"#
+    ))
+    .unwrap();
+    assert!(!port_free(port), "the IPv4 address is held");
+    assert!(
+        address_free(&listen),
+        "the IPv6 address was judged by the IPv4 one"
+    );
+    drop(four);
 }
 
 #[test]
@@ -91,11 +123,11 @@ fn the_protection_report_states_encryption_modes_and_isolation() {
         name: "FileVault",
         setting: "FileVault in System Settings › Privacy & Security",
     };
-    let on = protection_report(&EncryptionState::On, mac, "alex", &[]);
+    let on = protection_report(&EncryptionState::On, mac, "alex", &[], &[]);
     assert_eq!(on[0], "Disk encryption (FileVault): on.");
     assert!(on[1].contains("readable only by alex (folders 700, files 600)"));
     assert!(on[2].contains("same-user mode"));
-    let off = protection_report(&EncryptionState::Off, mac, "alex", &[]);
+    let off = protection_report(&EncryptionState::Off, mac, "alex", &[], &[]);
     assert_eq!(
         off[0],
         "Disk encryption is off. Agentic Org does not encrypt its data; turn on FileVault in \
@@ -106,22 +138,29 @@ fn the_protection_report_states_encryption_modes_and_isolation() {
         mac,
         "alex",
         &[],
+        &[],
     );
     assert_eq!(
         unknown[0],
         "Disk encryption could not be determined (no volume). Agentic Org does not encrypt \
          its data; check FileVault in System Settings › Privacy & Security."
     );
-    let open = protection_report(&EncryptionState::On, mac, "alex", &[("/r/x".into(), 0o644)]);
+    let open = protection_report(
+        &EncryptionState::On,
+        mac,
+        "alex",
+        &[("/r/x".into(), 0o644)],
+        &[],
+    );
     assert!(
         open[1].contains("1 path(s)") && open[2] == "  644 /r/x",
         "{open:?}"
     );
     // This system's own words fit the same sentences.
     let here = org_platform::disk::wording();
-    let on = protection_report(&EncryptionState::On, here, "alex", &[]);
+    let on = protection_report(&EncryptionState::On, here, "alex", &[], &[]);
     assert_eq!(on[0], format!("Disk encryption ({}): on.", here.name));
-    let off = protection_report(&EncryptionState::Off, here, "alex", &[]);
+    let off = protection_report(&EncryptionState::Off, here, "alex", &[], &[]);
     assert!(
         off[0].ends_with(&format!("turn on {}.", here.setting)),
         "{off:?}"
@@ -177,12 +216,41 @@ fn modes_are_read_back_from_disk() {
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::write(root.join("a"), b"x").unwrap();
     std::fs::set_permissions(root.join("a"), std::fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(mode_exceptions(&root).unwrap().is_empty());
+    assert_eq!(mode_exceptions(&root).unwrap(), (vec![], vec![]));
     std::fs::set_permissions(root.join("a"), std::fs::Permissions::from_mode(0o644)).unwrap();
     assert_eq!(
         mode_exceptions(&root).unwrap(),
-        vec![(root.join("a"), 0o644)]
+        (vec![(root.join("a"), 0o644)], vec![])
     );
+    // X5 review F5: a folder inside that cannot be read is reported, never a refusal.
+    let closed = root.join("closed");
+    std::fs::create_dir(&closed).unwrap();
+    std::fs::write(closed.join("b"), b"x").unwrap();
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let found = mode_exceptions(&root);
+    std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let (exceptions, unreadable) = found.unwrap();
+    assert_eq!(
+        exceptions,
+        vec![(root.join("a"), 0o644), (closed.clone(), 0o000)]
+    );
+    assert_eq!(unreadable, vec![closed.clone()]);
+    let report = protection_report(
+        &EncryptionState::On,
+        org_platform::disk::wording(),
+        "alex",
+        &exceptions,
+        &unreadable,
+    );
+    assert!(
+        report
+            .iter()
+            .any(|line| line.contains("1 path(s) in the instance folder could not be read"))
+            && report.contains(&format!("  {}", closed.display())),
+        "{report:?}"
+    );
+    // The root itself must be readable.
+    assert!(mode_exceptions(&root.join("missing")).is_err());
 }
 
 #[test]
@@ -335,6 +403,7 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
             env: Vec::new(),
             // Even at a terminal: the configuration decides, and no link is printed.
             terminal: true,
+            development_keys: None,
             configuration: Some(Configuration(input.clone())),
         };
         assert!(request.configuration.as_ref().unwrap().foreground());
@@ -388,10 +457,20 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
         "the layout is made"
     );
     // A second run is a no-op that says the same, and holds no address: the instance's
-    // host binds it.
+    // host binds it. It does not walk the instance's data again for its modes (X5 review
+    // F5): that is the first run's report.
+    assert!(out.contains("File permissions: "), "{out}");
     let (result, again) = run(&input);
     assert!(result.unwrap().is_none());
-    assert_eq!(again, out);
+    let reported: Vec<&str> = out
+        .lines()
+        .filter(|line| {
+            !(line.starts_with("Disk encryption")
+                || line.starts_with("File permissions")
+                || line.starts_with("Agents run as"))
+        })
+        .collect();
+    assert_eq!(again.lines().collect::<Vec<_>>(), reported);
     assert_eq!(Journal::snapshot(&base, None).unwrap(), record);
     // Another configuration for the same instance is refused, whatever differs.
     let mut other = input.clone();
@@ -407,6 +486,7 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
             program: PathBuf::from("/no-such-program"),
             env: Vec::new(),
             terminal: false,
+            development_keys: None,
             configuration: Some(Configuration(changed)),
         };
         let mut out = Vec::new();
@@ -422,7 +502,7 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
 #[test]
 fn a_published_plain_http_listener_is_announced_with_where_it_is_safe() {
     let listen: ListenConfig = serde_json::from_str(
-        r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://localhost:8443","hsts":"off"}"#,
+        r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://127.0.0.1:8443","hsts":"off"}"#,
     )
     .unwrap();
     assert_eq!(
@@ -430,7 +510,7 @@ fn a_published_plain_http_listener_is_announced_with_where_it_is_safe() {
         "serving plain HTTP on a published port (0.0.0.0:8443): publish it on the Docker \
          host's 127.0.0.1 only (docker run -p 127.0.0.1:8443:8443); published on another \
          interface, sign-in and every session travel unencrypted on that network. Open \
-         http://localhost:8443. HTTPS is not available yet."
+         http://127.0.0.1:8443. HTTPS is not available yet."
     );
 }
 
@@ -487,6 +567,9 @@ fn a_refused_setup_from_a_file_leaves_nothing_and_a_corrected_file_then_works() 
             program: PathBuf::from("/no-such-program"),
             env: Vec::new(),
             terminal: false,
+            // Apart from what the test lists: a registered service of a development build
+            // that records no credential directory needs it.
+            development_keys: Some(temp.path().canonicalize().unwrap().join("k")),
             configuration: Some(Configuration(input.clone())),
         };
         let mut out = Vec::new();
@@ -516,7 +599,7 @@ fn a_refused_setup_from_a_file_leaves_nothing_and_a_corrected_file_then_works() 
     let published = |port: u16| -> ListenConfig {
         serde_json::from_value(serde_json::json!({
             "address": "0.0.0.0", "port": port, "scheme": "http_published",
-            "origin": format!("http://localhost:{port}"), "hsts": "off"
+            "origin": format!("http://127.0.0.1:{port}"), "hsts": "off"
         }))
         .unwrap()
     };
@@ -787,9 +870,13 @@ fn a_fifo_is_refused_as_a_configuration_and_as_a_data_folder_without_waiting() {
         credentials: Some(secrets),
         listen: loopback(free_port()).unwrap(),
     };
+    let dir_for_records = dir.clone();
     let refused = within(
         "the data folder check",
-        Box::new(move || preflight(&input).unwrap_err()),
+        Box::new(move || {
+            let records = std::fs::File::open(dir_for_records).unwrap();
+            preflight(&input, records.as_fd()).unwrap_err()
+        }),
     );
     assert!(
         refused.starts_with(&format!("the data folder {}: ", root.display()))
@@ -812,38 +899,18 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// X5 review V7: the unit is given exactly the variables that decided the instance's
-/// paths, when they are set to an absolute path. The names are the platform's: nothing here
-/// knows which system's variables they are (second round).
+/// X5 review V7 and F8: the unit is given exactly the variables that move the instance's
+/// paths away from their defaults (the platform's rule, `dirs::location_overrides`, tested
+/// there): nothing here knows which system's variables they are.
 #[test]
-fn a_registered_service_is_given_the_variables_that_decided_its_paths() {
-    let set = |name: &str| match name {
-        "DATA" => Some(OsString::from("/srv/data")),
-        "CACHE" => Some(OsString::from("relative/cache")),
-        "STATE" => Some(OsString::from("/srv/state")),
-        _ => Some(OsString::from("/never")),
-    };
-    assert_eq!(
-        path_environment_from(&["DATA", "CACHE", "STATE"], set),
-        [
-            ("DATA".into(), "/srv/data".into()),
-            ("STATE".into(), "/srv/state".into()),
-        ]
-    );
-    // Unset, empty and relative values are not carried, nor any name the platform omits.
-    let unset = |name: &str| match name {
-        "CACHE" => Some(OsString::from("/srv/cache")),
-        "STATE" => Some(OsString::new()),
-        _ => None,
-    };
-    assert_eq!(
-        path_environment_from(&["DATA", "CACHE", "STATE"], unset),
-        [("CACHE".into(), "/srv/cache".into())]
-    );
-    assert!(path_environment_from(&["DATA"], unset).is_empty());
-    // A system on which no variable moves a location carries none.
-    assert!(path_environment_from(&[], set).is_empty());
-    // This system's own answer names only the platform's variables that are set and absolute.
+fn a_registered_service_is_given_the_variables_that_moved_its_paths() {
+    let home = crate::home::account_dir().unwrap();
+    let overrides: Vec<(OsString, OsString)> = org_platform::dirs::location_overrides(&home)
+        .unwrap()
+        .into_iter()
+        .map(|(name, value)| (name.into(), value))
+        .collect();
+    assert_eq!(path_environment(), overrides);
     let names = org_platform::dirs::location_variables().unwrap();
     for (name, value) in path_environment() {
         assert!(names.contains(&name.to_str().unwrap()), "{name:?}");
@@ -956,13 +1023,73 @@ mod credentials {
         protected_store() == Ok(ProtectedStore::ReleaseDirectory)
     }
 
+    /// X5 review V-a: a development build records the system's credential directory as a
+    /// release build does (these tests are a development build), so that its registered
+    /// service keeps its secrets there and needs no development key folder; where the
+    /// system keeps them in the Keychain, none.
     #[test]
-    fn a_development_build_records_no_credential_directory() {
-        // These tests are a development build: its secrets are in its key folder.
+    fn every_build_records_the_systems_credential_directory() {
+        let home = Path::new("/home/someone");
+        let found = CredentialDirectory::for_host(home);
+        if release_directory_system() {
+            assert_eq!(
+                found,
+                Ok(CredentialDirectory::Below(
+                    org_platform::dirs::credential_directory_base(home).unwrap()
+                ))
+            );
+        } else {
+            assert_eq!(found, Ok(CredentialDirectory::Unused));
+        }
+    }
+
+    /// X5 review, fourth round, P2-6: the check preflight asks before anything is reserved
+    /// leaves nothing it made, when it passes as when it refuses: the directories of the
+    /// store, and the store's lock file in a store directory that existed without one.
+    #[test]
+    fn a_question_asked_before_the_reservation_leaves_nothing_it_made() {
+        if !release_directory_system() {
+            println!("skipped: this system keeps no secrets in a directory");
+            return;
+        }
+        let account = account();
+        let data = account.base.join("data");
+        fs::create_dir(&data).unwrap();
+        fs::set_permissions(&data, fs::Permissions::from_mode(0o700)).unwrap();
+        let data_root = fs::File::open(&data).unwrap();
+        let data_fd = || std::os::fd::AsFd::as_fd(&data_root);
+        let enter = |location: org_platform_host::credentials::ReleaseDirectory<'_>| {
+            release_directory_below(&account.base, location)
+        };
+        let credentials = account.base.join("state/agentic-org/credentials/x");
+        let before = tree(&account.base);
         assert_eq!(
-            CredentialDirectory::for_host(Path::new("/home/someone")),
-            Ok(CredentialDirectory::Unused)
+            credential_directory(&credentials, false, data_fd(), &account.base, false, enter),
+            Ok(credentials.clone())
         );
+        assert_eq!(tree(&account.base), before, "the probe left what it made");
+        // A store directory that exists keeps no lock file the probe made.
+        fs::create_dir_all(&credentials).unwrap();
+        for dir in [
+            "state",
+            "state/agentic-org",
+            "state/agentic-org/credentials",
+            "state/agentic-org/credentials/x",
+        ] {
+            fs::set_permissions(account.base.join(dir), fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let before = tree(&account.base);
+        assert_eq!(
+            credential_directory(&credentials, false, data_fd(), &account.base, false, enter),
+            Ok(credentials.clone())
+        );
+        assert_eq!(tree(&account.base), before, "the probe left its lock file");
+        // The reservation's own check keeps them.
+        assert_eq!(
+            use_credential_directory(&credentials, false, data_fd(), &account.base, enter),
+            Ok(credentials.clone())
+        );
+        assert!(credentials.join(".lock").exists());
     }
 
     #[test]
@@ -1289,6 +1416,7 @@ mod credentials {
             program: PathBuf::from("/no-such-program"),
             env: Vec::new(),
             terminal: false,
+            development_keys: None,
             configuration: None,
         };
         let mut out = Vec::new();
@@ -1331,6 +1459,7 @@ mod credentials {
                 program: PathBuf::from("/no-such-program"),
                 env: Vec::new(),
                 terminal: false,
+                development_keys: Some(account.base.join("keys")),
                 configuration: Some(Configuration(input.clone())),
             };
             let mut out = Vec::new();
@@ -1453,5 +1582,413 @@ mod credentials {
         );
         assert!(!home.join("other-state").exists());
         println!("setup recorded {}", directory.display());
+    }
+}
+
+/// X5 review, fourth round, P1-4: a foreground start after the instance's runtime folders
+/// were removed (a cleared cache; a container on its volumes again) makes them again and
+/// continues, as the host does at its start.
+#[test]
+fn a_set_up_instance_continues_after_its_runtime_folders_are_gone() {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let base = temp.path().canonicalize().unwrap().join("b");
+    for dir in [base.clone(), base.join("t")] {
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let paths = Paths::at(&base, base.join("t"), None).unwrap();
+    let input = Input {
+        version: 1,
+        service: Service::Foreground,
+        root: base.join("data"),
+        credentials: None,
+        listen: loopback(free_port()).unwrap(),
+    };
+    let platform = Platform {
+        service: Box::new(Untouchable),
+        disk: Box::new(org_platform::testing::FakeDiskEncryption(
+            EncryptionState::On,
+        )),
+        credentials: CredentialDirectory::Unused,
+    };
+    let run = || {
+        let request = Request {
+            name: None,
+            port: None,
+            prompt: None,
+            named_port_base: NAMED_PORT_BASE,
+            program: PathBuf::from("/no-such-program"),
+            env: Vec::new(),
+            terminal: false,
+            development_keys: None,
+            configuration: Some(Configuration(input.clone())),
+        };
+        run_at(&paths, &platform, request, &mut Vec::new()).map(drop)
+    };
+    run().unwrap();
+    std::fs::remove_dir_all(base.join("t/ao")).unwrap();
+    run().unwrap();
+    assert_eq!(std::fs::read_dir(base.join("t/ao")).unwrap().count(), 1);
+}
+
+/// X5 review, fourth round, P2-1: setup is ready only when the service answers with its
+/// browser service running. A host whose web process is still starting is asked again; a
+/// failure another program causes (its address held) ends the wait at once; and a browser
+/// service that does not run by the deadline is said to be the reason.
+#[test]
+fn setup_is_ready_only_when_the_browser_service_runs() {
+    let id = "01965d2e-8b1c-7c3a-9f00-0123456789ab";
+    let status = |state: GatewayState| {
+        serde_json::from_value::<InstanceStatusResult>(serde_json::json!({
+            "instance_id": id,
+            "mode": "registered",
+            "gateway": {"state": match state {
+                GatewayState::Running => "running",
+                GatewayState::Failed => "failed",
+                _ => "starting",
+            }},
+            "offices": {"total": 0, "active": 0, "failed": 0},
+            "administrator": "absent",
+        }))
+        .unwrap()
+    };
+    let mut answers = vec![
+        Err("no socket yet".to_owned()),
+        Ok(status(GatewayState::Starting)),
+        Ok(status(GatewayState::Failed)),
+        Ok(status(GatewayState::Running)),
+    ]
+    .into_iter();
+    let mut asked = 0;
+    let found = wait_ready(
+        || {
+            asked += 1;
+            answers.next().unwrap()
+        },
+        id,
+        Duration::from_secs(10),
+        || None,
+    )
+    .unwrap();
+    assert_eq!(found.gateway.state, GatewayState::Running);
+    assert_eq!(
+        asked, 4,
+        "a host whose browser service is not running is not ready"
+    );
+    let held = wait_ready(
+        || Ok(status(GatewayState::Failed)),
+        id,
+        Duration::from_secs(10),
+        || Some("port held".to_owned()),
+    )
+    .unwrap_err();
+    assert_eq!(held, "port held");
+    let late = wait_ready(
+        || Ok(status(GatewayState::Starting)),
+        id,
+        Duration::from_millis(300),
+        || None,
+    )
+    .unwrap_err();
+    assert!(
+        late.contains("its browser service did not start within")
+            && late.contains("still starting"),
+        "{late}"
+    );
+}
+
+/// X5 review V-a and P3-1: a development build's registered service whose record names no
+/// credential directory keeps its keys in its development key folder, so setup refuses
+/// before anything is saved without one, or with one that is not an absolute path, and
+/// makes it (mode 700) before it registers the service. A folder the data folder holds, or
+/// one another program made open to others, is refused.
+#[test]
+fn a_development_build_needs_and_makes_its_development_key_folder() {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    let platform = |credentials| Platform {
+        service: Box::new(Untouchable),
+        disk: Box::new(org_platform::testing::FakeDiskEncryption(
+            EncryptionState::On,
+        )),
+        credentials,
+    };
+    let input = |service, credentials: Option<PathBuf>| Input {
+        version: 1,
+        service,
+        root: base.join("data"),
+        credentials,
+        listen: loopback(7420).unwrap(),
+    };
+    let unused = platform(CredentialDirectory::Unused);
+    let registered = input(Service::Registered, None);
+    let missing = development_keys(&registered, None, &unused).unwrap_err();
+    assert!(
+        missing.contains("ORG_OFFICE_DEV_KEY_DIR") && missing.ends_with("nothing was changed"),
+        "{missing}"
+    );
+    let relative = development_keys(&registered, Some(Path::new("keys")), &unused).unwrap_err();
+    assert!(relative.contains("not an absolute folder"), "{relative}");
+    assert_eq!(
+        development_keys(&registered, Some(&base.join("keys")), &unused),
+        Ok(Some(base.join("keys")))
+    );
+    // Nothing is needed where the host does not use one.
+    let below = platform(CredentialDirectory::Below(base.join("state")));
+    for (input, platform) in [
+        (input(Service::Foreground, None), &unused),
+        (
+            input(Service::Registered, Some(base.join("secrets"))),
+            &unused,
+        ),
+        (input(Service::Registered, None), &below),
+    ] {
+        assert_eq!(development_keys(&input, None, platform), Ok(None));
+    }
+    // Made private, whatever the mask, and kept as it is the next time.
+    let keys = base.join("keys");
+    development_folder(&keys, &base.join("data")).unwrap();
+    assert_eq!(
+        std::fs::metadata(&keys).unwrap().permissions().mode() & 0o7777,
+        0o700
+    );
+    development_folder(&keys, &base.join("data")).unwrap();
+    // Inside the data folder, or holding it, it is refused and not made.
+    for (folder, root) in [
+        (base.join("data/keys"), base.join("data")),
+        (base.join("keys"), base.join("keys/data")),
+    ] {
+        let refused = development_folder(&folder, &root).unwrap_err();
+        assert!(refused.contains("contain each other"), "{refused}");
+    }
+    assert!(!base.join("data/keys").exists());
+    // A folder open to others, or a link in its place, is refused.
+    let open = base.join("open");
+    std::fs::create_dir(&open).unwrap();
+    std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(development_folder(&open, &base.join("data"))
+        .unwrap_err()
+        .contains("mode 700"));
+    std::os::unix::fs::symlink(&keys, base.join("link")).unwrap();
+    assert!(development_folder(&base.join("link"), &base.join("data")).is_err());
+    // The whole run refuses before anything is saved.
+    let paths_base = base.join("b");
+    for dir in [paths_base.clone(), paths_base.join("t")] {
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let paths = Paths::at(&paths_base, paths_base.join("t"), None).unwrap();
+    let request = Request {
+        name: None,
+        port: Some(free_port()),
+        prompt: None,
+        named_port_base: NAMED_PORT_BASE,
+        program: PathBuf::from("/no-such-program"),
+        env: Vec::new(),
+        terminal: false,
+        development_keys: None,
+        configuration: None,
+    };
+    let refused = run_at(&paths, &unused, request, &mut Vec::new()).unwrap_err();
+    assert!(refused.contains("ORG_OFFICE_DEV_KEY_DIR"), "{refused}");
+    assert!(
+        Journal::snapshot(&paths_base, None).is_err(),
+        "a record was saved"
+    );
+    assert!(
+        !Registry::open(&paths.locator, &paths.user_temp)
+            .unwrap()
+            .reserved(None)
+            .unwrap(),
+        "an instance was reserved"
+    );
+}
+
+/// X5 review, fourth round, P2-7: a reservation that refused says what the locator holds,
+/// whatever step of it refused: a reservation saved before a later step failed is reported
+/// with the way to continue.
+#[test]
+fn a_refused_reservation_says_what_the_locator_holds() {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let base = temp.path().canonicalize().unwrap().join("b");
+    for dir in [base.clone(), base.join("t")] {
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let paths = Paths::at(&base, base.join("t"), None).unwrap();
+    let registry = Registry::open(&paths.locator, &paths.user_temp).unwrap();
+    let journal = Journal::open(&base, None).unwrap();
+    let input = Input {
+        version: 1,
+        service: Service::Registered,
+        root: base.join("data"),
+        credentials: None,
+        listen: loopback(7420).unwrap(),
+    };
+    let said =
+        |file| refused_reservation("disk full".into(), &registry, &journal, file, None, &input);
+    assert_eq!(said(false), "disk full");
+    drop(registry.reserve(None, &input.root).unwrap());
+    let interactive = said(false);
+    assert!(
+        interactive
+            .starts_with("disk full; instance \"default\" stays reserved with the data folder")
+            && interactive.ends_with("run setup again to continue"),
+        "{interactive}"
+    );
+    journal
+        .freeze(input.clone(), true, release_pin().unwrap())
+        .unwrap();
+    let from_file = said(true);
+    assert!(
+        from_file.contains("run setup again with a file that keeps both"),
+        "{from_file}"
+    );
+    assert!(
+        journal.read().unwrap().is_none(),
+        "the file's record was kept"
+    );
+}
+
+/// X5 review, fourth round, P2-3: the account's folders are made below a location outside
+/// the home that exists (an `XDG_*` variable naming another folder), one folder at a time,
+/// and never below one that others can write to.
+#[test]
+fn the_account_folders_are_made_below_an_existing_folder_outside_the_home() {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    let home = base.join("home");
+    let cache = base.join("cache");
+    let shared = base.join("shared");
+    for (dir, mode) in [(&home, 0o700), (&cache, 0o700), (&shared, 0o777)] {
+        std::fs::create_dir(dir).unwrap();
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+    make_folders(
+        &home,
+        &home,
+        [
+            cache.join("agentic-org/tmp"),
+            shared.join("agentic-org/tmp"),
+            home.join(".local/share"),
+        ],
+    );
+    assert!(cache.join("agentic-org/tmp").is_dir());
+    assert_eq!(
+        std::fs::metadata(cache.join("agentic-org"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert!(home.join(".local/share").is_dir());
+    assert!(
+        !shared.join("agentic-org").exists(),
+        "made below a folder others can write to"
+    );
+}
+
+/// X5 review, fourth round, P2-8: the wait for the service is bound by one deadline, from
+/// the connect to the answer.
+#[test]
+fn a_service_that_never_answers_does_not_hold_the_command() {
+    let started = Instant::now();
+    let never = within(Duration::from_millis(200), || -> Result<(), String> {
+        std::thread::sleep(Duration::from_secs(30));
+        Ok(())
+    })
+    .unwrap_err();
+    assert!(never.contains("did not answer within"), "{never}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(within(Duration::from_secs(5), || Ok(7)), Ok(7));
+}
+
+/// X5 review, fourth round, P2-9 and F4: the lookup runs in a child process and only its
+/// answer comes back: what `work` returns, its refusal, a panic, a child that does not end
+/// and an identity that cannot be taken are all answers, and the child never returns into
+/// the caller. (Without root the child keeps this process's identity.)
+#[test]
+fn the_lookup_runs_in_a_child_and_only_its_answer_comes_back() {
+    let me = std::process::id();
+    let pid: Result<u32, String> = in_child(|| Ok(()), || Ok(std::process::id()), LOOKUP_WITHIN);
+    assert_ne!(pid.unwrap(), me, "the work ran in this process");
+    assert_eq!(
+        in_child(
+            || Ok(()),
+            || Err::<u32, _>("no record".into()),
+            LOOKUP_WITHIN
+        ),
+        Err("no record".into())
+    );
+    assert_eq!(
+        in_child(
+            || Err("not that user".into()),
+            || -> Result<u32, String> { panic!("ran") },
+            LOOKUP_WITHIN
+        ),
+        Err("not that user".into())
+    );
+    assert_eq!(
+        in_child(
+            || Ok(()),
+            || -> Result<u32, String> { panic!("a bug") },
+            LOOKUP_WITHIN
+        ),
+        Err("the lookup failed".into())
+    );
+    let started = Instant::now();
+    let slow = in_child(
+        || Ok(()),
+        || -> Result<u32, String> {
+            std::thread::sleep(Duration::from_secs(30));
+            Ok(1)
+        },
+        Duration::from_millis(300),
+    )
+    .unwrap_err();
+    assert!(slow.contains("did not end within"), "{slow}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    // The process this test runs in is not root: becoming its own account changes nothing.
+    assert_eq!(
+        become_account(Account {
+            uid: crate::home::euid(),
+            gid: unsafe { libc::getegid() },
+        }),
+        Ok(())
+    );
+}
+
+/// X5 review, fourth round, P2-10: an instance that has an administrator gets no link, and
+/// the command says what to do instead, without claiming a password reset.
+#[test]
+fn a_reset_of_an_instance_with_an_administrator_says_where_to_sign_in() {
+    let origin = org_host_control::listen::ListenOrigin::parse("http://127.0.0.1:7420").unwrap();
+    let mut out = Vec::new();
+    let refused = answer_reset(
+        AdminLinkResult::AdministratorPresent,
+        &origin,
+        Some("lab"),
+        &mut out,
+    )
+    .unwrap_err();
+    assert_eq!(
+        refused,
+        "instance lab has an administrator, so no registration link is issued: sign in at \
+         http://127.0.0.1:7420. Resetting a forgotten administrator password is not available yet"
+    );
+    assert!(out.is_empty());
+}
+
+/// X5 review F12: setup names this user by its account name, which `admin reset --user`
+/// takes, and not by an environment variable a container does not set.
+#[test]
+fn this_user_is_named_by_its_account() {
+    if let Some(name) = plain_account_name(crate::home::euid()) {
+        assert_eq!(user_name(), name);
     }
 }

@@ -93,6 +93,10 @@ show)
         echo "Version=255"
         exit 0
     fi
+    if [ "$1" = "--property=UnitPath" ]; then
+        echo "UnitPath=$XDG_RUNTIME_DIR/systemd/user.control $units /etc/systemd/user"
+        exit 0
+    fi
     file="$units/$1"
     if [ -f "$file" ]; then
         load=loaded

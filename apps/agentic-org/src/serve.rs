@@ -134,6 +134,11 @@ fn run_as(
     // The service is an ordinary user's on every system. Before anything is opened or made:
     // nothing above reads more than the arguments.
     may_run_the_service()?;
+    // What the service makes is its user's alone, whatever mask started it: a container
+    // runtime starts it with 022, as a shell may, where the registered unit sets
+    // `UMask=0077` (X5 review F10). Before any thread exists or any file is made.
+    // SAFETY: umask has no preconditions and cannot fail.
+    unsafe { libc::umask(0o077) };
     // Before any thread exists, so every thread inherits the mask.
     let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
     let registered = args.name.is_some() || args.setup.is_some();
