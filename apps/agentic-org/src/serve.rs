@@ -59,6 +59,8 @@
 //!   own kill a moment later, and the next start continues. Office servers and the web
 //!   process started meanwhile end with it (the end of their input and of their control
 //!   connection).
+//! - Any stop that has not ended 2.4 s after the signal (the host's last steps waiting on a
+//!   slow volume, say) ends the process there, with status 0 and a line that says so.
 //! - Waiting for the signal failing (it cannot, in practice) is an error, whenever it is
 //!   found: `serve` stops what it started and exits non-zero.
 //!
@@ -67,11 +69,16 @@
 //! variable. The host never passes the variable on to its servers.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use org_host::signals::ShutdownSignals;
+use org_host::stop::Stop;
 use org_host::{BrowserListener, Config, Host};
+
+/// The longest a stop may take, from the signal to the process's end: the design's 2.5 s
+/// (Linux host design, section 3.4), less the moment the end itself takes. Past it the
+/// process ends at once (`org_host::stop`).
+const STOP_LIMIT: Duration = Duration::from_millis(2400);
 
 const USAGE: &str = "usage: agentic-org serve [--version] | --name <instance> | --setup <file> \
                      [--name <instance>] | (debug builds only) [--home <absolute path>] \
@@ -147,12 +154,20 @@ fn run_as(
     let stop = Stop::watch(
         move || signals.wait(),
         bound,
-        move |signal| {
-            let line = format!(
-                "agentic-org: stopped by signal {signal} while starting, which had not ended \
-                 {bound:?} after it; the process ends now. What setup or the start completed \
-                 is kept, and the next start continues from it\n"
-            );
+        STOP_LIMIT,
+        move |signal, starting| {
+            let line = if starting {
+                format!(
+                    "agentic-org: stopped by signal {signal} while starting, which had not \
+                     ended {bound:?} after it; the process ends now. What setup or the start \
+                     completed is kept, and the next start continues from it\n"
+                )
+            } else {
+                format!(
+                    "agentic-org: stopped by signal {signal}; the stop had not ended \
+                     {STOP_LIMIT:?} after it, and the process ends now\n"
+                )
+            };
             // Neither std's stderr lock nor the exit handlers, which a thread blocked in a
             // write (or in anything else) could hold up: one write, best effort, then the
             // end of the process.
@@ -196,14 +211,15 @@ fn serve_until_stopped<H>(
     let started = start_unless_stopped(stop, setup, start);
     // From here on the stop no longer bounds the start: it has ended, one way or another.
     stop.settle();
-    let Some(host) = started? else {
+    let Some(host) = started.inspect_err(|_| stop.finish())? else {
+        stop.finish();
         eprintln!(
             "agentic-org: stopped before serving: the stop signal came while starting; what \
              setup completed is kept, and the next start serves it"
         );
         return Ok(());
     };
-    match stop.wait() {
+    let stopped = match stop.wait() {
         Ok(asked) => {
             shutdown(host, asked);
             Ok(())
@@ -212,7 +228,9 @@ fn serve_until_stopped<H>(
             shutdown(host, Instant::now());
             Err(error)
         }
-    }
+    };
+    stop.finish();
+    stopped
 }
 
 /// `setup`, then `start`, unless the stop is asked for before either: `None` then.
@@ -230,106 +248,6 @@ fn start_unless_stopped<H>(
         return Ok(None);
     }
     start(held).map(Some)
-}
-
-/// The stop of `serve`, taken as soon as it is asked for: a thread of its own waits for it
-/// from the moment the signals are blocked (X5 review, third round, P1).
-///
-/// Until the start settles ([`Stop::settle`]: the host serves, or `serve` ends without
-/// serving), a stop also bounds the start: a start that has not settled `bound` after the
-/// stop ends with the `overrun` the composition gives, the process's exit.
-struct Stop {
-    shared: Arc<(Mutex<Stopping>, Condvar)>,
-}
-
-#[derive(Default)]
-struct Stopping {
-    /// When the stop was asked for, or why waiting for it failed.
-    asked: Option<Result<Instant, String>>,
-    /// The start has ended: the stop no longer bounds it.
-    settled: bool,
-}
-
-impl Stop {
-    /// Starts the thread that waits for the stop with `wait` (the composition passes
-    /// [`ShutdownSignals::wait`]; it returns the signal's number). While the start has not
-    /// settled, it calls `overrun` with that number `bound` after the stop, and the start
-    /// cannot settle meanwhile.
-    fn watch(
-        wait: impl FnOnce() -> std::io::Result<i32> + Send + 'static,
-        bound: Duration,
-        overrun: impl FnOnce(i32) + Send + 'static,
-    ) -> Result<Self, String> {
-        let shared = Arc::new((Mutex::new(Stopping::default()), Condvar::new()));
-        let watching = Arc::clone(&shared);
-        std::thread::Builder::new()
-            .name("serve-stop".into())
-            .spawn(move || {
-                let (state, changed) = &*watching;
-                let taken = wait();
-                let asked = Instant::now();
-                let mut stopping = lock(state);
-                stopping.asked = Some(match &taken {
-                    Ok(_) => Ok(asked),
-                    Err(e) => Err(format!("waiting for a signal: {e}")),
-                });
-                changed.notify_all();
-                let Ok(signal) = taken else {
-                    return;
-                };
-                let until = asked + bound;
-                while !stopping.settled {
-                    let now = Instant::now();
-                    if now >= until {
-                        // Under the lock, so the start does not settle meanwhile.
-                        overrun(signal);
-                        return;
-                    }
-                    stopping = changed
-                        .wait_timeout(stopping, until - now)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .0;
-                }
-            })
-            .map_err(|e| format!("starting the thread that waits for a stop: {e}"))?;
-        Ok(Self { shared })
-    }
-
-    /// Whether a stop has been asked for, or why waiting for one failed.
-    fn asked(&self) -> Result<bool, String> {
-        match &lock(&self.shared.0).asked {
-            None => Ok(false),
-            Some(asked) => asked.as_ref().map(|_| true).map_err(Clone::clone),
-        }
-    }
-
-    /// The start has ended: a stop no longer bounds it.
-    fn settle(&self) {
-        lock(&self.shared.0).settled = true;
-        self.shared.1.notify_all();
-    }
-
-    /// Waits for the stop, and says when it was asked for.
-    fn wait(&self) -> Result<Instant, String> {
-        let (state, changed) = &*self.shared;
-        let mut stopping = lock(state);
-        loop {
-            if let Some(asked) = &stopping.asked {
-                return asked.clone();
-            }
-            stopping = changed
-                .wait(stopping)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-        }
-    }
-}
-
-/// Locks the stop's state, carrying on past a panic in another thread: it is plain data
-/// that is valid at every step.
-fn lock(state: &Mutex<Stopping>) -> MutexGuard<'_, Stopping> {
-    state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// The unsigned development CLI peer the host's app policy admits. A debug build serving a
@@ -453,6 +371,7 @@ fn parse_args(args: impl IntoIterator<Item = String>, build: Build) -> Result<Ar
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
@@ -649,7 +568,8 @@ mod tests {
         let stop = Stop::watch(
             move || signal.recv().map_err(std::io::Error::other),
             bound,
-            move |signal| recording.lock().unwrap().push((signal, Instant::now())),
+            Duration::from_secs(30),
+            move |signal, _| recording.lock().unwrap().push((signal, Instant::now())),
         )
         .unwrap();
         (stop, send, overruns)
@@ -713,15 +633,23 @@ mod tests {
     /// stops what it started and says why, and never takes it for a stop that ends with 0.
     #[test]
     fn a_failed_wait_for_the_signal_is_an_error_not_a_stop() {
+        // The wait fails once `fail` is sent.
         let failing = || {
-            Stop::watch(
-                || Err(std::io::Error::other("no signals here")),
+            let (fail, failed) = std::sync::mpsc::channel::<()>();
+            let stop = Stop::watch(
+                move || {
+                    let _ = failed.recv();
+                    Err(std::io::Error::other("no signals here"))
+                },
                 Duration::from_secs(10),
-                |_| panic!("no signal was taken, so nothing overran"),
+                Duration::from_secs(10),
+                |_, _| panic!("no signal was taken, so nothing overran"),
             )
-            .unwrap()
+            .unwrap();
+            (stop, fail)
         };
-        let stop = failing();
+        let (stop, fail) = failing();
+        fail.send(()).unwrap();
         let until = Instant::now() + Duration::from_secs(10);
         while stop.asked().is_ok() {
             assert!(Instant::now() < until, "the failed wait was not reported");
@@ -739,9 +667,17 @@ mod tests {
         );
 
         // Found once the host serves: it is shut down, and the error is returned.
-        let stop = failing();
+        let (stop, fail) = failing();
         let shut = std::cell::Cell::new(false);
-        let result = serve_until_stopped(&stop, || Ok(None), |_| Ok(()), |(), _| shut.set(true));
+        let result = serve_until_stopped(
+            &stop,
+            || Ok(None),
+            |_| {
+                fail.send(()).unwrap();
+                Ok(())
+            },
+            |(), _| shut.set(true),
+        );
         assert!(shut.get(), "the host was left running");
         assert_eq!(
             result,

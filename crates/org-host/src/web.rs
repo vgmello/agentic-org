@@ -631,8 +631,8 @@ impl Supervisor {
     /// [`Supervisor::stop`], then waits for the supervision to end until `until` at the
     /// latest, and says whether it did. It is left running only while a request of the web
     /// process's control connection still runs (one waiting for a write lock of the
-    /// registry, say): the connection is closed by then, so the web process ends by itself
-    /// when it reads the end of its control stream, or with the host's process.
+    /// registry, say): the web process has been killed and reaped by then, and the request
+    /// ends with the host's process, its answer dropped.
     pub(crate) fn join_by(mut self, until: Instant) -> bool {
         self.stop();
         self.thread
@@ -729,7 +729,7 @@ fn supervise<S: Serving>(
                             failures = 0; // a stable run resets the count, as documented
                         }
                         *lock(state) = GatewayState::Starting;
-                        drop(child); // end sessions/control, then kill/reap
+                        drop(child); // kill/reap, then end control and its sessions
                         log("authenticated browser stopped because the host is no longer eligible; it starts again once eligible");
                         continue;
                     }
@@ -741,7 +741,7 @@ fn supervise<S: Serving>(
                     format!("it stopped before serving: {}", child.ended())
                 };
                 *lock(state) = GatewayState::Failed;
-                drop(child); // end sessions/control, then kill/reap before restart
+                drop(child); // kill/reap, then end control, before restart
                 reason
             }
             Err(error) => error.to_string(),

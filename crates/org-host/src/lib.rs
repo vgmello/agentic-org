@@ -92,6 +92,7 @@ mod service;
 mod sessions;
 pub mod setup_flow;
 pub mod signals;
+pub mod stop;
 mod supervisor;
 mod sync;
 #[cfg(test)]
