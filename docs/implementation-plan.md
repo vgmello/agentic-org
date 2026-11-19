@@ -598,7 +598,17 @@ on the offers of design section 10.
   tools and the environment, and where their conversation is kept
   ([ADR-0025](adr/0025-agents-start-sub-agents.md) decision 10).
 - **Read:** [ADR-0015](adr/0015-agent-isolation-modes.md) decisions 7, 10 and 11,
-  [agent runtimes research](research/agent-runtimes-control.md).
+  [agent runtimes research](research/agent-runtimes-control.md),
+  [C1 sign-in spike record](research/c1-sign-in-spike.md),
+  [ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md).
+- **Recorded result (2026-11-19):** [C1 sign-in spike](research/c1-sign-in-spike.md)
+  records live findings on Claude Code `2.1.311` and Codex `0.169.0` (companion POC in
+  `pocs/console-attach/`) and selects **`org-runtime-claude`** as the first adapter for C3
+  (persistent `stream-json` keeping background commands and sub-agents alive across turns
+  per ADR-0025 decision 6 amended 2026-11-19, plus `CLAUDE_CODE_OAUTH_TOKEN` for
+  portable/private-`HOME` sign-in). Remaining before `dedicated-user` becomes default:
+  the macOS second-OS-account + Xcode check (ADR-0015 decision 7 / `ISO-6`), and Codex
+  sub-agent isolation verification when `org-runtime-codex` begins.
 - **Done when:** the result is recorded and the first adapter to build is chosen.
 - **Needs nothing else and can start at any time.**
 
@@ -652,7 +662,9 @@ on the offers of design section 10.
   change.
 - **Sub-agents:** the adapter enables the runtime's own sub-agent tool, inside the
   parent's sandbox, tools and policy; the office writes the sub-agent definition; a
-  sub-agent's commands and cost are the employee's; nothing outlives the turn
+  sub-agent's commands and cost are the employee's; background tasks and sub-agents may
+  stay running across turns while the session is active so people and agents can keep
+  messaging the agent, and Pause/Stop/Offboard/stall stops and reaps everything
   ([ADR-0025](adr/0025-agents-start-sub-agents.md); SUB-1 to SUB-5 and SUB-7). SUB-6,
   the sub-agent's conversation in the session view, is finished with C4. Row FC-172.
 - **Staying alive:** after an office restart an interrupted turn continues by itself

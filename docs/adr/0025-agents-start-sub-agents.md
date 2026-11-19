@@ -43,11 +43,9 @@ The design:
    What it does is recorded under the employee
    ([chat spec](../specs/chat-ux.md): "anything an agent's own subprocesses post is
    attributed to that agent").
-6. **It lives inside the turn.** The turn is not over while a sub-agent runs. When the
-   turn ends, nothing of it is left running; the office stops what remains, as it does
-   for any process the agent started, and records it. Sub-agents that keep running in
-   the background after the turn's result stay off, because work after a result would
-   be a turn nobody started.
+6. **Background tasks and sub-agents may stay running across turns while the session is active (owner clarification 2026-11-19).**
+   Inside a persistent headless session (`stream-json` / `app-server` with `stdin` kept open), an agent may start long-running background commands or background sub-agents and remain available to receive and answer new messages while they run. When a background task or sub-agent finishes, the runtime's completion notification (e.g., Claude's `system/task_notification`) wakes the session for a reactive follow-up turn whose usage and actions are attributed to the same employee and run. The office tracks active background work and **stops and reaps all remaining background tasks and sub-agents on Pause, Stop, Offboard, or stall timeout**, recording what was stopped.
+   *(Foreground-only execution remains available via `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` if a specific policy requires synchronous turn boundaries, but is not forced by default.)*
 7. **Its cost is the employee's.** Every model call of a sub-agent is usage of the
    employee in that run, and is in the turn's cost.
 8. **Its model is the agent's model.** A sub-agent runs on the model of the agent's
@@ -69,9 +67,9 @@ The design:
     office runs.
 11. **Still off.** The other tools the session design keeps out stay out, because they
     do act outside the office or the sandbox: messaging between sessions, scheduling
-    and remote triggers, background work after a result, the runtime's own worktree
-    tool, and web access. Private specialists, generated copies of the employee, and
-    delegation chosen by a process stay later features (FC-107).
+    and remote triggers, the runtime's own worktree tool, and web access. Private
+    specialists, generated copies of the employee, and delegation chosen by a process
+    stay later features (FC-107).
 
 ## Acceptance criteria
 
@@ -81,7 +79,7 @@ The design:
 | SUB-2 | A sub-agent's tools are within the parent's allowlist; a write outside the parent's writable places is refused to it as to the parent; an action needing approval reaches the same approval bridge |
 | SUB-3 | `agent-os` run by a sub-agent is bound as the employee and its change is recorded under the employee |
 | SUB-4 | The model calls of a sub-agent are in the employee's usage for that run, and the turn's cost includes them |
-| SUB-5 | After a turn's result nothing the turn started is running; a sub-agent still alive at the end is stopped and recorded |
+| SUB-5 | While a background task or sub-agent is running in an active session, the agent still accepts and answers new messages, receives the completion notification, and on Pause, Stop, Offboard or stall timeout every remaining background task and sub-agent is stopped, reaped and recorded |
 | SUB-6 | The session view shows a sub-agent's conversation under the turn that started it |
 | SUB-7 | An agent's edit to a sub-agent definition in its home does not survive the next start, and an undeclared definition is not loaded |
 

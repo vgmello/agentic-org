@@ -102,6 +102,17 @@ team; every other agent is created only by a hire that someone who may hire has 
 does not block hiring with the manual form. Creating configuration does not start a
 model turn.
 
+**Advanced settings (sandbox and permissions):** under an agent's or connection's
+Advanced Settings, the UI presents user-friendly security presets mapped strictly to
+`org-runtime::PermissionMode`, defaulting to a sandboxed workspace with interactive
+approval routing (`safe_ask`, alongside `read_only`, `workspace_edits`, and
+`autonomous_sandboxed`;
+[ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)).
+The product never exposes a bypass / unrestricted skip-permissions switch, preserving
+the `org-runtime` no-bypass invariant. Browser-driven one-time subscription sign-in for
+connections (Claude paste-code / `setup-token` and Codex device-code) is also defined
+in ADR-0032 without exposing a browser terminal for agent sessions (ADR-0004).
+
 ## 3. States and edge cases
 
 | Case | Required outcome |
@@ -133,7 +144,7 @@ model turn.
 - RUN-12 · Not in v1: one-off agents started from a job.
 - RUN-13 · Not in v1: run-mode history and cost summary in a How it runs panel. Cost visibility rules apply wherever turn costs appear.
 - RUN-14 · Each placed runnable agent has office-owned execution state independent of its model conversation. People have no execution controller; monitoring an idle or paused agent uses no model turns. Pause, offboarding and transfer reconcile owned main processes and their descendants before replacement, keep independent holds and keep task workspaces.
-- RUN-15 · An agent can start sub-agents inside its turn with its runtime's own tool; they share its limits, are recorded and costed as the employee, and end with the turn (ADR-0025, SUB-1 to SUB-7). Not in v1: memory forks.
+- RUN-15 · An agent can start sub-agents and background tasks inside its active session with its runtime's own tools; they share its limits, stay running across turns while people and agents keep messaging the agent, are recorded and costed as the employee, and are stopped and reaped on Pause, Stop, Offboard or stall timeout (ADR-0025, SUB-1 to SUB-7). Not in v1: memory forks.
 
 ## 5. Not in v1
 
