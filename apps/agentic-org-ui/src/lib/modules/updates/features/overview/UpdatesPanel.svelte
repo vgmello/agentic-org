@@ -19,23 +19,24 @@
 	let { organizationId }: { organizationId: string } = $props();
 	const resource = new Resource(() => updatesApi.overview(organizationId));
 
-	// Retry is disabled while it runs, so focus falls to the body (§6a forbids leaving it there). When the read
+	// Retry is disabled while it runs, so focus falls to the body (§6a forbids leaving it there). When a Retry
 	// settles: back to Retry if it failed again, else to the page heading, since the Retry button is gone.
-	// The first load is left alone: the shell has already placed focus on arrival.
+	// Only a reload seen starting after the first run counts, so the first read (however fast it settles) never
+	// moves focus: the shell has already placed it on arrival.
+	let started = false;
 	let wasReloading = false;
-	let firstLoad = true;
 	$effect(() => {
 		const reloading = resource.reloading;
+		if (!started) {
+			started = true;
+			return;
+		}
 		if (reloading) {
 			wasReloading = true;
 			return;
 		}
 		if (!wasReloading) return;
 		wasReloading = false;
-		if (firstLoad) {
-			firstLoad = false;
-			return;
-		}
 		const failedAgain = resource.state === 'error';
 		setTimeout(() => {
 			const active = document.activeElement;
@@ -54,6 +55,7 @@
 	id="updates-heading"
 	title="Updates"
 	description="The release of Agentic Org this organization runs, office by office, and how to update it."
+	class="[&_h2:focus]:outline-none"
 />
 <div data-updates-panel>
 	<Loaded
@@ -76,7 +78,7 @@
 			<Section
 				level={3}
 				title="This instance"
-				description="The instance that hosts HQ. Every office on it runs the same release."
+				description="The instance that hosts HQ, on {hq?.host ?? 'the HQ machine'}."
 			>
 				<div class="border-y border-line-subtle" data-testid="instance">
 					<DescriptionList
