@@ -487,9 +487,9 @@ for (const fail of [false, true]) {
 		await open(page);
 		await page
 			.getByRole('navigation', { name: 'Main' })
-			.getByRole('link', { name: 'Agents', exact: true })
+			.getByRole('link', { name: 'Teams', exact: true })
 			.click();
-		await expect(page).toHaveURL(/\/teams\/members$/);
+		await expect(page).toHaveURL(/\/teams$/);
 		await page.evaluate(async (fail) => {
 			// Share the singleton composed into the UI by the explicit e2e resolver.
 			const modulePath = '/e2e/fakes/org-api.ts';

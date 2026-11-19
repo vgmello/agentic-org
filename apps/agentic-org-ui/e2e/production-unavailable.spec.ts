@@ -2,17 +2,22 @@ import { expect, test } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 
+// Each path with the area the shell names for it (app-shell-ux §0): the navigation's destinations, then the old
+// addresses, which keep working and name the area they moved into.
 const areas = [
-	['agents', 'Agents'],
-	['org-chart', 'Org chart'],
+	['home', 'Home'],
 	['projects', 'Projects'],
 	['work', 'Work'],
 	['chat', 'Chat'],
-	['processes', 'Processes'],
-	['offices', 'Offices'],
-	['sessions', 'Sessions'],
 	['activity', 'Activity'],
-	['settings', 'Settings']
+	['teams', 'Teams'],
+	['teams/members', 'Teams'],
+	['settings', 'Organization settings'],
+	['agents', 'Teams'],
+	['org-chart', 'Teams'],
+	['processes', 'Organization settings'],
+	['offices', 'Organization settings'],
+	['sessions', 'Activity']
 ] as const;
 const heading = (area?: string) =>
 	area ? `${area} isn't available yet` : "Agentic Org isn't ready in the browser yet";
@@ -79,9 +84,7 @@ test(
 			);
 		});
 		await visit(page, '/org-chart?org=empty&mock=healthy&copilot=on');
-		await expect(
-			page.getByRole('heading', { name: "Org chart isn't available yet" })
-		).toBeVisible();
+		await expect(page.getByRole('heading', { name: "Teams isn't available yet" })).toBeVisible();
 		await expect(page.getByText('Forged sample')).toHaveCount(0);
 		await expect(page.getByRole('button', { name: /add|create|bring in/i })).toHaveCount(0);
 		await page.getByRole('link', { name: 'Chat', exact: true }).click();
@@ -110,7 +113,7 @@ test('SRV-18 / BUG-53: unknown routes keep their error and a named browser tab',
 	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
 });
 
-for (const [path, area] of [['/agents', 'Agents']] as const) {
+for (const [path, area] of [['/agents', 'Teams']] as const) {
 	test(`BUG-53: ${path} keeps its wrapping navigation and readable copy at 320px`, async ({
 		page
 	}) => {
