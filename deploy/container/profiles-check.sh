@@ -95,6 +95,8 @@ echo "== 3. the same sandbox with Docker's default profiles"
 out=$(sandbox --)
 echo "  $(tr '\n' ' ' <<<"$out")"
 if has '^exit 0$' "$out"; then fail "bwrap ran without the profiles: the check proves nothing"; fi
+has 'No permissions to create a new namespace|Operation not permitted' "$out" ||
+    fail "bwrap failed without the profiles for another reason than its namespace: $out"
 
 echo "== 4. no mount outside a user namespace of one's own, and /proc/sys stays read-only"
 # as <user> <shell text>: the text's output under both profiles, and "exit <code>" last.

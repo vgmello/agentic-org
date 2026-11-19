@@ -108,8 +108,6 @@ impl OfficeKeys {
 
     /// Keys as the items of the office keys' item store below the release directory `root`,
     /// which is opened (and made, if it is missing) now.
-    // Debug builds never choose this store (`keys::store_for`); its tests still run there.
-    #[cfg_attr(debug_assertions, allow(dead_code))]
     pub(super) fn release_directory(root: &ReleaseRoot) -> Result<Self, CredentialError> {
         Ok(Self {
             source: Source::Protected(root.store(RELEASE_ITEMS)?),

@@ -156,9 +156,9 @@ are **optional** and exist for one purpose: an agent's vendor tool whose own san
 creates a user namespace, which Docker's default seccomp profile refuses and which
 Ubuntu 24.04 and later also restrict through AppArmor.
 
-- `seccomp.json`: Docker's default profile (moby v28.0.0) with three rules added at its
+- `seccomp.json`: Docker's default profile (moby v28.0.0) with four rules added at its
   end: `unshare` and `clone` (both argument orders) are allowed when `CLONE_NEWUSER` is
-  among their flags.
+  among their flags, and `mount`, `umount2` and `pivot_root` are allowed.
 - `apparmor-agentic-org`: `docker-default` plus `userns`, and `mount` and `pivot_root`
   allowed in place of `docker-default`'s `deny mount`, for a Docker host that has
   AppArmor. Load it with `sudo apparmor_parser -r -W deploy/container/apparmor-agentic-org`.
@@ -181,7 +181,11 @@ then `pivot_root`). Neither profile lets the container itself mount anything: th
 admits a mount only to a process with `CAP_SYS_ADMIN` over the mount namespace, which a
 container process has only in a user namespace it created (Docker drops `CAP_SYS_ADMIN`;
 never add it back), and there only for the filesystems a user namespace may mount. Every
-other denial of Docker's profiles stays.
+other denial of Docker's profiles stays. The cost is kernel surface: a process of the
+container can then use the mount code of those filesystems (overlayfs, tmpfs, bind mounts,
+devpts) inside its own namespaces, where container escapes have been found before
+(CVE-2023-0386, CVE-2023-2640 and CVE-2023-32629 in overlayfs). Use the profiles only on a
+Docker host whose kernel is kept patched, and only for agents that need such a sandbox.
 
 Verified on Ubuntu 26.04 (AppArmor enforcing, Docker 29.1.3) by
 `deploy/container/profiles-check.sh` (LNX-2 step 10, `LNX2_PROFILES=1`): under both

@@ -882,7 +882,10 @@ serves no HTTPS on any system yet.
   container mount: the kernel admits a mount only with `CAP_SYS_ADMIN` over the mount
   namespace, which a container process (Docker drops it; it is never added back) has
   only in a user namespace it created, and there only for the filesystems a user
-  namespace may mount. The rest of `docker-default` stays (no write to `/proc/sys` but
+  namespace may mount. The cost is kernel surface: those filesystems' mount code
+  (overlayfs, tmpfs, bind, devpts) inside the container's own namespaces, where escapes
+  have been found (CVE-2023-0386, CVE-2023-2640, CVE-2023-32629); the README asks for a
+  patched kernel. The rest of `docker-default` stays (no write to `/proc/sys` but
   `kernel/shm*`, to `/proc/sysrq-trigger`, `/proc/kcore`, `/sys/firmware`). Verified on
   Ubuntu 26.04 with AppArmor enforcing and Docker 29.1.3 (`deploy/container/profiles-check.sh`,
   LNX-2 step 10): the service serves and stops within 2.5 s under both profiles, and
