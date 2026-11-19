@@ -1,66 +1,35 @@
-//! `agent-os` against a real office server: `who` goes through the office; `msg send | inbox |
-//! read | wait` reach it and are refused, because the office does not serve messaging until B6
-//! rebuilds it on the office store; and a `send` to an office that is down is refused (exit 5)
-//! without spooling.
+//! `agent-os` against an office on this Mac that is not running: a send to it is refused
+//! (exit 5) without spooling, an office named by mistake is told at once, an office not named
+//! is not used, and an office-run agent never falls back to the spool.
 //!
-//! The server is the real one: this test binary, started with `ORG_AGENT_TEST_OFFICE_SERVER`
-//! set, runs exactly what `agentic-org-office`'s `main` runs (its library). It is driven the way
-//! the host drives it (`apps/agentic-org-office/tests/launch.rs`): the office's database key is a
-//! fixed test key on the launch line, so no Keychain is involved. Every home is a temporary
-//! folder: the office home (`ORG_OFFICE_HOME`) and the agents' `HOME` and `ORG_HOME` (their
-//! spool), so nothing here can reach `~/.agency` or a real office.
+//! What needs a running office is gone until agents can reach one: the office store binds no
+//! agent before B2 places agents through HR, and `agent-os` addresses only plain office IDs
+//! until A5 teaches it a selected (UUIDv7) office and its socket. `who` through the office and
+//! the messaging cases return then (docs/implementation-plan.md, B2, B6 and A5).
 //!
-//! Its own `main` (`harness = false`), because the server writes control lines on stdout.
+//! The office is its `office.json`, as the host's provisioning leaves it; nothing serves its
+//! socket. Every home is a temporary folder: the office home (`ORG_OFFICE_HOME`) and the
+//! agents' `HOME` and `ORG_HOME` (their spool), so nothing here can reach `~/.agency` or a
+//! real office.
+//!
+//! Its own `main` (`harness = false`), as before.
 
-use std::io::{BufReader, Write};
-use std::os::fd::AsFd;
-use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Output, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-use agentic_org_office::test_support::{grant_key, signed_grant, ChannelCaller};
-use org_office::rules::OrgCommand;
-use org_office_launch::ServerEvent;
-use org_office_launch::{
-    self, ChannelKind, Handoff, HandoffFd, HostFirstLine, OfficeLine, RendezvousEvent,
-    TransferRecord,
-};
-use org_proto::org::{
-    AgentProfile, AgentRuntime, AgentStatus, MemberAddAgentParams, MemberOffboardParams,
-};
-use org_proto::OfficeSecretsKey;
 use serde_json::Value;
 use tempfile::TempDir;
 
-/// Set on the child that is the office server.
-const SERVER_ENV: &str = "ORG_AGENT_TEST_OFFICE_SERVER";
 const OFFICE: &str = "01OFFICE00000000000000HQ1";
 const ORG: &str = "01ORG0000000000000000ACME1";
-const PIXEL: &str = "AGENT00000000000000000PIXL";
-const NOVA: &str = "AGENT00000000000000000NOVA";
-const WAIT: Duration = Duration::from_secs(30);
-/// The instance the host starts the office as (the worker adopts the library-stored office into it).
-const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 
 fn main() {
-    if std::env::var_os(SERVER_ENV).is_some() {
-        serve();
-    }
     let tests: &[(&str, fn())] = &[
-        ("who_goes_through_the_office", who_goes_through_the_office),
-        (
-            "messages_through_the_office_are_refused_unsupported_and_show_no_body",
-            messages_through_the_office_are_refused_unsupported_and_show_no_body,
-        ),
         (
             "office_errors_keep_their_exit_codes_and_never_show_a_body",
             office_errors_keep_their_exit_codes_and_never_show_a_body,
-        ),
-        (
-            "an_offboarded_agent_is_refused_at_the_bind",
-            an_offboarded_agent_is_refused_at_the_bind,
         ),
         (
             "a_send_to_an_office_that_is_down_is_refused_until_ingest",
@@ -174,20 +143,6 @@ impl TestArgs {
     }
 }
 
-/// The office server, exactly as `agentic-org-office`'s `main` runs it.
-fn serve() -> ! {
-    let control = match agentic_org_office::fdswap::take_control_pipe() {
-        Ok(control) => control,
-        Err(error) => {
-            eprintln!("agentic-org-office: cannot set up its descriptors: {error}");
-            std::process::exit(1);
-        }
-    };
-    agentic_org_office::install_panic_hook();
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    std::process::exit(agentic_org_office::run(&args, control));
-}
-
 /// A temporary office home and agents' home, under /tmp (socket paths are short).
 struct World {
     _dir: TempDir,
@@ -213,117 +168,20 @@ impl World {
         }
     }
 
-    /// Stores the office with the library and hires pixel and nova into it there (the worker
-    /// creates only through HQ creation-v1, and no app or person binds on the office socket),
-    /// then starts it the way the host does (the first line on stdin, the keys and the
-    /// transfer socket over the rendezvous) and returns the running server.
-    fn office(&self) -> Server {
-        let office = org_office::Office::create(
-            org_office_launch::office_dir(&self.home, OFFICE).unwrap(),
-            &org_office::NewOffice {
-                office_id: OFFICE.into(),
-                office_name: "HQ".into(),
-                role: org_office::OfficeRole::Hq,
-                org_id: ORG.into(),
-                org_name: "Acme".into(),
-            },
-            org_office::Key::from_office_secrets_key(office_secrets_key()),
-        )
-        .unwrap();
-        for (n, id, handle) in [(1, PIXEL, "pixel"), (2, NOVA, "nova")] {
-            office
-                .submit_org(OrgCommand::MemberAddAgent(MemberAddAgentParams {
-                    command_id: command_id(n),
-                    member_id: id.into(),
-                    name: handle.to_uppercase(),
-                    office_id: OFFICE.into(),
-                    profile: AgentProfile {
-                        role: "engineer".into(),
-                        title: "Engineer".into(),
-                        focus: None,
-                        runtime: AgentRuntime::ClaudeCode,
-                        model: None,
-                        run_mode: None,
-                        schedule: None,
-                        home: None,
-                        messaging_name: handle.into(),
-                        status: AgentStatus::Active,
-                        offboarded_at: None,
-                    },
-                }))
-                .unwrap()
-                .unwrap();
-        }
-        let owner = office
-            .org_snapshot()
-            .unwrap()
-            .members
-            .into_iter()
-            .find(|m| m.owner)
-            .unwrap()
-            .id;
-        drop(office);
-
-        let rendezvous = self.home.parent().unwrap().join("r");
-        let _ = std::fs::remove_file(&rendezvous);
-        let listener = UnixListener::bind(&rendezvous).unwrap();
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--office", OFFICE])
-            .env(SERVER_ENV, "1")
-            .env("ORG_OFFICE_HOME", &self.home)
-            .env("HOME", &self.user)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let mut stdin = child.stdin.take();
-        org_office_launch::write_first_line(
-            stdin.as_mut().unwrap(),
-            &HostFirstLine::Start(OfficeLine {
-                id_profile: None,
-                instance_id: INSTANCE.into(),
-                office_id: OFFICE.into(),
-                rendezvous: rendezvous.to_str().unwrap().into(),
-            }),
-        )
-        .unwrap();
-        let stream = accept(&listener, &mut child);
-        let mut server = Server {
-            reader: BufReader::with_capacity(1, stream.try_clone().unwrap()),
-            stream,
-            transfer: None,
-            stdin,
-            child,
-            owner,
-            channels: 0,
-        };
-        let ready_for_secrets: Value = serde_json::from_slice(
-            &org_proto::frame::read_line(&mut server.reader)
-                .unwrap()
-                .expect("the rendezvous closed"),
-        )
-        .unwrap();
-        assert_eq!(ready_for_secrets["event"], "ready_for_secrets");
-        let mut handoff = org_office_launch::encode_handoff(&Handoff::Start {
-            office_secrets_key: Some(office_secrets_key()),
-            grant_key: grant_key(),
-            fds: vec![HandoffFd::Transfer],
-        })
-        .unwrap();
-        server.stream.write_all(&handoff).unwrap();
-        handoff.fill(0);
-        let (transfer, host_end) = UnixDatagram::pair().unwrap();
-        transfer.shutdown(std::net::Shutdown::Write).unwrap();
-        send_fds(&server.stream, &[org_office_launch::FD_MARKER], &transfer);
-        server.expect_received("handoff");
-        drop(transfer);
-        server.transfer = Some(host_end);
-        assert!(matches!(
-            server.event(),
-            RendezvousEvent::Server(ServerEvent::Ready { .. })
-        ));
-        server
+    /// The office on this Mac, as the host's provisioning leaves it (its `office.json`),
+    /// with nothing serving its socket.
+    fn stored_office(&self) {
+        let folder = self.home.join("offices").join(OFFICE);
+        std::fs::create_dir_all(&folder).unwrap();
+        let office = org_office_launch::OfficeFile::new(
+            OFFICE,
+            "HQ",
+            org_proto::OfficeRole::Hq,
+            ORG,
+            "Acme",
+            "2026-11-09T10:00:00.000Z",
+        );
+        std::fs::write(folder.join("office.json"), office.to_vec().unwrap()).unwrap();
     }
 
     /// `agent-os <args>` as `agent`, with every home in this world and the office named
@@ -372,106 +230,6 @@ impl World {
     }
 }
 
-/// Waits for the worker to connect to the rendezvous, failing if it exits first.
-fn accept(listener: &UnixListener, child: &mut Child) -> UnixStream {
-    listener.set_nonblocking(true).unwrap();
-    let deadline = Instant::now() + WAIT;
-    loop {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                stream.set_nonblocking(false).unwrap();
-                stream.set_read_timeout(Some(WAIT)).unwrap();
-                return stream;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(e) => panic!("rendezvous accept: {e}"),
-        }
-        assert!(
-            child.try_wait().unwrap().is_none(),
-            "the worker exited before the rendezvous"
-        );
-        assert!(Instant::now() < deadline, "the worker never connected");
-        std::thread::sleep(Duration::from_millis(10));
-    }
-}
-
-/// One `sendmsg` of `payload` carrying `fd`, as the host sends descriptors.
-fn send_fds(socket: &impl AsFd, payload: &[u8], fd: &impl AsFd) {
-    org_socket::rights::send(
-        socket.as_fd(),
-        payload,
-        &[fd.as_fd()],
-        Instant::now() + Duration::from_secs(5),
-    )
-    .unwrap();
-}
-
-/// The running office: its process, the rendezvous it reports on and the host end of its
-/// transfer socket.
-struct Server {
-    child: Child,
-    stdin: Option<ChildStdin>,
-    stream: UnixStream,
-    reader: BufReader<UnixStream>,
-    transfer: Option<UnixDatagram>,
-    owner: String,
-    channels: u32,
-}
-
-impl Server {
-    fn event(&mut self) -> RendezvousEvent {
-        org_office_launch::read_server_event(&mut self.reader)
-            .unwrap()
-            .expect("the rendezvous closed")
-    }
-
-    fn expect_received(&mut self, of: &str) {
-        match self.event() {
-            RendezvousEvent::FdsReceived { of: got } => assert_eq!(got, of),
-            other => panic!("expected fds_received for {of}, got {other:?}"),
-        }
-    }
-
-    /// A new host channel to the office, acting as the owner with a signed grant (persons and
-    /// the owner act only through grants on host channels).
-    fn owner(&mut self) -> ChannelCaller {
-        self.channels += 1;
-        let id = format!("owner-{}", self.channels);
-        let (source, peer) = UnixStream::pair().unwrap();
-        peer.set_read_timeout(Some(WAIT)).unwrap();
-        let record = org_office_launch::encode_transfer_record(&TransferRecord::Channel {
-            kind: ChannelKind::Local,
-            office_id: OFFICE.into(),
-            channel_id: id.clone(),
-        })
-        .unwrap();
-        send_fds(self.transfer.as_ref().unwrap(), &record, &source);
-        self.expect_received(&id);
-        drop(source);
-        let mut caller = ChannelCaller::new(peer);
-        assert_eq!(caller.hello()["result"]["api_version"], 2);
-        caller.with_grant(signed_grant(&self.owner, ORG, OFFICE, &id, "owner-session"))
-    }
-
-    /// Ends the rendezvous, as a host that goes away does, and waits for the server to exit.
-    fn stop(&mut self) {
-        let _ = self.stream.shutdown(std::net::Shutdown::Both);
-        self.stdin = None;
-        let started = Instant::now();
-        while self.child.try_wait().unwrap().is_none() {
-            assert!(started.elapsed() < WAIT, "the server did not exit");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 struct Run {
     code: i32,
     stdout: String,
@@ -504,119 +262,12 @@ impl Run {
     }
 }
 
-/// The database key the host would hold for the office.
-fn office_secrets_key() -> OfficeSecretsKey {
-    OfficeSecretsKey::from_bytes([0xB3; 32])
-}
-
-/// A ULID made now (the command ids the office accepts), distinct for each `n`.
-fn command_id(n: u8) -> String {
-    const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-    let ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-    let mut value = (ms << 80) | u128::from(n);
-    let mut out = [0u8; 26];
-    for slot in out.iter_mut().rev() {
-        *slot = CROCKFORD[(value & 0x1F) as usize];
-        value >>= 5;
-    }
-    String::from_utf8(out.to_vec()).unwrap()
-}
-
-fn who_goes_through_the_office() {
-    let world = World::new();
-    let _server = world.office();
-
-    // who, through the office, in the spool's card shape.
-    let everyone = world.run("pixel", &["who", "--json"]).ok().json();
-    let cards = everyone.as_array().unwrap();
-    for member in [PIXEL, NOVA] {
-        assert!(cards.iter().any(|c| c["id"] == member), "{everyone}");
-    }
-    assert!(cards.iter().any(|c| c["owner"] == true), "{everyone}");
-    let nova = world.run("pixel", &["who", "nova", "--json"]).ok().json();
-    assert_eq!(nova["id"], NOVA);
-    assert_eq!(nova["kind"], "agent");
-    let owner = world
-        .run("pixel", &["who", "--kind", "owner", "--json"])
-        .ok()
-        .json();
-    assert_eq!(owner.as_array().unwrap().len(), 1);
-    assert_eq!(owner[0]["owner"], true);
-    let row = world.run("pixel", &["who", "nova"]).ok();
-    assert!(
-        row.stdout.contains(&format!("id:          {NOVA}")),
-        "{}",
-        row.stdout
-    );
-}
-
-/// The office answers every messaging call `unsupported` until B6 rebuilds messaging on the
-/// office store. `agent-os` reports the refusal with its exit code for an office error it has
-/// no class for (4, `exit_code`'s default), prints nothing on stdout, never shows the body,
-/// and never falls back to a spool: the office was reached and answered.
-fn messages_through_the_office_are_refused_unsupported_and_show_no_body() {
-    let world = World::new();
-    let _server = world.office();
-    let secret = "a secret body";
-    let refused = |run: Run, what: &str| {
-        assert_eq!(run.code, 4, "{what}: {}", run.stderr);
-        assert_eq!(run.stdout, "", "{what}");
-        assert!(
-            run.stderr.contains("does not serve messaging yet"),
-            "{what}: {}",
-            run.stderr
-        );
-        assert!(!run.stderr.contains(secret), "{what}");
-    };
-    refused(
-        world.run(
-            "pixel",
-            &[
-                "msg",
-                "send",
-                "--to",
-                "nova",
-                "--subject",
-                "hi",
-                "--json",
-                secret,
-            ],
-        ),
-        "send",
-    );
-    refused(world.run("nova", &["msg", "inbox", "--json"]), "inbox");
-    refused(
-        world.run("nova", &["msg", "read", "--next", "--json"]),
-        "read",
-    );
-    // Answered at once: the office does not hold it.
-    let started = Instant::now();
-    refused(
-        world.run("nova", &["msg", "wait", "--timeout", "30s"]),
-        "wait",
-    );
-    assert!(started.elapsed() < Duration::from_secs(10));
-    assert!(world.spooled().is_empty(), "a refused send was spooled");
-    assert!(world.office_spooled().is_empty());
-}
-
+/// (An agent the office doesn't know being refused at its bind needs a running office that
+/// `agent-os` can address: it returns with A5.)
 fn office_errors_keep_their_exit_codes_and_never_show_a_body() {
     let world = World::new();
-    let _server = world.office();
+    world.stored_office();
     let secret = "a secret body";
-
-    // An agent the office doesn't know can't bind: exit 1, naming the office and the agent,
-    // and no fall back to the spool.
-    let stranger = world.run("ghost", &["msg", "send", "--to", "nova", secret]);
-    assert_eq!(stranger.code, 1, "{}", stranger.stderr);
-    assert!(stranger.stderr.contains(OFFICE), "{}", stranger.stderr);
-    assert!(stranger.stderr.contains("'ghost'"), "{}", stranger.stderr);
-    assert!(!stranger.stderr.contains(secret));
-    assert!(world.spooled().is_empty());
-    assert_eq!(world.run("ghost", &["msg", "inbox"]).code, 1);
 
     // An office asked for that isn't a plain id is a usage error, before anything is sent.
     let bad = world.run(
@@ -655,39 +306,9 @@ fn office_errors_keep_their_exit_codes_and_never_show_a_body() {
     assert!(world.office_spooled().is_empty());
 }
 
-fn an_offboarded_agent_is_refused_at_the_bind() {
-    let world = World::new();
-    let mut server = world.office();
-    // Bound before: the office knows nova.
-    world.run("nova", &["who", "nova", "--json"]).ok();
-    let mut owner = server.owner();
-    let offboarded = owner.call(
-        "member.offboard",
-        serde_json::to_value(MemberOffboardParams {
-            command_id: command_id(9),
-            member_id: NOVA.into(),
-            expected_version: 1,
-        })
-        .unwrap(),
-    );
-    assert!(offboarded.get("result").is_some(), "{offboarded}");
-
-    // Its next command is refused at the bind, clearly, and nothing falls back to the spool.
-    let next = world.run("nova", &["msg", "inbox"]);
-    assert_eq!(next.code, 1, "{}", next.stderr);
-    assert!(
-        next.stderr.contains("did not let 'nova' in"),
-        "{}",
-        next.stderr
-    );
-    assert!(next.stdout.is_empty());
-    assert!(world.spooled().is_empty());
-}
-
 fn a_send_to_an_office_that_is_down_is_refused_until_ingest() {
     let world = World::new();
-    let mut server = world.office();
-    server.stop();
+    world.stored_office();
 
     // Until the office ingests its spool, a send to it while it's down is refused (exit 5):
     // nothing is written anywhere, and the body isn't shown. (The queued path is unit-tested
@@ -733,8 +354,8 @@ fn a_send_to_an_office_that_is_down_is_refused_until_ingest() {
 
 fn an_office_not_named_is_not_used() {
     let world = World::new();
-    let _server = world.office();
-    // Running, with its office.json, but not named: the local spool, quietly, as before.
+    world.stored_office();
+    // On this Mac, with its office.json, but not named: the local spool, quietly, as before.
     world.run_unnamed("nova", &["msg", "register", "nova"]).ok();
     let sent = world
         .run_unnamed("pixel", &["msg", "send", "--to", "nova", "--json", "hi"])
@@ -744,10 +365,6 @@ fn an_office_not_named_is_not_used() {
     assert_eq!(world.spooled().len(), 1);
     let inbox = world.run_unnamed("nova", &["msg", "inbox", "--json"]).ok();
     assert_eq!(inbox.stderr, "");
-    // Named, the office is asked, and refuses: it does not serve messaging yet.
-    let named = world.run("nova", &["msg", "inbox", "--json"]);
-    assert_eq!(named.code, 4, "{}", named.stderr);
-    assert_eq!(named.stdout, "");
     // A hand-run agent the office doesn't know isn't refused when it names no office.
     let stranger = world.run_unnamed("ghost", &["msg", "inbox"]).ok();
     assert_eq!(stranger.stderr, "");
@@ -819,8 +436,7 @@ fn an_office_run_agent_never_falls_back_to_the_spool() {
     assert!(!spool.exists(), "the spool was opened");
 
     // Its office named but not running: exit 5, nothing spooled.
-    let mut server = world.office();
-    server.stop();
+    world.stored_office();
     let sent: Run = world
         .agent("pixel", &["msg", "send", "--to", "nova", "hi"])
         .env("ORG_OFFICE", OFFICE)

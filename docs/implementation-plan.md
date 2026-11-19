@@ -299,7 +299,13 @@ Three things to know about the order:
   office only when one is named and otherwise writes to a file queue, which B6 deletes.
 - **Done when:** SES-8 passes; a signed-in person runs a read command and a write
   command against the office from a terminal; the same commands are refused without a
-  session.
+  session. `agent-os` addresses a selected office: a UUIDv7 office ID and that office's
+  socket (`org_proto::location::selected_office_socket_in`), where today
+  `crates/org-client/src/agent.rs` takes plain office IDs only. With it, the cases B1b
+  removed from `apps/agent-os/tests/office.rs` return there against a running office
+  (their agent comes from B2): an agent the office does not know is refused at its bind
+  (exit 1, naming the office and the agent, nothing spooled); an office named by mistake
+  is still told at once.
 - **Needs:** A4, K1.
 
 ---
@@ -473,6 +479,14 @@ on the offers of design section 10.
   roles is enforced by the office and covered by the engine-independent organization
   suite; each action in the outcome works from the command line and through `/api/v1`
   and is in the history. The screen criteria (TEAM, PEOPLE, REPORT) are finished in U1.
+  Since B1b no agent binds on an office's socket: the creation's HR lead has no office
+  and no agent profile, and agents come only through a hire (C2). Once an agent is placed
+  in an office and A5 lets `agent-os` address a selected office,
+  `apps/agent-os/tests/office.rs` regains the cases B1b removed: `agent-os who` through
+  the office for a placed agent (everyone, one by name, the owner by kind,
+  the plain-text card), and an offboarded agent refused at its next bind; the messaging
+  cases (send, inbox, read and wait answered `unsupported` with no body shown) return
+  with B6.
   `operation.get` for organization commands answers from the store's receipts,
   replacing the `unsupported` B1b left (a client learns a committed command's answer
   without resending it).
@@ -741,8 +755,9 @@ on the offers of design section 10.
   when one is named.
 - **Done when:** the CHAT criteria for sending, reading and channels pass; the
   engine-independent messaging suite passes; ACK-1 is measured on a Mac and recorded.
-  B6 also restores LNX-1's send and read through the office in
-  `apps/agentic-org/tests/lnx1.rs`, which B1b reduced to a directory read and a refused send.
+  B6 also brings `agent-os` send and read through the office back to LNX-1
+  (`apps/agentic-org/tests/lnx1.rs`), once B2 places agents and A5 lets `agent-os`
+  address a selected office; B1b took `agent-os` out of LNX-1.
   B6 serves again what B1b switched off with the old tables, through the office or A3's
   `/events`, each with its scenario as a test: `subscribe` (a caller without a grant or
   binding is refused `not_authorized`; another caller's committed `team.create` arrives as
