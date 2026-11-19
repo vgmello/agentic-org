@@ -271,13 +271,19 @@ describe('list and instance', () => {
 		};
 		s.read
 			.mockResolvedValueOnce({ status: 200, body: { result: view } })
+			.mockResolvedValueOnce({
+				status: 200,
+				body: { result: { ...view, listen_scheme: 'http_published' } }
+			})
 			.mockRejectedValueOnce(new Error('offline'));
-		expect(await s.api.instance()).toEqual({
-			instance_id: INSTANCE,
-			name: 'default',
-			server_version: '1.2.3',
-			server_time_ms: 5
-		});
+		for (let i = 0; i < 2; i++) {
+			expect(await s.api.instance()).toEqual({
+				instance_id: INSTANCE,
+				name: 'default',
+				server_version: '1.2.3',
+				server_time_ms: 5
+			});
+		}
 		expect(await s.api.instance()).toBeUndefined();
 	});
 });

@@ -28,6 +28,12 @@ use crate::tls::TlsCertificates;
 #[derive(Clone)]
 pub enum ListenMode {
     HttpLoopback,
+    /// Plain HTTP on a published port of a foreground instance: served exactly as loopback
+    /// HTTP is. The host says which of the two plain modes the listener has; this process
+    /// refuses to start unless the origin fits its listener in that mode
+    /// (`ListenOrigin::check`): a published listener is not on a loopback address and its
+    /// origin's host is a loopback name.
+    HttpPublished,
     Https(Arc<TlsCertificates>),
 }
 
@@ -36,6 +42,7 @@ impl ListenMode {
     fn origin_mode(&self) -> listen::ListenMode {
         match self {
             ListenMode::HttpLoopback => listen::ListenMode::HttpLoopback,
+            ListenMode::HttpPublished => listen::ListenMode::HttpPublished,
             ListenMode::Https(_) => listen::ListenMode::Https,
         }
     }
@@ -161,7 +168,7 @@ where
                     return;
                 };
                 match mode {
-                    ListenMode::HttpLoopback => {
+                    ListenMode::HttpLoopback | ListenMode::HttpPublished => {
                         serve_then_linger(stream, peer, handler, limits).await;
                     }
                     ListenMode::Https(certificates) => {

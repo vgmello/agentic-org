@@ -70,7 +70,8 @@ use crate::code_signing::HARDENED;
 #[cfg(test)]
 use crate::peer::AuditToken;
 
-#[cfg(all(test, target_os = "macos"))]
+/// Tests of the pinned image on a system that identifies an image by its code signature.
+#[cfg(test)]
 mod selected_image_tests;
 
 /// The entitlement that lists the Keychain access groups a signed program may use. The web
@@ -804,10 +805,13 @@ mod tests {
     /// admitted; `/usr/bin/ssh` (hardened, only keychain-access-groups) satisfies the
     /// signature check, as the office `Requirement` check shows, yet the web process check
     /// refuses it; unhardened `/bin/sleep` fails the signature check.
-    #[cfg(target_os = "macos")]
     #[test]
     fn production_web_admission_uses_the_live_keychain_probe() {
         use org_platform_host::admission::{ChildEnv, SpawnRefused};
+        // Only where admission checks a code signature (and so the Keychain entitlement).
+        if org_platform_host::admission::image_identity() != Ok(ImageIdentity::CodeSignature) {
+            return;
+        }
         // Started and checked, never let run: each child is killed still suspended.
         let admit_with = |check: &ServerCheck, program: &str| {
             check

@@ -36,7 +36,10 @@ const WAIT: Duration = Duration::from_secs(10);
 /// itself wait the full 10 s shutdown grace for a server before SIGKILLing it; on a loaded
 /// machine a server can be that slow. A host still running after this is stuck.
 const EXIT_WAIT: Duration = Duration::from_secs(30);
-const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+/// The stored office, named by canonical UUIDv7 as every launch line names it, and its
+/// organization.
+const A: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
+const ORG_A: &str = "0190a5d2-7c3e-7000-8000-00000000010a";
 
 /// A host process that is killed (and reaped) when dropped, so a failed assertion never leaves
 /// one running.
@@ -66,7 +69,7 @@ impl Drop for HostProcess {
 
 /// A registered instance (setup's steps 2 and 3, through A2's fixture) under a short temporary
 /// base `<tmp>/a`, its development keys under `<tmp>/k`, and one stored office the fake server
-/// runs. `agentic-org serve --name default` serves it, as the account's service does after
+/// runs under the writer custody the host reserved for it. `agentic-org serve --name default` serves it, as the account's service does after
 /// setup.
 #[cfg(debug_assertions)]
 struct Registered {
@@ -91,7 +94,7 @@ impl Registered {
         };
         let account = registered_account(&root.join("a"), None, port).unwrap();
         let registered = Self { dir, account };
-        registered.store_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+        registered.store_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
         registered
     }
 
@@ -104,12 +107,25 @@ impl Registered {
         &self.account.office_home
     }
 
-    /// Stores an office as if the host had provisioned it: its `office.json` in the instance's
-    /// office home and a key in the instance's development key folder (the layout
-    /// `TestHome::write_office` uses for a registered home).
+    /// Stores an office as if the host had provisioned it: its writer custody (reserved as
+    /// protected provisioning reserves it, which also creates the instance's registry), its
+    /// `office.json` in the instance's office home and a key in the instance's development key
+    /// folder (the layout `TestHome::write_office` uses for a registered home).
     fn store_office(&self, office: &OfficeFile) {
+        let at = org_host::test_support::custody::InstanceAt::account(
+            &self.base().join("a"),
+            None,
+            &self.base().join("k"),
+        )
+        .unwrap();
+        org_host::test_support::custody::reserve_office(
+            &at,
+            &office.org_id,
+            &office.office_id,
+            None,
+        )
+        .unwrap();
         let dir = self.home().join("offices").join(&office.office_id);
-        fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("office.json"), office.to_vec().unwrap()).unwrap();
         let keys = self.base().join("k").join(&self.account.instance_id);
         fs::DirBuilder::new()
@@ -200,7 +216,7 @@ impl Registered {
             UnixStream::connect(&socket).is_ok()
         });
         let office_socket =
-            org_proto::location::office_socket_in(&self.account.runtime, A).unwrap();
+            org_proto::location::selected_office_socket_in(&self.account.runtime, A).unwrap();
         eventually(WAIT, "the supervised worker to answer hello", || {
             if UnixStream::connect(&office_socket).is_err() {
                 return false;
@@ -253,6 +269,53 @@ fn sigterm_stops_the_servers_cleanly_and_exits_0() {
         pids,
         "the server didn't exit on stdin EOF"
     );
+}
+
+/// X5 review V2: the stop is bounded whatever a worker does. A worker that ignores the
+/// end of its input (as one that is stopped or hung does) is killed when the grace ends,
+/// and the service still exits 0 within the design's 2.5 s (Linux host design, section
+/// 3.4), inside the 3 s of Docker Desktop's default grace.
+#[cfg(debug_assertions)]
+#[test]
+fn a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_its_bound() {
+    const NAME: &str =
+        "a_worker_that_ignores_the_stop_is_killed_and_the_service_exits_0_within_its_bound";
+    if !may_run_the_service(NAME) {
+        return;
+    }
+    let instance = Registered::new();
+    fs::write(
+        instance.home().join("fake-script.json"),
+        format!(r#"{{"{A}": {{"do": "ready", "ignore_eof": true}}}}"#),
+    )
+    .unwrap();
+    let mut host = instance.spawn_host("host.err");
+    instance.wait_until_active(&mut host);
+    let pids = instance.pids(A);
+    assert_eq!(pids.len(), 1);
+    let alive = |pid: u32| unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+    assert!(alive(pids[0]));
+    let asked = Instant::now();
+    signal(&host, libc::SIGTERM);
+    let status = wait_for_exit(&mut host);
+    let took = asked.elapsed();
+    println!("the service stopped {took:?} after SIGTERM with a worker that ignores it");
+    assert!(
+        status.success(),
+        "{status}: {}",
+        instance.stderr("host.err")
+    );
+    assert!(took < Duration::from_millis(2500), "{took:?}");
+    // It was given the grace first: the stop did not simply kill at once.
+    assert!(took >= Duration::from_millis(1400), "{took:?}");
+    assert!(
+        instance.eof_exits(A).is_empty(),
+        "the worker exited by itself"
+    );
+    eventually(Duration::from_secs(2), "the worker to be gone", || {
+        !alive(pids[0])
+    });
+    assert!(!instance.host_socket().exists());
 }
 
 #[cfg(debug_assertions)]

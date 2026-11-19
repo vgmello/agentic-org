@@ -111,8 +111,14 @@ These settle what the decisions above left open. The detail is in the
    disjoint from the data root by device and inode and by its place in the mount
    table (and, in a container, from the whole data volume); a mount point in a
    container; and
-   an empty store for an instance whose records say keys exist refuses. Anything else
-   refuses. The same engine is every development build's store.
+   an empty store for an instance whose records say keys exist refuses. Before opening
+   either item store, the host checks the instance ID in a private `.instance` marker,
+   or binds an unused directory under the store lock. Setup refuses a new foreground
+   reservation on a secrets volume already bound or holding credentials. The same
+   engine is every development build's store. A development build on
+   Linux records and uses the credential directory as a release build does; on macOS a
+   development build's registered setup needs an absolute `ORG_OFFICE_DEV_KEY_DIR`, which
+   setup makes, with mode 700, before it registers the service.
 9. **The web process confines itself with a seccomp filter, and with Landlock where
    the kernel has it** (amended by the owner's direction of 2026-11-18: the product
    runs on ordinary Linux hosts and in Docker without extra configuration). It
@@ -127,8 +133,8 @@ These settle what the decisions above left open. The detail is in the
    refusing adapters. As first accepted, this decision required Landlock ABI 3 and
    therefore kernel 6.2.
 10. **Service.** A systemd user unit on a Linux machine; in a container, `agentic-org
-    serve --setup <file>` in the foreground under `tini`, stopping within 8 seconds on
-    `SIGTERM`. Setup's non-interactive configuration names the mode and the credential
+    serve --setup <file>` in the foreground under `tini`, stopping within 2.5 seconds on
+    `SIGTERM` (amended 2026-11-18 from 8: Docker Desktop's default grace is 3 seconds). Setup's non-interactive configuration names the mode and the credential
     directory; nothing detects a container. `serve` and `setup` refuse to run as root.
     The container runs as UID 61000 and listens on its network interface.
     It starts with a plain `docker run` that publishes the port (amended by the
@@ -137,13 +143,58 @@ These settle what the decisions above left open. The detail is in the
     vendor sandboxes create user namespaces. **For now the container serves plain
     HTTP** (owner, 2026-11-18: "http for now is fine"): a listener mode of its own,
     allowed only in the foreground mode and chosen explicitly in the setup file; the
-    documented command publishes it on `127.0.0.1` only, and published on another
-    interface sign-in and sessions travel unencrypted. **Pending, recorded by the
-    owner the same day:** HTTPS for the container with a certificate the instance
-    makes for itself at first start, or one the operator supplies (implementation
-    plan, X7); the product serves no HTTPS on any system yet. Its first registration link
+    documented Docker command publishes it on `127.0.0.1` only. Every machine that
+    can reach the listen address can reach sign-in and sessions in plain text,
+    including with foreground mode on a bare host. Its first registration link
     comes only from
     `docker exec -u 0 <container> agentic-org admin reset --user <service user>`.
+
+    **HTTPS with the instance's own certificate** (X7, decided 2026-11-19; recorded
+    by the owner on 2026-11-18 as pending). Any instance, in a container or on a
+    machine, may listen with `scheme: "https"` on any address:
+    - *Made by the instance.* When the setup file names no pair, the host makes,
+      at the instance's first start, an ECDSA P-256 key and a self-signed X.509
+      certificate whose only subject alternative name is the origin's host (a DNS
+      name or an IP literal), valid 397 days (rcgen over ring; nothing uses aws-lc).
+      Setup says so; the host logs the certificate's SHA-256 fingerprint
+      (uppercase colon hex of the leaf's DER, as browsers show it) at every start,
+      so that `docker logs` shows it. It renews itself, with a new key and a new
+      fingerprint, at a start or while it runs when fewer than 30 days remain, and
+      the web process swaps the new pair in (`tls.renew`). A lost self-made key is
+      made again, and the log says so.
+    - *Supplied by the operator.* The setup file may name `"tls": {"cert":
+      <path>, "key": <path>}`: absolute paths of a PEM chain (leaf first) and its
+      unencrypted key. Setup reads them (opened without following a symbolic link in
+      their last component, regular files, at most 64 KiB each) and verifies the pair with `tls.set`'s checks
+      before it saves anything: both parse (`tls_invalid`), the key is the leaf's
+      (`tls_key_mismatch`), the leaf is valid now (`tls_not_valid`) and names the
+      origin's host by a subject alternative name (`tls_name_mismatch`). Only the
+      paths are recorded. The host imports the pair at its first start, verified
+      again, and never reads the files after that. A supplied key that is gone
+      refuses the start: it is never made again. A supplied pair that no longer
+      verifies (expired, say) is never replaced by the instance either: the host
+      starts, logs why, and serves no browser until the administrator replaces it
+      with `tls.set`.
+    - *Custody.* The key is a host secret, `tls.<pair fingerprint>` (the secrets
+      volume in a container; never the data volume, an argument, the environment
+      or a log). The registry's `web_tls_pair` row holds the chain in a normal form
+      (its certificates only, re-encoded), the pair fingerprint naming the key and
+      whether the pair was made or supplied. The administrator replaces a pair
+      with `tls.set` on `host.sock` (journaled; the same checks), after which the
+      host sends `tls.renew` and the web process serves it for new handshakes.
+      `agentic-org admin tls set --cert --key --login` is that call's command: it
+      prints only the new fingerprint, and sends the administrator's password only
+      to a host it identified, so on Linux and in a container it refuses until
+      command-line sign-in is approved in the browser (FC-173).
+    - *Start gate.* Before the web process is spawned: the listener fields and
+      origin, `hsts`, a stored pair (`tls_missing`), its coverage of the origin
+      (`tls_name_mismatch`) and its validity now. While the stored pair fails it the
+      web process waits (it is part of the web start's eligibility, asked again every
+      two seconds), so a replacement through `tls.set` starts it; `tls.fetch`
+      answers `https` with the stored pair after the coverage re-check.
+    - *Plain HTTP on a published port stays,* as an explicit choice
+      (`http_published`). The container's shipped setup file and its README move to
+      `https` once B1b has landed (they are being rewritten in that increment).
 11. **Recovery, reset and native clients on Linux.** A native client on `host.sock` is
     admitted by its kernel UID; Linux has no code identity for it, so the "verified
     signed `agentic-org` client" of ADR-0011 means, on Linux, a peer with the service

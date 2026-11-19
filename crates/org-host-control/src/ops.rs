@@ -263,6 +263,7 @@ pub struct TlsFetch;
 /// `tls.fetch`'s tagged result:
 /// - `{"ok": {"mode": "https", "cert", "key", "origin", "hsts"}}`;
 /// - `{"ok": {"mode": "http_loopback", "origin", "hsts"}}`, with no certificate fields;
+/// - `{"ok": {"mode": "http_published", "origin", "hsts"}}`, with no certificate fields;
 /// - `{"unavailable": <ListenFailure>}`: exactly a [`ListenFailure`].
 ///
 /// Not `Clone`: the key is a secret. The `ok` object decodes as one flat object, not through
@@ -270,9 +271,9 @@ pub struct TlsFetch;
 /// [`TlsPrivateKey`]. The JSON itself is the envelope's raw result, a `serde_json::Value`: built
 /// with `serde_json::to_value` on the host's side and parsed from the response line on the
 /// gateway's, so the key also sits there, unzeroed, on both sides (§6.5's raw-JSON exception).
-/// `https` needs both `cert` and `key`, non-empty strings; `http_loopback` takes neither, so a
-/// `cert` or `key` there is refused whatever its value, `null` included; any other `mode` is
-/// refused. `origin` must be canonical; its fit to the listener is the gateway's check, not the
+/// `https` needs both `cert` and `key`, non-empty strings; `http_loopback` and
+/// `http_published` take neither, so a `cert` or `key` there is refused whatever its value,
+/// `null` included; any other `mode` is refused. `origin` must be canonical; its fit to the listener is the gateway's check, not the
 /// decoder's.
 #[derive(Debug)]
 pub enum TlsFetchResult {
@@ -285,6 +286,9 @@ pub enum TlsFetchResult {
     },
     /// Plain HTTP on `127.0.0.1` or `::1`: no pair.
     HttpLoopback { origin: ListenOrigin, hsts: Hsts },
+    /// Plain HTTP on a published port of a foreground instance
+    /// ([`ListenMode::HttpPublished`]): no pair.
+    HttpPublished { origin: ListenOrigin, hsts: Hsts },
     /// The host can't serve the snapshot (a host bug).
     Unavailable(ListenFailure),
 }
@@ -297,6 +301,9 @@ impl TlsFetchResult {
             TlsFetchResult::Https { origin, hsts, .. } => Some((ListenMode::Https, origin, *hsts)),
             TlsFetchResult::HttpLoopback { origin, hsts } => {
                 Some((ListenMode::HttpLoopback, origin, *hsts))
+            }
+            TlsFetchResult::HttpPublished { origin, hsts } => {
+                Some((ListenMode::HttpPublished, origin, *hsts))
             }
             TlsFetchResult::Unavailable(_) => None,
         }
@@ -372,6 +379,13 @@ impl Serialize for TlsFetchResult {
                 origin,
                 hsts: *hsts,
             }),
+            TlsFetchResult::HttpPublished { origin, hsts } => TlsFetchOut::Ok(TlsFetchRef {
+                mode: ListenMode::HttpPublished,
+                cert: None,
+                key: None,
+                origin,
+                hsts: *hsts,
+            }),
             TlsFetchResult::Unavailable(failed) => TlsFetchOut::Unavailable(failed),
         }
         .serialize(s)
@@ -407,11 +421,17 @@ impl<'de> Deserialize<'de> for TlsFetchResult {
             (ListenMode::HttpLoopback, None, None) => {
                 Ok(TlsFetchResult::HttpLoopback { origin, hsts })
             }
+            (ListenMode::HttpPublished, None, None) => {
+                Ok(TlsFetchResult::HttpPublished { origin, hsts })
+            }
             (ListenMode::Https, _, _) => {
                 Err(D::Error::custom("https needs a non-empty cert and key"))
             }
             (ListenMode::HttpLoopback, _, _) => {
                 Err(D::Error::custom("http_loopback takes no cert or key"))
+            }
+            (ListenMode::HttpPublished, _, _) => {
+                Err(D::Error::custom("http_published takes no cert or key"))
             }
         }
     }

@@ -93,6 +93,14 @@ fn default_script() -> Arc<Script> {
 }
 
 fn gateway(script: Arc<Script>) -> (Gateway<SessionApi>, Calls) {
+    gateway_in(script, org_host_control::listen::ListenMode::HttpLoopback)
+}
+
+/// [`gateway`] for a listener of `mode` (the instance view's `listen_scheme`).
+fn gateway_in(
+    script: Arc<Script>,
+    mode: org_host_control::listen::ListenMode,
+) -> (Gateway<SessionApi>, Calls) {
     let (web, peer) = UnixStream::pair().unwrap();
     let calls = Calls::default();
     let seen = calls.clone();
@@ -138,7 +146,7 @@ fn gateway(script: Arc<Script>) -> (Gateway<SessionApi>, Calls) {
     let origin = ListenOrigin::parse(ORIGIN).unwrap();
     let files =
         BuildFiles::from_files([("index.html".into(), b"<script>0</script>".to_vec())]).unwrap();
-    let api = SessionApi::new(host, cache, &origin);
+    let api = SessionApi::new(host, cache, &origin, mode);
     let gateway = Gateway::new(
         StaticUi::new(files, origin.clone(), Hsts::Off),
         api,
@@ -422,6 +430,50 @@ fn instance_view_needs_a_session_and_reports_the_public_view() {
         &[],
     );
     assert_eq!(answer.status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// The view names the listener's own mode, `http_published` included, and passes on the
+/// host's word on an `https` certificate (`tls`); a plain HTTP listener's view has none.
+#[test]
+fn instance_view_reports_the_listen_mode_and_the_certificate_status() {
+    use org_host_control::listen::ListenMode;
+    let (first, _) = gateway(default_script());
+    let pair = sign_in(&first).pair();
+    for (mode, scheme, tls) in [
+        (ListenMode::HttpPublished, "http_published", None),
+        (ListenMode::Https, "https", Some("expiring")),
+    ] {
+        let script: Arc<Script> = Arc::new(move |method, _| match method {
+            "session.validate" => vec![json!({"result": record(1)})],
+            "instance.view" => {
+                let mut view = json!({
+                    "name": "studio", "status": "service", "web_status": "running",
+                    "administrator": "present"
+                });
+                if let Some(tls) = tls {
+                    view["tls"] = tls.into();
+                }
+                vec![json!({ "result": view })]
+            }
+            _ => vec![json!({"error":{"code":"unavailable","message":"no"}})],
+        });
+        let (gateway, _) = gateway_in(script, mode);
+        let answer = send(
+            &gateway,
+            Method::GET,
+            "/api/v1/instance",
+            "",
+            Some(&pair),
+            &[],
+        );
+        assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+        let result = &answer.body["result"];
+        assert_eq!(result["listen_scheme"], scheme);
+        match tls {
+            Some(tls) => assert_eq!(result["tls"], tls),
+            None => assert!(result.get("tls").is_none(), "{result}"),
+        }
+    }
 }
 
 /// A pair this host doesn't know is 401 after one validate and is not cached.

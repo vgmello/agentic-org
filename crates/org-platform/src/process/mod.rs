@@ -119,7 +119,111 @@ pub mod testing {
     pub fn open_paths() -> io::Result<Vec<std::path::PathBuf>> {
         super::native::open_paths()
     }
+
+    /// Makes this process the reaper of its orphaned descendants, where the system has
+    /// such an attribute (GNU/Linux: `PR_SET_CHILD_SUBREAPER`): `true` when it is now
+    /// one, `false` where the system has none (macOS: an orphan goes to `launchd`), so a
+    /// test reaps a grandchild only where it was given it. Irreversible for the process:
+    /// for a test's own child process only. The refusing adapter refuses.
+    pub fn become_subreaper() -> io::Result<bool> {
+        super::native::become_subreaper()
+    }
+
+    /// Whether the process `pid` is stopped (suspended by a signal or started
+    /// suspended), as the system reports its state: `proc_pidinfo` on macOS, the state
+    /// field of `/proc/<pid>/stat` on GNU/Linux. The refusing adapter refuses.
+    pub fn is_stopped(pid: libc::pid_t) -> io::Result<bool> {
+        super::native::is_stopped(pid)
+    }
+
+    /// The storage of this process's own `argv[0]`, which the process may overwrite,
+    /// where the system exposes it (macOS: `_NSGetArgv`), else `None`. For a test of
+    /// what a recovery scan reads after a process changed its arguments.
+    pub fn argv_zero() -> Option<*mut libc::c_char> {
+        super::native::argv_zero()
+    }
+
+    /// Ends the calling thread alone; the process goes on while another thread runs.
+    /// GNU/Linux: the `exit` system call (not `exit_group`), which also ends a main
+    /// thread alone. Elsewhere `pthread_exit`.
+    ///
+    /// # Safety
+    ///
+    /// No destructor of the calling thread runs and its stack is given up. Call it only
+    /// where no value on that stack is borrowed elsewhere, pinned or owed a drop: for
+    /// example before `main` (from [`crate::process::run_before_main`]), where nothing
+    /// of the Rust runtime is in use.
+    pub unsafe fn exit_this_thread() -> ! {
+        // SAFETY: the caller's contract above.
+        unsafe { super::native::exit_this_thread() }
+    }
+
+    /// The `posix_spawn` attribute flag that starts the child in a new session, as
+    /// `setsid` does. Its value differs by system, and the macOS C library does not
+    /// name it. The refusing adapter refuses: no flag stands in for it.
+    pub fn posix_spawn_setsid() -> io::Result<libc::c_short> {
+        super::native::posix_spawn_setsid()
+    }
 }
+
+/// `run_before_main!(unsafe NAME = function)`: a static `NAME` that has the system's
+/// loader call `function` (an `unsafe extern "C" fn()`) before `main`, and so before a
+/// test harness starts any thread (`test-support`). macOS: the `__DATA,__mod_init_func`
+/// section; GNU/Linux: `.init_array`. A target without an adapter does not build it.
+///
+/// It is unsafe, and the call says so: `function` runs before the Rust runtime is set
+/// up, so it may use only what needs none (raw C library calls), and must not unwind.
+#[cfg(any(test, feature = "test-support"))]
+pub use native::run_before_main;
+
+/// Whether a signal to a whole process group whose members have all exited, but are
+/// not yet reaped, is refused (macOS: `EPERM`, which [`is_exited_group_denial`]
+/// recognises), rather than delivered or answered `ESRCH` (GNU/Linux).
+pub const EXITED_GROUP_SIGNAL_IS_DENIED: bool = native::EXITED_GROUP_SIGNAL_IS_DENIED;
+
+/// Whether [`spawn_piped`] starts the child suspended, until [`release_spawned`]
+/// continues it (macOS), rather than running (GNU/Linux).
+pub const SPAWNS_SUSPENDED: bool = native::SPAWNS_SUSPENDED;
+
+// What a [`RecoveryScan`] meets, one fact per behaviour a consumer's tests depend on.
+// On today's systems the first three hold together on GNU/Linux and the last two on
+// macOS, because each follows from how that system lets one process read another; each
+// is still stated by itself, so that a test names the behaviour it needs and a later
+// adapter can differ in one without the others.
+
+/// Whether a [`RecoveryScan`] holds one descriptor for each process it observes until
+/// the next snapshot (GNU/Linux: a pidfd pins each process), so a scan of many
+/// processes is bounded by `RLIMIT_NOFILE` and its error names that limit.
+pub const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = native::SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS;
+
+/// Whether the system's read of a process's environment, which a [`RecoveryScan`]
+/// makes, returns the part before a page the process made unreadable (GNU/Linux:
+/// `/proc/<pid>/environ`, copied from the process's memory between the addresses in
+/// fields 50 and 51 of proc(5)'s `/proc/<pid>/stat`), rather than failing as a whole
+/// (macOS: `KERN_PROCARGS2`). Such a prefix can end at a complete entry, so the scan
+/// must tell it from a whole environment. On every system the scan reports that
+/// environment as unreadable.
+pub const SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE: bool =
+    native::SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE;
+
+/// Whether a process whose main thread has ended while another thread runs is a zombie
+/// leader to a [`RecoveryScan`] (GNU/Linux: state `Z` in `/proc/<pid>/stat`, while the
+/// process lives on). The scan must not take such a leader for an ended process.
+pub const AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER: bool =
+    native::AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER;
+
+/// Whether the environment a [`RecoveryScan`] reads is what follows the arguments
+/// counted when the process started (macOS: `KERN_PROCARGS2`), so a process that
+/// rewrote its arguments can move text into what the scan takes for its environment,
+/// and an empty `argv[0]` makes the layout ambiguous.
+pub const SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS: bool =
+    native::SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS;
+
+/// Whether the system withholds a restricted process's environment from a
+/// [`RecoveryScan`] (macOS: `CS_RESTRICT`, as for its platform programs such as
+/// `/bin/sleep`), so the scan reports its mark unreadable.
+pub const SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS: bool =
+    native::SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS;
 
 fn check(rc: libc::c_int) -> io::Result<()> {
     if rc == 0 {

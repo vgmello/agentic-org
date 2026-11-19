@@ -1,9 +1,9 @@
 <!--
   @component
   Top-bar New (app-shell-ux §0.2): an outline menu button that opens the creation flows that exist, in the
-  spec's order: Project, Work item, Request, Message, a separator, Hire an agent (the Hire page), Add a person. Project and
-  Work item are omitted until a flow exists that does not need a project page (New project is not built;
-  New task needs its project). Below 640 px it is a 44 px icon button named New. `openMenu()` is what the
+  spec's order: Project, Work item, Request, Message, a separator, Hire an agent (the Hire page), Add a person. Project
+  opens New project on the Projects page. Work item is omitted until a flow exists that does not need a project page
+  (New task needs its project). Below 640 px it is a 44 px icon button named New. `openMenu()` is what the
   N / Shift+N shortcut calls. Closing or finishing a flow returns focus to this button.
 -->
 <script lang="ts">
@@ -15,6 +15,7 @@
 	import AddPersonSheet from '$lib/components/AddPersonSheet.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { hireUrl } from '$lib/modules/employees';
+	import { newProjectUrl } from '$lib/modules/projects';
 	import { focusDestinationHeading } from './focus-destination';
 	import { NewMessageDialog } from '$lib/modules/messaging';
 	import { chatMembers } from '$lib/modules/messaging/model';
@@ -108,6 +109,10 @@
 		{/snippet}
 	</DropdownMenu.Trigger>
 	<DropdownMenu.Content align="end" class="w-56 bg-surface ring-line">
+		<!-- The Projects page opens New project; the sheet takes focus, and returns it to that page's heading. -->
+		<DropdownMenu.Item class={itemClass} onSelect={() => goto(resolve(newProjectUrl() as '/'))}
+			>Project</DropdownMenu.Item
+		>
 		<DropdownMenu.Item class={itemClass} onSelect={() => start('request')}
 			>Request</DropdownMenu.Item
 		>

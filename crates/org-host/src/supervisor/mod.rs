@@ -186,9 +186,11 @@ pub(crate) enum DiscardOutcome {
     Stopped,
 }
 
-/// How long past the grace period a shutdown waits for its short runs to end: the time a
-/// run's owner needs to SIGKILL and reap its server at the deadline and drop its entry.
-const RUN_END_MARGIN: Duration = Duration::from_secs(1);
+/// How long past the grace period a shutdown waits for its short runs and the offices'
+/// supervision threads to end: the time a run's owner (or an office's thread) needs to
+/// SIGKILL and reap its server at the deadline and drop its entry. With the host's other
+/// waits it ends inside the host's stop bound of 2.5 s (`Timings`).
+const RUN_END_MARGIN: Duration = Duration::from_millis(500);
 const RUN_END_POLL: Duration = Duration::from_millis(10);
 
 /// A short run's entry in [`State::runs`], removed when dropped: after its server was
@@ -354,6 +356,15 @@ impl Supervisor {
             .server_check
             .may_spawn()
             .map_err(CreateStartError::NotStarted)?;
+        // Before its key is read: a create needs the writer custody provisioning reserved
+        // for this office, organization and owner member.
+        self.spawner()
+            .map_err(|e| CreateStartError::NotStarted(e.to_string()))?
+            .custody(
+                &first.office.office_id,
+                Some((&first.org_id, &first.owner_member_id)),
+            )
+            .map_err(|e| CreateStartError::NotStarted(e.to_string()))?;
         let office_secrets_key = self
             .config
             .keys
@@ -523,14 +534,25 @@ impl Supervisor {
     /// rest, and waits for every supervision thread. Short runs (`--create`, `--discard`) in
     /// flight are stopped too, and this waits for them: a run leaves [`State::runs`] only
     /// after its server was stopped or killed and reaped, so no server of a run is left when
-    /// this returns. That wait ends [`RUN_END_MARGIN`] after the grace period at the latest
-    /// (a run whose owner never takes its stop signal is logged, and its server is killed
-    /// when the owner drops it).
+    /// this returns. These waits end [`RUN_END_MARGIN`] after the grace period at the latest
+    /// (a run whose owner never takes its stop signal, or an office thread still in its
+    /// server's launch handshake, is logged, and kills its server when it takes the stop or
+    /// drops it).
     pub(crate) fn shutdown(&self) {
-        let deadline = Instant::now() + self.config.timings.shutdown_grace;
+        self.shutdown_by(Instant::now() + self.config.timings.shutdown_grace);
+    }
+
+    /// [`Supervisor::shutdown`] with the grace period ending at `deadline`, which a stopping
+    /// host fixes when it is asked to stop: every server is SIGKILLed then, and the wait for
+    /// the short runs ends [`RUN_END_MARGIN`] after it.
+    pub(crate) fn shutdown_by(&self, deadline: Instant) {
         let threads: Vec<JoinHandle<()>> = {
             let mut state = lock(&self.state);
             state.stopping = true;
+            // A server still in its launch handshake is killed by its owner at once.
+            if let Some(spawner) = &self.spawner {
+                spawner.broker.stop();
+            }
             for sender in state.runs.values() {
                 let _ = sender.send(Signal::Stop { deadline });
             }
@@ -543,10 +565,17 @@ impl Supervisor {
                 })
                 .collect()
         };
-        for thread in threads {
-            let _ = thread.join();
-        }
         let until = deadline + RUN_END_MARGIN;
+        // A thread whose server is still in its launch handshake takes its stop only when
+        // the handshake ends (up to its own deadline): it is not waited for past the bound,
+        // and stops that server as soon as it sees the stop.
+        let mut left = false;
+        for thread in threads {
+            left |= !crate::sync::join_by(thread, until);
+        }
+        if left {
+            host_log::log("an office's supervision did not end with the host");
+        }
         while !lock(&self.state).runs.is_empty() {
             if Instant::now() >= until {
                 host_log::log("a create or discard run did not end with the host");
@@ -725,13 +754,32 @@ pub(crate) mod tests {
     use crate::test_programs::{image_identity, recorded_starts, recorded_stdin, recording_worker};
     use org_platform_host::admission::ImageIdentity;
 
-    const OFFICE: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+    const OFFICE: &str = "01900000-0000-7000-8000-0000000000aa";
+    const B: &str = "01900000-0000-7000-8000-0000000000bb";
+    const C: &str = "01900000-0000-7000-8000-0000000000cc";
+    /// An office this host holds no writer custody for.
+    const NO_CUSTODY: &str = "01900000-0000-7000-8000-0000000000dd";
 
     fn supervisor(dir: &Path, program: PathBuf, keys: &Arc<MemoryKeys>) -> Supervisor {
         checked_supervisor(dir, program, keys, ServerCheck::Skip)
     }
 
+    /// Real writer custody for `OFFICE`, `B` and `C` (never `NO_CUSTODY`), under `dir`.
+    fn custody(dir: &Path) -> crate::writer::TestCustody {
+        crate::writer::TestCustody::reserve(dir, INSTANCE, &[OFFICE, B, C])
+    }
+
     fn checked_supervisor(
+        dir: &Path,
+        program: PathBuf,
+        keys: &Arc<MemoryKeys>,
+        check: ServerCheck,
+    ) -> Supervisor {
+        uncustodied_supervisor(dir, program, keys, check).with_writers(custody(dir).writers)
+    }
+
+    /// A supervisor of a host with no writer custody at all (no protected registry).
+    fn uncustodied_supervisor(
         dir: &Path,
         program: PathBuf,
         keys: &Arc<MemoryKeys>,
@@ -831,14 +879,12 @@ pub(crate) mod tests {
         supervisor.start_office(OFFICE).unwrap();
         wait_for_spawn(OFFICE);
         // An item that isn't a key: the same.
-        const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
         keys.create(B, &OfficeSecretsKey::from_bytes([1; 32]))
             .unwrap();
         keys.fail(Op::Load, Fault::Corrupt);
         supervisor.start_office(B).unwrap();
         wait_for_spawn(B);
         // A store that fails otherwise: `storage_error`, retried with backoff.
-        const C: &str = "01CCCCCCCCCCCCCCCCCCCCCCCC";
         keys.fail(Op::Load, Fault::Io);
         supervisor.start_office(C).unwrap();
         wait_for_state(&supervisor, C, |s| {
@@ -862,7 +908,6 @@ pub(crate) mod tests {
     /// fails and keeps the key.
     #[test]
     fn a_server_that_isnt_the_signed_one_gets_nothing() {
-        const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
         let dir = short_tempdir();
         let got = dir.path().join("got");
         let program = script(dir.path(), "server", &format!("cat >> '{}'", got.display()));
@@ -1346,28 +1391,64 @@ pub(crate) mod tests {
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
 
-    fn hq_create_line() -> org_office_launch::CreateLine {
+    /// The selected HQ create of `office`, for the organization `custody` holds it for.
+    fn hq_create_line(
+        custody: &crate::writer::TestCustody,
+        office: &str,
+    ) -> org_office_launch::CreateLine {
+        use org_proto::selected_bootstrap::{CreatorV1, PlanV1, PreparedV1};
+        let prepared = PreparedV1 {
+            plan: PlanV1 {
+                version: 1,
+                name: "Acme".into(),
+                slug: "acme".into(),
+                repository_remote_url: "https://example.test/org.git".into(),
+                state_branch: "org/state".into(),
+            },
+            organization_id: custody.organization.clone(),
+            office_id: office.into(),
+            repository_id: crate::ids::uuid_v7().unwrap(),
+            home_team_id: crate::ids::uuid_v7().unwrap(),
+            hr_employee_id: crate::ids::uuid_v7().unwrap(),
+            creator: CreatorV1::from_login(custody.member.clone(), "Ana"),
+        };
         org_office_launch::CreateLine {
             office: org_office_launch::OfficeLine {
-                id_profile: None,
-                selected_writer_required: false,
                 instance_id: INSTANCE.into(),
-                office_id: OFFICE.into(),
+                office_id: office.into(),
                 rendezvous: String::new(),
             },
-            org_id: "01ORG".into(),
+            org_id: custody.organization.clone(),
             org_name: "Acme".into(),
             office_name: "HQ".into(),
             role: org_proto::OfficeRole::Hq,
-            owner_member_id: "01M72N8MG00000000000000M01".into(),
-            hq_creation: None,
+            owner_member_id: custody.member.clone(),
+            hq_creation: org_office_launch::HqCreationV1 {
+                version: org_office_launch::HqCreationV1::VERSION,
+                operation_id: crate::ids::generate().unwrap(),
+                escrow_profile: 1,
+                bootstrap: Box::new(prepared),
+            },
         }
+    }
+
+    /// A supervisor over real custody for `OFFICE`, `B` and `C`, with that custody.
+    fn custodied_supervisor(
+        dir: &Path,
+        program: PathBuf,
+        keys: &Arc<MemoryKeys>,
+    ) -> (Supervisor, crate::writer::TestCustody) {
+        let custody = custody(dir);
+        let supervisor = uncustodied_supervisor(dir, program, keys, ServerCheck::ByPath)
+            .with_writers(Arc::clone(&custody.writers));
+        (supervisor, custody)
     }
 
     /// Not a test: a launch HQ `--create` server, as the real worker speaks it (first line on
     /// stdin, the rendezvous connect, `ready_for_secrets`, the handoff header, the transfer
-    /// socket after its marker, the receipt), that reports `created` at once and keeps running.
-    /// Without its variable it does nothing.
+    /// socket after its marker, the receipt, then the writer control on the transfer socket
+    /// and its receipt), that reports `created` at once and keeps running. Without its
+    /// variable it does nothing.
     #[test]
     #[ignore = "run only as the launch HQ create server of a supervisor test"]
     fn hq_create_server() {
@@ -1376,7 +1457,7 @@ pub(crate) mod tests {
         let Some(pid_file) = std::env::var_os(CREATE_PID) else {
             return;
         };
-        fs::write(pid_file, std::process::id().to_string()).unwrap();
+        fs::write(&pid_file, std::process::id().to_string()).unwrap();
         let mut stdin = std::io::BufReader::new(std::io::stdin());
         let Ok(Some(HostFirstLine::Create(create))) =
             org_office_launch::read_first_line(&mut stdin, org_office_launch::FirstLine::Create)
@@ -1422,7 +1503,7 @@ pub(crate) mod tests {
             std::process::exit(5);
         };
         crate::secrets::zero(&mut header);
-        let (_, _transfer) = receive(fds.len(), true);
+        let (_, mut transfer) = receive(fds.len(), true);
         drop(receiver);
         stream.set_nonblocking(false).unwrap();
         org_office_launch::write_rendezvous_event(
@@ -1432,19 +1513,80 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
+        // Every create receives its writer control before it creates anything.
+        let Some(transfer) = transfer.pop() else {
+            std::process::exit(6);
+        };
+        let mut control = org_socket::rights::DatagramReceiver::new(
+            std::os::unix::net::UnixDatagram::from(transfer),
+        );
+        let mut payload = [0; org_office_launch::TRANSFER_HEADER_MAX_BYTES];
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let received = loop {
+            match control.receive_up_to(&mut payload, 1, &fence) {
+                Ok(received) => break received,
+                Err(org_socket::rights::ReceiveError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5))
+                }
+                Err(_) => std::process::exit(7),
+            }
+        };
+        let Ok(org_office_launch::TransferRecord::WriterControl {
+            office_id,
+            channel_id,
+        }) = org_office_launch::decode_transfer_record(&payload[..received.bytes])
+        else {
+            std::process::exit(8);
+        };
+        if office_id != create.office.office_id || received.descriptors.len() != 1 {
+            std::process::exit(9);
+        }
+        // The host's admission comes first on the custody channel: it must be valid, and
+        // what it names is recorded beside the pid file for the test to check. The channel
+        // stays open for the server's life.
+        let Some(writer) = received.descriptors.into_iter().next() else {
+            std::process::exit(9);
+        };
+        let writer = UnixStream::from(writer);
+        writer.set_nonblocking(false).unwrap();
+        writer
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut writer = std::io::BufReader::new(writer);
+        let Ok(Some(admission)) =
+            org_office_launch::writer::read::<org_office_launch::writer::Admission>(&mut writer)
+        else {
+            std::process::exit(11);
+        };
+        if !admission.check()
+            || admission.identity.office_id != create.office.office_id
+            || admission.identity.organization_id != create.org_id
+        {
+            std::process::exit(12);
+        }
+        let mut seen = std::path::PathBuf::from(&pid_file).into_os_string();
+        seen.push(".admission");
+        fs::write(seen, serde_json::to_vec(&admission).unwrap()).unwrap();
+        org_office_launch::write_rendezvous_event(
+            &mut stream,
+            &org_office_launch::RendezvousEvent::FdsReceived { of: channel_id },
+        )
+        .unwrap();
         if std::env::var_os(CREATE_HANG).is_some() {
             // Never reports, and ignores its closed stdin: only a SIGKILL ends it.
             std::thread::sleep(Duration::from_secs(600));
             std::process::exit(0);
         }
-        let office = OfficeFile::new(
+        let Ok(office) = OfficeFile::selected(
             &create.office.office_id,
             &create.office_name,
             create.role,
             &create.org_id,
             &create.org_name,
             "2026-11-08T00:00:00.000Z",
-        );
+        ) else {
+            std::process::exit(10);
+        };
         org_office_launch::write_rendezvous_event(
             &mut stream,
             &org_office_launch::RendezvousEvent::Server(ServerEvent::Created { office }),
@@ -1467,8 +1609,8 @@ pub(crate) mod tests {
         let pid_file = dir.path().join("pid");
         let program = dir.path().join("server");
         write_create_server(&program, &pid_file, false);
-        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
-        let first = hq_create_line();
+        let (supervisor, custody) = custodied_supervisor(dir.path(), program, &keys);
+        let first = hq_create_line(&custody, OFFICE);
         let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
         let pending = supervisor.begin_hq_create(first, recovery).unwrap();
         let CreateOutcome::Created(adoptable) = pending.wait(Duration::from_secs(10)) else {
@@ -1502,10 +1644,10 @@ pub(crate) mod tests {
         let pid_file = dir.path().join("pid");
         let program = dir.path().join("server");
         write_create_server(&program, &pid_file, true);
-        let supervisor = checked_supervisor(dir.path(), program, &keys, ServerCheck::ByPath);
+        let (supervisor, custody) = custodied_supervisor(dir.path(), program, &keys);
         let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
         let pending = supervisor
-            .begin_hq_create(hq_create_line(), recovery)
+            .begin_hq_create(hq_create_line(&custody, OFFICE), recovery)
             .unwrap();
         let pid: libc::pid_t = fs::read_to_string(&pid_file).unwrap().parse().unwrap();
         thread::scope(|scope| {
@@ -1523,10 +1665,95 @@ pub(crate) mod tests {
         });
         assert!(supervisor
             .begin_hq_create(
-                hq_create_line(),
+                hq_create_line(&custody, OFFICE),
                 org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap()
             )
             .is_err());
+    }
+
+    /// X5 review V2: the wait for short runs is bounded from the deadline the stopping host
+    /// fixed, not from when the supervisor's turn came: a run whose owner never takes its
+    /// stop signal is waited for until [`RUN_END_MARGIN`] after that deadline, and then left
+    /// to its owner, which kills its server when it drops it.
+    #[test]
+    fn a_shutdown_waits_for_a_run_until_its_margin_after_the_hosts_deadline() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([2; 32]))
+            .unwrap();
+        let pid_file = dir.path().join("pid");
+        let program = dir.path().join("server");
+        write_create_server(&program, &pid_file, true);
+        let (supervisor, custody) = custodied_supervisor(dir.path(), program, &keys);
+        let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
+        // Its owner (this test) never waits on it, so never takes the stop.
+        let pending = supervisor
+            .begin_hq_create(hq_create_line(&custody, OFFICE), recovery)
+            .unwrap();
+        let pid: libc::pid_t = fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        // The host fixed its deadline a grace period ago.
+        let deadline = Instant::now();
+        supervisor.shutdown_by(deadline);
+        let took = deadline.elapsed();
+        assert!(took >= RUN_END_MARGIN, "{took:?}");
+        assert!(
+            took < RUN_END_MARGIN + Duration::from_millis(400),
+            "{took:?}"
+        );
+        drop(pending);
+        // SAFETY: signal 0 only checks the pid.
+        assert!(
+            unsafe { libc::kill(pid, 0) } != 0,
+            "the run's server outlived its owner"
+        );
+    }
+
+    /// X5 review V2: a create whose worker has not connected to its launch rendezvous yet
+    /// does not hold the host's stop for the handshake's own 5 s: the shutdown ends the
+    /// handshake at once, the create fails, and its worker is killed before its owner returns.
+    #[test]
+    fn a_shutdown_ends_a_launch_handshake_at_once_and_kills_its_worker() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        keys.create(OFFICE, &OfficeSecretsKey::from_bytes([2; 32]))
+            .unwrap();
+        let pid_file = dir.path().join("pid");
+        // It never connects to the rendezvous.
+        let program = script(
+            dir.path(),
+            "server",
+            &format!("echo $$ > '{}'; exec sleep 60", pid_file.display()),
+        );
+        let (supervisor, custody) = custodied_supervisor(dir.path(), program, &keys);
+        thread::scope(|scope| {
+            let creating = scope.spawn(|| {
+                let recovery = org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
+                let begun = supervisor.begin_hq_create(hq_create_line(&custody, OFFICE), recovery);
+                (begun.is_err(), Instant::now())
+            });
+            let until = Instant::now() + Duration::from_secs(10);
+            let pid: libc::pid_t = loop {
+                if let Some(pid) = fs::read_to_string(&pid_file)
+                    .ok()
+                    .and_then(|text| text.trim().parse().ok())
+                {
+                    break pid;
+                }
+                assert!(Instant::now() < until, "the worker never started");
+                thread::sleep(Duration::from_millis(5));
+            };
+            let asked = Instant::now();
+            supervisor.shutdown_by(asked + Duration::from_millis(200));
+            let (failed, returned) = creating.join().unwrap();
+            assert!(failed, "the create did not fail");
+            let took = returned.duration_since(asked);
+            assert!(took < Duration::from_secs(1), "{took:?}");
+            // SAFETY: signal 0 only checks the pid.
+            assert!(
+                unsafe { libc::kill(pid, 0) } != 0,
+                "the worker outlived its handshake"
+            );
+        });
     }
 
     #[test]
@@ -1553,6 +1780,148 @@ pub(crate) mod tests {
         assert!(!seen.exists(), "a server started");
         assert!(keys.has(OFFICE));
         assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Delete));
+    }
+
+    /// M8: every office needs writer custody. An office without a valid record is never
+    /// spawned and its key is never read; it is `unavailable` (`storage_error`) at once, not
+    /// retried with backoff, and `office.restart` tries once more without a loop. A host with
+    /// no writer custody at all starts no office either.
+    #[test]
+    fn an_office_without_writer_custody_never_starts_and_is_not_restarted_in_a_loop() {
+        let unavailable = |s: &OfficeState| {
+            s.status == OfficeStatus::Unavailable
+                && s.reason == Some(OfficeStatusReason::StorageError)
+                && s.next_restart_at.is_none()
+        };
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        for id in [OFFICE, NO_CUSTODY] {
+            keys.create(id, &OfficeSecretsKey::from_bytes([8; 32]))
+                .unwrap();
+        }
+        let supervisor = supervisor(dir.path(), recording_worker(), &keys);
+        supervisor.start_office(NO_CUSTODY).unwrap();
+        wait_for_state(&supervisor, NO_CUSTODY, unavailable);
+        // Longer than the first backoff: still unavailable, still never spawned.
+        thread::sleep(Duration::from_millis(500));
+        assert!(unavailable(&supervisor.state(NO_CUSTODY).unwrap()));
+        assert_eq!(
+            recorded_starts(dir.path()),
+            0,
+            "a server started without custody"
+        );
+        assert_eq!(supervisor.restart(NO_CUSTODY), RestartOutcome::Restarting);
+        thread::sleep(Duration::from_millis(300));
+        wait_for_state(&supervisor, NO_CUSTODY, unavailable);
+        assert_eq!(recorded_starts(dir.path()), 0);
+        assert!(!keys
+            .calls()
+            .iter()
+            .any(|(op, id)| *op == Op::Load && id == NO_CUSTODY));
+        // The control: an office with custody is started.
+        supervisor.start_office(OFFICE).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while recorded_starts(dir.path()) == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "the office with custody never ran"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        supervisor.shutdown();
+
+        // A host with no writer custody at all.
+        let dir = short_tempdir();
+        let bare = uncustodied_supervisor(dir.path(), recording_worker(), &keys, ServerCheck::Skip);
+        bare.start_office(OFFICE).unwrap();
+        wait_for_state(&bare, OFFICE, unavailable);
+        thread::sleep(Duration::from_millis(300));
+        assert!(unavailable(&bare.state(OFFICE).unwrap()));
+        bare.shutdown();
+        assert_eq!(recorded_starts(dir.path()), 0);
+        assert!(keys.has(OFFICE) && keys.has(NO_CUSTODY));
+    }
+
+    /// Custody that can't be read now (the custody store fails) is not a refusal: the
+    /// office is `offline` (`storage_error`) with a restart scheduled, nothing is spawned
+    /// meanwhile, and once custody reads again the office starts.
+    #[test]
+    fn unreadable_custody_is_retried_and_the_office_starts_once_it_reads() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        let custody = custody(dir.path());
+        let supervisor =
+            uncustodied_supervisor(dir.path(), recording_worker(), &keys, ServerCheck::Skip)
+                .with_writers(Arc::clone(&custody.writers));
+        custody
+            .unreadable
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        supervisor.start_office(OFFICE).unwrap();
+        wait_for_state(&supervisor, OFFICE, |s| {
+            s.status == OfficeStatus::Offline
+                && s.reason == Some(OfficeStatusReason::StorageError)
+                && s.next_restart_at.is_some()
+        });
+        assert_eq!(
+            recorded_starts(dir.path()),
+            0,
+            "started over unreadable custody"
+        );
+        custody
+            .unreadable
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while recorded_starts(dir.path()) == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "never started once custody read: {:?}",
+                supervisor.state(OFFICE)
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        supervisor.shutdown();
+    }
+
+    /// A create needs the custody provisioning reserved for that office, organization and
+    /// owner member: otherwise nothing is spawned and the key is not read.
+    #[test]
+    fn a_create_without_its_custody_starts_nothing() {
+        let dir = short_tempdir();
+        let keys = Arc::new(MemoryKeys::default());
+        for id in [OFFICE, NO_CUSTODY] {
+            keys.create(id, &OfficeSecretsKey::from_bytes([2; 32]))
+                .unwrap();
+        }
+        let (supervisor, custody) = custodied_supervisor(dir.path(), recording_worker(), &keys);
+        let recovery = || org_proto::RecoveryCode::new("ABCD-EFGH-IJKL".into()).unwrap();
+        // No record for the office: refused, and the host log says why.
+        let (refused, logged) = host_log::capture(|| {
+            supervisor
+                .begin_hq_create(hq_create_line(&custody, NO_CUSTODY), recovery())
+                .is_err()
+        });
+        assert!(refused);
+        assert!(
+            logged
+                .iter()
+                .any(|line| line.contains(NO_CUSTODY) && line.contains("no valid writer custody")),
+            "{logged:?}"
+        );
+        // A record, but for another organization.
+        let mut other = hq_create_line(&custody, OFFICE);
+        let organization = crate::ids::uuid_v7().unwrap();
+        other.org_id = organization.clone();
+        other.hq_creation.bootstrap.organization_id = organization;
+        assert!(supervisor.begin_hq_create(other, recovery()).is_err());
+        // A record for this organization, but another owner member.
+        let mut other = hq_create_line(&custody, OFFICE);
+        let member = crate::ids::uuid_v7().unwrap();
+        other.owner_member_id = member.clone();
+        other.hq_creation.bootstrap.creator.employee_id = member;
+        assert!(supervisor.begin_hq_create(other, recovery()).is_err());
+        assert_eq!(recorded_starts(dir.path()), 0, "a create server ran");
+        assert!(!keys.calls().iter().any(|(op, _)| *op == Op::Load));
+        supervisor.shutdown();
     }
 
     /// G1: a host with no registered instance spawns nothing: no discard, no office start.

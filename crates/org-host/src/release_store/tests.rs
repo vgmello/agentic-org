@@ -55,10 +55,12 @@ fn release_directory_system() -> bool {
         true,
         protected_store(),
         Facts {
+            instance_id: "unused",
             recorded: Some(Path::new("/no-such-credential-directory")),
             data_root: std::os::fd::AsFd::as_fd(&anywhere),
             foreground: false,
             expect_items: true,
+            records: None,
         },
     );
     assert!(matches!(opened, Ok(None)));
@@ -104,10 +106,12 @@ impl World {
 
     fn facts(&self, expect_items: bool) -> Facts<'_> {
         Facts {
+            instance_id: self.instance.id(),
             recorded: Some(&self.credentials),
             data_root: self.instance.root_descriptor(),
             foreground: false,
             expect_items,
+            records: None,
         }
     }
 
@@ -186,10 +190,12 @@ fn holds(bytes: &[u8], needle: &[u8]) -> bool {
 fn a_development_build_and_a_keychain_system_open_no_release_directory() {
     let anywhere = fs::File::open("/").unwrap();
     let facts = || Facts {
+        instance_id: "fixture-instance",
         recorded: Some(Path::new("/no-such-credential-directory")),
         data_root: std::os::fd::AsFd::as_fd(&anywhere),
         foreground: true,
         expect_items: true,
+        records: None,
     };
     let refused = org_platform::Refused::Unsupported {
         capability: "credentials",
@@ -199,8 +205,8 @@ fn a_development_build_and_a_keychain_system_open_no_release_directory() {
         panic!("the platform was asked for a release directory")
     };
     for (release_build, store) in [
-        // A development build keeps its development stores on every system.
-        (false, Ok(ProtectedStore::ReleaseDirectory)),
+        // A development build keeps its development stores where the system's store is not
+        // a directory.
         (false, Ok(ProtectedStore::Keychain)),
         (false, Err(refused.clone())),
         // The Keychain is the store; and a system without one is answered where each
@@ -212,6 +218,31 @@ fn a_development_build_and_a_keychain_system_open_no_release_directory() {
         let opened = open_with(release_build, store.clone(), facts(), never);
         assert!(matches!(opened, Ok(None)), "{release_build} {store:?}");
     }
+    // Where it is a directory, a development build opens the one its record names, with the
+    // release build's checks (X5 review, fourth round), and keeps its development stores
+    // only when the record names none.
+    let asked = std::cell::Cell::new(false);
+    let opened = open_with(
+        false,
+        Ok(ProtectedStore::ReleaseDirectory),
+        facts(),
+        |location| {
+            asked.set(true);
+            assert!(location.expect_items && location.mount_point_required);
+            Err(CredentialError::InUse)
+        },
+    );
+    assert!(asked.get() && opened.is_err());
+    let opened = open_with(
+        false,
+        Ok(ProtectedStore::ReleaseDirectory),
+        Facts {
+            recorded: None,
+            ..facts()
+        },
+        never,
+    );
+    assert!(matches!(opened, Ok(None)));
 }
 
 #[test]
@@ -221,10 +252,12 @@ fn a_release_host_without_a_recorded_directory_does_not_start() {
         true,
         Ok(ProtectedStore::ReleaseDirectory),
         Facts {
+            instance_id: "fixture-instance",
             recorded: None,
             data_root: std::os::fd::AsFd::as_fd(&anywhere),
             foreground: false,
             expect_items: false,
+            records: None,
         },
         |_| panic!("the platform was asked for a release directory without a path"),
     )
@@ -368,16 +401,21 @@ fn host_secrets_are_owner_only_and_none_is_in_the_data_root() {
         }
     }
     stored.sort();
-    let mut expected: Vec<PathBuf> = [".lock", "host-secrets/.lock", "office-keys/.lock"]
-        .iter()
-        .map(PathBuf::from)
-        .chain(
-            secrets
-                .iter()
-                .map(|(name, _)| Path::new("host-secrets").join(name)),
-        )
-        .chain([Path::new("office-keys").join(format!("{OFFICE}.key"))])
-        .collect();
+    let mut expected: Vec<PathBuf> = [
+        ".instance",
+        ".lock",
+        "host-secrets/.lock",
+        "office-keys/.lock",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .chain(
+        secrets
+            .iter()
+            .map(|(name, _)| Path::new("host-secrets").join(name)),
+    )
+    .chain([Path::new("office-keys").join(format!("{OFFICE}.key"))])
+    .collect();
     expected.sort();
     assert_eq!(stored, expected);
 
@@ -437,7 +475,8 @@ fn a_store_found_empty_for_an_instance_with_offices_stops_the_start_and_nothing_
     // A new instance: no office yet, so an empty store is what it must be.
     assert!(!records_say_keys_exist(&world.office_home).unwrap());
     drop(world.open_as_the_host_decides().unwrap());
-    fs::remove_file(world.credentials.join(".lock")).unwrap();
+    fs::remove_dir_all(&world.credentials).unwrap();
+    directory(&world.credentials);
 
     // An office exists, and the store is empty: the volume was lost or replaced.
     directory(&world.office_folder());

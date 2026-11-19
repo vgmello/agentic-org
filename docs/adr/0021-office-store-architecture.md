@@ -102,7 +102,18 @@ the Track B lead took B1a. Implementation in progress: increments B1a to B1c of 
 - One write path and one rebuild serve every record family; a new family copies a shape.
 - A second engine implements the projection only; the journal and files carry every
   guarantee and do not change.
-- Until B4 and B6, the office answers work and messaging calls with `unsupported`.
+- Since B1b the running office is on this store: HQ creation is the journal's first
+  entry, the organization's files are under `durable/state/`, the projection under
+  `runtime/<office-id>/` is rebuilt when deleted, and the host confirms the journal head
+  once per flush ([office store](../design/office-store.md) section 11). The old store,
+  its two databases and the SQL outside `src/store/sqlite/` are deleted;
+  `crates/org-office/tests/engine_boundary.rs` keeps it so (ENG-1 for the office).
+- Calls only the old tables served answer `unsupported` until their family is on the
+  store: work in B4; operation lookup and the other organization commands in B2;
+  messaging, status lines and `subscribe` in B6. The office's native directory reads
+  and `team.create` answer from the store.
+- An organization created before B1b has no journal; its office is refused, not
+  migrated, and the organization is created again.
 - The data contract states the journal this record decides: document 16 revision 4,
   document 15 revision 10, document 06 revision 2.10 and document 08 revision 2.10
   (set revision 2.16), with ADR-0006 and ADR-0014 decision 8 worded to match.

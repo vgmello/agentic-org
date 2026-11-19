@@ -45,11 +45,6 @@
       "count": 1
     }
   },
-  "src/lib/components/testing/office-status.svelte": {
-    "svelte/require-each-key": {
-      "count": 1
-    }
-  },
   "src/lib/components/ui/button/button.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 1
@@ -198,16 +193,6 @@
     },
     "svelte/no-useless-mustaches": {
       "count": 1
-    }
-  },
-  "src/routes/(shell)/projects/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    }
-  },
-  "src/routes/(shell)/projects/[id]/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 2
     }
   },
   "src/routes/(shell)/work/+page.svelte": {

@@ -48,6 +48,54 @@ mod shared;
 #[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
 use shared::checked_uid;
 
+/// How a descriptor received through a [`DescriptorReceive`] becomes close-on-exec on
+/// this system.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceivedCloseOnExec {
+    /// The kernel sets it with the receive: [`DescriptorReceive::flags`] includes this
+    /// `recvmsg` flag, the fence is neither locked nor inspected, and
+    /// [`DescriptorReceive::close_on_exec`] calls nothing (Linux: `MSG_CMSG_CLOEXEC`).
+    WithTheReceive(libc::c_int),
+    /// [`DescriptorReceive::close_on_exec`] sets it on each descriptor, under the fence
+    /// held from before the receive until it is dropped (macOS).
+    UnderTheFence,
+    /// No adapter: no receive begins.
+    Unavailable,
+}
+
+/// How a received descriptor becomes close-on-exec on this system.
+pub const RECEIVED_CLOSE_ON_EXEC: ReceivedCloseOnExec = native::RECEIVED_CLOSE_ON_EXEC;
+
+/// Whether [`send_flags`] keep a send to a closed peer from raising `SIGPIPE`
+/// (Linux: `MSG_NOSIGNAL`). Where it is `false`, the caller owns `SIGPIPE`.
+pub const SEND_SUPPRESSES_SIGPIPE: bool = native::SEND_SUPPRESSES_SIGPIPE;
+
+/// Whether a peer-address query on a Unix stream whose peer has closed fails with
+/// `EINVAL` (macOS), rather than succeeding (Linux). [`peer_closed`] applies it.
+pub const PEER_CLOSED_IS_EINVAL: bool = native::PEER_CLOSED_IS_EINVAL;
+
+/// The `errno` of a nonblocking send to a Unix datagram peer whose receive queue is
+/// full: `ENOBUFS` on macOS, `EAGAIN` (would block) on Linux and where there is no
+/// adapter.
+pub const DATAGRAM_PEER_FULL: i32 = native::DATAGRAM_PEER_FULL;
+
+/// Whether a receive on a Unix datagram socket whose connected peer has closed may
+/// fail with `ECONNRESET` (macOS) instead of only finding nothing to read (Linux).
+pub const DATAGRAM_PEER_CLOSE_MAY_RESET: bool = native::DATAGRAM_PEER_CLOSE_MAY_RESET;
+
+/// The `errno` of a socket call for an address family the kernel does not have at
+/// all, such as IPv6 on a kernel built without it. Its number differs by system.
+pub const EAFNOSUPPORT: i32 = libc::EAFNOSUPPORT;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+
+#[cfg(all(
+    test,
+    any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))
+))]
+mod adapter_tests;
+
 /// The effective UID of the process at the other end of a connected Unix socket, as
 /// the kernel recorded it. A failed or truncated query is an error; callers refuse
 /// the peer.
@@ -117,7 +165,7 @@ pub fn listening(fd: RawFd) -> io::Result<bool> {
 /// listener answers the query with the same error. Where the system has no such
 /// error, or no adapter, this is `false` and the caller refuses the descriptor.
 pub fn peer_closed(error: &io::Error) -> bool {
-    peer_closed_when(error, native::PEER_CLOSED_IS_EINVAL)
+    peer_closed_when(error, PEER_CLOSED_IS_EINVAL)
 }
 
 // Both platforms reject listeners first, including macOS sockets that were

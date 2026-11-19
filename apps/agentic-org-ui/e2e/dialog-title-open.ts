@@ -64,7 +64,7 @@ export async function createDialogOrganization(page: Page, width: number) {
 export async function openTitle(page: Page, kind: TitleCase, width: number, scale = 1, root = 16) {
 	await createDialogOrganization(page, width);
 	if (kind === 'task' || kind === 'report') {
-		await visit(page, '/projects/atlas');
+		await visit(page, '/projects/atlas/work');
 		await page.getByRole('tab', { name: kind === 'task' ? 'Tasks' : 'Bugs', exact: true }).click();
 		await page
 			.getByRole('button', { name: kind === 'task' ? 'New task' : 'Report a bug', exact: true })
@@ -109,7 +109,7 @@ export async function openTitle(page: Page, kind: TitleCase, width: number, scal
 			await visit(page, '/projects');
 			await page.getByRole('button', { name: 'Remove Atlas from Platform', exact: true }).click();
 		} else if (kind === 'block-task') {
-			await visit(page, '/projects/atlas');
+			await visit(page, '/projects/atlas/work');
 			await page.getByRole('tab', { name: 'Tasks', exact: true }).click();
 			await page.getByRole('button', { name: 'New task', exact: true }).click();
 			await page.getByRole('dialog').getByLabel('Title', { exact: true }).fill('Layout regression');

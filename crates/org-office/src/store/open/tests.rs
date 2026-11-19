@@ -12,6 +12,7 @@ use org_store::{
 };
 
 use super::*;
+use crate::office_local::{testkit::ca_material, CaMaterial};
 use crate::organization::{
     features::CreateTeam,
     ports::RecordRef,
@@ -20,6 +21,7 @@ use crate::organization::{
 };
 
 mod crashes;
+mod local;
 
 pub(super) const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
 
@@ -145,11 +147,23 @@ pub(super) fn directory(store: &OfficeStore) -> Directory {
     store.read(ReadDirectory).expect("a read").0
 }
 
+/// The seed of the suite's CA material.
+pub(super) const CA: u8 = 1;
+
 pub(super) fn create_organization(store: &OfficeStore, op: u64) -> Result<Reply, StoreError> {
+    create_organization_with(store, op, ca_material(&identity().organization_id, CA))
+}
+
+pub(super) fn create_organization_with(
+    store: &OfficeStore,
+    op: u64,
+    ca: CaMaterial,
+) -> Result<Reply, StoreError> {
     store.run(CreateOrganizationOp {
         operation_id: id(op),
         here: identity(),
         command: creation_command(),
+        ca,
     })
 }
 

@@ -136,6 +136,7 @@ fn on_a_refusing_build_every_location_refuses_first() {
         data_root: std::os::fd::AsFd::as_fd(&data_root),
         mount_point_required: false,
         expect_items: false,
+        instance_id: None,
     });
     assert_eq!(release.err().as_ref(), Some(&refused));
     assert_eq!(std::fs::read_dir(&anchor).unwrap().count(), 0);
@@ -186,6 +187,7 @@ fn the_protected_store_kind_says_which_entry_opens_a_release_builds_store() {
         data_root: std::os::fd::AsFd::as_fd(&data_root),
         mount_point_required: false,
         expect_items: true,
+        instance_id: None,
     })
     .err();
     // The entry that names the host's item stores answers the same on every target.
@@ -200,6 +202,7 @@ fn the_protected_store_kind_says_which_entry_opens_a_release_builds_store() {
             data_root: std::os::fd::AsFd::as_fd(&data_root),
             mount_point_required: false,
             expect_items: true,
+            instance_id: None,
         },
         &stores,
     )
@@ -260,6 +263,7 @@ fn a_root_refusal_is_the_one_error_with_a_path_and_it_names_the_directory_and_th
         data_root: std::os::fd::AsFd::as_fd(&data_root),
         mount_point_required: false,
         expect_items: true,
+        instance_id: None,
     };
     let printed = format!("{location:?}");
     assert!(printed.starts_with("ReleaseDirectory"), "{printed}");

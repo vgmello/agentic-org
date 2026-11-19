@@ -65,10 +65,13 @@ mod ids;
 mod links;
 pub mod release;
 mod web;
+mod web_tls;
 
 // Real-process tests (debug builds only).
 #[cfg(all(test, debug_assertions))]
 mod enc1_process_tests;
+#[cfg(all(test, debug_assertions))]
+mod https_process_tests;
 #[cfg(all(test, debug_assertions))]
 mod web_process_tests;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
@@ -92,6 +95,7 @@ mod service;
 mod sessions;
 pub mod setup_flow;
 pub mod signals;
+pub mod stop;
 mod supervisor;
 mod sync;
 #[cfg(test)]
@@ -131,12 +135,20 @@ pub const HOST_SIGNING_ID: &str = "com.vgmello.agentic-org.org-office-host";
 pub use crate::error::HostError;
 pub use crate::logs::DEFAULT_LOG_MAX_BYTES;
 pub use crate::timings::Timings;
+pub use crate::web::BrowserListener;
 
 /// The office server's program name, looked for next to the host's own executable.
 pub const SERVER_PROGRAM_NAME: &str = "agentic-org-office";
 
 /// Requests one connection may have running at once.
 const MAX_IN_FLIGHT_PER_CONNECTION: usize = 16;
+
+/// How long past the servers' grace period a stopping host waits for its own threads: the
+/// requests still running on its connections and the web process's supervision. A request
+/// that waits for a create ends when its server is stopped; one still waiting after this
+/// (for a write lock of the registry, say) is left, its answer dropped, and ends with the
+/// process. With the grace period it bounds the stop (`Timings::shutdown_grace`).
+const THREAD_END_MARGIN: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// The team id that signs the desktop app, fixed when the host is built (`ORG_APP_TEAM_ID`).
 /// Without it no signed app can use the app-only calls (logged loudly at startup).
@@ -162,6 +174,14 @@ pub struct Config {
     pub log_max_bytes: u64,
     /// Client connections beyond this are closed on arrival.
     pub max_connections: usize,
+    /// The browser listener setup bound for this instance, held since setup checked its
+    /// address (`setup_flow::run` returns it in the foreground mode): the web process's
+    /// first start serves on it instead of binding the address again. A listener that is
+    /// not on the instance's address and port is refused by that start.
+    pub browser_listener: Option<BrowserListener>,
+    /// The TLS pair setup's configuration supplied for an `https` listener, imported at the
+    /// instance's first start (`web_tls`). Set by the registered start from its record.
+    supplied_tls: Option<instance::setup::SuppliedTls>,
     /// Signing policy reserved for CLI sessions in 2b.3; it enables no retired host calls.
     app_team_id: Option<String>,
     /// Debug builds only (release builds don't have the field): an unsigned development app
@@ -207,6 +227,8 @@ impl Config {
             timings: Timings::default(),
             log_max_bytes: DEFAULT_LOG_MAX_BYTES,
             max_connections: 64,
+            browser_listener: None,
+            supplied_tls: None,
             app_team_id: app_team_id.map(str::to_owned),
             #[cfg(debug_assertions)]
             dev_app_path: None,
@@ -252,6 +274,12 @@ impl Config {
         Ok(self)
     }
     fn admit_runtime(&mut self) -> Result<(), HostError> {
+        self.admit_runtime_with(false)
+    }
+    /// [`Config::admit_runtime`] for a start whose setup record names a credential directory
+    /// that the host opens (`recorded_custody`): in a development build that names the
+    /// build's custody as a development key folder does.
+    fn admit_runtime_with(&mut self, recorded_custody: bool) -> Result<(), HostError> {
         let fail = |e| HostError::Io {
             context: "admitting the complete runtime release before custody",
             source: io::Error::other(e),
@@ -262,12 +290,15 @@ impl Config {
             return Ok(());
         }
         // Named development custody is already debug-only and cannot be present
-        // in a release Config. It establishes no production signing evidence.
+        // in a release Config. It establishes no production signing evidence. A credential
+        // directory the setup record names is custody named as explicitly.
         #[cfg(debug_assertions)]
-        if self.dev_key_dir.is_some() {
+        if self.dev_key_dir.is_some() || recorded_custody {
             host_log::log("explicit debug development custody: unpinned fixture runtime; no production release admission");
             return Ok(());
         }
+        #[cfg(not(debug_assertions))]
+        let _ = recorded_custody;
         Err(fail(release::Error::MissingBuildTrust))
     }
 }
@@ -373,9 +404,13 @@ pub struct Host {
     instance: Option<instance::registry::Instance>,
     authentication_lifecycle: Option<service::authentication::Lifecycle>,
     web: Option<web::Supervisor>,
+    /// The renewal of an `https` listener's own certificate while the host runs.
+    tls_renewal: Option<web_tls::Renewal>,
     service: Arc<Service>,
     /// Organization creation, kept to end its threads when the host stops.
     creating: Option<Arc<provisioning::Provisioning>>,
+    /// How long the servers get to exit when the host stops.
+    shutdown_grace: std::time::Duration,
 }
 
 fn startup_server_check(config: &Config) -> Result<ServerCheck, HostError> {
@@ -566,11 +601,52 @@ fn startup_catalog(
     Ok((catalog, protected_offices, unfinished))
 }
 
+/// The listener's TLS pair, for an instance whose listener is `https` and whose registry
+/// exists (`web_tls::WebTls::start`): made, imported, renewed or kept before the web process
+/// is started. A pair that cannot be served and may not be made again (a supplied one)
+/// refuses the start, before anything is served.
+fn startup_web_tls(
+    instance: &Option<instance::registry::Instance>,
+    authentication: &Option<Arc<service::authentication::Authentication>>,
+    supplied: Option<instance::setup::SuppliedTls>,
+) -> Result<Option<Arc<web_tls::WebTls>>, HostError> {
+    let (Some(instance), Some(authentication)) = (instance, authentication) else {
+        return Ok(None);
+    };
+    let Some(listen) = instance.browser().map_err(instance_error)? else {
+        return Ok(None);
+    };
+    if listen.scheme() != org_host_control::listen::ListenMode::Https {
+        return Ok(None);
+    }
+    let refused = |why: String| {
+        host_log::log(&format!("the host does not start: {why}"));
+        HostError::Io {
+            context: "preparing the browser listener's TLS certificate",
+            source: io::Error::other(why),
+        }
+    };
+    let now = web_tls::now().ok_or_else(|| refused("the clock is unavailable".into()))?;
+    let (db, secrets) = authentication.provisioning_storage();
+    web_tls::WebTls::start(
+        db,
+        secrets,
+        listen.origin().clone(),
+        supplied
+            .as_ref()
+            .map(|tls| (tls.cert.as_path(), tls.key.as_path())),
+        now,
+    )
+    .map(Some)
+    .map_err(|why| refused(why.0))
+}
+
 fn startup_web(
     config: &Config,
     instance: &Option<instance::registry::Instance>,
     layout: &Layout,
     dev_key_dir: Option<&Path>,
+    tls: Option<Arc<web_tls::WebTls>>,
 ) -> Result<Option<web::Configuration>, HostError> {
     let Some(instance) = instance else {
         return Ok(None);
@@ -598,6 +674,7 @@ fn startup_web(
         listen,
         check,
         critical_paths,
+        tls,
     }))
 }
 
@@ -613,7 +690,6 @@ fn startup_protected_services(
     supervisor: Supervisor,
     keys: &Arc<dyn keys::OfficeSecretsKeys>,
     layout: &Layout,
-    timings: &Timings,
 ) -> Result<ProtectedServices, HostError> {
     let io = |context| move |source| HostError::Io { context, source };
     let writers = match (instance, authentication) {
@@ -631,18 +707,14 @@ fn startup_protected_services(
     let provisioning = match (instance, authentication, &writers) {
         (Some(instance), Some(authentication), Some(writers)) => {
             let (db, custody) = authentication.provisioning_storage();
-            Some(Arc::new(
-                provisioning::Provisioning::new(
-                    db,
-                    custody,
-                    Arc::clone(keys),
-                    Arc::clone(writers),
-                    instance.id(),
-                    instance.root(),
-                    &layout.home,
-                )
-                .with_shutdown_grace(timings.shutdown_grace),
-            ))
+            Some(Arc::new(provisioning::Provisioning::new(
+                db,
+                custody,
+                Arc::clone(keys),
+                Arc::clone(writers),
+                instance.id(),
+                &layout.home,
+            )))
         }
         _ => None,
     };
@@ -692,8 +764,9 @@ impl Host {
     }
 
     /// The composition. `release_directory` is the credential directory a registered start
-    /// opened, where a release build keeps its secrets in one: the office keys are opened
-    /// below it, and each view keeps it locked for as long as the view lives.
+    /// opened, where this system keeps a host's secrets in one and the setup record names it
+    /// (in every build): the office keys are opened below it, and each view keeps it locked
+    /// for as long as the view lives.
     fn start_with(
         mut config: Config,
         instance: Option<instance::registry::Instance>,
@@ -702,7 +775,7 @@ impl Host {
     ) -> Result<Self, HostError> {
         harden()?;
         if instance.is_some() {
-            config.admit_runtime()?;
+            config.admit_runtime_with(release_directory.is_some())?;
         }
         let layout = match &instance {
             Some(instance) => {
@@ -731,7 +804,9 @@ impl Host {
             None => HostLock::acquire(&layout)?,
         };
         // Decided only by the host that holds the home.
-        // An unregistered host reads no catalog, so it may never judge a key an orphan.
+        // With an instance, either the key store is scoped by ID or the release directory
+        // was opened with a verified instance binding. An unregistered host cannot judge
+        // which keys are orphans.
         let sweep_orphans = instance.is_some();
         let server_check = startup_server_check(&config)?;
         let io = |context| move |source| HostError::Io { context, source };
@@ -749,6 +824,9 @@ impl Host {
             .map(service::authentication::Lifecycle::start)
             .transpose()
             .map_err(io("starting session lifecycle"))?;
+        // Before any office or web process starts: an `https` instance whose pair cannot be
+        // served and may not be made again does not start.
+        let web_tls = startup_web_tls(&instance, &authentication, config.supplied_tls.take())?;
         // An unregistered host starts and discards no office server: setup must run first.
         let (catalog, protected_offices, unfinished) = match &instance {
             Some(_) => startup_catalog(&layout, &authentication)?,
@@ -792,14 +870,7 @@ impl Host {
             writers: _writers,
             supervisor,
             provisioning,
-        } = startup_protected_services(
-            &instance,
-            &authentication,
-            supervisor,
-            &keys,
-            &layout,
-            &config.timings,
-        )?;
+        } = startup_protected_services(&instance, &authentication, supervisor, &keys, &layout)?;
         let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(
             &layout.home,
@@ -813,7 +884,7 @@ impl Host {
         let gateway_state = Arc::new(std::sync::Mutex::new(
             org_host_control::GatewayState::NotConfigured,
         ));
-        let web_config = startup_web(&config, &instance, &layout, dev_key_dir)?;
+        let web_config = startup_web(&config, &instance, &layout, dev_key_dir, web_tls.clone())?;
         let recovery = match (&instance, &authentication) {
             (Some(instance), Some(authentication)) => Some(Arc::new(recovery::Recovery::new(
                 Arc::clone(authentication),
@@ -834,8 +905,27 @@ impl Host {
             .with_authentication(authentication)
             .with_provisioning(provisioning)
             .with_recovery(recovery)
+            .with_web_tls(web_tls.clone())
             .with_gateway_state(Arc::clone(&gateway_state)),
         );
+        let tls_renewal = match web_tls {
+            Some(tls) => {
+                let announcing = Arc::downgrade(&service);
+                Some(
+                    web_tls::Renewal::start(
+                        tls,
+                        web_tls::RENEW_EVERY,
+                        Box::new(move || {
+                            if let Some(service) = announcing.upgrade() {
+                                service.announce_tls_renewal();
+                            }
+                        }),
+                    )
+                    .map_err(io("starting the TLS certificate's renewal"))?,
+                )
+            }
+            None => None,
+        };
         let listener = startup_listener(bound, &service, &offices, config.max_connections)?;
         // A create that reserved its identity before the host last stopped continues now,
         // with no client asking; later ones start from the browser's request. This follows
@@ -845,9 +935,14 @@ impl Host {
         if let Some(provisioning) = &creating {
             provisioning.start(Arc::clone(&offices) as Arc<dyn provisioning::Hq>);
         }
+        let held = config
+            .browser_listener
+            .take()
+            .and_then(|listener| listener.take());
         let web = web_config.and_then(|web_config| {
             match web::Supervisor::start(
                 web_config,
+                held,
                 service.clone(),
                 Arc::clone(&gateway_state),
                 service.web_eligibility(),
@@ -872,8 +967,10 @@ impl Host {
             instance,
             authentication_lifecycle,
             web,
+            tls_renewal,
             service,
             creating,
+            shutdown_grace: config.timings.shutdown_grace,
         })
     }
 
@@ -895,30 +992,66 @@ impl Host {
 
     /// Stops accepting, stops every office server (stdin closed, then SIGKILL after the grace
     /// period), removes `host.sock` and releases `host.lock`.
-    pub fn shutdown(mut self) {
-        self.stop();
+    ///
+    /// The stop is bounded from the moment it is asked for: every wait in it ends by one
+    /// deadline fixed then, the servers' grace period, or a margin after it
+    /// ([`THREAD_END_MARGIN`], the supervisor's for its short runs, provisioning's for its
+    /// creation threads), whatever a server, the web process or a request does.
+    pub fn shutdown(self) {
+        self.shutdown_from(std::time::Instant::now());
     }
 
-    fn stop(&mut self) {
+    /// [`Host::shutdown`] of a stop asked for at `asked`, which may be before this host
+    /// finished starting (a signal taken while it started): the stop's deadline is fixed from
+    /// then, so it ends as it would have had the host been running when it was asked for.
+    /// Every wait of a stop asked for longer ago than [`Timings::stop_ends_within`] ends at
+    /// once: its servers are killed without a grace.
+    pub fn shutdown_from(mut self, asked: std::time::Instant) {
+        self.stop(asked);
+    }
+
+    fn stop(&mut self, asked: std::time::Instant) {
         let Some(mut listener) = self.listener.take() else {
             return;
         };
+        let deadline = asked + self.shutdown_grace;
+        let until = deadline + THREAD_END_MARGIN;
         listener.close();
-        // Ends the web process control connection (and its sessions), then kills/reaps it.
-        self.web.take();
+        // Its start or its run ends at once: the control connection (and its sessions)
+        // closes, and the web process is killed and reaped.
+        if let Some(web) = &self.web {
+            web.stop();
+        }
         // No creation attempt starts from here on, and none records a link.
         if let Some(creating) = &self.creating {
             creating.halt();
         }
-        // Before joining the listener: a create still running answers as soon as the
-        // supervisor stops its server.
-        self.offices.shutdown();
-        listener.join();
-        // Nothing of a create writes custody or the registry after this.
-        if let Some(creating) = self.creating.take() {
-            creating.stop();
+        // Before joining the listener and the web process's connection: a create still
+        // running answers as soon as the supervisor stops its server.
+        self.offices.shutdown_by(deadline, until);
+        if let Some(web) = self.web.take() {
+            if !web.join_by(until) {
+                host_log::log("the browser web process's connection did not end with the host");
+            }
         }
-        self.authentication_lifecycle.take();
+        if !listener.join_by(until) {
+            host_log::log("a request on host.sock did not end with the host");
+        }
+        // Nothing of a create writes custody or the registry after this, unless it is
+        // logged that a creation did not end.
+        if let Some(creating) = self.creating.take() {
+            creating.stop_by(deadline);
+        }
+        if let Some(lifecycle) = self.authentication_lifecycle.take() {
+            if !lifecycle.join_by(until) {
+                host_log::log("the session expiry did not end with the host");
+            }
+        }
+        if let Some(renewal) = self.tls_renewal.take() {
+            if !renewal.join_by(until) {
+                host_log::log("the TLS certificate's renewal did not end with the host");
+            }
+        }
         if let Ok(meta) = fs::symlink_metadata(&self.layout.host_socket) {
             if meta.file_type().is_socket() {
                 let _ = fs::remove_file(&self.layout.host_socket);
@@ -931,7 +1064,7 @@ impl Host {
 
 impl Drop for Host {
     fn drop(&mut self) {
-        self.stop();
+        self.stop(std::time::Instant::now());
     }
 }
 

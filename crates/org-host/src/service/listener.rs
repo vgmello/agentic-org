@@ -244,31 +244,61 @@ impl Listener {
         })
     }
 
-    /// Stops accepting (within [`ACCEPT_POLL`]) and closes every connection. Requests still
-    /// running finish (their answers are dropped); [`Listener::join`] waits for them.
+    /// Stops accepting and closes every connection, and returns at once. The accept thread
+    /// ends within [`ACCEPT_POLL`], or when the accept it is making ends (it may wait for
+    /// `SPAWN_LOCK` while a server is spawned): a connection it accepts from now on is
+    /// closed on arrival. Requests still running finish (their answers are dropped);
+    /// [`Listener::join`] waits for them and for the accept thread.
     pub(crate) fn close(&mut self) {
+        // Under the table's lock: the accept thread looks at `stopping` under it before it
+        // adds a connection, so every connection is either closed here or never added.
+        let live = lock(&self.live);
         self.stopping.store(true, Ordering::SeqCst);
-        if let Some(accept) = self.accept.take() {
-            let _ = accept.join();
-        }
-        for live in lock(&self.live).values() {
+        for live in live.values() {
             live.connection.close();
         }
     }
 
-    /// Waits for every connection's threads, including its running requests.
+    /// Waits for the accept thread and every connection's threads, including its running
+    /// requests.
     pub(crate) fn join(&mut self) {
+        self.close();
+        if let Some(accept) = self.accept.take() {
+            let _ = accept.join();
+        }
         let live: Vec<Live> = lock(&self.live).drain().map(|(_, live)| live).collect();
         for live in live {
             live.connection.close();
             let _ = live.reader.join();
         }
     }
+
+    /// [`Listener::join`], until `until` at the latest: an accept that has not ended by
+    /// then, or a connection whose running request has not (one waiting for a write lock of
+    /// the registry, say), is left to end on its own, its answer dropped. Says whether
+    /// everything ended.
+    pub(crate) fn join_by(&mut self, until: std::time::Instant) -> bool {
+        self.close();
+        let accepted = self
+            .accept
+            .take()
+            .is_none_or(|accept| crate::sync::join_by(accept, until));
+        let live: Vec<Live> = lock(&self.live).drain().map(|(_, live)| live).collect();
+        for live in &live {
+            live.connection.close();
+        }
+        // Every connection is waited for, until the same bound.
+        let left = live
+            .into_iter()
+            .map(|live| crate::sync::join_by(live.reader, until))
+            .filter(|ended| !ended)
+            .count();
+        accepted && left == 0
+    }
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        self.close();
         self.join();
     }
 }
@@ -320,11 +350,19 @@ fn accept_loop(
         if stream.set_nonblocking(false).is_err() {
             continue;
         }
-        if !org_socket::peer_allowed(&stream, config.expected_uid) {
+        let Some(admitted) = admission(
+            org_socket::peer_allowed(&stream, config.expected_uid),
+            || root_peer(&stream),
+        ) else {
             host_log::log("refused a connection from another user");
             continue; // dropping `stream` closes it
-        }
+        };
         let mut table = lock(live);
+        // Accepted after the listener was closed (this accept waited for `SPAWN_LOCK`
+        // meanwhile): closed on arrival, as [`Listener::close`] closed every other one.
+        if stopping.load(Ordering::SeqCst) {
+            break;
+        }
         table.retain(|_, live| !live.reader.is_finished());
         if table.len() >= config.max_connections {
             continue;
@@ -335,6 +373,10 @@ fn accept_loop(
         let id = next_id;
         next_id += 1;
         let (connection, queue) = Connection::new(for_writer, Accepted::sample(&stream));
+        if admitted == Admitted::Root {
+            connection.mark_root_authority();
+            host_log::log("admitted root on host.sock, for admin.reset only");
+        }
         let reader = {
             let (handler, connection) = (Arc::clone(handler), Arc::clone(&connection));
             let max_in_flight = config.max_in_flight;
@@ -384,6 +426,45 @@ fn readable(listener: &UnixListener, wait: Duration) -> bool {
     let ms = libc::c_int::try_from(wait.as_millis()).unwrap_or(libc::c_int::MAX);
     // SAFETY: polls one valid pollfd, owned by this frame, for at most `ms`.
     unsafe { libc::poll(&mut fd, 1, ms) > 0 }
+}
+
+/// Who a peer of `host.sock` was admitted as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Admitted {
+    /// The host's own user: every call is judged by its own rule.
+    User,
+    /// Root, on a system that names a peer by its user alone: the local authority that
+    /// may reset the administrator (SIGN-33, ADR-0017 decision 11). It is admitted for
+    /// that call and the greeting, and for nothing else ([`root_may_call`]).
+    Root,
+}
+
+/// The admission decision, pure: `own_user` is whether the kernel names the host's own
+/// user as the peer, and `root` asks whether it names root (asked only otherwise). Any
+/// other user is not admitted at all.
+fn admission(own_user: bool, root: impl FnOnce() -> bool) -> Option<Admitted> {
+    if own_user {
+        Some(Admitted::User)
+    } else if root() {
+        Some(Admitted::Root)
+    } else {
+        None
+    }
+}
+
+/// Whether the kernel names root as the peer of `stream`, through the platform's peer
+/// identity. Only a system that names a peer by its user alone reports a user at all
+/// (`Identity::uid`): where a peer is identified by its image, root has no route here,
+/// and a system that cannot identify a peer admits nobody this way.
+fn root_peer(stream: &UnixStream) -> bool {
+    crate::peer::identity(stream).is_ok_and(|identity| identity.uid == Some(0))
+}
+
+/// The calls a connection admitted as root may make: the greeting every connection
+/// starts with, and `admin.reset`. Everything else is answered `not_authorized` before any
+/// handler sees it.
+fn root_may_call(request: &Request) -> bool {
+    request.is::<org_proto::Hello>() || request.is::<org_host_control::admin::AdminReset>()
 }
 
 /// A connection's reader: reads requests until the client goes away or the stream is out of
@@ -452,6 +533,17 @@ fn serve_with_poll(
                 continue;
             }
         };
+        if connection.root_authority() && !root_may_call(&request) {
+            connection.clear_recovery_permission();
+            connection.send_response(Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "root is admitted on this socket for admin.reset only",
+                ),
+            ));
+            continue;
+        }
         let received = Received {
             sent_at,
             buffered_after: reader.inner.buffer().len(),
@@ -598,11 +690,22 @@ pub(crate) struct Connection {
     /// Ends the ticked reader even if shutdown misses a platform wakeup.
     closed: Arc<AtomicBool>,
     hello_completed: AtomicBool,
+    /// The peer is root, admitted as the local authority for `admin.reset` alone.
+    root_authority: AtomicBool,
     descriptor_receipts:
         Mutex<HashMap<String, (mpsc::Sender<()>, crate::supervisor::channels::ChannelSlot)>>,
     received_channels: Mutex<HashMap<String, crate::supervisor::channels::ChannelSlot>>,
     gateway: Option<Gateway>,
     pub(crate) recovery_permission: Mutex<Option<crate::recovery::Permission>>,
+}
+
+#[cfg(test)]
+impl Connection {
+    /// A connection as the listener makes one for an accepted `stream`, for the tests of
+    /// the calls that judge a connection (`admin`). Nothing serves it.
+    pub(crate) fn accepted_for_tests(stream: &UnixStream) -> Arc<Self> {
+        Self::new(stream.try_clone().unwrap(), Accepted::sample(stream)).0
+    }
 }
 
 /// Capacity is a definite pre-enqueue refusal; all other delivery failures stay fatal.
@@ -621,6 +724,7 @@ impl Connection {
             accepted,
             closed: Arc::new(AtomicBool::new(false)),
             hello_completed: AtomicBool::new(false),
+            root_authority: AtomicBool::new(false),
             descriptor_receipts: Mutex::default(),
             received_channels: Mutex::default(),
             gateway: None,
@@ -656,6 +760,15 @@ impl Connection {
     }
     pub(crate) fn hello_completed(&self) -> bool {
         self.hello_completed.load(Ordering::SeqCst)
+    }
+    /// Set once, when the connection is accepted, and never cleared.
+    pub(crate) fn mark_root_authority(&self) {
+        self.root_authority.store(true, Ordering::SeqCst);
+    }
+    /// Whether the kernel named root as this connection's peer when it was accepted, on a
+    /// system where that makes it the local authority for `admin.reset`.
+    pub(crate) fn root_authority(&self) -> bool {
+        self.root_authority.load(Ordering::SeqCst)
     }
     pub(crate) fn channel_kind(&self) -> org_office_launch::ChannelKind {
         if self.gateway.is_some() {
@@ -1247,6 +1360,88 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
+    /// SIGN-33: the host's own user is admitted as itself, root as the local authority
+    /// (asked only when the peer is not the host's user), and nobody else at all.
+    #[test]
+    fn only_the_hosts_user_and_root_are_admitted_and_root_is_asked_last() {
+        let unasked = || -> bool { panic!("asked about root for the host's own user") };
+        assert_eq!(admission(true, unasked), Some(Admitted::User));
+        assert_eq!(admission(false, || true), Some(Admitted::Root));
+        assert_eq!(admission(false, || false), None);
+        // This process's own peer is its own user: the platform never names it root unless
+        // the tests run as root, and where a peer is identified by its image, never.
+        let (stream, _peer) = UnixStream::pair().unwrap();
+        let named_root = crate::peer::identity(&stream).is_ok_and(|i| i.uid == Some(0));
+        assert_eq!(root_peer(&stream), named_root);
+        assert!(!named_root || crate::home::euid() == 0);
+    }
+
+    /// A connection admitted as root reaches a handler with the greeting and
+    /// `admin.reset` only: every other method is answered `not_authorized` before any
+    /// handler sees it. The same requests on the host's own user's connection all reach
+    /// the handler, which judges each by its own rule.
+    #[test]
+    fn root_is_admitted_for_admin_reset_and_the_greeting_and_nothing_else() {
+        const METHODS: [&str; 14] = [
+            "hello",
+            "instance.status",
+            "admin.link.initial",
+            "admin.reset",
+            "tls.fetch",
+            "web.serving",
+            "organization.provision",
+            "operation.get",
+            "recovery.release",
+            "recovery.acknowledge",
+            "session.grant",
+            "office.app_token",
+            "office.restart",
+            "no.such.method",
+        ];
+        for root in [true, false] {
+            let (host, peer) = UnixStream::pair().unwrap();
+            let (connection, queue) =
+                Connection::new(host.try_clone().unwrap(), Accepted::sample(&host));
+            assert!(!connection.root_authority());
+            if root {
+                connection.mark_root_authority();
+            }
+            let serving = Arc::clone(&connection);
+            let server = thread::spawn(move || serve(host, serving, queue, Arc::new(Echo), 4));
+            peer.set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut reader = io::BufReader::new(peer.try_clone().unwrap());
+            for (id, method) in METHODS.iter().enumerate() {
+                writeln!(
+                    &peer,
+                    r#"{{"id":{},"method":"{method}","params":{{}}}}"#,
+                    id + 1
+                )
+                .unwrap();
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let response: Response = serde_json::from_str(&line).unwrap();
+                assert_eq!(response.id, id as u64 + 1);
+                let reached = match response.outcome {
+                    org_proto::Outcome::Result(value) => {
+                        assert_eq!(value, Value::String((*method).into()));
+                        true
+                    }
+                    org_proto::Outcome::Error(error) => {
+                        assert_eq!(error.code, ErrorCode::NotAuthorized, "{method}");
+                        assert!(error.message.contains("admin.reset only"), "{method}");
+                        false
+                    }
+                };
+                let allowed = !root || matches!(*method, "hello" | "admin.reset");
+                assert_eq!(reached, allowed, "root={root} {method}");
+            }
+            drop(reader);
+            drop(peer);
+            server.join().unwrap();
+        }
+    }
+
     #[test]
     fn ticked_reader_repolls_a_missed_eof_at_the_host_call_site() {
         let (stream, peer) = UnixStream::pair().unwrap();
@@ -1475,6 +1670,97 @@ mod tests {
                 usize::from(expected_uid == uid)
             );
         }
+    }
+
+    /// X5 review V2: a stopping host waits for a request still running only until its
+    /// bound. A request that waits for something else (here a lock the test holds, as a
+    /// write lock of the registry would be held) is left running, and the wait ends at the
+    /// bound.
+    #[test]
+    fn a_bounded_join_leaves_a_request_that_does_not_end_by_its_bound() {
+        struct Waits(Arc<Mutex<()>>, Arc<AtomicBool>);
+        impl Handler for Waits {
+            fn handle(&self, _: Request, _: &Arc<Connection>, _: Received) {
+                self.1.store(true, Ordering::SeqCst);
+                drop(lock(&self.0));
+            }
+        }
+        let dir = short_tempdir();
+        let path = dir.path().join("w.sock");
+        let held = Arc::new(Mutex::new(()));
+        let entered = Arc::new(AtomicBool::new(false));
+        let holding = lock(&held);
+        let mut listener = Listener::start(
+            bind(&path).unwrap(),
+            ListenerConfig {
+                max_connections: 2,
+                max_in_flight: 4,
+                expected_uid: crate::home::euid(),
+            },
+            Arc::new(Waits(Arc::clone(&held), Arc::clone(&entered))),
+        )
+        .unwrap();
+        let mut stream = connect(&path);
+        stream
+            .write_all(b"{\"id\":1,\"method\":\"slow\"}\n")
+            .unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        while !entered.load(Ordering::SeqCst) {
+            assert!(std::time::Instant::now() < until, "the request never ran");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        listener.close();
+        let asked = std::time::Instant::now();
+        assert!(!listener.join_by(asked + Duration::from_millis(300)));
+        let took = asked.elapsed();
+        assert!(took >= Duration::from_millis(300), "{took:?}");
+        assert!(took < Duration::from_secs(2), "{took:?}");
+        // The request, left to run, ends once its lock is free.
+        drop(holding);
+    }
+
+    /// X5 review (third round, P1): closing the listener does not wait for its accept
+    /// thread, which may be waiting for `SPAWN_LOCK` while a server is spawned, and the
+    /// bounded join leaves that thread at its bound. The connection it accepts once the
+    /// lock is free is closed on arrival and never served.
+    #[test]
+    fn a_stop_never_waits_for_an_accept_that_waits_for_the_spawn_lock() {
+        let dir = short_tempdir();
+        let (mut listener, path) = start(dir.path(), crate::home::euid());
+        let spawning = lock(&SPAWN_LOCK);
+        let mut stream = connect(&path);
+        stream
+            .write_all(b"{\"id\":1,\"method\":\"hello\"}\n")
+            .unwrap();
+        // The accept thread sees the connection at once (its poll returns when one waits)
+        // and waits for the lock. The margin is for a loaded machine.
+        std::thread::sleep(ACCEPT_POLL * 10);
+        let stopping = std::thread::spawn(move || {
+            let asked = std::time::Instant::now();
+            listener.close();
+            let closed = asked.elapsed();
+            let joined = listener.join_by(asked + Duration::from_millis(300));
+            // Returned, not dropped here: dropping it waits for every thread.
+            (closed, asked.elapsed(), joined, listener)
+        });
+        let until = std::time::Instant::now() + Duration::from_secs(3);
+        while !stopping.is_finished() && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let finished = stopping.is_finished();
+        drop(spawning);
+        assert!(finished, "the stop waited for the accept thread");
+        let (closed, took, joined, listener) = stopping.join().unwrap();
+        assert!(closed < Duration::from_millis(100), "{closed:?}");
+        assert!(
+            !joined,
+            "the accept thread waited for the lock until the bound"
+        );
+        assert!(took >= Duration::from_millis(300), "{took:?}");
+        assert!(took < Duration::from_secs(2), "{took:?}");
+        // The lock is free: the accept ends, and its connection is closed unanswered.
+        assert_eq!(read_line(&stream), None);
+        drop(listener);
     }
 
     #[test]

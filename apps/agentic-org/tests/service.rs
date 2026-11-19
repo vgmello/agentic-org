@@ -178,11 +178,11 @@ fn a_stale_socket_is_replaced_but_another_file_is_not() {
 /// stuck test run.
 #[test]
 fn shutdown_with_clients_connected_finishes_promptly() {
-    const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
+    const A: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
     let home = TestHome::registered();
     home.write_office(&support::hq(
         A,
-        "01ORGA",
+        "0190a5d2-7c3e-7000-8000-00000000010a",
         "Acme",
         "2026-11-08T00:00:00.000Z",
     ));
@@ -225,12 +225,12 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
 
     const OFFICES: usize = 12;
     let home = TestHome::registered();
-    let ids: Vec<String> = (0..OFFICES).map(|i| format!("01{:024}", i + 1)).collect();
+    let ids: Vec<String> = (0..OFFICES).map(|i| support::uuid7(i as u64 + 1)).collect();
     let mut script = serde_json::Map::new();
     for (i, id) in ids.iter().enumerate() {
         home.write_office(&support::hq(
             id,
-            &format!("01{:024}", i + 101),
+            &support::uuid7(i as u64 + 101),
             &format!("Org {i}"),
             "2026-11-08T00:00:00.000Z",
         ));

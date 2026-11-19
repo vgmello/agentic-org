@@ -8,6 +8,7 @@ import type {
 	PriceDraft,
 	PriceVersion,
 	PricesOverview,
+	ProjectInvestment,
 	UsageRecordPage
 } from './types';
 
@@ -34,6 +35,16 @@ export interface CostsApi {
 		key: BreakdownKey | { all: true },
 		cursor?: string
 	): Promise<UsageRecordPage>;
+	/**
+	 * Each project's investment, to date and this month (decision 6, §1 "Projects list"), for the projects whose amounts
+	 * the viewer may see: every project for the owner, the projects of the teams a project manager leads for that
+	 * manager (§1 "Who sees amounts"). HQ scopes the rows; a viewer who may see none is refused with `not_authorized`.
+	 * This month resolves in `timeZone`, the viewing account's zone.
+	 */
+	projectInvestment(
+		organizationId: string,
+		request: { timeZone: string }
+	): Promise<ProjectInvestment>;
 	/** Every agent's daily and monthly budget in the budget zone (owner only). */
 	agentBudgets(organizationId: string): Promise<AgentBudgets>;
 }
@@ -46,5 +57,6 @@ export const costsApi: CostsApi = {
 	priceOperation: unavailableCall,
 	organizationCost: unavailableCall,
 	records: unavailableCall,
+	projectInvestment: unavailableCall,
 	agentBudgets: unavailableCall
 };

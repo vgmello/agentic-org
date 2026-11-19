@@ -94,7 +94,7 @@ pub(crate) const TEMP_PREFIX: &str = ".store-tmp-";
 /// accepted paths never name one file and every accepted path can be written. (No
 /// uppercase: a case-insensitive volume would make `A` and `a` one file. UUIDv7 text and
 /// every file name of the data contract fit.)
-fn component_ok(text: &str) -> bool {
+pub(crate) fn component_ok(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= 255
         && text != "."

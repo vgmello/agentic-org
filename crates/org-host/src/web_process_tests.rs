@@ -22,7 +22,6 @@ use crate::{
     home::{HostLock, Layout},
     hostdb::{HostDb, HostDbInit},
     instance::registry::Registry,
-    service::authentication::hash_password,
     Config, Host,
 };
 use org_host_control::{
@@ -52,7 +51,7 @@ const WAIT: Duration = Duration::from_secs(60);
 /// How long the real-host tests keep asking for the HQ whose worker must start within the
 /// host's launch deadline ([`create_hq_beside`]).
 const HQ_WAIT: Duration = Duration::from_secs(300);
-const PASSWORD: &str = "synthetic first password";
+const PASSWORD: &str = crate::setup_flow::seed::PASSWORD;
 
 struct Reply {
     status: u16,
@@ -291,15 +290,7 @@ fn start_registered_host(
         let db = HostDb::create(home, custody, &init).unwrap();
         match seed {
             Seed::Administrator => {
-                let verifier = hash_password(&Password::new(PASSWORD.into()).unwrap()).unwrap();
-                db.seed_account(
-                    &crate::ids::generate().unwrap(),
-                    "Owner",
-                    &verifier,
-                    true,
-                    now,
-                )
-                .unwrap();
+                crate::setup_flow::seed::administrator(&db, PASSWORD, now).unwrap();
             }
             Seed::RegistrationLink => {
                 use crate::links::{LinkKind, OneTimeLinks, Subject};
@@ -355,8 +346,25 @@ pub(super) fn fixture_config(base: &Path) -> Config {
 /// (`ORG_TEST_OFFICE_BIN` and `ORG_TEST_WEB_BIN` name others) under a disposable root on
 /// disk.
 pub(super) fn launch(seed: Seed) -> Launched {
+    launch_on(seed, false)
+}
+
+/// [`launch`], with the browser listener as a foreground instance in a container has it
+/// when `published`: plain HTTP on every address (`http_published`), reached through this
+/// machine's loopback, which is its origin.
+fn launch_on(seed: Seed, published: bool) -> Launched {
     let office = built_program("ORG_TEST_OFFICE_BIN", "agentic-org-office");
     let web = built_program("ORG_TEST_WEB_BIN", "agentic-org-web");
+    // Copies keep the build outputs untouched.
+    launch_placing(seed, published, |bin| {
+        fs::copy(office, bin.join("agentic-org-office")).unwrap();
+        fs::copy(web, bin.join("agentic-org-web")).unwrap();
+    })
+}
+
+/// [`launch_on`] with the worker and web programs that `place` puts in the folder it is
+/// given, as `agentic-org-office` and `agentic-org-web`.
+fn launch_placing(seed: Seed, published: bool, place: impl FnOnce(&Path)) -> Launched {
     let temp =
         tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
     let base = temp.path().canonicalize().unwrap();
@@ -365,10 +373,9 @@ pub(super) fn launch(seed: Seed) -> Launched {
         fs::set_permissions(base.join(name), fs::Permissions::from_mode(0o700)).unwrap();
     }
     // The host runs the web process as the worker's sibling; the web image serves
-    // `<exe dir>/ui`. Copies keep the build outputs untouched.
+    // `<exe dir>/ui`.
     let program = base.join("bin/agentic-org-web");
-    fs::copy(office, base.join("bin/agentic-org-office")).unwrap();
-    fs::copy(web, &program).unwrap();
+    place(&base.join("bin"));
     fs::create_dir(base.join("bin/ui")).unwrap();
     // Startup validation hashes the entry's inline bootstrap into the CSP and
     // refuses an entry without one (MissingInlineScript), as for a real build.
@@ -380,10 +387,17 @@ pub(super) fn launch(seed: Seed) -> Launched {
     let reserved = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = reserved.local_addr().unwrap();
     drop(reserved);
-    let listen = serde_json::from_value(serde_json::json!({
-        "address":"127.0.0.1","port":address.port(),"scheme":"http_loopback",
-        "origin":format!("http://{address}"),"hsts":"off"
-    }))
+    let listen = serde_json::from_value(if published {
+        serde_json::json!({
+            "address":"0.0.0.0","port":address.port(),"scheme":"http_published",
+            "origin":format!("http://{address}"),"hsts":"off"
+        })
+    } else {
+        serde_json::json!({
+            "address":"127.0.0.1","port":address.port(),"scheme":"http_loopback",
+            "origin":format!("http://{address}"),"hsts":"off"
+        })
+    })
     .unwrap();
     let (host, socket, link) = start_registered_host(fixture_config(&base), &base, &listen, seed);
     Launched {
@@ -414,6 +428,11 @@ pub(super) struct Started {
 
 /// Starts [`Started`] from [`launch`] with a seeded administrator. Uses request IDs 1 and 2.
 pub(super) fn start_signed_in() -> Started {
+    start_signed_in_on(false)
+}
+
+/// [`start_signed_in`] on a published listener when `published` ([`launch_on`]).
+fn start_signed_in_on(published: bool) -> Started {
     let Launched {
         temp,
         address,
@@ -421,7 +440,7 @@ pub(super) fn start_signed_in() -> Started {
         host,
         socket,
         ..
-    } = launch(Seed::Administrator);
+    } = launch_on(Seed::Administrator, published);
     let stream = UnixStream::connect(&socket).unwrap();
     stream.set_read_timeout(Some(WAIT)).unwrap();
     let mut wire = BufReader::new(stream);
@@ -796,7 +815,7 @@ fn lnx_3_host(outcome: &str) {
         socket: _,
         mut wire,
         session: _,
-    } = start_signed_in();
+    } = start_signed_in_on(outcome == "serves published");
     println!("\nhost.sock: hello and account.verify answered");
     let mut id = 3;
     let state = |wire: &mut BufReader<UnixStream>, id: &mut u64| {
@@ -847,6 +866,42 @@ fn lnx_3_host(outcome: &str) {
         "serves" => {
             serving(&host);
         }
+        "serves published" => {
+            serving(&host);
+            // The wildcard listener accepts on every address of this machine; only a
+            // request for the configured origin is answered. Another Host is refused
+            // before any route, and so is a request for the address it arrived on.
+            for host_header in [
+                "192.0.2.7:8443",
+                "localhost",
+                &format!("0.0.0.0:{}", address.port()),
+            ] {
+                let mut stream = TcpStream::connect(address).unwrap();
+                stream.set_read_timeout(Some(WAIT)).unwrap();
+                stream
+                    .write_all(
+                        format!(
+                            "GET /api/v1/version HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
+                let mut response = String::new();
+                stream.read_to_string(&mut response).unwrap();
+                let status = response.split(' ').nth(1).unwrap_or("none").to_owned();
+                println!("published: another host: {status}");
+            }
+            let index = http(address, "GET", "/", "", "");
+            println!(
+                "published: index {} hsts {} cookie {}",
+                index.status,
+                index
+                    .headers
+                    .to_ascii_lowercase()
+                    .contains("strict-transport-security"),
+                index.headers.to_ascii_lowercase().contains("set-cookie")
+            );
+        }
         "serves again" => {
             let killed = serving(&host);
             kill(&killed);
@@ -858,22 +913,13 @@ fn lnx_3_host(outcome: &str) {
             nothing_runs();
         }
         "gives up" => {
-            // The longest wait between two starts is 8 seconds, and the state is `failed`
-            // through it. Failed for longer than that and a start: the supervisor gave up.
-            let mut failed_since = None;
-            wait_until("the supervisor gives up", || {
-                let now = Instant::now();
-                match state(&mut wire, &mut id) {
-                    GatewayState::Failed => {
-                        now.duration_since(*failed_since.get_or_insert(now))
-                            > Duration::from_secs(11)
-                    }
-                    _ => {
-                        failed_since = None;
-                        false
-                    }
-                }
-            });
+            // The supervision ends when it gives up, after its last failed start has been
+            // stopped. (The state alone cannot show it: a failed start is `starting` only
+            // for the moment it takes, which reads of the state can miss, and the next one
+            // comes up to 8 seconds later.)
+            let web = host.web.as_ref().expect("the web process is supervised");
+            wait_until("the supervisor gives up", || web.ended());
+            assert_eq!(state(&mut wire, &mut id), GatewayState::Failed);
             assert!(!web_ready(&host));
             nothing_runs();
         }
@@ -934,6 +980,43 @@ fn lnx_3_a_real_host_starts_the_real_web_process_confined_and_logs_by_what() {
     // One admission for both starts: the web image was read, and its digest logged, once.
     let read = run.logged("agentic-org-web; every server this host starts runs the bytes");
     assert_eq!(read.len(), 1, "{:?}", run.log);
+}
+
+/// A foreground instance's published listener (`http_published`): the real host binds
+/// every address, the real web process serves the configured loopback origin confined as
+/// always, sets no `Strict-Transport-Security` and no cookie, and refuses a request that
+/// names any other host.
+#[test]
+fn a_real_host_serves_plain_http_on_a_published_listener_for_its_loopback_origin_only() {
+    const NAME: &str = "web_process_tests::a_real_host_serves_plain_http_on_a_published_listener_for_its_loopback_origin_only";
+    if let Some(outcome) = host_outcome() {
+        return lnx_3_host(&outcome);
+    }
+    let Some(run) = as_host(NAME, "serves published", None) else {
+        return;
+    };
+    assert!(
+        run.fact("web process: version 200 NoNewPrivs 1 Seccomp 2"),
+        "{}",
+        run.facts
+    );
+    let refused: Vec<&str> = run
+        .facts
+        .lines()
+        .filter(|line| line.starts_with("published: another host: "))
+        .collect();
+    assert_eq!(refused.len(), 3, "{}", run.facts);
+    for line in refused {
+        let status: u16 = line.rsplit(' ').next().unwrap().parse().unwrap();
+        assert!((400..500).contains(&status), "{line}");
+    }
+    assert!(
+        run.fact("published: index 200 hsts false cookie false"),
+        "{}",
+        run.facts
+    );
+    assert!(run.fact("state: Running"), "{}", run.facts);
+    assert_eq!(run.logged(STARTED).len(), 1, "{:?}", run.log);
 }
 
 /// LNX-3 where a container's profile refuses Landlock, at its version query, at the
@@ -1072,6 +1155,89 @@ fn lnx_3_a_filter_that_cannot_be_installed_is_logged_five_times_and_the_real_hos
         panic!("the limit is logged once: {:?}", run.log)
     };
     assert!(last.ends_with(REASON), "{last}");
+}
+
+/// X5 review V2: a host's stop is bounded from the moment it is asked for, whatever its
+/// web process and a create in flight do. Here the web process's start waits for a child
+/// that never connects, and a create waits for a worker that never connects to its launch
+/// rendezvous (a handshake with a deadline of its own, 5 s). The host stops within 2.5 s of
+/// being asked (Docker Desktop kills a container 3 s after `SIGTERM`), and neither the web
+/// process nor the create's worker is left when it has stopped. Both stand-ins are the
+/// compiled fake web process.
+#[test]
+fn a_host_stops_within_its_bound_while_its_web_start_and_a_create_wait() {
+    let launched = launch_placing(Seed::Administrator, false, |bin| {
+        for (name, steps) in [
+            ("agentic-org-office", "pause 60000\n"),
+            ("agentic-org-web", "first-line\nstay\n"),
+        ] {
+            fs::copy(crate::test_programs::fake_web(), bin.join(name)).unwrap();
+            fs::write(bin.join(format!("{name}.steps")), steps).unwrap();
+        }
+    });
+    let Launched {
+        temp: _temp,
+        program,
+        host,
+        base,
+        ..
+    } = launched;
+    let worker = base.join("bin/agentic-org-office");
+    let creating = host
+        .creating
+        .as_ref()
+        .expect("a registered host creates organizations");
+    let account = creating.account_for_test("Owner");
+    let plan = PlanV1 {
+        version: 1,
+        name: "Example".into(),
+        slug: "example".into(),
+        repository_remote_url: "https://example.test/organization.git".into(),
+        state_branch: "org/state".into(),
+    };
+    let fingerprint: [u8; 32] =
+        <sha2::Sha256 as sha2::Digest>::digest(serde_json::to_vec(&plan).unwrap()).into();
+    let operation_id = crate::ids::generate().unwrap();
+    assert!(matches!(
+        creating.create(&account, &operation_id, &plan, fingerprint),
+        Ok(org_host_control::HostOpResult::Accepted)
+    ));
+    // Both wait: the create's worker runs, and so does a web process (between two failed
+    // starts none does, so this waits for the next start).
+    wait_until("the create's worker and a web process", || {
+        !own_pids(&worker).is_empty() && !own_pids(&program).is_empty()
+    });
+    let asked = Instant::now();
+    host.shutdown();
+    let took = asked.elapsed();
+    println!("the host stopped {took:?} after it was asked");
+    assert!(took < Duration::from_millis(2500), "{took:?}");
+    assert!(
+        own_pids(&program).is_empty(),
+        "a web process outlived the host"
+    );
+    assert!(
+        own_pids(&worker).is_empty(),
+        "the create's worker outlived the host"
+    );
+}
+
+/// Every live child of this process executing exactly `program`. Only children: macOS runs
+/// its own checks of a new program (`codesign --check-notarization <path>`), which name the
+/// same path.
+fn own_pids(program: &Path) -> Vec<String> {
+    let out = Command::new("/usr/bin/pgrep")
+        .arg("-P")
+        .arg(std::process::id().to_string())
+        .arg("-f")
+        .arg(program)
+        .output()
+        .unwrap();
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Ported from the deleted bootstrap release gate: a registered-instance host with

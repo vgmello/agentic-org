@@ -127,10 +127,7 @@ impl Running {
 }
 
 /// `EAFNOSUPPORT`: the kernel has no IPv6 at all.
-#[cfg(target_os = "linux")]
-const NO_ADDRESS_FAMILY: i32 = 97;
-#[cfg(not(target_os = "linux"))]
-const NO_ADDRESS_FAMILY: i32 = 47;
+const NO_ADDRESS_FAMILY: i32 = org_platform::socket::EAFNOSUPPORT;
 
 /// The IPv6 loopback listener, or `None` only where this host has no IPv6 loopback (no address
 /// family, or `::1` not configured). The skip goes to stderr directly, not through the test
@@ -808,6 +805,81 @@ fn invalid_limits_and_non_loopback_plaintext_are_refused_before_initialization()
             fail_initialize
         )),
         Some((io::ErrorKind::PermissionDenied, "loopback_address"))
+    );
+}
+
+/// `http_published`: plain HTTP on a listener that is not on a loopback address, with
+/// `127.0.0.1` as its origin's host, is served exactly as loopback HTTP is. The same mode on
+/// a loopback listener, with another host as its origin (the name `localhost` and `[::1]`
+/// among them) or with another port is refused before initialization, and `http_loopback`
+/// never serves a listener off loopback.
+#[test]
+fn published_plaintext_serves_only_off_loopback_with_a_loopback_origin() {
+    let host = "127.0.0.1";
+    let listener = TcpListener::bind("0.0.0.0:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let origin = ListenOrigin::parse(&format!("http://{host}:{port}")).unwrap();
+    let mut server = Running::start_serving(
+        listener,
+        ListenMode::HttpPublished,
+        origin,
+        HttpLimits::default(),
+        |_| {
+            Response::builder()
+                .header("Content-Type", "application/json")
+                .body(Full::new(Bytes::from_static(b"{}")))
+                .unwrap()
+        },
+    );
+    // The wildcard listener is reached through this machine's loopback, as a published
+    // port is.
+    server.address = SocketAddr::from(([127, 0, 0, 1], port));
+    let response = server.request(
+        format!("GET / HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n").as_bytes(),
+    );
+    assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"), "{host}");
+    assert_eq!(body(&response), b"{}", "{host}");
+    assert_eq!(server.calls.load(Ordering::Acquire), 1, "{host}");
+    let refused = |bind: &str, host: &str, port_offset: u16| {
+        let listener = TcpListener::bind(bind).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let named = if port_offset == 0 {
+            port
+        } else if port == 65535 {
+            port - 1
+        } else {
+            port + 1
+        };
+        let origin = ListenOrigin::parse(&format!("http://{host}:{named}")).unwrap();
+        origin_refusal(run_http(
+            listener,
+            ListenMode::HttpPublished,
+            origin,
+            HttpLimits::default(),
+            fail_initialize,
+        ))
+    };
+    assert_eq!(
+        refused("127.0.0.1:0", "127.0.0.1", 0),
+        Some((io::ErrorKind::PermissionDenied, "published_address"))
+    );
+    for host in [
+        "localhost",
+        "[::1]",
+        "office.example",
+        "192.168.1.20",
+        "0.0.0.0",
+        "sub.localhost",
+    ] {
+        assert_eq!(
+            refused("0.0.0.0:0", host, 0),
+            Some((io::ErrorKind::PermissionDenied, "published_host")),
+            "{host}"
+        );
+    }
+    assert_eq!(
+        refused("0.0.0.0:0", "127.0.0.1", 1),
+        Some((io::ErrorKind::PermissionDenied, "port_mismatch"))
     );
 }
 

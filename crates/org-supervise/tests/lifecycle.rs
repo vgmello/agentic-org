@@ -551,9 +551,13 @@ fn probe_context_is_refused_and_abandoned_preparation_cleans_only_its_fresh_dire
     assert_eq!(std::fs::read(real.join("keep")).unwrap(), b"keep");
 }
 
-#[cfg(target_os = "linux")]
+/// Where a signal to a group of only exited members is not refused (Linux), it succeeds
+/// or answers `ESRCH`, and cleanup reaps as usual.
 #[test]
 fn linux_owned_zombie_group_keeps_success_or_esrch_signalling_behavior() {
+    if org_platform::process::EXITED_GROUP_SIGNAL_IS_DENIED {
+        return;
+    }
     let root = private_tempdir();
     let mut spawned = shell(&root.path().canonicalize().unwrap(), "exit 17");
     spawned

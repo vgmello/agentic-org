@@ -1,27 +1,24 @@
-//! Organization-owned membership, structure, people, directory and status policies.
-//! Persistence remains in the private store; root facades compose it with these capabilities.
-pub mod activity;
-pub(crate) mod admission;
+//! Organization-owned membership, structure, people and directory policies, and the
+//! organization family on the office store.
 mod apply;
-mod bootstrap;
-mod canonical_directory;
 pub mod directory;
 pub mod features;
+pub mod operation_id;
 mod people;
 mod policy;
 pub mod ports;
 pub mod projector;
 pub mod records;
-mod status;
+pub mod snapshot;
 mod structure;
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
 mod view;
+pub mod wire;
 
 pub use apply::{apply, UnknownChange};
 pub use people::owner_bootstrap;
 pub use policy::name_key;
-pub use status::presence_after_status;
 pub use view::{OrgView, OrgWrite};
 
 pub(crate) type Decision = Result<Vec<org_proto::org::OrgChange>, org_proto::ApiError>;
@@ -30,9 +27,8 @@ pub(crate) use people::{
 };
 pub(crate) use policy::{
     check_handle_free, check_id, check_member_id, check_text, check_version, fail, found,
-    is_offboarded, parse_name, refuse_offboarded, valid_owner,
+    parse_name, refuse_offboarded,
 };
-pub(crate) use status::check as check_status;
 pub(crate) use structure::{
     member_move, project_add_team, project_remove_team, team_add_member, team_create, team_delete,
     team_move, team_remove_member, team_rename, team_set_lead, team_set_title,

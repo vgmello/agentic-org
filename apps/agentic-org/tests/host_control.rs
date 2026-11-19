@@ -265,11 +265,23 @@ fn status_counts_observed_office_states_without_revealing_ids() {
     use org_host_control::{InstanceStatus, InstanceStatusParams};
     use std::time::Duration;
     let home = TestHome::registered();
-    const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
-    const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
-    const C: &str = "01CCCCCCCCCCCCCCCCCCCCCCCC";
-    for (id, name) in [(A, "Alpha"), (B, "Beta"), (C, "Failing")] {
-        home.write_office(&support::hq(id, id, name, "2026-11-11T00:00:00.000Z"));
+    const A: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
+    const B: &str = "0190a5d2-7c3e-7000-8000-00000000000b";
+    const C: &str = "0190a5d2-7c3e-7000-8000-00000000000c";
+    // Each office is its own organization's HQ: the organization IDs are kept out of the
+    // answer too.
+    let offices = [
+        (A, 0x10a, "Alpha"),
+        (B, 0x10b, "Beta"),
+        (C, 0x10c, "Failing"),
+    ];
+    for (id, org, name) in offices {
+        home.write_office(&support::hq(
+            id,
+            &support::uuid7(org),
+            name,
+            "2026-11-11T00:00:00.000Z",
+        ));
     }
     // A fatal server failure leaves C `unavailable` (a missing key no longer does: it starts).
     home.script(serde_json::json!({ C: {"do": "fail", "code": "invalid_request"} }));
@@ -293,8 +305,9 @@ fn status_counts_observed_office_states_without_revealing_ids() {
         .call::<InstanceStatus>(&InstanceStatusParams::default())
         .unwrap();
     let encoded = serde_json::to_string(&result).unwrap();
-    for id in [A, B, C] {
+    for (id, org, _) in offices {
         assert!(!encoded.contains(id));
+        assert!(!encoded.contains(&support::uuid7(org)));
     }
     assert_eq!(
         (
@@ -343,8 +356,13 @@ fn hello_shape_errors_precede_version_refusal_and_do_not_close() {
 #[test]
 fn even_a_development_app_peer_cannot_use_retired_wire_calls() {
     let home = TestHome::registered();
-    const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
-    home.write_office(&support::hq(A, "ORGA", "Acme", "2026-11-11T00:00:00.000Z"));
+    const A: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
+    home.write_office(&support::hq(
+        A,
+        "0190a5d2-7c3e-7000-8000-00000000010a",
+        "Acme",
+        "2026-11-11T00:00:00.000Z",
+    ));
     let mut config = home.config();
     config.dev_app_path = Some(std::env::current_exe().unwrap());
     let host = home.start(config).unwrap();

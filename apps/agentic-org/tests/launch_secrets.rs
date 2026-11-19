@@ -19,8 +19,11 @@ use support::{eventually, has_hex_run, hq, office_info, Client, TestHome};
 
 const WAIT: Duration = Duration::from_secs(10);
 
-const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
-const B: &str = "01BBBBBBBBBBBBBBBBBBBBBBBB";
+// Offices and organizations are named by canonical UUIDv7, as every launch line names them.
+const A: &str = "0190a5d2-7c3e-7000-8000-00000000000a";
+const B: &str = "0190a5d2-7c3e-7000-8000-00000000000b";
+const ORG_A: &str = "0190a5d2-7c3e-7000-8000-00000000010a";
+const ORG_B: &str = "0190a5d2-7c3e-7000-8000-00000000010b";
 
 fn status(host: &Host, office_id: &str) -> OfficeStatus {
     Client::for_host(host)
@@ -41,8 +44,8 @@ fn wait_for(host: &Host, office_id: &str, want: OfficeStatus) {
 #[test]
 fn every_start_gets_a_grant_key_of_its_own() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
-    home.write_office(&hq(B, "01ORGB", "Beta", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(B, ORG_B, "Beta", "2026-11-08T00:00:00.000Z"));
     home.script(json!({ A: [{"do": "crash"}, {"do": "crash"}, {"do": "ready"}] }));
     let host = home.start(home.config()).unwrap();
     wait_for(&host, A, OfficeStatus::Active);
@@ -72,7 +75,7 @@ fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secr
     // A retired v2 create line, keys included (the launch library no longer writes v2): the
     // worker refuses it by its version without decoding it.
     let v2_create = format!(
-        r#"{{"v":2,"op":"create","org_id":"01ORGA","org_name":"Acme","office_id":"{A}","office_name":"HQ","role":"hq","app_token":"{}","db_key":"{}"}}"#,
+        r#"{{"v":2,"op":"create","org_id":"{ORG_A}","org_name":"Acme","office_id":"{A}","office_name":"HQ","role":"hq","app_token":"{}","db_key":"{}"}}"#,
         "07".repeat(32),
         "08".repeat(32),
     );
@@ -85,7 +88,7 @@ fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secr
     ];
     for (name, first_line) in cases {
         let home = TestHome::registered();
-        home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+        home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
         home.script(json!({ A: {"stdin": first_line} }));
         let host = home.start(home.config()).unwrap();
         // Two runs well inside the host's 5 s rendezvous wait: the exit ended the first wait.
@@ -107,7 +110,7 @@ fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secr
 #[test]
 fn a_worker_that_always_refuses_its_first_line_is_given_up_on() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     home.script(json!({ A: {"stdin": "not json\n"} }));
     let mut config = home.config();
     config.timings.give_up_after = 3;
@@ -134,7 +137,7 @@ fn a_worker_that_always_refuses_its_first_line_is_given_up_on() {
 #[test]
 fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
     let home = TestHome::registered();
-    home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.write_office(&hq(A, ORG_A, "Acme", "2026-11-08T00:00:00.000Z"));
     // Its standard input ends before any first line (the fake's `stdin` step, empty).
     home.script(json!({ A: {"stdin": ""} }));
     let host = home.start(home.config()).unwrap();

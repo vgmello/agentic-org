@@ -19,10 +19,8 @@ use org_host_control::{
     },
     HostOpResult,
 };
-use org_office_launch::writer::Admission;
 use org_proto::{
     selected_bootstrap::{PlanV1, PreparedV1},
-    work::WriterIdentity,
     ApiError, ErrorCode, RecoveryCode,
 };
 use serde::{Deserialize, Serialize};
@@ -39,7 +37,6 @@ pub(crate) struct Provisioning {
     keys: Arc<dyn OfficeSecretsKeys>,
     writers: Arc<Writers>,
     instance: String,
-    root: PathBuf,
     office_home: PathBuf,
     /// Held for admission only, never while an organization is being created.
     gate: Mutex<()>,
@@ -51,8 +48,6 @@ pub(crate) struct Provisioning {
     driving: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// Set when the host stops: no attempt starts and no link is recorded afterwards.
     stopping: std::sync::atomic::AtomicBool,
-    /// How long [`Self::stop`] waits for the creation threads.
-    stop_wait: std::time::Duration,
     #[cfg(test)]
     drives_started: std::sync::atomic::AtomicUsize,
     /// While set, a creation thread holds its claim and creates nothing until the host
@@ -154,14 +149,14 @@ fn private(path: &Path) -> Result<(), ApiError> {
     Ok(())
 }
 impl Provisioning {
-    #[allow(clippy::too_many_arguments)]
+    /// The organizations' data roots come from `writers` (its instance root), never from a
+    /// caller.
     pub(crate) fn new(
         db: Arc<HostDb>,
         custody: Arc<dyn HostSecrets>,
         keys: Arc<dyn OfficeSecretsKeys>,
         writers: Arc<Writers>,
         instance: &str,
-        root: &Path,
         office_home: &Path,
     ) -> Self {
         Self {
@@ -170,13 +165,11 @@ impl Provisioning {
             keys,
             writers,
             instance: instance.into(),
-            root: root.into(),
             office_home: office_home.into(),
             gate: Mutex::new(()),
             hq: std::sync::OnceLock::new(),
             driving: Arc::default(),
             stopping: std::sync::atomic::AtomicBool::new(false),
-            stop_wait: crate::Timings::default().shutdown_grace + STOP_MARGIN,
             #[cfg(test)]
             drives_started: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
@@ -185,13 +178,6 @@ impl Provisioning {
             #[cfg(test)]
             reservation_fault: std::sync::atomic::AtomicU8::new(0),
         }
-    }
-    /// The grace period the host's supervisor gives a server to stop: [`Self::stop`] waits
-    /// that long plus [`STOP_MARGIN`], so a creation whose server is killed at the end of
-    /// the grace period has ended before the wait does.
-    pub(crate) fn with_shutdown_grace(mut self, grace: std::time::Duration) -> Self {
-        self.stop_wait = grace + STOP_MARGIN;
-        self
     }
     /// Installs the offices this host creates in and continues every create that reserved
     /// its identity before the host last stopped. No client has to ask.
@@ -221,14 +207,17 @@ impl Provisioning {
     }
 
     /// [`Self::halt`], then waits until no creation thread is left, so nothing writes
-    /// custody or the registry after the host stopped. The wait is bounded: a thread
-    /// still running when it ends is logged, records no link (see [`Self::drive`]), but
-    /// may still finish a custody or file write it had begun. Call after the offices
-    /// stopped: a creation waiting for its worker ends when the supervisor stops it, and
-    /// the supervisor's shutdown returns only after that worker is gone.
-    pub(crate) fn stop(&self) {
+    /// custody or the registry after the host stopped. The wait is bounded: it ends
+    /// [`STOP_MARGIN`] after `deadline`, where the host's supervisor kills the servers it
+    /// stops (the end of their grace period, fixed when the host was asked to stop), so a
+    /// creation whose server is killed then has ended before the wait does. A thread still
+    /// running when it ends is logged, records no link (see [`Self::drive`]), but may still
+    /// finish a custody or file write it had begun. Call after the offices stopped: a
+    /// creation waiting for its worker ends when the supervisor stops it, and the
+    /// supervisor's shutdown returns only after that worker is gone.
+    pub(crate) fn stop_by(&self, deadline: std::time::Instant) {
         self.halt();
-        let until = std::time::Instant::now() + self.stop_wait;
+        let until = deadline + STOP_MARGIN;
         while self.driving.lock().is_ok_and(|driving| !driving.is_empty()) {
             if std::time::Instant::now() >= until {
                 crate::host_log::log("an organization create did not end with the host");
@@ -579,11 +568,9 @@ impl Provisioning {
         }
         let folder = org_office_launch::office_dir(&self.office_home, &r.prepared.office_id)
             .ok_or_else(unavailable)?;
-        let public = self.reserve_writer(account, r, &folder)?;
+        self.reserve_writer(account, r, &folder)?;
         let first = org_office_launch::CreateLine {
             office: org_office_launch::OfficeLine {
-                id_profile: Some(org_office_launch::IdProfile::SelectedV1),
-                selected_writer_required: true,
                 instance_id: self.instance.clone(),
                 office_id: r.prepared.office_id.clone(),
                 rendezvous: String::new(),
@@ -593,13 +580,12 @@ impl Provisioning {
             office_name: "HQ".into(),
             role: org_proto::OfficeRole::Hq,
             owner_member_id: r.owner_member.clone(),
-            hq_creation: Some(org_office_launch::HqCreationV1 {
-                version: 1,
+            hq_creation: org_office_launch::HqCreationV1 {
+                version: org_office_launch::HqCreationV1::VERSION,
                 operation_id: r.operation_id.clone(),
                 escrow_profile: 1,
-                public_root: public.to_str().ok_or_else(unavailable)?.into(),
-                bootstrap: Some(Box::new(r.prepared.clone())),
-            }),
+                bootstrap: Box::new(r.prepared.clone()),
+            },
         };
         hq.provision_hq(first, pending.code)?;
         // The link and its announcement are one critical section of the web connections'
@@ -623,7 +609,7 @@ impl Provisioning {
         account: &Account,
         r: &Reservation,
         folder: &Path,
-    ) -> Result<PathBuf, ApiError> {
+    ) -> Result<(), ApiError> {
         let key = match self.keys.load(&r.prepared.office_id).map_err(storage)? {
             Some(key) => key,
             None if r.key_fingerprint.is_none()
@@ -646,21 +632,17 @@ impl Provisioning {
             return Err(unavailable());
         }
         self.db.provision_key_stored(r, &key_fp).map_err(storage)?;
-        // All paths derive from protected instance/identity facts. No caller
-        // or browser chooses a local path, and every parent is checked.
-        private(&self.root.join("durable"))?;
-        private(&self.root.join("durable/state"))?;
-        private(&self.root.join("durable/authority"))?;
-        let public = self
-            .root
-            .join("durable/state")
-            .join(&r.prepared.organization_id);
-        private(&public)?;
-        let protected = self
-            .root
-            .join("durable/authority")
-            .join(&r.prepared.office_id);
-        private(&protected)?;
+        // All paths derive from protected instance/identity facts. No caller or browser
+        // chooses a local path, and every parent is checked. The organization's data roots
+        // are `<instance-root>/<organization-id>/{durable,runtime}`, owner-only; the writer
+        // reservation requires them empty unless it already holds this office's record.
+        let (durable, runtime) = self
+            .writers
+            .data_roots(&r.prepared.organization_id)
+            .map_err(storage)?;
+        private(durable.parent().ok_or_else(unavailable)?)?;
+        private(&durable)?;
+        private(&runtime)?;
         private(folder)?;
         self.db
             .establish_organization_owner(account, &r.prepared.organization_id, &r.owner_member)
@@ -668,24 +650,15 @@ impl Provisioning {
         self.writers
             .reserve(
                 &r.operation_id,
-                Admission {
-                    version: org_office_launch::writer::VERSION,
-                    identity: WriterIdentity {
-                        instance_id: self.instance.clone(),
-                        organization_id: r.prepared.organization_id.clone(),
-                        office_id: r.prepared.office_id.clone(),
-                        machine_id: String::new(),
-                        writer_epoch: 1,
-                        journal_incarnation: String::new(),
-                    },
-                    protected_root: protected.to_str().ok_or_else(unavailable)?.into(),
-                    public_root: public.to_str().ok_or_else(unavailable)?.into(),
-                    owner_account: r.account.clone(),
-                    owner_member: r.owner_member.clone(),
+                &crate::writer::Binding {
+                    organization_id: &r.prepared.organization_id,
+                    office_id: &r.prepared.office_id,
+                    owner_account: &r.account,
+                    owner_member: &r.owner_member,
                 },
             )
             .map_err(storage)?;
-        Ok(public)
+        Ok(())
     }
 
     fn new_pending(
@@ -961,8 +934,11 @@ const RESUME_ATTEMPTS: u32 = 3;
 const RESUME_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// How long past the supervisor's grace period a stopping host waits for its creation
-/// threads to end: what a thread needs after its server was stopped or killed.
-const STOP_MARGIN: std::time::Duration = std::time::Duration::from_secs(5);
+/// threads to end: what a thread needs after its server was stopped or killed. With the
+/// host's other waits it ends inside the host's stop bound of 2.5 s (`Timings`); a thread
+/// that waits longer (for a write lock of the registry, say) is left, as
+/// [`Provisioning::stop_by`] says.
+const STOP_MARGIN: std::time::Duration = std::time::Duration::from_millis(500);
 const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// Whether a later try of the same creation can end differently. A refusal that states a

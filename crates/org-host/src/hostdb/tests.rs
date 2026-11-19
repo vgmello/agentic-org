@@ -138,9 +138,9 @@ fn plain_schema_metadata_and_pragmas_survive_reopen() {
             .unwrap(),
         "wal"
     );
-    let strict: i64 = c.query_row("SELECT count(*) FROM pragma_table_list WHERE name IN ('meta','op_journal','op_verifiers','org_create_staging','tls_pair','org_owners') AND strict=1", [], |r| r.get(0)).unwrap();
+    let strict: i64 = c.query_row("SELECT count(*) FROM pragma_table_list WHERE name IN ('meta','op_journal','op_verifiers','org_create_staging','web_tls_pair','org_owners') AND strict=1", [], |r| r.get(0)).unwrap();
     assert_eq!(strict, 6);
-    assert_eq!(c.query_row("SELECT count(*) FROM pragma_table_list WHERE name IN ('meta','op_journal','op_verifiers','org_create_staging','tls_pair','org_owners') AND wr=1",[],|r|r.get::<_,i64>(0)).unwrap(),5);
+    assert_eq!(c.query_row("SELECT count(*) FROM pragma_table_list WHERE name IN ('meta','op_journal','op_verifiers','org_create_staging','web_tls_pair','org_owners') AND wr=1",[],|r|r.get::<_,i64>(0)).unwrap(),5);
     assert_eq!(c.query_row("SELECT count(*) FROM sqlite_schema WHERE type='index' AND name IN ('op_journal_expiry','op_verifiers_account')",[],|r|r.get::<_,i64>(0)).unwrap(),2);
     for (name, value) in [
         ("instance_id", init().instance_id),
@@ -202,7 +202,8 @@ fn create_replaces_leftover_secrets_and_temps() {
         db.connection
             .lock()
             .unwrap()
-            .query_row("SELECT count(*) FROM tls_pair", [], |r| r.get::<_, i64>(0))
+            .query_row("SELECT count(*) FROM web_tls_pair", [], |r| r
+                .get::<_, i64>(0))
             .unwrap(),
         0
     );
@@ -730,17 +731,29 @@ fn schema_checks_foreign_keys_update_delete_conflict_rollback_and_reopen() {
         .unwrap();
         assert!(c
             .execute(
-                "INSERT INTO tls_pair VALUES (2,'cert',?1,0)",
+                "INSERT INTO web_tls_pair VALUES (2,'made','cert',?1,0)",
+                [&[1u8; 32][..]]
+            )
+            .is_err());
+        assert!(c
+            .execute(
+                "INSERT INTO web_tls_pair VALUES (1,'found','cert',?1,0)",
+                [&[1u8; 32][..]]
+            )
+            .is_err());
+        assert!(c
+            .execute(
+                "INSERT INTO web_tls_pair VALUES (1,'made','',?1,0)",
                 [&[1u8; 32][..]]
             )
             .is_err());
         c.execute(
-            "INSERT INTO tls_pair VALUES (1,'cert',?1,0)",
+            "INSERT INTO web_tls_pair VALUES (1,'supplied','cert',?1,0)",
             [&[1u8; 32][..]],
         )
         .unwrap();
         assert!(c
-            .execute("UPDATE tls_pair SET pair_fp=?1", [&[1u8; 31][..]])
+            .execute("UPDATE web_tls_pair SET pair_fp=?1", [&[1u8; 31][..]])
             .is_err());
         assert!(c
             .execute("UPDATE meta SET value=1.5 WHERE key='clock_high_ms'", [])

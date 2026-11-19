@@ -4,7 +4,7 @@ use super::{Error, HostDb};
 use org_host_control::{journal::Journaled, HostOpResult};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 
-const DAY: i64 = 86_400_000;
+pub(super) const DAY: i64 = 86_400_000;
 pub(crate) type Stored = HostOpResult<serde_json::Value>;
 
 pub(crate) struct Attempt<'a> {
@@ -136,13 +136,13 @@ pub(crate) fn delete_verifiers(tx: &Transaction<'_>, created_account: &str) -> R
     )?;
     Ok(())
 }
-fn immediate(db: &mut Connection) -> Result<Transaction<'_>, Error> {
+pub(super) fn immediate(db: &mut Connection) -> Result<Transaction<'_>, Error> {
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     #[cfg(test)]
     tests::after_begin();
     Ok(tx)
 }
-fn maintain(tx: &Transaction<'_>, now: i64) -> Result<usize, Error> {
+pub(super) fn maintain(tx: &Transaction<'_>, now: i64) -> Result<usize, Error> {
     advance_clock(tx, now)?;
     Ok(tx.execute(
         "DELETE FROM op_journal WHERE operation_id IN (
@@ -153,12 +153,20 @@ fn maintain(tx: &Transaction<'_>, now: i64) -> Result<usize, Error> {
         [now],
     )?)
 }
-fn id_time(id: &str) -> Result<i64, Error> {
+pub(super) fn id_time(id: &str) -> Result<i64, Error> {
     org_proto::ulid_time_ms(id)
         .and_then(|n| i64::try_from(n).ok())
         .ok_or(Error::InvalidId)
 }
-fn lookup(db: &Connection, op: &Attempt<'_>, now: i64) -> Result<Lookup, Error> {
+/// The stored row of `op`, as `(state, result)`, once it is known to be `op`'s: unexpired, of
+/// the same kind, fingerprint and account, and not reserved. `None`: no row, and the
+/// operation ID is fresh enough to be used (not older than 29 days, not more than five
+/// minutes ahead). Shared by every journaled op's lookup.
+pub(super) fn stored_row(
+    db: &Connection,
+    op: &Attempt<'_>,
+    now: i64,
+) -> Result<Option<(String, String)>, Error> {
     let row = db.query_row(
         "SELECT kind,fingerprint,account,state,result,expires_at_ms FROM op_journal WHERE operation_id=?1",
         [op.id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,String>(2)?,
@@ -174,8 +182,21 @@ fn lookup(db: &Connection, op: &Attempt<'_>, now: i64) -> Result<Lookup, Error> 
         if state == "reserved" {
             return Err(Error::Conflict);
         }
-        let stored: Stored =
-            serde_json::from_str(&result.ok_or(Error::Unsafe)?).map_err(|_| Error::Unsafe)?;
+        return Ok(Some((state, result.ok_or(Error::Unsafe)?)));
+    }
+    let issued = id_time(op.id)?;
+    if issued < now.saturating_sub(29 * DAY) {
+        return Err(Error::Expired);
+    }
+    if issued > now.saturating_add(300_000) {
+        return Err(Error::ClockSkew);
+    }
+    Ok(None)
+}
+fn lookup(db: &Connection, op: &Attempt<'_>, now: i64) -> Result<Lookup, Error> {
+    if let Some((state, result)) = stored_row(db, op, now)? {
+        let kind = op.kind;
+        let stored: Stored = serde_json::from_str(&result).map_err(|_| Error::Unsafe)?;
         if !matches!(
             (&*state, &stored),
             ("completed" | "linked", Stored::Completed { .. })
@@ -198,13 +219,6 @@ fn lookup(db: &Connection, op: &Attempt<'_>, now: i64) -> Result<Lookup, Error> 
             });
         }
         return Ok(Lookup::Replay(stored));
-    }
-    let issued = id_time(op.id)?;
-    if issued < now.saturating_sub(29 * DAY) {
-        return Err(Error::Expired);
-    }
-    if issued > now.saturating_add(300_000) {
-        return Err(Error::ClockSkew);
     }
     Ok(Lookup::Vacant)
 }
