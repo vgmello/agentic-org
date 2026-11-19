@@ -1105,7 +1105,11 @@ fn the_real_runner_answers_on_this_machine_without_changing_anything() {
                 Err(ServiceError::Unavailable(_))
             ));
         }
-        Err(ServiceError::System(why)) if why.contains("does not read unit files from") => {}
+        Err(ServiceError::System(why)) if why.contains("does not read unit files from") => {
+            let placement = temp.path().join("systemd/user");
+            assert!(why.contains(&placement.display().to_string()), "{why}");
+            assert!(why.ends_with("nothing was changed"), "{why}");
+        }
         Err(other) => panic!("neither available nor unavailable: {other}"),
     }
     assert!(!temp.path().join("systemd").exists());
