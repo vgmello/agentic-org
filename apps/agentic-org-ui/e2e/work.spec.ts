@@ -8,7 +8,7 @@ async function open(page: Page) {
 	await expect(page).toHaveURL(/\/teams\/members$/);
 }
 async function addTask(page: Page, project: string, title: string) {
-	await visit(page, `/projects/${project}`);
+	await visit(page, `/projects/${project}/work`);
 	await page.getByRole('tab', { name: 'Tasks' }).click();
 	await page.getByRole('button', { name: 'New task' }).click();
 	const dialog = page.getByRole('dialog', { name: 'New task' });
@@ -17,7 +17,7 @@ async function addTask(page: Page, project: string, title: string) {
 	await expect(dialog).toBeHidden();
 }
 async function addBug(page: Page, project: string, title: string, severity: string) {
-	await visit(page, `/projects/${project}`);
+	await visit(page, `/projects/${project}/work`);
 	await page.getByRole('tab', { name: 'Bugs' }).click();
 	await page.getByRole('button', { name: 'Report a bug' }).click();
 	const dialog = page.getByRole('dialog', { name: 'Report a bug' });

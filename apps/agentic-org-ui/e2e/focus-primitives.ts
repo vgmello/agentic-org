@@ -324,16 +324,19 @@ export async function consumerFocus(page: Page, width: number, scale: number, ro
 	});
 	await item.press('Escape');
 	await expect(view).toBeFocused();
+	// Projects' page action is New project (a project's teams are edited in its Settings tab).
 	await go('/projects');
-	const assign = page.getByRole('button', { name: 'Assign a team to Scratchpad', exact: true });
-	await probe(assign, 'projects');
-	await assign.press('Enter');
+	const newProject = page
+		.getByRole('main')
+		.getByRole('button', { name: 'New project', exact: true });
+	await probe(newProject, 'projects');
+	await newProject.press('Enter');
 	await probe(
 		page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }),
 		'dialog-footer'
 	);
 	await page.keyboard.press('Escape');
-	await expect(assign).toBeFocused();
+	await expect(newProject).toBeFocused();
 	await go('/work');
 	await page.getByRole('tab', { name: /^Requests/ }).click();
 	await probe(page.getByTestId('new-request'), 'work-requests');
@@ -351,7 +354,7 @@ export async function consumerFocus(page: Page, width: number, scale: number, ro
 	await probe(close, 'processes-override');
 	await close.press('Enter');
 	await expect(page.getByRole('dialog')).toHaveCount(0);
-	await go('/projects/atlas');
+	await go('/projects/atlas/work');
 	await page.getByRole('tab', { name: 'Bugs', exact: true }).click();
 	await page.getByRole('button', { name: 'Report a bug', exact: true }).click();
 	const smart = page

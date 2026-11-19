@@ -1325,14 +1325,14 @@ describe('selector', () => {
 		expect(plan([ui('e2e/gate-manifest.json')], manifest).all).toBe(true);
 	});
 
-	it('org-chart page and its load function run org-chart and also the non-Chat icon spec (projects-work)', () => {
+	it('org-chart page and its load function run org-chart only', () => {
 		for (const file of [
 			'src/routes/(shell)/teams/(views)/org-chart/+page.svelte',
 			'src/routes/(shell)/teams/(views)/org-chart/+page.ts'
 		]) {
 			const chosen = plan([ui(file)], manifest);
 			expect(chosen.all, file).toBe(false);
-			expect(chosen.categories.sort(), file).toEqual(['org-chart', 'projects-work']);
+			expect(chosen.categories.sort(), file).toEqual(['org-chart']);
 		}
 		expect(
 			plan([ui('src/lib/modules/org-chart/features/chart/OrgChartPage.svelte')], manifest)
@@ -1508,54 +1508,37 @@ describe('selector', () => {
 		expect(step.cmd.filter((word) => word.startsWith('e2e/')).sort()).toEqual(
 			[
 				'e2e/projects\\.spec\\.ts$',
-				'e2e/project-profile\\.spec\\.ts$',
 				'e2e/work\\.spec\\.ts$',
 				'e2e/tasks\\.spec\\.ts$',
 				'e2e/dialog-block-title\\.spec\\.ts$',
-				'e2e/bugs\\.spec\\.ts$',
-				'e2e/non-chat-icons\\.spec\\.ts$',
-				'e2e/non-chat-icons-default-font\\.ts$'
+				'e2e/bugs\\.spec\\.ts$'
 			].sort()
 		);
 	});
 
 	it('runs the dedicated-project test file with its own project, in the ordinary step only', () => {
-		const list = steps(plan([ui('e2e/non-chat-icons.ts')], manifest), manifest, specs);
-		const ordinary = list.find((step) => step.name === 'ordinary: projects-work')!;
-		expect(ordinary.cmd).toContain('--project=chromium-default-font');
-		expect(ordinary.cmd).toContain('e2e/non-chat-icons-default-font\\.ts$');
-		expect(ordinary.cmd).toContain('e2e/non-chat-icons\\.spec\\.ts$');
+		const list = steps(plan([ui('e2e/dialog-title-open.ts')], manifest), manifest, specs);
+		const ordinary = list.find((step) => step.name === 'ordinary: dialog-title-words')!;
+		expect(ordinary.cmd).toContain('--project=chromium-title-default-font');
+		expect(ordinary.cmd).toContain('e2e/dialog-title-words-default-font\\.ts$');
+		expect(ordinary.cmd).toContain('e2e/dialog-title-words\\.spec\\.ts$');
 		expect(list.find((step) => step.name === 'ordinary: journeys')!.cmd).not.toContain(
-			'--project=chromium-default-font'
+			'--project=chromium-title-default-font'
 		);
-		const csp = list.find((step) => step.name === 'csp: projects-work')!;
-		expect(csp.cmd).toContain('e2e/non-chat-icons\\.spec\\.ts$');
-		expect(csp.cmd).not.toContain('e2e/non-chat-icons-default-font\\.ts$');
 		for (const step of list.filter((candidate) => !candidate.name.startsWith('ordinary')))
-			expect(step.cmd, step.name).not.toContain('--project=chromium-default-font');
-		expect(names([ui('e2e/org-chart.spec.ts')])).not.toContain('csp: projects-work');
+			expect(step.cmd, step.name).not.toContain('--project=chromium-title-default-font');
 		expect(
 			steps(plan([ui('e2e/org-chart.spec.ts')], manifest), manifest, specs).find(
 				(step) => step.name === 'ordinary: org-chart'
 			)!.cmd
-		).not.toContain('--project=chromium-default-font');
+		).not.toContain('--project=chromium-title-default-font');
 	});
 
-	it('maps the non-Chat icon spec, its helpers and fixture to projects-work', () => {
-		for (const file of [
-			'e2e/non-chat-icons.spec.ts',
-			'e2e/non-chat-icons-default-font.ts',
-			'e2e/non-chat-icons.ts',
-			'e2e/fixtures/non-chat-icons-v2.2.0.json'
-		]) {
-			expect(classify(ui(file), manifest), file).toEqual([
-				expect.objectContaining({ kind: 'category', category: 'projects-work' })
-			]);
-		}
+	it('maps the project components to projects-work and refuses an unknown e2e helper', () => {
 		expect(plan([ui('src/lib/components/ProjectTeams.svelte')], manifest).categories).toEqual([
 			'projects-work'
 		]);
-		expect(classify(ui('e2e/non-chat-icons-new-helper.ts'), manifest)).toEqual([
+		expect(classify(ui('e2e/projects-new-helper.ts'), manifest)).toEqual([
 			expect.objectContaining({ kind: 'unknown' })
 		]);
 	});

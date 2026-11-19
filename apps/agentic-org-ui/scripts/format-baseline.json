@@ -11,7 +11,6 @@
 	"e2e/fakes/org-api.ts": "sha256:1595687172f340e6a529d7c10721339d2c125e06f64fdcc7fdf6d38e31f8c2aa",
 	"e2e/fakes/work-api.ts": "sha256:60dea493ac4747a839528bf1d7a3e890c61645da678349e73d1650263c14021a",
 	"e2e/fixtures/heroicons-v2.2.0.json": "sha256:4899630c1184d7d028a0ce2e5840eaf07ea850e4c19c371225ab2058f81b1bbf",
-	"e2e/fixtures/non-chat-icons-v2.2.0.json": "sha256:abe4a2ca7c33ba393599a3752f6d551da473b07a5dcfdaaba7463f74f4a31a3e",
 	"e2e/focus-primitives-default-font.ts": "sha256:211ba2e0627ff2c5568fef1437b26639bf7e98a44b19c434a4568bb68bb73a71",
 	"e2e/memory/portal-calibration.ts": "sha256:15c284fc3f0b21e2abcda43d21a140c31785b428278cd276ec9f77d20fad9f03",
 	"e2e/memory/probe.ts": "sha256:36be414c0feb09482af0df1ed6d0dceb7d0126d3825eca69d1f04d93434271e3",
