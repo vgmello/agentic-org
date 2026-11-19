@@ -600,11 +600,14 @@ impl RootProbe {
             }
             Err(error) => return Err(error.into()),
         };
-        check_path_component(&root, &path, true)?;
-        Ok(Self {
+        // Built before the root's own check, so that a refusal there still removes what
+        // this made.
+        let probe = Self {
             root,
             made: made.then_some((parent, name)),
-        })
+        };
+        check_path_component(&probe.root, &path, true)?;
+        Ok(probe)
     }
 
     pub(crate) fn descriptor(&self) -> std::os::fd::BorrowedFd<'_> {

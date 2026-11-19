@@ -2297,9 +2297,21 @@ fn in_child<T: serde::Serialize + serde::de::DeserializeOwned>(
     }
     if pid == 0 {
         drop(read);
-        // The child keeps no descriptor of this process but the standard three and its end
-        // of the pipe: nothing root holds (a listener, a lock) outlives into the account's
-        // process, or stays held while it runs.
+        // The child keeps no descriptor of this process but its end of the pipe: nothing
+        // root holds (its terminal, a listener, a lock) is the account's process's, or stays
+        // held while it runs. Its standard three are the null device.
+        // SAFETY: a NUL-terminated path; each standard descriptor is replaced by a copy.
+        unsafe {
+            let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+            if null >= 0 {
+                for fd in 0..3 {
+                    libc::dup2(null, fd);
+                }
+                if null > 2 {
+                    libc::close(null);
+                }
+            }
+        }
         let keep = write.as_raw_fd();
         // SAFETY: sysconf has no preconditions.
         let most = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) }.clamp(3, 65_536) as libc::c_int;

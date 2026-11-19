@@ -338,10 +338,6 @@ mod tests {
         list.iter().map(|s| (*s).to_owned()).collect()
     }
 
-    /// A user who may not own a service is refused before setup reads or makes anything:
-    /// before its options are even parsed, so no instance is reserved, no custody is made
-    /// and no service is registered. Help and the satellite refusal read nothing and are
-    /// answered to anyone.
     /// X5 review V-d: the help says what setup does on every system it runs on.
     #[test]
     fn the_help_names_no_one_system() {
@@ -351,6 +347,10 @@ mod tests {
         assert!(HELP.starts_with("Set up this computer's instance"));
     }
 
+    /// A user who may not own a service is refused before setup reads or makes anything:
+    /// before its options are even parsed, so no instance is reserved, no custody is made
+    /// and no service is registered. Help and the satellite refusal read nothing and are
+    /// answered to anyone.
     #[test]
     fn a_user_who_may_not_run_the_service_is_refused_before_setup_reads_anything() {
         let refusal = || Err("the service does not run as this user".to_owned());
