@@ -660,7 +660,7 @@ refused "$tag-nest" "holds the account's records" \
     fail "the refusal does not name the account's records"
 # No key and no item store is made there. (Before setup compared the directory with the
 # records too, its own check left its lock file `.lock` there; that is tolerated here.)
-left=$(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'find /v/secrets -mindepth 1 ! -name .lock')
+left=$(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'find /v/secrets -mindepth 1')
 [ -z "$left" ] || fail "the refused start wrote into the data volume's secrets folder: $left"
 echo "  and no key or item store was written in it ($(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'ls -A /v/secrets' | tr '\n' ' '))"
 
