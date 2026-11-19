@@ -63,8 +63,25 @@ pub(crate) fn open(
 ) -> Result<Option<ReleaseRoot>, String> {
     let account_data: Vec<BorrowedFd<'_>> = facts.records.into_iter().collect();
     open_with(release_build, store, facts, |location| {
+        #[cfg(test)]
+        if let Some(base) = WALK_FROM.with(|from| from.borrow().clone()) {
+            return org_platform_host::testing::credentials::release_directory_below_apart_from(
+                &base,
+                location,
+                &ITEM_STORES,
+                &account_data,
+            );
+        }
         release_directory_apart_from(location, &ITEM_STORES, &account_data)
     })
+}
+
+// A test's host start walks to its credential directory from this directory instead of from
+// `/`: a shared temporary directory is writable by others, which the ancestor rule refuses.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static WALK_FROM: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// [`open`] with the platform's entry as a parameter: the host's is

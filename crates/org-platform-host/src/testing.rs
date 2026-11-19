@@ -20,6 +20,7 @@ pub mod names {
 pub mod credentials {
     pub use crate::credentials::testing::{
         after_collision, before_publish, fail_directory_syncs, release_directory_below,
-        release_directory_below_with_stores, take_before_publish, take_directory_sync_faults,
+        release_directory_below_apart_from, release_directory_below_with_stores,
+        take_before_publish, take_directory_sync_faults,
     };
 }

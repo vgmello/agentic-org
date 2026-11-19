@@ -362,9 +362,18 @@ fn credential_directory() -> (tempfile::TempDir, PathBuf) {
 }
 
 /// Whether a refusal is this machine's, not the rule's: the temporary directory is on a
-/// filesystem, or below a directory, that cannot hold a credential directory.
+/// filesystem that cannot hold a credential directory.
 fn this_machine_cannot_hold_one(refused: &str) -> bool {
-    refused.contains("must be on ext4") || refused.contains("above the credential directory")
+    refused.contains("must be on ext4")
+}
+
+/// Runs `f` with this thread's host starts walking to their credential directory from
+/// `base` (`release_store::WALK_FROM`): every check below `base` is the host's.
+fn walking_from<R>(base: &std::path::Path, f: impl FnOnce() -> R) -> R {
+    crate::release_store::WALK_FROM.with(|from| *from.borrow_mut() = Some(base.to_owned()));
+    let result = f();
+    crate::release_store::WALK_FROM.with(|from| *from.borrow_mut() = None);
+    result
 }
 
 /// X5 review, fourth round (Sol P1-1, P1-2, P1-5): where this system keeps a host's secrets
@@ -390,10 +399,13 @@ fn a_recorded_credential_directory_holds_a_development_builds_custody() {
         &secrets,
     );
     // No development key folder: the recorded directory is the custody.
+    let walk_base = secrets.parent().unwrap().to_owned();
     let start = || {
         let mut config = f.config();
         config.dev_key_dir = None;
-        Host::start_registered_at(config, &f.paths, None)
+        walking_from(&walk_base, || {
+            Host::start_registered_at(config, &f.paths, None)
+        })
     };
     let host = match start() {
         Ok(host) => host,
@@ -458,7 +470,10 @@ fn a_credential_directory_among_the_accounts_records_is_refused() {
         crate::instance::setup::Service::Registered,
         &secrets,
     );
-    let refused = f.start().err().expect("refused").to_string();
+    let refused = walking_from(&f.base, || f.start())
+        .err()
+        .expect("refused")
+        .to_string();
     if this_machine_cannot_hold_one(&refused) {
         println!("skipped: {refused}");
         return;
