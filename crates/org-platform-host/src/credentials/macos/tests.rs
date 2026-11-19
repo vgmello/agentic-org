@@ -702,6 +702,7 @@ fn a_release_directory_is_refused_and_nothing_is_made() {
             data_root: std::os::fd::AsFd::as_fd(&data_root),
             mount_point_required,
             expect_items,
+            instance_id: None,
         };
         let stores = [ItemStore {
             directory: "office-keys",

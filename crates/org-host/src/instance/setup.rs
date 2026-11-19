@@ -185,10 +185,29 @@ pub(crate) const CONFIGURATION_SHAPE: &str = "the setup configuration is not val
      absolute path, \"listen\": {\"address\", \"port\", \"scheme\": \"http_loopback\" or \"http_published\", \
      \"origin\", \"hsts\": \"off\", \"on\" or \"clear\"}, and optionally \"credentials\": an \
      absolute path; no other property is accepted";
+// Before setup recorded a service mode, every instance used the service manager.
+#[derive(Deserialize)]
+#[serde(remote = "Input", deny_unknown_fields)]
+struct RecordedInput {
+    version: u32,
+    #[serde(default = "registered_service")]
+    service: Service,
+    root: PathBuf,
+    #[serde(default)]
+    credentials: Option<PathBuf>,
+    #[serde(deserialize_with = "strict_listen")]
+    listen: ListenConfig,
+}
+
+fn registered_service() -> Service {
+    Service::Registered
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Record {
     pub version: u32,
+    #[serde(deserialize_with = "RecordedInput::deserialize")]
     pub input: Input,
     pub offline: bool,
     pub release: ReleasePin,

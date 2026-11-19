@@ -146,14 +146,14 @@ impl Host {
         })?;
         // Where this system keeps a host's secrets in a directory and the record names one, it
         // is opened here, once, in every build: checked (in the foreground mode as a mounted
-        // volume), locked for this host alone, and refused with the directory and the rule it
-        // broke. Both views open below it, from its descriptor. No custody exists before this,
-        // so a store found empty where the records say keys exist (a lost secrets volume)
-        // stops the start before anything could make a fresh key (X5 review, fourth round).
+        // volume), bound to this instance and locked for this host alone. Both views open
+        // below it from its descriptor. An empty store with office records or a store bound
+        // to a different instance refuses before either view can read or write a key.
         let release_directory = crate::release_store::open(
             !cfg!(debug_assertions),
             org_platform_host::credentials::protected_store(),
             crate::release_store::Facts {
+                instance_id: instance.id(),
                 recorded: record.credentials.as_deref(),
                 data_root: instance.root_descriptor(),
                 // In the foreground mode (a container) the directory is a mounted volume.

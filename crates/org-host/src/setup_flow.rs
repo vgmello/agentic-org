@@ -91,17 +91,14 @@ pub fn path_environment() -> Vec<(OsString, OsString)> {
         .collect()
 }
 
-/// What setup and the host say, once each, of a listener that is plain HTTP on a published
-/// port (`http_published`): where it is safe, what happens elsewhere, and that there is no
-/// HTTPS yet. `address` is the listen address and port.
+/// What setup and the host say about the exposure of an explicit plain-HTTP listener.
 pub(crate) fn published_http_notice(listen: &ListenConfig) -> String {
     format!(
-        "serving plain HTTP on a published port ({}:{}): publish it on the Docker host's \
-         127.0.0.1 only (docker run -p 127.0.0.1:{port}:{port}); published on another \
-         interface, sign-in and every session travel unencrypted on that network. Open {}. \
+        "serving plain HTTP on a published port ({}). Every machine that can reach the \
+         listen address can reach sign-in and sessions in plain text. In Docker, publish \
+         only on the host's 127.0.0.1 (docker run -p 127.0.0.1:{port}:{port}). Open {}. \
          HTTPS is not available yet.",
-        listen.address(),
-        listen.port(),
+        std::net::SocketAddr::new(listen.address(), listen.port()),
         listen.origin().as_str(),
         port = listen.port(),
     )
@@ -175,20 +172,12 @@ pub(crate) fn make_credential_directory(
     }
     let base = crate::instance::setup::normalized(base).map_err(|_| NO_PATH.to_owned())?;
     // A registered service's store is a directory of the account, not a mount.
-    use_credential_directory(
-        &base.join(instance_id),
-        false,
-        data_root,
-        judged_from,
-        enter,
-    )
+    use_credential_directory(&base.join(instance_id), data_root, judged_from, enter)
 }
 
-/// Opens a credential directory exactly as the host opens it at every start
-/// (`release_store::open`): with the host's two item stores declared, and apart from the
-/// account's records (`records`, the application base that holds the setup record and the
-/// instance locator, held open during the check) and their volume, so that setup and the
-/// host judge the same directories by the same rules (X5 review, fourth round, P1-3).
+/// Checks a registered service's credential directory using the host's layout rules.
+/// The host's two item stores are declared and the credential directory must be apart
+/// from the account's records. The host checks the instance binding when it opens.
 fn open_as_the_host_will(
     records: std::os::fd::BorrowedFd<'_>,
 ) -> impl FnOnce(
@@ -204,6 +193,69 @@ fn open_as_the_host_will(
             &[records],
         )
     }
+}
+
+/// [`open_as_the_host_will`] for a new reservation of a registered service whose
+/// configuration names the credential directory: the directory must also be unused, as a
+/// new foreground reservation's volume must be ([`unused_mounted_store`]). One bound to
+/// another instance, or holding credentials without a binding, is refused before the
+/// service is registered, not at its first start.
+fn unused_as_the_host_will(
+    records: std::os::fd::BorrowedFd<'_>,
+) -> impl FnOnce(
+    org_platform_host::credentials::ReleaseDirectory<'_>,
+) -> Result<
+    org_platform_host::credentials::ReleaseRoot,
+    org_platform_host::credentials::CredentialError,
+> + '_ {
+    move |location| {
+        org_platform_host::credentials::check_unused_release_directory(
+            location,
+            &crate::release_store::ITEM_STORES,
+            &[records],
+        )?;
+        open_as_the_host_will(records)(location)
+    }
+}
+
+/// A new foreground reservation requires an unused volume. The host claims it with its
+/// recorded instance ID when it starts.
+fn unused_mounted_store(
+    path: &Path,
+    data_root: std::os::fd::BorrowedFd<'_>,
+    records: std::os::fd::BorrowedFd<'_>,
+) -> Result<PathBuf, String> {
+    check_mounted_store(path, data_root, |location| {
+        org_platform_host::credentials::check_unused_release_directory(
+            location,
+            &crate::release_store::ITEM_STORES,
+            &[records],
+        )
+    })
+}
+
+fn check_mounted_store(
+    path: &Path,
+    data_root: std::os::fd::BorrowedFd<'_>,
+    check: impl FnOnce(
+        org_platform_host::credentials::ReleaseDirectory<'_>,
+    ) -> Result<(), org_platform_host::credentials::CredentialError>,
+) -> Result<PathBuf, String> {
+    check(org_platform_host::credentials::ReleaseDirectory {
+        path,
+        data_root,
+        mount_point_required: true,
+        expect_items: false,
+        instance_id: None,
+    })
+    .map_err(|refused| {
+        format!(
+            "the credential directory cannot be used: {refused}; in the foreground mode \
+             it is a mounted volume that belongs to the service user with mode 700, and \
+             setup does not make it"
+        )
+    })?;
+    Ok(path.to_owned())
 }
 
 /// The account's records (`base`, which holds the setup record and the instance locator),
@@ -261,14 +313,17 @@ fn preflight(
     let root = crate::instance::RootProbe::open(&input.root)
         .map_err(|e| format!("the data folder {}: {e}", input.root.display()))
         .map_err(|refused| format!("{refused}; nothing was saved"))?;
-    let checked = credential_directory(
-        credentials,
-        input.service == Service::Foreground,
-        root.descriptor(),
-        Path::new("/"),
-        false,
-        open_as_the_host_will(records),
-    );
+    let checked = if input.service == Service::Foreground {
+        unused_mounted_store(credentials, root.descriptor(), records)
+    } else {
+        credential_directory(
+            credentials,
+            root.descriptor(),
+            Path::new("/"),
+            false,
+            unused_as_the_host_will(records),
+        )
+    };
     // The data folder goes again if this made it.
     drop(root);
     checked
@@ -279,13 +334,10 @@ fn preflight(
 /// The credential directory at exactly `path` (absolute and normalized), checked as the
 /// host will check it at every start, and returned for the record.
 ///
-/// In the foreground mode (`mounted`) it is a mounted volume: setup never makes it, and
-/// without a mount at the path it refuses. Otherwise the directories that are missing are
-/// made first, below ancestors that were judged, and taken away again when the check
-/// refuses. No item is expected yet.
+/// For a registered service, missing directories are made below checked ancestors and
+/// taken away again if the check refuses. No item is expected yet.
 pub(crate) fn use_credential_directory(
     path: &Path,
-    mounted: bool,
     data_root: std::os::fd::BorrowedFd<'_>,
     judged_from: &Path,
     enter: impl FnOnce(
@@ -295,7 +347,7 @@ pub(crate) fn use_credential_directory(
         org_platform_host::credentials::CredentialError,
     >,
 ) -> Result<PathBuf, String> {
-    credential_directory(path, mounted, data_root, judged_from, true, enter)
+    credential_directory(path, data_root, judged_from, true, enter)
 }
 
 /// [`use_credential_directory`]; with `keep` false, a question asked before the reservation:
@@ -304,7 +356,6 @@ pub(crate) fn use_credential_directory(
 /// had none).
 fn credential_directory(
     path: &Path,
-    mounted: bool,
     data_root: std::os::fd::BorrowedFd<'_>,
     judged_from: &Path,
     keep: bool,
@@ -315,36 +366,21 @@ fn credential_directory(
         org_platform_host::credentials::CredentialError,
     >,
 ) -> Result<PathBuf, String> {
-    let made = if mounted {
-        None
-    } else {
-        Some(
-            store_directories::make(path, Some(data_root), judged_from)
-                .map_err(|refused| format!("the credential directory cannot be used: {refused}"))?,
-        )
-    };
-    // The store directory held, when this call is to leave nothing and the store has no
-    // lock file yet: the one the check makes there is taken away again.
-    let lock_made_here = if keep {
-        None
-    } else {
-        match &made {
-            Some(made) => made.directory().try_clone_to_owned().ok(),
-            None => {
-                std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()))
-                    .ok()
-                    .and_then(|path| store_directories::open_directory(None, &path).ok())
-            }
-        }
-        .filter(|store| store_directories::lacks(store.as_fd(), c".lock"))
-    };
+    let made = store_directories::make(path, Some(data_root), judged_from)
+        .map_err(|refused| format!("the credential directory cannot be used: {refused}"))?;
+    // When this check is to leave nothing, remove a newly made lock file while it is held.
+    let lock_made_here = (!keep)
+        .then(|| made.directory().try_clone_to_owned().ok())
+        .flatten()
+        .filter(|store| store_directories::lacks(store.as_fd(), c".lock"));
     // Open it once as the host does, so that a directory the host would refuse is refused
     // now, with the same words, and not at the service's first start.
     let checked = enter(org_platform_host::credentials::ReleaseDirectory {
         path,
         data_root,
-        mount_point_required: mounted,
+        mount_point_required: false,
         expect_items: false,
+        instance_id: None,
     });
     // While the store is still locked by this check, so that no other opener holds a lock
     // on the file that goes.
@@ -354,24 +390,10 @@ fn credential_directory(
         unsafe { libc::unlinkat(store.as_raw_fd(), c".lock".as_ptr(), 0) };
     }
     let checked = checked.map(drop);
-    match (checked, made) {
-        (Ok(()), Some(made)) if !keep => made.remove(),
-        (Ok(()), _) => {}
-        (Err(refused), made) => {
-            if let Some(made) = made {
-                made.remove();
-            }
-            let hint = if mounted {
-                "; in the foreground mode it is a mounted volume that belongs to the service \
-                 user with mode 700, and setup does not make it"
-            } else {
-                ""
-            };
-            return Err(format!(
-                "the credential directory cannot be used: {refused}{hint}"
-            ));
-        }
+    if !keep || checked.is_err() {
+        made.remove();
     }
+    checked.map_err(|refused| format!("the credential directory cannot be used: {refused}"))?;
     Ok(path.to_owned())
 }
 
@@ -1222,12 +1244,13 @@ pub(crate) fn run_at(
             // The runtime folders are not kept: a cache that was cleared since (a container
             // started on its volumes again) has none, and they are made again here, as the
             // host makes them at its start (X5 review, fourth round, P1-4).
-            registry
-                .restore_temp_folders()
-                .map_err(|e| fail("restoring instance temp folders", e))?;
-            let (id, temp) = registry
-                .locate(name, &record.input.root)
-                .map_err(|e| fail("locating the instance", e))?;
+            let deadline = Instant::now() + LOCATOR_WAIT;
+            wait_for_locator("restoring instance temp folders", deadline, || {
+                registry.restore_temp_folders()
+            })?;
+            let (id, temp) = wait_for_locator("locating the instance", deadline, || {
+                registry.locate(name, &record.input.root)
+            })?;
             if &id != recorded {
                 return Err(
                     "the reserved instance is not the one setup recorded; nothing was changed"
@@ -1257,12 +1280,18 @@ pub(crate) fn run_at(
                     record.credentials = match (&record.input.credentials, &platform.credentials) {
                         // The configuration names it. In the foreground mode it is a mounted
                         // volume, which setup never makes.
+                        (Some(configured), _) if record.input.service == Service::Foreground => {
+                            Some(unused_mounted_store(
+                                configured,
+                                instance.root_descriptor(),
+                                records.as_fd(),
+                            )?)
+                        }
                         (Some(configured), _) => Some(use_credential_directory(
                             configured,
-                            record.input.service == Service::Foreground,
                             instance.root_descriptor(),
                             Path::new("/"),
-                            open_as_the_host_will(records.as_fd()),
+                            unused_as_the_host_will(records.as_fd()),
                         )?),
                         (None, CredentialDirectory::Below(base)) => {
                             Some(make_credential_directory(
@@ -1332,14 +1361,18 @@ pub(crate) fn run_at(
     // for, and no link is asked for: whoever runs `serve` is the supervisor, and the
     // administrator's first link comes from `admin reset`.
     if record.input.service == Service::Foreground {
+        let command = reset_hint(name);
+        let link = if crate::human::host_is_named_by_user_alone() {
+            format!("run as root: {command} --user {}", user_name())
+        } else {
+            format!("run as the service user: {command}")
+        };
         say(
             out,
             format!(
                 "Service: none is registered (foreground mode). Instance \"{shown}\" runs \
                  while agentic-org serve --setup <file> runs. For the administrator's \
-                 registration link, run as root: {} --user {}",
-                reset_hint(name),
-                user_name()
+                 registration link, {link}"
             ),
         )?;
         return Ok(held);
@@ -1863,20 +1896,31 @@ fn registered(paths: &Paths, name: Option<&str>) -> Result<(Record, String, Path
         .map_err(|e| fail("opening the instance locator", e))?;
     // A service that is just starting holds the locator's lock for a moment (it reserves
     // its instance again): a command that arrives then waits for it instead of failing.
-    let deadline = Instant::now() + LOCATOR_WAIT;
-    let (id, temp) = loop {
-        match registry.locate(name, &record.input.root) {
-            Ok(located) => break located,
-            Err(crate::instance::Error::Busy(_)) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) => return Err(fail("locating the instance", e)),
-        }
-    };
+    let (id, temp) = wait_for_locator(
+        "locating the instance",
+        Instant::now() + LOCATOR_WAIT,
+        || registry.locate(name, &record.input.root),
+    )?;
     if record.instance_id.as_deref() != Some(id.as_str()) {
         return Err("the instance is not the one setup recorded; run agentic-org setup".into());
     }
     Ok((record, id, temp.join("host.sock")))
+}
+
+fn wait_for_locator<T>(
+    context: &str,
+    deadline: Instant,
+    mut work: impl FnMut() -> Result<T, crate::instance::Error>,
+) -> Result<T, String> {
+    loop {
+        match work() {
+            Err(crate::instance::Error::Busy(_)) if Instant::now() < deadline => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                std::thread::sleep(remaining.min(Duration::from_millis(50)));
+            }
+            result => return result.map_err(|e| fail(context, e)),
+        }
+    }
 }
 
 /// What `admin reset` answers when its output is not a terminal (spec §4a.4).
@@ -1907,8 +1951,10 @@ pub fn admin_reset(
         // SSH-session detection, which is not built yet; it goes before this check.
         return Err(NOT_A_TERMINAL.into());
     }
+    let named_by_user = crate::human::host_is_named_by_user_alone();
     let acting_for = service_account(
         crate::home::euid(),
+        named_by_user,
         user,
         std::env::var("SUDO_UID").ok().as_deref(),
         account_by_name,
@@ -1916,7 +1962,7 @@ pub fn admin_reset(
     )?;
     // SIGN-33: where the system names a peer by its user alone (Linux), only root resets,
     // and anyone else is told so before the service is asked anything.
-    if acting_for.is_none() && crate::human::host_is_named_by_user_alone() {
+    if acting_for.is_none() && named_by_user {
         return Err(reset_needs_root(name));
     }
     match acting_for {
@@ -2104,6 +2150,7 @@ pub(crate) struct Account {
 /// service does not run as root); anyone else acts only for itself.
 pub(crate) fn service_account(
     me: u32,
+    named_by_user: bool,
     named: Option<&str>,
     sudo_uid: Option<&str>,
     by_name: impl Fn(&str) -> Option<Account>,
@@ -2121,6 +2168,9 @@ pub(crate) fn service_account(
                 None => Err(unknown(account)),
             },
         };
+    }
+    if !named_by_user {
+        return Err("Run agentic-org admin reset as the service user.".into());
     }
     let account = match (named, sudo_uid) {
         (Some(account), _) => by_name(account).ok_or_else(|| unknown(account))?,

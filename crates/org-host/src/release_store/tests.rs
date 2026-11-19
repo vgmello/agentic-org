@@ -55,6 +55,7 @@ fn release_directory_system() -> bool {
         true,
         protected_store(),
         Facts {
+            instance_id: "unused",
             recorded: Some(Path::new("/no-such-credential-directory")),
             data_root: std::os::fd::AsFd::as_fd(&anywhere),
             foreground: false,
@@ -105,6 +106,7 @@ impl World {
 
     fn facts(&self, expect_items: bool) -> Facts<'_> {
         Facts {
+            instance_id: self.instance.id(),
             recorded: Some(&self.credentials),
             data_root: self.instance.root_descriptor(),
             foreground: false,
@@ -188,6 +190,7 @@ fn holds(bytes: &[u8], needle: &[u8]) -> bool {
 fn a_development_build_and_a_keychain_system_open_no_release_directory() {
     let anywhere = fs::File::open("/").unwrap();
     let facts = || Facts {
+        instance_id: "fixture-instance",
         recorded: Some(Path::new("/no-such-credential-directory")),
         data_root: std::os::fd::AsFd::as_fd(&anywhere),
         foreground: true,
@@ -249,6 +252,7 @@ fn a_release_host_without_a_recorded_directory_does_not_start() {
         true,
         Ok(ProtectedStore::ReleaseDirectory),
         Facts {
+            instance_id: "fixture-instance",
             recorded: None,
             data_root: std::os::fd::AsFd::as_fd(&anywhere),
             foreground: false,
@@ -397,16 +401,21 @@ fn host_secrets_are_owner_only_and_none_is_in_the_data_root() {
         }
     }
     stored.sort();
-    let mut expected: Vec<PathBuf> = [".lock", "host-secrets/.lock", "office-keys/.lock"]
-        .iter()
-        .map(PathBuf::from)
-        .chain(
-            secrets
-                .iter()
-                .map(|(name, _)| Path::new("host-secrets").join(name)),
-        )
-        .chain([Path::new("office-keys").join(format!("{OFFICE}.key"))])
-        .collect();
+    let mut expected: Vec<PathBuf> = [
+        ".instance",
+        ".lock",
+        "host-secrets/.lock",
+        "office-keys/.lock",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .chain(
+        secrets
+            .iter()
+            .map(|(name, _)| Path::new("host-secrets").join(name)),
+    )
+    .chain([Path::new("office-keys").join(format!("{OFFICE}.key"))])
+    .collect();
     expected.sort();
     assert_eq!(stored, expected);
 
@@ -466,7 +475,8 @@ fn a_store_found_empty_for_an_instance_with_offices_stops_the_start_and_nothing_
     // A new instance: no office yet, so an empty store is what it must be.
     assert!(!records_say_keys_exist(&world.office_home).unwrap());
     drop(world.open_as_the_host_decides().unwrap());
-    fs::remove_file(world.credentials.join(".lock")).unwrap();
+    fs::remove_dir_all(&world.credentials).unwrap();
+    directory(&world.credentials);
 
     // An office exists, and the store is empty: the volume was lost or replaced.
     directory(&world.office_folder());

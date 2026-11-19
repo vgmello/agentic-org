@@ -33,11 +33,11 @@ machine. Docker Desktop on a Mac has a current engine.
 
 Then open **`http://127.0.0.1:8443`** in a browser on the Docker host.
 
-**The container serves plain HTTP. Publish it on `127.0.0.1` only**, as the command above
-does. Published on another interface (`-p 8443:8443`, `-p 0.0.0.0:8443:8443`), sign-in and
-every session travel unencrypted on that network. HTTPS is not available yet (X7). Setup
-and the host say the same in the log at every start ("serving plain HTTP on a published
-port").
+**Every machine that can reach the listen address can reach sign-in and sessions in
+plain text.** This applies to `http_published` on a bare macOS or Linux machine as well
+as in a container. On a bare machine, `0.0.0.0` listens on all IPv4 interfaces, including
+the LAN interface. In Docker, **publish it on `127.0.0.1` only**, as the command above
+does. HTTPS is pending in X7. Setup and the host log the exposure at every start.
 
 **Other containers reach the port whatever `-p` says.** `-p` decides what the Docker host
 publishes; a container on the same Docker network connects to the instance's own address
@@ -86,13 +86,26 @@ docker run -d --name agentic-org --network agentic-org -p 127.0.0.1:8443:8443 \
 | Volume | Holds |
 | --- | --- |
 | `/data` | Everything the instance keeps that is not a secret: the service user's home is `/data`, the instance's data folder is `/data/instance`, its records are in `/data/.local/share/agentic-org` and its sockets in `/data/.cache/agentic-org/tmp`. |
-| `/secrets` | The host's keys, owned by the service user, folders `700` and files `600`. Never in `/data`, so a copy of the data volume holds no key. |
+| `/secrets` | The host's keys and its instance marker, owned by the service user, with folders at mode `700` and files at mode `600`. A copy of the data volume holds no key. |
 
-A new container on the same two volumes is the same instance with the same keys. A new
-container on the data volume with a **new, empty** secrets volume does not start once the
-instance has an office ("credentials missing: the host's records say keys exist, and the
-credential directory holds none"), and makes nothing in that volume: no key is ever made in
-place of a lost one. Restore the secrets volume.
+A new container on the same two volumes is the same instance with the same keys.
+On the first start the host writes `.instance` in the secrets volume with the
+instance ID. A new data volume paired with an already bound secrets volume is refused
+before setup reserves an instance. A recorded instance must match the marker before
+the host opens its keys. A volume with existing credential files and no marker is
+also refused because its owner cannot be established. Keep the original volumes together
+and use an unused secrets volume for a new instance.
+
+A secrets volume written by a development build from before the marker existed holds
+keys and no `.instance`, so it is refused this way. No release wrote one. To keep such a
+volume with the data volume it belongs to, write the instance ID from the setup record
+(`instance_id` in `/data/.local/share/agentic-org/setup/default/setup.v1.json`) into
+`/secrets/.instance` as the service user, with mode `600` and nothing else in it (no newline), while the
+container is stopped.
+
+Once the instance has an office, a **new, empty** secrets volume is refused with
+"credentials missing". The new volume stays empty. Restore the matching secrets volume
+to recover the keys.
 
 The instance's data folder is `/data/instance`, not `/data`: the instance's records must
 be in the volume too, and the product refuses a data folder that contains them.
@@ -226,9 +239,10 @@ docker run -d --name agentic-org --network agentic-org -p 127.0.0.1:8443:8443 \
   -v agentic-org-data:/data -v agentic-org-secrets:/secrets agentic-org
 ```
 
-With `--cap-drop ALL` alone the service runs the same, but
-`docker exec -u 0 … admin reset --user agentic` is refused ("acting as the service user:
-Operation not permitted"), and `docker exec` cannot add a capability back.
+The hardened run serves HTTP, prints root's registration link at a terminal, and
+stops with exit code 0 within 2.5 seconds. With `--cap-drop ALL` alone the service
+still serves HTTP. Root's reset at a terminal returns "acting as the service user:
+Operation not permitted" because `docker exec` cannot add a dropped capability.
 
 ## The setup file
 
@@ -281,13 +295,17 @@ image sets no `ORG_OFFICE_DEV_KEY_DIR`, and one given with `-e` is not used.
 
 ## The test (LNX-2)
 
-`deploy/container/lnx2.sh` builds the image and checks all of the above in real
-containers: the plain run, the link, a worker with an `agent-os` send and read, the
-browser address over plain HTTP from the Docker host (the API, the UI's index, `400` for
-any other Host, the web process's confinement in the host log), the modes in `/secrets`,
-that nothing is written outside the volumes, the stop, the replaced container, the empty
-secrets volume, anonymous volumes, the store's refusals, that a container on the
-instance's network reaches its port, and whether one on the default bridge does. With `LNX2_PROFILES=1`, on a Docker host that enforces
-AppArmor with the profile loaded, it also runs `profiles-check.sh` (step 10). It builds the executables and
-its own office program for Linux itself (`build.sh`); it needs the UI built, Docker
-Engine 28 or later and `curl`.
+`deploy/container/lnx2.sh` builds the image and runs it in real containers. It checks
+registration and sign-in, the web process's confinement, and a worker sending and reading
+messages with `agent-os`. It checks the private modes in `/secrets`, including a
+mode-`600` recovery credential created by the host under `/secrets/host-secrets` after
+organization creation is requested. It verifies that writes stay within the volumes,
+a replacement container keeps its state, and that empty or mismatched secrets volumes
+are refused without changing the original credentials. It also checks HTTP, root's
+reset and clean shutdown in the hardened run, plus root's refusal with all capabilities
+dropped. The network check reports which containers can reach the HTTP port.
+
+Set `LNX2_PROFILES=1` on a Docker host that enforces AppArmor with the profile loaded
+to also run `profiles-check.sh` (step 10). The script builds the Linux executables and
+its own office program with `build.sh`. It needs the UI built, Docker Engine 28 or
+later, and `curl`.

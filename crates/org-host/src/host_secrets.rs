@@ -244,7 +244,7 @@ impl Custody {
 impl Custody {
     /// The custody of `instance` below the release directory `root`: its `host-secrets` item
     /// store, opened (and made, if it is missing) now and held by this handle alone. The
-    /// release directory is one instance's, so the instance is not part of the layout.
+    /// host has already verified the directory's binding to this instance.
     fn release_directory(root: &ReleaseRoot, instance: &str) -> Result<Self, SelectionError> {
         if !org_proto::is_uuid_v7(instance) {
             return Err(SelectionError::InvalidInstance);

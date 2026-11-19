@@ -31,6 +31,14 @@ pub(super) fn release_directory(
     Err(refusal().into())
 }
 
+pub(super) fn check_unused_release_directory(
+    _location: &ReleaseDirectory<'_>,
+    _item_stores: &[ItemStore<'_>],
+    _account_data: &[std::os::fd::BorrowedFd<'_>],
+) -> Result<(), CredentialError> {
+    Err(refusal().into())
+}
+
 /// The test entry of the release directory refuses as the host's does.
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn release_directory_below(
@@ -120,6 +128,7 @@ mod tests {
                 data_root: std::os::fd::AsFd::as_fd(&data_root),
                 mount_point_required,
                 expect_items,
+                instance_id: None,
             };
             let stores = [ItemStore {
                 directory: "office-keys",

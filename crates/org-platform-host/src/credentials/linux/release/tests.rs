@@ -228,6 +228,7 @@ impl Tree {
                 data_root: data_root.as_fd(),
                 mount_point_required,
                 expect_items,
+                instance_id: None,
             },
             &STORES,
             &[],
@@ -249,6 +250,7 @@ impl Tree {
                 data_root: self.data_root().as_fd(),
                 mount_point_required: false,
                 expect_items,
+                instance_id: None,
             },
             stores,
             &[],
@@ -277,6 +279,7 @@ impl Tree {
                 data_root: data_root.as_fd(),
                 mount_point_required,
                 expect_items: false,
+                instance_id: None,
             },
             &STORES,
             &account_data,
@@ -287,6 +290,54 @@ impl Tree {
     fn open_expecting_items(&self, path: &Path) -> Result<Opened, CredentialError> {
         self.open_with(path, &self.data_root(), false, true)
     }
+}
+
+#[test]
+fn an_unmarked_store_with_credentials_cannot_be_claimed() {
+    let Some(tree) = Tree::accepted() else {
+        return;
+    };
+    let path = tree.dir("secrets", 0o700);
+    let data_root = tree.data_root();
+    let location = ReleaseDirectory {
+        path: &path,
+        data_root: data_root.as_fd(),
+        mount_point_required: false,
+        expect_items: false,
+        instance_id: Some("fixture-instance"),
+    };
+    let probe = || {
+        check_unused(
+            Walk {
+                start: &tree.base,
+                root: open_absolute(&tree.base).unwrap(),
+                names: vec![OsStr::new("secrets")],
+            },
+            &location,
+            &STORES,
+            &[],
+        )
+    };
+    probe().unwrap();
+    assert!(listing(&path).is_empty());
+
+    let keys = path.join("office-keys");
+    mkdir(&keys, 0o700);
+    let key = keys.join("hq.key");
+    fs::write(&key, b"previous key").unwrap();
+    chmod(&key, 0o600);
+    assert!(matches!(
+        probe(),
+        Err(CredentialError::Root(RootRefusal {
+            rule: RootRule::CredentialsPresent,
+            ..
+        }))
+    ));
+    let result =
+        release_directory_below(&tree.base, &location, &STORES, &[]).map(|root| Opened { root });
+    assert_eq!(refusal(result), (RootRule::CredentialsPresent, keys));
+    assert_eq!(listing(&path), ["office-keys", "office-keys/hq.key"]);
+    assert_eq!(fs::read(key).unwrap(), b"previous key");
 }
 
 /// Opens `path` from `/`, through the contract, with `data_root` as the data root.
@@ -301,6 +352,7 @@ fn from_filesystem_root(
             data_root: data_root.as_fd(),
             mount_point_required: false,
             expect_items,
+            instance_id: None,
         },
         &STORES,
     )
@@ -1222,6 +1274,7 @@ fn a_second_host_on_the_same_store_is_refused_until_the_first_has_dropped_every_
                 data_root: data_root.as_fd(),
                 mount_point_required: false,
                 expect_items: false,
+                instance_id: None,
             },
             &STORES,
             &[],
@@ -1335,6 +1388,7 @@ fn a_lock_made_under_a_mask_that_takes_the_owners_bits_is_usable_and_an_old_one_
             data_root: data_root.as_fd(),
             mount_point_required: false,
             expect_items: false,
+            instance_id: None,
         };
         // SAFETY: this exact-test child runs nothing else.
         unsafe { libc::umask(0o277) };
@@ -1351,6 +1405,7 @@ fn a_lock_made_under_a_mask_that_takes_the_owners_bits_is_usable_and_an_old_one_
             &base,
             &ReleaseDirectory {
                 expect_items: true,
+                instance_id: None,
                 ..location
             },
             &STORES,
@@ -1630,6 +1685,7 @@ fn a_refusal_names_the_directory_and_the_rule_and_a_location_prints_no_path() {
         data_root: data_root.as_fd(),
         mount_point_required: true,
         expect_items: false,
+        instance_id: None,
     };
     let printed = format!("{location:?}");
     assert!(printed.contains("mount_point_required: true"), "{printed}");
@@ -2320,6 +2376,7 @@ fn the_directories_a_deployment_names_are_judged_as_its_host_judges_them() {
         data_root: data.as_fd(),
         mount_point_required: true,
         expect_items: false,
+        instance_id: None,
     };
     match contract(location, &STORES) {
         Ok(opened) => {
@@ -2333,6 +2390,7 @@ fn the_directories_a_deployment_names_are_judged_as_its_host_judges_them() {
             let again = contract(
                 ReleaseDirectory {
                     expect_items: true,
+                    instance_id: None,
                     ..location
                 },
                 &STORES,
