@@ -49,4 +49,24 @@ describe('investmentWords (costs decision 6)', () => {
 			}).thisMonth
 		).toBeUndefined();
 	});
+	it('qualifies this month too: unknown says why, incomplete says so', () => {
+		expect(
+			investmentWords({
+				toDate: totals(),
+				thisMonth: totals({ records: 3, knownCostMicroUsd: null, unknownCostRecords: 3 })
+			}).thisMonth
+		).toBe('— this month, cost unknown: the runtime reported no cost for 3 records');
+		expect(
+			investmentWords({
+				toDate: totals(),
+				thisMonth: totals({ records: 3, unpricedRecords: 1, costIncompleteRecords: 1 })
+			}).thisMonth
+		).toBe('≈ $1,240.50 this month, usage incomplete');
+	});
+	it("says an amount isn't shown rather than leaving a gap that reads as unknown", () => {
+		expect(investmentWords(undefined, undefined, false)).toEqual({
+			toDate: 'Not shown',
+			detail: "Only the organization's owner and the project's manager see its cost."
+		});
+	});
 });

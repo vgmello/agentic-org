@@ -19,12 +19,15 @@
 		bugParts,
 		countedTasks,
 		featuresText,
+		keepWords,
 		openBugs,
 		openTasks,
 		projectHref
 	} from '../../present';
 	import { inlineLink } from '../../components/classes';
 	import { projectFrame } from '../frame/context';
+	import SeverityMark from '../../components/SeverityMark.svelte';
+	import type { BugCounts } from '../../types';
 	import BriefText from './BriefText.svelte';
 
 	const frame = projectFrame();
@@ -33,10 +36,12 @@
 	const activity = new Resource(() => projectsApi.activity(frame.organizationId, frame.projectId));
 	const investment = investmentResource(() => frame.organizationId);
 	const amounts = $derived(investment.data?.allowed ? investment.data.value : undefined);
+	// A project manager sees the amounts of the projects they lead and of no other (costs §1 "Who sees amounts").
 	const money = $derived(
-		amounts ? investmentWords(amounts.byProject.get(p.id), amounts.coverage) : undefined
+		amounts && (amounts.scope === 'organization' || amounts.byProject.has(p.id))
+			? investmentWords(amounts.byProject.get(p.id), amounts.coverage)
+			: undefined
 	);
-	const features = $derived(p.features.planned + p.features.inProgress + p.features.live);
 	const bugs = $derived(bugParts(p.bugs));
 
 	const h4 = 'text-sm/6 font-semibold text-fg';
@@ -45,13 +50,22 @@
 </script>
 
 <!-- Each figure: what it counts, the number, then what qualifies it, words kept whole so no separator strands. -->
-{#snippet figure(label: string, value: string, parts: string[], tone?: (index: number) => string)}
-	<div class="bg-surface px-4 py-6 min-[640px]:px-6">
+{#snippet figure(
+	label: string,
+	value: string,
+	parts: { text: string; severity?: keyof BugCounts }[]
+)}
+	<div class="bg-surface px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8">
 		<dt class="text-sm/6 font-medium text-fg-muted">{label}</dt>
 		<dd class="mt-1 text-2xl/8 font-semibold tracking-tight text-fg tabular-nums">{value}</dd>
 		<dd class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-fg-muted">
-			{#each parts as part, i (part)}<span class="whitespace-nowrap {tone?.(i) ?? ''}"
-					>{part}{#if i < parts.length - 1}<span class="sr-only">{separator}</span>{/if}</span
+			{#each parts as part, i (part.text)}<span class="whitespace-nowrap"
+					>{#if part.severity}<SeverityMark
+							severity={part.severity}
+							text={part.text}
+						/>{:else}{part.text}{/if}{#if i < parts.length - 1}<span class="sr-only"
+							>{separator}</span
+						>{/if}</span
 				>{/each}
 		</dd>
 	</div>
@@ -64,24 +78,28 @@
 	data-testid="project-figures"
 >
 	{@render figure('Open tasks', String(openTasks(p.tasks)), [
-		p.tasks.blocked > 0 ? `${p.tasks.blocked} blocked` : 'None blocked'
+		{ text: p.tasks.blocked > 0 ? `${p.tasks.blocked} blocked` : 'None blocked' }
 	])}
 	{@render figure('Done', String(p.tasks.done), [
-		`of ${countedTasks(p.tasks)} ${countedTasks(p.tasks) === 1 ? 'task' : 'tasks'}`
+		{
+			text:
+				countedTasks(p.tasks) === 0
+					? 'No tasks yet'
+					: `of ${countedTasks(p.tasks)} ${countedTasks(p.tasks) === 1 ? 'task' : 'tasks'}`
+		}
 	])}
 	{@render figure(
 		'Open bugs',
 		String(openBugs(p.bugs)),
-		bugs.length ? bugs.map((b) => b.text) : ['None open'],
-		(i) => (bugs[i]?.key === 'critical' ? 'text-danger-text' : '')
+		bugs.length ? bugs.map((b) => ({ text: b.text, severity: b.key })) : [{ text: 'None open' }]
 	)}
-	{@render figure(
-		'Features',
-		String(features),
-		features ? featuresText(p.features).split(' · ') : ['None yet']
-	)}
+	<!-- The features line, word for word (features-ux "Overview tile"). -->
+	<div class="bg-surface px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8" data-testid="features-line">
+		<dt class="text-sm/6 font-medium text-fg-muted">Features<span class="sr-only">:</span></dt>
+		<dd class="mt-1 text-base/7 font-semibold text-fg">{keepWords(featuresText(p.features))}</dd>
+	</div>
 	{#if money}
-		{@render figure('Investment', money.toDate, money.thisMonth ? [money.thisMonth] : [])}
+		{@render figure('Investment', money.toDate, money.thisMonth ? [{ text: money.thisMonth }] : [])}
 	{/if}
 </dl>
 {#if money?.note}

@@ -28,6 +28,7 @@
 	import {
 		CHANGES_PAUSED,
 		VIEW_ONLY,
+		archivedText,
 		branchProblem,
 		nameProblem,
 		slugProblem
@@ -41,7 +42,7 @@
 	const frame = projectFrame();
 	const p = $derived(frame.project);
 	const org = $derived(frame.organizationId);
-	const locked = $derived(!p.viewer.canEdit || !!p.stale);
+	const locked = $derived(!p.viewer.canEdit || !!p.stale || p.archived);
 	const reload = () => frame.reload();
 
 	// What the fields choose from: read once per frame (the route keys the frame by organization and project).
@@ -119,38 +120,39 @@
 	);
 	let confirmOwner = $state(false);
 	let ownerPreview = $state<{ tasks: number } | undefined>();
-	let ownerPreviewError = $state<string>();
 	const newOwner = $derived(teams?.find((t) => t.id === ownerId));
 
+	let counting = $state(false);
+
 	async function saveTeams() {
-		if (ownerChanged) {
-			// Changing the accountable team moves every task's accountability: say how many before anything happens.
-			ownerPreview = undefined;
-			ownerPreviewError = undefined;
+		if (!ownerChanged) return void (await commitTeams());
+		// Changing the accountable team moves every task's accountability: the confirmation opens only once the number
+		// of tasks that move is known, so the cost is in view at the moment of action (§7.9).
+		counting = true;
+		teamsSave.edited();
+		try {
+			ownerPreview = await projectsApi.ownerChangePreview(org, p.id, ownerId);
 			confirmOwner = true;
-			try {
-				ownerPreview = await projectsApi.ownerChangePreview(org, p.id, ownerId);
-			} catch (e) {
-				ownerPreviewError = toAppError(e).message;
-			}
-			return;
+		} catch (e) {
+			teamsSave.refusal = {
+				message: `Couldn't count the tasks that would move, so nothing was changed: ${toAppError(e).message} Save again to retry.`
+			};
+		} finally {
+			counting = false;
 		}
-		await commitTeams();
 	}
 
+	/** One accepted operation for the accountable team and the contributors: applied whole or not at all. */
 	async function commitTeams() {
-		const contributors = contributorIds.filter((id) => id !== ownerId);
-		const ok = await teamsSave.run(async () => {
-			if (ownerChanged)
-				await projectsApi.setOwner(org, p.id, { teamId: ownerId, expectedRevision: p.revision });
-			const after = ownerChanged ? p.revision + 1 : p.revision;
-			const current = p.contributors.map((c) => c.id).filter((id) => id !== ownerId);
-			if (!sameSet(contributors, current))
-				await projectsApi.setContributors(org, p.id, {
-					teamIds: contributors,
-					expectedRevision: after
-				});
-		}, p.name);
+		const ok = await teamsSave.run(
+			() =>
+				projectsApi.setTeams(org, p.id, {
+					ownerTeamId: ownerId,
+					contributorTeamIds: contributorIds.filter((id) => id !== ownerId),
+					expectedRevision: p.revision
+				}),
+			p.name
+		);
 		if (ok) {
 			ownerId = p.ownerTeam.id;
 			contributorIds = p.contributors.map((c) => c.id);
@@ -226,6 +228,10 @@
 		if (ok) {
 			associations = fromProject();
 			repoTouched = false;
+		} else if (repoSave.refusal?.field) {
+			// A refusal focuses the field it is about (§6a).
+			await tick();
+			form.querySelector<HTMLElement>('#settings-add-repository')?.focus();
 		}
 	}
 
@@ -234,7 +240,7 @@
 	let processId = $state(untrack(() => p.developmentProcess?.id ?? ''));
 	const processDirty = $derived(processId !== (p.developmentProcess?.id ?? ''));
 
-	async function saveProcess() {
+	async function saveProcess(form: HTMLFormElement) {
 		const ok = await processSave.run(
 			() =>
 				projectsApi.setProcess(org, p.id, {
@@ -244,13 +250,19 @@
 			p.name
 		);
 		if (ok) processId = p.developmentProcess?.id ?? '';
+		else if (processSave.refusal?.field) {
+			await tick();
+			form.querySelector<HTMLElement>('#settings-process-select')?.focus();
+		}
 	}
 </script>
 
 {#if locked}
 	<div class="px-4 pt-6 min-[640px]:px-6 min-[1024px]:px-8">
 		<Callout data-testid="settings-locked">
-			<p class="text-sm/6">{p.stale ? CHANGES_PAUSED : VIEW_ONLY}</p>
+			<p class="text-sm/6">
+				{p.stale ? CHANGES_PAUSED : p.archived ? archivedText(p.name) : VIEW_ONLY}
+			</p>
 		</Callout>
 	</div>
 {/if}
@@ -314,6 +326,8 @@
 		save={teamsSave}
 		{locked}
 		dirty={teamsDirty}
+		working={counting}
+		busyLabel={counting ? 'Counting tasks…' : 'Saving…'}
 		onsubmit={saveTeams}
 	>
 		<div>
@@ -481,11 +495,7 @@
 			class="list-disc space-y-1 pl-5 text-sm/6 text-fg-secondary marker:text-fg-muted"
 		>
 			<li data-testid="owner-preview">
-				{#if ownerPreviewError}
-					Couldn't count the tasks that move: {ownerPreviewError}
-				{:else if !ownerPreview}
-					Counting the tasks that move…
-				{:else if ownerPreview.tasks === 0}
+				{#if !ownerPreview || ownerPreview.tasks === 0}
 					{p.name} has no tasks yet, so none move.
 				{:else}
 					{ownerPreview.tasks}

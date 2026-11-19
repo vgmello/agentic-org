@@ -67,6 +67,8 @@ test(
 		await sheet.getByRole('textbox', { name: 'Name' }).fill('Reservations');
 		await expect(sheet.getByLabel('Slug')).toHaveValue('reservations');
 		await expect(sheet.getByRole('radio', { name: /New team: Reservations/ })).toBeChecked();
+		// The new team goes under the organization's top-level team unless the person chooses another place.
+		await expect(sheet.locator('#new-project-parent')).toHaveValue('eng');
 		await sheet.getByLabel('Development process').selectOption({ label: 'Feature delivery' });
 		await expect(sheet.getByTestId('process-preview')).toContainText(
 			'Create the roles Product lead, Engineering lead'
@@ -138,7 +140,10 @@ test(
 		const figures = page.getByTestId('project-figures');
 		await expect(figures).toContainText('Open tasks');
 		await expect(figures).toContainText('1 blocked');
-		await expect(figures).toContainText('2 in progress, 1 planned, 5 live');
+		// The features line, word for word (features-ux "Overview tile").
+		await expect(page.getByTestId('features-line')).toHaveText(
+			'Features: 2 in progress · 1 planned · 5 live'
+		);
 		await expect(figures).toContainText('1 critical, 2 major, 1 trivial, 1 not set');
 		await expect(figures).toContainText('Investment');
 		await expect(page.getByRole('heading', { name: 'Brief' })).toBeVisible();
@@ -323,4 +328,130 @@ test('PROJ layout: no sideways scroll at 320 px with 200% text; 44 px targets be
 	}
 	for (const link of await tabs(page).all())
 		expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+});
+
+// ── Review fixes (P2) ─────────────────────────────────────────────────────────────────────────────────────────────
+
+test('PROJ-2: a lost answer to Create is checked by the same operation, never sent again blind', async ({
+	page
+}) => {
+	await open(page, '/projects?mock=create-unknown');
+	await page.getByRole('button', { name: 'New project' }).click();
+	const sheet = page.getByRole('dialog', { name: 'New project' });
+	await sheet.getByRole('textbox', { name: 'Name' }).fill('Lantern');
+	await sheet.getByRole('button', { name: 'Create project' }).click();
+	await expect(sheet.getByTestId('create-outcome')).toContainText(
+		"Couldn't confirm whether Lantern was created"
+	);
+	// Nothing can be changed or sent again until HQ says what became of it.
+	await expect(sheet.getByRole('textbox', { name: 'Name' })).toBeDisabled();
+	await expect(sheet.getByRole('button', { name: 'Create project' })).toHaveCount(0);
+	// Closing and reopening keeps the unresolved attempt, not a fresh one.
+	await sheet.getByRole('button', { name: 'Cancel' }).click();
+	await page.getByRole('button', { name: 'New project' }).click();
+	await expect(sheet.getByRole('textbox', { name: 'Name' })).toHaveValue('Lantern');
+	await sheet.getByRole('button', { name: 'Check status' }).click();
+	await expect(page).toHaveURL(/\/projects\/[0-9A-Za-z-]+$/);
+	await expect(page.locator('#project-heading')).toContainText('Lantern');
+	await page.getByRole('link', { name: 'Projects', exact: true }).last().click();
+	await expect(page.getByTestId('project-row').filter({ hasText: 'Lantern' })).toHaveCount(1);
+});
+
+test('PROJ-2: the new team goes where the person chooses, and Create waits for the teams', async ({
+	page
+}) => {
+	await open(page, '/projects?mock=slow');
+	await page.getByRole('button', { name: 'New project' }).click();
+	const sheet = page.getByRole('dialog', { name: 'New project' });
+	await sheet.getByRole('textbox', { name: 'Name' }).fill('Racer');
+	const create = sheet.getByRole('button', { name: 'Create project' });
+	await expect(create).toBeDisabled();
+	await expect(sheet.getByText('Reading the teams first')).toBeVisible();
+	await expect(sheet.locator('#new-project-parent')).toHaveValue('eng', { timeout: 10_000 });
+	await sheet.locator('#new-project-parent').selectOption('platform');
+	await expect(create).toBeEnabled();
+	await create.click();
+	await expect(page.locator('#project-heading')).toContainText('Racer', { timeout: 20_000 });
+	await page.getByTestId('owner-team').getByRole('link', { name: 'Racer' }).click();
+	await expect(page.getByText(/Part of\s+Platform/)).toBeVisible({ timeout: 20_000 });
+});
+
+test('PROJ-2: Back with New project open closes the sheet only and returns focus', async ({
+	page
+}) => {
+	await open(page, '/projects/beacon');
+	await page.getByRole('link', { name: 'Projects', exact: true }).last().click();
+	await expect(page).toHaveURL(/\/projects$/);
+	const opener = page.getByRole('button', { name: 'New project' });
+	await opener.click();
+	await expect(page.getByRole('dialog', { name: 'New project' })).toBeVisible();
+	await page.goBack();
+	await expect(page.getByRole('dialog', { name: 'New project' })).toHaveCount(0);
+	await expect(page).toHaveURL(/\/projects$/);
+	await expect(opener).toBeFocused();
+});
+
+test('PRJ-3: the accountable team and the contributors change in one save, whatever revision HQ answers', async ({
+	page
+}) => {
+	await open(page, '/projects/atlas/settings');
+	await page.locator('#settings-owner').selectOption('web');
+	await page
+		.locator('section[aria-labelledby=settings-teams-heading]')
+		.getByRole('checkbox', { name: /Design/ })
+		.check();
+	await page
+		.locator('section[aria-labelledby=settings-teams-heading]')
+		.getByRole('button', { name: 'Save' })
+		.click();
+	const dialog = page.getByRole('dialog', { name: 'Make Web accountable for Atlas?' });
+	// The confirmation opens only once the number of tasks that move is known.
+	await expect(dialog.getByTestId('owner-preview')).toHaveText(
+		'18 tasks move their accountable team from Platform to Web, with history.'
+	);
+	await dialog.getByRole('button', { name: 'Change accountable team' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.getByTestId('owner-team')).toContainText('Accountable team: Web');
+	await expect(page.getByTestId('contributors')).toContainText('Design');
+	await expect(
+		page
+			.locator('section[aria-labelledby=settings-teams-heading]')
+			.getByText('Saved', { exact: true })
+	).toBeVisible();
+});
+
+test("PROJ-1: a project manager sees the investment of the projects they lead, and no other's", async ({
+	page
+}) => {
+	await open(page, '/projects?mock=manager');
+	await expect(row(page, 'beacon').getByTestId('investment')).toContainText('≈ $');
+	await expect(row(page, 'atlas').getByTestId('investment')).toContainText('Not shown');
+	await expect(row(page, 'atlas').getByTestId('investment')).not.toContainText('$');
+	await visit(page, '/projects/beacon?mock=manager');
+	await expect(page.getByTestId('project-figures')).toContainText('Investment');
+	await visit(page, '/projects/atlas?mock=manager');
+	await expect(page.getByTestId('project-figures')).not.toContainText('Investment');
+});
+
+test('PROJ-2: New project opens from the New menu, Home and a team with no projects', async ({
+	page
+}) => {
+	await open(page, '/home');
+	await page.getByRole('button', { name: 'New', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Project', exact: true }).click();
+	const sheet = page.getByRole('dialog', { name: 'New project' });
+	await expect(sheet).toBeVisible();
+	await expect(page).toHaveURL(/\/projects$/);
+	await sheet.getByRole('button', { name: 'Cancel' }).click();
+
+	await visit(page, '/home?mock=noprojects');
+	await page.getByTestId('create-project').click();
+	await expect(sheet).toBeVisible();
+	await expect(sheet.getByRole('radio', { name: /New team/ })).toBeChecked();
+
+	await visit(page, '/teams/web/projects?mock=empty');
+	await page.getByRole('link', { name: 'New project' }).click();
+	await expect(sheet).toBeVisible();
+	await expect(sheet.getByRole('radio', { name: 'An existing team' })).toBeChecked();
+	await expect(sheet.locator('#new-project-team')).toHaveValue('web');
 });

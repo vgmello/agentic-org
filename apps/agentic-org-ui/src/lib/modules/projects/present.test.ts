@@ -5,6 +5,7 @@ import {
 	bugsText,
 	doneText,
 	featuresText,
+	keepWords,
 	openText,
 	projectTabs,
 	slugFrom,
@@ -134,6 +135,10 @@ describe('counts', () => {
 			'2 in progress · 1 planned · 5 live'
 		);
 		expect(featuresText(noFeatures)).toBe('No features yet');
+		// Wraps only after a dot, so no dot starts a line and no part splits.
+		expect(keepWords('2 in progress · 1 planned · 5 live')).toBe(
+			'2\u00a0in\u00a0progress\u00a0· 1\u00a0planned\u00a0· 5\u00a0live'
+		);
 	});
 	it('sorts A–Z with archived projects last', () => {
 		expect(

@@ -131,8 +131,12 @@ export interface ProjectTeamView {
 export interface TeamChoice extends TeamRef {
 	/** "Engineering › Web". */
 	path: string;
-	/** A team with no parent. A new project's team goes under the first one (§7.9). */
-	topLevel: boolean;
+	/**
+	 * The organization's top-level team, made with the organization (organization-data 01): a new project's team goes
+	 * under it unless the person chooses another place (offices-and-teams-ux §7.9). HQ marks it; the browser never
+	 * guesses it.
+	 */
+	organizationTeam: boolean;
 }
 
 /** A code repository registered with the organization (`repositories.yaml`). */
@@ -157,6 +161,12 @@ export interface NewProject {
 	owner: { kind: 'new'; parentTeamId?: string } | { kind: 'existing'; teamId: string };
 	developmentProcessId: string | null;
 }
+
+/** Where a create whose answer was lost stands, asked by its operation ID. */
+export type CreateOutcome =
+	| { state: 'applied'; projectId: string; number: number }
+	| { state: 'not_applied'; reason: string }
+	| { state: 'pending' };
 
 /** What choosing a development process would do (development-processes §3), computed by HQ before confirming. */
 export interface ProcessPreview {

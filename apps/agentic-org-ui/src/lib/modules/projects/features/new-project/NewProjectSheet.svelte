@@ -2,10 +2,14 @@
   @component
   New project (offices-and-teams-ux §7.9, TEAM-8/14, development-processes §3): Name and Slug (suggested from the
   name until edited); Accountable team, which starts as "New team: <name>" (a team named after the project, made with
-  it in one operation, under the top-level team) or an existing team, prefilled from the launching team; and the
-  Development process with what choosing it does. No project is created without a team. A refusal shows on its field
-  and focuses it; the same attempt is resent on Try again, so a lost answer never creates a second project. Success is
-  said only after HQ accepts it.
+  it in one operation) placed under the organization's top-level team unless the person chooses another place, or an
+  existing team, prefilled from the launching team; and the Development process with what choosing it does. No
+  project is created without a team, and Create waits until the teams are known (its reason beside it, Retry if they
+  can't be read).
+  A refusal shows on its field and focuses it. A lost answer is never sent again blind (work-items-ux §12): the sheet
+  says "Couldn't confirm whether <name> was created", keeps the values read-only and offers only Check status, which
+  asks HQ by the same operation ID; the ID changes only after a definite refusal. Success is said only after HQ
+  accepts it. Back with the sheet open closes it only (app-shell-ux §6).
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
@@ -28,7 +32,9 @@
 	} from '$lib/components/ui/sheet';
 	import { newId } from '$lib/org/commands';
 	import { toAppError } from '$lib/office/api';
+	import { registerModalBack } from '$lib/platform/shell/modal-back';
 	import { projectsApi } from '../../api';
+	import { OUTCOME_UNKNOWN } from '../../outcome';
 	import { nameProblem, slugFrom, slugProblem } from '../../present';
 	import type { ProjectField, TeamChoice } from '../../types';
 	import ProcessSelect from '../../components/ProcessSelect.svelte';
@@ -44,20 +50,35 @@
 		onCloseAutoFocus?: (event: Event) => void;
 	} = $props();
 
+	/** The parent value for "no parent: a new top-level team". */
+	const NO_PARENT = ':root';
+
+	type Outcome =
+		| { kind: 'unknown'; checkError?: string }
+		| { kind: 'pending' }
+		| { kind: 'not_applied'; reason: string }
+		| { kind: 'failed'; message: string };
+
 	let open = $state(false);
 	let name = $state('');
 	let slug = $state('');
 	let slugEdited = $state(false);
 	let ownerKind = $state<'new' | 'existing'>('new');
 	let teamId = $state('');
+	let parentId = $state('');
 	let processId = $state('');
 	let touched = $state(false);
-	let busy = $state(false);
+	let busy = $state<'creating' | 'checking' | undefined>();
 	let operationId = '';
-	let refusal = $state<{ field?: ProjectField; message: string }>();
+	let refusal = $state<{ field: ProjectField; message: string }>();
+	let outcome = $state<Outcome>();
 	let teams = $state.raw<TeamChoice[] | undefined>();
 	let teamsError = $state<string>();
+	let teamsLoading = $state(false);
 
+	/** The attempt can't be repeated or changed until HQ says what became of it. */
+	const unresolved = $derived(outcome?.kind === 'unknown' || outcome?.kind === 'pending');
+	const locked = $derived(!!busy || unresolved);
 	const nameError = $derived(
 		refusal?.field === 'name' ? refusal.message : touched ? nameProblem(name) : undefined
 	);
@@ -75,38 +96,86 @@
 				? 'Choose the team accountable for the project.'
 				: undefined
 	);
-	const topTeam = $derived(teams?.find((t) => t.topLevel));
+	const organizationTeam = $derived(teams?.find((t) => t.organizationTeam));
+	const parent = $derived(
+		parentId === NO_PARENT ? undefined : teams?.find((t) => t.id === parentId)
+	);
 	const newTeamName = $derived(name.trim() || 'named after the project');
+	const waitingForTeams = $derived(!teams);
 
-	/** Opens the sheet; `presetTeamId` (a team's page or menu) makes that team the accountable one. */
+	// Back with the sheet open closes it only, and focus returns to its opener (app-shell-ux §6).
+	$effect(() => {
+		if (open) return registerModalBack(() => (open = false));
+	});
+
+	function loadTeams() {
+		teamsError = undefined;
+		teamsLoading = true;
+		projectsApi.teamChoices(organizationId).then(
+			(rows) => {
+				teams = rows;
+				teamsLoading = false;
+				// The default place for a new team is the organization's top-level team (§7.9).
+				if (!parentId) parentId = rows.find((t) => t.organizationTeam)?.id ?? NO_PARENT;
+			},
+			(e) => {
+				teamsError = toAppError(e).message;
+				teamsLoading = false;
+			}
+		);
+	}
+
+	/**
+	 * Opens the sheet; `presetTeamId` (a team's page or menu) makes that team the accountable one. An attempt whose
+	 * outcome is still unknown opens again as it was: it can only be checked, never started afresh.
+	 */
 	export function start(presetTeamId?: string) {
+		open = true;
+		if (unresolved) return;
 		name = '';
 		slug = '';
 		slugEdited = false;
 		ownerKind = presetTeamId ? 'existing' : 'new';
 		teamId = presetTeamId ?? '';
+		parentId = '';
 		processId = '';
 		touched = false;
-		busy = false;
+		busy = undefined;
 		refusal = undefined;
+		outcome = undefined;
 		operationId = newId();
-		open = true;
-		teamsError = undefined;
-		void projectsApi.teamChoices(organizationId).then(
-			(rows) => (teams = rows),
-			(e) => (teamsError = toAppError(e).message)
-		);
+		teams = undefined;
+		loadTeams();
 	}
 
-	/** A field changed after a refusal: what was sent is no longer what is asked, so the next try is a new attempt. */
+	/**
+	 * A field changed. After a definite refusal the next try is a new attempt with a new ID; otherwise (a failure HQ
+	 * reported as not applied, or nothing sent yet) the same ID is safe to send again.
+	 */
 	function edited() {
+		if (refusal) operationId = newId();
 		refusal = undefined;
-		operationId = newId();
+		if (outcome?.kind === 'failed' || outcome?.kind === 'not_applied') outcome = undefined;
+	}
+
+	const fieldSelector = (field: ProjectField) =>
+		field === 'owner'
+			? ownerKind === 'existing'
+				? '#new-project-team'
+				: '#new-project-parent'
+			: field === 'process'
+				? '#new-project-process'
+				: `#new-project-${field}`;
+
+	async function finish(answer: { projectId: string; number: number }, created: string) {
+		outcome = undefined;
+		open = false;
+		await oncreated({ ...answer, name: created });
 	}
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
-		if (busy) return;
+		if (locked || waitingForTeams) return;
 		touched = true;
 		const form = event.currentTarget as HTMLFormElement;
 		if (nameProblem(name) || slugProblem(slug) || (ownerKind === 'existing' && !teamId)) {
@@ -114,8 +183,9 @@
 			form.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
 			return;
 		}
-		busy = true;
+		busy = 'creating';
 		refusal = undefined;
+		outcome = undefined;
 		const created = name.trim();
 		try {
 			const answer = await projectsApi.create(organizationId, {
@@ -124,30 +194,39 @@
 				slug: slug.trim(),
 				owner:
 					ownerKind === 'new'
-						? { kind: 'new', parentTeamId: topTeam?.id }
+						? { kind: 'new', parentTeamId: parent?.id }
 						: { kind: 'existing', teamId },
 				developmentProcessId: processId || null
 			});
-			open = false;
-			await oncreated({ ...answer, name: created });
+			busy = undefined;
+			await finish(answer, created);
 		} catch (e) {
+			busy = undefined;
 			const failure = toAppError(e);
 			const field = (failure as { field?: ProjectField }).field;
-			refusal = { field, message: failure.message };
-			busy = false;
-			await tick();
-			if (field)
-				form
-					.querySelector<HTMLElement>(
-						field === 'owner'
-							? '#new-project-team, #new-project-owner-new'
-							: field === 'process'
-								? '#new-project-process'
-								: `#new-project-${field}`
-					)
-					?.focus();
-		} finally {
-			busy = false;
+			if (failure.code === OUTCOME_UNKNOWN) outcome = { kind: 'unknown' };
+			else if (field) {
+				refusal = { field, message: failure.message };
+				await tick();
+				form.querySelector<HTMLElement>(fieldSelector(field))?.focus();
+			} else outcome = { kind: 'failed', message: failure.message };
+		}
+	}
+
+	async function checkStatus() {
+		if (busy) return;
+		busy = 'checking';
+		const created = name.trim();
+		try {
+			const result = await projectsApi.createOperation(organizationId, operationId);
+			busy = undefined;
+			if (result.state === 'applied') await finish(result, created);
+			else if (result.state === 'not_applied')
+				outcome = { kind: 'not_applied', reason: result.reason };
+			else outcome = { kind: 'pending' };
+		} catch (e) {
+			busy = undefined;
+			outcome = { kind: 'unknown', checkError: toAppError(e).message };
 		}
 	}
 </script>
@@ -172,7 +251,7 @@
 					<Input
 						id="new-project-name"
 						bind:value={name}
-						disabled={busy}
+						disabled={locked}
 						autocomplete="off"
 						class="mt-2 {inputClass}"
 						aria-invalid={nameError ? true : undefined}
@@ -190,7 +269,7 @@
 					<Input
 						id="new-project-slug"
 						bind:value={slug}
-						disabled={busy}
+						disabled={locked}
 						autocomplete="off"
 						autocapitalize="none"
 						spellcheck={false}
@@ -214,7 +293,10 @@
 					{/if}
 				</div>
 
-				<fieldset aria-describedby={ownerError ? 'new-project-owner-error' : undefined}>
+				<fieldset
+					disabled={locked}
+					aria-describedby={ownerError ? 'new-project-owner-error' : undefined}
+				>
 					<legend class="text-sm/6 font-medium text-fg">Accountable team</legend>
 					<div class="mt-2 space-y-3">
 						<label class="flex items-start gap-x-3 max-[639px]:min-h-11">
@@ -224,7 +306,6 @@
 								name="owner"
 								value="new"
 								bind:group={ownerKind}
-								disabled={busy}
 								onchange={edited}
 								class="mt-1 size-4 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 							/>
@@ -233,18 +314,44 @@
 									>New team: {newTeamName}</span
 								>
 								<span class="block text-xs/5 text-fg-muted">
-									Made with the project{topTeam ? `, under ${topTeam.name}` : ''}. Add people and
-									agents to it from its page.
+									Made with the project. Add people and agents to it from its page.
 								</span>
 							</span>
 						</label>
+						{#if ownerKind === 'new'}
+							<div class="pl-7">
+								<Label for="new-project-parent">Place it under</Label>
+								<select
+									id="new-project-parent"
+									bind:value={parentId}
+									disabled={!teams}
+									onchange={edited}
+									aria-describedby="new-project-parent-help"
+									class="mt-2 {selectClass}"
+								>
+									{#if !teams}<option value="">Loading teams…</option>{/if}
+									{#each teams ?? [] as t (t.id)}
+										<option value={t.id}
+											>{t.path}{t.ref ? ` · ${t.ref}` : ''}{t.organizationTeam
+												? ' (top-level team)'
+												: ''}</option
+										>
+									{/each}
+									{#if teams}<option value={NO_PARENT}>No parent: a new top-level team</option>{/if}
+								</select>
+								<p id="new-project-parent-help" class={helpClass}>
+									{organizationTeam
+										? `Under ${organizationTeam.name}, the organization's top-level team, unless you choose another place.`
+										: 'Where the new team sits in the team tree.'}
+								</p>
+							</div>
+						{/if}
 						<label class="flex items-start gap-x-3 max-[639px]:min-h-11">
 							<input
 								type="radio"
 								name="owner"
 								value="existing"
 								bind:group={ownerKind}
-								disabled={busy}
 								onchange={edited}
 								class="mt-1 size-4 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 							/>
@@ -256,7 +363,7 @@
 								<select
 									id="new-project-team"
 									bind:value={teamId}
-									disabled={busy || !teams}
+									disabled={!teams}
 									onchange={edited}
 									aria-invalid={ownerError ? true : undefined}
 									aria-describedby={ownerError ? 'new-project-owner-error' : undefined}
@@ -267,46 +374,104 @@
 										<option value={t.id}>{t.path}{t.ref ? ` · ${t.ref}` : ''}</option>
 									{/each}
 								</select>
-								{#if teamsError}
-									<p class={errorClass}>Couldn't load the teams: {teamsError}</p>
-								{/if}
 							</div>
 						{/if}
 					</div>
 					{#if ownerError}<p id="new-project-owner-error" class={errorClass}>{ownerError}</p>{/if}
 				</fieldset>
+				{#if teamsError}
+					<div role="alert" class="rounded-md border border-line p-3 text-sm/6">
+						<p class="font-semibold text-danger-text">Couldn't load the teams</p>
+						<p class="mt-1 text-fg-secondary [overflow-wrap:anywhere]">{teamsError}</p>
+						<Button
+							type="button"
+							variant="outline"
+							class="mt-3 min-w-20 {mobileButton}"
+							disabled={teamsLoading}
+							aria-busy={teamsLoading}
+							onclick={loadTeams}>{teamsLoading ? 'Retrying…' : 'Retry'}</Button
+						>
+					</div>
+				{/if}
 
 				<ProcessSelect
 					id="new-project-process"
 					{organizationId}
 					projectId={null}
 					bind:value={processId}
-					disabled={busy}
+					disabled={locked}
 					error={refusal?.field === 'process' ? refusal.message : undefined}
 				/>
 
-				{#if refusal && !refusal.field}
-					<div role="alert" class="rounded-md border border-line p-3 text-sm/6">
-						<p class="font-semibold text-danger-text">The project wasn't created</p>
-						<p class="mt-1 text-fg-secondary [overflow-wrap:anywhere]">{refusal.message}</p>
+				{#if outcome}
+					<div
+						role="alert"
+						class="rounded-md border border-line bg-tint/[0.03] p-3 text-sm/6"
+						data-testid="create-outcome"
+					>
+						{#if outcome.kind === 'unknown'}
+							<p class="font-semibold text-fg">
+								Couldn't confirm whether {name.trim()} was created
+							</p>
+							<p class="mt-1 text-fg-secondary [overflow-wrap:anywhere]">
+								The answer from HQ was lost. Check its status before anything else, so the project
+								isn't created twice.{outcome.checkError ? ` ${outcome.checkError}` : ''}
+							</p>
+						{:else if outcome.kind === 'pending'}
+							<p class="font-semibold text-fg">Still not confirmed</p>
+							<p class="mt-1 text-fg-secondary">
+								HQ hasn't finished with this project yet. Check again in a moment.
+							</p>
+						{:else if outcome.kind === 'not_applied'}
+							<p class="font-semibold text-fg">{name.trim()} wasn't created</p>
+							<p class="mt-1 text-fg-secondary [overflow-wrap:anywhere]">
+								{outcome.reason} Your values are kept; create it when ready.
+							</p>
+						{:else}
+							<p class="font-semibold text-danger-text">The project wasn't created</p>
+							<p class="mt-1 text-fg-secondary [overflow-wrap:anywhere]">
+								{outcome.message} Your values are kept; try again.
+							</p>
+						{/if}
 					</div>
 				{/if}
 			</div>
-			<!-- Outside the scrolling fields, so Cancel and Create project stay in view. -->
-			<div
-				data-sheet-footer
-				class="flex flex-wrap justify-end gap-3 border-t border-line p-4 max-[639px]:[&>*]:flex-1"
-			>
-				<Button
-					type="button"
-					variant="outline"
-					disabled={busy}
-					class={mobileButton}
-					onclick={() => (open = false)}>Cancel</Button
-				>
-				<Button type="submit" disabled={busy} aria-busy={busy} class="min-w-32 {mobileButton}"
-					>{busy ? 'Creating…' : 'Create project'}</Button
-				>
+			<!-- Outside the scrolling fields, so Cancel and the action stay in view. -->
+			<div data-sheet-footer class="border-t border-line p-4">
+				<div class="flex flex-wrap justify-end gap-3 max-[639px]:[&>*]:flex-1">
+					<Button
+						type="button"
+						variant="outline"
+						disabled={!!busy}
+						class={mobileButton}
+						onclick={() => (open = false)}>Cancel</Button
+					>
+					{#if unresolved}
+						<Button
+							type="button"
+							class="min-w-32 {mobileButton}"
+							aria-busy={busy === 'checking'}
+							disabled={busy === 'checking'}
+							onclick={checkStatus}>{busy === 'checking' ? 'Checking…' : 'Check status'}</Button
+						>
+					{:else}
+						<Button
+							type="submit"
+							disabled={!!busy || waitingForTeams}
+							aria-busy={busy === 'creating'}
+							aria-describedby={waitingForTeams ? 'new-project-waiting' : undefined}
+							class="min-w-32 {mobileButton}"
+							>{busy === 'creating' ? 'Creating…' : 'Create project'}</Button
+						>
+					{/if}
+				</div>
+				{#if waitingForTeams && !unresolved}
+					<p id="new-project-waiting" class="mt-2 text-right text-xs/5 text-fg-muted">
+						{teamsError
+							? "Can't create until the teams are read: use Retry above."
+							: 'Reading the teams first, so the new team goes in the right place…'}
+					</p>
+				{/if}
 			</div>
 		</form>
 	</SheetContent>

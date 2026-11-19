@@ -9,12 +9,14 @@
   HQ can't be reached (New project disabled with the reason).
 -->
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import EmptyState from '$lib/components/EmptyState.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
+	import SkeletonRows from '$lib/components/SkeletonRows.svelte';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
 	import { mobileButton } from '$lib/components/classes';
@@ -36,6 +38,7 @@
 	} from '../../present';
 	import type { ProjectRow } from '../../types';
 	import { fact, rowTitleLink } from '../../components/classes';
+	import SeverityMark from '../../components/SeverityMark.svelte';
 	import StaleNotice from '../../components/StaleNotice.svelte';
 	import TeamLink from '../../components/TeamLink.svelte';
 	import { focusProjectOnArrival } from '../frame/arrival';
@@ -60,14 +63,22 @@
 		sheet?.start(teamId);
 	}
 
-	// `?new` (and `&team=`) opens New project once the list says the viewer may create. An effect, because it acts on
-	// the address (outside state) once the read and the sheet exist; it opens an overlay and derives nothing.
-	let asked = false;
+	// `?new` (and `&team=`) opens New project once the list says the viewer may create — from the New menu, Home or a
+	// team's page. The address then drops `new` (replacing the entry), so Back and a reload don't reopen it. An effect,
+	// because it acts on the address (outside state) once the read and the sheet exist; it derives nothing.
 	$effect(() => {
-		if (asked || !overview || !canCreate || paused || !sheet) return;
-		if (!page.url.searchParams.has('new')) return;
-		asked = true;
-		newProject(undefined, page.url.searchParams.get('team') ?? undefined);
+		if (!page.url.searchParams.has('new') || !overview || !canCreate || paused || !sheet) return;
+		const team = page.url.searchParams.get('team') ?? undefined;
+		const url = new URL(page.url);
+		url.searchParams.delete('new');
+		url.searchParams.delete('team');
+		untrack(() => {
+			void goto(resolve(`${url.pathname}${url.search}` as '/'), {
+				replaceState: true,
+				keepFocus: true,
+				noScroll: true
+			}).then(() => newProject(undefined, team));
+		});
 	});
 
 	async function created(c: { projectId: string; number: number; name: string }) {
@@ -107,7 +118,11 @@
 {/snippet}
 
 {#snippet money(r: ProjectRow)}
-	{@const m = investmentWords(amounts?.byProject.get(r.id), amounts?.coverage)}
+	{@const m = investmentWords(
+		amounts?.byProject.get(r.id),
+		amounts?.coverage,
+		amounts?.scope === 'organization' || !!amounts?.byProject.has(r.id)
+	)}
 	<p class="text-sm/6 text-fg-secondary tabular-nums min-[1024px]:text-right">
 		<span class="text-fg-muted min-[1024px]:sr-only">Investment:</span>
 		{m.toDate}
@@ -146,7 +161,10 @@
 
 <Loaded {resource} label="projects" error="Couldn't load the projects">
 	{#snippet children(data)}
-		{#if data.projects.length === 0}
+		{#if data.projects.length > 0 && investment.state === 'loading'}
+			<!-- Rows wait for the investment read, so its column never appears under the pointer (§6a). -->
+			<SkeletonRows label="projects" rows={Math.min(data.projects.length, 6)} />
+		{:else if data.projects.length === 0}
 			<EmptyState
 				title="No projects yet"
 				level={3}
@@ -233,10 +251,10 @@
 							</p>
 							{#if openBugs(r.bugs) > 0}
 								<p class="flex flex-wrap gap-x-2 text-xs/5 text-fg-muted" aria-hidden="true">
-									{#each bugParts(r.bugs) as part (part.key)}<span
-											class="whitespace-nowrap {part.key === 'critical' ? 'text-danger-text' : ''}"
-											>{part.text}</span
-										>{/each}
+									{#each bugParts(r.bugs) as part (part.key)}<SeverityMark
+											severity={part.key}
+											text={part.text}
+										/>{/each}
 								</p>
 							{/if}
 						</div>
