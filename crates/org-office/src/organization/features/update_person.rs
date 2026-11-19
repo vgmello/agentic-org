@@ -151,7 +151,11 @@ where
             return reject(RejectCode::InvalidRequest, rule);
         }
     }
-    if command.name.as_deref().is_some_and(|name| !records::is_line(name)) {
+    if command
+        .name
+        .as_deref()
+        .is_some_and(|name| !records::is_line(name))
+    {
         return reject(RejectCode::InvalidName, "the name is one line of text");
     }
     if let Some(manager) = &manager {
@@ -185,11 +189,7 @@ where
 }
 
 /// Whether `id` is `from` or anyone `from` reports to, however far up.
-fn reports_up_to(
-    view: &impl OrganizationRead,
-    from: &Employee,
-    id: &Id,
-) -> Result<bool, Refusal> {
+fn reports_up_to(view: &impl OrganizationRead, from: &Employee, id: &Id) -> Result<bool, Refusal> {
     let mut next = Some(from.clone());
     // A line on record ends (validate); the bound only keeps a damaged one finite.
     for _ in 0..=view.employees()?.len() {

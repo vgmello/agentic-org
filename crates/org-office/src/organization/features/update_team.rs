@@ -89,7 +89,11 @@ where
             return reject(RejectCode::InvalidRequest, rule);
         }
     }
-    if command.name.as_deref().is_some_and(|name| !records::is_line(name)) {
+    if command
+        .name
+        .as_deref()
+        .is_some_and(|name| !records::is_line(name))
+    {
         return reject(RejectCode::InvalidName, "the name is one line of text");
     }
     check_revision(team.meta.revision, command.expected_revision)?;

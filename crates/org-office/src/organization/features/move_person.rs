@@ -79,7 +79,10 @@ where
     }
     check_revision(person.meta.revision, command.expected_revision)?;
     if team.id == person.home_team_id {
-        return reject(RejectCode::AlreadyExists, "the person is already in that team");
+        return reject(
+            RejectCode::AlreadyExists,
+            "the person is already in that team",
+        );
     }
     let (Some(old), Some(new)) = (
         view.team_chain(&person.home_team_id)?,

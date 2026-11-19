@@ -52,10 +52,10 @@ pub use store::open::Testing;
 /// Opening an office's store on the engine its configuration names, and the operations
 /// run on it whichever engine that is.
 pub use store::open::{
-    open_store, AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp,
-    DeactivatePersonOp, DirectoryGeneration, DirectorySnapshot, EngineChoice, MovePersonOp,
-    MoveTeamOp, OfficeEngine, OfficeStanding, OfficeStore, Opened, ReadOp, Standing, StoreConfig,
-    StoreOp, StructureOp, UpdatePersonOp, UpdateTeamOp,
+    open_store, AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
+    DirectoryGeneration, DirectorySnapshot, EngineChoice, MovePersonOp, MoveTeamOp, OfficeEngine,
+    OfficeStanding, OfficeStore, Opened, ReadOp, Standing, StoreConfig, StoreOp, StructureOp,
+    UpdatePersonOp, UpdateTeamOp,
 };
 /// The SQLite engine of the office store: the projection as one plain database file.
 pub use store::sqlite::{SqliteEngine, SqliteSnapshot, SqliteTx};

@@ -189,7 +189,10 @@ pub(super) fn named(team: &Team) -> String {
 }
 
 /// The team an employee leads, if any. A lead's home is the team, so there is one at most.
-pub(super) fn led_by(view: &impl OrganizationRead, employee: &Id) -> Result<Option<Team>, StoreError> {
+pub(super) fn led_by(
+    view: &impl OrganizationRead,
+    employee: &Id,
+) -> Result<Option<Team>, StoreError> {
     let teams = view.teams()?;
     Ok(teams
         .into_iter()

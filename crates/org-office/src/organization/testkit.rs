@@ -402,7 +402,11 @@ mod suite {
         }
 
         /// `command` from `by`, decided as the office decides it: the owner is the creator.
-        fn feature<E: OrganizationEngine, C: Feature>(&self, by: &Actor, command: &C) -> Decision<E> {
+        fn feature<E: OrganizationEngine, C: Feature>(
+            &self,
+            by: &Actor,
+            command: &C,
+        ) -> Decision<E> {
             let (by, command) = (by.clone(), command.clone());
             self.counted(move |uow, here| command.decide(uow, here, &id(CREATOR), &by))
         }
@@ -525,7 +529,12 @@ mod suite {
         }
 
         /// `command` from `by` under operation `op`.
-        fn submit<C: Feature>(&self, op: u64, by: &Actor, command: &C) -> Result<Reply, StoreError> {
+        fn submit<C: Feature>(
+            &self,
+            op: u64,
+            by: &Actor,
+            command: &C,
+        ) -> Result<Reply, StoreError> {
             let decide = self.decisions.feature(by, command);
             let operation = command.operation(id(op), by);
             self.store.submit(Some(operation), false, decide)
@@ -549,7 +558,11 @@ mod suite {
             let reply = self.owner(op, command).expect("a decided change");
             assert_eq!(reply.outcome, Outcome::Rejected);
             assert!(self.has_receipt(op));
-            assert_eq!(self.generation(), generation, "a rejection takes no generation");
+            assert_eq!(
+                self.generation(),
+                generation,
+                "a rejection takes no generation"
+            );
             rejection(&reply)
         }
 
@@ -874,13 +887,19 @@ mod suite {
 
         let code = |op: u64, command: &CreateTeam| bench.refused(op, command).code;
         assert_eq!(code(4, &team_command(0x22, 0x99)), RejectCode::NotFound);
-        assert_eq!(code(5, &team_command(0x22, 0x21)), RejectCode::InvalidRequest);
+        assert_eq!(
+            code(5, &team_command(0x22, 0x21)),
+            RejectCode::InvalidRequest
+        );
         let unnamed = CreateTeam {
             name: String::new(),
             ..team_command(0x22, TEAM)
         };
         assert_eq!(code(6, &unnamed), RejectCode::InvalidName);
-        assert_eq!(code(7, &team_command(0x21, TEAM)), RejectCode::AlreadyExists);
+        assert_eq!(
+            code(7, &team_command(0x21, TEAM)),
+            RejectCode::AlreadyExists
+        );
         // An ID that is another record's: the organization, the office, an employee, the
         // repository.
         let here = identity();
@@ -919,7 +938,10 @@ mod suite {
             id: Id::parse("team-x").expect("a safe component"),
             ..team_command(0x22, TEAM)
         };
-        assert!(matches!(bench.owner(19, &malformed), Err(StoreError::Invalid(_))));
+        assert!(matches!(
+            bench.owner(19, &malformed),
+            Err(StoreError::Invalid(_))
+        ));
         assert!(!bench.has_receipt(19));
 
         // The ID of a completed creation with another command conflicts: nothing is
@@ -1065,7 +1087,9 @@ mod suite {
         let mut parent = 0x22;
         let refused = loop {
             let team = parent + 1;
-            let reply = bench.create_team(100 + team, team, parent).expect("decided");
+            let reply = bench
+                .create_team(100 + team, team, parent)
+                .expect("decided");
             match reply.outcome {
                 Outcome::Completed => parent = team,
                 Outcome::Rejected => break rejection(&reply),
