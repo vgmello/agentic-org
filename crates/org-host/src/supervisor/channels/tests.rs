@@ -226,7 +226,15 @@ fn a_discard_hands_off_no_key_and_no_descriptors_and_forwards_its_report() {
     });
     let (signals, events) = mpsc::channel();
     let (admission, child) = stand_in(std::process::id()).unwrap();
-    Broker::discard_handoff(host, &admission, &child, 9, signals).unwrap();
+    Broker::discard_handoff(
+        host,
+        &admission,
+        &child,
+        9,
+        signals,
+        Instant::now() + DEADLINE,
+    )
+    .unwrap();
     worker_thread.join().unwrap();
     assert!(matches!(
         events.recv_timeout(Duration::from_secs(3)).unwrap(),
@@ -267,7 +275,15 @@ fn a_discard_stream_ends_at_a_non_server_event() {
     });
     let (signals, events) = mpsc::channel();
     let (admission, child) = stand_in(std::process::id()).unwrap();
-    Broker::discard_handoff(host, &admission, &child, 3, signals).unwrap();
+    Broker::discard_handoff(
+        host,
+        &admission,
+        &child,
+        3,
+        signals,
+        Instant::now() + DEADLINE,
+    )
+    .unwrap();
     let _worker = worker_thread.join().unwrap();
     // Only the stream's end: the `discarded` after the receipt is never forwarded.
     assert!(matches!(
@@ -291,7 +307,14 @@ fn a_discard_reader_from_another_process_identity_gets_no_header() {
         .spawn()
         .unwrap();
     let (admission, child) = stand_in(other.id()).unwrap();
-    let refused = Broker::discard_handoff(host, &admission, &child, 1, signals);
+    let refused = Broker::discard_handoff(
+        host,
+        &admission,
+        &child,
+        1,
+        signals,
+        Instant::now() + DEADLINE,
+    );
     drop(child);
     other.kill().unwrap();
     other.wait().unwrap();
@@ -922,4 +945,61 @@ fn a_timeout_change_after_the_worker_closed_keeps_its_buffered_report() {
     assert!(org_office_launch::read_server_event(&mut reader)
         .unwrap()
         .is_none());
+}
+
+/// A worker sending one byte at a time, each well inside the socket's timeout, until `stop`.
+fn trickle(mut worker: UnixStream, stop: Duration) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        while started.elapsed() < stop {
+            if worker.write_all(b" ").is_err() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    })
+}
+
+/// The handoff and ready reads end at the launch's one deadline: a worker trickling bytes
+/// (never a whole line) cannot hold the host past it by restarting the socket's timeout.
+#[test]
+fn a_trickled_receipt_still_ends_at_the_deadline() {
+    let (host, worker) = UnixStream::pair().unwrap();
+    // What `connect` leaves: a read timeout of what was left of the deadline.
+    host.set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let trickling = trickle(worker, Duration::from_secs(4));
+    let (admission, child) = stand_in(std::process::id()).unwrap();
+    let started = Instant::now();
+    let error = Broker::ready(
+        host,
+        &admission,
+        &child,
+        started + Duration::from_millis(500),
+    )
+    .unwrap_err();
+    let elapsed = started.elapsed();
+    assert!(elapsed < Duration::from_secs(2), "{elapsed:?}: {error}");
+    trickling.join().unwrap();
+}
+
+/// The bounded reader serves what its buffer holds without a wait and leaves whatever follows
+/// a line in that buffer, for the next read of the same stream.
+#[test]
+fn a_deadline_read_keeps_the_bytes_after_its_line() {
+    let (host, mut worker) = UnixStream::pair().unwrap();
+    worker.write_all(b"{\"a\":1}\n{\"b\":2}\n").unwrap();
+    let mut reader = BufReader::new(host);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let first = frame::read_line(&mut ByDeadline::new(&mut reader, deadline)).unwrap();
+    assert_eq!(first.as_deref(), Some(&b"{\"a\":1}"[..]));
+    // Past the deadline, buffered bytes are still served: no read of the socket is needed.
+    let second = frame::read_line(&mut ByDeadline::new(&mut reader, Instant::now())).unwrap();
+    assert_eq!(second.as_deref(), Some(&b"{\"b\":2}"[..]));
+    // And nothing more is read once it has passed.
+    let late = frame::read_line(&mut ByDeadline::new(&mut reader, Instant::now()));
+    assert!(
+        matches!(late, Err(frame::FrameError::Io(ref e)) if e.kind() == io::ErrorKind::TimedOut),
+        "{late:?}"
+    );
 }
