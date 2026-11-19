@@ -14,7 +14,7 @@
 	import { mobileButton } from '$lib/components/classes';
 	import { tone } from '$lib/components/pills';
 	import { Button } from '$lib/components/ui/button';
-	import { TURN_STATE, ageText, kindWord, whenText } from '../../present';
+	import { reportedText, turnLine, whenText } from '../../present';
 	import type { Supervision } from '../../types';
 	import AllowHiring from '../allow-hiring/AllowHiring.svelte';
 	import { profileContext } from '../profile/context.svelte';
@@ -35,16 +35,12 @@
 	const STALE_MS = 5 * 60_000;
 	const stale = (iso: string | undefined) => !iso || Date.now() - Date.parse(iso) > STALE_MS;
 
+	// What the header doesn't already say (handle, kind, home team and reports to are there): no fact twice.
 	const details = $derived.by(() => {
-		const items: DescriptionItem[] = [
-			{ term: 'Handle', value: `@${p.handle}`, mono: true },
-			{ term: 'Kind', value: kindWord(p.kind) }
-		];
+		const items: DescriptionItem[] = [];
 		if (p.title && p.title !== p.role) items.push({ term: 'Title', value: p.title });
 		if (p.focus) items.push({ term: 'Focus', value: p.focus });
-		if (p.kind === 'person') items.push({ term: 'Contact', value: p.contact || 'None recorded' });
-		items.push({ term: 'Home team', content: homeTeam });
-		items.push({ term: 'Reports to', content: reportsTo });
+		if (p.kind === 'person' && !p.contact) items.push({ term: 'Contact', value: 'None recorded' });
 		if (p.leads.length) items.push({ term: 'Leads', value: p.leads.map((t) => t.name).join(', ') });
 		if (p.directReports)
 			items.push({
@@ -61,6 +57,12 @@
 		items.push({ term: 'Allow hiring', content: allowHiring });
 		return items;
 	});
+
+	/** The Health tone word, unless the health text already starts with it ("Waiting for an answer…"). */
+	const healthWord = (s: Supervision) => {
+		const word = HEALTH[s.tone].word;
+		return s.health.toLowerCase().startsWith(word.toLowerCase()) ? undefined : word;
+	};
 
 	const execution = $derived.by((): DescriptionItem[] => {
 		const e = p.execution;
@@ -81,38 +83,17 @@
 	});
 </script>
 
-{#snippet homeTeam()}
-	{#if p.homeTeam}
-		<a href={resolve(`/teams/${encodeURIComponent(p.homeTeam.id)}` as '/')} class={linkClass}
-			>{p.homeTeam.name}</a
-		>{p.homeTeam.ref ? ` · ${p.homeTeam.ref}` : ''}
-	{:else if !active}
-		None: former member
-	{:else}
-		<span class="text-red-300"
-			>None on record. Every employee needs one home team; this record is invalid.</span
-		>
-	{/if}
-{/snippet}
-{#snippet reportsTo()}
-	{#if p.reportsTo}
-		<a href={resolve(`/members/${encodeURIComponent(p.reportsTo.id)}` as '/')} class={linkClass}
-			>{p.reportsTo.name}</a
-		>
-	{:else}No explicit manager{/if}
-{/snippet}
 {#snippet allowHiring()}
 	<AllowHiring organizationId={ctx.organizationId} profile={p} onchanged={ctx.changed} />
 {/snippet}
 {#snippet turn()}
 	{@const e = p.execution!}
-	{TURN_STATE[e.turnState]}{#if p.openTurn}
-		· started {ageText(p.openTurn.startedAt)}{/if}
+	{turnLine(e.turnState, p.openTurn)}
 {/snippet}
 {#snippet office()}
 	{@const o = p.execution?.office}
 	{#if o}
-		{o.name} · placement generation {o.generation} · reported {ageText(o.observedAt)}
+		{o.name} · placement generation {o.generation} · {reportedText(o.observedAt)}
 		{#if stale(o.observedAt)}<span class="block text-xs/5 text-gray-400"
 				>Last observed state: the office hasn't reported recently, so this may be out of date.</span
 			>{/if}
@@ -120,14 +101,12 @@
 {/snippet}
 {#snippet health()}
 	{#if p.supervision}
+		{@const word = healthWord(p.supervision)}
 		<span class="flex flex-wrap items-center gap-x-2 gap-y-1">
-			<StatusPill
-				label={HEALTH[p.supervision.tone].word}
-				class={HEALTH[p.supervision.tone].class}
-			/>
-			<span class="text-gray-300">{p.supervision.health}</span>
+			{#if word}<StatusPill label={word} class={HEALTH[p.supervision.tone].class} />{/if}
+			<span class="text-gray-300 [overflow-wrap:anywhere]">{p.supervision.health}</span>
 		</span>
-	{:else}Status unknown{/if}
+	{:else}Not reported by the office{/if}
 {/snippet}
 {#snippet holds()}
 	{#if p.supervision?.holds.length}

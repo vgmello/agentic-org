@@ -125,6 +125,41 @@ export function turnDuration(t: Pick<Turn, 'startedAt' | 'endedAt'>, now = Date.
 	return t.endedAt ? text : `running ${text}…`;
 }
 
+/** A turn's time as a row says it: "ran 4 min", "running 2 min…", or "waiting for the office" before it starts. */
+export function durationFact(
+	t: Pick<Turn, 'startedAt' | 'endedAt' | 'state'>,
+	now = Date.now()
+): string {
+	if (t.state === 'accepted') return 'waiting for the office to start it';
+	return t.endedAt ? `ran ${turnDuration(t, now)}` : turnDuration(t, now);
+}
+
+/** Why Run now is Busy, in words that don't call a requested turn running (RUN-4). */
+export function busyText(
+	name: string,
+	open: { startedAt: string; state: TurnState },
+	now = Date.now()
+) {
+	const when = ageText(open.startedAt, now);
+	const what =
+		open.state === 'accepted'
+			? `${name} already has a run waiting for the office to start it (requested ${when})`
+			: `${name} is already running a turn (started ${when})`;
+	return `${what}. It takes new input when that turn ends; nothing is queued.`;
+}
+
+/** The execution view's Turn line: "Running · started 2 min ago", "Requested · waiting for the office (1 min ago)". */
+export function turnLine(
+	turnState: TurnState | 'idle',
+	open: { startedAt: string; state: TurnState } | undefined,
+	now = Date.now()
+): string {
+	if (open?.state === 'accepted')
+		return `Requested · waiting for the office to start it (requested ${ageText(open.startedAt, now)})`;
+	if (open) return `${TURN_STATE[open.state]} · started ${ageText(open.startedAt, now)}`;
+	return TURN_STATE[turnState];
+}
+
 /** "20 s ago", "12 min ago", "3 h ago", or the date for older observations. */
 export function ageText(iso: string | undefined, now = Date.now()): string {
 	if (!iso) return 'never reported';
@@ -133,6 +168,10 @@ export function ageText(iso: string | undefined, now = Date.now()): string {
 	if (ms < 24 * 3600_000) return `${durationText(ms)} ago`;
 	return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
+
+/** "reported 30 s ago", or "never reported" when the office has no observation (never "reported never reported"). */
+export const reportedText = (iso: string | undefined, now = Date.now()): string =>
+	iso ? `reported ${ageText(iso, now)}` : 'never reported';
 
 /** 24-hour date and time for a row, e.g. "18 Nov, 09:12". */
 export const whenText = (iso: string) =>

@@ -469,7 +469,8 @@
 				"look-primitives.spec.ts",
 				"focus-primitives.spec.ts",
 				"focus-primitives-default-font.ts",
-				"shot.spec.ts"
+				"shot.spec.ts",
+				"member-profile.spec.ts"
 			],
 			"sources": [
 				"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
@@ -567,9 +568,9 @@
 	],
 	"allowedCoupling": [
 		{
-			"from": "src/lib/modules/members/features/profile/ProfileFrame.svelte",
-			"to": "src/lib/{components/{EditPersonDialog,MoveMemberDialog}.svelte,modules/employees/index.ts}",
-			"why": "The member profile reuses the org chart's Edit and Move home team dialogs (and the agent Edit dialog from the employees module's public entry) without owning them; org-chart specs cover them. They move into the members module when the org chart slice is rebuilt."
+			"from": "src/lib/modules/members/features/profile/{IdentityDialog,MoveHomeTeamDialog}.svelte",
+			"to": "src/lib/org/{people-edit,team-edit}.ts",
+			"why": "The profile's own Edit and Move home team dialogs check a person's name and list the team tree with the organization's existing rules instead of copying them; the org-chart and projects-work specs keep covering those rules."
 		},
 		{
 			"from": "src/lib/platform/shell/NewMenu.svelte",

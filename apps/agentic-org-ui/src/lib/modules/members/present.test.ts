@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+	busyText,
+	durationFact,
 	durationText,
 	headerPresence,
 	matchesOutcome,
 	outcomeText,
+	reportedText,
 	rowPresence,
 	startedByText,
-	turnDuration
+	turnDuration,
+	turnLine
 } from './present';
 import type { Turn } from './types';
 
@@ -53,5 +57,35 @@ describe('turns', () => {
 		expect(matchesOutcome(turn({ state: 'running' }), 'open')).toBe(true);
 		expect(matchesOutcome(turn({ state: 'blocked' }), 'other')).toBe(true);
 		expect(matchesOutcome(turn({ state: 'failed' }), 'succeeded')).toBe(false);
+	});
+});
+
+describe('a requested turn is never called running', () => {
+	const now = Date.parse('2026-11-18T09:02:00Z');
+	const at = '2026-11-18T09:00:00Z';
+	it('words the Busy reason by the turn state', () => {
+		expect(busyText('Kai', { startedAt: at, state: 'accepted' }, now)).toBe(
+			'Kai already has a run waiting for the office to start it (requested 2 min ago). It takes new input when that turn ends; nothing is queued.'
+		);
+		expect(busyText('Kai', { startedAt: at, state: 'running' }, now)).toContain(
+			'Kai is already running a turn (started 2 min ago)'
+		);
+	});
+	it('words the Turn line and the row time by the turn state', () => {
+		expect(turnLine('accepted', { startedAt: at, state: 'accepted' }, now)).toBe(
+			'Requested · waiting for the office to start it (requested 2 min ago)'
+		);
+		expect(turnLine('running', { startedAt: at, state: 'running' }, now)).toBe(
+			'Running · started 2 min ago'
+		);
+		expect(turnLine('idle', undefined, now)).toBe('No open turn');
+		expect(durationFact({ startedAt: at, state: 'accepted' }, now)).toBe(
+			'waiting for the office to start it'
+		);
+		expect(durationFact({ startedAt: at, state: 'running' }, now)).toBe('running 2 min…');
+	});
+	it('never says "reported never reported"', () => {
+		expect(reportedText(undefined)).toBe('never reported');
+		expect(reportedText('2026-11-18T09:01:30Z', now)).toBe('reported 30 s ago');
 	});
 });

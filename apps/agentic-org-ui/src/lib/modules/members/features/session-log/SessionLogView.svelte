@@ -23,13 +23,22 @@
 		type FileAction,
 		type SessionEntry
 	} from './entries';
+	import { fact, factsList, factsWrap } from '../../components/facts';
 	import { formatName, previewLines, readSessionLog } from './read';
+	import { runFacts } from './run-header';
 
 	let {
 		organizationId,
 		memberId,
+		memberName,
 		runId
-	}: { organizationId: string; memberId: string; runId: string } = $props();
+	}: {
+		organizationId: string;
+		memberId: string;
+		/** Known before the page draws (or not at all), so the back link's label never changes. */
+		memberName?: string;
+		runId: string;
+	} = $props();
 
 	// Not found (no log kept, or not this member's run) is a state of its own, without Retry.
 	const log = new Resource(() =>
@@ -38,9 +47,11 @@
 			throw e;
 		})
 	);
-	// Only the name, for the back link and the title; the log shows without it.
-	const member = new Resource(() => membersApi.profile(organizationId, memberId));
-	const name = $derived(member.data?.name);
+	// The run this log belongs to, for the header line; the log shows without it.
+	const run = new Resource(async () =>
+		(await membersApi.runs(organizationId, memberId)).find((t) => t.id === runId)
+	);
+	const name = $derived(memberName);
 
 	let showTools = $state(true);
 	let showFiles = $state(true);
@@ -73,8 +84,30 @@
 		href: `/members/${encodeURIComponent(memberId)}/runs`,
 		label: name ? `${name}'s runs` : 'Runs'
 	}}
-	description="Read-only. Taking over a session is a command on the machine of the office that runs it; there is no terminal in the browser."
+	description={header}
 />
+
+{#snippet header()}
+	<!-- The run's line keeps its height while it loads, so the page doesn't shift when it arrives. -->
+	<div class="min-h-6">
+		{#if run.data}
+			<div class={factsWrap}>
+				<ul role="list" class="{factsList} text-sm/6 text-gray-300" aria-label="This run">
+					{#each runFacts(run.data) as text, i (i)}<li class={fact}>{text}</li>{/each}
+				</ul>
+			</div>
+		{:else if run.state === 'loading'}
+			<span
+				class="mt-1 block h-4 w-64 max-w-full animate-pulse rounded bg-white/10 motion-reduce:animate-none"
+				aria-hidden="true"
+			></span>
+		{/if}
+	</div>
+	<p class="mt-1">
+		Read-only. Taking over a session is a command on the machine of the office that runs it; there
+		is no terminal in the browser.
+	</p>
+{/snippet}
 
 <Loaded
 	resource={log}
@@ -98,11 +131,15 @@
 		{@const files = touchedFiles(l.entries)}
 		{@const usage = usageTotals(l.entries)}
 		<div class="border-b border-white/5 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
-			<p class="text-xs/5 text-gray-400">
-				{formatName(l)}{#if l.startedAt}&nbsp;· started <time datetime={l.startedAt}
-						>{whenText(l.startedAt)}</time
-					>{/if}{` · ${l.entries.length} entries`}
-			</p>
+			<div class={factsWrap}>
+				<ul role="list" class="{factsList} text-xs/5 text-gray-400">
+					<li class={fact}>{formatName(l)}</li>
+					{#if l.startedAt}<li class={fact}>
+							started <time datetime={l.startedAt}>{whenText(l.startedAt)}</time>
+						</li>{/if}
+					<li class={fact}>{l.entries.length} {l.entries.length === 1 ? 'entry' : 'entries'}</li>
+				</ul>
+			</div>
 			<fieldset class="mt-3 flex flex-wrap gap-x-6 gap-y-1">
 				<legend class="sr-only">Show in the log</legend>
 				<label class={toggle}

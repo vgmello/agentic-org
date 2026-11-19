@@ -15,24 +15,27 @@
 	import { membersApi } from '../../api';
 	import {
 		ATTEMPT_OUTCOME,
+		durationFact,
 		OUTCOME_FILTERS,
 		TURN_STATE,
+		isOpen,
 		matchesOutcome,
 		outcomeText,
 		startedByText,
 		tokens,
-		turnDuration,
 		usd,
 		whenText,
-		type OutcomeFilter
+		type OutcomeFilter as Outcome
 	} from '../../present';
 	import type { Attempt, Turn, TurnState } from '../../types';
 	import { profileContext } from '../profile/context.svelte';
+	import { fact, factsList, factsWrap } from '../../components/facts';
+	import OutcomeFilter from './OutcomeFilter.svelte';
 	import { tabResource } from '../profile-tabs/reload.svelte';
 
 	const ctx = profileContext();
 	const runs = tabResource((o, m) => membersApi.runs(o, m));
-	let filter = $state<OutcomeFilter>('all');
+	let filter = $state<Outcome>('all');
 	const name = $derived(ctx.profile.name);
 
 	const STATE_TONE: Record<TurnState, string> = {
@@ -80,23 +83,13 @@
 	{/snippet}
 	{#snippet children(list)}
 		{@const shown = list.filter((t) => matchesOutcome(t, filter))}
-		<fieldset
-			class="flex flex-wrap items-center gap-2 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8"
-		>
-			<legend class="sr-only">Show runs</legend>
-			{#each OUTCOME_FILTERS as f (f.id)}
-				<label
-					class="inline-flex min-h-9 cursor-pointer items-center rounded-md px-3 text-sm/6 font-semibold ring-1 ring-inset has-checked:bg-white/10 has-checked:text-white has-checked:ring-white/20 has-checked:underline has-checked:underline-offset-4 has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-indigo-400 max-[639px]:min-h-11 {filter ===
-					f.id
-						? ''
-						: 'text-gray-400 ring-white/10 hover:text-white'}"
-				>
-					<input type="radio" name="run-filter" value={f.id} bind:group={filter} class="sr-only" />
-					{f.label}
-				</label>
-			{/each}
+		{@const counts = Object.fromEntries(
+			OUTCOME_FILTERS.map((f) => [f.id, list.filter((t) => matchesOutcome(t, f.id)).length])
+		) as Record<Outcome, number>}
+		<div class="px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
+			<OutcomeFilter bind:value={filter} {counts} />
 			<p class="sr-only" role="status">{runsWord(shown.length)} shown</p>
-		</fieldset>
+		</div>
 		{#if shown.length === 0}
 			<p
 				class="border-t border-white/5 px-4 py-8 text-sm/6 text-gray-400 min-[640px]:px-6 min-[1024px]:px-8"
@@ -120,55 +113,63 @@
 							</p>
 							<StatusPill label={TURN_STATE[t.state]} class={STATE_TONE[t.state]} />
 						</div>
-						<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-gray-400">
-							<time datetime={t.startedAt}>{whenText(t.startedAt)}</time>
-							<span aria-hidden="true">·</span><span>{startedByText(t.startedBy)}</span>
-							<span aria-hidden="true">·</span><span
-								>{t.endedAt ? `ran ${turnDuration(t)}` : turnDuration(t)}</span
-							>
-							{#if cost}<span aria-hidden="true">·</span><span>{cost}</span>{/if}
-						</p>
+						<div class="mt-1 {factsWrap}">
+							<ul role="list" class="{factsList} text-xs/5 text-gray-400">
+								<li class={fact}><time datetime={t.startedAt}>{whenText(t.startedAt)}</time></li>
+								<li class={fact}>{startedByText(t.startedBy)}</li>
+								<li class={fact}>{durationFact(t)}</li>
+								{#if cost}<li class={fact}>{cost}</li>{/if}
+							</ul>
+						</div>
 						<div class="mt-3 flex flex-wrap items-start gap-x-6 gap-y-2">
-							<details class="group min-w-0 flex-1 basis-72">
-								<summary
-									class="inline-flex min-h-6 cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden gap-x-1 rounded-sm text-sm/6 font-semibold text-gray-300 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
-								>
-									<svg
-										viewBox="0 0 20 20"
-										fill="currentColor"
-										aria-hidden="true"
-										class="size-5 shrink-0 text-gray-400 transition-transform group-open:rotate-90 motion-reduce:transition-none"
-										><path
-											fill-rule="evenodd"
-											d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z"
-											clip-rule="evenodd"
-										/></svg
+							{#if t.attempts.length === 0}
+								<p class="min-w-0 flex-1 basis-72 text-sm/6 text-gray-400">
+									No attempt yet: the office hasn't started this turn.
+								</p>
+							{:else}
+								<details class="group min-w-0 flex-1 basis-72">
+									<summary
+										class="inline-flex min-h-6 cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden gap-x-1 rounded-sm text-sm/6 font-semibold text-gray-300 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
 									>
-									{t.attempts.length === 1 ? '1 attempt' : `${t.attempts.length} attempts`}
-								</summary>
-								<ol role="list" class="mt-2 space-y-2">
-									{#each t.attempts as a (a.n)}
-										<li
-											class="rounded-md bg-white/[0.03] px-3 py-2 text-xs/5 text-gray-400 ring-1 ring-white/10 ring-inset [overflow-wrap:anywhere]"
+										<svg
+											viewBox="0 0 20 20"
+											fill="currentColor"
+											aria-hidden="true"
+											class="size-5 shrink-0 text-gray-400 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+											><path
+												fill-rule="evenodd"
+												d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z"
+												clip-rule="evenodd"
+											/></svg
 										>
-											<p class="text-sm/6 text-gray-300">
-												{a.n}. {a.connection} · <span class="font-mono">{a.model}</span>
-											</p>
-											<p>
-												{ATTEMPT_OUTCOME[a.outcome]}{a.reason ? `: ${a.reason}` : ''} · {usageText(
-													a
-												)}
-											</p>
-										</li>
-									{/each}
-								</ol>
-							</details>
+										{t.attempts.length === 1 ? '1 attempt' : `${t.attempts.length} attempts`}
+									</summary>
+									<ol role="list" class="mt-2 space-y-2">
+										{#each t.attempts as a (a.n)}
+											<li
+												class="rounded-md bg-white/[0.03] px-3 py-2 text-xs/5 text-gray-400 ring-1 ring-white/10 ring-inset [overflow-wrap:anywhere]"
+											>
+												<p class="text-sm/6 text-gray-300">
+													{a.n}. {a.connection} · <span class="font-mono">{a.model}</span>
+												</p>
+												<p>
+													{ATTEMPT_OUTCOME[a.outcome]}{a.reason ? `: ${a.reason}` : ''} · {usageText(
+														a
+													)}
+												</p>
+											</li>
+										{/each}
+									</ol>
+								</details>
+							{/if}
 							{#if t.hasLog}
 								<a
 									href={resolve(logHref(t) as '/')}
 									class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400 max-[639px]:min-h-11"
 									>Open session log<span class="sr-only">, run of {whenText(t.startedAt)}</span></a
 								>
+							{:else if isOpen(t)}
+								<p class="text-xs/5 text-gray-400">Session log appears when the turn writes one</p>
 							{:else}
 								<p class="text-xs/5 text-gray-400">No session log kept</p>
 							{/if}
