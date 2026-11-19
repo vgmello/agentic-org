@@ -135,7 +135,7 @@ would be declared four times.
 | `agentic-org` (`serve`) | Durable flush and exclusive rename | `org-host/src/writer.rs`, `hostdb.rs`, `release/files.rs`, `release/files/output.rs`, `human/recovery.rs`, `host_secrets/dev.rs` | `fs` |
 | `agentic-org` (`serve`) | Office catalog tests gated by system | `org-host/src/offices.rs` | `testing` support |
 | `agentic-org` (`recovery`) | Local presence and confirmation for the recovery code (ADR-0011) | `org-host/src/recovery/presence.rs`, the bridge in `org-host/build.rs` | `presence` |
-| `agentic-org` (`admin reset`) | Local authority to reset the administrator: the OS dialog at the Mac, root on Linux (SIGN-33) | Not built (A3) | `presence` |
+| `agentic-org` (`admin reset`) | Local authority to reset the administrator: the OS dialog at the Mac, root on Linux (SIGN-33) | On Linux, root's registration-link recovery since X5 (section 4); the macOS dialog and password reset are A3's | `presence` |
 | `agentic-org-office` | Socket locations | `org-proto/src/location.rs` through `apps/agentic-org-office/src/lib.rs` | `dirs` |
 | `agentic-org-office` | Its end of the rendezvous: receive descriptors | `org-socket/src/rights.rs`, `rights/send.rs`, `rights/stream.rs` | `socket` |
 | `agentic-org-office` | Admit same-user peers on its local socket | `org-socket/src/peer.rs` (`peer_allowed`), called from `apps/agentic-org-office/src/serve.rs` | `socket` |
@@ -325,9 +325,8 @@ signed manifest digest alone, after its ELF header check. Built in X2: the host'
 peer policy has one path (`app_auth`), in which a peer the platform names by its user
 alone is admitted when that user is the host's own, and a command accepts a host of
 its own user the same way (`human::verify_host`); the platform says which kind of
-system it is with each identity (`Peer::uid`). Root for `admin reset` is not built:
-the listener refuses every other user when it accepts (X5, with the container's
-`docker exec -u 0` path).
+system it is with each identity (`Peer::uid`). Root is admitted for `admin reset` alone
+since X5 (section 4, `presence`); the listener refuses every other user when it accepts.
 
 The worker's `current_exe()` is `/memfd:… (deleted)`, so a worker cannot find sibling
 executables (for example `agent-os`) next to itself. The host passes the release's
@@ -480,14 +479,15 @@ checks and a lock.
   and with both views opened below it from its held descriptor, in the release layout.
   So the development image refuses a start on a new, empty secrets volume, a volume
   mounted inside the secrets volume is refused wherever it is, and a registered
-  development service started by systemd uses the directory its setup recorded, where
-  setup recorded one. A development build on Linux records and uses the credential
-  directory as a release build does. A development build uses its development key folder
-  (`ORG_OFFICE_DEV_KEY_DIR`) only where the record names no credential directory (macOS,
-  which keeps a release's secrets in the Keychain), and admits its unpinned runtime when
-  the record names a directory as it does with that folder. On macOS, a development
-  build's registered setup needs an absolute `ORG_OFFICE_DEV_KEY_DIR`; setup makes that
-  folder, with mode 700, before it registers the service. The image sets no `ORG_OFFICE_DEV_KEY_DIR`.
+  development service started by systemd uses the directory its setup recorded. A
+  development build on Linux records and uses the credential directory as a release build
+  does. A development build uses its development key folder (`ORG_OFFICE_DEV_KEY_DIR`)
+  only where the record names no credential directory (macOS, which keeps a release's
+  secrets in the Keychain, and the development test stand-ins that record none), and
+  admits its unpinned runtime when the record names a directory as it does with that
+  folder. On macOS, a development build's registered setup needs an absolute
+  `ORG_OFFICE_DEV_KEY_DIR`; setup makes that folder, with mode 700, before it registers
+  the service. The image sets no `ORG_OFFICE_DEV_KEY_DIR`.
 
 **Built in X3** (`org_platform_host::credentials`: `protected_store()` answers
 `Keychain` or `ReleaseDirectory`; `release_directory(ReleaseDirectory { path,

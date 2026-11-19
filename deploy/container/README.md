@@ -140,8 +140,8 @@ account's records"). Mount nothing inside `/secrets` either: a start with anythi
 inside it, at any depth, is refused, naming the mount point.
 
 A first start that is refused before the instance is reserved saves no setup record,
-reserves nothing and writes nothing in `/secrets`. It leaves only empty folders of the
-service user: `/data/.local/share/agentic-org` (an empty `locator` folder and
+reserves nothing and writes nothing in `/secrets`. It leaves only empty folders and an empty lock
+file of the service user: `/data/.local/share/agentic-org` (an empty `locator` folder and
 `setup/default/setup.lock`) and `/data/.cache/agentic-org/tmp`. A corrected start uses
 them. Correct the mistake and start again. Once an instance is set up, its
 configuration does not change.
@@ -266,9 +266,9 @@ image sets no `ORG_OFFICE_DEV_KEY_DIR`, and one given with `-e` is not used.
 ## Known limits
 
 - A first start that is refused before the instance is reserved saves no setup record,
-  reserves nothing and writes nothing in `/secrets`. It leaves only empty folders of the
-  service user: `/data/.local/share/agentic-org` (an empty `locator` folder and
-  `setup/default/setup.lock`) and `/data/.cache/agentic-org/tmp`. A corrected start uses
+  reserves nothing and writes nothing in `/secrets`. It leaves only empty folders and an empty
+  lock file of the service user: `/data/.local/share/agentic-org` (an empty `locator`
+  folder and `setup/default/setup.lock`) and `/data/.cache/agentic-org/tmp`. A corrected start uses
   them. A
   registered-mode setup (on a machine, not this image) that fails later, when its service
   is registered, keeps its record: correct the cause and run the same file again; another

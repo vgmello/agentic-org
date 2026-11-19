@@ -505,7 +505,7 @@ docker stop "$tag-d" >/dev/null
 echo "docker stop: $(since "$started") s, exit code $(docker inspect -f '{{.State.ExitCode}}' "$tag-d")"
 docker rm -f -v "$tag-d" >/dev/null
 
-say "8b. a refused first start leaves nothing, and the corrected file then works (X5 review V1)"
+say "8b. a refused first start saves no record and no data folder, and the corrected file then works (X5 review V1)"
 volumes+=("$tag-v1")
 docker volume create "$tag-v1" >/dev/null
 sed 's|"/secrets"|"/secret"|' "$here/setup.json" > "$scratch/typo.json"
