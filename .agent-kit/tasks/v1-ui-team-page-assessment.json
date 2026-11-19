@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "task_id": "v1-ui-team-page",
+  "kind": "implementation",
+  "facts": {
+    "familiar_pattern": true,
+    "precise_scope": true,
+    "localized_change": true,
+    "deterministic_checks": true,
+    "low_risk": true,
+    "no_prior_failure": true,
+    "ambiguity_resolved": true
+  },
+  "evidence": {
+    "familiar_pattern": [
+      "the accepted foundation (Resource/Loaded) and the member profile's tab routes are the analogue"
+    ],
+    "precise_scope": [
+      ".agent-kit/tasks/v1-ui-team-page-contract.md acceptance list"
+    ],
+    "localized_change": [
+      "modules/teams (team-page, team-actions), routes teams/[teamId]/**, the Teams index, fakes"
+    ],
+    "deterministic_checks": [
+      "svelte-check, vitest (incl. ui-gate manifest guard), vite build, format check, browser checks"
+    ],
+    "low_risk": [
+      "UI-only screens over the mock API; production calls refuse; no auth, data or concurrency change"
+    ],
+    "no_prior_failure": [
+      "two fresh local code reviews and one UX review, findings fixed"
+    ],
+    "ambiguity_resolved": [
+      "offices-and-teams-ux \u00a77.2 and the v1 UI plan (five tabs incl. Processes)"
+    ]
+  }
+}
