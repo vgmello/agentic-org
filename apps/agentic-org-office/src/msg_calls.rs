@@ -11,12 +11,19 @@ use org_proto::msg::{MsgInbox, MsgRead, MsgSend, MsgWait, MsgWaitParams, MAX_WAI
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
 /// Answers `request` if it is one of the calls answered at once (not `msg.wait`, which is held).
-/// `member` is the bound member, `None` when the connection acts as no member.
+/// `member` is the bound member, `None` when the connection acts as no member. With no
+/// `mailbox` this office does not serve messaging yet: each of them answers `unsupported`,
+/// before the binding or the params are looked at.
 pub(crate) fn answer(
     request: &Request,
-    mailbox: &Mailbox,
+    mailbox: Option<&Mailbox>,
     member: Option<&str>,
 ) -> Option<Response> {
+    let Some(mailbox) = mailbox else {
+        let messaging =
+            request.is::<MsgSend>() || request.is::<MsgInbox>() || request.is::<MsgRead>();
+        return messaging.then(|| unsupported(request.id));
+    };
     if request.is::<MsgSend>() {
         return Some(run::<MsgSend>(request, member, |member, params| {
             mailbox.send(member, params)
@@ -103,6 +110,17 @@ fn reply<C: Call>(id: u64, result: &C::Result) -> Response {
 fn refuse(id: u64, error: MailboxError) -> Response {
     let text = error.to_string();
     Response::error(id, ApiError::new(ErrorCode::from(error), text))
+}
+
+/// The answer to a messaging call when this office has no mailbox (B6 rebuilds messaging).
+pub(crate) fn unsupported(id: u64) -> Response {
+    Response::error(
+        id,
+        ApiError::new(
+            ErrorCode::Unsupported,
+            "this office does not serve messaging yet",
+        ),
+    )
 }
 
 fn not_bound(id: u64) -> Response {

@@ -27,9 +27,10 @@ Nothing here is carried over into that model.
   still wakes the waiter. It returns the oldest unread message without claiming it.
 - **defer**, **done** and **expire_due**, over a `TriageStore`.
 
-The office worker calls `send`, `inbox`, `read` and `wait` from
-`apps/agentic-org-office/src/msg_calls.rs`; the store and directory adapters are in
-`crates/org-office/src/messaging.rs`. The server passes the bound member id from its
+The running office supplies no mailbox: since B1b it answers `send`, `inbox`, `read` and
+`wait` with `unsupported` until the messaging family is rebuilt on the new store (B6).
+The worker's serve-layer tests still drive the mailbox through
+`apps/agentic-org-office/src/msg_calls.rs` over this crate's testkit. The server passes the bound member id from its
 authenticated binding, never from request JSON, and the mailbox rechecks that member
 on every call: an offboarded, removed or moved member gets `not_bound`.
 

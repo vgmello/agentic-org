@@ -3,9 +3,9 @@
 //!
 //! The operation id is the write's existing field: `command_id` for organization commands
 //! ([`crate::org`]), `change_id` for work writes ([`crate::work`]) and `msg.send`'s `id` for
-//! messages ([`crate::msg`]). Each lives in its own table, so the lookup names the kind. A retry
-//! with the same id and params gets the stored answer too; a lookup lets a client learn it without
-//! keeping the request body.
+//! messages ([`crate::msg`]). The lookup names the kind so a client can retrieve an outcome
+//! without keeping the request body when that lookup is served. See [`OperationGet`] for
+//! current availability.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,9 +14,16 @@ use crate::calls::Call;
 use crate::error::ApiError;
 
 /// `operation.get`: the stored outcome of an operation, for the principal that made it (in v1.0,
-/// the owner). Errors: `not_found` (no such operation for this principal), `expired` (past its
-/// dedup window), `invalid_request` (an unknown `kind`), `not_authorized`. A queued outcome
-/// arrives with relay (X-05); until then a lookup answers only `committed` or `rejected`.
+/// the owner).
+///
+/// The current office worker returns [`crate::ErrorCode::Unsupported`] for valid,
+/// grant-authorized organization lookups until B2 restores them. Retrying the original
+/// organization command with the same `command_id` and parameters still returns its retained
+/// answer.
+///
+/// When lookup is served, errors include `not_found` (no such operation for this principal),
+/// `expired` (past its dedup window), `invalid_request` (an unknown `kind`), and
+/// `not_authorized`. A queued outcome arrives with relay (X-05).
 pub struct OperationGet;
 
 /// Which table an operation id is in.

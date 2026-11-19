@@ -115,6 +115,11 @@ pub enum ErrorCode {
     Cancelled,
     /// A throttle key is locked; the error carries `retry_after_ms`.
     RateLimited,
+    /// The protocol has this call; this office does not serve it yet. Not temporary, unlike
+    /// `unavailable` and `not_ready`: retrying the same call against the same build answers
+    /// the same. Never stored as a write's answer. A build that doesn't know it reads it as
+    /// [`ErrorCode::Unknown`].
+    Unsupported,
     /// A code this build doesn't know (sent by a newer server).
     #[serde(other)]
     Unknown,
@@ -191,3 +196,25 @@ impl fmt::Display for CallError {
 }
 
 impl std::error::Error for CallError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_is_its_own_code_on_the_wire() {
+        let error = ApiError::new(ErrorCode::Unsupported, "not served by this office yet");
+        let wire = serde_json::to_value(&error).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({ "code": "unsupported", "message": "not served by this office yet" })
+        );
+        assert_eq!(serde_json::from_value::<ApiError>(wire).unwrap(), error);
+    }
+
+    #[test]
+    fn a_code_this_build_does_not_know_still_reads_as_unknown() {
+        let code: ErrorCode = serde_json::from_str("\"some_newer_code\"").unwrap();
+        assert_eq!(code, ErrorCode::Unknown);
+    }
+}
