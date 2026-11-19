@@ -1096,14 +1096,18 @@ fn a_required_mount_point_refuses_an_ordinary_directory_and_the_probe_knows_moun
     );
 }
 
-/// The other way of the mount-point rule: a store that is the root of a mount is
-/// accepted when one is required, next to a data root on a volume of its own (where a
-/// mount point is required the store may not be in the data root's volume, and a data
-/// root on the machine's own disk has all of that disk as its volume). Making a mount
-/// takes root (and a container that allows it); otherwise the reason is printed and
-/// the probe test above, with the decision's tests, carries the rule.
+/// A store that is the root of a bind mount of a directory on the machine's own disk,
+/// next to a data root on a volume of its own. Where a mount point is required it is
+/// refused as mounted twice: the disk's own mount shows the same directory, so its keys
+/// can be reached outside the store (X5 final review). In a container only the volume's
+/// mount shows it, and LNX-2 starts the real image that way, with "credentials missing"
+/// for an empty volume (its step 7). Where none is required the same store opens, and the
+/// empty-store rule holds. Making a mount takes root (and a container that allows it);
+/// otherwise the reason is printed and the probe test above, with the decision's tests,
+/// carries the rule.
 #[test]
-fn a_required_mount_point_accepts_a_store_that_is_the_root_of_a_mount() {
+fn a_bind_mounted_store_on_the_machines_disk_is_refused_as_mounted_twice_where_a_mount_point_is_required(
+) {
     if !is_root() {
         println!(
             "skipped: only root can mount, and no mount root here is a directory this user \
@@ -1143,14 +1147,20 @@ fn a_required_mount_point_accepts_a_store_that_is_the_root_of_a_mount() {
             return;
         }
     };
-    // An empty mounted volume with records: credentials missing, as after a replaced
-    // container with a new volume.
+    // Where a mount point is required: the disk's own mount shows the store too.
+    // (Kept as a value, so that the assertions below come after the unmount.)
+    let required = match tree.open_with(&store, &tree.data_root(), true, true) {
+        Err(CredentialError::Root(RootRefusal { rule, path })) => Some((rule, path)),
+        _ => None,
+    };
+    // An empty store with records: credentials missing, as after a replaced container
+    // with a new volume.
     let first = tree
-        .open_with(&store, &tree.data_root(), true, true)
+        .open_with(&store, &tree.data_root(), false, true)
         .map(|_| ())
         .map_err(|error| error.to_string());
     let second = tree
-        .open_with(&store, &tree.data_root(), true, false)
+        .open_with(&store, &tree.data_root(), false, false)
         .map(|root| {
             root.store(HOST_SECRETS)
                 .unwrap()
@@ -1159,13 +1169,16 @@ fn a_required_mount_point_accepts_a_store_that_is_the_root_of_a_mount() {
         })
         .map_err(|error| error.to_string());
     let third = tree
-        .open_with(&store, &tree.data_root(), true, true)
+        .open_with(&store, &tree.data_root(), false, true)
         .map(|_| ())
         .map_err(|error| error.to_string());
     // Unmount before any assertion, so that a failure leaves no mount behind.
     // SAFETY: a NUL-terminated path; `MNT_DETACH` cannot block on a busy mount.
     let unmounted = unsafe { libc::umount2(target.as_ptr(), libc::MNT_DETACH) };
     assert_eq!(unmounted, 0);
+    let (rule, named) = required.expect("a store mounted twice was not refused");
+    assert_eq!(rule, RootRule::MountedElsewhere);
+    assert_ne!(named, store, "the store's own mount was named");
     assert!(
         first.is_err_and(|text| text.contains("credentials missing")),
         "an empty mounted store with records was not refused as missing"
@@ -1173,7 +1186,8 @@ fn a_required_mount_point_accepts_a_store_that_is_the_root_of_a_mount() {
     assert_eq!(second, Ok(()));
     assert_eq!(third, Ok(()));
     println!(
-        "accepted as a mount root: a bind mount at {}",
+        "a bind mount at {} on this disk: refused as mounted twice where a mount point is \
+         required, and opened where none is",
         store.display()
     );
 }
