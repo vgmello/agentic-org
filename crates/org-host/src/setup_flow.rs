@@ -198,21 +198,12 @@ fn open_as_the_host_will(
     org_platform_host::credentials::CredentialError,
 > + '_ {
     move |location| {
-        release_directory_apart_from(location, &crate::release_store::ITEM_STORES, &[records])
+        org_platform_host::credentials::release_directory_apart_from(
+            location,
+            &crate::release_store::ITEM_STORES,
+            &[records],
+        )
     }
-}
-
-// TEMPORARY SHIM (removed in this branch's last commit): x/x5-fix3-custody adds
-// `org_platform_host::credentials::release_directory_apart_from`.
-fn release_directory_apart_from(
-    location: org_platform_host::credentials::ReleaseDirectory<'_>,
-    stores: &[org_platform_host::credentials::ItemStore<'_>],
-    _account_data: &[std::os::fd::BorrowedFd<'_>],
-) -> Result<
-    org_platform_host::credentials::ReleaseRoot,
-    org_platform_host::credentials::CredentialError,
-> {
-    org_platform_host::credentials::release_directory_with_stores(location, stores)
 }
 
 /// The account's records (`base`, which holds the setup record and the instance locator),

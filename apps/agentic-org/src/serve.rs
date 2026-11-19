@@ -163,24 +163,21 @@ fn run_as(
         move |signal, starting| {
             let line = if starting {
                 format!(
-                    "agentic-org: stopped by signal {signal} while starting, which had not \
-                     ended {bound:?} after it; the process ends now. What setup or the start \
-                     completed is kept, and the next start continues from it\n"
+                    "stopped by signal {signal} while starting, which had not ended {bound:?} \
+                     after it; the process ends now. What setup or the start completed is \
+                     kept, and the next start continues from it"
                 )
             } else {
                 format!(
-                    "agentic-org: stopped by signal {signal}; the stop had not ended \
-                     {STOP_LIMIT:?} after it, and the process ends now\n"
+                    "stopped by signal {signal}; the stop had not ended {STOP_LIMIT:?} after \
+                     it, and the process ends now"
                 )
             };
-            // Neither std's stderr lock nor the exit handlers, which a thread blocked in a
-            // write (or in anything else) could hold up: one write, best effort, then the
-            // end of the process.
-            // SAFETY: a write of an owned buffer to fd 2, then `_exit`, which never returns.
-            unsafe {
-                libc::write(2, line.as_ptr().cast(), line.len());
-                libc::_exit(0)
-            }
+            // A full standard error (a pipe nobody reads) cannot hold the end up: the line
+            // is written by the host log's own thread, waited for a short, bounded time,
+            // and then the process ends without its exit handlers (X5 review, fourth round,
+            // P1-6).
+            org_host::stop::end_process(&line)
         },
     )?;
     serve_until_stopped(

@@ -1497,6 +1497,44 @@ mod credentials {
         assert!(record.instance_id.is_some());
     }
 
+    /// X5 review, fourth round, P1-3 (setup's side): the credential directory is checked
+    /// apart from the account's records, as the host checks it at every start: one inside
+    /// the application base, which holds the setup record and the instance locator, is
+    /// refused before any instance is recorded with it.
+    #[test]
+    fn a_credential_directory_among_the_accounts_records_is_refused() {
+        if !release_directory_system() {
+            println!("skipped: this system keeps no secrets in a directory");
+            return;
+        }
+        // <target>/<profile>/deps/<test binary>: a place whose ancestors may pass the rule.
+        let executable = std::env::current_exe().unwrap().canonicalize().unwrap();
+        let tmp = executable.ancestors().nth(3).unwrap().join("tmp");
+        if fs::create_dir_all(&tmp).is_err() {
+            println!("skipped: {} cannot be made", tmp.display());
+            return;
+        }
+        let temp = tempfile::tempdir_in(&tmp).unwrap();
+        let account = Account {
+            base: temp.path().canonicalize().unwrap(),
+            _temp: temp,
+        };
+        fs::set_permissions(&account.base, fs::Permissions::from_mode(0o700)).unwrap();
+        let (result, _) = run_setup(&account, &account.base.join("state"), free_port());
+        let refused = result.unwrap_err();
+        if refused.contains("writable by others") || refused.contains("owned by another") {
+            println!("skipped: no directory here passes the ancestor rule: {refused}");
+            return;
+        }
+        assert!(
+            refused.starts_with("the credential directory cannot be used: ")
+                && refused.contains("account's records"),
+            "{refused}"
+        );
+        let record = Journal::snapshot(&account.base, None).unwrap();
+        assert_eq!(record.credentials, None);
+    }
+
     /// Setup on this machine, with the host's own walk from `/`. A credential directory
     /// below a shared temporary directory is one the host would refuse (that directory is
     /// writable by others): setup refuses it in the host's words and saves no instance.
