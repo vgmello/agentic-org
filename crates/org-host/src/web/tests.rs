@@ -2399,24 +2399,39 @@ fn a_child_that_exited_with_a_refusal_line_gives_the_failed_start_its_reason() {
     );
 }
 
+/// A child that exited without a refusal line is no refusal: the cause stays, followed by
+/// the last whole line it wrote, if any, shown as printable ASCII (X5 review, fourth
+/// round, V-c).
 #[test]
-fn a_child_that_exited_without_a_refusal_line_leaves_the_cause_as_it_is() {
-    for script in [
-        "exit 1\n",
-        "stderr agentic-org-web: authenticated startup unavailable\nexit 1\n",
-        // Not printable: a tab in the reason.
-        "stderr agentic-org-web: startup refused: confinement: a\tb\nexit 1\n",
-        // No line feed.
-        "stderr-raw agentic-org-web: startup refused: confinement: cut\nexit 1\n",
+fn a_child_that_exited_without_a_refusal_line_keeps_the_cause_and_says_its_last_line() {
+    for (script, expected) in [
+        ("exit 1\n", "web process start failed: the cause"),
+        (
+            "stderr agentic-org-web: authenticated startup unavailable\nexit 1\n",
+            "web process start failed: the cause; it wrote: agentic-org-web: authenticated \
+             startup unavailable",
+        ),
+        (
+            "stderr agentic-org-web: startup refused: ui build: InvalidKey\nexit 1\n",
+            "web process start failed: the cause; it wrote: agentic-org-web: startup refused: \
+             ui build: InvalidKey",
+        ),
+        // Not printable: a tab in the reason. No refusal, and the tab is not shown raw.
+        (
+            "stderr agentic-org-web: startup refused: confinement: a\tb\nexit 1\n",
+            "web process start failed: the cause; it wrote: agentic-org-web: startup refused: \
+             confinement: a?b",
+        ),
+        // No line feed: nothing whole was written.
+        (
+            "stderr-raw agentic-org-web: startup refused: confinement: cut\nexit 1\n",
+            "web process start failed: the cause",
+        ),
     ] {
         let (mut child, captured, _stdin) = stepping(script);
         wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
         let error = with_refusal(failed("the cause"), &captured, &mut child);
-        assert_eq!(
-            error.to_string(),
-            "web process start failed: the cause",
-            "{script}"
-        );
+        assert_eq!(error.to_string(), expected, "{script}");
     }
 }
 
