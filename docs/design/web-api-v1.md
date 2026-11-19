@@ -256,8 +256,9 @@ Host session handles, grant MACs and channels never appear in a view.
 
 **Instance view:** `{instance_id,name,server_version,web_status,listen_scheme,tls,server_time_ms}`.
 `server_version` is the release pin's version; `web_status` is `ok|degraded`;
-`listen_scheme` is `https|http_loopback`; `tls` is `ok|missing|expiring`, and is
-absent until the instance serves TLS (the loopback listener has none). Unknown
+`listen_scheme` is `https|http_loopback|http_published`; `tls` is
+`ok|missing|expiring` (`expiring`: fewer than 30 days of the certificate remain), and is
+absent for a plain HTTP listener, which has no certificate. Unknown
 enum values decode to `unknown`. The view has no paths, endpoints, sockets,
 handles or certificate material.
 

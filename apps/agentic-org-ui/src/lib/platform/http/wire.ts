@@ -475,7 +475,7 @@ export const readInstance = checked(
 		name: text,
 		server_version: text,
 		web_status: word(['ok', 'degraded'] as const),
-		listen_scheme: word(['https', 'http_loopback'] as const),
+		listen_scheme: word(['https', 'http_loopback', 'http_published'] as const),
 		tls: optional(word(['ok', 'missing', 'expiring'] as const)),
 		server_time_ms: readSafeInteger
 	})

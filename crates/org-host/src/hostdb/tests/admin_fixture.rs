@@ -63,7 +63,7 @@ pub(super) fn assert_new_registry(db: &HostDb) {
             ("instance_id".into(), init().instance_id)
         ]
     );
-    for table in ["accounts", "one_time_links", "tls_pair", "op_journal"] {
+    for table in ["accounts", "one_time_links", "web_tls_pair", "op_journal"] {
         let rows: i64 = c
             .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
             .unwrap();

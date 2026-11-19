@@ -202,6 +202,8 @@ impl Host {
             .map_err(|e| refused("recording the host registry", e))?;
 
         let instance_name = instance.name().to_owned();
+        // An `https` instance imports the pair setup verified at its first start.
+        config.supplied_tls = record.tls.clone();
         let host = Self::start_with(
             config,
             Some(instance),

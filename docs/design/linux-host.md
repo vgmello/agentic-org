@@ -882,8 +882,93 @@ the seccomp and AppArmor profiles are optional and exist for agents' vendor sand
 The `http_published` listener is available in foreground mode on bare macOS and
 Linux machines and in containers. Every machine that can reach the listen address
 can reach sign-in and sessions in plain text. A bare host using `0.0.0.0` listens on
-all IPv4 interfaces, including those on the LAN. HTTPS with a certificate made by
-the instance or supplied by the operator is pending (implementation plan, X7).
+all IPv4 interfaces, including those on the LAN.
+
+**HTTPS** (X7; ADR-0017 decision 10). `scheme: "https"` is available to every
+instance, on any address. The pair is the host's (`crates/org-host/src/web_tls/`):
+
+- **Made at first start** when the setup file names none: an ECDSA P-256 key and a
+  self-signed certificate whose only subject alternative name is the origin's host
+  (DNS name or IP literal), `CN=Agentic Org`, not a CA, server authentication, a random
+  128-bit serial, valid 397 days from five minutes before the start. Setup prints that
+  the instance makes it; the host logs `the TLS certificate for <origin>: made by this
+  instance, SHA-256 fingerprint AB:…, valid from … until …` at every start (stderr: the
+  container log). At a start, or every six hours while it runs, a self-made certificate
+  with fewer than 30 days left is replaced by a new key and certificate (a new
+  fingerprint, logged), and the host sends `tls.renew` to the web process. A lost
+  self-made key is made again, and logged as such.
+- **Supplied** by `"tls": {"cert": "<path>", "key": "<path>"}` in the setup file (absolute
+  paths; only with `https`). Setup opens each without following a symbolic link in its
+  last component (such a link is refused: name the file itself; a link among its parent
+  directories is followed), as a regular file of at most 64 KiB, and verifies
+  the pair in `tls.set`'s order (`tls_invalid`, `tls_key_mismatch`, `tls_not_valid`,
+  `tls_name_mismatch`) before it saves anything; setup prints its fingerprint. The paths
+  are recorded beside the frozen input, never the key. The host imports the pair at its
+  first start (verified again) and does not read the files after that. A supplied key
+  missing from the host's secrets refuses the start, naming the cause: it is never made
+  again. A supplied pair that no longer verifies (expired, say) is never replaced by the
+  instance: the host starts and logs why, and no browser is served until the
+  administrator replaces the pair with `tls.set` (a start with fewer than 30 days left
+  logs a warning).
+- **Custody.** The key is the host secret `tls.<pair fingerprint>` (add-only; in a
+  container, in the secrets volume); the registry's `web_tls_pair` row holds the chain
+  (its `CERTIFICATE` blocks only, re-encoded: text around them, such as a key in a
+  combined file, is dropped), the pair fingerprint and `made` or `supplied`. A new pair
+  is installed by adding its key, pointing the row at it, then deleting the old key; a
+  start deletes any TLS key the row does not name. The registry of an instance created
+  before X7 gains the table at open. Every registry keeps the unused `tls_pair` table of
+  earlier builds (a new one creates it too): a build from before X7 requires it and leaves
+  the `web_tls_pair` it does not know alone, so it can still open a registry this build
+  created. The rule for later additive tables is the same: never drop a table an earlier
+  build requires.
+- **Replacement.** `tls.set` on `host.sock` from the administrator's session (journaled,
+  X-02 §6.2's checks) installs a supplied pair; the host then sends `tls.renew`, and the
+  web process fetches the pair and swaps it for new handshakes, without a restart. When
+  the web process keeps its current pair instead (the fetch failed, the host answered
+  `unavailable`, the pair did not load or the swap failed), it writes one line naming the
+  reason, and the host logs it (a known reason only, at most 16 per web process; no key or
+  certificate bytes). On an
+  instance whose listener is not `https` it answers `unavailable` (decided with X7: no
+  plain-HTTP listener serves a pair, and the scheme never changes, so none is stored). A
+  chain longer than 64 KiB in its normal form is `tls_invalid`.
+- **Command.** `agentic-org admin tls set --cert <file> --key <file> --login <login>
+  [--name <instance>]` reads the files with setup's rules, checks the pair in `tls.set`'s
+  order (a refusal names the files, before a password is asked), signs the administrator in
+  with the password typed at the terminal (native `account.verify`, the interim sign-in
+  `recovery` uses until FC-173), calls `tls.set`, ends the session and prints only the new
+  certificate's SHA-256 fingerprint. It is admitted as the call is and no wider: on
+  `host.sock`, as the service's user, by the administrators' admission (the signed
+  `agentic-org` on a Mac); root has no route. It sends the password only to a host whose
+  program it identified, so where a peer is known by its user alone (GNU/Linux, a
+  container) it refuses before asking for the password or sending anything, until
+  command-line sign-in is approved in the browser (FC-173).
+- **Start gate and `tls.fetch`.** The web process is spawned only while the stored pair is
+  present (`tls_missing`), names the origin's host (`tls_name_mismatch`) and is valid now;
+  the gate is part of the web start's eligibility (asked at most every two seconds, each
+  change logged once), so the web process waits for a replacement rather than failing, and
+  a running one stops when its pair can no longer be served. `tls.fetch` re-checks coverage
+  and answers `https` with the chain and the key on the secret-line path.
+- The web process sets `Secure` session cookies and, for a named host with `hsts` on,
+  `Strict-Transport-Security`; an IP-literal origin never gets HSTS.
+
+Known limits: the self-made certificate is trusted by no browser until the operator
+accepts it (compare the fingerprint first); on Linux and in a container `admin tls set`
+refuses until FC-173 (no password is sent to a host known by its user alone), so a
+supplied pair is replaced there only by an administrator's `tls.set` from another client of
+`host.sock`, or by a new instance; a supplied pair that expires
+stops the browser service until it is replaced; a supplied pair already expired at the
+instance's first start refuses that start (setup verified it moments before; the operator
+replaces the files at the recorded paths and starts again), while one
+that expires later only stops the browser; a supplied pair nearing its end is warned
+about at a start, not while the host runs; and a clock set back more than five minutes
+before a self-made certificate's start, or a self-made key deleted from the secrets while
+the host runs, keeps the browser down until the next six-hourly renewal look (a restart
+remakes it at once). While the gate holds the web process its status stays `starting`;
+the reason is in the host log and `instance.view` reports `tls: missing` (a status
+reason for it belongs to the host status of move 2b). The gate checks in `tls.set`'s order,
+validity before coverage, so an expired pair that also does not name the origin is
+reported as `tls_not_valid` rather than `tls_name_mismatch` (X-02 §2's order); the origin
+never changes, so it does not arise.
 
 **The container file** (`deploy/container/Dockerfile`, `deploy/container/README.md`):
 
@@ -898,8 +983,9 @@ the instance or supplied by the operator is pending (implementation plan, X7).
   layout, and sets no `ORG_OFFICE_DEV_KEY_DIR`).
 - `/etc/agentic-org/setup.json`: `service: foreground`, `root: /data/instance`,
   `credentials: /secrets`, and the listener below.
-- **The listener.** A published port arrives on the container's network interface, not
-  its loopback. The container listens on `0.0.0.0:8443` with `http_published`, whose
+- **The listener** (until the container moves to `https` after B1b). A published port
+  arrives on the container's network interface, not its loopback. The container listens
+  on `0.0.0.0:8443` with `http_published`, whose
   origin's host is exactly `127.0.0.1`: the configured origin is
   `http://127.0.0.1:8443`, and the operator publishes the port as
   `-p 127.0.0.1:8443:8443` (Docker Engine 28 or later, which keeps a port published on
@@ -961,7 +1047,8 @@ the instance or supplied by the operator is pending (implementation plan, X7).
 **Without a terminal.** `setup --non-interactive --config <file>` takes the setup record's
 input as one strict JSON object: `version`, `service` (`registered` or `foreground`),
 `root`, `credentials` (the absolute store directory of section 3.2, required with
-`foreground` on Linux) and `listen` (`address`, `port`, `scheme`, `origin`, `hsts`).
+`foreground` on Linux), `listen` (`address`, `port`, `scheme`, `origin`, `hsts`) and,
+with `https` only, an optional `tls` (`cert`, `key`: the paths of a supplied pair).
 Configuration files require an explicit `service`. Persisted v1 setup records that
 predate that field resume in `registered` mode.
 

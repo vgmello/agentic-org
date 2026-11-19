@@ -142,6 +142,12 @@ impl Admin {
         self.setup_operation == setup_operation && self.origin.as_str() == origin
     }
 
+    /// The admission of every administrator's host call (`tls.set` too): a local
+    /// `host.sock` client that passes the host's signing check.
+    pub(crate) fn admit_peer(&self, c: &Connection, received: Received) -> Result<(), ApiError> {
+        self.admit(c, received)
+    }
+
     /// The caller is a local `host.sock` client that passes the host's signing check.
     fn admit(&self, c: &Connection, received: Received) -> Result<(), ApiError> {
         admit_with(c.channel_kind(), || {

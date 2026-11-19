@@ -15,6 +15,7 @@ mod schema;
 pub(crate) mod sessions;
 #[cfg(test)]
 mod tests;
+pub(crate) mod web_tls;
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -219,6 +220,7 @@ impl HostDb {
         tx.execute_batch(recovery::DDL)?;
         tx.execute_batch(links::DDL)?;
         sessions::create_schema(&tx)?;
+        web_tls::create_schema(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         for (name, value) in [
             ("instance_id", init.instance_id.clone()),
@@ -286,6 +288,7 @@ impl HostDb {
             return Err(Error::InvalidId);
         }
         sessions::ensure_schema(&mut db)?;
+        web_tls::ensure_schema(&mut db)?;
         enter_wal(&db)?;
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
         Ok(Self {

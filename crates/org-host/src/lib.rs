@@ -65,10 +65,13 @@ mod ids;
 mod links;
 pub mod release;
 mod web;
+mod web_tls;
 
 // Real-process tests (debug builds only).
 #[cfg(all(test, debug_assertions))]
 mod enc1_process_tests;
+#[cfg(all(test, debug_assertions))]
+mod https_process_tests;
 #[cfg(all(test, debug_assertions))]
 mod web_process_tests;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
@@ -176,6 +179,9 @@ pub struct Config {
     /// first start serves on it instead of binding the address again. A listener that is
     /// not on the instance's address and port is refused by that start.
     pub browser_listener: Option<BrowserListener>,
+    /// The TLS pair setup's configuration supplied for an `https` listener, imported at the
+    /// instance's first start (`web_tls`). Set by the registered start from its record.
+    supplied_tls: Option<instance::setup::SuppliedTls>,
     /// Signing policy reserved for CLI sessions in 2b.3; it enables no retired host calls.
     app_team_id: Option<String>,
     /// Debug builds only (release builds don't have the field): an unsigned development app
@@ -222,6 +228,7 @@ impl Config {
             log_max_bytes: DEFAULT_LOG_MAX_BYTES,
             max_connections: 64,
             browser_listener: None,
+            supplied_tls: None,
             app_team_id: app_team_id.map(str::to_owned),
             #[cfg(debug_assertions)]
             dev_app_path: None,
@@ -397,6 +404,8 @@ pub struct Host {
     instance: Option<instance::registry::Instance>,
     authentication_lifecycle: Option<service::authentication::Lifecycle>,
     web: Option<web::Supervisor>,
+    /// The renewal of an `https` listener's own certificate while the host runs.
+    tls_renewal: Option<web_tls::Renewal>,
     service: Arc<Service>,
     /// Organization creation, kept to end its threads when the host stops.
     creating: Option<Arc<provisioning::Provisioning>>,
@@ -592,11 +601,52 @@ fn startup_catalog(
     Ok((catalog, protected_offices, unfinished))
 }
 
+/// The listener's TLS pair, for an instance whose listener is `https` and whose registry
+/// exists (`web_tls::WebTls::start`): made, imported, renewed or kept before the web process
+/// is started. A pair that cannot be served and may not be made again (a supplied one)
+/// refuses the start, before anything is served.
+fn startup_web_tls(
+    instance: &Option<instance::registry::Instance>,
+    authentication: &Option<Arc<service::authentication::Authentication>>,
+    supplied: Option<instance::setup::SuppliedTls>,
+) -> Result<Option<Arc<web_tls::WebTls>>, HostError> {
+    let (Some(instance), Some(authentication)) = (instance, authentication) else {
+        return Ok(None);
+    };
+    let Some(listen) = instance.browser().map_err(instance_error)? else {
+        return Ok(None);
+    };
+    if listen.scheme() != org_host_control::listen::ListenMode::Https {
+        return Ok(None);
+    }
+    let refused = |why: String| {
+        host_log::log(&format!("the host does not start: {why}"));
+        HostError::Io {
+            context: "preparing the browser listener's TLS certificate",
+            source: io::Error::other(why),
+        }
+    };
+    let now = web_tls::now().ok_or_else(|| refused("the clock is unavailable".into()))?;
+    let (db, secrets) = authentication.provisioning_storage();
+    web_tls::WebTls::start(
+        db,
+        secrets,
+        listen.origin().clone(),
+        supplied
+            .as_ref()
+            .map(|tls| (tls.cert.as_path(), tls.key.as_path())),
+        now,
+    )
+    .map(Some)
+    .map_err(|why| refused(why.0))
+}
+
 fn startup_web(
     config: &Config,
     instance: &Option<instance::registry::Instance>,
     layout: &Layout,
     dev_key_dir: Option<&Path>,
+    tls: Option<Arc<web_tls::WebTls>>,
 ) -> Result<Option<web::Configuration>, HostError> {
     let Some(instance) = instance else {
         return Ok(None);
@@ -624,6 +674,7 @@ fn startup_web(
         listen,
         check,
         critical_paths,
+        tls,
     }))
 }
 
@@ -773,6 +824,9 @@ impl Host {
             .map(service::authentication::Lifecycle::start)
             .transpose()
             .map_err(io("starting session lifecycle"))?;
+        // Before any office or web process starts: an `https` instance whose pair cannot be
+        // served and may not be made again does not start.
+        let web_tls = startup_web_tls(&instance, &authentication, config.supplied_tls.take())?;
         // An unregistered host starts and discards no office server: setup must run first.
         let (catalog, protected_offices, unfinished) = match &instance {
             Some(_) => startup_catalog(&layout, &authentication)?,
@@ -830,7 +884,7 @@ impl Host {
         let gateway_state = Arc::new(std::sync::Mutex::new(
             org_host_control::GatewayState::NotConfigured,
         ));
-        let web_config = startup_web(&config, &instance, &layout, dev_key_dir)?;
+        let web_config = startup_web(&config, &instance, &layout, dev_key_dir, web_tls.clone())?;
         let recovery = match (&instance, &authentication) {
             (Some(instance), Some(authentication)) => Some(Arc::new(recovery::Recovery::new(
                 Arc::clone(authentication),
@@ -851,8 +905,27 @@ impl Host {
             .with_authentication(authentication)
             .with_provisioning(provisioning)
             .with_recovery(recovery)
+            .with_web_tls(web_tls.clone())
             .with_gateway_state(Arc::clone(&gateway_state)),
         );
+        let tls_renewal = match web_tls {
+            Some(tls) => {
+                let announcing = Arc::downgrade(&service);
+                Some(
+                    web_tls::Renewal::start(
+                        tls,
+                        web_tls::RENEW_EVERY,
+                        Box::new(move || {
+                            if let Some(service) = announcing.upgrade() {
+                                service.announce_tls_renewal();
+                            }
+                        }),
+                    )
+                    .map_err(io("starting the TLS certificate's renewal"))?,
+                )
+            }
+            None => None,
+        };
         let listener = startup_listener(bound, &service, &offices, config.max_connections)?;
         // A create that reserved its identity before the host last stopped continues now,
         // with no client asking; later ones start from the browser's request. This follows
@@ -894,6 +967,7 @@ impl Host {
             instance,
             authentication_lifecycle,
             web,
+            tls_renewal,
             service,
             creating,
             shutdown_grace: config.timings.shutdown_grace,
@@ -971,6 +1045,11 @@ impl Host {
         if let Some(lifecycle) = self.authentication_lifecycle.take() {
             if !lifecycle.join_by(until) {
                 host_log::log("the session expiry did not end with the host");
+            }
+        }
+        if let Some(renewal) = self.tls_renewal.take() {
+            if !renewal.join_by(until) {
+                host_log::log("the TLS certificate's renewal did not end with the host");
             }
         }
         if let Ok(meta) = fs::symlink_metadata(&self.layout.host_socket) {
