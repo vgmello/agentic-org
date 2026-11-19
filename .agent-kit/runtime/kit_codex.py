@@ -317,8 +317,10 @@ def invoke(repo, directory, phase, prompt, effort, timeout, model, session=None,
               "termination_reason": reason})
 
 
-def checked(repo, config, directory):
-    _, receipt, path = verify(repo, config)
+def checked(repo, config, directory, base):
+    _, receipt, path = verify(repo, config, base)
+    for warning in inspect_receipt(path)["warnings"]:
+        print(f"WARNING {warning}", flush=True)
     if not inspect_receipt(path)["current"] or not any(s.get("root") == str(repo) for s in receipt["sources_after"]):
         raise ValueError("Checks must produce current evidence for this checkout")
     write(directory / "verification.json", receipt)
@@ -361,7 +363,7 @@ def start(args):
             raise ValueError("Ignore .agent-kit/reviews/ before starting (the installer supplies this)")
         config = repo / ".agent-kit/verification.json"
         checks, _ = load_checks(config, repo)
-        if any(snapshot(directory).get("root") != str(repo) for directory, _ in checks):
+        if any(snapshot(check.directory).get("root") != str(repo) for check in checks):
             raise ValueError("Run one review per checkout; cross-repo verification belongs in final integration")
         config_hash = digest(config.read_bytes())
         task = args.task.read_text()
@@ -395,7 +397,7 @@ def start(args):
         deadline = time.monotonic() + args.budget
         previous_findings = None
         try:
-            state["receipt"] = checked(repo, config, directory)
+            state["receipt"] = checked(repo, config, directory, base)
             for number in range(1, args.rounds + 1):
                 if time.monotonic() >= deadline:
                     raise ValueError("Review run time budget exhausted")
@@ -431,7 +433,7 @@ def start(args):
                 if review["verdict"] == "incomplete":
                     raise ValueError("Sol review is incomplete")
                 if review["verdict"] == "clean":
-                    state["receipt"] = checked(repo, config, round_dir)
+                    state["receipt"] = checked(repo, config, round_dir, state["base"])
                     check_inputs(repo, directory, state)
                     state.update(phase="AWAITING_ORIGIN", source=checkout(repo, state["branch"], state["head"], clean=True))
                     break
@@ -474,7 +476,7 @@ def start(args):
                 git(repo, "--literal-pathspecs", "add", "--all", "--", *paths)
                 write(round_dir / "fix.diff", git(repo, "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--"))
                 expected_tree = git(repo, "write-tree").strip()
-                verified = checked(repo, config, round_dir)
+                verified = checked(repo, config, round_dir, state["base"])
                 checkout(repo, state["branch"], state["head"])
                 if not inspect_receipt(verified)["current"]:
                     raise ValueError("Source changed between verification and commit")
@@ -487,7 +489,7 @@ def start(args):
                         git(repo, "rev-parse", "HEAD^").decode().strip() != record["before"]):
                     raise ValueError("Commit hooks changed the verified tree or parent; inspect the recorded commit")
                 # A commit changes source identity. Recheck on the committed revision.
-                state["receipt"] = checked(repo, config, round_dir)
+                state["receipt"] = checked(repo, config, round_dir, state["base"])
                 check_inputs(repo, directory, state)
                 save_run(directory, state)
             else:
