@@ -576,9 +576,11 @@ it). As built, where the text above is not exact:
   an account with umask `002` starts its own build.
 - The record's `credentials` path is byte-exact normalized and frozen; setup creates
   the directory, opens it once as the host will, and prints `Secrets: <path>`.
-- Open: `mount_point_required` is not asked for until the record has a service mode
-  (X5); a whole release-profile host on a release directory runs in no test; setup
-  itself still stops on Linux until X5's service and disk-encryption adapters.
+- `mount_point_required` is asked for by the record's service mode (X5): the
+  foreground mode (the container) requires a mounted volume, and the registered mode
+  does not. Setup runs on Linux with X5's service and disk-encryption adapters. Open:
+  a whole release-profile host on a release directory runs in no test (no release
+  image yet).
 
 **What it proves.** Only the service user and root can read the items, none is in
 the data volume, a wrong setup refuses, and a lost store is noticed (LNX-4). **What it
