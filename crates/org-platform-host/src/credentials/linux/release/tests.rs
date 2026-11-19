@@ -121,11 +121,11 @@ fn listing(dir: &Path) -> Vec<String> {
 }
 
 /// The rule and the path a refused open named.
-fn refusal(result: Result<Opened, CredentialError>) -> (RootRule, PathBuf) {
+fn refusal<T>(result: Result<T, CredentialError>) -> (RootRule, PathBuf) {
     match result {
         Err(CredentialError::Root(RootRefusal { rule, path })) => (rule, path),
         Err(other) => panic!("refused with {other:?}, not with a rule of the release directory"),
-        Ok(_) => panic!("the release directory was opened"),
+        Ok(_) => panic!("the release directory, or a folder in it, was opened"),
     }
 }
 
@@ -2256,4 +2256,88 @@ fn the_directories_a_deployment_names_are_judged_as_its_host_judges_them() {
         }
         Err(other) => panic!("probe: {other:?}"),
     }
+}
+
+/// X5 review (third round), P1: a development build's key folder is one folder directly in
+/// the release directory, made owner-only from its descriptor when it is missing, judged
+/// without following a link, and its stores are opened from the checked folder and hold
+/// the release directory's lock. Another volume mounted on the folder is refused by the
+/// mount rule (`rules.rs`, and LNX-2 with a real nested mount); this test runs as an
+/// ordinary user, who cannot mount one.
+#[test]
+fn a_development_folder_is_made_and_checked_in_the_release_directory_and_holds_its_lock() {
+    let Some(tree) = Tree::accepted() else { return };
+    let store = tree.dir("secrets", 0o700);
+    let opened = tree.open(&store).unwrap();
+    let folder = opened.development_folder("dev-keys").unwrap();
+    assert_eq!(mode(&store.join("dev-keys")), 0o700);
+    let secrets = folder
+        .store(&["host-secrets", "instance"], Sharing::Exclusive, "")
+        .unwrap();
+    secrets.add(&name("registry"), b"registry key").unwrap();
+    assert_eq!(
+        fs::read(store.join("dev-keys/host-secrets/instance/registry")).unwrap(),
+        b"registry key"
+    );
+    // The folder and its store hold the release directory: no second host opens it, until
+    // the last of them is gone.
+    drop((folder, opened));
+    assert_eq!(refusal(tree.open(&store)), (RootRule::InUse, store.clone()));
+    drop(secrets);
+    let opened = tree.open(&store).unwrap();
+    // Found again, as it is.
+    let folder = opened.development_folder("dev-keys").unwrap();
+    assert_eq!(
+        loaded(
+            &folder
+                .store(&["host-secrets", "instance"], Sharing::Exclusive, "")
+                .unwrap(),
+            "registry"
+        )
+        .unwrap(),
+        b"registry key"
+    );
+    drop(folder);
+
+    // Not a folder name: an item store's own directory, the lock, a path, nothing.
+    let before = listing(&store);
+    for name in [
+        "office-keys",
+        "host-secrets",
+        ".lock",
+        "a/b",
+        "",
+        "lost+found",
+        "..",
+    ] {
+        assert_eq!(
+            opened.development_folder(name).err(),
+            Some(CredentialError::InvalidName),
+            "{name}"
+        );
+    }
+    assert_eq!(listing(&store), before);
+
+    // A link to a folder elsewhere is not followed, and nothing is made there; nor is a
+    // file taken for a folder.
+    let elsewhere = tree.dir("elsewhere", 0o700);
+    symlink(&elsewhere, store.join("linked")).unwrap();
+    fs::write(store.join("plain"), b"").unwrap();
+    for name in ["linked", "plain"] {
+        assert_eq!(
+            refusal(opened.development_folder(name)),
+            (RootRule::DevelopmentFolderNotADirectory, store.join(name)),
+            "{name}"
+        );
+    }
+    assert!(listing(&elsewhere).is_empty());
+
+    // A folder open to its group is refused and left as it is.
+    let open = store.join("open");
+    mkdir(&open, 0o750);
+    assert_eq!(
+        refusal(opened.development_folder("open")),
+        (RootRule::DevelopmentFolderMode, open.clone())
+    );
+    assert_eq!(mode(&open), 0o750);
 }

@@ -44,6 +44,27 @@ impl ReleaseRoot {
     pub(super) fn store(&self, _items: &ReleaseItems<'_>) -> Result<Store, CredentialError> {
         match *self {}
     }
+
+    pub(super) fn development_folder(
+        &self,
+        _name: &str,
+    ) -> Result<DevelopmentFolder, CredentialError> {
+        match *self {}
+    }
+}
+
+/// No release directory is opened, so there is no development key folder in one.
+pub(super) enum DevelopmentFolder {}
+
+impl DevelopmentFolder {
+    pub(super) fn store(
+        &self,
+        _below: &[&str],
+        _sharing: super::Sharing,
+        _suffix: &str,
+    ) -> Result<Store, CredentialError> {
+        match *self {}
+    }
 }
 
 impl Store {

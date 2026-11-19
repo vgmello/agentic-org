@@ -265,6 +265,130 @@ impl ReleaseRoot {
             _root: Some(Arc::clone(&self.0)),
         })
     }
+
+    /// The development key folder `name` directly in the release directory (`release.rs`
+    /// says what is checked): made if it is missing, then opened from the release
+    /// directory's descriptor without following a link, and judged on its mount first.
+    pub(in crate::credentials) fn development_folder(
+        &self,
+        name: &str,
+    ) -> Result<DevelopmentFolder, CredentialError> {
+        let root = &self.0;
+        // A store's own directory, the lock and anything not an item name are not
+        // development folders: nothing is made for them.
+        if !valid_name(name) || root.stores.iter().any(|(directory, _)| directory == name) {
+            return Err(CredentialError::InvalidName);
+        }
+        let path = root.path.join(name);
+        let refuse = |rule| refused(rule, &path);
+        let unavailable =
+            |error: io::Error| refuse(RootRule::DevelopmentFolderUnavailable(error.kind()));
+        let c_folder = c_name(OsStr::new(name)).map_err(unavailable)?;
+        // SAFETY: the held release directory and a checked single name. A name that is
+        // taken, by a folder, a link or another volume's mount point, makes nothing.
+        if unsafe { libc::mkdirat(root.directory.as_raw_fd(), c_folder.as_ptr(), 0o700) } == 0 {
+            // Made by this call: its mode is set whatever the process's mask took away,
+            // and the release directory is flushed so that it is still there after a
+            // power loss. An existing folder is never changed.
+            // SAFETY: as above, on the folder this call just made.
+            if unsafe { libc::fchmodat(root.directory.as_raw_fd(), c_folder.as_ptr(), 0o700, 0) }
+                != 0
+            {
+                return Err(unavailable(io::Error::last_os_error()));
+            }
+            root.directory.sync_all().map_err(unavailable)?;
+        } else {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::AlreadyExists {
+                return Err(unavailable(error));
+            }
+        }
+        // To judge it, not to read it: a folder this user cannot read is judged too.
+        let held =
+            open_at(root.directory.as_fd(), OsStr::new(name), libc::O_PATH).map_err(|error| {
+                match error.raw_os_error() {
+                    Some(libc::ELOOP | libc::ENOTDIR) => {
+                        refuse(RootRule::DevelopmentFolderNotADirectory)
+                    }
+                    _ => unavailable(error),
+                }
+            })?;
+        // Its mount before anything else: another volume mounted there is refused
+        // whatever it holds and whoever owns it.
+        rules::same_mount(
+            mount_id(held.as_fd()).map_err(unavailable)?,
+            mount_id(root.directory.as_fd()).map_err(unavailable)?,
+        )
+        .map_err(refuse)?;
+        let found = held.metadata().map_err(unavailable)?;
+        // SAFETY: no arguments and no side effects; it cannot fail.
+        rules::development_folder(found.uid(), found.mode(), unsafe { libc::geteuid() })
+            .map_err(refuse)?;
+        let directory =
+            open_at(held.as_fd(), OsStr::new("."), libc::O_RDONLY).map_err(unavailable)?;
+        Ok(DevelopmentFolder {
+            directory,
+            path,
+            root: Arc::clone(root),
+        })
+    }
+}
+
+/// A development key folder in a release directory, checked and held, with the release
+/// directory's lock (`release.rs`).
+pub(in crate::credentials) struct DevelopmentFolder {
+    /// The folder, held since it was checked.
+    directory: File,
+    /// Its path: the release directory's, and the folder's single name.
+    path: PathBuf,
+    /// The release directory it is in, whose lock it and its stores hold.
+    root: Arc<Root>,
+}
+
+impl DevelopmentFolder {
+    pub(in crate::credentials) fn store(
+        &self,
+        below: &[&str],
+        sharing: crate::credentials::Sharing,
+        suffix: &str,
+    ) -> Result<super::Store, CredentialError> {
+        // The engine opens each directory below the folder relative to this descriptor,
+        // without following a link, and checks it as it checks every directory.
+        let store = directory::Store::below(
+            self.directory.try_clone()?,
+            self.path.clone(),
+            below,
+            true,
+            sharing,
+            suffix,
+        )?;
+        Ok(super::Store {
+            directory: store,
+            _root: Some(Arc::clone(&self.root)),
+        })
+    }
+}
+
+/// The id of the mount the directory `fd` is on, as `statx` gives it (`STATX_MNT_ID`), or
+/// `None` where this kernel does not say (before Linux 5.8).
+fn mount_id(fd: BorrowedFd<'_>) -> io::Result<Option<u64>> {
+    // SAFETY: an all-zero `statx` is a valid value for the call to overwrite.
+    let mut stat: libc::statx = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid descriptor, an empty NUL-terminated path with `AT_EMPTY_PATH`
+    // (the descriptor itself is examined), and a valid out-pointer.
+    let status = unsafe {
+        libc::statx(
+            fd.as_raw_fd(),
+            c"".as_ptr(),
+            libc::AT_EMPTY_PATH,
+            libc::STATX_MNT_ID,
+            &mut stat,
+        )
+    };
+    if status != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((stat.stx_mask & libc::STATX_MNT_ID != 0).then_some(stat.stx_mnt_id))
 }
 
 fn refused(rule: RootRule, path: &Path) -> CredentialError {

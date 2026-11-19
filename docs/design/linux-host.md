@@ -464,10 +464,14 @@ checks and a lock.
   directly in the recorded secrets volume (`/secrets/dev-keys` in the image): a host
   in the foreground mode refuses, before anything is written, a development key folder
   anywhere else (in the data volume, a copy of which would then hold the keys), one
-  reached through a link, or one on another filesystem mounted inside the volume; and
-  a foreground record that names no secrets volume does not start on Linux. Known limit:
-  the development stores reopen that folder by its path after the check, which only
-  the service user, who can read the keys anyway, could exploit.
+  reached through a link, or another volume mounted on it, whatever its filesystem
+  (the platform's `ReleaseRoot::development_folder` compares the kernel's mount ids,
+  `statx` `STATX_MNT_ID`, since two named volumes on one filesystem share a device
+  number); and a foreground record that names no secrets volume does not start on
+  Linux. The host's own development custody is opened from the checked folder's
+  descriptor and holds the volume's lock. Known limit: the office keys' development
+  store reopens that folder by its path when it is first used, which only the service
+  user, who can read the keys anyway, could exploit.
 
 **Built in X3** (`org_platform_host::credentials`: `protected_store()` answers
 `Keychain` or `ReleaseDirectory`; `release_directory(ReleaseDirectory { path,
@@ -826,7 +830,11 @@ the product serves no HTTPS on any system yet.
   sandboxes need (section 3.5). The `agentic-org` AppArmor profile is
   `docker-default` plus `userns`, for Docker hosts that restrict unprivileged user
   namespaces through AppArmor (Ubuntu 24.04 and later); on a Docker host without
-  AppArmor that option is left out. `apparmor=unconfined` and `--privileged` are
+  AppArmor that option is left out. Being a static file, it admits signals from an
+  unconfined Docker daemon and the Docker snap's (`snap.docker.dockerd`) where Moby's
+  template names the running daemon's label; another daemon label is added by the
+  operator (`deploy/container/README.md`). It has not been loaded on a host that
+  enforces AppArmor: `docker stop` under it is unverified. `apparmor=unconfined` and `--privileged` are
   never used.
 - **The first registration link.** Non-interactive setup prints none, and nothing is
   written to the container log. The administrator runs
