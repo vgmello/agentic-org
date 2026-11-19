@@ -15,7 +15,7 @@ Ask the owner before starting anything new.
 | --- | --- | --- | --- |
 | A1 to A4 (setup, registration, sign-in, create organization) | In progress | v1 (merged before 74865317) | Per their FEATURES rows. The browser-to-office path in A3's Build is not built: no browser request reaches an office yet |
 | B1a · office store core | Done | v1 (merged before 74865317) | — |
-| B1b · the office runs on the new store | Done, with narrowings recorded in FC-146 | v1 5f9941f1 | Real-host delete-runtime with office calls, and journal corruption or rollback, move to A5. Rewritten LNX-1 and LNX-2 step 10 not yet run on Linux |
+| B1b · the office runs on the new store | Done, with narrowings recorded in FC-146 | v1 5f9941f1 | Real-host delete-runtime with office calls, and journal corruption or rollback, move to A5. Rewritten LNX-2 including step 10 passed in CI's container job on GitHub's Ubuntu runner (run 44552811792); rewritten LNX-1 not yet run on Linux |
 | B2 · organization, teams and people | Blocked: owner paused new features | branch `wip/b2-1-checkpoint` (does not build); plan `.agent-kit/slices/b2-organization-teams-people-plan.md` | Owner questions Q8 (who builds browser-to-office) and Q9 (move agent-placed checks to C3) |
 | B3, A5, O1, A6, B4, B6 | Not started | — | In `docs/implementation-plan.md` order, after B2 |
 | C1 to C5 (agents) | Not started here | PR 17 (another agent builds the runtime) | Owner decides; reviewed on PR 17 |
@@ -38,6 +38,8 @@ are at the end of the B2 plan.
 - PR 17: the rename can merge; the ADR-0032 docs have four blocking issues (review on the PR).
 
 ## Small follow-ups (not new features)
+
+- CI on `v1` is red in jobs that were already red before B1b (checked on c60bcada, 58a44b2b, 701d8460): `rust (macos-15)` (`release::store` tests, `unsupported_bootstrap_never_creates_partial_offices_or_service_state`), Secret scanning (30 findings across the whole history), Dependency security (frontend audit). Browser CSP jobs are the UI stream's.
 
 - `docs/design/office-host-boundary.md` still says HTTPS is unavailable (X7 added it).
 - Kit: stale manifest hash for `skill-catalog.json` (needs the owner's overlay override), old review-run label, catalog rationale cites "HEAD:".
