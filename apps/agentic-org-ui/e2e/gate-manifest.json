@@ -471,7 +471,8 @@
 				"focus-primitives.spec.ts",
 				"focus-primitives-default-font.ts",
 				"shot.spec.ts",
-				"member-profile.spec.ts"
+				"member-profile.spec.ts",
+				"roles.spec.ts"
 			],
 			"sources": [
 				"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
