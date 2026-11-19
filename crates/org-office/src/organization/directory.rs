@@ -15,7 +15,15 @@ use org_proto::org::{
 };
 use org_proto::{ApiError, ErrorCode};
 
-use super::policy::{is_offboarded, name_key};
+use super::names::name_key;
+
+/// Whether `member` is an agent that was offboarded: a record that is history.
+fn is_offboarded(member: &Member) -> bool {
+    member
+        .agent
+        .as_ref()
+        .is_some_and(|agent| agent.status == AgentStatus::Offboarded)
+}
 use crate::time;
 
 /// What the office knows about one member right now. Runtime data, never in the organization's

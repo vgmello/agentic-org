@@ -2,8 +2,9 @@
 //! the family's answers mapped back. Pure: the office hands in a function that runs the
 //! operation on its store, so this names no store and no engine.
 //!
-//! Before B2 the office answers `team.create` from the family; every other organization
-//! command is `unsupported` and is not mapped here.
+//! Until B2.2 moves the wire to one home team, the office answers `team.create` from the
+//! family; every other organization command is `unsupported` and is not mapped here. A
+//! top-level team is refused on the wire until then, though the family creates one.
 
 use org_proto::{
     org::{CommandAccepted, CommandStatus, TeamCreateParams},
@@ -12,7 +13,7 @@ use org_proto::{
 use org_store::{Actor, Id, Outcome, Reply, StoreError};
 
 use super::{
-    features::{CreateTeam, TeamCreated, TeamRefusal, TeamRejected, TeamRejection},
+    features::{CreateTeam, OrgRejection, RejectCode, TeamCreated, NOT_AUTHORIZED},
     operation_id, records, snapshot,
 };
 
@@ -40,16 +41,13 @@ pub fn team_create_request(
         .map_err(|_| invalid("command_id is not a ULID in its canonical form"))?;
     // Every employee's ID is a stable ID: a member with another is nobody on record.
     let Some(by) = stable_id(member) else {
-        return Err(refused(
-            ErrorCode::NotAuthorized,
-            TeamRefusal::NotAuthorized.reason(),
-        ));
+        return Err(refused(ErrorCode::NotAuthorized, NOT_AUTHORIZED));
     };
     let Some(team) = stable_id(&params.team_id) else {
         return Err(invalid("team_id is not a UUIDv7 in lowercase text"));
     };
     let Some(parent) = &params.owner_team_id else {
-        return Err(invalid("a top-level team arrives with B2"));
+        return Err(invalid("a top-level team arrives on the wire with B2.2"));
     };
     let Some(parent) = stable_id(parent) else {
         return Err(invalid("owner_team_id is not a UUIDv7 in lowercase text"));
@@ -60,7 +58,7 @@ pub fn team_create_request(
         command: CreateTeam {
             id: team,
             name: params.name.clone(),
-            parent,
+            parent: Some(parent),
         },
     })
 }
@@ -69,6 +67,20 @@ fn stable_id(text: &str) -> Option<Id> {
     records::is_stable_id(text)
         .then(|| Id::parse(text).ok())
         .flatten()
+}
+
+/// The protocol's code of a rule's refusal.
+pub fn rejection_code(code: RejectCode) -> ErrorCode {
+    match code {
+        RejectCode::NotFound => ErrorCode::NotFound,
+        RejectCode::InvalidRequest => ErrorCode::InvalidRequest,
+        RejectCode::InvalidName => ErrorCode::InvalidName,
+        RejectCode::OwnerProtected => ErrorCode::OwnerProtected,
+        RejectCode::Cycle => ErrorCode::Cycle,
+        RejectCode::NotEmpty => ErrorCode::NotEmpty,
+        RejectCode::Conflict => ErrorCode::Conflict,
+        RejectCode::AlreadyExists => ErrorCode::AlreadyExists,
+    }
 }
 
 /// The protocol's answer to `team.create` from the store's. A failure of the store itself
@@ -85,12 +97,10 @@ pub fn team_create_answer(
             return Ok(Err(refused(ErrorCode::InvalidRequest, message)));
         }
         Err(StoreError::Invalid(reason)) => {
-            let code = match TeamRefusal::of(&reason) {
-                Some(TeamRefusal::NoSuchParent) => ErrorCode::NotFound,
-                Some(TeamRefusal::NotAuthorized) => ErrorCode::NotAuthorized,
-                Some(TeamRefusal::IdInUse) => ErrorCode::AlreadyExists,
-                Some(TeamRefusal::BadName) => ErrorCode::InvalidName,
-                None => ErrorCode::InvalidRequest,
+            let code = if reason == NOT_AUTHORIZED {
+                ErrorCode::NotAuthorized
+            } else {
+                ErrorCode::InvalidRequest
             };
             return Ok(Err(ApiError::new(code, reason)));
         }
@@ -107,12 +117,10 @@ pub fn team_create_answer(
             }))
         }
         Outcome::Rejected => {
-            let rejected: TeamRejected =
+            let rejected: OrgRejection =
                 serde_json::from_slice(&reply.bytes).map_err(|_| unreadable("team.create"))?;
-            let message = match rejected.rejected {
-                TeamRejection::ParentArchived => "the parent team is archived",
-            };
-            Ok(Err(refused(ErrorCode::Conflict, message)))
+            let code = rejection_code(rejected.code);
+            Ok(Err(ApiError::new(code, rejected.message)))
         }
     }
 }
@@ -161,7 +169,7 @@ mod tests {
             command: CreateTeam {
                 id: id(0x21),
                 name: "Core".into(),
-                parent: id(0x11),
+                parent: Some(id(0x11)),
             },
         };
         assert_eq!(request, expected);
@@ -218,29 +226,33 @@ mod tests {
         };
         assert_eq!(committed, Ok(Ok(accepted)));
 
-        let archived = TeamRejected {
-            rejected: TeamRejection::ParentArchived,
+        let rejection = |code: RejectCode| OrgRejection {
+            code,
+            message: "the parent team is archived".into(),
         };
-        let archived = serde_json::to_vec(&archived).unwrap();
-        let rejected = team_create_answer(reply(Outcome::Rejected, &archived));
-        assert_eq!(rejected.unwrap().unwrap_err().code, ErrorCode::Conflict);
+        for (code, expected) in [
+            (RejectCode::NotFound, ErrorCode::NotFound),
+            (RejectCode::InvalidRequest, ErrorCode::InvalidRequest),
+            (RejectCode::InvalidName, ErrorCode::InvalidName),
+            (RejectCode::OwnerProtected, ErrorCode::OwnerProtected),
+            (RejectCode::Cycle, ErrorCode::Cycle),
+            (RejectCode::NotEmpty, ErrorCode::NotEmpty),
+            (RejectCode::Conflict, ErrorCode::Conflict),
+            (RejectCode::AlreadyExists, ErrorCode::AlreadyExists),
+        ] {
+            let bytes = serde_json::to_vec(&rejection(code)).unwrap();
+            let rejected = team_create_answer(reply(Outcome::Rejected, &bytes));
+            let error = rejected.unwrap().unwrap_err();
+            assert_eq!(error.code, expected);
+            assert_eq!(error.message, "the parent team is archived");
+        }
 
         let code = |error: StoreError| team_create_answer(Err(error)).unwrap().unwrap_err().code;
         assert_eq!(code(StoreError::Conflict), ErrorCode::InvalidRequest);
-        let invalid = |refusal: TeamRefusal| StoreError::invalid(refusal.reason());
         assert_eq!(
-            code(invalid(TeamRefusal::NoSuchParent)),
-            ErrorCode::NotFound
-        );
-        assert_eq!(
-            code(invalid(TeamRefusal::NotAuthorized)),
+            code(StoreError::invalid(NOT_AUTHORIZED)),
             ErrorCode::NotAuthorized
         );
-        assert_eq!(
-            code(invalid(TeamRefusal::IdInUse)),
-            ErrorCode::AlreadyExists
-        );
-        assert_eq!(code(invalid(TeamRefusal::BadName)), ErrorCode::InvalidName);
         let other = StoreError::invalid("the team tree is too deep");
         let answer = team_create_answer(Err(other)).unwrap().unwrap_err();
         assert_eq!(answer.code, ErrorCode::InvalidRequest);
@@ -262,13 +274,5 @@ mod tests {
             matches!(garbled, Err(StoreError::Internal(_))),
             "{garbled:?}"
         );
-    }
-
-    #[test]
-    fn every_refusal_reason_is_its_own() {
-        for refusal in TeamRefusal::ALL {
-            assert_eq!(TeamRefusal::of(refusal.reason()), Some(refusal));
-        }
-        assert_eq!(TeamRefusal::of("no such parent"), None);
     }
 }

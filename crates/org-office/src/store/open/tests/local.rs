@@ -491,6 +491,7 @@ fn wire_create(
         store.run(CreateTeamOp {
             operation_id: request.operation_id,
             here: identity(),
+            owner: id(CREATOR),
             by: request.by,
             command: request.command,
         })
