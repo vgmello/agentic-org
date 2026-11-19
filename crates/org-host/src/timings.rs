@@ -42,6 +42,15 @@ pub struct Timings {
     pub exit_poll: Duration,
 }
 
+impl Timings {
+    /// How long after a stop is asked for every wait of it has ended: the servers' grace,
+    /// then the margin the host gives its own threads after it. A host's last steps (removing
+    /// `host.sock`, releasing `host.lock`) follow at once.
+    pub fn stop_ends_within(&self) -> Duration {
+        self.shutdown_grace + crate::THREAD_END_MARGIN
+    }
+}
+
 impl Default for Timings {
     fn default() -> Self {
         Self {

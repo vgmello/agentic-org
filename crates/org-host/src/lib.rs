@@ -92,6 +92,7 @@ mod service;
 mod sessions;
 pub mod setup_flow;
 pub mod signals;
+pub mod stop;
 mod supervisor;
 mod sync;
 #[cfg(test)]
@@ -131,6 +132,7 @@ pub const HOST_SIGNING_ID: &str = "com.vgmello.agentic-org.org-office-host";
 pub use crate::error::HostError;
 pub use crate::logs::DEFAULT_LOG_MAX_BYTES;
 pub use crate::timings::Timings;
+pub use crate::web::BrowserListener;
 
 /// The office server's program name, looked for next to the host's own executable.
 pub const SERVER_PROGRAM_NAME: &str = "agentic-org-office";
@@ -169,6 +171,11 @@ pub struct Config {
     pub log_max_bytes: u64,
     /// Client connections beyond this are closed on arrival.
     pub max_connections: usize,
+    /// The browser listener setup bound for this instance, held since setup checked its
+    /// address (`setup_flow::run` returns it in the foreground mode): the web process's
+    /// first start serves on it instead of binding the address again. A listener that is
+    /// not on the instance's address and port is refused by that start.
+    pub browser_listener: Option<BrowserListener>,
     /// Signing policy reserved for CLI sessions in 2b.3; it enables no retired host calls.
     app_team_id: Option<String>,
     /// Debug builds only (release builds don't have the field): an unsigned development app
@@ -214,6 +221,7 @@ impl Config {
             timings: Timings::default(),
             log_max_bytes: DEFAULT_LOG_MAX_BYTES,
             max_connections: 64,
+            browser_listener: None,
             app_team_id: app_team_id.map(str::to_owned),
             #[cfg(debug_assertions)]
             dev_app_path: None,
@@ -843,9 +851,14 @@ impl Host {
         if let Some(provisioning) = &creating {
             provisioning.start(Arc::clone(&offices) as Arc<dyn provisioning::Hq>);
         }
+        let held = config
+            .browser_listener
+            .take()
+            .and_then(|listener| listener.take());
         let web = web_config.and_then(|web_config| {
             match web::Supervisor::start(
                 web_config,
+                held,
                 service.clone(),
                 Arc::clone(&gateway_state),
                 service.web_eligibility(),
@@ -899,15 +912,24 @@ impl Host {
     /// deadline fixed then, the servers' grace period, or a margin after it
     /// ([`THREAD_END_MARGIN`], the supervisor's for its short runs, provisioning's for its
     /// creation threads), whatever a server, the web process or a request does.
-    pub fn shutdown(mut self) {
-        self.stop();
+    pub fn shutdown(self) {
+        self.shutdown_from(std::time::Instant::now());
     }
 
-    fn stop(&mut self) {
+    /// [`Host::shutdown`] of a stop asked for at `asked`, which may be before this host
+    /// finished starting (a signal taken while it started): the stop's deadline is fixed from
+    /// then, so it ends as it would have had the host been running when it was asked for.
+    /// Every wait of a stop asked for longer ago than [`Timings::stop_ends_within`] ends at
+    /// once: its servers are killed without a grace.
+    pub fn shutdown_from(mut self, asked: std::time::Instant) {
+        self.stop(asked);
+    }
+
+    fn stop(&mut self, asked: std::time::Instant) {
         let Some(mut listener) = self.listener.take() else {
             return;
         };
-        let deadline = std::time::Instant::now() + self.shutdown_grace;
+        let deadline = asked + self.shutdown_grace;
         let until = deadline + THREAD_END_MARGIN;
         listener.close();
         // Its start or its run ends at once: the control connection (and its sessions)
@@ -952,7 +974,7 @@ impl Host {
 
 impl Drop for Host {
     fn drop(&mut self) {
-        self.stop();
+        self.stop(std::time::Instant::now());
     }
 }
 

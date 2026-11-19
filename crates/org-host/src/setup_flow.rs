@@ -215,27 +215,31 @@ fn open_as_the_host_will(
 /// - the address must be free now, in either service mode: a registered service is started
 ///   by setup, and a foreground instance is served by this process right after it. The
 ///   address is reserved with the instance and never changes, so a port another program
-///   holds is refused here and not found by the web process after the instance was set up;
+///   holds is refused here and not found by the web process after the instance was set up.
+///   The address is bound here and returned, so it stays this process's while the instance
+///   is reserved with it (X5 review, third round, P2): no other program can take it between
+///   this check and the reservation. A foreground setup hands it to the web process's first
+///   start ([`run`]); a registered one keeps it until it registers the service;
 /// - the credential directory the file names must pass the host's own check. The check
 ///   compares it with the data folder, which is made for the question when it is missing
 ///   and removed again before this returns, whatever the answer. The data folder is opened
 ///   as a directory only, so a path that is something else (a FIFO) is refused, never
 ///   waited on.
-fn preflight(input: &Input) -> Result<(), String> {
+fn preflight(input: &Input) -> Result<crate::BrowserListener, String> {
     use std::os::fd::AsFd;
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::DirBuilderExt;
     let listen = &input.listen;
-    if std::net::TcpListener::bind((listen.address(), listen.port())).is_err() {
+    let Ok(held) = crate::BrowserListener::bind(listen) else {
         return Err(format!(
             "port {} on {} is in use by another program; choose another port in the file, or \
              stop that program; nothing was saved",
             listen.port(),
             listen.address()
         ));
-    }
+    };
     let Some(credentials) = &input.credentials else {
-        return Ok(());
+        return Ok(held);
     };
     let made = match std::fs::DirBuilder::new().mode(0o700).create(&input.root) {
         Ok(()) => true,
@@ -264,7 +268,7 @@ fn preflight(input: &Input) -> Result<(), String> {
         let _ = std::fs::remove_dir(&input.root);
     }
     checked
-        .map(drop)
+        .map(|_| held)
         .map_err(|refused| format!("{refused}; nothing was saved"))
 }
 
@@ -830,7 +834,16 @@ pub fn platform(foreground: bool) -> Result<Platform, String> {
 }
 
 /// Runs setup for `request`. See the module docs for the steps.
-pub fn run(platform: &Platform, request: Request<'_>, out: &mut dyn Write) -> Result<(), String> {
+///
+/// A foreground setup from a file that reserved the instance in this run returns the
+/// instance's browser listener, bound since setup checked the address: the process that
+/// serves the instance next ([`crate::Config::browser_listener`]) serves on it, so the port
+/// stays this instance's from the check on. Every other run returns none.
+pub fn run(
+    platform: &Platform,
+    request: Request<'_>,
+    out: &mut dyn Write,
+) -> Result<Option<crate::BrowserListener>, String> {
     // A release build without a pinned runtime refuses before any path is resolved or made.
     release_pin()?;
     service_gate(platform, &request)?;
@@ -898,7 +911,7 @@ pub(crate) fn run_at(
     platform: &Platform,
     mut request: Request<'_>,
     out: &mut dyn Write,
-) -> Result<(), String> {
+) -> Result<Option<crate::BrowserListener>, String> {
     // 1. Platform gate. [`run`] has already asked the service manager whether it answers,
     // before any folder was made.
     let pin = release_pin()?;
@@ -928,6 +941,9 @@ pub(crate) fn run_at(
     // Whether this run froze the record from a file: if a later step of the reservation
     // refuses, the record is taken away again, so that nothing this run saved remains.
     let mut froze_from_file = false;
+    // The address of a file's configuration, held from its check until the instance is
+    // reserved with it, and beyond (`preflight`).
+    let mut held = None;
     let mut record = match existing {
         Some(record)
             if configured
@@ -951,13 +967,18 @@ pub(crate) fn run_at(
                     record.input.listen.port()
                 ));
             }
+            // The same file again, after a run that froze the record and stopped before it
+            // reserved the instance: asked again, and its address held, as on a first run.
+            if configured.is_some() && record.instance_id.is_none() {
+                held = Some(preflight(&record.input)?);
+            }
             record
         }
         None if configured.is_some() => {
             // Offline: nothing is asked and nothing is fetched. The address is the file's.
             let input = configured.expect("checked above");
             // Everything that can refuse this input is asked before anything is saved.
-            preflight(&input)?;
+            held = Some(preflight(&input)?);
             froze_from_file = true;
             journal
                 .freeze(input, true, pin)
@@ -1138,7 +1159,7 @@ pub(crate) fn run_at(
     // for, and no link is asked for: whoever runs `serve` is the supervisor, and the
     // administrator's first link comes from `admin reset`.
     if record.input.service == Service::Foreground {
-        return say(
+        say(
             out,
             format!(
                 "Service: none is registered (foreground mode). Instance \"{shown}\" runs \
@@ -1147,8 +1168,11 @@ pub(crate) fn run_at(
                 reset_hint(name),
                 user_name()
             ),
-        );
+        )?;
+        return Ok(held);
     }
+    // The service binds the address itself once it is started.
+    drop(held);
     let service_id = service_id(&instance_id);
     let unit = Unit {
         instance_id: service_id.clone(),
@@ -1205,7 +1229,8 @@ pub(crate) fn run_at(
         return say(
             out,
             running_with_administrator(shown, record.input.listen.origin().as_str()),
-        );
+        )
+        .map(|()| None);
     }
     say(out, "Instance ready. It has no administrator yet.")?;
     // The link is shown only in a terminal; noninteractive setup does not ask for it.
@@ -1227,7 +1252,7 @@ pub(crate) fn run_at(
             .map_err(|e| fail("saving setup", e))?;
         result
     };
-    show_link(out, result, name, record.input.listen.origin())
+    show_link(out, result, name, record.input.listen.origin()).map(|()| None)
 }
 
 /// What setup and the service commands say when no service manager can register a service

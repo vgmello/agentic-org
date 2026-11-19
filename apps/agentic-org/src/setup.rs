@@ -102,7 +102,7 @@ fn run_as(
         configuration: None,
     };
     let mut out = std::io::stdout().lock();
-    setup_flow::run(&platform, request, &mut out)
+    setup_flow::run(&platform, request, &mut out).map(drop)
 }
 
 fn own_program() -> Result<std::path::PathBuf, String> {
@@ -117,16 +117,20 @@ fn own_program() -> Result<std::path::PathBuf, String> {
 /// differs from what the instance was set up with is refused. The caller has already
 /// refused a user who may not own the instance.
 pub(crate) fn configured(file: &std::path::Path, name: Option<&str>) -> Result<(), String> {
-    apply(setup_flow::configuration(file)?, name)
+    apply(setup_flow::configuration(file)?, name).map(drop)
 }
 
 /// [`configured`] for `serve --setup`: the file must set up the foreground mode, in which
 /// nothing is registered and the caller is the service. A file that sets up a registered
 /// service is refused before anything is changed: its service manager runs it.
+///
+/// When this run reserved the instance, it returns the instance's browser listener, bound
+/// since setup checked the address, for the host the caller starts next
+/// ([`org_host::Config::browser_listener`]).
 pub(crate) fn configured_foreground(
     file: &std::path::Path,
     name: Option<&str>,
-) -> Result<(), String> {
+) -> Result<Option<org_host::BrowserListener>, String> {
     let configuration = setup_flow::configuration(file)?;
     if !configuration.foreground() {
         return Err(format!(
@@ -138,7 +142,10 @@ pub(crate) fn configured_foreground(
     apply(configuration, name)
 }
 
-fn apply(configuration: setup_flow::Configuration, name: Option<&str>) -> Result<(), String> {
+fn apply(
+    configuration: setup_flow::Configuration,
+    name: Option<&str>,
+) -> Result<Option<org_host::BrowserListener>, String> {
     let platform = platform(configuration.foreground())?;
     let request = Request {
         name: name.map(str::to_owned),

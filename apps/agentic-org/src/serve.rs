@@ -38,14 +38,47 @@
 //! an ordinary user. The host then closes itself to the other processes of that user before
 //! it reads a key (no core dump; on Linux not dumpable).
 //!
+//! **The stop.** `serve` stops on SIGTERM or SIGINT, within 2.5 s of the signal (Linux host
+//! design, section 3.4), from the moment it blocks them, before setup runs: a thread takes
+//! the signal as soon as it arrives ([`Stop`]), so a stop that comes while the instance is
+//! set up or the host starts is never left waiting for them (X5 review, third round, P1).
+//! - A stop that comes before setup has ended: setup runs to its end (it waits for nothing
+//!   but the disk), and `serve` exits 0 without starting the host. Setup is idempotent and
+//!   what it did is kept: the next `serve --setup` with the same file continues it, and
+//!   then serves.
+//! - A stop that comes while the host starts: the host stops as soon as its start returns,
+//!   with the stop's deadline fixed from the signal ([`Host::shutdown_from`]), and `serve`
+//!   exits 0.
+//! - A start (setup, or the host's) that has not returned
+//!   [`stop_ends_within`](org_host::Timings::stop_ends_within) (2 s) after the signal (a
+//!   slow volume, say) ends the process there, with a line that says so, inside the 2.5 s.
+//!   Its status is 0 too: the stop was asked for, and a service manager must not take the
+//!   exit for a failure (launchd restarts a job that does not exit 0, and systemd marks the
+//!   unit failed). What setup or the start completed is kept: setup and every store the host
+//!   writes recover from a process that ends at any point, as from the container runtime's
+//!   own kill a moment later, and the next start continues. Office servers and the web
+//!   process started meanwhile end with it (the end of their input and of their control
+//!   connection).
+//! - Any stop that has not ended 2.4 s after the signal (the host's last steps waiting on a
+//!   slow volume, say) ends the process there, with status 0 and a line that says so.
+//! - Waiting for the signal failing (it cannot, in practice) is an error, whenever it is
+//!   found: `serve` stops what it started and exits non-zero.
+//!
 //! A debug build keeps the offices' secrets keys as files in the folder `ORG_OFFICE_DEV_KEY_DIR`
 //! names, never in the Keychain, and refuses to start without it. Release builds ignore the
 //! variable. The host never passes the variable on to its servers.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use org_host::signals::ShutdownSignals;
-use org_host::{Config, Host};
+use org_host::stop::Stop;
+use org_host::{BrowserListener, Config, Host};
+
+/// The longest a stop may take, from the signal to the process's end: the design's 2.5 s
+/// (Linux host design, section 3.4), less the moment the end itself takes. Past it the
+/// process ends at once (`org_host::stop`).
+const STOP_LIMIT: Duration = Duration::from_millis(2400);
 
 const USAGE: &str = "usage: agentic-org serve [--version] | --name <instance> | --setup <file> \
                      [--name <instance>] | (debug builds only) [--home <absolute path>] \
@@ -103,14 +136,9 @@ fn run_as(
     may_run_the_service()?;
     // Before any thread exists, so every thread inherits the mask.
     let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
-    // The foreground mode: set the instance up from the file if it is not set up yet. A
-    // stop signal that arrives meanwhile stays pending and ends the service below.
-    if let Some(file) = &args.setup {
-        crate::setup::configured_foreground(file, args.name.as_deref())?;
-    }
     let registered = args.name.is_some() || args.setup.is_some();
     let name = args.name.clone();
-    #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+    let setup = args.setup.clone();
     let mut config = config(args)?;
     // Release builds have no `dev_app_path` field: no development peer can be configured.
     #[cfg(debug_assertions)]
@@ -122,17 +150,104 @@ fn run_as(
             || std::env::current_exe().ok(),
         );
     }
-    let host = if registered {
-        Host::start_registered(config, name.as_deref())
-    } else {
-        Host::start(config)
+    let bound = config.timings.stop_ends_within();
+    let stop = Stop::watch(
+        move || signals.wait(),
+        bound,
+        STOP_LIMIT,
+        move |signal, starting| {
+            let line = if starting {
+                format!(
+                    "agentic-org: stopped by signal {signal} while starting, which had not \
+                     ended {bound:?} after it; the process ends now. What setup or the start \
+                     completed is kept, and the next start continues from it\n"
+                )
+            } else {
+                format!(
+                    "agentic-org: stopped by signal {signal}; the stop had not ended \
+                     {STOP_LIMIT:?} after it, and the process ends now\n"
+                )
+            };
+            // Neither std's stderr lock nor the exit handlers, which a thread blocked in a
+            // write (or in anything else) could hold up: one write, best effort, then the
+            // end of the process.
+            // SAFETY: a write of an owned buffer to fd 2, then `_exit`, which never returns.
+            unsafe {
+                libc::write(2, line.as_ptr().cast(), line.len());
+                libc::_exit(0)
+            }
+        },
+    )?;
+    serve_until_stopped(
+        &stop,
+        // The foreground mode: set the instance up from the file if it is not set up yet.
+        || match &setup {
+            Some(file) => crate::setup::configured_foreground(file, name.as_deref()),
+            None => Ok(None),
+        },
+        |held| {
+            config.browser_listener = held;
+            if registered {
+                Host::start_registered(config, name.as_deref())
+            } else {
+                Host::start(config)
+            }
+            .map_err(|e| e.to_string())
+        },
+        Host::shutdown_from,
+    )
+}
+
+/// What `serve` does once its stop is watched: `setup` (the foreground mode's, or nothing),
+/// then `start` (the host, given the browser listener setup held), and `shutdown` of what
+/// started once the stop is asked for, from when it was asked for. A stop that comes before
+/// `start` is called ends it there: nothing is started, and it exits 0. See the module docs.
+fn serve_until_stopped<H>(
+    stop: &Stop,
+    setup: impl FnOnce() -> Result<Option<BrowserListener>, String>,
+    start: impl FnOnce(Option<BrowserListener>) -> Result<H, String>,
+    shutdown: impl FnOnce(H, Instant),
+) -> Result<(), String> {
+    let started = start_unless_stopped(stop, setup, start);
+    // From here on the stop no longer bounds the start: it has ended, one way or another.
+    stop.settle();
+    let Some(host) = started.inspect_err(|_| stop.finish())? else {
+        stop.finish();
+        eprintln!(
+            "agentic-org: stopped before serving: the stop signal came while starting; what \
+             setup completed is kept, and the next start serves it"
+        );
+        return Ok(());
+    };
+    let stopped = match stop.wait() {
+        Ok(asked) => {
+            shutdown(host, asked);
+            Ok(())
+        }
+        Err(error) => {
+            shutdown(host, Instant::now());
+            Err(error)
+        }
+    };
+    stop.finish();
+    stopped
+}
+
+/// `setup`, then `start`, unless the stop is asked for before either: `None` then.
+fn start_unless_stopped<H>(
+    stop: &Stop,
+    setup: impl FnOnce() -> Result<Option<BrowserListener>, String>,
+    start: impl FnOnce(Option<BrowserListener>) -> Result<H, String>,
+) -> Result<Option<H>, String> {
+    if stop.asked()? {
+        return Ok(None);
     }
-    .map_err(|e| e.to_string())?;
-    let waited = signals.wait();
-    host.shutdown();
-    waited
-        .map(drop)
-        .map_err(|e| format!("waiting for a signal: {e}"))
+    let held = setup()?;
+    // A stop that came during setup: what setup did is kept, and nothing is started.
+    if stop.asked()? {
+        return Ok(None);
+    }
+    start(held).map(Some)
 }
 
 /// The unsigned development CLI peer the host's app policy admits. A debug build serving a
@@ -256,6 +371,7 @@ fn parse_args(args: impl IntoIterator<Item = String>, build: Build) -> Result<Ar
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_owned()).collect()
@@ -434,5 +550,187 @@ mod tests {
             dev_cli_peer(Build::Debug, false, Some(built_in.clone()), own),
             Some(built_in)
         );
+    }
+
+    /// A stop watched with a signal the test sends (`send`), and the overruns it recorded:
+    /// the signal's number and when.
+    #[allow(clippy::type_complexity)]
+    fn watched(
+        bound: Duration,
+    ) -> (
+        Stop,
+        std::sync::mpsc::Sender<i32>,
+        Arc<Mutex<Vec<(i32, Instant)>>>,
+    ) {
+        let (send, signal) = std::sync::mpsc::channel::<i32>();
+        let overruns = Arc::new(Mutex::new(Vec::new()));
+        let recording = Arc::clone(&overruns);
+        let stop = Stop::watch(
+            move || signal.recv().map_err(std::io::Error::other),
+            bound,
+            Duration::from_secs(30),
+            move |signal, _| recording.lock().unwrap().push((signal, Instant::now())),
+        )
+        .unwrap();
+        (stop, send, overruns)
+    }
+
+    /// Sends the stop and returns once the stop's thread has taken it, with a moment before.
+    fn stop_now(stop: &Stop, send: &std::sync::mpsc::Sender<i32>) -> Instant {
+        let before = Instant::now();
+        send.send(libc::SIGTERM).unwrap();
+        while !stop.asked().unwrap() {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        before
+    }
+
+    /// X5 review, third round, P1: a stop that comes while the instance is set up is taken
+    /// at once, and `serve` ends when setup returns, without starting the host: exit 0.
+    #[test]
+    fn a_stop_during_setup_ends_serve_without_starting_the_host() {
+        let (stop, send, overruns) = watched(Duration::from_secs(10));
+        let result = serve_until_stopped(
+            &stop,
+            || {
+                stop_now(&stop, &send);
+                Ok(None)
+            },
+            |_| -> Result<(), String> { panic!("the host started after the stop") },
+            |_, _| panic!("nothing started, so nothing is shut down"),
+        );
+        assert_eq!(result, Ok(()));
+        assert!(overruns.lock().unwrap().is_empty());
+    }
+
+    /// X5 review, third round, P1: a stop that comes while the host starts stops it as soon
+    /// as its start returns, with the stop's deadline fixed from the signal, not from then.
+    #[test]
+    fn a_stop_during_the_start_stops_the_host_from_when_it_was_asked() {
+        let (stop, send, overruns) = watched(Duration::from_secs(10));
+        let shut = Mutex::new(None);
+        let result = serve_until_stopped(
+            &stop,
+            || Ok(None),
+            |_| {
+                let before = stop_now(&stop, &send);
+                std::thread::sleep(Duration::from_millis(200));
+                Ok((before, Instant::now()))
+            },
+            |(before, started), asked| *shut.lock().unwrap() = Some((before, started, asked)),
+        );
+        assert_eq!(result, Ok(()));
+        let (before, started, asked) = shut.lock().unwrap().expect("the host was shut down");
+        assert!(asked >= before, "asked before the signal was sent");
+        assert!(
+            started.duration_since(asked) >= Duration::from_millis(200),
+            "the stop was dated from the end of the start, not from the signal"
+        );
+        assert!(overruns.lock().unwrap().is_empty());
+    }
+
+    /// Waiting for the signal failing is an error, before the start as after it: `serve`
+    /// stops what it started and says why, and never takes it for a stop that ends with 0.
+    #[test]
+    fn a_failed_wait_for_the_signal_is_an_error_not_a_stop() {
+        // The wait fails once `fail` is sent.
+        let failing = || {
+            let (fail, failed) = std::sync::mpsc::channel::<()>();
+            let stop = Stop::watch(
+                move || {
+                    let _ = failed.recv();
+                    Err(std::io::Error::other("no signals here"))
+                },
+                Duration::from_secs(10),
+                Duration::from_secs(10),
+                |_, _| panic!("no signal was taken, so nothing overran"),
+            )
+            .unwrap();
+            (stop, fail)
+        };
+        let (stop, fail) = failing();
+        fail.send(()).unwrap();
+        let until = Instant::now() + Duration::from_secs(10);
+        while stop.asked().is_ok() {
+            assert!(Instant::now() < until, "the failed wait was not reported");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let result = serve_until_stopped(
+            &stop,
+            || panic!("set up after the wait failed"),
+            |_| -> Result<(), String> { panic!("the host started after the wait failed") },
+            |_, _| panic!("nothing started, so nothing is shut down"),
+        );
+        assert_eq!(
+            result,
+            Err("waiting for a signal: no signals here".to_owned())
+        );
+
+        // Found once the host serves: it is shut down, and the error is returned.
+        let (stop, fail) = failing();
+        let shut = std::cell::Cell::new(false);
+        let result = serve_until_stopped(
+            &stop,
+            || Ok(None),
+            |_| {
+                fail.send(()).unwrap();
+                Ok(())
+            },
+            |(), _| shut.set(true),
+        );
+        assert!(shut.get(), "the host was left running");
+        assert_eq!(
+            result,
+            Err("waiting for a signal: no signals here".to_owned())
+        );
+    }
+
+    /// X5 review, third round, P1: a start that has not ended `bound` after the stop is
+    /// ended there (the composition's overrun exits the process); one that ends in time is
+    /// not, and neither is a host that serves when a stop comes after its start.
+    #[test]
+    fn a_start_that_outlasts_the_stop_s_bound_is_ended_at_the_bound() {
+        let bound = Duration::from_millis(200);
+        let (stop, send, overruns) = watched(bound);
+        let mut asked = None;
+        let result = serve_until_stopped(
+            &stop,
+            || {
+                asked = Some(stop_now(&stop, &send));
+                // Setup that does not end (a write that waits for a slow volume, say).
+                std::thread::sleep(Duration::from_millis(800));
+                Ok(None)
+            },
+            |_| -> Result<(), String> { panic!("the host started after the stop") },
+            |_, _| panic!("nothing started, so nothing is shut down"),
+        );
+        assert_eq!(result, Ok(()));
+        let asked = asked.unwrap();
+        let overruns = overruns.lock().unwrap().clone();
+        let [(signal, at)] = overruns[..] else {
+            panic!("one overrun, not {overruns:?}");
+        };
+        assert_eq!(signal, libc::SIGTERM);
+        let after = at.duration_since(asked);
+        assert!(after >= bound, "{after:?}");
+        assert!(after < Duration::from_millis(600), "{after:?}");
+
+        // A host that started before the stop: the stop is not a start's, and nothing ends
+        // it at the bound.
+        let (stop, send, overruns) = watched(Duration::from_millis(50));
+        let stopping = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            send.send(libc::SIGTERM).unwrap();
+        });
+        let result = serve_until_stopped(
+            &stop,
+            || Ok(None),
+            |_| Ok(()),
+            |(), _| std::thread::sleep(Duration::from_millis(200)),
+        );
+        assert_eq!(result, Ok(()));
+        stopping.join().unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(overruns.lock().unwrap().is_empty());
     }
 }

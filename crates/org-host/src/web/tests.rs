@@ -34,6 +34,7 @@ fn start(config: &Configuration, handler: Arc<dyn Handler>) -> io::Result<Runnin
     Running::start(
         config,
         &Image::new(&config.check, &config.program),
+        None,
         handler,
         START_WAIT,
         &GOING,
@@ -91,6 +92,7 @@ fn refused_web_start_never_becomes_ready() {
             critical_paths: vec![],
             release: None,
         },
+        None,
         Arc::new(NoOps),
         Arc::clone(&state),
         Arc::new(|| true),
@@ -919,6 +921,104 @@ fn a_child_that_exits_before_connecting_names_its_status() {
     );
 }
 
+/// X5 review, third round, P2: a start given the listener setup bound serves on that one
+/// socket and binds nothing. The port stays held throughout (here by a second handle on
+/// the same socket, as setup holds it), so a start that bound again would be refused
+/// ("bind the browser listener"); this one goes on to start its child. A listener on
+/// another address or port is refused before anything is spawned.
+#[test]
+fn a_start_given_a_bound_listener_serves_on_it_and_binds_nothing() {
+    let (_dir, config) = scripted_config("first-line\nexit 3\n", |_, _, _| Ok(None));
+    let held =
+        TcpListener::bind((config.listen.address(), config.listen.port())).expect("its port");
+    let holding = held.try_clone().unwrap();
+    let image = Image::new(&config.check, &config.program);
+    let message = match Running::start(
+        &config,
+        &image,
+        Some(held),
+        Arc::new(NoOps),
+        START_WAIT,
+        &GOING,
+    ) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("this start must be refused"),
+    };
+    assert!(
+        message.contains("the child exited before connecting (exit code 3)"),
+        "{message}"
+    );
+    drop(holding);
+
+    let elsewhere = TcpListener::bind("127.0.0.1:0").unwrap();
+    let message = match Running::start(
+        &config,
+        &image,
+        Some(elsewhere),
+        Arc::new(NoOps),
+        START_WAIT,
+        &GOING,
+    ) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("a listener on another port must be refused"),
+    };
+    assert!(
+        message.contains("the browser listener is not on its configured address and port"),
+        "{message}"
+    );
+}
+
+/// X5 review, third round, P1: when a start or a run of the web process ends (as at a
+/// host's stop), the web process is killed and reaped at once, whatever a request of its
+/// control connection is doing. A request still running (here held on a lock the test
+/// holds, as a write lock of the registry would be held) is waited for only afterwards.
+#[test]
+fn a_running_request_never_keeps_the_web_process_alive() {
+    struct Holds(Arc<Mutex<()>>, Arc<AtomicBool>);
+    impl Handler for Holds {
+        fn handle(&self, _: org_proto::Request, _: &Arc<Connection>, _: crate::peer::Received) {
+            self.1.store(true, Ordering::SeqCst);
+            drop(lock(&self.0));
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let held = Arc::new(Mutex::new(()));
+    let entered = Arc::new(AtomicBool::new(false));
+    let holding = lock(&held);
+    let (host, mut peer) = UnixStream::pair().unwrap();
+    let (transfer, _child) = UnixDatagram::pair().unwrap();
+    let handler = Arc::new(Holds(Arc::clone(&held), Arc::clone(&entered)));
+    let control = WebConnection::start(host, transfer, loopback(), handler).unwrap();
+    let spawned = held_child(dir.path());
+    let pid = spawned.child.id();
+    let running = Running {
+        control,
+        process: spawned.child,
+        _stdin: spawned.stdin,
+        layers: org_platform::confinement::Layers {
+            description: "nothing: a test's own child".to_owned(),
+            landlock_missing: false,
+        },
+        captured: Stderr::capture(spawned.stderr, "stderr-held-request-test").unwrap(),
+    };
+    let hello = org_proto::Request::new::<org_host_control::Hello>(1, &Default::default());
+    org_proto::frame::write_message(&mut peer, &hello.unwrap()).unwrap();
+    wait_for("the request to run", || entered.load(Ordering::SeqCst));
+
+    let stopping = thread::spawn(move || drop(running));
+    // Reaped: no process has the pid any more (a zombie still would).
+    // SAFETY: signal 0 only asks whether the pid exists.
+    let exists = || unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+    let until = Instant::now() + Duration::from_secs(5);
+    while exists() && Instant::now() < until {
+        thread::sleep(Duration::from_millis(5));
+    }
+    let reaped = !exists();
+    drop(holding);
+    stopping.join().unwrap();
+    assert!(reaped, "the web process lived on while a request of it ran");
+}
+
 /// Collects supervisor log lines.
 fn recording() -> (Arc<Mutex<Vec<String>>>, impl Fn(&str) + Send + 'static) {
     let lines = Arc::new(Mutex::new(Vec::new()));
@@ -1114,6 +1214,7 @@ fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
             critical_paths: vec![],
             release: None,
         },
+        None,
         Arc::new(NoOps),
         Arc::clone(&state),
         Arc::new(|| true),
@@ -1148,6 +1249,7 @@ fn the_supervisor_admits_a_published_plain_http_listener() {
             listen: published,
             ..startable(dir.path())
         },
+        None,
         Arc::new(NoOps),
         Arc::clone(&state),
         // Never eligible: the gate is what this asks about, and nothing is started.
@@ -1186,6 +1288,7 @@ fn the_supervisor_starts_only_where_the_web_process_can_be_confined() {
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let started = Supervisor::start(
         startable(dir.path()),
+        None,
         Arc::new(NoOps),
         Arc::clone(&state),
         Arc::new(|| false),
@@ -1276,6 +1379,7 @@ fn lnx_3_a_host_under_a_profile_starts_nothing_only_where_the_filter_is_refused(
         let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
         let started = Supervisor::start(
             startable(dir.path()),
+            None,
             Arc::new(NoOps),
             Arc::clone(&state),
             Arc::new(|| false),
@@ -1468,7 +1572,7 @@ fn a_stop_ends_a_start_that_waits_for_the_web_process_at_once() {
             thread::spawn(move || {
                 let image = Image::new(&config.check, &config.program);
                 supervise(&stop, &state, &|| true, Timing::PRODUCTION, &log, || {
-                    Running::start(&config, &image, Arc::new(NoOps), START_WAIT, &stop)
+                    Running::start(&config, &image, None, Arc::new(NoOps), START_WAIT, &stop)
                 })
             })
         };
@@ -1804,11 +1908,11 @@ fn one_web_admission_serves_every_start_and_is_never_built_again() {
     let config = unchecked(dir.path(), fake_program(dir.path(), "first-line\nexit 3\n"));
     let image = Image::new(&config.check, &config.program);
     let built = image.admission().unwrap();
-    let failed_start = || match Running::start(&config, &image, Arc::new(NoOps), START_WAIT, &GOING)
-    {
-        Err(error) => error.to_string(),
-        Ok(_) => panic!("the fake web process exits before it connects"),
-    };
+    let failed_start =
+        || match Running::start(&config, &image, None, Arc::new(NoOps), START_WAIT, &GOING) {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("the fake web process exits before it connects"),
+        };
     for _ in 0..2 {
         assert_eq!(failed_start(), EXITED);
         assert!(Arc::ptr_eq(&built, &image.admission().unwrap()));
@@ -1863,7 +1967,7 @@ fn a_web_admission_that_could_not_be_built_is_logged_and_asked_for_again() {
         (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
     };
     // No web process starts, whichever step notices.
-    let message = match Running::start(&config, &image, Arc::new(NoOps), START_WAIT, &GOING) {
+    let message = match Running::start(&config, &image, None, Arc::new(NoOps), START_WAIT, &GOING) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("a missing program was started"),
     };
@@ -1873,7 +1977,7 @@ fn a_web_admission_that_could_not_be_built_is_logged_and_asked_for_again() {
     );
     // The program appears: the next start builds the admission, or finds the one it has.
     fake_program(dir.path(), "first-line\nexit 3\n");
-    let message = match Running::start(&config, &image, Arc::new(NoOps), START_WAIT, &GOING) {
+    let message = match Running::start(&config, &image, None, Arc::new(NoOps), START_WAIT, &GOING) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("the fake web process exits before it connects"),
     };
@@ -2526,6 +2630,7 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
                     Running::start(
                         &web.config,
                         &image,
+                        None,
                         web.handler.clone(),
                         START_WAIT,
                         &stopping,
@@ -2645,7 +2750,16 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
             &|| true,
             timing,
             &log,
-            || Running::start(&web.config, &image, web.handler.clone(), START_WAIT, &GOING),
+            || {
+                Running::start(
+                    &web.config,
+                    &image,
+                    None,
+                    web.handler.clone(),
+                    START_WAIT,
+                    &GOING,
+                )
+            },
         );
         assert_eq!(*lock(&state), GatewayState::Failed);
         for line in lock(&lines).iter() {
