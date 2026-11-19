@@ -44,11 +44,22 @@ impl MessageUsage {
 }
 
 /// Pure sans-I/O protocol state machine for one Claude Code `stream-json` child process.
+///
+/// ## Known protocol race (Send vs. unsolicited background wake)
+/// Claude Code's `stream-json` stdin/stdout pipes are asynchronous: if the office invokes
+/// `Control::Send` right as Claude emits an unsolicited `system/init` for a completing
+/// background task/sub-agent, the session is already `Busy` (`solicited: true`), so Claude
+/// runs the wake first and queues the office's `user` message behind it. Because Claude's
+/// `result` frame does not carry a host-assigned request ID, the first `result` closes the
+/// open turn and the follow-up turn arrives on the next `system/init` as `solicited: false`
+/// (with a warning notice when `system/init` arrives mid-turn). The office must not rely on
+/// `solicited` alone to distinguish races when background tasks are active.
 pub(crate) struct ClaudeSession {
     expected_agent: String,
     expected_agent_description: String,
     expected_mode: ExpectedMode,
     allowed_tools: Option<BTreeSet<String>>,
+    allowed_mcp_servers: BTreeSet<String>,
     allowed_mcp_prefixes: Vec<String>,
     phase: Phase,
     aborting: bool,
@@ -58,6 +69,7 @@ pub(crate) struct ClaudeSession {
     emitted_session_id: Option<SessionId>,
     pending_approvals: BTreeSet<ApprovalId>,
     turn_usage_by_msg: BTreeMap<String, MessageUsage>,
+    streaming_message_id: Option<String>,
     turn_model: Option<String>,
 }
 
@@ -67,6 +79,7 @@ impl ClaudeSession {
         expected_agent_description: String,
         expected_mode: ExpectedMode,
         allowed_tools: Option<BTreeSet<String>>,
+        allowed_mcp_servers: BTreeSet<String>,
         allowed_mcp_prefixes: Vec<String>,
     ) -> Self {
         Self {
@@ -74,6 +87,7 @@ impl ClaudeSession {
             expected_agent_description,
             expected_mode,
             allowed_tools,
+            allowed_mcp_servers,
             allowed_mcp_prefixes,
             phase: Phase::Opening,
             aborting: false,
@@ -83,8 +97,30 @@ impl ClaudeSession {
             emitted_session_id: None,
             pending_approvals: BTreeSet::new(),
             turn_usage_by_msg: BTreeMap::new(),
+            streaming_message_id: None,
             turn_model: None,
         }
+    }
+
+    fn fail_or_fast_stop(&mut self, detail: String) -> Vec<Output> {
+        if self.phase == Phase::Opening {
+            self.init_deadline = None;
+            self.phase = Phase::Failed;
+            return vec![Output::Event(SessionEvent::StartFailed {
+                reason: StartFailure::Other { detail },
+            })];
+        }
+        self.aborting = true;
+        self.phase = Phase::Closing;
+        let interrupt = self.encode_interrupt_request();
+        vec![
+            Output::Event(SessionEvent::Notice {
+                kind: NoticeKind::Warning,
+                text: detail,
+            }),
+            interrupt,
+            Output::CloseStdin,
+        ]
     }
 
     fn is_tool_allowed(&self, tool_name: &str) -> bool {
@@ -133,6 +169,7 @@ impl ClaudeSession {
 
     fn reset_turn_usage(&mut self) {
         self.turn_usage_by_msg.clear();
+        self.streaming_message_id = None;
         self.turn_model = None;
     }
 
@@ -337,8 +374,12 @@ impl ClaudeSession {
         let id = ApprovalId::new(request_id);
         if self.pending_approvals.remove(&id) {
             let mut out = vec![Output::Event(SessionEvent::ApprovalCancelled { id })];
-            if self.pending_approvals.is_empty() && self.phase == Phase::Busy {
-                out.push(Output::Event(SessionEvent::Status(Activity::Busy)));
+            if self.pending_approvals.is_empty() {
+                match self.phase {
+                    Phase::Busy => out.push(Output::Event(SessionEvent::Status(Activity::Busy))),
+                    Phase::Idle => out.push(Output::Event(SessionEvent::Status(Activity::Idle))),
+                    _ => {}
+                }
             }
             out
         } else {
@@ -365,28 +406,67 @@ impl ClaudeSession {
                             "Claude system/init exposed disallowed tools: {}",
                             disallowed.join(", ")
                         );
+                        return self.fail_or_fast_stop(detail);
+                    }
+                }
+
+                // Verify `init.plugins` holds only built-in plugins (S1, agent-sessions.md:168).
+                if let Some(plugins) = val.get("plugins").and_then(Value::as_array) {
+                    let non_builtin: Vec<String> = plugins
+                        .iter()
+                        .filter(|p| !is_builtin_plugin(p))
+                        .map(plugin_display_name)
+                        .collect();
+                    if !non_builtin.is_empty() {
+                        let detail = format!(
+                            "Claude system/init loaded non-builtin plugins: {}",
+                            non_builtin.join(", ")
+                        );
+                        return self.fail_or_fast_stop(detail);
+                    }
+                }
+
+                // Verify `init.mcp_servers` lists only servers granted in `spec.mcp_servers` (S1).
+                if let Some(servers) = val.get("mcp_servers").and_then(Value::as_array) {
+                    let unlisted: Vec<String> = servers
+                        .iter()
+                        .filter_map(mcp_server_name)
+                        .filter(|name| !self.allowed_mcp_servers.contains(name))
+                        .collect();
+                    if !unlisted.is_empty() {
+                        let detail = format!(
+                            "Claude system/init exposed unlisted MCP servers: {}",
+                            unlisted.join(", ")
+                        );
+                        return self.fail_or_fast_stop(detail);
+                    }
+                }
+
+                // Verify remote control is not active on any `system/init` (S1).
+                if remote_control_active(val) {
+                    return self.fail_or_fast_stop(
+                        "Claude system/init reported remote control active".to_owned(),
+                    );
+                }
+
+                if let Some(reported_mode) = val.get("permissionMode").and_then(Value::as_str) {
+                    if reported_mode == "bypassPermissions" {
+                        // Banned everywhere: fast-stop instead of emitting ModeChanged (B1).
                         if self.phase == Phase::Opening {
                             self.init_deadline = None;
                             self.phase = Phase::Failed;
                             return vec![Output::Event(SessionEvent::StartFailed {
-                                reason: StartFailure::Other { detail },
+                                reason: StartFailure::ModeMismatch {
+                                    requested: self.expected_mode.reported_name.to_owned(),
+                                    reported: reported_mode.to_owned(),
+                                },
                             })];
                         }
-                        self.aborting = true;
-                        self.phase = Phase::Closing;
-                        let interrupt = self.encode_interrupt_request();
-                        return vec![
-                            Output::Event(SessionEvent::Notice {
-                                kind: NoticeKind::Warning,
-                                text: detail,
-                            }),
-                            interrupt,
-                            Output::CloseStdin,
-                        ];
+                        return self.fail_or_fast_stop(
+                            "Claude system/init reported banned permission mode `bypassPermissions`"
+                                .to_owned(),
+                        );
                     }
-                }
-
-                if let Some(reported_mode) = val.get("permissionMode").and_then(Value::as_str) {
                     if !reported_mode.is_empty()
                         && !permission_mode_matches(&self.expected_mode, reported_mode)
                     {
@@ -427,6 +507,10 @@ impl ClaudeSession {
                 // Unsolicited turn started by Claude itself (e.g. background bash/sub-agent
                 // completing after the previous turn's result; ADR-0025 decision 6).
                 if self.phase == Phase::Idle {
+                    // Flush any idle-time background sub-agent usage before resetting (S3).
+                    if let Some(u) = self.flush_open_usage() {
+                        out.push(u);
+                    }
                     self.phase = Phase::Busy;
                     self.reset_turn_usage();
                     out.push(Output::Event(SessionEvent::TurnStarted {
@@ -464,6 +548,24 @@ impl ClaudeSession {
         };
         let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
         match event_type {
+            "message_start" => {
+                if let Some(msg) = event.get("message").and_then(Value::as_object) {
+                    if let Some(model) = msg.get("model").and_then(Value::as_str) {
+                        self.turn_model = Some(model.to_owned());
+                    }
+                    if let Some(id) = msg.get("id").and_then(Value::as_str) {
+                        self.streaming_message_id = Some(id.to_owned());
+                        if let Some(usage_val) = msg.get("usage") {
+                            let parsed = parse_claude_usage(usage_val);
+                            self.turn_usage_by_msg
+                                .entry(id.to_owned())
+                                .and_modify(|existing| existing.merge_max(&parsed))
+                                .or_insert(parsed);
+                        }
+                    }
+                }
+                Vec::new()
+            }
             "content_block_delta" => {
                 let Some(delta) = event.get("delta").and_then(Value::as_object) else {
                     return Vec::new();
@@ -487,11 +589,21 @@ impl ClaudeSession {
                 if let Some(usage_obj) = event.get("usage").and_then(Value::as_object) {
                     if let Some(out_tokens) = usage_obj.get("output_tokens").and_then(Value::as_u64)
                     {
-                        if let Some((_, last)) = self.turn_usage_by_msg.iter_mut().last() {
-                            last.output = last.output.max(out_tokens);
+                        if let Some(msg_id) = self.streaming_message_id.clone() {
+                            self.turn_usage_by_msg
+                                .entry(msg_id)
+                                .and_modify(|entry| entry.output = entry.output.max(out_tokens))
+                                .or_insert_with(|| MessageUsage {
+                                    output: out_tokens,
+                                    ..MessageUsage::default()
+                                });
                         }
                     }
                 }
+                Vec::new()
+            }
+            "message_stop" => {
+                self.streaming_message_id = None;
                 Vec::new()
             }
             _ => Vec::new(),
@@ -704,9 +816,9 @@ impl ClaudeSession {
         self.pending_approvals.clear();
         if self.phase == Phase::Busy {
             self.phase = Phase::Idle;
+            out.push(Output::Event(SessionEvent::TurnEnded { outcome, errors }));
+            out.push(Output::Event(SessionEvent::Status(Activity::Idle)));
         }
-        out.push(Output::Event(SessionEvent::TurnEnded { outcome, errors }));
-        out.push(Output::Event(SessionEvent::Status(Activity::Idle)));
         out
     }
 
@@ -803,7 +915,12 @@ impl Session for ClaudeSession {
                 }));
                 out.push(Output::Event(SessionEvent::Status(Activity::Idle)));
             }
-            Phase::Idle | Phase::Failed | Phase::Closing | Phase::Ended => {}
+            Phase::Idle => {
+                if let Some(u) = self.flush_open_usage() {
+                    out.push(u);
+                }
+            }
+            Phase::Failed | Phase::Closing | Phase::Ended => {}
         }
         out
     }
@@ -834,7 +951,12 @@ impl Session for ClaudeSession {
                     errors: Vec::new(),
                 }));
             }
-            Phase::Idle | Phase::Failed | Phase::Closing | Phase::Ended => {}
+            Phase::Idle => {
+                if let Some(u) = self.flush_open_usage() {
+                    out.push(u);
+                }
+            }
+            Phase::Failed | Phase::Closing | Phase::Ended => {}
         }
         self.phase = Phase::Ended;
         out.push(Output::Event(SessionEvent::Ended { exit }));
@@ -883,16 +1005,20 @@ impl Session for ClaudeSession {
                         }
                     });
                     let line = encode_line(&payload).map_err(|_| ControlError::Unsupported)?;
+                    // Flush any idle-time background sub-agent usage before starting the turn (S3).
+                    let mut out = Vec::new();
+                    if let Some(u) = self.flush_open_usage() {
+                        out.push(u);
+                    }
                     self.phase = Phase::Busy;
                     self.reset_turn_usage();
-                    Ok(vec![
-                        Output::Write(line),
-                        Output::Event(SessionEvent::TurnStarted {
-                            turn_id: None,
-                            solicited: true,
-                        }),
-                        Output::Event(SessionEvent::Status(Activity::Busy)),
-                    ])
+                    out.push(Output::Write(line));
+                    out.push(Output::Event(SessionEvent::TurnStarted {
+                        turn_id: None,
+                        solicited: true,
+                    }));
+                    out.push(Output::Event(SessionEvent::Status(Activity::Busy)));
+                    Ok(out)
                 }
                 Phase::Closing | Phase::Ended => Err(ControlError::Closed),
             },
@@ -946,8 +1072,16 @@ impl Session for ClaudeSession {
                 let line = encode_line(&payload).map_err(|_| ControlError::Unsupported)?;
                 self.pending_approvals.remove(&request_id);
                 let mut out = vec![Output::Write(line)];
-                if self.pending_approvals.is_empty() && self.phase == Phase::Busy {
-                    out.push(Output::Event(SessionEvent::Status(Activity::Busy)));
+                if self.pending_approvals.is_empty() {
+                    match self.phase {
+                        Phase::Busy => {
+                            out.push(Output::Event(SessionEvent::Status(Activity::Busy)));
+                        }
+                        Phase::Idle => {
+                            out.push(Output::Event(SessionEvent::Status(Activity::Idle)));
+                        }
+                        _ => {}
+                    }
                 }
                 Ok(out)
             }
@@ -1003,6 +1137,28 @@ fn agent_matches(val: Option<&Value>, expected_name: &str, expected_description:
             None => true,
         }
     })
+}
+
+fn is_builtin_plugin(val: &Value) -> bool {
+    let Some(obj) = val.as_object() else {
+        return false;
+    };
+    obj.get("builtin").and_then(Value::as_bool) == Some(true)
+        || obj.get("isBuiltin").and_then(Value::as_bool) == Some(true)
+        || obj.get("source").and_then(Value::as_str) == Some("builtin")
+}
+
+fn plugin_display_name(val: &Value) -> String {
+    val.as_str()
+        .or_else(|| val.get("name").and_then(Value::as_str))
+        .unwrap_or("<unnamed>")
+        .to_owned()
+}
+
+fn mcp_server_name(val: &Value) -> Option<String> {
+    val.as_str()
+        .or_else(|| val.get("name").and_then(Value::as_str))
+        .map(ToOwned::to_owned)
 }
 
 fn remote_control_active(body: &Value) -> bool {

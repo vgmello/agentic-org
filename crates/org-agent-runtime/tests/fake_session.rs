@@ -613,6 +613,7 @@ impl EchoRuntime {
             },
             cleanup_after_exit: vec![],
             secret_env_names: vec![],
+            auth_env_names: vec![],
         })
     }
 }
@@ -708,6 +709,7 @@ impl AgentRuntime for EchoRuntime {
             program: ctx.runtime_path.clone(),
             args: args.iter().map(|a| a.to_string()).collect(),
             env_add: vec![],
+            auth_env_names: vec![],
             stdin_lines: vec![],
             timeout_ms: 10_000,
         };

@@ -57,12 +57,15 @@ impl AgentRuntime for ClaudeRuntime {
             reads_workspace_instruction_files: false,
             tools_detach_from_group: true,
             take_over: true,
-            enforces_writable_roots: true,
-            enforces_deny_write: true,
-            enforces_deny_read: true,
-            enforces_unix_socket_allowlist: true,
+            // Enforcement flags stay false until opt-in live tool-call tests prove each
+            // guarantee against the real Claude binary, keeping the office approval-bridge
+            // fallback active (B2).
+            enforces_writable_roots: false,
+            enforces_deny_write: false,
+            enforces_deny_read: false,
+            enforces_unix_socket_allowlist: false,
             enforces_tool_allowlist: true,
-            enforces_deny_rules: true,
+            enforces_deny_rules: false,
             usage_scope: UsageScope::TurnDelta,
             cost: CostBasis::ListPriceEstimate,
             tested_versions: VersionRange {
@@ -83,6 +86,11 @@ impl AgentRuntime for ClaudeRuntime {
             .tools
             .as_ref()
             .map(|tools| tools.iter().map(|t| t.as_str().to_owned()).collect());
+        let allowed_mcp_servers = spec
+            .mcp_servers
+            .keys()
+            .map(|name| name.as_str().to_owned())
+            .collect();
         let allowed_mcp_prefixes = spec
             .mcp_servers
             .keys()
@@ -93,6 +101,7 @@ impl AgentRuntime for ClaudeRuntime {
             spec.agent.description.clone(),
             expected_mode,
             allowed_tools,
+            allowed_mcp_servers,
             allowed_mcp_prefixes,
         );
         Ok((plan, Box::new(session)))

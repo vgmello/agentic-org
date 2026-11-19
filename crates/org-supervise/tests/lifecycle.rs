@@ -370,6 +370,7 @@ fn probe(
             program: program.clone(),
             args: vec!["--exact".into(), "probe_child".into(), "--nocapture".into()],
             env_add: vec![],
+            auth_env_names: vec![],
             stdin_lines: vec![org_agent_runtime::encode_line("hello").unwrap()],
             timeout_ms: 10000,
         },

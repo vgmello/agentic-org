@@ -143,7 +143,13 @@ fn plan_keeps_background_tasks_enabled_and_maps_private_config_dir() {
             .env_add
             .iter()
             .any(|(k, _)| k.as_str() == "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"),
-        "ADR-0025/0032: background tasks must remain enabled by default"
+        "ADR-0025: background tasks must remain enabled"
+    );
+    assert!(
+        plan.env_add
+            .iter()
+            .any(|(k, v)| k.as_str() == "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB" && v == "1"),
+        "S4: CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 must be set"
     );
     assert!(
         plan.env_add.iter().any(|(k, v)| {
@@ -155,6 +161,29 @@ fn plan_keeps_background_tasks_enabled_and_maps_private_config_dir() {
     assert!(plan.args.contains(&"--forward-subagent-text".to_owned()));
     assert!(plan.args.contains(&"--strict-mcp-config".to_owned()));
 
+    // Low 5: `--agents` in headless mode points to a runtime_dir file (prompt not in argv).
+    let agents_pos = plan
+        .args
+        .iter()
+        .position(|a| a == "--agents")
+        .expect("--agents flag");
+    assert_eq!(
+        plan.args[agents_pos + 1],
+        "/office/agents/ada/runtime/claude-agents.json"
+    );
+    assert!(plan
+        .files
+        .iter()
+        .any(|f| f.rel_path.as_str() == "claude-agents.json"));
+
+    // B2: enforcement capability flags stay false until live-verified, keeping office fallback on.
+    let caps = runtime.capabilities();
+    assert!(!caps.enforces_writable_roots);
+    assert!(!caps.enforces_deny_write);
+    assert!(!caps.enforces_deny_read);
+    assert!(!caps.enforces_unix_socket_allowlist);
+    assert!(!caps.enforces_deny_rules);
+
     let settings_file = plan
         .files
         .iter()
@@ -163,16 +192,70 @@ fn plan_keeps_background_tasks_enabled_and_maps_private_config_dir() {
     let settings: serde_json::Value =
         serde_json::from_slice(&settings_file.contents).expect("valid settings JSON");
     assert_eq!(settings["autoMemoryEnabled"], serde_json::json!(false));
+    // B1: both no-bypass switches pinned.
+    assert_eq!(
+        settings["permissions"]["disableBypassPermissionsMode"],
+        serde_json::json!("disable")
+    );
     assert_eq!(settings["sandbox"]["enabled"], serde_json::json!(true));
+    assert_eq!(
+        settings["sandbox"]["autoAllowBashIfSandboxed"],
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        settings["sandbox"]["allowUnsandboxedCommands"],
+        serde_json::json!(false)
+    );
+
+    // S2: config_dir must NEVER be in allowWrite; it is in denyWrite, and .credentials.json in denyRead.
     let allow_write = settings["sandbox"]["filesystem"]["allowWrite"]
         .as_array()
         .expect("allowWrite array");
     assert!(allow_write
         .iter()
         .any(|v| v == "/private/tmp/agentic-org/run-1"));
-    assert!(allow_write
+    assert!(!allow_write
         .iter()
         .any(|v| v == "/office/agents/ada/home/claude"));
+    let deny_write = settings["sandbox"]["filesystem"]["denyWrite"]
+        .as_array()
+        .expect("denyWrite array");
+    assert!(deny_write
+        .iter()
+        .any(|v| v == "/office/agents/ada/home/claude"));
+    let deny_read = settings["sandbox"]["filesystem"]["denyRead"]
+        .as_array()
+        .expect("denyRead array");
+    assert!(deny_read
+        .iter()
+        .any(|v| v == "/office/agents/ada/home/claude/.credentials.json"));
+
+    // B2 + Low 2: file-tool denies use Claude's `//abs/path` grammar and include NotebookEdit.
+    let deny_rules: Vec<&str> = settings["permissions"]["deny"]
+        .as_array()
+        .expect("deny array")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(deny_rules.contains(&"*(//office/**)"));
+    assert!(deny_rules.contains(&"Edit(//homes/ada/**)"));
+    assert!(deny_rules.contains(&"NotebookEdit(//homes/ada/**)"));
+    assert!(deny_rules.contains(&"Read(//office/agents/ada/home/claude/.credentials.json)"));
+    assert!(deny_rules.contains(&"Write(//office/agents/ada/home/claude/**)"));
+
+    // Low 1: --disallowedTools is still emitted when spec.tools is None.
+    let mut unrestricted_tools_spec = sample_spec();
+    unrestricted_tools_spec.tools = None;
+    let (plan_none, _) = runtime
+        .plan_session(&unrestricted_tools_spec, &ctx)
+        .expect("plan_session with tools=None");
+    let dis_pos = plan_none
+        .args
+        .iter()
+        .position(|a| a == "--disallowedTools")
+        .expect("--disallowedTools must be emitted even when spec.tools is None");
+    assert!(plan_none.args[dis_pos + 1].contains("WebFetch"));
+    assert!(plan_none.args[dis_pos + 1].contains("CronCreate"));
 }
 
 #[test]
@@ -495,7 +578,7 @@ fn parses_version_and_auth_probes_and_prepares_via_org_supervise() {
     );
 
     // End-to-end probe & launch preparation through org-supervise with private CLAUDE_CONFIG_DIR
-    // and runtime auth token (RT-P3 + ADR-0032).
+    // and adapter-declared runtime auth token (ADR-0015 decision 11 + ADR-0032).
     org_platform::confinement::disable_core_dumps().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let real = std::fs::canonicalize(tmp.path()).unwrap();
@@ -523,24 +606,22 @@ fn parses_version_and_auth_probes_and_prepares_via_org_supervise() {
     };
     let probe_path =
         SearchPath::new(&helpers, OsString::from("/usr/bin:/bin").as_os_str(), &[]).unwrap();
-    let probe_env = Environment::new(probe_path, &[])
-        .unwrap()
-        .with_runtime_auth(&[(
-            OsString::from("CLAUDE_CODE_OAUTH_TOKEN"),
-            OsString::from("synthetic-oauth-token"),
-        )])
-        .unwrap();
+    let probe_env = Environment::new(probe_path, &[]).unwrap();
     let probe_mark =
         SessionMark::new("probe-claude-00000000000000000000000000000001".to_owned()).unwrap();
-    org_supervise::runtime::prepare_probe(
+    org_supervise::runtime::prepare_probe_with_auth(
         probe_plan,
         &probe_ctx,
         probe_env,
+        &[(
+            OsString::from("CLAUDE_CODE_OAUTH_TOKEN"),
+            OsString::from("synthetic-oauth-token"),
+        )],
         probe_mark,
         &probe_tmp,
         org_supervise::runtime::ProbeMode::OneShot,
     )
-    .expect("org_supervise::runtime::prepare_probe must accept ClaudeRuntime auth probe");
+    .expect("org_supervise::runtime::prepare_probe_with_auth must accept ClaudeRuntime auth probe");
 
     let mut spec = sample_spec();
     spec.workspace = sp(ws.to_str().unwrap());
@@ -564,18 +645,23 @@ fn parses_version_and_auth_probes_and_prepares_via_org_supervise() {
             OsString::from("AGENT_OS_SESSION_TOKEN"),
             OsString::from("synthetic-session-token"),
         )])
-        .unwrap()
-        .with_runtime_auth(&[(
-            OsString::from("CLAUDE_CODE_OAUTH_TOKEN"),
-            OsString::from("synthetic-oauth-token"),
-        )])
         .unwrap();
     let mark = SessionMark::new("run-claude-00000000000000000000000000000001".to_owned()).unwrap();
-    let launch = org_supervise::runtime::prepare(plan, &ctx, env, mark)
-        .expect("org_supervise::runtime::prepare must accept ClaudeRuntime plan");
+    let launch = org_supervise::runtime::prepare_with_auth(
+        plan,
+        &ctx,
+        env,
+        &[(
+            OsString::from("CLAUDE_CODE_OAUTH_TOKEN"),
+            OsString::from("synthetic-oauth-token"),
+        )],
+        mark,
+    )
+    .expect("org_supervise::runtime::prepare_with_auth must accept ClaudeRuntime plan");
 
     assert!(rt.join("claude-settings.json").is_file());
     assert!(rt.join("claude-mcp.json").is_file());
+    assert!(rt.join("claude-agents.json").is_file());
     assert!(rt.join("claude-instructions.md").is_file());
     assert_eq!(
         launch.lifecycle.runtime_session_id,
@@ -677,12 +763,219 @@ fn enforces_agent_description_remote_control_init_tools_and_unknown_tool_escalat
     assert!(!denied
         .iter()
         .any(|o| matches!(o, Output::Event(SessionEvent::ApprovalRequested(_)))));
+
+    // 5. B1: system/init reporting banned `bypassPermissions` triggers fast-stop (never ModeChanged).
+    let (_, mut s_bypass) = runtime.plan_session(&spec, &ctx).unwrap();
+    let _ = s_bypass.start(now);
+    let _ = s_bypass.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":[{"name":"ac-dev-ada","description":"Staff engineer"}],"current_permission_mode":"default"}}}"#,
+        now,
+    );
+    let bypass_out = s_bypass.on_line(
+        br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","permissionMode":"bypassPermissions"}"#,
+        now,
+    );
+    assert!(bypass_out.iter().any(|o| matches!(o, Output::CloseStdin)));
+    assert!(!bypass_out
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::ModeChanged { .. }))));
+
+    // 6. S1: non-builtin plugin, unlisted MCP server, and late remote_control on system/init fast-stop.
+    for (label, bad_frame) in [
+        (
+            "non-builtin plugin",
+            br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","plugins":[{"name":"evil-plugin","builtin":false}]}"#.as_slice(),
+        ),
+        (
+            "unlisted mcp server",
+            br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","mcp_servers":[{"name":"office"},{"name":"rogue-mcp"}]}"#.as_slice(),
+        ),
+        (
+            "late remote control",
+            br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","remote_control_active":true}"#.as_slice(),
+        ),
+    ] {
+        let (_, mut s) = runtime.plan_session(&spec, &ctx).unwrap();
+        let _ = s.start(now);
+        let _ = s.on_line(
+            br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":[{"name":"ac-dev-ada","description":"Staff engineer"}],"current_permission_mode":"default"}}}"#,
+            now,
+        );
+        // Valid built-in plugin and granted MCP server pass cleanly.
+        let ok_init = s.on_line(
+            br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","plugins":[{"name":"core","builtin":true}],"mcp_servers":[{"name":"office"}]}"#,
+            now,
+        );
+        assert!(
+            !ok_init.iter().any(|o| matches!(o, Output::CloseStdin)),
+            "{label}: valid init must not fast-stop"
+        );
+        let bad = s.on_line(bad_frame, now);
+        assert!(
+            bad.iter().any(|o| matches!(o, Output::CloseStdin)),
+            "{label}: expected fast-stop CloseStdin"
+        );
+        assert!(
+            bad.iter().any(|o| matches!(o, Output::Write(_))),
+            "{label}: expected fast-stop interrupt Write"
+        );
+    }
+}
+
+#[test]
+fn preserves_idle_background_usage_tracks_streaming_msg_ids_and_handles_idle_edge_cases() {
+    let runtime = ClaudeRuntime::new();
+    let spec = sample_spec();
+    let ctx = sample_ctx();
+    let now = Instant::now();
+
+    let (_, mut session) = runtime.plan_session(&spec, &ctx).unwrap();
+    let _ = session.start(now);
+    let _ = session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":[{"name":"ac-dev-ada","description":"Staff engineer"}],"current_permission_mode":"default"}}}"#,
+        now,
+    );
+
+    // Low 3: stray result while Idle must NOT emit TurnEnded.
+    let stray = session.on_line(
+        br#"{"type":"result","subtype":"success","is_error":false}"#,
+        now,
+    );
+    assert!(!stray
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. }))));
+
+    // Low 3: approval answered while Idle restores Status(Activity::Idle).
+    let _ = session.on_line(
+        br#"{"type":"control_request","request_id":"req-idle","request":{"subtype":"can_use_tool","tool_name":"Read","input":{"file_path":"/work/t-1/a.rs"}}}"#,
+        now,
+    );
+    let ans_idle = session
+        .control(
+            Control::Answer {
+                request_id: ApprovalId::new("req-idle"),
+                decision: Decision::AllowOnce,
+            },
+            now,
+        )
+        .unwrap();
+    assert!(ans_idle
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::Status(Activity::Idle)))));
+
+    // S3: assistant frame from a background sub-agent arriving while Idle is flushed before
+    // the next Control::Send so tokens are never dropped.
+    let _ = session.on_line(
+        br#"{"type":"assistant","message":{"id":"msg_bg_1","model":"claude-sonnet-4-6","usage":{"input_tokens":33,"output_tokens":17},"content":[{"type":"text","text":"bg step"}]}}"#,
+        now,
+    );
+    let send_out = session
+        .control(
+            Control::Send {
+                text: "next user turn".into(),
+                urgent: false,
+            },
+            now,
+        )
+        .unwrap();
+    assert!(
+        send_out.iter().any(|o| matches!(
+            o,
+            Output::Event(SessionEvent::Usage(u)) if u.input == 33 && u.output == 17
+        )),
+        "idle background usage must be flushed before reset on Control::Send"
+    );
+
+    // S6: two messages whose IDs sort in reverse order (`msg_z` then `msg_a`):
+    // `message_delta` for `msg_a` must update `msg_a`, NOT `msg_z`.
+    let _ = session.on_line(
+        br#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_z","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":10}}}}"#,
+        now,
+    );
+    let _ = session.on_line(
+        br#"{"type":"stream_event","event":{"type":"message_delta","usage":{"output_tokens":40}}}"#,
+        now,
+    );
+    let _ = session.on_line(
+        br#"{"type":"stream_event","event":{"type":"message_stop"}}"#,
+        now,
+    );
+    let _ = session.on_line(
+        br#"{"type":"stream_event","event":{"type":"message_start","message":{"id":"msg_a","model":"claude-sonnet-4-6","usage":{"input_tokens":50,"output_tokens":5}}}}"#,
+        now,
+    );
+    let _ = session.on_line(
+        br#"{"type":"stream_event","event":{"type":"message_delta","usage":{"output_tokens":20}}}"#,
+        now,
+    );
+    let _ = session.on_line(
+        br#"{"type":"stream_event","event":{"type":"message_stop"}}"#,
+        now,
+    );
+    let end = session.on_line(
+        br#"{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.01}"#,
+        now,
+    );
+    // Total output must be 40 (msg_z) + 20 (msg_a) = 60, NOT 40 + 5 = 45 (if msg_z had been updated twice).
+    assert!(
+        end.iter().any(|o| matches!(
+            o,
+            Output::Event(SessionEvent::Usage(u)) if u.input == 150 && u.output == 60
+        )),
+        "expected msg_z(40) + msg_a(20) = 60 output tokens, got: {end:?}"
+    );
+
+    // S7: scripted Send-vs-unsolicited-wake race stays coherent across both turns.
+    let send2 = session
+        .control(
+            Control::Send {
+                text: "racing send".into(),
+                urgent: false,
+            },
+            now,
+        )
+        .unwrap();
+    assert!(send2.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::TurnStarted {
+            solicited: true,
+            ..
+        })
+    )));
+    // Unsolicited init arrives while Busy -> does not emit duplicate TurnStarted.
+    let mid_init = session.on_line(
+        br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001"}"#,
+        now,
+    );
+    assert!(!mid_init
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::TurnStarted { .. }))));
+    // First result closes open turn; subsequent init starts the queued turn as unsolicited.
+    let res1 = session.on_line(
+        br#"{"type":"result","subtype":"success","is_error":false}"#,
+        now,
+    );
+    assert!(res1
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. }))));
+    let next_init = session.on_line(
+        br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001"}"#,
+        now,
+    );
+    assert!(next_init.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::TurnStarted {
+            solicited: false,
+            ..
+        })
+    )));
 }
 
 #[test]
 #[ignore = "opt-in live smoke test: requires local `claude` binary on PATH"]
 fn live_smoke_initialize_handshake_with_real_claude() {
     use std::io::{BufRead, BufReader, Write};
+    use std::sync::mpsc;
 
     org_platform::confinement::disable_core_dumps().unwrap();
 
@@ -752,36 +1045,57 @@ fn live_smoke_initialize_handshake_with_real_claude() {
         }
     }
 
-    let mut reader = BufReader::new(spawned.stdout);
-    let mut buf = Vec::new();
-    let mut saw_ready = false;
-    loop {
-        buf.clear();
-        let n = reader.read_until(b'\n', &mut buf).unwrap();
-        if n == 0 {
-            break;
-        }
-        if buf.ends_with(b"\n") {
-            buf.pop();
-        }
-        let outputs = session.on_line(&buf, Instant::now());
-        for out in outputs {
-            if let Output::Event(SessionEvent::Ready {
-                runtime_version,
-                permission_mode,
-                ..
-            }) = out
-            {
-                assert!(runtime_version.is_some());
-                assert_eq!(permission_mode.as_deref(), Some("default"));
-                saw_ready = true;
+    // Low 4: bound stdout reading with a reader thread + 20s deadline so a hung binary cannot hang tests.
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    let stdout = spawned.stdout;
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if buf.ends_with(b"\n") {
+                        buf.pop();
+                    }
+                    if tx.send(buf.clone()).is_err() {
+                        break;
+                    }
+                }
             }
         }
-        if saw_ready {
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut saw_ready = false;
+    while !saw_ready {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
             break;
         }
+        match rx.recv_timeout(remaining) {
+            Ok(line) => {
+                for out in session.on_line(&line, Instant::now()) {
+                    if let Output::Event(SessionEvent::Ready {
+                        runtime_version,
+                        permission_mode,
+                        ..
+                    }) = out
+                    {
+                        assert!(runtime_version.is_some());
+                        assert_eq!(permission_mode.as_deref(), Some("default"));
+                        saw_ready = true;
+                    }
+                }
+            }
+            Err(_) => break,
+        }
     }
-    assert!(saw_ready, "expected SessionEvent::Ready from real claude");
+    assert!(
+        saw_ready,
+        "expected SessionEvent::Ready from real claude within 20s"
+    );
 
     let close_out = session.control(Control::Close, Instant::now()).unwrap();
     assert!(close_out.iter().any(|o| matches!(o, Output::CloseStdin)));

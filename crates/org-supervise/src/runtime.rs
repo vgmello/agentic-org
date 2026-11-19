@@ -2,6 +2,7 @@
 //! Lifecycle instructions are retained explicitly and mapped into generic core types;
 //! preparing a launch does not execute them. This is not a complete session runner.
 
+use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 use std::time::Duration;
@@ -83,14 +84,28 @@ pub struct RuntimeProbe {
 
 /// Prepare a probe without borrowing agent authority or writing a workspace. `temp_root`
 /// must be an existing, real-path own-UID/0700 session temp folder allocated by the caller.
-/// Refuse all context-only names (ORG_*, GIT_CONFIG_*, GH_CONFIG_DIR) rather than
-/// silently stripping accidentally supplied agent or tool authority.
+/// Refuse all context-only names (`ORG_*`, `AGENT_OS_*`, `GIT_CONFIG_*`, `GH_CONFIG_DIR`)
+/// rather than silently stripping accidentally supplied agent or tool authority.
 /// The fresh private cwd protects shared folders from CLIs that write relative dotfiles.
 /// No ProbeSession is called here, and neither stdout nor stderr is consumed.
 pub fn prepare_probe(
     plan: ProbePlan,
     ctx: &ProbeContext,
     environment: Environment,
+    mark: SessionMark,
+    temp_root: &Path,
+    mode: ProbeMode,
+) -> io::Result<RuntimeProbe> {
+    prepare_probe_with_auth(plan, ctx, environment, &[], mark, temp_root, mode)
+}
+
+/// Same as [`prepare_probe`], also admitting runtime auth environment variables declared
+/// by [`ProbePlan::auth_env_names`]. Any name not declared by the adapter's plan is refused.
+pub fn prepare_probe_with_auth(
+    plan: ProbePlan,
+    ctx: &ProbeContext,
+    environment: Environment,
+    auth_env: &[(OsString, OsString)],
     mark: SessionMark,
     temp_root: &Path,
     mode: ProbeMode,
@@ -105,6 +120,8 @@ pub fn prepare_probe(
             "probe executable differs from the recorded runtime path",
         ));
     }
+    let declared_auth: Vec<&str> = plan.auth_env_names.iter().map(EnvName::as_str).collect();
+    let environment = environment.with_declared_auth(auth_env, &declared_auth)?;
     let additions = plan
         .env_add
         .into_iter()
@@ -137,6 +154,7 @@ pub fn prepare_probe(
 const REVIEWED_ENV_SWITCHES: &[&str] = &[
     "DISABLE_AUTOUPDATER",
     "ENABLE_TOOL_SEARCH",
+    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
     "CLAUDE_CONFIG_DIR",
     "CODEX_HOME",
 ];
@@ -170,6 +188,19 @@ pub fn prepare(
     environment: Environment,
     mark: SessionMark,
 ) -> io::Result<RuntimeLaunch> {
+    prepare_with_auth(plan, ctx, environment, &[], mark)
+}
+
+/// Same as [`prepare`], also admitting runtime auth environment variables declared by
+/// [`LaunchPlan::auth_env_names`]. Any name not declared by the adapter's plan is refused
+/// before writing any planned file.
+pub fn prepare_with_auth(
+    plan: LaunchPlan,
+    ctx: &LaunchContext,
+    environment: Environment,
+    auth_env: &[(OsString, OsString)],
+    mark: SessionMark,
+) -> io::Result<RuntimeLaunch> {
     let LaunchPlan {
         program,
         args,
@@ -182,6 +213,7 @@ pub fn prepare(
         stop,
         cleanup_after_exit,
         secret_env_names,
+        auth_env_names,
     } = plan;
     if stdio != Stdio::Piped {
         return Err(unsupported("PTY spawning is not implemented in this slice"));
@@ -196,6 +228,8 @@ pub fn prepare(
             "plan executable differs from the recorded runtime path",
         ));
     }
+    let declared_auth: Vec<&str> = auth_env_names.iter().map(EnvName::as_str).collect();
+    let environment = environment.with_declared_auth(auth_env, &declared_auth)?;
     let additions = env_add
         .into_iter()
         .map(|(name, value)| (name.as_str().into(), value.into()))

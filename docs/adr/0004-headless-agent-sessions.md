@@ -18,12 +18,12 @@ it merged; this ADR records the decision that replaced it, which until now lived
    view of what the agent did. It never attaches to an agent's process, never forwards
    keystrokes, and never carries terminal frames.
    *Narrow exception (2026-11-19, [ADR-0032](0032-browser-driven-cli-signin-and-remote-token-distribution.md)):*
-   during one-time provider connection enrollment, the host/office may run a bounded,
-   short-lived local PTY helper strictly to drive a vendor's sign-in CLI (`claude setup-token`,
-   `claude auth login --claudeai`, or `codex login --device-auth`). No terminal frames
-   or arbitrary keystrokes cross the browser boundary—only a structured OAuth URL/code
-   and, for Claude's paste-code flow, one validated authorization code string—and agent
-   sessions themselves never use a PTY or browser terminal.
+   during one-time provider connection enrollment, the office worker (`agentic-org-office`)
+   may run a bounded, short-lived local PTY helper strictly to drive a vendor's sign-in CLI
+   (`claude setup-token`, `claude auth login --claudeai`, or `codex login --device-auth`).
+   No terminal frames or arbitrary keystrokes cross the browser boundary—only a structured
+   OAuth URL/code and, for Claude's paste-code flow, one validated authorization code
+   string—and agent sessions themselves never use a PTY or browser terminal.
 4. **Taking over an agent is a local command-line operation.** A person at the machine
    runs an `agentic-org` command. The office stops the agent's headless run, keeps the
    agent's lock, and gives the authorized local caller that session's launch

@@ -8,6 +8,7 @@ use org_agent_runtime::{
 
 const SETTINGS_FILE: &str = "claude-settings.json";
 const MCP_FILE: &str = "claude-mcp.json";
+const AGENTS_FILE: &str = "claude-agents.json";
 const INSTRUCTIONS_FILE: &str = "claude-instructions.md";
 
 /// Known Claude Code built-in tools that act outside the office/sandbox or defer tools.
@@ -66,10 +67,11 @@ pub(crate) fn build_headless_plan(
 
     let settings_bytes = build_settings_json(spec, ctx, caps)?;
     let mcp_bytes = build_mcp_json(spec);
-    let agents_json = build_agents_json(spec);
+    let agents_bytes = build_agents_json(spec).into_bytes();
 
     let settings_path = format!("{}/{SETTINGS_FILE}", ctx.runtime_dir.as_str());
     let mcp_path = format!("{}/{MCP_FILE}", ctx.runtime_dir.as_str());
+    let agents_path = format!("{}/{AGENTS_FILE}", ctx.runtime_dir.as_str());
     let instructions_path = format!("{}/{INSTRUCTIONS_FILE}", ctx.runtime_dir.as_str());
 
     let mut args = vec![
@@ -93,8 +95,10 @@ pub(crate) fn build_headless_plan(
         expected_mode.cli_flag.to_owned(),
         "--permission-prompt-tool".to_owned(),
         "stdio".to_owned(),
+        // Under `-p`, `--agents` accepts a path to a file so the full agent prompt never
+        // appears in argv / `ps`.
         "--agents".to_owned(),
-        agents_json,
+        agents_path,
         "--agent".to_owned(),
         spec.agent.name.as_str().to_owned(),
     ];
@@ -123,6 +127,12 @@ pub(crate) fn build_headless_plan(
             location: FileLocation::RuntimeDir,
             rel_path: RelPath::try_from(MCP_FILE).expect("constant relative path is valid"),
             contents: mcp_bytes,
+            git_exclude: false,
+        },
+        PlannedFile {
+            location: FileLocation::RuntimeDir,
+            rel_path: RelPath::try_from(AGENTS_FILE).expect("constant relative path is valid"),
+            contents: agents_bytes,
             git_exclude: false,
         },
     ];
@@ -157,6 +167,7 @@ pub(crate) fn build_headless_plan(
         },
         cleanup_after_exit: Vec::new(),
         secret_env_names: secret_env_names(),
+        auth_env_names: auth_env_names(),
     };
 
     Ok((plan, expected_mode))
@@ -257,6 +268,7 @@ pub(crate) fn build_take_over_plan(
         },
         cleanup_after_exit: Vec::new(),
         secret_env_names: secret_env_names(),
+        auth_env_names: auth_env_names(),
     })
 }
 
@@ -321,19 +333,60 @@ fn append_common_options(args: &mut Vec<String>, spec: &SessionSpec) {
                 .join(",");
             args.push(joined);
         }
-        let disallowed: Vec<&str> = RISKY_BUILTIN_TOOLS
-            .iter()
-            .copied()
-            .filter(|risky| !tools.iter().any(|allowed| allowed.as_str() == *risky))
-            .collect();
-        if !disallowed.is_empty() {
-            args.push("--disallowedTools".to_owned());
-            args.push(disallowed.join(","));
-        }
+    }
+    // Always disallow known risky built-in tools (web access, cron/triggers, worktrees,
+    // ToolSearch, etc.) unless explicitly granted in `spec.tools` — including when
+    // `spec.tools` is `None`.
+    let disallowed: Vec<&str> = RISKY_BUILTIN_TOOLS
+        .iter()
+        .copied()
+        .filter(|risky| {
+            !spec
+                .tools
+                .as_ref()
+                .is_some_and(|tools| tools.iter().any(|allowed| allowed.as_str() == *risky))
+        })
+        .collect();
+    if !disallowed.is_empty() {
+        args.push("--disallowedTools".to_owned());
+        args.push(disallowed.join(","));
     }
     for dir in &spec.read_only_dirs {
         args.push("--add-dir".to_owned());
         args.push(dir.as_str().to_owned());
+    }
+}
+
+/// Convert an absolute filesystem path/pattern to Claude Code's `//abs/path` permission rule
+/// syntax (single leading `/` in Claude rules is settings-file-relative, not filesystem-root).
+fn claude_rule_path(path: &str) -> String {
+    if path.starts_with("//") {
+        path.to_owned()
+    } else if path.starts_with('/') {
+        format!("/{path}")
+    } else {
+        path.to_owned()
+    }
+}
+
+fn push_file_write_denies(deny_rules: &mut Vec<Value>, raw_path: &str, include_exact: bool) {
+    let trimmed = raw_path.trim_end_matches('/');
+    let exact = claude_rule_path(trimmed);
+    let glob = format!("{exact}/**");
+    for tool in ["Edit", "Write", "MultiEdit", "NotebookEdit"] {
+        if include_exact {
+            deny_rules.push(Value::String(format!("{tool}({exact})")));
+        }
+        deny_rules.push(Value::String(format!("{tool}({glob})")));
+    }
+}
+
+fn push_file_read_denies(deny_rules: &mut Vec<Value>, raw_path: &str, include_glob: bool) {
+    let trimmed = raw_path.trim_end_matches('/');
+    let exact = claude_rule_path(trimmed);
+    deny_rules.push(Value::String(format!("Read({exact})")));
+    if include_glob {
+        deny_rules.push(Value::String(format!("Read({exact}/**)")));
     }
 }
 
@@ -346,18 +399,32 @@ fn build_settings_json(
     root.insert("autoMemoryEnabled".to_owned(), Value::Bool(false));
 
     // Permissions: deny always written before allow; allow rules are dropped whenever
-    // `keeps_allow_rules` is false (deny wins over allow).
+    // `keeps_allow_rules` is false (deny wins over allow). `disableBypassPermissionsMode`
+    // is pinned to `"disable"` per agent-sessions.md (B1).
     let mut deny_rules = Vec::new();
     for rule in &spec.policy.deny {
         let formatted = format_rule(rule).ok_or(PlanError::Unsupported("deny rule scope"))?;
         deny_rules.push(Value::String(formatted));
     }
-    // Also deny Edit/Write into read-only directories so file tools respect read_only_dirs.
+    // Mirror sandbox read/write denies onto Claude's file tools using `//` absolute path
+    // grammar so Read/Edit/Write/MultiEdit/NotebookEdit cannot bypass the Bash sandbox (B2).
+    for path in &spec.sandbox.deny_read {
+        push_file_read_denies(&mut deny_rules, path.as_str(), true);
+    }
+    for path in &spec.sandbox.deny_write {
+        push_file_write_denies(&mut deny_rules, path.as_str(), true);
+    }
     for dir in &spec.read_only_dirs {
-        let glob = format!("{}/**", dir.as_str().trim_end_matches('/'));
-        for tool in ["Edit", "Write", "MultiEdit"] {
-            deny_rules.push(Value::String(format!("{tool}({glob})")));
-        }
+        push_file_write_denies(&mut deny_rules, dir.as_str(), false);
+    }
+    // Protect vendor config dir from tool writes and its credential file from tool reads (S2).
+    if let Some(cfg_dir) = &ctx.config_dir {
+        push_file_write_denies(&mut deny_rules, cfg_dir.as_str(), true);
+        let cred_file = format!(
+            "{}/.credentials.json",
+            cfg_dir.as_str().trim_end_matches('/')
+        );
+        push_file_read_denies(&mut deny_rules, &cred_file, false);
     }
 
     let mut allow_rules = Vec::new();
@@ -371,11 +438,17 @@ fn build_settings_json(
     }
 
     let mut permissions = Map::new();
+    permissions.insert(
+        "disableBypassPermissionsMode".to_owned(),
+        Value::String("disable".to_owned()),
+    );
     permissions.insert("deny".to_owned(), Value::Array(deny_rules));
     permissions.insert("allow".to_owned(), Value::Array(allow_rules));
     root.insert("permissions".to_owned(), Value::Object(permissions));
 
-    // Sandbox: always add `ctx.tmpdir` (and `ctx.config_dir` when set) to writable roots.
+    // Sandbox: always add `ctx.tmpdir` to writable roots; NEVER add `ctx.config_dir` to
+    // `allowWrite` (Claude writes it outside the Bash sandbox; tools must not tamper with
+    // transcripts or credential files — S2). Pin `allowUnsandboxedCommands: false` (B1).
     if spec.sandbox.enabled {
         let mut writable: Vec<String> = spec
             .sandbox
@@ -386,24 +459,32 @@ fn build_settings_json(
         if !writable.iter().any(|p| p == ctx.tmpdir.as_str()) {
             writable.push(ctx.tmpdir.as_str().to_owned());
         }
-        if let Some(cfg_dir) = &ctx.config_dir {
-            if !writable.iter().any(|p| p == cfg_dir.as_str()) {
-                writable.push(cfg_dir.as_str().to_owned());
-            }
-        }
 
-        let deny_write: Vec<Value> = spec
+        let mut deny_write: Vec<String> = spec
             .sandbox
             .deny_write
             .iter()
-            .map(|p| Value::String(p.as_str().to_owned()))
+            .map(|p| p.as_str().to_owned())
             .collect();
-        let deny_read: Vec<Value> = spec
+        let mut deny_read: Vec<String> = spec
             .sandbox
             .deny_read
             .iter()
-            .map(|p| Value::String(p.as_str().to_owned()))
+            .map(|p| p.as_str().to_owned())
             .collect();
+        if let Some(cfg_dir) = &ctx.config_dir {
+            if !deny_write.iter().any(|p| p == cfg_dir.as_str()) {
+                deny_write.push(cfg_dir.as_str().to_owned());
+            }
+            let cred_file = format!(
+                "{}/.credentials.json",
+                cfg_dir.as_str().trim_end_matches('/')
+            );
+            if !deny_read.iter().any(|p| p == &cred_file) {
+                deny_read.push(cred_file);
+            }
+        }
+
         let allow_sockets: Vec<Value> = spec
             .sandbox
             .allowed_unix_sockets
@@ -416,6 +497,7 @@ fn build_settings_json(
             json!({
                 "enabled": true,
                 "autoAllowBashIfSandboxed": false,
+                "allowUnsandboxedCommands": false,
                 "filesystem": {
                     "allowWrite": writable,
                     "denyWrite": deny_write,
@@ -437,7 +519,7 @@ fn format_rule(rule: &Rule) -> Option<String> {
     let tool = rule.tool.as_str();
     match &rule.scope {
         RuleScope::Any => Some(tool.to_owned()),
-        RuleScope::Path(pattern) => Some(format!("{tool}({})", pattern.as_str())),
+        RuleScope::Path(pattern) => Some(format!("{tool}({})", claude_rule_path(pattern.as_str()))),
         RuleScope::CommandPrefix(prefix) => Some(format!("{tool}({}*)", prefix.as_str())),
         RuleScope::McpServer(server) => Some(format!("mcp__{}__*", server.as_str())),
         _ => None,
@@ -496,6 +578,12 @@ fn build_env_add(ctx: &LaunchContext) -> Vec<(EnvName, String)> {
             EnvName::try_from("ENABLE_TOOL_SEARCH").expect("static env name is valid"),
             "false".to_owned(),
         ),
+        // Scrub Claude credentials from tool subprocesses (verified present in Claude 2.1.311; S4).
+        (
+            EnvName::try_from("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
+                .expect("static env name is valid"),
+            "1".to_owned(),
+        ),
     ];
     if let Some(cfg_dir) = &ctx.config_dir {
         env.push((
@@ -504,6 +592,13 @@ fn build_env_add(ctx: &LaunchContext) -> Vec<(EnvName, String)> {
         ));
     }
     env
+}
+
+pub(crate) fn auth_env_names() -> Vec<EnvName> {
+    ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
+        .into_iter()
+        .map(|name| EnvName::try_from(name).expect("static auth env name is valid"))
+        .collect()
 }
 
 fn secret_env_names() -> Vec<EnvName> {

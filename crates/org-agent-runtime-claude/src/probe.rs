@@ -4,11 +4,12 @@ use org_agent_runtime::{
     EnvName, Probe, ProbeContext, ProbeOutput, ProbePlan, ProbeResult, ProbeRun, Unavailable,
 };
 
-pub(crate) const TESTED_VERSION_MIN: &str = "2.1.0";
-pub(crate) const TESTED_VERSION_MAX: &str = "2.99.999";
+// Pinned to the exact Claude Code version exercised by C1 and the opt-in live smoke test.
+pub(crate) const TESTED_VERSION_MIN: &str = "2.1.311";
+pub(crate) const TESTED_VERSION_MAX: &str = "2.1.311";
 
-const MIN_SEMVER: (u64, u64, u64) = (2, 1, 0);
-const MAX_SEMVER: (u64, u64, u64) = (2, 99, 999);
+const MIN_SEMVER: (u64, u64, u64) = (2, 1, 311);
+const MAX_SEMVER: (u64, u64, u64) = (2, 1, 311);
 
 pub(crate) fn plan_probe(probe: Probe, ctx: &ProbeContext) -> Option<ProbeRun> {
     let mut env_add = vec![(
@@ -27,6 +28,7 @@ pub(crate) fn plan_probe(probe: Probe, ctx: &ProbeContext) -> Option<ProbeRun> {
             program: ctx.runtime_path.clone(),
             args: vec!["--version".to_owned()],
             env_add,
+            auth_env_names: Vec::new(),
             stdin_lines: Vec::new(),
             timeout_ms: 10_000,
         })),
@@ -34,6 +36,7 @@ pub(crate) fn plan_probe(probe: Probe, ctx: &ProbeContext) -> Option<ProbeRun> {
             program: ctx.runtime_path.clone(),
             args: vec!["auth".to_owned(), "status".to_owned()],
             env_add,
+            auth_env_names: crate::plan::auth_env_names(),
             stdin_lines: Vec::new(),
             timeout_ms: 15_000,
         })),

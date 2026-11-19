@@ -747,7 +747,8 @@ on the offers of design section 10.
   [employee supervision UX](specs/employee-supervision-ux.md) (EMP criteria). Rows FC-031,
   FC-098, FC-100, FC-101, FC-189.
 - **Code today:** `crates/org-agent-runtime` is the contract and `crates/org-agent-runtime-claude`
-  implements the sans-I/O Claude Code adapter (with `RT-P3` `config_dir` and runtime-auth
+  implements the sans-I/O Claude Code `2.1.311` adapter as an internal foundation with no
+  production caller yet (alongside `config_dir` and adapter-declared `auth_env_names`
   supervision plumbing in `org-agent-runtime` and `org-supervise`); `crates/org-agent-runtime-codex`
   and the office session runner remain to be built.
   `crates/org-supervise` starts, stops and cleans up processes; it is used only to
