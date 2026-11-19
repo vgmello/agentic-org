@@ -8,8 +8,6 @@ import type { SettingsApi } from '../../../src/lib/modules/settings/api';
 import type {
 	AccessOverview,
 	AccessPerson,
-	AgentSetup,
-	AgentSetupList,
 	CostPeriod,
 	GeneralSettings,
 	PriceRate,
@@ -17,7 +15,6 @@ import type {
 } from '../../../src/lib/modules/settings/types';
 import general from '../data/settings/general.json' with { type: 'json' };
 import prices0 from '../data/settings/prices.json' with { type: 'json' };
-import execution from '../data/settings/execution.json' with { type: 'json' };
 import costs from '../data/settings/costs.json' with { type: 'json' };
 
 const query = () => new URLSearchParams(location.search);
@@ -40,8 +37,6 @@ const accounts: Record<string, string> = {
 };
 const links = new Map<string, string>();
 let prices: PriceRate[] = structuredClone(prices0) as PriceRate[];
-const setups = new Map<string, AgentSetup>();
-let seeded = false;
 
 async function snapshot(organizationId: string) {
 	return (await orgApi.view(organizationId)).snapshot;
@@ -93,49 +88,6 @@ async function access(organizationId: string): Promise<AccessOverview> {
 	return { people, viewerCanManage: query().get('admin') !== 'viewer' };
 }
 
-async function seed(organizationId: string) {
-	if (seeded) return;
-	seeded = true;
-	const { members } = await snapshot(organizationId);
-	for (const m of members) {
-		if (m.kind !== 'agent') continue;
-		const e = (
-			execution.byMember as Record<
-				string,
-				{
-					profile: string | null;
-					model: string | null;
-					driver: string | null;
-					readiness: AgentSetup['readiness'];
-					employeeRevision: number;
-					executionRevision: number;
-				}
-			>
-		)[m.id];
-		const profileName = execution.profiles.find((p) => p.id === e?.profile)?.name;
-		setups.set(m.id, {
-			memberId: m.id,
-			execution: {
-				memberId: m.id,
-				configured: !!e?.profile,
-				...(profileName ? { profileName } : {}),
-				...(e?.model ? { model: e.model } : {}),
-				enabled: m.agent?.status !== 'offboarded',
-				employeeRevision: e?.employeeRevision ?? m.version,
-				executionRevision: e?.executionRevision ?? 0
-			},
-			...(e?.driver ? { driver: e.driver } : {}),
-			readiness: e?.readiness ?? { kind: 'unknown' },
-			managedHome: `/Users/alex/Agent Homes/${m.agent?.messaging_name ?? m.id}`,
-			observedAt: '2026-11-18T08:50:00Z'
-		});
-	}
-}
-const list = (): AgentSetupList => ({
-	agents: [...setups.values()],
-	profiles: structuredClone(execution.profiles)
-});
-
 const micro = (n: number | null | undefined) => (n === undefined ? null : n);
 
 export const settingsApi: SettingsApi = {
@@ -159,40 +111,6 @@ export const settingsApi: SettingsApi = {
 			};
 		administrator = { memberId, username: accounts[memberId] };
 		return general_(organizationId);
-	},
-	async agentSetups(organizationId) {
-		await gate();
-		await seed(organizationId);
-		return list();
-	},
-	async saveExecution(organizationId, memberId, edit) {
-		await wait();
-		await seed(organizationId);
-		const current = setups.get(memberId);
-		if (!current)
-			throw { source: 'app', code: 'not_found', message: "That agent isn't here any more." };
-		if (edit.expectedRevision !== current.execution.executionRevision) {
-			throw Object.assign(new Error(`${memberId} changed while you were editing.`), {
-				source: 'app',
-				code: 'conflict',
-				message:
-					"This agent's setup changed while you were editing. Here's the newer version; your changes are kept.",
-				latest: list()
-			});
-		}
-		const profile = execution.profiles.find((p) => p.id === edit.profileId);
-		setups.set(memberId, {
-			...current,
-			execution: {
-				...current.execution,
-				configured: !!profile,
-				...(profile ? { profileName: profile.name } : {}),
-				model: edit.model,
-				enabled: edit.enabled,
-				executionRevision: current.execution.executionRevision + 1
-			}
-		});
-		return list();
 	},
 	async access(organizationId) {
 		await gate();

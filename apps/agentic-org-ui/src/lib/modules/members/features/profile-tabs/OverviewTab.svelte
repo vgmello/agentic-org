@@ -8,6 +8,7 @@
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { agentSetupHref } from '$lib/modules/agent-setup';
 	import DescriptionList, { type DescriptionItem } from '$lib/components/DescriptionList.svelte';
 	import Section from '$lib/components/Section.svelte';
 	import StatusPill from '$lib/components/StatusPill.svelte';
@@ -192,7 +193,9 @@
 		class="border-t border-white/5"
 	>
 		{#snippet actions()}
-			<a href={resolve('/settings/agents')} class="{linkClass} text-sm/6">Open Agent setup</a>
+			<a href={resolve(agentSetupHref(p.id) as '/')} class="{linkClass} text-sm/6"
+				>Open Agent setup</a
+			>
 		{/snippet}
 		<DescriptionList items={execution} />
 	</Section>

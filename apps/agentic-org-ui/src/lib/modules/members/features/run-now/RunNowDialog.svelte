@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { agentSetupHref } from '$lib/modules/agent-setup';
 	import { textareaClass, helpClass, mobileButton } from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
 	import {
@@ -126,7 +127,7 @@
 					<p class="mt-1 [overflow-wrap:anywhere]">{blocked}</p>
 					{#if !profile.openTurn && profile.status === 'active'}
 						<a
-							href={resolve('/settings/agents')}
+							href={resolve(agentSetupHref(profile.id) as '/')}
 							class="mt-2 inline-flex rounded-sm font-semibold text-indigo-400 hover:text-indigo-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400"
 							>Open Agent setup</a
 						>

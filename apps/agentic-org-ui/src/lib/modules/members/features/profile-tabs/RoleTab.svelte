@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { agentSetupHref } from '$lib/modules/agent-setup';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import { membersApi } from '../../api';
 	import { profileContext } from '../profile/context.svelte';
@@ -53,7 +54,7 @@
 				</p>
 			{/if}
 			<p class="mt-4">
-				<a href={resolve('/settings/agents')} class={linkClass}
+				<a href={resolve(agentSetupHref(ctx.profile.id) as '/')} class={linkClass}
 					>{view.role ? 'Change the role in Agent setup' : 'Choose a role in Agent setup'}</a
 				>
 			</p>

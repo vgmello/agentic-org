@@ -9,6 +9,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { agentSetupHref } from '$lib/modules/agent-setup';
 	import { errorClass, helpClass, inputClass, mobileButton } from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
 	import {
@@ -159,7 +160,7 @@
 				<DialogDescription>
 					{#if isAgent}
 						Who {member.name} is. How it runs (runtime, model and home folder) is set in
-						<a href={resolve('/settings/agents')} class={linkClass}>Agent setup</a>.
+						<a href={resolve(agentSetupHref(member.id) as '/')} class={linkClass}>Agent setup</a>.
 					{:else}
 						Agents address a person by their name.
 					{/if}
