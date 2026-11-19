@@ -16,9 +16,9 @@
 #   3. with Docker's default profiles the same sandbox cannot start (the profiles are what
 #      lets it);
 #   4. the mount calls the profiles allow work only in a user namespace of one's own:
-#      neither the service user nor root in the container mounts anything without one, and
-#      root, in a user and mount namespace of its own, cannot write /proc/sys through a
-#      bind mount of it (Docker keeps it read-only there too).
+#      neither the service user nor root in the container can make a mount namespace
+#      without one, and in a user and mount namespace of its own neither can write
+#      /proc/sys through a bind mount of it (Docker keeps it read-only there too).
 # bubblewrap is not in the image: a derived image adds it for this check. Every container
 # and image it makes is removed at the end, pass or fail.
 set -euo pipefail
@@ -103,13 +103,19 @@ as() {
         "$2"' 2>&1; echo "exit $?"' 2>&1
 }
 for user in 61000 0; do
-    out=$(as "$user" 'mkdir -p /tmp/m && mount -t tmpfs none /tmp/m')
-    echo "  uid $user, mount without a namespace: $(tr '\n' ' ' <<<"$out")"
-    if has '^exit 0$' "$out"; then fail "uid $user mounted outside a user namespace"; fi
+    # A mount namespace without a user namespace takes CAP_SYS_ADMIN in the container's
+    # own, which no process of it has: nothing can be mounted there.
+    out=$(as "$user" 'unshare -m true')
+    echo "  uid $user, a mount namespace without a user namespace: $(tr '\n' ' ' <<<"$out")"
+    if has '^exit 0$' "$out"; then fail "uid $user made a mount namespace outside a user namespace"; fi
+    has 'Operation not permitted' "$out" || fail "uid $user: refused for another reason: $out"
+    # In a user and mount namespace of its own (bubblewrap's mount calls, the ones the
+    # profiles allow), /proc/sys can be bound elsewhere and stays read-only there. The value
+    # is written back unchanged, so a write that wrongly succeeded would change nothing.
+    out=$(as "$user" 'bwrap --unshare-user --uid 0 --dev-bind / / --bind /proc/sys /mnt sh -c "cat /mnt/kernel/printk_ratelimit > /mnt/kernel/printk_ratelimit && echo wrote"')
+    echo "  uid $user, writing /proc/sys through a bind in its own namespaces: $(tr '\n' ' ' <<<"$out")"
+    if has '^exit 0$' "$out" || has '^wrote$' "$out"; then
+        fail "uid $user wrote /proc/sys through a bind mount of its own"
+    fi
+    has 'Read-only file system' "$out" || fail "uid $user: the write failed for another reason: $out"
 done
-# The value is written back unchanged, so a write that wrongly succeeds changes nothing.
-out=$(as 0 'unshare -Urm sh -c "mkdir -p /tmp/s && mount --bind /proc/sys /tmp/s && cat /tmp/s/kernel/printk_ratelimit > /tmp/s/kernel/printk_ratelimit"')
-echo "  root, own user and mount namespace, writing /proc/sys through a bind: $(tr '\n' ' ' <<<"$out")"
-if has '^exit 0$' "$out"; then fail "root wrote /proc/sys through a bind mount of its own"; fi
-has 'Read-only file system|Permission denied|Operation not permitted' "$out" ||
-    fail "the write to /proc/sys failed for another reason: $out"
