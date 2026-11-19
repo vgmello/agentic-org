@@ -104,8 +104,9 @@ test(
 		await expect(page.getByText('HQ · placement generation 1')).toBeVisible();
 		await expect(page.getByText('/srv/agentic-org/lumen/agents/kai')).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Copy path' })).toBeVisible();
+		// Kai has no role on record in the roles data, as on his member profile.
 		await expect(
-			page.getByRole('region', { name: 'Employee record' }).getByText('Software Engineer')
+			page.getByRole('region', { name: 'Employee record' }).getByText('No role on record')
 		).toBeVisible();
 
 		await page.getByRole('link', { name: 'View profile' }).click();
