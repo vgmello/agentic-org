@@ -1,13 +1,13 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
+import { signInAsAdmin } from './web-session';
 
 export async function setupFocus(page: Page, width: number, scale: number, root = 16) {
 	await page.setViewportSize({ width, height: 1100 });
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/agents$|\/teams\/members$/);
+	await enterMockedOrganization(page);
+	await expect(page).toHaveURL(/\/teams\/members$/);
 	// Percentages retain the actual browser default; the dedicated project must prove a 20px default.
 	await page.locator('html').evaluate((html, percent) => {
 		html.style.fontSize = `${percent}%`;
@@ -297,11 +297,12 @@ export async function consumerFocus(page: Page, width: number, scale: number, ro
 		await visit(page, path);
 		await resize();
 	};
+	await signInAsAdmin(page); // the Create organization page is the signed-in administrator's
 	await go('/create');
 	await probe(page.getByRole('button', { name: 'Create organization', exact: true }), 'onboarding');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).press('Enter');
-	await expect(page).toHaveURL(/\/agents$|\/teams\/members$/);
+	await enterMockedOrganization(page);
+	await resize();
+	await expect(page).toHaveURL(/\/teams\/members$/);
 	// Members' page action is Add a person; agents come only from Hire (our-org-in-the-app §7).
 	const add = page.getByRole('main').getByRole('button', { name: 'Add a person', exact: true });
 	await probe(add, 'members');

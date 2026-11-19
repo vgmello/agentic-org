@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { signInAsAdmin } from './web-session';
+import { enterMockedOrganization } from './mock-organization';
 
 // Organization settings › Roles against the mock roles API (roles-ux §1, ROLE-1, ROLE-5, ROLE-9, ROLE-10).
 async function openOrganization(page: Page) {
@@ -12,10 +13,7 @@ async function openOrganization(page: Page) {
 			recovery: 'acknowledged'
 		}
 	]);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Lumen Labs');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).not.toHaveURL(/\/create$/);
+	await enterMockedOrganization(page, 'Lumen Labs');
 }
 
 const rows = (page: Page) => page.locator('main ul[aria-labelledby="roles-heading"] > li');

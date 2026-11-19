@@ -14,11 +14,13 @@ increments are X1a to X6 of the implementation plan. Implementation pending. Ame
 
 - The host can start office workers only on macOS today. On any other platform the
   spawn returns "office servers run only on macOS"
-  (`crates/org-host/src/spawn.rs`).
+  (`crates/org-host/src/spawn.rs` when this was written; since X1c the admission
+  contract's Linux adapter, `crates/org-platform-host/src/admission/linux.rs`).
 - Worker admission on macOS checks the child's code signature through its audit token.
   Linux has no equivalent in the code.
 - The web process confines itself with a macOS Seatbelt profile. On every other system
-  a refusing adapter reports that confinement is unavailable.
+  a refusing adapter reports that confinement is unavailable (when this was written;
+  Linux has its adapter since X4).
 - The host's secrets use the macOS keychain; a Linux release build has no store.
 - No service is registered on any system yet. A container has neither launchd nor a
   user's systemd.
@@ -40,7 +42,7 @@ increments are X1a to X6 of the implementation plan. Implementation pending. Ame
    | --- | --- | --- | --- |
    | Process admission | Is the child the program we meant to start? | Code signature through the audit token | The verified release image: the pinned path, its content digest from the release manifest, and the child's identity from the kernel |
    | Credential provider | Where do host secrets live? | Keychain | A host-only directory with owner-only permissions; in a container, a mounted secret volume |
-   | Confinement | What may the web process touch? | Seatbelt (ADR-0008) | Landlock and seccomp; the adapter must exist, and a container's own restrictions do not replace it |
+   | Confinement | What may the web process touch? | Seatbelt (ADR-0008) | A seccomp filter, and Landlock where the kernel has it; the adapter must exist, and a container's own restrictions do not replace it |
    | Service lifecycle | Who starts and restarts the host? | launchd | A systemd user unit, or the container runtime running `agentic-org serve` in the foreground |
    | Agent isolation | How is an agent kept from the data? | The modes of ADR-0015 | The same modes; `dedicated-user` uses an account created in the image or by setup |
 3. **No platform fails open.** On a system with only a refusing adapter, or where a
@@ -60,7 +62,7 @@ increments are X1a to X6 of the implementation plan. Implementation pending. Ame
 | --- | --- |
 | LNX-1 | On Linux, the host starts an office worker, the worker serves the local socket, and `agent-os` completes a send and a read. |
 | LNX-2 | The same in a container built from the repository's container file, with only mounted volumes for data and secrets, and again after the container is replaced. |
-| LNX-3 | With the Linux kernel feature unavailable, the web process refuses to start and reports the reason. |
+| LNX-3 | With seccomp unavailable, the web process refuses to start and the host log has the reason; with Landlock unavailable it starts, confined by the filter, and the host log says so (amended 2026-11-18, decision 9). |
 | LNX-4 | Host secrets on Linux are readable only by the service account; none is in the data volume. |
 | LNX-5 | No `.rs` file outside `crates/org-platform` has a `cfg`, `cfg_attr` or `cfg!` predicate on `target_os`, `target_vendor`, `target_env` or `target_family`; a CI check that parses the source enforces it. |
 | LNX-6 | The CI matrix runs the workspace checks on macOS and Linux. |
@@ -70,20 +72,32 @@ increments are X1a to X6 of the implementation plan. Implementation pending. Ame
 These settle what the decisions above left open. The detail is in the
 [Linux host design](../design/linux-host.md).
 
-6. **One crate holds every platform difference.** `crates/org-platform` owns the five
-   contracts and the five further capabilities, with macOS, Linux and refusing adapters
-   and one non-conditional constructor each. It depends on no workspace crate.
+6. **Platform differences live in two crates and nowhere else.** `crates/org-platform`
+   owns the contracts and capabilities that the four executables share, with macOS,
+   Linux and refusing adapters and one non-conditional constructor each. It depends on
+   the C library only and on no workspace crate.
    Consumers keep their policy (which image, which secret names) and pass it as data.
    This is a deliberate exception to the rule that a consumer owns its contract
    ([architecture rules](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)):
    these capabilities are consumed by four executables and six libraries, so no one
    consumer can own them.
+   `crates/org-platform-host` (amended 2026-11-18, during X1b) holds, under the same
+   rules, the capabilities that only the host consumes and whose macOS adapter needs
+   an Apple framework: admission's code-identity checks, credentials, presence and the
+   comparison of file names. A crate's link directives reach every executable that
+   links it, so one crate for everything would have made the web process, the office
+   worker and `agent-os` load Security, CoreFoundation and LocalAuthentication on
+   macOS, and the web process must load nothing but the C library before it confines
+   itself (ADR-0008). Only `org-host` depends on `org-platform-host`; a test keeps
+   `org-platform` libc-only and the other executables' crates free of it. Rejected: a
+   Cargo feature on one crate, because features unify across a workspace build, so
+   what the web process links would depend on how it was built.
 7. **Linux process admission executes verified bytes.** The host copies the pinned
    executable into a sealed, execute-only memory file (with `MFD_EXEC` from Linux 6.3,
    without it before), compares its SHA-256 with the signed release manifest (in a
    development build, with the bytes read at host start), and starts the child from
    that file with `execveat`, holding a pidfd. Loader variables (`LD_*`, `DYLD_*`,
-   `GLIBC_TUNABLES`) are refused in every child's environment. The rendezvous peer
+   `GLIBC_TUNABLES`, `GCONV_PATH`) are refused in every child's environment. The rendezvous peer
    must match by `SO_PEERCRED`. There is no start-suspended step: the bytes are fixed
    before `exec`, and the execute-only image starts a non-root child non-dumpable. The
    executable is hashed; the loader and shared libraries are trusted because root owns
@@ -94,27 +108,48 @@ These settle what the decisions above left open. The detail is in the
    setup creates, or a mounted secrets volume in a container, recorded at setup. Mode
    `0700`, items `0600`, owned by the service user; ancestors not writable by others
    or by any group but the user's private group; on ext4, XFS, Btrfs or F2FS only;
-   disjoint from the data root by device and inode; a mount point in a container; and
+   disjoint from the data root by device and inode and by its place in the mount
+   table (and, in a container, from the whole data volume); a mount point in a
+   container; and
    an empty store for an instance whose records say keys exist refuses. Anything else
    refuses. The same engine is every development build's store.
-9. **The web process confines itself with Landlock and seccomp.** It connects to the
-   rendezvous, sets no-new-privileges, applies Landlock (ABI 3 or higher, every
-   filesystem right handled, no rule) and a seccomp allowlist that kills on any other
-   call, then reports ready. The host checks seccomp and no-new-privileges in
-   `/proc/<pid>/status`. Linux hosts need kernel 6.2 or later with Landlock enabled,
-   and glibc 2.34 or later; other C libraries get the refusing adapters.
+9. **The web process confines itself with a seccomp filter, and with Landlock where
+   the kernel has it** (amended by the owner's direction of 2026-11-18: the product
+   runs on ordinary Linux hosts and in Docker without extra configuration). It
+   connects to the rendezvous, sets no-new-privileges, applies Landlock if the kernel
+   offers it (any ABI, every right handled, no rule), installs a seccomp allowlist
+   that kills on any other call, then reports ready. The filter is mandatory and
+   fails closed; Landlock is a second layer and its absence is logged, never a
+   refusal: every forbidden operation is killed by the filter alone, and no allowed
+   call was found that only Landlock stopped. The host checks seccomp and
+   no-new-privileges in `/proc/<pid>/status`. Linux hosts need kernel 5.9 or later
+   (the admission of decision 7) and glibc 2.34 or later; other C libraries get the
+   refusing adapters. As first accepted, this decision required Landlock ABI 3 and
+   therefore kernel 6.2.
 10. **Service.** A systemd user unit on a Linux machine; in a container, `agentic-org
     serve --setup <file>` in the foreground under `tini`, stopping within 8 seconds on
     `SIGTERM`. Setup's non-interactive configuration names the mode and the credential
-    directory; nothing detects a container. `serve` refuses to run as root. The
-    container runs as UID 61000 with the repository's seccomp and AppArmor profiles,
-    listens with HTTPS on its network interface with an operator-supplied certificate,
-    and its first registration link comes only from
+    directory; nothing detects a container. `serve` and `setup` refuse to run as root.
+    The container runs as UID 61000 and listens on its network interface.
+    It starts with a plain `docker run` that publishes the port (amended by the
+    owner's direction of 2026-11-18): the image declares its two volumes, and the
+    repository's seccomp and AppArmor profiles are optional files that let agents'
+    vendor sandboxes create user namespaces. **For now the container serves plain
+    HTTP** (owner, 2026-11-18: "http for now is fine"): a listener mode of its own,
+    allowed only in the foreground mode and chosen explicitly in the setup file; the
+    documented command publishes it on `127.0.0.1` only, and published on another
+    interface sign-in and sessions travel unencrypted. **Pending, recorded by the
+    owner the same day:** HTTPS for the container with a certificate the instance
+    makes for itself at first start, or one the operator supplies (implementation
+    plan, X7); the product serves no HTTPS on any system yet. Its first registration link
+    comes only from
     `docker exec -u 0 <container> agentic-org admin reset --user <service user>`.
 11. **Recovery, reset and native clients on Linux.** A native client on `host.sock` is
     admitted by its kernel UID; Linux has no code identity for it, so the "verified
     signed `agentic-org` client" of ADR-0011 means, on Linux, a peer with the service
-    user's UID, and authority comes only from the browser-approved session. The
+    user's UID, and authority comes only from the browser-approved session (the one
+    exception is the initial registration link of ADR-0022, which setup takes before
+    any account exists and which any process of that user could take in its place). The
     recovery code's confirmation is the administrator's browser approval of the run
     (ADR-0011); the local context is a controlling terminal in the foreground. Against
     a same-user process these are a gate against mistakes, not a security control,

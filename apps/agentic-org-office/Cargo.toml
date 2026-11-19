@@ -14,10 +14,6 @@ path = "src/main.rs"
 name = "launch"
 path = "tests/launch.rs"
 
-[[test]]
-name = "owned_recovery"
-path = "tests/owned_recovery.rs"
-
 [features]
 # Test helpers shared with the binary suite: the test grant signer and a host-channel caller.
 test-support = []
@@ -31,7 +27,8 @@ org-office = { path = "../../crates/org-office" }
 org-work = { path = "../../crates/org-work" }
 org-mailbox = { path = "../../crates/org-mailbox" }
 org-office-launch = { path = "../../crates/org-office-launch" }
-org-supervise = { path = "../../crates/org-supervise" }
+# The default office home and the socket path limit of the build target.
+org-platform = { path = "../../crates/org-platform" }
 libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -770,30 +770,6 @@ fn api_code(error: org_client::ClientError) -> org_proto::ErrorCode {
     }
 }
 
-#[test]
-#[ignore = "rewrite on A3's grant-bound host-channel subscribe (/events): no office-socket subscriber exists"]
-/// Must be rewritten on A3's grant-bound host-channel subscribe (/events): since A1.5 nobody
-/// binds or subscribes as the owner on the office socket, and host channels refuse `subscribe`
-/// until A3. Scenario to keep: an unbound connection's subscribe is `not_authorized`; a
-/// subscriber from a snapshot position gets another caller's committed `team.create` as
-/// `org.changed` (seq 1, same position and command id); a refused command and a retry of a
-/// committed one are not events; a position beyond the log is `snapshot_required`; after a host
-/// restart a subscriber resuming from the old position gets the backlog, then live changes.
-fn a_subscriber_follows_the_organization_and_resumes_from_where_it_was_after_a_restart() {
-    panic!("rewrite on A3's grant-bound host-channel subscribe; see the doc comment");
-}
-
-#[test]
-#[ignore = "rewrite on A3's grant-bound host-channel subscribe (/events): no office-socket subscriber exists"]
-/// Must be rewritten on A3's grant-bound host-channel subscribe (/events): since A1.5 nobody
-/// binds or subscribes as the owner on the office socket, and host channels refuse `subscribe`
-/// until A3. Scenario to keep: the owner's subscriber gets an agent's `msg.send` to the owner as
-/// `message.received` (header id, never the body), then the agent's `status.set` as
-/// `member.presence_changed` (member id, status text) with the next seq on the same connection.
-fn the_app_is_told_live_of_a_message_and_of_a_status_line_through_the_real_office() {
-    panic!("rewrite on A3's grant-bound host-channel subscribe; see the doc comment");
-}
-
 #[path = "launch/activation.rs"]
 mod activation;
 use activation::{handshake, Session, INSTANCE};

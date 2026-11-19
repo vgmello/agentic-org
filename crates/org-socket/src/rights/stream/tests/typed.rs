@@ -24,7 +24,28 @@ fn tcp_listener_requires_inet_stream_listening_and_cloexec_and_closes_refusals()
         "tcp-connected",
         "tcp-no-cloexec",
     ] {
+        if case == "tcp-v6" && !ipv6_loopback() {
+            continue;
+        }
         run_typed(case);
+    }
+}
+
+/// Whether this machine has an IPv6 loopback to bind. A machine without one (a sandbox
+/// or a container with IPv6 switched off) answers "address family not supported" or
+/// "address not available": the IPv6 case is then skipped, with the reason printed, and
+/// the IPv4 case still runs. Any other failure to bind is a failure of the test.
+fn ipv6_loopback() -> bool {
+    match TcpListener::bind("[::1]:0") {
+        Ok(_) => true,
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AddrNotAvailable
+                || error.raw_os_error() == Some(libc::EAFNOSUPPORT) =>
+        {
+            eprintln!("skipped the IPv6 case: this machine has no IPv6 loopback ({error})");
+            false
+        }
+        Err(error) => panic!("binding the IPv6 loopback: {error}"),
     }
 }
 
@@ -85,16 +106,7 @@ fn typed_child() {
             "kind" => Fault::Kind,
             "family" => Fault::Family,
             "flags" => Fault::Flags,
-            #[cfg(target_os = "linux")]
             "listener" => Fault::Listener,
-            #[cfg(target_os = "macos")]
-            "proc-error" => Fault::ProcError,
-            #[cfg(target_os = "macos")]
-            "proc-negative" => Fault::ProcNegative,
-            #[cfg(target_os = "macos")]
-            "proc-short" => Fault::ProcShort,
-            #[cfg(target_os = "macos")]
-            "proc-long" => Fault::ProcLong,
             _ => panic!("unknown fault {name}"),
         };
         FAULT.with(|slot| slot.set(Some(fault)));
@@ -156,7 +168,7 @@ fn check_flags_and_drop(descriptor: OwnedFd, raw: RawFd, flags: libc::c_int) {
 fn check_refusal<T: std::fmt::Debug>(result: io::Result<T>, raw: RawFd, case: &str) {
     let error = result.expect_err("wrong descriptor admitted by typed adoption");
     FAULT.with(|slot| slot.set(None));
-    if case.contains("-fault-") && !case.contains("-fault-proc-") {
+    if case.contains("-fault-") {
         assert_eq!(error.raw_os_error(), Some(libc::EBADF));
     } else {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
@@ -203,12 +215,7 @@ fn each_typed_metadata_error_refuses_and_drops_the_owned_descriptor() {
             run_typed(&format!("{adapter}-fault-{fault}"));
         }
     }
-    #[cfg(target_os = "linux")]
     run_typed("tcp-fault-listener");
-    #[cfg(target_os = "macos")]
-    for fault in ["proc-error", "proc-negative", "proc-short", "proc-long"] {
-        run_typed(&format!("tcp-fault-{fault}"));
-    }
 }
 
 #[test]

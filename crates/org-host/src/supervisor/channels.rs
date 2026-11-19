@@ -1,7 +1,8 @@
 //! Host-owned launch connections. Keys go only to the authenticated reader;
 //! channel descriptors are retained until that worker acknowledges ownership.
 use super::child::Signal;
-use crate::{cloexec::SPAWN_LOCK, peer::AuditToken, server_check::ServerCheck, sync::lock};
+use crate::{cloexec::SPAWN_LOCK, sync::lock};
+use org_platform_host::admission::{Admission, Child, NotTheChild};
 use org_proto::{frame, GrantKey, OfficeSecretsKey};
 use std::{
     collections::BTreeMap,
@@ -152,17 +153,17 @@ impl Broker {
         &self,
         rendezvous: Rendezvous,
         office: &str,
-        pid: u32,
-        admitted: Option<AuditToken>,
-        check: &ServerCheck,
+        admission: &Admission,
+        child: &mut Child,
         secrets: HandoffSecrets<'_>,
         generation: u64,
         signals: Sender<Signal>,
-        exited: &mut dyn FnMut() -> bool,
     ) -> io::Result<Arc<Endpoint>> {
-        let (stream, deadline) = Self::connect(rendezvous, Instant::now() + DEADLINE, exited)?;
+        let (stream, deadline) = Self::connect(rendezvous, Instant::now() + DEADLINE, &mut || {
+            child.try_wait().unwrap_or(false)
+        })?;
         self.handoff(
-            stream, office, pid, admitted, check, secrets, generation, signals, deadline,
+            stream, office, admission, child, secrets, generation, signals, deadline,
         )
     }
     /// The one connection to a bound rendezvous, by `deadline`, with blocking I/O bounded by
@@ -221,15 +222,14 @@ impl Broker {
     /// the steps before any secret goes out, shared by every op.
     fn ready(
         stream: UnixStream,
-        pid: u32,
-        admitted: Option<AuditToken>,
-        check: &ServerCheck,
+        admission: &Admission,
+        child: &Child,
     ) -> io::Result<BufReader<UnixStream>> {
         // Authenticate the socket's actual reader, not merely a process that was
         // admitted before it ran. Release macOS requires the exact audit token.
         phase(
             "initial reader identity",
-            reader_is_child(&stream, pid, admitted),
+            reader_is_child(admission, child, &stream),
         )?;
         let mut reader = BufReader::new(stream);
         let _: org_office_launch::ReadyForSecrets = phase(
@@ -242,11 +242,11 @@ impl Broker {
         }
         phase(
             "handoff reader identity",
-            reader_is_child(reader.get_ref(), pid, admitted),
+            reader_is_child(admission, child, reader.get_ref()),
         )?;
         phase(
             "handoff image identity",
-            check.still(pid, admitted).map_err(launch),
+            admission.recheck(child).map_err(launch),
         )?;
         Ok(reader)
     }
@@ -257,25 +257,25 @@ impl Broker {
     /// endpoint is registered: a discard serves no channels.
     pub fn discard(
         rendezvous: Rendezvous,
-        pid: u32,
-        admitted: Option<AuditToken>,
-        check: &ServerCheck,
+        admission: &Admission,
+        child: &mut Child,
         generation: u64,
         signals: Sender<Signal>,
-        exited: &mut dyn FnMut() -> bool,
     ) -> io::Result<()> {
-        let (stream, _deadline) = Self::connect(rendezvous, Instant::now() + DEADLINE, exited)?;
-        Self::discard_handoff(stream, pid, admitted, check, generation, signals)
+        let (stream, _deadline) =
+            Self::connect(rendezvous, Instant::now() + DEADLINE, &mut || {
+                child.try_wait().unwrap_or(false)
+            })?;
+        Self::discard_handoff(stream, admission, child, generation, signals)
     }
     fn discard_handoff(
         stream: UnixStream,
-        pid: u32,
-        admitted: Option<AuditToken>,
-        check: &ServerCheck,
+        admission: &Admission,
+        child: &Child,
         generation: u64,
         signals: Sender<Signal>,
     ) -> io::Result<()> {
-        let mut reader = Self::ready(stream, pid, admitted, check)?;
+        let mut reader = Self::ready(stream, admission, child)?;
         // Still sent only to the authenticated child reader, after `ready_for_secrets`, so a
         // discard keeps the start/create handshake order; the header itself holds no secret.
         let header = org_office_launch::encode_discard_handoff().map_err(launch)?;
@@ -284,7 +284,7 @@ impl Broker {
         // worker at that deadline, which ends this stream.
         set_timeout_unless_peer_closed(reader.get_ref(), None)?;
         std::thread::Builder::new()
-            .name(format!("office-{pid}-launch-discard"))
+            .name(format!("office-{}-launch-discard", child.id()))
             .spawn(move || {
                 while let Ok(Some(org_office_launch::RendezvousEvent::Server(event))) =
                     org_office_launch::read_server_event(&mut reader)
@@ -302,15 +302,14 @@ impl Broker {
         &self,
         stream: UnixStream,
         office: &str,
-        pid: u32,
-        admitted: Option<AuditToken>,
-        check: &ServerCheck,
+        admission: &Admission,
+        child: &Child,
         secrets: HandoffSecrets<'_>,
         generation: u64,
         signals: Sender<Signal>,
         deadline: Instant,
     ) -> io::Result<Arc<Endpoint>> {
-        let mut reader = Self::ready(stream, pid, admitted, check)?;
+        let mut reader = Self::ready(stream, admission, child)?;
         let (transfer, worker) = {
             let _fence = lock(&SPAWN_LOCK);
             UnixDatagram::pair()?
@@ -379,7 +378,7 @@ impl Broker {
         lock(&self.endpoints).insert(office.into(), Arc::downgrade(&endpoint));
         let receiving = Arc::clone(&endpoint);
         std::thread::Builder::new()
-            .name(format!("office-{pid}-launch"))
+            .name(format!("office-{}-launch", child.id()))
             .spawn(move || {
                 while let Ok(Some(event)) = org_office_launch::read_server_event(&mut reader) {
                     match event {
@@ -673,33 +672,21 @@ pub(crate) fn set_timeout_unless_peer_closed(
     }
 }
 
-#[cfg(target_os = "macos")]
+/// Whether the process at the other end of `stream` is `child`, as the image `admission`
+/// admitted (on macOS the same audit token and pid). A system without an admission adapter
+/// has no child to ask about: no weaker check stands in for it (ADR-0017).
 pub(crate) fn reader_is_child(
+    admission: &Admission,
+    child: &Child,
     stream: &UnixStream,
-    pid: u32,
-    admitted: Option<AuditToken>,
 ) -> io::Result<()> {
-    let token = crate::peer::audit_token(stream)?;
-    let peer_pid = u32::from_ne_bytes(token[20..24].try_into().map_err(launch)?);
-    if admitted.is_some_and(|expected| expected != token) || peer_pid != pid {
-        return Err(invalid());
-    }
-    Ok(())
-}
-
-/// No other operating system has a check that the reader is the started worker yet. Refuse
-/// rather than fall back to a weaker one (ADR-0017); the Linux check arrives with increment X1
-/// of the implementation plan.
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn reader_is_child(
-    _stream: &UnixStream,
-    _pid: u32,
-    _admitted: Option<AuditToken>,
-) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "checking a worker's identity is not implemented on this operating system",
-    ))
+    admission.verify_reader(child, stream).map_err(|error| {
+        if NotTheChild::is(&error) {
+            invalid()
+        } else {
+            error
+        }
+    })
 }
 
 #[cfg(test)]

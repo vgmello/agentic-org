@@ -11,9 +11,6 @@
 // have (a release host uses the Keychain, which tests never touch): debug builds only. Many
 // tests also need the development fallback, which only debug builds have.
 #![cfg(debug_assertions)]
-// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
-// helpers are unused.
-#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -93,7 +90,6 @@ fn wait_for_state(
 
 // Needs the development fallback: a debug build.
 #[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
 #[test]
 fn the_launch_worker_gets_no_app_token() {
     let home = TestHome::registered();
@@ -107,7 +103,6 @@ fn the_launch_worker_gets_no_app_token() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn retired_calls_are_refused_under_each_non_app_policy() {
     let home = TestHome::registered();
@@ -139,7 +134,6 @@ fn retired_calls_are_refused_under_each_non_app_policy() {
 
 // Needs the development fallback: a debug build.
 #[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
 #[test]
 fn native_restart_follows_the_runtime_contract() {
     let home = TestHome::registered();
@@ -186,7 +180,6 @@ fn native_restart_follows_the_runtime_contract() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn every_way_a_start_ends_has_its_reason() {
     use OfficeStatus::{Offline, Unavailable};
@@ -268,7 +261,6 @@ fn every_way_a_start_ends_has_its_reason() {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn status_changes_are_pushed_on_subscribe() {
     let home = TestHome::registered();
@@ -316,7 +308,6 @@ fn status_changes_are_pushed_on_subscribe() {
 
 // Needs the development fallback: a debug build.
 #[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
 #[test]
 fn the_give_up_rule_stops_restarts_until_office_restart() {
     let home = TestHome::registered();
@@ -349,7 +340,6 @@ fn the_give_up_rule_stops_restarts_until_office_restart() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn uptime_counts_from_ready_not_from_the_spawn() {
     let home = TestHome::registered();
@@ -381,7 +371,6 @@ fn uptime_counts_from_ready_not_from_the_spawn() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_status_change_publishes_the_whole_office_record() {
     // The event's data is the office's whole record, as `office.list` shows it.
@@ -407,7 +396,6 @@ fn a_status_change_publishes_the_whole_office_record() {
 /// The retired token method remains refused when a second process writes an accepted socket.
 /// This gate test does not establish app_auth's process-identity enforcement.
 #[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
 #[test]
 fn retired_calls_stay_refused_when_another_process_writes_the_connection() {
     use std::io::{BufRead, BufReader, Write};
@@ -495,7 +483,6 @@ fn write_on_fd3_when_asked() {
 /// Retired token calls remain refused with any buffered suffix. Actual app_auth timing
 /// enforcement is tested separately and needs session wire coverage again in2b.3.
 #[cfg(debug_assertions)]
-#[cfg(target_os = "macos")]
 #[test]
 fn retired_calls_stay_refused_with_a_buffered_suffix() {
     use std::io::{BufRead, BufReader, Write};

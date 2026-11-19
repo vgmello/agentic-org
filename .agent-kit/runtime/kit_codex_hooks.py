@@ -9,7 +9,7 @@ import sys
 import time
 
 from kit_config import CheckError
-from kit_hooks import cwd_from, format_file, guard, read_payload, verify
+from kit_hooks import cwd_from, default_base, format_file, guard, read_payload, verify
 from kit_memory import checkpoint
 
 
@@ -51,7 +51,7 @@ def main():
                 format_file(entry, remaining)
         elif args.action == "verify":
             if payload.get("agent_type") == "fullstack-engineer":
-                verify(cwd)
+                verify(cwd, None, default_base(cwd))
             # Stop events require JSON, including the successful case.
             print("{}")
         else:

@@ -197,6 +197,9 @@ export function readCommandEnvelope<P = JsonObject>(
 ): CommandEnvelope<P> {
 	return checked((value) => {
 		const input = fields(value);
+		// The envelope has three keys. Any other top-level key is refused, not ignored, as the server does.
+		if (Object.keys(input).some((key) => !['operation_id', 'scope', 'params'].includes(key)))
+			return invalid();
 		return {
 			operation_id: operationId(field(input, 'operation_id')),
 			scope: readScope(field(input, 'scope')),
@@ -210,8 +213,6 @@ export function nativeParams<P>(envelope: CommandEnvelope<P>, kind: OperationKin
 		[idFields[readKind(kind)]]: operationId(envelope.operation_id)
 	}))(undefined);
 }
-export const readCreateRequest = (value: unknown) =>
-	readCommandEnvelope(value, object({ name: text }));
 export const readRestartRequest = (value: unknown) => readCommandEnvelope(value, object({}));
 export const readCancelRequest = checked((value) =>
 	Object.keys(fields(value)).length === 0 ? {} : invalid()
@@ -222,8 +223,9 @@ export interface LookupQuery {
 	org_id?: string;
 	office_id?: string;
 }
+// Instance, organization and office IDs are canonical UUID text: letters, digits and the hyphen.
 const lookupId: Reader<string> = (value) =>
-	/^[A-Za-z0-9]{1,64}$/.test(text(value)) ? (value as string) : invalid();
+	/^[A-Za-z0-9-]{1,64}$/.test(text(value)) ? (value as string) : invalid();
 const queryReader = object({
 	instance_id: lookupId,
 	org_id: optional(lookupId),
@@ -456,17 +458,6 @@ function publicProjection(value: unknown, depth = 0): void {
 		}
 	}
 }
-const organizationReader = object({
-	id: text,
-	name: text,
-	created_at: text,
-	recovery: word(['pending', 'delivered', 'acknowledged'] as const)
-});
-export const readOrganization = checked((value) => {
-	fields(value);
-	publicProjection(value);
-	return organizationReader(value);
-});
 export const readRestartResult = checked((value) => {
 	fields(value);
 	publicProjection(value);
@@ -519,7 +510,6 @@ export const readOffice = checked(
 		next_restart_at: optional(text)
 	})
 );
-export const readOrganizationList = checked(object({ organizations: array(readOrganization) }));
 export const readOfficeList = checked(object({ offices: array(readOffice) }));
 const capabilityReader = object({
 	name: text,

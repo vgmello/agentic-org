@@ -103,7 +103,7 @@ def snapshot(directory, deadline=None):
 
 
 def sources(checks, deadline=None):
-    return [snapshot(directory, deadline) for directory in dict.fromkeys(directory for directory, _ in checks)]
+    return [snapshot(directory, deadline) for directory in dict.fromkeys(check.directory for check in checks)]
 
 
 def same_sources(before, after):
@@ -150,6 +150,10 @@ def inspect_receipt(path):
     current = [snapshot(Path(source["directory"])) for source in before]
     if not before or not same_sources(before, current):
         reasons.append("Checkout contents, index or HEAD have changed")
+    warnings = [f"Non-blocking check {'failed' if c.get('advisory_failure') else 'skipped (no time left)'}: "
+                f"{' '.join(c.get('argv', []))}"
+                for c in receipt.get("checks", []) if c.get("advisory_failure") or c.get("skipped") == "time budget"]
     return {"receipt": str(Path(path).resolve()), "current": not reasons, "reasons": reasons,
+            "scope": receipt.get("scope", "all"), "warnings": warnings,
             "note": "Local evidence only; ignored dependencies/environment and external services are outside the fingerprint. "
                     "Review the diff against the task's base ref and rerun after integration."}

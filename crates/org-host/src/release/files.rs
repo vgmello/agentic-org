@@ -126,12 +126,7 @@ impl Directory {
         }
         use std::os::unix::fs::PermissionsExt;
         frozen.set_permissions(std::fs::Permissions::from_mode(0o400))?;
-        frozen.sync_all()?;
-        #[cfg(target_os = "macos")]
-        // SAFETY: live writable held descriptor; F_FULLFSYNC takes no pointer.
-        if unsafe { libc::fcntl(frozen.as_raw_fd(), libc::F_FULLFSYNC) } != 0 {
-            return Err(io::Error::last_os_error().into());
-        }
+        org_platform::fs::full_sync(&frozen)?;
         self.0.sync_all()?;
         frozen.rewind()?;
         Ok(frozen)
@@ -220,7 +215,7 @@ impl Directory {
         let entries = Entries(pointer);
         let mut names = BTreeSet::new();
         loop {
-            set_errno(0);
+            org_platform::fs::set_errno(0)?;
             // SAFETY: retained live DIR, same thread and no competing iterator.
             let item = unsafe { libc::readdir(entries.0) };
             if item.is_null() {
@@ -288,18 +283,5 @@ impl Directory {
             }
         }
         Ok(())
-    }
-}
-fn set_errno(value: i32) {
-    // SAFETY: libc exposes this thread's errno cell; no shared memory access.
-    unsafe {
-        #[cfg(target_os = "macos")]
-        {
-            *libc::__error() = value;
-        }
-        #[cfg(target_os = "linux")]
-        {
-            *libc::__errno_location() = value;
-        }
     }
 }

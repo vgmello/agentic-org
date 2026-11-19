@@ -13,8 +13,8 @@ import sys
 import tempfile
 import time
 
-from kit_config import CheckError, ancestors_in_repo, digest, load_checks, protected_name
-from kit_evidence import inspect_receipt, same_sources, save_receipt, sources, timestamp
+from kit_config import CheckError, ancestors_in_repo, covered, digest, load_checks, protected_name
+from kit_evidence import git, inspect_receipt, same_sources, save_receipt, sources, timestamp
 
 
 class VerificationError(CheckError):
@@ -144,27 +144,110 @@ def find_config(cwd):
                      "and checks before accepting implementation work.")
 
 
-def verify(cwd, config=None):
+ADVISORY_SECONDS = 120
+# Time kept back for the closing source fingerprint, so a non-blocking check cannot use it.
+EVIDENCE_RESERVE_SECONDS = 30
+
+
+def default_base(cwd, config=None):
+    """The configured integration base, else the upstream when it is another branch, else None
+    (run every check). A branch tracking its own remote copy is not a base: after a push it
+    would leave nothing in scope."""
+    try:
+        config = Path(config).resolve() if config else find_config(cwd)
+        configured = json.loads(config.read_text()).get("base")
+    except (CheckError, OSError, ValueError, AttributeError):
+        configured = None
+    if configured is not None and not isinstance(configured, str):
+        return None  # load_checks refuses the configuration with the reason
+    branch = git(cwd, "symbolic-ref", "--short", "--quiet", "HEAD", optional=True)
+    branch = branch.decode().strip() if branch else None
+    base = configured
+    if not base:
+        upstream = git(cwd, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}", optional=True)
+        base = upstream.decode().strip() if upstream else None
+    # On the base branch itself everything is already integrated: nothing would be in scope.
+    if not base or (branch and base.split("/", 1)[-1] == branch):
+        return None
+    return base
+
+
+def changed_files(cwd, base, deadline):
+    """The checkout's top level, the merge base with `base`, and the files that differ from
+    it, including uncommitted and untracked ones."""
+    if base.startswith("-"):
+        raise CheckError(f"Base {base!r} is not a ref")
+    root = Path(os.fsdecode(git(cwd, "rev-parse", "--show-toplevel", deadline=deadline).rstrip(b"\n"))).resolve()
+    try:
+        merge_base = git(root, "merge-base", "HEAD", base, deadline=deadline).decode().strip()
+    except ValueError as exc:
+        raise CheckError(f"Cannot scope checks to base {base!r}: it is unknown here or shares no history "
+                         "with HEAD. Fetch it, set base in verification.json, or pass --base REF / --all") from exc
+    raw = git(root, "diff", "--name-only", "--no-renames", "-z", merge_base, "--", deadline=deadline)
+    raw += git(root, "ls-files", "--others", "--exclude-standard", "-z", deadline=deadline)
+    return root, merge_base, sorted({root / os.fsdecode(p) for p in raw.split(b"\0") if p})
+
+
+def verify(cwd, config=None, base=None):
+    """Run the configured checks. With a base, a check that declares paths runs only when a
+    changed file matches them; without one, or when the configuration itself changed, every
+    check runs. Non-blocking checks run last, time-capped; their failure is a warning."""
     config = Path(config).resolve() if config else find_config(cwd)
     receipt = {"version": 1, "started_at": timestamp(), "cwd": str(cwd), "config": str(config),
-               "config_sha256": None, "checks": [], "sources_before": [], "sources_after": [],
-               "source_bound": False, "passed": False}
+               "config_sha256": None, "scope": None, "executed": 0, "checks": [], "sources_before": [],
+               "sources_after": [], "source_bound": False, "passed": False}
     completed = []
     failure = None
     try:
         receipt["config_sha256"] = digest(config.read_bytes())
         checks, timeout = load_checks(config, cwd)
         deadline = time.monotonic() + timeout
+        root, changed = config.parent.parent.resolve(), None
+        if base:
+            top, merge_base, changed = changed_files(cwd, base, deadline)
+            receipt["scope"] = {"base": base, "merge_base": merge_base, "changed": [str(p) for p in changed]}
+            if config in changed:
+                completed.append("NOTE the verification configuration changed: running every check")
+                receipt["scope"]["configuration_changed"] = True
+                changed = None
+        else:
+            receipt["scope"] = "all"
         receipt["sources_before"] = sources(checks, deadline)
         receipt["source_bound"] = all(source["bound"] for source in receipt["sources_before"])
-        for directory, argv in checks:
+        for check in sorted(checks, key=lambda c: not c.blocking):
+            # A project outside the scoped checkout cannot be scoped by its changes: run it whole.
+            scoped = (changed is not None and check.paths and root.is_relative_to(top)
+                      and check.directory.is_relative_to(top))
+            files = covered(check, changed, root) if scoped else None
+            if files == []:
+                receipt["checks"].append({"argv": check.argv, "cwd": str(check.directory), "blocking": check.blocking,
+                                          "skipped": "no changed file matches its paths"})
+                completed.append(f"SKIP {check.directory}: {shlex.join(check.argv)} (nothing it covers changed)")
+                continue
+            argv = check.argv
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise CheckError("Verification exceeded its total time budget")
-            record = {}
+            limit = remaining if check.blocking else min(ADVISORY_SECONDS, remaining - EVIDENCE_RESERVE_SECONDS)
+            if limit <= 0:
+                if check.blocking:
+                    raise CheckError("Verification exceeded its total time budget")
+                receipt["checks"].append({"argv": argv, "cwd": str(check.directory), "blocking": False,
+                                          "skipped": "time budget"})
+                completed.append(f"WARN {check.directory}: {shlex.join(argv)} skipped (non-blocking): no time left")
+                continue
+            record = {"blocking": check.blocking}
             receipt["checks"].append(record)
-            command(argv, directory, remaining, record, config.parent / "logs/commands")
-            completed.append(f"PASS {directory}: {shlex.join(argv)}")
+            receipt["executed"] += 1
+            try:
+                command(argv, check.directory, limit, record, config.parent / "logs/commands")
+            except CheckError as exc:
+                if check.blocking or record.get("launch_failed"):
+                    raise
+                record["advisory_failure"] = True
+                completed.append(f"WARN {check.directory}: {shlex.join(argv)} failed (non-blocking): {str(exc).splitlines()[0]}")
+                continue
+            completed.append(f"PASS {check.directory}: {shlex.join(argv)}")
+        if not receipt["executed"]:
+            completed.append("NOTE no configured check covers this change")
         receipt["sources_after"] = sources(checks, deadline)
         if (receipt["config_sha256"] != digest(config.read_bytes()) or
                 not same_sources(receipt["sources_before"], receipt["sources_after"])):
@@ -189,6 +272,10 @@ def main():
     parser.add_argument("action", choices=("guard", "format", "verify", "check", "evidence"))
     parser.add_argument("--config", help="verification JSON (standalone check only)")
     parser.add_argument("--receipt", help="receipt to inspect (evidence action only)")
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--base", help="check only what changed since this ref (check only; default: the configured "
+                       "base, else an upstream on another branch, else every check)")
+    scope.add_argument("--all", action="store_true", help="run every configured check (check only)")
     parser.add_argument("--json", action="store_true", help="JSON output for check/evidence")
     args = parser.parse_args()
     payload = {}
@@ -198,25 +285,30 @@ def main():
                 raise CheckError("evidence requires --receipt and does not accept --config")
             report = inspect_receipt(args.receipt)
             print(json.dumps(report, indent=2) if args.json else
-                  ("CURRENT " + report["receipt"] if report["current"] else "STALE/FAILED: " + "; ".join(report["reasons"])))
+                  "\n".join([("CURRENT " + report["receipt"] if report["current"] else "STALE/FAILED: " + "; ".join(report["reasons"])),
+                             "Scope: " + ("all" if report["scope"] == "all" else f"changes since {report['scope']['base']}"
+                                          if isinstance(report["scope"], dict) else "unknown"),
+                             *("WARNING " + w for w in report["warnings"])]))
             return 0 if report["current"] else 1
         if args.receipt or (args.json and args.action != "check"):
             raise CheckError("--receipt is for evidence; --json is for check/evidence")
         if args.action == "check":
-            completed, receipt, receipt_path = verify(Path.cwd().resolve(), args.config)
+            cwd = Path.cwd().resolve()
+            completed, receipt, receipt_path = verify(cwd, args.config, None if args.all else args.base or default_base(cwd, args.config))
             print(json.dumps({**receipt, "receipt_path": str(receipt_path)}, indent=2) if args.json else
                   "\n".join([*completed, f"Evidence: {receipt_path}",
                               "Source identity: Git-bound" if receipt["source_bound"] else "Source identity: unbound (no Git checkout)"]))
             return 0
-        if args.config:
-            raise CheckError("--config is only supported by the standalone check command")
+        if args.config or args.base or args.all:
+            raise CheckError("--config, --base and --all are only supported by the standalone check command")
         payload = read_payload()
         if args.action == "guard":
             guard(payload)
         elif args.action == "format":
             format_file(payload)
         elif payload.get("agent_type") == "fullstack-engineer":
-            verify(cwd_from(payload))
+            cwd = cwd_from(payload)
+            verify(cwd, None, default_base(cwd))
         return 0
     except (CheckError, OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
         message = f"Starter kit {args.action} failed: {exc}"

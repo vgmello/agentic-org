@@ -405,6 +405,28 @@
         "parse_valid": false,
         "http_status": 400
       }
+    },
+    {
+      "name": "host lookup names a canonical UUID instance",
+      "kind": "host",
+      "fields": [
+        [
+          "instance_id",
+          "0193a5c0-0000-7000-8000-000000000009"
+        ]
+      ],
+      "session_instance": "0193a5c0-0000-7000-8000-000000000009",
+      "expect": {
+        "valid": true,
+        "scope": {
+          "kind": "instance",
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "normalized": {
+          "instance_id": "0193a5c0-0000-7000-8000-000000000009"
+        },
+        "parse_valid": true
+      }
     }
   ],
   "visibility": {

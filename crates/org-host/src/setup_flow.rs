@@ -6,7 +6,10 @@
 //! 2. Lock and freeze the setup record (`setup.lock`). The address is chosen before anything
 //!    is written: port 7420 for `default`, the first free port from 7421 for a named instance;
 //!    an occupied requested port is an actionable error and nothing is saved (SRV-4).
-//! 3. Reserve the instance, record its listener and prepare the layout.
+//! 3. Reserve the instance, record its listener and prepare the layout. Where a release
+//!    host keeps its secrets in a credential directory (Linux, ADR-0017 decision 8), make
+//!    that directory, check it as the host will, and record its absolute path with the
+//!    instance: once, here, so that the host never derives it from its environment.
 //! 4. Report disk encryption and the folder modes, read back from disk (ENC-3).
 //! 5. Register the service and start it unless it already runs (SRV-6).
 //! 6. Wait until `host.sock` answers hello and `instance.status` for this instance.
@@ -56,6 +59,80 @@ const READY_WITHIN: Duration = Duration::from_secs(60);
 pub struct Platform {
     pub service: Box<dyn ServiceManager>,
     pub disk: Box<dyn DiskEncryption>,
+    pub credentials: CredentialDirectory,
+}
+
+/// Where the host of the instance being set up keeps its secrets, as far as setup has to
+/// provide it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CredentialDirectory {
+    /// Not in a directory setup makes: the Keychain, or a development build's key folder.
+    /// The record names none.
+    Unused,
+    /// In `<base>/<instance id>`: setup makes it (mode 700, with the folders of `base`
+    /// that are missing), checks it and records it. `base` is absolute.
+    Below(PathBuf),
+}
+
+impl CredentialDirectory {
+    /// What a host of this build keeps its secrets in on this system, for the account
+    /// whose home is `home`: a development build its key folder; a release build the
+    /// system's protected store, which is a directory on Linux
+    /// (`${XDG_STATE_HOME:-~/.local/state}/agentic-org/credentials`, read here and never
+    /// again) and the Keychain on macOS.
+    pub fn for_host(home: &Path) -> Result<Self, String> {
+        use org_platform_host::credentials::{protected_store, ProtectedStore};
+        if cfg!(debug_assertions) {
+            return Ok(Self::Unused);
+        }
+        match protected_store().map_err(|e| e.to_string())? {
+            ProtectedStore::Keychain => Ok(Self::Unused),
+            ProtectedStore::ReleaseDirectory => org_platform::dirs::credential_directory_base(home)
+                .map(Self::Below)
+                .map_err(|e| e.to_string()),
+        }
+    }
+}
+
+/// Makes the credential directory of instance `instance_id` below `base` and checks it as
+/// the host will at every start: outside the data root `data_root`, owner-only, on a
+/// filesystem that can hold it, below directories nobody else can change. Returns its
+/// absolute path, for the record. Every folder this makes has mode 700; an existing one is
+/// left as it is, and a wrong one is refused with its path and the rule it broke, never
+/// repaired.
+pub(crate) fn make_credential_directory(
+    base: &Path,
+    instance_id: &str,
+    data_root: std::os::fd::BorrowedFd<'_>,
+    enter: impl FnOnce(
+        org_platform_host::credentials::ReleaseDirectory<'_>,
+    ) -> Result<
+        org_platform_host::credentials::ReleaseRoot,
+        org_platform_host::credentials::CredentialError,
+    >,
+) -> Result<PathBuf, String> {
+    use std::os::unix::fs::DirBuilderExt;
+    if !base.is_absolute() || !crate::instance::registry::valid_instance_id(instance_id) {
+        return Err("the credential directory has no absolute path; nothing was saved".into());
+    }
+    let path = base.join(instance_id);
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&path)
+        .map_err(|e| format!("creating the credential directory {}: {e}", path.display()))?;
+    // Open it once as the host does, so that a directory the host would refuse is refused
+    // now, with the same words, and not at the service's first start. No item is expected
+    // yet; a mount point is the container's rule (X5).
+    enter(org_platform_host::credentials::ReleaseDirectory {
+        path: &path,
+        data_root,
+        mount_point_required: false,
+        expect_items: false,
+    })
+    .map(drop)
+    .map_err(|refused| format!("the credential directory cannot be used: {refused}"))?;
+    Ok(path)
 }
 
 /// Asked once, on the first run only, with the default address; `Ok(None)` accepts it.
@@ -293,6 +370,7 @@ pub fn platform() -> Result<Platform, String> {
         )
         .map_err(refused)?,
         disk: org_platform::disk::disk_encryption().map_err(refused)?,
+        credentials: CredentialDirectory::for_host(&home)?,
     })
 }
 
@@ -406,6 +484,16 @@ pub(crate) fn run_at(
                 instance
                     .prepare_layout()
                     .map_err(|e| fail("preparing the instance folder", e))?;
+                // While the root lock is held: the directory is checked against the root
+                // itself, and recorded together with the instance it belongs to.
+                if let CredentialDirectory::Below(base) = &platform.credentials {
+                    record.credentials = Some(make_credential_directory(
+                        base,
+                        instance.id(),
+                        instance.root_descriptor(),
+                        org_platform_host::credentials::release_directory,
+                    )?);
+                }
                 (
                     instance.id().to_owned(),
                     instance.temp_folder().join("host.sock"),
@@ -418,6 +506,9 @@ pub(crate) fn run_at(
             reserved
         }
     };
+    if let Some(credentials) = &record.credentials {
+        say(out, format!("Secrets: {}", credentials.display()))?;
+    }
 
     // 4. ENC-3, with the modes read back from disk.
     let exceptions = mode_exceptions(&record.input.root)?;

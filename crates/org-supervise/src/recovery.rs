@@ -39,11 +39,6 @@ mod capture;
 mod failure;
 pub use failure::ScanFailureKind;
 mod job;
-#[cfg(target_os = "linux")]
-#[path = "recovery/native/linux.rs"]
-mod native;
-#[cfg(target_os = "macos")]
-#[path = "recovery/native/macos.rs"]
 mod native;
 pub use native::NativeRecovery;
 mod checkpoint;
@@ -504,7 +499,7 @@ mod tests;
 fn native_wait_until(deadline: Instant) -> io::Result<()> {
     wait_until_with(deadline, Instant::now, |remaining| {
         let timeout = libc::timespec {
-            tv_sec: remaining.as_secs().min(libc::time_t::MAX as u64) as libc::time_t,
+            tv_sec: remaining.as_secs().min(i64::MAX as u64) as _,
             tv_nsec: remaining.subsec_nanos() as _,
         };
         // SAFETY: a valid finite interval. An interrupted call is retried only
@@ -547,26 +542,21 @@ fn signal_mark_matches(target: &VerifiedTarget, mark: &MarkEvidence) -> bool {
     }
 }
 
-fn native_mark(bytes: &[u8]) -> MarkEvidence {
-    if !bytes.is_empty() && bytes.last() != Some(&0) {
-        return MarkEvidence::Unreadable;
+/// What the platform scan asks before it signals: whether the mark it just read from
+/// the process still supports signalling `target`.
+fn signal_allowed_by(target: &VerifiedTarget, mark: &org_platform::process::MarkEvidence) -> bool {
+    signal_mark_matches(target, &native_mark(mark.clone()))
+}
+
+/// The consumer's half of mark evidence: the platform scan reports the value of
+/// `ORG_SESSION_MARK` as it found it, and only a valid session mark counts as present.
+fn native_mark(evidence: org_platform::process::MarkEvidence) -> MarkEvidence {
+    use org_platform::process::MarkEvidence as Native;
+    match evidence {
+        Native::Present(value) if SessionMark::new(value.clone()).is_ok() => {
+            MarkEvidence::Present(value)
+        }
+        Native::Present(_) | Native::Unreadable => MarkEvidence::Unreadable,
+        Native::Absent => MarkEvidence::Absent,
     }
-    let mut marks = bytes
-        .split(|byte| *byte == 0)
-        .filter_map(|entry| entry.strip_prefix(b"ORG_SESSION_MARK="));
-    let Some(value) = marks.next() else {
-        return MarkEvidence::Absent;
-    };
-    // Identical entries count as one mark on both platforms; conflicting values
-    // are ambiguous evidence.
-    if marks.any(|duplicate| duplicate != value) {
-        return MarkEvidence::Unreadable;
-    }
-    let Ok(value) = std::str::from_utf8(value) else {
-        return MarkEvidence::Unreadable;
-    };
-    if SessionMark::new(value.into()).is_err() {
-        return MarkEvidence::Unreadable;
-    }
-    MarkEvidence::Present(value.into())
 }

@@ -177,8 +177,8 @@ fn refused_principal_bind_preserves_binding_held_calls_and_subscription_generati
     let feed = Arc::new(FakeFeed::default());
     let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
     ports.submit = Box::new(|_| panic!("principal must not submit or store a command"));
-    ports.feed = Box::new(Arc::clone(&feed));
-    let mailbox = Arc::clone(&ports.mailbox);
+    ports.feed = Some(Box::new(Arc::clone(&feed)));
+    let mailbox = Arc::clone(ports.mailbox.as_ref().unwrap());
     let shared = Arc::new(Shared::new(&test_info(), &path, ports, launch_key()));
     let _server = running(&path, &shared);
     // A person binds only through a grant (no office-socket frame binds one); the connection

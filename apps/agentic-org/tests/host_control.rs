@@ -274,11 +274,7 @@ fn status_counts_observed_office_states_without_revealing_ids() {
     // A fatal server failure leaves C `unavailable` (a missing key no longer does: it starts).
     home.script(serde_json::json!({ C: {"do": "fail", "code": "invalid_request"} }));
     let host = home.start(home.config()).unwrap();
-    let running_status = if cfg!(target_os = "macos") {
-        org_proto::OfficeStatus::Active
-    } else {
-        org_proto::OfficeStatus::Unavailable
-    };
+    let running_status = org_proto::OfficeStatus::Active;
     support::eventually(Duration::from_secs(10), "native offices settled", || {
         let offices = org_host::test_support::Fixture::new(&host).offices();
         [A, B].iter().all(|id| {
@@ -306,11 +302,7 @@ fn status_counts_observed_office_states_without_revealing_ids() {
             result.offices.active,
             result.offices.failed
         ),
-        if cfg!(target_os = "macos") {
-            (3, 2, 1)
-        } else {
-            (3, 0, 3)
-        }
+        (3, 2, 1)
     );
     host.shutdown();
 }
@@ -356,11 +348,7 @@ fn even_a_development_app_peer_cannot_use_retired_wire_calls() {
     let mut config = home.config();
     config.dev_app_path = Some(std::env::current_exe().unwrap());
     let host = home.start(config).unwrap();
-    let expected = if cfg!(target_os = "macos") {
-        org_proto::OfficeStatus::Active
-    } else {
-        org_proto::OfficeStatus::Unavailable
-    };
+    let expected = org_proto::OfficeStatus::Active;
     support::eventually(std::time::Duration::from_secs(10), "office active", || {
         support::office_info(&host, A).is_some_and(|o| o.status == expected)
     });

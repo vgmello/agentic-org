@@ -1,23 +1,27 @@
-//! Who is at the other end of a connection on `host.sock`, as the kernel reports it: its uid,
-//! and on macOS its audit token, its pid and its executable's path; what the host noted when it
-//! accepted the connection, and where each request was in the stream. `app_auth` decides what
-//! these allow; the listener records them.
+//! Who is at the other end of a connection on `host.sock`, as the kernel reports it: what the
+//! system identifies it by ([`Identity`]: on macOS its audit token, which names its image; on
+//! GNU/Linux the user and the PID that connected, and nothing of its image), what the host
+//! noted when it accepted the connection, and where each request was in the stream. `app_auth`
+//! decides what these allow; the listener records them. The kernel is asked through
+//! `org_platform_host::admission`, which refuses on a system that cannot identify a peer at
+//! all: no identity is noted there, so nothing that needs one is allowed.
 
-#[cfg(all(target_os = "macos", debug_assertions))]
-use std::ffi::OsStr;
 use std::io;
-#[cfg(all(target_os = "macos", debug_assertions))]
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
-#[cfg(all(target_os = "macos", debug_assertions))]
+#[cfg(debug_assertions)]
 use std::path::PathBuf;
 
-/// An `audit_token_t`: eight 32-bit words.
-pub(crate) const AUDIT_TOKEN_BYTES: usize = 32;
+/// A process's audit token (`audit_token_t`: eight 32-bit words), as a test's scripted image
+/// check names the identity of a child. The host's own code takes a peer's identity whole
+/// ([`Identity`]) and never looks inside it.
+#[cfg(test)]
+pub(crate) type AuditToken = [u8; 32];
 
-/// A process's audit token (`audit_token_t`).
-pub(crate) type AuditToken = [u8; AUDIT_TOKEN_BYTES];
+/// The process at the other end of a connection, as the system identifies it at one moment
+/// (the platform's plain facts). Two of them are equal exactly when the system names the same
+/// process image (macOS), or the same connecting user and PID (GNU/Linux).
+pub(crate) type Identity = org_platform_host::admission::Peer;
 
 /// Where a request's line was in the connection's stream when the reader read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,28 +34,22 @@ pub(crate) struct Received {
 }
 
 /// What the host notes about a client as it accepts its connection, for the app-only calls
-/// (`app_auth`): its audit token, taken first, then how many bytes it had already sent. A byte
-/// buffered before the token was taken may come from a process image that was replaced since
-/// (the exec swap), so an app-only call is accepted only from a request line that starts at or
-/// after `buffered`.
+/// (`app_auth`): its identity (on macOS its audit token), taken first, then how many bytes it
+/// had already sent. A byte buffered before the identity was taken may come from a process
+/// image that was replaced since (the exec swap), so an app-only call is accepted only from a
+/// request line that starts at or after `buffered`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Accepted {
-    #[cfg(target_os = "macos")]
-    pub(crate) token: Option<AuditToken>,
+    pub(crate) identity: Option<Identity>,
     pub(crate) buffered: u64,
 }
 
 impl Accepted {
     pub(crate) fn sample(stream: &UnixStream) -> Self {
-        #[cfg(target_os = "macos")]
-        let token = audit_token(stream).ok();
-        // After the token: anything sent before it was taken is counted as buffered.
+        let identity = identity(stream).ok();
+        // After the identity: anything sent before it was taken is counted as buffered.
         let buffered = bytes_waiting(stream).unwrap_or(u64::MAX);
-        Self {
-            #[cfg(target_os = "macos")]
-            token,
-            buffered,
-        }
+        Self { identity, buffered }
     }
 }
 
@@ -67,84 +65,68 @@ pub(crate) fn bytes_waiting(stream: &UnixStream) -> io::Result<u64> {
     }
 }
 
-/// The peer's audit token, which the code-signing check identifies the caller by. Unlike a pid,
-/// it names one process for its whole life and is never reused.
-#[cfg(target_os = "macos")]
-pub(crate) fn audit_token(stream: &UnixStream) -> io::Result<[u8; AUDIT_TOKEN_BYTES]> {
-    let mut token = [0u8; AUDIT_TOKEN_BYTES];
-    let mut len = AUDIT_TOKEN_BYTES as libc::socklen_t;
-    // SAFETY: a valid socket fd, and an out-buffer of `len` bytes that outlives the call.
-    let rc = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_LOCAL,
-            libc::LOCAL_PEERTOKEN,
-            token.as_mut_ptr().cast(),
-            &mut len,
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if len as usize != AUDIT_TOKEN_BYTES {
-        return Err(io::Error::other(
-            "the peer's audit token has an unexpected size",
-        ));
-    }
-    Ok(token)
+/// The peer's identity now. On macOS it is the audit token the code-signing check identifies
+/// the caller by: unlike a pid, it names one process image for its whole life and is never
+/// reused. On GNU/Linux it is who connected, which never changes for a connection. A system
+/// that cannot identify a peer refuses ([`unidentifiable`]).
+pub(crate) fn identity(stream: &UnixStream) -> io::Result<Identity> {
+    org_platform_host::admission::peer(stream)
 }
 
-/// The peer's pid (for the debug-only fallback; a pid can be reused, an audit token can't).
-#[cfg(all(target_os = "macos", debug_assertions))]
-pub(crate) fn pid(stream: &UnixStream) -> io::Result<libc::pid_t> {
-    let mut pid: libc::pid_t = 0;
-    let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
-    // SAFETY: a valid socket fd, and an out-value of `len` bytes that outlives the call.
-    let rc = unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_LOCAL,
-            libc::LOCAL_PEERPID,
-            (&mut pid as *mut libc::pid_t).cast(),
-            &mut len,
-        )
-    };
-    if rc == 0 {
-        Ok(pid)
-    } else {
-        Err(io::Error::last_os_error())
-    }
+/// Whether `error`, from [`identity`], says that this system cannot identify a peer at all,
+/// rather than that asking about this peer failed.
+pub(crate) fn unidentifiable(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|source| source.is::<org_platform::Refused>())
 }
 
-/// The path of the executable process `pid` runs (for the debug-only fallback).
-#[cfg(all(target_os = "macos", debug_assertions))]
-pub(crate) fn executable(pid: libc::pid_t) -> io::Result<PathBuf> {
-    let mut buf = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
-    // SAFETY: a buffer of exactly the size passed, which outlives the call.
-    let n = unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
-    if n <= 0 {
-        return Err(io::Error::last_os_error());
-    }
-    buf.truncate(n as usize);
-    Ok(PathBuf::from(OsStr::from_bytes(&buf)))
+/// The path of the executable the peer's process runs, found through its pid (for the
+/// debug-only fallback; a pid can be reused, an audit token can't).
+#[cfg(debug_assertions)]
+pub(crate) fn executable(stream: &UnixStream) -> io::Result<PathBuf> {
+    org_platform_host::admission::peer_executable(stream)
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
+    /// What is noted at the accept: the bytes the client had already sent, and its identity
+    /// exactly when the system identifies peers at all.
     #[test]
-    fn a_socket_pair_reports_this_process() {
-        let (a, _b) = UnixStream::pair().unwrap();
-        assert!(audit_token(&a).unwrap().iter().any(|&b| b != 0));
-        #[cfg(debug_assertions)]
-        {
-            assert_eq!(pid(&a).unwrap(), std::process::id() as libc::pid_t);
-            let me = executable(std::process::id() as libc::pid_t).unwrap();
-            assert_eq!(
-                me.canonicalize().unwrap(),
-                std::env::current_exe().unwrap().canonicalize().unwrap()
-            );
+    fn a_sample_counts_what_was_already_sent_and_keeps_the_identity_the_system_gives() {
+        let (a, b) = UnixStream::pair().unwrap();
+        assert_eq!(Accepted::sample(&a).buffered, 0);
+        (&b).write_all(b"early").unwrap();
+        let sampled = Accepted::sample(&a);
+        assert_eq!(sampled.buffered, 5);
+        match identity(&a) {
+            Ok(peer) => {
+                assert_eq!(sampled.identity, Some(peer));
+                org_platform_host::admission::native_peers().unwrap();
+                // Both ends of the pair are this process. Where the system names a peer by
+                // its user alone that user is this process's own; where it identifies the
+                // image, it names no user at all (the platform's fact decides which).
+                use org_platform_host::admission::ImageIdentity;
+                assert_eq!(
+                    peer.uid,
+                    match crate::test_programs::image_identity() {
+                        ImageIdentity::VerifiedBytes => Some(org_socket::effective_uid()),
+                        ImageIdentity::CodeSignature => None,
+                    }
+                );
+            }
+            Err(error) => {
+                assert!(unidentifiable(&error), "{error}");
+                assert_eq!(sampled.identity, None);
+                assert!(org_platform_host::admission::native_peers().is_err());
+            }
         }
+        // An error that is no refusal of the system is not taken for one.
+        assert!(!unidentifiable(&io::Error::from_raw_os_error(
+            libc::ENOTSOCK
+        )));
     }
 }

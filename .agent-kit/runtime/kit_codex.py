@@ -26,7 +26,8 @@ from kit_hooks import protected_name, verify
 from kit_policy import load_policy, route
 from kit_skills import current as current_skills, resolve as resolve_skills
 
-MODEL = "gpt-6.2-sol"
+# Runs recorded before the review model came from the policy ran on this one.
+LEGACY_REVIEW_MODEL = "gpt-6.1-sol"
 
 
 def obj(properties):
@@ -164,7 +165,7 @@ def save_run(directory, state):
              f"Task base: `{state['base']}`", f"Initial implementation: `{state['initial_head']}`",
              f"Current recorded HEAD: `{state.get('head', state['initial_head'])}`",
              f"Branch: `{state['branch']}`", f"Original session: `{state['origin_session']}`",
-             f"Profile: `{state['mode']}`; Sol: `{MODEL}` / `{state['effort']}`; final: `{state['final_model']}` / `{state['final_effort']}`", "",
+             f"Profile: `{state['mode']}`; Sol: `{review_model(state)}` / `{state['effort']}`; final: `{state['final_model']}` / `{state['final_effort']}`", "",
              f"Reported cache-read fraction: {state['metrics']['cached_input_fraction']} (null means unknown).",
              "See metrics.json for model-turn durations and reported usage; session reuse is not proof of caching.", "",
              "Read task.md, each review.json / review.md, fix.json, fix.diff and verification.json.",
@@ -412,7 +413,11 @@ def sweep(paths):
                 pass
 
 
-def invoke(repo, directory, phase, prompt, effort, timeout, session=None, executable="codex", review_box=None):
+def review_model(state):
+    return state.get("review_model", LEGACY_REVIEW_MODEL)
+
+
+def invoke(repo, directory, phase, prompt, effort, timeout, model, session=None, executable="codex", review_box=None):
     schema = FIX_SCHEMA if phase == "fix" else REVIEW_SCHEMA
     write(directory / f"{phase}-schema.json", schema)
     started = time.monotonic()
@@ -465,7 +470,7 @@ def invoke(repo, directory, phase, prompt, effort, timeout, session=None, execut
             write(directory / f"{phase}-prompt.txt", prompt)
             result_path = directory / f"{phase}.json"
             args = [executable, "exec", *before] + (["resume"] if session else [])
-            args += ["-m", MODEL, "-c", f'model_reasoning_effort="{effort}"',
+            args += ["-m", model, "-c", f'model_reasoning_effort="{effort}"',
                      "-c", "agents.enabled=false", "-c", "features.hooks=false",
                      # The user config defines hindsight; without it (clone turns) the override would be an invalid entry.
                      *([] if clone is not None else ["-c", "mcp_servers.hindsight.enabled=false"]),
@@ -537,12 +542,14 @@ def invoke(repo, directory, phase, prompt, effort, timeout, session=None, execut
         # Failures consume real time even when the provider never supplies usage.
         write(directory / f"{phase}-execution.json", {"exit_code": process.returncode if process else None,
               "duration_seconds": round(time.monotonic() - started, 3), "session_ids": ids,
-              "usage": usage, "requested_model": MODEL, "requested_effort": effort,
+              "usage": usage, "requested_model": model, "requested_effort": effort,
               "termination_reason": reason})
 
 
-def checked(repo, config, directory):
-    _, receipt, path = verify(repo, config)
+def checked(repo, config, directory, base):
+    _, receipt, path = verify(repo, config, base)
+    for warning in inspect_receipt(path)["warnings"]:
+        print(f"WARNING {warning}", flush=True)
     if not inspect_receipt(path)["current"] or not any(s.get("root") == str(repo) for s in receipt["sources_after"]):
         raise ValueError("Checks must produce current evidence for this checkout")
     write(directory / "verification.json", receipt)
@@ -585,7 +592,7 @@ def start(args):
             raise ValueError("Ignore .agent-kit/reviews/ before starting (the installer supplies this)")
         config = repo / ".agent-kit/verification.json"
         checks, _ = load_checks(config, repo)
-        if any(snapshot(directory).get("root") != str(repo) for directory, _ in checks):
+        if any(snapshot(check.directory).get("root") != str(repo) for check in checks):
             raise ValueError("Run one review per checkout; cross-repo verification belongs in final integration")
         config_hash = digest(config.read_bytes())
         task = args.task.read_text()
@@ -600,7 +607,8 @@ def start(args):
             raise ValueError("Critical project skill scope conflicts with low_risk=true; reassess before review")
         version = subprocess.run([args.codex, "--version"], capture_output=True, text=True, timeout=10, check=True).stdout.strip()
         directory = repo / ".agent-kit/reviews" / uuid.uuid4().hex
-        state = {"version": 2, "mode": selection["mode"], "final_model": review_policy["final_model"],
+        state = {"version": 2, "mode": selection["mode"], "review_model": review_policy["model"],
+                 "final_model": review_policy["final_model"],
                  "phase": "RUNNING", "created_at": timestamp(), "repo": str(repo),
                  "base": base, "initial_head": before["head"], "head": before["head"], "branch": before["branch"],
                  "origin_session": args.origin_session, "origin_model": args.origin_model,
@@ -619,7 +627,7 @@ def start(args):
         deadline = time.monotonic() + args.budget
         previous_findings = None
         try:
-            state["receipt"] = checked(repo, config, directory)
+            state["receipt"] = checked(repo, config, directory, base)
             for number in range(1, args.rounds + 1):
                 if time.monotonic() >= deadline:
                     raise ValueError("Review run time budget exhausted")
@@ -641,8 +649,8 @@ def start(args):
                           "Do not invent stylistic issues to fill a quota. Report incomplete if coverage is insufficient. "
                           "Return only the required JSON. Clean means no actionable findings; it is not final acceptance.")
                 review, session = invoke(repo, round_dir, "review", prompt, args.effort,
-                                         min(args.timeout, max(1, deadline - time.monotonic())), executable=args.codex,
-                                         review_box=review_sandbox(repo, state["base"]))
+                                         min(args.timeout, max(1, deadline - time.monotonic())), review_model(state),
+                                         executable=args.codex, review_box=review_sandbox(repo, state["base"]))
                 validate_review(review)
                 if session in {r.get("session_id") for r in state["rounds"]}:
                     raise ValueError("Each review round must start a fresh session")
@@ -656,7 +664,7 @@ def start(args):
                 if review["verdict"] == "incomplete":
                     raise ValueError("Sol review is incomplete")
                 if review["verdict"] == "clean":
-                    state["receipt"] = checked(repo, config, round_dir)
+                    state["receipt"] = checked(repo, config, round_dir, state["base"])
                     check_inputs(repo, directory, state)
                     state.update(phase="AWAITING_ORIGIN", source=checkout(repo, state["branch"], state["head"], clean=True))
                     break
@@ -679,7 +687,8 @@ def start(args):
                           "If a finding needs broader scope or cannot be fixed, report it unaddressed. "
                           "Account for every finding ID in the required JSON; fixed is not an approval verdict.")
                 fix, _ = invoke(repo, round_dir, "fix", prompt, args.effort,
-                                min(args.timeout, max(1, deadline - time.monotonic())), session, args.codex)
+                                min(args.timeout, max(1, deadline - time.monotonic())), review_model(state),
+                                session, args.codex)
                 validate_fix(fix, review)
                 checkout(repo, state["branch"], state["head"])
                 if digest(config.read_bytes()) != config_hash:
@@ -700,7 +709,7 @@ def start(args):
                 git(repo, "--literal-pathspecs", "add", "--all", "--", *paths)
                 write(round_dir / "fix.diff", git(repo, "diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD", "--"))
                 expected_tree = git(repo, "write-tree").strip()
-                verified = checked(repo, config, round_dir)
+                verified = checked(repo, config, round_dir, state["base"])
                 checkout(repo, state["branch"], state["head"])
                 if not inspect_receipt(verified)["current"]:
                     raise ValueError("Source changed between verification and commit")
@@ -713,7 +722,7 @@ def start(args):
                         git(repo, "rev-parse", "HEAD^").decode().strip() != record["before"]):
                     raise ValueError("Commit hooks changed the verified tree or parent; inspect the recorded commit")
                 # A commit changes source identity. Recheck on the committed revision.
-                state["receipt"] = checked(repo, config, round_dir)
+                state["receipt"] = checked(repo, config, round_dir, state["base"])
                 check_inputs(repo, directory, state)
                 save_run(directory, state)
             else:
@@ -753,6 +762,8 @@ def current_run(directory):
     policy, checksum = load_policy(repo / ".agent-kit/policy/model-routing.json")
     if state.get("mode") != policy["mode"] or state["routing"]["policy_sha256"] != checksum:
         raise ValueError("Review profile/policy changed; do not transfer acceptance across modes")
+    if state.get("final_model") != policy["review"]["final_model"] or review_model(state) != policy["review"]["model"]:
+        raise ValueError("Run models differ from the routing policy")
     check_inputs(repo, directory, state)
     current = checkout(repo, state["branch"], state["head"], clean=True)
     if current["fingerprint"] != state["source"]["fingerprint"]:
@@ -769,7 +780,7 @@ def record_final(directory, state, result):
     if not isinstance(result, dict) or set(result) != required:
         raise ValueError("Final result requires head, session_id, model, effort and review")
     model = result["model"]
-    model_ok = isinstance(model, str) and (model == MODEL if state["mode"] == "codex-only" else model.startswith("claude-opus-"))
+    model_ok = isinstance(model, str) and (model == state["final_model"] if state["mode"] == "codex-only" else model.startswith("claude-opus-"))
     allowed = ("high", "xhigh") if state["mode"] == "codex-only" else ("medium", "high")
     if (result["head"] != state["head"] or not model_ok or result["effort"] not in allowed or
             (state["final_effort"] == allowed[-1] and result["effort"] != allowed[-1])):
@@ -800,11 +811,11 @@ def final_review(args):
                   "evidence is unavailable. Return the required JSON with only actionable findings.")
         try:
             review, session = invoke(repo, directory / "final", "final", prompt,
-                                     state["final_effort"], args.timeout, executable=args.codex,
-                                     review_box=review_sandbox(repo, state["base"]))
+                                     state["final_effort"], args.timeout, state["final_model"],
+                                     executable=args.codex, review_box=review_sandbox(repo, state["base"]))
             state = current_run(directory)
             record_final(directory, state, {"head": state["head"], "session_id": session,
-                         "model": MODEL, "effort": state["final_effort"], "review": review})
+                         "model": state["final_model"], "effort": state["final_effort"], "review": review})
         except (CheckError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
             state.update(phase="BLOCKED", failure=f"Final review failed: {exc}")
             save_run(directory, state)

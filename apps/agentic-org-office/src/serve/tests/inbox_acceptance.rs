@@ -101,15 +101,16 @@ impl Fixture {
             failed: AtomicBool::new(false),
         });
         let mut ports = ports(Box::new(|| panic!("not an inbox source")));
-        ports.mailbox = mailbox;
+        ports.mailbox = Some(mailbox);
         ports.directory = directory.clone();
-        ports.feed = Box::new(feed.clone());
+        ports.feed = Some(Box::new(feed.clone()));
         ports.live = live;
         let mut shared = Shared::new(&test_info(), &path, ports, launch_key());
         shared.register_inbox(
             Hq {
                 sources: vec![counts.clone()],
                 clock: Clock::new("acceptance".into()),
+                list_office: None,
             },
             Ok(true),
         );

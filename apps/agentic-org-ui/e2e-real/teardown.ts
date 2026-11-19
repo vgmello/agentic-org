@@ -29,9 +29,13 @@ export function stopInstance(root: string) {
 	}
 }
 
-export default function teardown() {
-	const root = process.env.B6_ROOT;
-	if (!root || !root.startsWith('/private/tmp/b6pw.')) return;
+/** Stops and removes one disposable instance; refuses any root that is not one of ours under /tmp. */
+export function removeInstance(root: string | undefined, prefix: string) {
+	if (!root || !root.startsWith(`/private/tmp/${prefix}.`)) return;
 	stopInstance(root);
 	rmSync(root, { recursive: true, force: true });
+}
+
+export default function teardown() {
+	removeInstance(process.env.B6_ROOT, 'b6pw');
 }

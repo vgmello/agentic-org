@@ -1,12 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
+import { enterMockedOrganization } from './mock-organization';
 
 async function createOrganization(page: Page) {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/(agents|teams\/members)$/);
+	await enterMockedOrganization(page);
+	await expect(page).toHaveURL(/\/teams\/members$/);
 }
 
 async function openOffices(page: Page) {
@@ -459,7 +458,7 @@ test(
 	'BUG-59: a supplied navigation badge appears in the full sidebar and rail',
 	{ tag: '@webkit' },
 	async ({ page }) => {
-		await visit(page, '/create');
+		await enterMockedOrganization(page);
 		await page.evaluate(async () => {
 			const path = '/src/lib/nav.ts';
 			const { NAV } = await import(path);
@@ -468,9 +467,7 @@ test(
 				label: '3 need you'
 			};
 		});
-		await page.getByLabel('Organization name').fill('Acme');
-		await page.getByRole('button', { name: 'Create organization' }).click();
-		await expect(page).toHaveURL(/\/(agents|teams\/members)$/);
+		await expect(page).toHaveURL(/\/teams\/members$/);
 		const nav = page.getByRole('navigation', { name: 'Main', exact: true });
 		const chat = nav.getByRole('link', { name: 'Chat', exact: true });
 		const badge = chat.getByText('3', { exact: true });

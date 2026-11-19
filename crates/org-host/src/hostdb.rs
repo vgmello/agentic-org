@@ -442,23 +442,8 @@ fn install(from: &Path, to: &Path) -> Result<(), Error> {
     use std::os::unix::ffi::OsStrExt;
     let from = std::ffi::CString::new(from.as_os_str().as_bytes()).map_err(|_| Error::Unsafe)?;
     let to = std::ffi::CString::new(to.as_os_str().as_bytes()).map_err(|_| Error::Unsafe)?;
-    // SAFETY: both paths are live NUL-terminated strings; exclusive rename never overwrites.
-    #[cfg(target_os = "macos")]
-    let rc = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL) };
-    #[cfg(target_os = "linux")]
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_renameat2,
-            libc::AT_FDCWD,
-            from.as_ptr(),
-            libc::AT_FDCWD,
-            to.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error().into());
-    }
+    // Exclusive rename never overwrites.
+    org_platform::fs::rename_noreplace(&from, &to)?;
     Ok(())
 }
 fn checkpoint(step: u8) -> Result<(), Error> {

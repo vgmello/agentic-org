@@ -253,3 +253,140 @@ fn compressed_input_limit_rejects_before_private_copy_without_truncating_source(
         org_release::MAX_PAYLOAD_BYTES + 1
     );
 }
+
+/// A signed release input for `platform` and `architecture` whose executables all hold
+/// `executable`, with `cdhash` as each executable's CodeDirectory hash where the platform
+/// has one. Synthetic bytes: no test treats them as a release that may run.
+fn signed_release(
+    platform: &str,
+    architecture: &str,
+    executable: &[u8],
+    cdhash: Option<&str>,
+) -> (tempfile::TempDir, DirectoryBundle) {
+    use ring::signature::{Ed25519KeyPair, KeyPair};
+    use sha2::{Digest, Sha256};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let encoded = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
+    let key = Ed25519KeyPair::from_pkcs8(encoded.as_ref()).unwrap();
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let key_id = hex(&Sha256::digest(key.public_key().as_ref()));
+    let registry = serde_json::to_vec(&serde_json::json!({"version":1,"keys":[{"key_id":key_id,"public_key_hex":hex(key.public_key().as_ref()),"min_sequence":1,"max_sequence":100}]})).unwrap();
+    let keys = TrustedKeys::from_registry_bytes(&registry).unwrap();
+    let mut files = Vec::new();
+    std::fs::create_dir(root.join("ui")).unwrap();
+    for path in org_release::EXECUTABLE_PATHS {
+        std::fs::write(root.join(path), executable).unwrap();
+        files.push(serde_json::json!({"path":path,"size":executable.len(),"sha256":hex(&Sha256::digest(executable)),"role":"executable","macos_cdhash":cdhash}));
+    }
+    std::fs::write(root.join("ui/index.html"), b"abc").unwrap();
+    files.push(serde_json::json!({"path":"ui/index.html","size":3,"sha256":hex(&Sha256::digest(b"abc")),"role":"data","macos_cdhash":null}));
+    let bytes = serde_json::to_vec_pretty(&serde_json::json!({"format":org_release::FORMAT,"release_id":"test-1","sequence":1,"platform":platform,"architecture":architecture,"installer_contract":1,"key_id":key_id,"files":files})).unwrap();
+    std::fs::write(root.join("release.v1.json"), &bytes).unwrap();
+    std::fs::write(root.join("release.v1.sig"), key.sign(&bytes).as_ref()).unwrap();
+    let platform = match platform {
+        "macos" => Platform::Macos,
+        _ => Platform::Linux,
+    };
+    let architecture = match architecture {
+        "aarch64" => Architecture::Aarch64,
+        _ => Architecture::X86_64,
+    };
+    let policy = TrustedPolicy::new(platform, architecture, 1, 1).unwrap();
+    let bundle = DirectoryBundle::with_policy(&root, &policy, &keys).unwrap();
+    (temp, bundle)
+}
+
+/// An ELF header for `machine` (62: x86-64, 183: aarch64) followed by some bytes of program.
+fn elf(machine: u16) -> Vec<u8> {
+    let mut image = vec![0u8; 96];
+    image[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+    image[16..18].copy_from_slice(&3u16.to_le_bytes());
+    image[18..20].copy_from_slice(&machine.to_le_bytes());
+    image
+}
+
+/// The static rule of a release for Linux: an executable is accepted on its ELF header for
+/// the release's architecture, and nothing else is asked of the file, because its bytes are
+/// the ones whose SHA-256 the signed manifest names (the input was verified against it).
+#[test]
+fn a_linux_release_executable_is_accepted_on_its_header_and_its_signed_digest() {
+    for (architecture, machine) in [("x86_64", 62u16), ("aarch64", 183)] {
+        let (_temp, bundle) = signed_release("linux", architecture, &elf(machine), None);
+        platform::verify(&bundle.root, bundle.manifest())
+            .unwrap_or_else(|error| panic!("{architecture}: {error}"));
+    }
+    // Another machine's executable, a file that is not ELF, and one too short to be a
+    // program are each refused, whatever the manifest says of their digest.
+    let (_temp, bundle) = signed_release("linux", "x86_64", &elf(183), None);
+    assert!(matches!(
+        platform::verify(&bundle.root, bundle.manifest()),
+        Err(Error::InvalidRelease)
+    ));
+    let (_temp, bundle) = signed_release("linux", "x86_64", &[b'#'; 96], None);
+    assert!(matches!(
+        platform::verify(&bundle.root, bundle.manifest()),
+        Err(Error::InvalidRelease)
+    ));
+    let (_temp, bundle) = signed_release("linux", "x86_64", b"abc", None);
+    assert!(matches!(
+        platform::verify(&bundle.root, bundle.manifest()),
+        Err(Error::Io(_))
+    ));
+}
+
+/// A release for macOS is signed code: after the header check each executable's signature
+/// must be established, which an unsigned synthetic file never passes, on any system (a
+/// system without a static check is outside that release's profile).
+#[test]
+fn a_macos_release_executable_still_needs_its_code_signature() {
+    let mut macho = vec![0u8; 96];
+    macho[..4].copy_from_slice(&[0xcf, 0xfa, 0xed, 0xfe]);
+    macho[4..8].copy_from_slice(&0x0100_000c_u32.to_le_bytes());
+    macho[12..16].copy_from_slice(&2u32.to_le_bytes());
+    let cdhash = "ab".repeat(20);
+    let (_temp, bundle) = signed_release("macos", "aarch64", &macho, Some(&cdhash));
+    assert!(matches!(
+        platform::verify(&bundle.root, bundle.manifest()),
+        Err(Error::UnsupportedTarget | Error::PlatformAdmission | Error::UnsafeInput)
+    ));
+}
+
+/// The pin of an executable is its manifest entry: the SHA-256 of its bytes always, and the
+/// CodeDirectory hash exactly in a release for macOS. A data file and an unknown name have
+/// no pin.
+#[test]
+fn a_release_pins_each_executable_with_the_identities_its_manifest_names() {
+    use sha2::{Digest, Sha256};
+    let image = elf(62);
+    let digest: [u8; 32] = Sha256::digest(&image).into();
+    let (_temp, linux) = signed_release("linux", "x86_64", &image, None);
+    for name in org_release::EXECUTABLE_PATHS {
+        assert_eq!(
+            runtime::pin_of(linux.manifest(), name).unwrap(),
+            crate::server_check::Pin {
+                sha256: digest,
+                macos_cdhash: None,
+            },
+            "{name}"
+        );
+    }
+    for name in ["ui/index.html", "release.v1.json", "agentic-org-other"] {
+        assert!(
+            matches!(
+                runtime::pin_of(linux.manifest(), name),
+                Err(Error::PlatformAdmission)
+            ),
+            "{name}"
+        );
+    }
+    let cdhash = "ab".repeat(20);
+    let (_temp, macos) = signed_release("macos", "aarch64", &image, Some(&cdhash));
+    assert_eq!(
+        runtime::pin_of(macos.manifest(), "agentic-org-office").unwrap(),
+        crate::server_check::Pin {
+            sha256: digest,
+            macos_cdhash: Some([0xab; 20]),
+        }
+    );
+}

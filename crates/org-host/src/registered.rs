@@ -40,6 +40,9 @@ impl Host {
         paths: &Paths,
         name: Option<&str>,
     ) -> Result<Self, HostError> {
+        // Before any key or custody is read (this path opens custody before the ordinary
+        // composition is reached).
+        crate::harden()?;
         // Before anything is touched on disk: a release build without a pinned runtime
         // release refuses here.
         config.admit_runtime()?;
@@ -113,11 +116,36 @@ impl Host {
         let dev_key_dir = config.dev_key_dir.clone();
         #[cfg(not(debug_assertions))]
         let dev_key_dir: Option<std::path::PathBuf> = None;
+        // Where a release build keeps its secrets in a credential directory, it is opened
+        // here, once, from the path setup recorded: checked, locked for this host alone, and
+        // refused with the directory and the rule it broke. Both views open below it. No
+        // custody exists before this, so a store found empty where the records say keys exist
+        // stops the start before anything could make a fresh key.
+        let release_directory = crate::release_store::open(
+            !cfg!(debug_assertions),
+            org_platform_host::credentials::protected_store(),
+            crate::release_store::Facts {
+                recorded: record.credentials.as_deref(),
+                data_root: instance.root_descriptor(),
+                // The setup record has no service mode yet: increment X5 adds it, and with it
+                // the foreground mode of a container, where the directory must be a mount.
+                foreground: false,
+                expect_items: crate::release_store::records_say_keys_exist(
+                    &layout_paths.office_home,
+                )
+                .map_err(|source| HostError::Io {
+                    context: "reading the office folders",
+                    source,
+                })?,
+            },
+        )
+        .map_err(|why| refused("opening the credential directory", why))?;
         let custody = crate::host_secrets::store_for(
             dev_key_dir.as_deref(),
             instance.root(),
             instance.id(),
             crate::code_signing::own_signing,
+            release_directory.as_ref(),
         )
         .map_err(|e| refused("opening protected account custody", format!("{e:?}")))?;
         if registry_state == RegistryState::Absent {
@@ -130,7 +158,12 @@ impl Host {
             .map_err(|e| refused("recording the host registry", e))?;
 
         let instance_name = instance.name().to_owned();
-        let host = Self::start_prepared(config, Some(instance), Some((lock, custody)))?;
+        let host = Self::start_with(
+            config,
+            Some(instance),
+            Some((lock, custody)),
+            release_directory,
+        )?;
         let db = match &host.service.authentication {
             Some(authentication) => authentication.provisioning_storage().0,
             None => {

@@ -41,6 +41,11 @@ pub(super) fn send_rights(socket: RawFd, payload: &[u8], descriptors: &[RawFd]) 
     }
 }
 
+// `libc` declares the field as `size_t` on Linux and as `socklen_t` on macOS.
+fn control_len(message: &libc::msghdr) -> usize {
+    message.msg_controllen as _
+}
+
 fn assert_cloexec(descriptor: &OwnedFd) {
     // SAFETY: a live owned descriptor is inspected, not modified.
     let flags = unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_GETFD) };

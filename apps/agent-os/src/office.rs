@@ -250,7 +250,7 @@ pub(crate) fn route(member: &str, office_flag: Option<&str>) -> Result<Route, Fa
     let Some(chosen) = office_flag.or(from_env.as_deref()) else {
         return no_spool_when_office_run(Route::NoOffice, office_run());
     };
-    let Some(home) = org_proto::location::default_office_home() else {
+    let Some(home) = org_client::default_office_home() else {
         return Err(Failure::new(
             EXIT_USAGE,
             format!(

@@ -65,16 +65,7 @@ fn wrong_descriptor_classes_are_refused_and_owned_fds_close() {
         "fault-peer",
         #[cfg(target_os = "linux")]
         "fault-peer-einval",
-        #[cfg(target_os = "linux")]
         "fault-listener",
-        #[cfg(target_os = "macos")]
-        "fault-proc-error",
-        #[cfg(target_os = "macos")]
-        "fault-proc-negative",
-        #[cfg(target_os = "macos")]
-        "fault-proc-short",
-        #[cfg(target_os = "macos")]
-        "fault-proc-long",
         "fault-family",
         "fault-flags",
     ] {
@@ -268,31 +259,14 @@ fn adoption_child() {
             unix_peer = Some(peer);
             stream.into()
         }
-        "fault-peer"
-        | "fault-peer-einval"
-        | "fault-listener"
-        | "fault-family"
-        | "fault-flags"
-        | "fault-proc-error"
-        | "fault-proc-negative"
-        | "fault-proc-short"
-        | "fault-proc-long" => {
+        "fault-peer" | "fault-peer-einval" | "fault-listener" | "fault-family" | "fault-flags" => {
             let (stream, peer) = UnixStream::pair().unwrap();
             unix_peer = Some(peer);
             FAULT.with(|fault| {
                 fault.set(Some(match case.as_str() {
                     "fault-peer" => Fault::Peer,
                     "fault-peer-einval" => Fault::PeerEinval,
-                    #[cfg(target_os = "linux")]
                     "fault-listener" => Fault::Listener,
-                    #[cfg(target_os = "macos")]
-                    "fault-proc-error" => Fault::ProcError,
-                    #[cfg(target_os = "macos")]
-                    "fault-proc-negative" => Fault::ProcNegative,
-                    #[cfg(target_os = "macos")]
-                    "fault-proc-short" => Fault::ProcShort,
-                    #[cfg(target_os = "macos")]
-                    "fault-proc-long" => Fault::ProcLong,
                     "fault-family" => Fault::Family,
                     _ => Fault::Flags,
                 }))
@@ -358,8 +332,6 @@ fn adoption_child() {
     assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EBADF));
     if case == "fault-peer-einval" {
         assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
-    } else if case.starts_with("fault-proc-") {
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     } else if case.starts_with("fault-") {
         assert_eq!(error.raw_os_error(), Some(libc::EBADF));
     } else if matches!(case.as_str(), "pipe" | "file") {
@@ -456,20 +428,13 @@ fn received_descriptor_passes_validation_without_a_second_flags_update() {
 
 // Test-only syscall interposition leaves the live fd owned, so each real helper
 // call site's error propagation and descriptor drop can be observed separately.
+// The platform's listener query is interposed as a whole: how each system's query
+// itself fails is tested with its adapter in org-platform.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fault {
-    #[cfg(target_os = "macos")]
-    ProcError,
-    #[cfg(target_os = "macos")]
-    ProcNegative,
-    #[cfg(target_os = "macos")]
-    ProcShort,
-    #[cfg(target_os = "macos")]
-    ProcLong,
     Kind,
     Peer,
     PeerEinval,
-    #[cfg(target_os = "linux")]
     Listener,
     Family,
     Flags,
@@ -542,37 +507,14 @@ pub(super) unsafe fn getsockopt(
     if option == libc::SO_TYPE && injected(Fault::Kind) {
         return -1;
     }
-    #[cfg(target_os = "linux")]
-    if option == libc::SO_ACCEPTCONN && injected(Fault::Listener) {
-        return -1;
-    }
     // SAFETY: socket_option supplies valid buffers for a live fd and integer option.
     unsafe { libc::getsockopt(fd, level, option, value, length) }
 }
-#[test]
-fn peer_closed_policy_accepts_only_macos_einval_and_refuses_every_other_error() {
-    for macos in [false, true] {
-        for errno in [
-            libc::EINVAL,
-            libc::ENOTCONN,
-            libc::EBADF,
-            libc::EACCES,
-            libc::ENOTSOCK,
-            libc::EINTR,
-        ] {
-            let error = io::Error::from_raw_os_error(errno);
-            assert_eq!(
-                peer_closed(&error, macos),
-                macos && errno == libc::EINVAL,
-                "macos={macos}, errno={errno}"
-            );
-        }
-        // A generic InvalidInput classification cannot stand in for the exact kernel errno.
-        assert!(!peer_closed(
-            &io::Error::from(io::ErrorKind::InvalidInput),
-            macos
-        ));
+pub(super) fn listening(fd: RawFd) -> io::Result<bool> {
+    if injected(Fault::Listener) {
+        return Err(io::Error::last_os_error());
     }
+    org_platform::socket::listening(fd)
 }
 
 pub(super) fn peer_address(stream: &UnixStream) -> io::Result<SocketAddr> {
@@ -587,33 +529,4 @@ pub(super) fn peer_address(stream: &UnixStream) -> io::Result<SocketAddr> {
         return Err(error);
     }
     stream.peer_addr()
-}
-
-#[cfg(target_os = "macos")]
-pub(super) unsafe fn proc_pidfdinfo(
-    pid: libc::c_int,
-    fd: libc::c_int,
-    flavor: libc::c_int,
-    buffer: *mut libc::c_void,
-    size: libc::c_int,
-) -> libc::c_int {
-    for (fault, result) in [
-        (Fault::ProcError, 0),
-        (Fault::ProcNegative, -1),
-        (Fault::ProcShort, size - 1),
-        (Fault::ProcLong, size + 1),
-    ] {
-        if injected(fault) {
-            // Keep genuine metadata in the buffer so a deleted count guard is
-            // not masked by the listener's later state check.
-            // SAFETY: these are the unchanged live output buffers from the helper.
-            assert_eq!(
-                unsafe { libc::proc_pidfdinfo(pid, fd, flavor, buffer, size) },
-                size
-            );
-            return result;
-        }
-    }
-    // SAFETY: the helper supplies an owned fd and its exact SDK-aligned writable buffer.
-    unsafe { libc::proc_pidfdinfo(pid, fd, flavor, buffer, size) }
 }

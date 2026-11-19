@@ -10,6 +10,8 @@ Generate a new stable ID before submitting a creation. An ID is not an increment
 
  Slugs/handles are explicit identity fields. `key` columns are generated from stored fields, using `TEAM-`, `P-`, `T-`, `F-`, `R-` and `M-`. Numbered records use positive integers. Every numbered record has its number from the moment it exists, except a feature created while HQ is unreachable, whose number is null until HQ registers it. Resolve slugs and handles by their documented scope rather than by display names.
 
+**Handles.** A handle is at most 64 bytes: the limit of an agent's messaging name (`org_proto::org::AGENT_MESSAGING_NAME_MAX_CHARS`), so every handle is also a valid messaging name. It starts with a letter or digit, has dots only between other characters and never two together, and is neither a reserved word (`here`, the owner's handle, the office's handle) nor shaped like an address.
+
 There are two ways a number is given.
 
 **Numbers given by HQ.** Counter rows identify `(organization_id, scope_kind, scope_id, entity_kind)`:
@@ -97,7 +99,7 @@ Primary keys and UNIQUE constraints already create indexes; do not duplicate the
 | --- | --- |
 | `reference_counters` | Counter YAML: all same-named fields except inherited `organization_id`. Durable authority state, projected into office SQLite caches. |
 | `reference_allocations` | Allocation YAML: all same-named fields except inherited `organization_id`. Retained after entity deletion; unpublished entries are in HQ's `durable/state/identity/` files or, until written, its acceptance journal. |
-| `office_codes` | `identity/office-codes.yaml`, written by HQ: code, office, issue and retirement time. Retired codes are kept so that old task references resolve and no code is issued twice. |
+| `office_codes` | `identity/office-codes.yaml`, written by HQ: a top-level `schema_version: 1` and `codes`, a list whose order is kept, of `{code, office_id, issued_at, retired_at}` (`retired_at` is null while the code is current). Retired codes are kept so that old task references resolve and no code is issued twice. |
 | `office_task_counters` | The office's own `task-counter.yaml` under `durable/local/offices/<office-id>/`. Durable office-local state, not Git content and not a cache; other offices do not hold it. |
 
 ## Relationships

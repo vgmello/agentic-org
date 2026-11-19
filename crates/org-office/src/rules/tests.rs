@@ -632,8 +632,10 @@ fn people_share_one_handle_namespace_ignoring_case() {
         code(org.person("ANA00000000000000000000000", "Somebody")),
         ErrorCode::AlreadyExists
     );
-    // "owner" is reserved for the owner, and "office" for the office, in any capitalization.
-    for reserved in ["owner", "Owner", "OWNER", "office", "Office", "OFFICE"] {
+    // "owner" is reserved for the owner, "office" for the office and "here" for a channel's
+    // members, in any capitalization.
+    let reserved = ["owner", "Owner", "OWNER", "office", "Office", "OFFICE"];
+    for reserved in reserved.into_iter().chain(["here", "Here"]) {
         assert_eq!(
             code(org.person("X0000000000000000000000000", reserved)),
             ErrorCode::AlreadyExists,
@@ -2525,7 +2527,7 @@ fn an_agents_handle_has_a_format_and_one_namespace_with_people_and_the_reserved_
     }
     // Taken by an agent, a person (either case), or reserved: already_exists.
     for taken in [
-        "pixel", "PIXEL", "ana", "ANA", "owner", "Owner", "office", "OFFICE",
+        "pixel", "PIXEL", "ana", "ANA", "owner", "Owner", "office", "OFFICE", "here", "HERE",
     ] {
         assert_eq!(
             code(org.hire(&mid("AG2"), taken)),

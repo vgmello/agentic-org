@@ -3,12 +3,10 @@
 // ?mock=slow|fails|empty (e2e/fakes/modules/employees.ts).
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
+import { enterMockedOrganization } from './mock-organization';
 
 async function open(page: Page, url: string) {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Hire checks');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/teams\/members$/);
+	await enterMockedOrganization(page, 'Hire checks');
 	await visit(page, url);
 }
 

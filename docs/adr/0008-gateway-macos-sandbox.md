@@ -16,11 +16,13 @@ adapter refuses to start the web process; it never runs unconfined.
 
 ## Mechanism
 
-1. The sandbox primitives live in the libc-only `org-socket` crate, with no new
-   project or external dependency. The web process keeps `forbid(unsafe_code)`; it
-   composes this adapter and turns enforcement evidence into its ready-for-secrets
-   message. `org-socket` has no protocol, storage, host credential or domain
-   knowledge.
+1. The sandbox primitives live in `org_platform::confinement`, the macOS adapter of
+   the confinement contract of [ADR-0017](0017-linux-and-container-hosting.md)
+   (moved there from `org-socket` in increment X1c). That crate depends on the C
+   library only, plus the system's `libsandbox`, and adds no external dependency. The
+   web process keeps `forbid(unsafe_code)`; it composes this adapter and turns
+   enforcement evidence into its ready-for-secrets message. `org-platform` has no
+   protocol, storage, host credential or domain knowledge.
 2. On the main thread, before any concurrency, the web process disables core
    dumps, preloads only approved public static assets into bounded immutable
    memory, and closes every unintended inherited descriptor, keeping only standard
@@ -85,7 +87,8 @@ refuses startup, with no fallback.
 ## Rejected alternatives
 
 Dropping sandbox readiness; unsafe code in the web process; broad filesystem reads
-for convenience; interpolating paths into the profile; a new platform crate; broad
+for convenience; interpolating paths into the profile; a platform crate for this
+adapter alone (ADR-0017 later created `org-platform` for every system difference); broad
 inbound without `deny network-bind`, which permitted new listeners; and the App
 Sandbox entitlement alone, which does not give this per-spawn Unix-socket policy.
 If a runtime call fails under the profile, the policy is reassessed with evidence;

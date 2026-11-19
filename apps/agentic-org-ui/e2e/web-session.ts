@@ -6,7 +6,27 @@ export interface WebOrganization {
 	readonly name: string;
 	readonly created_at: string;
 	readonly recovery: 'pending' | 'delivered' | 'acknowledged';
+	/** The rest of the organization view (web-api-v1 section 3); filled in when left out. */
+	readonly slug?: string;
+	readonly employee_id?: string;
+	readonly offices?: readonly Record<string, unknown>[];
 }
+/** The whole organization view of a fixture organization: an HQ office on hq-mac, online. */
+export const organizationView = (organization: WebOrganization) => ({
+	slug: organization.id,
+	employee_id: 'person-1',
+	offices: [
+		{
+			id: `${organization.id}-hq`,
+			organization_id: organization.id,
+			name: 'HQ',
+			role: 'hq',
+			host: 'hq-mac',
+			status: 'active'
+		}
+	],
+	...organization
+});
 
 /**
  * The mocked web-session fixture (e2e mode only; the Vite test composition serves it, see
@@ -23,7 +43,7 @@ export async function signInAsAdmin(page: Page, organizations: readonly WebOrgan
 		{ name: 'p6_auth_case', value: id, url: new URL('/', created.url()).href }
 	]);
 	const listed = await context.request.post('/__p6-auth/control', {
-		data: { id, action: 'organizations', value: organizations }
+		data: { id, action: 'organizations', value: organizations.map(organizationView) }
 	});
 	expect(listed.ok()).toBe(true);
 	await visit(page, '/sign-in');

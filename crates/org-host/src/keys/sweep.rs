@@ -667,7 +667,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("h");
         let memory = setup(&home);
-        let store = crate::keys::dev::DevKeys::new(dir.path().join("k"));
+        let store = crate::keys::custody::OfficeKeys::development(&dir.path().join("k"), None);
         for id in memory.list().unwrap() {
             store
                 .create(&id, &OfficeSecretsKey::from_bytes([2; 32]))

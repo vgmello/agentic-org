@@ -103,7 +103,7 @@ def diagnose(project, config_dir):
                     f"{tool} version probe: " + (result.stdout.strip()[:200] or f"exit {result.returncode}"))
             except (OSError, subprocess.TimeoutExpired) as exc:
                 add("error", f"{tool} version probe failed: {exc}")
-    add("info", "Sol review default: gpt-6.2-sol / high; explicit fresh exec then resume by ID. "
+    add("info", "Sol review: the routing policy's review model (gpt-6.1-sol or gpt-6.2-sol) / high; explicit fresh exec then resume by ID. "
         "Version probes do not establish working authentication or model availability.")
     try:
         guidance = codex_instruction_file(project)
@@ -255,7 +255,7 @@ def diagnose(project, config_dir):
     try:
         checks, timeout = load_checks(project / ".agent-kit/verification.json", project)
         add("info", f"{len(checks)} configured checks; total budget {timeout}s (commands were not run)")
-        for directory, argv in checks:
+        for directory, argv, *_ in checks:
             executable = str(directory / argv[0]) if "/" in argv[0] else shutil.which(argv[0])
             available = executable and Path(executable).is_file() and os.access(executable, os.X_OK)
             add("info" if available else "error", f"Check tool {argv[0]} in {directory}: {'available' if available else 'missing/not executable'}")

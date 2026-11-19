@@ -40,6 +40,7 @@ fn shared() -> Shared {
         crate::inbox::Hq {
             sources: vec![],
             clock: crate::inbox::Clock::new("host-test".into()),
+            list_office: None,
         },
         Ok(true),
     );
@@ -346,6 +347,8 @@ fn served_message_calls_act_as_the_canonical_owner() {
     let inbox = shared
         .ports
         .mailbox
+        .as_ref()
+        .unwrap()
         .inbox(PAT_ID, Default::default())
         .unwrap();
     assert_eq!(inbox.headers.len(), 1);
@@ -353,6 +356,8 @@ fn served_message_calls_act_as_the_canonical_owner() {
     shared
         .ports
         .mailbox
+        .as_ref()
+        .unwrap()
         .send(
             PAT_ID,
             serde_json::from_value(json!({

@@ -104,8 +104,9 @@ class ReviewIsolationTests(unittest.TestCase):
                 with patch.object(kit_codex.subprocess, 'Popen', side_effect=launch) as popen, \
                         patch.object(kit_codex.os, 'killpg'):
                     kit_codex.invoke(repo, repo / 'run', phase, 'Read source independently', 'high', 10,
-                                     session=session if phase == 'fix' else None)
+                                     'gpt-6.2-sol', session=session if phase == 'fix' else None)
                 args = popen.call_args.args[0]
+                self.assertEqual(args[args.index('-m') + 1], 'gpt-6.2-sol')
                 overrides = [args[i + 1] for i, value in enumerate(args[:-1]) if value == '-c']
                 self.assertIn('features.hooks=false', overrides)
                 self.assertIn('mcp_servers.hindsight.enabled=false', overrides)
@@ -141,7 +142,7 @@ class ReviewIsolationTests(unittest.TestCase):
                 return process
             box = {'mode': 'clone', 'network_access': True, 'exclude': ['target', '.agent-kit/reviews', '.agent-kit/logs']}
             with patch.object(kit_codex.subprocess, 'Popen', side_effect=launch) as popen, patch.object(kit_codex.os, 'killpg'):
-                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run', 'review', 'Review only', 'high', 10, review_box=box)
+                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run', 'review', 'Review only', 'high', 10, 'gpt-6.2-sol', review_box=box)
             args = next(c.args[0] for c in popen.call_args_list if c.args[0][0] == 'codex')
             overrides = [args[i + 1] for i, value in enumerate(args[:-1]) if value == '-c']
             self.assertIn('sandbox_mode="workspace-write"', overrides)
@@ -205,7 +206,7 @@ class ReviewIsolationTests(unittest.TestCase):
             with patch.object(kit_codex.tempfile, 'mkdtemp', side_effect=mkdtemp), \
                     patch.object(kit_codex, 'clone_checkout', side_effect=OSError('disk full')), \
                     self.assertRaises(OSError):
-                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run', 'review', 'Review only', 'high', 10, review_box=box)
+                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run', 'review', 'Review only', 'high', 10, 'gpt-6.2-sol', review_box=box)
             self.assertFalse((repo / '.agent-kit/reviews/run/review-clone').exists())
             self.assertTrue(made and not made[0].exists(), 'the private temp folder is removed')
 
@@ -225,7 +226,7 @@ class ReviewIsolationTests(unittest.TestCase):
                 process.communicate.side_effect = communicate
                 return process
             with patch.object(kit_codex.subprocess, 'Popen', side_effect=launch) as popen, patch.object(kit_codex.os, 'killpg'):
-                kit_codex.invoke(repo, repo / 'run', 'fix', 'Fix', 'high', 10, session=session)
+                kit_codex.invoke(repo, repo / 'run', 'fix', 'Fix', 'high', 10, 'gpt-6.2-sol', session=session)
             args = popen.call_args.args[0]
             self.assertEqual(args[2:5], ['-C', str(repo), 'resume'])
             self.assertEqual(Path(popen.call_args.kwargs['cwd']), repo)
@@ -256,7 +257,7 @@ class ReviewIsolationTests(unittest.TestCase):
             subprocess.run(['git', 'init', '-q', str(repo)], check=True)
             box = {'mode': 'clone', 'sandbox': 'danger-full-access', 'network_access': True, 'exclude': ['.agent-kit/reviews']}
             with patch.object(kit_codex.subprocess, 'Popen', side_effect=launch) as popen, patch.object(kit_codex.os, 'killpg'):
-                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run', 'review', 'Review only', 'high', 10, review_box=box)
+                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run', 'review', 'Review only', 'high', 10, 'gpt-6.2-sol', review_box=box)
             tamper = {'hook': True}
             def tampering(args, **kwargs):
                 if args[0] == 'codex' and tamper.pop('hook', False):
@@ -264,7 +265,7 @@ class ReviewIsolationTests(unittest.TestCase):
                 return launch(args, **kwargs)
             with patch.object(kit_codex.subprocess, 'Popen', side_effect=tampering), patch.object(kit_codex.os, 'killpg'), \
                     self.assertRaisesRegex(ValueError, 'Git state the runner guards changed'):
-                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run2', 'review', 'Review only', 'high', 10, review_box=box)
+                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run2', 'review', 'Review only', 'high', 10, 'gpt-6.2-sol', review_box=box)
             def stalls(args, **kwargs):  # plants a hook, then times out
                 if args[0] != 'codex':
                     return real_popen(args, **kwargs)
@@ -274,7 +275,7 @@ class ReviewIsolationTests(unittest.TestCase):
                 return process
             with patch.object(kit_codex.subprocess, 'Popen', side_effect=stalls), patch.object(kit_codex.os, 'killpg'), \
                     self.assertRaisesRegex(ValueError, 'Git state the runner guards changed') as caught:
-                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run3', 'final', 'Review only', 'high', 10, review_box=box)
+                kit_codex.invoke(repo, repo / '.agent-kit/reviews/run3', 'final', 'Review only', 'high', 10, 'gpt-6.2-sol', review_box=box)
             self.assertIn('timed out', str(caught.exception.__context__), 'the timeout stays attached')
             args = next(c.args[0] for c in popen.call_args_list if c.args[0][0] == 'codex')
             overrides = [args[i + 1] for i, value in enumerate(args[:-1]) if value == '-c']
