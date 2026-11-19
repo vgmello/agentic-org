@@ -408,7 +408,7 @@ secrets_listing "$tag-a" | sed 's/^/  /'
 [ -z "$(docker exec "$tag-a" find /secrets ! -user "$user")" ] || fail "a secret is not the service user's"
 [ -z "$(docker exec "$tag-a" find /secrets -type f ! -perm 600)" ] || fail "a secret file is not 600"
 [ -z "$(docker exec "$tag-a" find /secrets -type d ! -perm 700)" ] || fail "a secrets folder is not 700"
-[ "$(docker exec "$tag-a" od -An -tx1 "/secrets/office-keys/$office.key" | tr -d ' \n')" = "$key_hex" ] ||
+[ "$(docker exec "$tag-a" od -An -v -tx1 "/secrets/office-keys/$office.key" | tr -d ' \n')" = "$key_hex" ] ||
     fail "the office's key is not in /secrets/office-keys"
 [ -z "$(docker exec "$tag-a" find /data \( -name '*.key' -o -name 'host-secrets' -o -name 'office-keys' -o -name 'dev-keys' \))" ] ||
     fail "a key store is under /data"
