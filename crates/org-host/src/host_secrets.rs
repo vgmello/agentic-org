@@ -8,13 +8,11 @@
 //! Data Protection Keychain, in the access group compiled in and under this instance's
 //! service, after the host checked its own signature; or `host-secrets/<name>` below the
 //! credential directory setup recorded, which the host opened and checked at its start
-//! (`release_store`). A debug build uses the platform's directory store under the development
-//! key folder.
+//! (`release_store`). A debug build uses that credential directory too where its setup record
+//! names one, and otherwise the platform's directory store under the development key folder.
 //!
 //! The development store is plain files: `<base>/host-secrets/<instance id>/<name>`, held by
-//! one host at a time. In a container's foreground mode the base is a development key folder
-//! that the host opened and checked in its credential directory, and the store is opened
-//! from that folder's descriptor ([`development_store`]). A put error can follow publication: the value may be visible but not
+//! one host at a time. A put error can follow publication: the value may be visible but not
 //! durable. Reload the item before deciding how to recover; an error does not imply rollback.
 
 #[cfg(test)]
@@ -24,8 +22,8 @@ use std::{fmt, io};
 
 use org_platform::Refused;
 use org_platform_host::credentials::{
-    credentials, CredentialError, CredentialLocation, Credentials, DevelopmentFolder, ItemName,
-    ItemStore, KeychainItems, ProtectedStore, ReleaseItems, ReleaseRoot, Sharing,
+    credentials, CredentialError, CredentialLocation, Credentials, ItemName, ItemStore,
+    KeychainItems, ProtectedStore, ReleaseItems, ReleaseRoot, Sharing,
 };
 
 pub(crate) const MAX_BYTES: usize = 16 * 1024;
@@ -247,10 +245,6 @@ impl Custody {
     /// The custody of `instance` below the release directory `root`: its `host-secrets` item
     /// store, opened (and made, if it is missing) now and held by this handle alone. The
     /// release directory is one instance's, so the instance is not part of the layout.
-    #[cfg_attr(
-        all(debug_assertions, not(test)),
-        expect(dead_code, reason = "release selection")
-    )]
     fn release_directory(root: &ReleaseRoot, instance: &str) -> Result<Self, SelectionError> {
         if !org_proto::is_uuid_v7(instance) {
             return Err(SelectionError::InvalidInstance);
@@ -330,8 +324,9 @@ pub(crate) enum SelectionError {
     Storage(Error),
 }
 /// The host secrets of `instance` (see the module docs). `release_directory` is the
-/// credential directory the host opened at its start, where a release build's protected
-/// store is one; a debug build ignores it.
+/// credential directory the host opened at its start, where this system's protected store
+/// is one and the setup record names it: a debug build uses it too, and its development
+/// folder only without one.
 pub(crate) fn store_for(
     dev_base: Option<&std::path::Path>,
     home: &std::path::Path,
@@ -344,7 +339,12 @@ pub(crate) fn store_for(
     }
     #[cfg(debug_assertions)]
     {
-        let _ = (own_signing, release_directory);
+        let _ = own_signing;
+        // A credential directory the host opened (its setup record names one) holds this
+        // build's secrets as it holds a release build's.
+        if let Some(root) = release_directory {
+            return Custody::release_directory(root, instance).map(|s| std::sync::Arc::new(s) as _);
+        }
         let base = dev_base.ok_or(SelectionError::NoDevBase)?;
         Custody::open(base, home, instance)
             .map(|s| std::sync::Arc::new(s) as _)
@@ -362,24 +362,6 @@ pub(crate) fn store_for(
         )
     }
 }
-/// The development custody of `instance` in the development key folder `folder`, which the
-/// host opened and checked in its credential directory: `host-secrets/<instance>` below the
-/// folder, made if it is missing, opened from the folder's own descriptor (never again by
-/// its path), and held by this handle alone. The release directory's lock is held with it.
-pub(crate) fn development_store(
-    folder: &DevelopmentFolder,
-    instance: &str,
-) -> Result<std::sync::Arc<dyn HostSecrets>, SelectionError> {
-    if !org_proto::is_uuid_v7(instance) {
-        return Err(SelectionError::InvalidInstance);
-    }
-    match folder.store(&["host-secrets", instance], Sharing::Exclusive, "") {
-        Ok(store) => Ok(std::sync::Arc::new(Custody { store })),
-        Err(CredentialError::Refused(_)) => Err(SelectionError::Unsupported),
-        Err(e) => Err(SelectionError::Storage(e.into())),
-    }
-}
-
 /// A release build's custody on a system whose protected store is `store`: `host-secrets`
 /// below the open release directory where it is one, and the Keychain custody otherwise. A
 /// system without a protected store takes the Keychain's path too, and is refused there as

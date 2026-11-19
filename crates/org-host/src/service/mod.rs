@@ -1149,7 +1149,7 @@ pub(crate) mod tests {
         let home = tempfile::tempdir().unwrap();
         let (web, mut peer, offices) = web_peer_on(
             home.path(),
-            r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://localhost:8443","hsts":"off"}"#,
+            r#"{"address":"0.0.0.0","port":8443,"scheme":"http_published","origin":"http://127.0.0.1:8443","hsts":"off"}"#,
         );
         exchange::<Hello>(&mut peer, 1, &Default::default())
             .unwrap()
@@ -1162,7 +1162,7 @@ pub(crate) mod tests {
         let TlsFetchResult::HttpPublished { origin, hsts } = fetched else {
             panic!("not the published mode: {fetched:?}");
         };
-        assert_eq!(origin.as_str(), "http://localhost:8443");
+        assert_eq!(origin.as_str(), "http://127.0.0.1:8443");
         assert_eq!(hsts, org_host_control::listen::Hsts::Off);
         exchange::<WebServing>(&mut peer, 3, &Default::default())
             .unwrap()

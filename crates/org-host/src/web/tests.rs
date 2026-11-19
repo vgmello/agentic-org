@@ -1241,7 +1241,7 @@ fn the_supervisor_admits_a_published_plain_http_listener() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let published: ListenConfig = serde_json::from_str(
-        r#"{"address":"0.0.0.0","port":48125,"scheme":"http_published","origin":"http://localhost:48125","hsts":"off"}"#,
+        r#"{"address":"0.0.0.0","port":48125,"scheme":"http_published","origin":"http://127.0.0.1:48125","hsts":"off"}"#,
     )
     .unwrap();
     let started = Supervisor::start(
@@ -2212,13 +2212,53 @@ fn only_the_start_of_a_childs_standard_error_is_kept() {
     let early = format!("{REFUSAL_PREFIX}{reason}\n{}", "x".repeat(100_000));
     let captured =
         Stderr::capture(io::Cursor::new(early.into_bytes()), "stderr-unit-test").unwrap();
-    assert_eq!(captured.refusal(WAIT).as_deref(), Some(reason));
+    assert!(matches!(captured.ending(WAIT), Ending::Refused(found) if found == reason));
     assert_eq!(lock(&captured.kept).0.len(), STDERR_KEPT);
-    // A refusal line after the kept bytes is not seen.
+    // A refusal line after the kept bytes is not seen, and nothing whole was kept.
     let late = format!("{}\n{REFUSAL_PREFIX}{reason}\n", "x".repeat(STDERR_KEPT));
     let captured = Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test").unwrap();
-    assert_eq!(captured.refusal(WAIT), None);
+    assert!(matches!(captured.ending(WAIT), Ending::Silent));
     assert!(lock(&captured.kept).1, "read to its end");
+}
+
+/// X5 review, fourth round (V-c): a child that ended before it connected without a refusal
+/// line is reported with the last whole line it wrote (after a notice before it), as
+/// printable ASCII and bounded; a line cut off at the end is not taken.
+#[test]
+fn a_child_that_ended_otherwise_is_reported_with_its_last_whole_line() {
+    let said = |text: &str| {
+        let captured = Stderr::capture(
+            io::Cursor::new(text.as_bytes().to_vec()),
+            "stderr-unit-test",
+        )
+        .unwrap();
+        match captured.ending(WAIT) {
+            Ending::Said(line) => Some(line),
+            Ending::Silent => None,
+            Ending::Refused(reason) => panic!("a refusal: {reason}"),
+        }
+    };
+    assert_eq!(
+        said(
+            "agentic-org-web: explicit debug unpinned fixture preload; no production release \
+             admission\nagentic-org-web: startup refused: ui build: InvalidKey\n"
+        )
+        .as_deref(),
+        Some("agentic-org-web: startup refused: ui build: InvalidKey")
+    );
+    assert_eq!(
+        said("agentic-org-web: authenticated startup unavailable\n\n").as_deref(),
+        Some("agentic-org-web: authenticated startup unavailable")
+    );
+    assert_eq!(
+        said("one\nforged\u{1b}[2J\u{202e}line\n").as_deref(),
+        Some("forged?[2J?line")
+    );
+    let long = said(&format!("{}\n", "y".repeat(900))).unwrap();
+    assert_eq!(long.len(), REASON_BYTES);
+    assert_eq!(said("whole\ncut off"), Some("whole".to_owned()));
+    assert_eq!(said("cut off"), None);
+    assert_eq!(said(""), None);
 }
 
 #[test]

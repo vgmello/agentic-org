@@ -267,6 +267,12 @@ impl Config {
         Ok(self)
     }
     fn admit_runtime(&mut self) -> Result<(), HostError> {
+        self.admit_runtime_with(false)
+    }
+    /// [`Config::admit_runtime`] for a start whose setup record names a credential directory
+    /// that the host opens (`recorded_custody`): in a development build that names the
+    /// build's custody as a development key folder does.
+    fn admit_runtime_with(&mut self, recorded_custody: bool) -> Result<(), HostError> {
         let fail = |e| HostError::Io {
             context: "admitting the complete runtime release before custody",
             source: io::Error::other(e),
@@ -277,12 +283,15 @@ impl Config {
             return Ok(());
         }
         // Named development custody is already debug-only and cannot be present
-        // in a release Config. It establishes no production signing evidence.
+        // in a release Config. It establishes no production signing evidence. A credential
+        // directory the setup record names is custody named as explicitly.
         #[cfg(debug_assertions)]
-        if self.dev_key_dir.is_some() {
+        if self.dev_key_dir.is_some() || recorded_custody {
             host_log::log("explicit debug development custody: unpinned fixture runtime; no production release admission");
             return Ok(());
         }
+        #[cfg(not(debug_assertions))]
+        let _ = recorded_custody;
         Err(fail(release::Error::MissingBuildTrust))
     }
 }
@@ -705,8 +714,9 @@ impl Host {
     }
 
     /// The composition. `release_directory` is the credential directory a registered start
-    /// opened, where a release build keeps its secrets in one: the office keys are opened
-    /// below it, and each view keeps it locked for as long as the view lives.
+    /// opened, where this system keeps a host's secrets in one and the setup record names it
+    /// (in every build): the office keys are opened below it, and each view keeps it locked
+    /// for as long as the view lives.
     fn start_with(
         mut config: Config,
         instance: Option<instance::registry::Instance>,
@@ -715,7 +725,7 @@ impl Host {
     ) -> Result<Self, HostError> {
         harden()?;
         if instance.is_some() {
-            config.admit_runtime()?;
+            config.admit_runtime_with(release_directory.is_some())?;
         }
         let layout = match &instance {
             Some(instance) => {

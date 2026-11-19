@@ -111,10 +111,44 @@ impl Stop {
     }
 }
 
+/// Ends the process now, with exit code 0, after one line to its log: `message`, one line
+/// without the program's name, which is put in front. For the composition's `overrun` (see
+/// [`Stop::watch`]): the line is written by the host log's own thread, and this waits for it
+/// a short, bounded time only, so that a stderr nobody reads (a full pipe) cannot hold the end
+/// up (X5 review, fourth round, P1). `_exit` skips the exit handlers, which a thread blocked in
+/// a write, or in anything else, could hold up.
+pub fn end_process(message: &str) -> ! {
+    crate::host_log::log(message);
+    // SAFETY: `_exit` ends the process at once and never returns.
+    unsafe { libc::_exit(0) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    const END_CHILD: &str = "ORG_HOST_TEST_END_PROCESS";
+
+    /// X5 review, fourth round (P1): the end of an overrun stop is not held up by a stderr
+    /// that is a full pipe nobody reads. The child ends with code 0 well inside a stop's grace.
+    #[test]
+    fn the_end_of_the_process_is_not_held_up_by_a_full_stderr() {
+        if std::env::var_os(END_CHILD).is_some() {
+            println!("ending");
+            end_process("stopped by signal 15; the stop had not ended in time");
+        }
+        let started = Instant::now();
+        let (status, stdout) = crate::host_log::tests::with_full_stderr(
+            "stop::tests::the_end_of_the_process_is_not_held_up_by_a_full_stderr",
+            END_CHILD,
+            Duration::from_secs(20),
+        )
+        .expect("the process did not end: its last line blocked");
+        assert!(status.success(), "{status:?} {stdout}");
+        assert!(stdout.contains("ending"), "{stdout}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
 
     type Overruns = Arc<Mutex<Vec<(i32, bool, Instant)>>>;
 

@@ -709,7 +709,7 @@ fn a_release_directory_is_refused_and_nothing_is_made() {
             is_item: |_| true,
         }];
         for item_stores in [&stores[..], &[]] {
-            let refused = release_directory(&location, item_stores);
+            let refused = release_directory(&location, item_stores, &[]);
             assert_eq!(refused.err(), Some(CredentialError::Refused(refusal())));
         }
     }

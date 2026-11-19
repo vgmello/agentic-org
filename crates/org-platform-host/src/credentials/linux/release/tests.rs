@@ -121,11 +121,11 @@ fn listing(dir: &Path) -> Vec<String> {
 }
 
 /// The rule and the path a refused open named.
-fn refusal<T>(result: Result<T, CredentialError>) -> (RootRule, PathBuf) {
+fn refusal(result: Result<Opened, CredentialError>) -> (RootRule, PathBuf) {
     match result {
         Err(CredentialError::Root(RootRefusal { rule, path })) => (rule, path),
         Err(other) => panic!("refused with {other:?}, not with a rule of the release directory"),
-        Ok(_) => panic!("the release directory, or a folder in it, was opened"),
+        Ok(_) => panic!("the release directory was opened"),
     }
 }
 
@@ -230,6 +230,7 @@ impl Tree {
                 expect_items,
             },
             &STORES,
+            &[],
         )
         .map(|root| Opened { root })
     }
@@ -250,12 +251,37 @@ impl Tree {
                 expect_items,
             },
             stores,
+            &[],
         )
         .map(|root| Opened { root })
     }
 
     fn open(&self, path: &Path) -> Result<Opened, CredentialError> {
         self.open_with(path, &self.data_root(), false, false)
+    }
+
+    /// Opens the release directory at `path` as [`Tree::open_with`] does, for a host whose
+    /// other persistent data is in the directories `account_data`.
+    fn open_apart(
+        &self,
+        path: &Path,
+        data_root: &File,
+        mount_point_required: bool,
+        account_data: &[&File],
+    ) -> Result<Opened, CredentialError> {
+        let account_data: Vec<_> = account_data.iter().map(|file| file.as_fd()).collect();
+        release_directory_below(
+            &self.base,
+            &ReleaseDirectory {
+                path,
+                data_root: data_root.as_fd(),
+                mount_point_required,
+                expect_items: false,
+            },
+            &STORES,
+            &account_data,
+        )
+        .map(|root| Opened { root })
     }
 
     fn open_expecting_items(&self, path: &Path) -> Result<Opened, CredentialError> {
@@ -1198,6 +1224,7 @@ fn a_second_host_on_the_same_store_is_refused_until_the_first_has_dropped_every_
                 expect_items: false,
             },
             &STORES,
+            &[],
         )
         .map(|root| Opened { root });
         assert_eq!(refusal(second), (RootRule::InUse, store));
@@ -1313,7 +1340,7 @@ fn a_lock_made_under_a_mask_that_takes_the_owners_bits_is_usable_and_an_old_one_
         unsafe { libc::umask(0o277) };
         // Everything this open makes gets its mode set, whatever the mask is: the
         // root's lock, the item stores' directories and their locks, and an item.
-        let opened = release_directory_below(&base, &location, &STORES)
+        let opened = release_directory_below(&base, &location, &STORES, &[])
             .map(|root| Opened { root })
             .unwrap();
         let keys = opened.store(OFFICE_KEYS).unwrap();
@@ -1327,6 +1354,7 @@ fn a_lock_made_under_a_mask_that_takes_the_owners_bits_is_usable_and_an_old_one_
                 ..location
             },
             &STORES,
+            &[],
         )
         .map(|root| Opened { root })
         .unwrap();
@@ -2111,6 +2139,41 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
     );
     drop((top, instance, secrets_bound, data_bound));
 
+    // 4b. The data root on a volume of its own, mounted inside the account's data volume
+    //     (`-v D:/data -v I:/data/instance -v D/secrets:/secrets`): the store is apart from
+    //     the instance's volume, and every key is still in `D`, which holds the account's
+    //     records. Judged against the records as well, it is refused for that volume
+    //     (X5 review, fourth round, P1).
+    let outer = tree.dir("outer-volume", 0o700);
+    mkdir(&outer.join("instance"), 0o700);
+    mkdir(&outer.join("records"), 0o700);
+    mkdir(&outer.join("secrets"), 0o700);
+    let inner_volume = tree.dir("instance-volume", 0o700);
+    let container_data = tree.dir("container-data-3", 0o700);
+    let container_secrets = tree.dir("container-secrets-3", 0o700);
+    let Some(outer_bound) = mounted(&outer, &container_data) else {
+        return;
+    };
+    let Some(inner_bound) = mounted(&inner_volume, &container_data.join("instance")) else {
+        return;
+    };
+    let Some(secrets_bound) = mounted(&outer.join("secrets"), &container_secrets) else {
+        return;
+    };
+    let instance = File::open(container_data.join("instance")).unwrap();
+    let records = File::open(container_data.join("records")).unwrap();
+    // Against the instance's own volume alone it passes: that is the gap.
+    drop(
+        tree.open_apart(&container_secrets, &instance, true, &[])
+            .unwrap(),
+    );
+    assert_eq!(
+        refusal(tree.open_apart(&container_secrets, &instance, true, &[&records])),
+        (RootRule::AccountData, container_secrets.clone())
+    );
+    assert_eq!(listing(&outer.join("secrets")), [".lock"]);
+    drop((records, instance, secrets_bound, inner_bound, outer_bound));
+
     // 5. A mount whose directory was deleted: where it is cannot be said, so it is
     //    refused, not assumed to be elsewhere.
     let gone = tree.dir("gone", 0o700);
@@ -2133,6 +2196,41 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
         "bind mounts judged on a real kernel: inside, reverse, alias, two volumes, secrets \
          in the data volume, deleted ({})",
         tree.base.display()
+    );
+}
+
+/// X5 review, fourth round (P1): the account's other persistent data (its records) is kept
+/// apart from the store as the data root is. A store inside the records' directory, or one
+/// that contains it, is refused; without the records named it would have been accepted.
+#[test]
+fn a_store_that_shares_a_directory_with_the_accounts_records_is_refused() {
+    let Some(tree) = Tree::accepted() else { return };
+    let records = tree.dir("records", 0o700);
+    let inside = records.join("credentials");
+    mkdir(&inside, 0o700);
+    let held = File::open(&records).unwrap();
+    drop(
+        tree.open_apart(&inside, &tree.data_root(), false, &[])
+            .unwrap(),
+    );
+    fs::remove_file(inside.join(".lock")).unwrap();
+    assert_eq!(
+        refusal(tree.open_apart(&inside, &tree.data_root(), false, &[&held])),
+        (RootRule::AccountData, inside.clone())
+    );
+    assert!(listing(&inside).is_empty(), "something was made");
+    let outer = tree.dir("outer", 0o700);
+    mkdir(&outer.join("records"), 0o700);
+    let contained = File::open(outer.join("records")).unwrap();
+    assert_eq!(
+        refusal(tree.open_apart(&outer, &tree.data_root(), false, &[&contained])),
+        (RootRule::AccountData, outer.clone())
+    );
+    // Apart from both, it opens.
+    let apart = tree.dir("credentials", 0o700);
+    drop(
+        tree.open_apart(&apart, &tree.data_root(), false, &[&held, &contained])
+            .unwrap(),
     );
 }
 
@@ -2256,88 +2354,4 @@ fn the_directories_a_deployment_names_are_judged_as_its_host_judges_them() {
         }
         Err(other) => panic!("probe: {other:?}"),
     }
-}
-
-/// X5 review (third round), P1: a development build's key folder is one folder directly in
-/// the release directory, made owner-only from its descriptor when it is missing, judged
-/// without following a link, and its stores are opened from the checked folder and hold
-/// the release directory's lock. Another volume mounted on the folder is refused by the
-/// mount rule (`rules.rs`, and LNX-2 with a real nested mount); this test runs as an
-/// ordinary user, who cannot mount one.
-#[test]
-fn a_development_folder_is_made_and_checked_in_the_release_directory_and_holds_its_lock() {
-    let Some(tree) = Tree::accepted() else { return };
-    let store = tree.dir("secrets", 0o700);
-    let opened = tree.open(&store).unwrap();
-    let folder = opened.development_folder("dev-keys").unwrap();
-    assert_eq!(mode(&store.join("dev-keys")), 0o700);
-    let secrets = folder
-        .store(&["host-secrets", "instance"], Sharing::Exclusive, "")
-        .unwrap();
-    secrets.add(&name("registry"), b"registry key").unwrap();
-    assert_eq!(
-        fs::read(store.join("dev-keys/host-secrets/instance/registry")).unwrap(),
-        b"registry key"
-    );
-    // The folder and its store hold the release directory: no second host opens it, until
-    // the last of them is gone.
-    drop((folder, opened));
-    assert_eq!(refusal(tree.open(&store)), (RootRule::InUse, store.clone()));
-    drop(secrets);
-    let opened = tree.open(&store).unwrap();
-    // Found again, as it is.
-    let folder = opened.development_folder("dev-keys").unwrap();
-    assert_eq!(
-        loaded(
-            &folder
-                .store(&["host-secrets", "instance"], Sharing::Exclusive, "")
-                .unwrap(),
-            "registry"
-        )
-        .unwrap(),
-        b"registry key"
-    );
-    drop(folder);
-
-    // Not a folder name: an item store's own directory, the lock, a path, nothing.
-    let before = listing(&store);
-    for name in [
-        "office-keys",
-        "host-secrets",
-        ".lock",
-        "a/b",
-        "",
-        "lost+found",
-        "..",
-    ] {
-        assert_eq!(
-            opened.development_folder(name).err(),
-            Some(CredentialError::InvalidName),
-            "{name}"
-        );
-    }
-    assert_eq!(listing(&store), before);
-
-    // A link to a folder elsewhere is not followed, and nothing is made there; nor is a
-    // file taken for a folder.
-    let elsewhere = tree.dir("elsewhere", 0o700);
-    symlink(&elsewhere, store.join("linked")).unwrap();
-    fs::write(store.join("plain"), b"").unwrap();
-    for name in ["linked", "plain"] {
-        assert_eq!(
-            refusal(opened.development_folder(name)),
-            (RootRule::DevelopmentFolderNotADirectory, store.join(name)),
-            "{name}"
-        );
-    }
-    assert!(listing(&elsewhere).is_empty());
-
-    // A folder open to its group is refused and left as it is.
-    let open = store.join("open");
-    mkdir(&open, 0o750);
-    assert_eq!(
-        refusal(opened.development_folder("open")),
-        (RootRule::DevelopmentFolderMode, open.clone())
-    );
-    assert_eq!(mode(&open), 0o750);
 }

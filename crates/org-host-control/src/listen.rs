@@ -32,8 +32,10 @@ pub enum ListenMode {
     /// Plain HTTP on a listen address that is not a loopback address, for one case only: an
     /// instance that runs in the foreground as a container's main process, whose port the
     /// container runtime publishes on the Docker host's own loopback
-    /// (`-p 127.0.0.1:8443:8443`). The browser-facing origin is therefore a loopback origin
-    /// (`localhost`, `127.0.0.1` or `[::1]`), and nothing else is accepted as one. It is chosen
+    /// (`-p 127.0.0.1:8443:8443`). The browser-facing origin is therefore that address,
+    /// `http://127.0.0.1:<port>`, and nothing else is accepted as one: not the name
+    /// `localhost`, which can resolve to `::1`, where the port is not published and another
+    /// program of the machine could listen, and not `[::1]` either. It is chosen
     /// by name in a setup file, never implied by `http` and an address, and only an instance
     /// whose service mode is `foreground` may have it ([`ListenMode::fits_service`]).
     HttpPublished,
@@ -251,8 +253,8 @@ pub enum OriginError {
     /// Fit, `http_published`: the listen address is a loopback address. A loopback listener
     /// is `http_loopback`'s.
     PublishedAddress,
-    /// Fit, `http_published`: the host isn't `localhost`, `127.0.0.1` or `[::1]`, the names
-    /// of the loopback the port is published on.
+    /// Fit, `http_published`: the host isn't `127.0.0.1`, the address the port is published
+    /// on.
     PublishedHost,
 }
 
@@ -316,8 +318,9 @@ impl fmt::Display for OriginError {
                  127.0.0.1 or ::1 the scheme is http_loopback"
             }
             OriginError::PublishedHost => {
-                "in http_published the origin's host must be localhost, 127.0.0.1 or [::1]: the \
-                 port is published on the Docker host's loopback"
+                "in http_published the origin's host must be 127.0.0.1: the port is published on \
+                 the Docker host's 127.0.0.1, and a name such as localhost can resolve to ::1, \
+                 where it is not"
             }
         })
     }
@@ -385,10 +388,12 @@ impl ListenOrigin {
     ///
     /// - in `http_published`, the listen address is not a loopback address (a loopback
     ///   listener is `http_loopback`'s, with its stricter host rule);
-    /// - in `http_published`, the host is exactly `localhost`, `127.0.0.1` or `::1`: the
-    ///   browser reaches the listener through a port published on its own machine's loopback,
-    ///   so no other name is the listener's, and a request that names another host is not
-    ///   for this origin.
+    /// - in `http_published`, the host is exactly the IPv4 literal `127.0.0.1`: the browser
+    ///   reaches the listener through a port published on its own machine's `127.0.0.1`, so
+    ///   no other host is the listener's (plan A-10's rule, as in `http_loopback`: the name
+    ///   `localhost` can resolve to `::1`, where the port is not published and another local
+    ///   program could listen), and a request that names another host is not for this
+    ///   origin.
     ///
     /// In `https` any canonical host fits, IP literals included. Certificate coverage isn't part
     /// of this check. The first failure, in that order, is returned. Whether the instance may
@@ -404,12 +409,7 @@ impl ListenOrigin {
             if address.is_loopback() {
                 return Err(OriginError::PublishedAddress);
             }
-            let loopback_name = match &self.host {
-                OriginHost::Domain(name) => name == "localhost",
-                OriginHost::Ipv4(host) => *host == Ipv4Addr::LOCALHOST,
-                OriginHost::Ipv6(host) => *host == Ipv6Addr::LOCALHOST,
-            };
-            if !loopback_name {
+            if self.host != OriginHost::Ipv4(Ipv4Addr::LOCALHOST) {
                 return Err(OriginError::PublishedHost);
             }
         }

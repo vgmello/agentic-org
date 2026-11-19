@@ -9,14 +9,15 @@
 # build.sh builds them in the Rust toolchain's Debian image, into target/linux/debug, on a
 # Mac as on a Linux machine: a plain `cargo build` on a Mac makes macOS programs.
 #
-# Run (nothing else is needed; see README.md in this folder for volumes and the first link):
+# Run (see README.md in this folder for the network, the volumes and the first link):
 #
-#   docker run -d --name agentic-org -p 127.0.0.1:8443:8443 agentic-org
+#   docker network create agentic-org
+#   docker run -d --name agentic-org --network agentic-org -p 127.0.0.1:8443:8443 agentic-org
 #
-# This is a DEVELOPMENT image: BIN names the workspace's own Linux build, the host logs
-# that the worker has no publisher check, and the host keeps its keys in its development
-# key store inside the secrets volume. A release image takes a signed release from the
-# release pipeline instead (README.md, "What a release image still needs").
+# This is a DEVELOPMENT image: BIN names the workspace's own Linux build, and the host logs
+# that the worker has no publisher check. It keeps its keys in the secrets volume exactly as
+# a release build does. A release image takes a signed release from the release pipeline
+# instead (README.md, "What a release image still needs").
 
 # Debian 13 (glibc 2.41), pinned by digest: the Linux adapters need glibc, not musl.
 ARG BASE=debian:stable-slim@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0
@@ -52,11 +53,9 @@ COPY --chown=root:root ${UI}/ /opt/agentic-org/bin/ui/
 RUN chmod -R u=rwX,go=rX /opt/agentic-org/bin/ui
 COPY --chown=root:root --chmod=0644 deploy/container/setup.json /etc/agentic-org/setup.json
 
-# `agent-os` is first on an agent's PATH. ORG_OFFICE_DEV_KEY_DIR is the development key
-# store of a development build, inside the secrets volume; a release build ignores it.
+# `agent-os` is first on an agent's PATH.
 ENV PATH=/opt/agentic-org/bin:/usr/local/bin:/usr/bin:/bin \
-    USER=agentic LOGNAME=agentic \
-    ORG_OFFICE_DEV_KEY_DIR=/secrets/dev-keys
+    USER=agentic LOGNAME=agentic
 
 # Declared volumes are mounts even when the operator names none, which the credential
 # store requires of /secrets (a plain directory of the image is refused).

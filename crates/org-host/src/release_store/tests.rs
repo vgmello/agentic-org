@@ -59,6 +59,7 @@ fn release_directory_system() -> bool {
             data_root: std::os::fd::AsFd::as_fd(&anywhere),
             foreground: false,
             expect_items: true,
+            records: None,
         },
     );
     assert!(matches!(opened, Ok(None)));
@@ -108,6 +109,7 @@ impl World {
             data_root: self.instance.root_descriptor(),
             foreground: false,
             expect_items,
+            records: None,
         }
     }
 
@@ -190,6 +192,7 @@ fn a_development_build_and_a_keychain_system_open_no_release_directory() {
         data_root: std::os::fd::AsFd::as_fd(&anywhere),
         foreground: true,
         expect_items: true,
+        records: None,
     };
     let refused = org_platform::Refused::Unsupported {
         capability: "credentials",
@@ -199,8 +202,8 @@ fn a_development_build_and_a_keychain_system_open_no_release_directory() {
         panic!("the platform was asked for a release directory")
     };
     for (release_build, store) in [
-        // A development build keeps its development stores on every system.
-        (false, Ok(ProtectedStore::ReleaseDirectory)),
+        // A development build keeps its development stores where the system's store is not
+        // a directory.
         (false, Ok(ProtectedStore::Keychain)),
         (false, Err(refused.clone())),
         // The Keychain is the store; and a system without one is answered where each
@@ -212,6 +215,31 @@ fn a_development_build_and_a_keychain_system_open_no_release_directory() {
         let opened = open_with(release_build, store.clone(), facts(), never);
         assert!(matches!(opened, Ok(None)), "{release_build} {store:?}");
     }
+    // Where it is a directory, a development build opens the one its record names, with the
+    // release build's checks (X5 review, fourth round), and keeps its development stores
+    // only when the record names none.
+    let asked = std::cell::Cell::new(false);
+    let opened = open_with(
+        false,
+        Ok(ProtectedStore::ReleaseDirectory),
+        facts(),
+        |location| {
+            asked.set(true);
+            assert!(location.expect_items && location.mount_point_required);
+            Err(CredentialError::InUse)
+        },
+    );
+    assert!(asked.get() && opened.is_err());
+    let opened = open_with(
+        false,
+        Ok(ProtectedStore::ReleaseDirectory),
+        Facts {
+            recorded: None,
+            ..facts()
+        },
+        never,
+    );
+    assert!(matches!(opened, Ok(None)));
 }
 
 #[test]
@@ -225,6 +253,7 @@ fn a_release_host_without_a_recorded_directory_does_not_start() {
             data_root: std::os::fd::AsFd::as_fd(&anywhere),
             foreground: false,
             expect_items: false,
+            records: None,
         },
         |_| panic!("the platform was asked for a release directory without a path"),
     )

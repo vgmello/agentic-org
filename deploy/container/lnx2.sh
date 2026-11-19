@@ -21,7 +21,9 @@
 # 18443).
 #
 # It builds the image, then checks, in order:
-#   1. a plain `docker run` on two named volumes sets the instance up and serves;
+#   1. the documented `docker run`, on two named volumes and a network of its own, sets the
+#      instance up and serves; a container on the default bridge cannot reach its port,
+#      and one on the same network can (the trust boundary of plain HTTP until X7);
 #   2. the first registration link comes from `docker exec -u 0 ... admin reset --user`,
 #      and only from root at a terminal; a browser at the origin registers the
 #      administrator from it and signs in, through the web API as the UI calls it;
@@ -36,14 +38,20 @@
 #   6. a new container on the same volumes is the same instance with the same keys, reads
 #      a message sent before the replacement, sends and reads a new one, keeps the
 #      browser's session and signs the administrator in again;
-#   7. a new container with the data volume and a new, empty secrets volume does not serve;
+#   7. a new container with the data volume and a new, empty secrets volume does not start
+#      ("credentials missing"), and nothing is made in the empty volume;
 #   8. a plain `docker run` with no volume named (anonymous volumes) works too;
 #   9. what the credential store refuses: a path that is not a mount, a volume root that
-#      is not the service user's, a development key folder outside the secrets volume,
-#      another volume mounted inside the secrets volume (a folder of the data volume, on
-#      the same filesystem, at the development key folder or at an item store), and a
-#      secrets directory inside the data directory; and root's reset for an instance
-#      whose data folder is gone is refused with its words escaped.
+#      is not the service user's, another volume mounted inside the secrets volume (a
+#      folder of the data volume, on the same filesystem, at an item store or deeper), a
+#      secrets directory inside the data directory, and one in the data volume beside a
+#      data folder that is a volume of its own; a development key folder named in the
+#      environment is not used; and root's reset for an instance whose data folder is gone
+#      is refused with its words escaped;
+#  10. (only with LNX2_PROFILES=1, on a Docker host whose kernel enforces AppArmor) the
+#      optional seccomp and AppArmor profiles, loaded: the service serves and stops under
+#      them, and a vendor-style sandbox (`bwrap --unshare-all ...`) runs in the container
+#      as the service user.
 # Every container and volume it makes is removed at the end, pass or fail.
 #
 # Known limits of this test: two rules have no case here because they need a client
@@ -63,6 +71,7 @@ tag=lnx2-$$
 user=agentic
 office=01OFFICE00000000000000HQ1
 key_hex=$(printf 'b3%.0s' $(seq 1 32))
+network=$tag-net
 record=/data/.local/share/agentic-org/setup/default/setup.v1.json
 scratch=$(mktemp -d "${TMPDIR:-/var/tmp}/lnx2.XXXXXX")
 containers=()
@@ -84,6 +93,7 @@ cleanup() {
         docker run --rm -u 0 -v "$scratch":/scratch --entrypoint /bin/rm "$image" \
             -rf /scratch/binds >/dev/null 2>&1 || true
     fi
+    docker network rm "$network" >/dev/null 2>&1 || true
     docker rmi "$image-overlay" >/dev/null 2>&1 || true
     [ -n "${LNX2_IMAGE:-}" ] || docker rmi "$image" >/dev/null 2>&1 || true
     if [ -n "$scratch" ] && [ -d "$scratch" ]; then rm -rf "$scratch" 2>/dev/null || true; fi
@@ -95,6 +105,22 @@ trap cleanup EXIT
 # has <extended pattern> <text>: the text was read completely first, so no writer is cut
 # off by a reader that has seen enough (which `pipefail` would report as a failure).
 has() { grep -Eq -- "$1" <<<"$2"; }
+# absent <what> <volume> <grep arguments...>: a scan of the data volume `volume` (at /data, in
+# a container of its own, so that nothing writes to it meanwhile) that must find nothing.
+# grep's status 1 is "no match"; a match (0) or a scan that failed (2: a file it could not
+# read, a pattern this grep cannot run) fails the test, so a broken scan never passes as a
+# clean one.
+absent() {
+    what=$1 volume=$2
+    shift 2
+    status=0
+    docker run --rm -v "$volume:/data" --entrypoint grep "$image" "$@" >/dev/null 2>&1 || status=$?
+    case $status in
+    1) ;;
+    0) fail "$what" ;;
+    *) fail "the scan for '$what' did not run (grep exit $status): grep $*" ;;
+    esac
+}
 logs() { docker logs "$1" 2>&1; }
 # The last line a container wrote to its standard error: the refusal that ended it. (Its
 # standard output is another stream, which `docker logs` does not order against this one.)
@@ -199,14 +225,29 @@ has 'ORG_DEV_SERVICE_DIR names a development test service adapter, which this bu
     fail "the image's agentic-org is a test-support build: $seams"
 echo "the packed agentic-org has no test adapters"
 
-say "1. a plain docker run on two named volumes"
+say "1. the documented docker run: two named volumes and a network of its own"
 volumes+=("$tag-data" "$tag-secrets")
 docker volume create "$tag-data" >/dev/null
 docker volume create "$tag-secrets" >/dev/null
+docker network create "$network" >/dev/null
 started=$(now)
-run "$tag-a" -p "127.0.0.1:$port:8443" -v "$tag-data:/data" -v "$tag-secrets:/secrets"
+run "$tag-a" --network "$network" -p "127.0.0.1:$port:8443" -v "$tag-data:/data" -v "$tag-secrets:/secrets"
 wait_until "the instance to serve" serving "$tag-a"
 echo "serving $(since "$started") s after docker run"
+# The listener is on the container's own interface, where a published port arrives. A
+# container on the default bridge has no route to this network; one attached to the same
+# network reaches the plain-HTTP port directly, whatever -p says. The network is the
+# boundary until HTTPS (X7): attach nothing to it that is not trusted with the sign-in.
+address=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$network\").IPAddress}}" "$tag-a")
+[ -n "$address" ] || fail "the container has no address on $network"
+reach() {
+    docker run --rm --network "$1" --entrypoint /bin/bash "$image" \
+        -c "timeout 3 bash -c 'exec 3<>/dev/tcp/$address/8443'" >/dev/null 2>&1
+}
+port_answers() { reach "$network"; }
+wait_until "the port on the container's network" port_answers
+if reach bridge; then fail "a container on the default bridge reached $address:8443"; fi
+echo "port 8443 at $address: reached from a container on $network, not from one on the default bridge"
 id=$(instance_id "$tag-a")
 [ -n "$id" ] || fail "the setup record names no instance"
 echo "instance $id"
@@ -339,7 +380,7 @@ started=$(now)
 docker stop "$tag-a" >/dev/null
 echo "docker stop (no worker yet): $(since "$started") s, exit code $(docker inspect -f '{{.State.ExitCode}}' "$tag-a")"
 docker run --rm --volumes-from "$tag-a" -v "$repo/$bin/examples/lnx2-office:/lnx2-office:ro" \
-    --entrypoint /lnx2-office "$image" /data/instance/office-state "/secrets/dev-keys/$id" >/dev/null
+    --entrypoint /lnx2-office "$image" /data/instance/office-state /secrets/office-keys >/dev/null
 docker start "$tag-a" >/dev/null
 wait_until "the instance to serve again" serving "$tag-a"
 wait_until "the office worker's socket" worker_serves "$tag-a"
@@ -361,12 +402,11 @@ secrets_listing "$tag-a" | sed 's/^/  /'
 [ -z "$(docker exec "$tag-a" find /secrets ! -user "$user")" ] || fail "a secret is not the service user's"
 [ -z "$(docker exec "$tag-a" find /secrets -type f ! -perm 600)" ] || fail "a secret file is not 600"
 [ -z "$(docker exec "$tag-a" find /secrets -type d ! -perm 700)" ] || fail "a secrets folder is not 700"
-docker exec "$tag-a" grep -rlq "$key_hex" /secrets || fail "the office's key is not in /secrets"
-if docker exec "$tag-a" grep -rlaqs "$key_hex" /data; then fail "the office's key is under /data"; fi
-if docker exec "$tag-a" grep -rlaqsP '\xb3{32}' /data; then fail "the office's key bytes are under /data"; fi
-[ -z "$(docker exec "$tag-a" find /data \( -name '*.key' -o -name 'host-secrets' -o -name 'dev-keys' \))" ] ||
+[ "$(docker exec "$tag-a" od -An -tx1 "/secrets/office-keys/$office.key" | tr -d ' \n')" = "$key_hex" ] ||
+    fail "the office's key is not in /secrets/office-keys"
+[ -z "$(docker exec "$tag-a" find /data \( -name '*.key' -o -name 'host-secrets' -o -name 'office-keys' -o -name 'dev-keys' \))" ] ||
     fail "a key store is under /data"
-echo "everything under /secrets is $user's, files 600 and folders 700; no key under /data"
+echo "everything under /secrets is $user's, files 600 and folders 700; no key store under /data"
 changed=$(docker diff "$tag-a")
 [ -z "$changed" ] || fail "written outside the volumes: $changed"
 echo "docker diff is empty: nothing was written outside /data and /secrets"
@@ -380,6 +420,10 @@ code=$(docker inspect -f '{{.State.ExitCode}}' "$tag-a")
 echo "docker stop: $took s, exit code $code"
 [ "$code" = 0 ] || fail "the service ended with $code (137 is the runtime's kill after its grace)"
 awk -v t="$took" 'BEGIN { exit !(t < 2.5) }' || fail "the service took $took s to stop (its bound is 2.5 s)"
+# With the service stopped, nothing writes to the data volume while it is scanned.
+absent "the office's key is under /data (as hex)" "$tag-data" -rlaq "$key_hex" /data
+absent "the office's key bytes are under /data" "$tag-data" -rlaqP '\xb3{32}' /data
+echo "the stopped data volume holds the office's key neither as hex nor as its bytes"
 
 say "5b. docker stop with a worker that does not act on the stop (X5 review V2)"
 docker start "$tag-a" >/dev/null
@@ -425,34 +469,21 @@ echo "the browser's session held across the replacement, and the administrator s
 docker rm -f "$tag-b" >/dev/null
 
 say "7. the data volume with a new, empty secrets volume"
-# The office's key is gone with the old volume. Nothing may make a new one in its place:
-# the office's private keys are wrapped with the lost key. A release build's store refuses
-# the whole start ("credentials missing"); this development image keeps its keys in the
-# development store, which starts. The host then starts the office's worker without a key.
+# The office's key is gone with the old volume. Nothing may make a new one in its place: the
+# office's private keys are wrapped with the lost key. Every build, this development image
+# included, keeps its keys in the credential directory and refuses the whole start
+# ("credentials missing", ADR-0017 decision 8) before anything is made in the new volume.
 volumes+=("$tag-empty")
 docker volume create "$tag-empty" >/dev/null
 run "$tag-c" -v "$tag-data:/data" -v "$tag-empty:/secrets"
-settled_c() { serving "$tag-c" || exited "$tag-c"; }
-wait_until "that container to serve or to end" settled_c
-sleep 3
-if exited "$tag-c"; then
-    echo "the container ended with exit code $(docker inspect -f '{{.State.ExitCode}}' "$tag-c"):"
-    last_error "$tag-c" | sed 's/^/  /'
-    [ "$(docker inspect -f '{{.State.ExitCode}}' "$tag-c")" != 0 ] || fail "it ended as if nothing was wrong"
-else
-    log=$(logs "$tag-c")
-    grep -E "$office" <<<"$log" | cut -c1-240 | sed 's/^/  /' || true
-    has "office $office has no usable key in the host.s key store; it starts without one" "$log" ||
-        fail "the host did not say that the office's key is gone"
-    echo "  worker process: $(if worker_runs "$tag-c"; then echo running, without a key; else echo none; fi)"
-    [ -z "$(docker exec "$tag-c" find /secrets -name '*.key')" ] || fail "a new key was made for the office"
-    if answers "$tag-c"; then
-        echo "  agent-os reaches that worker: $(agent "$tag-c" nova msg inbox --json 2>&1 | cut -c1-160)"
-    else
-        echo "  agent-os gets no answer from that worker"
-    fi
-    echo "no key was made in place of the lost one (the host itself keeps serving)"
-fi
+wait_until "that container to end" exited "$tag-c"
+log=$(last_error "$tag-c")
+echo "  ${log:0:300}"
+[ "$(docker inspect -f '{{.State.ExitCode}}' "$tag-c")" != 0 ] || fail "it ended as if nothing was wrong"
+has 'credentials missing' "$log" || fail "the refusal is not 'credentials missing': $log"
+[ -z "$(docker run --rm -v "$tag-empty:/secrets" --entrypoint /bin/sh "$image" -c 'find /secrets -mindepth 1')" ] ||
+    fail "the refused start made something in the empty secrets volume"
+echo "  refused, and nothing was made in the empty secrets volume"
 docker rm -f -v "$tag-c" >/dev/null
 
 say "8. a plain docker run, no volume named"
@@ -539,27 +570,18 @@ docker run --rm -u 0 -v "$scratch/binds:/b" --entrypoint /bin/sh "$image" -c \
     'mkdir -m 750 /b/open && chown 61000:61000 /b/open' >/dev/null
 refused "$tag-f2" 'mode' -v "$scratch/binds/open:/secrets" ||
     fail "the refusal does not name the mode"
-echo "a development key folder outside the secrets volume (ORG_OFFICE_DEV_KEY_DIR=/data/keys):"
-volumes+=("$tag-dk")
-docker volume create "$tag-dk" >/dev/null
-refused "$tag-k" 'is not a folder directly in the credential directory /secrets' \
-    -e ORG_OFFICE_DEV_KEY_DIR=/data/keys -v "$tag-dk:/data" ||
-    fail "the refusal does not name the development key folder's rule"
-docker run --rm -v "$tag-dk:/data" --entrypoint /bin/sh "$image" -c '! test -e /data/keys' ||
-    fail "the refused start made /data/keys"
-echo "  and /data/keys was not made"
-echo "a development key folder that is another volume mounted in the secrets volume (a folder"
-echo "of the data volume at /secrets/dev-keys; two named volumes share one filesystem):"
+echo "another volume mounted inside the secrets volume, below an item store (a folder of the"
+echo "data volume at /secrets/host-secrets/deeper; two named volumes share one filesystem):"
 volumes+=("$tag-nd" "$tag-ns")
 docker volume create "$tag-nd" >/dev/null
 docker volume create "$tag-ns" >/dev/null
 # Mounted at /data first, so that the new volume gets the image's /data (its owner and mode).
 docker run --rm -u 0 -v "$tag-nd:/data" --entrypoint /bin/sh "$image" -c \
-    'mkdir -m 700 /data/devkeys /data/itemstore && chown 61000:61000 /data/devkeys /data/itemstore' >/dev/null
-refused "$tag-n" '/secrets/dev-keys: another volume is mounted here, inside the credential directory' \
+    'mkdir -m 700 /data/deeper /data/itemstore && chown 61000:61000 /data/deeper /data/itemstore' >/dev/null
+refused "$tag-n" '/secrets/host-secrets/deeper: another volume is mounted here, inside the credential directory' \
     -v "$tag-nd:/data" -v "$tag-ns:/secrets" \
-    --mount "type=volume,src=$tag-nd,dst=/secrets/dev-keys,volume-subpath=devkeys" ||
-    fail "the refusal does not name the mounted development key folder"
+    --mount "type=volume,src=$tag-nd,dst=/secrets/host-secrets/deeper,volume-subpath=deeper" ||
+    fail "the refusal does not name the volume mounted below an item store"
 echo "the same at an item store of the credential directory (/secrets/office-keys):"
 volumes+=("$tag-ns2")
 docker volume create "$tag-ns2" >/dev/null
@@ -567,9 +589,19 @@ refused "$tag-n2" '/secrets/office-keys: another volume is mounted here, inside 
     -v "$tag-nd:/data" -v "$tag-ns2:/secrets" \
     --mount "type=volume,src=$tag-nd,dst=/secrets/office-keys,volume-subpath=itemstore" ||
     fail "the refusal does not name the mounted item store"
-[ -z "$(docker run --rm -v "$tag-nd:/v" --entrypoint /bin/sh "$image" -c 'find /v/devkeys /v/itemstore -mindepth 1')" ] ||
+[ -z "$(docker run --rm -v "$tag-nd:/v" --entrypoint /bin/sh "$image" -c 'find /v/deeper /v/itemstore -mindepth 1')" ] ||
     fail "a refused start wrote into the data volume's folders"
 echo "  and nothing was written in the data volume's folders"
+echo "a development key folder named in the environment (ORG_OFFICE_DEV_KEY_DIR=/data/keys) is"
+echo "not used: the record names the credential directory, which holds every key:"
+volumes+=("$tag-dk")
+docker volume create "$tag-dk" >/dev/null
+run "$tag-k" -e ORG_OFFICE_DEV_KEY_DIR=/data/keys -v "$tag-dk:/data"
+wait_until "the instance with a development key folder named to serve" serving "$tag-k"
+docker exec "$tag-k" sh -c '! test -e /data/keys && test -d /secrets/host-secrets' ||
+    fail "the development key folder was used: $(docker exec "$tag-k" sh -c 'ls -la /data /secrets' 2>&1)"
+echo "  serving; /data/keys was not made, and the host's secrets are in /secrets/host-secrets"
+docker rm -f -v "$tag-k" >/dev/null
 echo "root's reset for an instance whose data folder is gone: refused, its words escaped:"
 volumes+=("$tag-rd" "$tag-rs")
 docker volume create "$tag-rd" >/dev/null
@@ -609,3 +641,25 @@ refused "$tag-h" 'is inside the data volume' \
     --mount "type=volume,src=$tag-in,dst=/data,volume-subpath=agentic" \
     --mount "type=volume,src=$tag-in,dst=/secrets,volume-subpath=agentic/secrets" ||
     fail "the refusal does not name the data volume"
+echo "the secrets directory in the data volume, beside a data folder that is a volume of its own"
+echo "(-v D:/data -v I:/data/instance, /secrets a folder of D: X5 review, fourth round):"
+volumes+=("$tag-nest-d" "$tag-nest-i")
+docker volume create "$tag-nest-d" >/dev/null
+docker volume create "$tag-nest-i" >/dev/null
+docker run --rm -u 0 -v "$tag-nest-d:/data" -v "$tag-nest-i:/data/instance" --entrypoint /bin/sh "$image" -c \
+    'install -d -o 61000 -g 61000 -m 0700 /data/secrets && chown 61000:61000 /data/instance && chmod 700 /data/instance' >/dev/null
+refused "$tag-nest" "holds the account's records" \
+    -v "$tag-nest-d:/data" -v "$tag-nest-i:/data/instance" \
+    --mount "type=volume,src=$tag-nest-d,dst=/secrets,volume-subpath=secrets" ||
+    fail "the refusal does not name the account's records"
+[ -z "$(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'find /v/secrets -mindepth 1')" ] ||
+    fail "the refused start wrote into the data volume's secrets folder"
+echo "  and nothing was written in it"
+
+say "10. the optional profiles (LNX2_PROFILES=1, on a Docker host that enforces AppArmor)"
+if [ "${LNX2_PROFILES:-}" = 1 ]; then
+    "$here/profiles-check.sh" "$image" || fail "the optional profiles"
+else
+    echo "skipped: set LNX2_PROFILES=1 on a Docker host that enforces AppArmor, with the profile"
+    echo "loaded (sudo apparmor_parser -r -W deploy/container/apparmor-agentic-org)"
+fi
