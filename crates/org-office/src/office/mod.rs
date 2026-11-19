@@ -362,6 +362,7 @@ impl Office {
             self.store.run(CreateTeamOp {
                 operation_id: request.operation_id,
                 here: here.clone(),
+                owner: self.owner.clone(),
                 by: request.by,
                 command: request.command,
             })

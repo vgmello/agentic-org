@@ -36,6 +36,7 @@ fn team(n: u64, number: u64, parent: Option<u64>, lead: Option<u64>) -> Team {
         parent_team_id: parent.map(id),
         lead_employee_id: lead.map(id),
         status: TeamStatus::Active,
+        max_members: 6,
         meta: meta(),
     }
 }
@@ -57,6 +58,7 @@ fn employee(n: u64, handle: &str, kind: EmployeeKind, home: u64) -> Employee {
         title_in_team: None,
         offboarded_at: None,
         may_hire: kind == EmployeeKind::Person,
+        builtin_key: None,
         meta: meta(),
         body: String::new(),
     }

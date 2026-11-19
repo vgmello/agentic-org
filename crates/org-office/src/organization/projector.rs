@@ -8,7 +8,9 @@ use org_store::{DurablePath, Engine, Id, ProjectionError, Projector};
 
 use super::{
     ports::OrganizationWrite,
-    records::{self, By, Kind, Meta, OfficeRole, RecordError, RepositoryKind, Team},
+    records::{
+        self, By, EmployeeStatus, Kind, Meta, OfficeRole, RecordError, RepositoryKind, Team,
+    },
 };
 
 /// The projector of one organization's files. Team and employee files do not hold the
@@ -80,6 +82,12 @@ where
                 tx.put_office_codes(&decoded(path, records::decode_office_codes(bytes))?)?;
             }
             (Kind::OfficeCodes, None) => tx.put_office_codes(&[])?,
+            (Kind::Role(id), Some(bytes)) => {
+                let record = decoded(path, records::decode_role(bytes))?;
+                agree(path, record.id == id, "id")?;
+                tx.put_role(&record)?;
+            }
+            (Kind::Role(id), None) => tx.remove_role(&id)?,
             (Kind::Team(chain), Some(bytes)) => {
                 let record = decoded(path, records::decode_team(bytes))?;
                 let (id, above) = chain.split_last().expect("a team path names a team");
@@ -143,6 +151,7 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
     let repositories = tx.repositories()?;
     let offices = tx.offices()?;
     let codes = tx.office_codes()?;
+    let roles = tx.roles()?;
     let teams = tx.teams()?;
     let employees = tx.employees()?;
     let counter = tx.team_counter()?;
@@ -153,6 +162,7 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
         let empty = repositories.is_empty()
             && offices.is_empty()
             && codes.is_empty()
+            && roles.is_empty()
             && teams.is_empty()
             && employees.is_empty()
             && counter.is_none()
@@ -190,12 +200,25 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
             return Err(refuse(&records::office_codes_path(), reason));
         }
     }
+    // Roles: a key names one role of the organization.
+    let mut role_keys = BTreeSet::new();
+    for role in &roles {
+        if role.key.as_ref().is_some_and(|key| !role_keys.insert(key)) {
+            let path = records::role_path(&role.id);
+            return Err(refuse(&path, "another role has this key"));
+        }
+    }
 
     // Teams: a tree, numbered once each, led from inside.
     let by_id: BTreeMap<&Id, &Team> = teams.iter().map(|team| (&team.id, team)).collect();
     let home_of: BTreeMap<&Id, &Id> = employees
         .iter()
         .map(|employee| (&employee.id, &employee.home_team_id))
+        .collect();
+    let inactive: BTreeSet<&Id> = employees
+        .iter()
+        .filter(|employee| employee.status == EmployeeStatus::Inactive)
+        .map(|employee| &employee.id)
         .collect();
     let mut chains: BTreeMap<&Id, Vec<Id>> = BTreeMap::new();
     let mut numbers = BTreeSet::new();
@@ -220,6 +243,9 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
         if let Some(lead) = &team.lead_employee_id {
             if home_of.get(lead) != Some(&&team.id) {
                 return Err(refuse(&path, "its lead is not an employee of the team"));
+            }
+            if inactive.contains(lead) {
+                return Err(refuse(&path, "its lead is inactive"));
             }
         }
         chains.insert(&team.id, chain);
@@ -255,6 +281,7 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
         records::employee_path(chain, employee.kind, &employee.id).ok()
     };
     let mut handles = BTreeSet::new();
+    let mut builtin = BTreeSet::new();
     for employee in &employees {
         let Some(path) = profile(employee) else {
             let reason = format!("employee {} has no home team", employee.id);
@@ -262,6 +289,15 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
         };
         if !handles.insert(&employee.handle) {
             return Err(refuse(&path, "another employee has this handle"));
+        }
+        if let Some(key) = employee.builtin_key {
+            if !builtin.insert(key) {
+                return Err(refuse(&path, "another employee has this builtin_key"));
+            }
+        }
+        let role_known = |role: &Id| roles.iter().any(|known| known.id == *role);
+        if !employee.role_id.as_ref().is_none_or(role_known) {
+            return Err(refuse(&path, "its role_id names no role"));
         }
         let mut above = employee.reports_to_employee_id.as_ref();
         let mut steps = 0;
@@ -289,6 +325,9 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
     }
     if let Some(office) = offices.iter().find(|o| !attributed(&o.meta)) {
         return Err(refuse(&records::office_path(&office.id), reason));
+    }
+    if let Some(role) = roles.iter().find(|r| !attributed(&r.meta)) {
+        return Err(refuse(&records::role_path(&role.id), reason));
     }
     if let Some(team) = teams.iter().find(|t| !attributed(&t.meta)) {
         let path = records::team_path(&chains[&team.id]);

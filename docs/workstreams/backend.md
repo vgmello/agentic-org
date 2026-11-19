@@ -29,21 +29,19 @@ Ask the owner before starting anything new.
 | A1 to A4 (setup, registration, sign-in, create organization) | In progress | v1 (merged before 74865317) | Per their FEATURES rows. The browser-to-office path in A3's Build is not built: no browser request reaches an office yet |
 | B1a · office store core | Done | v1 (merged before 74865317) | — |
 | B1b · the office runs on the new store | Done | v1 5f9941f1 | Narrowings recorded in FC-146: real-host delete-runtime with office calls, and journal corruption or rollback, move to A5. Rewritten LNX-2 including step 10 passed in CI's container job on GitHub's Ubuntu runner (run 44552811792); rewritten LNX-1 not yet run on Linux |
-| B2 · organization, teams and people | Blocked: owner paused new features | branch `wip/b2-1-checkpoint` (does not build); plan `.agent-kit/slices/b2-organization-teams-people-plan.md` | Owner questions Q8 (who builds browser-to-office) and Q9 (move agent-placed checks to C3) |
+| B2.1 · one home team on the store (domain) | Done | v1 (merge of ec469fa4) | FEATURES FC-025..029 and "code today" text not yet updated; old test vectors `crates/org-office/test-vectors/{org-commands,deferred-org-commands,organization}.json` describe the deleted model (only UI tests read them; freeze or replace with B2.2) |
+| B2.2 to B2.4 · wire, browser path and routes, CLI | Blocked: owner paused new features | plan `.agent-kit/slices/b2-organization-teams-people-plan.md` | Owner questions Q8 (who builds browser-to-office), Q9 (agent-placed checks to C3); confirm Q3 refusal code `invalid_request` vs Q2 `not_empty`, and "a manager must be active" (a paused agent can't manage) |
 | B3, A5, O1, A6, B4, B6 | Not started | — | In `docs/implementation-plan.md` order, after B2 |
 | C1 to C5 (agents) | Not started | PR 17 (another agent builds the runtime, not this stream) | Owner decides; reviewed on PR 17 |
 
 ## Next up
 
-When the owner lifts the pause: finish B2.1 from `wip/b2-1-checkpoint`. The owner's answers to Q1 to Q5
-are at the end of the B2 plan.
+When the owner lifts the pause: B2.2 (wire, dry run, `operation.get`; ui-dev updates its mirrors in the same
+merge). The owner's answers to Q1 to Q5 are at the end of the B2 plan.
 
 ## In flight
 
-- Pushed: `wip/b2-1-checkpoint` on origin (partial B2.1, does not build, not merged). Local branch
-  `worktree-b2-1` in worktree slot-1 is the same commit; if the local copy is gone, use origin.
-- Local only: nothing that matters. Every B1b branch is merged into v1 (their origin copies
-  `worktree-b1b-*` are kept as history).
+- Nothing. B1b and B2.1 are merged into v1; their branches are deleted after merging.
 - Outside the repo: test logs and review reports lived in the session scratchpad and are not kept;
   every decision and result they produced is in the delivery log below. Plans are committed under
   `.agent-kit/slices/`.
@@ -53,7 +51,9 @@ are at the end of the B2 plan.
 - B2 Q8: who builds the browser-to-office path (a new feature) — this stream or the other Track A lead.
 - B2 Q9: move B2's checks that need a placed agent to C3.
 - macOS admission relies on the audit token; the fd-holder check is unscheduled (security design).
-- PR 17: the rename can merge; the ADR-0032 docs have four blocking issues (review on the PR).
+- PR 17: two reviews posted on the PR. Owner decisions: HQ-centralized Codex refresh stands; background
+  work across turns is taken out of PR 17 for now; the Bash sandbox is left out of PR 17 for now (comes back
+  later).
 
 ## Small follow-ups (not new features)
 

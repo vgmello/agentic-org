@@ -175,7 +175,7 @@ pub(super) fn team_command(team: u64, parent: u64) -> CreateTeam {
     CreateTeam {
         id: id(team),
         name: format!("Team {team:x}"),
-        parent: id(parent),
+        parent: Some(id(parent)),
     }
 }
 
@@ -183,6 +183,7 @@ pub(super) fn create_team(store: &OfficeStore, op: u64, team: u64) -> Result<Rep
     store.run(CreateTeamOp {
         operation_id: id(op),
         here: identity(),
+        owner: id(CREATOR),
         by: Actor::Employee(id(CREATOR)),
         command: team_command(team, TOP_TEAM),
     })

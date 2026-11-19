@@ -14,7 +14,8 @@ use org_store::{
 use super::{
     ports::{OrganizationRead, OrganizationWrite, RecordRef},
     records::{
-        Employee, Office, OfficeCode, Organization, Repository, Team, TeamAllocation, TeamCounter,
+        Employee, Office, OfficeCode, Organization, Repository, Role, Team, TeamAllocation,
+        TeamCounter,
     },
 };
 
@@ -25,6 +26,7 @@ pub struct OrganizationTables {
     repositories: Vec<Repository>,
     offices: BTreeMap<Id, Office>,
     office_codes: Vec<OfficeCode>,
+    roles: BTreeMap<Id, Role>,
     teams: BTreeMap<Id, Team>,
     employees: BTreeMap<Id, Employee>,
     team_counter: Option<TeamCounter>,
@@ -62,6 +64,7 @@ impl FamilyTable for OrganizationTables {
         lines.extend(rows("repositories", &self.repositories));
         lines.extend(rows("offices", self.offices.values()));
         lines.extend(rows("office_codes", &self.office_codes));
+        lines.extend(rows("roles", self.roles.values()));
         lines.extend(rows("teams", self.teams.values()));
         lines.extend(rows("employees", self.employees.values()));
         lines.extend(rows("reference_counters", &self.team_counter));
@@ -110,6 +113,14 @@ macro_rules! memory_read {
 
             fn office_codes(&self) -> Result<Vec<OfficeCode>, EngineError> {
                 read(self.table(), |t| t.office_codes.clone())
+            }
+
+            fn role(&self, id: &Id) -> Result<Option<Role>, EngineError> {
+                read(self.table(), |t| t.roles.get(id).cloned())
+            }
+
+            fn roles(&self) -> Result<Vec<Role>, EngineError> {
+                read(self.table(), |t| t.roles.values().cloned().collect())
             }
 
             fn team(&self, id: &Id) -> Result<Option<Team>, EngineError> {
@@ -196,6 +207,17 @@ impl OrganizationWrite for MemoryTx {
         Ok(())
     }
 
+    fn put_role(&mut self, record: &Role) -> Result<(), EngineError> {
+        let tables = self.table_mut::<OrganizationTables>()?;
+        tables.roles.insert(record.id.clone(), record.clone());
+        Ok(())
+    }
+
+    fn remove_role(&mut self, id: &Id) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?.roles.remove(id);
+        Ok(())
+    }
+
     fn put_team(&mut self, record: &Team) -> Result<(), EngineError> {
         let tables = self.table_mut::<OrganizationTables>()?;
         tables.record_refs.insert(record_ref("team", &record.id));
@@ -251,6 +273,10 @@ impl OrganizationWrite for MemoryTx {
 pub use suite::*;
 
 mod suite {
+    // The rules of the structure changes after creation (B2 plan, section 4, R2-R21).
+    mod structure;
+    pub use structure::*;
+
     use std::{
         collections::BTreeMap,
         path::{Path, PathBuf},
@@ -272,12 +298,16 @@ mod suite {
 
     use crate::organization::{
         features::{
-            create_organization, create_team, CreateOrganization, CreateTeam, Creator, Op,
-            OrganizationCreated, TeamCreated, TeamRejected, TeamRejection,
+            create_organization, AddPerson, ArchiveTeam, Changed, CreateOrganization, CreateTeam,
+            Creator, DeactivatePerson, Edit, Feature, MovePerson, MoveTeam, Op, OrgRejection,
+            OrganizationCreated, RejectCode, TeamCreated, UpdatePerson, UpdateTeam, NOT_AUTHORIZED,
         },
         ports::{OrganizationEngine, OrganizationRead},
         projector::OrganizationFiles,
-        records::{self, EmployeeKind, EmployeeStatus, OfficeRole, TeamCounter, TeamStatus},
+        records::{
+            self, BuiltinKey, By, EmployeeKind, EmployeeStatus, Meta, OfficeRole, Role,
+            TeamCounter, TeamStatus,
+        },
     };
 
     /// The instant of every suite operation, and of the golden creation files.
@@ -378,36 +408,70 @@ mod suite {
             self.counted(move |uow, here| create_organization::decide(uow, here, &command))
         }
 
-        fn create_team<E: OrganizationEngine>(
+        /// `command` from `by`, decided as the office decides it: the owner is the creator.
+        fn feature<E: OrganizationEngine, C: Feature>(
             &self,
             by: &Actor,
-            command: &CreateTeam,
+            command: &C,
         ) -> Decision<E> {
             let (by, command) = (by.clone(), command.clone());
-            self.counted(move |uow, here| create_team::decide(uow, here, &by, &command))
+            self.counted(move |uow, here| command.decide(uow, here, &id(CREATOR), &by))
         }
 
-        /// Not an operation of the family (archiving arrives with B2): rewrites a team's
-        /// file as archived, as that operation will, so the suite can meet an archived
-        /// parent. Takes a generation like every organization decision.
+        /// The owner archives `team` at whatever revision it has when decided, or at 1 when
+        /// it does not exist.
         fn archive_team<E: OrganizationEngine>(&self, team: &Id) -> Decision<E> {
             let team = team.clone();
-            self.counted(move |uow: &mut UnitOfWork<'_, E>, _| {
-                uow.next(Stream::Organization)?;
-                let view = uow.view();
-                let (Some(mut record), Some(chain)) = (view.team(&team)?, view.team_chain(&team)?)
-                else {
-                    return Err(Refusal::invalid("no such team"));
+            self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
+                let revision = uow.view().team(&team)?.map_or(1, |t| t.meta.revision);
+                let command = ArchiveTeam {
+                    id: team.clone(),
+                    expected_revision: revision,
                 };
-                if !record.is_active() {
-                    return Err(Refusal::invalid("already archived"));
-                }
-                record.status = TeamStatus::Archived;
-                record.meta.revision += 1;
-                let bytes = records::encode_team(&record);
-                Ok(Change::new(Op::CreateTeam.ack())
-                    .put(records::team_path(&chain)?, bytes)
-                    .reply(b"archived".to_vec()))
+                command.decide(uow, here, &id(CREATOR), &Actor::Employee(id(CREATOR)))
+            })
+        }
+
+        /// The owner moves `team` under `parent` at whatever revision it has when decided.
+        fn move_team<E: OrganizationEngine>(&self, team: &Id, parent: &Id) -> Decision<E> {
+            let (team, parent) = (team.clone(), parent.clone());
+            self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
+                let revision = uow.view().team(&team)?.map_or(1, |t| t.meta.revision);
+                let command = MoveTeam {
+                    id: team.clone(),
+                    expected_revision: revision,
+                    parent: parent.clone(),
+                };
+                command.decide(uow, here, &id(CREATOR), &Actor::Employee(id(CREATOR)))
+            })
+        }
+
+        /// The owner moves `person` to `team` at whatever revision it has when decided.
+        fn move_person<E: OrganizationEngine>(&self, person: &Id, team: &Id) -> Decision<E> {
+            let (person, team) = (person.clone(), team.clone());
+            self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
+                let revision = uow.view().employee(&person)?.map_or(1, |e| e.meta.revision);
+                let command = MovePerson {
+                    id: person.clone(),
+                    expected_revision: revision,
+                    home_team: team.clone(),
+                };
+                command.decide(uow, here, &id(CREATOR), &Actor::Employee(id(CREATOR)))
+            })
+        }
+
+        /// The owner appoints `lead` to `team` (none: clears it) at whatever revision the
+        /// team has when decided.
+        fn set_lead<E: OrganizationEngine>(&self, team: &Id, lead: Option<Id>) -> Decision<E> {
+            let team = team.clone();
+            self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
+                let revision = uow.view().team(&team)?.map_or(1, |t| t.meta.revision);
+                let command = UpdateTeam {
+                    lead: lead.clone(),
+                    clear_lead: lead.is_none(),
+                    ..UpdateTeam::new(team.clone(), revision)
+                };
+                command.decide(uow, here, &id(CREATOR), &Actor::Employee(id(CREATOR)))
             })
         }
 
@@ -500,12 +564,46 @@ mod suite {
                 .submit(Some(command.operation(id(op))), false, decide)
         }
 
-        fn create_team(&self, op: u64, team: u64, parent: u64) -> Result<Reply, StoreError> {
-            let command = team_command(team, parent);
-            let by = Actor::Employee(id(CREATOR));
-            let decide = self.decisions.create_team(&by, &command);
-            let operation = command.operation(id(op), &by);
+        /// `command` from `by` under operation `op`.
+        fn submit<C: Feature>(
+            &self,
+            op: u64,
+            by: &Actor,
+            command: &C,
+        ) -> Result<Reply, StoreError> {
+            let decide = self.decisions.feature(by, command);
+            let operation = command.operation(id(op), by);
             self.store.submit(Some(operation), false, decide)
+        }
+
+        /// `command` from the owner under operation `op`.
+        fn owner<C: Feature>(&self, op: u64, command: &C) -> Result<Reply, StoreError> {
+            self.submit(op, &Actor::Employee(id(CREATOR)), command)
+        }
+
+        /// The reply of a completed change.
+        fn done<C: Feature>(&self, op: u64, command: &C) -> Changed {
+            let reply = self.owner(op, command).expect("a decided change");
+            assert_eq!(reply.outcome, Outcome::Completed, "{:?}", rejection(&reply));
+            serde_json::from_slice(&reply.bytes).expect("a change reply")
+        }
+
+        /// The recorded rejection of a change, with its receipt.
+        fn refused<C: Feature>(&self, op: u64, command: &C) -> OrgRejection {
+            let generation = self.generation();
+            let reply = self.owner(op, command).expect("a decided change");
+            assert_eq!(reply.outcome, Outcome::Rejected);
+            assert!(self.has_receipt(op));
+            assert_eq!(
+                self.generation(),
+                generation,
+                "a rejection takes no generation"
+            );
+            rejection(&reply)
+        }
+
+        fn create_team(&self, op: u64, team: u64, parent: u64) -> Result<Reply, StoreError> {
+            self.owner(op, &team_command(team, parent))
         }
 
         /// The team's number and generation, from a completed creation.
@@ -516,10 +614,103 @@ mod suite {
         }
 
         fn archive_team(&self, op: u64, team: u64) {
-            let operation = test_operation(op, "test.archive_team", &id(team));
-            let decide = self.decisions.archive_team(&id(team));
-            let reply = self.store.submit(Some(operation), false, decide);
-            assert_eq!(reply.map(|reply| reply.outcome), Ok(Outcome::Completed));
+            let revision = self.team(team).meta.revision;
+            let command = ArchiveTeam {
+                id: id(team),
+                expected_revision: revision,
+            };
+            self.done(op, &command);
+        }
+
+        /// The owner adds `person` to `team`, under operation `op`.
+        fn add_person(&self, op: u64, person: u64, team: u64) -> Changed {
+            self.done(op, &person_command(person, team))
+        }
+
+        /// The owner appoints `lead` to `team`, or clears its lead (`None`).
+        fn set_lead(&self, op: u64, team: u64, lead: Option<u64>) -> Changed {
+            let command = UpdateTeam {
+                lead: lead.map(id),
+                clear_lead: lead.is_none(),
+                ..UpdateTeam::new(id(team), self.team(team).meta.revision)
+            };
+            self.done(op, &command)
+        }
+
+        /// The owner names `manager` as the one `person` reports to, or clears it (`None`).
+        fn set_manager(&self, op: u64, person: u64, manager: Option<u64>) -> Changed {
+            let command = UpdatePerson {
+                manager: manager.map_or(Edit::Clear, |m| Edit::Set(id(m))),
+                ..UpdatePerson::new(id(person), self.employee(person).meta.revision)
+            };
+            self.done(op, &command)
+        }
+
+        fn deactivate(&self, op: u64, person: u64) -> Changed {
+            let command = DeactivatePerson {
+                id: id(person),
+                expected_revision: self.employee(person).meta.revision,
+            };
+            self.done(op, &command)
+        }
+
+        fn move_person(&self, person: u64, team: u64) -> MovePerson {
+            MovePerson {
+                id: id(person),
+                expected_revision: self.employee(person).meta.revision,
+                home_team: id(team),
+            }
+        }
+
+        fn move_team(&self, team: u64, parent: u64) -> MoveTeam {
+            MoveTeam {
+                id: id(team),
+                expected_revision: self.team(team).meta.revision,
+                parent: id(parent),
+            }
+        }
+
+        fn archive(&self, team: u64) -> ArchiveTeam {
+            ArchiveTeam {
+                id: id(team),
+                expected_revision: self.team(team).meta.revision,
+            }
+        }
+
+        /// Files no operation of the family writes (a role), or that break a rule, written
+        /// as one entry by a writer outside the family.
+        fn write(&self, change: Change) -> Result<Reply, StoreError> {
+            let decide = self.decisions.write(change);
+            self.store.submit(None, false, decide)
+        }
+
+        /// Puts a role record: no command writes one (roles are read-only in v1).
+        fn put_role(&self, role: u64, key: &str) {
+            let record = role_record(role, key);
+            let change = Change::new(Op::CreateTeam.ack())
+                .put(records::role_path(&id(role)), records::encode_role(&record));
+            let reply = self.write(change).expect("written");
+            assert_eq!(reply.outcome, Outcome::Completed);
+        }
+
+        /// `command` from `by` is refused before admission: nothing recorded, no generation.
+        fn unrecorded<C: Feature>(&self, op: u64, by: &Actor, command: &C) -> StoreError {
+            let generation = self.generation();
+            let error = self.submit(op, by, command).expect_err("refused");
+            assert!(matches!(error, StoreError::Invalid(_)), "{error:?}");
+            assert!(!self.has_receipt(op));
+            assert_eq!(self.generation(), generation);
+            error
+        }
+
+        fn team(&self, team: u64) -> records::Team {
+            let found = self.read(|snapshot| snapshot.team(&id(team)));
+            found.expect("the team")
+        }
+
+        fn employee(&self, employee: u64) -> records::Employee {
+            let found = self.read(|snapshot| snapshot.employee(&id(employee)));
+            found.expect("the employee")
         }
 
         fn read<R>(&self, query: impl FnOnce(&E::Snapshot) -> Result<R, EngineError>) -> R {
@@ -577,8 +768,29 @@ mod suite {
         CreateTeam {
             id: id(team),
             name: format!("Team {team:x}"),
-            parent: id(parent),
+            parent: Some(id(parent)),
         }
+    }
+
+    /// A person with only what a person must have: handle `p<hex>`.
+    fn person_command(person: u64, team: u64) -> AddPerson {
+        let (handle, name) = (format!("p{person:x}"), format!("Person {person:x}"));
+        AddPerson::new(id(person), &handle, &name, id(team))
+    }
+
+    fn role_record(role: u64, key: &str) -> Role {
+        Role {
+            id: id(role),
+            key: Some(key.into()),
+            name: key.to_uppercase(),
+            meta: Meta::created(&By::Employee(id(CREATOR)), CREATION_AT),
+            body: String::new(),
+        }
+    }
+
+    /// The rejection a reply carries.
+    fn rejection(reply: &Reply) -> OrgRejection {
+        serde_json::from_slice(&reply.bytes).expect("a rejection")
     }
 
     /// Files as text, so a failed comparison shows the bytes.
@@ -646,6 +858,12 @@ mod suite {
             );
             assert_eq!(hr.home_team_id, id(TEAM));
             assert!(!hr.may_hire);
+            // The HR lead is the one built-in employee; teams take six by hiring.
+            assert_eq!(hr.builtin_key, Some(BuiltinKey::Hr));
+            assert_eq!(creator.builtin_key, None);
+            let top = snapshot.team(&id(TEAM))?.expect("the top-level team");
+            assert_eq!(top.max_members, records::DEFAULT_MAX_MEMBERS);
+            assert_eq!(records::DEFAULT_MAX_MEMBERS, 6);
             assert!(snapshot.handle_in_use("ana")? && snapshot.handle_in_use("hr")?);
             assert!(!snapshot.handle_in_use("bo")?);
 
@@ -794,9 +1012,10 @@ mod suite {
         assert_eq!(files.len(), 9 + 2 * 2);
     }
 
-    /// An archived parent is a recorded rejection that takes no generation and no number;
-    /// an unknown parent, a used ID and an unknown actor record nothing; an operation ID
-    /// used again with another command conflicts.
+    /// A rule's refusal (an unknown or archived parent, a bad name, a used ID) is a recorded
+    /// rejection that takes no generation and no number, and its retry is the same answer;
+    /// an actor who is not the owner is refused unrecorded; an operation ID used again with
+    /// another command conflicts.
     pub fn team_refusals<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::created(open);
         assert_eq!(bench.created_team(2, 0x21, TEAM).number, 2);
@@ -805,14 +1024,21 @@ mod suite {
         assert_eq!(generation, 3);
         let files = bench.state_files();
 
-        let unrecorded = |op: u64, reply: Result<Reply, StoreError>| {
-            assert!(matches!(reply, Err(StoreError::Invalid(_))), "{reply:?}");
-            assert!(!bench.has_receipt(op));
-            assert_eq!(bench.generation(), generation);
+        let code = |op: u64, command: &CreateTeam| bench.refused(op, command).code;
+        assert_eq!(code(4, &team_command(0x22, 0x99)), RejectCode::NotFound);
+        assert_eq!(
+            code(5, &team_command(0x22, 0x21)),
+            RejectCode::InvalidRequest
+        );
+        let unnamed = CreateTeam {
+            name: String::new(),
+            ..team_command(0x22, TEAM)
         };
-        unrecorded(4, bench.create_team(4, 0x22, 0x99));
-        unrecorded(5, bench.create_team(5, 0x21, TEAM));
-        unrecorded(6, bench.create_team(6, TEAM, TEAM));
+        assert_eq!(code(6, &unnamed), RejectCode::InvalidName);
+        assert_eq!(
+            code(7, &team_command(0x21, TEAM)),
+            RejectCode::AlreadyExists
+        );
         // An ID that is another record's: the organization, the office, an employee, the
         // repository.
         let here = identity();
@@ -827,33 +1053,35 @@ mod suite {
                 id: taken,
                 ..team_command(0x22, TEAM)
             };
-            let actor = Actor::Employee(id(CREATOR));
-            let decide = bench.decisions.create_team(&actor, &command);
-            let operation = command.operation(id(op), &actor);
-            unrecorded(op, bench.store.submit(Some(operation), false, decide));
+            assert_eq!(code(op, &command), RejectCode::AlreadyExists);
         }
-        let by = |actor: Actor, command: CreateTeam| {
-            let decide = bench.decisions.create_team(&actor, &command);
-            let operation = command.operation(id(7), &actor);
-            bench.store.submit(Some(operation), false, decide)
-        };
-        unrecorded(7, by(Actor::Employee(id(0x99)), team_command(0x22, TEAM)));
-        let mut unnamed = team_command(0x22, TEAM);
-        unnamed.name = String::new();
-        unrecorded(7, by(Actor::Employee(id(CREATOR)), unnamed));
-
-        let rejected = bench
-            .create_team(8, 0x22, 0x21)
-            .expect("a recorded rejection");
-        assert_eq!(rejected.outcome, Outcome::Rejected);
-        let reason: TeamRejected = serde_json::from_slice(&rejected.bytes).expect("a rejection");
-        assert_eq!(reason.rejected, TeamRejection::ParentArchived);
-        assert!(bench.has_receipt(8));
-        assert_eq!(bench.generation(), generation);
-        // The retry is the same rejection, even once the answer would differ.
+        // The retry of a rejection is the same answer without deciding, even once the
+        // answer would differ.
         let decided = bench.decisions.count();
-        assert_eq!(bench.create_team(8, 0x22, 0x21), Ok(rejected));
+        let first = bench.create_team(4, 0x22, 0x99).expect("the stored answer");
+        assert_eq!(rejection(&first).code, RejectCode::NotFound);
         assert_eq!(bench.decisions.count(), decided);
+
+        // Nobody but the owner creates a team: refused unrecorded, whoever asks.
+        let unrecorded = |op: u64, by: Actor| {
+            let reply = bench.submit(op, &by, &team_command(0x22, TEAM));
+            assert_eq!(reply, Err(StoreError::invalid(NOT_AUTHORIZED)));
+            assert!(!bench.has_receipt(op));
+            assert_eq!(bench.generation(), generation);
+        };
+        unrecorded(16, Actor::Employee(id(0x99)));
+        unrecorded(17, Actor::Employee(id(HR)));
+        unrecorded(18, Actor::System);
+        // A malformed ID is refused unrecorded too.
+        let malformed = CreateTeam {
+            id: Id::parse("team-x").expect("a safe component"),
+            ..team_command(0x22, TEAM)
+        };
+        assert!(matches!(
+            bench.owner(19, &malformed),
+            Err(StoreError::Invalid(_))
+        ));
+        assert!(!bench.has_receipt(19));
 
         // The ID of a completed creation with another command conflicts: nothing is
         // decided, and the generation and the original answer stand.
@@ -862,13 +1090,10 @@ mod suite {
             let other = bench.create_team(2, team, parent);
             assert_eq!(other, Err(StoreError::Conflict), "{team:x} {parent:x}");
         }
-        let command = team_command(0x21, TEAM);
-        let decide = bench.decisions.create_team(&Actor::System, &command);
-        let operation = command.operation(id(2), &Actor::System);
-        let other_actor = bench.store.submit(Some(operation), false, decide);
+        let other_actor = bench.submit(2, &Actor::System, &team_command(0x21, TEAM));
         assert_eq!(other_actor, Err(StoreError::Conflict));
         // So does the ID of a recorded rejection.
-        assert_eq!(bench.create_team(8, 0x24, TEAM), Err(StoreError::Conflict));
+        assert_eq!(bench.create_team(4, 0x24, TEAM), Err(StoreError::Conflict));
         assert_eq!(bench.decisions.count(), decided);
         assert_eq!(bench.generation(), generation);
         assert_eq!(bench.created_team(2, 0x21, TEAM).number, 2);
@@ -884,14 +1109,9 @@ mod suite {
         // The next accepted creation takes the next number and the next generation.
         let next = bench.created_team(9, 0x22, TEAM);
         assert_eq!((next.number, next.generation), (3, generation + 1));
-        // The system may create a team; its record is attributed to the system.
-        let command = team_command(0x23, TEAM);
-        let decide = bench.decisions.create_team(&Actor::System, &command);
-        let operation = command.operation(id(10), &Actor::System);
-        let reply = bench.store.submit(Some(operation), false, decide);
-        assert_eq!(reply.map(|reply| reply.outcome), Ok(Outcome::Completed));
-        let team = bench.read(|snapshot| snapshot.team(&id(0x23)));
-        assert_eq!(team.expect("the team").meta.created_by, records::By::System);
+        let team = bench.team(0x22);
+        assert_eq!(team.meta.created_by, records::By::Employee(id(CREATOR)));
+        assert_eq!(team.max_members, records::DEFAULT_MAX_MEMBERS);
     }
 
     /// Every row of the family and its generation, to compare across a rebuild.
@@ -903,6 +1123,7 @@ mod suite {
                 snapshot.repositories()?,
                 snapshot.offices()?,
                 snapshot.office_codes()?,
+                snapshot.roles()?,
                 snapshot.teams()?,
                 snapshot.employees()?,
                 snapshot.team_counter()?,
@@ -926,7 +1147,7 @@ mod suite {
             let submit = |n: u64| {
                 move || {
                     let command = team_command(0x20 + n, TEAM);
-                    let decide = decisions.create_team(by, &command);
+                    let decide = decisions.feature(by, &command);
                     let operation = command.operation(id(100 + n), by);
                     start.wait();
                     let reply = store.submit(Some(operation), false, decide);
@@ -1006,13 +1227,16 @@ mod suite {
         let mut parent = 0x22;
         let refused = loop {
             let team = parent + 1;
-            match bench.create_team(100 + team, team, parent) {
-                Ok(_) => parent = team,
-                Err(refused) => break refused,
+            let reply = bench
+                .create_team(100 + team, team, parent)
+                .expect("decided");
+            match reply.outcome {
+                Outcome::Completed => parent = team,
+                Outcome::Rejected => break rejection(&reply),
             }
             assert!(parent < 0x40, "no depth was refused");
         };
-        assert!(matches!(refused, StoreError::Invalid(_)), "{refused:?}");
+        assert_eq!(refused.code, RejectCode::InvalidRequest);
         let depth = bench.read(|snapshot| snapshot.team_chain(&id(parent)));
         let depth = depth.expect("the deepest team").len();
         assert!(
@@ -1033,7 +1257,8 @@ mod suite {
         bench.archive_team(3, 0x21);
         let rejected = bench.create_team(4, 0x22, 0x21).expect("a rejection");
         assert_eq!(rejected.outcome, Outcome::Rejected);
-        assert!(bench.create_team(5, 0x22, 0x99).is_err());
+        let unknown = bench.create_team(5, 0x22, 0x99).expect("a rejection");
+        assert_eq!(unknown.outcome, Outcome::Rejected);
         bench.created_team(6, 0x22, TEAM);
         assert_eq!(bench.generation(), 4);
 
@@ -1095,7 +1320,8 @@ mod suite {
 
     /// Generates the family's commands for `org_store::testkit::rebuild_equivalence`:
     /// creations (valid, invalid and repeated), teams under known, unknown and archived
-    /// parents with colliding IDs, and archivals.
+    /// parents with colliding IDs, archivals and subtree moves, and people added, moved
+    /// and appointed to lead, so subtree moves carry profiles.
     pub struct OrganizationScript {
         decisions: Decisions,
     }
@@ -1115,10 +1341,33 @@ mod suite {
             op: Option<u64>,
             team: u64,
         },
+        Move {
+            op: Option<u64>,
+            team: u64,
+            parent: u64,
+        },
+        Person {
+            op: Option<u64>,
+            person: u64,
+            team: u64,
+        },
+        MovePerson {
+            op: Option<u64>,
+            person: u64,
+            team: u64,
+        },
+        /// `None`: the lead is cleared.
+        Lead {
+            op: Option<u64>,
+            team: u64,
+            person: Option<u64>,
+        },
     }
 
     /// The few teams a script creates, so IDs collide and parents exist.
     const POOL: u64 = 6;
+    /// The few people a script adds.
+    const PEOPLE: u64 = 4;
 
     impl OrganizationScript {
         pub fn new() -> Self {
@@ -1146,11 +1395,13 @@ mod suite {
         fn generate(&self, rng: &mut Rng, step: u64) -> Step {
             let op = (!rng.chance(4)).then_some(step + 1);
             let pooled = |rng: &mut Rng| 0x100 + rng.below(POOL);
+            let person = |rng: &mut Rng| 0x200 + rng.below(PEOPLE);
+            let home = |rng: &mut Rng| if rng.chance(3) { TEAM } else { pooled(rng) };
             // Most sequences begin with the organization; some never have one.
             if step == 0 && !rng.chance(8) {
                 return Step::Organization { op, valid: true };
             }
-            match rng.below(12) {
+            match rng.below(16) {
                 0 => Step::Organization {
                     op,
                     valid: !rng.chance(3),
@@ -1159,10 +1410,30 @@ mod suite {
                     op,
                     team: pooled(rng),
                 },
+                2 => Step::Move {
+                    op,
+                    team: pooled(rng),
+                    parent: if rng.chance(3) { TEAM } else { pooled(rng) },
+                },
+                3 => Step::Person {
+                    op,
+                    person: person(rng),
+                    team: home(rng),
+                },
+                4 => Step::MovePerson {
+                    op,
+                    person: person(rng),
+                    team: home(rng),
+                },
+                5 => Step::Lead {
+                    op,
+                    team: home(rng),
+                    person: (!rng.chance(3)).then(|| person(rng)),
+                },
                 kind => {
                     let parent = match kind {
-                        2 => 0x1ff,
-                        3..=6 => TEAM,
+                        6 => 0x1ff,
+                        7..=9 => TEAM,
                         _ => pooled(rng),
                     };
                     let team = pooled(rng);
@@ -1188,12 +1459,32 @@ mod suite {
                     let by = Actor::Employee(id(CREATOR));
                     Command {
                         op: op.map(|n| command.operation(id(n), &by)),
-                        decide: self.decisions.create_team(&by, &command),
+                        decide: self.decisions.feature(&by, &command),
                     }
                 }
                 Step::Archive { op, team } => Command {
                     op: op.map(|n| test_operation(n, "test.archive_team", &id(*team))),
                     decide: self.decisions.archive_team(&id(*team)),
+                },
+                Step::Move { op, team, parent } => Command {
+                    op: op.map(|n| test_operation(n, "test.move_team", &id(*team))),
+                    decide: self.decisions.move_team(&id(*team), &id(*parent)),
+                },
+                Step::Person { op, person, team } => {
+                    let command = person_command(*person, *team);
+                    let by = Actor::Employee(id(CREATOR));
+                    Command {
+                        op: op.map(|n| command.operation(id(n), &by)),
+                        decide: self.decisions.feature(&by, &command),
+                    }
+                }
+                Step::MovePerson { op, person, team } => Command {
+                    op: op.map(|n| test_operation(n, "test.move_person", &id(*person))),
+                    decide: self.decisions.move_person(&id(*person), &id(*team)),
+                },
+                Step::Lead { op, team, person } => Command {
+                    op: op.map(|n| test_operation(n, "test.set_lead", &id(*team))),
+                    decide: self.decisions.set_lead(&id(*team), person.map(id)),
                 },
             }
         }
@@ -1253,6 +1544,110 @@ macro_rules! organization_conformance_tests {
         #[test]
         fn organization_rebuild_validation() {
             $crate::organization_family::testkit::rebuild_validation(&$open);
+        }
+        #[test]
+        fn organization_archive_and_move_keep_the_number() {
+            $crate::organization_family::testkit::archive_and_move_keep_the_number(&$open);
+        }
+        #[test]
+        fn organization_moving_a_team_cannot_make_a_loop() {
+            $crate::organization_family::testkit::moving_a_team_cannot_make_a_loop(&$open);
+        }
+        #[test]
+        fn organization_a_move_past_the_depth_limit_is_refused() {
+            $crate::organization_family::testkit::a_move_past_the_depth_limit_is_refused(&$open);
+        }
+        #[test]
+        fn organization_a_subtree_move_rewrites_every_path_once() {
+            $crate::organization_family::testkit::a_subtree_move_rewrites_every_path_once(&$open);
+        }
+        #[test]
+        fn organization_the_first_team_stays_top_level() {
+            $crate::organization_family::testkit::the_first_team_stays_top_level(&$open);
+        }
+        #[test]
+        fn organization_sibling_team_names_clash_ignoring_case_but_not_across_parents() {
+            $crate::organization_family::testkit::sibling_team_names_clash_ignoring_case_but_not_across_parents(&$open);
+        }
+        #[test]
+        fn organization_archived_teams_take_nothing_new() {
+            $crate::organization_family::testkit::archived_teams_take_nothing_new(&$open);
+        }
+        #[test]
+        fn organization_archive_needs_an_empty_team() {
+            $crate::organization_family::testkit::archive_needs_an_empty_team(&$open);
+        }
+        #[test]
+        fn organization_a_teams_lead_is_a_direct_active_employee() {
+            $crate::organization_family::testkit::a_teams_lead_is_a_direct_active_employee(&$open);
+        }
+        #[test]
+        fn organization_moving_a_lead_is_refused_until_the_appointment_is_cleared() {
+            $crate::organization_family::testkit::moving_a_lead_is_refused_until_the_appointment_is_cleared(&$open);
+        }
+        #[test]
+        fn organization_a_person_needs_an_active_home_team() {
+            $crate::organization_family::testkit::a_person_needs_an_active_home_team(&$open);
+        }
+        #[test]
+        fn organization_people_share_one_handle_namespace() {
+            $crate::organization_family::testkit::people_share_one_handle_namespace(&$open);
+        }
+        #[test]
+        fn organization_an_inactive_persons_handle_stays_taken() {
+            $crate::organization_family::testkit::an_inactive_persons_handle_stays_taken(&$open);
+        }
+        #[test]
+        fn organization_deactivate_sets_inactive_and_offboarded_at_and_keeps_the_handle() {
+            $crate::organization_family::testkit::deactivate_sets_inactive_and_offboarded_at_and_keeps_the_handle(&$open);
+        }
+        #[test]
+        fn organization_reporting_lines_have_no_loops() {
+            $crate::organization_family::testkit::reporting_lines_have_no_loops(&$open);
+        }
+        #[test]
+        fn organization_nobody_new_reports_to_an_inactive_person() {
+            $crate::organization_family::testkit::nobody_new_reports_to_an_inactive_person(&$open);
+        }
+        #[test]
+        fn organization_the_owner_cannot_be_deactivated() {
+            $crate::organization_family::testkit::the_owner_cannot_be_deactivated(&$open);
+        }
+        #[test]
+        fn organization_deactivating_refuses_a_lead_or_a_manager() {
+            $crate::organization_family::testkit::deactivating_refuses_a_lead_or_a_manager(&$open);
+        }
+        #[test]
+        fn organization_a_new_person_may_hire() {
+            $crate::organization_family::testkit::a_new_person_may_hire(&$open);
+        }
+        #[test]
+        fn organization_team_member_limit() {
+            $crate::organization_family::testkit::team_member_limit(&$open);
+        }
+        #[test]
+        fn organization_a_role_reference_must_exist() {
+            $crate::organization_family::testkit::a_role_reference_must_exist(&$open);
+        }
+        #[test]
+        fn organization_only_the_owner_changes_structure() {
+            $crate::organization_family::testkit::only_the_owner_changes_structure(&$open);
+        }
+        #[test]
+        fn organization_every_write_raises_the_revision_by_one_and_is_receipted() {
+            $crate::organization_family::testkit::every_write_raises_the_revision_by_one_and_is_receipted(&$open);
+        }
+        #[test]
+        fn organization_a_domain_rule_is_told_before_a_stale_revision() {
+            $crate::organization_family::testkit::a_domain_rule_is_told_before_a_stale_revision(&$open);
+        }
+        #[test]
+        fn organization_one_builtin_hr_lead() {
+            $crate::organization_family::testkit::one_builtin_hr_lead(&$open);
+        }
+        #[test]
+        fn organization_roles_are_checked_by_the_projection() {
+            $crate::organization_family::testkit::roles_are_checked_by_the_projection(&$open);
         }
         #[test]
         fn organization_rebuild_equivalence() {

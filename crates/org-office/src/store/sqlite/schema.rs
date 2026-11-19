@@ -51,7 +51,7 @@ CREATE TABLE store_receipts (
 /// this number is the third part of the digest. Add one on ANY change to what the adapter
 /// encodes into a column or how (`receipts.rs`, `organization.rs`): a projection written
 /// the old way is then recognized and rebuilt instead of being misread.
-const ADAPTER_FORMAT: u32 = 1;
+const ADAPTER_FORMAT: u32 = 2;
 
 /// All the DDL a projection is made from, in the order it is loaded, and the format of
 /// what the adapter writes into it.

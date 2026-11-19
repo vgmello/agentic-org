@@ -7,10 +7,9 @@
 //!
 //! Knows nothing about sockets: callers hand it plain values and get plain values back.
 //! [`Office::provision_hq`], [`Office::open`] and [`Office::discard`] are the three ways into
-//! a folder. The organization's rules (`rules`) speak the wire contract's types
-//! (`org_proto::org`).
+//! a folder. The organization family (`organization_family`) holds the organization's
+//! rules; `rules` reads the native protocol's organization commands.
 
-mod employees;
 pub mod hq_creation;
 mod organization;
 pub use organization::directory;
@@ -19,8 +18,11 @@ pub use organization::directory;
 /// feature: its memory port and `organization_conformance_tests!`.
 pub mod organization_family {
     pub use crate::organization::features::{
-        self, create_organization, create_team, CreateOrganization, CreateTeam, Creator, Op,
-        OrganizationCreated, TeamCreated, TeamRefusal, TeamRejected, TeamRejection,
+        self, add_person, archive_team, create_organization, create_team, deactivate_person,
+        move_person, move_team, update_person, update_team, AddPerson, ArchiveTeam, Changed,
+        CreateOrganization, CreateTeam, Creator, DeactivatePerson, Edit, Feature, MovePerson,
+        MoveTeam, Op, OrgRejection, OrganizationCreated, RejectCode, TeamCreated, UpdatePerson,
+        UpdateTeam, NOT_AUTHORIZED,
     };
     pub use crate::organization::ports::{
         OrganizationEngine, OrganizationRead, OrganizationWrite, RecordRef, MAX_TEAM_DEPTH,
@@ -50,9 +52,10 @@ pub use store::open::Testing;
 /// Opening an office's store on the engine its configuration names, and the operations
 /// run on it whichever engine that is.
 pub use store::open::{
-    open_store, CreateOrganizationOp, CreateTeamOp, DirectoryGeneration, DirectorySnapshot,
-    EngineChoice, OfficeEngine, OfficeStanding, OfficeStore, Opened, ReadOp, Standing, StoreConfig,
-    StoreOp,
+    open_store, AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
+    DirectoryGeneration, DirectorySnapshot, EngineChoice, MovePersonOp, MoveTeamOp, OfficeEngine,
+    OfficeStanding, OfficeStore, Opened, ReadOp, Standing, StoreConfig, StoreOp, StructureOp,
+    UpdatePersonOp, UpdateTeamOp,
 };
 /// The SQLite engine of the office store: the projection as one plain database file.
 pub use store::sqlite::{SqliteEngine, SqliteSnapshot, SqliteTx};

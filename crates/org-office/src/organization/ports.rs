@@ -8,7 +8,7 @@
 use org_store::{CoreRead, Engine, EngineError, Id};
 
 use super::records::{
-    Employee, Office, OfficeCode, Organization, Repository, Team, TeamAllocation, TeamCounter,
+    Employee, Office, OfficeCode, Organization, Repository, Role, Team, TeamAllocation, TeamCounter,
 };
 
 /// The deepest team tree a chain is followed through. A path cannot hold more.
@@ -38,6 +38,9 @@ pub trait OrganizationRead: CoreRead {
     fn offices(&self) -> Result<Vec<Office>, EngineError>;
     /// Every code HQ has issued, current and retired, in the order of the file.
     fn office_codes(&self) -> Result<Vec<OfficeCode>, EngineError>;
+    fn role(&self, id: &Id) -> Result<Option<Role>, EngineError>;
+    /// In order of ID.
+    fn roles(&self) -> Result<Vec<Role>, EngineError>;
     fn team(&self, id: &Id) -> Result<Option<Team>, EngineError>;
     fn team_by_number(&self, number: u64) -> Result<Option<Team>, EngineError>;
     /// In order of ID.
@@ -92,6 +95,8 @@ pub trait OrganizationWrite: OrganizationRead {
     fn remove_office(&mut self, id: &Id) -> Result<(), EngineError>;
     /// Replaces every office-code row: the file is the list. An empty list removes them.
     fn put_office_codes(&mut self, records: &[OfficeCode]) -> Result<(), EngineError>;
+    fn put_role(&mut self, record: &Role) -> Result<(), EngineError>;
+    fn remove_role(&mut self, id: &Id) -> Result<(), EngineError>;
     fn put_team(&mut self, record: &Team) -> Result<(), EngineError>;
     fn remove_team(&mut self, id: &Id) -> Result<(), EngineError>;
     fn put_employee(&mut self, record: &Employee) -> Result<(), EngineError>;

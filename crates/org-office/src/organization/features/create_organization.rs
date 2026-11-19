@@ -14,8 +14,9 @@ use super::{invalid, operation, reply, require, Op};
 use crate::organization::{
     ports::OrganizationRead,
     records::{
-        self, By, Employee, EmployeeKind, EmployeeStatus, Meta, Office, OfficeCode, OfficeRole,
-        Organization, Repository, RepositoryKind, Team, TeamAllocation, TeamCounter, TeamStatus,
+        self, BuiltinKey, By, Employee, EmployeeKind, EmployeeStatus, Meta, Office, OfficeCode,
+        OfficeRole, Organization, Repository, RepositoryKind, Team, TeamAllocation, TeamCounter,
+        TeamStatus,
     },
 };
 
@@ -130,6 +131,7 @@ fn employee(
         offboarded_at: None,
         // A person's record is written with hiring power; the HR lead never has it.
         may_hire: kind == EmployeeKind::Person,
+        builtin_key: None,
         meta: meta.clone(),
         body: body.to_owned(),
     }
@@ -197,6 +199,7 @@ where
         parent_team_id: None,
         lead_employee_id: Some(command.creator.employee_id.clone()),
         status: TeamStatus::Active,
+        max_members: records::DEFAULT_MAX_MEMBERS,
         meta: meta.clone(),
     };
     let creator = employee(
@@ -206,13 +209,16 @@ where
         &meta,
         "",
     );
-    let hr = employee(
-        (&command.hr_employee_id, EmployeeKind::Agent),
-        (HR_NAME, HR_HANDLE),
-        &team.id,
-        &meta,
-        HR_BODY,
-    );
+    let hr = Employee {
+        builtin_key: Some(BuiltinKey::Hr),
+        ..employee(
+            (&command.hr_employee_id, EmployeeKind::Agent),
+            (HR_NAME, HR_HANDLE),
+            &team.id,
+            &meta,
+            HR_BODY,
+        )
+    };
     let counter = TeamCounter {
         organization_id: organization.id.clone(),
         last_number: team.number,
