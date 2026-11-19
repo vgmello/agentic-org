@@ -150,7 +150,10 @@ then hold the keys. It is refused, and so is a secrets folder in the data volume
 data folder `/data/instance` is a volume of its own mounted inside it: the instance's
 records are in `/data` too ("the credential directory is in the volume that holds the
 account's records"). Mount nothing inside `/secrets` either: a start with anything mounted
-inside it, at any depth, is refused, naming the mount point.
+inside it, at any depth, is refused, naming the mount point. And mount the secrets volume
+once, at `/secrets` only: the same volume, or a `volume-subpath` of it, mounted anywhere
+else in the container (`-v S:/secrets -v S:/data/extra`) is refused, naming that other
+mount point ("the secrets volume is also mounted here").
 
 A first start that is refused before the instance is reserved saves no setup record,
 reserves nothing and writes nothing in `/secrets`. It leaves only empty folders and an empty lock

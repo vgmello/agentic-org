@@ -50,8 +50,9 @@
 #   9. what the credential store refuses: a path that is not a mount, a volume root that
 #      is not the service user's, another volume mounted inside the secrets volume (a
 #      folder of the data volume, on the same filesystem, at an item store or deeper), a
-#      secrets directory inside the data directory, and one in the data volume beside a
-#      data folder that is a volume of its own; a development key folder named in the
+#      secrets directory inside the data directory, one in the data volume beside a
+#      data folder that is a volume of its own, and the secrets volume mounted a second
+#      time inside the data volume; a development key folder named in the
 #      environment is not used; and root's reset for an instance whose data folder is gone
 #      is refused with its words escaped;
 #  10. (only with LNX2_PROFILES=1, on a Docker host whose kernel enforces AppArmor) the
@@ -732,6 +733,18 @@ refused "$tag-nest" "holds the account's records" \
 left=$(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'find /v/secrets -mindepth 1')
 [ -z "$left" ] || fail "the refused start wrote into the data volume's secrets folder: $left"
 echo "  and no key or item store was written in it ($(docker run --rm -v "$tag-nest-d:/v" --entrypoint /bin/sh "$image" -c 'ls -A /v/secrets' | tr '\n' ' '))"
+echo "the secrets volume mounted a second time, inside the data volume (-v S:/secrets"
+echo "-v S:/data/extra: every key would be in a copy of /data; X5 final review):"
+volumes+=("$tag-tw-d" "$tag-tw-s")
+docker volume create "$tag-tw-d" >/dev/null
+docker volume create "$tag-tw-s" >/dev/null
+refused "$tag-tw" '/data/extra: the secrets volume is also mounted here' \
+    -v "$tag-tw-d:/data" -v "$tag-tw-s:/secrets" -v "$tag-tw-s:/data/extra" ||
+    fail "the refusal does not name the second mount of the secrets volume"
+left=$(docker run --rm -v "$tag-tw-d:/data" -v "$tag-tw-s:/secrets" --entrypoint /bin/sh "$image" -c \
+    'find /secrets -mindepth 1; find /data -mindepth 1 \( -name instance -o -name "setup.v1.json" -o -name "instance.json" \)')
+[ -z "$left" ] || fail "the refused start wrote: $left"
+echo "  and nothing was written in either volume"
 
 say "10. the optional profiles (LNX2_PROFILES=1, on a Docker host that enforces AppArmor)"
 if [ "${LNX2_PROFILES:-}" = 1 ]; then

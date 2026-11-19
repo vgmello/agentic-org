@@ -265,6 +265,35 @@ impl Launchd {
         self.expect_ok(&["bootstrap".into(), self.domain.clone().into(), file.into()])
             .map(drop)
     }
+
+    /// Loads the definition `register` has just written at `file` for the job `label`. What
+    /// launchd refuses is not left behind for the next call to find, as the systemd adapter
+    /// does with its unit: a job launchd lists under the label all the same is booted out,
+    /// then the file goes if it still holds what this call wrote (best effort; the error
+    /// reported is the bootstrap's). If the job cannot be booted out its file stays, so that
+    /// launchd never runs a job without one. A definition this call replaced is not put
+    /// back: it was this instance's, and its job is gone.
+    fn load_written(
+        &self,
+        label: &str,
+        file: &Path,
+        bytes: &[u8],
+    ) -> Result<Registration, ServiceError> {
+        self.bootstrap(file)
+            .map(|()| Registration::Loaded)
+            .inspect_err(|_| {
+                // Only while launchd no longer lists the job and the file still holds what
+                // this call wrote: a job left running keeps its definition, and another
+                // writer's file is never removed.
+                let listed = matches!(self.print_ours(label), Ok(Some(_)));
+                if listed && self.boot_out(label).is_err() {
+                    return;
+                }
+                if matches!(self.read_definition(file), Ok(Some(found)) if found == bytes) {
+                    let _ = fs::remove_file(file);
+                }
+            })
+    }
 }
 
 impl ServiceManager for Launchd {
@@ -291,7 +320,7 @@ impl ServiceManager for Launchd {
                     self.boot_out(&label)?;
                 }
                 self.write_definition(&file, &bytes, true)?;
-                self.bootstrap(&file).map(|()| Registration::Loaded)
+                self.load_written(&label, &file, &bytes)
             }
             Some(_) if loaded => Ok(Registration::Unchanged),
             Some(_) => self.bootstrap(&file).map(|()| Registration::Loaded),
@@ -300,7 +329,7 @@ impl ServiceManager for Launchd {
             ))),
             None => {
                 self.write_definition(&file, &bytes, false)?;
-                self.bootstrap(&file).map(|()| Registration::Loaded)
+                self.load_written(&label, &file, &bytes)
             }
         }
     }

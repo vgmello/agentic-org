@@ -65,6 +65,17 @@
 //!    a device number, so nothing else tells them apart). Only for this is every line's
 //!    mount point read; a line whose mount point cannot be read refuses
 //!    ([`RootRule::Undetermined`]).
+//!
+//!    Nor can it be reached through another mount ([`RootRule::MountedElsewhere`],
+//!    [`RootRule::MountedInData`], each naming that mount's mount point): every line's
+//!    device, root and mount point are read to find a mount that shows the release
+//!    directory, a directory inside it or one that contains it. Where a mount point is
+//!    required there must be none: the secrets volume is mounted once (`-v S:/secrets -v
+//!    S:/data/extra` puts every key in a copy of `/data`). Everywhere, none may show any
+//!    of it at or below the data root or the account's other data directories. A mount
+//!    elsewhere on an ordinary machine is allowed: an image-based system mounts its whole
+//!    disk again at `/sysroot`. These are asked after checks 8 and the account's data,
+//!    so a store inside the data is named as that.
 //! 8. When a mount point is required (a container's mounted secrets volume), it is
 //!    the root of a mount (`statx`, `STATX_ATTR_MOUNT_ROOT`; a kernel that cannot say
 //!    refuses), and it is on another volume than the data: it is not inside the
@@ -291,7 +302,14 @@ pub struct RootRefusal {
 
 impl fmt::Display for RootRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.path.display(), self.rule)
+        // The path can come from the mount table (another mount of the store), where any
+        // byte but a slash and NUL can be in a name: control characters are escaped.
+        write!(
+            f,
+            "{}: {}",
+            self.path.display().to_string().escape_debug(),
+            self.rule
+        )
     }
 }
 
@@ -359,6 +377,14 @@ pub enum RootRule {
     NotAMountPoint,
     /// Something is mounted inside the release directory. The path is the mount point.
     MountInside,
+    /// A mount point is required, and another mount shows the release directory, a
+    /// directory inside it or one that contains it: the secrets volume is mounted twice.
+    /// The path is the other mount's mount point.
+    MountedElsewhere,
+    /// Another mount shows the release directory, or a directory inside it, at or below
+    /// the data root or one of the account's other data directories. The path is that
+    /// mount's mount point.
+    MountedInData,
     /// A mount point is required and this kernel does not say whether a directory is
     /// one (before Linux 5.8).
     MountPointUnknown,
@@ -476,6 +502,17 @@ impl fmt::Display for RootRule {
             Self::MountInside => f.write_str(
                 "another volume is mounted here, inside the credential directory; the keys \
                  stay in the credential directory's own volume, so mount nothing inside it",
+            ),
+            Self::MountedElsewhere => f.write_str(
+                "the secrets volume is also mounted here (this mount shows the credential \
+                 directory, a directory inside it or one that contains it), so the keys can be \
+                 reached outside the credential directory; mount the secrets volume once, at \
+                 the credential directory only",
+            ),
+            Self::MountedInData => f.write_str(
+                "the credential directory, or a directory inside it, is also mounted here, in \
+                 the data root or the account's records, so a copy of the data would hold the \
+                 keys; remove this mount",
             ),
             Self::MountPointUnknown => f.write_str(
                 "the credential directory must be a mount point, and this kernel does not say \

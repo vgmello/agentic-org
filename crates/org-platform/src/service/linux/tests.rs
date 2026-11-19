@@ -30,6 +30,8 @@ struct State {
     /// The programs are not installed.
     missing: bool,
     no_runtime_dir: bool,
+    /// What `show --property=Version` prints after `Version=` (`None`: 255).
+    version: Option<&'static str>,
     calls: Vec<Vec<String>>,
 }
 
@@ -255,7 +257,9 @@ impl Commands for Fake {
         }
         let unit = call.last().cloned().unwrap_or_default();
         match call[2].as_str() {
-            "show" if call[3] == "--property=Version" => done(0, "Version=255\n".into(), ""),
+            "show" if call[3] == "--property=Version" => {
+                done(0, format!("Version={}\n", s.version.unwrap_or("255")), "")
+            }
             // The manager's unit path: the directory it reads, among others it would read.
             "show" if call[3] == "--property=UnitPath" => {
                 let read = s
@@ -1624,6 +1628,65 @@ fn a_drop_in_for_every_service_that_changes_what_runs_is_a_conflict_for_what_run
         .path()
         .join(format!("fresh/systemd/user/{NAME}"))
         .exists());
+}
+
+/// X5 final review: a user manager older than systemd 240 does not know `Type=exec`, ignores
+/// it and reports `simple` with no drop-in. It is named as too old, before anything is
+/// written (`available`), and if it is found later (register, start, status of a unit it
+/// loaded), not as a drop-in that changes the type. Version strings as distributions print
+/// them; one that is not a number is not refused by its version.
+#[test]
+fn a_systemd_too_old_for_the_unit_is_named_as_that() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    for version in [
+        "255",
+        "240",
+        "252 (252.22-1~deb12u1)",
+        "249.11-0ubuntu3.12",
+        "v999",
+    ] {
+        fake.set(|s| s.version = Some(version));
+        assert!(systemd.available().is_ok(), "{version}");
+    }
+    for version in ["239 (239-78.el8)", "237", " 219"] {
+        fake.set(|s| s.version = Some(version));
+        let error = systemd.available().unwrap_err();
+        assert!(
+            matches!(&error, ServiceError::Unavailable(why)
+                if why.contains("needs 240 or later") && why.contains("Type=exec")),
+            "{version}: {error}"
+        );
+    }
+    assert!(!temp.path().join("systemd/user").exists());
+    // Found once it holds the unit: the type it reports is the old manager's, not a drop-in's.
+    fake.set(|s| s.version = None);
+    systemd.register(&unit()).unwrap();
+    fake.set(|s| {
+        s.version = Some("239 (239-78.el8)");
+        s.changed = vec![("Type", "simple".into())];
+    });
+    for call in [
+        systemd.register(&unit()).map(drop),
+        systemd.start(ID),
+        systemd.status(ID).map(drop),
+    ] {
+        let error = call.unwrap_err();
+        assert!(
+            matches!(&error, ServiceError::Unavailable(why) if why.contains("version 239")),
+            "{error}"
+        );
+    }
+    // A recent manager with a drop-in that changes the type is still that.
+    fake.set(|s| {
+        s.version = None;
+        s.drop_ins = "/home/a/.config/systemd/user/service.d/50-x.conf".into();
+    });
+    let error = systemd.status(ID).unwrap_err();
+    assert!(
+        matches!(&error, ServiceError::Conflict(why) if why.contains("Type") && why.contains("50-x.conf")),
+        "{error}"
+    );
 }
 
 /// X5 review (third round): a loaded file that is not exactly a rendering of a unit (one
