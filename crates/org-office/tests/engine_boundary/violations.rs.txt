@@ -129,7 +129,19 @@ fn select_a_function() {
 }
 
 fn with_a_common_table() {
-    let _ = "WITH t AS (SELECT 1) SELECT * FROM t";
+    let _ = "WITH t AS (values (1)) select x from t";
+}
+
+fn explain_in_capitals() {
+    let _ = "EXPLAIN QUERY PLAN select id from teams";
+}
+
+fn reindex_alone() {
+    let _ = "REINDEX";
+}
+
+fn analyze_a_table() {
+    let _ = "ANALYZE teams";
 }
 
 fn with_in_lower_case() {
@@ -168,10 +180,9 @@ fn sql_in_a_byte_string_in_a_macro() {
     let _ = format!("{:?}", b"DELETE FROM teams");
 }
 
-fn sql_split_across_concat() {
+fn sql_in_a_concat_piece() {
     let _ = concat!("SELECT id ", "FROM teams");
 }
 
-#[cfg_attr(test, doc = "x")]
 #[some_attribute(query = "INSERT INTO teams (id) VALUES (?1)")]
 fn sql_in_an_attribute() {}

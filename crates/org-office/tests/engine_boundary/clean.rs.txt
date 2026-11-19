@@ -3,6 +3,7 @@
 
 /// Doc comments may describe the engine and its SQL: `rusqlite`, "SELECT x FROM t",
 /// INSERT INTO teams, CREATE TABLE and DELETE FROM are prose here.
+#[cfg_attr(test, doc = "SELECT a person FROM the list, INSERT INTO the team")]
 fn prose() {
     let _ = "select a team from the list";
     let _ = "Select the organization";

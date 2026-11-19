@@ -18,8 +18,9 @@
 //! lowercase/uppercase hex. The wrapped CA key, in any of those forms, is in the local
 //! record and may be in the office's acceptance journal under `<organization-id>/durable/
 //! recovery/offices/<office-id>/journals/acceptance/` (creation's journal entry carries
-//! the record until its segment is released); it is in no other file: not the projection, not `durable/state/` (the organization's Git
-//! content), not the host's registry, logs or runtime files.
+//! the record until its segment is released); it is in no other file: not the
+//! projection, not `durable/state/` (the organization's Git content), not the host's
+//! registry, logs or runtime files.
 use crate::web_process_tests::{create_hq, start_signed_in, Started};
 use org_proto::{OfficeInfo, OfficeStatus};
 use std::{

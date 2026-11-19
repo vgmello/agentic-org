@@ -246,9 +246,15 @@ impl<'ast> Visit<'ast> for Scan {
         if attribute.path().is_ident("doc") {
             return;
         }
-        // An attribute's argument list is tokens to `syn`, like a macro's.
+        // An attribute's argument list is tokens to `syn`, like a macro's. A doc comment
+        // behind `cfg_attr` (`doc = "..."`) is prose, as a plain one is.
         if let syn::Meta::List(list) = &attribute.meta {
-            self.tokens(list.tokens.clone());
+            let tokens = if attribute.path().is_ident("cfg_attr") {
+                without_docs(list.tokens.clone())
+            } else {
+                list.tokens.clone()
+            };
+            self.tokens(tokens);
         }
         syn::visit::visit_attribute(self, attribute);
     }
@@ -302,6 +308,25 @@ impl<'ast> Visit<'ast> for Scan {
         syn::visit::visit_macro(self, mac);
         self.tokens(mac.tokens.clone());
     }
+}
+
+/// `tokens` without the `doc = <literal>` arguments in it.
+fn without_docs(tokens: TokenStream) -> TokenStream {
+    let tokens: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut kept = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        let doc = matches!(&tokens[index], TokenTree::Ident(ident) if ident == "doc")
+            && matches!(tokens.get(index + 1), Some(TokenTree::Punct(p)) if p.as_char() == '=')
+            && matches!(tokens.get(index + 2), Some(TokenTree::Literal(_)));
+        if doc {
+            index += 3;
+            continue;
+        }
+        kept.push(tokens[index].clone());
+        index += 1;
+    }
+    kept.into_iter().collect()
 }
 
 /// The violations in one Rust source text; `name` says where it came from.
@@ -419,7 +444,8 @@ fn the_scan_finds_the_engine_and_its_sql_in_the_adapter() {
 #[test]
 fn the_scan_reports_each_kind_of_violation() {
     let source = fixture("violations.rs.txt");
-    let file = syn::parse_file(&source).expect("the fixture parses");
+    let file =
+        syn::parse_file(&source).unwrap_or_else(|error| panic!("violations.rs.txt: {error}"));
     let mut checked = 0;
     for item in file.items {
         let syn::Item::Fn(function) = item else {
