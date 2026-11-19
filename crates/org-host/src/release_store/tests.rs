@@ -401,16 +401,21 @@ fn host_secrets_are_owner_only_and_none_is_in_the_data_root() {
         }
     }
     stored.sort();
-    let mut expected: Vec<PathBuf> = [".lock", "host-secrets/.lock", "office-keys/.lock"]
-        .iter()
-        .map(PathBuf::from)
-        .chain(
-            secrets
-                .iter()
-                .map(|(name, _)| Path::new("host-secrets").join(name)),
-        )
-        .chain([Path::new("office-keys").join(format!("{OFFICE}.key"))])
-        .collect();
+    let mut expected: Vec<PathBuf> = [
+        ".instance",
+        ".lock",
+        "host-secrets/.lock",
+        "office-keys/.lock",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .chain(
+        secrets
+            .iter()
+            .map(|(name, _)| Path::new("host-secrets").join(name)),
+    )
+    .chain([Path::new("office-keys").join(format!("{OFFICE}.key"))])
+    .collect();
     expected.sort();
     assert_eq!(stored, expected);
 
@@ -470,7 +475,8 @@ fn a_store_found_empty_for_an_instance_with_offices_stops_the_start_and_nothing_
     // A new instance: no office yet, so an empty store is what it must be.
     assert!(!records_say_keys_exist(&world.office_home).unwrap());
     drop(world.open_as_the_host_decides().unwrap());
-    fs::remove_file(world.credentials.join(".lock")).unwrap();
+    fs::remove_dir_all(&world.credentials).unwrap();
+    directory(&world.credentials);
 
     // An office exists, and the store is empty: the volume was lost or replaced.
     directory(&world.office_folder());
