@@ -69,6 +69,11 @@ this acceptance run. Commands in the linked design are proposed until implemente
 
 ## 0. Preconditions and evidence
 
+Use the [office integration validation procedure](../processes/office-integration-validation.md)
+for disposable Linux container topologies, native macOS/Linux VM or runner checks,
+environment coverage and source-bound evidence. It does not waive any Required
+row below or count development fixtures as production acceptance.
+
 Use the same verified release on two supported machines, one macOS and one Linux.
 Run once with macOS HQ/Linux satellite and once with Linux HQ/macOS satellite.
 Use new roots and credentials; never tests' access to a user's actual office home.

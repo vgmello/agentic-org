@@ -1,6 +1,14 @@
 # Selected assignment implementation plan
 
-**Plan revision 16, 2026-11-16: unaffected implementation remains READY; existing-HQ first-owner registration/admission is PAUSED on missing authoritative proof.** Architecture readiness is separate from eventual code acceptance.
+**Plan revision 17, 2026-11-16: delivery boundaries superseded by separate acceptance/merge units.** Preserve current bounded repairs through safe handoff. Existing-HQ first-owner registration/admission remains PAUSED on missing authoritative proof. Architecture readiness is separate from code acceptance.
+
+The owner explicitly replaced “finish the entire assignment bundle first” with
+[dependency-driven deliveries](v1-incremental-delivery.md). That record and its
+[exact source inventory](v1-delivery-source-map.json) govern extraction, order and
+per-unit acceptance into `v1-integration`. This branch is a preserved source
+reservoir, not a whole-ancestry merge candidate. Sections below retain implementation
+history and the assignment contract; they no longer require accepting every
+prerequisite and assignment together before usable onboarding can ship.
 
 Parent stable acceptance: [v1-assignment-integration-contract.md](v1-assignment-integration-contract.md).
 

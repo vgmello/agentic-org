@@ -59,6 +59,14 @@ Prefer `application -> domain module -> feature/use case` for business behavior.
 - Keep reusable visual primitives and design tokens in a shared UI foundation.
 - Apply these boundaries incrementally while preserving behavior.
 
+# Independent Delivery and Dependency Boundaries
+
+The [independent delivery and dependency rules](independent-delivery.md) are a
+required part of this architecture. Apply them when scoping, implementing,
+delegating and reviewing increments. They define usable acceptance/merge units,
+stable prerequisite contracts, early production-path verification and escalation
+of unexpected coupling. Preserve the existing author, testing and review gates.
+
 # Shared Code and Ownership
 
 Place shared behavior at the narrowest scope that owns its meaning:

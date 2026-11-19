@@ -2,6 +2,8 @@
 
 The single product feature/status index, categorized by the [documented feature areas](FEATURE-AREAS.md). Each row is a small capability with a short description linked to its full requirement. Supporting ADRs and data contracts remain authoritative; this file does not duplicate them. **An unchecked row is not complete.**
 
+Current delivery direction (2026-11-16): [separate acceptance and merge units](../.agent-kit/tasks/v1-incremental-delivery.md) replace the whole-assignment-bundle-first gate. First usable delivery is onboarding/sign-in with the minimum first-organization creation/reopen; teams, people, daily tasks, assignment and one Codex runtime follow by dependency. Internal foundations are explicitly not usable features. The preserved branch/source map is unaccepted reuse evidence, not a status upgrade. Feature and area totals are reconciled below; full row scope, security and review gates still apply. Genuine signing setup/verification remains final-phase work.
+
 Original inventory: **2026-11-16**, by Ada. Evidence baseline: `origin/v1` at `b1256c9771b15c0b47198828164e5efe78db2e96`; reconciled requirements at `b4f8e8b3456d1dc9dd5cf43bd3db3dd13d403a6e`. This inventory covers all 17 UX specs, the selected organization-data domains and supporting designs, including deferred candidates. It is a capability checklist, not one row per acceptance criterion or database field.
 
 Current-branch reconciliation: **2026-11-16**, by Codex, at preservation checkpoint `b77cbd6876d72f76cc3b7f1d5fa3c3d96f424c09`. [Refresh evidence](verification/2026-11-16-feature-checklist-refresh.md) distinguishes the imported baseline from current implementation and accepted library slices. No new full product delivery or production release is claimed.

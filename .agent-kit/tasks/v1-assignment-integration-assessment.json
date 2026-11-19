@@ -16,7 +16,8 @@
       "TA-01 is a pure domain prerequisite only; existing task.assign and WorkEvent have distinct legacy semantics."
     ],
     "precise_scope": [
-      "v1-assignment-integration-contract.md binds selected docs12/05/16 and demands actual UI/API/durable acceptance."
+      "v1-assignment-integration-contract.md binds selected docs12/05/16 and demands actual UI/API/durable acceptance.",
+      "Owner plan17 replaces entire-assignment-first with separate acceptance/merge units: v1-incremental-delivery.md and v1-delivery-source-map.json. Preserved contract still governs assignment; root sole architecture/integration, max2 writers, signing last. No whole-reservoir ancestry merge or repeated broad review; every extracted complete delta retains current tests, original intent and independent/fresh final review."
     ],
     "localized_change": [
       "Crosses org-work, org-office storage/dispatch, org-proto/client/gateway and UI; selected task/history foundations may require new interfaces."

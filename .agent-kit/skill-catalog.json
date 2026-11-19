@@ -1,8 +1,8 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "01a1dd82-ffe6-7363-af94-6072c75de2d1",
-  "rationale": "Existing Rust/static-SvelteKit fullstack/reviewer guidance still covers the stack; no dependency, protocol or runtime source changed in incoming v1 docs batch6f02ae95. Root independently inspected changed AGENTS/authority map: retain solo root ownership, max2disjointworktreewriters, existingauthorcontexts/localgates; add single docs/FEATURES.md checklist and docs/FEATURE-AREAS.md categories with full-scope evidence rules. New target UX/cost/messaging refinements are requirements, not delivered services or automatic scope activation. Signing setup and authentic signed-release checks are owner-deferred finalphase16, failclosed code preserved. Existing security guidance retains ADR6-12 protected custody, bounded IPC/durability, strict public source and exact native pins. No new stack/skill gap; current channel author remains in unchanged separate c3worktree under its actual preflight; subsequent assignments must resolve/read newly merged guidance. Main root scope here is documentation reconciliation/catalog freshness only; coherent functional checks and independent/original/final review still required for implementation.",
+  "reviewed_by": "Codex side conversation, owner-authorized delivery-policy amendment, 2026-11-16",
+  "rationale": "Existing Rust/static-SvelteKit fullstack/reviewer guidance still covers the stack; no dependency, protocol or runtime source changed in incoming v1 docs batch6f02ae95. Root independently inspected changed AGENTS/authority map: retain solo root ownership, max2disjointworktreewriters, existingauthorcontexts/localgates; add single docs/FEATURES.md checklist and docs/FEATURE-AREAS.md categories with full-scope evidence rules. New target UX/cost/messaging refinements are requirements, not delivered services or automatic scope activation. Signing setup and authentic signed-release checks are owner-deferred finalphase16, failclosed code preserved. Existing security guidance retains ADR6-12 protected custody, bounded IPC/durability, strict public source and exact native pins. No new stack/skill gap; current channel author remains in unchanged separate c3worktree under its actual preflight; subsequent assignments must resolve/read newly merged guidance. Main root scope here is documentation reconciliation/catalog freshness only; coherent functional checks and independent/original/final review still required for implementation. Owner-approved amendment makes independent delivery/boundaries linked from docs/architecture-rules.md into focused docs/independent-delivery.md, required by AGENTS handoffs and directly selected in both baseline packet phases. Existing stack/roles/policy unchanged; only those two existing evidence files and the new focused policy captured after scoped reassessment. Active delivery review checkout stays untouched; this local amendment needs normal review/integration.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
@@ -58,7 +58,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "6d3d8a901fe5343eb2c2668ac87bfaf3ccb753fbe1b0ee6e47cdc7bc1737abb3"
+      "sha256": "f7d9e3f1305c468695f9684694ad31cd3d0eff60c33f448b0a4eccfd6b52c557"
     },
     {
       "path": "Cargo.lock",
@@ -150,7 +150,7 @@
     },
     {
       "path": "docs/architecture-rules.md",
-      "sha256": "c809d3fba308f63f81b07268e3b6db9c62a96a18519611035f555c6d287c9d19"
+      "sha256": "ea6f7921ef3f5e88dd8f62feb658272d08ccfc618e97357055c3771229f64393"
     },
     {
       "path": "docs/design/documentation-authority.md",
@@ -171,6 +171,10 @@
     {
       "path": "rust-toolchain.toml",
       "sha256": "5e7517b95a2b4e810124f84091dd4a6e3f2192523fcac7b6d52abc7fc6aff91d"
+    },
+    {
+      "path": "docs/independent-delivery.md",
+      "sha256": "95c7daf76339c0b60c4af26069a9e5145290c47ae524c0b2b2d148d70b6a8fee"
     }
   ],
   "roles": {
@@ -189,10 +193,12 @@
       "risks": [],
       "implementation": [
         "AGENTS.md",
+        "docs/independent-delivery.md",
         "docs/processes/branch-and-merge.md"
       ],
       "review": [
         "AGENTS.md",
+        "docs/independent-delivery.md",
         "docs/processes/branch-and-merge.md"
       ],
       "critical": false

@@ -2,7 +2,7 @@
 
 Broader target: the selected organization-data model in vertical UI/backend/database slices. A prerequisite or domain-only delivery does not complete v1.
 
-Current owner direction (2026-11-15): finish the full task-assignment feature, then notify the owner and explain the prioritized delivery order. Deliver increments that can be used and tested end to end: organization onboarding, then teams and core daily work; defer specialized cases unless they are necessary. Report after assignment before automatically continuing the broader backlog. Current assignment acceptance remains unchanged.
+Current owner direction (2026-11-16, plan17): preserve active bounded repairs through safe handoff, then extract smaller **separate acceptance and merge units** from the existing reservoir. Deliver onboarding/sign-in with its necessary first-organization creation/reopen, teams, people, daily tasks, assignment and one useful Codex runtime in dependency order. Internal foundations do not count as usable deliveries. No entire-assignment-bundle-first gate; the assignment contract itself is unchanged for its eventual unit. See [current delivery boundaries and exact source inventory](v1-incremental-delivery.md). Signing setup/authentic signed-release verification remains last; security enforcement and other production requirements remain intact.
 
 Integrate reviewed features into `v1-integration`; review locally without waiting for a PR. Release `v1` is separate. Codex owns every repository area and uses local kit workers/reviewers. Do not message or wait for Ada, offline developers or an external reviewer. Preserve genuinely blocked work and continue independent features. Preserve live CLI/spool and user organization data.
 
@@ -23,7 +23,7 @@ Actual temporary protected bootstrap, HQ provisioning, canonical directory impor
 
 Release-store archive/pin/recovery mechanics now have14 focused tests at their captured checkpoint; runtime admission and production setup/service/recovery, supported-platform evidence, current full checks, fresh local reviews and original-author validation remain open. [Production-readiness clarification](v1-assignment-production-readiness.md) preserves those gates; generated credentials, debug image admission, library tests and architecture READY do not establish authentic production signing or a shipped vertical feature.
 
-[Incremental delivery order](v1-incremental-delivery.md) records the owner-directed usable milestones for the report after assignment; it is not an implemented-capability claim or permission to skip the current contract.
+[Incremental delivery order](v1-incremental-delivery.md) governs separate accepted merges, not merely worker assignments. Existing broad check/review receipts remain historical evidence on the reservoir; every extracted unit needs its own current verification, original-author validation and fresh independent/final reviews.
 
 ## Accepted checkpoints
 
@@ -61,7 +61,7 @@ Requirements below are not claims that draft SQL or legacy APIs ship them. Each 
 
 ## Resume discipline
 
-Finish the exact contract, required checks, fresh local reviews and original-author validation. Close metrics on its feature branch before integrating reviewed work. Start the next feature from updated `v1-integration`. If genuinely blocked, preserve branch/checkpoint and continue independent work. Do not mark overall v1 complete until every selected requirement and vertical acceptance is verified.
+Finish each unit's exact contract, required checks, fresh local reviews and original-author validation. Close its metrics before integration. Start the next active delivery from updated `v1-integration`; preserve the unmerged reservoir and all original contexts. If genuinely blocked, preserve the checkpoint and continue independent work. Do not mark overall v1 complete until every selected requirement and vertical acceptance is verified.
 
 Checkpoint 2026-11-16 02:38UTC: root verified actual disposable launchd adapter1PASS and cleanup, current mainpacket9 actual15sourceACK/preflight0, and focused independent ADR0010r1 ARCHITECTURE READY for conservative baseline1 legacy adoption. Original author is implementing dependent owning docs/import/tests; not migration acceptance. An extended actual native protected bootstrap/foreign-account/two-session-revocation fixture failed101 after revocation with Unavailable versus expected NotAuthorized, stable553Rust/Cargo sources; same author received exact failure and holds released. Bounded Linux pinnedTokio feasibility passed but no Linux production profile/adapter was selected. Browser original context is doing a read-only minimal extra-auth fixture handoff; no new source ownership yet. Full assignment and all final production/check/review gates remain incomplete. Evidence: `.agent-kit/logs/v1-assignment-integration/{implementation/lead-actual-setup-service-test-1.json,implementation/lead-native-auth-fixture-receipt-1.json,legacy-adoption-profile-review/activation.json,parallel-execution-checkpoint-3.json}`.
 
