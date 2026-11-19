@@ -257,12 +257,12 @@ fn create_line() -> serde_json::Value {
         office_name: "Headquarters".into(),
         role: org_proto::OfficeRole::Hq,
         owner_member_id: OWNER.into(),
-        hq_creation: Some(org_office_launch::HqCreationV1 {
+        hq_creation: org_office_launch::HqCreationV1 {
             version: org_office_launch::HqCreationV1::VERSION,
             operation_id: "01JD5Z0000000000000000AP01".into(),
             escrow_profile: 1,
-            bootstrap: Some(Box::new(prepared)),
-        }),
+            bootstrap: Box::new(prepared),
+        },
     });
     serde_json::to_value(&line).unwrap()
 }
