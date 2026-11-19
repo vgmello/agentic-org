@@ -3,7 +3,7 @@
   Organization settings › Agent setup (our-org-in-the-app §5, AC-IA07-1): every current agent with its configured
   runtime, model and model profile, its office and one Health word, A–Z with the built-in HR lead first. From 640 px
   the facts sit in aligned columns; below, each agent is a divided row. A name opens that agent's setup. Hire an
-  agent (the one primary action) opens the existing hire flow. States: loading, unavailable, error with Retry, no
+  agent (the one primary action) opens the existing hire flow at `hireHref`, which the route supplies. States: loading, unavailable, error with Retry, no
   agents.
 -->
 <script lang="ts">
@@ -13,7 +13,6 @@
 	import { mobileButton } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { hireUrl } from '$lib/modules/employees';
 	import { agentSetupApi } from '../../api';
 	import HealthBadge from '../../components/HealthBadge.svelte';
 	import { health, healthText, needsSetupCount } from '../../health';
@@ -28,19 +27,36 @@
 	} from '../../present';
 	import { agentSetupHref } from '../../urls';
 
-	let { organizationId }: { organizationId: string } = $props();
+	let {
+		organizationId,
+		hireHref
+	}: {
+		organizationId: string;
+		/**
+		 * Where Hire an agent goes: the existing reviewed hire flow, which agent-setup doesn't own. The route supplies it,
+		 * so this module depends on no module that depends on members (no cycle: members links here).
+		 */
+		hireHref: string;
+	} = $props();
 
 	const resource = new Resource(() => agentSetupApi.list(organizationId));
 	const agents = $derived(resource.data ? sortAgents(resource.data.agents) : []);
 	const description = $derived(
 		listDescription(agents.length, resource.data ? needsSetupCount(agents) : 0)
 	);
-	const now = Date.now();
+	/** When the shown answer arrived: ages and the stale flag follow each reload. */
+	const now = $derived(resource.data ? Date.now() : 0);
 	const cell = 'min-w-0 text-sm/6';
+	/** After the handle: Built-in and the role, each after a separator, as one string so the spaces stay. */
+	const metaText = (a: (typeof agents)[number]) =>
+		[a.builtIn ? 'Built-in' : '', a.role ?? a.roleText ?? '']
+			.filter(Boolean)
+			.map((fact) => ` · ${fact}`)
+			.join('');
 </script>
 
 {#snippet hire()}
-	<Button href={resolve(hireUrl() as '/')} class={mobileButton}>Hire an agent</Button>
+	<Button href={resolve(hireHref as '/')} class={mobileButton}>Hire an agent</Button>
 {/snippet}
 
 <PageHeader
@@ -67,7 +83,7 @@
 	<!-- The columns follow the list's own width: Organization settings' side column narrows it from 960 px. -->
 	<div class="@container">
 		<div
-			class="hidden grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(0,5fr)] gap-x-4 @4xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(0,4fr)_minmax(0,5fr)] border-b border-white/10 px-4 py-3 text-xs/5 font-semibold text-gray-400 min-[640px]:grid min-[640px]:px-6 min-[1024px]:px-8"
+			class="hidden grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(10rem,5fr)] gap-x-4 @4xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(0,4fr)_minmax(10rem,5fr)] border-b border-white/10 px-4 py-3 text-xs/5 font-semibold text-gray-400 min-[640px]:grid min-[640px]:px-6 min-[1024px]:px-8"
 			aria-hidden="true"
 		>
 			<span>Agent</span>
@@ -80,7 +96,7 @@
 				{@const h = health(agent)}
 				{@const reported = reportedText(agent.placement, now)}
 				<li
-					class="relative grid grid-cols-1 gap-y-2 px-4 py-4 transition-colors duration-150 hover:bg-white/[0.02] motion-reduce:transition-none min-[640px]:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(0,5fr)] min-[640px]:gap-x-4 @4xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(0,4fr)_minmax(0,5fr)] min-[640px]:px-6 min-[1024px]:px-8"
+					class="relative grid grid-cols-1 gap-y-2 px-4 py-4 transition-colors duration-150 hover:bg-white/[0.02] motion-reduce:transition-none min-[640px]:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(10rem,5fr)] min-[640px]:gap-x-4 @4xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(0,4fr)_minmax(10rem,5fr)] min-[640px]:px-6 min-[1024px]:px-8"
 					data-agent={agent.memberId}
 				>
 					<div class="{cell} min-[640px]:row-span-2 @4xl:row-span-1">
@@ -93,9 +109,7 @@
 						</p>
 						<p class="text-xs/5 text-gray-400 [overflow-wrap:anywhere]">
 							<span class="font-mono">@{agent.handle}</span>
-							{#each [agent.builtIn ? 'Built-in' : '', agent.role ?? agent.roleText ?? ''].filter(Boolean) as fact (fact)}
-								<span aria-hidden="true">·</span> {fact}
-							{/each}
+							{metaText(agent)}
 						</p>
 					</div>
 					<div class={cell}>
@@ -126,7 +140,8 @@
 								>
 							</p>
 						{:else}
-							<p class="font-medium text-amber-200">Unplaced</p>
+							<!-- Health carries the warning (amber, with the reason); the office cell says it in words only. -->
+							<p class="font-medium text-gray-300">Unplaced</p>
 						{/if}
 					</div>
 					<div

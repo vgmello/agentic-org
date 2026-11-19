@@ -6,6 +6,10 @@
 // Scenarios (`?mock=` on the page's URL, several joined with commas):
 //   slow · fails (reads fail) · empty (no agents) · unavailable · not-found (every agent read answers not found)
 //   viewer (read only) · conflict (someone else saves first, once per save) · save-fails (writes fail)
+//   disabled (Noor's execution.md has enabled: false)
+import { addAgent } from '$lib/org/actions';
+import { orgApi } from '$lib/org/api';
+import { sessionFor } from '$lib/org/session';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { Member } from '$lib/proto';
 import type { AgentSetupApi } from '../../../src/lib/modules/agent-setup/api';
@@ -144,7 +148,7 @@ async function row(organizationId: string, m: Member): Promise<AgentSetupRow> {
 				? {
 						profile: { id: profile.id, name: profile.name },
 						modelId: s.modelId,
-						enabled: s.enabled ?? true,
+						enabled: on('disabled') && m.id === 'noor' ? false : (s.enabled ?? true),
 						runtimes: runtimesOf(profile)
 					}
 				: null,
@@ -161,9 +165,45 @@ async function row(organizationId: string, m: Member): Promise<AgentSetupRow> {
 	};
 }
 
+/**
+ * The built-in HR lead (our-org-in-the-app §2a) is made with every organization. The org sample predates it, so the
+ * first Agent setup read adds it through the organization's own add-agent command, in the top-level team and the HQ
+ * office: from then on every page of this mock organization has it. Its setup is the JSON's `hr` entry.
+ */
+const hrAdded = new Map<string, Promise<void>>();
+function ensureHrLead(organizationId: string): Promise<void> {
+	let pending = hrAdded.get(organizationId);
+	if (!pending) {
+		pending = (async () => {
+			const snapshot = await snapshotFor(organizationId);
+			if (snapshot.members.some((m) => m.agent?.messaging_name === 'hr')) return;
+			const top = snapshot.teams.find((t) => !t.owner_team_id);
+			const office = (await officesFor(organizationId))[0];
+			if (!top || !office) return;
+			await addAgent(sessionFor(orgApi, organizationId), {
+				name: 'HR lead',
+				messagingName: 'hr',
+				runtime: 'claude_code',
+				role: 'HR lead',
+				title: 'HR lead',
+				officeId: office.id,
+				teamIds: [top.id]
+			});
+		})();
+		hrAdded.set(organizationId, pending);
+	}
+	return pending;
+}
+
 async function currentAgents(organizationId: string) {
+	await ensureHrLead(organizationId);
 	const snapshot = await snapshotFor(organizationId);
-	return snapshot.members.filter((m) => m.kind === 'agent' && m.agent?.status !== 'offboarded');
+	const agents = snapshot.members.filter(
+		(m) => m.kind === 'agent' && m.agent?.status !== 'offboarded'
+	);
+	const hr = agents.find((m) => m.agent?.messaging_name === 'hr');
+	if (hr && !stored.has(hr.id)) stored.set(hr.id, structuredClone(stored.get('hr')!));
+	return agents;
 }
 
 async function detail(organizationId: string, memberId: string): Promise<AgentSetupDetail> {
@@ -283,7 +323,6 @@ export const agentSetupApi: AgentSetupApi = {
 			...s,
 			profileId: edit.profileId,
 			modelId: edit.modelId,
-			enabled: true,
 			revision: s.revision + 1,
 			updated: { byName: 'Alex Kim', at: new Date().toISOString() }
 		});
