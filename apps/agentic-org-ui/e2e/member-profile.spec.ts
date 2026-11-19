@@ -178,3 +178,29 @@ test(
 		await expect(invite).toBeFocused();
 	}
 );
+
+test('MP-8: leaving the profile while a sign-in dialog closes reports nothing to the page that is gone', async ({
+	page
+}) => {
+	await openOrganization(page);
+	const warnings: string[] = [];
+	page.on('console', (message) => {
+		if (/derived_inert|destroyed effect/.test(message.text())) warnings.push(message.text());
+	});
+	// Arrive by a client navigation, so Back stays inside the app and the profile is torn down, not unloaded.
+	await visit(page, '/settings/access');
+	await page
+		.locator('[data-access-row]')
+		.filter({ hasText: 'Leo Brandt' })
+		.getByRole('link', { name: 'Leo Brandt' })
+		.click();
+	await expect(page).toHaveURL(/\/members\/leo$/);
+	await signInAccess(page).getByRole('button', { name: 'Invite to sign in' }).click();
+	const dialog = page.getByRole('dialog');
+	await expect(dialog).toContainText('Invite Leo Brandt to sign in');
+	await dialog.getByRole('button', { name: 'Done' }).click();
+	await page.goBack();
+	await expect(page).toHaveURL(/\/settings\/access$/);
+	await page.waitForTimeout(1500);
+	expect(warnings).toEqual([]);
+});

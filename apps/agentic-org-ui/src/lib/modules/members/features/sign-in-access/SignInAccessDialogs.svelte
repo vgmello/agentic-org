@@ -72,6 +72,13 @@
 
 	const who = $derived(shown ? shown.name.split(/\s+/)[0] || shown.name : '');
 
+	// Once the host is gone (the person navigated away while a dialog was closing), nothing is reported: the caller is
+	// gone too, and moving focus or reloading then would act on the next page.
+	let disposed = false;
+	$effect(() => () => {
+		disposed = true;
+	});
+
 	/**
 	 * Starts an action on `person`. A link resolves once it is issued and shown; a removal resolves once it is asked
 	 * for. A refusal rejects, nothing is shown, and `onsettled` is not called: the caller shows the refusal.
@@ -132,7 +139,7 @@
 	/**
 	 * A dialog is closing. Focus belongs to the caller, so the dialog doesn't restore it; the link goes with the dialog.
 	 * The dialog's content still holds focus while it animates out, so the caller hears how the action ended once that
-	 * content is gone (at most a second later) and focus is free to move.
+	 * content is gone (at most a second later) and focus is free to move; never after the host has been torn down.
 	 */
 	function closed(event: Event) {
 		event.preventDefault();
@@ -146,6 +153,7 @@
 		const holder = document.activeElement;
 		const until = performance.now() + 1000;
 		const settle = () => {
+			if (disposed) return;
 			if (holder?.isConnected && document.activeElement === holder && performance.now() < until)
 				requestAnimationFrame(settle);
 			else onsettled(person.id, ended, opener);

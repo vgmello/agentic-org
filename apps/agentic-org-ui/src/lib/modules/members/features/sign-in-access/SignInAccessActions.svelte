@@ -38,6 +38,11 @@
 	let issuing = $state<'invite' | 'reset' | undefined>();
 	let refusal = $state<string | undefined>();
 	let region: HTMLElement | null = null;
+	/** Set on teardown: after a reload that outlived the profile, focus is left alone. */
+	let destroyed = false;
+	$effect(() => () => {
+		destroyed = true;
+	});
 	/** Where the actions are, so focus can find the button that replaced the one that opened an action. */
 	const holdRegion = (element: HTMLElement) => {
 		region = element;
@@ -65,7 +70,7 @@
 		if (outcome === 'gone') refusal = NOT_IN_ORGANIZATION;
 		if (outcome !== 'cancelled') await onchanged();
 		await tick();
-		if (!focusIsFree(from)) return;
+		if (destroyed || !focusIsFree(from)) return;
 		if (from?.isConnected) return from.focus();
 		const target =
 			region?.querySelector<HTMLElement>('button') ??
