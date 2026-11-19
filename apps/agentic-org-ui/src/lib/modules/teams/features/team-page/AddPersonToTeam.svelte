@@ -4,8 +4,9 @@
   (offices-and-teams-ux §7.4, PEOPLE-3/4). Name and Handle are separate, both required; the handle is suggested from
   the name until it is edited, then left alone; HQ checks it is free across people and agents and a refusal shows
   on the Handle field with its suggestion. Home team is a single required choice, preset to this team. Contact and
-  Reports to are optional. The footer stays in view while the fields scroll (390 px, 200% text). Success is said
-  only after HQ accepts it. Hire an agent beside it opens the Hire flow with this team preset.
+  Reports to are optional; the owner's person can be chosen like anyone (§7.1). The footer stays in view while the
+  fields scroll (390 px, 200% text). Success is said only after HQ accepts it. Hire an agent beside it opens the
+  Hire flow with this team preset. The Org chart uses it too, with its home team starting at the top-level team.
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
@@ -38,15 +39,16 @@
 		connection: Connection;
 		snapshot: OrgSnapshot;
 		teamId: string;
-		/** After HQ accepted the new person: re-read the team. */
-		onadded: () => Promise<void>;
+		/** After HQ accepted the new person: re-read what the caller shows, and focus the new person there. */
+		onadded: (added: { memberId: string; name: string }) => Promise<void>;
 	} = $props();
 
 	const organization = $derived(connection.organization);
 	const teams = $derived(teamOptions(snapshot));
+	// Every current employee, the owner's person included: ownership is no employee field (§7.1, OWNER-2).
 	const managers = $derived(
 		withoutFormer(snapshot)
-			.members.filter((m) => !m.owner)
+			.members.filter((m) => m.kind === 'person' || m.kind === 'agent')
 			.toSorted(byName)
 	);
 
@@ -98,7 +100,7 @@
 		handleRefusal = undefined;
 		const added = name.trim();
 		try {
-			await teamsApi.addPerson(organization.id, {
+			const { memberId } = await teamsApi.addPerson(organization.id, {
 				name: added,
 				handle: handle.trim(),
 				homeTeamId,
@@ -106,7 +108,7 @@
 				reportsToId: reportsToId || undefined
 			});
 			open = false;
-			await onadded();
+			await onadded({ memberId, name: added });
 			toast.success(`Added ${added}. Agents can now reach ${added}.`);
 		} catch (e) {
 			const refused = toAppError(e);

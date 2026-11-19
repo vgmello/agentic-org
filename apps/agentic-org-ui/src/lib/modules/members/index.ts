@@ -25,4 +25,5 @@ export {
 } from './features/sign-in-access/OneTimeLink.svelte';
 export { profileBase, tabHref } from './features/profile/tabs';
 export { default as MembersDirectory } from './features/directory/MembersDirectory.svelte';
+export { default as MoveHomeTeamDialog } from './features/profile/MoveHomeTeamDialog.svelte';
 export { loadDirectory } from './features/directory/load';
