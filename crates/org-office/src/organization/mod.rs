@@ -7,16 +7,19 @@ mod bootstrap;
 mod canonical_directory;
 pub mod directory;
 pub mod features;
+pub mod operation_id;
 mod people;
 mod policy;
 pub mod ports;
 pub mod projector;
 pub mod records;
+pub mod snapshot;
 mod status;
 mod structure;
 #[cfg(any(test, feature = "testkit"))]
 pub mod testkit;
 mod view;
+pub mod wire;
 
 pub use apply::{apply, UnknownChange};
 pub use people::owner_bootstrap;
