@@ -898,14 +898,18 @@ instance, on any address. The pair is the host's (`crates/org-host/src/web_tls/`
   fingerprint, logged), and the host sends `tls.renew` to the web process. A lost
   self-made key is made again, and logged as such.
 - **Supplied** by `"tls": {"cert": "<path>", "key": "<path>"}` in the setup file (absolute
-  paths; only with `https`). Setup opens each without following a link (a symbolic link
-  is refused: name the file itself), as a regular file of at most 64 KiB, and verifies
+  paths; only with `https`). Setup opens each without following a symbolic link in its
+  last component (such a link is refused: name the file itself; a link among its parent
+  directories is followed), as a regular file of at most 64 KiB, and verifies
   the pair in `tls.set`'s order (`tls_invalid`, `tls_key_mismatch`, `tls_not_valid`,
   `tls_name_mismatch`) before it saves anything; setup prints its fingerprint. The paths
   are recorded beside the frozen input, never the key. The host imports the pair at its
   first start (verified again) and does not read the files after that. A supplied key
-  missing from the host's secrets, or a supplied pair that no longer verifies (expired,
-  say), refuses the start, naming the cause: it is never made again or replaced.
+  missing from the host's secrets refuses the start, naming the cause: it is never made
+  again. A supplied pair that no longer verifies (expired, say) is never replaced by the
+  instance: the host starts and logs why, and no browser is served until the
+  administrator replaces the pair with `tls.set` (a start with fewer than 30 days left
+  logs a warning).
 - **Custody.** The key is the host secret `tls.<pair fingerprint>` (add-only; in a
   container, in the secrets volume); the registry's `web_tls_pair` row holds the chain
   (its `CERTIFICATE` blocks only, re-encoded: text around them, such as a key in a
@@ -916,16 +920,19 @@ instance, on any address. The pair is the host's (`crates/org-host/src/web_tls/`
 - **Replacement.** `tls.set` on `host.sock` from the administrator's session (journaled,
   X-02 §6.2's checks) installs a supplied pair; the host then sends `tls.renew`, and the
   web process fetches the pair and swaps it for new handshakes, without a restart.
-- **Start gate and `tls.fetch`.** The web process is spawned only when the stored pair is
-  present (`tls_missing`) and names the origin's host (`tls_name_mismatch`); `tls.fetch`
-  re-checks and answers `https` with the chain and the key on the secret-line path.
+- **Start gate and `tls.fetch`.** The web process is spawned only while the stored pair is
+  present (`tls_missing`), names the origin's host (`tls_name_mismatch`) and is valid now;
+  the gate is part of the web start's eligibility (asked at most every two seconds, each
+  change logged once), so the web process waits for a replacement rather than failing, and
+  a running one stops when its pair can no longer be served. `tls.fetch` re-checks coverage
+  and answers `https` with the chain and the key on the secret-line path.
 - The web process sets `Secure` session cookies and, for a named host with `hsts` on,
   `Strict-Transport-Security`; an IP-literal origin never gets HSTS.
 
 Known limits: the self-made certificate is trusted by no browser until the operator
 accepts it (compare the fingerprint first); there is no command for `tls.set` yet, so a
 supplied pair is replaced only by a client of `host.sock`; a supplied pair that expires
-refuses the start until it is replaced.
+stops the browser service until it is replaced.
 
 **The container file** (`deploy/container/Dockerfile`, `deploy/container/README.md`):
 

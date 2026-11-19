@@ -37,6 +37,9 @@ pub(crate) enum Unservable {
     Missing,
     /// The stored pair does not cover the origin (`tls_name_mismatch`).
     Failure(ListenFailure),
+    /// The stored pair is not valid now (`tls_not_valid`: expired, or not valid yet). Only
+    /// the web start's gate and `instance.view` judge it; `tls.fetch` does not.
+    NotValid,
     /// The key is gone, or the stored pair or the registry cannot be read: `storage_error`.
     Storage,
 }
@@ -76,7 +79,8 @@ impl WebTls {
     /// - a stored pair whose key is gone: one made here is made again (and said so); a supplied
     ///   one refuses the start;
     /// - a stored pair that no longer verifies at `now` (expired, or not the origin's): one
-    ///   made here is made again; a supplied one refuses the start;
+    ///   made here is made again; a supplied one is kept and logged, and the web start's gate
+    ///   serves no browser until the administrator replaces it (`tls.set`);
     /// - one made here with fewer than 30 days left: renewed.
     ///
     /// Every start logs the pair's source and fingerprint, and keys no row names are deleted.
@@ -177,12 +181,19 @@ impl WebTls {
                 )))
             }
             (Source::Supplied, Some(Err(why))) => {
-                return Err(refused(format!(
+                // The host starts, so that the administrator can replace the pair
+                // (`tls.set`); the browser is not served until a pair that verifies is
+                // stored (the web start's gate). Its key stays.
+                log(&format!(
                     "the supplied TLS pair for {} cannot be served: {}; a supplied pair is \
-                     never replaced by the instance",
+                     never replaced by the instance: the browser is not served until the \
+                     administrator replaces it (tls.set)",
                     tls.origin,
                     refusal_text(&why)
-                )))
+                ));
+                tls.sweep(&stored.pair_fp);
+                drop(_writing);
+                return Ok(tls);
             }
         };
         tls.sweep(&current.pair());
@@ -255,10 +266,10 @@ impl WebTls {
         }
     }
 
-    /// The stored pair, verified now for the origin (validity is not judged: a pair that expired
-    /// while the host ran is still the pair until it is replaced), with its key from the
-    /// host's secrets. The caller holds `writing`.
-    fn current(&self) -> Result<(Checked, Source), Unservable> {
+    /// The stored pair, verified for the origin and, at `now` (Unix seconds), for its
+    /// validity (`None`: not judged, as `tls.fetch` does not), with its key from the host's
+    /// secrets. The caller holds `writing`.
+    fn current(&self, now: Option<i64>) -> Result<(Checked, Source), Unservable> {
         let stored = self
             .db
             .web_tls_pair()
@@ -271,8 +282,9 @@ impl WebTls {
             .map_err(|_| Unservable::Storage)?
             .ok_or(Unservable::Storage)?;
         let key = key_text(&key).ok_or(Unservable::Storage)?;
-        match check(&stored.cert_pem, key, &[&self.origin], None) {
+        match check(&stored.cert_pem, key, &[&self.origin], now) {
             Ok(checked) => Ok((checked, stored.source)),
+            Err(TlsRefusal::TlsNotValid { .. }) => Err(Unservable::NotValid),
             Err(TlsRefusal::TlsNameMismatch { uncovered }) => {
                 Err(Unservable::Failure(ListenFailure::TlsNameMismatch {
                     uncovered,
@@ -282,29 +294,30 @@ impl WebTls {
         }
     }
 
-    /// The web start's gate (X-02 §2, pre-spawn): a stored pair is present (`tls_missing`)
-    /// and covers the origin (`tls_name_mismatch`); its key can be read.
-    pub(crate) fn servable(&self) -> Result<(), Unservable> {
+    /// The web start's gate (X-02 §2, pre-spawn) at `now`: a stored pair is present
+    /// (`tls_missing`), covers the origin (`tls_name_mismatch`) and is valid now; its key can
+    /// be read.
+    pub(crate) fn servable(&self, now: i64) -> Result<(), Unservable> {
         let _writing = crate::sync::lock(&self.writing);
-        self.current().map(drop)
+        self.current(Some(now)).map(drop)
     }
 
     /// `tls.fetch`'s pair: the chain and the key. Read while no pair is being installed, so
     /// the row and its key are one pair.
     pub(crate) fn fetch(&self) -> Result<(String, TlsPrivateKey), Unservable> {
         let _writing = crate::sync::lock(&self.writing);
-        let (mut checked, _) = self.current()?;
+        let (mut checked, _) = self.current(None)?;
         let key = TlsPrivateKey::new(std::mem::take(&mut *checked.key))
             .map_err(|_| Unservable::Storage)?;
         Ok((std::mem::take(&mut checked.chain), key))
     }
 
     /// What `instance.view` says of the pair at `now`: served, expiring within 30 days, or
-    /// missing (unservable).
+    /// missing (unservable, an expired pair included).
     pub(crate) fn status(&self, now: i64) -> org_proto::gateway::TlsStatus {
         use org_proto::gateway::TlsStatus;
         let _writing = crate::sync::lock(&self.writing);
-        match self.current() {
+        match self.current(Some(now)) {
             Ok((checked, _)) if checked.expiring(now) => TlsStatus::Expiring,
             Ok(_) => TlsStatus::Ok,
             Err(_) => TlsStatus::Missing,
@@ -394,8 +407,11 @@ impl WebTls {
         }
     }
 
-    /// Renews the instance's own certificate when fewer than 30 days of it remain at `now`.
-    /// `Ok(true)`: renewed; the caller emits `tls.renew`. A supplied pair is never renewed.
+    /// Renews the instance's own certificate when fewer than 30 days of it remain at `now`,
+    /// or when its key is missing or it no longer verifies, as a start does. `Ok(true)`:
+    /// renewed; the caller emits `tls.renew`. A supplied pair is never renewed. An error
+    /// reading the registry or the secrets changes nothing: it is reported, and the next
+    /// look tries again.
     pub(crate) fn renew_if_expiring(&self, now: i64) -> Result<bool, String> {
         let _writing = crate::sync::lock(&self.writing);
         let stored = self
@@ -405,10 +421,19 @@ impl WebTls {
         let Some(stored) = stored.filter(|s| s.source == Source::Made) else {
             return Ok(false);
         };
-        match self.current() {
-            Ok((checked, _)) if !checked.expiring(now) => return Ok(false),
-            _ => {}
+        let key = self
+            .secrets
+            .load(&secret_name(&stored.pair_fp)?)
+            .map_err(|e| format!("reading the TLS key from the host's secrets: {e:?}"))?;
+        if let Some(key) = &key {
+            let verified = key_text(key)
+                .ok_or(TlsRefusal::TlsInvalid)
+                .and_then(|key| check(&stored.cert_pem, key, &[&self.origin], Some(now)));
+            if verified.is_ok_and(|checked| !checked.expiring(now)) {
+                return Ok(false);
+            }
         }
+        drop(key);
         let checked = make(&self.origin, now)?;
         self.install(&checked, Source::Made, Some(&stored))?;
         log(&format!(

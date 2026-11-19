@@ -233,3 +233,65 @@ impl HostDb {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! A registry created before X7 (with the unused `tls_pair` table and no `web_tls_pair`)
+    //! still opens and gains the table; a `web_tls_pair` of another shape refuses the open.
+    use rusqlite::OpenFlags;
+
+    use super::super::tests::connection_for_test;
+    use crate::hostdb::{Error, HostDb, DB};
+    use crate::sessions::contract_tests::{sqlite, NoSecrets};
+
+    fn raw_db(home: &std::path::Path) -> rusqlite::Connection {
+        connection_for_test(home.join(DB), OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap()
+    }
+    fn tables(db: &rusqlite::Connection) -> Vec<String> {
+        let mut names: Vec<String> = db
+            .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE '%tls_pair'")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        names.sort();
+        names
+    }
+    const EARLIER: &str = "CREATE TABLE tls_pair (
+ id INTEGER PRIMARY KEY CHECK (id = 1), cert_pem TEXT NOT NULL,
+ pair_fp BLOB NOT NULL CHECK (length(pair_fp) = 32), set_at_ms INTEGER NOT NULL
+) STRICT";
+
+    #[test]
+    fn a_registry_from_before_x7_opens_and_gains_the_table() {
+        let (home, db) = sqlite();
+        drop(db);
+        raw_db(home.path())
+            .execute_batch(&format!("DROP TABLE web_tls_pair; {EARLIER};"))
+            .unwrap();
+        assert_eq!(tables(&raw_db(home.path())), ["tls_pair"]);
+        let db = HostDb::open(home.path(), &NoSecrets).unwrap();
+        assert!(db.web_tls_pair().unwrap().is_none());
+        drop(db);
+        assert_eq!(tables(&raw_db(home.path())), ["tls_pair", "web_tls_pair"]);
+        // Opening again changes nothing.
+        drop(HostDb::open(home.path(), &NoSecrets).unwrap());
+        assert_eq!(tables(&raw_db(home.path())), ["tls_pair", "web_tls_pair"]);
+    }
+
+    #[test]
+    fn a_web_tls_table_of_another_shape_refuses_the_open() {
+        let (home, db) = sqlite();
+        drop(db);
+        let other = super::TABLE_DDL.replace("'made','supplied'", "'made','supplied','found'");
+        assert_ne!(other, super::TABLE_DDL);
+        raw_db(home.path())
+            .execute_batch(&format!("DROP TABLE web_tls_pair; {other};"))
+            .unwrap();
+        assert!(matches!(
+            HostDb::open(home.path(), &NoSecrets),
+            Err(Error::Outdated)
+        ));
+    }
+}

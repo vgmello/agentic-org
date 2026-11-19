@@ -1243,15 +1243,35 @@ fn the_supervisor_refuses_an_https_listener_without_a_stored_pair() {
 #[test]
 fn the_https_gate_admits_only_a_stored_pair_that_names_the_origin() {
     use crate::web_tls::tests::started;
+    let now = crate::web_tls::now().unwrap();
     let (_kept, tls) = started("https://127.0.0.1:48125");
-    https_gate(Some(&*tls)).unwrap();
+    https_gate(Some(&*tls), now).unwrap();
     let refusal = |result: io::Result<()>| result.unwrap_err().to_string();
-    assert!(refusal(https_gate(None)).ends_with(": tls_missing"));
+    assert!(refusal(https_gate(None, now)).ends_with(": tls_missing"));
+    // Expired: 398 days on.
+    assert!(refusal(https_gate(Some(&*tls), now + 398 * 86_400)).contains("tls_not_valid"));
     let (kept, other) = started("https://org.example:48125");
     crate::web_tls::tests::store_pair_of(&kept, &other, "https://elsewhere.example");
-    assert!(refusal(https_gate(Some(&*other))).contains("tls_name_mismatch"));
+    assert!(refusal(https_gate(Some(&*other), now)).contains("tls_name_mismatch"));
     crate::web_tls::tests::lose_keys(&kept);
-    assert!(refusal(https_gate(Some(&*other))).contains("tls_missing"));
+    assert!(refusal(https_gate(Some(&*other), now)).contains("tls_missing"));
+}
+
+/// The web start's eligibility in `https`: the host's own eligibility and a pair that can be
+/// served now. A pair that cannot be served keeps the web process waiting (the supervisor
+/// counts no failed start), and the refusal is logged once.
+#[test]
+fn an_https_web_start_waits_while_its_pair_cannot_be_served() {
+    use crate::web_tls::tests::started;
+    let (kept, tls) = started("https://127.0.0.1:48126");
+    assert!(gated(Arc::new(|| true), Arc::clone(&tls))());
+    assert!(!gated(Arc::new(|| false), Arc::clone(&tls))());
+    crate::web_tls::tests::lose_keys(&kept);
+    let waiting = gated(Arc::new(|| true), Arc::clone(&tls));
+    let (answers, log) = crate::host_log::capture(|| (waiting(), waiting()));
+    assert_eq!(answers, (false, false));
+    assert_eq!(log.len(), 1, "{log:?}");
+    assert!(log[0].contains("tls_missing"), "{log:?}");
 }
 
 /// The listener gate admits the two plain HTTP modes: a published listener of a foreground

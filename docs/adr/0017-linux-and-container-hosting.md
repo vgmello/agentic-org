@@ -170,9 +170,11 @@ These settle what the decisions above left open. The detail is in the
       (`tls_key_mismatch`), the leaf is valid now (`tls_not_valid`) and names the
       origin's host by a subject alternative name (`tls_name_mismatch`). Only the
       paths are recorded. The host imports the pair at its first start, verified
-      again, and never reads the files after that. A supplied key that is gone,
-      or a supplied pair that no longer verifies, refuses the start: it is never
-      made again or replaced by the instance.
+      again, and never reads the files after that. A supplied key that is gone
+      refuses the start: it is never made again. A supplied pair that no longer
+      verifies (expired, say) is never replaced by the instance either: the host
+      starts, logs why, and serves no browser until the administrator replaces it
+      with `tls.set`.
     - *Custody.* The key is a host secret, `tls.<pair fingerprint>` (the secrets
       volume in a container; never the data volume, an argument, the environment
       or a log). The registry's `web_tls_pair` row holds the chain in a normal form
@@ -181,9 +183,11 @@ These settle what the decisions above left open. The detail is in the
       with `tls.set` on `host.sock` (journaled; the same checks), after which the
       host sends `tls.renew` and the web process serves it for new handshakes.
     - *Start gate.* Before the web process is spawned: the listener fields and
-      origin, `hsts`, a stored pair (`tls_missing`) and its coverage of the origin
-      (`tls_name_mismatch`); `tls.fetch` answers `https` with the stored pair after
-      the same re-check.
+      origin, `hsts`, a stored pair (`tls_missing`), its coverage of the origin
+      (`tls_name_mismatch`) and its validity now. While the stored pair fails it the
+      web process waits (it is part of the web start's eligibility, asked again every
+      two seconds), so a replacement through `tls.set` starts it; `tls.fetch`
+      answers `https` with the stored pair after the coverage re-check.
     - *Plain HTTP on a published port stays,* as an explicit choice
       (`http_published`). The container's shipped setup file and its README move to
       `https` once B1b has landed (they are being rewritten in that increment).

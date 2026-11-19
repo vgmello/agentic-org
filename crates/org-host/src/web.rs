@@ -574,27 +574,76 @@ fn unconfinable(reason: io::Error) -> io::Error {
     ))
 }
 
-/// The pre-spawn check of an `https` listener (X-02 §2), after its listener fields, origin and
-/// `hsts`, which the snapshot passed when it was read: a stored pair is present
-/// (`tls_missing`), covers the origin (`tls_name_mismatch`) and its key can be read. The
-/// refusal names the reason for the host log.
-fn https_gate(tls: Option<&crate::web_tls::WebTls>) -> io::Result<()> {
+/// The pre-spawn check of an `https` listener (X-02 §2) at `now` (Unix seconds), after its
+/// listener fields, origin and `hsts`, which the snapshot passed when it was read: a stored
+/// pair is present (`tls_missing`), covers the origin (`tls_name_mismatch`), is valid now and
+/// its key can be read. The refusal names the reason for the host log.
+fn https_gate(tls: Option<&crate::web_tls::WebTls>, now: i64) -> io::Result<()> {
     use crate::web_tls::Unservable;
     let refused = |reason: &str| {
         io::Error::other(format!(
             "the web process requires a verified TLS pair for its https listener: {reason}"
         ))
     };
-    match tls.map(crate::web_tls::WebTls::servable) {
+    match tls.map(|tls| tls.servable(now)) {
         Some(Ok(())) => Ok(()),
         None | Some(Err(Unservable::Missing)) => Err(refused("tls_missing")),
         Some(Err(Unservable::Failure(_))) => Err(refused(
             "tls_name_mismatch: the stored certificate does not name the origin's host",
         )),
+        Some(Err(Unservable::NotValid)) => Err(refused(
+            "tls_not_valid: the stored certificate is not valid now; the administrator \
+             replaces it (tls.set)",
+        )),
         Some(Err(Unservable::Storage)) => Err(refused(
             "tls_missing: the stored pair or its key cannot be read",
         )),
     }
+}
+
+/// How often the `https` gate is asked again while the supervisor polls its eligibility.
+const HTTPS_GATE_EVERY: Duration = Duration::from_secs(2);
+
+/// `eligible`, and the `https` gate ([`https_gate`]) for `tls`: the web process starts only
+/// while the stored pair can be served, and the supervisor waits, without counting a failed
+/// start, while it cannot (a supplied pair that expired waits for the administrator's
+/// `tls.set`); a running one is stopped when it no longer can. The gate is asked at most
+/// every [`HTTPS_GATE_EVERY`], and each change of its answer is logged once.
+fn gated(
+    eligible: Arc<dyn Fn() -> bool + Send + Sync>,
+    tls: Arc<crate::web_tls::WebTls>,
+) -> Arc<dyn Fn() -> bool + Send + Sync> {
+    let last: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    Arc::new(move || {
+        if !eligible() {
+            return false;
+        }
+        let mut last = lock(&last);
+        if let Some((at, served)) = *last {
+            if at.elapsed() < HTTPS_GATE_EVERY {
+                return served;
+            }
+        }
+        let verdict = match crate::web_tls::now() {
+            Some(now) => https_gate(Some(&tls), now),
+            None => Err(io::Error::other("the clock is unavailable")),
+        };
+        let served = verdict.is_ok();
+        if last.map(|(_, was)| was) != Some(served) {
+            match &verdict {
+                Err(why) => crate::host_log::log(&format!(
+                    "the web process is not started: {}",
+                    crate::host_log::untrusted(&why.to_string())
+                )),
+                Ok(()) if last.is_some() => crate::host_log::log(
+                    "the stored TLS pair can be served: the web process is started",
+                ),
+                Ok(()) => {}
+            }
+        }
+        *last = Some((Instant::now(), served));
+        served
+    })
 }
 
 pub(crate) struct Supervisor {
@@ -619,10 +668,13 @@ impl Supervisor {
         org_platform::confinement::web_confinement_supported().map_err(unconfinable)?;
         // Plain HTTP, in one of its two modes: on loopback, or on the published port of a
         // foreground instance, which the registered start has already judged against the
-        // instance's service mode. HTTPS needs the stored pair, verified now.
-        if config.listen.scheme() == ListenMode::Https {
-            https_gate(config.tls.as_deref())?;
-        }
+        // instance's service mode. HTTPS needs the host's pair; it is started only while
+        // the stored pair verifies (`gated`).
+        let eligible = match (config.listen.scheme(), &config.tls) {
+            (ListenMode::Https, None) => return Err(https_gate(None, 0).unwrap_err()),
+            (ListenMode::Https, Some(tls)) => gated(eligible, Arc::clone(tls)),
+            _ => eligible,
+        };
         config
             .check
             .may_spawn()

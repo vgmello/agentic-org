@@ -236,7 +236,8 @@ impl Service {
                     ));
                     return;
                 }
-                Some(Err(Unservable::Missing | Unservable::Storage)) | None => {
+                Some(Err(Unservable::Missing | Unservable::NotValid | Unservable::Storage))
+                | None => {
                     connection.send_response(Response::error(
                         request.id,
                         ApiError::new(ErrorCode::StorageError, "the TLS pair cannot be read"),

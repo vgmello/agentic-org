@@ -19,12 +19,13 @@
 //!   (`hostdb::web_tls`). The instance's data and records never hold the key; nothing logs it.
 //!   What is printed is the leaf's SHA-256 fingerprint ([`Fingerprint`]).
 //! - **Reading a supplied pair** ([`read_pem_file`], `files`): the setup configuration names
-//!   two PEM files; each is opened without following a link, must be a regular file and is
-//!   read up to [`FILE_LIMIT`] bytes.
+//!   two PEM files; each is opened without following a link in its last component, must be a
+//!   regular file and is read up to [`FILE_LIMIT`] bytes.
 //!
 //! Setup verifies a supplied pair before it saves anything; the host imports it at its first
 //! start, verified again, and from then on reads only its own copy. A self-made key that is
-//! lost is made again; a supplied one is not, and the start is refused.
+//! lost is made again; a supplied one is not, and the start is refused. A supplied pair that
+//! no longer verifies is kept but not served (the web start's gate) until `tls.set` replaces it.
 mod certificate;
 mod files;
 mod renewal;

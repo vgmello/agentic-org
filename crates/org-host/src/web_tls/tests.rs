@@ -47,7 +47,19 @@ fn pair(names: &[&str]) -> (String, String) {
 
 /// The host's secrets, in memory, with the store's add-only rule for `tls.` names.
 #[derive(Default)]
-struct Secrets(Mutex<BTreeMap<String, Vec<u8>>>);
+struct Secrets(
+    Mutex<BTreeMap<String, Vec<u8>>>,
+    /// Every load fails while set: a store that cannot be read.
+    FailLoads,
+);
+#[derive(Default)]
+struct FailLoads(std::sync::atomic::AtomicBool);
+impl std::ops::Deref for FailLoads {
+    type Target = std::sync::atomic::AtomicBool;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 impl HostSecrets for Secrets {
     fn put(&self, name: &Name, value: &Value) -> Result<(), SecretError> {
         let mut items = self.0.lock().unwrap();
@@ -58,6 +70,9 @@ impl HostSecrets for Secrets {
         Ok(())
     }
     fn load(&self, name: &Name) -> Result<Option<Value>, SecretError> {
+        if self.1.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(SecretError::Io(std::io::ErrorKind::Other));
+        }
         let items = self.0.lock().unwrap();
         Ok(items
             .get(name.as_str())
@@ -523,8 +538,10 @@ fn the_instances_own_pair_is_made_again_when_lost_and_renewed_before_it_expires(
     assert_eq!(f.secrets.names(), [format!("tls.{}", hex(&third.pair_fp))]);
 }
 
-/// A supplied pair is imported at the first start, verified again; a supplied key that is
-/// gone, or a supplied pair that no longer verifies, refuses the start and is never replaced.
+/// A supplied pair is imported at the first start, verified again. One that no longer
+/// verifies (expired) does not stop the host: it is kept, logged, and not served (the web
+/// gate) until the administrator replaces it with `tls.set`. A supplied key that is gone
+/// refuses the start; it is never made again.
 #[test]
 fn a_supplied_pair_is_imported_and_never_made_again() {
     let f = fixture();
@@ -552,10 +569,30 @@ fn a_supplied_pair_is_imported_and_never_made_again() {
         lines.join("\n").contains("ends within 30 days"),
         "{lines:?}"
     );
-    // Expired: refused, nothing replaced.
-    let refused = f.start(&here, None, now + 11 * DAY).err().unwrap();
-    assert!(refused.0.contains("tls_not_valid"), "{refused}");
+    // Expired: the host starts, nothing is replaced, and the pair is not served.
+    let later = now + 11 * DAY;
+    let (tls, lines) = captured(|| f.start(&here, None, later).unwrap());
+    assert!(
+        lines.join("\n").contains("tls_not_valid") && lines.join("\n").contains("tls.set"),
+        "{lines:?}"
+    );
     assert_eq!(f.stored(), stored);
+    assert_eq!(f.secrets.names(), [format!("tls.{}", hex(&stored.pair_fp))]);
+    assert!(matches!(
+        tls.servable(later),
+        Err(store::Unservable::NotValid)
+    ));
+    assert_eq!(tls.status(later), org_proto::gateway::TlsStatus::Missing);
+    // The administrator's replacement is served.
+    let (cert, key) = pair_for(&["org.example"], later - DAY, later + 90 * DAY);
+    let id = crate::ids::generate().unwrap();
+    let (answer, renew) = tls
+        .set(&set_params(&id, &cert, &key), "account", later)
+        .unwrap();
+    assert!(matches!(answer, HostOpResult::Completed { .. }) && renew);
+    tls.servable(later).unwrap();
+    let stored = f.stored();
+    drop(tls);
     // Gone: refused, never made again.
     f.secrets.0.lock().unwrap().clear();
     let refused = f.start(&here, None, now).err().unwrap();
@@ -706,7 +743,7 @@ fn a_pair_that_cannot_be_served_is_never_fetched() {
     let here = origin("https://org.example:8443");
     let now = wall();
     let tls = f.start(&here, None, now).unwrap();
-    assert!(tls.servable().is_ok());
+    assert!(tls.servable(now).is_ok());
     assert_eq!(tls.status(now), org_proto::gateway::TlsStatus::Ok);
     assert_eq!(
         tls.status(now + 370 * DAY),
@@ -741,7 +778,28 @@ fn a_pair_that_cannot_be_served_is_never_fetched() {
         set_at_ms: 1,
     })
     .unwrap();
-    assert!(matches!(tls.servable(), Err(store::Unservable::Storage)));
+    assert!(matches!(tls.servable(now), Err(store::Unservable::Storage)));
+}
+
+/// A registry or secrets error during the running renewal changes nothing: the pair, its key
+/// and its fingerprint stay, and the error is reported for the next look.
+#[test]
+fn a_failed_read_during_the_renewal_never_replaces_the_pair() {
+    let f = fixture();
+    let here = origin("https://org.example:8443");
+    let now = wall();
+    let tls = f.start(&here, None, now).unwrap();
+    let made = f.stored();
+    f.secrets.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(tls.renew_if_expiring(now + 368 * DAY).is_err());
+    assert_eq!(f.stored(), made);
+    f.secrets
+        .1
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    // A key that is gone is made again.
+    lose_keys(&f);
+    assert!(tls.renew_if_expiring(now).unwrap());
+    assert_ne!(f.stored().pair_fp, made.pair_fp);
 }
 
 /// The renewal while the host runs: only the instance's own pair, only within 30 days.
