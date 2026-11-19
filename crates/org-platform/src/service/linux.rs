@@ -17,11 +17,24 @@
 //!   replace `ExecStart` or add to the environment, so what systemd would run is no longer
 //!   the definition. A definition file with different bytes than the
 //!   rendered unit is a conflict for register, which never replaces, reloads or enables it.
+//! - **What systemd would run is what the definition says.** A drop-in for every service of
+//!   the user (`service.d/`) is accepted, and distributions ship some, but it can still
+//!   change `ExecStart`, the environment or `KillMode` while `FragmentPath` is our file. So
+//!   whenever systemd has our file loaded as it is on disk, the values the service depends
+//!   on, as systemd reports them ([`EFFECTIVE`]), are compared with what our definition
+//!   says (read back from the file, which must be exactly a rendering of a unit), and any
+//!   difference is a conflict for every operation, like a drop-in by name.
 //! - **An identical, settled registration is left alone**: the file has the rendered bytes,
 //!   systemd loaded it from that file, nothing changed on disk since, and it is enabled.
 //!   A healthy service is not restarted.
 //! - **The definition is published complete and never replaces a file that appeared
 //!   meanwhile**: a temporary file, flushed, then a hard link.
+//! - **The location variables the unit does not set are unset** (`UnsetEnvironment=`, for
+//!   every name of `crate::dirs::location_variables`): the user manager's own environment
+//!   cannot move the instance's locations away from the ones setup resolved.
+//! - **A failed registration leaves nothing behind**: when `enable --now` enabled the unit
+//!   and then failed to start it, the enablement that call made is removed
+//!   (`disable --now`) before the definition this call wrote is removed.
 //! - **`start` never loads a definition.** systemd reads a unit file when it is first
 //!   asked about it, so "loaded" means here what register established: enabled, and
 //!   unchanged on disk since systemd read it. A unit that is not enabled, or whose file
@@ -59,9 +72,29 @@ const SEARCH: [&str; 2] = ["/usr/bin", "/bin"];
 /// itself returns only when the unit has stopped (`TimeoutStopSec=15`).
 const UNLOAD_WAIT: Duration = Duration::from_secs(20);
 pub(super) const USER_PREFIX: &str = "agentic-org-";
-/// What the adapter reads of a unit, in one `systemctl show`.
-const PROPERTIES: &str =
-    "--property=LoadState,ActiveState,MainPID,FragmentPath,UnitFileState,NeedDaemonReload,DropInPaths";
+/// What the adapter reads of a unit, in one `systemctl show`: its state, and the values
+/// the service depends on ([`EFFECTIVE`]).
+const PROPERTIES: &str = "--property=LoadState,ActiveState,MainPID,FragmentPath,UnitFileState,\
+     NeedDaemonReload,DropInPaths,ExecStart,ExecStartPre,ExecStartPost,Environment,\
+     EnvironmentFiles,PassEnvironment,UnsetEnvironment,Type,KillMode,TimeoutStopUSec,\
+     Restart,UMask,NoNewPrivileges";
+/// The properties of [`PROPERTIES`] that say what systemd would run and how: each is
+/// compared with what the definition says (`effective_differs`).
+const EFFECTIVE: [&str; 13] = [
+    "ExecStart",
+    "ExecStartPre",
+    "ExecStartPost",
+    "Environment",
+    "EnvironmentFiles",
+    "PassEnvironment",
+    "UnsetEnvironment",
+    "Type",
+    "KillMode",
+    "TimeoutStopUSec",
+    "Restart",
+    "UMask",
+    "NoNewPrivileges",
+];
 
 pub(super) fn user_placement(home: &Path) -> Result<Placement, Refused> {
     Ok(Placement {
@@ -199,6 +232,8 @@ struct Shown {
     needs_reload: bool,
     /// The drop-in files systemd applies to the unit, as it lists them.
     drop_ins: String,
+    /// The [`EFFECTIVE`] properties systemd printed, by name, as it printed them.
+    effective: Vec<(&'static str, String)>,
 }
 
 impl Shown {
@@ -215,6 +250,15 @@ impl Shown {
     /// it is now, and the unit is enabled.
     fn settled(&self) -> bool {
         self.load == "loaded" && self.file_state == "enabled" && !self.needs_reload
+    }
+
+    /// The value systemd printed for the [`EFFECTIVE`] property `name`; a property it did
+    /// not print is empty (`systemctl show` leaves out an empty list).
+    fn effective(&self, name: &str) -> &str {
+        self.effective
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map_or("", |(_, value)| value.as_str())
     }
 }
 
@@ -333,6 +377,33 @@ impl Systemd {
                 file.display()
             )));
         }
+        // What systemd holds is our file as it is on disk: what it would run must be what
+        // the file says, whatever a drop-in for every service changed. A file that changed
+        // since systemd read it is not compared: it is `Unloaded`, nothing starts it, and
+        // register compares its bytes and reloads it, which compares again.
+        if shown.load == "loaded" && !shown.needs_reload {
+            let defined = self
+                .read_definition(&file)?
+                .and_then(|bytes| definition(name, &bytes));
+            let Some(defined) = defined else {
+                return Err(ServiceError::Conflict(format!(
+                    "{} is not a definition this adapter wrote; systemd would run what it says",
+                    file.display()
+                )));
+            };
+            if let Some(property) = effective_differs(&defined, &shown) {
+                return Err(ServiceError::Conflict(format!(
+                    "systemd's {property} for {name} is not what {} says (a drop-in changes \
+                     it: {}); the definition is not the only thing it would run",
+                    file.display(),
+                    if shown.drop_ins.is_empty() {
+                        "none is listed".into()
+                    } else {
+                        shown.drop_ins.escape_default().to_string()
+                    }
+                )));
+            }
+        }
         Ok(Some(shown))
     }
 
@@ -400,11 +471,13 @@ impl Systemd {
     }
 
     /// Makes systemd read the definition at `file`, whose bytes the caller compared with
-    /// the unit, and enables and starts it. A running unit is not restarted.
+    /// the unit, and enables and starts it. A running unit is not restarted. When `enable
+    /// --now` fails after it enabled a unit that was not enabled (its start failed), that
+    /// enablement is removed again, and a restart systemd scheduled is cancelled.
     fn load(&self, name: &str, file: &Path) -> Result<(), ServiceError> {
         self.expect_ok(&["daemon-reload".as_ref()])?;
-        match self.show_ours(name)? {
-            Some(shown) if shown.load == "loaded" => {}
+        let was_enabled = match self.show_ours(name)? {
+            Some(shown) if shown.load == "loaded" => shown.file_state == "enabled",
             Some(shown) => {
                 return Err(ServiceError::System(format!(
                     "systemd cannot use {} (its load state is {})",
@@ -419,8 +492,13 @@ impl Systemd {
                     file.display()
                 )))
             }
+        };
+        let enabled = self.expect_ok(&["enable".as_ref(), "--now".as_ref(), name.as_ref()]);
+        if enabled.is_err() && !was_enabled {
+            // Best effort: the error the caller reports is the enable's.
+            let _ = self.systemctl(&["disable".as_ref(), "--now".as_ref(), name.as_ref()]);
         }
-        self.expect_ok(&["enable".as_ref(), "--now".as_ref(), name.as_ref()])
+        enabled
     }
 }
 
@@ -448,9 +526,11 @@ impl ServiceManager for Systemd {
                     Ok(()) => Ok(Registration::Loaded),
                     Err(refused) => {
                         // What this call wrote is not left behind for the next one to
-                        // find: the file goes, and systemd is told so.
+                        // find: the file goes (its enablement went in `load`), systemd is
+                        // told so, and a start that failed is not kept as a failed unit.
                         let _ = fs::remove_file(&file);
                         let _ = self.systemctl(&["daemon-reload".as_ref()]);
+                        let _ = self.systemctl(&["reset-failed".as_ref(), name.as_ref()]);
                         Err(refused)
                     }
                 }
@@ -622,7 +702,182 @@ fn parse_show(output: &str) -> Option<Shown> {
         file_state: property(output, "UnitFileState").unwrap_or("").to_owned(),
         needs_reload: property(output, "NeedDaemonReload") == Some("yes"),
         drop_ins: property(output, "DropInPaths").unwrap_or("").to_owned(),
+        effective: EFFECTIVE
+            .iter()
+            .filter_map(|name| Some((*name, property(output, name)?.to_owned())))
+            .collect(),
     })
+}
+
+/// What a definition this adapter wrote says: the unit it is a rendering of. `None` when
+/// the bytes are not exactly the rendering of a unit under `name`: a file someone wrote or
+/// changed, whose meaning the adapter does not claim to know. The parse only has to find
+/// the values; the comparison of the bytes with a new rendering is what makes it exact.
+fn definition(name: &str, bytes: &[u8]) -> Option<Unit> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let mut exec = None;
+    let mut env = Vec::new();
+    for line in text.lines() {
+        if let Some(words) = line.strip_prefix("ExecStart=") {
+            exec = Some(unquoted_words(words, true)?);
+        } else if let Some(word) = line.strip_prefix("Environment=") {
+            let mut words = unquoted_words(word, false)?.into_iter();
+            let assignment = words.next().filter(|_| words.next().is_none())?;
+            let (key, value) = assignment.split_once('=')?;
+            env.push((key.into(), value.into()));
+        }
+    }
+    let mut exec = exec?.into_iter();
+    let unit = Unit {
+        instance_id: String::new(),
+        program: exec.next()?.into(),
+        args: exec.map(OsString::from).collect(),
+        env,
+    };
+    (render(name, &unit) == bytes).then_some(unit)
+}
+
+/// The words of a line written by [`quote`], with its escapes undone: `%%` is `%` and, in
+/// `ExecStart=` (`exec`), `$$` is `$`. `None` for anything [`quote`] does not write.
+fn unquoted_words(line: &str, exec: bool) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut chars = line.chars();
+    loop {
+        if chars.next()? != '"' {
+            return None;
+        }
+        let mut word = String::new();
+        loop {
+            match chars.next()? {
+                '"' => break,
+                '\\' => word.push(match chars.next()? {
+                    '\\' => '\\',
+                    '"' => '"',
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    _ => return None,
+                }),
+                '%' => (chars.next()? == '%').then(|| word.push('%'))?,
+                '$' if exec => (chars.next()? == '$').then(|| word.push('$'))?,
+                c => word.push(c),
+            }
+        }
+        words.push(word);
+        match chars.next() {
+            None => return Some(words),
+            Some(' ') => {}
+            Some(_) => return None,
+        }
+    }
+}
+
+/// The first of the [`EFFECTIVE`] properties for which what systemd reports differs from
+/// what the unit `defined` says, or `None`. systemd 257 prints `ExecStart` as
+/// `{ path=<program> ; argv[]=<words> ; ignore_errors=no ; … }`, where the words are the
+/// program and its arguments joined by spaces, unquoted, each `$` still written `$$`; and
+/// `Environment=` and `UnsetEnvironment=` as words separated by spaces, double-quoted where
+/// they hold a space or a character a shell treats specially ([`shell_words`]). So
+/// `ExecStart` compares the joined text: a change that only regroups words around a space
+/// is not seen. Units hold no control character ([`unit_file_safe`]), which systemd would
+/// print raw in an argument and break the line. A systemd that quotes differently makes a
+/// value with a space or such a character differ, and the unit is refused: never accepted
+/// on doubt.
+fn effective_differs(defined: &Unit, shown: &Shown) -> Option<&'static str> {
+    let exec = std::iter::once(defined.program.as_os_str())
+        .chain(defined.args.iter().map(OsString::as_os_str))
+        .map(|word| word.to_string_lossy().replace('$', "$$"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let start = shown.effective("ExecStart");
+    let one_command = start
+        .strip_prefix(&format!(
+            "{{ path={} ; argv[]={exec} ; ",
+            defined.program.display()
+        ))
+        .is_some_and(|rest| rest.ends_with(" }") && !rest.contains("{ path="));
+    if !one_command {
+        return Some("ExecStart");
+    }
+    let sorted = |mut words: Vec<String>| {
+        words.sort();
+        words
+    };
+    let environment: Vec<String> = defined
+        .env
+        .iter()
+        .map(|(key, value)| format!("{}={}", key.to_string_lossy(), value.to_string_lossy()))
+        .collect();
+    if shell_words(shown.effective("Environment")).map(sorted) != Some(sorted(environment)) {
+        return Some("Environment");
+    }
+    let unset: Vec<String> = unset_variables(defined)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    if shell_words(shown.effective("UnsetEnvironment")).map(sorted) != Some(sorted(unset)) {
+        return Some("UnsetEnvironment");
+    }
+    let expected = [
+        ("ExecStartPre", ""),
+        ("ExecStartPost", ""),
+        ("EnvironmentFiles", ""),
+        ("PassEnvironment", ""),
+        ("Type", "exec"),
+        ("KillMode", "mixed"),
+        ("TimeoutStopUSec", "15s"),
+        ("Restart", "on-failure"),
+        ("UMask", "0077"),
+        ("NoNewPrivileges", "yes"),
+    ];
+    expected
+        .into_iter()
+        .find(|(name, value)| shown.effective(name) != *value)
+        .map(|(name, _)| name)
+}
+
+/// The words of a list `systemctl show` prints, such as `Environment=`: separated by
+/// spaces; a word, or part of one, in double quotes may hold spaces, and inside the quotes
+/// a backslash makes the next `\`, `"`, `$` or `` ` `` literal. `None` for anything else
+/// (an unfinished quote, another escape): that is not compared, it differs.
+fn shell_words(text: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut quoted = false;
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            ' ' if !quoted => words.extend(word.take()),
+            '"' => {
+                quoted = !quoted;
+                word.get_or_insert_with(String::new);
+            }
+            '\\' if quoted => match chars.next()? {
+                escaped @ ('\\' | '"' | '$' | '`') => {
+                    word.get_or_insert_with(String::new).push(escaped)
+                }
+                _ => return None,
+            },
+            '\\' => return None,
+            c => word.get_or_insert_with(String::new).push(c),
+        }
+    }
+    if quoted {
+        return None;
+    }
+    words.extend(word);
+    Some(words)
+}
+
+/// The location variables (`crate::dirs::location_variables`) that `unit` does not set:
+/// its definition unsets them, so the user manager's own values never reach the service.
+fn unset_variables(unit: &Unit) -> Vec<&'static str> {
+    crate::dirs::location_variables()
+        .unwrap_or(&[])
+        .iter()
+        .copied()
+        .filter(|name| !unit.env.iter().any(|(key, _)| key == OsStr::new(name)))
+        .collect()
 }
 
 /// Whether the drop-in file `path` is one systemd applies to the unit `name` by its name:
@@ -690,18 +945,26 @@ fn user_name(uid: u32) -> String {
     uid.to_string()
 }
 
-/// What the unit-file grammar cannot carry safely, beyond the contract's `validate`:
+/// What the unit-file grammar cannot carry safely, or what `systemctl show` cannot report
+/// back for the comparison of what systemd would run, beyond the contract's `validate`:
 ///
 /// - an environment name that is not an identifier (`[A-Za-z_][A-Za-z0-9_]*`): systemd
 ///   drops such an assignment with a warning, and the service would start without it;
-/// - a carriage return or DEL in an environment value: some systemd versions drop the
-///   whole assignment for a control character other than tab and line feed;
+/// - a control character (tab, line feed and carriage return included) in the program,
+///   an argument or an environment value: systemd prints an argument raw, which breaks its
+///   report into lines, and some systemd versions drop an assignment that holds one;
 /// - a `$` in the program path: systemd expands variables in arguments, where `$$` writes a
 ///   literal `$`, but not in the path it executes, so no one spelling is right for both.
 fn unit_file_safe(unit: &Unit) -> Result<(), ServiceError> {
     if unit.program.to_string_lossy().contains('$') {
         return Err(ServiceError::Invalid(
             "a systemd unit cannot name a program whose path contains a dollar sign",
+        ));
+    }
+    let control = |text: &OsStr| text.to_string_lossy().chars().any(char::is_control);
+    if control(unit.program.as_os_str()) || unit.args.iter().any(|arg| control(arg)) {
+        return Err(ServiceError::Invalid(
+            "a systemd unit cannot run a program or argument with a control character",
         ));
     }
     for (key, value) in &unit.env {
@@ -716,9 +979,9 @@ fn unit_file_safe(unit: &Unit) -> Result<(), ServiceError> {
                  identifier",
             ));
         }
-        if value.to_string_lossy().contains(['\r', '\u{7f}']) {
+        if control(value) {
             return Err(ServiceError::Invalid(
-                "a systemd unit cannot set an environment value with a carriage return or DEL",
+                "a systemd unit cannot set an environment value with a control character",
             ));
         }
     }
@@ -769,6 +1032,10 @@ fn render(name: &str, unit: &Unit) -> Vec<u8> {
     for (key, value) in &unit.env {
         let assignment = format!("{}={}", key.to_string_lossy(), value.to_string_lossy());
         u.push_str(&format!("Environment={}\n", quote(&assignment, false)));
+    }
+    let unset = unset_variables(unit);
+    if !unset.is_empty() {
+        u.push_str(&format!("UnsetEnvironment={}\n", unset.join(" ")));
     }
     u.push_str(concat!(
         "KillMode=mixed\n",

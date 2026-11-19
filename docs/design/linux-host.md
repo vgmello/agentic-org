@@ -768,6 +768,23 @@ instance runs only while the user is logged in and print
 for themselves; setup does not run it without being asked. The unit file is writable
 by the same user, like the executable path it names (section 5).
 
+The unit sets the location variables setup gave it (`dirs::location_variables`) and
+unsets the others (`UnsetEnvironment=`), so a value the user manager holds cannot move
+the instance's locations away from the ones setup reserved. A drop-in that applies to
+the unit by its name is a conflict for every operation; a drop-in for every service
+(`service.d/`) is accepted, but whenever systemd has the unit file loaded as it is on
+disk, what it reports for `ExecStart`, `ExecStartPre`, `ExecStartPost`, `Environment`,
+`EnvironmentFiles`, `PassEnvironment`, `UnsetEnvironment`, `Type`, `KillMode`,
+`TimeoutStopUSec`, `Restart`, `UMask` and `NoNewPrivileges` must be what the file says
+(read back only from an exact rendering of a unit), or that is a conflict too. The
+program, its arguments and its environment values carry no control character, which
+`systemctl show` would print raw. Known limits: `ExecStart`'s arguments are compared as
+systemd prints them, joined by spaces, so a drop-in that only regroups words around a
+space is not seen; and a systemd that quotes `Environment=` differently from systemd 257
+refuses a unit whose values hold a space or a shell character, never accepts it. A
+registration whose `enable --now` enabled the unit and then failed to start it removes
+that enablement (`disable --now`) before it removes the file it wrote.
+
 **`Foreground`, the container mode.** Nothing is registered: the container runtime
 is the supervisor. Setup is told the mode explicitly; nothing detects a container.
 The container's command is `agentic-org serve --setup /etc/agentic-org/setup.json`:
