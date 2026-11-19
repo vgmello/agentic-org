@@ -20,6 +20,8 @@ struct State {
     /// `enable --now` enables the unit and then fails to start it, as when the unit's
     /// program cannot be started.
     enable_fails: bool,
+    /// `disable` fails and changes nothing, as when stopping the unit times out.
+    disable_fails: bool,
     /// What a drop-in for every service changes: [`EFFECTIVE`] properties the manager
     /// reports with these values instead of the ones its file says.
     changed: Vec<(&'static str, String)>,
@@ -322,6 +324,9 @@ impl Commands for Fake {
                 done(0, String::new(), "")
             }
             "disable" => {
+                if s.disable_fails {
+                    return done(1, String::new(), "Job for the unit timed out.\n");
+                }
                 s.enabled = false;
                 if call[3] == "--now" {
                     s.pid = None;
@@ -1839,6 +1844,56 @@ fn an_earlier_rendering_for_the_same_instance_is_replaced() {
     ));
     assert_eq!(fs::read_to_string(&file).unwrap(), edited);
     assert!(!fake.verbs().contains(&"disable".to_string()));
+}
+
+/// X5 final review: when the earlier rendering's unit cannot be disabled and stopped, the
+/// earlier rendering is put back and the error returned. The file on disk stays what
+/// systemd runs from, so the next register replaces it from the start and restarts the
+/// service on the new definition; left as the new rendering, it would find the file
+/// current and only enable the unit, which never restarts the earlier program.
+#[test]
+fn a_failed_stop_of_the_earlier_rendering_puts_it_back() {
+    let temp = tempfile::tempdir().unwrap();
+    let (systemd, fake) = systemd(temp.path());
+    systemd.register(&unit()).unwrap();
+    let file = temp.path().join(format!("systemd/user/{NAME}"));
+    let fixed = Unit {
+        env: vec![
+            ("HOME".into(), "/home/a".into()),
+            ("ORG_OFFICE_DEV_KEY_DIR".into(), "/home/a/keys".into()),
+        ],
+        ..unit()
+    };
+    fake.set(|s| s.disable_fails = true);
+    assert!(matches!(
+        systemd.register(&fixed),
+        Err(ServiceError::System(_))
+    ));
+    assert_eq!(fs::read(&file).unwrap(), render(NAME, &unit()));
+    assert_eq!(
+        systemd.status(ID).unwrap(),
+        ServiceStatus::Running { pid: 42 }
+    );
+    let entries = fs::read_dir(temp.path().join("systemd/user"))
+        .unwrap()
+        .count();
+    assert_eq!(entries, 1, "a temporary file remains");
+
+    // Once the stop works, the next register replaces it: the earlier program stops and
+    // the new definition is loaded and started.
+    fake.set(|s| s.disable_fails = false);
+    fake.clear();
+    assert_eq!(systemd.register(&fixed).unwrap(), Registration::Loaded);
+    assert_eq!(fs::read(&file).unwrap(), render(NAME, &fixed));
+    assert!(fake.calls().contains(
+        &["systemctl", "--user", "disable", "--now", NAME]
+            .map(String::from)
+            .to_vec()
+    ));
+    assert_eq!(
+        systemd.status(ID).unwrap(),
+        ServiceStatus::Running { pid: 42 }
+    );
 }
 
 /// X5 review (fourth round, P2-5): the definitions are written only in a directory of this
