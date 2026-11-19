@@ -70,8 +70,6 @@ pub const DEFAULT_PORT: u16 = 7420;
 /// passes this; only a test-support build may pass another base ([`Request::named_port_base`]).
 pub const NAMED_PORT_BASE: u16 = DEFAULT_PORT + 1;
 const READY_WITHIN: Duration = Duration::from_secs(60);
-/// How long a command waits for the instance locator while a starting service holds it.
-const LOCATOR_WAIT: Duration = Duration::from_secs(5);
 
 /// The environment variables that decided this account's instance locations in this
 /// process, with their values: what a registered service must be given so that it resolves
@@ -1325,13 +1323,12 @@ pub(crate) fn run_at(
             // The runtime folders are not kept: a cache that was cleared since (a container
             // started on its volumes again) has none, and they are made again here, as the
             // host makes them at its start (X5 review, fourth round, P1-4).
-            let deadline = Instant::now() + LOCATOR_WAIT;
-            wait_for_locator("restoring instance temp folders", deadline, || {
-                registry.restore_temp_folders()
-            })?;
-            let (id, temp) = wait_for_locator("locating the instance", deadline, || {
-                registry.locate(name, &record.input.root)
-            })?;
+            registry
+                .restore_temp_folders()
+                .map_err(|e| fail("restoring instance temp folders", e))?;
+            let (id, temp) = registry
+                .locate(name, &record.input.root)
+                .map_err(|e| fail("locating the instance", e))?;
             if &id != recorded {
                 return Err(
                     "the reserved instance is not the one setup recorded; nothing was changed"
@@ -1976,32 +1973,14 @@ fn registered(paths: &Paths, name: Option<&str>) -> Result<(Record, String, Path
     let registry = Registry::open(&paths.locator, &paths.user_temp)
         .map_err(|e| fail("opening the instance locator", e))?;
     // A service that is just starting holds the locator's lock for a moment (it reserves
-    // its instance again): a command that arrives then waits for it instead of failing.
-    let (id, temp) = wait_for_locator(
-        "locating the instance",
-        Instant::now() + LOCATOR_WAIT,
-        || registry.locate(name, &record.input.root),
-    )?;
+    // its instance again): the registry waits for it rather than failing.
+    let (id, temp) = registry
+        .locate(name, &record.input.root)
+        .map_err(|e| fail("locating the instance", e))?;
     if record.instance_id.as_deref() != Some(id.as_str()) {
         return Err("the instance is not the one setup recorded; run agentic-org setup".into());
     }
     Ok((record, id, temp.join("host.sock")))
-}
-
-fn wait_for_locator<T>(
-    context: &str,
-    deadline: Instant,
-    mut work: impl FnMut() -> Result<T, crate::instance::Error>,
-) -> Result<T, String> {
-    loop {
-        match work() {
-            Err(crate::instance::Error::Busy(_)) if Instant::now() < deadline => {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                std::thread::sleep(remaining.min(Duration::from_millis(50)));
-            }
-            result => return result.map_err(|e| fail(context, e)),
-        }
-    }
 }
 
 /// What `admin reset` answers when its output is not a terminal (spec §4a.4).

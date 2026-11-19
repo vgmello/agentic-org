@@ -7,6 +7,7 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use super::Error;
 
@@ -322,6 +323,24 @@ impl Directory {
         lock(&self.file, &self.path)?;
         self.locked = true;
         Ok(())
+    }
+
+    /// [`Self::lock_file`] for a lock that every holder keeps only for a moment: while
+    /// another process holds it, it is tried again until `wait` has passed, and only a
+    /// holder that keeps it longer is reported as [`Error::Busy`].
+    pub(super) fn lock_file_within(&self, name: &str, wait: Duration) -> Result<FileLock, Error> {
+        const RETRY: Duration = Duration::from_millis(10);
+        let deadline = Instant::now() + wait;
+        loop {
+            match self.lock_file(name) {
+                Err(Error::Busy(_)) if Instant::now() < deadline => {
+                    std::thread::sleep(
+                        RETRY.min(deadline.saturating_duration_since(Instant::now())),
+                    );
+                }
+                result => return result,
+            }
+        }
     }
 
     pub(super) fn lock_file(&self, name: &str) -> Result<FileLock, Error> {

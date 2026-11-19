@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +12,12 @@ use super::{Error, Name};
 const REGISTRY: &str = "instances.json";
 const CONFIG: &str = "instance.json";
 const LOCK: &str = "registry.lock";
+/// How long a registry call waits for the locator's lock. Every holder keeps it only while
+/// it reads or publishes the locator (a command locating its instance, a service host
+/// reserving it at its start), so a call that meets it held waits for it rather than
+/// failing: otherwise a command run while a service starts (`agentic-org service start`,
+/// then `service status`) makes that start fail. Only a holder past this is reported busy.
+const LOCK_WAIT: Duration = Duration::from_secs(5);
 /// The host's durable record that it created this instance's host registry (ADR-0022).
 const REGISTRY_CREATED: &str = "host-registry.created";
 const MAX_BYTES: usize = 64 * 1024;
@@ -380,6 +387,11 @@ impl Instance {
 }
 
 impl Registry {
+    /// The locator's lock, waited for up to [`LOCK_WAIT`] while another process holds it.
+    fn lock(&self) -> Result<super::directory::FileLock, Error> {
+        self.directory.lock_file_within(LOCK, LOCK_WAIT)
+    }
+
     /// Library use case only until agentic-org can expose the signed/interactive CLI.
     /// Preflight and confirmation hold no locks. Revalidation takes registry, then root.
     pub(crate) fn rebind(
@@ -422,7 +434,7 @@ impl Registry {
 
         // Canonical order; no root lock is retained across the human confirmation.
         self.directory.verify()?;
-        let lock = self.directory.lock_file(LOCK)?;
+        let lock = self.lock()?;
         let (mut locator, previous) = self.load()?;
         let changed = || Error::RebindChanged {
             name: name.as_str().to_owned(),
@@ -490,7 +502,7 @@ impl Registry {
     /// Startup re-creates all recorded instance folders before sessions build deny lists.
     /// The returned canonical paths are a snapshot taken under the locator lock.
     pub(crate) fn restore_temp_folders(&self) -> Result<Vec<PathBuf>, Error> {
-        let lock = self.directory.lock_file(LOCK)?;
+        let lock = self.lock()?;
         let (locator, _previous) = self.load()?;
         self.user_temp.verify()?;
         let parent = self.user_temp.child("ao", true)?;
@@ -512,7 +524,7 @@ impl Registry {
         let path = absolute(root)?;
         self.directory.verify()?;
         self.user_temp.verify()?;
-        let registry_lock = self.directory.lock_file(LOCK)?;
+        let registry_lock = self.lock()?;
         let (mut locator, mut previous) = self.load()?;
         let mut root = match self.check_roots(&locator, &name, &path)? {
             Some(root) => root,
@@ -578,7 +590,7 @@ impl Registry {
     /// failed (X5 review, fourth round, P2-7).
     pub(crate) fn reserved(&self, name: Option<&str>) -> Result<bool, Error> {
         let name = Name::parse(name)?;
-        let lock = self.directory.lock_file(LOCK)?;
+        let lock = self.lock()?;
         let (locator, _) = self.load()?;
         self.directory.verify_file(LOCK, &lock)?;
         Ok(locator.entries.iter().any(|e| e.binding.name == name))
@@ -593,7 +605,7 @@ impl Registry {
     ) -> Result<(String, PathBuf), Error> {
         let name = Name::parse(name)?;
         let path = absolute(path)?;
-        let lock = self.directory.lock_file(LOCK)?;
+        let lock = self.lock()?;
         let (locator, _) = self.load()?;
         let entry = locator
             .entries
@@ -619,7 +631,7 @@ impl Registry {
     /// whose root or configuration cannot be read is skipped: setup uses this only to
     /// avoid choosing a port another instance already owns.
     pub(crate) fn saved_browser_ports(&self) -> Result<Vec<(String, u16)>, Error> {
-        let lock = self.directory.lock_file(LOCK)?;
+        let lock = self.lock()?;
         let (locator, _) = self.load()?;
         let mut ports = Vec::new();
         for entry in &locator.entries {
