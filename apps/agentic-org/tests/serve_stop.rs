@@ -210,6 +210,16 @@ fn a_start_that_does_not_end_is_ended_at_the_stop_s_bound() {
     let instance = Foreground::new();
     let (output, write) = full_pipe();
     let mut serve = instance.spawn(write);
+    // X5 review F10: whatever mask it was started with (this test's), the service makes
+    // what is its user's alone. Read where the system shows a process's mask.
+    let shown = format!("/proc/{}/status", serve.0.id());
+    match fs::read_to_string(&shown) {
+        Ok(status) => assert!(
+            status.lines().any(|line| line == "Umask:\t0077"),
+            "{status}"
+        ),
+        Err(_) => println!("the file-creation mask is not checked: {shown} is not readable"),
+    }
     let (status, took) = stop(&mut serve);
     println!("serve exited {took:?} after SIGTERM, held in setup: {status}");
     assert_eq!(status.code(), Some(0), "{status}: {}", instance.stderr());

@@ -152,7 +152,10 @@ impl std::error::Error for ServiceError {}
 
 pub trait ServiceManager: Send + Sync {
     /// Idempotent. An identical, loaded registration is left alone so a healthy service
-    /// is not restarted. A different definition under the same name is a conflict.
+    /// is not restarted. A definition under the same name that is exactly what this adapter
+    /// rendered for another unit of the same instance (an earlier program, arguments or
+    /// environment) is replaced: its service is stopped and unloaded first. Any other
+    /// definition under the name is a conflict, never taken over.
     fn register(&self, unit: &Unit) -> Result<Registration, ServiceError>;
     /// Starts a loaded service; a running one is left alone. A definition the manager has
     /// not loaded is refused: only `register`, which compares it with the unit, loads it.
@@ -163,9 +166,11 @@ pub trait ServiceManager: Send + Sync {
     fn status(&self, instance_id: &str) -> Result<ServiceStatus, ServiceError>;
     /// Unloads the service and removes its definition.
     fn unregister(&self, instance_id: &str) -> Result<(), ServiceError>;
-    /// Whether the service manager answers at all, asked before anything is changed.
-    /// [`ServiceError::Unavailable`] where the system has none to register with. Managers
-    /// that are always there answer `Ok` without asking.
+    /// Whether the service manager answers at all and would load a definition from this
+    /// adapter's placement, asked before anything is changed. [`ServiceError::Unavailable`]
+    /// where the system has none to register with; another error where it answers but
+    /// reads its definitions elsewhere. Managers that are always there answer `Ok` without
+    /// asking.
     fn available(&self) -> Result<(), ServiceError> {
         Ok(())
     }

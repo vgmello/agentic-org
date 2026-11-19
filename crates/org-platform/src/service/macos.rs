@@ -189,7 +189,15 @@ impl Launchd {
             .map_err(|e| ServiceError::System(format!("cannot read {}: {e}", file.display())))
     }
 
-    fn write_definition(&self, file: &Path, bytes: &[u8]) -> Result<(), ServiceError> {
+    /// Publishes `bytes` at `file`: a complete temporary file, then a hard link, which never
+    /// replaces a definition that appeared meanwhile; or, to `replace` the earlier rendering
+    /// register found, a rename over it.
+    fn write_definition(
+        &self,
+        file: &Path,
+        bytes: &[u8],
+        replace: bool,
+    ) -> Result<(), ServiceError> {
         let system =
             |e: io::Error| ServiceError::System(format!("cannot write {}: {e}", file.display()));
         fs::create_dir_all(&self.placement.directory).map_err(system)?;
@@ -212,17 +220,45 @@ impl Launchd {
             .custom_flags(libc::O_NOFOLLOW)
             .open(&temporary)
             .map_err(system)?;
+        // The mode is set on the open file, never again by the path.
         let written = f
             .write_all(bytes)
-            .and_then(|()| f.sync_all())
-            .and_then(|()| fs::set_permissions(&temporary, fs::Permissions::from_mode(0o644)));
+            .and_then(|()| f.set_permissions(fs::Permissions::from_mode(0o644)))
+            .and_then(|()| f.sync_all());
         // A hard link publishes the complete file and, unlike rename, never replaces a
         // definition another writer placed meanwhile.
-        let published = written
-            .map_err(system)
-            .and_then(|()| fs::hard_link(&temporary, file).map_err(conflict));
+        let published = written.map_err(system).and_then(|()| {
+            if replace {
+                fs::rename(&temporary, file).map_err(system)
+            } else {
+                fs::hard_link(&temporary, file).map_err(conflict)
+            }
+        });
         let _ = fs::remove_file(&temporary);
         published
+    }
+
+    /// Unloads the job `label` and waits until launchd no longer lists it.
+    fn boot_out(&self, label: &str) -> Result<(), ServiceError> {
+        let out = self.run(&["bootout".into(), self.target(label)])?;
+        if out.code != 0 && out.code != NO_SUCH_SERVICE {
+            return Err(ServiceError::System(format!(
+                "launchctl bootout exited with {}",
+                out.code
+            )));
+        }
+        // bootout can return while launchd still tears the job down.
+        let deadline = std::time::Instant::now() + UNLOAD_WAIT;
+        while self.print(label)?.is_some() {
+            if std::time::Instant::now() >= deadline {
+                return Err(ServiceError::System(format!(
+                    "launchd still lists {label} {} s after bootout",
+                    UNLOAD_WAIT.as_secs()
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        Ok(())
     }
 
     fn bootstrap(&self, file: &Path) -> Result<(), ServiceError> {
@@ -239,17 +275,31 @@ impl ServiceManager for Launchd {
         let bytes = render(&label, unit);
         let loaded = self.print_ours(&label)?.is_some();
         match self.read_definition(&file)? {
-            Some(existing) if existing != bytes => Err(ServiceError::Conflict(format!(
-                "{} already defines {label} differently; it is left untouched",
-                file.display()
-            ))),
+            // An earlier rendering of a job under this label, which holds the instance's
+            // ID: what this adapter wrote for the same instance with another program,
+            // arguments or environment (setup run again with what the service lacked, X5
+            // review V-b). It is replaced, never edited: its job is booted out first.
+            // Anything else is never taken over.
+            Some(existing) if existing != bytes => {
+                if definition(&label, &existing).is_none() {
+                    return Err(ServiceError::Conflict(format!(
+                        "{} already defines {label} differently; it is left untouched",
+                        file.display()
+                    )));
+                }
+                if loaded {
+                    self.boot_out(&label)?;
+                }
+                self.write_definition(&file, &bytes, true)?;
+                self.bootstrap(&file).map(|()| Registration::Loaded)
+            }
             Some(_) if loaded => Ok(Registration::Unchanged),
             Some(_) => self.bootstrap(&file).map(|()| Registration::Loaded),
             None if loaded => Err(ServiceError::Conflict(format!(
                 "launchd already runs {label} from another definition"
             ))),
             None => {
-                self.write_definition(&file, &bytes)?;
+                self.write_definition(&file, &bytes, false)?;
                 self.bootstrap(&file).map(|()| Registration::Loaded)
             }
         }
@@ -301,24 +351,7 @@ impl ServiceManager for Launchd {
         let label = self.label(instance_id)?;
         let file = self.file(&label);
         if self.print_ours(&label)?.is_some() {
-            let out = self.run(&["bootout".into(), self.target(&label)])?;
-            if out.code != 0 && out.code != NO_SUCH_SERVICE {
-                return Err(ServiceError::System(format!(
-                    "launchctl bootout exited with {}",
-                    out.code
-                )));
-            }
-            // bootout can return while launchd still tears the job down.
-            let deadline = std::time::Instant::now() + UNLOAD_WAIT;
-            while self.print(&label)?.is_some() {
-                if std::time::Instant::now() >= deadline {
-                    return Err(ServiceError::System(format!(
-                        "launchd still lists {label} {} s after bootout",
-                        UNLOAD_WAIT.as_secs()
-                    )));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
+            self.boot_out(&label)?;
         }
         match fs::remove_file(&file) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(ServiceError::System(format!(
@@ -383,6 +416,59 @@ fn escape(text: &str) -> String {
         }
     }
     out
+}
+
+/// What a definition this adapter wrote says: the unit it is a rendering of, or `None` when
+/// the bytes are not exactly the rendering of a unit under `label` (a file someone wrote or
+/// changed). The parse only has to find the values, one per line; re-rendering them and
+/// comparing the bytes is what makes it exact.
+fn definition(label: &str, bytes: &[u8]) -> Option<Unit> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let value = |line: &str, tag: &str| {
+        line.strip_prefix(&format!("\t\t<{tag}>"))?
+            .strip_suffix(&format!("</{tag}>"))
+            .map(unescape)
+    };
+    let mut lines = text.lines();
+    lines.find(|line| *line == "\t<key>ProgramArguments</key>")?;
+    (lines.next()? == "\t<array>").then_some(())?;
+    let mut words = Vec::new();
+    for line in lines.by_ref() {
+        if line == "\t</array>" {
+            break;
+        }
+        words.push(value(line, "string")?);
+    }
+    (lines.next()? == "\t<key>EnvironmentVariables</key>").then_some(())?;
+    (lines.next()? == "\t<dict>").then_some(())?;
+    let mut env = Vec::new();
+    while let Some(line) = lines.next() {
+        if line == "\t</dict>" {
+            break;
+        }
+        let key = value(line, "key")?;
+        let value = value(lines.next()?, "string")?;
+        env.push((key.into(), value.into()));
+    }
+    let mut words = words.into_iter();
+    let unit = Unit {
+        instance_id: String::new(),
+        program: words.next()?.into(),
+        args: words.map(OsString::from).collect(),
+        env,
+    };
+    (render(label, &unit) == bytes).then_some(unit)
+}
+
+/// The text [`escape`] wrote. Anything it does not write is left as it is, and the
+/// comparison of a new rendering with the bytes then fails.
+fn unescape(text: &str) -> String {
+    text.replace("&#13;", "\r")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 /// The launchd definition. Inputs were validated as UTF-8 by `validate`.

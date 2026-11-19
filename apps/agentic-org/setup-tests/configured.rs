@@ -112,8 +112,7 @@ fn a_configuration_that_cannot_be_used_is_refused_and_nothing_is_saved() {
         "published.json",
         &registered(&account, port)
             .replacen("\"127.0.0.1\"", "\"0.0.0.0\"", 1)
-            .replacen("\"http_loopback\"", "\"http_published\"", 1)
-            .replacen("http://127.0.0.1:", "http://localhost:", 1),
+            .replacen("\"http_loopback\"", "\"http_published\"", 1),
     );
     // Never implied by plain `http_loopback` and another address.
     let implied = file(

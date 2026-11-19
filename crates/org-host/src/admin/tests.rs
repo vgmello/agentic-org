@@ -139,8 +139,11 @@ fn no_link_is_issued_while_an_administrator_exists() {
         admin.initial_link(OPERATION, 1).unwrap(),
         AdminLinkResult::AdministratorPresent
     ));
-    let error = admin.reset_with(true, || Ok(())).unwrap_err();
-    assert_eq!(error.code, ErrorCode::Unavailable);
+    // X5 review, fourth round, P2-10: an answer the command can act on, not an error.
+    assert!(matches!(
+        admin.reset_with(true, || Ok(())).unwrap(),
+        AdminLinkResult::AdministratorPresent
+    ));
     assert_eq!(
         admin
             .db
@@ -196,13 +199,13 @@ fn reset_replaces_the_previous_link_and_only_the_newest_redeems() {
 #[test]
 fn a_dialog_that_sees_a_new_administrator_issues_nothing() {
     let (_home, admin) = admin();
-    let error = admin
+    let answer = admin
         .reset_with(true, || {
             seed_administrator(&admin);
             Ok(())
         })
-        .unwrap_err();
-    assert_eq!(error.code, ErrorCode::Unavailable);
+        .unwrap();
+    assert!(matches!(answer, AdminLinkResult::AdministratorPresent));
     assert_eq!(
         admin
             .db
@@ -221,13 +224,13 @@ fn a_reset_refused_for_an_administrator_keeps_the_pending_link() {
         .pending(LinkKind::Registration, &subject(), 1)
         .unwrap()
         .expect("pending link");
-    let error = admin
+    let answer = admin
         .reset_with(true, || {
             seed_administrator(&admin);
             Ok(())
         })
-        .unwrap_err();
-    assert_eq!(error.code, ErrorCode::Unavailable);
+        .unwrap();
+    assert!(matches!(answer, AdminLinkResult::AdministratorPresent));
     // The administrator check and the replacement share one transaction: a refused reset
     // neither cancels the pending link nor writes a new one.
     let after = admin
@@ -326,10 +329,10 @@ fn where_a_peer_is_named_by_its_user_alone_only_root_resets_the_administrator() 
     let (second, _) = token(refusing.reset(&root, received).unwrap());
     assert_ne!(first, second);
     seed_administrator(&refusing);
-    assert_eq!(
-        refusing.reset(&root, received).unwrap_err().code,
-        ErrorCode::Unavailable
-    );
+    assert!(matches!(
+        refusing.reset(&root, received).unwrap(),
+        AdminLinkResult::AdministratorPresent
+    ));
     // Bytes already waiting behind the request deny it, as for every caller.
     let (_home, fresh) = admin();
     let (busy_host, mut busy_peer) = UnixStream::pair().unwrap();

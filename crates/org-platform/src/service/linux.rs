@@ -29,7 +29,12 @@
 //!   systemd loaded it from that file, nothing changed on disk since, and it is enabled.
 //!   A healthy service is not restarted.
 //! - **The definition is published complete and never replaces a file that appeared
-//!   meanwhile**: a temporary file, flushed, then a hard link.
+//!   meanwhile**: a temporary file, flushed, then a hard link, all relative to the unit
+//!   directory held open, which must be this user's and not writable by other users. The
+//!   one file register replaces is an exact earlier rendering of a unit under the same
+//!   name, which holds the instance's ID: its unit is disabled and stopped first.
+//! - **Nothing is written for a manager that would not read it**: the manager's
+//!   `UnitPath` must name the placement's directory (`available` and register ask).
 //! - **The location variables the unit does not set are unset** (`UnsetEnvironment=`, for
 //!   every name of `crate::dirs::location_variables`): the user manager's own environment
 //!   cannot move the instance's locations away from the ones setup resolved.
@@ -62,7 +67,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::{self, Write},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -394,7 +399,7 @@ impl Systemd {
         // register compares its bytes and reloads it, which compares again.
         if runs && shown.load == "loaded" && !shown.needs_reload {
             let defined = self
-                .read_definition(&file)?
+                .read_definition(name)?
                 .and_then(|bytes| definition(name, &bytes));
             let Some(defined) = defined else {
                 return Err(ServiceError::Conflict(format!(
@@ -418,67 +423,96 @@ impl Systemd {
         Ok(Some(shown))
     }
 
-    fn read_definition(&self, file: &Path) -> Result<Option<Vec<u8>>, ServiceError> {
-        match fs::symlink_metadata(file) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => {
-                return Err(ServiceError::System(format!(
-                    "cannot inspect {}: {e}",
-                    file.display()
-                )))
-            }
-            Ok(m) if !m.file_type().is_file() => {
-                return Err(ServiceError::Conflict(format!(
-                    "{} is not a regular file",
-                    file.display()
-                )))
-            }
-            Ok(_) => {}
+    /// The definition `name` in the placement's directory, read relative to the held
+    /// directory without following a link. `None` when the directory or the file is missing.
+    fn read_definition(&self, name: &str) -> Result<Option<Vec<u8>>, ServiceError> {
+        match self.directory(false)? {
+            Some(directory) => directory.read(name),
+            None => Ok(None),
         }
-        fs::read(file)
-            .map(Some)
-            .map_err(|e| ServiceError::System(format!("cannot read {}: {e}", file.display())))
     }
 
-    fn write_definition(&self, file: &Path, bytes: &[u8]) -> Result<(), ServiceError> {
-        let system =
-            |e: io::Error| ServiceError::System(format!("cannot write {}: {e}", file.display()));
-        fs::create_dir_all(&self.placement.directory).map_err(system)?;
-        let temporary = file.with_extension(format!("service.{}.tmp", std::process::id()));
-        let conflict = |e: io::Error| {
-            if e.kind() == io::ErrorKind::AlreadyExists {
-                ServiceError::Conflict(format!(
-                    "{} appeared while registering; it is left untouched",
-                    file.display()
-                ))
-            } else {
-                system(e)
-            }
+    /// The placement's directory, held open and judged ([`UnitDirectory`]). `create`: made
+    /// first where it is missing (mode 700, whatever the process's mask leaves). `None`
+    /// when it does not exist and is not to be made.
+    fn directory(&self, create: bool) -> Result<Option<UnitDirectory>, ServiceError> {
+        let directory = &self.placement.directory;
+        let system = |e: io::Error| {
+            ServiceError::System(format!("cannot open {}: {e}", directory.display()))
         };
-        let _ = fs::remove_file(&temporary);
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o644)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&temporary)
-            .map_err(system)?;
-        let written = f
-            .write_all(bytes)
-            .and_then(|()| f.sync_all())
-            .and_then(|()| fs::set_permissions(&temporary, fs::Permissions::from_mode(0o644)));
-        // A hard link publishes the complete file and, unlike rename, never replaces a
-        // definition another writer placed meanwhile.
-        let published = written
-            .map_err(system)
-            .and_then(|()| fs::hard_link(&temporary, file).map_err(conflict));
-        let _ = fs::remove_file(&temporary);
-        published?;
-        // The new name is in the directory: flush the directory, so the definition is
-        // still there after a power loss.
-        fs::File::open(&self.placement.directory)
-            .and_then(|directory| directory.sync_all())
-            .map_err(system)
+        if create {
+            use std::os::unix::fs::DirBuilderExt;
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(directory)
+                .map_err(system)?;
+        }
+        let file = match fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
+            .open(directory)
+        {
+            Ok(file) => file,
+            Err(e) if e.kind() == io::ErrorKind::NotFound && !create => return Ok(None),
+            Err(e) => return Err(system(e)),
+        };
+        let found = file.metadata().map_err(system)?;
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let user = unsafe { libc::geteuid() };
+        let rule = if found.uid() != user {
+            "it belongs to another user"
+        } else if found.mode() & 0o002 != 0 {
+            "it is writable by other users"
+        } else {
+            return Ok(Some(UnitDirectory {
+                file,
+                path: directory.clone(),
+            }));
+        };
+        Err(ServiceError::Conflict(format!(
+            "{} cannot hold this user's units: {rule}",
+            directory.display()
+        )))
+    }
+
+    /// Whether systemd's user manager reads unit files from the placement's directory: its
+    /// `UnitPath` names it. A manager whose `XDG_CONFIG_HOME` is another folder reads
+    /// another directory, and a unit written to this one would never be loaded (X5 review,
+    /// fourth round, P2-4). Asked before anything is written.
+    fn reads_placement(&self) -> Result<(), ServiceError> {
+        let out = self.systemctl(&["show".as_ref(), "--property=UnitPath".as_ref()])?;
+        if out.code != 0 {
+            return Err(ServiceError::System(format!(
+                "systemctl --user show exited with {} ({})",
+                out.code,
+                said(&out)
+            )));
+        }
+        let listed = property(&out.stdout, "UnitPath").ok_or_else(|| {
+            ServiceError::System("systemd's user manager did not report its unit path".into())
+        })?;
+        let wanted = &self.placement.directory;
+        // The entries are separated by spaces; a directory with a space in its name is
+        // found as a whole entry.
+        let named = format!(" {listed} ").contains(&format!(" {} ", wanted.display()))
+            || listed
+                .split(' ')
+                .any(|entry| resolved(Path::new(entry)) == resolved(wanted));
+        if named {
+            return Ok(());
+        }
+        Err(ServiceError::System(format!(
+            "systemd's user manager does not read unit files from {}, so a unit written there \
+             would never be loaded (its unit path is {}; its XDG_CONFIG_HOME names another \
+             folder); nothing was changed",
+            wanted.display(),
+            listed
+                .chars()
+                .take(400)
+                .flat_map(char::escape_default)
+                .collect::<String>()
+        )))
     }
 
     /// Makes systemd read the definition at `file`, whose bytes the caller compared with
@@ -529,30 +563,55 @@ impl ServiceManager for Systemd {
         let file = self.file(&name);
         let bytes = render(&name, unit);
         let shown = self.show_ours(&name, true)?;
-        match self.read_definition(&file)? {
-            Some(existing) if existing != bytes => Err(ServiceError::Conflict(format!(
-                "{} already defines {name} differently; it is left untouched",
-                file.display()
-            ))),
-            Some(_) if shown.as_ref().is_some_and(Shown::settled) => Ok(Registration::Unchanged),
-            Some(_) => self.load(&name, &file).map(|()| Registration::Loaded),
-            None if shown.is_some() => Err(ServiceError::Conflict(format!(
-                "systemd still has {name} from a definition that is gone"
-            ))),
-            None => {
-                self.write_definition(&file, &bytes)?;
-                match self.load(&name, &file) {
-                    Ok(()) => Ok(Registration::Loaded),
-                    Err(refused) => {
-                        // What this call wrote is not left behind for the next one to
-                        // find: the file goes (its enablement went in `load`), systemd is
-                        // told so, and a start that failed is not kept as a failed unit.
-                        let _ = fs::remove_file(&file);
-                        let _ = self.systemctl(&["daemon-reload".as_ref()]);
-                        let _ = self.systemctl(&["reset-failed".as_ref(), name.as_ref()]);
-                        Err(refused)
-                    }
+        let replace = match self.read_definition(&name)? {
+            // An earlier rendering of a unit under this name, which holds the instance's
+            // ID: what this adapter wrote for the same instance with another program,
+            // arguments or environment (setup run again with what the service lacked, X5
+            // review V-b). It is replaced, never edited: what systemd runs from it stops and
+            // loses its enablement first. Anything else is never taken over.
+            Some(existing) if existing != bytes => {
+                if definition(&name, &existing).is_none() {
+                    return Err(ServiceError::Conflict(format!(
+                        "{} already defines {name} differently; it is left untouched",
+                        file.display()
+                    )));
                 }
+                true
+            }
+            Some(_) if shown.as_ref().is_some_and(Shown::settled) => {
+                return Ok(Registration::Unchanged)
+            }
+            Some(_) => return self.load(&name, &file).map(|()| Registration::Loaded),
+            None if shown.is_some() => {
+                return Err(ServiceError::Conflict(format!(
+                    "systemd still has {name} from a definition that is gone"
+                )))
+            }
+            None => false,
+        };
+        // Nothing is written for a manager that would never read it.
+        self.reads_placement()?;
+        let directory = self
+            .directory(true)?
+            .expect("a directory this call makes exists");
+        // Published first: a write that fails leaves the earlier rendering as it was, and
+        // running. Then what systemd runs from the earlier one stops and loses its
+        // enablement, and the new one is loaded as a first registration's would be.
+        directory.publish(&name, &bytes, replace)?;
+        if replace && shown.is_some() {
+            self.expect_ok(&["disable".as_ref(), "--now".as_ref(), name.as_ref()])?;
+        }
+        match self.load(&name, &file) {
+            Ok(()) => Ok(Registration::Loaded),
+            Err(refused) => {
+                // What this call wrote is not left behind for the next one to find: the
+                // file goes (its enablement went in `load`), systemd is told so, and a
+                // start that failed is not kept as a failed unit. A definition this call
+                // replaced is not put back: it was this instance's, and it did not serve.
+                let _ = directory.remove(&name);
+                let _ = self.systemctl(&["daemon-reload".as_ref()]);
+                let _ = self.systemctl(&["reset-failed".as_ref(), name.as_ref()]);
+                Err(refused)
             }
         }
     }
@@ -594,9 +653,7 @@ impl ServiceManager for Systemd {
                 None if shown.settled() => ServiceStatus::Stopped,
                 None => ServiceStatus::Unloaded,
             }),
-            None if self.read_definition(&self.file(&name))?.is_some() => {
-                Ok(ServiceStatus::Unloaded)
-            }
+            None if self.read_definition(&name)?.is_some() => Ok(ServiceStatus::Unloaded),
             None => Ok(ServiceStatus::NotRegistered),
         }
     }
@@ -609,7 +666,11 @@ impl ServiceManager for Systemd {
             // Stops the unit (and waits for it) and removes its enablement links.
             self.expect_ok(&["disable".as_ref(), "--now".as_ref(), name.as_ref()])?;
         }
-        match fs::remove_file(&file) {
+        let removed = match self.directory(false)? {
+            Some(directory) => directory.remove(&name),
+            None => Ok(()),
+        };
+        match removed {
             Err(e) if e.kind() != io::ErrorKind::NotFound => {
                 return Err(ServiceError::System(format!(
                     "cannot remove {}: {e}",
@@ -649,7 +710,7 @@ impl ServiceManager for Systemd {
                 said(&out)
             )));
         }
-        Ok(())
+        self.reads_placement()
     }
 
     fn lingering(&self) -> Lingering {
@@ -674,6 +735,164 @@ impl ServiceManager for Systemd {
             Err(e) => Lingering::Unknown(format!("loginctl could not run: {e}")),
         }
     }
+}
+
+/// The placement's directory, held open by [`Systemd::directory`], which judged it: a
+/// directory of this user that other users cannot write to. A definition is read, published
+/// and removed relative to this descriptor and never again by its path, so an entry renamed
+/// or replaced meanwhile is never the one changed, and the mode is set on the open file
+/// (X5 review, fourth round, P2-5).
+struct UnitDirectory {
+    file: fs::File,
+    path: PathBuf,
+}
+
+impl UnitDirectory {
+    fn entry(&self, name: &str) -> Result<std::ffi::CString, ServiceError> {
+        std::ffi::CString::new(name)
+            .map_err(|_| ServiceError::Invalid("a unit name holds a NUL byte"))
+    }
+
+    /// The bytes of the regular file `name`, opened without following a link; `None` when
+    /// there is none.
+    fn read(&self, name: &str) -> Result<Option<Vec<u8>>, ServiceError> {
+        use std::io::Read;
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let shown = self.path.join(name);
+        let entry = self.entry(name)?;
+        // SAFETY: the held directory and a NUL-terminated single name.
+        let fd = unsafe {
+            libc::openat(
+                self.file.as_raw_fd(),
+                entry.as_ptr(),
+                libc::O_RDONLY
+                    | libc::O_NOFOLLOW
+                    | libc::O_NONBLOCK
+                    | libc::O_NOCTTY
+                    | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            let error = io::Error::last_os_error();
+            return match error.raw_os_error() {
+                Some(libc::ENOENT) => Ok(None),
+                Some(libc::ELOOP) => Err(ServiceError::Conflict(format!(
+                    "{} is not a regular file",
+                    shown.display()
+                ))),
+                _ => Err(ServiceError::System(format!(
+                    "cannot read {}: {error}",
+                    shown.display()
+                ))),
+            };
+        }
+        // SAFETY: a new descriptor owned only here.
+        let file = unsafe { fs::File::from_raw_fd(fd) };
+        let system =
+            |e: io::Error| ServiceError::System(format!("cannot read {}: {e}", shown.display()));
+        if !file.metadata().map_err(system)?.is_file() {
+            return Err(ServiceError::Conflict(format!(
+                "{} is not a regular file",
+                shown.display()
+            )));
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_DEFINITION + 1)
+            .read_to_end(&mut bytes)
+            .map_err(system)?;
+        if bytes.len() as u64 > MAX_DEFINITION {
+            return Err(ServiceError::Conflict(format!(
+                "{} is not a definition this adapter wrote",
+                shown.display()
+            )));
+        }
+        Ok(Some(bytes))
+    }
+
+    /// Publishes `bytes` as `name`: a complete temporary file (mode 0644, set on the open
+    /// file whatever the process's mask is), flushed, then a hard link, which never
+    /// replaces a definition another writer placed meanwhile; or, to `replace` the earlier
+    /// rendering register found, a rename over it. The directory is flushed afterwards, so
+    /// the definition is still there after a power loss.
+    fn publish(&self, name: &str, bytes: &[u8], replace: bool) -> Result<(), ServiceError> {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let shown = self.path.join(name);
+        let system =
+            |e: io::Error| ServiceError::System(format!("cannot write {}: {e}", shown.display()));
+        let entry = self.entry(name)?;
+        let temporary = self.entry(&format!("{name}.{}.tmp", std::process::id()))?;
+        let directory = self.file.as_raw_fd();
+        // SAFETY (each call below): the held directory and NUL-terminated single names.
+        unsafe { libc::unlinkat(directory, temporary.as_ptr(), 0) };
+        let fd = unsafe {
+            libc::openat(
+                directory,
+                temporary.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o644 as libc::c_uint,
+            )
+        };
+        if fd < 0 {
+            return Err(system(io::Error::last_os_error()));
+        }
+        // SAFETY: a new descriptor owned only here.
+        let mut file = unsafe { fs::File::from_raw_fd(fd) };
+        let written = file
+            .write_all(bytes)
+            .and_then(|()| file.set_permissions(fs::Permissions::from_mode(0o644)))
+            .and_then(|()| file.sync_all());
+        drop(file);
+        let published = written.map_err(system).and_then(|()| {
+            let status = if replace {
+                unsafe { libc::renameat(directory, temporary.as_ptr(), directory, entry.as_ptr()) }
+            } else {
+                unsafe { libc::linkat(directory, temporary.as_ptr(), directory, entry.as_ptr(), 0) }
+            };
+            if status == 0 {
+                return Ok(());
+            }
+            let error = io::Error::last_os_error();
+            Err(if error.kind() == io::ErrorKind::AlreadyExists {
+                ServiceError::Conflict(format!(
+                    "{} appeared while registering; it is left untouched",
+                    shown.display()
+                ))
+            } else {
+                system(error)
+            })
+        });
+        unsafe { libc::unlinkat(directory, temporary.as_ptr(), 0) };
+        published?;
+        self.file.sync_all().map_err(system)
+    }
+
+    /// Removes the entry `name` (never a directory).
+    fn remove(&self, name: &str) -> io::Result<()> {
+        use std::os::fd::AsRawFd;
+        let entry = std::ffi::CString::new(name).map_err(io::Error::other)?;
+        // SAFETY: the held directory and a NUL-terminated single name.
+        if unsafe { libc::unlinkat(self.file.as_raw_fd(), entry.as_ptr(), 0) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        self.file.sync_all()
+    }
+}
+
+/// The longest definition read back: a rendering is a few hundred bytes.
+const MAX_DEFINITION: u64 = 1 << 20;
+
+/// `path` with the links of its deepest existing ancestor resolved, for comparing a
+/// directory that may not exist yet with one systemd names.
+fn resolved(path: &Path) -> PathBuf {
+    for ancestor in path.ancestors() {
+        if let Ok(found) = fs::canonicalize(ancestor) {
+            return match path.strip_prefix(ancestor) {
+                Ok(rest) if !rest.as_os_str().is_empty() => found.join(rest),
+                _ => found,
+            };
+        }
+    }
+    path.to_owned()
 }
 
 /// `systemctl`'s own words when no user manager answers it.

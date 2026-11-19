@@ -240,9 +240,9 @@ fn publishing_never_replaces_a_definition_that_appeared_meanwhile() {
     let temp = tempfile::tempdir().unwrap();
     let (launchd, _fake) = launchd(temp.path());
     let file = temp.path().join(format!("LaunchAgents/{LABEL}.plist"));
-    launchd.write_definition(&file, b"first").unwrap();
+    launchd.write_definition(&file, b"first", false).unwrap();
     assert!(matches!(
-        launchd.write_definition(&file, b"second"),
+        launchd.write_definition(&file, b"second", false),
         Err(ServiceError::Conflict(_))
     ));
     assert_eq!(fs::read(&file).unwrap(), b"first");
@@ -452,4 +452,57 @@ fn real_launchd() {
     manager.unregister(&id).unwrap();
     assert_eq!(manager.status(&id).unwrap(), ServiceStatus::NotRegistered);
     assert!(fs::read_dir(temp.path()).unwrap().next().is_none());
+}
+
+/// X5 review V-b: a definition that is exactly an earlier rendering of a job for the same
+/// instance (another program or environment, as when setup runs again with what the service
+/// lacked) is replaced: its job is booted out, the new rendering is published and loaded. A
+/// file that is no rendering is still never taken over.
+#[test]
+fn an_earlier_rendering_for_the_same_instance_is_replaced() {
+    let temp = tempfile::tempdir().unwrap();
+    let (launchd, fake) = launchd(temp.path());
+    launchd.register(&unit()).unwrap();
+    let file = temp.path().join(format!("LaunchAgents/{LABEL}.plist"));
+    let fixed = Unit {
+        env: vec![
+            ("HOME".into(), "/Users/a".into()),
+            (
+                "ORG_OFFICE_DEV_KEY_DIR".into(),
+                "/Users/a/keys & more".into(),
+            ),
+        ],
+        ..unit()
+    };
+    assert!(definition(LABEL, &render(LABEL, &unit())).is_some());
+    assert_eq!(
+        definition(LABEL, &render(LABEL, &fixed)).unwrap().env,
+        fixed.env
+    );
+    fake.clear();
+    assert_eq!(launchd.register(&fixed).unwrap(), Registration::Loaded);
+    assert_eq!(fs::read(&file).unwrap(), render(LABEL, &fixed));
+    assert_eq!(fake.verbs(), ["print", "bootout", "print", "bootstrap"]);
+    assert_eq!(
+        launchd.status(ID).unwrap(),
+        ServiceStatus::Running { pid: 42 }
+    );
+    let entries = fs::read_dir(temp.path().join("LaunchAgents"))
+        .unwrap()
+        .count();
+    assert_eq!(entries, 1, "a temporary file remains");
+    assert_eq!(launchd.register(&fixed).unwrap(), Registration::Unchanged);
+    // A file that is not a rendering (edited by hand) is not replaced.
+    let edited = String::from_utf8(render(LABEL, &fixed))
+        .unwrap()
+        .replace("<integer>63</integer>", "<integer>18</integer>");
+    fs::write(&file, &edited).unwrap();
+    assert!(definition(LABEL, edited.as_bytes()).is_none());
+    fake.clear();
+    assert!(matches!(
+        launchd.register(&unit()),
+        Err(ServiceError::Conflict(_))
+    ));
+    assert_eq!(fs::read_to_string(&file).unwrap(), edited);
+    assert_eq!(fake.verbs(), ["print"]);
 }

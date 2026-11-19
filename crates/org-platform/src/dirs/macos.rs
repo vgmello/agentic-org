@@ -20,6 +20,12 @@ pub(super) fn location_variables() -> Result<&'static [&'static str], Refused> {
     Ok(&[])
 }
 
+pub(super) fn location_overrides(
+    _home: &Path,
+) -> Result<Vec<(&'static str, std::ffi::OsString)>, Refused> {
+    Ok(Vec::new())
+}
+
 pub(super) fn user_temp_base(_home: &Path) -> Result<PathBuf, UserTempError> {
     let mut bytes = vec![0_u8; 4096];
     // SAFETY: module-owned writable storage and supported Darwin query.

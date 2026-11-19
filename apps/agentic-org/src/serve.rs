@@ -134,6 +134,11 @@ fn run_as(
     // The service is an ordinary user's on every system. Before anything is opened or made:
     // nothing above reads more than the arguments.
     may_run_the_service()?;
+    // What the service makes is its user's alone, whatever mask started it: a container
+    // runtime starts it with 022, as a shell may, where the registered unit sets
+    // `UMask=0077` (X5 review F10). Before any thread exists or any file is made.
+    // SAFETY: umask has no preconditions and cannot fail.
+    unsafe { libc::umask(0o077) };
     // Before any thread exists, so every thread inherits the mask.
     let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
     let registered = args.name.is_some() || args.setup.is_some();
@@ -158,24 +163,21 @@ fn run_as(
         move |signal, starting| {
             let line = if starting {
                 format!(
-                    "agentic-org: stopped by signal {signal} while starting, which had not \
-                     ended {bound:?} after it; the process ends now. What setup or the start \
-                     completed is kept, and the next start continues from it\n"
+                    "stopped by signal {signal} while starting, which had not ended {bound:?} \
+                     after it; the process ends now. What setup or the start completed is \
+                     kept, and the next start continues from it"
                 )
             } else {
                 format!(
-                    "agentic-org: stopped by signal {signal}; the stop had not ended \
-                     {STOP_LIMIT:?} after it, and the process ends now\n"
+                    "stopped by signal {signal}; the stop had not ended {STOP_LIMIT:?} after \
+                     it, and the process ends now"
                 )
             };
-            // Neither std's stderr lock nor the exit handlers, which a thread blocked in a
-            // write (or in anything else) could hold up: one write, best effort, then the
-            // end of the process.
-            // SAFETY: a write of an owned buffer to fd 2, then `_exit`, which never returns.
-            unsafe {
-                libc::write(2, line.as_ptr().cast(), line.len());
-                libc::_exit(0)
-            }
+            // A full standard error (a pipe nobody reads) cannot hold the end up: the line
+            // is written by the host log's own thread, waited for a short, bounded time,
+            // and then the process ends without its exit handlers (X5 review, fourth round,
+            // P1-6).
+            org_host::stop::end_process(&line)
         },
     )?;
     serve_until_stopped(
