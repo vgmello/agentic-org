@@ -312,8 +312,9 @@ export async function consumerFocus(page: Page, width: number, scale: number, ro
 	await cancel.press('Enter');
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await expect(add).toBeFocused();
-	await go('/org-chart');
-	const view = page.getByRole('button', { name: 'View', exact: true });
+	// The org chart's menus are each employee's actions (offices-and-teams-ux §7.1).
+	await go('/teams/org-chart');
+	const view = page.getByRole('button', { name: /^Actions for / }).first();
 	await probe(view, 'org-chart');
 	await view.press('ArrowDown');
 	const item = page.getByRole('menuitem').first();

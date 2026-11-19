@@ -10,6 +10,7 @@ import { invalidate } from '$app/navigation';
 import { orgApi } from '$lib/org/api';
 import { newId } from '$lib/org/commands';
 import { officeApi } from '$lib/office/api';
+import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { Member, OrgSnapshot } from '$lib/proto';
 import { mockLatency, mockMode } from '../mock-mode';
 import type { MembersApi } from '../../../src/lib/modules/members/api';
@@ -595,8 +596,7 @@ async function profileOf(organizationId: string, memberId: string): Promise<Memb
 export const membersApi: MembersApi = {
 	async directory(organizationId) {
 		await gate();
-		if (scenario() === 'unavailable')
-			throw fail('unavailable', "This server doesn't serve the members directory yet.");
+		if (scenario() === 'unavailable') await unavailableCall();
 		if (scenario() === 'empty') return [];
 		if (scenario() === 'race') await race();
 		const all = await rows(organizationId);

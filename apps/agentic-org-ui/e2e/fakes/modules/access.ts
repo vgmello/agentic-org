@@ -8,6 +8,7 @@
 //   invited (Leo Brandt has an open invitation) · deactivated (Hana Weiss is deactivated)
 //   refuse (the sign-in actions are refused) · gone (the next action on Leo finds him gone: he leaves the list)
 import { officeApi } from '$lib/office/api';
+import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { AccessApi } from '../../../src/lib/modules/access/api';
 import type { AccessOverview, AccessPerson } from '../../../src/lib/modules/access/types';
 import { mockLatency, mockMode } from '../mock-mode';
@@ -33,8 +34,7 @@ async function overview(organizationId: string): Promise<AccessOverview> {
 	await mockLatency(250);
 	if (modes().includes('fails'))
 		throw fail('internal', "HQ didn't answer. Check that it's running, then try again.");
-	if (modes().includes('unavailable'))
-		throw fail('unavailable', "This server doesn't serve sign-in access yet.");
+	if (modes().includes('unavailable')) await unavailableCall();
 	if (modes().includes('invited')) seedInvitation('leo', 18 * 3_600_000);
 
 	const s = await snapshotFor(organizationId);

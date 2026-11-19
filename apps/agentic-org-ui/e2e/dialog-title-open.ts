@@ -1,28 +1,24 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
-import { viewAction } from './org-chart-menu';
 import { enterMockedOrganization } from './mock-organization';
 
+// The team dialogs open from Teams (/teams) and the member dialogs from the member's profile; the dialogs that only the
+// retired org-chart canvas opened (team members, add project, change manager, member teams, how it runs, remove
+// person) have no caller left.
 export const titles = {
-	'add-project': 'Add a project to Engineering',
 	'delete-refused': "Can't delete Engineering",
 	task: 'New task',
 	report: 'Report a bug',
 	assign: 'Assign a team to Scratchpad',
-	delete: 'Delete People?',
-	'change-manager': 'Change manager of Hana Weiss',
-	'member-teams': 'Teams for Hana Weiss',
-	'team-members': 'Members of Web',
+	delete: 'Delete Spare?',
 	'edit-person': 'Edit Hana Weiss',
-	'move-member': 'Move Sam Okafor to a team',
+	'move-member': "Move Sam Okafor's home team",
 	'move-team': 'Move Engineering to…',
 	'new-request': 'New request',
-	'remove-person': 'Remove Hana Weiss from Acme?',
 	'remove-project': 'Remove Atlas from Platform?',
 	'rename-team': 'Rename Web',
 	'block-task': 'Block T-1',
-	'how-runs': 'How Sam Okafor runs',
 	'edit-agent': 'Edit Sam Okafor',
 	offboard: 'Offboard Sam Okafor?',
 	pause: 'Pause Sam Okafor?',
@@ -44,11 +40,25 @@ const originallyNormal = new Set<TitleCase>([
 const originalWrap = (kind: TitleCase): 'normal' | 'anywhere' =>
 	originallyNormal.has(kind) ? 'normal' : 'anywhere';
 
+/** A top-level team with nothing in it, which Delete accepts. */
+export async function createSpareTeam(page: Page) {
+	await page.evaluate(async () => {
+		const saved = JSON.parse(localStorage.getItem('agentic-org.mock.connections') ?? '[]');
+		const id = saved[saved.length - 1].organization.id as string;
+		await (
+			window as unknown as { __mockOrgChange: (id: string, command: object) => Promise<unknown> }
+		).__mockOrgChange(id, {
+			method: 'team.create',
+			params: { team_id: 'title-spare', name: 'Spare' }
+		});
+	});
+}
+
 export async function createDialogOrganization(page: Page, width: number) {
 	await page.setViewportSize({ width, height: 900 });
 	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/teams\/members$/);
-	await expect(page.getByRole('table', { name: 'Agents', exact: true })).toBeVisible();
+	await expect(page.getByRole('list', { name: 'Members', exact: true })).toBeVisible();
 }
 
 export async function openTitle(page: Page, kind: TitleCase, width: number, scale = 1, root = 16) {
@@ -63,10 +73,12 @@ export async function openTitle(page: Page, kind: TitleCase, width: number, scal
 		await visit(page, '/projects');
 		await page.getByRole('button', { name: 'Assign a team to Scratchpad', exact: true }).click();
 	} else if (kind === 'delete' || kind === 'delete-refused') {
-		await visit(page, '/org-chart');
+		// Every sample team has members or work (offices-and-teams-ux §7.10), so Delete gets an empty team of its own.
+		if (kind === 'delete') await createSpareTeam(page);
+		await visit(page, '/teams');
 		await page
 			.getByRole('button', {
-				name: kind === 'delete' ? 'Actions for People' : 'Actions for Engineering',
+				name: kind === 'delete' ? 'Actions for Spare' : 'Actions for Engineering',
 				exact: true
 			})
 			.click();
@@ -111,53 +123,31 @@ export async function openTitle(page: Page, kind: TitleCase, width: number, scal
 				.getByRole('button', { name: /^Actions for/ })
 				.click();
 			await page.getByRole('menuitem', { name: 'Blocked', exact: true }).click();
+		} else if (kind === 'move-team' || kind === 'rename-team') {
+			await visit(page, '/teams');
+			await page
+				.getByRole('button', {
+					name: `Actions for ${kind === 'move-team' ? 'Engineering' : 'Web'}`,
+					exact: true
+				})
+				.click();
+			await page
+				.getByRole('menuitem', { name: kind === 'move-team' ? 'Move to…' : 'Rename…', exact: true })
+				.click();
 		} else {
-			await visit(page, '/org-chart');
-			if (['team-members', 'move-team', 'rename-team', 'add-project'].includes(kind)) {
-				await page
-					.getByRole('button', {
-						name: `Actions for ${kind === 'move-team' || kind === 'add-project' ? 'Engineering' : 'Web'}`,
-						exact: true
-					})
-					.click();
-				const name =
-					kind === 'add-project'
-						? 'Add project…'
-						: kind === 'team-members'
-							? 'Edit members…'
-							: kind === 'move-team'
-								? 'Move to…'
-								: 'Rename…';
-				await page.getByRole('menuitem', { name, exact: true }).click();
-			} else {
-				if (!(await page.getByRole('region', { name: 'Teams chart', exact: true }).isVisible()))
-					await viewAction(page, 'Chart');
-				const agent = ['how-runs', 'edit-agent', 'offboard', 'pause', 'move-member'].includes(kind);
-				await page
-					.locator(`[data-testid=team-card][data-team=${agent ? 'eng' : 'people'}]`)
-					.getByRole('button', { name: agent ? /^Sam Okafor/ : /^Hana Weiss/ })
-					.first()
-					.click();
-				const actions = page.getByTestId('selected-member');
-				const name = (
-					{
-						'change-manager': 'Change manager…',
-						'member-teams': 'Edit teams…',
-						'edit-person': 'Edit…',
-						'move-member': 'Move to team…',
-						'how-runs': 'How it runs…',
-						'edit-agent': 'Edit…',
-						offboard: 'Offboard…',
-						pause: 'Pause…'
-					} as Partial<Record<TitleCase, string>>
-				)[kind];
-				await actions
-					.getByRole('button', {
-						name: kind === 'remove-person' ? /^Remove from/ : name!,
-						exact: true
-					})
-					.click();
-			}
+			const agent = kind !== 'edit-person';
+			await visit(page, agent ? '/members/sam' : '/members/hana');
+			await page.getByRole('button', { name: /^More/ }).click();
+			const name = (
+				{
+					'edit-person': 'Edit…',
+					'edit-agent': 'Edit…',
+					'move-member': 'Move home team…',
+					offboard: 'Offboard…',
+					pause: 'Pause…'
+				} as Partial<Record<TitleCase, string>>
+			)[kind];
+			await page.getByRole('menuitem', { name: name!, exact: true }).click();
 		}
 	}
 	const dialog = page.locator('[data-slot=dialog-content]');
