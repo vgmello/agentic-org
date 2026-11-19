@@ -60,16 +60,6 @@
       "count": 1
     }
   },
-  "src/lib/modules/employees/AgentsTabs.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    }
-  },
-  "src/lib/modules/employees/AgentsTabs.test.ts": {
-    "@typescript-eslint/no-empty-object-type": {
-      "count": 1
-    }
-  },
   "src/lib/modules/messaging/components/Rich.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 1
@@ -202,11 +192,6 @@
   "src/lib/work/support.ts": {
     "no-control-regex": {
       "count": 1
-    }
-  },
-  "src/routes/(onboarding)/create/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 2
     }
   },
   "src/routes/(shell)/chat/+page.svelte": {

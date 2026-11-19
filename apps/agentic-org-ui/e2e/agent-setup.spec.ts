@@ -4,6 +4,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { signInAsAdmin } from './web-session';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openOrganization(page: Page) {
 	await signInAsAdmin(page, [
@@ -14,10 +15,7 @@ async function openOrganization(page: Page) {
 			recovery: 'acknowledged'
 		}
 	]);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Lumen Labs');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).not.toHaveURL(/\/create$/);
+	await enterMockedOrganization(page, 'Lumen Labs');
 }
 
 const rows = (page: Page) => page.locator('main ul[aria-labelledby="agent-setup-heading"] > li');

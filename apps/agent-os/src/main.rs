@@ -522,11 +522,10 @@ Usage:
   agent-os msg wait   [--timeout 60s] [--from <agent>] [--urgent-only] [--office <id>] [--as <agent>] [--json]
   agent-os relay <run [--once] | status [--json]>
 
-Office (cutover, opt-in): --office <id> or $ORG_OFFICE sends msg send, inbox, read, wait and who
-through that office; without either, everything uses the local spool. Don't set ORG_OFFICE on a
-working agent until reply, defer, done and notify go through the office too: they still use the
-local spool and can't see the office's messages. A send to a named office that is down is not
-queued yet (exit 5)."
+The who command works against a named office (--office <id> or $ORG_OFFICE).
+After an office bind, msg send, inbox, read and wait return unsupported (exit 4)
+without falling back to the local spool. A send to a named office that is down exits 5
+without queuing the message. With no office named, standalone commands use the local spool."
     );
 }
 

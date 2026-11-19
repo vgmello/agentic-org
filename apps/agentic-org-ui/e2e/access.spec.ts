@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { signInAsAdmin } from './web-session';
+import { enterMockedOrganization } from './mock-organization';
 
 // Organization settings › Members and access against the mock access API (server-installation-and-access-ux §4a,
 // offices-and-teams-ux §5b, §7.1, §7.4). Mock: e2e/fakes/modules/access.ts; `?mock=` switches are listed there.
@@ -13,10 +14,7 @@ async function openOrganization(page: Page) {
 			recovery: 'acknowledged'
 		}
 	]);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Lumen Labs');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).not.toHaveURL(/\/create$/);
+	await enterMockedOrganization(page, 'Lumen Labs');
 }
 
 const section = (page: Page, title: string) =>
@@ -250,6 +248,17 @@ test('ACC-7: at 320 px the page has no sideways scroll and its actions are 44 px
 	const button = row(page, 'Leo Brandt').getByRole('button', { name: 'Invite to sign in' });
 	const box = await button.boundingBox();
 	expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+
+	// At 200% text the labels wrap inside the row's column instead of running into its gutter.
+	await page.evaluate(() => (document.documentElement.style.fontSize = '32px'));
+	const spill = await page.locator('[data-access-row]').evaluateAll((rows) =>
+		rows.flatMap((li) => {
+			const edge = li.getBoundingClientRect().right - parseFloat(getComputedStyle(li).paddingRight);
+			return [...li.querySelectorAll('button')].map((b) => b.getBoundingClientRect().right - edge);
+		})
+	);
+	expect(Math.max(...spill)).toBeLessThanOrEqual(0.5);
+	await noSidewaysScroll(page);
 });
 
 test('ACC-8: after the page opens, its heading takes focus', async ({ page }) => {
@@ -340,7 +349,7 @@ test('ACC-16: a deactivated person is listed apart, with no sign-in action', asy
 	await expect(section(page, 'No account yet')).not.toContainText('Hana Weiss');
 });
 
-test('ACC-17: this page, the member profile and Members tell the same story in one session', async ({
+test('ACC-17: this page and the member profile tell the same story in one session', async ({
 	page
 }) => {
 	await openOrganization(page);
@@ -361,4 +370,32 @@ test('ACC-17: this page, the member profile and Members tell the same story in o
 	await page.goBack();
 	await expect(page).toHaveURL(/\/settings\/access$/);
 	await expect(section(page, 'Invited, not signed in yet')).toContainText('Avery Stone');
+});
+
+test('ACC-18: a refusal clears on the next interaction; another person waits while a link is made', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/access?mock=refuse');
+	const invite = row(page, 'Leo Brandt').getByRole('button', { name: 'Invite to sign in' });
+	await invite.focus();
+	await page.keyboard.press('Enter');
+	await expect(row(page, 'Leo Brandt').getByRole('alert')).toBeVisible();
+	await page.keyboard.press('Shift+Tab');
+	await expect(page.getByRole('alert')).toHaveCount(0);
+
+	// While Leo's link is being made, Hana's actions wait and say why; pressing one points at Leo's.
+	await visit(page, '/settings/access?mock=slow');
+	await row(page, 'Leo Brandt').getByRole('button', { name: 'Invite to sign in' }).click();
+	const leo = row(page, 'Leo Brandt').getByRole('button', { name: 'Inviting…' });
+	await expect(leo).toBeVisible();
+	await expect(row(page, 'Hana Weiss')).toContainText("Wait for Leo Brandt's link first.");
+	const hana = row(page, 'Hana Weiss').getByRole('button', { name: 'Invite to sign in' });
+	await expect(hana).toHaveAttribute('aria-disabled', 'true');
+	await hana.focus();
+	await page.keyboard.press('Enter');
+	await expect(leo).toBeFocused();
+	await expect(page.getByRole('dialog')).toContainText('Invite Leo Brandt to sign in', {
+		timeout: 20_000
+	});
 });

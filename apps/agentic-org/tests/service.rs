@@ -4,9 +4,6 @@
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only.
 #![cfg(debug_assertions)]
-// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
-// helpers are unused.
-#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -179,7 +176,6 @@ fn a_stale_socket_is_replaced_but_another_file_is_not() {
 /// answers ends promptly. It would hang if waking the accept thread, ending a connection's writer
 /// or stopping a worker mid-start broke, so a watchdog turns that into a failure instead of a
 /// stuck test run.
-#[cfg(target_os = "macos")]
 #[test]
 fn shutdown_with_clients_connected_finishes_promptly() {
     const A: &str = "01AAAAAAAAAAAAAAAAAAAAAAAA";
@@ -221,7 +217,6 @@ fn shutdown_with_clients_connected_finishes_promptly() {
 /// message on a subscribed connection shows an office in an earlier state than one before it.
 /// List calls stream in on one subscribed connection (handled up to 16 at a time) while the
 /// host's offices go from `starting` to `active`, each after its own delay.
-#[cfg(target_os = "macos")]
 #[test]
 fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
     use std::collections::HashMap;
@@ -252,13 +247,15 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
         matches!(fixture.recv(std::time::Duration::from_secs(30)),Some(ServerMessage::Response(r)) if r.id==0)
     );
 
-    let (starting, sent) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicU64::new(0)));
+    // `last_id` is the id of the writer's last list call, 0 until the writer has decided
+    // which call that is.
+    let (starting, last_id) = (Arc::new(AtomicBool::new(true)), Arc::new(AtomicU64::new(0)));
     let answered = Arc::new(AtomicU64::new(0));
     let writer = {
         let out = Arc::clone(&fixture);
-        let (starting, sent, answered) = (
+        let (starting, last_id, answered) = (
             Arc::clone(&starting),
-            Arc::clone(&sent),
+            Arc::clone(&last_id),
             Arc::clone(&answered),
         );
         std::thread::spawn(move || {
@@ -272,6 +269,14 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
                 }
                 let last = !starting.load(Ordering::SeqCst);
                 id += 1;
+                if last {
+                    // Published before the call is made: its answer cannot reach the reader
+                    // before the reader can know that it is the last one. (The reader must
+                    // not learn it from this thread having ended: the answer is queued
+                    // inside `submit`, so the reader can read it, find this thread still
+                    // running and wait for a message that never comes.)
+                    last_id.store(id, Ordering::SeqCst);
+                }
                 // Both lists, in turn.
                 let method = if id % 2 == 1 {
                     "organization.list"
@@ -280,7 +285,6 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
                 };
                 let line = format!("{{\"id\":{id},\"method\":\"{method}\",\"params\":{{}}}}\n");
                 out.submit(serde_json::from_str(&line).unwrap());
-                sent.store(id, Ordering::SeqCst);
                 if last {
                     return;
                 }
@@ -323,10 +327,16 @@ fn a_list_answer_never_arrives_after_an_event_it_doesnt_reflect() {
             std::time::Instant::now() < deadline,
             "the run took over 60 s"
         );
-        let done = writer.is_finished() && answers == sent.load(Ordering::SeqCst);
-        if done {
+        // Done when the answer to the writer's last call has been read: every call before
+        // it was answered before it, on this one connection.
+        let last = last_id.load(Ordering::SeqCst);
+        if last != 0 && answers == last {
             break;
         }
+        assert!(
+            last != 0 || !writer.is_finished(),
+            "the writer ended before its last list call"
+        );
         let message = fixture
             .recv(std::time::Duration::from_secs(30))
             .expect("native event or response");

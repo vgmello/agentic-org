@@ -3,6 +3,8 @@ import {
 	checkSummary,
 	compareVersions,
 	holdBackNote,
+	listSeparator,
+	officeUpgradeHint,
 	officeStanding,
 	sortOffices,
 	upgradeCommand,
@@ -15,6 +17,7 @@ const office = (over: Partial<OfficeVersion>): OfficeVersion => ({
 	name: 'Studio Mac',
 	role: 'satellite',
 	host: 'Studio Mac',
+	instance: 'default',
 	version: '0.4.0',
 	holdsBack: false,
 	...over
@@ -73,24 +76,50 @@ describe('sortOffices', () => {
 });
 
 describe('holdBackNote', () => {
-	it('uses the offices spec sentence for one office', () => {
-		expect(holdBackNote([office({ name: 'Build box', holdsBack: true }), office({})])).toBe(
+	it('uses the offices spec sentence for one office, and names it for its link', () => {
+		const note = holdBackNote([
+			office({ id: 'b', name: 'Build box', holdsBack: true }),
+			office({})
+		]);
+		expect(note?.text).toBe(
 			'Build box runs an older version of Agentic Org, so new features wait until it updates.'
+		);
+		expect(note?.held.map((o) => o.id)).toEqual(['b']);
+		expect(note?.tail).toBe(
+			' runs an older version of Agentic Org, so new features wait until it updates.'
 		);
 	});
 	it('names several offices', () => {
 		expect(
 			holdBackNote([
-				office({ name: 'A', holdsBack: true }),
-				office({ name: 'B', holdsBack: true }),
-				office({ name: 'C', holdsBack: true })
-			])
+				office({ id: 'a', name: 'A', holdsBack: true }),
+				office({ id: 'b', name: 'B', holdsBack: true }),
+				office({ id: 'c', name: 'C', holdsBack: true })
+			])?.text
 		).toBe(
 			'A, B and C run an older version of Agentic Org, so new features wait until they update.'
 		);
 	});
 	it('is absent when nothing is held back', () => {
 		expect(holdBackNote([office({})])).toBeNull();
+	});
+	it('separates linked names as the sentence does', () => {
+		expect([0, 1, 2].map((i) => listSeparator(i, 3))).toEqual(['', ', ', ' and ']);
+		expect([0, 1].map((i) => listSeparator(i, 2))).toEqual(['', ' and ']);
+	});
+});
+
+describe('officeUpgradeHint', () => {
+	it("names the office's own instance, never the machine's default by omission", () => {
+		expect(officeUpgradeHint(office({ instance: 'build' }))).toEqual({
+			command: 'agentic-org upgrade --name build',
+			known: true
+		});
+	});
+	it("asks for the instance's name when HQ doesn't know it", () => {
+		const hint = officeUpgradeHint(office({ instance: null }));
+		expect(hint).toEqual({ command: 'agentic-org upgrade --name <instance>', known: false });
+		expect(hint.command).toContain('--name');
 	});
 });
 

@@ -6,6 +6,7 @@ members = [
   "crates/org-host-control",
   "crates/org-client",
   "crates/org-command",
+  "crates/org-store",
   "crates/org-office",
   "crates/org-office-launch",
   "crates/org-spool",
@@ -19,6 +20,7 @@ members = [
   "crates/org-socket",
   "crates/org-release",
   "crates/org-platform",
+  "crates/org-platform-host",
   "crates/org-sync",
   "crates/org-sync-proto",
   "apps/agentic-org-office",
@@ -34,6 +36,7 @@ default-members = [
   "crates/org-host-control",
   "crates/org-client",
   "crates/org-command",
+  "crates/org-store",
   "crates/org-office",
   "crates/org-office-launch",
   "crates/org-spool",
@@ -47,6 +50,7 @@ default-members = [
   "crates/org-socket",
   "crates/org-release",
   "crates/org-platform",
+  "crates/org-platform-host",
   "crates/org-sync",
   "crates/org-sync-proto",
   "apps/agentic-org-office",
@@ -104,3 +108,9 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# The host hashes each program it starts (the office worker, the web process) when it
+# builds their admission. Unoptimised SHA-256 takes over a second for a debug-built
+# executable, on every host start and in every test that starts a host.
+[profile.dev.package.sha2]
+opt-level = 3

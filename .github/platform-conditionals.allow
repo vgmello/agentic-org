@@ -1,0 +1,31 @@
+# Platform conditionals outside crates/org-platform (ADR-0017 LNX-5).
+#
+# Each line is a source file and the number of platform predicates in it, as the check
+# in crates/org-platform/tests/platform_conditionals.rs counts them: each `cfg` or
+# `cfg_attr` attribute and each `cfg!` call that names target_os, target_vendor,
+# target_env or target_family, and each other use of one of those four names. These
+# are the files that had such predicates when the check was written (increment X1a).
+#
+# This list only shrinks. No count is raised and the total never rises (CI compares
+# the list with the commit where the branch left v1; a renamed or split
+# file may appear under its new paths as long as the total does not rise): a new
+# operating-system difference goes into crates/org-platform, behind a contract
+# (docs/design/linux-host.md, section 1). When a file loses predicates, lower its
+# count, or delete its line at zero, in the same change; the check fails until you do.
+# The list is empty when Track X is complete (increment X6).
+apps/agentic-org-office/src/startup/tests.rs 8
+apps/agentic-org-office/src/transfer/tests.rs 4
+apps/agentic-org-office/tests/launch/activation/transfer.rs 3
+apps/agentic-org-web/src/transport/server/tests.rs 2
+crates/org-host/src/server_check.rs 2
+crates/org-office/src/store/acceptance/tests.rs 2
+crates/org-socket/src/rights/send/tests.rs 2
+crates/org-socket/src/rights/stream/tests.rs 10
+crates/org-socket/src/rights/tests.rs 6
+crates/org-socket/src/rights/tests/bounded.rs 5
+crates/org-socket/tests/stream_adoption.rs 1
+crates/org-supervise/src/spawn.rs 1
+crates/org-supervise/tests/lifecycle.rs 1
+crates/org-supervise/tests/recovery_native.rs 25
+crates/org-supervise/tests/spawn.rs 4
+crates/org-supervise/tests/support/core_limit.rs 2

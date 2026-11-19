@@ -22,12 +22,14 @@
 >
 	<div class="max-w-3xl {gutters}">
 		<p class="text-sm/6 text-fg-body">
-			On <span class="font-semibold text-fg [overflow-wrap:anywhere]">{machine}</span>, run:
+			On the HQ machine (<span class="font-semibold text-fg [overflow-wrap:anywhere]"
+				>{machine}</span
+			>), run:
 		</p>
 		<div class="mt-3 flex flex-wrap items-center gap-3">
 			<code
 				data-testid="upgrade-command"
-				class="min-w-0 flex-1 basis-56 rounded-md bg-surface-sunken max-[639px]:basis-full px-3 py-2 font-mono text-sm/6 text-fg-bright [overflow-wrap:anywhere]"
+				class="min-w-0 flex-1 basis-56 rounded-md bg-surface-sunken px-3 py-2 font-mono max-[639px]:basis-full min-[640px]:py-1.5 text-sm/6 text-fg-bright [overflow-wrap:anywhere]"
 				>{command}</code
 			>
 			<CopyButton text={command} label="Copy command" />

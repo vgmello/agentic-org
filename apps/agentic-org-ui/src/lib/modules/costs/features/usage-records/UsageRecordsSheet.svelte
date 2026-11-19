@@ -103,9 +103,13 @@
 </script>
 
 <Sheet bind:open>
-	<SheetContent side="right" class="w-full gap-0 sm:max-w-lg" {onCloseAutoFocus}>
+	<SheetContent
+		side="right"
+		class="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-lg"
+		{onCloseAutoFocus}
+	>
 		<SheetHeader class="border-b border-line pr-14">
-			<SheetTitle class="text-base/7 font-semibold [overflow-wrap:anywhere]">{title}</SheetTitle>
+			<SheetTitle class="text-base/7 font-semibold">{title}</SheetTitle>
 			<SheetDescription class="text-sm/6">
 				{periodLabel(period.kind)} · effective records, newest first{phase === 'ready'
 					? ` · ${formatCount(total)} ${total === 1 ? 'record' : 'records'}`
@@ -149,7 +153,7 @@
 					{#if cursor}
 						<Button
 							variant="outline"
-							class="mt-3 min-w-28 {mobileButton}"
+							class="mt-3 min-w-28 max-w-full {mobileButton}"
 							aria-busy={more === 'loading'}
 							disabled={more === 'loading'}
 							onclick={loadMore}

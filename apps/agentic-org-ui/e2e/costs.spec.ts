@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { signInAsAdmin } from './web-session';
+import { enterMockedOrganization } from './mock-organization';
 
 // Organization settings › Costs against the mock costs API (costs-and-insights-ux §1 Organization › Cost, §3, §4, §5;
 // app-shell-ux §0.1). Mock: e2e/fakes/modules/costs.ts; its `?mock=` switches are listed there. The mock's clock is
@@ -14,11 +15,7 @@ async function openOrganization(page: Page) {
 			recovery: 'acknowledged'
 		}
 	]);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Lumen Labs');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	// The first test of a run may wait on the dev server compiling the shell.
-	await expect(page).not.toHaveURL(/\/create$/, { timeout: 30_000 });
+	await enterMockedOrganization(page, 'Lumen Labs');
 }
 
 const cost = (page: Page) => page.getByTestId('organization-cost');
@@ -61,7 +58,7 @@ test('COST: the owner reads this month’s cost, its breakdowns and the records 
 	await expect(tile(page, 'Usage records')).toContainText('48');
 	await expect(cost(page)).toContainText('Includes API-equivalent cost for subscription plans');
 	await expect(page.getByTestId('totals-incomplete')).toHaveText(
-		'Usage incomplete: excludes 3 unpriced records · 2 records with a partial cost · 1 record without full token counts · 1 usage source not fully reported'
+		'Usage incomplete: excludes 2 unpriced records · 1 record with unknown cost · 2 records with a partial cost · 1 record without full token counts · 1 usage source not fully reported'
 	);
 	await expect(cost(page)).toContainText('Studio Mac office: not reported since 19 Nov, 13:40');
 
@@ -175,7 +172,15 @@ test('BUD: agent budgets show in the budget zone, with stopping and paused state
 	);
 	await expect(agent('mira').getByTestId('budget-state')).toHaveText('Stopping · Budget reached');
 	await expect(agent('kai').getByTestId('budget-state')).toHaveText('Paused · Budget reached');
-	await expect(agent('kai')).toContainText('This budget already used its one 20% extension.');
+	// Document 17: the extended limit is L + floor(L/5); reached above it, so held.
+	await expect(agent('kai')).toContainText(
+		'This budget already used its one 20% extension: limit $20.00 + $4.00 = $24.00.'
+	);
+	await expect(agent('kai')).toContainText('≈ $26.35 of $24.00 · 109%');
+	// §4: the period's bounds in the budget zone are shown, not only spoken.
+	await expect(
+		agent('sam').locator('[data-budget="daily"]').getByTestId('budget-bounds')
+	).toHaveText('19 Nov 2026, 00:00 up to 20 Nov 2026, 00:00');
 	await expect(agent('noor')).toContainText('18.1 M of 25 M tokens · 72%');
 	await expect(agent('juno')).toContainText(
 		'This runtime does not report usage, so this budget cannot stop its unmeasured work.'
@@ -282,7 +287,7 @@ test('COST-9 scope: a viewer who is not the owner sees no amounts and cannot add
 	await openOrganization(page);
 	await visit(page, '/settings/costs?mock=viewer');
 	await expect(cost(page).getByTestId('cost-not-yours')).toContainText(
-		"Only the organization's owner sees its cost."
+		"Only the organization's owner sees the organization's cost."
 	);
 	await expect(cost(page)).not.toContainText('$');
 	await expect(page.getByTestId('agent-budgets')).toHaveCount(0);
@@ -364,4 +369,110 @@ test('320 px and 200% text: no sideways scroll, 44 px targets, whole-word pills'
 	await expect(pill).toHaveText('Stopping · Budget reached');
 	const fits = await pill.evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
 	expect(fits).toBe(true);
+});
+
+// Review fixes (checkpoints/reviews/costs.md): each test below failed on 4940b647.
+
+const sideways = (locator: import('@playwright/test').Locator) =>
+	locator.evaluate((el) => el.scrollWidth - el.clientWidth);
+
+test('P1: at 320 px with 200% text the custom period form, Add a rate and the records sheet reflow', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await page.setViewportSize({ width: 320, height: 800 });
+	await visit(page, '/settings/costs');
+	await expect(tile(page, 'Cost')).toContainText('≈ $123.90');
+	await page.evaluate(() => (document.documentElement.style.fontSize = '200%'));
+
+	await choosePeriod(page, 'Custom');
+	await expect(page.getByLabel('From')).toBeFocused();
+	expect(await sideways(page.locator('main'))).toBeLessThanOrEqual(0);
+	await noSidewaysScroll(page);
+	await page.getByRole('button', { name: 'Cancel' }).click();
+
+	await prices(page).getByRole('button', { name: 'Add a rate…' }).click();
+	const dialog = page.getByRole('dialog');
+	await expect(page.getByLabel('Takes effect on')).toBeVisible();
+	expect(await sideways(dialog)).toBeLessThanOrEqual(0);
+	await page.keyboard.press('Escape');
+	await expect(dialog).toBeHidden();
+
+	await row(page, 'project:atlas')
+		.getByRole('button', { name: /Open the records/ })
+		.click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet.locator('[data-record]').first()).toBeVisible();
+	// Sheets take the full width below 640 px (app-shell §2); the title wraps between words only.
+	const box = await sheet.boundingBox();
+	expect(box?.width ?? 0).toBeGreaterThanOrEqual(319);
+	expect(await sideways(sheet)).toBeLessThanOrEqual(0);
+	const title = sheet.getByRole('heading', { name: 'Usage records: Atlas' });
+	expect(await title.evaluate((el) => getComputedStyle(el).overflowWrap)).not.toBe('anywhere');
+});
+
+test('P2: Show and Cancel in the custom period form return focus to the period menu', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/costs');
+	await expect(tile(page, 'Cost')).toContainText('≈ $123.90');
+	await choosePeriod(page, 'Custom');
+	await page.getByRole('button', { name: 'Cancel' }).click();
+	await expect(page.getByTestId('period-menu')).toBeFocused();
+	await choosePeriod(page, 'Custom');
+	await page.getByLabel('From').fill('2026-10-01');
+	await page.getByRole('button', { name: 'Show' }).click();
+	await expect(page.getByTestId('period-menu')).toBeFocused();
+	await expect(tile(page, 'Cost')).toContainText('≈ $');
+});
+
+test('P2: an unconfirmed save cannot be abandoned into a new operation; prices reload on close', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/costs?mock=save-unknown');
+	const add = prices(page).getByRole('button', { name: 'Add a rate…' });
+	await add.click();
+	const dialog = page.getByRole('dialog');
+	await page.getByLabel('Provider').fill('acme');
+	await page.getByLabel('Model').fill('m1');
+	await page.getByLabel('Input').fill('1');
+	await dialog.getByRole('button', { name: 'Add rate' }).click();
+	await expect(dialog.getByTestId('add-rate-outcome')).toContainText('Save not confirmed');
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(dialog).toBeHidden();
+	// The rate HQ did record shows once the list is read again.
+	await expect(prices(page).locator('[data-price-model="m1"]')).toHaveCount(1);
+	await expect(prices(page).getByTestId('unconfirmed-save')).toBeVisible();
+	// Reopening, from any button, returns to the unconfirmed save instead of starting another.
+	await prices(page).getByRole('button', { name: 'New rate for m1' }).click();
+	await expect(dialog.getByTestId('add-rate-outcome')).toContainText('Save not confirmed');
+	await expect(page.getByLabel('Model')).toHaveValue('m1');
+	await expect(dialog.getByRole('button', { name: 'Add rate' })).toHaveCount(0);
+	await dialog.getByRole('button', { name: 'Check status' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(prices(page).getByTestId('unconfirmed-save')).toHaveCount(0);
+	await expect(prices(page).locator('[data-price-model="m1"]')).toHaveCount(1);
+});
+
+test('P2: unknown cost is counted apart from unpriced', async ({ page }) => {
+	await openOrganization(page);
+	await visit(page, '/settings/costs');
+	await expect(page.getByTestId('totals-incomplete')).toHaveText(
+		'Usage incomplete: excludes 2 unpriced records · 1 record with unknown cost · 2 records with a partial cost · 1 record without full token counts · 1 usage source not fully reported'
+	);
+});
+
+test('P2: while a new period loads, the old figures are marked as loading, not relabelled', async ({
+	page
+}) => {
+	await openOrganization(page);
+	await visit(page, '/settings/costs?mock=slow');
+	await expect(tile(page, 'Cost')).toContainText('≈ $123.90', { timeout: 15_000 });
+	await choosePeriod(page, 'Last month');
+	await expect(cost(page).getByTestId('period-loading')).toHaveText('Loading Last month…');
+	await expect(cost(page).getByTestId('cost-figures')).toHaveAttribute('aria-busy', 'true');
+	await expect(tile(page, 'Cost')).toContainText('≈ $278.66', { timeout: 15_000 });
+	await expect(cost(page).getByTestId('period-loading')).toHaveCount(0);
 });

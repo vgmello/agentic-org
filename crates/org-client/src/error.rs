@@ -23,7 +23,7 @@ pub enum ClientError {
     /// Neither `ORG_OFFICE_HOME` nor `HOME` is set to an absolute path, so the office home
     /// (and with it every socket) can't be found.
     NoOfficeHome,
-    /// The socket path is longer than macOS allows.
+    /// The socket path is longer than this system allows.
     SocketPathTooLong(SocketPathTooLong),
     /// The office has no local socket this machine can reach (it isn't on this Mac, or its
     /// id is not a plain id).

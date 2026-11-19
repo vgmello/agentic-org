@@ -132,6 +132,15 @@ an old acceptance.
    integration/UI checks separately. Do not put a no-op command in an empty config.
    Do not invent a framework test suite when the project has none: record the gap
    and define task-specific acceptance checks.
+   Set `base` to the integration branch. A check is an argument array (always runs,
+   blocks) or an object: `argv`; `paths`, workspace-relative patterns (`*` also
+   matches `/`), so it runs only when a changed file matches. List every input the
+   check's tests read, including files outside its project (fixtures, contract
+   vectors, policy files). `blocking: false` marks a slow, low-priority check: it runs
+   last, within 120 seconds and the time left before the evidence reserve, otherwise
+   it is skipped with a warning; its failure is only a warning, but a command that
+   cannot start is a configuration error. A review package refuses scoped evidence
+   that did not see every file changed since the merge base with the review base.
 3. Populate the project map with real entry points and verified references. Record
    accepted constraints in the decision ledger; do not import all historical prose.
    Read `project-memory`: seed relevant subsystem capsules, capture useful proposals

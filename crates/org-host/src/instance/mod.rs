@@ -49,14 +49,11 @@ pub(crate) enum Error {
         name: String,
         path: PathBuf,
     },
-    #[cfg(target_os = "linux")]
     CaseInsensitive(PathBuf),
-    #[cfg(target_os = "linux")]
     UnsupportedFilesystem {
         path: PathBuf,
         kind: u64,
     },
-    #[cfg(target_os = "linux")]
     FilesystemProbe {
         path: PathBuf,
         probe: &'static str,
@@ -86,15 +83,12 @@ impl fmt::Display for Error {
                 "instance {name} reserves root {}; choose a disjoint root or repair that registration",
                 path.display()),
             Self::Busy(path) => write!(f, "instance state is already locked: {}", path.display()),
-            #[cfg(target_os = "linux")]
             Self::CaseInsensitive(path) => write!(f,
                 "instance path {} uses a case-insensitive directory; case-insensitive directories aren't supported on Linux",
                 path.display()),
-            #[cfg(target_os = "linux")]
             Self::UnsupportedFilesystem { path, kind } => write!(f,
                 "unsupported filesystem for the instance root at {} (type {kind:#x}); Linux requires a case-sensitive local filesystem",
                 path.display()),
-            #[cfg(target_os = "linux")]
             Self::FilesystemProbe { path, probe, source } => write!(f,
                 "cannot validate instance path {} with {probe}: {source}", path.display()),
             Self::Io(error) => write!(f, "instance filesystem: {error}"),
@@ -106,7 +100,6 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
-            #[cfg(target_os = "linux")]
             Self::FilesystemProbe { source, .. } => Some(source),
             _ => None,
         }
@@ -116,6 +109,31 @@ impl std::error::Error for Error {
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
+    }
+}
+
+/// What the platform's filesystem checks refused (`org_platform::fs`). Only the user temp base
+/// is required to be on disk (`Directory::require_disk`), so that refusal names it.
+impl From<org_platform::fs::FilesystemRefusal> for Error {
+    fn from(refusal: org_platform::fs::FilesystemRefusal) -> Self {
+        use org_platform::fs::FilesystemRefusal as Refusal;
+        match refusal {
+            Refusal::CaseInsensitive(path) => Self::CaseInsensitive(path),
+            Refusal::UnsupportedFilesystem { path, kind } => {
+                Self::UnsupportedFilesystem { path, kind }
+            }
+            Refusal::Probe {
+                path,
+                probe,
+                source,
+            } => Self::FilesystemProbe {
+                path,
+                probe,
+                source,
+            },
+            Refusal::MemoryBacked { .. } => Self::Unsafe("user temp base must be disk-backed"),
+            Refusal::Unsupported(refused) => Self::Io(refused.into()),
+        }
     }
 }
 
@@ -160,12 +178,10 @@ impl From<Name> for String {
 /// Tests exercise disk policy even on Linux hosts whose /tmp is tmpfs.
 #[cfg(test)]
 fn test_directory() -> tempfile::TempDir {
-    let fallback = if cfg!(target_os = "linux") {
-        "/var/tmp"
-    } else {
-        "/private/tmp"
+    let base = match option_env!("CARGO_TARGET_TMPDIR") {
+        Some(base) => PathBuf::from(base),
+        None => org_platform::dirs::testing::disk_backed_temp().unwrap(),
     };
-    let base = option_env!("CARGO_TARGET_TMPDIR").unwrap_or(fallback);
-    std::fs::create_dir_all(base).unwrap();
+    std::fs::create_dir_all(&base).unwrap();
     tempfile::tempdir_in(base).unwrap()
 }

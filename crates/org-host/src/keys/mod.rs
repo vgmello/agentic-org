@@ -6,17 +6,21 @@
 //! A key is in the host's memory only from its creation or load until that first line is written.
 //!
 //! [`OfficeSecretsKeys`] is the host's own contract: the supervisor and provisioning depend on it,
-//! never on a particular store or platform. The adapters:
-//! - **Release builds on macOS:** the Data Protection keychain, in the host's access group
-//!   (`keychain`), so other code gets `errSecItemNotFound`, never a prompt.
-//! - **Release builds on any other operating system:** `unsupported`, which refuses every call
-//!   with a reported reason ([`KeyStoreError::Unsupported`]). It is chosen before any Keychain
-//!   precondition is checked, so such a host never reports a macOS-only reason (no access group,
-//!   not hardened). `platform` is the only place that chooses between these two by
-//!   `cfg(target_os)`, and it owns the Keychain preconditions (the access group, its entitlement
-//!   and the host's own hardening).
-//! - **Debug builds:** plain files in a development folder (`dev`), so a debug host and the tests
-//!   never write a real Keychain item. A debug host without that folder refuses to start.
+//! never on a particular store or system. It is a typed view (`custody`) over one credential
+//! store of the platform (`org_platform_host::credentials`): the view keeps the name rule, the
+//! add-only rule and what a key looks like; the platform keeps the bytes. Which store a build
+//! uses is decided here:
+//! - **Release builds:** the system's protected store, whichever kind it is
+//!   (`org_platform_host::credentials::protected_store`). The Data Protection keychain, in the
+//!   host's access group, so other code gets `errSecItemNotFound`, never a prompt; or the
+//!   credential directory setup recorded, which the host opened and checked at its start
+//!   (`release_store`). A system without such a store gets the refusing view, which refuses
+//!   every call with a reported reason ([`KeyStoreError::Unsupported`]). It is chosen before any
+//!   Keychain precondition is checked, so such a host never reports a Keychain-only reason (no
+//!   access group, not hardened).
+//! - **Debug builds:** plain files in a development folder (the platform's directory store), so
+//!   a debug host and the tests never write a real Keychain item. A debug host without that
+//!   folder refuses to start.
 //! - **Unit tests:** an in-memory store with fault injection (`memory`).
 //!
 //! The rules every store follows, and the host relies on:
@@ -29,15 +33,12 @@
 //!   left nothing in the home, still so at a start 7 days or more after it was first found so.
 //! - No error ever shows key bytes: [`KeyStoreError`] holds only codes and kinds.
 
-#[cfg(debug_assertions)]
-mod dev;
-mod keychain;
+mod custody;
 #[cfg(test)]
 pub(crate) mod memory;
-mod platform;
 mod sweep;
-mod unsupported;
 
+pub(crate) use custody::RELEASE_ITEM_STORE;
 pub(crate) use sweep::sweep_orphans;
 
 use std::fmt;
@@ -45,16 +46,39 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
+use org_platform::Refused;
+use org_platform_host::credentials::{
+    credentials, CredentialLocation, KeychainItems, ProtectedStore, ReleaseRoot,
+};
 use org_proto::OfficeSecretsKey;
 
-use crate::code_signing::Signing;
+use crate::code_signing::{hardened_and_clean, Signing};
+
+/// The Keychain service every office key is filed under (ADR-0002); the account is the office
+/// id. It is persisted state: changing it later orphans every office's key. (The server's former
+/// items used `org.agentic.office`; this store never reads them.) A registered instance's keys
+/// are filed under [`keychain_service`] of its id instead.
+pub(crate) const SERVICE: &str = "org.agentic.office-key";
+
+/// The Keychain service of the office keys of instance `instance_id`, or of the host that
+/// serves no registered instance.
+fn keychain_service(instance_id: Option<&str>) -> String {
+    match instance_id {
+        Some(id) => format!("{SERVICE}.instance.{id}"),
+        None => SERVICE.to_owned(),
+    }
+}
 
 /// Where the host keeps every office's secrets key (see the module docs). Office ids are plain
 /// ids ([`org_office_launch::is_plain_id`]); a store refuses any other
 /// ([`KeyStoreError::NotPlainId`]).
 pub(crate) trait OfficeSecretsKeys: Send + Sync {
     /// Stores `key` as office `office_id`'s key. Add-only: an existing item is
-    /// [`KeyStoreError::Exists`] and is left as it is. On any other error nothing is stored.
+    /// [`KeyStoreError::Exists`] and is left as it is. On any other error no key is replaced
+    /// and no partial item is left. One error can follow a complete store: in the
+    /// development store, a directory flush that fails after the key was published. The key
+    /// then exists although `create` failed; it belongs to no started office and the orphan
+    /// sweep removes it.
     fn create(&self, office_id: &str, key: &OfficeSecretsKey) -> Result<(), KeyStoreError>;
 
     /// Office `office_id`'s key, or `None` if the store has no item for it. An item that isn't a
@@ -71,10 +95,7 @@ pub(crate) trait OfficeSecretsKeys: Send + Sync {
 }
 
 /// Why a key store call failed. It never holds key bytes, and neither does its `Display`.
-/// Each adapter constructs only the variants it can meet; a build without that adapter
-/// leaves them unused, which is not dead code to remove.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) enum KeyStoreError {
     /// `create`: the store already has an item for that office (it was left as it is).
     Exists,
@@ -84,9 +105,11 @@ pub(crate) enum KeyStoreError {
     NotPlainId,
     /// The Keychain failed with this `OSStatus`.
     Os(i32),
-    /// The development store's file I/O failed.
+    /// The development store's file I/O failed, or one of its checks refused. The error holds a
+    /// kind and a fixed text, never a path.
     Io(io::Error),
-    /// This operating system has no office secrets key adapter (`unsupported`).
+    /// This system has no credential store to keep an office secrets key in
+    /// (`org_platform_host::credentials` refused).
     Unsupported,
 }
 
@@ -106,9 +129,9 @@ impl fmt::Display for KeyStoreError {
             KeyStoreError::NotPlainId => f.write_str("the office id isn't a plain id"),
             KeyStoreError::Os(status) => write!(f, "the Keychain failed (OSStatus {status})"),
             KeyStoreError::Io(e) => write!(f, "the key folder: {e}"),
-            KeyStoreError::Unsupported => f.write_str(
-                "this operating system has no office secrets key store (only macOS is implemented)",
-            ),
+            KeyStoreError::Unsupported => {
+                f.write_str("this operating system has no office secrets key store")
+            }
         }
     }
 }
@@ -135,62 +158,102 @@ pub(crate) enum StoreError {
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     NoDevKeyDir,
     /// A release build has no Keychain access group compiled in.
-    // Keychain preconditions: only the macOS adapter (`platform`) checks them.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     NoKeychainGroup,
     /// A release build's access group isn't in its own `keychain-access-groups` entitlement.
-    // Keychain preconditions: only the macOS adapter (`platform`) checks them.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     KeychainGroupNotEntitled { group: String },
     /// A release build's own signature can't be read, or it isn't signed with the hardened
     /// runtime, or is entitled to let other code into it (`code_signing::REJECTED_ENTITLEMENTS`):
     /// any same-user process could then read the keys out of it.
-    #[cfg_attr(any(debug_assertions, not(target_os = "macos")), allow(dead_code))]
+    #[cfg_attr(debug_assertions, allow(dead_code))]
     NotHardened,
+    /// A release build on a system that keeps its secrets in a credential directory has none
+    /// open: it serves no registered instance, and only setup records the directory.
+    NoCredentialDirectory,
+    /// The office keys' item store could not be opened in the credential directory, for this
+    /// reason (a kind, never a path: the directory itself was checked when the host opened it).
+    CredentialDirectory(String),
 }
 
 /// The key store this host uses. Debug builds: the development folder `dev_key_dir`
 /// (absolute, outside the office `home`), and [`StoreError::NoDevKeyDir`] without one, so a
-/// debug host never writes a real Keychain item. Release builds on an operating system with no
-/// key store: the refusing adapter ([`KeyStoreError::Unsupported`] on every call), before any of
-/// the checks below. Release builds on macOS: the Data Protection keychain in the access group compiled in as `ORG_HOST_KEYCHAIN_GROUP`: [`StoreError::NoKeychainGroup`]
-/// without one. `own_signing` (the host's own signing information, read once) must show both
-/// that group in its `keychain-access-groups` entitlement
+/// debug host never writes a real Keychain item. Release builds on a system with no protected
+/// store: the refusing view ([`KeyStoreError::Unsupported`] on every call), before any of
+/// the checks below. Release builds whose protected store is the Keychain: the Data Protection
+/// keychain in the access group compiled in as `ORG_HOST_KEYCHAIN_GROUP`:
+/// [`StoreError::NoKeychainGroup`] without one. `own_signing` (the host's own signing
+/// information, read once) must show both that group in its `keychain-access-groups` entitlement
 /// ([`StoreError::KeychainGroupNotEntitled`] otherwise, so a misbuilt host fails at startup
 /// rather than at its first `SecItemAdd`) and the hardened runtime with none of the
 /// entitlements that let other code in ([`StoreError::NotHardened`] otherwise: an injectable
 /// host would give every key away). A release build ignores `dev_key_dir`.
+///
+/// Where a release build's protected store is a credential directory instead, the store is
+/// the office keys' item store below `release_directory`, the directory the host opened and
+/// checked at its start ([`StoreError::NoCredentialDirectory`] without one). The system says
+/// which kind it has; nothing here names a system. A debug build ignores `release_directory`.
 pub(crate) fn store_for(
     dev_key_dir: Option<&Path>,
     home: &Path,
     instance_id: Option<&str>,
     own_signing: impl FnOnce() -> Option<Signing>,
+    release_directory: Option<&ReleaseRoot>,
 ) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     #[cfg(debug_assertions)]
     {
-        let _ = own_signing;
-        let scoped = dev_key_dir.map(|dir| match instance_id {
-            Some(id) => dir.join(id),
-            None => dir.to_owned(),
-        });
-        dev_store(scoped.as_deref(), home)
+        let _ = (own_signing, release_directory);
+        dev_store(dev_key_dir, home, instance_id)
     }
     #[cfg(not(debug_assertions))]
     {
         let _ = (dev_key_dir, home);
-        platform::release_keys(
+        selected_release_store(
+            org_platform_host::credentials::protected_store(),
             option_env!("ORG_HOST_KEYCHAIN_GROUP"),
             instance_id,
             own_signing,
+            release_directory,
         )
     }
 }
 
-/// The development store in `dir`, which must be absolute and outside the office `home`: inside
-/// `offices/` it would look like an unfinished office (and be discarded with every key in it),
-/// and anywhere in the home it would put plain-text keys there.
+/// A release build's store on a system whose protected store is `store`: the office keys
+/// below the open release directory where it is one, and the Keychain store where it is the
+/// Keychain. A system without a protected store gets the refusing view, which refuses
+/// every call ([`KeyStoreError::Unsupported`]): it is chosen before any Keychain check, so
+/// `group` and `own_signing` are not consulted and no Keychain-only reason is reported there.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+pub(crate) fn selected_release_store(
+    store: Result<ProtectedStore, Refused>,
+    group: Option<&str>,
+    instance_id: Option<&str>,
+    own_signing: impl FnOnce() -> Option<Signing>,
+    release_directory: Option<&ReleaseRoot>,
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
+    match store {
+        Ok(ProtectedStore::ReleaseDirectory) => {
+            let root = release_directory.ok_or(StoreError::NoCredentialDirectory)?;
+            match custody::OfficeKeys::release_directory(root) {
+                Ok(keys) => Ok(Arc::new(keys)),
+                // Kinds only: no item operation or item store names a path.
+                Err(e) => Err(StoreError::CredentialDirectory(e.to_string())),
+            }
+        }
+        Ok(ProtectedStore::Keychain) => release_store_scoped(group, instance_id, own_signing),
+        Err(_) => Ok(Arc::new(custody::UnsupportedKeys)),
+    }
+}
+
+/// The development store in `dir`, or for a registered instance in `dir/<instance id>`. That
+/// folder must be absolute and outside the office `home`: inside `offices/` it would look like an
+/// unfinished office (and be discarded with every key in it), and anywhere in the home it would
+/// put plain-text keys there. Nothing is opened or made here: the store opens its folder at
+/// its first use.
 #[cfg(debug_assertions)]
-fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
+fn dev_store(
+    dir: Option<&Path>,
+    home: &Path,
+    instance_id: Option<&str>,
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
     let inside = |dir: &Path| {
         let lexical = dir.starts_with(home);
         let canonical = match (dir.canonicalize(), home.canonicalize()) {
@@ -199,12 +262,85 @@ fn dev_store(dir: Option<&Path>, home: &Path) -> Result<Arc<dyn OfficeSecretsKey
         };
         lexical || canonical
     };
-    match dir {
-        Some(dir) if dir.is_absolute() && !inside(dir) => {
-            Ok(Arc::new(dev::DevKeys::new(dir.to_path_buf())))
-        }
-        _ => Err(StoreError::NoDevKeyDir),
+    let Some(dir) = dir else {
+        return Err(StoreError::NoDevKeyDir);
+    };
+    let scoped = match instance_id {
+        Some(id) => dir.join(id),
+        None => dir.to_owned(),
+    };
+    if scoped.is_absolute() && !inside(&scoped) {
+        Ok(Arc::new(custody::OfficeKeys::development(dir, instance_id)))
+    } else {
+        Err(StoreError::NoDevKeyDir)
     }
+}
+
+/// The release store for the access group `group` (`ORG_HOST_KEYCHAIN_GROUP` at build time),
+/// once the host's own signing information (`own_signing`) shows it may use it and can be
+/// trusted with the keys ([`self_trusted`]).
+///
+/// The live check can't run in the tests: an unsigned (or ad-hoc signed) test binary has no
+/// `keychain-access-groups` and no hardened runtime, so it would always refuse. The decision,
+/// [`self_trusted`], is tested on synthetic signing information; the reading is
+/// `code_signing`'s, tested the same way. Check it live on the first signed build.
+#[cfg(test)]
+fn release_store(
+    group: Option<&str>,
+    own_signing: impl FnOnce() -> Option<Signing>,
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
+    release_store_scoped(group, None, own_signing)
+}
+
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn release_store_scoped(
+    group: Option<&str>,
+    instance_id: Option<&str>,
+    own_signing: impl FnOnce() -> Option<Signing>,
+) -> Result<Arc<dyn OfficeSecretsKeys>, StoreError> {
+    let group = match group {
+        Some(group) if !group.trim().is_empty() => group,
+        _ => return Err(StoreError::NoKeychainGroup),
+    };
+    self_trusted(group, own_signing().as_ref())?;
+    // Opening the Keychain store reads and writes nothing.
+    match credentials(CredentialLocation::Keychain(KeychainItems {
+        access_group: group,
+        service: &keychain_service(instance_id),
+    })) {
+        Ok(store) => Ok(Arc::new(custody::OfficeKeys::keychain(store))),
+        // A system without a protected store has no access group to keep keys in.
+        Err(_) => Err(StoreError::NoKeychainGroup),
+    }
+}
+
+/// The decision, pure: a host whose own signing information is `own` may keep keys in the
+/// access group `group` only if that group is in its `keychain-access-groups`, and it runs
+/// hardened with none of the entitlements that let other code in
+/// (`code_signing::hardened_and_clean`). Information that couldn't be read trusts nothing.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn self_trusted(group: &str, own: Option<&Signing>) -> Result<(), StoreError> {
+    // Its own signature can't be read: nothing about it can be trusted.
+    let Some(own) = own else {
+        return Err(StoreError::NotHardened);
+    };
+    let entitled = own.keychain_access_groups.as_deref();
+    if !group_entitled(group, entitled) {
+        return Err(StoreError::KeychainGroupNotEntitled {
+            group: group.to_owned(),
+        });
+    }
+    if !hardened_and_clean(own) {
+        return Err(StoreError::NotHardened);
+    }
+    Ok(())
+}
+
+/// Whether the access group `group` is one of the host's own `entitled` groups (exactly). No
+/// entitlement, or one that couldn't be read, entitles nothing.
+#[cfg_attr(debug_assertions, allow(dead_code))]
+fn group_entitled(group: &str, entitled: Option<&[String]>) -> bool {
+    entitled.is_some_and(|groups| groups.iter().any(|g| g == group))
 }
 
 #[cfg(test)]
@@ -221,13 +357,21 @@ mod tests {
         std::fs::create_dir(&home_a).unwrap();
         std::fs::create_dir(&home_b).unwrap();
         let key_base = fixture.path().join("keys");
-        let a = store_for(Some(&key_base), &home_a, Some("INSTANCEA"), || {
-            panic!("debug never signs")
-        })
+        let a = store_for(
+            Some(&key_base),
+            &home_a,
+            Some("INSTANCEA"),
+            || panic!("debug never signs"),
+            None,
+        )
         .unwrap();
-        let b = store_for(Some(&key_base), &home_b, Some("INSTANCEB"), || {
-            panic!("debug never signs")
-        })
+        let b = store_for(
+            Some(&key_base),
+            &home_b,
+            Some("INSTANCEB"),
+            || panic!("debug never signs"),
+            None,
+        )
         .unwrap();
         let office = "SAMEOFFICE";
         a.create(office, &OfficeSecretsKey::from_bytes([1; 32]))
@@ -287,6 +431,221 @@ mod tests {
         }
     }
 
+    const GROUP: &str = "TEAMID1234.org.agentic.host";
+    const HARDENED: u32 = crate::code_signing::HARDENED_RUNTIME;
+
+    /// Signing information with these `flags`, access `groups` and boolean `entitlements`.
+    fn signing(flags: Option<u32>, groups: &[&str], entitlements: &[(&str, bool)]) -> Signing {
+        Signing {
+            flags,
+            entitlements: Some(
+                entitlements
+                    .iter()
+                    .map(|(key, value)| ((*key).to_owned(), Some(*value)))
+                    .collect(),
+            ),
+            keychain_access_groups: Some(groups.iter().map(|g| (*g).to_owned()).collect()),
+        }
+    }
+
+    #[test]
+    fn a_release_build_without_an_access_group_has_no_store() {
+        let mut asked = false;
+        for group in [None, Some(""), Some("  ")] {
+            let store = release_store(group, || {
+                asked = true;
+                Some(signing(Some(HARDENED), &[GROUP], &[]))
+            });
+            assert!(
+                matches!(store, Err(StoreError::NoKeychainGroup)),
+                "{group:?}"
+            );
+        }
+        assert!(!asked, "the signing information was read without a group");
+    }
+
+    #[test]
+    fn a_release_build_needs_its_access_group_in_its_own_entitlement() {
+        for groups in [
+            vec![],
+            vec!["TEAMID1234.other"],
+            vec![
+                "TEAMID1234.org.agentic.host.x",
+                "teamid1234.org.agentic.host",
+            ],
+        ] {
+            let own = signing(Some(HARDENED), &groups, &[]);
+            let err = self_trusted(GROUP, Some(&own)).unwrap_err();
+            assert_eq!(
+                err,
+                StoreError::KeychainGroupNotEntitled {
+                    group: GROUP.to_owned()
+                },
+                "{groups:?}"
+            );
+        }
+        // Signing information that couldn't be read trusts nothing.
+        assert_eq!(self_trusted(GROUP, None), Err(StoreError::NotHardened));
+        let entitled = signing(Some(HARDENED), &["TEAMID1234.other", GROUP], &[]);
+        assert_eq!(self_trusted(GROUP, Some(&entitled)), Ok(()));
+        // Choosing the store touches no Keychain item. A system whose protected store is not
+        // the Keychain has none to choose.
+        let chosen = release_store(Some(GROUP), || Some(entitled));
+        match org_platform_host::credentials::protected_store() {
+            Ok(ProtectedStore::Keychain) => assert!(chosen.is_ok()),
+            _ => assert!(matches!(chosen, Err(StoreError::NoKeychainGroup))),
+        }
+    }
+
+    /// The release store this system's protected store decides, for an entitled, hardened host
+    /// with its access group compiled in and no release directory open: one outcome per kind
+    /// of store. Where it is the Keychain, choosing it touches no item. Where it is a
+    /// credential directory, the Keychain preconditions are never consulted. A system with no
+    /// protected store gets the refusing view, never a fallback store.
+    #[test]
+    fn the_release_adapter_for_this_target_is_chosen_without_touching_a_store() {
+        let mut asked = false;
+        let keys = selected_release_store(
+            org_platform_host::credentials::protected_store(),
+            Some(GROUP),
+            Some("INSTANCEA"),
+            || {
+                asked = true;
+                Some(signing(Some(HARDENED), &[GROUP], &[]))
+            },
+            None,
+        );
+        match org_platform_host::credentials::protected_store() {
+            Ok(ProtectedStore::Keychain) => {
+                assert!(keys.is_ok());
+                assert!(
+                    asked,
+                    "the Keychain was chosen without the host's own signing"
+                );
+            }
+            Ok(ProtectedStore::ReleaseDirectory) => {
+                assert!(matches!(keys, Err(StoreError::NoCredentialDirectory)));
+                assert!(!asked, "the signing information was read");
+            }
+            Err(_) => {
+                let keys = keys.unwrap_or_else(|e| panic!("{e:?}"));
+                assert!(matches!(keys.list(), Err(KeyStoreError::Unsupported)));
+                assert!(!asked, "the signing information was read");
+            }
+        }
+    }
+
+    /// Another operating system (one with no protected store) gets the refusing view whatever
+    /// the group and signing: no Keychain reason (a missing group, an unsigned host) is ever
+    /// reported there, and the signing information is never read. The system is given as the
+    /// platform's answer, so this holds on every build target.
+    #[test]
+    fn another_operating_system_gets_the_refusing_adapter_before_any_keychain_check() {
+        let refused = || Refused::Unsupported {
+            capability: "credentials",
+            os: std::env::consts::OS,
+        };
+        for group in [None, Some(""), Some(GROUP)] {
+            let mut asked = false;
+            let keys = selected_release_store(
+                Err(refused()),
+                group,
+                Some("INSTANCEA"),
+                || {
+                    asked = true;
+                    None
+                },
+                None,
+            )
+            .unwrap_or_else(|e| panic!("{group:?}: {e:?}"));
+            assert!(!asked, "the signing information was read");
+            assert!(matches!(keys.list(), Err(KeyStoreError::Unsupported)));
+            assert!(matches!(
+                keys.load("01JAAAAAAAAAAAAAAAAAAAAAAA"),
+                Err(KeyStoreError::Unsupported)
+            ));
+        }
+    }
+
+    #[test]
+    fn the_service_is_the_one_the_adr_fixes_and_an_instance_has_its_own() {
+        // Persisted state: changing it orphans every office's key (ADR-0002).
+        assert_eq!(SERVICE, "org.agentic.office-key");
+        assert_eq!(keychain_service(None), "org.agentic.office-key");
+        assert_eq!(
+            keychain_service(Some("INSTANCEA")),
+            "org.agentic.office-key.instance.INSTANCEA"
+        );
+        assert_ne!(
+            keychain_service(Some("INSTANCEA")),
+            keychain_service(Some("INSTANCEB"))
+        );
+    }
+
+    #[test]
+    fn ids_that_arent_plain_are_refused_before_the_keychain() {
+        let entitled = signing(Some(HARDENED), &[GROUP], &[]);
+        // Where the protected store is not the Keychain there is none to keep them from.
+        let Ok(store) = release_store(Some(GROUP), || Some(entitled)) else {
+            assert_ne!(
+                org_platform_host::credentials::protected_store(),
+                Ok(ProtectedStore::Keychain)
+            );
+            return;
+        };
+        let key = OfficeSecretsKey::from_bytes([1; 32]);
+        for id in ["", "../x", "a b"] {
+            assert!(matches!(
+                store.create(id, &key),
+                Err(KeyStoreError::NotPlainId)
+            ));
+            assert!(matches!(store.load(id), Err(KeyStoreError::NotPlainId)));
+            assert!(matches!(store.delete(id), Err(KeyStoreError::NotPlainId)));
+        }
+    }
+
+    /// M1: an entitled host that isn't hardened, or lets other code in, could give every key
+    /// away: refused.
+    #[test]
+    fn a_release_build_must_itself_be_hardened_and_closed_to_other_code() {
+        let entitled =
+            |flags, entitlements: &[(&str, bool)]| signing(flags, &[GROUP], entitlements);
+        for own in [
+            entitled(None, &[]),
+            entitled(Some(0x2), &[]),
+            entitled(
+                Some(HARDENED),
+                &[(
+                    "com.apple.security.cs.allow-dyld-environment-variables",
+                    true,
+                )],
+            ),
+            entitled(
+                Some(HARDENED),
+                &[("com.apple.security.cs.disable-library-validation", true)],
+            ),
+            entitled(
+                Some(HARDENED),
+                &[("com.apple.security.get-task-allow", true)],
+            ),
+        ] {
+            assert_eq!(
+                self_trusted(GROUP, Some(&own)),
+                Err(StoreError::NotHardened),
+                "{own:?}"
+            );
+            assert!(matches!(
+                release_store(Some(GROUP), || Some(own)),
+                Err(StoreError::NotHardened)
+            ));
+        }
+        let clean = entitled(
+            Some(HARDENED | 0x2),
+            &[("com.apple.security.get-task-allow", false)],
+        );
+        assert_eq!(self_trusted(GROUP, Some(&clean)), Ok(()));
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     fn a_debug_build_needs_an_absolute_dev_key_dir_outside_the_home() {
@@ -299,10 +658,22 @@ mod tests {
             Some(Path::new("/tmp/org-home-never-made/offices/keys")),
         ] {
             assert!(
-                matches!(dev_store(dir, home), Err(StoreError::NoDevKeyDir)),
+                matches!(dev_store(dir, home, None), Err(StoreError::NoDevKeyDir)),
                 "{dir:?}"
             );
         }
-        assert!(dev_store(Some(Path::new("/tmp/org-keys-never-made")), home).is_ok());
+        // Choosing the store makes and opens nothing.
+        assert!(dev_store(Some(Path::new("/tmp/org-keys-never-made")), home, None).is_ok());
+        assert!(!Path::new("/tmp/org-keys-never-made").exists());
+        // A registered instance's folder is checked, not the folder it is in.
+        assert!(dev_store(Some(Path::new("/tmp")), Path::new("/tmp/INSTANCE"), None).is_ok());
+        assert!(matches!(
+            dev_store(
+                Some(Path::new("/tmp")),
+                Path::new("/tmp/INSTANCE"),
+                Some("INSTANCE")
+            ),
+            Err(StoreError::NoDevKeyDir)
+        ));
     }
 }

@@ -92,7 +92,10 @@ impl LiveEvents {
         (self.wake)();
     }
 
-    /// A member's presence changed. Only the latest per member is kept.
+    /// A member's presence changed. Only the latest per member is kept. Status lines publish
+    /// it; until B6 rebuilds them on the office store nothing in the server does, and only the
+    /// serve-layer tests of the presence push call this.
+    #[cfg(test)]
     pub(crate) fn publish_presence(&self, data: MemberPresenceChangedData) {
         {
             let mut presence = self.presence.lock().unwrap_or_else(|p| p.into_inner());

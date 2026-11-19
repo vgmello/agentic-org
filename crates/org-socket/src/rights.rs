@@ -11,6 +11,7 @@ mod stream;
 pub use send::{send, set_buffer_sizes, SendError};
 pub use stream::{connected_unix_stream, tcp_listener, unix_datagram};
 
+use org_platform::socket::descriptor_receive;
 use std::fmt;
 use std::io;
 use std::mem;
@@ -219,13 +220,12 @@ impl Receiver {
             Err(error) => return self.fatal(error),
         };
         loop {
-            #[cfg(not(target_os = "linux"))]
-            let _guard = match fence.lock() {
-                Ok(guard) => guard,
-                Err(_) => return self.fatal(io::Error::other("descriptor fence is poisoned")),
+            // The platform decides what the fence covers: on macOS it is held from here
+            // through every FD_CLOEXEC update; Linux leaves it alone.
+            let receiving = match descriptor_receive(fence) {
+                Ok(receiving) => receiving,
+                Err(error) => return self.fatal(error),
             };
-            #[cfg(target_os = "linux")]
-            let _ = (fence, &mut set_flags);
             let mut data = libc::iovec {
                 iov_base: payload.as_mut_ptr().cast(),
                 iov_len: payload.len(),
@@ -236,7 +236,7 @@ impl Receiver {
             message.msg_iovlen = 1;
             message.msg_control = control.as_mut_ptr().cast();
             message.msg_controllen = space as _;
-            let bytes = match receive(fd, &mut message, receive_flags()) {
+            let bytes = match receive(fd, &mut message, receiving.flags()) {
                 Ok(bytes) => bytes,
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -256,12 +256,9 @@ impl Receiver {
                 drop(descriptors);
                 return self.fatal(invalid("unexpected descriptor count"));
             }
-            #[cfg(not(target_os = "linux"))]
-            for descriptor in &descriptors {
-                if let Err(error) = set_flags(descriptor.as_raw_fd()) {
-                    drop(descriptors);
-                    return self.fatal(error);
-                }
+            if let Err(error) = receiving.close_on_exec(&descriptors, &mut set_flags) {
+                drop(descriptors);
+                return self.fatal(error);
             }
             return Ok(Received { bytes, descriptors });
         }
@@ -293,17 +290,6 @@ fn control_space(expected: usize) -> Option<usize> {
         .try_into()
         .ok()?;
     Some(unsafe { libc::CMSG_SPACE(data as u32) } as usize)
-}
-
-fn receive_flags() -> i32 {
-    #[cfg(target_os = "linux")]
-    {
-        libc::MSG_DONTWAIT | libc::MSG_CMSG_CLOEXEC
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        libc::MSG_DONTWAIT
-    }
 }
 
 fn system_receive(fd: RawFd, message: &mut libc::msghdr, flags: i32) -> io::Result<usize> {
@@ -345,19 +331,9 @@ fn close_on_exec_with(fd: RawFd, mut call: impl FnMut(RawFd, i32, i32) -> i32) -
     ))
 }
 
-// libc uses size_t on Linux and socklen_t (u32) on macOS.
-fn control_len(message: &libc::msghdr) -> usize {
-    #[cfg(target_os = "linux")]
-    {
-        message.msg_controllen
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        message.msg_controllen as usize
-    }
-}
-
 unsafe fn take_rights(message: &libc::msghdr) -> Vec<OwnedFd> {
+    // `libc` declares the field as `size_t` on Linux and as `socklen_t` on macOS.
+    let control_len: usize = message.msg_controllen as _;
     let mut descriptors = Vec::new();
     // SAFETY: caller supplies successful recvmsg output with live control storage.
     let mut header = unsafe { libc::CMSG_FIRSTHDR(message) };
@@ -367,7 +343,7 @@ unsafe fn take_rights(message: &libc::msghdr) -> Vec<OwnedFd> {
             let offset = header
                 .cast::<u8>()
                 .offset_from(message.msg_control.cast::<u8>()) as usize;
-            let available = control_len(message) - offset;
+            let available = control_len - offset;
             let reported = (*header).cmsg_len as usize;
             if (*header).cmsg_level == libc::SOL_SOCKET && (*header).cmsg_type == libc::SCM_RIGHTS {
                 // macOS retains the original cmsg_len when only a prefix was reported.

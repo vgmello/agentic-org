@@ -171,6 +171,7 @@ impl Fixture {
                 flagged: person && expires,
             })],
             clock: Clock::new("real-mailbox".into()),
+            list_office: None,
         };
         Self {
             mailbox,

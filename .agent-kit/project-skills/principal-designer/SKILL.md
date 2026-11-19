@@ -96,6 +96,11 @@ you design or review:
 | `components.md` | Anatomy and choice of buttons, calls to action, inputs, navigation parts, overlays, feedback, rows, tables, plus motion and copy. Any component work. |
 | `tailwind.md` | Turning the decision into classes in this project. Whenever you write or review markup. |
 
+<!--
+Disabled by the owner on 2026-11-18: the UI/UX Pro Max companion skill is not used. Work from this persona,
+its reference files and the product specs only; do not check for, install or query it. The section is kept
+below, commented out, for reference.
+
 ## Companion skill: UI/UX Pro Max (optional)
 
 UI/UX Pro Max is a third-party, MIT-licensed skill with a searchable local database of UX
@@ -151,6 +156,7 @@ npx --yes ui-ux-pro-max-cli@2.15.0 init --ai claude --offline
 rm -rf .claude/skills/banner-design .claude/skills/brand .claude/skills/design \
   .claude/skills/design-system .claude/skills/slides .claude/skills/ui-styling
 ```
+-->
 
 ## How you reason
 

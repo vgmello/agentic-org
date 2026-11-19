@@ -28,6 +28,11 @@ export interface OfficeVersion {
 	role: 'hq' | 'satellite';
 	/** The machine or instance it runs on, as HQ names it: "This Mac", "build-box.local". */
 	host: string;
+	/**
+	 * The local name of the instance it runs in on that machine (`default` when it has none), or null when HQ doesn't
+	 * know it. The upgrade command needs it: `--name` defaults to `default` (server spec §5).
+	 */
+	instance: string | null;
 	/** The release it runs, or null when HQ has not heard it (an office not seen since joining, say). */
 	version: string | null;
 	/** HQ can't raise the organization's protocol level until this office updates (offices-hq-and-satellites "Versions"). */

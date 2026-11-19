@@ -506,8 +506,17 @@
 			]
 		},
 		"org-lifecycle": {
-			"specs": ["retired-import.spec.ts", "session-foundation.spec.ts", "accessibility.spec.ts"],
-			"sources": ["src/routes/(onboarding)/**", "src/lib/create-flow.ts", "src/lib/open-flow.ts"]
+			"specs": [
+				"retired-import.spec.ts",
+				"session-foundation.spec.ts",
+				"accessibility.spec.ts",
+				"organizations.spec.ts"
+			],
+			"sources": [
+				"src/routes/(onboarding)/**",
+				"src/lib/open-flow.ts",
+				"src/lib/platform/organizations/**"
+			]
 		},
 		"production": {
 			"specs": ["production-unavailable.spec.ts"],
@@ -698,6 +707,7 @@
 			"e2e/fakes/**",
 			"../../.github/workflows/**",
 			"e2e/ready.ts",
+			"e2e/mock-organization.ts",
 			"e2e/web-session.ts",
 			"e2e/shot.ts",
 			"e2e/vite-composition.ts",

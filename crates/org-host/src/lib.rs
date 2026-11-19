@@ -14,7 +14,8 @@
 //! host's registry in plain SQLite; organization databases remain in office servers.
 //!
 //! It holds every office's secrets key (`keys`): it creates each one, keeps it in its key store
-//! (the Data Protection keychain in release builds, a development folder in debug builds) and
+//! (in release builds the system's protected store: the Data Protection keychain on macOS, the
+//! credential directory setup recorded on Linux; a development folder in debug builds) and
 //! hands it to the office's server on the launch pipe. Its servers never touch a key store.
 //!
 //! The agentic-org serve composition parses arguments, waits for shutdown and calls [`Host`].
@@ -71,7 +72,6 @@ mod enc1_process_tests;
 #[cfg(all(test, debug_assertions))]
 mod web_process_tests;
 // B2-01 foundation: compiled now; host wiring follows in the next reviewed slice.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[cfg_attr(not(test), expect(dead_code, reason = "B2-01.2 wires the host"))]
 mod instance;
 mod keys;
@@ -81,6 +81,7 @@ mod peer;
 mod provisioning;
 mod recovery;
 mod registered;
+mod release_store;
 mod secrets;
 mod server_check;
 mod service;
@@ -89,12 +90,12 @@ mod service;
     expect(dead_code, reason = "A3 B4 wires browser sessions into the host ops")
 )]
 mod sessions;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod setup_flow;
 pub mod signals;
-mod spawn;
 mod supervisor;
 mod sync;
+#[cfg(test)]
+mod test_programs;
 mod timings;
 mod writer;
 
@@ -103,6 +104,8 @@ use std::io;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use org_platform_host::credentials::ReleaseRoot;
 
 use crate::app_auth::AppPolicy;
 use crate::broadcast::Broadcast;
@@ -212,6 +215,16 @@ impl Config {
         }
     }
 
+    /// The service account is an ordinary user on every system: the service refuses to run
+    /// as root (ADR-0017 decision 10). Every composition that runs the service calls this
+    /// first, before anything is opened or created. It is not part of [`Host::start`], so a
+    /// test can run a host as whatever user the tests run as. A command that only talks to a
+    /// running service (`admin reset` run by root for the service user) is not the service
+    /// and does not call it.
+    pub fn refuse_root() -> Result<(), String> {
+        root_refusal(home::euid())
+    }
+
     /// Debug builds only: another office server program.
     #[cfg(debug_assertions)]
     pub fn set_server_program(&mut self, program: impl Into<PathBuf>) {
@@ -259,6 +272,39 @@ impl Config {
     }
 }
 
+/// Why a process whose effective user is `euid` may not run the service, if it may not.
+fn root_refusal(euid: u32) -> Result<(), String> {
+    if euid == 0 {
+        return Err(
+            "the service does not run as root: start it as the service user, an ordinary \
+             account (a root-owned service could be read by nothing but root, and every \
+             office worker and agent it starts would be root too)"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Closes this process to the other processes of its user: no core dump, and where the
+/// system has the attribute, not dumpable (`org_platform::process::harden_self`). The
+/// executable calls it as its first action, before it reads an argument: a descriptor of
+/// this process's memory that another process of the user opened earlier keeps working, so
+/// the time before this call is kept as short as it can be. It can be called again and
+/// changes nothing then.
+pub fn harden_process() -> io::Result<()> {
+    org_platform::process::harden_self()
+}
+
+/// [`harden_process`] before a host reads a key. Every way a host starts goes through it
+/// first, whatever its executable did: a host started inside another program (a test) is
+/// closed here.
+fn harden() -> Result<(), HostError> {
+    harden_process().map_err(|source| HostError::Io {
+        context: "closing this process to other processes before any key is read",
+        source,
+    })
+}
+
 /// Temporary test entry for the private bootstrap while setup's CLI is gated.
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub fn start_instance_for_test(
@@ -280,18 +326,27 @@ fn instance_error(error: instance::Error) -> HostError {
     }
 }
 
-/// The office home a trusted (release) host serves: its account's own office home,
-/// `<pw_dir>/Library/Application Support/agentic.org`, and only when `org_proto::location`'s
-/// shared rule (`ORG_OFFICE_HOME`, else `$HOME/…`), the one the app and `agent-os` use to find
-/// `host.sock`, gives that same home in this environment ([`home::pinned_office_home`]).
-/// Otherwise the host doesn't start, saying why: its home can't be moved by its environment,
-/// and it never serves a home its clients don't look in.
+/// The office home the shared rule gives in this environment: `ORG_OFFICE_HOME` when it is an
+/// absolute path, else this system's application base for the home folder `HOME` names. The
+/// app and `agent-os` find `host.sock` by the same rule.
+pub fn default_office_home() -> Option<PathBuf> {
+    home::default_office_home()
+}
+
+/// The office home a trusted (release) host serves: its account's own office home, this
+/// system's application base for `<pw_dir>`, and only when the shared rule
+/// ([`default_office_home`]: `ORG_OFFICE_HOME`, else the base for `$HOME`), the one the app and
+/// `agent-os` use to find `host.sock`, gives that same home in this environment
+/// ([`home::pinned_office_home`]). Otherwise the host doesn't start, saying why: its home can't
+/// be moved by `ORG_OFFICE_HOME` or `HOME`, and it never serves a home its clients don't look
+/// in.
 fn trusted_office_home() -> Result<PathBuf, String> {
     let home_env = std::env::var_os("HOME").map(PathBuf::from);
     home::pinned_office_home(
-        org_proto::location::default_office_home().as_deref(),
+        home::default_office_home().as_deref(),
         home_env.as_deref(),
         home::account_dir().as_deref(),
+        home::office_home_in,
         home::same_path,
     )
 }
@@ -327,18 +382,17 @@ fn startup_server_check(config: &Config) -> Result<ServerCheck, HostError> {
     let server_check =
         ServerCheck::for_build(cfg!(debug_assertions), config.app_team_id.as_deref())
             .map_err(|why| HostError::InvalidAppIdentity { why })?;
-    let server_check =
-        match &config.runtime_release {
-            Some(release) => {
-                server_check.pinned(release.cdhash(SERVER_PROGRAM_NAME).map_err(|e| {
-                    HostError::Io {
-                        context: "binding office image",
-                        source: io::Error::other(e),
-                    }
-                })?)
-            }
-            None => server_check,
-        };
+    let server_check = match &config.runtime_release {
+        Some(release) => {
+            server_check.pinned(release.image_pin(SERVER_PROGRAM_NAME).map_err(|e| {
+                HostError::Io {
+                    context: "binding office image",
+                    source: io::Error::other(e),
+                }
+            })?)
+        }
+        None => server_check,
+    };
     host_log::log(&server_check.describe());
     Ok(server_check)
 }
@@ -374,6 +428,7 @@ fn startup_keys(
     config: &Config,
     instance: &Option<instance::registry::Instance>,
     dev_key_dir: Option<&Path>,
+    release_directory: Option<&ReleaseRoot>,
 ) -> Result<Arc<dyn keys::OfficeSecretsKeys>, HostError> {
     let keys = keys::store_for(
         dev_key_dir,
@@ -382,6 +437,7 @@ fn startup_keys(
             .map_or(config.home.as_path(), |i| i.root()),
         instance.as_ref().map(|i| i.id()),
         code_signing::own_signing,
+        release_directory,
     )
     .map_err(|e| match e {
         keys::StoreError::NoDevKeyDir => HostError::NoDevKeyDir,
@@ -390,9 +446,23 @@ fn startup_keys(
             HostError::KeychainGroupNotEntitled { group }
         }
         keys::StoreError::NotHardened => HostError::NotHardened,
+        keys::StoreError::NoCredentialDirectory => HostError::Io {
+            context: "choosing the key store",
+            source: io::Error::other(NO_CREDENTIAL_DIRECTORY),
+        },
+        keys::StoreError::CredentialDirectory(why) => HostError::Io {
+            context: "opening the office keys in the credential directory",
+            source: io::Error::other(why),
+        },
     })?;
     Ok(keys)
 }
+
+/// What a release host says when it keeps its keys in a credential directory and has none:
+/// only a registered instance has one, at the path its setup recorded.
+const NO_CREDENTIAL_DIRECTORY: &str = "this host keeps the offices' keys in the credential \
+     directory that setup records, and it serves no registered instance: run agentic-org \
+     setup, then agentic-org serve --name <instance>";
 
 fn startup_app_policy(config: &Config, selected: bool) -> Result<AppPolicy, HostError> {
     // Registered selected instances admit the same human CLI/host image as
@@ -423,6 +493,7 @@ fn startup_authentication(
     instance: &Option<instance::registry::Instance>,
     custody: &mut Option<Arc<dyn host_secrets::HostSecrets>>,
     dev_key_dir: Option<&Path>,
+    release_directory: Option<&ReleaseRoot>,
 ) -> Result<Option<Arc<service::authentication::Authentication>>, HostError> {
     let authentication = if let Some(instance) = instance {
         match fs::symlink_metadata(layout.home.join("host-registry.db")) {
@@ -434,6 +505,7 @@ fn startup_authentication(
                         instance.root(),
                         instance.id(),
                         code_signing::own_signing,
+                        release_directory,
                     )
                     .map_err(|_| HostError::Io {
                         context: "opening protected account custody",
@@ -512,7 +584,7 @@ fn startup_web(
         config
             .runtime_release
             .as_ref()
-            .map(|release| (release.cdhash("agentic-org-web"), release.web_binding())),
+            .map(|release| (release.image_pin("agentic-org-web"), release.web_binding())),
     );
     let mut critical_paths = vec![layout.home.clone(), instance.root().to_owned()];
     if let Some(dir) = dev_key_dir {
@@ -612,10 +684,23 @@ impl Host {
     }
 
     fn start_prepared(
-        mut config: Config,
+        config: Config,
         instance: Option<instance::registry::Instance>,
         prepared: Option<(HostLock, Arc<dyn host_secrets::HostSecrets>)>,
     ) -> Result<Self, HostError> {
+        Self::start_with(config, instance, prepared, None)
+    }
+
+    /// The composition. `release_directory` is the credential directory a registered start
+    /// opened, where a release build keeps its secrets in one: the office keys are opened
+    /// below it, and each view keeps it locked for as long as the view lives.
+    fn start_with(
+        mut config: Config,
+        instance: Option<instance::registry::Instance>,
+        prepared: Option<(HostLock, Arc<dyn host_secrets::HostSecrets>)>,
+        release_directory: Option<ReleaseRoot>,
+    ) -> Result<Self, HostError> {
+        harden()?;
         if instance.is_some() {
             config.admit_runtime()?;
         }
@@ -637,7 +722,7 @@ impl Host {
         let dev_key_dir = config.dev_key_dir.as_deref();
         #[cfg(not(debug_assertions))]
         let dev_key_dir = None;
-        let keys = startup_keys(&config, &instance, dev_key_dir)?;
+        let keys = startup_keys(&config, &instance, dev_key_dir, release_directory.as_ref())?;
         layout.check_socket_paths()?;
         layout.prepare()?;
         let (held, mut custody) = prepared.unzip();
@@ -650,7 +735,15 @@ impl Host {
         let sweep_orphans = instance.is_some();
         let server_check = startup_server_check(&config)?;
         let io = |context| move |source| HostError::Io { context, source };
-        let authentication = startup_authentication(&layout, &instance, &mut custody, dev_key_dir)?;
+        let authentication = startup_authentication(
+            &layout,
+            &instance,
+            &mut custody,
+            dev_key_dir,
+            release_directory.as_ref(),
+        )?;
+        // From here on the views hold the credential directory: this handle is not needed
+        // again and goes when the composition returns.
         let authentication_lifecycle = authentication
             .as_ref()
             .map(service::authentication::Lifecycle::start)
@@ -839,5 +932,69 @@ impl Host {
 impl Drop for Host {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_root_is_refused_the_service() {
+        let refusal = root_refusal(0).unwrap_err();
+        assert!(refusal.contains("does not run as root"), "{refusal}");
+        assert!(refusal.contains("service user"), "{refusal}");
+        for user in [1, 501, 1000, 61000, u32::MAX] {
+            assert_eq!(root_refusal(user), Ok(()), "{user}");
+        }
+        // The composition's check is this rule for the process's own effective user.
+        assert_eq!(Config::refuse_root().is_err(), home::euid() == 0);
+    }
+
+    /// Set in the child of [`a_host_start_closes_the_process_before_it_reads_a_key`].
+    #[cfg(debug_assertions)]
+    const START_CHILD: &str = "ORG_HOST_TEST_START_CHILD";
+
+    /// A host start closes its process to the other processes of its user before it reaches
+    /// its key store: a start that is refused before any store is chosen (a relative home)
+    /// has already done it. A child of the test starts the host, so the test binary itself is
+    /// not changed for the other tests.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_host_start_closes_the_process_before_it_reads_a_key() {
+        use org_platform::process::testing::hardened;
+        if std::env::var_os(START_CHILD).is_some() {
+            // A fresh process is not closed, unless its environment already forbids core
+            // dumps on a system where that is all there is to it.
+            if hardened().unwrap() {
+                println!("this process was closed before the start: only the end is shown");
+            }
+            // No development key folder is set: reaching the key store would say so.
+            let refused = Host::start(Config::new("relative/home", "/nonexistent/worker"));
+            assert!(
+                matches!(refused, Err(HostError::RelativeHome { .. })),
+                "{:?}",
+                refused.err().map(|e| e.to_string())
+            );
+            assert!(hardened().unwrap(), "the start did not close the process");
+            println!("closed before the key store");
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::a_host_start_closes_the_process_before_it_reads_a_key",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(START_CHILD, "1")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && text.contains("closed before the key store"),
+            "{text}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

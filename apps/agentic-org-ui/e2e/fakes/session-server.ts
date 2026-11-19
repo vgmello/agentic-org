@@ -26,6 +26,26 @@ const knownSessionPaths = new Set([
 	'/api/v1/session/refresh',
 	'/api/v1/session/sign-out'
 ]);
+interface CreateParams {
+	name: string;
+	slug: string;
+	organization_repository: { kind: string; remote_url: string };
+	state_branch: string;
+}
+type Refusal = { code: string; field?: string; rule?: string };
+/** `lost` records the create and answers with an intermediary's error page instead of the outcome. */
+type CreateStep =
+	| 'accepted'
+	| 'completed'
+	| 'unknown'
+	| 'lost'
+	| 'unavailable'
+	| { rejected: Refusal; status: number }
+	| { refused: Refusal };
+type LookupStep =
+	'accepted' | 'completed' | 'missing' | 'unavailable' | 'expired' | { rejected: Refusal };
+const ulid = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+const hostLookup = /^\/api\/v1\/operations\/host\/([^/]+)$/;
 function newCase() {
 	return {
 		pair: undefined as SessionPair | undefined,
@@ -40,7 +60,24 @@ function newCase() {
 		signOutRefused: undefined as 400 | 403 | undefined,
 		revision: 2,
 		/** What GET /api/v1/organizations lists: a real instance lists none until A4 (SIGN-9). */
-		organizations: [] as { id: string; name: string; created_at: string; recovery: string }[],
+		organizations: [] as ({
+			id: string;
+			name: string;
+			created_at: string;
+			recovery: string;
+		} & Record<string, unknown>)[],
+		/**
+		 * Scripted answers of POST /api/v1/organizations and of the host operation lookup, one per
+		 * request; when a script is empty the create is `accepted` and the lookup `completed`.
+		 */
+		/** The account's creates still in progress, as GET /api/v1/organizations lists them. */
+		creating: [] as { operation_id: string; name: string; slug: string }[],
+		/** GET /api/v1/organizations answers 503: HQ can't be reached. */
+		listUnavailable: false,
+		createScript: [] as CreateStep[],
+		lookupScript: [] as LookupStep[],
+		creates: [] as { operation_id: string; params: CreateParams }[],
+		lookups: [] as string[],
 		hold: false,
 		release: undefined as (() => void) | undefined,
 		requestHeaders: [] as Record<string, string>[]
@@ -138,6 +175,21 @@ export function sessionTestMiddleware() {
 					else if (value.action === 'revision') controlled.revision = value.value;
 					else if (value.action === 'organizations' && Array.isArray(value.value))
 						controlled.organizations = value.value;
+					else if (value.action === 'creating' && Array.isArray(value.value)) {
+						controlled.creating = value.value;
+						// A listed create is one the host knows: its lookup answers.
+						for (const entry of controlled.creating)
+							if (!controlled.creates.some((c) => c.operation_id === entry.operation_id))
+								controlled.creates.push({
+									operation_id: entry.operation_id,
+									params: { name: entry.name, slug: entry.slug } as CreateParams
+								});
+					} else if (value.action === 'listUnavailable')
+						controlled.listUnavailable = value.value === true;
+					else if (value.action === 'createScript' && Array.isArray(value.value))
+						controlled.createScript = value.value;
+					else if (value.action === 'lookupScript' && Array.isArray(value.value))
+						controlled.lookupScript = value.value;
 					else {
 						json({}, 400);
 						return;
@@ -147,7 +199,9 @@ export function sessionTestMiddleware() {
 					refreshCount: controlled.refreshCount,
 					gets: controlled.gets,
 					requestHeaders: controlled.requestHeaders,
-					issued: controlled.issued
+					issued: controlled.issued,
+					creates: controlled.creates,
+					lookups: controlled.lookups
 				});
 				return;
 			}
@@ -179,6 +233,8 @@ export function sessionTestMiddleware() {
 			if (
 				url.pathname !== '/api/v1/version' &&
 				url.pathname !== '/api/v1/organizations' &&
+				url.pathname !== '/api/v1/instance' &&
+				!hostLookup.test(url.pathname) &&
 				!(sessionPath && knownSessionPaths.has(url.pathname))
 			) {
 				json(notFound, 404);
@@ -240,9 +296,115 @@ export function sessionTestMiddleware() {
 				respond(state.view);
 				return;
 			}
-			if (url.pathname === '/api/v1/organizations') {
+			// The organization view of web-api-v1 section 3, made from what the create asked for.
+			const link = (operation_id: string) => {
+				const asked = state.creates.find((c) => c.operation_id === operation_id)?.params;
+				const id = `org-${operation_id.slice(-6).toLowerCase()}`;
+				const view = {
+					id,
+					slug: asked?.slug ?? 'unknown',
+					name: asked?.name ?? 'Unknown',
+					created_at: '2026-11-18T10:00:00.000Z',
+					employee_id: 'person-1',
+					recovery: 'pending',
+					offices: [
+						{
+							id: `${id}-hq`,
+							organization_id: id,
+							name: 'HQ',
+							role: 'hq',
+							host: 'hq-mac',
+							status: 'starting'
+						}
+					]
+				};
+				if (!state.organizations.some((o) => o.id === id)) state.organizations.push(view);
+				state.creating = state.creating.filter((c) => c.operation_id !== operation_id);
+				return view;
+			};
+			const refusal = (error: Refusal) => ({ message: 'Refused.', ...error });
+			if (url.pathname === '/api/v1/instance') {
 				if (req.method === 'GET' && url.search === '')
-					respond({ organizations: state.organizations });
+					respond({
+						instance_id: state.view.instance_id,
+						name: 'default',
+						server_version: '0.0.0-test',
+						web_status: 'ok',
+						listen_scheme: 'http_loopback',
+						server_time_ms: Date.now()
+					});
+				else json(invalidRequest, 400);
+				return;
+			}
+			if (url.pathname === '/api/v1/organizations' && req.method === 'POST') {
+				const sent = await body(req);
+				const operation_id = sent?.operation_id;
+				if (
+					typeof operation_id !== 'string' ||
+					!ulid.test(operation_id) ||
+					Object.keys(sent).sort().join() !== 'operation_id,params,scope' ||
+					sent.scope?.kind !== 'instance' ||
+					sent.scope?.instance_id !== state.view.instance_id ||
+					Object.keys(sent.params ?? {})
+						.sort()
+						.join() !== 'name,organization_repository,slug,state_branch'
+				) {
+					json(invalidRequest, 400);
+					return;
+				}
+				const step = state.createScript.shift() ?? 'accepted';
+				if (typeof step === 'object' && 'refused' in step) {
+					// The web process refuses before any host call: nothing is recorded.
+					json({ error: { ...refusal(step.refused), code: 'invalid_request' } }, 400);
+					return;
+				}
+				state.creates.push({ operation_id, params: sent.params });
+				if (step === 'lost') {
+					// What a browser gets when the answer is lost on the way: no JSON it can read.
+					res.statusCode = 502;
+					res.setHeader('Content-Type', 'text/html');
+					res.end('<html>Bad gateway</html>');
+				} else if (step === 'accepted') json({ outcome: 'accepted', operation_id }, 202);
+				else if (step === 'completed')
+					json({ outcome: 'completed', operation_id, result: link(operation_id) });
+				else if (step === 'unknown') json({ outcome: 'unknown', operation_id }, 504);
+				else if (step === 'unavailable')
+					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503);
+				else
+					json({ outcome: 'rejected', operation_id, error: refusal(step.rejected) }, step.status);
+				return;
+			}
+			const looked = hostLookup.exec(url.pathname);
+			if (looked) {
+				const operation_id = looked[1];
+				if (
+					req.method !== 'GET' ||
+					!ulid.test(operation_id) ||
+					url.search !== `?instance_id=${state.view.instance_id}`
+				) {
+					json(invalidRequest, 400);
+					return;
+				}
+				state.lookups.push(operation_id);
+				const step = state.lookupScript.shift() ?? 'completed';
+				const known = state.creates.some((c) => c.operation_id === operation_id);
+				const result = (rest: Record<string, unknown>) =>
+					respond({ operation_id, kind: 'host', ...rest });
+				if (step === 'missing' || !known) json(notFound, 404);
+				else if (step === 'unavailable')
+					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503);
+				else if (step === 'expired') json({ error: { code: 'expired', message: 'Expired.' } }, 410);
+				else if (step === 'accepted') result({ outcome: 'accepted', state: 'reserved' });
+				else if (step === 'completed')
+					result({ outcome: 'completed', state: 'linked', result: link(operation_id) });
+				else result({ outcome: 'rejected', error: refusal(step.rejected) });
+				return;
+			}
+			if (url.pathname === '/api/v1/organizations') {
+				if (req.method === 'GET' && url.search === '' && state.listUnavailable)
+					json({ error: { code: 'unavailable', message: 'Offline.' } }, 503);
+				else if (req.method === 'GET' && url.search === '')
+					respond({ organizations: state.organizations, creating: state.creating });
 				else json(invalidRequest, 400);
 				return;
 			}

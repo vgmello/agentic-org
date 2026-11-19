@@ -52,6 +52,8 @@
 		const load = loads;
 		if (load === seenLoad) return;
 		seenLoad = load;
+		// The organization changed elsewhere: a message about the last action no longer describes the list.
+		untrack(dismiss);
 		// Synchronising with the server, not deriving: the read starts here and its answer lands in the Resource.
 		untrack(() => void resource.reload());
 	});
@@ -63,6 +65,18 @@
 	let refusal = $state<{ memberId: string; message: string } | undefined>();
 	/** A person who left since the list loaded: said in the list they were in. */
 	let gone = $state<AccessList | undefined>();
+	/** Set on teardown: a reload that outlives the page never moves focus on the next one. */
+	let destroyed = false;
+	$effect(() => () => {
+		destroyed = true;
+	});
+
+	/** A refusal or a "has left" line is read once; the next interaction anywhere clears it. */
+	function dismiss() {
+		if (busy) return;
+		refusal = undefined;
+		gone = undefined;
+	}
 
 	// After a client navigation the shell focuses the area's h1 on the next tick; this page's heading takes focus after
 	// that, so the person lands on what the page is for (app-shell-ux §6a).
@@ -81,8 +95,16 @@
 	}
 
 	async function act(person: AccessPerson, kind: SignInAction, event: MouseEvent) {
-		if (busy) return;
 		const opener = event.currentTarget as HTMLElement;
+		if (busy) {
+			// One link at a time: point at the one being made rather than ignoring the press silently.
+			document
+				.querySelector<HTMLElement>(
+					`[data-access-row][data-member-id="${CSS.escape(busy.memberId)}"] button[aria-busy="true"]`
+				)
+				?.focus();
+			return;
+		}
 		refusal = undefined;
 		gone = undefined;
 		if (kind !== 'remove') busy = { memberId: person.memberId, kind };
@@ -104,7 +126,7 @@
 		const moveFocus = neighbourFocus(opener, headingTarget);
 		await resource.reload();
 		await tick();
-		if (focusIsFree(opener)) await moveFocus();
+		if (!destroyed && focusIsFree(opener)) await moveFocus();
 	}
 
 	/** The page heading, focusable as a place to read from when no row is left to focus. */
@@ -120,7 +142,7 @@
 			await resource.reload();
 			await tick();
 		}
-		if (!focusIsFree(from)) return;
+		if (destroyed || !focusIsFree(from)) return;
 		if (from?.isConnected) return from.focus();
 		// The person moved to another list (invited, or access removed): their first action there, else their row.
 		const row = document.querySelector<HTMLElement>(
@@ -130,6 +152,8 @@
 		(target ?? headingTarget())?.focus();
 	}
 </script>
+
+<svelte:document onpointerdown={dismiss} onkeydown={dismiss} />
 
 <!-- The heading takes focus programmatically; it shows no ring of its own (app-shell-ux §6a). -->
 {#if resource.state !== 'unavailable'}
@@ -199,8 +223,8 @@
 		{#snippet adminFact()}
 			<span class="block" data-fact="administrator"
 				>{admin.name
-					? `${admin.name} (${admin.username})`
-					: `${admin.username} · no person in this organization yet`}{admin.isYou
+					? `${admin.name}${admin.username ? ` (${admin.username})` : ''}`
+					: `${admin.username ?? 'An account'} · no person in this organization yet`}{admin.isYou
 					? ' · you'
 					: ''}</span
 			>
@@ -228,6 +252,10 @@
 							{person}
 							{canManage}
 							busy={busy?.memberId === person.memberId ? busy.kind : undefined}
+							waiting={busy && busy.memberId !== person.memberId
+								? (resource.data?.people.find((p) => p.memberId === busy?.memberId)?.name ??
+									'someone')
+								: undefined}
 							refusal={refusal?.memberId === person.memberId ? refusal.message : undefined}
 							onact={(kind, event) => act(person, kind, event)}
 						/>

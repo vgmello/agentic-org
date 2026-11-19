@@ -6,6 +6,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { signInAsAdmin } from './web-session';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openTeam(page: Page, url: string, name = 'Engineering') {
 	await signInAsAdmin(page, [
@@ -16,10 +17,7 @@ async function openTeam(page: Page, url: string, name = 'Engineering') {
 			recovery: 'acknowledged'
 		}
 	]);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Team page');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).not.toHaveURL(/\/create$/);
+	await enterMockedOrganization(page, 'Team page');
 	await visit(page, url);
 	if (name) await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
 }

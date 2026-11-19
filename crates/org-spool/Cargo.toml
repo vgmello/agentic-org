@@ -7,5 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# The `open(2)` flags and error numbers of the build target (`safe_read`).
+org-platform = { path = "../org-platform" }
 serde.workspace = true
 serde_json.workspace = true

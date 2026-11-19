@@ -2,6 +2,7 @@
 //! this module. Each source returns counts and items from one read view, or fails as a unit.
 use org_proto::inbox::{InboxCounts, InboxItem, InboxKind, InboxPosition, InboxState};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 mod hint;
 mod list;
@@ -10,19 +11,21 @@ pub(crate) use hint::Hint;
 
 /// HQ's real source registration and the clock also used by hint delivery.
 pub(crate) struct Hq {
-    pub(crate) sources: Vec<std::sync::Arc<dyn Source>>,
+    pub(crate) sources: Vec<Arc<dyn Source>>,
     pub(crate) clock: Clock,
+    pub(crate) list_office: Option<Arc<org_office::Office>>,
 }
 
 impl Hq {
-    pub(crate) fn for_office(office: std::sync::Arc<org_office::Office>) -> std::io::Result<Self> {
+    pub(crate) fn for_office(office: Arc<org_office::Office>) -> std::io::Result<Self> {
         use std::io::Read;
         let mut epoch = [0; 16];
         std::fs::File::open("/dev/urandom")?.read_exact(&mut epoch)?;
         let office_id = office.info().office_id.clone();
+        let snapshot_office = Arc::clone(&office);
         let source = org_source::OrgSource::new(
             Box::new(move || {
-                office.org_snapshot().map_err(|error| {
+                snapshot_office.org_snapshot().map_err(|error| {
                     crate::logged("inbox.org", &error);
                     SourceFailure
                 })
@@ -30,8 +33,9 @@ impl Hq {
             office_id,
         );
         Ok(Self {
-            sources: vec![std::sync::Arc::new(source)],
+            sources: vec![Arc::new(source)],
             clock: Clock::new(format!("{:032x}", u128::from_be_bytes(epoch))),
+            list_office: Some(office),
         })
     }
 }
@@ -177,6 +181,10 @@ impl Clock {
             seq: self.seq.load(Ordering::Acquire),
         }
     }
+    fn observe_org_head(&self, seq: u64) {
+        self.seq.fetch_max(seq, Ordering::AcqRel);
+    }
+
     /// a2 calls this after a committed relevant change, independently of emission throttling.
     pub fn changed(&self) {
         self.seq

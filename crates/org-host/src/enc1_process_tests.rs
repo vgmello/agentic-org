@@ -1,6 +1,6 @@
 //! ENC-1 and ENC-5 through real processes (ADR-0016 decisions 3 and 5; A1 plan §3): the
 //! real registered host supervises copies of the real built `agentic-org-office` with
-//! debug development key custody under a disposable `/private/tmp` root (never the
+//! debug development key custody under a disposable root on disk (never the
 //! Keychain, never a real organization root). Debug `ServerCheck::Skip` admits the
 //! worker; this proves no release-signing evidence.
 //!
@@ -94,7 +94,8 @@ pub(crate) fn contains(haystack: &[u8], needle: &[u8]) -> bool {
 }
 
 /// The forms a secret can take in a file: raw bytes and lowercase/uppercase hex. Keys
-/// travel as hex (handoff JSON, `keys/dev.rs`); no key or CA channel uses base64.
+/// travel as hex (handoff JSON, the development store of `keys/custody.rs`); no key or CA
+/// channel uses base64.
 pub(crate) fn encodings(bytes: &[u8]) -> [Vec<u8>; 3] {
     let lower: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     let upper = lower.to_ascii_uppercase();

@@ -3,15 +3,13 @@
 // the Show select, and focus returning from the sheet.
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
+import { enterMockedOrganization } from './mock-organization';
 import { shot } from './shot';
 
 test.use({ locale: 'en-GB', timezoneId: 'UTC' });
 
 async function open(page: Page, url: string) {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/teams\/members$/);
+	await enterMockedOrganization(page, 'Acme');
 	await visit(page, url);
 }
 

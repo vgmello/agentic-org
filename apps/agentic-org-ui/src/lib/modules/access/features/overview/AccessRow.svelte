@@ -23,6 +23,7 @@
 		person,
 		canManage,
 		busy,
+		waiting,
 		refusal,
 		onact
 	}: {
@@ -30,6 +31,8 @@
 		canManage: boolean;
 		/** The action this row's person is running right now, while its link is being made. */
 		busy?: 'invite' | 'reset';
+		/** Someone else's link is being made (their name): this row's actions wait, and say so. */
+		waiting?: string;
 		/** Why the last action on this person was refused, shown under the actions. */
 		refusal?: string;
 		onact: (kind: SignInAction, event: MouseEvent) => void;
@@ -49,6 +52,10 @@
 					: stateWord.no_account
 	);
 	const actions = $derived(canManage && person.active);
+	// Under 20rem of list (320 px at 200% text) the buttons take the column's width and their labels wrap between
+	// words, so they never run into the gutter (app-shell-ux §6a: labels wrap, they don't shrink or clip).
+	const wrapLabel =
+		'@max-[20rem]:h-auto @max-[20rem]:w-full @max-[20rem]:justify-start @max-[20rem]:py-2 @max-[20rem]:text-left @max-[20rem]:whitespace-normal';
 </script>
 
 <li
@@ -92,7 +99,8 @@
 				{#if person.state !== 'signed_in'}
 					<Button
 						variant="outline"
-						class={mobileButton}
+						class="{mobileButton} {wrapLabel}"
+						aria-disabled={waiting ? 'true' : undefined}
 						aria-busy={busy === 'invite'}
 						onclick={(e) => onact('invite', e)}
 						>{busy === 'invite' ? 'Inviting…' : 'Invite to sign in'}</Button
@@ -100,14 +108,18 @@
 				{:else}
 					<Button
 						variant="outline"
-						class={mobileButton}
+						class="{mobileButton} {wrapLabel}"
+						aria-disabled={waiting ? 'true' : undefined}
 						aria-busy={busy === 'reset'}
 						onclick={(e) => onact('reset', e)}
 						>{busy === 'reset' ? 'Making link…' : 'New sign-in link'}</Button
 					>
 					{#if !person.owner}
-						<Button variant="outline" class={mobileButton} onclick={(e) => onact('remove', e)}
-							>Remove access…</Button
+						<Button
+							variant="outline"
+							class="{mobileButton} {wrapLabel}"
+							aria-disabled={waiting ? 'true' : undefined}
+							onclick={(e) => onact('remove', e)}>Remove access…</Button
 						>
 					{/if}
 				{/if}
@@ -118,6 +130,11 @@
 			{#if person.state === 'invited'}
 				<p class="text-xs/5 text-fg-muted @min-[44rem]:text-right">
 					Inviting again cancels the previous link.
+				</p>
+			{/if}
+			{#if waiting}
+				<p class="text-xs/5 text-fg-muted @min-[44rem]:text-right">
+					Wait for {waiting}'s link first.
 				</p>
 			{/if}
 			{#if refusal}

@@ -16,6 +16,22 @@ pub mod hq_creation;
 mod organization;
 pub use organization::admission::{OwnerAccount, OwnerAuthority};
 pub use organization::{activity, directory};
+/// The organization family on the office store (`docs/design/office-store.md`): its
+/// operations, its records and codec, its two ports and its projector. With the `testkit`
+/// feature: its memory port and `organization_conformance_tests!`.
+pub mod organization_family {
+    pub use crate::organization::features::{
+        self, create_organization, create_team, CreateOrganization, CreateTeam, Creator, Op,
+        OrganizationCreated, TeamCreated, TeamRejected, TeamRejection,
+    };
+    pub use crate::organization::ports::{
+        OrganizationEngine, OrganizationRead, OrganizationWrite, RecordRef, MAX_TEAM_DEPTH,
+    };
+    pub use crate::organization::projector::OrganizationFiles;
+    pub use crate::organization::records;
+    #[cfg(any(test, feature = "testkit"))]
+    pub use crate::organization::testkit;
+}
 mod error;
 mod key;
 mod messaging;
@@ -30,6 +46,16 @@ mod store;
 pub use store::acceptance::{
     AcceptanceConfig, AcceptanceIdentity, JournalPosition, WriterAuthority,
 };
+#[cfg(any(test, feature = "testkit"))]
+pub use store::open::Testing;
+/// Opening an office's store on the engine its configuration names, and the operations
+/// run on it whichever engine that is.
+pub use store::open::{
+    open_store, CreateOrganizationOp, CreateTeamOp, DirectoryGeneration, EngineChoice,
+    OfficeEngine, OfficeStore, Opened, ReadOp, StoreConfig, StoreOp,
+};
+/// The SQLite engine of the office store: the projection as one plain database file.
+pub use store::sqlite::{SqliteEngine, SqliteSnapshot, SqliteTx};
 mod time;
 mod ulid;
 

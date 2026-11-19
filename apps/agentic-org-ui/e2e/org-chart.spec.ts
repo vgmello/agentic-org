@@ -5,6 +5,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { visit } from './ready';
 import { signInAsAdmin } from './web-session';
+import { enterMockedOrganization } from './mock-organization';
 
 async function openChart(page: Page, url = '/teams/org-chart') {
 	await signInAsAdmin(page, [
@@ -15,10 +16,7 @@ async function openChart(page: Page, url = '/teams/org-chart') {
 			recovery: 'acknowledged'
 		}
 	]);
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Lumen Labs');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).not.toHaveURL(/\/create$/);
+	await enterMockedOrganization(page, 'Lumen Labs');
 	await visit(page, url);
 	await expect(page.getByRole('heading', { name: /^Org chart/, level: 2 })).toBeVisible();
 }

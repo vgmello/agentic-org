@@ -58,8 +58,21 @@
 		void budgets.reload();
 		void prices.reload();
 	}
+	/** A rate's save was not confirmed: the prices part says so until Check status settles it (§5). */
+	let unconfirmed = $state(false);
+	function unconfirmedChanged(state: { unconfirmed: boolean; closed?: boolean }) {
+		unconfirmed = state.unconfirmed;
+		// The rate may have been recorded after all: read the list again rather than show a stale one.
+		if (state.closed || !state.unconfirmed) void prices.reload();
+	}
 	/** Budgets are the owner's: a viewer who may not see amounts sees no budget part at all. */
-	const budgetsAllowed = $derived(!(budgets.data && !budgets.data.allowed));
+	// Shown once a read says amounts are the viewer's (or a failure needs saying), so a non-owner never sees the budget
+	// skeleton appear and vanish.
+	const budgetsAllowed = $derived(
+		budgets.state === 'loading'
+			? !!(cost.data && cost.data.allowed)
+			: !(budgets.data && !budgets.data.allowed)
+	);
 
 	let sheet = $state<ReturnType<typeof UsageRecordsSheet>>();
 	let dialog = $state<ReturnType<typeof AddRateDialog>>();
@@ -152,7 +165,7 @@
 			<AgentBudgets resource={budgets} {memberHref} />
 		{/if}
 
-		<PricesSection resource={prices} {zone} onadd={addRate} />
+		<PricesSection resource={prices} {zone} {unconfirmed} onadd={addRate} />
 	{/if}
 
 	<UsageRecordsSheet bind:this={sheet} {organizationId} {zone} onCloseAutoFocus={restoreFocus} />
@@ -163,6 +176,7 @@
 		providers={names.providers}
 		models={names.models}
 		onadded={added}
+		onunconfirmed={unconfirmedChanged}
 		onCloseAutoFocus={restoreFocus}
 	/>
 {/if}

@@ -60,6 +60,26 @@ describe('Resource', () => {
 		expect(r.state).toBe('unavailable');
 	});
 
+	it('allows retry when a read fails temporarily with an unavailable code', async () => {
+		const c = controlled<string[]>();
+		const r = new Resource(c.load);
+		c.pending[0].resolve(['old']);
+		await settle();
+
+		const refresh = r.reload();
+		c.pending[1].reject({ source: 'api', code: 'unavailable', message: "HQ didn't answer." });
+		await refresh;
+		expect(r.state).toBe('error');
+		expect(r.data).toBeUndefined();
+		expect(r.message).toBe("HQ didn't answer.");
+
+		const retry = r.reload();
+		c.pending[2].resolve(['new']);
+		await retry;
+		expect(r.state).toBe('ready');
+		expect(r.data).toEqual(['new']);
+	});
+
 	it('shows the latest request even when an older one answers last', async () => {
 		const c = controlled<string>();
 		const r = new Resource(c.load);

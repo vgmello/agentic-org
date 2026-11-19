@@ -7,9 +7,6 @@
 // Every host here keeps its offices' keys in a development key folder, which only debug builds
 // have (a release host uses the Keychain, which tests never touch): debug builds only.
 #![cfg(debug_assertions)]
-// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
-// helpers are unused.
-#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -41,7 +38,6 @@ fn wait_for(host: &Host, office_id: &str, want: OfficeStatus) {
     });
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn every_start_gets_a_grant_key_of_its_own() {
     let home = TestHome::registered();
@@ -71,7 +67,6 @@ fn every_start_gets_a_grant_key_of_its_own() {
 /// naming it; a refusal before that goes to stdout, which the host does not read. So a worker
 /// that refuses its first line and exits is a crash: restarted with backoff, never given a key,
 /// and noticed when it exits rather than at the end of the rendezvous wait.
-#[cfg(target_os = "macos")]
 #[test]
 fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secret() {
     // A retired v2 create line, keys included (the launch library no longer writes v2): the
@@ -81,26 +76,18 @@ fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secr
         "07".repeat(32),
         "08".repeat(32),
     );
+    // The worker reads each of these as its first line instead of the host's (the fake's
+    // `stdin` step), as a wrapper around a real server could make it.
     let cases = [
-        (
-            "malformed",
-            r#"printf 'not json\n' | "$FAKE" "$@""#.to_owned(),
-        ),
-        (
-            "unknown-op",
-            r#"printf '{"v":2,"op":"stop"}\n' | "$FAKE" "$@""#.to_owned(),
-        ),
-        (
-            "v2-create",
-            format!(r#"printf '%s\n' '{v2_create}' | "$FAKE" "$@""#),
-        ),
+        ("malformed", "not json\n".to_owned()),
+        ("unknown-op", "{\"v\":2,\"op\":\"stop\"}\n".to_owned()),
+        ("v2-create", format!("{v2_create}\n")),
     ];
-    for (name, body) in cases {
+    for (name, first_line) in cases {
         let home = TestHome::registered();
         home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
-        let mut config = home.config();
-        config.set_server_program(home.wrapper(name, &body));
-        let host = home.start(config).unwrap();
+        home.script(json!({ A: {"stdin": first_line} }));
+        let host = home.start(home.config()).unwrap();
         // Two runs well inside the host's 5 s rendezvous wait: the exit ended the first wait.
         eventually(
             Duration::from_secs(3),
@@ -117,13 +104,12 @@ fn a_worker_that_refuses_its_first_line_is_restarted_as_a_crash_and_gets_no_secr
 
 /// A worker that refuses every first line is given up on: with a give-up limit of 3 its third
 /// short exit makes the office `unavailable`/`restarts_exhausted`, and no further run starts.
-#[cfg(target_os = "macos")]
 #[test]
 fn a_worker_that_always_refuses_its_first_line_is_given_up_on() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
+    home.script(json!({ A: {"stdin": "not json\n"} }));
     let mut config = home.config();
-    config.set_server_program(home.wrapper("malformed", r#"printf 'not json\n' | "$FAKE" "$@""#));
     config.timings.give_up_after = 3;
     config.timings.backoff_initial = Duration::from_millis(20);
     config.timings.backoff_max = Duration::from_millis(40);
@@ -145,14 +131,13 @@ fn a_worker_that_always_refuses_its_first_line_is_given_up_on() {
     host.shutdown();
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_server_whose_stdin_closes_before_its_first_line_exits_and_is_restarted() {
     let home = TestHome::registered();
     home.write_office(&hq(A, "01ORGA", "Acme", "2026-11-08T00:00:00.000Z"));
-    let mut config = home.config();
-    config.set_server_program(home.wrapper("no-first-line", r#"exec "$FAKE" "$@" </dev/null"#));
-    let host = home.start(config).unwrap();
+    // Its standard input ends before any first line (the fake's `stdin` step, empty).
+    home.script(json!({ A: {"stdin": ""} }));
+    let host = home.start(home.config()).unwrap();
     // The contract: the host is gone, so the server exits 0 without a `failed` line. That
     // isn't fatal: the host restarts it with backoff.
     eventually(WAIT, "two runs", || {

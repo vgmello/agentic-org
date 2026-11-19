@@ -3,13 +3,11 @@
 // stale, viewer, conflict, save-fails (e2e/fakes/modules/processes.ts).
 import { expect, test, type Page } from '@playwright/test';
 import { visit } from './ready';
+import { enterMockedOrganization } from './mock-organization';
 import { shot } from './shot';
 
 async function open(page: Page, url = '/settings/processes') {
-	await visit(page, '/create');
-	await page.getByLabel('Organization name').fill('Acme');
-	await page.getByRole('button', { name: 'Create organization' }).click();
-	await expect(page).toHaveURL(/\/teams\/members$/);
+	await enterMockedOrganization(page, 'Acme');
 	await visit(page, url);
 }
 const row = (page: Page, key: string) =>

@@ -233,9 +233,9 @@ Three things to know about the order:
     declarations and `organization.provision.v1` are deleted. The web process serves
     `POST` and `GET /api/v1/organizations` and the host operation lookup over it
     ([web API](design/web-api-v1.md#selected-create-organization-payload)).
-  - The UI's create flow still runs against fakes
-    (`apps/agentic-org-ui/src/lib/create-flow.ts`) until A4.5 moves the create page
-    and the welcome list onto the real API.
+  - The UI's create page and organizations page read that API through
+    `apps/agentic-org-ui/src/lib/platform/organizations` (A4.5); the former
+    `src/lib/create-flow.ts`, which ran against fakes, is deleted.
 - **Done when:** an organization created in the browser exists after a restart with its
   owner as a person in the top-level team; its files are under `durable/state/`; the
   recovery code has been delivered once; ENC-2 passes.
@@ -355,7 +355,17 @@ onto it and deletes the old store; B1c measures and guards it.
   source-preserving editor; `organization/bootstrap.rs` and `organization/admission.rs`
   today's creation path; `org_mailbox::mailbox_conformance_tests!` the suite pattern.
   Since A1 the workspace `rusqlite` is plain bundled SQLite; the new engine never sets a
-  key.
+  key. Built by B1a, beside the store above and not yet in its place: `crates/org-store`
+  (the writer, the journal, the flusher, the files, receipts, rebuild, the engine
+  contracts and, under its `testkit` feature, the memory engine, the fault disk and the
+  engine and rebuild suites); `crates/org-office/src/store/sqlite/` (the SQLite engine:
+  one plain `office.db` per office under the runtime root, made from the contract's
+  `schema.sql` and four tables of its own, never migrated); the organization family on
+  the new contracts (`organization/records.rs`, `ports.rs`, `projector.rs`, `features/`
+  with creating an organization and a team, and `testkit.rs` with its conformance
+  suite); and `store/open.rs`, whose `open_store` is the one place that names an engine.
+  Nothing in production calls `open_store` yet: the office still opens today's store
+  until B1b.
 - **Done when:** the organization suite passes against SQLite and memory (ENG-3 for
   organization records); the rebuild-equivalence harness passes for the organization
   family on both engines; a crash injected at each point of the design's crash table
@@ -400,7 +410,7 @@ onto it and deletes the old store; B1c measures and guards it.
   writes `meta` rows; `office/hq_creation.rs` and `store/hq_creation.rs` hold the
   creation record; `apps/agentic-org-office/src/transfer/writer.rs` is the host custody
   channel, called twice per write and once per read today; `apps/agentic-org-office/src/lib.rs`
-  wires the mailbox to the old tables.
+  wired the mailbox to the old tables until B1b's first merge, which unplugged it (`unsupported`).
 - **Done when:** with an organization created through the host, deleting
   `runtime/<office-id>/` and restarting rebuilds the projection with no loss; a
   committed organization write survives killing the office right after its answer; the
@@ -419,7 +429,9 @@ onto it and deletes the old store; B1c measures and guards it.
 - **Build:** the benchmark target of design section 8; the flush interval fixed from
   its results; a load test of the flush bound; a CI regression check; the wording of
   documents 06 and 11 and the ADRs checked for engine mechanisms; the trigger and
-  generated-column constraints listed in words in schema coverage.
+  generated-column constraints listed in words in schema coverage; a SQLite checkpoint
+  that keeps failing after each round is made visible (today the flusher drops its
+  error and leaves the log to the next round, so a log that grows is not reported).
 - **Read:** [office store design](design/office-store.md) sections 8 and 9;
   [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 7 and
   ACK-2, ACK-3, ACK-5 to ACK-7; [ADR-0018](adr/0018-storage-engine-independence.md)
@@ -461,6 +473,9 @@ on the offers of design section 10.
   roles is enforced by the office and covered by the engine-independent organization
   suite; each action in the outcome works from the command line and through `/api/v1`
   and is in the history. The screen criteria (TEAM, PEOPLE, REPORT) are finished in U1.
+  `operation.get` for organization commands answers from the store's receipts,
+  replacing the `unsupported` B1b left (a client learns a committed command's answer
+  without resending it).
 - **Needs:** B1a to start, B1b to finish; A5.
 
 ### B3 · Projects, the minimum
@@ -726,6 +741,21 @@ on the offers of design section 10.
   when one is named.
 - **Done when:** the CHAT criteria for sending, reading and channels pass; the
   engine-independent messaging suite passes; ACK-1 is measured on a Mac and recorded.
+  B6 also restores LNX-1's send and read through the office in
+  `apps/agentic-org/tests/lnx1.rs`, which B1b reduced to a directory read and a refused send.
+  B6 serves again what B1b switched off with the old tables, through the office or A3's
+  `/events`, each with its scenario as a test: `subscribe` (a caller without a grant or
+  binding is refused `not_authorized`; another caller's committed `team.create` arrives as
+  `org.changed` carrying its position and command id; a refused command or a retry is no event; a position
+  beyond the log is `snapshot_required`; after a restart a subscriber resuming from its
+  position gets the backlog, then live changes); live events (`message.received` with the
+  header, never the body; `member.presence_changed` with the member id and status text after `status.set`, next on
+  the same stream); and `inbox.changed`
+  hints (a send to the owner reaches the owner's subscriber within 1 s with the counts
+  `inbox.list` gives and the next position, not degraded, none to others, no second hint for a replay;
+  offboarding an agent placed in no office clears its problem the same way: zero counts, not
+  degraded, and `inbox.list` showing no items). The inbox
+  position then has one rule: the hint clock and the list both take the organization's head.
 - **Needs:** B2, A5, B1c. The browser part needs A3.
 
 ### B7 · Asks and questions
@@ -935,20 +965,36 @@ half of LNX-6 run).
 
 ### X1a · The platform crate and the check
 
-- **Outcome:** none a person can see. From the first day no change can add a
-  platform branch outside one crate, and A2 has a contract to write service
-  registration behind.
-- **Build:**
-  - The crate `crates/org-platform`, with its module layout and the `Refused` type,
-    and the `service` contract with a refusing adapter, agreed with the A2 lead.
-  - The CI check: a script that parses every `.rs` file outside
-    `crates/org-platform/` with `syn` and fails on a `cfg`, `cfg_attr` or `cfg!`
-    predicate naming `target_os`, `target_vendor`, `target_env` or `target_family`,
-    with an allowlist of today's files that may only shrink.
+- **Outcome:** none a person can see. No change can add a platform branch outside one
+  crate, and A2 has a contract to write service registration behind.
+- **Built (2026-11-18):**
+  - A2 B0 created `crates/org-platform` with the `Refused` type and the `service`,
+    `disk` (disk-encryption state for ENC-3, a new capability) and `dirs` (the
+    application base only) modules, each with its macOS and refusing adapters and one
+    non-conditional constructor, so that A2 never added a platform predicate outside
+    the crate. The A2 lead wrote the `service` contract with its launchd adapter
+    ([design, section 3.4](design/linux-host.md#34-service-lifecycle)).
+  - X1a added the check `crates/org-platform/tests/platform_conditionals.rs`: it reads
+    every `.rs` file outside `crates/org-platform/`, requires that `syn` parses it,
+    and fails on a `cfg`, `cfg_attr`, `cfg!`, `cfg_select!` or `cfg_match!` predicate
+    naming `target_os`, `target_vendor`, `target_env` or `target_family`, or any
+    other use of those names, beyond `.github/platform-conditionals.allow`. The list
+    has the 79 files and 495 predicates of that day, each file with its count, and
+    must equal the sources. CI runs the check on macOS and Linux, and a second job
+    fails a change that raises a count or the total.
+  - X1a added the layout for a capability that has both adapters (explicit module
+    declarations in `<capability>/mod.rs`, `shared.rs` for code the two real adapters
+    share, the refusing adapter compiled and tested on every target,
+    `From<Refused> for io::Error`), a CI step that builds and tests the crate for a
+    target that gets only the refusing adapters, and the module stubs X1b fills.
+  - X1a reviewed the `service` contract as built. What X5 must settle with the A2
+    lead before it writes the systemd adapter is in the
+    [Track X record](../.agent-kit/tasks/v1-track-x.md).
 - **Read:** [Linux host design](design/linux-host.md) sections 1, 3.4 and 7,
   [architecture rules](architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one).
-- **Code today:** 44 source files and 35 test files outside any adapter name a
-  platform target. The source files are 29 in `org-host` (among them `spawn.rs`,
+- **Code when the list was written:** the 79 listed files were 45 source files, one
+  example and 33 test files (78 files and 491 predicates since A1 removed SQLCipher
+  from the office store). The source files are 29 in `org-host` (among them `spawn.rs`,
   `server_check.rs`, `code_signing.rs`, `peer.rs`, `app_auth.rs`, `bootstrap.rs` (since removed),
   `human.rs`, `offices.rs`, `recovery.rs`, `release.rs`, `writer.rs`, `hostdb.rs`,
   `lib.rs`, `keys/mod.rs`, `host_secrets.rs`, `supervisor/mod.rs`,
@@ -956,22 +1002,16 @@ half of LNX-6 run).
   `instance/mod.rs`, `instance/registry.rs`, `recovery/presence.rs`,
   `release/platform.rs`), 6 in `org-socket`, 6 in `org-supervise` (among them the
   `compile_error!` in `lib.rs`), `org-office`'s `store/acceptance/durable.rs`,
-  `org-client`'s `agent.rs` and `org-spool`'s `safe_read.rs`.
-  `org-proto/src/location.rs` hard-codes macOS values with no conditional. The
+  `org-client`'s `agent.rs`, `org-spool`'s `safe_read.rs` and `agentic-org-web`'s
+  `release.rs`. `org-proto/src/location.rs` hard-codes macOS values with no
+  conditional. The
   [design](design/linux-host.md#2-what-each-executable-needs-from-the-platform) maps
   each to its contract. Milestone-one work in those files adds no new conditional.
   CI lints `org-host` and `agentic-org` on Linux with `dead_code` and
   `unused_imports` allowed and runs none of their tests there.
-- **Code today (2026-11-18):** A2 B0 created `crates/org-platform` with the `Refused`
-  type and the `service`, `disk` (disk-encryption state for ENC-3, a new capability)
-  and `dirs` (the application base only) modules, each with its macOS and refusing
-  adapters and one non-conditional constructor, so that A2 never added a platform
-  predicate outside the crate. X1a adds the CI check, the allowlist and the remaining
-  module layout, and reviews the `service` contract as built (section 3.4 of the
-  design).
 - **Done when:** the crate builds on macOS and Linux; the check runs in CI on both and
-  fails on a new predicate; the A2 lead has accepted the `service` contract. Merged on
-  the first day of Track X.
+  fails on a new predicate; the A2 lead has accepted the `service` contract. All
+  three are met: the A2 lead wrote the contract.
 - **Needs:** nothing.
 
 ### X1b · Files, locations, processes and sockets behind the crate
@@ -979,6 +1019,13 @@ half of LNX-6 run).
 - **Outcome:** none a person can see. Durable flushes, exclusive renames, filesystem
   checks, the default locations, process supervision and socket peer checks of all
   four executables come from `org-platform`.
+- **Built (2026-11-18):** `org_platform::{process, socket, fs, dirs}` with macOS,
+  Linux and refusing adapters; `org-proto/src/location.rs` keeps only path
+  composition; `org-supervise`'s `compile_error!` is gone; the list is at 58 files and
+  353 predicates. Linux default locations are the design's XDG ones. `org-platform`
+  is libc-only and `crates/org-platform-host` holds what only the host links
+  (ADR-0017 decision 6 as amended). Details and what is carried forward:
+  [Track X record](../.agent-kit/tasks/v1-track-x.md).
 - **Build:** the `fs`, `dirs`, `process` and `socket` modules with today's macOS code
   and today's Linux code moved in unchanged and refusing adapters elsewhere (the flush
   of `store/acceptance/durable.rs`, or of `org-store/src/files.rs` once B1a has carried
@@ -1050,8 +1097,16 @@ half of LNX-6 run).
 - **Read:** [Linux host design](design/linux-host.md) sections 3.1 and 4,
   [host boundary design](design/office-host-boundary.md) (admission and the verified
   rendezvous). LNX-1.
-- **Code today:** `crates/org-host/src/spawn.rs` returns "office servers run only on
-  macOS"; six tests in `supervisor/channels/tests.rs` fail on Linux.
+- **Built (2026-11-18):** the Linux admission adapter
+  (`crates/org-platform-host/src/admission/linux.rs`), reviewed and hardened; the
+  host's composition of it (one admission per host lifetime, both image identities
+  from the manifest, native clients by user, the root refusal, the non-dumpable
+  host); the by-path test admission; the host's tests and `apps/agentic-org`'s on
+  Linux; `apps/agentic-org/tests/lnx1.rs`. CI excludes no package on Linux. Open from
+  this increment: `agent-os` cannot find the socket of a registered instance on any
+  system, so the LNX-1 test links it into place (the agent launch binding owns the
+  fix); root is not admitted for `admin reset` (X5); two host tests of the macOS
+  adapter keep their predicate until they move into the platform crate (X6).
 - **Done when:** LNX-1 passes in a test that starts the real host composition on Linux
   and uses `agent-os` through the same authenticated route the macOS tests use when X2
   lands; a worker image one byte different from the expected digest, and a child
@@ -1079,26 +1134,32 @@ half of LNX-6 run).
 
 ### X4 · The web process confined on Linux
 
-- **Outcome:** on Linux the web process confines itself with Landlock and seccomp
-  before it handles input, and refuses to start where it cannot.
+- **Outcome:** on Linux the web process confines itself with a seccomp filter, and with
+  Landlock where the kernel has it, before it handles input, and refuses to start where
+  it cannot install the filter.
 - **Build:**
   - First, on the first day of Track X: a one-hour probe of Docker Desktop's kernel on
-    a Mac (Landlock ABI, seccomp, `memfd_create` and `execveat`). If it has no
-    Landlock, the web process cannot run in a container on a Mac, and the Track X lead
-    brings that to the owner with a recommendation before this adapter is built.
-  - The Linux confinement adapter (Landlock ABI 3 or higher handling every filesystem
-    right, a seccomp allowlist that kills on anything else, `prctl` and `ioctl`
-    filtered by argument) and the host's check of the child's seccomp and
+    a Mac (Landlock ABI, seccomp, `memfd_create` and `execveat`), brought to the owner
+    before this adapter was built. Since ADR-0017 decision 9 was amended on
+    2026-11-18, a kernel without Landlock still runs the web process, under the filter
+    alone.
+  - The Linux confinement adapter (Landlock at any ABI the kernel offers, handling every
+    filesystem right it knows, a seccomp allowlist that kills on anything else, `prctl`
+    and `ioctl` filtered by argument) and the host's check of the child's seccomp and
     no-new-privileges state.
 - **Read:** [Linux host design](design/linux-host.md) section 3.3,
   [ADR-0008](adr/0008-gateway-macos-sandbox.md). LNX-3.
-- **Code today:** `org-socket/src/confinement.rs` has a refusing adapter on every
-  system but macOS; the host does not start the web process yet (A3).
-- **Done when:** LNX-3 passes: with Landlock unavailable, below ABI 3 or blocked by a
-  seccomp profile, the web process refuses and reports which (proved first with the
-  confinement example process); confined, it cannot open a file, create a socket or
-  start a program, and its whole HTTP and TLS path works under the filter on the
-  development system and in the container image.
+- **Code today:** the Linux adapter is `org-platform/src/confinement/linux/` (Landlock,
+  the seccomp filter and the ready report); the host starts the web process, checks its
+  `/proc` status and logs how it is confined (`org-host/src/web.rs`, the `lnx_3_*`
+  real-process tests).
+- **Done when:** LNX-3 passes: the seccomp filter is mandatory, and a web process that
+  cannot install it refuses and reports why; Landlock is applied when the kernel offers
+  it (any ABI) and, when it is unavailable or blocked by a seccomp profile, the web
+  process serves under the filter alone and the host logs which (ADR-0017 decision 9,
+  amended 2026-11-18; proved first with the confinement example process); confined,
+  it cannot open a file, create a socket or start a program, and its whole HTTP and
+  TLS path works under the filter on the development system and in the container image.
 - **Needs:** X1c; the HTTP and TLS proof needs A3.
 
 ### X5 · Service and container
@@ -1134,6 +1195,41 @@ half of LNX-6 run).
   systemd user service survives a restart of the machine when lingering is on, and
   setup reports when it is off.
 - **Needs:** X2, X3, X4, A2 (setup) and A3 (the web process and sign-in).
+
+### X7 · HTTPS for a container, with the instance's own certificate (pending)
+
+Recorded by the owner on 2026-11-18. Until it is built the container serves the
+browser over plain HTTP (X5), and the documented run command publishes that port on
+`127.0.0.1` only.
+
+- **Outcome:** the container serves the browser over HTTPS without the operator making
+  anything: at first start the instance makes its own certificate for the configured
+  origin and prints its fingerprint; an operator may supply a certificate pair
+  instead. The plain-HTTP mode for a published port is then removed or kept only as an
+  explicit choice, a decision taken when this is built.
+- **What it needs** (none of it exists on any system today; the product serves plain
+  HTTP on loopback only):
+  - the web process serving TLS from a key it receives from the host (`tls.fetch`
+    answers only the loopback HTTP profile; `apps/agentic-org-web/src/tls.rs`), and
+    the host's gate that requires a verified HTTP loopback listener
+    (`crates/org-host/src/web.rs`) extended to an HTTPS listener;
+  - custody of the pair in the host's secrets (the `tls_pair` record is unused; a
+    self-made certificate may be made again if it is lost, an operator's key may not:
+    the store must refuse a start when the record names a key that is gone);
+  - making an X.509 certificate: no workspace dependency can (rustls and webpki only
+    read them), so either a dependency that can, or a small DER writer over the
+    existing crypto library;
+  - a verifier for a supplied pair (the key matches the leaf, the leaf is valid now and
+    names the origin's host, the chain parses) and its import at setup;
+  - the session cookie, HSTS and Origin rules for an HTTPS origin, which the listener
+    contract already describes (`crates/org-host-control/src/listen.rs`).
+- **Owned with Track A:** the listener and gateway contracts and FC-017 (TLS, CA
+  custody and privilege separation) are theirs; the contract change is agreed with
+  that lead before it is built.
+- **Read:** [Linux host design](design/linux-host.md) section 3.4,
+  [ADR-0017](adr/0017-linux-and-container-hosting.md) decision 10,
+  [standalone server design](design/standalone-server.md) (listener and Origin).
+- **Needs:** X5.
 
 ### X6 · Both systems in CI
 

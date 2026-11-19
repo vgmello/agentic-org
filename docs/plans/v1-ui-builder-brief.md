@@ -18,7 +18,8 @@ are authorized to commit and push on YOUR branch only.
 2. `apps/agentic-org-ui/src/lib/components/README-screens.md`: how a screen is added here
    (module layout, mock convention, shared parts, page skeleton, class strings). Follow it.
 3. `docs/specs/app-shell-ux.md` section 6a (the look) and the specs named in your assignment.
-4. The persona files your agent definition names. Do not install the companion skill.
+4. The persona files your agent definition names. The UI/UX Pro Max companion skill is disabled (owner,
+   2026-11-18): do not check for, install or use it.
 5. One existing page as a pattern, e.g. `src/routes/(shell)/teams/(views)/members/+page.svelte`.
 
 ## Rules

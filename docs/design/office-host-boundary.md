@@ -390,19 +390,22 @@ it restarts the worker; it never races a live worker over its agents.
   records. It depends only on `org-proto`, `serde` and `serde_json`.
 - `crates/org-host`: `catalog` (scan, `office.json`, name uniqueness, create),
   `supervisor` (spawn, the launch protocol, status, backoff, shutdown), `service` (the
-  host socket), `keys` and `host_secrets` (credential providers), `spawn` (process
-  admission).
+  host socket), `keys` and `host_secrets` (typed views over the platform's credential
+  store), `server_check` (the policy that says what a started program must be;
+  starting and checking it is `org_platform_host::admission`).
 - `keys::OfficeSecretsKeys` is the host's own contract for the office secrets keys
-  (create add-only, load, delete, list; errors carry codes, never key bytes). Its
-  adapters: the macOS Data Protection keychain (`keys/keychain.rs`, service
-  `org.agentic.office-key`), owner-only files in a development folder for debug builds
-  (`keys/dev.rs`), an in-memory store with fault injection for tests (`keys/memory.rs`),
-  and, for every other operating system, an adapter that refuses each call with a
-  reported reason (`keys/unsupported.rs`). `keys/platform.rs` holds the only
-  `cfg(target_os)` choice and owns the Keychain preconditions (the compiled-in access
-  group, its entitlement and the host's own hardening). Another operating system gets the
-  refusing adapter before any of them is checked, so its operator sees "this operating
-  system has no office secrets key store", never a macOS-only reason. The supervisor and
+  (create add-only, load, delete, list; errors carry codes, never key bytes). It is a
+  typed view (`keys/custody.rs`) over one item store of the platform
+  (`org_platform_host::credentials`): the Data Protection keychain on macOS (service
+  `org.agentic.office-key`), the credential directory setup recorded on Linux, and one
+  owner-only directory engine for every development build; `keys/memory.rs` is the
+  in-memory store with fault injection for tests. `keys/mod.rs` chooses the store from
+  the platform's own fact (`credentials::protected_store`) and holds the Keychain
+  preconditions (the compiled-in access group, its entitlement and the host's own
+  hardening). A system with no protected store gets a view that refuses each call with
+  a reported reason, chosen before any Keychain precondition is checked, so its operator
+  sees "this operating system has no office secrets key store", never a Keychain-only
+  reason. No file of key custody names an operating system. The supervisor and
   provisioning never branch on the platform.
 - Storage: every database (host registry, `org.db`, `office.db`) is plain SQLite from
   `rusqlite`'s `bundled` feature, protected by owner-only file permissions; there is no
@@ -422,8 +425,8 @@ it restarts the worker; it never races a live worker over its agents.
 | A3 | The web process starts through the same launch contract as an office worker | The web process has its own rendezvous lines (`GatewayFirstLine`, `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from the office worker's. |
 | A3 | Seven web channels per office | Done: `MAX_WEB_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
-| A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). The host keeps the keys behind its `OfficeSecretsKeys` contract (§5); an operating system without an adapter refuses. |
-| X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Workers start only on macOS (`crates/org-host/src/spawn.rs`); host secrets use the Keychain. |
+| A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). The host keeps the keys behind its `OfficeSecretsKeys` contract (§5), a view over the platform's credential store; a system without a credential store refuses every call. |
+| X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Since X2 to X4 (2026-11-18): workers start on macOS and GNU/Linux (`org_platform_host::admission`); host secrets use the Keychain on macOS and a checked, owner-only directory on Linux (`org_platform_host::credentials`); the web process confines itself with Seatbelt on macOS and a seccomp filter on Linux. Service registration on Linux and the container are X5, not integrated. |
 
 `organization.create` is the only create: served on the admitted web connection,
 authorized by the browser pair digests and the origin, administrator required, and

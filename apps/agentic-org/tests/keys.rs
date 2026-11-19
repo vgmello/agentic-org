@@ -9,9 +9,6 @@
 // Development key folders exist in debug builds only (a release host uses the Keychain, which
 // tests never touch).
 #![cfg(debug_assertions)]
-// Only macOS can spawn the office servers the other tests here start (BUG-187); off macOS their
-// helpers are unused.
-#![cfg_attr(not(target_os = "macos"), allow(unused_imports, dead_code))]
 
 mod support;
 
@@ -64,7 +61,6 @@ fn a_debug_host_without_a_dev_key_folder_refuses_to_start() {
     }
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_missing_or_unreadable_key_still_starts_the_office_with_a_null_key() {
     let home = TestHome::registered();

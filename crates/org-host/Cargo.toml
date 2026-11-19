@@ -17,6 +17,7 @@ org-socket = { path = "../../crates/org-socket" }
 org-proto = { path = "../../crates/org-proto" }
 org-office-launch = { path = "../../crates/org-office-launch" }
 org-platform = { path = "../org-platform" }
+org-platform-host = { path = "../org-platform-host" }
 org-release = { path = "../org-release" }
 serde.workspace = true
 zeroize = "=1.9.1"
@@ -30,18 +31,14 @@ unicode-normalization = "=0.1.26"
 tar = { version = "=0.4.46", default-features = false }
 flate2 = { version = "=1.1.11", default-features = false, features = ["rust_backend"] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-# The Data Protection keychain (the release key store, `src/keys/keychain.rs`) needs the
-# workspace's `OSX_10_15` feature on both.
-security-framework.workspace = true
-security-framework-sys.workspace = true
-core-foundation.workspace = true
-
 [dev-dependencies]
+# Test locations and the flush steps the platform counted (`dirs::testing`, `fs::testing`).
+org-platform = { path = "../org-platform", features = ["test-support"] }
+# The scripted image check and the children a test names itself (`testing::admission`).
+org-platform-host = { path = "../org-platform-host", features = ["test-support"] }
 tempfile.workspace = true
 ring = "=0.17.14"
 syn = { version = "=2.0.119", features = ["full", "visit"] }
 
 [build-dependencies]
 org-release = { path = "../org-release" }
-cc = "=1.11.1"

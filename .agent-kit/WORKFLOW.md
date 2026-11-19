@@ -28,7 +28,13 @@
   compaction. A checkpoint hook cannot recover reasoning that was never written.
 - Configure `.agent-kit/verification.json` with real commands. Empty checks fail.
   Run `python3 .agent-kit/runtime/kit_hooks.py check` explicitly for direct lead work
-  and final acceptance. Hooks only provide supported/trusted runtime feedback.
+  and final acceptance. Checks that declare `paths` run only when a file changed since
+  the base matches them (the configured `base`, else an upstream on another branch;
+  `--base REF` to choose, `--all` for everything); checks without paths always run, a
+  changed configuration or no base at all runs every check, and an unknown base is an
+  error. Review runs scope to their review base, the worker stop hooks to the default
+  base. Non-blocking warnings appear in the check output, `evidence` and review runs. Hooks only
+  provide supported/trusted runtime feedback.
 - Use review-cycle: fresh read-only Sol review, exact-session repairs and verified
   commits, fresh recheck after fixes, original-author validation, separate fresh
   final code/output review. Three rounds default, five maximum, stop on repeated

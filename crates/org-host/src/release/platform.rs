@@ -1,6 +1,15 @@
 //! Static payload checks precede publication. Loaded process identity remains a
-//! separate kernel/audit-token check before any secret handoff.
+//! separate check before any secret handoff (the platform's admission).
+//!
+//! What vouches for a release executable is decided by the platform of the verified manifest,
+//! which is the platform of this build (`release::policy`): a release for macOS is signed
+//! code, and each executable's signature is established here; a release for Linux has no code
+//! signature, so the publisher's whole statement about an executable is its SHA-256 in the
+//! signed manifest, which every copy and every reopening of the release checks byte for byte
+//! (`release::store`), and which the host's admission checks again on the bytes it executes
+//! (Linux host design, section 3.1).
 use super::{files, Error};
+use org_platform_host::admission::{StaticImageError, StaticSignature};
 use org_release::{Architecture, FileEntry, Platform, VerifiedManifest};
 use std::{
     fs::File,
@@ -16,12 +25,13 @@ pub(super) fn verify(root: &files::Directory, manifest: &VerifiedManifest) -> Re
     {
         let mut file = root.payload(entry.path())?;
         let before = files::identity(&file)?;
-        header(
-            &mut file,
-            manifest.manifest().platform(),
-            manifest.manifest().architecture(),
-        )?;
-        platform_signature(&file, entry)?;
+        let platform = manifest.manifest().platform();
+        header(&mut file, platform, manifest.manifest().architecture())?;
+        match platform {
+            Platform::Macos => platform_signature(&file, entry)?,
+            // Its executable header was checked above; its bytes are the manifest's.
+            Platform::Linux => {}
+        }
         if before != files::identity(&file)? {
             return Err(Error::UnsafeInput);
         }
@@ -62,24 +72,14 @@ fn header(file: &mut File, platform: Platform, architecture: Architecture) -> Re
     }
 }
 
-#[cfg(target_os = "macos")]
-fn static_code(
-    file: &File,
-) -> Result<security_framework::os::macos::code_signing::SecStaticCode, Error> {
-    use core_foundation::url::CFURL;
-    use security_framework::os::macos::code_signing::{Flags, SecStaticCode};
-    use std::os::fd::AsRawFd;
-    // The module-controlled descriptor path addresses the held inode, never a
-    // mutable staged/sibling pathname. Verify support with the real kernel test.
-    let path = format!("/dev/fd/{}", file.as_raw_fd());
-    let url = CFURL::from_path(std::path::Path::new(&path), false).ok_or(Error::UnsafeInput)?;
-    SecStaticCode::from_path(&url, Flags::NONE).map_err(|_| Error::PlatformAdmission)
-}
-
-#[cfg(target_os = "macos")]
+/// What a release executable must be, per file: signed with the app team's Developer ID
+/// under its own signing identifier, hardened, with the manifest's exact CodeDirectory hash,
+/// and (but for the host) without a Keychain access group. The platform establishes the
+/// signature of the held file; a build target without such a check is outside the release
+/// profile.
 fn platform_signature(file: &File, entry: &FileEntry) -> Result<(), Error> {
-    use security_framework::os::macos::code_signing::{Flags, SecRequirement};
-    use std::str::FromStr;
+    let images = org_platform_host::admission::static_images()
+        .map_err(|_refused| Error::UnsupportedTarget)?;
     let team = option_env!("ORG_APP_TEAM_ID").ok_or(Error::PlatformAdmission)?;
     let requirement = match entry.path() {
         "agentic-org" => {
@@ -105,13 +105,17 @@ fn platform_signature(file: &File, entry: &FileEntry) -> Result<(), Error> {
         _ => return Err(Error::InvalidRelease),
     }
     .map_err(|_| Error::PlatformAdmission)?;
-    let requirement =
-        SecRequirement::from_str(&requirement).map_err(|_| Error::PlatformAdmission)?;
-    let code = static_code(file)?;
-    code.check_validity(Flags::NONE, &requirement)
-        .map_err(|_| Error::PlatformAdmission)?;
-    let (signing, hash) =
-        crate::code_signing::static_signing(&code).ok_or(Error::PlatformAdmission)?;
+    // The held descriptor addresses the held inode, never a mutable staged/sibling
+    // pathname.
+    let StaticSignature {
+        signing,
+        cdhash: hash,
+    } = images
+        .signature(file, &requirement)
+        .map_err(|error| match error {
+            StaticImageError::Path => Error::UnsafeInput,
+            StaticImageError::Refused => Error::PlatformAdmission,
+        })?;
     if !crate::code_signing::hardened_and_clean(&signing)
         || entry.macos_cdhash() != Some(&hash)
         || (entry.path() != "agentic-org"
@@ -124,32 +128,4 @@ fn platform_signature(file: &File, entry: &FileEntry) -> Result<(), Error> {
         return Err(Error::PlatformAdmission);
     }
     Ok(())
-}
-#[cfg(not(target_os = "macos"))]
-fn platform_signature(_: &File, _: &FileEntry) -> Result<(), Error> {
-    // Linux platform custody/confinement admission has not been established.
-    Err(Error::UnsupportedTarget)
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod tests {
-    use super::*;
-    #[test]
-    fn static_signature_query_addresses_the_held_descriptor_not_replaced_path() {
-        let dir = tempfile::tempdir_in("/private/tmp").unwrap();
-        let path = dir.path().join("image");
-        std::fs::copy(std::env::current_exe().unwrap(), &path).unwrap();
-        let file = File::open(&path).unwrap();
-        let original = static_code(&file).unwrap();
-        let (_, expected) = crate::code_signing::static_signing(&original).unwrap();
-        std::fs::rename(&path, dir.path().join("retained")).unwrap();
-        std::fs::write(&path, b"unsigned replacement").unwrap();
-        let held = static_code(&file).unwrap();
-        let (_, actual) = crate::code_signing::static_signing(&held).unwrap();
-        assert_eq!(actual, expected);
-        assert_eq!(actual, org_socket::image::own_loaded_cdhash().unwrap());
-        let replacement = File::open(&path).unwrap();
-        // Creating a static-code object alone does not establish a signature.
-        assert!(crate::code_signing::static_signing(&static_code(&replacement).unwrap()).is_none());
-    }
 }

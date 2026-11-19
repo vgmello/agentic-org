@@ -32,6 +32,7 @@ dependencies = [
  "libc",
  "org-host",
  "org-host-control",
+ "org-office",
  "org-office-launch",
  "org-platform",
  "org-proto",
@@ -54,9 +55,9 @@ dependencies = [
  "org-office",
  "org-office-launch",
  "org-pki",
+ "org-platform",
  "org-proto",
  "org-socket",
- "org-supervise",
  "org-sync",
  "org-work",
  "proc-macro2",
@@ -77,6 +78,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "org-host-control",
+ "org-platform",
  "org-proto",
  "org-release",
  "org-socket",
@@ -618,6 +620,7 @@ version = "0.0.0"
 dependencies = [
  "libc",
  "org-office-launch",
+ "org-platform",
  "org-proto",
  "org-socket",
  "serde_json",
@@ -656,21 +659,18 @@ version = "0.0.0"
 dependencies = [
  "argon2",
  "caseless",
- "cc",
- "core-foundation",
  "flate2",
  "hmac",
  "libc",
  "org-host-control",
  "org-office-launch",
  "org-platform",
+ "org-platform-host",
  "org-proto",
  "org-release",
  "org-socket",
  "ring",
  "rusqlite",
- "security-framework",
- "security-framework-sys",
  "serde",
  "serde_json",
  "sha2",
@@ -707,7 +707,9 @@ dependencies = [
  "libc",
  "org-docs",
  "org-mailbox",
+ "org-platform",
  "org-proto",
+ "org-store",
  "org-sync",
  "org-sync-proto",
  "org-work",
@@ -742,6 +744,23 @@ name = "org-platform"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "proc-macro2",
+ "serde_json",
+ "syn 2.0.119",
+ "tempfile",
+]
+
+[[package]]
+name = "org-platform-host"
+version = "0.0.0"
+dependencies = [
+ "cc",
+ "core-foundation",
+ "libc",
+ "org-platform",
+ "security-framework",
+ "security-framework-sys",
+ "sha2",
  "tempfile",
 ]
 
@@ -787,14 +806,28 @@ name = "org-socket"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "org-platform",
 ]
 
 [[package]]
 name = "org-spool"
 version = "0.0.0"
 dependencies = [
+ "org-platform",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "org-store"
+version = "0.0.0"
+dependencies = [
+ "org-platform",
+ "org-store",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -802,6 +835,7 @@ name = "org-supervise"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "org-platform",
  "org-runtime",
  "tempfile",
 ]
