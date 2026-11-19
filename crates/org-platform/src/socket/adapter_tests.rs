@@ -35,8 +35,9 @@ fn a_connected_stream_becomes_a_listener_exactly_where_the_fact_says() {
     let (stream, peer) = UnixStream::pair().unwrap();
     bind_path(stream.as_fd(), &path).unwrap();
     drop(peer);
-    // macOS takes the closed peer into account a moment after the close, so `listen`
-    // is tried again for up to half a second.
+    // macOS has been seen to refuse `listen` (EINVAL) for a moment after the peer
+    // closed, in a loaded run of the whole suite (two of five runs), so it is tried
+    // again for up to half a second.
     let mut listened = false;
     for _ in 0..100 {
         // SAFETY: listen on a live socket owned by this test.

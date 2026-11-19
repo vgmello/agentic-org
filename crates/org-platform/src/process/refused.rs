@@ -91,7 +91,7 @@ pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = false;
 pub(super) const SPAWNS_SUSPENDED: bool = false;
 /// No scan exists.
 pub(super) const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = false;
-pub(super) const SCAN_ENVIRONMENT_IS_PROC_ENVIRON: bool = false;
+pub(super) const SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE: bool = false;
 pub(super) const AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER: bool = false;
 pub(super) const SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS: bool = false;
 pub(super) const SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS: bool = false;

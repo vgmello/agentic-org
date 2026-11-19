@@ -196,11 +196,15 @@ pub const SPAWNS_SUSPENDED: bool = native::SPAWNS_SUSPENDED;
 /// processes is bounded by `RLIMIT_NOFILE` and its error names that limit.
 pub const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = native::SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS;
 
-/// Whether the environment a [`RecoveryScan`] reads is `/proc/<pid>/environ`
-/// (GNU/Linux): the kernel copies it from the process's own memory, between the
-/// addresses fields 48 and 49 of `/proc/<pid>/stat` give, and stops at a page it cannot
-/// read, so a process can cut what the scan sees short.
-pub const SCAN_ENVIRONMENT_IS_PROC_ENVIRON: bool = native::SCAN_ENVIRONMENT_IS_PROC_ENVIRON;
+/// Whether the system's read of a process's environment, which a [`RecoveryScan`]
+/// makes, returns the part before a page the process made unreadable (GNU/Linux:
+/// `/proc/<pid>/environ`, copied from the process's memory between the addresses in
+/// fields 50 and 51 of proc(5)'s `/proc/<pid>/stat`), rather than failing as a whole
+/// (macOS: `KERN_PROCARGS2`). Such a prefix can end at a complete entry, so the scan
+/// must tell it from a whole environment. On every system the scan reports that
+/// environment as unreadable.
+pub const SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE: bool =
+    native::SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE;
 
 /// Whether a process whose main thread has ended while another thread runs is a zombie
 /// leader to a [`RecoveryScan`] (GNU/Linux: state `Z` in `/proc/<pid>/stat`, while the

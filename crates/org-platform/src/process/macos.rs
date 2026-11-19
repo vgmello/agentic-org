@@ -87,6 +87,38 @@ pub(super) fn is_stopped(pid: libc::pid_t) -> io::Result<bool> {
     Ok(unsafe { info.assume_init() }.pbi_status == libc::SSTOP)
 }
 
+/// The process state, for adapter tests: whether `pid` is a zombie.
+#[cfg(test)]
+pub(super) fn is_zombie(pid: libc::pid_t) -> io::Result<bool> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: a correctly sized output record for PROC_PIDTBSDINFO.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if written != size {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: proc_pidinfo wrote the complete record.
+    Ok(unsafe { info.assume_init() }.pbi_status == libc::SZOMB)
+}
+
+/// This process's environment array, for adapter tests.
+#[cfg(test)]
+pub(super) fn environment_strings() -> *const *const libc::c_char {
+    unsafe extern "C" {
+        fn _NSGetEnviron() -> *mut *mut *mut libc::c_char;
+    }
+    // SAFETY: _NSGetEnviron returns this process's live environment pointer.
+    unsafe { (*_NSGetEnviron()).cast_const().cast() }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
     unsafe extern "C" {
@@ -131,7 +163,8 @@ pub(super) const SPAWNS_SUSPENDED: bool = true;
 const POSIX_SPAWN_SETSID: libc::c_short = 0x0400;
 /// `scan.rs` holds no descriptor for an observed process.
 pub(super) const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = false;
-pub(super) const SCAN_ENVIRONMENT_IS_PROC_ENVIRON: bool = false;
+/// `KERN_PROCARGS2` fails as a whole when a page of the area is unreadable.
+pub(super) const SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE: bool = false;
 pub(super) const AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER: bool = false;
 /// `scan.rs` reads `KERN_PROCARGS2` and skips the counted arguments.
 pub(super) const SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS: bool = true;

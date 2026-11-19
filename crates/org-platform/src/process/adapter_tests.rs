@@ -218,15 +218,13 @@ fn the_open_file_listing_follows_what_this_process_holds_open() {
 // Each fact this module states about the system, checked against what the system does,
 // so that a fact cannot drift from its adapter. Consumers' tests decide by these facts
 // which of their cases a system has; a wrong fact would turn such a case into a test
-// that checks nothing. `AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER` has no probe here:
-// making one needs a process whose main thread ends before `main`, which is
-// org-supervise's recovery fixture (`tests/recovery_native.rs`).
+// that checks nothing.
 
 use super::{
     group_contains_only_leader, is_exited_group_denial, testing, RecoveryScan,
-    EXITED_GROUP_SIGNAL_IS_DENIED, SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS,
-    SCAN_ENVIRONMENT_IS_PROC_ENVIRON, SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS,
-    SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS, SPAWNS_SUSPENDED,
+    AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER, EXITED_GROUP_SIGNAL_IS_DENIED,
+    SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS, SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE,
+    SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS, SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS, SPAWNS_SUSPENDED,
 };
 
 #[test]
@@ -262,11 +260,15 @@ fn the_exited_group_fact_is_how_a_signal_to_such_a_group_is_answered() {
 }
 
 /// A child for the scan probes: this test binary, started with an environment of
-/// the probe's own, holding until its standard input closes.
+/// the probe's own, holding until its standard input closes. With
+/// `ORG_PLATFORM_PROTECT_PAD` it first makes a page inside its `PAD` entry unreadable.
 #[test]
 fn hold_for_a_scan() {
     if std::env::var_os("ORG_PLATFORM_HOLD_FOR_A_SCAN").is_none() {
         return;
+    }
+    if std::env::var_os("ORG_PLATFORM_PROTECT_PAD").is_some() {
+        protect_a_page_of_the_pad();
     }
     println!("ready to be scanned");
     io::stdout().flush().unwrap();
@@ -275,13 +277,46 @@ fn hold_for_a_scan() {
 
 const PROBE_MARK: &CStr = c"ORG_SESSION_MARK=probe";
 
-/// Starts `program` with `argv` and only the probe's mark in its environment, lets it
-/// run, and when `ready` is given waits until it prints that line.
-fn started(program: &CStr, argv: &[&CStr], env: &[&CStr], ready: Option<&str>) -> TestChild {
+/// Makes one page inside this process's `PAD=` environment entry unreadable. Nothing
+/// in this process reads its environment afterwards.
+fn protect_a_page_of_the_pad() {
+    // SAFETY: the live, NULL-terminated environment array of C strings.
+    let pad = unsafe {
+        let mut entry = super::native::environment_strings();
+        loop {
+            let string = *entry;
+            assert!(!string.is_null(), "no PAD entry");
+            if CStr::from_ptr(string).to_bytes().starts_with(b"PAD=") {
+                break string;
+            }
+            entry = entry.add(1);
+        }
+    };
+    // SAFETY: sysconf has no pointer arguments.
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    // SAFETY: the entry is a NUL-terminated string.
+    let length = unsafe { CStr::from_ptr(pad) }.to_bytes().len();
+    let start = (pad as usize + 16).next_multiple_of(page);
+    assert!(start + page <= pad as usize + length, "PAD is too short");
+    // SAFETY: the page lies wholly inside this process's own environment string, which
+    // nothing reads again.
+    assert_eq!(
+        unsafe { libc::mprotect(start as *mut libc::c_void, page, libc::PROT_NONE) },
+        0
+    );
+}
+
+/// A probe child, and the write end of its standard input, closed after the child is
+/// killed.
+struct Held(TestChild, #[allow(dead_code)] std::fs::File);
+
+/// Starts `program` with `argv` and the environment `env`, lets it run, and when
+/// `ready` is given waits until it prints that line.
+fn started(program: &CStr, argv: &[&CStr], env: &[&CStr], ready: Option<&str>) -> Held {
     use std::io::BufRead;
     let argv: Vec<CString> = argv.iter().map(|arg| CString::from(*arg)).collect();
     let env: Vec<CString> = env.iter().map(|entry| CString::from(*entry)).collect();
-    let (pid, _stdin, stdout, _stderr) = spawn_piped(program, &argv, &env, c"/").unwrap();
+    let (pid, stdin, stdout, _stderr) = spawn_piped(program, &argv, &env, c"/").unwrap();
     let child = TestChild { pid };
     release_spawned(pid, || Ok(child.exit().is_some())).unwrap();
     if let Some(ready) = ready {
@@ -291,21 +326,25 @@ fn started(program: &CStr, argv: &[&CStr], env: &[&CStr], ready: Option<&str>) -
             .any(|line| line.contains(ready));
         assert!(found, "the probe child did not start");
     }
-    std::mem::forget(_stdin);
-    child
+    Held(child, stdin)
 }
 
-/// This test binary as a probe child, its `argv[0]` given.
-fn held_child(argv_zero: &CStr) -> TestChild {
-    let exe = CString::new(
+fn this_test_binary() -> CString {
+    CString::new(
         std::env::current_exe()
             .unwrap()
             .into_os_string()
             .into_encoded_bytes(),
     )
-    .unwrap();
+    .unwrap()
+}
+
+/// This test binary as a probe child, its `argv[0]` and environment given.
+fn held_child(argv_zero: &CStr, env: &[&CStr]) -> Held {
+    let mut environment = vec![c"ORG_PLATFORM_HOLD_FOR_A_SCAN=1", PROBE_MARK];
+    environment.extend_from_slice(env);
     started(
-        &exe,
+        &this_test_binary(),
         &[
             argv_zero,
             c"--exact",
@@ -313,7 +352,7 @@ fn held_child(argv_zero: &CStr) -> TestChild {
             c"--nocapture",
             c"--test-threads=1",
         ],
-        &[c"ORG_PLATFORM_HOLD_FOR_A_SCAN=1", PROBE_MARK],
+        &environment,
         Some("ready to be scanned"),
     )
 }
@@ -383,28 +422,46 @@ fn unreadable() -> String {
     format!("{:?}", MarkEvidence::Unreadable)
 }
 
+/// A child that made a page inside its environment unreadable: the system's read of
+/// that environment returns the part before the page exactly where the fact says, and
+/// the scan reports the environment unreadable on every system.
 #[test]
-fn the_proc_environ_fact_is_where_the_environment_is() {
-    let child = held_child(c"probe");
-    let environ = std::fs::read(format!("/proc/{}/environ", child.pid));
-    let listed = environ.is_ok_and(|bytes| {
+fn the_cut_short_fact_is_what_the_system_reads_of_a_protected_environment() {
+    // SAFETY: sysconf has no pointer arguments.
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+    let pad = CString::new(format!("PAD={}", "x".repeat(4 * page))).unwrap();
+    let child = held_child(c"probe", &[c"ORG_PLATFORM_PROTECT_PAD=1", &pad]);
+    let pid = child.0.pid;
+    // The system's own read, where it stops at the page: /proc/<pid>/environ. macOS
+    // has no such read; its KERN_PROCARGS2 fails as a whole, and the scan reports the
+    // environment unreadable on both.
+    let prefix = std::fs::read(format!("/proc/{pid}/environ")).ok();
+    let cut_short = prefix.as_ref().is_some_and(|bytes| {
         bytes
             .split(|byte| *byte == 0)
             .any(|entry| entry == PROBE_MARK.to_bytes())
+            && bytes.len() < pad.as_bytes().len()
     });
-    assert_eq!(listed, SCAN_ENVIRONMENT_IS_PROC_ENVIRON);
-    assert_eq!(scanned_mark(&child), present());
+    assert_eq!(
+        cut_short,
+        SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE,
+        "{:?}",
+        prefix.map(|bytes| bytes.len())
+    );
+    assert_eq!(scanned_mark(&child.0), unreadable());
 }
 
 #[test]
 fn the_counted_arguments_fact_is_what_an_empty_argv_zero_does_to_the_scan() {
-    let child = held_child(c"");
+    let child = held_child(c"", &[]);
     let expected = if SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS {
         unreadable()
     } else {
         present()
     };
-    assert_eq!(scanned_mark(&child), expected);
+    assert_eq!(scanned_mark(&child.0), expected);
+    let readable = held_child(c"probe", &[]);
+    assert_eq!(scanned_mark(&readable.0), present());
 }
 
 #[test]
@@ -415,7 +472,65 @@ fn the_restricted_environment_fact_is_what_the_scan_reads_of_a_system_program() 
     } else {
         present()
     };
-    assert_eq!(scanned_mark(&child), expected);
+    assert_eq!(scanned_mark(&child.0), expected);
+}
+
+/// The before-main hook of the probe below: with `ORG_PLATFORM_END_MAIN_THREAD` set,
+/// this test binary starts a worker that reports and holds, then ends its main thread.
+extern "C" fn end_the_main_thread_for_the_probe() {
+    // SAFETY: the loader has set up the C library; the name is a C string.
+    if unsafe { libc::getenv(c"ORG_PLATFORM_END_MAIN_THREAD".as_ptr()) }.is_null() {
+        return;
+    }
+    extern "C" fn worker(_: *mut libc::c_void) -> *mut libc::c_void {
+        let ready = b"ready to be scanned\n";
+        // SAFETY: raw writes to the inherited pipe; the process ends here.
+        unsafe {
+            libc::write(libc::STDOUT_FILENO, ready.as_ptr().cast(), ready.len());
+            libc::sleep(20);
+            libc::_exit(0)
+        }
+    }
+    let mut thread = std::mem::MaybeUninit::<libc::pthread_t>::uninit();
+    // SAFETY: an output slot, default attributes and a C entry point.
+    if unsafe {
+        libc::pthread_create(
+            thread.as_mut_ptr(),
+            std::ptr::null(),
+            worker,
+            std::ptr::null_mut(),
+        )
+    } != 0
+    {
+        // SAFETY: this disposable child cannot run its probe.
+        unsafe { libc::_exit(125) };
+    }
+    // SAFETY: before main nothing on this thread's stack is borrowed, pinned or owed a
+    // drop; the worker keeps the process alive.
+    unsafe { testing::exit_this_thread() }
+}
+
+// SAFETY: the hook uses only raw C library calls and cannot unwind.
+crate::process::run_before_main!(unsafe END_THE_MAIN_THREAD = end_the_main_thread_for_the_probe);
+
+#[test]
+fn the_zombie_leader_fact_is_the_state_of_a_process_whose_main_thread_ended() {
+    let child = started(
+        &this_test_binary(),
+        &[c"probe"],
+        &[c"ORG_PLATFORM_END_MAIN_THREAD=1"],
+        Some("ready to be scanned"),
+    );
+    let pid = child.0.pid;
+    // The main thread ends just after the worker reported; wait for the state.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut zombie = super::native::is_zombie(pid).unwrap();
+    while !zombie && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        zombie = super::native::is_zombie(pid).unwrap();
+    }
+    assert_eq!(zombie, AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER);
+    assert!(child.0.exit().is_none(), "the process lives on");
 }
 
 /// In a child process of its own, so that no other test opens or closes descriptors

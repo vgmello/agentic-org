@@ -92,6 +92,27 @@ pub(super) fn is_stopped(pid: libc::pid_t) -> io::Result<bool> {
     Ok(matches!(state, 'T' | 't'))
 }
 
+/// The process state, for adapter tests: whether `pid` is a zombie (`Z`).
+#[cfg(test)]
+pub(super) fn is_zombie(pid: libc::pid_t) -> io::Result<bool> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let state = stat
+        .rsplit_once(") ")
+        .and_then(|(_, fields)| fields.chars().next())
+        .ok_or_else(|| invalid("unexpected /proc stat format"))?;
+    Ok(state == 'Z')
+}
+
+/// This process's environment array, for adapter tests.
+#[cfg(test)]
+pub(super) fn environment_strings() -> *const *const libc::c_char {
+    unsafe extern "C" {
+        static environ: *const *const libc::c_char;
+    }
+    // SAFETY: the C library's environment pointer, read once.
+    unsafe { environ }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn argv_zero() -> Option<*mut libc::c_char> {
     None
@@ -136,8 +157,8 @@ pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
 }
 /// `scan.rs` pins each observed process with a pidfd.
 pub(super) const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = true;
-/// `scan.rs` reads `/proc/<pid>/environ`.
-pub(super) const SCAN_ENVIRONMENT_IS_PROC_ENVIRON: bool = true;
+/// `scan.rs` reads `/proc/<pid>/environ`, which stops at an unreadable page.
+pub(super) const SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE: bool = true;
 /// Linux ends a thread alone, the main thread too; the process lives on.
 pub(super) const AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER: bool = true;
 pub(super) const SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS: bool = false;

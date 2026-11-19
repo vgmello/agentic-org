@@ -188,8 +188,18 @@ fn adoption_child() {
             let path = dir.join("crafted");
             bind_path(stream.as_fd(), &path).unwrap();
             drop(peer);
-            // SAFETY: this test-owned bound socket has no connected peer; this system permits listen.
-            assert_eq!(unsafe { libc::listen(stream.as_raw_fd(), 1) }, 0);
+            // macOS has been seen to refuse listen (EINVAL) for a moment after the peer
+            // closed, under load; org-platform's probe of this fact retries the same way.
+            let listened = (0..100).any(|_| {
+                // SAFETY: this test-owned bound socket's peer has closed; this system
+                // permits listen.
+                let status = unsafe { libc::listen(stream.as_raw_fd(), 1) };
+                if status != 0 {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                status == 0
+            });
+            assert!(listened, "{}", io::Error::last_os_error());
             let listener = UnixListener::from(OwnedFd::from(stream));
             let connected = UnixStream::connect(path).unwrap();
             if case == "listener-crafted-queued" {

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use org_platform::process::{
     AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER, SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS,
-    SCAN_ENVIRONMENT_IS_PROC_ENVIRON, SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS,
+    SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE, SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS,
     SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS,
 };
 use org_supervise::recovery::{
@@ -403,7 +403,7 @@ fn hold_partial_environment() -> ! {
 
 #[test]
 fn native_capture_quarantines_a_nul_terminated_partial_environment() {
-    if !SCAN_ENVIRONMENT_IS_PROC_ENVIRON {
+    if !SCAN_ENVIRONMENT_READ_STOPS_AT_AN_UNREADABLE_PAGE {
         return;
     }
     let _scans = shared_scans();
@@ -511,8 +511,8 @@ extern "C" fn hold_worker(_: *mut libc::c_void) -> *mut libc::c_void {
     }
 }
 
-/// Where a process whose main thread ended while a worker runs is a zombie in the
-/// scan's source (procfs), recovery must not take it for gone.
+/// Where a process whose main thread ended while a worker runs is a zombie leader
+/// ([`AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER`]), recovery must not take it for gone.
 #[test]
 fn native_recovery_keeps_a_record_when_a_zombie_leader_has_live_workers() {
     if !AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER {
@@ -726,7 +726,8 @@ fn native_fixture_mark(
 }
 
 /// Where the scan reads a process's environment after the arguments counted at its
-/// start (sysctl), a process that moved a mark from its arguments is believed.
+/// start ([`SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS`]), a process that moved a mark
+/// from its arguments is believed.
 #[test]
 fn native_capture_documents_the_mutated_argv_trust_boundary() {
     if !SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS {
