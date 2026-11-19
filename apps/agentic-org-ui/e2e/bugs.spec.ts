@@ -6,7 +6,7 @@ import { enterMockedOrganization } from './mock-organization';
 async function open(page: Page) {
 	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/teams\/members$/);
-	await visit(page, '/projects/atlas');
+	await visit(page, '/projects/atlas/work');
 	await page.getByRole('tab', { name: 'Bugs' }).click();
 }
 const row = (page: Page, title: string) => page.getByTestId('bug-row').filter({ hasText: title });

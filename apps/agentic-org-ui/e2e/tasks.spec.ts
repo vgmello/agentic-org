@@ -6,7 +6,7 @@ import { enterMockedOrganization } from './mock-organization';
 async function open(page: Page) {
 	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/teams\/members$/);
-	await visit(page, '/projects/atlas');
+	await visit(page, '/projects/atlas/work');
 	await page.getByRole('tab', { name: 'Tasks' }).click();
 }
 const column = (page: Page, status: string) =>
@@ -197,7 +197,7 @@ test('TSK-9: Board or List is remembered per project', async ({ page }) => {
 	await expect(page.getByTestId('task-row')).toContainText('T-1');
 	await expect(page.getByTestId('task-row')).toContainText('High');
 	await shot(page, 'tasks-list');
-	await visit(page, '/projects/atlas');
+	await visit(page, '/projects/atlas/work');
 	await page.getByRole('tab', { name: 'Tasks' }).click();
 	await expect(page.getByTestId('task-list')).toBeVisible(); // remembered
 	await page.getByRole('button', { name: 'Board', exact: true }).click();
@@ -230,7 +230,7 @@ test('TSK-5: assigning to a paused agent asks first, on the task page and in New
 	await page.getByRole('menuitem', { name: 'Pause…', exact: true }).click();
 	await page.getByRole('dialog').getByRole('button', { name: 'Pause', exact: true }).click();
 	await expect(page.getByText('Pause requested for Noor Haddad.')).toBeVisible();
-	await visit(page, '/projects/atlas');
+	await visit(page, '/projects/atlas/work');
 	await page.getByRole('tab', { name: 'Tasks' }).click();
 	await page.getByRole('button', { name: 'New task' }).click();
 	const dialog = page.getByRole('dialog', { name: 'New task' });

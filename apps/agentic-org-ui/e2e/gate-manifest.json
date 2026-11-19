@@ -557,6 +557,11 @@
 	],
 	"allowedCoupling": [
 		{
+			"from": "src/lib/modules/projects/features/work/ProjectWork.svelte",
+			"to": "src/lib/components/{BugsPanel,TasksBoard}.svelte",
+			"why": "Until Work items (plan step 5) builds the project board and list, the project's Work tab shows v1's task board and bug list so the release keeps them; the tasks, bugs, copilot and dialog-title specs keep covering them. Removed when step 5 replaces them."
+		},
+		{
 			"from": "src/lib/modules/projects/{components/ProcessSelect,features/overview/ProjectOverview}.svelte",
 			"to": "src/lib/modules/processes/index.ts",
 			"why": "A project chooses its development process from the processes module's catalogue and links to it (development-processes §3, PKG-4), through that module's public index; the processes specs cover the catalogue, the projects spec covers the choice."

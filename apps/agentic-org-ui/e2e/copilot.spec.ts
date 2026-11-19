@@ -10,7 +10,7 @@ import { enterMockedOrganization } from './mock-organization';
 async function openProject(page: Page, tab: 'Bugs' | 'Tasks', scenario = '') {
 	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/teams\/members$/);
-	await visit(page, `/projects/atlas${scenario ? `?copilot=${scenario}` : ''}`);
+	await visit(page, `/projects/atlas/work${scenario ? `?copilot=${scenario}` : ''}`);
 	await page.getByRole('tab', { name: tab }).click();
 }
 
