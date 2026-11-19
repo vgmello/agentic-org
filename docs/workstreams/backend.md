@@ -13,9 +13,7 @@ Ask the owner before starting anything new.
 
 - This file is the current state and wins over the delivery log, which is history
   (`.agent-kit/tasks/v1-milestone-1.md`).
-- Integrate into `v1` (`git merge --no-ff`, push `v1`); never push `main`. Owner, 2026-11-18. AGENTS.md
-  rule 2 and `docs/processes/branch-and-merge.md` still say `v1-integration`, which is stale (that branch
-  stopped on 15 Nov).
+- Integrate into `v1` (`git merge --no-ff`, push `v1`); never push `main` (AGENTS.md rule 2).
 - Writers: Claude Opus, effort high. Every review: a fresh Claude `code-reviewer`, Opus, effort medium.
   No Codex or Sol runs (owner, 2026-11-19, usage). One fresh review per change and a whole-change review
   before every merge into `v1`; verify findings before acting.
@@ -65,7 +63,6 @@ are at the end of the B2 plan.
 - Kit: stale manifest hash for `skill-catalog.json` (needs the owner's overlay override), old review-run label, catalog rationale cites "HEAD:".
 - Platform allow-list: two office test files keep 11 predicates.
 - Flaky only under heavy load: three tests, listed in the delivery log.
-- AGENTS.md and `docs/processes/branch-and-merge.md` still name `v1-integration`.
 
 Full history, decisions and gates: `.agent-kit/tasks/v1-milestone-1.md`, section "WHERE WE ARE / HOW TO
 CONTINUE".
