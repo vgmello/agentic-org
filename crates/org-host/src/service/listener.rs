@@ -244,20 +244,28 @@ impl Listener {
         })
     }
 
-    /// Stops accepting (within [`ACCEPT_POLL`]) and closes every connection. Requests still
-    /// running finish (their answers are dropped); [`Listener::join`] waits for them.
+    /// Stops accepting and closes every connection, and returns at once. The accept thread
+    /// ends within [`ACCEPT_POLL`], or when the accept it is making ends (it may wait for
+    /// `SPAWN_LOCK` while a server is spawned): a connection it accepts from now on is
+    /// closed on arrival. Requests still running finish (their answers are dropped);
+    /// [`Listener::join`] waits for them and for the accept thread.
     pub(crate) fn close(&mut self) {
+        // Under the table's lock: the accept thread looks at `stopping` under it before it
+        // adds a connection, so every connection is either closed here or never added.
+        let live = lock(&self.live);
         self.stopping.store(true, Ordering::SeqCst);
-        if let Some(accept) = self.accept.take() {
-            let _ = accept.join();
-        }
-        for live in lock(&self.live).values() {
+        for live in live.values() {
             live.connection.close();
         }
     }
 
-    /// Waits for every connection's threads, including its running requests.
+    /// Waits for the accept thread and every connection's threads, including its running
+    /// requests.
     pub(crate) fn join(&mut self) {
+        self.close();
+        if let Some(accept) = self.accept.take() {
+            let _ = accept.join();
+        }
         let live: Vec<Live> = lock(&self.live).drain().map(|(_, live)| live).collect();
         for live in live {
             live.connection.close();
@@ -265,10 +273,16 @@ impl Listener {
         }
     }
 
-    /// [`Listener::join`], until `until` at the latest: a connection whose running request
-    /// has not ended by then (one waiting for a write lock of the registry, say) is left to
-    /// end on its own, its answer dropped. Says whether every connection ended.
+    /// [`Listener::join`], until `until` at the latest: an accept that has not ended by
+    /// then, or a connection whose running request has not (one waiting for a write lock of
+    /// the registry, say), is left to end on its own, its answer dropped. Says whether
+    /// everything ended.
     pub(crate) fn join_by(&mut self, until: std::time::Instant) -> bool {
+        self.close();
+        let accepted = self
+            .accept
+            .take()
+            .is_none_or(|accept| crate::sync::join_by(accept, until));
         let live: Vec<Live> = lock(&self.live).drain().map(|(_, live)| live).collect();
         for live in &live {
             live.connection.close();
@@ -279,13 +293,12 @@ impl Listener {
             .map(|live| crate::sync::join_by(live.reader, until))
             .filter(|ended| !ended)
             .count();
-        left == 0
+        accepted && left == 0
     }
 }
 
 impl Drop for Listener {
     fn drop(&mut self) {
-        self.close();
         self.join();
     }
 }
@@ -345,6 +358,11 @@ fn accept_loop(
             continue; // dropping `stream` closes it
         };
         let mut table = lock(live);
+        // Accepted after the listener was closed (this accept waited for `SPAWN_LOCK`
+        // meanwhile): closed on arrival, as [`Listener::close`] closed every other one.
+        if stopping.load(Ordering::SeqCst) {
+            break;
+        }
         table.retain(|_, live| !live.reader.is_finished());
         if table.len() >= config.max_connections {
             continue;
@@ -1699,6 +1717,49 @@ mod tests {
         assert!(took < Duration::from_secs(2), "{took:?}");
         // The request, left to run, ends once its lock is free.
         drop(holding);
+    }
+
+    /// X5 review (third round, P1): closing the listener does not wait for its accept
+    /// thread, which may be waiting for `SPAWN_LOCK` while a server is spawned, and the
+    /// bounded join leaves that thread at its bound. The connection it accepts once the
+    /// lock is free is closed on arrival and never served.
+    #[test]
+    fn a_stop_never_waits_for_an_accept_that_waits_for_the_spawn_lock() {
+        let dir = short_tempdir();
+        let (mut listener, path) = start(dir.path(), crate::home::euid());
+        let spawning = lock(&SPAWN_LOCK);
+        let mut stream = connect(&path);
+        stream
+            .write_all(b"{\"id\":1,\"method\":\"hello\"}\n")
+            .unwrap();
+        // The accept thread sees the connection within its poll and waits for the lock.
+        std::thread::sleep(ACCEPT_POLL * 3);
+        let stopping = std::thread::spawn(move || {
+            let asked = std::time::Instant::now();
+            listener.close();
+            let closed = asked.elapsed();
+            let joined = listener.join_by(asked + Duration::from_millis(300));
+            // Returned, not dropped here: dropping it waits for every thread.
+            (closed, asked.elapsed(), joined, listener)
+        });
+        let until = std::time::Instant::now() + Duration::from_secs(3);
+        while !stopping.is_finished() && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let finished = stopping.is_finished();
+        drop(spawning);
+        assert!(finished, "the stop waited for the accept thread");
+        let (closed, took, joined, listener) = stopping.join().unwrap();
+        assert!(closed < Duration::from_millis(100), "{closed:?}");
+        assert!(
+            !joined,
+            "the accept thread waited for the lock until the bound"
+        );
+        assert!(took >= Duration::from_millis(300), "{took:?}");
+        assert!(took < Duration::from_secs(2), "{took:?}");
+        // The lock is free: the accept ends, and its connection is closed unanswered.
+        assert_eq!(read_line(&stream), None);
+        drop(listener);
     }
 
     #[test]

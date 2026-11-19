@@ -400,6 +400,35 @@ fn still_running(child: &mut Child) -> io::Result<()> {
     }
 }
 
+/// An instance's browser listener, bound before its host started: setup binds it when it
+/// checks that the address it is about to reserve is free, and the web process's first
+/// start takes it (X5 review, third round, P2). The address never changes once reserved,
+/// so it is held from that check on, through the reservation, and no other program can
+/// take the port before the web process serves it. It is handed over once: a clone shares
+/// the one socket, and the first start that takes it leaves none.
+#[derive(Clone, Debug)]
+pub struct BrowserListener(Arc<Mutex<Option<TcpListener>>>);
+
+impl BrowserListener {
+    /// Binds the address of `listen`, as every start of the web process binds it.
+    pub(crate) fn bind(listen: &ListenConfig) -> io::Result<Self> {
+        bind(listen).map(|listener| Self(Arc::new(Mutex::new(Some(listener)))))
+    }
+
+    /// The listener, once.
+    pub(crate) fn take(&self) -> Option<TcpListener> {
+        lock(&self.0).take()
+    }
+}
+
+/// Binds the browser listener of `listen`: its exact address and port (a port of zero is
+/// refused before this, when the address is validated).
+fn bind(listen: &ListenConfig) -> io::Result<TcpListener> {
+    // See `cloexec`: on macOS the socket is made close-on-exec in a second step.
+    let _fence = lock(&SPAWN_LOCK);
+    TcpListener::bind((listen.address(), listen.port()))
+}
+
 pub(crate) struct Configuration {
     pub program: PathBuf,
     pub instance: String,
@@ -520,8 +549,12 @@ pub(crate) struct Supervisor {
     thread: Option<JoinHandle<()>>,
 }
 impl Supervisor {
+    /// Supervises the web process of `config`. Its first start serves on `first` when it is
+    /// given (the listener setup bound, [`BrowserListener`]); every other start binds the
+    /// configured address itself.
     pub(crate) fn start(
         config: Configuration,
+        first: Option<TcpListener>,
         handler: Arc<dyn Handler>,
         state: Arc<Mutex<GatewayState>>,
         eligible: Arc<dyn Fn() -> bool + Send + Sync>,
@@ -553,6 +586,7 @@ impl Supervisor {
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let observing = Arc::clone(&state);
+        let mut first = first;
         let thread = thread::Builder::new()
             .name("org-browser-supervisor".into())
             .spawn(move || {
@@ -562,7 +596,10 @@ impl Supervisor {
                     &*eligible,
                     Timing::PRODUCTION,
                     &|line| crate::host_log::log(line),
-                    || Running::start(&config, &image, Arc::clone(&handler), WAIT, &stopping),
+                    || {
+                        let held = first.take();
+                        Running::start(&config, &image, held, Arc::clone(&handler), WAIT, &stopping)
+                    },
                 )
             })
             .map_err(os_failed("start the supervisor thread"))?;
@@ -809,9 +846,13 @@ impl Drop for Rendezvous {
 }
 
 struct Running {
-    // Drop order: close control/revoke first, then kill/reap the child.
-    control: WebConnection,
+    // Drop order: kill and reap the child first, then close the control connection and wait
+    // for its threads. A request of it still running (one waiting for a write lock of the
+    // registry, say) is waited for only then: it never keeps the web process alive, past a
+    // host's stop or into the next start (X5 review, third round, P1). The child makes no
+    // request after it is killed; the request's answer is dropped.
     process: Child,
+    control: WebConnection,
     _stdin: fs::File,
     /// The layers of the report the host verified.
     layers: org_platform::confinement::Layers,
@@ -850,12 +891,14 @@ fn ended_cause(serving_refused: bool, exit: Option<String>, live: bool) -> Strin
     }
 }
 impl Running {
-    /// Starts the web process of `config` through `image`, the host's one admission of it.
-    /// `wait` bounds the steps from spawn through the handoff ACK; a start that waits for
-    /// the web process ends as soon as `stop` is set, as a failed start.
+    /// Starts the web process of `config` through `image`, the host's one admission of it,
+    /// serving on `held` when it is given (the listener setup bound) and on a listener it
+    /// binds otherwise. `wait` bounds the steps from spawn through the handoff ACK; a start
+    /// that waits for the web process ends as soon as `stop` is set, as a failed start.
     fn start(
         config: &Configuration,
         image: &Image,
+        held: Option<TcpListener>,
         handler: Arc<dyn Handler>,
         wait: Duration,
         stop: &AtomicBool,
@@ -865,16 +908,17 @@ impl Running {
             .may_spawn()
             .map_err(refused("the pre-spawn check"))?;
         // Validated configuration is frozen before bind. No port-zero substitution.
-        let listener = {
-            let _fence = lock(&SPAWN_LOCK);
-            TcpListener::bind((config.listen.address(), config.listen.port()))
-                .map_err(os_failed("bind the browser listener"))?
+        let listener = match held {
+            Some(listener) => listener,
+            None => bind(&config.listen).map_err(os_failed("bind the browser listener"))?,
         };
         let bound = listener
             .local_addr()
             .map_err(os_failed("read the browser listener address"))?;
-        if bound.port() != config.listen.port() {
-            return Err(failed("the browser listener is not on its configured port"));
+        if bound.ip() != config.listen.address() || bound.port() != config.listen.port() {
+            return Err(failed(
+                "the browser listener is not on its configured address and port",
+            ));
         }
         let rendezvous =
             Rendezvous::bind(&config.runtime).map_err(os_failed("bind the rendezvous"))?;

@@ -343,7 +343,22 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
         (result, String::from_utf8(out).unwrap())
     };
     let (result, out) = run(&input);
-    result.unwrap();
+    // The address it checked is held from that check on, and handed over to the process
+    // that serves the instance (X5 review, third round, P2): no other program can bind it.
+    let held = result
+        .unwrap()
+        .expect("the browser listener of a first foreground setup");
+    assert!(
+        std::net::TcpListener::bind(("127.0.0.1", port)).is_err(),
+        "the reserved address was free for another program after setup checked it"
+    );
+    let listener = held.take().expect("handed over once");
+    assert_eq!(
+        listener.local_addr().unwrap(),
+        std::net::SocketAddr::from(([127, 0, 0, 1], port))
+    );
+    assert!(held.take().is_none(), "handed over twice");
+    drop(listener);
     assert!(
         out.contains("Service: none is registered (foreground mode)."),
         "{out}"
@@ -372,9 +387,10 @@ fn foreground_setup_reserves_the_instance_and_never_touches_a_service_manager() 
         base.join("data/office-state").is_dir(),
         "the layout is made"
     );
-    // A second run is a no-op that says the same.
+    // A second run is a no-op that says the same, and holds no address: the instance's
+    // host binds it.
     let (result, again) = run(&input);
-    result.unwrap();
+    assert!(result.unwrap().is_none());
     assert_eq!(again, out);
     assert_eq!(Journal::snapshot(&base, None).unwrap(), record);
     // Another configuration for the same instance is refused, whatever differs.
@@ -1246,7 +1262,11 @@ mod credentials {
 
     /// Runs setup in `account` with a credential directory below `state`, up to the
     /// service step, which this test's manager refuses.
-    fn run_setup(account: &Account, state: &Path, port: u16) -> (Result<(), String>, String) {
+    fn run_setup(
+        account: &Account,
+        state: &Path,
+        port: u16,
+    ) -> (Result<Option<crate::BrowserListener>, String>, String) {
         // The user temp base has a short path of its own (socket paths are bounded).
         let temp = account._temp.path().canonicalize().unwrap().join("t");
         if !temp.exists() {
