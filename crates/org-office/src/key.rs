@@ -29,7 +29,7 @@ impl Key {
     }
 
     /// A key from raw bytes, for tests (the host makes the real ones).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testkit"))]
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self::from_office_secrets_key(OfficeSecretsKey::from_bytes(bytes))
     }

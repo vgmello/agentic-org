@@ -32,7 +32,7 @@ pub(crate) fn read(db: &rusqlite::Connection) -> Result<Option<LocalRecord>, Off
     if version != 1 || profile != 1 || complete != 1 {
         return Err(invalid());
     }
-    LocalRecord::new(org, operation, key, package, private).map(Some)
+    LocalRecord::legacy(org, operation, key, package, private).map(Some)
 }
 fn same(a: &LocalRecord, b: &LocalRecord) -> bool {
     a.organization_id == b.organization_id

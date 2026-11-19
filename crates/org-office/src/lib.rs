@@ -22,7 +22,7 @@ pub use organization::{activity, directory};
 pub mod organization_family {
     pub use crate::organization::features::{
         self, create_organization, create_team, CreateOrganization, CreateTeam, Creator, Op,
-        OrganizationCreated, TeamCreated, TeamRejected, TeamRejection,
+        OrganizationCreated, TeamCreated, TeamRefusal, TeamRejected, TeamRejection,
     };
     pub use crate::organization::ports::{
         OrganizationEngine, OrganizationRead, OrganizationWrite, RecordRef, MAX_TEAM_DEPTH,
@@ -31,13 +31,23 @@ pub mod organization_family {
     pub use crate::organization::records;
     #[cfg(any(test, feature = "testkit"))]
     pub use crate::organization::testkit;
+    /// The native protocol's side: wire command IDs as store operation IDs, `org.snapshot`
+    /// from the records, and `team.create` onto the family and back.
+    pub use crate::organization::{operation_id, snapshot, wire};
 }
 mod error;
+/// The office on its store (B1b): beside the office of the old databases until the worker
+/// switches to it (block 6) and the old one is deleted (block 4b).
+pub mod journal_office;
 mod key;
 mod messaging;
 mod model;
 mod office;
 mod office_file;
+/// The office-local family on the office store: the HQ's wrapped CA key record and the
+/// clean-stop marker under `durable/local/offices/<office-id>/`. With the `testkit`
+/// feature: a CA fixture.
+pub mod office_local;
 mod owned_processes;
 mod private_fs;
 pub mod rules;
@@ -51,8 +61,9 @@ pub use store::open::Testing;
 /// Opening an office's store on the engine its configuration names, and the operations
 /// run on it whichever engine that is.
 pub use store::open::{
-    open_store, CreateOrganizationOp, CreateTeamOp, DirectoryGeneration, EngineChoice,
-    OfficeEngine, OfficeStore, Opened, ReadOp, StoreConfig, StoreOp,
+    open_store, CreateOrganizationOp, CreateTeamOp, DirectoryGeneration, DirectorySnapshot,
+    EngineChoice, OfficeEngine, OfficeStanding, OfficeStore, Opened, ReadOp, Standing, StoreConfig,
+    StoreOp,
 };
 /// The SQLite engine of the office store: the projection as one plain database file.
 pub use store::sqlite::{SqliteEngine, SqliteSnapshot, SqliteTx};

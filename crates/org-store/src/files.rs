@@ -434,6 +434,12 @@ fn not_a_record(path: &Path) -> FilesError {
 }
 
 fn read_file(full: &Path) -> Result<Option<Vec<u8>>, FilesError> {
+    read_limited(full, MAX_FILE_BYTES)
+}
+
+/// A regular file of at most `limit` bytes, never through a link: `None` when absent.
+fn read_limited(full: &Path, limit: u64) -> Result<Option<Vec<u8>>, FilesError> {
+    let limit = limit.min(MAX_FILE_BYTES);
     let file = match OpenOptions::new()
         .read(true)
         // Never follows a link, and never waits on a FIFO someone put there.
@@ -447,7 +453,7 @@ fn read_file(full: &Path) -> Result<Option<Vec<u8>>, FilesError> {
     let meta = file
         .metadata()
         .map_err(|e| FilesError::io(full, "open", &e))?;
-    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+    if !meta.is_file() || meta.len() > limit {
         return Err(FilesError::io(
             full,
             "read",
@@ -458,10 +464,10 @@ fn read_file(full: &Path) -> Result<Option<Vec<u8>>, FilesError> {
         ));
     }
     let mut bytes = Vec::with_capacity(meta.len() as usize);
-    file.take(MAX_FILE_BYTES + 1)
+    file.take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| FilesError::io(full, "read", &e))?;
-    if bytes.len() as u64 > MAX_FILE_BYTES {
+    if bytes.len() as u64 > limit {
         return Err(FilesError::io(
             full,
             "read",
@@ -469,6 +475,119 @@ fn read_file(full: &Path) -> Result<Option<Vec<u8>>, FilesError> {
         ));
     }
     Ok(Some(bytes))
+}
+
+/// Temporary names of [`publish_one`] in this process: one each, never reused.
+static ONE_TEMP: AtomicU64 = AtomicU64::new(0);
+
+/// Publishes one file, `name`, directly in the existing folder `directory`, outside any
+/// store: a configuration or marker file that is not a source (an office's `office.json`
+/// and creation intent). Its bytes go to a new temporary file in that folder (never
+/// through a link, a name no other writer uses), which is fully flushed, then renamed into
+/// place, and the folder is synced. So after a crash the file is wholly old or wholly new.
+///
+/// `exclusive`: nothing at `name` is ever replaced. The same bytes already there are
+/// success; other bytes are refused and kept. Otherwise the file is replaced.
+pub fn publish_one(
+    directory: &Path,
+    name: &str,
+    bytes: &[u8],
+    exclusive: bool,
+) -> Result<(), FilesError> {
+    let target = one_path(directory, name)?;
+    let (temp, mut file) = one_temporary(directory)?;
+    let written = std::io::Write::write_all(&mut file, bytes)
+        .map_err(|e| FilesError::io(&temp, "write", &e))
+        .and_then(|()| {
+            org_platform::fs::full_sync(&file).map_err(|e| FilesError::flush(&temp, "flush", &e))
+        })
+        .and_then(|()| place_one(&temp, &target, bytes, exclusive));
+    if written.is_err() {
+        // Best effort: a temporary file left by a failure is never read or projected.
+        let _ = fs::remove_file(&temp);
+        return written;
+    }
+    sync_one_directory(directory)
+}
+
+/// The bytes of `name` in `directory`, at most `limit` of them: `None` when there is no
+/// such file. Never follows a link; anything but a regular file within the limit is
+/// refused.
+pub fn read_one(directory: &Path, name: &str, limit: u64) -> Result<Option<Vec<u8>>, FilesError> {
+    let target = one_path(directory, name)?;
+    read_limited(&target, limit)
+}
+
+/// `directory/name`, once `directory` is an absolute, real folder and `name` one portable
+/// path component that is no temporary name.
+fn one_path(directory: &Path, name: &str) -> Result<PathBuf, FilesError> {
+    let refused = |why: &str| {
+        let error = io::Error::new(io::ErrorKind::InvalidInput, why.to_owned());
+        FilesError::io(directory, "publish", &error)
+    };
+    if !directory.is_absolute() {
+        return Err(refused("the folder must be absolute"));
+    }
+    if !crate::change::component_ok(name) {
+        return Err(refused("the name is not one portable path component"));
+    }
+    match fs::symlink_metadata(directory) {
+        Ok(meta) if meta.is_dir() => Ok(directory.join(name)),
+        Ok(_) => Err(refused("not a folder")),
+        Err(e) => Err(FilesError::io(directory, "open", &e)),
+    }
+}
+
+fn one_temporary(directory: &Path) -> Result<(PathBuf, fs::File), FilesError> {
+    loop {
+        let n = ONE_TEMP.fetch_add(1, Ordering::Relaxed);
+        let temp = directory.join(format!("{TEMP_PREFIX}one-{}-{n}", std::process::id()));
+        let opened = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(org_platform::fs::O_NOFOLLOW)
+            .open(&temp);
+        match opened {
+            Ok(file) => return Ok((temp, file)),
+            // Another process's, or one left by a dead process with this pid: never ours.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(FilesError::io(&temp, "create", &e)),
+        }
+    }
+}
+
+fn place_one(temp: &Path, target: &Path, bytes: &[u8], exclusive: bool) -> Result<(), FilesError> {
+    if !exclusive {
+        return fs::rename(temp, target).map_err(|e| FilesError::io(target, "rename", &e));
+    }
+    use std::os::unix::ffi::OsStrExt;
+    let c = |path: &Path| {
+        std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+            let error = io::Error::new(io::ErrorKind::InvalidInput, "a NUL in the path");
+            FilesError::io(path, "rename", &error)
+        })
+    };
+    match org_platform::fs::rename_noreplace(&c(temp)?, &c(target)?) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            let _ = fs::remove_file(temp);
+            let limit = bytes.len() as u64;
+            if read_limited(target, limit).ok().flatten().as_deref() == Some(bytes) {
+                return Ok(());
+            }
+            let error = io::Error::new(io::ErrorKind::AlreadyExists, "other bytes are there");
+            Err(FilesError::io(target, "publish", &error))
+        }
+        Err(e) => Err(FilesError::io(target, "rename", &e)),
+    }
+}
+
+fn sync_one_directory(directory: &Path) -> Result<(), FilesError> {
+    let folder = fs::File::open(directory).map_err(|e| FilesError::io(directory, "open", &e))?;
+    folder
+        .sync_all()
+        .map_err(|e| FilesError::flush(directory, "flush directory", &e))
 }
 
 #[cfg(test)]
@@ -796,5 +915,103 @@ mod tests {
             .walk(&path("state/a/none/deeper"))
             .unwrap()
             .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod one_file_tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
+
+    fn folder() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().canonicalize().unwrap();
+        (dir, path)
+    }
+
+    fn names(folder: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(folder)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_file_is_published_owner_only_with_no_temporary_left() {
+        let (_dir, root) = folder();
+        publish_one(&root, "office.json", b"one\n", false).unwrap();
+        assert_eq!(
+            read_one(&root, "office.json", 64).unwrap().unwrap(),
+            b"one\n"
+        );
+        let mode = fs::metadata(root.join("office.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(names(&root), ["office.json"]);
+        // Replacing.
+        publish_one(&root, "office.json", b"two\n", false).unwrap();
+        assert_eq!(
+            read_one(&root, "office.json", 64).unwrap().unwrap(),
+            b"two\n"
+        );
+        assert_eq!(read_one(&root, "missing.json", 64).unwrap(), None);
+    }
+
+    #[test]
+    fn an_exclusive_file_is_never_replaced_and_the_same_bytes_are_success() {
+        let (_dir, root) = folder();
+        publish_one(&root, "intent.json", b"first", true).unwrap();
+        publish_one(&root, "intent.json", b"first", true).unwrap();
+        let refused = publish_one(&root, "intent.json", b"second", true);
+        assert!(refused.unwrap_err().to_string().contains("other bytes"));
+        assert_eq!(
+            read_one(&root, "intent.json", 64).unwrap().unwrap(),
+            b"first"
+        );
+        assert_eq!(names(&root), ["intent.json"]);
+    }
+
+    #[test]
+    fn a_temporary_name_someone_else_holds_is_never_written_through() {
+        let (_dir, root) = folder();
+        let outside = root.join("outside");
+        fs::write(&outside, b"kept").unwrap();
+        // Every name this process could pick next is a link: the publication skips them.
+        let pid = std::process::id();
+        let next = ONE_TEMP.load(Ordering::Relaxed);
+        for n in next..next + 8 {
+            let name = format!("{TEMP_PREFIX}one-{pid}-{n}");
+            std::os::unix::fs::symlink(&outside, root.join(name)).unwrap();
+        }
+        publish_one(&root, "office.json", b"mine", false).unwrap();
+        assert_eq!(fs::read(&outside).unwrap(), b"kept");
+        assert_eq!(
+            read_one(&root, "office.json", 64).unwrap().unwrap(),
+            b"mine"
+        );
+    }
+
+    #[test]
+    fn links_large_files_and_bad_names_are_refused() {
+        let (_dir, root) = folder();
+        let outside = root.join("outside");
+        fs::write(&outside, b"x").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link.json")).unwrap();
+        assert!(read_one(&root, "link.json", 64).is_err());
+        fs::write(root.join("big.json"), vec![b' '; 65]).unwrap();
+        assert!(read_one(&root, "big.json", 64).is_err());
+        assert!(read_one(&root, "big.json", 65).is_ok());
+        for name in ["", "..", "a/b", "Office.json", ".store-tmp-x"] {
+            assert!(publish_one(&root, name, b"x", false).is_err(), "{name:?}");
+        }
+        assert!(publish_one(Path::new("relative"), "a.json", b"x", false).is_err());
+        let file = root.join("plain");
+        fs::write(&file, b"x").unwrap();
+        assert!(publish_one(&file, "a.json", b"x", false).is_err());
     }
 }

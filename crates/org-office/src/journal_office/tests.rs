@@ -1,0 +1,702 @@
+//! The office on its store, created, opened, killed and refused, in temporary folders.
+//! Memory by default (ENG-2); SQLite where the projection's file matters.
+
+use std::{
+    cell::Cell,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+use org_proto::{
+    directory::WhoParams,
+    org::{CommandStatus, TeamCreateParams, TeamRenameParams},
+    ErrorCode,
+};
+use org_store::{
+    testkit::{identity, CrashPoint, DiskOp, FakeCustody, Faults, FlushSite, Target},
+    Sha256,
+};
+
+use super::{
+    testkit::{self, OPERATION},
+    *,
+};
+use crate::{
+    office_local::{records as local, testkit::ca_material},
+    organization::testkit::creation_files,
+    store::open::Testing,
+};
+
+const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
+const CREATOR: &str = "01900000-0000-7000-8000-000000000012";
+const HR: &str = "01900000-0000-7000-8000-000000000013";
+const TOP_TEAM: &str = "01900000-0000-7000-8000-000000000011";
+const TEAM_A: &str = "01900000-0000-7000-8000-000000000021";
+const TEAM_B: &str = "01900000-0000-7000-8000-000000000022";
+
+/// One office's folder, data roots, custody and disk, which outlive any one process.
+struct Site {
+    root: PathBuf,
+    folder: PathBuf,
+    roots: DataRoots,
+    custody: Arc<FakeCustody>,
+    faults: Arc<Faults>,
+    _dir: tempfile::TempDir,
+}
+
+impl Site {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let (folder, roots) = testkit::places(&root);
+        Self {
+            root,
+            folder,
+            roots,
+            custody: Arc::new(FakeCustody::new()),
+            faults: Faults::new(),
+            _dir: dir,
+        }
+    }
+
+    fn options(&self, engine: EngineChoice) -> Options {
+        let mut options = testkit::options(engine);
+        options.testing = Testing {
+            faults: Some(Arc::clone(&self.faults)),
+            ..Testing::default()
+        };
+        options
+    }
+
+    fn provision_with(
+        &self,
+        engine: EngineChoice,
+        material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
+    ) -> Result<Office, OfficeError> {
+        let (new, binding) = testkit::request();
+        Office::provision_with(
+            self.folder.clone(),
+            &new,
+            Some(Key::from_bytes([7; 32])),
+            &binding,
+            self.roots.clone(),
+            testkit::custody(Arc::clone(&self.custody)),
+            material,
+            self.options(engine),
+        )
+    }
+
+    /// The suite's creation: the retained CA when there is one, else seed 1's.
+    fn provision(&self, engine: EngineChoice) -> Result<Office, OfficeError> {
+        self.provision_with(engine, |prior| {
+            prior.map_or_else(|| testkit::record(testkit::CA_SEED), Ok)
+        })
+    }
+
+    fn open(&self, engine: EngineChoice) -> Result<Office, OfficeError> {
+        let instance = identity().instance_id.to_string();
+        Office::open_with(
+            self.folder.clone(),
+            None,
+            &instance,
+            self.roots.clone(),
+            testkit::custody(Arc::clone(&self.custody)),
+            self.options(engine),
+        )
+    }
+
+    /// The process dies with `office` open, and a new one finds the same disk.
+    fn killed(&self, office: Office) {
+        self.faults.kill();
+        drop(office);
+        self.faults.revive();
+    }
+
+    fn durable(&self, path: &str) -> PathBuf {
+        self.roots.durable.join(path)
+    }
+
+    fn runtime_folder(&self) -> PathBuf {
+        self.roots.runtime.join(identity().office_id.as_str())
+    }
+}
+
+/// Every file under `root`, by its path under it.
+fn tree(root: &Path) -> BTreeMap<String, Vec<u8>> {
+    let mut files = BTreeMap::new();
+    let mut folders = vec![root.to_owned()];
+    while let Some(folder) = folders.pop() {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+                continue;
+            }
+            let name = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_owned();
+            files.insert(name, std::fs::read(&path).unwrap());
+        }
+    }
+    files
+}
+
+fn names(folder: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    names.sort();
+    names
+}
+
+fn creation_id() -> Id {
+    operation_id::from_wire_ulid(OPERATION).unwrap()
+}
+
+fn team_create(n: u64, team: &str, parent: &str) -> OrgCommand {
+    OrgCommand::TeamCreate(TeamCreateParams {
+        command_id: format!("01HZY8M6V2Q3D4E5F{n:07}00"),
+        team_id: team.into(),
+        name: format!("Team {n}"),
+        owner_team_id: Some(parent.into()),
+    })
+}
+
+/// STORE-6 on the production path: the creation's files under `durable/` are exactly the
+/// golden ones and the two CA files, and nothing an older build made is anywhere.
+#[test]
+fn creation_writes_exactly_the_golden_files_and_the_ca_records() {
+    for engine in ENGINES {
+        let site = Site::new();
+        let office = site.provision(engine).unwrap();
+        let material = ca_material(&identity().organization_id, testkit::CA_SEED);
+
+        let mut expected = creation_files();
+        expected.insert(
+            "state/security/ca-escrow.v1.bin".into(),
+            material.package.clone(),
+        );
+        let state: BTreeMap<String, Vec<u8>> = tree(&site.durable("state"))
+            .into_iter()
+            .map(|(path, bytes)| (format!("state/{path}"), bytes))
+            .collect();
+        assert_eq!(state, expected, "{engine:?}");
+        let key = material.record(&identity(), &creation_id());
+        let key_path = local::ca_key_path(&identity().office_id);
+        let key_path = key_path.as_str().strip_prefix("local/").unwrap().to_owned();
+        let expected_local = BTreeMap::from([(key_path, local::encode_ca_key(&key))]);
+        assert_eq!(tree(&site.durable("local")), expected_local, "{engine:?}");
+        // Under durable/ only the files, the journal and the receipt.
+        assert_eq!(names(&site.roots.durable), ["local", "recovery", "state"]);
+        let receipts = tree(&site.durable("recovery/commands"));
+        let receipts: Vec<&String> = receipts.keys().collect();
+        assert_eq!(receipts, [&format!("{}.json", creation_id())], "{engine:?}");
+
+        // The office folder: the lock, the intent and office.json; no database, no
+        // workspace.
+        assert_eq!(
+            names(&site.folder),
+            ["hq-creation.v1.json", "office.json", "office.lock"]
+        );
+        let frozen = intent::read(&site.folder).unwrap().unwrap();
+        assert_eq!(frozen.version, 2);
+        assert_eq!(frozen.operation, OPERATION);
+        assert_eq!(frozen.roots(), site.roots);
+
+        // The public record is the escrow package, bound by the key record's hash.
+        let public = office.hq_creation_public_record().unwrap().unwrap();
+        assert_eq!(public.package, material.package);
+        assert_eq!(key.package_sha256, Sha256::of(&public.package));
+        assert_eq!(public.operation_id, creation_id().as_str());
+        let record = office.hq_creation_record().unwrap().unwrap();
+        assert_eq!(record.wrapped_ca_key(), material.wrapped_ca_key.as_slice());
+        assert!(office.is_hq().unwrap());
+        assert_eq!(office.org_snapshot().unwrap().position.seq, 1);
+        office.close().unwrap();
+    }
+}
+
+/// STORE-6, the other half: a foreign file where creation writes stops it, and the cause
+/// names the path. Nothing is replaced and the office is not finished.
+#[test]
+fn a_foreign_file_where_creation_writes_stops_it_and_is_named() {
+    let site = Site::new();
+    std::fs::create_dir_all(site.durable("state")).unwrap();
+    std::fs::write(site.durable("state/organization.yaml"), b"planted: true\n").unwrap();
+    let error = site.provision(EngineChoice::Sqlite).unwrap_err();
+    assert!(matches!(error, OfficeError::Storage(_)), "{error:?}");
+    let cause = std::error::Error::source(&error).unwrap().to_string();
+    assert!(cause.contains("state/organization.yaml"), "{cause}");
+    assert!(!error.to_string().contains("organization.yaml"), "{error}");
+    assert_eq!(
+        std::fs::read(site.durable("state/organization.yaml")).unwrap(),
+        b"planted: true\n"
+    );
+    assert!(!site.folder.join("office.json").exists());
+}
+
+/// A team, then the projection deleted: the reopened office rebuilds the same rows and
+/// reads the same snapshot (SQLite: the memory engine always rebuilds).
+#[test]
+fn deleting_the_runtime_folder_rebuilds_an_equal_projection() {
+    let site = Site::new();
+    let office = site.provision(EngineChoice::Sqlite).unwrap();
+    let answer = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
+    assert_eq!(answer.unwrap().unwrap().status, CommandStatus::Committed);
+    let (dump, snapshot) = (office.dump(), office.org_snapshot().unwrap());
+    office.close().unwrap();
+    std::fs::remove_dir_all(site.runtime_folder()).unwrap();
+
+    let office = site.open(EngineChoice::Sqlite).unwrap();
+    assert_eq!(office.dump(), dump);
+    assert_eq!(office.org_snapshot().unwrap(), snapshot);
+    assert!(site.runtime_folder().join("office.db").is_file());
+    office.close().unwrap();
+}
+
+/// A dropped office is a killed one: what it answered is there, and the next opening is
+/// told the stop was not clean. An orderly close is.
+#[test]
+fn an_answered_team_survives_a_kill_and_only_a_close_is_a_clean_stop() {
+    for engine in ENGINES {
+        let site = Site::new();
+        let office = site.provision(engine).unwrap();
+        let answered = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
+        let answered = answered.unwrap().unwrap();
+        site.killed(office);
+
+        let office = site.open(engine).unwrap();
+        assert!(!office.stopped_cleanly(), "{engine:?}");
+        let teams = office.org_snapshot().unwrap().teams;
+        assert!(teams.iter().any(|team| team.id == TEAM_A), "{engine:?}");
+        // The same command again: the same answer.
+        let again = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
+        assert_eq!(again.unwrap(), Ok(answered), "{engine:?}");
+        office.close().unwrap();
+
+        let office = site.open(engine).unwrap();
+        assert!(office.stopped_cleanly(), "{engine:?}");
+        office.close().unwrap();
+    }
+}
+
+/// A creation that dies at any point is completed by the same request: one entry 1, one
+/// receipt, and the CA the first attempt committed, handed back to `material`. H1: while
+/// it has not completed, there is no `office.json`.
+#[test]
+fn a_creation_retried_after_a_crash_point_keeps_its_ca_and_its_one_entry() {
+    let points = [
+        CrashPoint::DuringDecide,
+        CrashPoint::AfterAppend,
+        CrashPoint::AfterCommit,
+        CrashPoint::MaterializeTempFlushed,
+        CrashPoint::MaterializeRenamed,
+        CrashPoint::BeforeMark,
+    ];
+    for engine in ENGINES {
+        for point in points {
+            let context = format!("{engine:?} {point:?}");
+            let site = Site::new();
+            // Armed once the store is open, so it fires inside the creation itself.
+            let failed = site.provision_with(engine, |prior| {
+                site.faults.arm(point, 1);
+                prior.map_or_else(|| testkit::record(testkit::CA_SEED), Ok)
+            });
+            assert!(failed.is_err(), "{context}");
+            drop(failed);
+            site.faults.revive();
+            // H1: nobody was told the office exists.
+            assert!(!site.folder.join("office.json").exists(), "{context}");
+
+            let prior = Cell::new(None);
+            let office = site
+                .provision_with(engine, |found| {
+                    prior.set(Some(found.is_some()));
+                    // Another seed: used only if no CA was committed.
+                    found.map_or_else(|| testkit::record(9), Ok)
+                })
+                .unwrap_or_else(|e| panic!("{context}: {e:?}"));
+            let appended = point != CrashPoint::DuringDecide;
+            assert_eq!(prior.get(), Some(appended), "{context}");
+            let seed = if appended { testkit::CA_SEED } else { 9 };
+            let expected = ca_material(&identity().organization_id, seed);
+            let public = office.hq_creation_public_record().unwrap().unwrap();
+            assert_eq!(public.public_key, expected.public_key, "{context}");
+            assert_eq!(office.org_snapshot().unwrap().position.seq, 1, "{context}");
+            let receipts = tree(&site.durable("recovery/commands"));
+            assert_eq!(receipts.len(), 1, "{context}");
+            assert!(site.folder.join("office.json").is_file(), "{context}");
+            office.close().unwrap();
+        }
+    }
+}
+
+/// H2: a creation that dies after the journal's folders and before its anchor is
+/// completed by a retry, which starts that incarnation afresh; one that dies just after
+/// the anchor opens it.
+#[test]
+fn a_creation_that_dies_around_the_journal_anchor_completes_on_retry() {
+    for engine in ENGINES {
+        for after in [false, true] {
+            let site = Site::new();
+            // The first exclusive link of a new office is its journal's anchor.
+            site.faults.crash(DiskOp::Link, Target::File, 1, after);
+            assert!(site.provision(engine).is_err(), "{engine:?} {after}");
+            site.faults.revive();
+            let anchor = org_store::journal_dir(&site.roots.durable, &identity());
+            assert_eq!(anchor.join("anchor.json").exists(), after, "{engine:?}");
+            let office = site.provision(engine).unwrap();
+            assert_eq!(office.org_snapshot().unwrap().position.seq, 1);
+            office.close().unwrap();
+        }
+    }
+}
+
+type Spoil = Box<dyn Fn(&Site)>;
+
+fn rewrite_key(site: &Site, edit: impl Fn(&mut local::CaKey)) {
+    let path = site.durable(local::ca_key_path(&identity().office_id).as_str());
+    let mut key = local::decode_ca_key(&std::fs::read(&path).unwrap()).unwrap();
+    edit(&mut key);
+    std::fs::write(&path, local::encode_ca_key(&key)).unwrap();
+}
+
+/// M1: an HQ whose CA records are missing or disagree is not opened, and a creation retry
+/// generates nothing in their place.
+#[test]
+fn opening_refuses_missing_or_mismatched_ca_records() {
+    let escrow = "state/security/ca-escrow.v1.bin";
+    let cases: Vec<(&str, Spoil)> = vec![
+        (
+            "no escrow package",
+            Box::new(|site| std::fs::remove_file(site.durable(escrow)).unwrap()),
+        ),
+        (
+            "no key record",
+            Box::new(|site| {
+                let key = local::ca_key_path(&identity().office_id);
+                std::fs::remove_file(site.durable(key.as_str())).unwrap();
+            }),
+        ),
+        (
+            "another package",
+            Box::new(|site| {
+                let mut bytes = std::fs::read(site.durable(escrow)).unwrap();
+                *bytes.last_mut().unwrap() ^= 1;
+                std::fs::write(site.durable(escrow), bytes).unwrap();
+            }),
+        ),
+        (
+            "another public key",
+            Box::new(|site| {
+                let other = ca_material(&identity().organization_id, 5).public_key;
+                rewrite_key(site, |key| key.public_key = other);
+            }),
+        ),
+        (
+            "another organization",
+            Box::new(|site| {
+                rewrite_key(site, |key| {
+                    key.organization_id = org_store::testkit::id(0xB2);
+                });
+            }),
+        ),
+        (
+            "another operation",
+            Box::new(|site| {
+                rewrite_key(site, |key| key.operation_id = org_store::testkit::id(0x99));
+            }),
+        ),
+    ];
+    for (case, spoil) in cases {
+        let site = Site::new();
+        site.provision(EngineChoice::Sqlite)
+            .unwrap()
+            .close()
+            .unwrap();
+        spoil(&site);
+        let refused = site.open(EngineChoice::Sqlite).unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                OfficeError::Invalid("HQ provisioning requires recovery")
+            ),
+            "{case}: {refused:?}"
+        );
+        // A creation retry does not generate a CA in their place either.
+        let generated = Cell::new(false);
+        let retried = site.provision_with(EngineChoice::Sqlite, |prior| {
+            generated.set(prior.is_none());
+            prior.map_or_else(|| testkit::record(9), Ok)
+        });
+        assert!(retried.is_err(), "{case}");
+        assert!(!generated.get(), "{case}");
+    }
+}
+
+/// An office folder the old databases made is refused by both ways in, never migrated.
+#[test]
+fn an_office_made_by_an_older_build_is_refused() {
+    let older = |error: &OfficeError| {
+        matches!(
+            error,
+            OfficeError::Invalid("this office was made by an older build")
+        )
+    };
+    for database in ["org.db", "office.db"] {
+        let site = Site::new();
+        site.provision(EngineChoice::Memory)
+            .unwrap()
+            .close()
+            .unwrap();
+        std::fs::write(site.folder.join(database), b"SQLite format 3\0").unwrap();
+        let refused = site.open(EngineChoice::Memory).unwrap_err();
+        assert!(older(&refused), "{database}: {refused:?}");
+        let refused = site.provision(EngineChoice::Memory).unwrap_err();
+        assert!(older(&refused), "{database}: {refused:?}");
+    }
+    // An intent of the old version too.
+    let site = Site::new();
+    std::fs::create_dir_all(&site.folder).unwrap();
+    std::fs::write(site.folder.join(intent::FILE), br#"{"version":1}"#).unwrap();
+    let refused = site.provision(EngineChoice::Memory).unwrap_err();
+    assert!(older(&refused), "{refused:?}");
+}
+
+/// The intent binds the office: another request for it, or opening it with other roots or
+/// another identity, is refused; the same request again completes.
+#[test]
+fn the_intent_binds_the_request_the_roots_and_the_identity() {
+    let site = Site::new();
+    site.provision(EngineChoice::Memory)
+        .unwrap()
+        .close()
+        .unwrap();
+    let (new, mut binding) = testkit::request();
+    binding.operation_id = "01HZY8M6V2Q3D4E5F6G7H8J9K0".into();
+    let other = Office::provision_with(
+        site.folder.clone(),
+        &new,
+        None,
+        &binding,
+        site.roots.clone(),
+        testkit::custody(Arc::clone(&site.custody)),
+        |prior| prior.map_or_else(|| testkit::record(1), Ok),
+        site.options(EngineChoice::Memory),
+    );
+    assert!(matches!(other, Err(OfficeError::OfficeExists)), "{other:?}");
+
+    let instance = identity().instance_id.to_string();
+    let open = |roots: DataRoots, custody: Custody| {
+        Office::open_with(
+            site.folder.clone(),
+            None,
+            &instance,
+            roots,
+            custody,
+            site.options(EngineChoice::Memory),
+        )
+    };
+    let custody = || testkit::custody(Arc::clone(&site.custody));
+    let elsewhere = DataRoots {
+        durable: site.root.join("elsewhere/durable"),
+        runtime: site.roots.runtime.clone(),
+    };
+    let refused = open(elsewhere, custody());
+    assert!(
+        matches!(refused, Err(OfficeError::Invalid(_))),
+        "{refused:?}"
+    );
+    let mut stranger = custody();
+    stranger.identity.organization_id = org_store::testkit::id(0xB2);
+    let refused = open(site.roots.clone(), stranger);
+    assert!(
+        matches!(refused, Err(OfficeError::Invalid(_))),
+        "{refused:?}"
+    );
+    site.provision(EngineChoice::Memory)
+        .unwrap()
+        .close()
+        .unwrap();
+}
+
+/// `fatal` reports an injected flush error, with its path.
+#[test]
+fn fatal_reports_a_flush_error() {
+    for engine in ENGINES {
+        let site = Site::new();
+        let office = site.provision(engine).unwrap();
+        assert_eq!(office.fatal(), None);
+        site.faults
+            .arm(CrashPoint::FlushError(FlushSite::Segment), 1);
+        let refused = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
+        assert!(refused.is_err(), "{engine:?}: {refused:?}");
+        let fatal = office.fatal().expect("stopped");
+        assert!(fatal.starts_with("the office store stopped: "), "{fatal}");
+        assert!(fatal.contains(".log"), "{fatal}");
+        assert!(office.close().is_err());
+    }
+}
+
+/// ENC-5 in process: neither the projection nor any file under `state/` or `runtime/`
+/// holds the wrapped CA key, raw or in hex.
+#[test]
+fn the_projection_holds_no_form_of_the_ca_key() {
+    for engine in ENGINES {
+        let site = Site::new();
+        let office = site.provision(engine).unwrap();
+        let wrapped = ca_material(&identity().organization_id, testkit::CA_SEED).wrapped_ca_key;
+        let hex: String = wrapped.iter().map(|b| format!("{b:02x}")).collect();
+        let holds = |bytes: &[u8]| {
+            bytes
+                .windows(wrapped.len())
+                .any(|w| w == wrapped.as_slice())
+                || bytes.windows(hex.len()).any(|w| w == hex.as_bytes())
+        };
+        assert!(!holds(office.dump().join("\n").as_bytes()), "{engine:?}");
+        office.close().unwrap();
+        let runtime = tree(&site.roots.runtime);
+        for (path, bytes) in runtime.into_iter().chain(tree(&site.durable("state"))) {
+            assert!(!holds(&bytes), "{engine:?}: {path}");
+        }
+    }
+}
+
+/// `team.create` from the creator answers; every other organization command is
+/// `unsupported`; `who` and the snapshot read the projection.
+#[test]
+fn the_office_answers_team_create_and_refuses_the_rest_as_unsupported() {
+    let office = Office::for_test(TestOffice::default());
+    let created = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
+    let created = created.unwrap().unwrap();
+    assert_eq!(created.position.map(|p| p.seq), Some(2));
+    let refused = office
+        .submit_org(HR, team_create(2, TEAM_B, TOP_TEAM))
+        .unwrap();
+    assert_eq!(refused.unwrap_err().code, ErrorCode::NotAuthorized);
+    let rename = OrgCommand::TeamRename(TeamRenameParams {
+        command_id: "01HZY8M6V2Q3D4E5F000000300".into(),
+        team_id: TEAM_A.into(),
+        expected_version: 1,
+        name: "Renamed".into(),
+    });
+    let refused = office.submit_org(CREATOR, rename).unwrap();
+    assert_eq!(refused.unwrap_err().code, ErrorCode::Unsupported);
+
+    let snapshot = office.org_snapshot().unwrap();
+    let owners: Vec<&str> = snapshot
+        .members
+        .iter()
+        .filter(|m| m.owner)
+        .map(|m| m.id.as_str())
+        .collect();
+    assert_eq!(owners, [CREATOR]);
+    let who = office.who(&WhoParams::default()).unwrap().unwrap();
+    assert_eq!(who.members.len(), 2);
+    office.close().unwrap();
+}
+
+/// `discard` removes an unfinished create's folder only: one with an intent or
+/// `office.json` is an office, and one with anything else is not touched.
+#[test]
+fn discard_removes_only_an_unfinished_create() {
+    let site = Site::new();
+    let office_id = identity().office_id.to_string();
+    // No folder: nothing to do.
+    Office::discard(&site.folder, &office_id).unwrap();
+    // A folder with only its lock and a temporary file: removed.
+    std::fs::create_dir_all(&site.folder).unwrap();
+    std::fs::write(site.folder.join("office.lock"), b"").unwrap();
+    std::fs::write(site.folder.join(".store-tmp-one-1-1"), b"partial").unwrap();
+    Office::discard(&site.folder, &office_id).unwrap();
+    assert!(!site.folder.exists());
+    // Something else: refused, kept.
+    std::fs::create_dir_all(&site.folder).unwrap();
+    std::fs::write(site.folder.join("notes.txt"), b"mine").unwrap();
+    let refused = Office::discard(&site.folder, &office_id);
+    assert!(
+        matches!(refused, Err(OfficeError::Invalid(_))),
+        "{refused:?}"
+    );
+    assert!(site.folder.join("notes.txt").is_file());
+
+    // An unfinished create's intent, and a finished office: offices.
+    let site = Site::new();
+    let died = site.provision_with(EngineChoice::Memory, |prior| {
+        site.faults.arm(CrashPoint::DuringDecide, 1);
+        prior.map_or_else(|| testkit::record(testkit::CA_SEED), Ok)
+    });
+    assert!(died.is_err());
+    site.faults.revive();
+    let refused = Office::discard(&site.folder, &office_id);
+    assert!(
+        matches!(refused, Err(OfficeError::OfficeExists)),
+        "{refused:?}"
+    );
+    site.provision(EngineChoice::Memory)
+        .unwrap()
+        .close()
+        .unwrap();
+    let refused = Office::discard(&site.folder, &office_id);
+    assert!(
+        matches!(refused, Err(OfficeError::OfficeExists)),
+        "{refused:?}"
+    );
+    // The data roots are never touched.
+    assert!(site.durable("state/organization.yaml").is_file());
+}
+
+/// The office folder is never reached through a link.
+#[test]
+fn an_office_folder_that_is_a_link_is_refused() {
+    let site = Site::new();
+    let real = site.root.join("real").join(identity().office_id.as_str());
+    std::fs::create_dir_all(&real).unwrap();
+    std::fs::create_dir_all(site.folder.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&real, &site.folder).unwrap();
+    let refused = site.provision(EngineChoice::Memory);
+    assert!(
+        matches!(refused, Err(OfficeError::Invalid(_))),
+        "{refused:?}"
+    );
+    assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0);
+}
+
+/// One office process at a time: a second opening waits for the lock and gives up.
+#[test]
+fn a_second_opening_waits_for_the_lock_and_gives_up() {
+    let site = Site::new();
+    let office = site.provision(EngineChoice::Memory).unwrap();
+    let second = site.open(EngineChoice::Memory);
+    assert!(matches!(second, Err(OfficeError::InUse)), "{second:?}");
+    office.close().unwrap();
+    site.open(EngineChoice::Memory).unwrap().close().unwrap();
+}
+
+/// The creation's operation on disk is the UUIDv7 the request's ULID maps to, and a
+/// record that names the ULID itself is refused.
+#[test]
+fn the_creation_operation_on_disk_is_the_mapped_uuidv7() {
+    let site = Site::new();
+    let office = site.provision(EngineChoice::Memory).unwrap();
+    let record = office.hq_creation_record().unwrap().unwrap();
+    assert_eq!(record.operation_id, creation_id().as_str());
+    assert!(org_proto::is_uuid_v7(&record.operation_id));
+    let ulid = LocalRecord::new(
+        identity().organization_id.to_string(),
+        OPERATION.into(),
+        record.public_key,
+        record.package.clone(),
+        record.wrapped_ca_key().to_vec(),
+    );
+    assert!(ulid.is_err());
+    office.close().unwrap();
+}
