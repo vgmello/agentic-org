@@ -164,7 +164,7 @@ for (const width of [320, 640, 960, 1280]) {
 		async ({ page }) => {
 			await page.setViewportSize({ width, height: 900 });
 			await open(page, '/projects');
-			const list = page.getByRole('list', { name: 'Projects', exact: true });
+			const list = page.getByRole('main').getByRole('list', { name: 'Projects', exact: true });
 			await expect(list.getByRole('listitem')).toHaveCount(4);
 			await expect(list.getByTestId('project-row').getByRole('link')).toHaveText([
 				'Atlas',
