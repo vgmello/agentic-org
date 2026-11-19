@@ -1,0 +1,101 @@
+{
+  "deny-interrupt": {
+    "answer": {
+      "behavior": "deny",
+      "message": "Stopped by the owner",
+      "interrupt": true
+    },
+    "requests": 1,
+    "tool_result": [
+      {
+        "type": "tool_result",
+        "content": "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.",
+        "is_error": true,
+        "tool_use_id": "toolu_01TNj4oFtEuaBpXkFfAFU6WP"
+      }
+    ],
+    "result": {
+      "subtype": "error_during_execution",
+      "is_error": true,
+      "result": null,
+      "terminal_reason": "aborted_tools",
+      "permission_denials": [
+        {
+          "tool_name": "Bash",
+          "tool_use_id": "toolu_01TNj4oFtEuaBpXkFfAFU6WP",
+          "tool_input": {
+            "command": "echo x > deny-interrupt.txt",
+            "description": "Write x to deny-interrupt.txt"
+          }
+        }
+      ]
+    },
+    "next_turn": "ALIVE",
+    "file_written": false,
+    "exit": 0
+  },
+  "deny-invalid": {
+    "answer": {
+      "behavior": "deny"
+    },
+    "requests": 1,
+    "tool_result": [
+      {
+        "type": "tool_result",
+        "content": "The canUseTool callback returned an invalid permission result. Expected {behavior: 'allow', updatedInput?: object} or {behavior: 'deny', message: string}. updatedPermissions may hold at most 4096 updates, rules and directories in all.",
+        "is_error": true,
+        "tool_use_id": "toolu_016ZTQCKepEg7dpX9Msm37bh"
+      }
+    ],
+    "result": {
+      "subtype": "success",
+      "is_error": false,
+      "result": "DENIED — the Bash call returned this error: \"The canUseTool callback returned an invalid permission result. Expected {behavior: 'allow', updatedInput?: object} or {behavior: 'deny', message: string}. updatedPermissions may hold at most 4096 updates, rules and directories in all.\"\n\nI did not retry the command.",
+      "terminal_reason": "completed",
+      "permission_denials": [
+        {
+          "tool_name": "Bash",
+          "tool_use_id": "toolu_016ZTQCKepEg7dpX9Msm37bh",
+          "tool_input": {
+            "command": "echo x > deny-invalid.txt",
+            "description": "Write x to deny-invalid.txt"
+          }
+        }
+      ]
+    },
+    "next_turn": "ALIVE",
+    "file_written": false,
+    "exit": 0
+  },
+  "error-response": {
+    "answer": "office: approval store unavailable",
+    "requests": 1,
+    "tool_result": [
+      {
+        "type": "tool_result",
+        "content": "Tool permission request failed: Error: office: approval store unavailable",
+        "is_error": true,
+        "tool_use_id": "toolu_0125jos7UfS77DLtKUUgFAaG"
+      }
+    ],
+    "result": {
+      "subtype": "success",
+      "is_error": false,
+      "result": "DENIED: Tool permission request failed with \"Error: office: approval store unavailable\".",
+      "terminal_reason": "completed",
+      "permission_denials": [
+        {
+          "tool_name": "Bash",
+          "tool_use_id": "toolu_0125jos7UfS77DLtKUUgFAaG",
+          "tool_input": {
+            "command": "echo x > error-response.txt",
+            "description": "Write x into error-response.txt"
+          }
+        }
+      ]
+    },
+    "next_turn": "ALIVE",
+    "file_written": false,
+    "exit": 0
+  }
+}

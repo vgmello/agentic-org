@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "comment": "Final D-GW1: reject encoded separators, raw backslash, empty or single/double dot segments before routing; never normalize. %252f represents a literal encoded percent; decode at most once.",
+  "cases": [
+    {
+      "name": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "raw_segment": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "expect": {
+        "valid": true,
+        "http_status": null,
+        "code": null
+      }
+    },
+    {
+      "name": "team-1",
+      "raw_segment": "team-1",
+      "expect": {
+        "valid": true,
+        "http_status": null,
+        "code": null
+      }
+    },
+    {
+      "name": "%252f",
+      "raw_segment": "%252f",
+      "expect": {
+        "valid": true,
+        "http_status": null,
+        "code": null
+      }
+    },
+    {
+      "name": "part%2fother",
+      "raw_segment": "part%2fother",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "part%2Fother",
+      "raw_segment": "part%2Fother",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "%5c",
+      "raw_segment": "%5c",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "%5C",
+      "raw_segment": "%5C",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "part/other",
+      "raw_segment": "part/other",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "part\\other",
+      "raw_segment": "part\\other",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "empty or dot segment ",
+      "raw_segment": "",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "empty or dot segment .",
+      "raw_segment": ".",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "empty or dot segment ..",
+      "raw_segment": "..",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "empty or dot segment %2e",
+      "raw_segment": "%2e",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "empty or dot segment %2E",
+      "raw_segment": "%2E",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "empty or dot segment .%2e",
+      "raw_segment": ".%2e",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "empty or dot segment %2E.",
+      "raw_segment": "%2E.",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "empty or dot segment %2e%2E",
+      "raw_segment": "%2e%2E",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "code": "invalid_request"
+      }
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "comment": "X-02 §4.2: fingerprint values don't change. org: fingerprint = hex(SHA-256(method || 0x00 || serde_json::to_string(typed params))); serialized is that JSON, which the v1 params (profile: AgentProfile) and the v2 params (profile: AgentProfileInput) must both produce byte for byte. work: params_hash = SHA-256(method || 0x00 || member || 0x00 || canonical_json(params)).",
+  "org": [
+    {
+      "name": "member.add_agent, required fields only",
+      "method": "member.add_agent",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P10",
+        "member_id": "01M72N8MG00000000000000M10",
+        "name": "Ada",
+        "office_id": "01M72N8MG00000000000000F01",
+        "profile": {
+          "role": "software engineer",
+          "title": "Staff Engineer",
+          "runtime": "claude_code",
+          "messaging_name": "ada",
+          "status": "active"
+        }
+      },
+      "serialized": "{\"command_id\":\"01M72N8MG00000000000000P10\",\"member_id\":\"01M72N8MG00000000000000M10\",\"name\":\"Ada\",\"office_id\":\"01M72N8MG00000000000000F01\",\"profile\":{\"role\":\"software engineer\",\"title\":\"Staff Engineer\",\"runtime\":\"claude_code\",\"messaging_name\":\"ada\",\"status\":\"active\"}}",
+      "fingerprint": "e225a62db8a9547c70d7910d9e9fe55d195101122ed848aa75f101ddac390a82"
+    },
+    {
+      "name": "member.add_agent, every optional field",
+      "method": "member.add_agent",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P11",
+        "member_id": "01M72N8MG00000000000000M11",
+        "name": "Rowan",
+        "office_id": "01M72N8MG00000000000000F01",
+        "profile": {
+          "role": "software engineer",
+          "title": "Senior Staff Engineer",
+          "focus": "contracts",
+          "runtime": {
+            "other": "aider"
+          },
+          "model": "claude-opus-5-5",
+          "run_mode": "scheduled",
+          "schedule": {
+            "spec": "weekdays at 9",
+            "time_zone": "Europe/Lisbon"
+          },
+          "messaging_name": "rowan",
+          "status": "paused"
+        }
+      },
+      "serialized": "{\"command_id\":\"01M72N8MG00000000000000P11\",\"member_id\":\"01M72N8MG00000000000000M11\",\"name\":\"Rowan\",\"office_id\":\"01M72N8MG00000000000000F01\",\"profile\":{\"role\":\"software engineer\",\"title\":\"Senior Staff Engineer\",\"focus\":\"contracts\",\"runtime\":{\"other\":\"aider\"},\"model\":\"claude-opus-5-5\",\"run_mode\":\"scheduled\",\"schedule\":{\"spec\":\"weekdays at 9\",\"time_zone\":\"Europe/Lisbon\"},\"messaging_name\":\"rowan\",\"status\":\"paused\"}}",
+      "fingerprint": "372c0a30fe6de50e77622db144d660aef91f700c0e7e42e73aa2c66f1d5b0187"
+    }
+  ],
+  "org_refused_v1_home": {
+    "comment": "A v1 member.add_agent stored with profile.home. Its v1 fingerprint is unchanged, but the v2 params refuse the same input at decode (retired field), so it can never be replayed as a v2 request.",
+    "method": "member.add_agent",
+    "params": {
+      "command_id": "01M72N8MG00000000000000P12",
+      "member_id": "01M72N8MG00000000000000M10",
+      "name": "Ada",
+      "office_id": "01M72N8MG00000000000000F01",
+      "profile": {
+        "role": "software engineer",
+        "title": "Staff Engineer",
+        "runtime": "codex",
+        "home": "/Users/ada/agents/ada",
+        "messaging_name": "ada",
+        "status": "active"
+      }
+    },
+    "serialized": "{\"command_id\":\"01M72N8MG00000000000000P12\",\"member_id\":\"01M72N8MG00000000000000M10\",\"name\":\"Ada\",\"office_id\":\"01M72N8MG00000000000000F01\",\"profile\":{\"role\":\"software engineer\",\"title\":\"Staff Engineer\",\"runtime\":\"codex\",\"home\":\"/Users/ada/agents/ada\",\"messaging_name\":\"ada\",\"status\":\"active\"}}",
+    "fingerprint": "56c80a124f6346b12afcb8c3626e1d0a089123b79db8ba48aa120c82062d09c6",
+    "v2_refusal": "home is managed by the office"
+  },
+  "work": [
+    {
+      "name": "task.create",
+      "method": "task.create",
+      "member": "01M72N8MG00000000000000M01",
+      "params": {
+        "change_id": "01M72N8MG00000000000000W01",
+        "item_id": "01M72N8MG00000000000000K01",
+        "project_id": "01M72N8MG00000000000000J01",
+        "title": "Write the move-1 vectors",
+        "priority": "high"
+      },
+      "canonical": "{\"change_id\":\"01M72N8MG00000000000000W01\",\"item_id\":\"01M72N8MG00000000000000K01\",\"priority\":\"high\",\"project_id\":\"01M72N8MG00000000000000J01\",\"title\":\"Write the move-1 vectors\"}",
+      "params_hash": "0899273bb17445f5b1775776e95966efa22131e68e745578fe18e261db5148d8"
+    }
+  ]
+}

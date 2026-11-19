@@ -1,0 +1,67 @@
+---
+process: branch-and-merge
+name: Branch, review and integration
+kind: process
+level: organization
+version: 3
+owner: lead
+status: active
+summary: Branch from origin/v1-integration, verify and review locally, then merge into v1-integration.
+applies_to: every agent that changes this repository
+overridable: true
+---
+
+# Branch, review and integration
+
+Two engineers build v1, each with a lead agent. A lead takes an increment from the
+[implementation plan](../implementation-plan.md) and owns it end to end: UI, backend,
+database, shared contracts, documentation and integration. This page is how that work
+reaches the shared branch. [AGENTS.md](../../AGENTS.md) and the
+[kit workflow](../../.agent-kit/WORKFLOW.md) apply alongside it. No pull request and
+no outside reviewer is required.
+
+## 1. Branch and plan
+
+- Start each increment's branch from `origin/v1-integration`.
+- Before code, write the increment's short plan: the outcome, the files you own, what
+  you will delete, and the decisions you take where the documents are silent.
+- One writer per file at a time. A file that two increments need is handed over
+  explicitly. Concurrent writers use separate worktrees.
+- Each lead keeps one active implementation branch at a time. If it is blocked,
+  preserve the branch and its checkpoint and continue independent work.
+- Never delete unmerged work or overwrite another writer's changes.
+
+## 2. Implement and verify
+
+- Use the kit's task-routing and skill-routing. Delegate bounded pieces to local
+  subagents when useful, within the writer limit.
+- Agree a shared interface before another increment depends on it, and update every
+  affected implementation together.
+- Run the checks before review:
+  - Rust: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+    `cargo test --workspace`.
+  - UI: type check, tests, build and the relevant browser checks, with screenshots
+    where the change is visible.
+  - Data contract changes: `python3 docs/design/organization-data/test_schema.py`.
+  - Documentation or workflow only: the relevant kit and catalog checks, and a review
+    of the changed instructions.
+- Tests use temporary directories, never a real organization's data.
+- Update the [feature checklist](../FEATURES.md) row with evidence.
+
+## 3. Review locally
+
+Use the kit review cycle on the exact commit: a fresh independent local review,
+fixes for confirmed findings with checks rerun, validation by the original author that
+the result still meets the intent, then a separate fresh final review. A later source
+change needs current checks and review again.
+
+## 4. Integrate
+
+After the checks and the final review pass, the lead merges with
+`git merge --no-ff` into `v1-integration` and pushes that branch. Verify the pushed
+commit. Then start the next increment from the updated `origin/v1-integration`.
+
+- `v1-integration` is the integration branch for all v1 work.
+- Never push to `main` or merge into the release branch `v1` without an explicit
+  release instruction.
+- Clean up a branch or worktree only after confirming it is fully merged.

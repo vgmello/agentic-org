@@ -1,0 +1,12 @@
+{
+  "tools_count": 28,
+  "reply": "MEMORY-MARKER-A6",
+  "markers_seen": [
+    "MEMORY-MARKER-A6"
+  ],
+  "memory_paths": {
+    "auto": "<tmp>/s5c/cfg/projects/-private-tmp-claude-spike-s5c-parent-ws/memory/"
+  },
+  "memory_dir_matches_planted": true,
+  "exit": 0
+}

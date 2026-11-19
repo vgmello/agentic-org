@@ -1,0 +1,85 @@
+[
+ {
+  "actor": "kai",
+  "kind": "work",
+  "action": "task",
+  "text": "opened a task in Atlas",
+  "teams": [
+   "platform"
+  ],
+  "projects": [
+   "atlas"
+  ],
+  "members": []
+ },
+ {
+  "actor": "mira",
+  "kind": "conversation",
+  "action": "message",
+  "text": "sent a message to Alex Kim",
+  "teams": [
+   "web"
+  ],
+  "projects": [],
+  "members": [
+   "you"
+  ],
+  "thread": {
+   "id": "th-4",
+   "with": "Alex Kim"
+  },
+  "preview": "Quick question about the Beacon checkout work."
+ },
+ {
+  "actor": "noor",
+  "kind": "work",
+  "action": "task-done",
+  "text": "finished a task in Beacon",
+  "teams": [
+   "web"
+  ],
+  "projects": [
+   "beacon"
+  ],
+  "members": []
+ },
+ {
+  "actor": "juno",
+  "kind": "work",
+  "action": "comment",
+  "text": "commented on a task in Beacon",
+  "teams": [
+   "design"
+  ],
+  "projects": [
+   "beacon"
+  ],
+  "members": []
+ },
+ {
+  "actor": "sam",
+  "kind": "work",
+  "action": "merge",
+  "text": "merged server-dev/offices into v1 \u00b7 2 commits",
+  "teams": [
+   "eng"
+  ],
+  "projects": [
+   "atlas"
+  ],
+  "members": []
+ },
+ {
+  "actor": "quinn",
+  "kind": "work",
+  "action": "task",
+  "text": "opened a task in Atlas",
+  "teams": [
+   "platform"
+  ],
+  "projects": [
+   "atlas"
+  ],
+  "members": []
+ }
+]

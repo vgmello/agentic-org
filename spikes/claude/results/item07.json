@@ -1,0 +1,380 @@
+{
+  "R1_tree": {
+    "claude": {
+      "pid": 3623,
+      "ppid": 3620,
+      "pgid": 3623,
+      "sid": 3623,
+      "cmd": "/opt/homebrew/Caskroom/claude-code/2.1.311/claude -p --input-format stream-json --output-format stream-json --verbose --"
+    },
+    "descendants": [
+      {
+        "pid": 3694,
+        "ppid": 3623,
+        "pgid": 3694,
+        "sid": 3694,
+        "cmd": "/bin/zsh -c source <tmp>/s7/cfg/shell-snapshots/snapshot-zsh-1794123125065-r9pa9d.sh 2>/dev/null || true && "
+      },
+      {
+        "pid": 3695,
+        "ppid": 3694,
+        "pgid": 3694,
+        "sid": 3694,
+        "cmd": "sh hold.sh"
+      },
+      {
+        "pid": 3702,
+        "ppid": 3695,
+        "pgid": 3694,
+        "sid": 3694,
+        "cmd": "sleep 63"
+      },
+      {
+        "pid": 3703,
+        "ppid": 3695,
+        "pgid": 3694,
+        "sid": 3694,
+        "cmd": "sleep 61"
+      }
+    ],
+    "sleepers": [
+      {
+        "pid": 3701,
+        "ppid": 1,
+        "pgid": 3694,
+        "sid": 3694,
+        "cmd": "sleep 62"
+      },
+      {
+        "pid": 3702,
+        "ppid": 3695,
+        "pgid": 3694,
+        "sid": 3694,
+        "cmd": "sleep 63"
+      },
+      {
+        "pid": 3703,
+        "ppid": 3695,
+        "pgid": 3694,
+        "sid": 3694,
+        "cmd": "sleep 61"
+      }
+    ]
+  },
+  "R1_after_sigkill_pid": [
+    {
+      "pid": 3694,
+      "ppid": 1,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "/bin/zsh -c source <tmp>/s7/cfg/shell-snapshots/snapshot-zsh-1794123125065-r9pa9d.sh 2>/dev/null || true && "
+    },
+    {
+      "pid": 3695,
+      "ppid": 3694,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sh hold.sh"
+    },
+    {
+      "pid": 3702,
+      "ppid": 3695,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sleep 63"
+    },
+    {
+      "pid": 3703,
+      "ppid": 3695,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sleep 61"
+    },
+    {
+      "pid": 3701,
+      "ppid": 1,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sleep 62"
+    },
+    {
+      "pid": 3702,
+      "ppid": 3695,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sleep 63"
+    },
+    {
+      "pid": 3703,
+      "ppid": 3695,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sleep 61"
+    }
+  ],
+  "R1_cc_socket_left_after_sigkill": true,
+  "R1_after_killpg_claude_group": [
+    {
+      "pid": 3694,
+      "ppid": 1,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "/bin/zsh -c source <tmp>/s7/cfg/shell-snapshots/snapshot-zsh-1794123125065-r9pa9d.sh 2>/dev/null || true && "
+    },
+    {
+      "pid": 3695,
+      "ppid": 3694,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sh hold.sh"
+    },
+    {
+      "pid": 3702,
+      "ppid": 3695,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sleep 63"
+    },
+    {
+      "pid": 3703,
+      "ppid": 3695,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sleep 61"
+    },
+    {
+      "pid": 3701,
+      "ppid": 1,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sleep 62"
+    },
+    {
+      "pid": 3702,
+      "ppid": 3695,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sleep 63"
+    },
+    {
+      "pid": 3703,
+      "ppid": 3695,
+      "pgid": 3694,
+      "sid": 3694,
+      "cmd": "sleep 61"
+    }
+  ],
+  "env_names_seen_by_tool": [
+    "_",
+    "AI_AGENT",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_EFFORT",
+    "CLAUDE_PID",
+    "CLAUDE_SECURESTORAGE_CONFIG_DIR",
+    "CLAUDECODE",
+    "COREPACK_ENABLE_AUTO_PIN",
+    "DISABLE_AUTOUPDATER",
+    "GIT_EDITOR",
+    "HOME",
+    "LANG",
+    "LOGNAME",
+    "NoDefaultCurrentDirectoryInExePath",
+    "PATH",
+    "PWD",
+    "SHELL",
+    "SHLVL",
+    "TMPDIR",
+    "USER"
+  ],
+  "R2_tree": {
+    "claude": {
+      "pid": 3767,
+      "ppid": 3620,
+      "pgid": 3767,
+      "sid": 3767,
+      "cmd": "/opt/homebrew/Caskroom/claude-code/2.1.311/claude -p --input-format stream-json --output-format stream-json --verbose --"
+    },
+    "descendants": [
+      {
+        "pid": 3823,
+        "ppid": 3767,
+        "pgid": 3823,
+        "sid": 3823,
+        "cmd": "/bin/zsh -c source <tmp>/s7/cfg/shell-snapshots/snapshot-zsh-1794123132004-rws4f9.sh 2>/dev/null || true && "
+      },
+      {
+        "pid": 3824,
+        "ppid": 3823,
+        "pgid": 3823,
+        "sid": 3823,
+        "cmd": "sh hold.sh"
+      },
+      {
+        "pid": 3830,
+        "ppid": 3824,
+        "pgid": 3823,
+        "sid": 3823,
+        "cmd": "sleep 63"
+      },
+      {
+        "pid": 3831,
+        "ppid": 3824,
+        "pgid": 3823,
+        "sid": 3823,
+        "cmd": "sleep 61"
+      }
+    ],
+    "sleepers": [
+      {
+        "pid": 3829,
+        "ppid": 1,
+        "pgid": 3823,
+        "sid": 3823,
+        "cmd": "sleep 62"
+      },
+      {
+        "pid": 3830,
+        "ppid": 3824,
+        "pgid": 3823,
+        "sid": 3823,
+        "cmd": "sleep 63"
+      },
+      {
+        "pid": 3831,
+        "ppid": 3824,
+        "pgid": 3823,
+        "sid": 3823,
+        "cmd": "sleep 61"
+      }
+    ]
+  },
+  "R2_exit_code": 143,
+  "R2_exit_seconds": 0.6,
+  "R2_after_sigterm_pid": [],
+  "R2_stdout_tail": [
+    "control_request can_use_tool {\"subtype\": \"can_use_tool\", \"tool_name\": \"Bash\", \"display_name\": \"Bash\", \"input\": {\"command\": \"sh hold.sh\", \"description\": \"Run hold.sh script in foreground\"}, \"description\": \"Run hold.sh script in fo",
+    "rate_limit_event",
+    "user tool_result(err=True):\"Exit code 137\""
+  ],
+  "R3_tree": {
+    "claude": {
+      "pid": 4147,
+      "ppid": 3620,
+      "pgid": 4147,
+      "sid": 4147,
+      "cmd": "/opt/homebrew/Caskroom/claude-code/2.1.311/claude -p --input-format stream-json --output-format stream-json --verbose --"
+    },
+    "descendants": [
+      {
+        "pid": 4279,
+        "ppid": 4147,
+        "pgid": 4279,
+        "sid": 4279,
+        "cmd": "/bin/zsh -c source <tmp>/s7/cfg/shell-snapshots/snapshot-zsh-1794123142082-s7ix16.sh 2>/dev/null || true && "
+      },
+      {
+        "pid": 4280,
+        "ppid": 4279,
+        "pgid": 4279,
+        "sid": 4279,
+        "cmd": "sh hold.sh"
+      },
+      {
+        "pid": 4286,
+        "ppid": 4280,
+        "pgid": 4279,
+        "sid": 4279,
+        "cmd": "sleep 63"
+      },
+      {
+        "pid": 4287,
+        "ppid": 4280,
+        "pgid": 4279,
+        "sid": 4279,
+        "cmd": "sleep 61"
+      }
+    ],
+    "sleepers": [
+      {
+        "pid": 4285,
+        "ppid": 1,
+        "pgid": 4279,
+        "sid": 4279,
+        "cmd": "sleep 62"
+      },
+      {
+        "pid": 4286,
+        "ppid": 4280,
+        "pgid": 4279,
+        "sid": 4279,
+        "cmd": "sleep 63"
+      },
+      {
+        "pid": 4287,
+        "ppid": 4280,
+        "pgid": 4279,
+        "sid": 4279,
+        "cmd": "sleep 61"
+      }
+    ]
+  },
+  "R3_after_killpg_claude_group": [
+    {
+      "pid": 4279,
+      "ppid": 1,
+      "pgid": 4279,
+      "sid": 4279,
+      "cmd": "/bin/zsh -c source <tmp>/s7/cfg/shell-snapshots/snapshot-zsh-1794123142082-s7ix16.sh 2>/dev/null || true && "
+    },
+    {
+      "pid": 4280,
+      "ppid": 4279,
+      "pgid": 4279,
+      "sid": 4279,
+      "cmd": "sh hold.sh"
+    },
+    {
+      "pid": 4286,
+      "ppid": 4280,
+      "pgid": 4279,
+      "sid": 4279,
+      "cmd": "sleep 63"
+    },
+    {
+      "pid": 4287,
+      "ppid": 4280,
+      "pgid": 4279,
+      "sid": 4279,
+      "cmd": "sleep 61"
+    },
+    {
+      "pid": 4285,
+      "ppid": 1,
+      "pgid": 4279,
+      "sid": 4279,
+      "cmd": "sleep 62"
+    },
+    {
+      "pid": 4286,
+      "ppid": 4280,
+      "pgid": 4279,
+      "sid": 4279,
+      "cmd": "sleep 63"
+    },
+    {
+      "pid": 4287,
+      "ppid": 4280,
+      "pgid": 4279,
+      "sid": 4279,
+      "cmd": "sleep 61"
+    }
+  ],
+  "leftover_sleepers_at_end": []
+}

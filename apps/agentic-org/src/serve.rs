@@ -1,0 +1,328 @@
+//! agentic-org serve: the service host
+//!
+//! A thin binary: reads its arguments, finds the office home, starts the [`Host`] and stops it
+//! on SIGTERM or SIGINT. All logic lives in the library.
+//!
+//! ```text
+//! agentic-org serve [--version]
+//! agentic-org serve --name <instance>
+//! agentic-org serve [--home <absolute path>] [--server-bin <path>] [--app-team-id <team id>]   (debug builds)
+//! ```
+//! `--name` serves the registered instance setup reserved under that name ([`Host::start_registered`]):
+//! it creates the instance's host registry at its first start and answers the administrator
+//! link calls. It is accepted by both builds and excludes `--home`. A release build without a
+//! pinned runtime release refuses at runtime admission, before any custody is opened.
+//! **A release build trusts only what it was built with** ([`Config::trusted`]): the app's
+//! bundle id and team id (`ORG_APP_TEAM_ID` at build time; without it no signed app can use
+//! `office.restart`, logged loudly), its Keychain access group
+//! (`ORG_HOST_KEYCHAIN_GROUP` at build time; without it the host doesn't start), and the office
+//! server next to its own executable. It refuses `--home`, `--server-bin` and `--app-team-id`.
+//!
+//! A debug build takes them for development and tests: `--home` overrides the office home
+//! (otherwise `org_proto::location`'s rule), `--server-bin` the office server program (otherwise
+//! `agentic-org-office` next to this one), and `--app-team-id` the team id it was built with.
+//! It may also accept one unsigned development app for the app-only calls: the path of its
+//! executable (`Contents/MacOS/<exe>`) is the build-time constant `ORG_DEV_APP_PATH` (set when
+//! the host is compiled), never read from the command line, a config file or the environment at
+//! run time. If it doesn't exist when the host starts, the fallback is off (logged).
+//!
+//! A debug build keeps the offices' secrets keys as files in the folder `ORG_OFFICE_DEV_KEY_DIR`
+//! names, never in the Keychain, and refuses to start without it. Release builds ignore the
+//! variable. The host never passes the variable on to its servers.
+
+use std::path::PathBuf;
+
+use org_host::signals::ShutdownSignals;
+use org_host::{Config, Host};
+
+const USAGE: &str = "usage: agentic-org serve [--version] | --name <instance> | (debug builds \
+                     only) [--home <absolute path>] [--server-bin <path>] [--app-team-id <team \
+                     id>]";
+
+/// Which kind of build this is: a release build refuses the arguments that change what it
+/// trusts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Build {
+    Debug,
+    Release,
+}
+
+impl Build {
+    const CURRENT: Build = if cfg!(debug_assertions) {
+        Build::Debug
+    } else {
+        Build::Release
+    };
+}
+
+/// What the command line asks for.
+#[derive(Debug, Default, PartialEq, Eq)]
+// A release build reads only `version`: it refuses the rest.
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+struct Args {
+    version: bool,
+    /// The registered instance to serve.
+    name: Option<String>,
+    home: Option<PathBuf>,
+    server_bin: Option<PathBuf>,
+    app_team_id: Option<String>,
+}
+
+pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
+    // First, before any thread exists, so every thread inherits the mask.
+    let signals = ShutdownSignals::block().map_err(|e| format!("blocking signals: {e}"))?;
+    let args = parse_args(arguments, Build::CURRENT)?;
+    if args.version {
+        println!("agentic-org {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    let name = args.name.clone();
+    #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+    let mut config = config(args)?;
+    // Release builds have no `dev_app_path` field: no development peer can be configured.
+    #[cfg(debug_assertions)]
+    {
+        config.dev_app_path = dev_cli_peer(
+            Build::CURRENT,
+            name.is_some(),
+            config.dev_app_path.take(),
+            || std::env::current_exe().ok(),
+        );
+    }
+    let host = match name {
+        Some(name) => Host::start_registered(config, Some(&name)),
+        None => Host::start(config),
+    }
+    .map_err(|e| e.to_string())?;
+    let waited = signals.wait();
+    host.shutdown();
+    waited
+        .map(drop)
+        .map_err(|e| format!("waiting for a signal: {e}"))
+}
+
+/// The unsigned development CLI peer the host's app policy admits. A debug build serving a
+/// registered instance admits its own executable (setup and `admin` run the same binary)
+/// unless the build names another one; the host logs it loudly. A release build keeps what
+/// [`Config::trusted`] set (no development app), and its app policy has no development-app
+/// rule at all (`AppPolicy::with_dev_app` and `Config::dev_app_path` exist only in debug
+/// builds, so release code never calls this).
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+fn dev_cli_peer(
+    build: Build,
+    named: bool,
+    built_in: Option<PathBuf>,
+    current_exe: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    match (build, named, built_in) {
+        (Build::Release, _, built_in) => built_in,
+        (Build::Debug, true, None) => current_exe(),
+        (Build::Debug, _, built_in) => built_in,
+    }
+}
+
+/// A release build's config: only what it was built with.
+#[cfg(not(debug_assertions))]
+fn config(_args: Args) -> Result<Config, String> {
+    Config::trusted()
+}
+
+/// A debug build's config: what it was built with, with the arguments' overrides and the
+/// development settings.
+#[cfg(debug_assertions)]
+fn config(args: Args) -> Result<Config, String> {
+    let home = match args.home {
+        Some(home) => home,
+        None => org_proto::location::default_office_home()
+            .ok_or("no office home: neither ORG_OFFICE_HOME nor HOME is an absolute path")?,
+    };
+    let server_bin = match args.server_bin {
+        // Servers run with `/` as their working directory, so a relative path must be
+        // resolved here, against ours.
+        Some(path) => {
+            std::path::absolute(&path).map_err(|e| format!("resolving {}: {e}", path.display()))?
+        }
+        None => org_host::default_server_program()
+            .map_err(|e| format!("finding the office server: {e}"))?,
+    };
+    let mut config = Config::new(home, server_bin);
+    config.set_app_team_id(
+        args.app_team_id
+            .or(org_host::APP_TEAM_ID.map(str::to_owned)),
+    );
+    // The development app, fixed when this binary was compiled.
+    config.dev_app_path = option_env!("ORG_DEV_APP_PATH").map(PathBuf::from);
+    // The development key folder, resolved against our working directory.
+    config.dev_key_dir = match std::env::var_os("ORG_OFFICE_DEV_KEY_DIR") {
+        Some(dir) if !dir.is_empty() => Some(
+            std::path::absolute(&dir)
+                .map_err(|e| format!("resolving ORG_OFFICE_DEV_KEY_DIR: {e}"))?,
+        ),
+        _ => None,
+    };
+    Ok(config)
+}
+
+/// Parses the arguments (without the program name) for a `build`. Pure: it reads nothing else
+/// and exits nothing. A release build refuses `--home`, `--server-bin` and `--app-team-id`.
+fn parse_args(args: impl IntoIterator<Item = String>, build: Build) -> Result<Args, String> {
+    let mut parsed = Args::default();
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--version" {
+            parsed.version = true;
+            continue;
+        }
+        if arg == "--name" {
+            let value = args
+                .next()
+                .ok_or_else(|| format!("--name needs a value\n{USAGE}"))?;
+            if parsed.name.replace(value).is_some() {
+                return Err(format!("--name may be given once\n{USAGE}"));
+            }
+            continue;
+        }
+        let known = ["--home", "--server-bin", "--app-team-id"];
+        if !known.contains(&arg.as_str()) {
+            return Err(format!("unexpected argument {arg:?}\n{USAGE}"));
+        }
+        if build == Build::Release {
+            return Err(format!(
+                "{arg} isn't accepted by a release build: it uses only the office home, office \
+                 server and app team id it was built with"
+            ));
+        }
+        let value = args
+            .next()
+            .ok_or_else(|| format!("{arg} needs a value\n{USAGE}"))?;
+        match arg.as_str() {
+            "--home" => parsed.home = Some(PathBuf::from(value)),
+            "--server-bin" => parsed.server_bin = Some(PathBuf::from(value)),
+            _ => parsed.app_team_id = Some(value),
+        }
+    }
+    if parsed.name.is_some() && parsed.home.is_some() {
+        return Err(format!(
+            "--name and --home can't be combined: a registered instance has its own home\n{USAGE}"
+        ));
+    }
+    Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_debug_build_takes_the_development_arguments() {
+        let parsed = parse_args(
+            args(&[
+                "--home",
+                "/tmp/h",
+                "--server-bin",
+                "srv",
+                "--app-team-id",
+                "AB12CD34EF",
+            ]),
+            Build::Debug,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            Args {
+                version: false,
+                name: None,
+                home: Some("/tmp/h".into()),
+                server_bin: Some("srv".into()),
+                app_team_id: Some("AB12CD34EF".into()),
+            }
+        );
+        assert_eq!(
+            parse_args(args(&[]), Build::Debug).unwrap(),
+            Args::default()
+        );
+    }
+
+    #[test]
+    fn a_release_build_refuses_every_argument_that_changes_what_it_trusts() {
+        for flag in ["--home", "--server-bin", "--app-team-id"] {
+            for list in [
+                vec![flag, "/tmp/x"],
+                vec![flag],
+                vec!["--version", flag, "x"],
+            ] {
+                let err = parse_args(args(&list), Build::Release).unwrap_err();
+                assert!(err.contains(flag), "{list:?}: {err}");
+                assert!(err.contains("release build"), "{list:?}: {err}");
+            }
+        }
+        assert_eq!(
+            parse_args(args(&[]), Build::Release).unwrap(),
+            Args::default()
+        );
+    }
+
+    #[test]
+    fn version_works_in_both_builds_and_unknown_or_incomplete_arguments_are_refused() {
+        for build in [Build::Debug, Build::Release] {
+            assert!(parse_args(args(&["--version"]), build).unwrap().version);
+            let err = parse_args(args(&["--frobnicate"]), build).unwrap_err();
+            assert!(err.contains("unexpected argument"), "{err}");
+        }
+        let err = parse_args(args(&["--home"]), Build::Debug).unwrap_err();
+        assert!(err.contains("needs a value"), "{err}");
+    }
+
+    #[test]
+    fn both_builds_take_one_name_which_excludes_home() {
+        for build in [Build::Debug, Build::Release] {
+            let parsed = parse_args(args(&["--name", "office"]), build).unwrap();
+            assert_eq!(parsed.name.as_deref(), Some("office"));
+            let err = parse_args(args(&["--name"]), build).unwrap_err();
+            assert!(err.contains("needs a value"), "{err}");
+            let err = parse_args(args(&["--name", "a", "--name", "b"]), build).unwrap_err();
+            assert!(err.contains("once"), "{err}");
+        }
+        for list in [
+            ["--name", "a", "--home", "/tmp/h"],
+            ["--home", "/tmp/h", "--name", "a"],
+        ] {
+            let err = parse_args(args(&list), Build::Debug).unwrap_err();
+            assert!(err.contains("can't be combined"), "{err}");
+        }
+        let parsed =
+            parse_args(args(&["--name", "a", "--server-bin", "srv"]), Build::Debug).unwrap();
+        assert_eq!(parsed.server_bin, Some("srv".into()));
+    }
+
+    #[test]
+    fn only_a_debug_build_serving_a_named_instance_admits_its_own_executable() {
+        let own = || Some(PathBuf::from("/dev/build/agentic-org"));
+        let built_in = PathBuf::from("/dev/App.app/Contents/MacOS/App");
+        // A release build never admits a development CLI peer, named or not.
+        assert_eq!(dev_cli_peer(Build::Release, true, None, own), None);
+        assert_eq!(dev_cli_peer(Build::Release, false, None, own), None);
+        assert_eq!(
+            dev_cli_peer(Build::Release, true, None, || -> Option<PathBuf> {
+                panic!("a release build never asks for its own executable")
+            }),
+            None
+        );
+        // A debug build serving a registered instance admits itself unless the build names
+        // another development app; the legacy home entry admits only the built-in one.
+        assert_eq!(dev_cli_peer(Build::Debug, true, None, own), own());
+        assert_eq!(
+            dev_cli_peer(Build::Debug, true, Some(built_in.clone()), own),
+            Some(built_in.clone())
+        );
+        assert_eq!(dev_cli_peer(Build::Debug, false, None, own), None);
+        assert_eq!(
+            dev_cli_peer(Build::Debug, false, Some(built_in.clone()), own),
+            Some(built_in)
+        );
+    }
+}

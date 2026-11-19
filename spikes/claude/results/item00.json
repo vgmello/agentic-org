@@ -1,0 +1,28 @@
+{
+  "A-config-dir-only": {
+    "exit": 1,
+    "status": {
+      "loggedIn": false,
+      "authMethod": "none",
+      "apiProvider": "firstParty",
+      "configDirectory": "<tmp>/s0/cfg"
+    },
+    "env_has_securestorage_var": false
+  },
+  "B-config-dir-plus-empty-securestorage": {
+    "exit": 0,
+    "status": {
+      "loggedIn": true,
+      "authMethod": "claude.ai",
+      "apiProvider": "firstParty",
+      "configDirectory": "<tmp>/s0/cfg",
+      "subscriptionType": "<scrubbed>"
+    },
+    "env_has_securestorage_var": true
+  },
+  "files_in_config_dir": [
+    ".claude.json",
+    ".claude.json.lock",
+    "backups"
+  ]
+}

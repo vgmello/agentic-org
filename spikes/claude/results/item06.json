@@ -1,0 +1,208 @@
+{
+  "agent-inline-json": {
+    "extra_flags": [
+      "--agents",
+      "{\"zephyr\": {\"description\": \"Office-run agent Zephyr\", \"prompt\": \"You are Zephyr, an engineer agent of the office. Begin every reply with 'ZEPHYR:'.\", \"tools\": [\"Read\", \"Bash\"]}}",
+      "--agent",
+      "zephyr",
+      "--append-system-prompt-file",
+      "<tmp>/s6/runtime/instructions.md"
+    ],
+    "initialize_agents": [
+      {
+        "name": "claude",
+        "description": "Catch-all for any task that doesn't fit a more specific agent. FleetView's default when no agent name is typed."
+      },
+      {
+        "name": "Explore",
+        "description": "Fast read-only search agent for locating code. Use it to find files by pattern (eg. \"src/components/**/*.tsx\"), grep for symbols or keywords (eg. \"API endpoints\"), or answer \"where is X defined / which files reference Y.\" Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: \"quick\" for a single targeted lookup, \"medium\" for moderate exploration, or \"very thorough\" to search across multiple locations and naming conventions.",
+        "model": "inherit"
+      },
+      {
+        "name": "general-purpose",
+        "description": "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you."
+      },
+      {
+        "name": "Plan",
+        "description": "Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.",
+        "model": "inherit"
+      },
+      {
+        "name": "statusline-setup",
+        "description": "Use this agent to configure the user's Claude Code status line setting.",
+        "model": "sonnet"
+      },
+      {
+        "name": "zephyr",
+        "description": "Office-run agent Zephyr"
+      }
+    ],
+    "init_tools": [
+      "Read",
+      "Bash"
+    ],
+    "init_agents": [
+      "claude",
+      "Explore",
+      "general-purpose",
+      "Plan",
+      "statusline-setup",
+      "zephyr"
+    ],
+    "init_agent_field": {
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan",
+        "statusline-setup",
+        "zephyr"
+      ]
+    },
+    "reply": "ZEPHYR: Name: Zephyr; office handle: river-7.",
+    "exit": 0,
+    "stderr": []
+  },
+  "agent-file": {
+    "extra_flags": [
+      "--agents",
+      "<tmp>/s6/runtime/agents.json",
+      "--agent",
+      "zephyr"
+    ],
+    "initialize_agents": [
+      {
+        "name": "claude",
+        "description": "Catch-all for any task that doesn't fit a more specific agent. FleetView's default when no agent name is typed."
+      },
+      {
+        "name": "Explore",
+        "description": "Fast read-only search agent for locating code. Use it to find files by pattern (eg. \"src/components/**/*.tsx\"), grep for symbols or keywords (eg. \"API endpoints\"), or answer \"where is X defined / which files reference Y.\" Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: \"quick\" for a single targeted lookup, \"medium\" for moderate exploration, or \"very thorough\" to search across multiple locations and naming conventions.",
+        "model": "inherit"
+      },
+      {
+        "name": "general-purpose",
+        "description": "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you."
+      },
+      {
+        "name": "Plan",
+        "description": "Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.",
+        "model": "inherit"
+      },
+      {
+        "name": "statusline-setup",
+        "description": "Use this agent to configure the user's Claude Code status line setting.",
+        "model": "sonnet"
+      },
+      {
+        "name": "zephyr",
+        "description": "Office-run agent Zephyr"
+      }
+    ],
+    "init_tools": [
+      "Read",
+      "Bash"
+    ],
+    "init_agents": [
+      "claude",
+      "Explore",
+      "general-purpose",
+      "Plan",
+      "statusline-setup",
+      "zephyr"
+    ],
+    "init_agent_field": {
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan",
+        "statusline-setup",
+        "zephyr"
+      ]
+    },
+    "reply": "ZEPHYR: Name: Zephyr; office handle: NONE (none was assigned in my instructions).",
+    "exit": 0,
+    "stderr": []
+  },
+  "agent-unknown": {
+    "extra_flags": [
+      "--agent",
+      "zephyr"
+    ],
+    "initialize_agents": [
+      {
+        "name": "claude",
+        "description": "Catch-all for any task that doesn't fit a more specific agent. FleetView's default when no agent name is typed."
+      },
+      {
+        "name": "Explore",
+        "description": "Fast read-only search agent for locating code. Use it to find files by pattern (eg. \"src/components/**/*.tsx\"), grep for symbols or keywords (eg. \"API endpoints\"), or answer \"where is X defined / which files reference Y.\" Do NOT use it for code review, design-doc auditing, cross-file consistency checks, or open-ended analysis — it reads excerpts rather than whole files and will miss content past its read window. When calling, specify search breadth: \"quick\" for a single targeted lookup, \"medium\" for moderate exploration, or \"very thorough\" to search across multiple locations and naming conventions.",
+        "model": "inherit"
+      },
+      {
+        "name": "general-purpose",
+        "description": "General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you."
+      },
+      {
+        "name": "Plan",
+        "description": "Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.",
+        "model": "inherit"
+      },
+      {
+        "name": "statusline-setup",
+        "description": "Use this agent to configure the user's Claude Code status line setting.",
+        "model": "sonnet"
+      }
+    ],
+    "init_tools": [
+      "Task",
+      "AskUserQuestion",
+      "Bash",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "DesignSync",
+      "Edit",
+      "EnterPlanMode",
+      "EnterWorktree",
+      "ExitPlanMode",
+      "ExitWorktree",
+      "ListAgents",
+      "Monitor",
+      "NotebookEdit",
+      "PushNotification",
+      "Read",
+      "RemoteTrigger",
+      "ReportFindings",
+      "ScheduleWakeup",
+      "SendMessage",
+      "Skill",
+      "TaskStop",
+      "ToolSearch",
+      "WebFetch",
+      "WebSearch",
+      "Workflow",
+      "Write"
+    ],
+    "init_agents": [
+      "claude",
+      "Explore",
+      "general-purpose",
+      "Plan",
+      "statusline-setup"
+    ],
+    "init_agent_field": {
+      "agents": [
+        "claude",
+        "Explore",
+        "general-purpose",
+        "Plan",
+        "statusline-setup"
+      ]
+    },
+    "reply": "Claude (Haiku 5.5); office handle: NONE.",
+    "exit": 0,
+    "stderr": []
+  }
+}

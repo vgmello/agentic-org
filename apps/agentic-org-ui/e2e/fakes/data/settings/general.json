@@ -1,0 +1,22 @@
+{
+	"workspace": "/Users/alex/Agentic Org/Lumen Labs",
+	"hqMachine": "Studio Mac",
+	"instance": "default",
+	"administrator": { "username": "alex", "person": "Alex Kim" },
+	"runtimes": [
+		{ "id": "claude_code", "label": "Claude Code", "availability": "ready", "note": "Ready on Studio Mac" },
+		{ "id": "codex", "label": "Codex", "availability": "needs_setup", "note": "Not signed in on Studio Mac" },
+		{ "id": "antigravity", "label": "Antigravity", "availability": "unknown", "note": "Readiness not reported yet" }
+	],
+	"recoveries": {
+		"preparing": { "state": "preparing" },
+		"waiting": { "state": "waiting" },
+		"shown": { "state": "shown", "shownOn": "2026-11-10T09:30:00Z" },
+		"shown_again": { "state": "shown", "shownOn": "2026-11-10T09:30:00Z", "again": { "count": 2, "lastOn": "2026-11-12T16:05:00Z" } },
+		"collected": { "state": "collected", "collectedOn": "2026-11-10T09:41:00Z" },
+		"collected_again": { "state": "collected", "shownOn": "2026-11-10T09:30:00Z", "collectedOn": "2026-11-13T08:00:00Z", "again": { "count": 2, "lastOn": "2026-11-12T16:05:00Z" } },
+		"failed": { "state": "failed", "reason": "The encrypted package couldn't be written to disk" },
+		"unknown": { "state": "unknown" }
+	},
+	"accounts": { "hana": "hana", "leo": "leo.b", "avery": "avery" }
+}

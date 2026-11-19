@@ -1,0 +1,12 @@
+{
+	"mcpServers": {
+		"svelte": {
+			"type": "stdio",
+			"command": "node",
+			"env": {},
+			"args": [
+				"./node_modules/@sveltejs/mcp/dist/index.mjs"
+			]
+		}
+	}
+}

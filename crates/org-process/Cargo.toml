@@ -1,0 +1,11 @@
+[package]
+name = "org-process"
+description = "Processes: the process file, where it lives, and (later) which ones apply. Pure"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+org-docs = { path = "../org-docs" }
+serde_json.workspace = true

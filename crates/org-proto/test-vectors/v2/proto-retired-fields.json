@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "comment": "X-02 §4.3: retired input fields, refused on presence (null included) with invalid_request while the params decode, before any rule or filesystem access. These stay refused after move 3. org-proto checks each against org_proto::retired; the worker (move 2a) answers each with invalid_request and this message.",
+  "code": "invalid_request",
+  "cases": [
+    {
+      "name": "member.update_agent home \"/Users/ada/agents/ada\"",
+      "method": "member.update_agent",
+      "field": "home",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P20",
+        "member_id": "01M72N8MG00000000000000M10",
+        "expected_version": 2,
+        "home": "/Users/ada/agents/ada"
+      },
+      "message": "home is managed by the office"
+    },
+    {
+      "name": "member.update_agent home null",
+      "method": "member.update_agent",
+      "field": "home",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P20",
+        "member_id": "01M72N8MG00000000000000M10",
+        "expected_version": 2,
+        "home": null
+      },
+      "message": "home is managed by the office"
+    },
+    {
+      "name": "member.update_agent clear_home true",
+      "method": "member.update_agent",
+      "field": "clear_home",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P20",
+        "member_id": "01M72N8MG00000000000000M10",
+        "expected_version": 2,
+        "clear_home": true
+      },
+      "message": "home is managed by the office"
+    },
+    {
+      "name": "member.update_agent clear_home false",
+      "method": "member.update_agent",
+      "field": "clear_home",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P20",
+        "member_id": "01M72N8MG00000000000000M10",
+        "expected_version": 2,
+        "clear_home": false
+      },
+      "message": "home is managed by the office"
+    },
+    {
+      "name": "member.update_agent clear_home null",
+      "method": "member.update_agent",
+      "field": "clear_home",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P20",
+        "member_id": "01M72N8MG00000000000000M10",
+        "expected_version": 2,
+        "clear_home": null
+      },
+      "message": "home is managed by the office"
+    },
+    {
+      "name": "member.add_agent profile.home \"/Users/ada/agents/ada\"",
+      "method": "member.add_agent",
+      "field": "profile.home",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P10",
+        "member_id": "01M72N8MG00000000000000M10",
+        "name": "Ada",
+        "office_id": "01M72N8MG00000000000000F01",
+        "profile": {
+          "role": "software engineer",
+          "title": "Staff Engineer",
+          "runtime": "claude_code",
+          "messaging_name": "ada",
+          "status": "active",
+          "home": "/Users/ada/agents/ada"
+        }
+      },
+      "message": "home is managed by the office"
+    },
+    {
+      "name": "member.add_agent profile.home null",
+      "method": "member.add_agent",
+      "field": "profile.home",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P10",
+        "member_id": "01M72N8MG00000000000000M10",
+        "name": "Ada",
+        "office_id": "01M72N8MG00000000000000F01",
+        "profile": {
+          "role": "software engineer",
+          "title": "Staff Engineer",
+          "runtime": "claude_code",
+          "messaging_name": "ada",
+          "status": "active",
+          "home": null
+        }
+      },
+      "message": "home is managed by the office"
+    },
+    {
+      "name": "msg.bind app_token a token",
+      "method": "msg.bind",
+      "field": "app_token",
+      "params": {
+        "member": "01M72N8MG00000000000000M10",
+        "app_token": "abababababababababababababababababababababababababababababababab"
+      },
+      "message": "app_token is retired"
+    },
+    {
+      "name": "msg.bind app_token null",
+      "method": "msg.bind",
+      "field": "app_token",
+      "params": {
+        "member": "01M72N8MG00000000000000M10",
+        "app_token": null
+      },
+      "message": "app_token is retired"
+    }
+  ],
+  "accepted": [
+    {
+      "name": "member.update_agent without home fields",
+      "method": "member.update_agent",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P20",
+        "member_id": "01M72N8MG00000000000000M10",
+        "expected_version": 2,
+        "name": "Ada"
+      }
+    },
+    {
+      "name": "member.add_agent without profile.home",
+      "method": "member.add_agent",
+      "params": {
+        "command_id": "01M72N8MG00000000000000P10",
+        "member_id": "01M72N8MG00000000000000M10",
+        "name": "Ada",
+        "office_id": "01M72N8MG00000000000000F01",
+        "profile": {
+          "role": "software engineer",
+          "title": "Staff Engineer",
+          "runtime": "claude_code",
+          "messaging_name": "ada",
+          "status": "active"
+        }
+      }
+    },
+    {
+      "name": "msg.bind without app_token",
+      "method": "msg.bind",
+      "params": {
+        "member": "01M72N8MG00000000000000M10"
+      }
+    }
+  ]
+}

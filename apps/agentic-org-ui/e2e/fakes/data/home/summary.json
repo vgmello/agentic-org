@@ -1,0 +1,14 @@
+{
+ "projects": {
+  "atlas": {"done": 14, "total": 22, "open": 6, "blocked": 2},
+  "beacon": {"done": 31, "total": 38, "open": 5, "blocked": 2, "due": "2026-12-04"},
+  "onboarding": {"done": 3, "total": 9, "open": 6, "blocked": 0},
+  "scratch": {"done": 0, "total": 0, "open": 0, "blocked": 0}
+ },
+ "working": [
+  {"member": "noor", "task": {"ref": "T-14", "title": "Checkout page loses the basket on refresh"}, "since_ago": 2},
+  {"member": "juno", "task": {"ref": "T-21", "title": "Let people export a project's costs"}, "since_ago": 18},
+  {"member": "quinn", "since_ago": 41}
+ ],
+ "month": {"cost": 412, "tasksDone": 63, "waitingHours": 30}
+}

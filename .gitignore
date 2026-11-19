@@ -1,6 +1,20 @@
-target/
+/target/
+**/target/
 node_modules/
 .svelte-kit/
 build/
 dist/
 .DS_Store
+*.log
+.env
+.env.*
+!.env.example
+
+# Browser-agent snapshots and local session state
+.playwright-cli/
+.playwright/
+
+# Generated Claude skill links; canonical skills live in .agents/skills.
+/.claude/skills/
+/.repowise/
+/.agent-kit/tools/

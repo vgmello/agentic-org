@@ -1,0 +1,462 @@
+//! One bounded actor owns the already-admitted private host connection. The
+//! web process transfer descriptor from the reviewed handoff is held for the
+//! connection's lifetime; the web process opens no office channel on it and
+//! sends no office channel request. No host.sock/path fallback, office key or
+//! registry access.
+//!
+//! The actor is the connection's one ordered reader (A3 B5): host replies and
+//! host events (`session.ended`) are applied in arrival order on its thread,
+//! also while idle. A call may carry a hook that runs on that thread with its
+//! reply before the next frame is read, so a cache insert from a validate reply
+//! is always followed by any `session.ended` the host wrote after it.
+use org_host_control::ops;
+use org_proto::Call;
+use org_socket::rights::{ReceiveError, StreamReceiver};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::{
+    io::{self, Write},
+    net::Shutdown,
+    os::{
+        fd::{AsRawFd, OwnedFd},
+        unix::net::{UnixDatagram, UnixStream},
+    },
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
+        Arc, Mutex,
+    },
+    thread,
+    time::{Duration, Instant},
+};
+use zeroize::Zeroizing;
+
+const DEADLINE: Duration = Duration::from_secs(5);
+/// The actor writes a job only if at least this much of its deadline remains.
+/// A job dequeued later stays unclaimed and is refused unwritten: a write with
+/// almost no reply budget would expire in flight and close the connection.
+const MIN_WRITE_BUDGET: Duration = Duration::from_millis(250);
+/// Scheduling slack on top of the actor's own bound for a claimed job (its
+/// deadline plus one write timeout) before the caller treats the actor as stuck.
+const ACTOR_SLACK: Duration = Duration::from_secs(1);
+const MAX_CONTROL_BYTES: usize = org_proto::MAX_FRAME_BYTES;
+static SPAWN_FENCE: Mutex<()> = Mutex::new(());
+#[cfg(test)]
+mod tests;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Failure {
+    Denied,
+    NotFound,
+    Unavailable,
+    /// A host refusal a route may show the browser: an input rule (`invalid_request`
+    /// with `field`/`rule`), a rate limit with its delay, or a create refusal
+    /// (`already_exists`, `operation_reused`, `expired`, `clock_skew`).
+    Refused(Box<org_proto::ApiError>),
+}
+/// Applies a host event (`name`, `data`) on the reader thread, in arrival order.
+pub type EventSink = Arc<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
+/// Runs on the reader thread with a call's successful reply bytes and id.
+type Hook = Box<dyn FnOnce(u64, &[u8]) + Send>;
+/// Each admitted connection gets a new generation; a cache entry is valid only
+/// for the generation whose reader inserted it.
+static GENERATIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+struct Reply {
+    bytes: Zeroizing<Vec<u8>>,
+}
+impl Reply {
+    fn new() -> Self {
+        Self {
+            bytes: Zeroizing::new(Vec::with_capacity(MAX_CONTROL_BYTES.min(64 * 1024))),
+        }
+    }
+    fn push(&mut self, byte: u8) -> Result<(), Failure> {
+        if self.bytes.len() == MAX_CONTROL_BYTES {
+            return Err(Failure::Unavailable);
+        }
+        if self.bytes.len() == self.bytes.capacity() {
+            let capacity = (self.bytes.capacity() * 2).min(MAX_CONTROL_BYTES);
+            let mut bytes = Zeroizing::new(Vec::with_capacity(capacity));
+            bytes.extend_from_slice(&self.bytes);
+            // Replacing the wrapper zeroes the old allocation before releasing
+            // it; Vec's ordinary growth could leave a secret copy behind.
+            self.bytes = bytes;
+        }
+        self.bytes.push(byte);
+        Ok(())
+    }
+}
+struct Job {
+    line: Zeroizing<Vec<u8>>,
+    until: Instant,
+    answer: SyncSender<Result<Reply, Failure>>,
+    id: u64,
+    hook: Option<Hook>,
+    /// Claimed once, by the actor taking the job or by the caller abandoning
+    /// it. An abandoned job is never written, so the stream stays in step.
+    claimed: Arc<AtomicBool>,
+}
+pub struct HostControl {
+    instance: String,
+    generation: u64,
+    live: Arc<AtomicBool>,
+    socket: UnixStream,
+    jobs: SyncSender<Job>,
+    next: std::sync::atomic::AtomicU64,
+    // Kept open so the host's transfer end stays valid; never read by this process.
+    _transfer: UnixDatagram,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Response<T> {
+    id: u64,
+    result: Option<T>,
+    error: Option<org_proto::ApiError>,
+}
+/// `desync` runs when the reply answers another request id: replies are no
+/// longer paired with requests, so the connection must not be reused.
+fn decode<T: DeserializeOwned>(bytes: &[u8], id: u64, desync: &dyn Fn()) -> Result<T, Failure> {
+    if bytes.iter().find(|b| !b.is_ascii_whitespace()) != Some(&b'{') {
+        return Err(Failure::Unavailable);
+    }
+    let reply: Response<T> = serde_json::from_slice(bytes).map_err(|_| Failure::Unavailable)?;
+    if reply.id != id {
+        desync();
+        return Err(Failure::Unavailable);
+    }
+    match (reply.result, reply.error) {
+        (Some(result), None) => Ok(result),
+        (None, Some(e)) if e.code == org_proto::ErrorCode::NotAuthorized => Err(Failure::Denied),
+        (None, Some(e)) if e.code == org_proto::ErrorCode::NotFound => Err(Failure::NotFound),
+        (None, Some(e))
+            if matches!(
+                e.code,
+                org_proto::ErrorCode::InvalidRequest
+                    | org_proto::ErrorCode::RateLimited
+                    | org_proto::ErrorCode::AlreadyExists
+                    | org_proto::ErrorCode::OperationReused
+                    | org_proto::ErrorCode::Expired
+                    | org_proto::ErrorCode::ClockSkew
+            ) =>
+        {
+            Err(Failure::Refused(Box::new(e)))
+        }
+        _ => Err(Failure::Unavailable),
+    }
+}
+
+struct Counter(usize);
+impl Write for Counter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0 = self
+            .0
+            .checked_add(bytes.len())
+            .filter(|n| *n < MAX_CONTROL_BYTES)
+            .ok_or_else(|| io::Error::other("control request too large"))?;
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+fn encode<T: Serialize>(value: &T) -> Result<Zeroizing<Vec<u8>>, Failure> {
+    let mut n = Counter(0);
+    serde_json::to_writer(&mut n, value).map_err(|_| Failure::Unavailable)?;
+    let mut bytes = Zeroizing::new(Vec::with_capacity(n.0 + 1));
+    serde_json::to_writer(&mut *bytes, value).map_err(|_| Failure::Unavailable)?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+fn readable(fd: std::os::fd::BorrowedFd<'_>, until: Instant) -> Result<(), Failure> {
+    let left = until
+        .checked_duration_since(Instant::now())
+        .ok_or(Failure::Unavailable)?;
+    if org_socket::poll_readable(fd.as_raw_fd(), left).map_err(|_| Failure::Unavailable)? {
+        Ok(())
+    } else {
+        Err(Failure::Unavailable)
+    }
+}
+fn receive_error(error: ReceiveError, fatal: &dyn Fn()) -> Failure {
+    if matches!(&error,ReceiveError::Fatal(e) if e.kind()!=io::ErrorKind::UnexpectedEof) {
+        fatal();
+    }
+    Failure::Unavailable
+}
+impl HostControl {
+    /// The verified web process rendezvous supplies both descriptors. `fatal` must
+    /// terminate the web process on fatal ancillary framing (X-02 §5.2); it is not
+    /// an authorization hook. No process is spawned by this crate.
+    pub fn from_handoff(
+        control: OwnedFd,
+        transfer: OwnedFd,
+        instance: String,
+        fatal: Arc<dyn Fn() + Send + Sync>,
+        events: EventSink,
+    ) -> io::Result<Arc<Self>> {
+        let socket = org_socket::rights::connected_unix_stream(control)?;
+        let transfer = org_socket::rights::unix_datagram(transfer)?;
+        socket.set_nonblocking(false)?;
+        socket.set_write_timeout(Some(DEADLINE))?;
+        let writer = socket.try_clone()?;
+        let receiver = StreamReceiver::new(socket.try_clone()?);
+        let (jobs, pending) = mpsc::sync_channel::<Job>(32);
+        let live = Arc::new(AtomicBool::new(true));
+        let alive = Arc::clone(&live);
+        thread::Builder::new()
+            .name("web-host-control".into())
+            .spawn(move || {
+                actor(writer, receiver, pending, &alive, &*fatal, &*events);
+                alive.store(false, Ordering::SeqCst);
+            })?;
+        let control = Arc::new(Self {
+            instance,
+            generation: GENERATIONS.fetch_add(1, Ordering::SeqCst),
+            live,
+            socket,
+            jobs,
+            next: std::sync::atomic::AtomicU64::new(1),
+            _transfer: transfer,
+        });
+        let hello = control
+            .call::<org_host_control::Hello>(&Default::default())
+            .map_err(|_| io::Error::other("host hello failed"))?;
+        if hello.api_version != org_host_control::API_VERSION
+            || hello.instance_id.as_deref() != Some(control.instance())
+        {
+            return Err(io::Error::other("host scope mismatch"));
+        }
+        Ok(control)
+    }
+    pub fn instance(&self) -> &str {
+        &self.instance
+    }
+    /// This connection's generation (see [`GENERATIONS`]).
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+    /// A host call; `C` must be an op the host serves on the web connection.
+    pub fn request<C: Call>(&self, params: &C::Params) -> Result<C::Result, Failure> {
+        self.call::<C>(params)
+    }
+    /// Like [`request`](Self::request), and `hook` runs on the reader thread
+    /// with the decoded reply before the next host frame is applied. It does
+    /// not run when the call is refused unwritten or the connection fails.
+    pub fn request_then<C: Call>(
+        &self,
+        params: &C::Params,
+        hook: impl FnOnce(&Result<C::Result, Failure>) + Send + 'static,
+    ) -> Result<C::Result, Failure> {
+        let hook: Hook = Box::new(move |id, bytes| hook(&decode::<C::Result>(bytes, id, &|| {})));
+        self.hooked::<C, C::Params>(params, Instant::now() + DEADLINE, Some(hook))
+    }
+    /// Configuration for the listener received on this admitted connection only.
+    pub fn fetch_listener(&self) -> Result<ops::TlsFetchResult, Failure> {
+        self.call::<ops::TlsFetch>(&Default::default())
+    }
+    /// The one `web.serving` notification (GW-01 r4): HTTP serving is
+    /// established. The host keeps the web process `starting` until it arrives.
+    pub fn report_serving(&self) -> Result<(), Failure> {
+        self.call::<ops::WebServing>(&Default::default())
+            .map(|_| ())
+    }
+    pub fn live(&self) -> bool {
+        self.live.load(Ordering::SeqCst)
+    }
+    /// Ends the connection: [`live`](Self::live) turns false, which ends serving.
+    /// Also called when the host's stdin pipe closes (the host is gone).
+    pub(crate) fn close(&self) {
+        self.live.store(false, Ordering::SeqCst);
+        let _ = self.socket.shutdown(Shutdown::Both);
+    }
+    fn call<C: Call>(&self, params: &C::Params) -> Result<C::Result, Failure> {
+        self.borrowed::<C, C::Params>(params)
+    }
+    /// Every call gets the full per-call deadline. After the actor took the
+    /// request, the caller waits for the actor's own answer (bounded by the
+    /// actor's deadline and write timeout); callers must never shorten this budget. Expiry while still queued, or
+    /// dequeuing with less than [`MIN_WRITE_BUDGET`] left, abandons the unwritten
+    /// request and keeps the connection.
+    fn borrowed<C: Call, T: Serialize>(&self, params: &T) -> Result<C::Result, Failure> {
+        self.borrowed_until::<C, T>(params, Instant::now() + DEADLINE)
+    }
+    fn borrowed_until<C: Call, T: Serialize>(
+        &self,
+        params: &T,
+        until: Instant,
+    ) -> Result<C::Result, Failure> {
+        self.hooked::<C, T>(params, until, None)
+    }
+    fn hooked<C: Call, T: Serialize>(
+        &self,
+        params: &T,
+        until: Instant,
+        hook: Option<Hook>,
+    ) -> Result<C::Result, Failure> {
+        #[derive(Serialize)]
+        struct Request<'a, T> {
+            id: u64,
+            method: &'static str,
+            params: &'a T,
+        }
+        if !self.live() {
+            return Err(Failure::Unavailable);
+        }
+        let id = self
+            .next
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < (1 << 53) - 1).then_some(n + 1)
+            })
+            .map_err(|_| Failure::Unavailable)?;
+        let (answer, receiver) = mpsc::sync_channel(1);
+        let claimed = Arc::new(AtomicBool::new(false));
+        self.jobs
+            .try_send(Job {
+                line: encode(&Request {
+                    id,
+                    method: C::METHOD,
+                    params,
+                })?,
+                until,
+                answer,
+                id,
+                hook,
+                claimed: Arc::clone(&claimed),
+            })
+            .map_err(|_| Failure::Unavailable)?;
+        match receiver.recv_timeout(until.saturating_duration_since(Instant::now())) {
+            Ok(reply) => decode(&reply?.bytes, id, &|| self.close()),
+            Err(_) => self.settle(&claimed, &receiver, id, until),
+        }
+    }
+    /// The caller's deadline passed. Unclaimed: the actor will skip it unwritten.
+    /// Claimed: the actor owns the stream for this job and always answers it;
+    /// its work ends by `until` plus one write timeout. Wait for that answer:
+    /// a reply keeps the stream in step, and only an actor failure or a reply
+    /// for another id closes the connection. An actor that misses its own bound
+    /// (or is gone) cannot be trusted with the stream, so that closes too.
+    fn settle<T: DeserializeOwned>(
+        &self,
+        claimed: &AtomicBool,
+        receiver: &mpsc::Receiver<Result<Reply, Failure>>,
+        id: u64,
+        until: Instant,
+    ) -> Result<T, Failure> {
+        if !claimed.swap(true, Ordering::SeqCst) {
+            return Err(Failure::Unavailable);
+        }
+        let bound = until.saturating_duration_since(Instant::now()) + DEADLINE + ACTOR_SLACK;
+        match receiver.recv_timeout(bound) {
+            Ok(Ok(reply)) => decode(&reply.bytes, id, &|| self.close()),
+            // The actor failed this job and is already ending the connection.
+            Ok(Err(error)) => {
+                self.close();
+                Err(error)
+            }
+            Err(_) => {
+                self.close();
+                Err(Failure::Unavailable)
+            }
+        }
+    }
+}
+impl Drop for HostControl {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+/// Reads one frame (up to `\n`) by `until`.
+fn read_frame(
+    receiver: &mut StreamReceiver,
+    until: Instant,
+    fatal: &dyn Fn(),
+) -> Result<Reply, Failure> {
+    let mut reply = Reply::new();
+    loop {
+        readable(receiver.fd().ok_or(Failure::Unavailable)?, until)?;
+        let (b, _) = receiver
+            .receive_byte(0, &SPAWN_FENCE)
+            .map_err(|e| receive_error(e, fatal))?;
+        if b == b'\n' {
+            return Ok(reply);
+        }
+        reply.push(b)?;
+    }
+}
+/// A host event frame: `{"event", "seq", "data"}` with no `id`.
+fn event(bytes: &[u8]) -> Option<(String, serde_json::Value)> {
+    #[derive(Deserialize)]
+    struct Frame {
+        event: String,
+        #[allow(dead_code)]
+        seq: u64,
+        #[serde(default)]
+        data: serde_json::Value,
+    }
+    let frame: Frame = serde_json::from_slice(bytes).ok()?;
+    Some((frame.event, frame.data))
+}
+fn actor(
+    mut writer: UnixStream,
+    mut receiver: StreamReceiver,
+    pending: mpsc::Receiver<Job>,
+    live: &AtomicBool,
+    fatal: &dyn Fn(),
+    events: &dyn Fn(&str, &serde_json::Value),
+) {
+    while live.load(Ordering::SeqCst) {
+        let job = match pending.recv_timeout(Duration::from_millis(100)) {
+            Ok(job) => job,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Readable while idle: a host event is applied now; EOF or
+                // any other frame ends this connection.
+                let ready = receiver.fd().is_none_or(|fd| {
+                    org_socket::poll_readable(fd.as_raw_fd(), Duration::ZERO).unwrap_or(true)
+                });
+                if !ready {
+                    continue;
+                }
+                match read_frame(&mut receiver, Instant::now() + DEADLINE, fatal)
+                    .ok()
+                    .and_then(|frame| event(&frame.bytes))
+                {
+                    Some((name, data)) => {
+                        events(&name, &data);
+                        continue;
+                    }
+                    None => break,
+                }
+            }
+        };
+        // Expired or nearly expired jobs stay unclaimed and unwritten: a caller
+        // resuming its timeout handler must not mistake them for in-flight I/O.
+        if job.until.saturating_duration_since(Instant::now()) < MIN_WRITE_BUDGET
+            || job.claimed.swap(true, Ordering::SeqCst)
+        {
+            let _ = job.answer.send(Err(Failure::Unavailable));
+            continue;
+        }
+        let result = (|| {
+            writer
+                .write_all(&job.line)
+                .map_err(|_| Failure::Unavailable)?;
+            loop {
+                let frame = read_frame(&mut receiver, job.until, fatal)?;
+                // Events written before this reply are applied first, in order.
+                match event(&frame.bytes) {
+                    Some((name, data)) => events(&name, &data),
+                    None => return Ok(frame),
+                }
+            }
+        })();
+        let failed = result.is_err();
+        if let (Ok(reply), Some(hook)) = (&result, job.hook) {
+            hook(job.id, &reply.bytes);
+        }
+        let _ = job.answer.send(result);
+        if failed {
+            break;
+        }
+    }
+    live.store(false, Ordering::SeqCst);
+    let _ = writer.shutdown(Shutdown::Both);
+}

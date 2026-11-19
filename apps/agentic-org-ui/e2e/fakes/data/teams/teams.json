@@ -1,0 +1,23 @@
+{
+ "eng": {
+  "number": 1,
+  "purpose": "Builds and runs Lumen's products. The lead manages every team under it."
+ },
+ "web": {
+  "number": 2,
+  "purpose": "The web app: checkout, saved carts and the account pages."
+ },
+ "platform": {
+  "number": 3,
+  "purpose": "Deploys, the registry and the build machines."
+ },
+ "design": {
+  "number": 4,
+  "purpose": "How Lumen looks and reads."
+ },
+ "people": {
+  "number": 5,
+  "maxMembers": 4,
+  "purpose": "Hiring, onboarding and the people who join."
+ }
+}

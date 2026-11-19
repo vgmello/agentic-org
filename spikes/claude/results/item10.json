@@ -1,0 +1,32 @@
+{
+  "headless-before": {
+    "reply": "OK",
+    "session_id_same": true,
+    "exit": 0
+  },
+  "pty_ready_seconds": 3.1,
+  "pty_answer_seen": true,
+  "pty_tail": [
+    "✢",
+    "✳",
+    "Kerfuffling…",
+    "(1s · thinking)",
+    "✶",
+    "✻↓ 25 tokens · thinking)",
+    "⏺",
+    "✽63thinking",
+    "HERON,andI'llrememberFALCONtoo.",
+    "✻Brewed for 1s · done 7:41 AM",
+    "❯",
+    "? for shortcuts · ← for agents"
+  ],
+  "pty_exit": 0,
+  "headless-after": {
+    "reply": "HERON and FALCON.",
+    "session_id_same": true,
+    "exit": 0
+  },
+  "transcripts": [
+    "projects/-private-tmp-claude-spike-s10-ws/<uuid-1>.jsonl"
+  ]
+}

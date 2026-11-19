@@ -1,0 +1,30 @@
+[
+  {
+    "office": "OFF1",
+    "incarnation": "INC1",
+    "from_exclusive": 0,
+    "through_seq": 3,
+    "rejected": [
+      {
+        "seq": 2,
+        "code": "not_owner"
+      }
+    ],
+    "preimage_hex": "6167656e7469632d6f72672f776f726b2d61636b2f763100000000044f46463100000004494e433100000000000000000000000000000003000000010000000000000002000000096e6f745f6f776e6572",
+    "digest_hex": "b9a52384b81719ebf18eda292f60f82f3c56e88018fba59707cad29886cecd63"
+  },
+  {
+    "office": "HQ1",
+    "incarnation": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "from_exclusive": 90,
+    "through_seq": 100,
+    "rejected": [
+      {
+        "seq": 99,
+        "code": "stale_version"
+      }
+    ],
+    "preimage_hex": "6167656e7469632d6f72672f776f726b2d61636b2f763100000000034851310000001a303141525a334e44454b54535634525246465136394735464156000000000000005a00000000000000640000000100000000000000630000000d7374616c655f76657273696f6e",
+    "digest_hex": "a4b6b02ebaea82c31cdc9e17a952d0baea0c355adf9cc16c11796a5591d1b08b"
+  }
+]

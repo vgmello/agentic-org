@@ -1,0 +1,437 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "host lookup fields",
+      "kind": "host",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": true,
+        "scope": {
+          "kind": "instance",
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "normalized": {
+          "instance_id": "01M72N8MG00000000000000001"
+        },
+        "parse_valid": true
+      }
+    },
+    {
+      "name": "org lookup fields",
+      "kind": "org",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": true,
+        "scope": {
+          "kind": "organization",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "normalized": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003"
+        },
+        "parse_valid": true
+      }
+    },
+    {
+      "name": "work lookup fields",
+      "kind": "work",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ],
+        [
+          "office_id",
+          "01M72N8MG00000000000000005"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": true,
+        "scope": {
+          "kind": "office",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "office_id": "01M72N8MG00000000000000005"
+        },
+        "normalized": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "office_id": "01M72N8MG00000000000000005"
+        },
+        "parse_valid": true
+      }
+    },
+    {
+      "name": "msg lookup fields",
+      "kind": "msg",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ],
+        [
+          "office_id",
+          "01M72N8MG00000000000000005"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": true,
+        "scope": {
+          "kind": "office",
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "office_id": "01M72N8MG00000000000000005"
+        },
+        "normalized": {
+          "instance_id": "01M72N8MG00000000000000001",
+          "org_id": "01M72N8MG00000000000000003",
+          "office_id": "01M72N8MG00000000000000005"
+        },
+        "parse_valid": true
+      }
+    },
+    {
+      "name": "missing instance",
+      "kind": "host",
+      "fields": [],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": false
+      }
+    },
+    {
+      "name": "missing org",
+      "kind": "org",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": true
+      }
+    },
+    {
+      "name": "host extra org",
+      "kind": "host",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": true
+      }
+    },
+    {
+      "name": "org extra office",
+      "kind": "org",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ],
+        [
+          "office_id",
+          "01M72N8MG00000000000000005"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": true
+      }
+    },
+    {
+      "name": "work missing office",
+      "kind": "work",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": true
+      }
+    },
+    {
+      "name": "repeated query key",
+      "kind": "org",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000005"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": false
+      }
+    },
+    {
+      "name": "unknown query key",
+      "kind": "host",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "account_id",
+          "owner"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": false
+      }
+    },
+    {
+      "name": "empty query ID",
+      "kind": "host",
+      "fields": [
+        [
+          "instance_id",
+          ""
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": false
+      }
+    },
+    {
+      "name": "separator in ID",
+      "kind": "host",
+      "fields": [
+        [
+          "instance_id",
+          "a/b"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": false
+      }
+    },
+    {
+      "name": "oversize ID",
+      "kind": "host",
+      "fields": [
+        [
+          "instance_id",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": false
+      }
+    },
+    {
+      "name": "pair instance mismatch",
+      "kind": "host",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000005",
+      "expect": {
+        "valid": false,
+        "http_status": 400,
+        "parse_valid": true
+      }
+    },
+    {
+      "name": "malformed org with matching instance",
+      "kind": "org",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "a/b"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "parse_valid": false,
+        "http_status": 400
+      }
+    },
+    {
+      "name": "empty office with matching instance",
+      "kind": "work",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ],
+        [
+          "office_id",
+          ""
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "parse_valid": false,
+        "http_status": 400
+      }
+    },
+    {
+      "name": "oversize office with matching instance",
+      "kind": "msg",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "org_id",
+          "01M72N8MG00000000000000003"
+        ],
+        [
+          "office_id",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "parse_valid": false,
+        "http_status": 400
+      }
+    },
+    {
+      "name": "identical repeated query key is still refused",
+      "kind": "host",
+      "fields": [
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ],
+        [
+          "instance_id",
+          "01M72N8MG00000000000000001"
+        ]
+      ],
+      "session_instance": "01M72N8MG00000000000000001",
+      "expect": {
+        "valid": false,
+        "parse_valid": false,
+        "http_status": 400
+      }
+    }
+  ],
+  "visibility": {
+    "fields": [
+      [
+        "instance_id",
+        "01M72N8MG00000000000000001"
+      ],
+      [
+        "org_id",
+        "01M72N8MG00000000000000003"
+      ]
+    ],
+    "kind": "org",
+    "hidden": {
+      "error": {
+        "code": "not_found",
+        "message": "Not found."
+      }
+    },
+    "missing": {
+      "error": {
+        "code": "not_found",
+        "message": "Not found."
+      }
+    },
+    "http_status": 404
+  },
+  "contract_revision": 2
+}

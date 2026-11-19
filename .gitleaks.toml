@@ -1,0 +1,4 @@
+title = "Agentic Org secret scanning"
+
+[extend]
+useDefault = true

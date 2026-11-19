@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "missing",
+      "access": "missing",
+      "wire": {
+        "error": {
+          "code": "not_found",
+          "message": "Not found."
+        }
+      },
+      "expect": {
+        "http_status": 404
+      }
+    },
+    {
+      "name": "hidden",
+      "access": "hidden",
+      "wire": {
+        "error": {
+          "code": "not_found",
+          "message": "Not found."
+        }
+      },
+      "expect": {
+        "http_status": 404
+      }
+    },
+    {
+      "name": "read_only",
+      "access": "read_only",
+      "wire": {
+        "error": {
+          "code": "not_authorized",
+          "message": "Not authorized."
+        }
+      },
+      "expect": {
+        "http_status": 403
+      }
+    }
+  ],
+  "attempts": [
+    {
+      "name": "grant or scope refusal never applied",
+      "origin": "grant_or_scope",
+      "submit": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "not_found",
+          "message": "Not found."
+        }
+      },
+      "stored_at_hq": false,
+      "lookup": {
+        "error": {
+          "code": "not_found",
+          "message": "Not found."
+        }
+      },
+      "expect": {
+        "submit_outcome": "rejected",
+        "keep_draft": true,
+        "auto_resubmit": false,
+        "lookup_if_submit_lost": "unresolved",
+        "new_user_attempt": "new_id"
+      }
+    },
+    {
+      "name": "rule refusal is stored and replays",
+      "origin": "rule",
+      "submit": {
+        "operation_id": "01M72N8MG00000000000000006",
+        "outcome": "rejected",
+        "error": {
+          "code": "not_found",
+          "message": "Not found."
+        }
+      },
+      "stored_at_hq": true,
+      "lookup": {
+        "result": {
+          "operation_id": "01M72N8MG00000000000000006",
+          "outcome": "rejected",
+          "error": {
+            "code": "not_found",
+            "message": "Not found."
+          },
+          "kind": "org"
+        }
+      },
+      "expect": {
+        "submit_outcome": "rejected",
+        "keep_draft": true,
+        "auto_resubmit": false,
+        "lookup_if_submit_lost": "rejected",
+        "new_user_attempt": "new_id"
+      }
+    }
+  ]
+}

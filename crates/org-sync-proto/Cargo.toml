@@ -1,0 +1,13 @@
+[package]
+name = "org-sync-proto"
+description = "Minimal office replication vocabulary and versioned digest contract."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sha2.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

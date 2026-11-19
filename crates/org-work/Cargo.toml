@@ -1,0 +1,19 @@
+[package]
+name = "org-work"
+description = "Work items' rules (tasks, checklists, links, comments, numbering, idempotency, conflicts, time figures): a pure domain library with a storage trait and no SQL or I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# `testkit`: an in-memory implementation of the storage traits (`WorkStore`, `WorkTxn`,
+# `WorkReads`, `OrgView`) and a settable clock, for tests here and in the office.
+testkit = []
+
+[dependencies]
+org-proto = { path = "../org-proto" }
+serde.workspace = true
+serde_json.workspace = true
+# The params hash of the change-id table (§2.3). Already in the lockfile.
+sha2.workspace = true

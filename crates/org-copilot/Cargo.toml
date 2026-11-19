@@ -1,0 +1,11 @@
+[package]
+name = "org-copilot"
+description = "The copilot: smart-feature registry, prompt rendering, output validation and limits, behind a runtime port. Drafts only."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

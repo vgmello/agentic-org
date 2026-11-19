@@ -1,0 +1,22 @@
+[package]
+name = "org-command"
+description = "The command contract of agent-os and agentic-org: the command table, the parser, the three ways to give input, the answer envelope and its formats, help, schemas and the contract tests. No socket, database or operating system."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# `testkit`: a stub office and sources, sample rows, and the contract checks (CLI-1, 2, 3, 7, 8
+# and 11) that every increment adding a row runs against its table.
+testkit = []
+
+[dependencies]
+# `ErrorCode`: the one closed list of error codes.
+org-proto = { path = "../org-proto" }
+# The bounded YAML reader, for `--input-format yaml`.
+org-docs = { path = "../org-docs" }
+serde_json.workspace = true
+
+[dev-dependencies]
+org-command = { path = ".", features = ["testkit"] }

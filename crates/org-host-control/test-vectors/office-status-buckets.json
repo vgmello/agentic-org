@@ -1,0 +1,9 @@
+[
+  {"status":"active","active":true,"failed":false},
+  {"status":"starting","active":false,"failed":false},
+  {"status":"pending","active":false,"failed":false},
+  {"status":"offline","active":false,"failed":false},
+  {"status":"unavailable","active":false,"failed":true},
+  {"status":"update_needed","active":false,"failed":true},
+  {"status":"unknown","active":false,"failed":true}
+]

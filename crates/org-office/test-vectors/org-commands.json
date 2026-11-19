@@ -1,0 +1,4085 @@
+{
+ "comment": "Cases for the organization commands, run against the sample organization by BOTH engines: the Rust mock HQ (src-tauri/src/org_engine.rs) and the TypeScript browser mock (src/lib/org/reducer.ts). Each case applies its setup commands, then the command; `expect` is `ok` or the error code. Commands carry no command_id: the runner adds one. The sample: office id 'office-1', teams at version 1, memberships ms-1..ms-11. Setup commands must succeed.",
+ "cases": [
+  {
+   "name": "remove: the owner",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "you",
+     "expected_version": 1
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "reports to: the owner reports to no one",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "you",
+     "expected_version": 1,
+     "reports_to_member_id": "avery"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "create: a blank name beats a taken id",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "eng",
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "create: a missing owner team beats a taken id",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "eng",
+     "name": "Ops",
+     "owner_team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "create: a taken id",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "eng",
+     "name": "Ops"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "create: a sibling's name, ignoring case",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "ops",
+     "name": "DESIGN"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "create: the same name under another team is fine",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "ops",
+     "name": "Design",
+     "owner_team_id": "eng"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "create: an empty id",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "",
+     "name": "Ops"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "create: an id with a control character",
+   "command": {
+    "method": "team.create",
+    "params": {
+     "team_id": "a\nb",
+     "name": "Ops"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "rename: a blank name beats a stale version",
+   "command": {
+    "method": "team.rename",
+    "params": {
+     "team_id": "web",
+     "expected_version": 9,
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "rename: a stale version beats a sibling clash",
+   "command": {
+    "method": "team.rename",
+    "params": {
+     "team_id": "web",
+     "expected_version": 9,
+     "name": "Platform"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "rename: a sibling clash",
+   "command": {
+    "method": "team.rename",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1,
+     "name": "platform"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "rename: keeping its own name in another case",
+   "command": {
+    "method": "team.rename",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1,
+     "name": "WEB"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "move: a missing owner beats a stale version",
+   "command": {
+    "method": "team.move",
+    "params": {
+     "team_id": "web",
+     "expected_version": 9,
+     "owner_team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "move: a loop beats a stale version",
+   "command": {
+    "method": "team.move",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 9,
+     "owner_team_id": "web"
+    }
+   },
+   "expect": "cycle"
+  },
+  {
+   "name": "move: under a team below it",
+   "command": {
+    "method": "team.move",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 1,
+     "owner_team_id": "web"
+    }
+   },
+   "expect": "cycle"
+  },
+  {
+   "name": "move: under itself",
+   "command": {
+    "method": "team.move",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 1,
+     "owner_team_id": "eng"
+    }
+   },
+   "expect": "cycle"
+  },
+  {
+   "name": "move: to the top level",
+   "command": {
+    "method": "team.move",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "lead: a missing member beats a stale version",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 9,
+     "lead_member_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "lead: the owner beats a stale version",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 9,
+     "lead_member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "lead: the owner",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1,
+     "lead_member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "lead: someone who is not in the team",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1,
+     "lead_member_id": "juno"
+    }
+   },
+   "expect": "not_a_member"
+  },
+  {
+   "name": "lead: a member",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 1,
+     "lead_member_id": "mira"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "delete: not empty beats a stale version",
+   "command": {
+    "method": "team.delete",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 9
+    }
+   },
+   "expect": "not_empty"
+  },
+  {
+   "name": "delete: a team that owns teams",
+   "command": {
+    "method": "team.delete",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 1
+    }
+   },
+   "expect": "not_empty"
+  },
+  {
+   "name": "delete: a leaf team",
+   "command": {
+    "method": "team.delete",
+    "params": {
+     "team_id": "design",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add member: the owner",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "web",
+     "member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "add member: already in the team",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "web",
+     "member_id": "mira"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add member: a taken membership id",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "ms-1",
+     "team_id": "web",
+     "member_id": "pax"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add member: an empty title",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "web",
+     "member_id": "pax",
+     "title_in_team": ""
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add member: a too long title",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "web",
+     "member_id": "pax",
+     "title_in_team": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add member: with a title",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "web",
+     "member_id": "pax",
+     "title_in_team": "Designer"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "remove member: a stale version",
+   "command": {
+    "method": "team.remove_member",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 9
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "remove member: gone",
+   "command": {
+    "method": "team.remove_member",
+    "params": {
+     "membership_id": "nope",
+     "expected_version": 1
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "add person: a blank name beats a taken id",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "01JC00000000000000000000T1",
+     "name": " "
+    }
+   },
+   "expect": "invalid_name",
+   "setup": [
+    {
+     "method": "member.add_person",
+     "params": {
+      "member_id": "01JC00000000000000000000T1",
+      "name": "First"
+     }
+    }
+   ]
+  },
+  {
+   "name": "add person: a taken id",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "01JC00000000000000000000T1",
+     "name": "Someone"
+    }
+   },
+   "expect": "already_exists",
+   "setup": [
+    {
+     "method": "member.add_person",
+     "params": {
+      "member_id": "01JC00000000000000000000T1",
+      "name": "First"
+     }
+    }
+   ]
+  },
+  {
+   "name": "add person: another person's name, ignoring case",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "01JC00000000000000000000P1",
+     "name": "avery stone"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add person: an agent's handle",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "01JC00000000000000000000P1",
+     "name": "SAM"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add person: the owner's handle",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "01JC00000000000000000000P1",
+     "name": "Owner"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add person: an agent's display name is not a handle",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "01JC00000000000000000000P1",
+     "name": "Sam Okafor"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add person: an empty contact",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "01JC00000000000000000000P1",
+     "name": "Sam Ortiz",
+     "contact": ""
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update person: an agent beats a stale version",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9,
+     "name": "X"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update person: a blank name beats a stale version",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 9,
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "update person: a stale version beats a clash",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 9,
+     "name": "Hana Weiss"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "update person: another member's handle",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "name": "hana weiss"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "update person: contact and clear together",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "contact": "a@b.c",
+     "clear_contact": true
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update person: your own name in another case",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "name": "AVERY STONE"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "remove: the owner beats a stale version",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "you",
+     "expected_version": 9
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "remove: a stale version",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "remove: reporters move to the removed member's manager (and get a new version)",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "noor",
+     "expected_version": 2
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "member.remove",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "remove: a stale reporter version after the removal",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "noor",
+     "expected_version": 1
+    }
+   },
+   "expect": "conflict",
+   "setup": [
+    {
+     "method": "member.remove",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "reports to: a missing manager beats a stale version",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "leo",
+     "expected_version": 9,
+     "reports_to_member_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "reports to: the owner beats a stale version",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "you",
+     "expected_version": 9,
+     "reports_to_member_id": "avery"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "reports to: a stale version",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "leo",
+     "expected_version": 9,
+     "reports_to_member_id": "juno"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "reports to: a loop",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "reports_to_member_id": "leo"
+    }
+   },
+   "expect": "cycle"
+  },
+  {
+   "name": "reports to: yourself",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "reports_to_member_id": "avery"
+    }
+   },
+   "expect": "cycle"
+  },
+  {
+   "name": "reports to: the owner",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "leo",
+     "expected_version": 1,
+     "reports_to_member_id": "you"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "move member: a missing team beats a stale version",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 9,
+     "new_membership_id": "n1",
+     "to_team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "move member: a stale version",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 9,
+     "new_membership_id": "n1",
+     "to_team_id": "platform"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "move member: already in the team",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 1,
+     "new_membership_id": "n1",
+     "to_team_id": "web"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "move member: a taken new id",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 1,
+     "new_membership_id": "ms-1",
+     "to_team_id": "platform"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "move member: to another team",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-2",
+     "expected_version": 1,
+     "new_membership_id": "n1",
+     "to_team_id": "platform",
+     "title_in_team": "Engineer"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "project: a missing project",
+   "command": {
+    "method": "project.add_team",
+    "params": {
+     "project_team_id": "pt-9",
+     "project_id": "ghost",
+     "team_id": "web"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "project: already linked",
+   "command": {
+    "method": "project.add_team",
+    "params": {
+     "project_team_id": "pt-9",
+     "project_id": "beacon",
+     "team_id": "web"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project: a new link",
+   "command": {
+    "method": "project.add_team",
+    "params": {
+     "project_team_id": "pt-9",
+     "project_id": "scratch",
+     "team_id": "web"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "project: remove with a stale version",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-1",
+     "expected_version": 9
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "project: remove",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-1",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add member: a missing team beats a blank title",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m1",
+     "team_id": "ghost",
+     "member_id": "leo",
+     "title_in_team": " "
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "update person: a missing person beats a blank contact",
+   "command": {
+    "method": "member.update_person",
+    "params": {
+     "member_id": "ghost",
+     "expected_version": 1,
+     "contact": " "
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "add person: a blank contact beats a blank name",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "01JC00000000000000000000P1",
+     "name": " ",
+     "contact": " "
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "set title: a blank title",
+   "command": {
+    "method": "team.set_title",
+    "params": {
+     "membership_id": "ms-1",
+     "expected_version": 1,
+     "title_in_team": " "
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "set title: a title",
+   "command": {
+    "method": "team.set_title",
+    "params": {
+     "membership_id": "ms-1",
+     "expected_version": 1,
+     "title_in_team": "Principal"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "set title: cleared",
+   "command": {
+    "method": "team.set_title",
+    "params": {
+     "membership_id": "ms-1",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "set title: a missing membership beats a blank title",
+   "command": {
+    "method": "team.set_title",
+    "params": {
+     "membership_id": "nope",
+     "expected_version": 1,
+     "title_in_team": " "
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "remove member: a membership",
+   "command": {
+    "method": "team.remove_member",
+    "params": {
+     "membership_id": "ms-3",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "remove member: the lead leaves, the team's version rises",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "web",
+     "expected_version": 2,
+     "lead_member_id": "mira"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "team.remove_member",
+     "params": {
+      "membership_id": "ms-2",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "remove person: cascades (memberships, lead, reporters)",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 2,
+     "lead_member_id": "avery"
+    }
+   },
+   "expect": "not_a_member",
+   "setup": [
+    {
+     "method": "member.remove",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "remove person: a second removal",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "remove person: gone",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1
+    }
+   },
+   "expect": "not_found",
+   "setup": [
+    {
+     "method": "member.remove",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "set title: a byte-order mark is a character, not blank",
+   "command": {
+    "method": "team.set_title",
+    "params": {
+     "membership_id": "ms-1",
+     "expected_version": 1,
+     "title_in_team": "﻿"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: a new agent",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: a missing office",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "ghost",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "add agent: a missing office beats a bad profile",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "ghost",
+     "profile": {
+      "role": " ",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "add agent: an unknown runtime",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "unknown",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a copy of a known runtime's name",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": {
+       "other": "codex"
+      },
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a named other runtime",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": {
+       "other": "my-runtime"
+      },
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: offboarded status",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "offboarded"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: paused status",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "paused"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: an offboarded date",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "offboarded_at": "2026-01-01T00:00:00.000Z"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: scheduled without a schedule",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "run_mode": "scheduled"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a schedule on an always-on agent",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "run_mode": "always_on",
+      "schedule": {
+       "spec": "daily",
+       "time_zone": "UTC"
+      }
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: scheduled with a schedule",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "run_mode": "scheduled",
+      "schedule": {
+       "spec": "weekdays at 9",
+       "time_zone": "Europe/Lisbon"
+      }
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: a time zone with .. in it",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "run_mode": "scheduled",
+      "schedule": {
+       "spec": "daily",
+       "time_zone": "Europe/../etc"
+      }
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: an unknown run mode",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "run_mode": "unknown"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a relative home",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "home": "agents/cam"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a home with ..",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "home": "/agents/../etc"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: an absolute home",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active",
+      "home": "/Users/me/agents/cam"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "add agent: a blank role beats a bad messaging name",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": " ",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "bad name!",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a bad messaging name",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "bad name!",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "add agent: a messaging name that starts with a dash",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "-cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "add agent: a blank display name",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": " ",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "add agent: a taken id",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC00000000000000000000T1",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "already_exists",
+   "setup": [
+    {
+     "method": "member.add_person",
+     "params": {
+      "member_id": "01JC00000000000000000000T1",
+      "name": "First"
+     }
+    }
+   ]
+  },
+  {
+   "name": "add agent: another agent's handle, ignoring case",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "SAM",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add agent: the owner's handle",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "Owner",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "add agent: a person's name as a handle",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "Avery",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "update agent: nothing given",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update agent: a value and its clear flag",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "focus": "x",
+     "clear_focus": true
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update agent: a person",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "role": "x"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "update agent: a bad name beats a stale version",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9,
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "update agent: a stale version",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9,
+     "role": "x"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "update agent: another agent's handle",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "messaging_name": "noor"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "update agent: your own handle in another case",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "messaging_name": "SAM"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "update agent: a role, a focus and a home",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "role": "staff engineer",
+     "focus": "the office",
+     "home": "/Users/me/sam"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "update agent: clearing the focus",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "clear_focus": true
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "update agent: an offboarded agent",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 2,
+     "role": "x"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "update agent: a missing agent",
+   "command": {
+    "method": "member.update_agent",
+    "params": {
+     "member_id": "ghost",
+     "expected_version": 1,
+     "role": "x"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "status: pause an agent",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "status": "paused"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "status: the same status again",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "status": "active"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "status: offboarded is not set here",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "status": "offboarded"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "status: a person",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "status": "paused"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "status: a stale version",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9,
+     "status": "paused"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "status: an agent who left",
+   "command": {
+    "method": "member.set_agent_status",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 2,
+     "status": "active"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "run mode: on call",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "on_call"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "run mode: none (started by a person)",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "run mode: scheduled needs a schedule",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "scheduled"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "run mode: scheduled with one",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "scheduled",
+     "schedule": {
+      "spec": "weekdays at 9",
+      "time_zone": "Europe/Lisbon"
+     }
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "run mode: unknown",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "unknown"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "run mode: a person",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1,
+     "run_mode": "on_call"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "offboard: an agent",
+   "command": {
+    "method": "member.offboard",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "offboard: a person",
+   "command": {
+    "method": "member.offboard",
+    "params": {
+     "member_id": "avery",
+     "expected_version": 1
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "offboard: twice",
+   "command": {
+    "method": "member.offboard",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 2
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "offboard: a stale version",
+   "command": {
+    "method": "member.offboard",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 9
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "offboard: the lead leaves, so the team's version rose",
+   "command": {
+    "method": "team.set_lead",
+    "params": {
+     "team_id": "eng",
+     "expected_version": 2,
+     "lead_member_id": "avery"
+    }
+   },
+   "expect": "not_a_member",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "offboard: reporters now report to its manager, with a new version",
+   "command": {
+    "method": "member.set_reports_to",
+    "params": {
+     "member_id": "noor",
+     "expected_version": 2
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "offboard: its handle stays reserved",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "01JC00000000000000000000P1",
+     "name": "sam"
+    }
+   },
+   "expect": "already_exists",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "offboard: it can't join a team again",
+   "command": {
+    "method": "team.add_member",
+    "params": {
+     "membership_id": "m9",
+     "team_id": "web",
+     "member_id": "sam"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "offboard: it can't be removed",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 2
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "sam",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "add agent: a person's real name is a handle too",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "already_exists",
+   "setup": [
+    {
+     "method": "member.add_person",
+     "params": {
+      "member_id": "01JC00000000000000000000P1",
+      "name": "cam"
+     }
+    }
+   ]
+  },
+  {
+   "name": "add person: an agent's messaging name from add_agent is a handle",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "01JC00000000000000000000P1",
+     "name": "CAM"
+    }
+   },
+   "expect": "already_exists",
+   "setup": [
+    {
+     "method": "member.add_agent",
+     "params": {
+      "member_id": "01JC0000000000000000000CAM",
+      "name": "Cameron",
+      "office_id": "office-1",
+      "profile": {
+       "role": "QA engineer",
+       "title": "QA engineer",
+       "runtime": "codex",
+       "messaging_name": "cam",
+       "status": "active"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "add agent: an empty office id",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "01JC0000000000000000000CAM",
+     "name": "Cameron",
+     "office_id": "",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "run mode: a string no build knows",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "weekly"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "run mode: the right words in the wrong case",
+   "command": {
+    "method": "member.set_run_mode",
+    "params": {
+     "member_id": "sam",
+     "expected_version": 1,
+     "run_mode": "ALWAYS_ON"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add person: an id that is not 26 letters or digits",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "p1",
+     "name": "Sam Ortiz"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add person: a 25-character id",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "0000000000000000000000000",
+     "name": "Sam Ortiz"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add person: a 26-character id with a dash",
+   "command": {
+    "method": "member.add_person",
+    "params": {
+     "member_id": "0000000000000000000000000-",
+     "name": "Sam Ortiz"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: an id that is not 26 letters or digits",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "office-1",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "add agent: a missing office beats a bad id",
+   "command": {
+    "method": "member.add_agent",
+    "params": {
+     "member_id": "cam",
+     "name": "Cameron",
+     "office_id": "ghost",
+     "profile": {
+      "role": "QA engineer",
+      "title": "QA engineer",
+      "runtime": "codex",
+      "messaging_name": "cam",
+      "status": "active"
+     }
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "project.create: makes the project, its General area and the links in one command, with a derived key",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "pt-9",
+       "team_id": "web"
+      }
+     ]
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "key": "neo",
+      "name": "Neo Project",
+      "version": 1
+     }
+    },
+    {
+     "in": "areas",
+     "id": "neo-general",
+     "has": {
+      "name": "General",
+      "general": true,
+      "team_id": "web",
+      "project_id": "neo",
+      "version": 1
+     }
+    },
+    {
+     "in": "project_teams",
+     "id": "pt-9",
+     "has": {
+      "project_id": "neo",
+      "team_id": "web"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a taken key gets a digit",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "at2",
+     "name": "Atlas Two",
+     "general_area_id": "at2-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "at2",
+     "has": {
+      "key": "atl2"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a reserved key gets a digit",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "rq",
+     "name": "Request tool",
+     "general_area_id": "rq-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "rq",
+     "has": {
+      "key": "req2"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a name without a letter first is prefixed with p",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "n1",
+     "name": "123 go",
+     "general_area_id": "n1-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "n1",
+     "has": {
+      "key": "p123"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a chosen key is kept",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "key": "neo9"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "key": "neo9"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a missing team",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "pt-9",
+       "team_id": "ghost"
+      }
+     ]
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "project.create: a bad key",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "key": "Bad Key"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a reserved key",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "key": "req"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a repeated team",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "pt-8",
+       "team_id": "web"
+      },
+      {
+       "project_team_id": "pt-9",
+       "team_id": "web"
+      }
+     ]
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a relative repository path",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "repo": {
+      "existing_local": {
+       "path": "relative/path"
+      }
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a blank name",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "  ",
+     "general_area_id": "neo-general"
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "project.create: a blank General name",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "general_area_name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "project.create: a taken project id",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "atlas",
+     "name": "Neo Project",
+     "general_area_id": "neo-general"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project.create: a taken key",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "key": "atl"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project.create: a name taken ignoring case",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "ATLAS",
+     "general_area_id": "neo-general"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project.create: a missing team beats a blank name",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "  ",
+     "general_area_id": "g",
+     "teams": [
+      {
+       "project_team_id": "pt-9",
+       "team_id": "ghost"
+      }
+     ]
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "project.update: renames and describes, and the version goes up",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "name": "Atlas 2",
+     "description": "The big one"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "atlas",
+     "has": {
+      "name": "Atlas 2",
+      "description": "The big one",
+      "version": 2,
+      "key": "atl"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.update: a description can be cleared",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 2,
+     "clear_description": true
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "project.update",
+     "params": {
+      "project_id": "atlas",
+      "expected_version": 1,
+      "description": "x"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "projects",
+     "id": "atlas",
+     "has": {
+      "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.update: nothing to change",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.update: a value and its clear",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "description": "x",
+     "clear_description": true
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.update: a missing project",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "ghost",
+     "expected_version": 1,
+     "name": "x"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "project.update: a blank name beats a stale version",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 9,
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "project.update: a stale version",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 9,
+     "name": "Atlas 2"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "project.update: a name taken ignoring case",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "name": "beacon"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project.archive: archives and unarchives",
+   "command": {
+    "method": "project.archive",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "archived": true
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "atlas",
+     "has": {
+      "archived": true,
+      "version": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.archive: a stale version",
+   "command": {
+    "method": "project.archive",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 9,
+     "archived": true
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "project.archive: a missing project",
+   "command": {
+    "method": "project.archive",
+    "params": {
+     "project_id": "ghost",
+     "expected_version": 1,
+     "archived": true
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.create: in a project with teams the area names its team",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "pay",
+     "project_id": "atlas",
+     "name": "Payments",
+     "team_id": "platform"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "pay",
+     "has": {
+      "name": "Payments",
+      "team_id": "platform",
+      "project_id": "atlas",
+      "version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.create: with a lead who is in the team",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "pay",
+     "project_id": "atlas",
+     "name": "Payments",
+     "team_id": "platform",
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "pay",
+     "has": {
+      "lead_member_id": "kai"
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.create: a project with no team takes no team",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "scratch",
+     "name": "Docs"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "x",
+     "has": {
+      "project_id": "scratch"
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.create: a missing project",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "ghost",
+     "name": "Docs"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.create: a missing team",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "Docs",
+     "team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.create: a team that is not the project's",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "Docs",
+     "team_id": "web"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "area.create: no team when the project has teams",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "Docs"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "area.create: a blank name",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": " ",
+     "team_id": "platform"
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "area.create: a lead who is not in the team",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "Docs",
+     "team_id": "platform",
+     "lead_member_id": "noor"
+    }
+   },
+   "expect": "not_a_member"
+  },
+  {
+   "name": "area.create: the owner as lead",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "Docs",
+     "team_id": "platform",
+     "lead_member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "area.create: a taken name, ignoring case",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "general",
+     "team_id": "platform"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "area.create: a taken id",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "atlas-general",
+     "project_id": "atlas",
+     "name": "Docs",
+     "team_id": "platform"
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "area.rename: renames and bumps the version",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "name": "Everything"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "name": "Everything",
+      "version": 2,
+      "general": true
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.rename: a stale version",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 9,
+     "name": "Everything"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "area.rename: a taken name in the project",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "pay",
+     "expected_version": 1,
+     "name": "General"
+    }
+   },
+   "expect": "already_exists",
+   "setup": [
+    {
+     "method": "area.create",
+     "params": {
+      "area_id": "pay",
+      "project_id": "atlas",
+      "name": "Payments",
+      "team_id": "platform"
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.rename: a blank name",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "name": " "
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "area.rename: a missing area",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "ghost",
+     "expected_version": 1,
+     "name": "x"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_team: moves an area to another of the project's teams and drops a lead who is not in it",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "bea-a",
+     "expected_version": 2,
+     "team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.create",
+     "params": {
+      "area_id": "bea-a",
+      "project_id": "beacon",
+      "name": "Sites",
+      "team_id": "web",
+      "lead_member_id": "noor"
+     }
+    },
+    {
+     "method": "area.rename",
+     "params": {
+      "area_id": "bea-a",
+      "expected_version": 1,
+      "name": "Websites"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "bea-a",
+     "has": {
+      "team_id": "design",
+      "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.set_team: a lead who is in the new team stays",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "bea-a",
+     "expected_version": 1,
+     "team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.create",
+     "params": {
+      "area_id": "bea-a",
+      "project_id": "beacon",
+      "name": "Sites",
+      "team_id": "web",
+      "lead_member_id": "noor"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "bea-a",
+     "has": {
+      "team_id": "design",
+      "lead_member_id": "noor",
+      "version": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.set_team: a team that is not the project's",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "team_id": "web"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "area.set_team: no team while the project has teams",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "area.set_team: a stale version",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 9,
+     "team_id": "platform"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "area.set_lead: sets and clears the lead",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "lead_member_id": "kai",
+      "version": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.set_lead: the owner",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "lead_member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "area.set_lead: not in the team",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "lead_member_id": "noor"
+    }
+   },
+   "expect": "not_a_member"
+  },
+  {
+   "name": "area.set_lead: an area with no team has no lead",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "scratch-general",
+     "expected_version": 1,
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "area.set_lead: the owner beats a stale version",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 9,
+     "lead_member_id": "you"
+    }
+   },
+   "expect": "owner_protected"
+  },
+  {
+   "name": "area.set_lead: a stale version",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 9,
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "conflict"
+  },
+  {
+   "name": "a lead who leaves the team stops leading the area",
+   "command": {
+    "method": "team.remove_member",
+    "params": {
+     "membership_id": "ms-4",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.set_lead",
+     "params": {
+      "area_id": "atlas-general",
+      "expected_version": 1,
+      "lead_member_id": "kai"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "version": 3
+     }
+    },
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "lead_member_id"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "a lead who is offboarded or removed stops leading",
+   "command": {
+    "method": "member.remove",
+    "params": {
+     "member_id": "kai",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.set_lead",
+     "params": {
+      "area_id": "atlas-general",
+      "expected_version": 1,
+      "lead_member_id": "kai"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "lead_member_id"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: the leaving team's areas go to the chosen team",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-2",
+     "expected_version": 1,
+     "areas_to_team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "beacon-general",
+     "has": {
+      "team_id": "design",
+      "version": 2
+     }
+    },
+    {
+     "in": "project_teams",
+     "id": "pt-2",
+     "absent": true
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: the chosen team is required when the project keeps others",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-2",
+     "expected_version": 1
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.remove_team: the chosen team must be a remaining team",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-2",
+     "expected_version": 1,
+     "areas_to_team_id": "platform"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.remove_team: the last team leaves its areas without a team",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-1",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "team_id"
+     ]
+    },
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "version": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: a target is refused when the last team leaves",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-1",
+     "expected_version": 1,
+     "areas_to_team_id": "web"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.remove_team: a team that owns no area needs no target",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-3",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "project_teams",
+     "id": "pt-3",
+     "absent": true
+    }
+   ]
+  },
+  {
+   "name": "team.delete: leaves the areas it owned without a team",
+   "command": {
+    "method": "team.delete",
+    "params": {
+     "team_id": "people",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "onboarding-general",
+     "lacks": [
+      "team_id"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "area.create: a name over 40 characters",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+     "team_id": "platform"
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "area.create: a name of 40 characters",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "atlas",
+     "name": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+     "team_id": "platform"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "areas",
+     "id": "x",
+     "has": {
+      "project_id": "atlas"
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.rename: a name over 40 characters",
+   "command": {
+    "method": "area.rename",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "project.create: a General name over 40 characters",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "general_area_name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+   },
+   "expect": "invalid_name"
+  },
+  {
+   "name": "project.create: a blank link id in teams",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "",
+       "team_id": "web"
+      }
+     ]
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a blank team id in teams",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "pt-9",
+       "team_id": ""
+      }
+     ]
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a link id used twice",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "teams": [
+      {
+       "project_team_id": "pt-9",
+       "team_id": "web"
+      },
+      {
+       "project_team_id": "pt-9",
+       "team_id": "design"
+      }
+     ]
+    }
+   },
+   "expect": "already_exists"
+  },
+  {
+   "name": "project.create: a description over 1000 characters",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "description": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a description with a control character",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "description": "a\u0001b"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a blank branch",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "  "
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: an absolute existing repository",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "repo": {
+      "existing_local": {
+       "path": "/repos/x.git"
+      }
+     }
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "created_at": "2026-11-08T12:00:00.000Z",
+      "version": 1,
+      "repo": {
+       "host": "local",
+       "default_branch": "main",
+       "path": "/repos/x.git"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a repository path with a control character",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "repo": {
+      "existing_local": {
+       "path": "/repos/\u0002x"
+      }
+     }
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.update: a description over 1000 characters",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "description": "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.remove_team: a lead who is not in the team taking over stops leading, in the same change",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-2",
+     "expected_version": 1,
+     "areas_to_team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.create",
+     "params": {
+      "area_id": "bea-a",
+      "project_id": "beacon",
+      "name": "Sites",
+      "team_id": "web",
+      "lead_member_id": "mira"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "bea-a",
+     "has": {
+      "team_id": "design",
+      "version": 2
+     }
+    },
+    {
+     "in": "areas",
+     "id": "bea-a",
+     "lacks": [
+      "lead_member_id"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: a lead who is in the team taking over keeps leading",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-2",
+     "expected_version": 1,
+     "areas_to_team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.create",
+     "params": {
+      "area_id": "bea-a",
+      "project_id": "beacon",
+      "name": "Sites",
+      "team_id": "web",
+      "lead_member_id": "noor"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "bea-a",
+     "has": {
+      "team_id": "design",
+      "lead_member_id": "noor",
+      "version": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "member.offboard: an agent who leaves stops leading an area",
+   "command": {
+    "method": "member.offboard",
+    "params": {
+     "member_id": "kai",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.set_lead",
+     "params": {
+      "area_id": "atlas-general",
+      "expected_version": 1,
+      "lead_member_id": "kai"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "lead_member_id"
+     ]
+    },
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "member.move: a lead who moves to another team stops leading the old team's area",
+   "command": {
+    "method": "member.move",
+    "params": {
+     "membership_id": "ms-4",
+     "expected_version": 1,
+     "new_membership_id": "ms-new",
+     "to_team_id": "design"
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.set_lead",
+     "params": {
+      "area_id": "atlas-general",
+      "expected_version": 1,
+      "lead_member_id": "kai"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "lead_member_id"
+     ]
+    },
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "team.delete: the areas it owned lose the team and the lead, once",
+   "command": {
+    "method": "team.delete",
+    "params": {
+     "team_id": "platform",
+     "expected_version": 1
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "area.set_lead",
+     "params": {
+      "area_id": "atlas-general",
+      "expected_version": 1,
+      "lead_member_id": "kai"
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "lacks": [
+      "team_id",
+      "lead_member_id"
+     ]
+    },
+    {
+     "in": "areas",
+     "id": "atlas-general",
+     "has": {
+      "version": 3
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a new local repository is resolved by HQ",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "repo": {
+      "new_local": {}
+     }
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "repo": {
+       "host": "local",
+       "default_branch": "main",
+       "path": "/workspace/repos/neo.git"
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a description and a branch are kept",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "description": "Notes",
+     "integration_branch": "develop"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "neo",
+     "has": {
+      "description": "Notes",
+      "integration_branch": "develop"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.archive: unarchiving removes the flag",
+   "command": {
+    "method": "project.archive",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 2,
+     "archived": false
+    }
+   },
+   "expect": "ok",
+   "setup": [
+    {
+     "method": "project.archive",
+     "params": {
+      "project_id": "atlas",
+      "expected_version": 1,
+      "archived": true
+     }
+    }
+   ],
+   "after": [
+    {
+     "in": "projects",
+     "id": "atlas",
+     "has": {
+      "version": 3
+     }
+    },
+    {
+     "in": "projects",
+     "id": "atlas",
+     "lacks": [
+      "archived"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "area.create: an offboarded lead",
+   "command": {
+    "method": "area.create",
+    "params": {
+     "area_id": "x",
+     "project_id": "beacon",
+     "name": "Docs",
+     "team_id": "design",
+     "lead_member_id": "pax"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "pax",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "area.set_team: a missing team",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "team_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_team: a missing area",
+   "command": {
+    "method": "area.set_team",
+    "params": {
+     "area_id": "ghost",
+     "expected_version": 1,
+     "team_id": "platform"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_lead: a missing area",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "ghost",
+     "expected_version": 1,
+     "lead_member_id": "kai"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_lead: a missing member",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "atlas-general",
+     "expected_version": 1,
+     "lead_member_id": "ghost"
+    }
+   },
+   "expect": "not_found"
+  },
+  {
+   "name": "area.set_lead: an offboarded lead",
+   "command": {
+    "method": "area.set_lead",
+    "params": {
+     "area_id": "beacon-general",
+     "expected_version": 1,
+     "lead_member_id": "pax"
+    }
+   },
+   "expect": "invalid_request",
+   "setup": [
+    {
+     "method": "member.offboard",
+     "params": {
+      "member_id": "pax",
+      "expected_version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.remove_team: a target is ignored for a team that owns no area when others remain",
+   "command": {
+    "method": "project.remove_team",
+    "params": {
+     "project_team_id": "pt-3",
+     "expected_version": 1,
+     "areas_to_team_id": "web"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "project_teams",
+     "id": "pt-3",
+     "absent": true
+    },
+    {
+     "in": "areas",
+     "id": "beacon-general",
+     "has": {
+      "team_id": "web",
+      "version": 1
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: the key from 'Billing' is bil",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "k1",
+     "name": "Billing",
+     "general_area_id": "k1-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "k1",
+     "has": {
+      "key": "bil"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: the key from 'Q' is qx",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "k2",
+     "name": "Q",
+     "general_area_id": "k2-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "k2",
+     "has": {
+      "key": "qx"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: the key from '9' is p9",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "k3",
+     "name": "9",
+     "general_area_id": "k3-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "k3",
+     "has": {
+      "key": "p9"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: the key from 'Exc' is exc2",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "k4",
+     "name": "Exc",
+     "general_area_id": "k4-g"
+    }
+   },
+   "expect": "ok",
+   "after": [
+    {
+     "in": "projects",
+     "id": "k4",
+     "has": {
+      "key": "exc2"
+     }
+    }
+   ]
+  },
+  {
+   "name": "project.create: a task/ branch",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "task/x"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a docs/ branch in other capitals",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "Docs/readme"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a merged/ branch under refs/heads/",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "refs/heads/merged/old"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: an archive/ branch under heads/",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "heads/ARCHIVE/old"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.create: a branch that only looks like a reserved one",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "tasks/x"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "project.create: an ordinary branch",
+   "command": {
+    "method": "project.create",
+    "params": {
+     "project_id": "neo",
+     "name": "Neo Project",
+     "general_area_id": "neo-general",
+     "integration_branch": "feature/x"
+    }
+   },
+   "expect": "ok"
+  },
+  {
+   "name": "project.update: a task/ branch",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "integration_branch": "task/x"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.update: a heads/docs/ branch",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "integration_branch": "heads/docs/x"
+    }
+   },
+   "expect": "invalid_request"
+  },
+  {
+   "name": "project.update: an ordinary branch",
+   "command": {
+    "method": "project.update",
+    "params": {
+     "project_id": "atlas",
+     "expected_version": 1,
+     "integration_branch": "release"
+    }
+   },
+   "expect": "ok"
+  }
+ ]
+}

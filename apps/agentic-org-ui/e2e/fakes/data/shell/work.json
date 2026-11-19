@@ -1,0 +1,8 @@
+[
+	{ "ref": "T-12", "title": "Add sign-in rate limiting", "state": "In progress" },
+	{ "ref": "T-14", "title": "Checkout page loses the basket on refresh", "state": "Open" },
+	{ "ref": "T-19", "title": "Write the release notes for 0.2", "state": "Open" },
+	{ "ref": "T-21", "title": "Let people export a project's costs", "state": "Needs you" },
+	{ "ref": "T-23", "title": "Search should match work item references", "state": "Done" },
+	{ "ref": "T-27", "title": "Show the office status in the footer", "state": "In progress" }
+]
