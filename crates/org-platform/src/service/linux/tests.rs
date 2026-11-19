@@ -1084,6 +1084,8 @@ fn the_user_placement_is_the_accounts_systemd_user_directory() {
 /// The real runner asks for the two programs by absolute path with an explicit
 /// environment, and reports a missing one as that. Where this machine has `systemctl` but
 /// no user manager (a container, a build sandbox), the adapter's answer is `Unavailable`.
+/// Where a user manager answers (a CI runner), it does not read this test's temporary
+/// placement, and the adapter says so before writing anything.
 #[test]
 fn the_real_runner_answers_on_this_machine_without_changing_anything() {
     let temp = tempfile::tempdir().unwrap();
@@ -1103,6 +1105,7 @@ fn the_real_runner_answers_on_this_machine_without_changing_anything() {
                 Err(ServiceError::Unavailable(_))
             ));
         }
+        Err(ServiceError::System(why)) if why.contains("does not read unit files from") => {}
         Err(other) => panic!("neither available nor unavailable: {other}"),
     }
     assert!(!temp.path().join("systemd").exists());

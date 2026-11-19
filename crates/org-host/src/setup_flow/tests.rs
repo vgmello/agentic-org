@@ -1546,10 +1546,13 @@ mod credentials {
             println!("skipped: {} cannot be made", tmp.display());
             return;
         }
-        let temp = tempfile::tempdir_in(&tmp).unwrap();
+        let base_dir = tempfile::tempdir_in(&tmp).unwrap();
+        // The base is below cargo's target folder, a long path on a CI runner; the user temp
+        // base, where the sockets go, is short (their paths are bounded).
         let account = Account {
-            base: temp.path().canonicalize().unwrap(),
-            _temp: temp,
+            base: base_dir.path().canonicalize().unwrap(),
+            _temp: tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap())
+                .unwrap(),
         };
         fs::set_permissions(&account.base, fs::Permissions::from_mode(0o700)).unwrap();
         let (result, _) = run_setup(&account, &account.base.join("state"), free_port());
