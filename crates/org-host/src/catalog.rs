@@ -284,25 +284,13 @@ pub(crate) fn unfinished_folders(home: &Path) -> io::Result<Vec<String>> {
         .collect())
 }
 
-/// Whether the host reserved writer custody in `folder`: its `selected-writer.required`
-/// marker, or a staging file of one (`.selected-writer-*.tmp`, which a host killed while it
-/// installed the marker leaves). Such a folder is the reservation's: its protected operation
-/// finishes or keeps it, and a worker's discard refuses it, so it is never "unfinished". A
-/// folder that can't be read is kept as well.
+/// Whether the host reserved writer custody in `folder` (`org_office_launch::writer::marker`):
+/// its marker, or a staging file of one, which a host killed while it installed the marker
+/// leaves. Such a folder is the reservation's: its protected operation finishes or keeps it,
+/// and a worker's discard refuses it, so it is never "unfinished". A folder that can't be
+/// read is kept as well.
 fn holds_writer_custody(folder: &Path) -> bool {
-    if fs::symlink_metadata(folder.join("selected-writer.required")).is_ok() {
-        return true;
-    }
-    let Ok(entries) = fs::read_dir(folder) else {
-        return true;
-    };
-    entries.into_iter().any(|entry| {
-        entry.map_or(true, |entry| {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            name.starts_with(".selected-writer-") && name.ends_with(".tmp")
-        })
-    })
+    org_office_launch::writer::marker::holds_custody(folder).unwrap_or(true)
 }
 
 /// Moves an office folder the host refuses (a refused create's, or one holding another office's

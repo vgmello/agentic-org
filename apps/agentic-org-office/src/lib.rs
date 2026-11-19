@@ -155,23 +155,11 @@ fn discard(mut control: Control, home: &Path, id: &str) -> i32 {
     }
 }
 
-/// Whether the host reserved writer custody in `folder`: `selected-writer.required`, or a
-/// `.selected-writer-*.tmp` staging file a host killed while installing it left. A folder
-/// that can't be listed counts too: it is kept.
+/// Whether the host reserved writer custody in `folder` (`org_office_launch::writer::marker`).
+/// A folder that can't be listed counts too: it is kept. A missing one holds nothing.
 fn holds_writer_custody(folder: &Path) -> bool {
-    if std::fs::symlink_metadata(folder.join("selected-writer.required")).is_ok() {
-        return true;
-    }
-    match std::fs::read_dir(folder) {
-        Ok(entries) => entries.into_iter().any(|entry| {
-            entry.map_or(true, |entry| {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                name.starts_with(".selected-writer-") && name.ends_with(".tmp")
-            })
-        }),
-        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-    }
+    org_office_launch::writer::marker::holds_custody(folder)
+        .unwrap_or_else(|error| error.kind() != std::io::ErrorKind::NotFound)
 }
 
 fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {

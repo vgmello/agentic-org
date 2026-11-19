@@ -11,7 +11,9 @@ use crate::{
     hostdb::HostDb,
     sync::lock,
 };
-use org_office_launch::writer::{self as wire, Admission, Head, Identity, Request, Response};
+use org_office_launch::writer::{
+    self as wire, marker, Admission, Head, Identity, Request, Response,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -234,10 +236,10 @@ fn existing_marker(path: &Path) -> io::Result<Option<fs::File>> {
 
 fn publish_marker(parent: &fs::File, temporary: &str) -> io::Result<()> {
     let from = std::ffi::CString::new(temporary).map_err(private)?;
-    let to = c"selected-writer.required";
+    let to = std::ffi::CString::new(marker::MARKER).map_err(private)?;
     // Fixed/generated single-component names under the retained parent;
     // exclusive rename never overwrites an existing final entry.
-    org_platform::fs::rename_noreplace_at(parent, &from, parent, to)
+    org_platform::fs::rename_noreplace_at(parent, &from, parent, &to)
 }
 
 fn empty_reservation_root(path: &Path) -> io::Result<()> {
@@ -341,7 +343,7 @@ impl Writers {
             .path
             .join("office-state/offices")
             .join(office)
-            .join("selected-writer.required"))
+            .join(marker::MARKER))
     }
     fn install_marker(&self, office: &str) -> io::Result<()> {
         let path = self.marker(office)?;
@@ -359,7 +361,7 @@ impl Writers {
         flush_marker(&file)
     }
     fn stage_marker(&self, path: &Path, parent: &fs::File) -> io::Result<()> {
-        let temporary = format!(".selected-writer-{}.tmp", crate::ids::generate()?);
+        let temporary = marker::staging_name(&crate::ids::generate()?);
         let temporary_path = path.parent().ok_or_else(refused)?.join(&temporary);
         let mut file = fs::OpenOptions::new()
             .write(true)

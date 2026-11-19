@@ -50,15 +50,6 @@ const TEMPORARY: &str = ".store-tmp-";
 /// What a creation folder may hold besides its lock.
 const CREATION_ENTRIES: [&str; 2] = [intent::FILE, office_file::FILE_NAME];
 
-/// The host's writer-custody marker. The host installs it in the office folder before it
-/// asks for a selected create, and the worker reads it there (`org-host` writer custody):
-/// a create finds it, and a folder that holds it is never discarded.
-const CUSTODY_MARKER: &str = "selected-writer.required";
-
-/// The prefix and suffix of the files the host stages its marker in; one may outlive a
-/// host that died while installing it.
-const CUSTODY_STAGING: (&str, &str) = (".selected-writer-", ".tmp");
-
 /// The request, checked as a whole: the binding's bootstrap names this office and
 /// organization, its creator is the owner, every ID is a UUIDv7 but the operation, which
 /// is the wire's ULID, and the custody is this office's.
@@ -320,15 +311,6 @@ fn refuse_another_office(folder: &std::path::Path) -> Result<(), OfficeError> {
     Ok(())
 }
 
-/// Whether `name` is the host's: its custody marker or a file it stages the marker in.
-fn is_custody(name: &str) -> bool {
-    let (prefix, suffix) = CUSTODY_STAGING;
-    name == CUSTODY_MARKER
-        || (name.len() > prefix.len() + suffix.len()
-            && name.starts_with(prefix)
-            && name.ends_with(suffix))
-}
-
 /// A new journal incarnation begins the organization's data only where nothing else has:
 /// no other incarnation of this office's journal, and no organization record. A second
 /// anchor beside another could never be removed (nothing under `durable/` is).
@@ -389,7 +371,7 @@ pub(super) fn discard(folder: PathBuf, office_id: &str) -> Result<(), OfficeErro
         let entry = entry.map_err(OfficeError::storage)?;
         let name = entry.file_name().to_string_lossy().into_owned();
         let kind = entry.file_type().map_err(OfficeError::storage)?;
-        if is_custody(&name) {
+        if org_office_launch::writer::marker::is_custody_entry(&name) {
             return Err(OfficeError::OfficeExists);
         }
         if name == LOCK_FILE {

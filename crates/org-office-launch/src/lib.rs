@@ -3,6 +3,8 @@
 //! The private contract between `org-host` (the login service) and `agentic-org-office` (one
 //! process per office). The app never uses it. `agent-os` uses only [`OfficeFile`], to read
 //! `office.json` (never by hand: the type checks the version, the ids, the names and `created_at`).
+//! `org-office` uses only [`writer::marker`], to recognise the host's custody marker in an
+//! office folder.
 //! The app and `agent-os` speak `org-proto` to the servers. See
 //! `docs/design/offices-hq-and-satellites.md` ("Processes on one Mac") and the host/server boundary
 //! design (`docs/design/office-host-boundary.md`).

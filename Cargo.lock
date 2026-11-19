@@ -706,6 +706,7 @@ name = "org-office"
 version = "0.0.0"
 dependencies = [
  "org-docs",
+ "org-office-launch",
  "org-platform",
  "org-proto",
  "org-store",
@@ -722,6 +723,7 @@ dependencies = [
  "org-proto",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
