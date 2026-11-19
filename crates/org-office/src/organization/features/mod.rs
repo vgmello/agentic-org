@@ -13,7 +13,7 @@ use org_store::{Ack, Actor, Id, Operation, Refusal, Sha256};
 use serde::Serialize;
 
 pub use create_organization::{CreateOrganization, Creator, OrganizationCreated};
-pub use create_team::{CreateTeam, TeamCreated, TeamRejected, TeamRejection};
+pub use create_team::{CreateTeam, TeamCreated, TeamRefusal, TeamRejected, TeamRejection};
 
 /// Every operation of the family. The one place their acknowledgement classes are
 /// declared (ADR-0014).
