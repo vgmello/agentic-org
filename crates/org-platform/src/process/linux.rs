@@ -134,7 +134,14 @@ const POSIX_SPAWN_SETSID: libc::c_short = libc::POSIX_SPAWN_SETSID as libc::c_sh
 pub(super) fn posix_spawn_setsid() -> io::Result<libc::c_short> {
     Ok(POSIX_SPAWN_SETSID)
 }
-pub(super) const SCAN_SOURCE: super::ScanSource = super::ScanSource::Procfs;
+/// `scan.rs` pins each observed process with a pidfd.
+pub(super) const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = true;
+/// `scan.rs` reads `/proc/<pid>/environ`.
+pub(super) const SCAN_ENVIRONMENT_IS_PROC_ENVIRON: bool = true;
+/// Linux ends a thread alone, the main thread too; the process lives on.
+pub(super) const AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER: bool = true;
+pub(super) const SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS: bool = false;
+pub(super) const SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS: bool = false;
 
 /// The targets of this process's descriptor links that are absolute paths.
 #[cfg(any(test, feature = "test-support"))]

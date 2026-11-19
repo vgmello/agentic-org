@@ -89,7 +89,12 @@ pub use crate::__org_platform_before_main_refused as run_before_main;
 /// No claim beyond POSIX.
 pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = false;
 pub(super) const SPAWNS_SUSPENDED: bool = false;
-pub(super) const SCAN_SOURCE: super::ScanSource = super::ScanSource::Unavailable;
+/// No scan exists.
+pub(super) const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = false;
+pub(super) const SCAN_ENVIRONMENT_IS_PROC_ENVIRON: bool = false;
+pub(super) const AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER: bool = false;
+pub(super) const SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS: bool = false;
+pub(super) const SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS: bool = false;
 
 pub(super) enum Watch {}
 

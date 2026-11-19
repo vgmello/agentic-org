@@ -90,6 +90,12 @@ pub const EAFNOSUPPORT: i32 = libc::EAFNOSUPPORT;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
+#[cfg(all(
+    test,
+    any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))
+))]
+mod adapter_tests;
+
 /// The effective UID of the process at the other end of a connected Unix socket, as
 /// the kernel recorded it. A failed or truncated query is an error; callers refuse
 /// the peer.

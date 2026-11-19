@@ -7,7 +7,11 @@ use std::path::Path;
 use std::sync::{mpsc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
-use org_platform::process::{ScanSource, SCAN_SOURCE};
+use org_platform::process::{
+    AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER, SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS,
+    SCAN_ENVIRONMENT_IS_PROC_ENVIRON, SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS,
+    SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS,
+};
 use org_supervise::recovery::{
     recover_record, CheckpointTarget, NativeRecovery, ProcessIdentity, RecoveryCheckpoint,
     RecoveryProcesses, RecoveryRecord, RecoveryRecords,
@@ -258,7 +262,7 @@ fn native_recovery_refuses_a_reused_non_child_identity_and_scans_detached_tools(
     assert!(owner.try_exit().unwrap().is_some());
 }
 
-/// Procfs scans pin each process with a descriptor (see [`ScanSource::Procfs`]).
+/// Where a scan holds a descriptor per process ([`SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS`]).
 fn capture_under_low_fd_limit(exhaust: bool) {
     struct Children(Vec<libc::pid_t>);
     impl Drop for Children {
@@ -335,7 +339,7 @@ fn capture_under_low_fd_limit(exhaust: bool) {
 
 #[test]
 fn native_recovery_fits_one_descriptor_per_process() {
-    if SCAN_SOURCE != ScanSource::Procfs {
+    if !SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS {
         return;
     }
     let _scans = exclusive_scans();
@@ -345,7 +349,7 @@ fn native_recovery_fits_one_descriptor_per_process() {
 
 #[test]
 fn native_recovery_explains_descriptor_exhaustion() {
-    if SCAN_SOURCE != ScanSource::Procfs {
+    if !SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS {
         return;
     }
     let _scans = exclusive_scans();
@@ -399,7 +403,7 @@ fn hold_partial_environment() -> ! {
 
 #[test]
 fn native_capture_quarantines_a_nul_terminated_partial_environment() {
-    if SCAN_SOURCE != ScanSource::Procfs {
+    if !SCAN_ENVIRONMENT_IS_PROC_ENVIRON {
         return;
     }
     let _scans = shared_scans();
@@ -511,7 +515,7 @@ extern "C" fn hold_worker(_: *mut libc::c_void) -> *mut libc::c_void {
 /// scan's source (procfs), recovery must not take it for gone.
 #[test]
 fn native_recovery_keeps_a_record_when_a_zombie_leader_has_live_workers() {
-    if SCAN_SOURCE != ScanSource::Procfs {
+    if !AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER {
         return;
     }
     let _scans = shared_scans();
@@ -725,7 +729,7 @@ fn native_fixture_mark(
 /// start (sysctl), a process that moved a mark from its arguments is believed.
 #[test]
 fn native_capture_documents_the_mutated_argv_trust_boundary() {
-    if SCAN_SOURCE != ScanSource::Sysctl {
+    if !SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS {
         return;
     }
     let _scans = shared_scans();
@@ -750,11 +754,12 @@ fn native_capture_documents_the_mutated_argv_trust_boundary() {
     assert_eq!(observed, MarkEvidence::Present(mark));
 }
 
-/// Where the system withholds a restricted process's environment (sysctl), the scan
-/// quarantines it.
+/// Where the scan's environment follows the counted arguments, an empty `argv[0]`
+/// makes it ambiguous, and where the system withholds a restricted process's
+/// environment, the scan quarantines it. Each part runs where its behaviour exists.
 #[test]
 fn native_capture_quarantines_empty_argv_zero_and_restricted_processes() {
-    if SCAN_SOURCE != ScanSource::Sysctl {
+    if !SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS && !SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS {
         return;
     }
     let _scans = shared_scans();
@@ -762,15 +767,20 @@ fn native_capture_quarantines_empty_argv_zero_and_restricted_processes() {
     let mark = std::ffi::CString::new(format!("ORG_SESSION_MARK={}", unique_mark())).unwrap();
     let conflicting =
         std::ffi::CString::new(format!("ORG_SESSION_MARK={}", unique_mark())).unwrap();
-    assert_eq!(
-        native_fixture_mark(
-            &std::env::current_exe().unwrap(),
-            &[c"", c"--exact", c"hold_fixture", c"--nocapture"],
-            &[c"ORG_TEST_CASE=hold", &mark],
-            true,
-        ),
-        MarkEvidence::Unreadable,
-    );
+    if SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS {
+        assert_eq!(
+            native_fixture_mark(
+                &std::env::current_exe().unwrap(),
+                &[c"", c"--exact", c"hold_fixture", c"--nocapture"],
+                &[c"ORG_TEST_CASE=hold", &mark],
+                true,
+            ),
+            MarkEvidence::Unreadable,
+        );
+    }
+    if !SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS {
+        return;
+    }
     // XNU's restricted-process redaction can reveal just the first conflicting
     // entry when argv[0] is empty. Both forms must be quarantined.
     for argv_zero in [c"", c"sleep"] {
@@ -859,7 +869,7 @@ fn hold_restricted_job(escape: bool) {
 
 #[test]
 fn native_recovery_checkpoints_restricted_nohup_job_before_stopping_its_leader() {
-    if SCAN_SOURCE != ScanSource::Sysctl {
+    if !SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS {
         return;
     }
     let _scans = shared_scans();
@@ -899,7 +909,7 @@ fn native_recovery_checkpoints_restricted_nohup_job_before_stopping_its_leader()
 
 #[test]
 fn native_recovery_warns_and_skips_unknown_restricted_setsid_escape() {
-    if SCAN_SOURCE != ScanSource::Sysctl {
+    if !SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS {
         return;
     }
     let _scans = shared_scans();

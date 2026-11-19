@@ -185,26 +185,41 @@ pub const EXITED_GROUP_SIGNAL_IS_DENIED: bool = native::EXITED_GROUP_SIGNAL_IS_D
 /// continues it (macOS), rather than running (GNU/Linux).
 pub const SPAWNS_SUSPENDED: bool = native::SPAWNS_SUSPENDED;
 
-/// Where a [`RecoveryScan`] reads the processes it observes, and so which of their
-/// edge cases it meets.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScanSource {
-    /// `/proc/<pid>` (GNU/Linux). Each observed process is pinned by a pidfd while the
-    /// scan holds it: one descriptor per process, within `RLIMIT_NOFILE`. The
-    /// environment is `/proc/<pid>/environ`, which a page the process made unreadable
-    /// cuts short. A process whose main thread ended while another thread runs is in
-    /// the zombie state there.
-    Procfs,
-    /// `sysctl` (macOS): `KERN_PROC` and `KERN_PROCARGS2`, whose environment is what
-    /// follows the arguments counted at start, and which the system withholds for a
-    /// restricted process.
-    Sysctl,
-    /// No adapter: no scan exists.
-    Unavailable,
-}
+// What a [`RecoveryScan`] meets, one fact per behaviour a consumer's tests depend on.
+// On today's systems the first three hold together on GNU/Linux and the last two on
+// macOS, because each follows from how that system lets one process read another; each
+// is still stated by itself, so that a test names the behaviour it needs and a later
+// adapter can differ in one without the others.
 
-/// Where a [`RecoveryScan`] reads processes on this system.
-pub const SCAN_SOURCE: ScanSource = native::SCAN_SOURCE;
+/// Whether a [`RecoveryScan`] holds one descriptor for each process it observes until
+/// the next snapshot (GNU/Linux: a pidfd pins each process), so a scan of many
+/// processes is bounded by `RLIMIT_NOFILE` and its error names that limit.
+pub const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = native::SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS;
+
+/// Whether the environment a [`RecoveryScan`] reads is `/proc/<pid>/environ`
+/// (GNU/Linux): the kernel copies it from the process's own memory, between the
+/// addresses fields 48 and 49 of `/proc/<pid>/stat` give, and stops at a page it cannot
+/// read, so a process can cut what the scan sees short.
+pub const SCAN_ENVIRONMENT_IS_PROC_ENVIRON: bool = native::SCAN_ENVIRONMENT_IS_PROC_ENVIRON;
+
+/// Whether a process whose main thread has ended while another thread runs is a zombie
+/// leader to a [`RecoveryScan`] (GNU/Linux: state `Z` in `/proc/<pid>/stat`, while the
+/// process lives on). The scan must not take such a leader for an ended process.
+pub const AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER: bool =
+    native::AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER;
+
+/// Whether the environment a [`RecoveryScan`] reads is what follows the arguments
+/// counted when the process started (macOS: `KERN_PROCARGS2`), so a process that
+/// rewrote its arguments can move text into what the scan takes for its environment,
+/// and an empty `argv[0]` makes the layout ambiguous.
+pub const SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS: bool =
+    native::SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS;
+
+/// Whether the system withholds a restricted process's environment from a
+/// [`RecoveryScan`] (macOS: `CS_RESTRICT`, as for its platform programs such as
+/// `/bin/sleep`), so the scan reports its mark unreadable.
+pub const SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS: bool =
+    native::SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS;
 
 fn check(rc: libc::c_int) -> io::Result<()> {
     if rc == 0 {

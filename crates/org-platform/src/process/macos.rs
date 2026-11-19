@@ -129,7 +129,14 @@ pub(super) const EXITED_GROUP_SIGNAL_IS_DENIED: bool = true;
 pub(super) const SPAWNS_SUSPENDED: bool = true;
 /// Darwin spawn.h defines `POSIX_SPAWN_SETSID` as 0x0400; libc doesn't export it.
 const POSIX_SPAWN_SETSID: libc::c_short = 0x0400;
-pub(super) const SCAN_SOURCE: super::ScanSource = super::ScanSource::Sysctl;
+/// `scan.rs` holds no descriptor for an observed process.
+pub(super) const SCAN_HOLDS_A_DESCRIPTOR_PER_PROCESS: bool = false;
+pub(super) const SCAN_ENVIRONMENT_IS_PROC_ENVIRON: bool = false;
+pub(super) const AN_ENDED_MAIN_THREAD_LEAVES_A_ZOMBIE_LEADER: bool = false;
+/// `scan.rs` reads `KERN_PROCARGS2` and skips the counted arguments.
+pub(super) const SCAN_ENVIRONMENT_FOLLOWS_COUNTED_ARGUMENTS: bool = true;
+/// `scan.rs` reports a `CS_RESTRICT` process's mark unreadable (`unrestricted`).
+pub(super) const SCAN_WITHHOLDS_RESTRICTED_ENVIRONMENTS: bool = true;
 
 /// The names `lsof` lists for this process's open files.
 #[cfg(any(test, feature = "test-support"))]
