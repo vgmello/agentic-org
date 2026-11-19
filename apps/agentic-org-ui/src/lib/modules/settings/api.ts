@@ -1,15 +1,7 @@
 import { unavailableCall } from '$lib/platform/unavailable-api';
-import type {
-	AccessOverview,
-	CostPeriod,
-	CostSummary,
-	GeneralSettings,
-	IssuedLink,
-	NewPriceRate,
-	PriceRate
-} from './types';
+import type { AccessOverview, GeneralSettings, IssuedLink } from './types';
 
-/** What the Organization settings screens (General, Members and access, Costs) read and change. */
+/** What the Organization settings screens (General, Members and access) read and change. */
 export interface SettingsApi {
 	general(organizationId: string): Promise<GeneralSettings>;
 	/** Makes `memberId`'s account the administrator, confirmed with the administrator's own password. */
@@ -27,11 +19,6 @@ export interface SettingsApi {
 		kind: IssuedLink['kind']
 	): Promise<IssuedLink>;
 	removeAccess(organizationId: string, memberId: string): Promise<AccessOverview>;
-
-	prices(organizationId: string): Promise<PriceRate[]>;
-	addPrice(organizationId: string, rate: NewPriceRate): Promise<PriceRate[]>;
-	/** The owner's organization cost summary; refuses anyone else with `not_authorized`. */
-	costSummary(organizationId: string, period: CostPeriod): Promise<CostSummary>;
 }
 
 // The web API does not serve these yet: every call refuses, and each screen says so.
@@ -41,8 +28,5 @@ export const settingsApi: SettingsApi = {
 	handOverAdministrator: unavailableCall,
 	access: unavailableCall,
 	issueLink: unavailableCall,
-	removeAccess: unavailableCall,
-	prices: unavailableCall,
-	addPrice: unavailableCall,
-	costSummary: unavailableCall
+	removeAccess: unavailableCall
 };

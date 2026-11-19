@@ -30,6 +30,10 @@
 			"why": "new spec; not yet run on WebKit (BUG-169b)"
 		},
 		{
+			"spec": "costs.spec.ts",
+			"why": "new spec; not yet run on WebKit (BUG-169b)"
+		},
+		{
 			"spec": "agents-roster.spec.ts",
 			"why": "not yet run on WebKit (BUG-169b)"
 		},
@@ -452,7 +456,8 @@
 				"member-profile.spec.ts",
 				"roles.spec.ts",
 				"access.spec.ts",
-				"agent-setup.spec.ts"
+				"agent-setup.spec.ts",
+				"costs.spec.ts"
 			],
 			"sources": [
 				"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
