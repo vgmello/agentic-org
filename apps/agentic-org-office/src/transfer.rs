@@ -20,6 +20,9 @@ use std::time::Duration;
 use tests::poll_readable;
 #[cfg(test)]
 use tests::Builder;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use writer::install as install_writer;
+pub(crate) use writer::Admitted;
 
 pub(super) struct Channel {
     recovery: bool,
@@ -96,36 +99,40 @@ fn receive(
         .receive_up_to(&mut payload, 1, &transport.fence)?;
     Ok((payload, received))
 }
+/// Receives the host's writer control, the first record after the handoff, and the
+/// admission on it; acknowledges the descriptor only once the admission is checked. A start
+/// or create without it within the deadline is refused: every office needs custody.
 pub(super) fn install_initial(
     transport: &mut startup::Transfer,
-    office: &org_office::Office,
+    office_id: &str,
     instance: &str,
     out: &startup::EventWriter,
-) -> io::Result<()> {
+) -> io::Result<writer::Admitted> {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         match receive(transport) {
             Ok((payload, mut received)) => {
                 let TransferRecord::WriterControl {
-                    office_id,
+                    office_id: named,
                     channel_id,
                 } = decode(&payload[..received.bytes], received.descriptors.len())?
                 else {
                     return Err(invalid());
                 };
-                if office_id != office.info().office_id {
+                if named != office_id {
                     return Err(invalid());
                 }
                 let stream = org_socket::rights::connected_unix_stream(
                     received.descriptors.pop().ok_or_else(invalid)?,
                 )?;
                 stream.set_nonblocking(false)?;
-                writer::install(stream, office, instance, &office_id)?;
-                return startup::write_event(
+                let admitted = writer::install(stream, instance, office_id)?;
+                startup::write_event(
                     out,
                     &org_office_launch::RendezvousEvent::FdsReceived { of: channel_id },
                 )
-                .map_err(|_| invalid());
+                .map_err(|_| invalid())?;
+                return Ok(admitted);
             }
             Err(ReceiveError::WouldBlock) if std::time::Instant::now() < deadline => {
                 poll_readable(

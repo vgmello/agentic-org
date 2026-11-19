@@ -177,7 +177,8 @@ pub struct Admission {
 
 impl Admission {
     /// The admission's own rules: this version, a valid identity, two separate plain
-    /// absolute roots (neither inside the other) and a valid owner member.
+    /// absolute roots (neither inside the other), an owner account in the host's form (a
+    /// ULID) and a valid owner member.
     pub fn check(&self) -> bool {
         let (durable, runtime) = (Path::new(&self.durable_root), Path::new(&self.runtime_root));
         self.version == VERSION
@@ -186,7 +187,7 @@ impl Admission {
             && plain_absolute(&self.runtime_root)
             && !durable.starts_with(runtime)
             && !runtime.starts_with(durable)
-            && !self.owner_account.is_empty()
+            && org_proto::ulid_time_ms(&self.owner_account).is_some()
             && org_proto::is_valid_member_id(&self.owner_member)
     }
 }

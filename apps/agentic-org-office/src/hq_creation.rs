@@ -4,7 +4,9 @@
 //! office secrets key (ADR-0016 decision 3, ENC-5).
 use org_office::{
     hq_creation::{Binding, LocalRecord},
-    Key, NewOffice, Office, OfficeError,
+    journal_office::{Custody, DataRoots, Office},
+    organization_family::operation_id::from_wire_ulid,
+    Key, NewOffice, OfficeError,
 };
 use org_proto::RecoveryCode;
 use std::path::Path;
@@ -37,27 +39,34 @@ fn unwrap_ca(
     Ok(ca)
 }
 
-/// Creates the HQ, or retries its creation. Without the office secrets key the CA key can be
-/// neither wrapped nor recovered from the retained record: recovery-required, nothing touched
-/// (ADR-0016 decision 3).
+/// Creates the HQ on its store, or retries its creation, under the host's writer custody
+/// and in the organization's data roots. Without the office secrets key the CA key can be
+/// neither wrapped nor recovered from the retained record: recovery-required, nothing
+/// touched (ADR-0016 decision 3). The CA records name the store operation the wire's ULID
+/// maps to (`from_wire_ulid`), never the ULID itself.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare(
     folder: &Path,
     new: &NewOffice,
     key: Option<Key>,
-    instance: &str,
     binding: &Binding,
+    roots: DataRoots,
+    custody: Custody,
     recovery: RecoveryCode,
 ) -> Result<Office, OfficeError> {
     let Some(key) = key else {
         return Err(invalid());
     };
+    let operation = from_wire_ulid(&binding.operation_id)
+        .map_err(|_| invalid())?
+        .to_string();
     let code = org_pki::Code::parse(recovery.expose()).map_err(|_| invalid())?;
     // The original wrapper and parsed KDF bytes both drop before serving.
     drop(recovery);
     let secrets = key.clone();
-    Office::provision_hq_for_instance(folder, new, key, instance, binding, move |prior| {
+    Office::provision_hq(folder, new, key, binding, roots, custody, move |prior| {
         if let Some(prior) = prior {
-            if prior.organization_id != new.org_id || prior.operation_id != binding.operation_id {
+            if prior.organization_id != new.org_id || prior.operation_id != operation {
                 return Err(invalid());
             }
             let recovered =
@@ -78,7 +87,7 @@ pub(crate) fn prepare(
         .map_err(|_| invalid())?;
         LocalRecord::new(
             new.org_id.clone(),
-            binding.operation_id.clone(),
+            operation,
             ca.public_key(),
             package,
             wrapped,
@@ -129,4 +138,4 @@ pub(crate) fn verify_existing(office: &Office) -> Result<CaStatus, OfficeError> 
     Ok(CaStatus::Available)
 }
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -10,7 +10,7 @@ use std::{
 
 pub(super) fn serve(
     mut stream: UnixStream,
-    office: &org_office::Office,
+    office: &org_office::journal_office::Office,
     instance: &str,
     office_id: &str,
 ) -> io::Result<()> {
@@ -21,7 +21,7 @@ pub(super) fn serve(
         || request.office_id != office_id
         || office.info().office_id != office_id
         || request.organization_id != office.info().org_id
-        || !office.is_replication_hq().map_err(|_| wire::invalid())?
+        || !office.is_hq().map_err(|_| wire::invalid())?
     {
         return Err(wire::invalid());
     }

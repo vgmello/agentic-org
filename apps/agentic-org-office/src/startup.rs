@@ -28,7 +28,6 @@ pub(super) enum Request {
 }
 
 pub(super) struct Control {
-    pub selected_writer_required: bool,
     pipe: ControlPipe,
     rendezvous: Option<EventWriter>,
     receiver: Option<StreamReceiver>,
@@ -58,7 +57,6 @@ pub(super) enum HandshakeWrite {
 impl Control {
     pub fn new(pipe: ControlPipe, fence: Arc<Mutex<()>>) -> Self {
         Self {
-            selected_writer_required: false,
             pipe,
             rendezvous: None,
             receiver: None,
@@ -95,7 +93,6 @@ impl Control {
                 let office = line
                     .office()
                     .ok_or(LaunchError::Invalid("unknown launch op"))?;
-                self.selected_writer_required = office.selected_writer_required;
                 if id.is_some_and(|id| office.office_id != id) {
                     return Err(LaunchError::Invalid("office id differs from flag"));
                 }
