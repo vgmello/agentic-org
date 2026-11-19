@@ -935,7 +935,12 @@ instance, on any address. The pair is the host's (`crates/org-host/src/web_tls/`
 Known limits: the self-made certificate is trusted by no browser until the operator
 accepts it (compare the fingerprint first); there is no command for `tls.set` yet, so a
 supplied pair is replaced only by a client of `host.sock`; a supplied pair that expires
-stops the browser service until it is replaced.
+stops the browser service until it is replaced; a supplied pair already expired at the
+instance's first start refuses that start (setup verified it moments before), while one
+that expires later only stops the browser; a supplied pair nearing its end is warned
+about at a start, not while the host runs; and a clock set back more than five minutes
+before a self-made certificate's start keeps the browser down until the next six-hourly
+renewal look.
 
 **The container file** (`deploy/container/Dockerfile`, `deploy/container/README.md`):
 

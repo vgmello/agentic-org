@@ -872,3 +872,22 @@ fn a_chain_the_registry_cannot_keep_is_refused() {
         Some(TlsRefusal::TlsInvalid)
     );
 }
+
+/// A key lost while the host runs: `tls.fetch` cannot serve it, and the gate, which had
+/// verified the pair, verifies it whole again and keeps the web process waiting.
+#[test]
+fn a_key_lost_while_running_closes_the_gate_after_a_failed_fetch() {
+    let f = fixture();
+    let here = origin("https://org.example:8443");
+    let now = wall();
+    let tls = f.start(&here, None, now).unwrap();
+    tls.servable(now).unwrap();
+    lose_keys(&f);
+    assert!(
+        tls.servable(now).is_ok(),
+        "the verified pair is not read again"
+    );
+    assert!(matches!(tls.fetch(), Err(store::Unservable::Storage)));
+    assert!(matches!(tls.servable(now), Err(store::Unservable::Storage)));
+    assert_eq!(tls.status(now), org_proto::gateway::TlsStatus::Missing);
+}

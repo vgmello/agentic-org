@@ -56,32 +56,11 @@ pub(crate) const VALIDITY_DAYS: i64 = 397;
 pub(crate) const RENEW_WITHIN_DAYS: i64 = 30;
 const DAY_SECS: i64 = 86_400;
 
-/// Who made the stored pair: the instance itself, or the operator (setup's configuration, or
-/// `tls.set`). It decides what a lost key means: one made here is made again, a supplied one
-/// refuses the start.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Source {
-    Made,
-    Supplied,
-}
+/// Who made the stored pair (the registry's record of it, `hostdb::web_tls`). It decides
+/// what a lost key means: one made here is made again, a supplied one refuses the start.
+pub(crate) use crate::hostdb::web_tls::Source;
 
 impl Source {
-    /// The registry's spelling.
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Source::Made => "made",
-            Source::Supplied => "supplied",
-        }
-    }
-
-    pub(crate) fn parse(text: &str) -> Option<Self> {
-        match text {
-            "made" => Some(Source::Made),
-            "supplied" => Some(Source::Supplied),
-            _ => None,
-        }
-    }
-
     /// How the host log and setup name it.
     fn described(self) -> &'static str {
         match self {

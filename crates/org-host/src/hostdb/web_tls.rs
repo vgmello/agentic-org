@@ -17,7 +17,32 @@ use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 use super::clock::{advance_clock, now};
 use super::journal::{id_time, immediate, maintain, stored_row, Attempt, DAY};
 use super::{Error, HostDb};
-use crate::web_tls::Source;
+
+/// Who made the stored pair: the instance itself, or the operator (setup's configuration, or
+/// `tls.set`). The registry's `source` column.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Source {
+    Made,
+    Supplied,
+}
+
+impl Source {
+    /// The registry's spelling.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Source::Made => "made",
+            Source::Supplied => "supplied",
+        }
+    }
+
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        match text {
+            "made" => Some(Source::Made),
+            "supplied" => Some(Source::Supplied),
+            _ => None,
+        }
+    }
+}
 
 pub(super) const TABLE_DDL: &str = r#"
 CREATE TABLE web_tls_pair (

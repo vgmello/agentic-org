@@ -190,10 +190,11 @@ impl WebTls {
                 // (`tls.set`); the browser is not served until a pair that verifies is
                 // stored (the web start's gate). Its key stays.
                 log(&format!(
-                    "the supplied TLS pair for {} cannot be served: {}; a supplied pair is \
-                     never replaced by the instance: the browser is not served until the \
-                     administrator replaces it (tls.set)",
+                    "the supplied TLS pair for {} (SHA-256 fingerprint {}) cannot be served: \
+                     {}; a supplied pair is never replaced by the instance: the browser is not \
+                     served until the administrator replaces it (tls.set)",
                     tls.origin,
+                    leaf_fingerprint(&stored.cert_pem),
                     refusal_text(&why)
                 ));
                 tls.sweep(&stored.pair_fp);
@@ -309,6 +310,12 @@ impl WebTls {
     /// verified whole.
     pub(crate) fn servable(&self, now: i64) -> Result<(), Unservable> {
         let _writing = crate::sync::lock(&self.writing);
+        self.judged(now).map(drop)
+    }
+
+    /// [`WebTls::servable`]'s judgement, the stored pair's validity bounds when it can be
+    /// served. The caller holds `writing`.
+    fn judged(&self, now: i64) -> Result<(i64, i64), Unservable> {
         let stored = self
             .db
             .web_tls_pair()
@@ -318,7 +325,7 @@ impl WebTls {
         if let Some((pair, not_before, not_after)) = *verified {
             if pair == stored.pair_fp {
                 return if (not_before..=not_after).contains(&now) {
-                    Ok(())
+                    Ok((not_before, not_after))
                 } else {
                     Err(Unservable::NotValid)
                 };
@@ -326,26 +333,33 @@ impl WebTls {
         }
         let (checked, _) = self.current(Some(now))?;
         *verified = Some((checked.pair(), checked.not_before, checked.not_after));
-        Ok(())
+        Ok((checked.not_before, checked.not_after))
     }
 
     /// `tls.fetch`'s pair: the chain and the key. Read while no pair is being installed, so
     /// the row and its key are one pair.
     pub(crate) fn fetch(&self) -> Result<(String, TlsPrivateKey), Unservable> {
         let _writing = crate::sync::lock(&self.writing);
-        let (mut checked, _) = self.current(None)?;
+        let (mut checked, _) = self.current(None).inspect_err(|_| {
+            // A pair that cannot be read (its key lost while the host ran) is verified whole
+            // again by the gate, which then keeps the web process waiting.
+            *crate::sync::lock(&self.verified) = None;
+        })?;
         let key = TlsPrivateKey::new(std::mem::take(&mut *checked.key))
             .map_err(|_| Unservable::Storage)?;
         Ok((std::mem::take(&mut checked.chain), key))
     }
 
     /// What `instance.view` says of the pair at `now`: served, expiring within 30 days, or
-    /// missing (unservable, an expired pair included).
+    /// missing (unservable, an expired pair included). Judged as the gate judges it, so a
+    /// pair already verified is not read again.
     pub(crate) fn status(&self, now: i64) -> org_proto::gateway::TlsStatus {
         use org_proto::gateway::TlsStatus;
         let _writing = crate::sync::lock(&self.writing);
-        match self.current(Some(now)) {
-            Ok((checked, _)) if checked.expiring(now) => TlsStatus::Expiring,
+        match self.judged(now) {
+            Ok((_, not_after)) if not_after - now < super::RENEW_WITHIN_DAYS * super::DAY_SECS => {
+                TlsStatus::Expiring
+            }
             Ok(_) => TlsStatus::Ok,
             Err(_) => TlsStatus::Missing,
         }
@@ -383,6 +397,9 @@ impl WebTls {
         if let TlsLookup::Replay(stored) = self.db.tls_set_lookup(&op, wall).map_err(journal)? {
             return Ok((replayed(stored)?, false));
         }
+        // Coverage of "every https origin among the stored one and the running one": they
+        // are this one origin, since the registered start serves only the listener setup
+        // recorded, and setup never changes it once the instance is reserved.
         let checked = match check(
             &params.cert,
             params.key.expose(),
@@ -470,6 +487,14 @@ impl WebTls {
         ));
         Ok(true)
     }
+}
+
+/// The fingerprint of `chain`'s leaf, read without its key, or `unreadable`.
+fn leaf_fingerprint(chain: &str) -> String {
+    use sha2::Digest;
+    org_host_control::pem::first_block(chain, org_host_control::pem::CERTIFICATE)
+        .map(|der| super::Fingerprint(sha2::Sha256::digest(der.bytes()).into()).to_string())
+        .unwrap_or_else(|_| "unreadable".into())
 }
 
 /// A stored `tls.set` result as its answer.
