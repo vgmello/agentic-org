@@ -1,5 +1,6 @@
 //! X-02 rev15 §5.1/5.2/5.4: a fake host drives the real worker independently of 2b.4.
 use super::*;
+use agentic_org_office::test_support::FakeWriter;
 use org_office_launch::{CreateLine, Handoff, HandoffFd, HostFirstLine, OfficeLine};
 use org_proto::{GrantKey, RecoveryCode};
 use serde_json::{json, Value};
@@ -8,41 +9,78 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixDatagram, UnixListener};
 
 pub(super) const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
-const OWNER: &str = "01900000-0000-7000-8000-0000000000ee";
+/// The creation's launch operation, a ULID as the host makes it.
+const OPERATION: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+
+/// The organization the host prepared: this file's office, organization and owner.
+fn plan() -> org_proto::selected_bootstrap::PreparedV1 {
+    org_proto::selected_bootstrap::PreparedV1 {
+        plan: org_proto::selected_bootstrap::PlanV1 {
+            version: 1,
+            name: "Acme".into(),
+            slug: "acme".into(),
+            repository_remote_url: "https://example.test/org.git".into(),
+            state_branch: "org/state".into(),
+        },
+        organization_id: ORG.into(),
+        office_id: OFFICE.into(),
+        repository_id: "019a8928-1337-7456-8456-0123456789ad".into(),
+        home_team_id: TOP_TEAM.into(),
+        hr_employee_id: "019a8928-1337-7456-8456-0123456789af".into(),
+        creator: org_proto::selected_bootstrap::CreatorV1::from_login(OWNER.into(), "Ana"),
+    }
+}
+
+fn office_line(path: &Path) -> OfficeLine {
+    OfficeLine {
+        id_profile: Some(org_office_launch::IdProfile::SelectedV1),
+        instance_id: INSTANCE.into(),
+        office_id: OFFICE.into(),
+        rendezvous: path.to_str().unwrap().into(),
+    }
+}
 
 fn create_line(path: &Path) -> HostFirstLine {
     HostFirstLine::Create(CreateLine {
-        office: OfficeLine {
-            id_profile: None,
-            selected_writer_required: false,
-            instance_id: INSTANCE.into(),
-            office_id: OFFICE.into(),
-            rendezvous: path.to_str().unwrap().into(),
-        },
+        office: office_line(path),
         org_id: ORG.into(),
         org_name: "Acme".into(),
         office_name: "HQ".into(),
         role: OfficeRole::Hq,
         owner_member_id: OWNER.into(),
-        hq_creation: Some(hq_creation(path)),
+        hq_creation: Some(org_office_launch::HqCreationV1 {
+            version: org_office_launch::HqCreationV1::VERSION,
+            operation_id: OPERATION.into(),
+            escrow_profile: 1,
+            bootstrap: Some(Box::new(plan())),
+        }),
     })
 }
 
-/// HQ creation-v1 without a selected bootstrap: the only create the worker accepts.
-fn hq_creation(rendezvous: &Path) -> org_office_launch::HqCreationV1 {
-    let public = rendezvous.parent().unwrap().join("state");
-    std::fs::create_dir_all(&public).unwrap();
-    org_office_launch::HqCreationV1 {
-        version: 1,
-        operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
-        escrow_profile: 1,
-        public_root: std::fs::canonicalize(public)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .into(),
-        bootstrap: None,
-    }
+/// The channel ID the fake host gives the writer control.
+const WRITER_CHANNEL: &str = "initial-writer";
+
+/// Sends the host's writer control on `transfer`, as the host does right after the handoff:
+/// the worker's end of a new custody channel that `writer` serves. Returns that end, which
+/// the host keeps until the worker answers.
+fn send_writer(writer: &FakeWriter, transfer: &UnixDatagram) -> UnixStream {
+    use std::os::fd::AsFd;
+    let (worker, _thread) = writer.channel();
+    let record = org_office_launch::encode_transfer_record(
+        &org_office_launch::TransferRecord::WriterControl {
+            office_id: OFFICE.into(),
+            channel_id: WRITER_CHANNEL.into(),
+        },
+    )
+    .unwrap();
+    // A worker that already refused its launch is gone: what it says is the case's to check.
+    let _ = org_socket::rights::send(
+        transfer.as_fd(),
+        &record,
+        &[worker.as_fd()],
+        std::time::Instant::now() + WAIT,
+    );
+    worker
 }
 
 /// A recovery code in the form the host makes.
@@ -155,6 +193,13 @@ fn launch_receives_keys_and_acknowledges_handoff_before_ready() {
         json!({"v":1,"event":"fds_received","of":"handoff"})
     );
     drop(transfer);
+    // The writer control comes next, before anything is created.
+    let writer = send_writer(&world.writer, &host_end);
+    assert_eq!(
+        line(&mut reader),
+        json!({"v":1,"event":"fds_received","of":WRITER_CHANNEL})
+    );
+    drop(writer);
     let created = line(&mut reader);
     assert_eq!(created["event"], "created");
     assert_eq!(created["office"]["office_id"], OFFICE);
@@ -201,11 +246,18 @@ pub(super) struct Session {
     // (as the host's pending registry does). Closing it while in flight lets the macOS
     // unix-socket GC flush the in-flight socket.
     in_flight: std::cell::RefCell<Option<UnixStream>>,
+    /// The host's copy of the writer control's descriptor, until the worker acknowledges it.
+    writer: std::cell::RefCell<Option<UnixStream>>,
 }
 impl Session {
     /// The next launch event on the rendezvous.
+    /// The writer control's receipt is taken here: it is the host's bookkeeping.
     pub(super) fn event(&mut self) -> Value {
-        let event = line(&mut self.reader);
+        let mut event = line(&mut self.reader);
+        if event == json!({"v":1,"event":"fds_received","of":WRITER_CHANNEL}) {
+            self.writer.get_mut().take();
+            event = line(&mut self.reader);
+        }
         self.in_flight.get_mut().take();
         event
     }
@@ -219,7 +271,7 @@ impl Session {
             "authority event on stdout"
         );
     }
-    fn stop(mut self) {
+    pub(super) fn stop(mut self) {
         assert!(self.host_goes_away().success());
         self.no_stdout();
     }
@@ -232,13 +284,7 @@ impl Session {
 
 /// The launch first line for `op`, naming `rendezvous`, with this file's instance and office.
 pub(super) fn first_line(op: FirstLine, rendezvous: &Path) -> HostFirstLine {
-    let office = OfficeLine {
-        id_profile: None,
-        selected_writer_required: false,
-        instance_id: INSTANCE.into(),
-        office_id: OFFICE.into(),
-        rendezvous: rendezvous.to_str().unwrap().into(),
-    };
+    let office = office_line(rendezvous);
     match op {
         FirstLine::Create => create_line(rendezvous),
         FirstLine::Start => HostFirstLine::Start(office),
@@ -255,14 +301,27 @@ pub(super) fn handshake(
     handshake_with(world, op, instance, key, |_| {})
 }
 
-/// `handshake`, with the create line changed first. The rendezvous sits beside the home, so a
-/// home whose own paths are too long can still be reached.
+/// `handshake`, with the create line changed first.
 fn handshake_with(
     world: &World,
     op: FirstLine,
     instance: &str,
     key: Option<OfficeSecretsKey>,
     edit: impl FnOnce(&mut CreateLine),
+) -> Session {
+    handshake_as(world, op, instance, key, edit, Some(&world.writer))
+}
+
+/// The host's side of a launch: the first line, the handoff and, for a create or a start,
+/// the writer control from `writer` (none: the host sends none). The rendezvous sits beside
+/// the home, so a home whose own paths are too long can still be reached.
+fn handshake_as(
+    world: &World,
+    op: FirstLine,
+    instance: &str,
+    key: Option<OfficeSecretsKey>,
+    edit: impl FnOnce(&mut CreateLine),
+    writer: Option<&FakeWriter>,
 ) -> Session {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let path = world.home.parent().unwrap().join(format!(
@@ -327,15 +386,20 @@ fn handshake_with(
     } else {
         None
     };
+    let writer = match (&transfer_host, writer) {
+        (Some(transfer), Some(writer)) => Some(send_writer(writer, transfer)),
+        _ => None,
+    };
     Session {
         run,
         stream,
         reader,
         transfer: transfer_host,
         in_flight: Default::default(),
+        writer: std::cell::RefCell::new(writer),
     }
 }
-fn ready_create(world: &World) -> Session {
+pub(super) fn ready_create(world: &World) -> Session {
     let mut session = handshake(
         world,
         FirstLine::Create,
@@ -346,23 +410,24 @@ fn ready_create(world: &World) -> Session {
     assert_eq!(session.event()["event"], "ready");
     session
 }
+/// The office reopens in process for its own instance and custody only.
 fn assert_reopens(world: &World) {
+    let (custody, roots) = world.writer.admitted();
     assert!(matches!(
-        org_office::Office::open_for_instance(
+        org_office::journal_office::Office::open(
             world.folder(OFFICE),
-            org_office::Key::from_office_secrets_key(office_secrets_key()),
-            "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184"
+            Some(org_office::Key::from_office_secrets_key(
+                office_secrets_key()
+            )),
+            "0190a5d2-7c3e-7a01-8b2c-3d4e5f607184",
+            roots,
+            custody,
         ),
         Err(org_office::OfficeError::Invalid(_))
     ));
-    let office = org_office::Office::open_for_instance(
-        world.folder(OFFICE),
-        org_office::Key::from_office_secrets_key(office_secrets_key()),
-        INSTANCE,
-    )
-    .unwrap();
+    let office = world.office();
     assert!(office.org_snapshot().is_ok());
-    drop(office);
+    office.close().unwrap();
 }
 
 /// A create the worker refuses: the reason, a failed exit and no stdout.
@@ -408,14 +473,14 @@ fn hq_creation_of_an_existing_office_by_another_operation_is_refused_and_changes
     let _process = process_isolation();
     let world = World::new();
     ready_create(&world).stop();
-    let before = database_bytes(&world.home);
-    // The same operation id resumes its own creation (ADR-0011). Another operation does not
-    // match the retained creation record, so it is refused as stored state, not a new office.
+    let before = stored_bytes(&world);
+    // The same operation id resumes its own creation (ADR-0011). Another operation is another
+    // request than the frozen intent, so it is refused, not a new office.
     let code = refused_create(&world, |create| {
-        create.hq_creation.as_mut().unwrap().operation_id = "01ARZ3NDEKTSV4RRFFQ69G5FAY".into();
+        create.hq_creation.as_mut().unwrap().operation_id = "01ARZ3NDEKTSV4RRFFQ79G5FAY".into();
     });
-    assert_eq!(code, "storage_error");
-    assert_eq!(database_bytes(&world.home), before);
+    assert_eq!(code, "already_exists");
+    assert_eq!(stored_bytes(&world), before);
     assert!(world.folder(OFFICE).join("office.json").exists());
 }
 
@@ -423,16 +488,13 @@ fn hq_creation_of_an_existing_office_by_another_operation_is_refused_and_changes
 fn hq_creation_with_a_bad_or_untrimmed_name_is_invalid_name_and_leaves_nothing() {
     let _process = process_isolation();
     let world = World::new();
-    for (org_name, office_name) in [
-        ("zero\u{200B}width", "HQ"),
-        (" Acme", "HQ"),
-        ("Acme", "HQ "),
-    ] {
+    // The organization's name is the prepared plan's, which the launch contract checks before
+    // the line is written; the office's name is the line's alone.
+    for office_name in ["zero\u{200B}width", " HQ", "HQ "] {
         let code = refused_create(&world, |create| {
-            create.org_name = org_name.into();
             create.office_name = office_name.into();
         });
-        assert_eq!(code, "invalid_name", "{org_name:?} / {office_name:?}");
+        assert_eq!(code, "invalid_name", "{office_name:?}");
         assert!(!world.folder(OFFICE).join("office.json").exists());
     }
 }
@@ -444,7 +506,7 @@ fn hq_creation_whose_socket_path_cannot_exist_fails_before_anything_is_stored() 
     let home = dir.path().join("x".repeat(90));
     std::fs::create_dir_all(home.join("offices")).unwrap();
     std::fs::create_dir_all(home.join("run")).unwrap();
-    let world = World { _dir: dir, home };
+    let world = World::in_dir(dir, home);
     assert_eq!(refused_create(&world, |_| {}), "invalid_request");
     assert!(
         !office_dir(&world.home, OFFICE).unwrap().exists(),
@@ -461,39 +523,22 @@ fn rendezvous_eof_closes_all_databases_and_persists_the_create_instance() {
     assert!(session.run.stdin.is_some());
     session.stop();
     assert!(!socket(&world).exists());
+    // The worker closed its office in order: the store's clean-stop marker is there.
+    assert!(
+        world.office().stopped_cleanly(),
+        "the worker did not close its office"
+    );
     assert_reopens(&world);
 }
 
 #[test]
 fn stdin_is_unparsed_while_launch_allows_agent_binds_and_refuses_app_person_binds() {
     let _process = process_isolation();
-    use org_proto::org::MemberAddAgent;
     let world = World::new();
-    // Seed through the library, then start it as the host does and hire through the owner's grant.
-    seed(&world);
-    let owner_id = {
-        let office = org_office::Office::open(
-            world.folder(OFFICE),
-            org_office::Key::from_office_secrets_key(office_secrets_key()),
-        )
-        .unwrap();
-        let owner = office
-            .org_snapshot()
-            .unwrap()
-            .members
-            .into_iter()
-            .find(|m| m.owner)
-            .unwrap()
-            .id;
-        drop(office);
-        owner
-    };
-    let member_id = "AGENT00000000000000000000A";
-    let mut live = owner::live(&world);
-    live.caller(Some(&owner_id))
-        .call::<MemberAddAgent>(&owner::hire(6, member_id, "Ada", "ada"))
-        .unwrap();
-    let mut session = live.session;
+    // The creation's HR lead is an agent with no profile and no office yet (agents are hired
+    // through HR from B2 on): no agent of this office can bind until then.
+    let hr = plan().hr_employee_id;
+    let mut session = started(&world);
     let mut stdin = session.run.stdin.take().unwrap();
     let (sent, complete) = std::sync::mpsc::channel();
     let writer = std::thread::spawn(move || {
@@ -523,11 +568,15 @@ fn stdin_is_unparsed_while_launch_allows_agent_binds_and_refuses_app_person_bind
             ErrorCode::InvalidRequest,
         ),
         (
-            serde_json::json!({"member": "ada", "app_token": null}),
+            serde_json::json!({"member": hr, "app_token": null}),
             ErrorCode::InvalidRequest,
         ),
         (
             serde_json::json!({"member": "owner"}),
+            ErrorCode::NotAuthorized,
+        ),
+        (
+            serde_json::json!({ "member": hr }),
             ErrorCode::NotAuthorized,
         ),
     ] {
@@ -536,13 +585,7 @@ fn stdin_is_unparsed_while_launch_allows_agent_binds_and_refuses_app_person_bind
             "{params}"
         );
     }
-    let bound = client
-        .call::<MsgBind>(&MsgBindParams::member("ada"))
-        .unwrap();
-    assert_eq!(bound.member_id.as_deref(), Some(member_id));
-    client
-        .call::<org_proto::OrgSnapshotCall>(&org_proto::Empty {})
-        .unwrap();
+    // The connection survives its refusals.
     assert_eq!(client.hello().unwrap().api_version, 1);
     // This distinguishes a rendezvous watcher from a pipe-EOF watcher without a sleep:
     // the undefined control byte must produce exit1; a pipe-authoritative worker exits0.
@@ -551,38 +594,37 @@ fn stdin_is_unparsed_while_launch_allows_agent_binds_and_refuses_app_person_bind
     session.no_stdout();
 }
 
-fn database_bytes(dir: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
-    let mut result = std::collections::BTreeMap::new();
-    for item in std::fs::read_dir(dir).unwrap() {
-        let path = item.unwrap().path();
-        if path.is_dir() {
-            result.extend(database_bytes(&path));
-        } else if path.extension().is_some_and(|ext| ext == "db") {
-            result.insert(path.clone(), std::fs::read(path).unwrap());
+/// Every file the office keeps: its folder and the organization's data roots.
+fn stored_bytes(world: &World) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    fn walk(dir: &Path, found: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>) {
+        for item in std::fs::read_dir(dir).unwrap() {
+            let path = item.unwrap().path();
+            if path.is_dir() {
+                walk(&path, found);
+            } else {
+                found.insert(path.clone(), std::fs::read(path).unwrap());
+            }
         }
     }
-    result
+    let mut found = std::collections::BTreeMap::new();
+    walk(&world.home.join("offices"), &mut found);
+    walk(&world.data, &mut found);
+    found
 }
+
+/// A start for another instance is refused before the office is opened, and writes
+/// nothing; a wrong secrets key still serves the office (it only wraps private keys).
 #[test]
-fn start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes() {
+fn start_matches_its_instance_and_refuses_another_without_writes() {
     let _process = process_isolation();
     let world = World::new();
-    let mut legacy = started(&world);
-    assert!(legacy.host_goes_away().success());
     for _ in 0..2 {
-        let mut session = handshake(
-            &world,
-            FirstLine::Start,
-            INSTANCE,
-            Some(office_secrets_key()),
-        );
-        assert_eq!(session.event()["event"], "ready");
+        let mut session = started(&world);
         assert_eq!(hello(&world).office.id, OFFICE);
-        session.stop();
+        assert!(session.host_goes_away().success());
     }
     assert_reopens(&world);
-    let before = database_bytes(&world.home);
-    assert!(!before.is_empty());
+    let before = stored_bytes(&world);
     let mut wrong = handshake(
         &world,
         FirstLine::Start,
@@ -594,15 +636,14 @@ fn start_adopts_legacy_then_matches_and_refuses_other_instance_without_writes() 
     assert_eq!(failed["code"], "storage_error");
     assert!(!wrong.run.wait().success());
     wrong.no_stdout();
-    assert_eq!(database_bytes(&world.home), before);
+    assert_eq!(stored_bytes(&world), before);
     let mut wrong_key = handshake(
         &world,
         FirstLine::Start,
         INSTANCE,
         Some(OfficeSecretsKey::from_bytes([0; 32])),
     );
-    // ADR-0016 decision 3: the key only wraps private keys. The plain databases open
-    // without it, so a wrong key still serves the office's data.
+    // ADR-0016 decision 3: the key only wraps private keys.
     assert_eq!(wrong_key.event()["event"], "ready");
     assert_eq!(hello(&world).office.id, OFFICE);
     wrong_key.stop();
@@ -646,11 +687,8 @@ fn cli_office_mismatch_refuses_before_connect_for_start_and_discard() {
             OFFICE,
         ]);
         let office = OfficeLine {
-            id_profile: None,
-            selected_writer_required: false,
-            instance_id: INSTANCE.into(),
-            office_id: "OTHEROFFICE".into(),
-            rendezvous: path.to_str().unwrap().into(),
+            office_id: "019a8928-1337-7456-8456-0123456789ff".into(),
+            ..office_line(&path)
         };
         org_office_launch::write_first_line(
             run.stdin.as_mut().unwrap(),
@@ -814,517 +852,125 @@ mod transfer;
 #[path = "activation/owner.rs"]
 mod owner;
 
-fn selected_plan() -> org_proto::selected_bootstrap::PreparedV1 {
-    let id = |n| format!("01900000-0000-7000-8000-{n:012x}");
-    org_proto::selected_bootstrap::PreparedV1 {
-        plan: org_proto::selected_bootstrap::PlanV1 {
-            version: 1,
-            name: "Acme".into(),
-            slug: "acme".into(),
-            repository_remote_url: "https://example.test/org.git".into(),
-            state_branch: "org/state".into(),
-        },
-        organization_id: id(1),
-        office_id: id(2),
-        repository_id: id(3),
-        home_team_id: id(4),
-        hr_employee_id: id(5),
-        creator: org_proto::selected_bootstrap::CreatorV1::from_login(OWNER.into(), "Ana"),
-    }
-}
-fn selected_handshake(world: &World, start: bool) -> Session {
-    let prepared = selected_plan();
-    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let path = world.home.join(format!(
-        "selected-{}",
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-    ));
-    let listener = UnixListener::bind(&path).unwrap();
-    let office = OfficeLine {
-        id_profile: Some(org_office_launch::IdProfile::SelectedV1),
-        selected_writer_required: true,
-        instance_id: INSTANCE.into(),
-        office_id: prepared.office_id.clone(),
-        rendezvous: path.to_str().unwrap().into(),
-    };
-    let first = if start {
-        HostFirstLine::Start(office)
-    } else {
-        let public = world.home.join("state");
-        std::fs::create_dir_all(&public).unwrap();
-        HostFirstLine::Create(CreateLine {
-            office,
-            org_id: prepared.organization_id.clone(),
-            org_name: prepared.plan.name.clone(),
-            office_name: "HQ".into(),
-            role: OfficeRole::Hq,
-            owner_member_id: OWNER.into(),
-            hq_creation: Some(org_office_launch::HqCreationV1 {
-                version: 1,
-                operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAX".into(),
-                escrow_profile: 1,
-                public_root: std::fs::canonicalize(public)
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    .into(),
-                bootstrap: Some(Box::new(prepared.clone())),
-            }),
-        })
-    };
-    let mut run = world.spawn(&if start {
-        vec!["--office", &prepared.office_id]
-    } else {
-        vec!["--create"]
-    });
-    org_office_launch::write_first_line(run.stdin.as_mut().unwrap(), &first).unwrap();
-    let mut stream = accepted(&listener, &mut run);
-    let mut reader = BufReader::with_capacity(1, stream.try_clone().unwrap());
-    assert_eq!(line(&mut reader)["event"], "ready_for_secrets");
-    let handoff = if start {
-        Handoff::Start {
-            office_secrets_key: Some(office_secrets_key()),
-            grant_key: GrantKey::from_bytes([7; 32]),
-            fds: vec![HandoffFd::Transfer],
-        }
-    } else {
-        Handoff::Create {
-            office_secrets_key: office_secrets_key(),
-            grant_key: GrantKey::from_bytes([7; 32]),
-            recovery_code: Some(
-                RecoveryCode::new("0001-0203-0405-0607-0809-0A0B-0C0D-0E0F-1011-1213".into())
-                    .unwrap(),
-            ),
-            fds: vec![HandoffFd::Transfer],
-        }
-    };
-    let mut header = org_office_launch::encode_handoff(&handoff).unwrap();
-    stream.write_all(&header).unwrap();
-    header.fill(0);
-    let (worker, host) = UnixDatagram::pair().unwrap();
-    worker.shutdown(std::net::Shutdown::Write).unwrap();
-    pass_fd(&stream, worker.as_raw_fd());
-    assert_eq!(
-        line(&mut reader),
-        json!({"v":1,"event":"fds_received","of":"handoff"})
-    );
-    drop(worker);
-    let mut session = Session {
-        run,
-        stream,
-        reader,
-        transfer: Some(host),
-        in_flight: Default::default(),
-    };
-    if !start {
-        assert_eq!(session.event()["event"], "created");
-    }
-    let socket = org_proto::location::selected_office_socket_in(
-        &world.home.join("run"),
-        &prepared.office_id,
-    )
-    .unwrap();
-    assert!(!socket.exists(), "Created must not bind before admission");
-    session
-}
-fn selected_admission(world: &World) -> org_office_launch::writer::Admission {
-    use org_office_launch::writer::{self as wire, Admission};
-    let p = selected_plan();
-    let identity = org_proto::work::WriterIdentity {
-        instance_id: INSTANCE.into(),
-        organization_id: p.organization_id,
-        office_id: p.office_id.clone(),
-        machine_id: "test-machine".into(),
-        writer_epoch: 1,
-        journal_incarnation: "test-journal".into(),
-    };
-    Admission {
-        version: wire::VERSION,
-        identity,
-        protected_root: world.home.join("protected").to_str().unwrap().into(),
-        public_root: std::fs::canonicalize(world.home.join("state"))
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .into(),
-        owner_account: "test-account".into(),
-        owner_member: OWNER.into(),
-    }
-}
-fn selected_writer(
-    world: &World,
-    session: &Session,
-    position: std::sync::Arc<std::sync::Mutex<Option<org_proto::work::JournalPosition>>>,
-    mode: &'static str,
-) -> std::thread::JoinHandle<()> {
-    let mut admission = selected_admission(world);
-    if mode == "scope" {
-        admission.identity.office_id = "foreign".into();
-    }
-    let (thread, sent) = selected_writer_attempt(session, position, mode, admission);
-    sent.unwrap();
-    thread
+/// The CA package the creation published.
+fn package(world: &World) -> Vec<u8> {
+    std::fs::read(world.data.join("durable/state/security/ca-escrow.v1.bin")).unwrap()
 }
 
-// Expected startup refusal may close transfer before the initial descriptor send.
-// Only refusal tests inspect this result; the ordinary path above stays strict.
-fn selected_writer_attempt(
-    session: &Session,
-    position: std::sync::Arc<std::sync::Mutex<Option<org_proto::work::JournalPosition>>>,
-    mode: &'static str,
-    admission: org_office_launch::writer::Admission,
-) -> (std::thread::JoinHandle<()>, Result<(), String>) {
-    use org_office_launch::writer::{self as wire, Request, Response};
-    use std::os::fd::AsFd;
-    let (worker, host) = UnixStream::pair().unwrap();
-    host.set_read_timeout(Some(WAIT)).unwrap();
-    let thread = std::thread::spawn(move || {
-        if mode == "eof" {
-            return;
-        }
-        let mut reader = BufReader::new(host);
-        if wire::write(reader.get_mut(), &admission).is_err() {
-            return;
-        }
-        while let Ok(Some(request)) = wire::read::<Request>(&mut reader) {
-            let response = match request {
-                Request::Checkpoint { identity } if identity == admission.identity => {
-                    Response::Checkpoint {
-                        position: position.lock().unwrap().clone(),
-                    }
-                }
-                Request::Confirm {
-                    identity,
-                    before,
-                    after,
-                } if identity == admission.identity => {
-                    let mut p = position.lock().unwrap();
-                    if *p != before
-                        || !after.valid()
-                        || before
-                            .as_ref()
-                            .is_some_and(|prior| prior != &after && !after.follows(prior))
-                    {
-                        Response::Denied
-                    } else {
-                        *p = Some(after);
-                        Response::Confirmed
-                    }
-                }
-                Request::Owner { identity }
-                    if identity == admission.identity && mode == "allow" =>
-                {
-                    Response::Owner {
-                        account: admission.owner_account.clone(),
-                        member: admission.owner_member.clone(),
-                    }
-                }
-                Request::Owner { .. } if mode == "account" => Response::Owner {
-                    account: "different-account".into(),
-                    member: OWNER.into(),
-                },
-                _ => Response::Denied,
-            };
-            if wire::write(reader.get_mut(), &response).is_err() {
-                break;
-            }
-        }
-    });
-    let record = org_office_launch::encode_transfer_record(
-        &org_office_launch::TransferRecord::WriterControl {
-            office_id: selected_plan().office_id,
-            channel_id: "initial-writer".into(),
-        },
-    )
-    .unwrap();
-    let sent = org_socket::rights::send(
-        session.transfer.as_ref().unwrap().as_fd(),
-        &record,
-        &[worker.as_fd()],
-        std::time::Instant::now() + WAIT,
-    )
-    .map(|_| ())
-    .map_err(|error| error.to_string());
-    *session.in_flight.borrow_mut() = Some(worker);
-    (thread, sent)
-}
+/// A worker create retried after its worker was killed, at the writer control's receipt or
+/// after `created`, completes over the same host reservation (the same custody) with one CA:
+/// the retry resumes the frozen intent, and every later start serves the same CA.
 #[test]
-fn selected_provider_actual_create_admit_reopen_preserves_ca_and_journal() {
+fn a_create_retried_after_its_worker_was_killed_completes_with_one_ca() {
     let _process = process_isolation();
-    let world = World::new();
-    let p = selected_plan();
-    let checkpoint = std::sync::Arc::new(std::sync::Mutex::new(None));
-    let package_path = world.home.join("state/security/ca-escrow.v1.bin");
-    // Kill after the stored Created marker, before any writer/owner admission.
-    // Exact same-operation create must resume the original CA/package.
-    let mut interrupted = selected_handshake(&world, false);
-    let package = std::fs::read(&package_path).unwrap();
-    interrupted.run.child.kill().unwrap();
-    assert!(!interrupted.run.wait().success());
-    drop(interrupted);
-    let mut create = selected_handshake(&world, false);
-    assert_eq!(std::fs::read(&package_path).unwrap(), package);
-    let thread = selected_writer(&world, &create, checkpoint.clone(), "allow");
-    assert_eq!(
-        create.event(),
-        json!({"v":1,"event":"fds_received","of":"initial-writer"})
-    );
-    assert_eq!(create.event()["event"], "ready");
-    assert_eq!(checkpoint.lock().unwrap().as_ref().unwrap().ordinal, 2);
-    let socket =
-        org_proto::location::selected_office_socket_in(&world.home.join("run"), &p.office_id)
-            .unwrap();
-    assert!(socket.exists());
-    create.stop();
-    thread.join().unwrap();
-    assert!(!socket.exists());
-    let retained = checkpoint.lock().unwrap().clone();
-    let mut reopen = selected_handshake(&world, true);
-    let thread = selected_writer(&world, &reopen, checkpoint.clone(), "allow");
-    assert_eq!(reopen.event()["event"], "fds_received");
-    assert_eq!(reopen.event()["event"], "ready");
-    assert_eq!(*checkpoint.lock().unwrap(), retained);
-    assert_eq!(std::fs::read(package_path).unwrap(), package);
-    reopen.stop();
-    thread.join().unwrap();
-    let office = org_office::Office::open_for_instance(
-        world.folder(&p.office_id),
-        org_office::Key::from_office_secrets_key(office_secrets_key()),
-        INSTANCE,
-    )
-    .unwrap();
-    let record = office.hq_creation_record().unwrap().unwrap();
-    assert_eq!(record.package, package);
-    fn bytes(root: &Path) -> Vec<u8> {
-        let mut out = Vec::new();
-        for entry in std::fs::read_dir(root).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                out.extend(bytes(&path))
-            } else {
-                out.extend(std::fs::read(path).unwrap())
-            }
-        }
-        out
-    }
-    // The unwrapped CA DER is the secret itself; the wrapped record must not
-    // leak either (ENC-5).
-    let ca_der = org_pki::wrap::unwrap(
-        office_secrets_key().expose_bytes(),
-        &org_pki::wrap::WrapBinding {
-            organization_id: &record.organization_id,
-            office_id: &p.office_id,
-            purpose: org_pki::wrap::WrapPurpose::OrganizationCa,
-        },
-        record.wrapped_ca_key(),
-    )
-    .unwrap();
-    assert_eq!(
-        org_pki::SigningKey::from_local_der(&ca_der)
-            .unwrap()
-            .public_key(),
-        record.public_key
-    );
-    for root in [world.home.join("state"), world.home.join("protected")] {
-        let published = bytes(&root);
-        for secret in [record.wrapped_ca_key(), &ca_der[..]] {
-            assert!(!published.windows(secret.len()).any(|s| s == secret));
-        }
-    }
-}
-#[test]
-fn selected_provider_actual_denied_scope_account_owner_and_eof_never_ready() {
-    let _process = process_isolation();
-    for mode in ["scope", "account", "revoked", "eof", "missing"] {
+    for after_created in [false, true] {
         let world = World::new();
-        let mut session = selected_handshake(&world, false);
-        let thread = (mode != "missing")
-            .then(|| selected_writer(&world, &session, std::sync::Arc::default(), mode));
-        assert_eq!(session.event()["event"], "failed", "{mode}");
-        assert!(!session.run.wait().success(), "{mode}");
-        let p = selected_plan();
-        assert!(!org_proto::location::selected_office_socket_in(
-            &world.home.join("run"),
-            &p.office_id
-        )
-        .unwrap()
-        .exists());
-        drop(session);
-        if let Some(t) = thread {
-            t.join().unwrap();
+        let mut interrupted = handshake(
+            &world,
+            FirstLine::Create,
+            INSTANCE,
+            Some(office_secrets_key()),
+        );
+        if after_created {
+            assert_eq!(interrupted.event()["event"], "created");
+        } else {
+            // The writer control's receipt: the creation is under way.
+            let receipt = line(&mut interrupted.reader);
+            assert_eq!(receipt["of"], WRITER_CHANNEL, "{receipt}");
         }
-        assert!(world.folder(&p.office_id).join("office.json").exists());
+        interrupted.run.child.kill().unwrap();
+        assert!(!interrupted.run.wait().success());
+        drop(interrupted);
+        let retry = ready_create(&world);
+        let created = package(&world);
+        let head = world.writer.head().expect("the creation was confirmed");
+        assert!(head.ordinal >= 1, "{head:?}");
+        retry.stop();
+        // The same request again, on a finished office: the same CA, never a second.
+        ready_create(&world).stop();
+        assert_eq!(package(&world), created, "after_created={after_created}");
+        let mut start = started(&world);
+        assert_eq!(hello(&world).office.id, OFFICE);
+        assert!(start.host_goes_away().success());
+        assert_eq!(package(&world), created);
+        let office = world.office();
+        let record = office.hq_creation_record().unwrap().unwrap();
+        assert_eq!(record.package, created);
+        // The records name the store operation the launch's ULID maps to (M7).
+        assert!(org_proto::is_uuid_v7(&record.operation_id));
+        office.close().unwrap();
     }
 }
 
-struct SelectedRetainedMaterial {
-    intent: Vec<u8>,
-    marker: Vec<u8>,
-    record: org_office::hq_creation::LocalRecord,
+/// A launch whose writer control is missing or whose admission the worker refuses never
+/// becomes ready and binds no socket: every office needs the host's custody.
+#[test]
+fn a_launch_without_valid_writer_custody_is_refused_and_never_ready() {
+    let _process = process_isolation();
+    // A create checks the admission's owner against its line; a start checks the roots
+    // against the intent its creation froze.
+    for (op, modes) in [
+        (FirstLine::Create, ["missing", "scope", "account", "owner"]),
+        (FirstLine::Start, ["missing", "scope", "account", "roots"]),
+    ] {
+        for mode in modes {
+            let world = World::new();
+            if op == FirstLine::Start {
+                seed(&world);
+            }
+            let before = stored_bytes(&world);
+            let mut admission = world.writer.admission().clone();
+            match mode {
+                "scope" => {
+                    admission.identity.office_id = "019a8928-1337-7456-8456-0123456789ff".into()
+                }
+                "account" => admission.owner_account = "test-account".into(),
+                "owner" => admission.owner_member = "01900000-0000-7000-8000-0000000000ef".into(),
+                "roots" => admission.runtime_root = world.home.join("run").to_str().unwrap().into(),
+                _ => {}
+            }
+            let writer = FakeWriter::new(admission);
+            let mut session = handshake_as(
+                &world,
+                op,
+                INSTANCE,
+                Some(office_secrets_key()),
+                |_| {},
+                (mode != "missing").then_some(&writer),
+            );
+            let failed = session.event();
+            assert_eq!(failed["event"], "failed", "{op:?} {mode}: {failed}");
+            assert_eq!(failed["code"], "storage_error", "{op:?} {mode}");
+            assert!(!session.run.wait().success(), "{op:?} {mode}");
+            session.no_stdout();
+            assert!(!socket(&world).exists(), "{op:?} {mode}");
+            if op == FirstLine::Create {
+                assert!(
+                    !world.folder(OFFICE).exists(),
+                    "{op:?} {mode}: a create without custody stored something"
+                );
+            } else {
+                assert_eq!(stored_bytes(&world), before, "{op:?} {mode}");
+            }
+        }
+    }
 }
 
-fn selected_interrupted_material(world: &World) -> SelectedRetainedMaterial {
-    let p = selected_plan();
-    let mut created = selected_handshake(world, false);
-    created.run.child.kill().unwrap();
-    assert!(!created.run.wait().success());
-    drop(created);
-    let folder = world.folder(&p.office_id);
-    let office = org_office::Office::open_for_instance(
-        &folder,
-        org_office::Key::from_office_secrets_key(office_secrets_key()),
+/// A finished office whose creation intent is gone is not this build's: never ready.
+#[test]
+fn a_start_without_the_creation_intent_is_refused_and_never_ready() {
+    let _process = process_isolation();
+    let world = World::new();
+    seed(&world);
+    std::fs::remove_file(world.folder(OFFICE).join("hq-creation.v1.json")).unwrap();
+    let session = handshake(
+        &world,
+        FirstLine::Start,
         INSTANCE,
-    )
-    .unwrap();
-    SelectedRetainedMaterial {
-        intent: std::fs::read(folder.join("hq-creation.v1.json")).unwrap(),
-        marker: std::fs::read(folder.join("office.json")).unwrap(),
-        record: office.hq_creation_record().unwrap().unwrap(),
-    }
-}
-
-fn assert_selected_retained_material(world: &World, retained: &SelectedRetainedMaterial) {
-    let folder = world.folder(&selected_plan().office_id);
-    assert_eq!(
-        std::fs::read(folder.join("office.json")).unwrap(),
-        retained.marker
+        Some(office_secrets_key()),
     );
-    assert_eq!(
-        std::fs::read(world.home.join("state/security/ca-escrow.v1.bin")).unwrap(),
-        retained.record.package
-    );
-    // Restore only this deliberately damaged test input after the worker exits,
-    // so strict production open can verify that local cryptographic material survived.
-    std::fs::write(folder.join("hq-creation.v1.json"), &retained.intent).unwrap();
-    let office = org_office::Office::open_for_instance(
-        &folder,
-        org_office::Key::from_office_secrets_key(office_secrets_key()),
-        INSTANCE,
-    )
-    .unwrap();
-    let record = office.hq_creation_record().unwrap().unwrap();
-    assert_eq!(record.organization_id, retained.record.organization_id);
-    assert_eq!(record.operation_id, retained.record.operation_id);
-    assert_eq!(record.public_key, retained.record.public_key);
-    assert_eq!(record.package, retained.record.package);
-    assert!(record.wrapped_ca_key() == retained.record.wrapped_ca_key());
-}
-
-fn selected_expect_start_refusal(
-    world: &World,
-    retained: &SelectedRetainedMaterial,
-    admission: org_office_launch::writer::Admission,
-) {
-    let mut start = selected_handshake(world, true);
-    let (thread, sent) =
-        selected_writer_attempt(&start, std::sync::Arc::default(), "allow", admission);
-    let first = start.event();
-    let outcome = if first["event"] == "fds_received" {
-        assert_eq!(
-            first,
-            json!({"v":1,"event":"fds_received","of":"initial-writer"})
-        );
-        assert!(
-            sent.is_ok(),
-            "acknowledged failed descriptor delivery: {sent:?}"
-        );
-        start.event()
-    } else {
-        first
-    };
-    // A broken baseline may emit Ready and stay running. Reap it explicitly so
-    // each independent regression fails promptly without leaving a live worker.
-    if outcome["event"] != "failed" {
-        start.run.child.kill().unwrap();
-    }
-    let status = start.run.wait();
-    start.no_stdout();
-    drop(start);
-    thread.join().unwrap();
-    assert_selected_retained_material(world, retained);
-    assert_eq!(
-        outcome["event"], "failed",
-        "selected startup falsely reached Ready: {outcome}"
-    );
-    assert!(!status.success());
-    let socket = org_proto::location::selected_office_socket_in(
-        &world.home.join("run"),
-        &selected_plan().office_id,
-    )
-    .unwrap();
-    assert!(!socket.exists(), "refused selected startup bound a socket");
-    assert!(
-        !world.home.join("protected").exists(),
-        "refused creation context installed protected acceptance/owner state"
-    );
-    let public: Vec<_> = std::fs::read_dir(world.home.join("state"))
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name())
-        .collect();
-    assert_eq!(public, [std::ffi::OsString::from("security")]);
-}
-
-#[test]
-fn selected_provider_actual_missing_intent_restart_never_ready() {
-    let _process = process_isolation();
-    let world = World::new();
-    let retained = selected_interrupted_material(&world);
-    std::fs::remove_file(
-        world
-            .folder(&selected_plan().office_id)
-            .join("hq-creation.v1.json"),
-    )
-    .unwrap();
-    selected_expect_start_refusal(&world, &retained, selected_admission(&world));
-}
-
-#[test]
-fn selected_provider_actual_null_bootstrap_restart_never_ready() {
-    let _process = process_isolation();
-    let world = World::new();
-    let retained = selected_interrupted_material(&world);
-    let mut intent: Value = serde_json::from_slice(&retained.intent).unwrap();
-    intent["bootstrap"] = Value::Null;
-    std::fs::write(
-        world
-            .folder(&selected_plan().office_id)
-            .join("hq-creation.v1.json"),
-        serde_json::to_vec(&intent).unwrap(),
-    )
-    .unwrap();
-    selected_expect_start_refusal(&world, &retained, selected_admission(&world));
-}
-
-#[test]
-fn selected_provider_actual_disjoint_public_root_never_ready() {
-    let _process = process_isolation();
-    let world = World::new();
-    let retained = selected_interrupted_material(&world);
-    let foreign = tempfile::tempdir().unwrap();
-    let mut admission = selected_admission(&world);
-    admission.public_root = std::fs::canonicalize(foreign.path())
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .into();
-    selected_expect_start_refusal(&world, &retained, admission);
-    assert_eq!(
-        std::fs::read_dir(foreign.path()).unwrap().count(),
-        0,
-        "mismatched admission published canonical artifacts to the foreign root"
-    );
-}
-
-#[test]
-fn selected_provider_actual_different_creation_owner_never_ready() {
-    let _process = process_isolation();
-    let world = World::new();
-    let retained = selected_interrupted_material(&world);
-    let mut admission = selected_admission(&world);
-    admission.owner_member = "01ARZ3NDEKTSV4RRFFQ69G5FAY".into();
-    assert_ne!(admission.owner_member, OWNER);
-    assert!(org_proto::is_valid_member_id(&admission.owner_member));
-    selected_expect_start_refusal(&world, &retained, admission);
+    assert_eq!(failed_code(session), "storage_error");
+    assert!(!socket(&world).exists());
 }
 
 /// `msg.bind` with params written by hand, to send what the typed params cannot (the retired

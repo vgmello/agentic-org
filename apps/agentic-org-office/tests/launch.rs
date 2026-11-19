@@ -15,14 +15,17 @@ use std::time::Duration;
 mod joined_client;
 #[path = "support/teardown.rs"]
 mod test_teardown;
+use agentic_org_office::test_support::{test_admission, FakeWriter};
 use joined_client::Client;
 use org_office_launch::{office_dir, OfficeFile};
-use org_proto::location::office_socket_path;
+use org_proto::location::selected_office_socket_in;
 use org_proto::{frame, OfficeRole, OfficeSecretsKey};
 use tempfile::TempDir;
 
-const OFFICE: &str = "01OFFICE00000000000000HQ1";
-const ORG: &str = "01ORG0000000000000000ACME1";
+const OFFICE: &str = "019a8928-1337-7456-8456-0123456789ac";
+const ORG: &str = "019a8928-1337-7123-8123-0123456789ab";
+/// The owner member: the creator's person.
+const OWNER: &str = "01900000-0000-7000-8000-0000000000ee";
 const WAIT: Duration = Duration::from_secs(30);
 
 // Every launch case owns descriptors while it creates its own worker. Keep the
@@ -35,10 +38,14 @@ fn process_isolation() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|error| error.into_inner())
 }
 
-/// A temporary office home.
+/// A temporary office home, the organization's data roots, and the host's custody of the
+/// office's writer (`FakeWriter`, which keeps its confirmed head across runs).
 struct World {
     _dir: TempDir,
     home: PathBuf,
+    /// `<dir>/<org-id>`: `durable/` and `runtime/` under it, as the host makes them.
+    data: PathBuf,
+    writer: FakeWriter,
 }
 
 impl World {
@@ -46,9 +53,46 @@ impl World {
         // A short path: unix socket paths are limited to ~100 bytes.
         let dir = tempfile::Builder::new().prefix("oo").tempdir().unwrap();
         let home = dir.path().join("h");
+        Self::in_dir(dir, home)
+    }
+
+    fn in_dir(dir: TempDir, home: PathBuf) -> Self {
         std::fs::create_dir_all(home.join("offices")).unwrap();
         std::fs::create_dir_all(home.join("run")).unwrap();
-        Self { _dir: dir, home }
+        let data = dir.path().canonicalize().unwrap().join(ORG);
+        for root in ["durable", "runtime"] {
+            std::fs::create_dir_all(data.join(root)).unwrap();
+        }
+        let writer = FakeWriter::new(test_admission(
+            activation::INSTANCE,
+            ORG,
+            OFFICE,
+            OWNER,
+            &data.join("durable"),
+            &data.join("runtime"),
+        ));
+        Self {
+            _dir: dir,
+            home,
+            data,
+            writer,
+        }
+    }
+
+    /// The office on its store, opened in this process with the world's custody (the
+    /// worker must not be running).
+    fn office(&self) -> org_office::journal_office::Office {
+        let (custody, roots) = self.writer.admitted();
+        org_office::journal_office::Office::open(
+            self.folder(OFFICE),
+            Some(org_office::Key::from_office_secrets_key(
+                office_secrets_key(),
+            )),
+            activation::INSTANCE,
+            roots,
+            custody,
+        )
+        .unwrap()
     }
 
     fn folder(&self, id: &str) -> PathBuf {
@@ -145,13 +189,12 @@ fn office_secrets_key() -> OfficeSecretsKey {
 const SECRETS_KEY_HEX: &str = "b3b3b3b3";
 
 fn socket(world: &World) -> PathBuf {
-    office_socket_path(&world.home, OFFICE).unwrap()
+    selected_office_socket_in(&world.home.join("run"), OFFICE).unwrap()
 }
 
-/// Stores the office with the library, as an HQ creation leaves it, then starts its server the
-/// way the host does (start, handoff, ready on the rendezvous) and returns the session. The
-/// worker creates offices only through HQ creation-v1 (`activation`); every other case starts
-/// an existing office.
+/// Creates the office through the worker, as the host does, then starts its server the way
+/// the host does (start, handoff, writer control, ready on the rendezvous) and returns the
+/// session.
 fn started(world: &World) -> Session {
     seed(world);
     let mut session = handshake(
@@ -170,24 +213,10 @@ fn started(world: &World) -> Session {
     session
 }
 
-/// Stores the office with the library, as an HQ creation leaves it, unless it is stored.
+/// Creates the office through the worker's HQ creation, unless it is stored.
 fn seed(world: &World) {
     if !world.folder(OFFICE).join("office.json").exists() {
-        let new = org_office::NewOffice {
-            office_id: OFFICE.into(),
-            office_name: "HQ".into(),
-            role: org_office::OfficeRole::Hq,
-            org_id: ORG.into(),
-            org_name: "Acme".into(),
-        };
-        drop(
-            org_office::Office::create(
-                world.folder(OFFICE),
-                &new,
-                org_office::Key::from_office_secrets_key(office_secrets_key()),
-            )
-            .unwrap(),
-        );
+        activation::ready_create(world).stop();
     }
 }
 
@@ -468,20 +497,22 @@ fn discard_without_office_json_finds_the_organization_and_deletes_nothing() {
     let world = World::new();
     let mut first = started(&world);
     assert!(first.host_goes_away().success());
-    // Lose office.json, as a crash or a person might: the databases are all that is left.
+    // Lose office.json, as a crash or a person might: the creation intent and the journal are
+    // what is left.
     std::fs::remove_file(world.folder(OFFICE).join("office.json")).unwrap();
 
-    // The databases are plain SQLite (ADR-0016) and the discard handoff carries no secret: the
-    // organization is found, so the discard is refused and nothing is deleted.
+    // The discard handoff carries no secret, and a folder with a creation intent is never
+    // discarded: the discard is refused and nothing is deleted.
     let mut session = handshake(&world, FirstLine::Discard, INSTANCE, None);
     let failed = session.event();
     assert_eq!(failed["code"], "already_exists", "{failed}");
     assert!(!session.run.wait().success());
     session.no_stdout();
     assert!(
-        world.folder(OFFICE).join("org.db").exists(),
-        "a database was deleted"
+        world.folder(OFFICE).join("hq-creation.v1.json").exists(),
+        "the intent was deleted"
     );
+    assert!(world.data.join("durable/recovery").is_dir());
 }
 
 #[test]
@@ -536,15 +567,12 @@ fn a_server_given_no_key_line_does_nothing() {
     let _process = process_isolation();
     // The host going away before the first line is a clean exit for every mode, discard too.
     let world = World::new();
-    std::fs::create_dir_all(world.folder("UNFINISHED1")).unwrap();
-    let mut run = world.spawn(&["--discard", "UNFINISHED1"]);
+    std::fs::create_dir_all(world.folder(OFFICE)).unwrap();
+    let mut run = world.spawn(&["--discard", OFFICE]);
     let status = run.host_goes_away();
     assert!(status.success(), "{status:?}");
     assert!(run.events.recv_timeout(Duration::from_millis(200)).is_err());
-    assert!(
-        world.folder("UNFINISHED1").exists(),
-        "it deleted without a line"
-    );
+    assert!(world.folder(OFFICE).exists(), "it deleted without a line");
 }
 
 fn signal(run: &Run, signal: libc::c_int) {
@@ -734,14 +762,16 @@ fn stopping_the_server_with_a_client_connected_closes_it_and_exits_clean() {
     drop(idle);
 }
 
-/// A ULID made now (the command ids the office accepts), distinct for each `n`.
+/// A ULID made now (the command ids the office accepts), distinct for each `n`. `n` sits
+/// above the low 6 bits, which the store's operation ID drops (the wire ULID maps to a
+/// UUIDv7 with 74 of its 80 random bits).
 fn command_id(n: u8) -> String {
     const CROCKFORD: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let mut value = (ms << 80) | u128::from(n);
+    let mut value = (ms << 80) | (u128::from(n) << 40);
     let mut out = [0u8; 26];
     for slot in out.iter_mut().rev() {
         *slot = CROCKFORD[(value & 0x1F) as usize];
@@ -750,6 +780,11 @@ fn command_id(n: u8) -> String {
     String::from_utf8(out.to_vec()).unwrap()
 }
 
+/// The creation's home team: the organization's top team.
+const TOP_TEAM: &str = "019a8928-1337-7456-8456-0123456789ae";
+/// The team the cases create under it.
+const TEAM: &str = "019a8928-1337-7456-8456-0123456789b1";
+
 fn team_create(
     client: &Client,
     command: &str,
@@ -757,9 +792,9 @@ fn team_create(
 ) -> Result<org_proto::org::CommandAccepted, org_client::ClientError> {
     client.call::<org_proto::org::TeamCreate>(&org_proto::org::TeamCreateParams {
         command_id: command.into(),
-        team_id: "T1".into(),
+        team_id: TEAM.into(),
         name: name.into(),
-        owner_team_id: None,
+        owner_team_id: Some(TOP_TEAM.into()),
     })
 }
 
