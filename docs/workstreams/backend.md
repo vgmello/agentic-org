@@ -43,6 +43,26 @@ Ask the owner before starting anything new.
 When the owner lifts the pause: B2.2 (wire, dry run, `operation.get`; ui-dev updates its mirrors in the same
 merge). The owner's answers to Q1 to Q5 are at the end of the B2 plan.
 
+Accounts, sandbox and extensions (late v1, after milestone one's increments; the owner decides when): start
+with the spikes in [the note's section 11](../design/accounts-sandbox-and-extensions.md#11-spikes) (accounts and launcher, security, isolation setting,
+secrets, the host-with-the-person option, administrator rights; the macOS iOS-build spike of FC-190), record
+the results in `docs/research/`, write the ADRs of [section 10](../design/accounts-sandbox-and-extensions.md#10-adrs-and-designs-to-write-or-update-after-the-spikes),
+then build L15 (`os-sandbox`, FC-190) and L16 (accounts and setup, FC-191, with L6 / FC-161), then L17
+(extensions, FC-192 to FC-194). Each spike section names the requirements (`ASX-`) it proves.
+
+## Owner decisions 2026-11-20
+
+The full list (D1 to D14) is in [the note's owner decisions](../design/accounts-sandbox-and-extensions.md#owner-decisions-and-direction-2026-11-20);
+its requirements are `ASX-1` to `ASX-18` ([requirements](../design/accounts-sandbox-and-extensions.md#requirements)); where each is tracked is
+[its tracking table](../design/accounts-sandbox-and-extensions.md#where-this-is-tracked).
+
+- Isolation by accounts is the default for an install; development uses `--isolation off` (D8; FC-191, L16).
+- One setup command does every core administrator step; a closed-list helper is preferred for later steps (D6, D7).
+- `os-sandbox` is v1 (late) (D4; FC-190, L15); Claude Code's sandbox switch is on by default (D2; FC-189).
+- Extensions after milestone one: Containers (Colima) and Xcode, with a UI slot to agree with ui-dev (D9 to D12; FC-192 to FC-194, L17).
+- Take-over paused to late v1 (D3; FC-151). Background tasks and sub-agents stay on (D1; ADR-0025).
+- Under evaluation: the host stays with the person on a desktop Mac (D14).
+
 ## In flight
 
 - Nothing. B1b and B2.1 are merged into v1; their branches are deleted after merging.
