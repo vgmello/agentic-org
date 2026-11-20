@@ -213,7 +213,10 @@ Three things to know about the order:
     product: it appears and is addressed as an agent, but it is not kept running. It
     runs only when called, and the onboarding of a new agent is product code it
     invokes (C2, C3).
-  - The recovery code is released once, on the HQ machine.
+  - The recovery code is released once, on the HQ machine. *(Owner direction
+    2026-11-20: the recovery code, CA escrow and protected recovery delivery are v2;
+    the built code stays until the owner confirms the document updates;
+    [note](design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1).)*
   - Organization and office IDs are UUIDv7.
   - The UI's create flow talks to the real API.
 - **Read:** [create organization design](design/create-organization.md),
@@ -238,7 +241,10 @@ Three things to know about the order:
     `src/lib/create-flow.ts`, which ran against fakes, is deleted.
 - **Done when:** an organization created in the browser exists after a restart with its
   owner as a person in the top-level team; its files are under `durable/state/`; the
-  recovery code has been delivered once; ENC-2 passes.
+  recovery code has been delivered once *(owner direction 2026-11-20: recovery-code
+  delivery is v2, so it is no longer part of this finish line once the owner confirms;
+  [note](design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1))*;
+  ENC-2 passes.
 - **Needs:** A3. A4 lands on the office store as it is. B1b then rebuilds that store
   underneath it and makes organization creation the first accepted transaction.
 
@@ -625,6 +631,10 @@ on the offers of design section 10.
   opened again from its repository and every record published before the loss is
   there; an invalid organization record refuses the open and names the file.
 - **Needs:** B1b, A4, A6.
+- **Owner direction 2026-11-20:** R1 is v1's answer to a lost HQ: the organization is
+  imported from Git into a new HQ with a new CA, and every other office re-enrolls with
+  one simple command ("this is your new HQ"), built with satellite enrollment (S1)
+  ([note](design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1)).
 
 ### U1 · Offices, teams, people and projects in the browser
 

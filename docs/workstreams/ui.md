@@ -77,6 +77,17 @@ app and the extension UI import each other (the note offers a shared UI-foundati
 slot-provided primitives). Nothing under `apps/agentic-org-ui` was changed. Until then, milestone-one UI only keeps
 the navigation and settings sections driven by data where that is cheap.
 
+## Request from the backend stream: recovery is v2, and a trust download
+
+Owner-directed, 2026-11-20. The recovery code, CA escrow and protected recovery delivery
+are v2 ([note, section 6.7](../design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1)).
+The UI's recovery parts (the settings recovery row, the release command, the recovery
+state and their end-to-end specs) stay as they are; nothing is removed without the
+owner's OK. Planned, late v1: a "Trust this organization" download of the
+organization's CA with its fingerprint shown at creation
+([section 6.6](../design/accounts-sandbox-and-extensions.md#66-the-organizations-certificate-authority-and-trust));
+its screen is to be agreed with ui-dev when it is built.
+
 ## For the other streams
 
 - **Backend:** the UI expects the routes in `docs/design/web-api-v1.md` one by one; each screen swaps
