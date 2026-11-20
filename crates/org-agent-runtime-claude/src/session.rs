@@ -63,6 +63,10 @@ pub(crate) struct ClaudeSession {
     allowed_mcp_prefixes: Vec<String>,
     phase: Phase,
     aborting: bool,
+    /// A `TurnStarted` was emitted and its `TurnEnded` not yet (also while `Closing`).
+    turn_open: bool,
+    /// Why the adapter fast-stopped the session, if it did.
+    stop_reason: Option<String>,
     next_req_id: u64,
     init_request_id: Option<String>,
     init_deadline: Option<Instant>,
@@ -91,6 +95,8 @@ impl ClaudeSession {
             allowed_mcp_prefixes,
             phase: Phase::Opening,
             aborting: false,
+            turn_open: false,
+            stop_reason: None,
             next_req_id: 1,
             init_request_id: None,
             init_deadline: None,
@@ -112,6 +118,7 @@ impl ClaudeSession {
         }
         self.aborting = true;
         self.phase = Phase::Closing;
+        self.stop_reason = Some(detail.clone());
         let interrupt = self.encode_interrupt_request();
         vec![
             Output::Event(SessionEvent::Notice {
@@ -171,6 +178,36 @@ impl ClaudeSession {
         self.turn_usage_by_msg.clear();
         self.streaming_message_id = None;
         self.turn_model = None;
+    }
+
+    /// Withdraws every pending approval: the runtime won't take an answer to it any more.
+    fn cancel_pending_approvals(&mut self) -> Vec<Output> {
+        std::mem::take(&mut self.pending_approvals)
+            .into_iter()
+            .map(|id| Output::Event(SessionEvent::ApprovalCancelled { id }))
+            .collect()
+    }
+
+    /// Ends a turn still open after the session started closing (a fast stop or
+    /// [`Control::Close`] during the turn), so every `TurnStarted` gets its `TurnEnded`.
+    /// A fast stop fails the turn with its reason; otherwise the runtime's own outcome is
+    /// used when it reported one (`result`), and `Interrupted` when the process ended first.
+    fn end_closed_turn(&mut self, reported: Option<(TurnOutcome, Vec<String>)>) -> Vec<Output> {
+        if !self.turn_open {
+            return Vec::new();
+        }
+        self.turn_open = false;
+        let (outcome, errors) = match (&self.stop_reason, reported) {
+            (Some(detail), reported) => (
+                TurnOutcome::Failed {
+                    reason: format!("session stopped: {detail}"),
+                },
+                reported.map(|(_, errors)| errors).unwrap_or_default(),
+            ),
+            (None, Some(reported)) => reported,
+            (None, None) => (TurnOutcome::Interrupted, Vec::new()),
+        };
+        vec![Output::Event(SessionEvent::TurnEnded { outcome, errors })]
     }
 
     fn sum_turn_usage(&self) -> Option<MessageUsage> {
@@ -512,6 +549,7 @@ impl ClaudeSession {
                         out.push(u);
                     }
                     self.phase = Phase::Busy;
+                    self.turn_open = true;
                     self.reset_turn_usage();
                     out.push(Output::Event(SessionEvent::TurnStarted {
                         turn_id: None,
@@ -813,11 +851,17 @@ impl ClaudeSession {
 
         let (outcome, errors) = map_result_outcome(val);
         self.reset_turn_usage();
-        self.pending_approvals.clear();
-        if self.phase == Phase::Busy {
-            self.phase = Phase::Idle;
-            out.push(Output::Event(SessionEvent::TurnEnded { outcome, errors }));
-            out.push(Output::Event(SessionEvent::Status(Activity::Idle)));
+        // The turn is over, so its approvals can't be answered any more.
+        out.extend(self.cancel_pending_approvals());
+        match self.phase {
+            Phase::Busy => {
+                self.phase = Phase::Idle;
+                self.turn_open = false;
+                out.push(Output::Event(SessionEvent::TurnEnded { outcome, errors }));
+                out.push(Output::Event(SessionEvent::Status(Activity::Idle)));
+            }
+            Phase::Closing => out.extend(self.end_closed_turn(Some((outcome, errors)))),
+            Phase::Opening | Phase::Idle | Phase::Failed | Phase::Ended => {}
         }
         out
     }
@@ -891,8 +935,7 @@ impl Session for ClaudeSession {
             return Vec::new();
         }
         self.init_deadline = None;
-        self.pending_approvals.clear();
-        let mut out = Vec::new();
+        let mut out = self.cancel_pending_approvals();
         match self.phase {
             Phase::Opening => {
                 self.phase = Phase::Failed;
@@ -907,6 +950,7 @@ impl Session for ClaudeSession {
                     out.push(u);
                 }
                 self.phase = Phase::Idle;
+                self.turn_open = false;
                 out.push(Output::Event(SessionEvent::TurnEnded {
                     outcome: TurnOutcome::Failed {
                         reason: "Claude stdout closed during turn".to_owned(),
@@ -920,7 +964,13 @@ impl Session for ClaudeSession {
                     out.push(u);
                 }
             }
-            Phase::Failed | Phase::Closing | Phase::Ended => {}
+            Phase::Closing => {
+                if let Some(u) = self.flush_open_usage() {
+                    out.push(u);
+                }
+                out.extend(self.end_closed_turn(None));
+            }
+            Phase::Failed | Phase::Ended => {}
         }
         out
     }
@@ -930,8 +980,7 @@ impl Session for ClaudeSession {
             return Vec::new();
         }
         self.init_deadline = None;
-        self.pending_approvals.clear();
-        let mut out = Vec::new();
+        let mut out = self.cancel_pending_approvals();
         match self.phase {
             Phase::Opening => {
                 out.push(Output::Event(SessionEvent::StartFailed {
@@ -944,6 +993,7 @@ impl Session for ClaudeSession {
                 if let Some(u) = self.flush_open_usage() {
                     out.push(u);
                 }
+                self.turn_open = false;
                 out.push(Output::Event(SessionEvent::TurnEnded {
                     outcome: TurnOutcome::Failed {
                         reason: "Claude exited during turn".to_owned(),
@@ -956,7 +1006,13 @@ impl Session for ClaudeSession {
                     out.push(u);
                 }
             }
-            Phase::Failed | Phase::Closing | Phase::Ended => {}
+            Phase::Closing => {
+                if let Some(u) = self.flush_open_usage() {
+                    out.push(u);
+                }
+                out.extend(self.end_closed_turn(None));
+            }
+            Phase::Failed | Phase::Ended => {}
         }
         self.phase = Phase::Ended;
         out.push(Output::Event(SessionEvent::Ended { exit }));
@@ -1011,6 +1067,7 @@ impl Session for ClaudeSession {
                         out.push(u);
                     }
                     self.phase = Phase::Busy;
+                    self.turn_open = true;
                     self.reset_turn_usage();
                     out.push(Output::Write(line));
                     out.push(Output::Event(SessionEvent::TurnStarted {

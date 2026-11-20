@@ -183,6 +183,8 @@ fn plan_keeps_background_tasks_enabled_and_maps_private_config_dir() {
     assert!(!caps.enforces_deny_read);
     assert!(!caps.enforces_unix_socket_allowlist);
     assert!(!caps.enforces_deny_rules);
+    // L2: the tool allowlist is unproven live, so the office keeps its own check.
+    assert!(!caps.enforces_tool_allowlist);
 
     let settings_file = plan
         .files
@@ -237,7 +239,15 @@ fn plan_keeps_background_tasks_enabled_and_maps_private_config_dir() {
         .iter()
         .filter_map(|v| v.as_str())
         .collect();
-    assert!(deny_rules.contains(&"*(//office/**)"));
+    // L4: a deny for any tool (`*`) expands to Claude's path-rule tools, never `*(...)`.
+    assert!(
+        !deny_rules.iter().any(|r| r.starts_with('*')),
+        "`*(...)` is not a Claude rule form: {deny_rules:?}"
+    );
+    for tool in ["Read", "Edit", "Write", "MultiEdit", "NotebookEdit"] {
+        let rule = format!("{tool}(//office/**)");
+        assert!(deny_rules.contains(&rule.as_str()), "missing {rule}");
+    }
     assert!(deny_rules.contains(&"Edit(//homes/ada/**)"));
     assert!(deny_rules.contains(&"NotebookEdit(//homes/ada/**)"));
     assert!(deny_rules.contains(&"Read(//office/agents/ada/home/claude/.credentials.json)"));
@@ -1116,4 +1126,253 @@ fn live_smoke_initialize_handshake_with_real_claude() {
         end_out.last(),
         Some(Output::Event(SessionEvent::Ended { .. }))
     ));
+}
+
+fn ready_session(spec: &SessionSpec) -> Box<dyn org_agent_runtime::Session> {
+    let runtime = ClaudeRuntime::new();
+    let (_, mut session) = runtime.plan_session(spec, &sample_ctx()).unwrap();
+    let now = Instant::now();
+    let _ = session.start(now);
+    let ready = session.on_line(
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":[{"name":"ac-dev-ada","description":"Staff engineer"}],"current_permission_mode":"default"}}}"#,
+        now,
+    );
+    assert!(ready
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::Ready { .. }))));
+    session
+}
+
+fn send_turn(session: &mut dyn org_agent_runtime::Session) {
+    let out = session
+        .control(
+            Control::Send {
+                text: "work".into(),
+                urgent: false,
+            },
+            Instant::now(),
+        )
+        .unwrap();
+    assert!(out
+        .iter()
+        .any(|o| matches!(o, Output::Event(SessionEvent::TurnStarted { .. }))));
+}
+
+fn turn_ends(out: &[Output]) -> Vec<&TurnOutcome> {
+    out.iter()
+        .filter_map(|o| match o {
+            Output::Event(SessionEvent::TurnEnded { outcome, .. }) => Some(outcome),
+            _ => None,
+        })
+        .collect()
+}
+
+const EXIT_OK: ExitInfo = ExitInfo {
+    code: Some(0),
+    signal: None,
+};
+
+#[test]
+fn l2_unproven_tool_allowlist_keeps_accept_edits_and_allow_rules_off() {
+    let runtime = ClaudeRuntime::new();
+    let mut spec = sample_spec();
+    // Nothing else drops a deny: only the tool allowlist decides.
+    spec.policy.deny.clear();
+    spec.sandbox.deny_write.clear();
+    spec.sandbox.deny_read.clear();
+    spec.permission_mode = PermissionMode::AcceptEdits;
+    assert!(spec.tools.is_some());
+
+    let (plan, _) = runtime.plan_session(&spec, &sample_ctx()).unwrap();
+    let mode_pos = plan
+        .args
+        .iter()
+        .position(|a| a == "--permission-mode")
+        .expect("--permission-mode");
+    assert_eq!(
+        plan.args[mode_pos + 1],
+        "manual",
+        "AcceptEdits must narrow to Ask while the tool allowlist is unproven"
+    );
+    let settings_file = plan
+        .files
+        .iter()
+        .find(|f| f.rel_path.as_str() == "claude-settings.json")
+        .unwrap();
+    let settings: serde_json::Value = serde_json::from_slice(&settings_file.contents).unwrap();
+    assert_eq!(settings["permissions"]["allow"], serde_json::json!([]));
+    // The allowlist is still passed to Claude as a narrowing.
+    assert!(plan.args.iter().any(|a| a == "--tools"));
+}
+
+#[test]
+fn l4_any_tool_rules_use_concrete_claude_forms_or_are_refused() {
+    let runtime = ClaudeRuntime::new();
+    let ctx = sample_ctx();
+
+    let mut prefix = sample_spec();
+    prefix.policy.deny = vec![Rule {
+        tool: RuleTool::try_from("*").unwrap(),
+        scope: RuleScope::CommandPrefix(CommandPrefix::try_from("rm -rf").unwrap()),
+    }];
+    let (plan, _) = runtime.plan_session(&prefix, &ctx).unwrap();
+    let settings_file = plan
+        .files
+        .iter()
+        .find(|f| f.rel_path.as_str() == "claude-settings.json")
+        .unwrap();
+    let settings: serde_json::Value = serde_json::from_slice(&settings_file.contents).unwrap();
+    let deny = settings["permissions"]["deny"].as_array().unwrap();
+    assert!(deny.iter().any(|v| v == "Bash(rm -rf*)"), "{deny:?}");
+    assert!(!deny
+        .iter()
+        .any(|v| v.as_str().is_some_and(|r| r.starts_with('*'))));
+
+    // `*` with no scope has no exact Claude form: refused rather than silently dropped.
+    let mut every = sample_spec();
+    every.policy.deny = vec![Rule {
+        tool: RuleTool::try_from("*").unwrap(),
+        scope: RuleScope::Any,
+    }];
+    assert!(matches!(
+        runtime.plan_session(&every, &ctx),
+        Err(PlanError::Unsupported(_))
+    ));
+}
+
+#[test]
+fn l5_close_during_a_turn_still_ends_the_turn() {
+    // Close, then the runtime's result: the turn ends with the runtime's outcome.
+    let mut session = ready_session(&sample_spec());
+    send_turn(session.as_mut());
+    let close = session.control(Control::Close, Instant::now()).unwrap();
+    assert!(close.contains(&Output::CloseStdin));
+    let result = session.on_line(
+        br#"{"type":"result","subtype":"success","is_error":false,"result":"Done."}"#,
+        Instant::now(),
+    );
+    assert_eq!(turn_ends(&result), vec![&TurnOutcome::Completed]);
+    let exit = session.on_exit(EXIT_OK, Instant::now());
+    assert!(turn_ends(&exit).is_empty(), "TurnEnded must come once");
+    assert!(matches!(
+        exit.last(),
+        Some(Output::Event(SessionEvent::Ended { .. }))
+    ));
+
+    // Close, then the process ends with no result: the turn is interrupted, before Ended.
+    let mut session = ready_session(&sample_spec());
+    send_turn(session.as_mut());
+    let _ = session.control(Control::Close, Instant::now()).unwrap();
+    let closed = session.on_stdout_closed(Instant::now());
+    assert_eq!(turn_ends(&closed), vec![&TurnOutcome::Interrupted]);
+    let exit = session.on_exit(EXIT_OK, Instant::now());
+    assert!(turn_ends(&exit).is_empty(), "TurnEnded must come once");
+
+    // Close, then exit without stdout closing first.
+    let mut session = ready_session(&sample_spec());
+    send_turn(session.as_mut());
+    let _ = session.control(Control::Close, Instant::now()).unwrap();
+    let exit = session.on_exit(EXIT_OK, Instant::now());
+    assert_eq!(turn_ends(&exit), vec![&TurnOutcome::Interrupted]);
+    let ended_at = exit
+        .iter()
+        .position(|o| matches!(o, Output::Event(SessionEvent::Ended { .. })))
+        .unwrap();
+    assert_eq!(ended_at, exit.len() - 1);
+}
+
+#[test]
+fn l5_fast_stop_during_a_turn_fails_the_turn() {
+    let mut session = ready_session(&sample_spec());
+    send_turn(session.as_mut());
+    let stop = session.on_line(
+        br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","tools":["Read","WebFetch"]}"#,
+        Instant::now(),
+    );
+    assert!(stop.contains(&Output::CloseStdin));
+    // Even if Claude reports success, a turn the adapter stopped for policy has failed.
+    let result = session.on_line(
+        br#"{"type":"result","subtype":"success","is_error":false}"#,
+        Instant::now(),
+    );
+    let ends = turn_ends(&result);
+    assert!(
+        matches!(ends.as_slice(), [TurnOutcome::Failed { reason }] if reason.contains("disallowed tools")),
+        "{result:?}"
+    );
+
+    let mut session = ready_session(&sample_spec());
+    send_turn(session.as_mut());
+    let _ = session.on_line(
+        br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001","remote_control_active":true}"#,
+        Instant::now(),
+    );
+    let exit = session.on_exit(EXIT_OK, Instant::now());
+    assert!(matches!(
+        turn_ends(&exit).as_slice(),
+        [TurnOutcome::Failed { .. }]
+    ));
+}
+
+#[test]
+fn l6_probe_refuses_a_root_config_dir() {
+    let runtime = ClaudeRuntime::new();
+    let mut pctx = ProbeContext::new(PathBuf::from("/opt/homebrew/bin/claude"));
+    pctx.config_dir = Some(sp("/"));
+    assert!(runtime.plan_probe(Probe::Version, &pctx).is_none());
+    assert!(runtime.plan_probe(Probe::Auth, &pctx).is_none());
+
+    pctx.config_dir = Some(sp("/office/agents/ada/home/claude"));
+    assert!(runtime.plan_probe(Probe::Auth, &pctx).is_some());
+}
+
+#[test]
+fn l7_a_result_cancels_pending_approvals() {
+    let mut session = ready_session(&sample_spec());
+    send_turn(session.as_mut());
+    let _ = session.on_line(
+        br#"{"type":"control_request","request_id":"req-open","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#,
+        Instant::now(),
+    );
+    let result = session.on_line(
+        br#"{"type":"result","subtype":"error_during_execution","is_error":false,"terminal_reason":"aborted_tools"}"#,
+        Instant::now(),
+    );
+    let cancelled = result
+        .iter()
+        .position(|o| {
+            o == &Output::Event(SessionEvent::ApprovalCancelled {
+                id: ApprovalId::new("req-open"),
+            })
+        })
+        .expect("ApprovalCancelled for the pending approval");
+    let ended = result
+        .iter()
+        .position(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. })))
+        .expect("TurnEnded");
+    assert!(cancelled < ended);
+    assert_eq!(
+        session.control(
+            Control::Answer {
+                request_id: ApprovalId::new("req-open"),
+                decision: Decision::AllowOnce,
+            },
+            Instant::now(),
+        ),
+        Err(ControlError::UnknownApproval)
+    );
+
+    // The process ending also withdraws a pending approval.
+    let mut session = ready_session(&sample_spec());
+    send_turn(session.as_mut());
+    let _ = session.on_line(
+        br#"{"type":"control_request","request_id":"req-exit","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#,
+        Instant::now(),
+    );
+    let exit = session.on_exit(EXIT_OK, Instant::now());
+    assert!(
+        exit.contains(&Output::Event(SessionEvent::ApprovalCancelled {
+            id: ApprovalId::new("req-exit"),
+        }))
+    );
 }

@@ -213,6 +213,8 @@ pub(crate) fn build_take_over_plan(
         settings_path,
         "--permission-mode".to_owned(),
         expected_mode.cli_flag.to_owned(),
+        // Inline JSON, unlike headless: Claude Code 2.1.311 accepts a file path for
+        // `--agents` only with `--print` (`claude --help`), and take-over is interactive.
         "--agents".to_owned(),
         agents_json,
         "--agent".to_owned(),
@@ -404,7 +406,7 @@ fn build_settings_json(
     let mut deny_rules = Vec::new();
     for rule in &spec.policy.deny {
         let formatted = format_rule(rule).ok_or(PlanError::Unsupported("deny rule scope"))?;
-        deny_rules.push(Value::String(formatted));
+        deny_rules.extend(formatted.into_iter().map(Value::String));
     }
     // Mirror sandbox read/write denies onto Claude's file tools using `//` absolute path
     // grammar so Read/Edit/Write/MultiEdit/NotebookEdit cannot bypass the Bash sandbox (B2).
@@ -432,7 +434,7 @@ fn build_settings_json(
         for rule in &spec.policy.allow {
             // Grants we cannot express exactly are dropped (never widened).
             if let Some(formatted) = format_rule(rule) {
-                allow_rules.push(Value::String(formatted));
+                allow_rules.extend(formatted.into_iter().map(Value::String));
             }
         }
     }
@@ -515,13 +517,39 @@ fn build_settings_json(
     Ok(serde_json::to_vec(&Value::Object(root)).expect("settings JSON serialization cannot fail"))
 }
 
-fn format_rule(rule: &Rule) -> Option<String> {
+/// Claude Code's file tools that take a path rule. `Read` rules also cover Claude's other
+/// read-only file tools (`Glob`, `Grep`); the edit tools are listed one by one, as for the
+/// sandbox mirrors above.
+const PATH_RULE_TOOLS: &[&str] = &["Read", "Edit", "Write", "MultiEdit", "NotebookEdit"];
+
+/// Claude's only shell tool, the one a command-prefix rule applies to.
+const SHELL_TOOL: &str = "Bash";
+
+/// Formats one policy rule as Claude Code permission rules, or `None` when Claude has no
+/// exact form for it (the caller refuses a deny it can't express and drops such an allow).
+///
+/// A rule for any tool (`*`) is never written as `*(...)`: that isn't a Claude rule form, and
+/// a settings file Claude rejects would lose the pinned no-bypass setting with it. It expands
+/// to the concrete tools the scope applies to: a path to [`PATH_RULE_TOOLS`], a command
+/// prefix to [`SHELL_TOOL`]. Claude has no path rule for `Bash`; the sandbox's deny lists and
+/// the office's approval bridge cover shell access to such paths. `*` with no scope (every
+/// use of every tool) has no exact Claude form and gives `None`.
+fn format_rule(rule: &Rule) -> Option<Vec<String>> {
     let tool = rule.tool.as_str();
+    let any_tool = tool == "*";
     match &rule.scope {
-        RuleScope::Any => Some(tool.to_owned()),
-        RuleScope::Path(pattern) => Some(format!("{tool}({})", claude_rule_path(pattern.as_str()))),
-        RuleScope::CommandPrefix(prefix) => Some(format!("{tool}({}*)", prefix.as_str())),
-        RuleScope::McpServer(server) => Some(format!("mcp__{}__*", server.as_str())),
+        RuleScope::Any if any_tool => None,
+        RuleScope::Any => Some(vec![tool.to_owned()]),
+        RuleScope::Path(pattern) => {
+            let path = claude_rule_path(pattern.as_str());
+            let tools: &[&str] = if any_tool { PATH_RULE_TOOLS } else { &[tool] };
+            Some(tools.iter().map(|t| format!("{t}({path})")).collect())
+        }
+        RuleScope::CommandPrefix(prefix) => {
+            let shell = if any_tool { SHELL_TOOL } else { tool };
+            Some(vec![format!("{shell}({}*)", prefix.as_str())])
+        }
+        RuleScope::McpServer(server) => Some(vec![format!("mcp__{}__*", server.as_str())]),
         _ => None,
     }
 }

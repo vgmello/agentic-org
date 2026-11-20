@@ -59,12 +59,14 @@ impl AgentRuntime for ClaudeRuntime {
             take_over: true,
             // Enforcement flags stay false until opt-in live tool-call tests prove each
             // guarantee against the real Claude binary, keeping the office approval-bridge
-            // fallback active (B2).
+            // fallback active (B2). The plan still passes `--tools` and the session checks
+            // `system/init` tools (narrowings only), but `can_use_tool` is not checked against
+            // the allowlist and no live test proves it, so the office keeps its own check.
             enforces_writable_roots: false,
             enforces_deny_write: false,
             enforces_deny_read: false,
             enforces_unix_socket_allowlist: false,
-            enforces_tool_allowlist: true,
+            enforces_tool_allowlist: false,
             enforces_deny_rules: false,
             usage_scope: UsageScope::TurnDelta,
             cost: CostBasis::ListPriceEstimate,

@@ -1,7 +1,8 @@
 use serde_json::Value;
 
 use org_agent_runtime::{
-    EnvName, Probe, ProbeContext, ProbeOutput, ProbePlan, ProbeResult, ProbeRun, Unavailable,
+    EnvName, Probe, ProbeContext, ProbeOutput, ProbePlan, ProbeResult, ProbeRun, SpecPath,
+    Unavailable,
 };
 
 // Pinned to the exact Claude Code version exercised by C1 and the opt-in live smoke test.
@@ -12,6 +13,10 @@ const MIN_SEMVER: (u64, u64, u64) = (2, 1, 311);
 const MAX_SEMVER: (u64, u64, u64) = (2, 1, 311);
 
 pub(crate) fn plan_probe(probe: Probe, ctx: &ProbeContext) -> Option<ProbeRun> {
+    // `/` is never a private config dir (as for `LaunchContext`); no plan fails closed.
+    if ctx.config_dir.as_ref().is_some_and(SpecPath::is_root) {
+        return None;
+    }
     let mut env_add = vec![(
         EnvName::try_from("DISABLE_AUTOUPDATER").expect("static env name is valid"),
         "1".to_owned(),
