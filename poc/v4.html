@@ -645,7 +645,10 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   .proto-banner { padding: 8px var(--gutter); }
 }
 .scrim { display: none; position: fixed; inset: 0; z-index: 45; background: rgb(16 24 40 / .8); }
-@media (prefers-reduced-motion: reduce) { .p-working::after, .skel-b, .skel-c, .c-dot, .c-caret-blink, .h4-live-dot::after { animation: none; } .sidebar, .h4-kpi, .h4-decision, .h4-proj, .h4-now-item { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .p-working::after, .skel-b, .skel-c, .c-dot, .c-caret-blink, .h4-live-dot::after, .h4-decision.win-burst { animation: none; }
+  .sidebar, .h4-kpi, .h4-decision, .h4-proj, .h4-now-item, .h4-cta, .h4-cta-fill, .h4-cta-sheen, .h4-cta-ico, .h4-cta-lbl { transition: none !important; }
+}
 
 /* ── v4 Home: Elevated Hierarchy & Relationship Grouping ──────────────── */
 .h4 {
@@ -792,13 +795,114 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .h4-origin a:hover { color: var(--h4-ink); text-decoration: underline; }
 .h4-task-chip { padding: 1px 6px; border-radius: 4px; background: rgba(148, 163, 184, .11); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; color: var(--h4-body); }
 .h4-d-foot .actions { margin-top: 0; gap: 8px; align-items: center; }
-.h4-d-foot .btn.primary { background: #5552F2; box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 1px 2px rgba(0,0,0,.3); }
-.h4-d-foot .btn.primary:hover { background: #6865FF; }
+.h4-d-foot .btn.primary { background: #4F46E5; box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 1px 2px rgba(0,0,0,.3); }
+.h4-d-foot .btn.primary:hover { background: #5B57F5; }
 .h4-d-foot .btn.outline { background: rgba(255,255,255,.03); box-shadow: inset 0 0 0 1px rgba(148, 163, 184, .28); }
 .h4-d-foot .btn.outline:hover { background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 1px rgba(148, 163, 184, .45); }
 .h4-d-foot .btn.ghost { color: var(--h4-muted); padding: 0 8px; }
 .h4-d-foot .btn.ghost:hover { color: var(--h4-ink); background: rgba(255,255,255,.06); }
 .h4-d-foot .reply { flex: 1 1 100%; }
+
+/* Delight CTA: Liquid win-fill sweep + glass sheen + kinetic rolling text */
+.h4-cta {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  padding: 0 14px;
+  background: #4F46E5;
+  color: #FFFFFF;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 1px 3px rgba(0, 0, 0, .32);
+  transition: transform .2s cubic-bezier(.22, 1, .36, 1), box-shadow .24s ease;
+}
+.h4-cta-fill {
+  position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(135deg, #047857 0%, #05875E 55%, #0F766E 100%);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform .32s cubic-bezier(.22, 1, .36, 1);
+}
+.h4-cta[data-cta-tone="reply"] .h4-cta-fill {
+  background: linear-gradient(135deg, #4338CA 0%, #4F46E5 55%, #0369A1 100%);
+}
+.h4-cta-sheen {
+  position: absolute; top: -20%; bottom: -20%; left: 0; width: 42%; z-index: 1; pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, .28) 50%, transparent 100%);
+  transform: translateX(-160%) skewX(-22deg);
+  transition: transform 0s;
+}
+.h4-cta-inner {
+  position: relative; z-index: 2;
+  display: inline-grid;
+  overflow: hidden;
+  line-height: 1.25rem;
+  height: 1.25rem;
+  align-items: center;
+}
+.h4-cta-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: transform .28s cubic-bezier(.34, 1.56, .64, 1);
+}
+.h4-cta-lbl {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+  transition: transform .3s cubic-bezier(.22, 1, .36, 1), opacity .22s ease;
+}
+.h4-cta-lbl.base { transform: translateY(0); opacity: 1; }
+.h4-cta-lbl.hover { transform: translateY(125%); opacity: 0; }
+
+.h4-cta:hover,
+.h4-cta:focus-visible {
+  background: #4F46E5;
+  transform: translateY(-1.5px);
+  box-shadow: inset 0 1px 0 rgba(167, 243, 208, .42), 0 8px 22px -5px rgba(16, 185, 129, .55);
+}
+.h4-cta[data-cta-tone="reply"]:hover,
+.h4-cta[data-cta-tone="reply"]:focus-visible {
+  box-shadow: inset 0 1px 0 rgba(199, 210, 254, .42), 0 8px 22px -5px rgba(99, 102, 241, .58);
+}
+.h4-cta:hover .h4-cta-fill,
+.h4-cta:focus-visible .h4-cta-fill {
+  transform: scaleX(1);
+}
+.h4-cta:hover .h4-cta-sheen {
+  transform: translateX(340%) skewX(-22deg);
+  transition: transform .62s cubic-bezier(.22, 1, .36, 1) .06s;
+}
+.h4-cta:hover .h4-cta-ico,
+.h4-cta:focus-visible .h4-cta-ico {
+  transform: scale(1.16) rotate(-5deg);
+}
+.h4-cta:hover .h4-cta-lbl.base,
+.h4-cta:focus-visible .h4-cta-lbl.base {
+  transform: translateY(-120%); opacity: 0;
+}
+.h4-cta:hover .h4-cta-lbl.hover,
+.h4-cta:focus-visible .h4-cta-lbl.hover {
+  transform: translateY(0); opacity: 1;
+}
+.h4-cta:active {
+  transform: translateY(0) scale(.98);
+  transition-duration: .08s;
+}
+
+/* Satisfying completion win burst on handled card */
+.h4-handled-win {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  background: rgba(16, 185, 129, .14);
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .36);
+  font-size: 0.78125rem; font-weight: 600; color: #6EE7B7;
+}
+@keyframes h4-win-glow {
+  0% { box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .75), 0 0 0 0 rgba(16, 185, 129, .45); }
+  55% { box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .45), 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .045), inset 0 0 0 1px var(--h4-border), 0 1px 3px rgba(0, 0, 0, .24); }
+}
+.h4-decision.win-burst { animation: h4-win-glow .75s cubic-bezier(.22, 1, .36, 1) both; }
 
 .h4-more-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -1501,29 +1605,58 @@ function board(items, kind) {
 }
 
 /* ---------------------------------------------------------------- pages */
+function hoverWinCopy(it, label) {
+  if (it.id === "in1") return "Merge to v1";
+  if (it.id === "in2" && /lease/i.test(label)) return "Lock in lease";
+  if (it.id === "in3") return "Write reply";
+  if (it.id === "in4") return "Greenlight hire";
+  if (it.id === "in5") return "Grant access";
+  if (/^Approve fix/i.test(label)) return "Ship the fix";
+  if (/^Approve$/i.test(label)) return "Approve & go";
+  if (/^Accept$/i.test(label)) return "Take ownership";
+  if (/^Resume$/i.test(label)) return "Resume run";
+  if (/^Reply$/i.test(label)) return "Write reply";
+  return `${label} →`;
+}
 function itemActionsV4(it) {
-  if (it.handled) return `<p class="handled" id="handled-${esc(it.id)}">${esc(it.outcome)}</p>`;
+  if (it.handled) return `<p class="h4-handled-win" id="handled-${esc(it.id)}">${ic("check-circle", "ic16")}<span>${esc(it.outcome)}</span></p>`;
   const open = `<a class="btn ghost sm" href="#/inbox/${it.id}">${ic("open", "ic16")}Open</a>`;
   if (S.replying === it.id) {
     const changes = S.replyMode === "changes", who = esc(M[it.from].name);
     const lbl = changes ? `What should ${who} change?` : `Reply to ${who}`;
     return `<div class="reply"><label class="sr-only" for="r-${it.id}">${lbl}</label><textarea id="r-${it.id}" rows="2" placeholder="${lbl}…"></textarea>
-      <div class="actions"><button class="btn primary sm" type="button" data-act="send-reply" data-id="${it.id}">${ic("send", "ic16")}${changes ? "Send changes" : "Send reply"}</button><button class="btn ghost sm" type="button" data-act="cancel-reply" data-id="${it.id}">Cancel</button></div></div>`;
+      <div class="actions"><button class="btn primary sm h4-cta" data-cta-tone="reply" type="button" data-act="send-reply" data-id="${it.id}"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("send", "ic16")}</span><span>${changes ? "Send changes" : "Send reply"}</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("send", "ic16")}</span><span>${changes ? "Send it" : "Send & notify"}</span></span></span></button><button class="btn ghost sm" type="button" data-act="cancel-reply" data-id="${it.id}">Cancel</button></div></div>`;
   }
   const b = [];
-  const btn = (style, act, v, icon, label) => `<button class="btn ${style} sm" type="button" data-act="${act}" data-id="${it.id}"${v ? ` data-v="${esc(v)}"` : ""}>${icon ? ic(icon, "ic16") : ""}${esc(label)}</button>`;
-  if (it.acts) it.acts.forEach(([label, outcome, icon, mode], i) => b.push(mode === "changes" ? btn(i ? "outline" : "primary", "reply", "changes", icon, label) : btn(i ? "outline" : "primary", "handle", outcome, icon, label)));
-  else if (it.kind === "approval") { b.push(btn("primary", "handle", "Approved", "check", "Approve")); b.push(btn("outline", "handle", "Denied", "deny", "Deny")); }
-  else if (it.kind === "question") b.push(btn("primary", "reply", "", "reply", "Reply"));
-  else if (it.kind === "decision") it.opts.forEach((o, i) => b.push(btn(i ? "outline" : "primary", "handle", "Chose: " + o, null, o)));
-  else if (it.kind === "problem") { if (it.resume) b.push(btn("primary", "handle", "Goal resumed", "play", "Resume")); if (it.assign) b.push(btn("primary", "assign", "", "user-plus", "Assign…")); if (it.dismiss) b.push(btn("outline", "handle", "Dismissed", "x", "Dismiss")); }
+  const primaryBtn = (act, v, icon, label, tone = "win") => {
+    const hoverLbl = hoverWinCopy(it, label);
+    const ico = icon ? `<span class="h4-cta-ico">${ic(icon, "ic16")}</span>` : "";
+    return `<button class="btn primary sm h4-cta" data-cta-tone="${tone}" type="button" data-act="${act}" data-id="${it.id}"${v ? ` data-v="${esc(v)}"` : ""}>
+      <span class="h4-cta-fill" aria-hidden="true"></span>
+      <span class="h4-cta-sheen" aria-hidden="true"></span>
+      <span class="h4-cta-inner">
+        <span class="h4-cta-lbl base">${ico}<span>${esc(label)}</span></span>
+        <span class="h4-cta-lbl hover" aria-hidden="true">${ico}<span>${esc(hoverLbl)}</span></span>
+      </span>
+    </button>`;
+  };
+  const btn = (style, act, v, icon, label, tone) => style === "primary"
+    ? primaryBtn(act, v, icon, label, tone)
+    : `<button class="btn ${style} sm" type="button" data-act="${act}" data-id="${it.id}"${v ? ` data-v="${esc(v)}"` : ""}>${icon ? ic(icon, "ic16") : ""}${esc(label)}</button>`;
+  if (it.acts) it.acts.forEach(([label, outcome, icon, mode], i) => b.push(mode === "changes" ? btn(i ? "outline" : "primary", "reply", "changes", icon, label, "reply") : btn(i ? "outline" : "primary", "handle", outcome, icon, label, "win")));
+  else if (it.kind === "approval") { b.push(btn("primary", "handle", "Approved", "check", "Approve", "win")); b.push(btn("outline", "handle", "Denied", "deny", "Deny")); }
+  else if (it.kind === "question") b.push(btn("primary", "reply", "", "reply", "Reply", "reply"));
+  else if (it.kind === "decision") it.opts.forEach((o, i) => b.push(btn(i ? "outline" : "primary", "handle", "Chose: " + o, i ? null : "check", o, "win")));
+  else if (it.kind === "problem") { if (it.resume) b.push(btn("primary", "handle", "Goal resumed", "play", "Resume", "win")); if (it.assign) b.push(btn("primary", "assign", "", "user-plus", "Assign…", "win")); if (it.dismiss) b.push(btn("outline", "handle", "Dismissed", "x", "Dismiss")); }
   b.push(open);
   return `<div class="actions">${b.join("")}</div>`;
 }
 function needsCardV4(it) {
   const isUrgent = !!(it.expires && !it.handled);
+  const isWinBurst = !!it.justHandled;
+  if (it.justHandled) it.justHandled = false;
   const k = KIND[it.kind] || { icon: "bell" };
-  return `<article class="h4-decision${isUrgent ? " urgent" : ""}${it.handled ? " done" : ""}" aria-label="${esc(it.sub)} from ${esc(M[it.from].name)}">
+  return `<article class="h4-decision${isUrgent ? " urgent" : ""}${it.handled ? " done" : ""}${isWinBurst ? " win-burst" : ""}" aria-label="${esc(it.sub)} from ${esc(M[it.from].name)}">
     <div class="h4-d-top">
       <div class="h4-d-who">${av(it.from, 24)}<span class="who-name">${mlink(it.from)}</span><span class="h4-kind-tag">${ic(k.icon, "ic14")}${esc(it.sub)}</span><span class="h4-d-time">${esc(it.time)}</span></div>
       ${it.handled ? pill("Handled", "gray", "check-circle") : isUrgent ? `<span class="h4-exp-pill">${ic("clock", "ic14")}${esc(it.expires)}</span>` : ""}
@@ -1582,8 +1715,8 @@ function pageHome() {
   const st = S.homeState, v1 = S.truth === "v1";
   const open = st === "empty" ? [] : unhandled();
   const cards = st === "empty" ? [] : IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
-  const urgentCards = cards.filter((i) => i.expires && !i.handled);
-  const inputCards = cards.filter((i) => !(i.expires && !i.handled));
+  const urgentCards = cards.filter((i) => !!i.expires);
+  const inputCards = cards.filter((i) => !i.expires);
   const openUrgentCount = open.filter((i) => i.expires).length;
   const remainingInInbox = Math.max(0, open.length - cards.filter((i) => !i.handled).length);
   const working = v1 || st === "empty" ? [] : memberIds().filter((k) => ["working", "withyou"].includes(presence(k)));
@@ -3218,7 +3351,7 @@ function toast(text, icon = "info") {
 }
 function handle(id, outcome) {
   const it = IN.find((i) => i.id === id); if (!it || it.handled) return;
-  it.handled = true; it.handledNow = true; it.outcome = outcome; S.replying = null;
+  it.handled = true; it.handledNow = true; it.justHandled = true; it.outcome = outcome; S.replying = null;
   const w = it.task && W.find((x) => x.id === it.task);
   if (w && it.assignTo && it.assignTo[outcome]) w.who = it.assignTo[outcome];
   if (w && blockedOnOwner(w) && !/Denied|Declined|Dismissed/.test(outcome)) { delete w.waitsOn; w.status = "In progress"; }
