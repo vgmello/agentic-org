@@ -30,8 +30,8 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-10 · Project health and reports](#area-10) | Health, narratives, analytics and private digests | 5 | 0 | 0 | 0 | 0 | 5 | 0 |
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
 | [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 15 | 1 | 5 | 6 | 0 | 3 | 0 |
-| [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
-| **Total** | | **189** | **9** | **74** | **61** | **1** | **44** | **0** |
+| [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 1 | 0 | 2 | 0 |
+| **Total** | | **189** | **9** | **74** | **60** | **1** | **45** | **0** |
 
 ## AREA-01
 
@@ -185,7 +185,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Boundary:** Owns human inspection/control of a session and profile memory access. Process execution belongs to AREA-08; author-private task notes belong to AREA-04. A profile placeholder or runtime transcript does not establish a private memory store.
 
-**Verification focus:** Check actual HQ-authorized session/event/transcript reads, privacy and freshness. CLI takeover is Planned pending PTY/lease/handback integration; the private memory reader remains Deferred with confined paths, caps, no-symlink checks and its separate human-only API.
+**Verification focus:** Check actual HQ-authorized session/event/transcript reads, privacy and freshness. CLI takeover is Deferred: paused by the owner on 2026-11-20 and moved to late v1, only if needed; the private memory reader remains Deferred with confined paths, caps, no-symlink checks and its separate human-only API.
 
 **Requirements:** [Employee/profile UX](specs/our-org-in-the-app.md), [Session design](design/agent-sessions.md), [Memory/supervision gates](specs/employee-supervision-ux.md).
 

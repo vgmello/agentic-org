@@ -1452,3 +1452,155 @@ fn l4_path_rules_for_tools_without_a_claude_path_form_are_not_written() {
         serde_json::json!(["Edit(//work/t-1/**)"])
     );
 }
+
+fn settings_rules(spec: &SessionSpec, list: &str) -> Result<Vec<String>, PlanError> {
+    let (plan, _) = ClaudeRuntime::new().plan_session(spec, &sample_ctx())?;
+    let settings_file = plan
+        .files
+        .iter()
+        .find(|f| f.rel_path.as_str() == "claude-settings.json")
+        .unwrap();
+    let settings: serde_json::Value = serde_json::from_slice(&settings_file.contents).unwrap();
+    Ok(settings["permissions"][list]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
+        .collect())
+}
+
+/// A spec that keeps allow rules (nothing droppable denies anything).
+fn allow_keeping_spec(allow: Vec<Rule>) -> SessionSpec {
+    let mut spec = sample_spec();
+    spec.policy.deny.clear();
+    spec.sandbox.deny_write.clear();
+    spec.sandbox.deny_read.clear();
+    spec.tools = None;
+    spec.policy.allow = allow;
+    spec
+}
+
+fn rule(tool: &str, scope: RuleScope) -> Rule {
+    Rule {
+        tool: RuleTool::try_from(tool).unwrap(),
+        scope,
+    }
+}
+
+fn prefix(p: &str) -> RuleScope {
+    RuleScope::CommandPrefix(CommandPrefix::try_from(p).unwrap())
+}
+
+fn mcp(server: &str) -> RuleScope {
+    RuleScope::McpServer(McpServerName::try_from(server).unwrap())
+}
+
+#[test]
+fn l4_command_prefix_and_mcp_rules_only_for_tools_claude_can_express() {
+    // A command prefix is only for Bash (or `*`): refused as a deny, dropped as an allow.
+    let mut deny = sample_spec();
+    deny.policy.deny = vec![rule("Edit", prefix("rm"))];
+    assert!(matches!(
+        settings_rules(&deny, "deny"),
+        Err(PlanError::Unsupported(_))
+    ));
+    let allow = allow_keeping_spec(vec![rule("Edit", prefix("git status"))]);
+    assert_eq!(
+        settings_rules(&allow, "allow").unwrap(),
+        Vec::<String>::new()
+    );
+
+    // An MCP-server rule is only for `*` or one of that server's tools.
+    let mut deny = sample_spec();
+    deny.policy.deny = vec![rule("Bash", mcp("office"))];
+    assert!(matches!(
+        settings_rules(&deny, "deny"),
+        Err(PlanError::Unsupported(_))
+    ));
+    let mut deny = sample_spec();
+    deny.policy.deny = vec![rule("mcp__other__send", mcp("office"))];
+    assert!(matches!(
+        settings_rules(&deny, "deny"),
+        Err(PlanError::Unsupported(_))
+    ));
+    let mut deny = sample_spec();
+    deny.policy.deny = vec![
+        rule("mcp__office__send", mcp("office")),
+        rule("*", mcp("office")),
+    ];
+    let rules = settings_rules(&deny, "deny").unwrap();
+    assert!(rules.contains(&"mcp__office__send".to_owned()), "{rules:?}");
+    assert!(rules.contains(&"mcp__office__*".to_owned()), "{rules:?}");
+    let allow = allow_keeping_spec(vec![
+        rule("Read", mcp("office")),
+        rule("mcp__office__read", mcp("office")),
+    ]);
+    assert_eq!(
+        settings_rules(&allow, "allow").unwrap(),
+        vec!["mcp__office__read".to_owned()]
+    );
+}
+
+#[test]
+fn l4_prefix_allows_are_word_bounded_and_denies_keep_the_literal_prefix() {
+    // `rm` must not allow `rmdir`: Claude's word-bounded form plus the bare command.
+    let allow = allow_keeping_spec(vec![rule("Bash", prefix("rm")), rule("*", prefix("git "))]);
+    let rules = settings_rules(&allow, "allow").unwrap();
+    assert_eq!(
+        rules,
+        vec![
+            "Bash(rm)".to_owned(),
+            "Bash(rm *)".to_owned(),
+            "Bash(git *)".to_owned()
+        ]
+    );
+    assert!(!rules.iter().any(|r| r == "Bash(rm*)"));
+
+    // A deny keeps the literal prefix (it also covers `rmdir`; a deny never shrinks).
+    let mut deny = sample_spec();
+    deny.policy.deny = vec![rule("Bash", prefix("rm"))];
+    let rules = settings_rules(&deny, "deny").unwrap();
+    assert!(rules.contains(&"Bash(rm*)".to_owned()), "{rules:?}");
+}
+
+#[test]
+fn l7_a_send_keeps_waiting_on_approval_while_background_approvals_are_pending() {
+    let mut session = ready_session(&sample_spec());
+    send_turn(session.as_mut());
+    let _ = session.on_line(
+        br#"{"type":"control_request","request_id":"req-bg","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#,
+        Instant::now(),
+    );
+    let _ = session.on_line(
+        br#"{"type":"result","subtype":"success","is_error":false}"#,
+        Instant::now(),
+    );
+    let send = session
+        .control(
+            Control::Send {
+                text: "next".into(),
+                urgent: false,
+            },
+            Instant::now(),
+        )
+        .unwrap();
+    assert!(
+        send.contains(&Output::Event(SessionEvent::Status(
+            Activity::WaitingOnApproval
+        ))),
+        "{send:?}"
+    );
+    assert!(!send.contains(&Output::Event(SessionEvent::Status(Activity::Busy))));
+
+    // Once it's answered, the running turn is Busy again.
+    let answer = session
+        .control(
+            Control::Answer {
+                request_id: ApprovalId::new("req-bg"),
+                decision: Decision::AllowOnce,
+            },
+            Instant::now(),
+        )
+        .unwrap();
+    assert!(answer.contains(&Output::Event(SessionEvent::Status(Activity::Busy))));
+}

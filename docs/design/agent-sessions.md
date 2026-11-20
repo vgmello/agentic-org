@@ -233,7 +233,10 @@ The decisions this design applies:
      `interrupt: true` is used only when the office means to end the turn.
    - **Expiry.** An unanswered approval expires after 30 minutes (configurable) and is
      a deny; waiting does not count toward run time. A request the runtime withdraws is
-     `cancelled`, and so is one pending when its turn or process ends. At startup,
+     `cancelled`, and so is one pending when its process ends. A pending request stays
+     answerable across the end of a turn while background work is active: a background
+     command or sub-agent may still be waiting on it ([ADR-0025](../adr/0025-agents-start-sub-agents.md)
+     decision 6). At startup,
      pending approvals of dead sessions become `expired`. Answering any of these returns
      `not_found`.
    - Needs you shows the structured tool input; the agent's own justification is shown
@@ -456,7 +459,9 @@ When an agent is offboarded or removed:
 
 ## Taking over
 
-There is no terminal in the browser. A person at the office's machine takes an agent
+Take-over is paused (owner decision 2026-11-20) and moved to late v1, built only if
+needed ([FC-151](../FEATURES.md)); this design is kept for then. Until it is built,
+`held` and **With you** do not occur. There is no terminal in the browser. A person at the office's machine takes an agent
 over with an `agentic-org` command (ADR-0004 decision 4):
 
 1. The office stops the headless run (for Codex, `thread/unsubscribe` first), keeps
@@ -738,6 +743,8 @@ real runtime is opt-in.
 validated paths and `spec_hash` (`crates/org-agent-runtime/src/spec.rs`), events, framing
 and probes. It has no `isolation_mode` yet, and it still has a one-off session
 kind, which is not part of v1. `crates/org-supervise` implements piped
-spawn, identity ordering, stop and reap and the recovery API. No adapter crate exists;
-the vendor protocol fixtures are research evidence. Nothing launches an agent
+spawn, identity ordering, stop and reap and the recovery API. `crates/org-agent-runtime-claude`
+implements the Claude Code adapter as an internal foundation with no production caller
+yet ([FC-101](../FEATURES.md)); the other vendors' protocol fixtures are research
+evidence. Nothing launches an agent
 (implementation plan C1, C3).

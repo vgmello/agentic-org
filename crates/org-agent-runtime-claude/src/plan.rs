@@ -405,7 +405,8 @@ fn build_settings_json(
     // is pinned to `"disable"` per agent-sessions.md (B1).
     let mut deny_rules = Vec::new();
     for rule in &spec.policy.deny {
-        let formatted = format_rule(rule).ok_or(PlanError::Unsupported("deny rule scope"))?;
+        let formatted =
+            format_rule(rule, RuleKind::Deny).ok_or(PlanError::Unsupported("deny rule scope"))?;
         deny_rules.extend(formatted.into_iter().map(Value::String));
     }
     // Mirror sandbox read/write denies onto Claude's file tools using `//` absolute path
@@ -433,7 +434,7 @@ fn build_settings_json(
     if spec.keeps_allow_rules(caps) {
         for rule in &spec.policy.allow {
             // Grants we cannot express exactly are dropped (never widened).
-            if let Some(formatted) = format_rule(rule) {
+            if let Some(formatted) = format_rule(rule, RuleKind::Allow) {
                 allow_rules.extend(formatted.into_iter().map(Value::String));
             }
         }
@@ -533,9 +534,10 @@ const SHELL_TOOL: &str = "Bash";
 /// to the concrete tools the scope applies to: a path to [`PATH_RULE_TOOLS`], a command
 /// prefix to [`SHELL_TOOL`]. Claude has no path rule for `Bash`; the sandbox's deny lists and
 /// the office's approval bridge cover shell access to such paths. `*` with no scope (every
-/// use of every tool) and a path rule for a tool outside [`PATH_RULE_TOOLS`] have no exact
-/// Claude form and give `None`.
-fn format_rule(rule: &Rule) -> Option<Vec<String>> {
+/// use of every tool), a path rule for a tool outside [`PATH_RULE_TOOLS`], a command prefix
+/// for a tool other than [`SHELL_TOOL`], and an MCP-server rule for a tool that isn't that
+/// server's (`mcp__<server>__<tool>`) have no exact Claude form and give `None`.
+fn format_rule(rule: &Rule, kind: RuleKind) -> Option<Vec<String>> {
     let tool = rule.tool.as_str();
     let any_tool = tool == "*";
     match &rule.scope {
@@ -554,12 +556,59 @@ fn format_rule(rule: &Rule) -> Option<Vec<String>> {
             };
             Some(tools.iter().map(|t| format!("{t}({path})")).collect())
         }
-        RuleScope::CommandPrefix(prefix) => {
-            let shell = if any_tool { SHELL_TOOL } else { tool };
-            Some(vec![format!("{shell}({}*)", prefix.as_str())])
+        RuleScope::CommandPrefix(prefix) if any_tool || tool == SHELL_TOOL => {
+            Some(command_prefix_rules(prefix.as_str(), kind))
         }
-        RuleScope::McpServer(server) => Some(vec![format!("mcp__{}__*", server.as_str())]),
+        // Claude has no command-prefix rule for any other tool.
+        RuleScope::CommandPrefix(_) => None,
+        RuleScope::McpServer(server) => {
+            let server_tools = format!("mcp__{}__", server.as_str());
+            if any_tool {
+                Some(vec![format!("{server_tools}*")])
+            } else if tool.len() > server_tools.len() && tool.starts_with(&server_tools) {
+                // One tool of that server, by its full Claude name.
+                Some(vec![tool.to_owned()])
+            } else {
+                // A tool that isn't the server's: no Claude form says "this tool, of that
+                // server".
+                None
+            }
+        }
         _ => None,
+    }
+}
+
+/// Whether a rule is written to Claude's `deny` or `allow` list. A prefix rule Claude can
+/// only approximate is widened for a deny and narrowed for an allow, never the reverse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuleKind {
+    Deny,
+    Allow,
+}
+
+/// Claude Code rules for shell commands starting with `prefix` (a literal prefix, per
+/// `CommandPrefix`).
+///
+/// - A deny keeps the literal prefix, `Bash(rm*)`: it also matches `rmdir`, as the contract's
+///   literal prefix does, and a deny must never shrink.
+/// - An allow uses Claude's word-bounded form, `Bash(rm)` plus `Bash(rm *)` (the
+///   `Bash(git *)` form `claude --help` documents for 2.1.311), so `rm` never allows
+///   `rmdir`. That is narrower than the literal prefix: the rest goes to the approval bridge.
+///   A prefix that already ends in whitespace (`git `) is word-bounded as written.
+fn command_prefix_rules(prefix: &str, kind: RuleKind) -> Vec<String> {
+    match kind {
+        RuleKind::Deny => vec![format!("{SHELL_TOOL}({prefix}*)")],
+        RuleKind::Allow => {
+            let word = prefix.trim_end();
+            if word.len() == prefix.len() {
+                vec![
+                    format!("{SHELL_TOOL}({word})"),
+                    format!("{SHELL_TOOL}({word} *)"),
+                ]
+            } else {
+                vec![format!("{SHELL_TOOL}({word} *)")]
+            }
+        }
     }
 }
 

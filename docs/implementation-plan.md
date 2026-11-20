@@ -733,11 +733,15 @@ on the offers of design section 10.
   ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8, 12, 15 and 21). Row
   FC-171.
 - **Enrollment and permission presets:** browser-driven one-time CLI enrollment
-  (`claude setup-token` / `codex login --device-auth`) inside wiped per-login `0700`
+  (`claude setup-token` (preferred) or `claude auth login --claudeai`, and
+  `codex login --device-auth`) inside wiped per-login `0700`
   temp directories, worker-wrapped `agentic-org/provider-credential/v1` storage, and the
   Advanced Settings `permission_preset` UI on `agent_execution_configs`
   ([ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md);
   `ENROLL-1` to `ENROLL-7`). Row FC-189.
+- **Take-over:** paused (owner decision 2026-11-20) and moved to late v1, only if
+  needed (row FC-151). C3 builds no take-over; the adapter's existing take-over
+  planning stays as it is, with no new work.
 - **Read:** [agent sessions design](design/agent-sessions.md),
   [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
   [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
@@ -1395,7 +1399,7 @@ each is finished.
 | FC-023 | Logs, doctor and support diagnostics | Later, with L9 |
 | FC-123, FC-124 | Drafting text and a bug from a sentence | Later |
 | FC-147, FC-148 | Restore of protected data; credential rebind and cache rebuild | Later |
-| FC-151 | Taking over an agent's session from a terminal and handing it back | Later |
+| FC-151 | Taking over an agent's session from a terminal and handing it back | Late v1, only if needed (paused by the owner on 2026-11-20) |
 
 ## For every increment
 

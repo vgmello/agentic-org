@@ -180,6 +180,16 @@ impl ClaudeSession {
         self.turn_model = None;
     }
 
+    /// The status of a running turn: still `WaitingOnApproval` while a request (e.g. a
+    /// background sub-agent's, kept across the previous turn's end) awaits an answer.
+    fn busy_status(&self) -> Activity {
+        if self.pending_approvals.is_empty() {
+            Activity::Busy
+        } else {
+            Activity::WaitingOnApproval
+        }
+    }
+
     /// Withdraws every pending approval once the process is gone: nothing can take an answer
     /// to it any more.
     fn cancel_pending_approvals(&mut self) -> Vec<Output> {
@@ -556,7 +566,7 @@ impl ClaudeSession {
                         turn_id: None,
                         solicited: false,
                     }));
-                    out.push(Output::Event(SessionEvent::Status(Activity::Busy)));
+                    out.push(Output::Event(SessionEvent::Status(self.busy_status())));
                 }
             }
             "task_notification" | "task_started" | "task_updated" => {
@@ -1081,7 +1091,7 @@ impl Session for ClaudeSession {
                         turn_id: None,
                         solicited: true,
                     }));
-                    out.push(Output::Event(SessionEvent::Status(Activity::Busy)));
+                    out.push(Output::Event(SessionEvent::Status(self.busy_status())));
                     Ok(out)
                 }
                 Phase::Closing | Phase::Ended => Err(ControlError::Closed),
