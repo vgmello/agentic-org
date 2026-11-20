@@ -380,7 +380,7 @@ account; in option 3 the daemon calls the same validation code.
   account is missing, an agent configured for its account is not runnable.
 - **Agent-writable paths are opened defensively.** The service account now handles
   files an agent account can write: the run copy of a sign-in it takes back, worktrees
-  and the shared parts of the Git cache, the agent's keychain. The office and the
+  and the shared parts of the Git cache, the agent's keychain (if XC-4 keeps one). The office and the
   launcher open every such path without following links, beneath a held directory,
   and check the owner and the link count before reading or writing. Otherwise an agent
   could swap its token file for a link to a host secret and have the office "take it
@@ -1074,7 +1074,7 @@ system".
   agent account only if the spike (XC-4) shows one is still needed
   ([section 6.2](#62-where-each-secret-lives-proposed)).
 - **Sandbox allowances:** Xcode read-only, the account's DerivedData, CoreSimulator and
-  the simulator services, signing (the agent's keychain).
+  the simulator services, signing (the API key's run copy; the agent's keychain, if XC-4 keeps one).
 - **Open risk:** simulators for an account with no graphical login session. Fallbacks:
   an auto-logged-in agent account on that Mac (as CI machines do), or iOS agents in
   an office on an instance set to `off`, or its own Mac, or the agent account's own graphical session of [section 7.1](#71-watching-an-agents-screen).
@@ -1102,7 +1102,7 @@ system".
 | Recovery presence and authority | Deferred to v2 (owner, D24). Under a service-account host neither ADR-0011's macOS check nor its Linux rule holds; the v2 design takes this up. In v1, HQ loss is handled by importing from Git and re-enrolling ([section 6.7](#67-recovery-is-v2-hq-loss-in-v1)) | ADR-0011, ADR-0017 |
 | Organization CA trust | The helper installs each organization's CA as trusted when the organization is created; a "Trust this organization" download with a fingerprint to compare | This note [6.6](#66-the-organizations-certificate-authority-and-trust), ADR-0017 decision 10 |
 | Extensions | The contract crate, the top-level `extensions/` folder, composition-root wiring, the LNX-5 exception for each extension's `platform` module | [Project structure](project-structure.md) |
-| Secrets custody | Host secrets as owner-only files on macOS too; the Xcode keychain | ADR-0016, [host boundary](office-host-boundary.md#the-office-secrets-key) |
+| Secrets custody | Host secrets as owner-only files on macOS too; the App Store Connect API key as a wrapped office secret; the Xcode keychain, if XC-4 keeps one | ADR-0016, [host boundary](office-host-boundary.md#the-office-secrets-key) |
 | Isolation setting | One instance-level setting (`off` or `accounts`) chosen at setup; the composition roots select one adapter per seam; conformance suites for both | This note, ADR-0015, the accounts ADR |
 | Administrator rights after setup | The closed-list helper installed by setup (recommended), or pre-provisioning (alternative) | This note, the accounts ADR |
 | Web app | The extension UI slot: discovery through the web API, menu items, settings sections, panels, UI modules built in from `extensions/<name>/ui/` | [Web API](web-api-v1.md), [shell spec](../specs/app-shell-ux.md) (UI stream), extensions ADR |
@@ -1130,7 +1130,7 @@ not on a spike.
 | [Git design](projects-git-github.md) | Update | Its `dedicated-user` rules restated for a service account and per-office agent accounts (GIT-1, GIT-2) |
 | [ADR-0017](../adr/0017-linux-and-container-hosting.md) | Update | Decision 2's service lifecycle and credential provider rows (system units; files on macOS), decision 8's location, decision 10's "setup refuses root" (the privileged step), decision 11's admission by explicit allowed UIDs |
 | [ADR-0008](../adr/0008-gateway-macos-sandbox.md) | Update | The web process confined under the service account as a system daemon; recheck its profile and the host's post-accept checks there |
-| [ADR-0016](../adr/0016-no-application-level-data-encryption.md) | Update | A secrets custody note: owner-only files for host secrets on macOS too; the Xcode keychain password as a wrapped office secret |
+| [ADR-0016](../adr/0016-no-application-level-data-encryption.md) | Update | A secrets custody note: owner-only files for host secrets on macOS too; the App Store Connect API key, and the Xcode keychain password if XC-4 keeps a keychain, as wrapped office secrets |
 | [ADR-0011](../adr/0011-protected-recovery-delivery.md) | To update after the owner confirms (D24) | Protected recovery delivery is v2; its presence and authority under a service-account host are taken up then |
 | [Linux host design](linux-host.md) | Update | System-level service adapters; the `agentic-org-office@.service` template unit and its polkit rule, with admission for an office systemd starts; `dedicated-user` and accounts in section 3.5; section 5's attacker model with a service account |
 | [Host boundary design](office-host-boundary.md) | Update | Host secrets custody; `host.sock` admission of the person's UID |
