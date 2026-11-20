@@ -38,7 +38,7 @@ goes there.
 | D5 | Dedicated non-administrator accounts: a service account for the instance and agent accounts for the agents; the office starts agents as their accounts through a grant made at setup | [Section 3](#3-accounts-proposed), [section 4](#4-starting-agents-as-their-accounts-without-being-an-administrator), [FC-191](../FEATURES.md) |
 | D6 | Every administrator step the core needs happens in the one setup command, never afterwards; an extension may need one later, kept minimal | [Section 5](#5-one-command-setup); the proposed exceptions are question 10 |
 | D7 | The closed-list privileged helper installed by setup is the preferred way to avoid prompts after setup, to be proven by the spike | [Section 5.2](#52-administrator-rights-after-setup) |
-| D8 | Isolation by accounts is the default for an install; development uses `--isolation off`; one setting | [Section 3.4](#34-isolated-and-not-isolated-how-few-switches) |
+| D8 | Isolation by accounts is the default for an install; development uses `--isolation off`; one setting (if the D14 option is adopted, setup also records the host placement, read only by the composition roots) | [Section 3.4](#34-isolated-and-not-isolated-how-few-switches) |
 | D9 | Extensions are built-in modules behind a contract, in `extensions/`, contributing menu items, settings and panels; built after milestone one, while milestone one keeps the door open | [Section 8](#8-extensions), [FC-192](../FEATURES.md) |
 | D10 | Containers through Colima on macOS and Linux (rootless fallback without KVM); no `agent-os` container commands: agents use `docker` | [Section 8.5](#85-the-containers-extension), [FC-193](../FEATURES.md) |
 | D11 | An Xcode extension with its checklist and sandbox allowances | [Section 8.6](#86-the-xcode-extension), [FC-194](../FEATURES.md) |
@@ -55,8 +55,8 @@ drop each one.
 
 | ID | Requirement | Section |
 | --- | --- | --- |
-| ASX-1 | One instance setting, `--isolation off\|accounts`, chosen at setup and recorded in the instance record; `accounts` is the default for an install, `off` for development | [3.4](#34-isolated-and-not-isolated-how-few-switches) |
-| ASX-2 | The composition roots select one adapter per seam from that setting; no other code reads it; both adapters of each seam pass the same conformance tests | [3.4](#34-isolated-and-not-isolated-how-few-switches) |
+| ASX-1 | One instance setting, `--isolation off\|accounts`, chosen at setup and recorded in the instance record; `accounts` is the default for an install, `off` for development. Exception if [6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac) is adopted: setup also records the host placement, a second choice | [3.4](#34-isolated-and-not-isolated-how-few-switches) |
+| ASX-2 | The composition roots select one adapter per seam from that setting; no other code reads it; both adapters of each seam pass the same conformance tests. The host placement of [6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac), if adopted, is likewise read only by the composition roots | [3.4](#34-isolated-and-not-isolated-how-few-switches) |
 | ASX-3 | `off` is never taken silently: it is asked and recorded only on yes; an `accounts` instance missing its launcher, helper or an agent account refuses the affected agents | [3.4](#34-isolated-and-not-isolated-how-few-switches), [5](#5-one-command-setup) |
 | ASX-4 | Under `accounts`, a non-administrator service account runs the host, the web process and the offices from boot with nobody logged in. Exception if [6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac) is adopted: on a desktop Mac the host runs as the person, only while the person is logged in | [3.1](#31-who-runs-what) |
 | ASX-5 | Agents run as non-administrator agent accounts, one per office first, started through a grant made at setup; the launcher validates every request and keeps ADR-0015 decision 4's evidence | [3.1](#31-who-runs-what), [4](#4-starting-agents-as-their-accounts-without-being-an-administrator) |
@@ -73,6 +73,8 @@ drop each one.
 | ASX-16 | Milestone one keeps the door open: composition, agent launch, navigation, settings sections and setup's plan are list-driven where that is cheap | [8.1](#81-what-an-extension-is) |
 | ASX-17 | The Containers extension gives each agent account its own Colima VM (rootless fallback without KVM), plain `docker` through `DOCKER_HOST`, never the `docker` group, and no `agent-os` container commands | [8.5](#85-the-containers-extension) |
 | ASX-18 | The Xcode extension is macOS only, with its checklist, its allowances and a signing keychain per agent account unlocked by the office | [8.6](#86-the-xcode-extension) |
+
+ASX-14 to ASX-16 are verified by review and by a CI check of dependency sources, to be added with L17 (no core crate or app depends on anything under `extensions/`), not by a spike.
 
 ## Where this is tracked
 
@@ -704,8 +706,13 @@ accounts.
   today ([section 6.0](#60-the-secrets-chain-in-plain-words)).
 - It starts the offices and the web process as the service account, through the grant
   setup made: the person may run our launcher as the service account (and only that),
-  in addition to the service account's grant to the agent accounts. The helper of
-  [section 5.2](#52-administrator-rights-after-setup) does not change.
+  in addition to the service account's grant to the agent accounts.
+- **Who calls the helper.** [Section 5.2](#52-administrator-rights-after-setup) lets
+  only the service account run the helper, and has the host call it; here the host runs
+  as the person. The person's UID is never granted the helper. The host relays each
+  request through a process of the service account (an office, or a small relay the
+  launcher starts as the service account), which runs the helper; the helper's own
+  checks stay the same (HLP-2 restated for this placement).
 - It hands the secrets down in memory exactly as now: the launch contract's per-spawn
   rendezvous socket and its handoff line, then the descriptors of the transfer
   records, including the writer-control connection
@@ -718,7 +725,9 @@ accounts.
 - **The launcher must authenticate the host** in this placement, because the grant
   belongs to the person's UID: for example it checks that its caller is the signed host
   by the caller's code identity (audit token), or requires a secret only the host
-  holds. It accepts the office and web images and the pair (person, service account)
+  holds. Under sudoers option 1 the launcher's parent is `sudo`, not the host, so the
+  check cannot look at the parent process: the host presents a token over a socket
+  whose peer the launcher verifies (the host's audit token), or a one-time secret. It accepts the office and web images and the pair (person, service account)
   for them, and does not apply the agent sandbox profile to them: the web process
   confines itself (ADR-0008), and the office keeps its own rules.
 
@@ -727,10 +736,10 @@ accounts.
 | Secrets | The Keychain works as today: the key stays in the signed host's access group; no headless keychain, no unlock secret on disk. Resolves the locked-Keychain question of [section 6.3](#63-no-dependency-on-the-macos-login-keychain) on a desktop Mac | The person's own programs run as the same user as the host; on macOS the Keychain access group still keeps the keys from them (as today) |
 | Recovery | ADR-0011's presence check holds unchanged: the peer is the console user with the host's own UID, in the same console session. Resolves that open item on a desktop Mac | — |
 | When it runs | — | The host runs only while the person is logged in. Fine for a desktop Mac; not for a headless server. Headless Macs and every Linux server use the service-account host of [section 3](#3-accounts-proposed) |
-| Trust | The core (host) is trusted; the untrusted code, the agents, still runs in other accounts | The host runs with the person's file access, so a fault in the host can reach the person's files. The person's other programs are **not** kept from the offices: the grant (person → service account) belongs to the person's UID, so any of the person's programs could start a genuine office image and supply the handoff itself, unless the launcher authenticates the host (see below); the host's plist in `~/Library/LaunchAgents` and its launch path are writable by the person's programs (the [Linux host design 5](linux-host.md#5-what-a-local-attacker-can-still-do-on-linux) case, now on macOS too); and the group or access-control entry the host needs on office folders opens them to every program of the person |
+| Trust | The core (host) is trusted; the untrusted code, the agents, still runs in other accounts | The host runs with the person's file access, so a fault in the host can reach the person's files. The person's other programs are **not** kept from the offices: the grant (person → service account) belongs to the person's UID, so any of the person's programs could start a genuine office image and supply the handoff itself, unless the launcher authenticates the host (see above); the host's plist in `~/Library/LaunchAgents` and its launch path are writable by the person's programs (the [Linux host design 5](linux-host.md#5-what-a-local-attacker-can-still-do-on-linux) case, now on macOS too); and the group or access-control entry the host needs on office folders opens them to every program of the person |
 | Host's access to office folders | — | Read and limited write: the host reads the catalog and `office.json`, moves refused folders to `.refused/<id>`, writes the office logs and runs the orphan sweep. `office.json` is accepted today only when owned by the service user, the host's own UID ([host boundary](office-host-boundary.md#officejson)); that rule changes to the service account |
 | Admission | — | Today the host spawns the worker suspended and checks its code identity before it runs ([host boundary](office-host-boundary.md#admission-and-the-verified-rendezvous) step 1 and 2). Through a grant to another account the host is no longer the direct parent, so it cannot spawn it suspended; admission must instead check the connected peer's code identity through its audit token at the rendezvous, or the launcher must do the suspended spawn. Needs design and the spike |
-| Control | — | The host cannot signal processes of the service account: the stop's final kill and orphan cleanup go through the launcher |
+| Control | — | The host cannot signal processes of the service account: the stop's final kill and orphan cleanup go through the launcher. It cannot run the helper either: each privileged request is relayed through a service-account process, one more path to build and test |
 | Complexity | — | A second host placement to build and test (person-hosted on a desktop Mac, service-hosted elsewhere): one more layout in the test matrix of [section 3.4](#34-isolated-and-not-isolated-how-few-switches) |
 
 **It resolves:** the locked Keychain and ADR-0011's recovery presence, on a desktop
@@ -740,7 +749,7 @@ that too. **It adds:** admission without a suspended spawn, signalling through t
 launcher, the host's read access to service-owned folders, a person-to-service-account
 grant, and a second host placement. It does not help headless servers.
 
-**Recommendation, if the spike (KEY-1 to KEY-6) holds:** use it on desktop Macs under
+**Recommendation, if the spike (KEY-1 to KEY-8) holds:** use it on desktop Macs under
 `accounts`, chosen by setup on macOS when it runs in a graphical session, and the
 service-account host everywhere else. It is not a third value of the isolation setting,
 but it is a second choice setup records (the host placement), read only by the
@@ -957,7 +966,7 @@ system".
 | Local socket admission | Explicit allowed UIDs: the person's UID on `host.sock` for the command line; the agent accounts on the office socket for `agent-os`; socket and directory permissions to match. Admission is never authorization | ADR-0015 decision 5, ADR-0017 decision 11, [host boundary 3](office-host-boundary.md#3-what-the-host-does) |
 | Data root | A system location owned by the service account, outside the person's home | [Standalone design 3](standalone-server.md#3-instance-selection-and-storage) |
 | Web confinement | ADR-0008's Seatbelt profile and the Linux filter, rechecked under the service account and a system daemon | ADR-0008, [Linux host design 3.3](linux-host.md#33-confinement-of-the-web-process) |
-| Recovery presence and authority | ADR-0011's macOS check requires the peer to share the host's UID and console session; on Linux the recovery peer is the service user's kernel UID (ADR-0011, ADR-0017 decision 11). Under a service-account host the person's command line is neither. Needs a new design; the host staying with the person ([section 6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac)) would keep both as they are on a desktop | ADR-0011, ADR-0017 |
+| Recovery presence and authority | ADR-0011's macOS check requires the peer to share the host's UID and console session; on Linux the recovery peer is the service user's kernel UID (ADR-0011, ADR-0017 decision 11). Under a service-account host the person's command line is neither. Needs a new design; the host staying with the person ([section 6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac)) would keep ADR-0011's macOS check as it is on a desktop Mac; ADR-0017 decision 11's Linux recovery authority still needs the new design, unless the placement is extended to Linux desktops | ADR-0011, ADR-0017 |
 | Extensions | The contract crate, the top-level `extensions/` folder, composition-root wiring, the LNX-5 question | [Project structure](project-structure.md) |
 | Secrets custody | Host secrets as owner-only files on macOS too; the Xcode keychain | ADR-0016, [host boundary](office-host-boundary.md#the-office-secrets-key) |
 | Isolation setting | One instance-level setting (`off` or `accounts`) chosen at setup; the composition roots select one adapter per seam; conformance suites for both | This note, ADR-0015, the accounts ADR |
@@ -986,7 +995,7 @@ Nothing below is changed by this note. Each is written once the spikes of
 | [ADR-0017](../adr/0017-linux-and-container-hosting.md) | Update | Decision 2's service lifecycle and credential provider rows (system units; files on macOS), decision 8's location, decision 10's "setup refuses root" (the privileged step), decision 11's admission by explicit allowed UIDs |
 | [ADR-0008](../adr/0008-gateway-macos-sandbox.md) | Update | The web process confined under the service account as a system daemon; recheck its profile and the host's post-accept checks there |
 | [ADR-0016](../adr/0016-no-application-level-data-encryption.md) | Update | A secrets custody note: owner-only files for host secrets on macOS too; the Xcode keychain password as a wrapped office secret |
-| [ADR-0011](../adr/0011-protected-recovery-delivery.md) | Update (found while writing this note) | The macOS presence check assumes the peer shares the host's UID and console session, and the Linux recovery peer is the service user's kernel UID; a host under a service account needs a new presence and authority design on both systems, unless the host stays with the person on a desktop ([section 6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac)) |
+| [ADR-0011](../adr/0011-protected-recovery-delivery.md) | Update (found while writing this note) | The macOS presence check assumes the peer shares the host's UID and console session, and the Linux recovery peer is the service user's kernel UID; a host under a service account needs a new presence and authority design on both systems, unless the host stays with the person on a desktop Mac ([section 6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac)), which keeps the macOS check; the Linux recovery authority of ADR-0017 decision 11 still needs the design unless that placement is extended to Linux desktops |
 | [Linux host design](linux-host.md) | Update | System-level service adapters; `NoNewPrivileges` and the launcher; `dedicated-user` and accounts in section 3.5; section 5's attacker model with a service account |
 | [Host boundary design](office-host-boundary.md) | Update | Host secrets custody; `host.sock` admission of the person's UID |
 | [Project structure](project-structure.md) | Update | The `extensions/` folder, the contract crate, composition wiring |
@@ -1161,7 +1170,7 @@ Proves: ASX-8, ASX-9.
 | PRE-1 | Alternative (b) only: the pool's unused accounts have no password, no login shell, no group beyond those setup recorded, and cannot be logged into | Any of these |
 | PRE-2 | Alternative (b) only: with the pool used up, adding an office is refused with a plain message naming `agentic-org setup --grow-pool`, which asks exactly once; enabling an extension setup did not prepare needs exactly one prompt through `agentic-org extension prepare`, in a terminal, never from the browser | A silent failure, a shared account, more than one prompt, or a browser-triggered elevation |
 | HLP-1 | The helper refuses every operation outside its list, including adding an account to `admin`, `wheel`, `sudo` or `docker`, creating an account without our prefix, removing an account it did not create, installing an unpinned package or one with a wrong checksum, and installing from a manifest that does not verify against the root-owned publisher key | Any of these succeeds |
-| HLP-2 | Only the service account can invoke the helper, and the command-line group only its "start this instance's service" operation; the agent accounts cannot invoke it at all | Another account can, or the group can call another operation |
+| HLP-2 | Only the service account can invoke the helper, and the command-line group only its "start this instance's service" operation; the agent accounts cannot invoke it at all. Under the host placement of [6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac), the person's UID still cannot invoke it, and the host's requests reach it only through the service-account relay | Another account can, or the group can call another operation, or the person's UID can run the helper |
 | HLP-3 | A simulated compromise of the service account cannot obtain a root shell or write an arbitrary root-owned file through the helper | It can |
 | HLP-4 | The helper is not running between requests; each request and its result are logged | A resident helper, or an unlogged operation |
 
@@ -1179,7 +1188,9 @@ Proves: ASX-8, ASX-9.
 3. **Recovery presence and authority.** ADR-0011's macOS check and its Linux rule (the
    peer is the service user's UID, ADR-0017 decision 11) cannot hold for a host under a
    service account. This needs a new design before an `accounts` install ships (L16); on a
-   desktop, the host staying with the person (question 13) keeps both as they are.
+   desktop Mac, the host staying with the person (question 13) keeps the macOS check as
+   it is; the Linux recovery authority (ADR-0017 decision 11) still needs the design
+   unless that placement is extended to Linux desktops.
 4. **Extensions and LNX-5.** Allow a `platform` module in each extension, or add the
    capabilities extensions need to `org-platform`?
 5. **UI slot.** Who designs the extension slot in the web app, and when (with the UI
@@ -1203,7 +1214,7 @@ Proves: ASX-8, ASX-9.
 12. **Signing identities for iOS agents.** Accept that an agent account with the Xcode
     extension holds its signing identity, as a named exception to non-negotiable 10?
 13. **The host with the person on a desktop Mac** ([section 6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac)):
-    adopt it for desktop Macs if KEY-1 to KEY-6 pass?
+    adopt it for desktop Macs if KEY-1 to KEY-8 pass?
 
 ## What the code does today
 
