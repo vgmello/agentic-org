@@ -56,7 +56,7 @@ goes there.
 | D23 | The named exceptions are accepted: `uninstall` and changing the isolation setting each ask once | [Section 5.2](#52-administrator-rights-after-setup) |
 | D24 | Recovery is v2: the recovery code, the escrow of the organization CA key (ADR-0007), protected recovery delivery (ADR-0011) and the recovery presence and authority question. Accepted ADR text and existing code stay until the owner confirms the updates | [Section 6.7](#67-recovery-is-v2-hq-loss-in-v1) |
 | D25 | In v1, a lost HQ is replaced by importing the organization from Git into a new HQ, with a new CA; every other office re-enrolls with one simple command ("this is your new HQ") | [Section 6.7](#67-recovery-is-v2-hq-loss-in-v1), [FC-167](../FEATURES.md) |
-| D26 | One certificate authority per organization, managed by HQ; two HQs are two organizations and two CAs on the machine. The organization's CA is installed as trusted on macOS and Linux; a remote browser gets a "Trust this organization" download and compares the fingerprint first | [Section 6.6](#66-the-organizations-certificate-authority-and-trust) |
+| D26 | One certificate authority per organization, managed by HQ; two HQs are two organizations and two CAs on the machine. The organization's CA is installed as trusted on macOS and Linux; a remote browser gets a "Trust this organization" download and compares the fingerprint first. On an `off` instance (no helper) the person installs it through that download (the system asks once) or accepts the browser warning, for development only | [Section 6.6](#66-the-organizations-certificate-authority-and-trust) |
 | D27 | Watching an agent's simulator or desktop apps: `same-user` in its old form is dropped. Preferred: the person views the agent account's own graphical session; fallback: a per-agent "visible on my desktop" opt-in where that agent runs as the person | [Section 7.1](#71-watching-an-agents-screen) |
 | D28 | iOS signing is the developer's normal setup; the Xcode extension only helps the agent use it (an App Store Connect API key is the low-friction path); simulator builds need no signing. An agent account with the Xcode extension that holds a signing credential is an exception to non-negotiable 10, accepted by the owner | [Section 8.6](#86-the-xcode-extension) |
 
@@ -87,7 +87,7 @@ drop each one.
 | ASX-16 | Milestone one keeps the door open: composition, agent launch, navigation, settings sections and setup's plan are list-driven where that is cheap | [8.1](#81-what-an-extension-is) |
 | ASX-17 | The Containers extension gives each agent account its own Colima VM (rootless fallback without KVM), plain `docker` through `DOCKER_HOST`, never the `docker` group, and no `agent-os` container commands | [8.5](#85-the-containers-extension) |
 | ASX-18 | The Xcode extension is macOS only, with its checklist and its allowances; it helps the agent use the developer's own signing setup (an App Store Connect API key as the low-friction path); simulator builds need no signing | [8.6](#86-the-xcode-extension) |
-| ASX-19 | Each organization has one certificate authority, managed by HQ; it is installed as trusted on the machine when the organization is created, and a remote browser can download it after comparing its fingerprint | [6.6](#66-the-organizations-certificate-authority-and-trust) |
+| ASX-19 | Each organization has one certificate authority, managed by HQ; under `accounts` it is installed as trusted on the machine when the organization is created (on `off`, through the download), and a remote browser can download it after comparing its fingerprint | [6.6](#66-the-organizations-certificate-authority-and-trust) |
 | ASX-20 | The person can watch an agent's graphical apps without the agent running as the service account: through the agent account's own graphical session, or, as an explicit per-agent opt-in, by running that agent as the person | [7.1](#71-watching-an-agents-screen) |
 
 ASX-14 to ASX-16 are verified without a spike. A CI check of dependency sources, to be
@@ -677,7 +677,8 @@ Recorded as the owner asked; nothing here changes a decision.
 | Office private keys (CA key; later TLS identity and invitation keys) | Unchanged: wrapped records in the office store under the office secrets key | The service account (wrapped) | ADR-0016 decision 3 |
 | Provider credentials | Unchanged: wrapped under `agentic-org/provider-credential/v1` in `durable/local/offices/<office-id>/auth/<connection-id>/` | The service account (wrapped) | ADR-0016 decision 3, ADR-0032 |
 | An agent's run copy of its sign-in | The agent's private home, for the run; taken back at the end | That agent account (and, while agents share an account, its other agents) | ADR-0015 decision 11 |
-| Xcode signing identities | A dedicated keychain file per agent account, created by the Xcode extension; its password held by the office (wrapped like a provider credential); unlocked by the office at agent start, through the launcher | That agent account, while unlocked | This note, [section 8.6](#86-the-xcode-extension) |
+| App Store Connect API key (Xcode extension) | The developer's key, stored by the office wrapped like a provider credential; the office places a run copy in the agent's private home at agent start and takes it back at the end | The office; the agent account during its run (the accepted non-negotiable-10 exception, D28) | This note, [section 8.6](#86-the-xcode-extension) |
+| Xcode signing identities, only if still needed (XC-4) | A dedicated keychain file per agent account, created by the Xcode extension; its password held by the office (wrapped like a provider credential); unlocked by the office at agent start, through the launcher | That agent account, while unlocked | This note, [section 8.6](#86-the-xcode-extension) |
 
 ### 6.3 No dependency on the macOS login keychain
 
@@ -814,16 +815,20 @@ Owner direction 2026-11-20 (D26).
   macOS and Linux. Setup creates no organization (ADR-0005 decision 2), so this
   happens when the organization is created, through the helper's closed list ("install
   this organization's CA as trusted"), with no new prompt; setup only installs what
-  the helper needs. On Linux the system store is updated (for example
+  the helper needs. On an `off` instance there is no helper: the person installs the CA
+  through the "Trust this organization" download (the system asks once) or accepts the
+  browser's warning; that is for development only. On Linux the system store is updated (for example
   `update-ca-certificates`); browsers that keep their own store (Firefox, and per-user
   NSS stores) may need a step of their own, which the checklist names (to verify).
 - **Remote browsers.** The site offers a "Trust this organization" download of the
   CA certificate. Because that download may itself arrive over a connection the browser
-  does not trust yet, the person compares the CA's fingerprint, which the command line
-  prints when the organization is created and on request, before trusting it.
+  does not trust yet, the person compares the CA's fingerprint before trusting it.
+  Organizations are created in the browser (ADR-0005 decision 2, FC-018): the browser
+  shows the fingerprint at creation, and the command line shows it on request.
 - **Open design point.** Today the browser's HTTPS certificate is the instance's own
-  self-signed certificate, made per instance, not issued by an organization CA
-  (ADR-0017 decision 10, X7), and one web listener serves every organization on the
+  self-signed certificate or a pair the operator supplies, per instance, not issued by
+  an organization CA (ADR-0017 decision 10, X7); a default macOS instance serves plain
+  HTTP on loopback (FC-017); and one web listener serves every organization on the
   instance (SRV-24). Trusting the organization CA helps the browser only once the
   listener's certificate is issued by it; how one listener serves several
   organizations' certificates is for the accounts ADR (TRUST-3).
@@ -841,12 +846,21 @@ Owner direction 2026-11-20 (D24, D25).
   office re-enrolls with one simple command that tells it "this is your new HQ"; that
   command is to be designed with satellite enrollment (FC-020, S1) and kept simple.
 - **What exists today.** The recovery code, the escrow package and recovery delivery
-  are built and tested on `v1` ([FC-016](../FEATURES.md) evidence): `crates/org-pki`
-  (escrow envelope and recovery code), `crates/org-host` (`recovery.rs`,
-  `human/recovery.rs`, `provisioning.rs`, the supervisor), `crates/org-host-control`
-  and `crates/org-proto` (`recovery.rs`), `crates/org-office-launch` (the recovery code
-  in the launch handoff, `recovery.rs`), and the office's `hq_creation.rs`,
-  `transfer/recovery.rs` and office-local records. **Nothing is removed or changed
+  are built and tested on `v1` ([FC-016](../FEATURES.md) evidence):
+  - `crates/org-pki` (escrow envelope and recovery code);
+  - `crates/org-host`: `recovery.rs`, `recovery/presence.rs`, `human/recovery.rs`,
+    `hostdb/recovery.rs`, `provisioning.rs`, the supervisor;
+  - `crates/org-platform-host/src/presence/` and its test
+    `crates/org-platform-host/tests/recovery_presence.rs`;
+  - `crates/org-host-control` and `crates/org-proto` (`recovery.rs`);
+  - `crates/org-office-launch` (the recovery code in the launch handoff, `recovery.rs`);
+  - the office library: `crates/org-office/src/hq_creation.rs` and
+    `crates/org-office/src/office_local/records.rs`; the office worker:
+    `apps/agentic-org-office/src/hq_creation.rs` and `transfer/recovery.rs`;
+  - the UI, which belongs to the UI stream: `src/lib/modules/settings/recovery.ts`,
+    `features/general/RecoveryRow.svelte`, the release command in
+    `platform/organizations/command.ts`, the recovery state in `platform/http/wire.ts`,
+    and the end-to-end specs that cover them (under `apps/agentic-org-ui`). **Nothing is removed or changed
   without the owner's OK**; the documents that change are listed in
   [section 10](#10-adrs-and-designs-to-write-or-update-after-the-spikes) as "to update
   after the owner confirms".
@@ -1055,8 +1069,10 @@ macOS only; on every other system its health check says "not available on this
 system".
 
 - **Checklist:** Xcode installed; licence accepted; the agent accounts in the
-  `_developer` group; developer tools security enabled (`DevToolsSecurity`); a signing
-  keychain for the agent account ([section 6.2](#62-where-each-secret-lives-proposed)).
+  `_developer` group; developer tools security enabled (`DevToolsSecurity`); the
+  developer's App Store Connect API key for the agent, and a signing keychain for the
+  agent account only if the spike (XC-4) shows one is still needed
+  ([section 6.2](#62-where-each-secret-lives-proposed)).
 - **Sandbox allowances:** Xcode read-only, the account's DerivedData, CoreSimulator and
   the simulator services, signing (the agent's keychain).
 - **Open risk:** simulators for an account with no graphical login session. Fallbacks:
@@ -1098,14 +1114,16 @@ closed, no source cycles, and logic in libraries with thin binaries.
 
 ## 10. ADRs and designs to write or update after the spikes
 
-Nothing below is changed by this note. Each is written once the spikes of
-[section 11](#11-spikes) have results.
+Nothing below is changed by this note. Rows for the accounts, sandbox and extensions
+work are written once the spikes of [section 11](#11-spikes) have results. Rows marked
+"to update after the owner confirms" (recovery, D24) wait on the owner's confirmation,
+not on a spike.
 
 | Document | New or update | What |
 | --- | --- | --- |
 | "The instance runs under dedicated non-administrator accounts" | New ADR | The service account, agent accounts per office then per agent, the data root outside the person's home, the launcher grant chosen by the spike, one-prompt setup, and the isolation setting with its `off` choice |
 | "Extensions" | New ADR | The contract, the `extensions/` folder, built-in-but-optional in v1 and out-of-process later, the contract crate's placement, the LNX-5 answer, the UI slot agreed with the UI stream |
-| [ADR-0015](../adr/0015-agent-isolation-modes.md) | Update | Decision 1: the account and the os-sandbox become two layers that combine, where decision 1 carries one isolation mode per launch; the instance-level isolation setting and how it maps onto `same-user` and `dedicated-user`; decision 3's "setup continues in `same-user`" and criterion ISO-3 become an explicit choice; decisions 2 to 5: agent accounts per office (not per instance), per-agent accounts as the later step, the launcher chosen by the spike, the socket allowing agent accounts; decision 6 (the owner may set `same-user` per agent): this note proposes forbidding it under `accounts` (question 11); decision 7 (`same-user` stays the default until the spike passes): changed by the owner's direction of 2026-11-20 that `accounts` is the default for an install, pending the spike, and its spike folded into the accounts spike; the `os-sandbox` mode as the inner wall |
+| [ADR-0015](../adr/0015-agent-isolation-modes.md) | Update | Decision 1: the account and the os-sandbox become two layers that combine, where decision 1 carries one isolation mode per launch; the instance-level isolation setting and how it maps onto `same-user` and `dedicated-user`; decision 3's "setup continues in `same-user`" and criterion ISO-3 become an explicit choice; decisions 2 to 5: agent accounts per office (not per instance), per-agent accounts as the later step, the launcher chosen by the spike, the socket allowing agent accounts; decision 6 (the owner may set `same-user` per agent): `same-user` in its old form is dropped under `accounts` and replaced by the per-agent "visible on my desktop" opt-in (D27, [section 7.1](#71-watching-an-agents-screen)); decision 7 (`same-user` stays the default until the spike passes): changed by the owner's direction of 2026-11-20 that `accounts` is the default for an install, pending the spike, and its spike folded into the accounts spike; the `os-sandbox` mode as the inner wall |
 | [ADR-0005](../adr/0005-standalone-server-v1.md) | Update | Decisions 2, 5 and 8: setup's one administrator prompt, the system-level service, the data root's location; decision 7: the launcher as a fifth executable, and a root daemon only if launcher option 3 is chosen |
 | [Architecture non-negotiables](../architecture-non-negotiables.md) | Update | Rule 7's four programs: name the launcher (accepted by ADR-0015 decision 4) and the closed-list helper, and a root launcher daemon if launcher option 3 is chosen |
 | [ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md) | Update | The initial registration link asked for across accounts: setup as the person, the host as the service account |
@@ -1126,6 +1144,7 @@ Nothing below is changed by this note. Each is written once the spikes of
 | [ADR-0012](../adr/0012-office-channel-lifecycle.md), [ADR-0013](../adr/0013-stored-browser-sessions.md) | To update after the owner confirms (D24) | Their mentions of the recovery read and recovery on `host.sock` |
 | ADR-0017 decision 11 | To update after the owner confirms (D24) | Recovery on Linux |
 | Designs: [standalone](standalone-server.md) ("CA escrow and the explicit recovery gate", REC-1), [create organization](create-organization.md), [host boundary](office-host-boundary.md) (the recovery code in the handoff), [offices](offices-hq-and-satellites.md) (the REC-1 gate), [document 16](organization-data/16-recovery-and-office-continuity.md), [web API](web-api-v1.md), [executable migration](executable-migration.md) | To update after the owner confirms (D24) | Recovery code, escrow and protected delivery as v2; HQ loss in v1 by import and re-enrollment |
+| Data contract [document 01](organization-data/01-organization-structure.md) (`security/ca-escrow.v1.bin`), [STATUS](organization-data/STATUS.md) (its changelog line on the CA records), [office store](office-store.md) (the escrow package and CA records), [Linux host design](linux-host.md) (the recovery presence adapter, the pending recovery code), [project structure](project-structure.md) (`org-pki` recovery escrow) | To update after the owner confirms (D24) | Escrow and the recovery code as v2 |
 | Specs: [installation UX](../specs/server-installation-and-access-ux.md) (recovery sections, SRV-25, REC-1), [dogfood run](../specs/dogfood-run.md), [offices and teams UX](../specs/offices-and-teams-ux.md) | To update after the owner confirms (D24), with the UI stream | The same |
 | Code: the recovery and escrow code listed in [section 6.7](#67-recovery-is-v2-hq-loss-in-v1) | Only with the owner's OK | Nothing is removed without it |
 | Decision record for the non-negotiable-10 exception | New | Agent accounts with the Xcode extension may hold a signing credential (D28) |
@@ -1241,7 +1260,7 @@ Proves: ASX-11, ASX-18.
 | --- | --- | --- |
 | XC-1 | `xcodebuild` builds an iOS app as the agent account with nobody logged in | Needs a login session |
 | XC-2 | A simulator boots and the app's tests run, with nobody logged in | Needs a graphical session; then XC-3 |
-| XC-3 | The fallback (an auto-logged-in agent account) passes XC-1 and XC-2; the spike records its cost | The fallback also fails; then iOS agents run in an office on an instance set to `off`, or its own Mac, or the recorded exception of question 11 |
+| XC-3 | The fallback (an auto-logged-in agent account) passes XC-1 and XC-2; the spike records its cost | The fallback also fails; then the person watches through the agent account's own graphical session ([section 7.1](#71-watching-an-agents-screen)), or the agent uses the "visible on my desktop" opt-in, or an office on an instance set to `off` |
 | XC-4 | Signing with the developer's setup through the App Store Connect API key (`-allowProvisioningUpdates`), and, if a keychain is still needed, the agent account's own keychain unlocked by the office at agent start, never with the password on a command line; a simulator build with no signing | A prompt, an Apple ID sign-in, a login keychain, or the password visible in a process listing |
 
 ### 11.6 Containers extension
@@ -1291,7 +1310,7 @@ Proves: ASX-19, ASX-20.
 
 | ID | PASS | FAIL |
 | --- | --- | --- |
-| TRUST-1 | Creating an organization installs its CA as trusted on macOS and Linux through the helper, with no prompt; two organizations give two trusted CAs; the command line prints the CA fingerprint | A prompt, a missing CA, or no fingerprint |
+| TRUST-1 | Under `accounts`, creating an organization in the browser installs its CA as trusted on macOS and Linux through the helper, with no prompt; two organizations give two trusted CAs; the browser shows the CA fingerprint at creation and the command line on request. On an `off` instance the person installs it through the download (the system asks once) or accepts the warning | A prompt under `accounts`, a missing CA, or no fingerprint |
 | TRUST-2 | A remote browser downloads "Trust this organization", the person compares the fingerprint, and after trusting it the browser accepts the organization's HTTPS | The download cannot be checked, or HTTPS is still refused |
 | TRUST-3 | The spike records how the web listener's certificate is issued by an organization CA while one listener serves several organizations | No answer recorded |
 | GUI-1 | macOS: the person views an agent account's graphical session on the same Mac (Screen Sharing or a virtual display), and the iOS simulator runs there | Not possible; then the "visible on my desktop" fallback |
