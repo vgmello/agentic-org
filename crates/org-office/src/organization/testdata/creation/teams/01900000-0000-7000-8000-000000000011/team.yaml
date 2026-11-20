@@ -3,6 +3,7 @@ created_by_id: "01900000-0000-7000-8000-000000000012"
 created_by_kind: "employee"
 id: "01900000-0000-7000-8000-000000000011"
 lead_employee_id: "01900000-0000-7000-8000-000000000012"
+max_members: 6
 name: "Example"
 number: 1
 parent_team_id: null

@@ -5,15 +5,42 @@
 //!
 //! Every decision of this family takes one position of the organization stream: that
 //! stream's high-water is the directory generation. A refusal gives the position back.
+//!
+//! Two kinds of refusal (B2 plan, D3). Before admission, unrecorded, so a retry decides
+//! again: an ID that is not a stable ID, a malformed command, no organization, an office
+//! that is not HQ, and an actor who is not the owner ([`NOT_AUTHORIZED`]). After
+//! admission, every rule of the organization refuses with an [`OrgRejection`] that is
+//! recorded, so a retry with the same operation ID gets the same answer. Rules are told in
+//! the wire contract's order (`org_proto::org`, "When several errors apply"): `not_found`,
+//! `invalid_request`, `invalid_name`, the domain codes (`owner_protected` first), a stale
+//! revision (`conflict`), then `already_exists`.
 
+pub mod add_person;
+pub mod archive_team;
 pub mod create_organization;
 pub mod create_team;
+pub mod deactivate_person;
+pub mod move_person;
+pub mod move_team;
+mod shared;
+pub mod update_person;
+pub mod update_team;
 
-use org_store::{Ack, Actor, Id, Operation, Refusal, Sha256};
-use serde::Serialize;
+use org_store::UnitOfWork;
+use org_store::{Ack, Actor, Change, Engine, Id, OfficeIdentity, Operation, Refusal, Sha256};
+use serde::{Deserialize, Serialize};
 
+pub use add_person::AddPerson;
+pub use archive_team::ArchiveTeam;
 pub use create_organization::{CreateOrganization, Creator, OrganizationCreated};
-pub use create_team::{CreateTeam, TeamCreated, TeamRefusal, TeamRejected, TeamRejection};
+pub use create_team::{CreateTeam, TeamCreated};
+pub use deactivate_person::DeactivatePerson;
+pub use move_person::MovePerson;
+pub use move_team::MoveTeam;
+pub use update_person::{Edit, UpdatePerson};
+pub use update_team::UpdateTeam;
+
+use super::ports::OrganizationRead;
 
 /// Every operation of the family. The one place their acknowledgement classes are
 /// declared (ADR-0014).
@@ -21,15 +48,31 @@ pub use create_team::{CreateTeam, TeamCreated, TeamRefusal, TeamRejected, TeamRe
 pub enum Op {
     CreateOrganization,
     CreateTeam,
+    UpdateTeam,
+    MoveTeam,
+    ArchiveTeam,
+    AddPerson,
+    UpdatePerson,
+    MovePerson,
+    DeactivatePerson,
 }
 
 impl Op {
-    pub const ALL: [Op; 2] = [Op::CreateOrganization, Op::CreateTeam];
+    pub const ALL: [Op; 9] = [
+        Op::CreateOrganization,
+        Op::CreateTeam,
+        Op::UpdateTeam,
+        Op::MoveTeam,
+        Op::ArchiveTeam,
+        Op::AddPerson,
+        Op::UpdatePerson,
+        Op::MovePerson,
+        Op::DeactivatePerson,
+    ];
 
+    /// Structure changes answer only once durable (ADR-0014).
     pub const fn ack(self) -> Ack {
-        match self {
-            Op::CreateOrganization | Op::CreateTeam => Ack::Durable,
-        }
+        Ack::Durable
     }
 
     /// The kind a receipt records.
@@ -37,7 +80,71 @@ impl Op {
         match self {
             Op::CreateOrganization => "organization.create",
             Op::CreateTeam => "organization.create_team",
+            Op::UpdateTeam => "organization.update_team",
+            Op::MoveTeam => "organization.move_team",
+            Op::ArchiveTeam => "organization.archive_team",
+            Op::AddPerson => "organization.add_person",
+            Op::UpdatePerson => "organization.update_person",
+            Op::MovePerson => "organization.move_person",
+            Op::DeactivatePerson => "organization.deactivate_person",
         }
+    }
+}
+
+/// The text of the unrecorded refusal of an actor who is not the organization's owner.
+pub const NOT_AUTHORIZED: &str = "only the organization's owner changes its structure";
+
+/// Which rule refused an admitted change, as the wire contract names its codes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RejectCode {
+    NotFound,
+    InvalidRequest,
+    InvalidName,
+    OwnerProtected,
+    Cycle,
+    NotEmpty,
+    Conflict,
+    AlreadyExists,
+}
+
+/// The reply of a change a rule refused. Recorded, so a retry gets the same answer.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrgRejection {
+    pub code: RejectCode,
+    pub message: String,
+}
+
+/// The reply of a completed change to one team or employee.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Changed {
+    pub id: Id,
+    /// The record's revision after the change.
+    pub revision: u64,
+    /// The directory generation the change is.
+    pub generation: u64,
+}
+
+/// A structure change the owner asks for: its operation and its decision. `owner` is the
+/// owner's employee ID, which the office knows from the creation; `by` is who asked.
+pub trait Feature: Serialize + Clone + Send + 'static {
+    const OP: Op;
+
+    fn decide<E: Engine>(
+        &self,
+        uow: &mut UnitOfWork<'_, E>,
+        here: &OfficeIdentity,
+        owner: &Id,
+        by: &Actor,
+    ) -> Result<Change, Refusal>
+    where
+        E::Tx: OrganizationRead;
+
+    /// The identity a retry is matched on.
+    fn operation(&self, id: Id, by: &Actor) -> Operation {
+        operation(Self::OP, id, by.clone(), self)
     }
 }
 
@@ -69,6 +176,21 @@ fn require(holds: bool, reason: &str) -> Result<(), Refusal> {
     invalid(reason)
 }
 
+/// `id` is a stable ID, or the command is malformed.
+fn stable(id: &Id, what: &str) -> Result<(), Refusal> {
+    let reason = format!("{what} is a UUIDv7 in lowercase text");
+    require(super::records::is_stable_id(id.as_str()), &reason)
+}
+
+/// A completed change's reply.
+fn changed(id: &Id, revision: u64, generation: u64) -> Vec<u8> {
+    reply(&Changed {
+        id: id.clone(),
+        revision,
+        generation,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,7 +212,7 @@ mod tests {
         let command = CreateTeam {
             id: id(1),
             name: "Core".into(),
-            parent: id(2),
+            parent: Some(id(2)),
         };
         let by = Actor::Employee(id(3));
         let first = command.operation(id(9), &by);
@@ -103,10 +225,35 @@ mod tests {
         };
         assert_ne!(renamed.operation(id(9), &by).fingerprint, first.fingerprint);
         let moved = CreateTeam {
-            parent: id(4),
+            parent: Some(id(4)),
             ..command.clone()
         };
         assert_ne!(moved.operation(id(9), &by).fingerprint, first.fingerprint);
+        let top = CreateTeam {
+            parent: None,
+            ..command.clone()
+        };
+        assert_ne!(top.operation(id(9), &by).fingerprint, first.fingerprint);
         assert_ne!(command.operation(id(9), &Actor::System).actor, first.actor);
+
+        // Keeping, setting and clearing a field are three different commands.
+        let edit = |manager: Edit<Id>| UpdatePerson {
+            manager,
+            ..UpdatePerson::new(id(5), 1)
+        };
+        let prints: Vec<_> = [Edit::Keep, Edit::Set(id(6)), Edit::Clear]
+            .into_iter()
+            .map(|manager| edit(manager).operation(id(9), &by).fingerprint)
+            .collect();
+        assert!(prints[0] != prints[1] && prints[1] != prints[2] && prints[0] != prints[2]);
+        let lead = |lead: Option<Id>, clear_lead: bool| UpdateTeam {
+            lead,
+            clear_lead,
+            ..UpdateTeam::new(id(1), 1)
+        };
+        assert_ne!(
+            lead(None, false).operation(id(9), &by).fingerprint,
+            lead(None, true).operation(id(9), &by).fingerprint
+        );
     }
 }

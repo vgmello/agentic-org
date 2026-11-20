@@ -11,7 +11,7 @@ use org_store::{
 };
 
 use super::*;
-use crate::organization::features::{create_team, TeamCreated};
+use crate::organization::features::{create_team, Feature, TeamCreated};
 
 /// `create_team`, counting its decisions: a retry answered from its receipt adds none.
 struct CountedTeam {
@@ -30,7 +30,7 @@ impl StoreOp for CountedTeam {
         let decisions = self.decisions;
         store.submit(Some(operation), false, move |uow| {
             decisions.fetch_add(1, Ordering::SeqCst);
-            create_team::decide(uow, &here, &by, &command)
+            create_team::decide(uow, &here, &id(CREATOR), &by, &command)
         })
     }
 }

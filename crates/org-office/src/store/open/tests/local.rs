@@ -491,6 +491,7 @@ fn wire_create(
         store.run(CreateTeamOp {
             operation_id: request.operation_id,
             here: identity(),
+            owner: id(CREATOR),
             by: request.by,
             command: request.command,
         })
@@ -571,6 +572,7 @@ fn put_person(store: &OfficeStore, op: u64, chain: &[u64], person: u64, status: 
         title_in_team: None,
         offboarded_at: None,
         may_hire: true,
+        builtin_key: None,
         meta,
         body: String::new(),
     };
@@ -673,23 +675,27 @@ fn team_create_refusals_carry_the_protocols_codes() {
         assert_eq!(store.read(DirectoryGeneration).unwrap().0, 1, "{engine:?}");
         assert_eq!(directory(&store).teams.len(), 1);
 
-        // An archived parent is a recorded rejection: conflict, and the same on a retry.
+        // An archived parent is the wrong state: a recorded rejection, invalid_request
+        // (the wire contract's code for it), and the same on a retry.
         assert!(ask(&creator, params(8, 0x21, Some(TOP_TEAM))).is_ok());
         edit_team(&store, 0x900, &[TOP_TEAM, 0x21], |team| {
             team.status = TeamStatus::Archived;
         });
         let generation = store.read(DirectoryGeneration).unwrap().0;
         let archived = params(9, 0x22, Some(0x21));
-        assert_eq!(code(ask(&creator, archived.clone())), ErrorCode::Conflict);
-        assert_eq!(code(ask(&creator, archived)), ErrorCode::Conflict);
+        let first = ask(&creator, archived.clone()).expect_err("refused");
+        assert_eq!(first.code, ErrorCode::InvalidRequest);
+        assert_eq!(ask(&creator, archived), Err(first));
         assert_eq!(store.read(DirectoryGeneration).unwrap().0, generation);
         store.close().unwrap();
     }
 }
 
-/// Before B2: an active person who leads the parent team or a team above it.
+/// Only the organization's owner creates a team (document 04, "Who may change what"): a
+/// person who leads the parent team, or a team above it, does not; nor does anyone else.
+/// Each refusal is unrecorded and takes no generation.
 #[test]
-fn only_an_active_person_leading_the_parent_or_above_creates_a_team() {
+fn only_the_owner_creates_a_team_even_under_a_team_another_person_leads() {
     for engine in ENGINES {
         let place = Place::new();
         let store = place.create(engine);
@@ -697,7 +703,7 @@ fn only_an_active_person_leading_the_parent_or_above_creates_a_team() {
         let creator = id(CREATOR).to_string();
         let ask = |member: &str, request: TeamCreateParams| wire_create(&store, member, &request);
         assert!(ask(&creator, params(1, 0x21, Some(TOP_TEAM))).is_ok());
-        // A person in team 0x21 who leads nothing.
+        // A person in team 0x21, then made its lead.
         put_person(
             &store,
             0x901,
@@ -711,32 +717,30 @@ fn only_an_active_person_leading_the_parent_or_above_creates_a_team() {
             code(ask(&person, under_own.clone())),
             ErrorCode::NotAuthorized
         );
-        // Made the lead of 0x21: under it and below it, yes; under the top team, no.
         edit_team(&store, 0x902, &[TOP_TEAM, 0x21], |team| {
             team.lead_employee_id = Some(id(0x31));
         });
-        assert!(ask(&person, under_own).is_ok(), "{engine:?}");
-        assert!(
-            ask(&person, params(3, 0x23, Some(0x22))).is_ok(),
+        let generation = store.read(DirectoryGeneration).unwrap().0;
+        // Leading the parent grants nothing: not under it, not above it.
+        assert_eq!(
+            code(ask(&person, under_own.clone())),
+            ErrorCode::NotAuthorized,
             "{engine:?}"
         );
-        let above = params(4, 0x24, Some(TOP_TEAM));
+        let above = params(3, 0x23, Some(TOP_TEAM));
         assert_eq!(code(ask(&person, above)), ErrorCode::NotAuthorized);
-        // The creator leads the top team, so everywhere below it.
-        assert!(
-            ask(&creator, params(5, 0x25, Some(0x23))).is_ok(),
-            "{engine:?}"
+        // The built-in HR lead is an agent: refused too.
+        let hr = id(HR).to_string();
+        assert_eq!(
+            code(ask(&hr, params(4, 0x24, Some(0x21)))),
+            ErrorCode::NotAuthorized
         );
-        // No longer active: no longer allowed.
-        put_person(
-            &store,
-            0x903,
-            &[TOP_TEAM, 0x21],
-            0x31,
-            EmployeeStatus::Inactive,
-        );
-        let inactive = params(6, 0x26, Some(0x21));
-        assert_eq!(code(ask(&person, inactive)), ErrorCode::NotAuthorized);
+        assert_eq!(store.read(DirectoryGeneration).unwrap().0, generation);
+        assert_eq!(directory(&store).teams.len(), 2, "{engine:?}");
+        // The owner creates under the team the person leads, with the refused command's ID:
+        // nothing was recorded for it.
+        assert!(ask(&creator, under_own).is_ok(), "{engine:?}");
+        assert_eq!(store.read(DirectoryGeneration).unwrap().0, generation + 1);
         store.close().unwrap();
     }
 }

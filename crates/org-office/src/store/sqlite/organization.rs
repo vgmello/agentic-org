@@ -1,5 +1,5 @@
 //! The organization family's two ports in SQL, on the data contract's tables
-//! (`organizations`, `repositories`, `offices`, `office_codes`, `teams`, `employees`,
+//! (`organizations`, `repositories`, `offices`, `office_codes`, `roles`, `teams`, `employees`,
 //! `reference_counters`, `reference_allocations`, `record_refs`).
 //!
 //! No rule is here: the decisions and the projector's `validate` hold them. The tables'
@@ -18,8 +18,9 @@ use super::{failed, SqliteSnapshot, SqliteTx};
 use crate::organization::{
     ports::{OrganizationRead, OrganizationWrite, RecordRef},
     records::{
-        By, Employee, EmployeeKind, EmployeeStatus, Meta, Office, OfficeCode, OfficeRole,
-        Organization, Repository, RepositoryKind, Team, TeamAllocation, TeamCounter, TeamStatus,
+        BuiltinKey, By, Employee, EmployeeKind, EmployeeStatus, Meta, Office, OfficeCode,
+        OfficeRole, Organization, Repository, RepositoryKind, Role, Team, TeamAllocation,
+        TeamCounter, TeamStatus,
     },
 };
 
@@ -201,7 +202,8 @@ fn team_row(row: &Row<'_>) -> rusqlite::Result<Team> {
         parent_team_id: optional_id(row, 3)?,
         lead_employee_id: optional_id(row, 4)?,
         status: one_of(row, 5, &STATUSES, TeamStatus::as_str)?,
-        meta: meta(row, 6)?,
+        max_members: number(row, 6)?,
+        meta: meta(row, 7)?,
     })
 }
 
@@ -228,8 +230,28 @@ fn employee_row(row: &Row<'_>) -> rusqlite::Result<Employee> {
         title_in_team: row.get(12)?,
         offboarded_at: row.get(13)?,
         may_hire: row.get(14)?,
-        body: row.get(15)?,
-        meta: meta(row, 16)?,
+        builtin_key: optional_builtin_key(row, 15)?,
+        body: row.get(16)?,
+        meta: meta(row, 17)?,
+    })
+}
+
+fn optional_builtin_key(row: &Row<'_>, column: usize) -> rusqlite::Result<Option<BuiltinKey>> {
+    let stored: Option<String> = row.get(column)?;
+    match stored.as_deref() {
+        None => Ok(None),
+        Some(text) if text == BuiltinKey::Hr.as_str() => Ok(Some(BuiltinKey::Hr)),
+        Some(_) => Err(foreign(column, "not a known value")),
+    }
+}
+
+fn role_row(row: &Row<'_>) -> rusqlite::Result<Role> {
+    Ok(Role {
+        id: id(row, 0)?,
+        key: row.get(1)?,
+        name: row.get(2)?,
+        body: row.get(3)?,
+        meta: meta(row, 4)?,
     })
 }
 
@@ -260,10 +282,11 @@ fn record_ref_row(row: &Row<'_>) -> rusqlite::Result<RecordRef> {
 const ORGANIZATION: &str = "id, slug, name, organization_repository_id, state_branch";
 const REPOSITORY: &str = "id, key, kind, remote_url";
 const OFFICE: &str = "id, slug, name, role";
-const TEAM: &str = "id, name, number, parent_team_id, lead_employee_id, status";
+const ROLE: &str = "id, key, name, body_markdown";
+const TEAM: &str = "id, name, number, parent_team_id, lead_employee_id, status, max_members";
 const EMPLOYEE: &str = "id, handle, kind, name, home_team_id, role_id, reports_to_employee_id, \
                         status, contact, title, focus, role_text, title_in_team, offboarded_at, \
-                        may_hire, body_markdown";
+                        may_hire, builtin_key, body_markdown";
 
 /// Every row of `table` in the organization, or those `filter` (on `?2`) keeps.
 fn select(columns: &str, table: &str, filter: &str, order: &str) -> String {
@@ -305,6 +328,18 @@ macro_rules! sqlite_read {
                 let sql = "SELECT code, office_id, issued_at, retired_at FROM office_codes \
                            WHERE organization_id = ?1 ORDER BY rowid";
                 all(db, sql, vec![text(scope)], office_code_row)
+            }
+
+            fn role(&self, id: &Id) -> Result<Option<Role>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = select(ROLE, "roles", " AND id = ?2", "id");
+                one(db, &sql, vec![text(scope), text(id.as_str())], role_row)
+            }
+
+            fn roles(&self) -> Result<Vec<Role>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = select(ROLE, "roles", "", "id");
+                all(db, &sql, vec![text(scope)], role_row)
             }
 
             fn team(&self, id: &Id) -> Result<Option<Team>, EngineError> {
@@ -544,6 +579,26 @@ impl OrganizationWrite for SqliteTx {
         Ok(())
     }
 
+    fn put_role(&mut self, record: &Role) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let mut values = vec![
+            text(scope),
+            text(record.id.as_str()),
+            optional(record.key.as_deref()),
+            text(&record.name),
+            text(&record.body),
+        ];
+        meta_values(&record.meta, &mut values)?;
+        let columns = format!("organization_id, {ROLE}, schema_version, {META}");
+        put(db, "roles", &columns, 2, values)
+    }
+
+    fn remove_role(&mut self, id: &Id) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let sql = "DELETE FROM roles WHERE organization_id = ?1 AND id = ?2";
+        run(db, sql, vec![text(scope), text(id.as_str())])
+    }
+
     fn put_team(&mut self, record: &Team) -> Result<(), EngineError> {
         let (db, scope) = self.view()?;
         let mut values = vec![
@@ -554,6 +609,7 @@ impl OrganizationWrite for SqliteTx {
             optional_id_value(record.parent_team_id.as_ref()),
             optional_id_value(record.lead_employee_id.as_ref()),
             text(record.status.as_str()),
+            whole(record.max_members)?,
         ];
         meta_values(&record.meta, &mut values)?;
         let columns = format!("organization_id, {TEAM}, schema_version, {META}");
@@ -590,6 +646,7 @@ impl OrganizationWrite for SqliteTx {
             optional(record.title_in_team.as_deref()),
             optional(record.offboarded_at.as_deref()),
             Value::Integer(i64::from(record.may_hire)),
+            optional(record.builtin_key.map(BuiltinKey::as_str)),
             text(&record.body),
         ];
         meta_values(&record.meta, &mut values)?;

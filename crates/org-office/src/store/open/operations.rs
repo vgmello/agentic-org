@@ -7,7 +7,10 @@ use super::{OfficeEngine, ReadOp, StoreOp};
 use crate::{
     office_local::{self, CaMaterial},
     organization::{
-        features::{create_organization, create_team, CreateOrganization, CreateTeam},
+        features::{
+            create_organization, AddPerson, ArchiveTeam, CreateOrganization, CreateTeam,
+            DeactivatePerson, Feature, MovePerson, MoveTeam, UpdatePerson, UpdateTeam,
+        },
         ports::OrganizationRead,
         records, snapshot,
     },
@@ -60,33 +63,54 @@ impl StoreOp for CreateOrganizationOp {
     }
 }
 
-/// Creates a team under an existing one. The caller has authenticated `by`; the
-/// organization decides what `by` may do.
-pub struct CreateTeamOp {
+/// One structure change the organization's owner asks for: the family decides it, and
+/// with it whether `by` may (only the owner, `owner`, does). The caller has authenticated
+/// `by`; the organization decides what `by` may do.
+pub struct StructureOp<C> {
     /// Minted by the caller: a retry with it gets the original reply.
     pub operation_id: Id,
     /// The office deciding: the store's own identity.
     pub here: OfficeIdentity,
+    /// The owner's employee ID, as the creation binding names them.
+    pub owner: Id,
     pub by: Actor,
-    pub command: CreateTeam,
+    pub command: C,
 }
 
-impl StoreOp for CreateTeamOp {
+impl<C: Feature> StoreOp for StructureOp<C> {
     type Out = Result<Reply, StoreError>;
 
     fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
         let Self {
             operation_id,
             here,
+            owner,
             by,
             command,
         } = self;
         let operation = command.operation(operation_id, &by);
         store.submit(Some(operation), false, move |uow| {
-            create_team::decide(uow, &here, &by, &command)
+            command.decide(uow, &here, &owner, &by)
         })
     }
 }
+
+/// Creates a team, under another or at the top level.
+pub type CreateTeamOp = StructureOp<CreateTeam>;
+/// Renames a team, or appoints or clears its lead.
+pub type UpdateTeamOp = StructureOp<UpdateTeam>;
+/// Moves a team, its subtree and their profiles under another team.
+pub type MoveTeamOp = StructureOp<MoveTeam>;
+/// Archives an empty team.
+pub type ArchiveTeamOp = StructureOp<ArchiveTeam>;
+/// Adds a person to a home team.
+pub type AddPersonOp = StructureOp<AddPerson>;
+/// Changes a person's profile, role or manager.
+pub type UpdatePersonOp = StructureOp<UpdatePerson>;
+/// Moves a person to another home team.
+pub type MovePersonOp = StructureOp<MovePerson>;
+/// Deactivates a person.
+pub type DeactivatePersonOp = StructureOp<DeactivatePerson>;
 
 /// The directory generation of the snapshot read: the organization stream's high-water.
 pub struct DirectoryGeneration;
