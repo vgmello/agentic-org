@@ -63,6 +63,19 @@ A restarted ui-dev reads `INDEX.md` after this file. If that folder is gone, thi
 - Pointer focus return for menus and dialogs (app-shell-ux 305–307): an unreviewed start is on branch
   `origin/app-frontend-dev/pointer-focus`.
 
+## Request from the backend stream: the extension UI slot
+
+Owner-directed, 2026-11-20. The backend stream proposes how optional extensions (first Containers and Xcode, late v1, not
+milestone one) appear in the web app: menu items, a settings section validated by the office,
+their own panels, discovery of enabled extensions from the office through the web API, and UI code
+that lives in `extensions/<name>/ui/` and is built into the web app (never Tailwind Plus outside
+`apps/agentic-org-ui`). Proposal: [accounts, sandbox and extensions, section 8.4](../design/accounts-sandbox-and-extensions.md#84-the-ui-slot-proposal).
+ui-dev is asked to review it, brainstorm the slot with backend-dev, and agree its shape before either
+side builds it. One point to settle together: building extension UI into the app must not make the
+app and the extension UI import each other (the note offers a shared UI-foundation package or
+slot-provided primitives). Nothing under `apps/agentic-org-ui` was changed. Until then, milestone-one UI only keeps
+the navigation and settings sections driven by data where that is cheap.
+
 ## For the other streams
 
 - **Backend:** the UI expects the routes in `docs/design/web-api-v1.md` one by one; each screen swaps
