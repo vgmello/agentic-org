@@ -136,6 +136,18 @@ section 8.
     specified next as one mode with two adapters: a mount-namespace root on Linux and
     a Seatbelt deny-by-default profile on macOS. It needs its own spike and is not a
     v1 commitment.
+    *Owner direction 2026-11-20 (planned, proposed; not yet accepted as a full
+    decision):* `os-sandbox` becomes a planned item (FC-190, plan row L15). The office
+    puts its own OS sandbox around the whole agent process, for every kind of agent,
+    confining it to its own folder: Seatbelt on macOS, Landlock on Linux (bubblewrap
+    as an installable alternative). Profiles depend on the kind of agent: a standard
+    profile (its own folder only) and an iOS profile that also allows Xcode,
+    DerivedData, CoreSimulator and simulator services, and signing. First step: a
+    macOS spike that builds an iOS app with `xcodebuild`, boots a simulator and runs
+    its tests under a Seatbelt profile. If simulators cannot be sandboxed, iOS agents
+    run in their own office or Mac in `dedicated-user` mode. The vendor tool's own
+    sandbox stays an optional extra layer; Claude Code's cannot be configured for the
+    simulator service.
 
 ## Acceptance criteria
 

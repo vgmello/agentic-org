@@ -25,13 +25,13 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring, project documentation and release/deployment records | 17 | 0 | 1 | 15 | 0 | 1 | 0 |
 | [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks and handoffs | 15 | 2 | 6 | 5 | 0 | 2 | 0 |
 | [AREA-07 · Usage, costs and budgets](#area-07) | Usage, attribution, pricing, cost reads and budget controls | 11 | 0 | 1 | 9 | 0 | 1 | 0 |
-| [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 20 | 1 | 5 | 10 | 0 | 4 | 0 |
+| [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 21 | 1 | 5 | 11 | 0 | 4 | 0 |
 | [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content, development processes and deferred learning engines | 18 | 0 | 3 | 10 | 0 | 5 | 0 |
 | [AREA-10 · Project health and reports](#area-10) | Health, narratives, analytics and private digests | 5 | 0 | 0 | 0 | 0 | 5 | 0 |
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
 | [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 15 | 1 | 5 | 6 | 0 | 3 | 0 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 1 | 0 | 2 | 0 |
-| **Total** | | **189** | **9** | **74** | **60** | **1** | **45** | **0** |
+| **Total** | | **190** | **9** | **74** | **61** | **1** | **45** | **0** |
 
 ## AREA-01
 

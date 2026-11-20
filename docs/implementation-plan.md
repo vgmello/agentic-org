@@ -666,6 +666,10 @@ on the offers of design section 10.
   + Xcode check (ADR-0015 decision 7 / `ISO-6`), Linux sign-in/isolation verification,
   and Codex sub-agent isolation verification when `org-agent-runtime-codex` begins.
 - **Done when:** the result is recorded and the first adapter to build is chosen.
+- **Done (2026-11-20):** both are met on `v1` (PR 17, merge `03df9805`): the result is
+  the [C1 sign-in spike](research/c1-sign-in-spike.md) and the first adapter is
+  `crates/org-agent-runtime-claude`, an internal foundation C3 builds on. The remaining
+  checks listed above move with their rows (FC-161, FC-098).
 - **Needs nothing else and can start at any time.**
 
 ### C2 · Hire an agent through HR
@@ -1371,6 +1375,7 @@ product without it.
 | L3 | Budgets and the hold at the turn permit | [document 17](design/organization-data/17-budgets-and-controls.md), FC-089 to FC-093; ASK-8 |
 | L4 | Subscription pools, quota permits, failover | [documents 11 and 14](design/organization-data/11-model-profiles-and-agent-execution.md), FC-098, FC-099; the rest of ASK-4 |
 | L6 | The `dedicated-user` isolation mode | [ADR-0015](adr/0015-agent-isolation-modes.md), FC-161; ENC-4 for this mode |
+| L15 | The `os-sandbox` isolation mode: the office's own OS sandbox around the whole agent process (owner direction 2026-11-20, planned). First step: the macOS iOS-build spike | [ADR-0015](adr/0015-agent-isolation-modes.md) decision 12 and its owner direction, FC-190 |
 | L7 | Features, knowledge, releases and deployments | documents [03](design/organization-data/03-features-and-work.md), [07](design/organization-data/07-release-deployments.md), [09](design/organization-data/09-release-content-and-flags.md), FC-058 to FC-070 |
 | L11 | The project documentation tree and its index: sections, documents, diagrams and images under `projects/<id>/docs/`, `agent-os doc`, the Docs tab by section, and the boundary that keeps an agent to its own projects | [development process design](design/development-processes.md#8-the-project-documentation-tree), [document 18](design/organization-data/18-development-processes-and-project-documentation.md), FC-180. With or before L7, whose project-wide documents live in the tree |
 | L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/development-processes.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-175 to FC-179, FC-184, FC-187. Needs C2, C3 and L11 |
