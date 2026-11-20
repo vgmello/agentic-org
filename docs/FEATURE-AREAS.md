@@ -19,7 +19,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | Area | Scope | Total | Done | In progress | Planned | Blocked | Deferred | Needs verification |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | [AREA-01 · Application and browser](#area-01) | Shell, navigation, accessibility, search and preferences | 9 | 2 | 5 | 1 | 0 | 1 | 0 |
-| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 24 | 1 | 18 | 2 | 1 | 2 | 0 |
+| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 24 | 1 | 17 | 2 | 1 | 3 | 0 |
 | [AREA-03 · Organization, people and teams](#area-03) | Membership, reporting, hiring, profiles, Home and activity | 13 | 1 | 12 | 0 | 0 | 0 | 0 |
 | [AREA-04 · Projects, tasks, bugs and requests](#area-04) | Typed work, assignment/history, collaboration and planning gates | 23 | 0 | 16 | 2 | 0 | 5 | 0 |
 | [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring, project documentation and release/deployment records | 17 | 0 | 1 | 15 | 0 | 1 | 0 |
@@ -31,7 +31,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
 | [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 15 | 1 | 5 | 6 | 0 | 3 | 0 |
 | [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 1 | 0 | 2 | 0 |
-| **Total** | | **194** | **9** | **74** | **65** | **1** | **45** | **0** |
+| **Total** | | **194** | **9** | **73** | **65** | **1** | **46** | **0** |
 
 ## AREA-01
 
@@ -53,7 +53,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Boundary:** Owns service/access/enrollment behavior. Team membership belongs to AREA-03; durable source restoration and process-safe cache rebuild belong to AREA-12. CSP is classified here with production security, even though it affects every screen.
 
-**Verification focus:** Setup creates the instance and prints a one-time registration link; it creates no account, organization or office and asks for no password. Every account is registered in the browser through a one-time link and is tied to a person. A signed-in administrator creates the organization and becomes its owner. Restart, instance and logging primitives are partial; authorized relocation/removal, update/uninstall and usable diagnostics remain. TLS/custody primitives and satellite status/repair UI are partial; production handoff, CA escrow and invitation/approval integration are missing. On macOS, setup reserves the instance and registers its per-user service, the service host creates its registry at first start, and `admin reset` issues a replacement registration link (FC-011, FC-012). Browser onboarding (the registration page), physical authentication, SSH refusal for `admin reset` and authentic signed-release acceptance remain. Dedicated non-administrator accounts with one-prompt setup (FC-191) are proposed and not built; today the instance runs as the person's own account.
+**Verification focus:** Setup creates the instance and prints a one-time registration link; it creates no account, organization or office and asks for no password. Every account is registered in the browser through a one-time link and is tied to a person. A signed-in administrator creates the organization and becomes its owner. Restart, instance and logging primitives are partial; authorized relocation/removal, update/uninstall and usable diagnostics remain. TLS/custody primitives and satellite status/repair UI are partial; production handoff and invitation/approval integration are missing; the recovery code and CA escrow are v2 (owner 2026-11-20, FC-016 Deferred). On macOS, setup reserves the instance and registers its per-user service, the service host creates its registry at first start, and `admin reset` issues a replacement registration link (FC-011, FC-012). Browser onboarding (the registration page), physical authentication, SSH refusal for `admin reset` and authentic signed-release acceptance remain. Dedicated non-administrator accounts with one-prompt setup (FC-191) are proposed and not built; today the instance runs as the person's own account.
 
 **Requirements:** [Installation/access UX](specs/server-installation-and-access-ux.md), [Office/team UX](specs/offices-and-teams-ux.md), [Host boundary](design/office-host-boundary.md), [Dogfood acceptance](specs/dogfood-run.md); proposed: [accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md).
 

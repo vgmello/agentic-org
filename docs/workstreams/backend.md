@@ -52,8 +52,8 @@ then build L15 (`os-sandbox`, FC-190) and L16 (accounts and setup, FC-191, with 
 
 ## Owner decisions 2026-11-20
 
-The full list (D1 to D23) is in [the note's owner decisions](../design/accounts-sandbox-and-extensions.md#owner-decisions-and-direction-2026-11-20);
-its requirements are `ASX-1` to `ASX-18` ([requirements](../design/accounts-sandbox-and-extensions.md#requirements)); where each is tracked is
+The full list (D1 to D28) is in [the note's owner decisions](../design/accounts-sandbox-and-extensions.md#owner-decisions-and-direction-2026-11-20);
+its requirements are `ASX-1` to `ASX-20` ([requirements](../design/accounts-sandbox-and-extensions.md#requirements)); where each is tracked is
 [its tracking table](../design/accounts-sandbox-and-extensions.md#where-this-is-tracked).
 
 - Isolation by accounts is the default for an install; development uses `--isolation off` (D8; FC-191, L16).
@@ -62,7 +62,8 @@ its requirements are `ASX-1` to `ASX-18` ([requirements](../design/accounts-sand
 - Extensions after milestone one: Containers (Colima) and Xcode, with a UI slot to agree with ui-dev (D9 to D12; FC-192 to FC-194, L17).
 - Take-over paused to late v1 (D3; FC-151). Background tasks and sub-agents stay on (D1; ADR-0025).
 - Answers of 2026-11-20 (D14 to D23): Linux offices in the template unit `agentic-org-office@.service` with a polkit rule; host secrets in owner-only files for now; extension `platform` modules (LNX-5 exception); ui-dev leads the UI slot at L17; agent accounts per office, separate from the service account; helper confirmed pending the spike; disk encryption check-and-warn; Git rules carry over; `uninstall` and changing the isolation setting ask once; the host-with-the-person option not adopted.
-- Still open (note section 12): recovery presence and authority under a service-account host (question 3), a `same-user` agent under `accounts` (11), iOS signing and the non-negotiable-10 exception (12).
+- Answers of 2026-11-20 (D24 to D28): the recovery code, CA escrow and protected recovery delivery are v2 (FC-016 Deferred; code stays until the owner confirms); a lost HQ in v1 is replaced by importing from Git (FC-167, R1) and other offices re-enroll with one command; one CA per organization, installed as trusted, with a "Trust this organization" download; watching an agent's screen through the agent account's own graphical session, "visible on my desktop" as the fallback; iOS signing is the developer's own setup and the non-negotiable-10 exception is accepted for Xcode-extension agents.
+- No question of section 12 is open now; question 3 is deferred to v2.
 
 ## In flight
 
@@ -81,6 +82,10 @@ its requirements are `ASX-1` to `ASX-18` ([requirements](../design/accounts-sand
   with the owner.
 
 ## Small follow-ups (not new features)
+
+- To do once secrets are settled: a secrets map (document and visual page: each secret, who holds it, where it
+  lives, who can read it); per-program custody (each program with its own Keychain items or files) is a later
+  release option ([note, To do and 6.4](../design/accounts-sandbox-and-extensions.md#to-do)).
 
 - CI on `v1` is red in jobs that were already red before B1b (checked on c60bcada, 58a44b2b, 701d8460): `rust (macos-15)` (`release::store` tests, `unsupported_bootstrap_never_creates_partial_offices_or_service_state`), Secret scanning (30 findings across the whole history), Dependency security (frontend audit). Browser CSP jobs are the UI stream's.
 
