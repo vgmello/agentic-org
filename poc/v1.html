@@ -91,9 +91,11 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .foot .office-rail .obadge { position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; border-radius: 99px; background: #1b2533; display: inline-flex; align-items: center; justify-content: center; }
 .foot .office-rail .obadge .ic { width: 12px; height: 12px; stroke-width: 2; color: var(--green-400); }
 
-.proto-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px var(--gutter); background: rgb(0 0 0 / .2); border-bottom: 1px solid var(--line); font-size: 13px; color: var(--gray-300); flex-shrink: 0; }
-.proto-banner .grow { flex: 1; min-width: 200px; }
-.bctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.proto-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px var(--gutter); background: rgb(0 0 0 / .2); border-bottom: 1px solid var(--line); font-size: 13px; color: var(--gray-300); flex-shrink: 0; }
+.proto-banner .grow { flex: 1; min-width: 110px; }
+.bctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.ver-ctl { display: inline-flex; align-items: center; gap: 6px; }
+.ver-select { font-size: 0.8125rem; font-weight: 600; padding: 0 20px 0 8px; cursor: pointer; }
 .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 24px; height: 64px; padding: 0 var(--gutter); border-bottom: 1px solid var(--line); background: var(--gray-800); flex-shrink: 0; }
 .search { position: relative; display: grid; flex: 1; max-width: 576px; height: 36px; border-radius: var(--radius-md); background: var(--hover); box-shadow: inset 0 0 0 1px var(--gray-500); }
 .search:focus-within { box-shadow: inset 0 0 0 2px var(--indigo-400); }
@@ -740,6 +742,14 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   <div class="proto-banner" id="banner" role="note">
     <svg class="ic ic16" aria-hidden="true"><use href="#i-info"/></svg>
     <span class="grow">Prototype · information architecture v2 · draft 4.1 · mock data</span>
+    <label class="ver-ctl" for="ver-select">
+      <span class="seg-label">Version</span>
+      <select class="field ver-select" id="ver-select" data-cur="/v1" aria-label="Prototype version">
+        <option value="/v1" selected>v1 · Original</option>
+        <option value="/v2">v2 · Navy</option>
+        <option value="/v3">v3 · Orb</option>
+      </select>
+    </label>
     <div class="bctl" id="banner-ctl"></div>
     <button class="link" type="button" data-act="changes">What changed</button>
     <button class="btn ghost sm icon" type="button" data-act="banner-close" aria-label="Dismiss prototype banner"><svg class="ic ic16" aria-hidden="true"><use href="#i-x"/></svg></button>
@@ -3064,6 +3074,12 @@ document.addEventListener("keydown", (e) => {
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
+
+const verSel = document.getElementById("ver-select");
+if (verSel) {
+  verSel.addEventListener("change", () => { location.href = verSel.value + (location.hash || ""); });
+  window.addEventListener("pageshow", () => { verSel.value = verSel.dataset.cur; });
+}
 
 if (!location.hash) {
   try { history.replaceState(null, "", "#/home"); } catch (e) {}
