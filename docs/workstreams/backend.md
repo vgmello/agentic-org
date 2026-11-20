@@ -32,7 +32,8 @@ Ask the owner before starting anything new.
 | B2.1 · one home team on the store (domain) | Done | v1 7f3000bc | FEATURES FC-025..029 and "code today" text not yet updated; old test vectors `crates/org-office/test-vectors/{org-commands,deferred-org-commands,organization}.json` describe the deleted model (only UI tests read them; freeze or replace with B2.2) |
 | B2.2 to B2.4 · wire, browser path and routes, CLI | Blocked: owner paused new features | plan `.agent-kit/slices/b2-organization-teams-people-plan.md` | Owner questions Q8 (who builds browser-to-office), Q9 (agent-placed checks to C3); confirm Q3 refusal code `invalid_request` vs Q2 `not_empty`, and "a manager must be active" (a paused agent can't manage) |
 | B3, A5, O1, A6, B4, B6 | Not started | — | In `docs/implementation-plan.md` order, after B2 |
-| C1 · the sign-in spike | Done | v1 03df9805 (PR 17) | Result: `docs/research/c1-sign-in-spike.md`; first adapter `crates/org-agent-runtime-claude` (internal foundation, no production caller). Its remaining gaps are in FEATURES FC-101, FC-161, FC-189 |
+| C1 · the sign-in spike | Done | v1 03df9805 (PR 17) | Result: `docs/research/c1-sign-in-spike.md`; first adapter `crates/org-agent-runtime-claude` (internal foundation, no production caller). Its remaining checks are in FEATURES FC-161, FC-098; Codex sub-agent isolation with FC-172/FC-101 |
+| L15 · `os-sandbox` isolation mode (v1 scope, owner 2026-11-20) | Not started | — | Planned: FEATURES FC-190, ADR-0015 decision 12 (design proposed). First step: the macOS spike (an iOS app built with `xcodebuild`, its simulator tests run under a Seatbelt profile) |
 | C2 to C5 (agents) | Not started | — | C3's next adapter work (the office session runner on `org-agent-runtime-claude`) has not started. Owner decides |
 
 ## Next up
@@ -57,10 +58,6 @@ merge). The owner's answers to Q1 to Q5 are at the end of the B2 plan.
   with the owner.
 
 ## Small follow-ups (not new features)
-
-- `os-sandbox` isolation mode (owner direction 2026-11-20, planned): FEATURES FC-190, plan row L15,
-  ADR-0015 decision 12. First step: the macOS spike (an iOS app built with `xcodebuild` and its simulator
-  tests run under a Seatbelt profile). Not started.
 
 - CI on `v1` is red in jobs that were already red before B1b (checked on c60bcada, 58a44b2b, 701d8460): `rust (macos-15)` (`release::store` tests, `unsupported_bootstrap_never_creates_partial_offices_or_service_state`), Secret scanning (30 findings across the whole history), Dependency security (frontend audit). Browser CSP jobs are the UI stream's.
 

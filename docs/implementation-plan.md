@@ -669,8 +669,8 @@ on the offers of design section 10.
 - **Done (2026-11-20):** both are met on `v1` (PR 17, merge `03df9805`): the result is
   the [C1 sign-in spike](research/c1-sign-in-spike.md) and the first adapter is
   `crates/org-agent-runtime-claude`, an internal foundation C3 builds on. The remaining
-  checks listed above move with their rows (FC-161, FC-098).
-- **Needs nothing else and can start at any time.**
+  checks listed above move with their rows (FC-161, FC-098; Codex sub-agent isolation
+  with FC-172/FC-101).
 
 ### C2 · Hire an agent through HR
 
