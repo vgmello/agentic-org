@@ -1327,42 +1327,71 @@ fn l6_probe_refuses_a_root_config_dir() {
 }
 
 #[test]
-fn l7_a_result_cancels_pending_approvals() {
+fn l7_a_pending_approval_survives_a_result_and_is_cancelled_when_the_process_ends() {
+    // A background sub-agent's approval can still be pending when the main turn's result
+    // arrives (ADR-0025): it stays answerable, and nothing announces a cancellation.
     let mut session = ready_session(&sample_spec());
     send_turn(session.as_mut());
     let _ = session.on_line(
-        br#"{"type":"control_request","request_id":"req-open","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#,
+        br#"{"type":"control_request","request_id":"req-bg","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#,
         Instant::now(),
     );
     let result = session.on_line(
-        br#"{"type":"result","subtype":"error_during_execution","is_error":false,"terminal_reason":"aborted_tools"}"#,
+        br#"{"type":"result","subtype":"success","is_error":false}"#,
         Instant::now(),
     );
-    let cancelled = result
-        .iter()
-        .position(|o| {
-            o == &Output::Event(SessionEvent::ApprovalCancelled {
-                id: ApprovalId::new("req-open"),
-            })
-        })
-        .expect("ApprovalCancelled for the pending approval");
-    let ended = result
-        .iter()
-        .position(|o| matches!(o, Output::Event(SessionEvent::TurnEnded { .. })))
-        .expect("TurnEnded");
-    assert!(cancelled < ended);
+    assert!(
+        !result
+            .iter()
+            .any(|o| matches!(o, Output::Event(SessionEvent::ApprovalCancelled { .. }))),
+        "Claude did not withdraw the approval: {result:?}"
+    );
+    assert_eq!(turn_ends(&result), vec![&TurnOutcome::Completed]);
     assert_eq!(
-        session.control(
+        result.last(),
+        Some(&Output::Event(SessionEvent::Status(
+            Activity::WaitingOnApproval
+        ))),
+        "an approval is still pending after the turn"
+    );
+    let answer = session
+        .control(
             Control::Answer {
-                request_id: ApprovalId::new("req-open"),
+                request_id: ApprovalId::new("req-bg"),
                 decision: Decision::AllowOnce,
             },
             Instant::now(),
-        ),
-        Err(ControlError::UnknownApproval)
+        )
+        .expect("the approval is still answerable after the result");
+    let written = answer
+        .iter()
+        .find_map(|o| match o {
+            Output::Write(line) => Some(String::from_utf8_lossy(line.as_bytes()).into_owned()),
+            _ => None,
+        })
+        .expect("the answer is written to Claude");
+    assert!(written.contains("\"control_response\"") && written.contains("req-bg"));
+    assert!(answer.contains(&Output::Event(SessionEvent::Status(Activity::Idle))));
+
+    // Stdout closing (the process is going) cancels a pending approval.
+    let mut session = ready_session(&sample_spec());
+    send_turn(session.as_mut());
+    let _ = session.on_line(
+        br#"{"type":"control_request","request_id":"req-eof","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#,
+        Instant::now(),
+    );
+    let _ = session.on_line(
+        br#"{"type":"result","subtype":"success","is_error":false}"#,
+        Instant::now(),
+    );
+    let closed = session.on_stdout_closed(Instant::now());
+    assert!(
+        closed.contains(&Output::Event(SessionEvent::ApprovalCancelled {
+            id: ApprovalId::new("req-eof"),
+        }))
     );
 
-    // The process ending also withdraws a pending approval.
+    // So does the exit.
     let mut session = ready_session(&sample_spec());
     send_turn(session.as_mut());
     let _ = session.on_line(
@@ -1370,9 +1399,56 @@ fn l7_a_result_cancels_pending_approvals() {
         Instant::now(),
     );
     let exit = session.on_exit(EXIT_OK, Instant::now());
-    assert!(
-        exit.contains(&Output::Event(SessionEvent::ApprovalCancelled {
-            id: ApprovalId::new("req-exit"),
-        }))
+    let cancelled = exit
+        .iter()
+        .position(|o| {
+            o == &Output::Event(SessionEvent::ApprovalCancelled {
+                id: ApprovalId::new("req-exit"),
+            })
+        })
+        .expect("ApprovalCancelled on exit");
+    assert!(cancelled < exit.len() - 1, "Ended stays last");
+}
+
+#[test]
+fn l4_path_rules_for_tools_without_a_claude_path_form_are_not_written() {
+    let runtime = ClaudeRuntime::new();
+    let ctx = sample_ctx();
+    let bash_path = Rule {
+        tool: RuleTool::try_from("Bash").unwrap(),
+        scope: RuleScope::Path(pat("/office/**")),
+    };
+
+    // A deny Claude can't express is refused (fail closed).
+    let mut deny = sample_spec();
+    deny.policy.deny = vec![bash_path.clone()];
+    assert!(matches!(
+        runtime.plan_session(&deny, &ctx),
+        Err(PlanError::Unsupported(_))
+    ));
+
+    // An allow Claude can't express is dropped; a known path tool is kept.
+    let mut allow = sample_spec();
+    allow.policy.deny.clear();
+    allow.sandbox.deny_write.clear();
+    allow.sandbox.deny_read.clear();
+    allow.tools = None;
+    allow.policy.allow = vec![
+        bash_path,
+        Rule {
+            tool: RuleTool::try_from("Edit").unwrap(),
+            scope: RuleScope::Path(pat("/work/t-1/**")),
+        },
+    ];
+    let (plan, _) = runtime.plan_session(&allow, &ctx).unwrap();
+    let settings_file = plan
+        .files
+        .iter()
+        .find(|f| f.rel_path.as_str() == "claude-settings.json")
+        .unwrap();
+    let settings: serde_json::Value = serde_json::from_slice(&settings_file.contents).unwrap();
+    assert_eq!(
+        settings["permissions"]["allow"],
+        serde_json::json!(["Edit(//work/t-1/**)"])
     );
 }

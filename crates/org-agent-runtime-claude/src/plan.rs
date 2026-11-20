@@ -533,7 +533,8 @@ const SHELL_TOOL: &str = "Bash";
 /// to the concrete tools the scope applies to: a path to [`PATH_RULE_TOOLS`], a command
 /// prefix to [`SHELL_TOOL`]. Claude has no path rule for `Bash`; the sandbox's deny lists and
 /// the office's approval bridge cover shell access to such paths. `*` with no scope (every
-/// use of every tool) has no exact Claude form and gives `None`.
+/// use of every tool) and a path rule for a tool outside [`PATH_RULE_TOOLS`] have no exact
+/// Claude form and give `None`.
 fn format_rule(rule: &Rule) -> Option<Vec<String>> {
     let tool = rule.tool.as_str();
     let any_tool = tool == "*";
@@ -542,7 +543,15 @@ fn format_rule(rule: &Rule) -> Option<Vec<String>> {
         RuleScope::Any => Some(vec![tool.to_owned()]),
         RuleScope::Path(pattern) => {
             let path = claude_rule_path(pattern.as_str());
-            let tools: &[&str] = if any_tool { PATH_RULE_TOOLS } else { &[tool] };
+            let tools: &[&str] = if any_tool {
+                PATH_RULE_TOOLS
+            } else if PATH_RULE_TOOLS.contains(&tool) {
+                &[tool]
+            } else {
+                // Claude has no path rule for this tool (e.g. `Bash(//path)`): written, it
+                // would look like a restriction and do nothing.
+                return None;
+            };
             Some(tools.iter().map(|t| format!("{t}({path})")).collect())
         }
         RuleScope::CommandPrefix(prefix) => {

@@ -180,7 +180,8 @@ impl ClaudeSession {
         self.turn_model = None;
     }
 
-    /// Withdraws every pending approval: the runtime won't take an answer to it any more.
+    /// Withdraws every pending approval once the process is gone: nothing can take an answer
+    /// to it any more.
     fn cancel_pending_approvals(&mut self) -> Vec<Output> {
         std::mem::take(&mut self.pending_approvals)
             .into_iter()
@@ -851,14 +852,20 @@ impl ClaudeSession {
 
         let (outcome, errors) = map_result_outcome(val);
         self.reset_turn_usage();
-        // The turn is over, so its approvals can't be answered any more.
-        out.extend(self.cancel_pending_approvals());
+        // Pending approvals stay answerable: a background sub-agent's `can_use_tool` outlives
+        // the main turn's `result` (ADR-0025), and Claude has not withdrawn it. Only the
+        // process ending (stdout closed or exit) cancels them.
         match self.phase {
             Phase::Busy => {
                 self.phase = Phase::Idle;
                 self.turn_open = false;
                 out.push(Output::Event(SessionEvent::TurnEnded { outcome, errors }));
-                out.push(Output::Event(SessionEvent::Status(Activity::Idle)));
+                let status = if self.pending_approvals.is_empty() {
+                    Activity::Idle
+                } else {
+                    Activity::WaitingOnApproval
+                };
+                out.push(Output::Event(SessionEvent::Status(status)));
             }
             Phase::Closing => out.extend(self.end_closed_turn(Some((outcome, errors)))),
             Phase::Opening | Phase::Idle | Phase::Failed | Phase::Ended => {}
