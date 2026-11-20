@@ -475,7 +475,7 @@ stream-json **[doc]**:
 
 ### 6.1 Shape
 
-Put the contract in a small, stable crate that the office domain owns, for example `crates/org-runtime`. Each runtime gets an adapter crate (`org-runtime-claude`, `org-runtime-codex`, `org-runtime-agy`).
+Put the contract in a small, stable crate that the office domain owns, for example `crates/org-agent-runtime`. Each runtime gets an adapter crate (`org-agent-runtime-claude`, `org-agent-runtime-codex`, `org-agent-runtime-agy`).
 
 - The office worker depends on the trait. `apps/agentic-org-office` wires in the adapters.
 - Adapters depend only on the trait crate and their CLI, never on each other or on office storage.

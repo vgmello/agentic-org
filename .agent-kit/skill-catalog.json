@@ -82,11 +82,11 @@
     },
     {
       "path": "Cargo.lock",
-      "sha256": "3ff16ccc71b7b2ec59ff504190028673c17a5b802c84ac241dcded4bf695a335"
+      "sha256": "a2fec1b5a9e2b60712fc22bf25cf95c45b60f3d5d3cd39909d50396fd4659300"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "8263b161ef70997e168ab09ff8074ae276869044ff62957e9946be184d34c1da"
+      "sha256": "36f85448956fdfa043582f6176b11400ebafc8f3d2ba95dad16e00431b344f20"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
@@ -174,7 +174,7 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "379ca93190007a8da2ef54a6a7645850b82c10e3a908739016211ec2fc37f8a0"
+      "sha256": "e88b469c39138f6da9fbd03124d004af86cc5684143202577e6f28ba3feb6f7e"
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
@@ -186,11 +186,11 @@
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "06dda77521ded6aa58eb0b1d3a592b2146393cdbd157e48fff37678c6944efb4"
+      "sha256": "d78cffe89ab3a466d3443b0a8408524282102a458137bfb09408c47dcbffd3cf"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "c857c6e75485c6a303389e8df3501f09e1fb22fe0cc2d4265c83cc771f8d660c"
+      "sha256": "8b8cdcec54228b541c82dc2a47dd54ba9d052de16bbd5ca43db325b425556305"
     },
     {
       "path": "docs/independent-delivery.md",
@@ -321,7 +321,8 @@
         "crates/org-proto",
         "crates/org-sync-proto",
         "crates/org-office-launch",
-        "crates/org-runtime",
+        "crates/org-agent-runtime",
+        "crates/org-agent-runtime-claude",
         "crates/org-host-control",
         "crates/org-release"
       ],

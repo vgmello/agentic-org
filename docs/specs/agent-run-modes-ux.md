@@ -102,6 +102,24 @@ team; every other agent is created only by a hire that someone who may hire has 
 does not block hiring with the manual form. Creating configuration does not start a
 model turn.
 
+**Advanced settings (sandbox and permissions):** under an agent's execution configuration
+(`agent_execution_configs.permission_preset` in `execution.md`, never on a provider
+connection), the UI presents user-friendly security presets mapped strictly to
+`org-agent-runtime::PermissionMode` plus named `PermissionPolicy` rules—always subject
+to `effective_permission_mode`, the fixed denies, and mandatory escalation denials—defaulting
+to a sandboxed workspace with interactive approval routing (`safe_ask` → `Ask`, alongside
+`read_only` → `Plan`, `workspace_edits` → `AcceptEdits`, and `autonomous_sandboxed` →
+`AcceptEdits` + named workspace-scoped sandboxed command allow rules;
+[ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)).
+The product never exposes a bypass / unrestricted skip-permissions switch, preserving
+the `org-agent-runtime` no-bypass invariant.
+A per-agent sandbox on/off switch in Advanced settings, on by default, is planned
+(owner decision 2026-11-20, FC-189 follow-up); it is not built yet and adds no stored field until it is.
+Browser-driven one-time subscription sign-in for
+connections (Claude paste-code via `claude setup-token`, preferred, or `claude auth login --claudeai`, and Codex device-code via `codex login --device-auth`) is also defined
+in ADR-0032 under ADR-0004 decision 3's narrow enrollment exception without exposing a
+browser terminal for agent sessions.
+
 ## 3. States and edge cases
 
 | Case | Required outcome |
@@ -121,7 +139,7 @@ model turn.
 
 - RUN-1 · Not in v1: an automatic run mode (Always on, On call, Scheduled) chosen at hire.
 - RUN-2 · Not in v1: Asleep and Offline presence derived from a run mode.
-- RUN-3 · A turn starts from an explicit Run, from the answer to a required ask, from an ask, a hand-off or a mention by name sent by another agent to an idle agent, or from an answer to a question the agent itself asked (ADR-0023, WAKE-1 to WAKE-7; ADR-0024). By [ADR-0028](../adr/0028-an-agent-is-always-available.md) a direct message or a mention from a person, and a task assigned to the agent, start a turn the same way (AVAIL-1 to AVAIL-6). An announcement, `@here`, and an ordinary post or an undirected question in a channel start nothing. An agent that is not working shows as Available, whether or not its process is running.
+- RUN-3 · A turn starts from an explicit Run, from the answer to a required ask, from an ask, a hand-off or a mention by name sent by another agent to an idle agent, or from an answer to a question the agent itself asked (ADR-0023, WAKE-1 to WAKE-7; ADR-0024), or from a reactive completion wake (`background_wake`) of the agent's own active background task or sub-agent ([ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6). By [ADR-0028](../adr/0028-an-agent-is-always-available.md) a direct message or a mention from a person, and a task assigned to the agent, start a turn the same way (AVAIL-1 to AVAIL-6). An announcement, `@here`, and an ordinary post or an undirected question in a channel start nothing. An agent that is not working shows as Available, whether or not its process is running.
 - RUN-4 · A second Run is Busy while the original turn is open; no second process or implicit queue is created.
 - RUN-5 · Turn history shows the logical turn, its actual routed attempts, durations, permitted amounts and completeness, and the concrete outcome; process reuse never merges attempt attribution.
 - RUN-6 · Not in v1: idle sleep and a maximum busy time per run.
@@ -133,7 +151,7 @@ model turn.
 - RUN-12 · Not in v1: one-off agents started from a job.
 - RUN-13 · Not in v1: run-mode history and cost summary in a How it runs panel. Cost visibility rules apply wherever turn costs appear.
 - RUN-14 · Each placed runnable agent has office-owned execution state independent of its model conversation. People have no execution controller; monitoring an idle or paused agent uses no model turns. Pause, offboarding and transfer reconcile owned main processes and their descendants before replacement, keep independent holds and keep task workspaces.
-- RUN-15 · An agent can start sub-agents inside its turn with its runtime's own tool; they share its limits, are recorded and costed as the employee, and end with the turn (ADR-0025, SUB-1 to SUB-7). Not in v1: memory forks.
+- RUN-15 · An agent can start sub-agents and background tasks inside its active session with its runtime's own tools; they share its limits, stay running across turns while people and agents keep messaging the agent, are recorded and costed as the employee, and are stopped and reaped on Pause, Stop, Offboard or stall timeout (ADR-0025, SUB-1 to SUB-7). Not in v1: memory forks.
 
 ## 5. Not in v1
 

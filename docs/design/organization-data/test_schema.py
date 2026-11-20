@@ -582,6 +582,7 @@ class DraftSchemaTests(unittest.TestCase):
         self.turn("open")
         self.turn("finished", "succeeded")
         self.turn("resumed", "failed", started_by_kind="resume")
+        self.turn("bg-wake", "succeeded", started_by_kind="background_wake")
         self.process("old", "gone")
         self.process("live", "starting")
         self.db.commit()
@@ -589,6 +590,8 @@ class DraftSchemaTests(unittest.TestCase):
                        lambda: self.turn("second", "blocked"))
         assert_refused(self, self.db, "CHECK constraint failed",
                        lambda: self.turn("unknown-start", "succeeded", started_by_kind="restart"))
+        assert_refused(self, self.db, "CHECK constraint failed",
+                       lambda: self.turn("bg-wake-emp", "succeeded", started_by_kind="background_wake", started_by_employee_id="ana"))
         assert_refused(self, self.db, "UNIQUE constraint failed: agent_process_instances",
                        lambda: self.process("another"))
 
@@ -1646,8 +1649,15 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         self.assertIn("started_by_employee_id", columns)
         self.assertIn("started_by_ref", columns)
         sql = self.db.execute("SELECT sql FROM sqlite_schema WHERE name='agent_execution_turns'").fetchone()[0]
-        for kind in ("run", "message", "mention", "ask", "handoff", "assignment", "answer", "recovery"):
+        for kind in ("run", "message", "mention", "ask", "handoff", "assignment", "answer", "resume", "recovery", "background_wake"):
             self.assertIn(f"'{kind}'", sql)
+        cfg_cols = {row[1]: row for row in self.db.execute("PRAGMA table_info(agent_execution_configs)")}
+        self.assertEqual(cfg_cols["permission_preset"][4], "'safe_ask'")
+        cfg_sql = self.db.execute("SELECT sql FROM sqlite_schema WHERE name='agent_execution_configs'").fetchone()[0]
+        for preset in ("safe_ask", "read_only", "workspace_edits", "autonomous_sandboxed"):
+            self.assertIn(f"'{preset}'", cfg_sql)
+        self.assertNotIn("unrestricted", cfg_sql)
+        self.assertNotIn("bypass", cfg_sql)
 
     def test_a_process_declares_its_tabs_from_the_generic_views(self):
         self.package()

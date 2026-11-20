@@ -77,7 +77,8 @@ impl Environment {
     }
 
     /// Add caller-owned context values. This crate validates names, never their domain meaning.
-    /// ORG_* identity/binding values, GH_CONFIG_DIR and the precise git config mechanism are
+    /// `ORG_*` identity/binding values, the exact documented `AGENT_OS_*` session context names
+    /// (never `AGENT_OS_SESSION_MARK`), `GH_CONFIG_DIR`, and the precise git config mechanism are
     /// allowed. The session mark is installed only by the recorded-spawn path.
     pub fn with_context(mut self, context: &[(OsString, OsString)]) -> io::Result<Self> {
         for (name, value) in context {
@@ -89,8 +90,20 @@ impl Environment {
                 "GIT_CONFIG_NOSYSTEM" | "GIT_CONFIG_GLOBAL" | "GIT_CONFIG_COUNT"
             ) || indexed(name_text, "GIT_CONFIG_KEY_")
                 || indexed(name_text, "GIT_CONFIG_VALUE_");
+            let agent_os = matches!(
+                name_text,
+                "AGENT_OS_SOCKET"
+                    | "AGENT_OS_SESSION_TOKEN"
+                    | "AGENT_OS_ORG"
+                    | "AGENT_OS_OFFICE"
+                    | "AGENT_OS_AGENT_ID"
+                    | "AGENT_OS_SESSION_ID"
+                    | "AGENT_OS_PROJECT"
+                    | "AGENT_OS_TASK"
+            );
             if !is_context_name(name)
                 || name_text == "ORG_SESSION_MARK"
+                || (name_text.starts_with("AGENT_OS_") && !agent_os)
                 || (name_text.starts_with("GIT_CONFIG_") && !git)
             {
                 return Err(invalid("name is not in the context environment allowlist"));
@@ -121,6 +134,28 @@ impl Environment {
         Ok(self)
     }
 
+    /// Apply adapter-declared runtime auth variables at the `runtime` mapping boundary.
+    /// Generic `Environment` holds no vendor names; every name must be declared by the
+    /// adapter's plan and must not collide with reserved, context, or loader-injection names.
+    pub(crate) fn with_declared_auth(
+        mut self,
+        auth: &[(OsString, OsString)],
+        declared: &[&str],
+    ) -> io::Result<Self> {
+        for (name, value) in auth {
+            let name_text = name
+                .to_str()
+                .ok_or_else(|| invalid("invalid runtime auth variable name"))?;
+            if !declared.contains(&name_text) || is_forbidden_auth_name(name, name_text) {
+                return Err(invalid(
+                    "name is not declared or allowed as a runtime auth variable",
+                ));
+            }
+            self.insert(name.clone(), value.clone())?;
+        }
+        Ok(self)
+    }
+
     pub(crate) fn insert(&mut self, name: OsString, value: OsString) -> io::Result<()> {
         use std::os::unix::ffi::OsStrExt;
         let bytes = name.as_bytes();
@@ -143,7 +178,32 @@ impl Environment {
 
 fn is_context_name(name: &OsStr) -> bool {
     let name = name.as_encoded_bytes();
-    name.starts_with(b"ORG_") || name.starts_with(b"GIT_CONFIG_") || name == b"GH_CONFIG_DIR"
+    name.starts_with(b"ORG_")
+        || name.starts_with(b"AGENT_OS_")
+        || name.starts_with(b"GIT_CONFIG_")
+        || name == b"GH_CONFIG_DIR"
+}
+
+fn is_forbidden_auth_name(raw: &OsStr, name: &str) -> bool {
+    is_context_name(raw)
+        || matches!(
+            name,
+            "PATH"
+                | "HOME"
+                | "LANG"
+                | "USER"
+                | "LOGNAME"
+                | "SHELL"
+                | "TERM"
+                | "TMPDIR"
+                | "NODE_OPTIONS"
+                | "BASH_ENV"
+                | "ENV"
+                | "PYTHONSTARTUP"
+                | "SSH_AUTH_SOCK"
+        )
+        || name.starts_with("LD_")
+        || name.starts_with("DYLD_")
 }
 
 fn indexed(name: &str, prefix: &str) -> bool {

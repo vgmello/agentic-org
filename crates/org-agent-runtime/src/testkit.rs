@@ -15,8 +15,8 @@
 //!     ..Default::default()
 //! };
 //! let caps = my_runtime.capabilities();
-//! org_runtime::testkit::check_all(&mut || my_session(), &script, &caps, Instant::now());
-//! org_runtime::testkit::check_plan(&plan, &spec, &ctx, &caps);
+//! org_agent_runtime::testkit::check_all(&mut || my_session(), &script, &caps, Instant::now());
+//! org_agent_runtime::testkit::check_plan(&plan, &spec, &ctx, &caps);
 //! ```
 //!
 //! `make` builds a fresh session in its initial state each time it's called (e.g. from
@@ -287,8 +287,13 @@ pub fn check_plan(plan: &LaunchPlan, spec: &SessionSpec, ctx: &LaunchContext, ca
         "plan rule broken: the cwd must be the spec's workspace"
     );
     assert!(
-        !ctx.tmpdir.is_root() && !ctx.runtime_dir.is_root(),
-        "plan rule broken: the run's TMPDIR or runtime dir is `/`"
+        !ctx.tmpdir.is_root()
+            && !ctx.runtime_dir.is_root()
+            && !ctx
+                .config_dir
+                .as_ref()
+                .is_some_and(crate::SpecPath::is_root),
+        "plan rule broken: the run's TMPDIR, runtime dir, or config dir is `/`"
     );
     // Whether the plan names `path` the way a root list would.
     let mentions = |path: &str| {
@@ -657,7 +662,7 @@ fn varied_exit(i: usize) -> ExitInfo {
 
 fn send(urgent: bool) -> Control {
     Control::Send {
-        text: "org-runtime testkit".to_owned(),
+        text: "org-agent-runtime testkit".to_owned(),
         urgent,
     }
 }
@@ -697,7 +702,7 @@ fn raise(session: &mut dyn Session, approval: &ScriptApproval, now: Instant) -> 
 
 fn answer_never_raised() -> Control {
     Control::Answer {
-        request_id: ApprovalId::new("org-runtime-testkit-never-raised"),
+        request_id: ApprovalId::new("org-agent-runtime-testkit-never-raised"),
         decision: Decision::AllowOnce,
     }
 }

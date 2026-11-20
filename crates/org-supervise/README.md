@@ -1,7 +1,7 @@
 # org-supervise
 
 Synchronous process primitives with private macOS/GNU-Linux implementations. The
-only dependencies are `libc` and the `org-runtime` contract. The generic API knows
+only dependencies are `libc` and the `org-agent-runtime` contract. The generic API knows
 no office, employee, protocol, storage or adapter implementation.
 
 Piped spawning, generated files, owned graceful/fast stopping, socket cleanup and
@@ -211,7 +211,7 @@ remain a containment limit.
 Owned stop/cleanup does not call this recovery policy. Probe cleanup is to use the
 shared coordinator after a successful owned group kill, then reap last; no new
 runtime may start before cleanup completes. This crate holds no SQL and no host or
-worker wiring. Dependencies: first-party `org-runtime`, and `libc`. Policy and its
+worker wiring. Dependencies: first-party `org-agent-runtime`, and `libc`. Policy and its
 sealed capability contracts remain in `org-supervise`; future storage adapters depend
 on this consumer-owned read port, without adding a dependency from process policy to SQL.
 

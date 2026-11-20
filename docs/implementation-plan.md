@@ -653,7 +653,18 @@ on the offers of design section 10.
   tools and the environment, and where their conversation is kept
   ([ADR-0025](adr/0025-agents-start-sub-agents.md) decision 10).
 - **Read:** [ADR-0015](adr/0015-agent-isolation-modes.md) decisions 7, 10 and 11,
-  [agent runtimes research](research/agent-runtimes-control.md).
+  [agent runtimes research](research/agent-runtimes-control.md),
+  [C1 sign-in spike record](research/c1-sign-in-spike.md),
+  [ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md).
+- **Recorded result (2026-11-19):** [C1 sign-in spike](research/c1-sign-in-spike.md)
+  records macOS `27.2.1` findings on Claude Code `2.1.311` and Codex `0.169.0` (Linux
+  unverified pending a Linux run; companion POC in `pocs/console-attach/`) and selects
+  **`org-agent-runtime-claude`** as the first adapter for C3 (persistent `stream-json`
+  keeping background commands and sub-agents alive across turns per ADR-0025 decision 6
+  amended 2026-11-19, plus per-office `CLAUDE_CODE_OAUTH_TOKEN` for portable/private-`HOME`
+  sign-in). Remaining before `dedicated-user` becomes default: the macOS second-OS-account
+  + Xcode check (ADR-0015 decision 7 / `ISO-6`), Linux sign-in/isolation verification,
+  and Codex sub-agent isolation verification when `org-agent-runtime-codex` begins.
 - **Done when:** the result is recorded and the first adapter to build is chosen.
 - **Needs nothing else and can start at any time.**
 
@@ -707,7 +718,9 @@ on the offers of design section 10.
   change.
 - **Sub-agents:** the adapter enables the runtime's own sub-agent tool, inside the
   parent's sandbox, tools and policy; the office writes the sub-agent definition; a
-  sub-agent's commands and cost are the employee's; nothing outlives the turn
+  sub-agent's commands and cost are the employee's; background tasks and sub-agents may
+  stay running across turns while the session is active so people and agents can keep
+  messaging the agent, and Pause/Stop/Offboard/stall stops and reaps everything
   ([ADR-0025](adr/0025-agents-start-sub-agents.md); SUB-1 to SUB-5 and SUB-7). SUB-6,
   the sub-agent's conversation in the session view, is finished with C4. Row FC-172.
 - **Staying alive:** after an office restart an interrupted turn continues by itself
@@ -719,15 +732,29 @@ on the offers of design section 10.
   agent receives, with the sections for what this build has, and their scenarios run
   ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8, 12, 15 and 21). Row
   FC-171.
+- **Enrollment and permission presets:** browser-driven one-time CLI enrollment
+  (`claude setup-token` (preferred) or `claude auth login --claudeai`, and
+  `codex login --device-auth`) inside wiped per-login `0700`
+  temp directories, worker-wrapped `agentic-org/provider-credential/v1` storage, and the
+  Advanced Settings `permission_preset` UI on `agent_execution_configs`
+  ([ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md);
+  `ENROLL-1` to `ENROLL-7`). Row FC-189.
+- **Take-over:** paused (owner decision 2026-11-20) and moved to late v1, only if
+  needed (row FC-151). C3 builds no take-over; the adapter's existing take-over
+  planning stays as it is, with no new work.
 - **Read:** [agent sessions design](design/agent-sessions.md),
   [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
   [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-4),
+  [ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md) (ENROLL-1 to ENROLL-7),
   [ADR-0003](adr/0003-agent-messaging-office-first.md) decision 12,
   [employee supervision UX](specs/employee-supervision-ux.md) (EMP criteria). Rows FC-031,
-  FC-098, FC-100, FC-101.
-- **Code today:** `crates/org-runtime` is the contract; only `crates/org-supervise`
-  uses its types, and nothing launches an agent.
+  FC-098, FC-100, FC-101, FC-189.
+- **Code today:** `crates/org-agent-runtime` is the contract and `crates/org-agent-runtime-claude`
+  implements the sans-I/O Claude Code `2.1.311` adapter as an internal foundation with no
+  production caller yet (alongside `config_dir` and adapter-declared `auth_env_names`
+  supervision plumbing in `org-agent-runtime` and `org-supervise`); `crates/org-agent-runtime-codex`
+  and the office session runner remain to be built.
   `crates/org-supervise` starts, stops and cleans up processes; it is used only to
   recover processes the office owned before a restart, not to launch an agent.
 - **Done when:** a hired agent completes an instruction given from its page, the HR
@@ -1372,7 +1399,7 @@ each is finished.
 | FC-023 | Logs, doctor and support diagnostics | Later, with L9 |
 | FC-123, FC-124 | Drafting text and a bug from a sentence | Later |
 | FC-147, FC-148 | Restore of protected data; credential rebind and cache rebuild | Later |
-| FC-151 | Taking over an agent's session from a terminal and handing it back | Later |
+| FC-151 | Taking over an agent's session from a terminal and handing it back | Late v1, only if needed (paused by the owner on 2026-11-20) |
 
 ## For every increment
 

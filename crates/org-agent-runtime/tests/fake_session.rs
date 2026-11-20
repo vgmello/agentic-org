@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use org_runtime::testkit::{self, Script, ScriptApproval};
-use org_runtime::{
+use org_agent_runtime::testkit::{self, Script, ScriptApproval};
+use org_agent_runtime::{
     encode_line, Activity, AgentIdentity, AgentName, AgentRuntime, ApprovalId, ApprovalKind,
     ApprovalRequest, Capabilities, CommandPrefix, Control, ControlError, CostBasis, Decision,
     EnvName, Escalation, ExitInfo, FileLocation, Frame, LaunchContext, LaunchPlan, LimitStatus,
@@ -229,7 +229,7 @@ impl Session for EchoSession {
                 if self.bug == Some(Bug::UsageAfterTurnEnded) {
                     return vec![
                         Output::Event(ended),
-                        Output::Event(SessionEvent::Usage(org_runtime::Usage::new(
+                        Output::Event(SessionEvent::Usage(org_agent_runtime::Usage::new(
                             UsageScope::TurnDelta,
                             UsageScope::TurnDelta,
                         ))),
@@ -613,6 +613,7 @@ impl EchoRuntime {
             },
             cleanup_after_exit: vec![],
             secret_env_names: vec![],
+            auth_env_names: vec![],
         })
     }
 }
@@ -708,6 +709,7 @@ impl AgentRuntime for EchoRuntime {
             program: ctx.runtime_path.clone(),
             args: args.iter().map(|a| a.to_string()).collect(),
             env_add: vec![],
+            auth_env_names: vec![],
             stdin_lines: vec![],
             timeout_ms: 10_000,
         };
@@ -787,6 +789,7 @@ fn ctx() -> LaunchContext {
         ],
         new_session_id: Some(SessionId::try_from("00000000-0000-0000-0000-000000000001").unwrap()),
         resume: None,
+        config_dir: None,
     }
 }
 
@@ -1022,12 +1025,12 @@ fn oversized_lines_reach_the_session_as_truncated() {
     let t0 = Instant::now();
     session.start(t0);
     let mut framer = LineFramer::new();
-    let mut big = vec![b'x'; org_runtime::MAX_LINE_BYTES + 10];
+    let mut big = vec![b'x'; org_agent_runtime::MAX_LINE_BYTES + 10];
     big.push(b'\n');
     assert_eq!(
         events(feed(session.as_mut(), &mut framer, &big, t0)),
         vec![SessionEvent::Truncated {
-            len: org_runtime::MAX_LINE_BYTES + 10
+            len: org_agent_runtime::MAX_LINE_BYTES + 10
         }]
     );
 }
@@ -1043,7 +1046,7 @@ fn plans_refuse_what_they_cant_honour() {
     ));
     let mut one_off = spec();
     one_off.kind = SessionKind::OneOff {
-        run_id: org_runtime::PlainId::try_from("r1").unwrap(),
+        run_id: org_agent_runtime::PlainId::try_from("r1").unwrap(),
     };
     let err = runtime
         .plan_take_over(&one_off, &ctx(), 80, 24)

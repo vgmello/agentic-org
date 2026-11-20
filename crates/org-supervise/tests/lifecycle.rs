@@ -195,10 +195,10 @@ fn requested_interrupt_follows_leader_term_and_its_full_grace() {
         "trap 'echo TERM' TERM; trap 'echo INT; exit 0' INT; echo READY; while :; do read line; done",
     ));
     let grace = Duration::from_secs(5);
-    let policy = org_supervise::runtime::stop_policy(&org_runtime::StopPlan {
-        steps: vec![org_runtime::StopStep::Signal {
-            signal: org_runtime::StopSignal::Interrupt,
-            target: org_runtime::SignalTarget::Group,
+    let policy = org_supervise::runtime::stop_policy(&org_agent_runtime::StopPlan {
+        steps: vec![org_agent_runtime::StopStep::Signal {
+            signal: org_agent_runtime::StopSignal::Interrupt,
+            target: org_agent_runtime::SignalTarget::Group,
             grace_ms: 5000,
         }],
     })
@@ -265,14 +265,14 @@ fn socket_failure_keeps_the_zombie_and_reports_partial_cleanup_until_retry() {
     let invalid = real.join(format!("{pid}.keep"));
     let _listener = UnixListener::bind(&good).unwrap();
     std::fs::write(&invalid, b"never unlink").unwrap();
-    let port_root = org_runtime::SpecPath::try_from(real.to_str().unwrap()).unwrap();
+    let port_root = org_agent_runtime::SpecPath::try_from(real.to_str().unwrap()).unwrap();
     let paths = org_supervise::runtime::socket_cleanup(&[
-        org_runtime::CleanupPath::new(
+        org_agent_runtime::CleanupPath::new(
             port_root.clone(),
             &format!("{}/{{pid}}.sock", real.display()),
         )
         .unwrap(),
-        org_runtime::CleanupPath::new(port_root, &format!("{}/{{pid}}.keep", real.display()))
+        org_agent_runtime::CleanupPath::new(port_root, &format!("{}/{{pid}}.keep", real.display()))
             .unwrap(),
     ])
     .unwrap();
@@ -366,14 +366,15 @@ fn probe(
 ) -> io::Result<org_supervise::runtime::RuntimeProbe> {
     let program = std::env::current_exe().unwrap();
     org_supervise::runtime::prepare_probe(
-        org_runtime::ProbePlan {
+        org_agent_runtime::ProbePlan {
             program: program.clone(),
             args: vec!["--exact".into(), "probe_child".into(), "--nocapture".into()],
             env_add: vec![],
-            stdin_lines: vec![org_runtime::encode_line("hello").unwrap()],
+            auth_env_names: vec![],
+            stdin_lines: vec![org_agent_runtime::encode_line("hello").unwrap()],
             timeout_ms: 10000,
         },
-        &org_runtime::ProbeContext::new(program),
+        &org_agent_runtime::ProbeContext::new(program),
         env,
         mark(),
         root,

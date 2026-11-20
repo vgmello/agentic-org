@@ -1,6 +1,6 @@
 # Model profiles, provider connections and agent execution
 
-Status: **selected** data and execution contract, revision 8. This document defines the data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
+Status: **selected** data and execution contract, revision 9. This document defines the data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
 
 This document owns provider connections, subscription identity, model profiles and their ordered memberships, discovered models, agent execution configuration, office-local bindings, shared admission records, and execution turns/attempts/process ownership. It is a first-class member of the [organization data specification](README.md), with its SQL included in the consolidated [schema.sql](schema.sql). The SQL is a design contract; the code does not implement it yet.
 
@@ -69,7 +69,7 @@ flowchart TD
 
 The OS service manager starts/restarts agentic-org serve. Its host module starts and monitors office workers and the optional web child. Each office worker acquires its exclusive office/ownership locks, replays its acceptance journal and reconciles marked children before admitting starts. After a worker restart the office continues each interrupted turn by itself once it has proved the run's processes are gone ([ADR-0030](../../adr/0030-an-agent-works-while-it-has-work.md) decisions 8 and 9); a process does not survive the restart. Host and worker generations are distinct from employee placement generation. Host shutdown stops workers in order; host reconciliation must not race the live worker's ownership of agent children.
 
-Inside agentic-org-office, the agent supervisor owns employee lifecycle, readiness, environment setup and recovery. The connection router owns pool selection, cooldown/permit decisions and failover. The session runner owns protocol pumping and invokes org-supervise for OS operations. Existing org-runtime remains the adapter contract; the planned org-office-sessions integration composes these capabilities without changing pure domain modules into process-control code. Binaries remain thin. New shared wire/launch contracts follow the repository's existing contract ownership/review rules.
+Inside agentic-org-office, the agent supervisor owns employee lifecycle, readiness, environment setup and recovery. The connection router owns pool selection, cooldown/permit decisions and failover. The session runner owns protocol pumping and invokes org-supervise for OS operations. Existing org-agent-runtime remains the adapter contract; the planned org-office-sessions integration composes these capabilities without changing pure domain modules into process-control code. Binaries remain thin. New shared wire/launch contracts follow the repository's existing contract ownership/review rules.
 
 The worker has one SQLite writer and one agent recovery owner. Its internal supervisor submits its changes through the office data service; it does not open another writer, keep a journal of its own or communicate with a sibling supervisor daemon. The execution record files, written through the office's acceptance journal, are authoritative for process ownership, turn/attempt changes and command receipts; SQL rows are projections. Integrate existing owned-recovery records into this path before enabling launches. Organization configuration and HQ coordination keep their authorities (§3/§6).
 
@@ -118,7 +118,7 @@ The [standalone installation contract](../standalone-server.md#4-setup-and-servi
 | --- | --- |
 | `provider_connections`, `model_profiles` | Same-named YAML fields and common attribution; profiles additionally contain `connection_ids[]`. |
 | `model_profile_connections` | Profile `connection_ids[]`; zero-based array position plus one becomes priority. |
-| `agent_execution_configs` | `execution.md` front matter: employee/profile/model IDs, revision/schema, enabled, tools_config; body is system_prompt_markdown. Common attribution follows [record contracts](08-record-contracts.md). |
+| `agent_execution_configs` | `execution.md` front matter: employee/profile/model IDs, revision/schema, enabled, tools_config, `permission_preset` (`safe_ask` default, `read_only`, `workspace_edits`, or `autonomous_sandboxed`; [ADR-0032](../../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)); body is system_prompt_markdown. Common attribution follows [record contracts](08-record-contracts.md). |
 | `office_connection_bindings` | Local binding YAML with same-named fields. Never shared Git content. |
 | `office_connection_state`, `office_connection_models` | Supervisor-owned discovery/auth observations, rebuilt from verified probes after cache loss. Their journal snapshots improve startup but are not fresh proof after restart. |
 | `agent_placements.placement_generation` | HQ's agent-execution record files, written through HQ's acceptance journal; current placement row remains the existing employee-to-office projection. |
@@ -160,6 +160,7 @@ enabled: true
 model_profile_id: subscription-pool-id
 model_id: canonical-target-model-id
 tools_config: [approved-shell-tool-id, approved-org-tool-id]
+permission_preset: safe_ask
 ```
 
 The associated organization files have the following serialization (nullable common attribution fields omitted, created_by_kind and updated_by_kind default to unknown):
@@ -212,7 +213,7 @@ Every internal command envelope contains `{protocol_version:1, organization_id, 
 | Command | Required payload / result |
 | --- | --- |
 | `RunTurn` | turn_id, employee_id, placement_generation, expected_agent_config_revision, expected_profile_revision, task_id or null, workspace_key, immutable input_ref/input_sha256. Returns accepted turn identity. A second open turn for the employee returns BUSY. |
-| What started a turn | Every turn records `started_by_kind` (`run`, `message`, `mention`, `ask`, `handoff`, `assignment`, `answer`, `resume` or `recovery`), the employee who did it in `started_by_employee_id` (null for a recovery) and, in `started_by_ref`, the message or task it came from ([ADR-0023](../../adr/0023-an-agents-ask-starts-a-turn.md), [ADR-0028](../../adr/0028-an-agent-is-always-available.md)). `resume` is the turn that continues an agent suspended on a required answer ([ADR-0020](../../adr/0020-required-asks-suspend-and-resume.md) decision 8); `answer` is an answer that starts an agent holding no wait. A suspended agent started by a question or a hand-off from the employee it waits for is recorded as `ask` or `handoff` and counted (ADR-0030 decision 7). A turn that takes several waiting items names the first in `started_by_ref`; its input lists them all. ADR-0023's hourly limit is counted from these rows, leaving out `run`, `resume` and `recovery`. Presence is not stored here: an agent that is active, configured and not held is available whether or not a process is running. |
+| What started a turn | Every turn records `started_by_kind` (`run`, `message`, `mention`, `ask`, `handoff`, `assignment`, `answer`, `resume`, `recovery` or `background_wake`), the employee who did it in `started_by_employee_id` (null for `recovery` and `background_wake`) and, in `started_by_ref`, the message, task or originating turn/background-task ID it came from ([ADR-0023](../../adr/0023-an-agents-ask-starts-a-turn.md), [ADR-0025](../../adr/0025-agents-start-sub-agents.md) decision 6, [ADR-0028](../../adr/0028-an-agent-is-always-available.md)). `resume` is the turn that continues an agent suspended on a required answer ([ADR-0020](../../adr/0020-required-asks-suspend-and-resume.md) decision 8); `answer` is an answer that starts an agent holding no wait; `background_wake` is a reactive follow-up turn woken by the completion of the agent's own active background command or background sub-agent (ADR-0025 decision 6). A suspended agent started by a question or a hand-off from the employee it waits for is recorded as `ask` or `handoff` and counted (ADR-0030 decision 7). A turn that takes several waiting items names the first in `started_by_ref`; its input lists them all. ADR-0023's hourly limit is counted from these rows, leaving out `run`, `resume`, `recovery` and `background_wake`. Presence is not stored here: an agent that is active, configured and not held is available whether or not a process is running. |
 | `ResumeTurn` | turn_id, expected_turn_revision; recovery-required turns also require recovery `{checkpoint_ref, receipt_dispositions:[{operation_id, outcome, result_ref, evidence_ref}]}`. Outcome is confirmed_completed or confirmed_not_started, with evidence verified by the tool broker/operator recovery authority. Unknown outcomes remain recovery_required. Retries a blocked turn or resumes only after validated reconciliation. Preserves turn ID, model and workspace. |
 | `CancelTurn` | turn_id, expected_turn_revision. Stops current work and becomes cancelled only after completion/cleanup facts are known. |
 | `StopAgent` | employee_id, placement_generation. Stops active and idle main processes. It creates no future automatic wake or budget policy. |
@@ -263,7 +264,7 @@ This qualifies source FR-6 deliberately: automatic mid-turn failover is required
 
 ## 8. Driver contract and failures
 
-Each registered driver supplies versioned preflight/discovery, capabilities, launch planning, normalized protocol events, checkpoint export/import and stop instructions. Reuse org-runtime's sans-I/O separation: adapters plan/translate, the supervisor performs I/O and org-supervise owns OS control. The HTTP-worker protocol adapter follows the same boundary. The connection's runtime_driver selects a registered implementation; unknown or unverified installed versions cannot run.
+Each registered driver supplies versioned preflight/discovery, capabilities, launch planning, normalized protocol events, checkpoint export/import and stop instructions. Reuse org-agent-runtime's sans-I/O separation: adapters plan/translate, the supervisor performs I/O and org-supervise owns OS control. The HTTP-worker protocol adapter follows the same boundary. The connection's runtime_driver selects a registered implementation; unknown or unverified installed versions cannot run.
 
 Driver manifest requirements are auth modes, supported isolation mechanism (the modes of [ADR-0015](../../adr/0015-agent-isolation-modes.md): `same-user` and `dedicated-user` in v1, with the mode carried in the launch contract and digest), model discovery evidence, tool/policy enforcement, context limits, side-effect visibility, checkpoint formats/portability, usage semantics and stop/cleanup support. A runtime cannot become eligible merely because it answers text requests. The adapter test suite uses fake drivers for deterministic core tests and installed-version fixtures for every production driver. Do not claim a model or variable is supported without that evidence.
 
@@ -422,6 +423,7 @@ erDiagram
         TEXT model_id "required"
         TEXT system_prompt_markdown "required"
         TEXT tools_config_json "required"
+        TEXT permission_preset "required"
         INTEGER enabled "required"
         TEXT created_at "optional"
         TEXT created_by_kind "required"
@@ -701,6 +703,7 @@ model_profile_id TEXT NOT NULL,
   model_id TEXT NOT NULL CHECK (length(model_id)>0),
   system_prompt_markdown TEXT NOT NULL CHECK (length(system_prompt_markdown)>0),
   tools_config_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tools_config_json) AND json_type(tools_config_json)='array'),
+  permission_preset TEXT NOT NULL DEFAULT 'safe_ask' CHECK (permission_preset IN ('safe_ask','read_only','workspace_edits','autonomous_sandboxed')),
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','system','unknown')),
@@ -817,10 +820,10 @@ organization_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   ended_at TEXT,
   error_code TEXT,
-  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','handoff','assignment','answer','resume','recovery')),
+  started_by_kind TEXT NOT NULL DEFAULT 'run' CHECK (started_by_kind IN ('run','message','mention','ask','handoff','assignment','answer','resume','recovery','background_wake')),
   started_by_employee_id TEXT,
   started_by_ref TEXT,
-  CHECK (started_by_kind<>'recovery' OR started_by_employee_id IS NULL),
+  CHECK (started_by_kind NOT IN ('recovery','background_wake') OR started_by_employee_id IS NULL),
   PRIMARY KEY (organization_id,id),
   UNIQUE (organization_id,id,employee_id,office_id,placement_generation),
   FOREIGN KEY (organization_id,started_by_employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
@@ -948,7 +951,7 @@ GROUP BY m.organization_id,m.office_id,p.model_profile_id,m.model_id;
 | Component | Role in the code |
 | --- | --- |
 | `crates/org-supervise` | A library for explicit environments, child spawning, ownership, stopping, cleanup and recovery primitives. It is not a supervisor daemon or a routing engine, and it does not launch agents today. |
-| `crates/org-runtime` | The runtime-adapter contract: `AgentRuntime::plan_session` produces a launch plan; the adapter does not spawn or do I/O. It has no caller. |
+| `crates/org-agent-runtime` | The runtime-adapter contract: `AgentRuntime::plan_session` produces a launch plan; the adapter does not spawn or do I/O. It has no caller. |
 | `apps/agentic-org-office` | No process ownership: B1b removed the recovery adapter over office-owned process rows (C3 rebuilds it on the new store). The agent launch loop is not wired. |
 
 The office hosts the logical employee supervisor, router and runner defined above; there is no separate supervisor executable.

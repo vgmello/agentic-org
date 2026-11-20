@@ -299,4 +299,4 @@ These are gaps or tensions between this design and the selected contracts. They 
 
 ## What the code does today
 
-Nothing runs Git. `org-process` has pure one-open-branch rules and `org-runtime` has sandbox specification types. Both were written before this design, name a different clone layout in their comments, and are adapted when `org-git` is built.
+Nothing runs Git. `org-process` has pure one-open-branch rules and `org-agent-runtime` has sandbox specification types. Both were written before this design, name a different clone layout in their comments, and are adapted when `org-git` is built.

@@ -48,6 +48,11 @@ pub struct LaunchPlan {
     /// (e.g. `CLAUDE_CODE_MESSAGING_TOKEN`). The office doesn't know their values, so it
     /// redacts `NAME=value` wherever one of these names appears.
     pub secret_env_names: Vec<EnvName>,
+    /// Names of runtime authentication environment variables this adapter accepts from the
+    /// office's wrapped credential store (e.g. `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`).
+    /// The supervisor admits only names declared here and never hardcodes vendor credential
+    /// names in generic process code (ADR-0032).
+    pub auth_env_names: Vec<EnvName>,
 }
 
 /// A file the supervisor writes before the spawn, mode `0600`.
@@ -290,6 +295,9 @@ pub struct ProbePlan {
     pub args: Vec<String>,
     /// The adapter's own switches, added to the office's environment.
     pub env_add: Vec<(EnvName, String)>,
+    /// Names of runtime authentication environment variables this probe accepts from the
+    /// office's wrapped credential store (e.g. `CLAUDE_CODE_OAUTH_TOKEN` for an auth probe).
+    pub auth_env_names: Vec<EnvName>,
     /// Lines to write to stdin first, in order. A one-shot probe's stdin is closed after
     /// them; a conversation's stays open for its [`crate::ProbeSession`].
     pub stdin_lines: Vec<Line>,

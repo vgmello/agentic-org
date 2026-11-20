@@ -769,6 +769,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "org-agent-runtime"
+version = "0.0.0"
+dependencies = [
+ "org-agent-runtime",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "org-agent-runtime-claude"
+version = "0.0.0"
+dependencies = [
+ "org-agent-runtime",
+ "org-platform",
+ "org-supervise",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "org-client"
 version = "0.0.0"
 dependencies = [
@@ -949,15 +969,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "org-runtime"
-version = "0.0.0"
-dependencies = [
- "org-runtime",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "org-socket"
 version = "0.0.0"
 dependencies = [
@@ -991,8 +1002,8 @@ name = "org-supervise"
 version = "0.0.0"
 dependencies = [
  "libc",
+ "org-agent-runtime",
  "org-platform",
- "org-runtime",
  "tempfile",
 ]
 

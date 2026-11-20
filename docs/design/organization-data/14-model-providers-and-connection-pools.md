@@ -1,6 +1,6 @@
 # Model providers, connections and pools
 
-Status: **selected** data contract, revision 1. This is the data-model view of the selected [execution contract](11-model-profiles-and-agent-execution.md), using the same records and SQL. It defines no second provider/pool system. Supervision, turn admission, failover, process recovery and installation remain in document 11.
+Status: **selected** data contract, revision 2. This is the data-model view of the selected [execution contract](11-model-profiles-and-agent-execution.md), using the same records and SQL. It defines no second provider/pool system. Supervision, turn admission, failover, process recovery and installation remain in document 11.
 
 ## Concepts and boundaries
 
@@ -87,6 +87,7 @@ erDiagram
         TEXT model_id "required"
         TEXT system_prompt_markdown "required"
         TEXT tools_config_json "required"
+        TEXT permission_preset "required"
         INTEGER enabled "required"
         TEXT created_at "optional"
         TEXT created_by_kind "required"
@@ -133,7 +134,7 @@ erDiagram
 - A valid pool contains 1–64 distinct connection IDs in contiguous priority order. Many agents can select one pool, and one connection can be reused by several pools. Array order becomes priorities 1, 2, 3, and so on.
 - Connection creation atomically creates one generated single-connection default profile. Manually assembled pools coexist with those defaults. Converting a default into a manual pool clears its generated designation; it cannot keep claiming to be that connection's generated default.
 - Two connection IDs cannot represent the same `(organization_id, provider_type, subscription_identity)`, even if one is disabled/archived. Two offices using one subscription create two local bindings to the same connection. A subscription pool's different connections represent different subscriptions.
-- Each office has at most one binding per connection. Credentials/CLI auth state stay private to the office or credential vault. The shared connection record never contains secrets or office-specific credential paths.
+- Each office has at most one binding per connection. Credentials and CLI auth state stay private to the office worker (`agentic-org-office`) or external credential vault under `durable/local/offices/<office-id>/auth/<connection-id>/`, wrapped with the office's per-office secrets key using the provider-credential wrap domain (`agentic-org/provider-credential/v1`, [ADR-0016](../../adr/0016-no-application-level-data-encryption.md) decision 3). Under [ADR-0032](../../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md), HQ may deliver per-office Claude tokens or—as the default for multi-office Codex subscriptions whose refresh tokens rotate on use—short-lived Codex access tokens (`chatgptAuthTokens`) over the Organization-CA mTLS federation channel (satellites write no `auth.json` under centralized Codex refresh; independent per-office `codex login --device-auth` bindings remain available for extended offline operation). Any persisted credential on a satellite is wrapped locally by the satellite worker under its own office secrets key; the shared connection record and organization Git never contain secrets or office-specific credential paths.
 - A connection can expose many models; the same canonical model can be available through multiple connections. A pool's model list is the union of discovered confirmed support. Connections need not expose identical catalogs; only those supporting the agent's chosen model can serve its turn.
 - Pool failover preserves the chosen canonical model. Changing models is a separate configuration decision, not an implicit consequence of selecting another connection.
 - Quota/cooldown admission belongs to the organization-wide connection and is shared across its pools, agents and office bindings. API/cloud provider-wide quota grouping is not inferred from different API keys; document 11 explicitly limits the subscription-identity rule to verified subscription contexts.
@@ -204,6 +205,7 @@ enabled: true
 model_profile_id: primary-pool
 model_id: example-provider/model-v1
 tools_config: [approved-shell-tool-id]
+permission_preset: safe_ask
 ---
 Work within the assigned role and approved tool policy.
 ```
@@ -229,7 +231,7 @@ Example relationship: Ana selects `primary-pool` and `example-provider/model-v1`
 | `provider_connections` | Shared connection YAML: same-named identity/config/attribution fields. `auth_mode` is `subscription_cli`, `api_key` or `cloud_iam`; subscription identity is required for the first and may be null for non-subscription API/cloud contexts. `max_concurrent_turns` is positive and defaults to 1. |
 | `model_profiles` | Shared profile YAML: scalar identity/name/description/generated/default/archive/attribution fields. `generated_for_connection_id` is present exactly when `is_auto_generated` is true. |
 | `model_profile_connections` | Profile `connection_ids[]`; each element yields a connection ID with one-based `priority`. No separate membership file. |
-| `agent_execution_configs` | `execution.md` front matter supplies employee/profile/model IDs, format/revision, enabled and tools; body maps to `system_prompt_markdown`. `tools_config` is an array projected as `tools_config_json`. Organization comes from its containing organization. |
+| `agent_execution_configs` | `execution.md` front matter supplies employee/profile/model IDs, format/revision, enabled, tools and `permission_preset` (`safe_ask` default, `read_only`, `workspace_edits`, or `autonomous_sandboxed`; [ADR-0032](../../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)); body maps to `system_prompt_markdown`. `tools_config` is an array projected as `tools_config_json`. Organization comes from its containing organization. |
 | `office_connection_bindings` | Private binding YAML: organization/office/connection IDs, binding revision, local auth reference, optional binary path/account-evidence reference and update time. |
 | `office_connection_state` | Supervisor observation: status `unknown`, `ready`, `auth_expired` or `unavailable`, observed binding revision, driver version, observation/expiry times and issue code. A binding revision change invalidates old evidence. |
 | `office_connection_models` | Verified discovery observation: scope IDs, canonical `model_id`, adapter-specific `driver_model_id`, entitlement `confirmed`, `denied` or `unknown`, capabilities JSON object and observation/expiry times. |

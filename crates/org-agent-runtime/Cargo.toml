@@ -1,5 +1,5 @@
 [package]
-name = "org-runtime"
+name = "org-agent-runtime"
 description = "The port every agent runtime adapter (Claude Code, Codex, Antigravity) implements: session specs, launch plans, a sans-I/O session, normalized events."
 version.workspace = true
 edition.workspace = true
@@ -11,10 +11,10 @@ serde.workspace = true
 serde_json.workspace = true
 
 [features]
-# The public conformance checks for Session implementations (`org_runtime::testkit`).
+# The public conformance checks for Session implementations (`org_agent_runtime::testkit`).
 # Adapters enable it as a dev-dependency feature.
 testkit = []
 
 [dev-dependencies]
 # This crate's own integration tests run the testkit too.
-org-runtime = { path = ".", features = ["testkit"] }
+org-agent-runtime = { path = ".", features = ["testkit"] }

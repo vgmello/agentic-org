@@ -4,7 +4,7 @@ use std::io::Read;
 use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use org_runtime::{
+use org_agent_runtime::{
     FileLocation, LaunchContext, LaunchPlan, PlannedDir, PlannedFile, RelPath, SpecPath, Stdio,
     StopPlan,
 };
@@ -23,6 +23,7 @@ fn context(root: &Path) -> LaunchContext {
         office_env_names: vec![],
         new_session_id: None,
         resume: None,
+        config_dir: None,
     }
 }
 
@@ -39,6 +40,7 @@ fn plan(root: &Path) -> LaunchPlan {
         stop: StopPlan { steps: vec![] },
         cleanup_after_exit: vec![],
         secret_env_names: vec![],
+        auth_env_names: vec![],
     }
 }
 
@@ -144,14 +146,17 @@ fn unsupported_plan_parts_fail_before_file_writes_and_lifecycle_is_retained() {
     launch
         .stop
         .steps
-        .push(org_runtime::StopStep::CloseStdin { grace_ms: 100 });
+        .push(org_agent_runtime::StopStep::CloseStdin { grace_ms: 100 });
     launch.cleanup_after_exit.push(
-        org_runtime::CleanupPath::new(path(&root), &format!("{}/{{pid}}.sock", root.display()))
-            .unwrap(),
+        org_agent_runtime::CleanupPath::new(
+            path(&root),
+            &format!("{}/{{pid}}.sock", root.display()),
+        )
+        .unwrap(),
     );
     launch
         .secret_env_names
-        .push(org_runtime::EnvName::try_from("RUNTIME_SECRET").unwrap());
+        .push(org_agent_runtime::EnvName::try_from("RUNTIME_SECRET").unwrap());
     let expected = launch.clone();
     let mapped = prepare(&root, launch, &context(&root)).unwrap();
     assert_eq!(mapped.lifecycle.stop, expected.stop);
@@ -325,7 +330,7 @@ fn runtime_mapper_rejects_injection_and_duplicate_switches_before_writes() {
     ] {
         let mut launch = plan(&root);
         launch.env_add.push((
-            org_runtime::EnvName::try_from(name).unwrap(),
+            org_agent_runtime::EnvName::try_from(name).unwrap(),
             "secret".into(),
         ));
         launch.files.push(file("must-not-exist", b"settings"));
@@ -336,11 +341,11 @@ fn runtime_mapper_rejects_injection_and_duplicate_switches_before_writes() {
         let mut launch = plan(&root);
         launch.env_add = vec![
             (
-                org_runtime::EnvName::try_from("ENABLE_TOOL_SEARCH").unwrap(),
+                org_agent_runtime::EnvName::try_from("ENABLE_TOOL_SEARCH").unwrap(),
                 "false".into(),
             ),
             (
-                org_runtime::EnvName::try_from("ENABLE_TOOL_SEARCH").unwrap(),
+                org_agent_runtime::EnvName::try_from("ENABLE_TOOL_SEARCH").unwrap(),
                 second.into(),
             ),
         ];
@@ -350,14 +355,156 @@ fn runtime_mapper_rejects_injection_and_duplicate_switches_before_writes() {
     launch.env_add = [
         "DISABLE_AUTOUPDATER",
         "ENABLE_TOOL_SEARCH",
-        "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+        "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+        "CLAUDE_CONFIG_DIR",
+        "CODEX_HOME",
     ]
     .map(|name| {
         (
-            org_runtime::EnvName::try_from(name).unwrap(),
+            org_agent_runtime::EnvName::try_from(name).unwrap(),
             "false".into(),
         )
     })
     .into();
     prepare(&root, launch, &context(&root)).unwrap();
+}
+
+#[test]
+fn adapter_declared_auth_and_exact_agent_os_context_and_probe_config_dir_switches() {
+    use org_agent_runtime::{EnvName, ProbeContext, ProbePlan};
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let probe_tmp = root.join("probe-tmp");
+    fs::create_dir(&probe_tmp).unwrap();
+    fs::set_permissions(&probe_tmp, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let make_env = || {
+        Environment::new(
+            SearchPath::new(
+                Path::new("/usr/bin"),
+                "/bin".as_ref(),
+                std::slice::from_ref(&root),
+            )
+            .unwrap(),
+            &[],
+        )
+        .unwrap()
+    };
+
+    // Exact documented AGENT_OS_* session context names are accepted by with_context,
+    // while AGENT_OS_SESSION_MARK and arbitrary AGENT_OS_* names are refused.
+    let ctx_env = make_env()
+        .with_context(&[
+            ("AGENT_OS_SOCKET".into(), "/tmp/s.sock".into()),
+            ("AGENT_OS_SESSION_TOKEN".into(), "sess-tok".into()),
+            ("AGENT_OS_ORG".into(), "org-1".into()),
+            ("AGENT_OS_OFFICE".into(), "off-1".into()),
+            ("AGENT_OS_AGENT_ID".into(), "emp-1".into()),
+            ("AGENT_OS_SESSION_ID".into(), "sess-1".into()),
+            ("AGENT_OS_PROJECT".into(), "proj-1".into()),
+            ("AGENT_OS_TASK".into(), "task-1".into()),
+        ])
+        .unwrap();
+
+    for bad in ["AGENT_OS_SESSION_MARK", "AGENT_OS_UNKNOWN", "AGENT_OS_BAD"] {
+        assert!(
+            make_env()
+                .with_context(&[(bad.into(), "val".into())])
+                .is_err(),
+            "with_context must reject {bad}"
+        );
+    }
+
+    // Adapter-declared auth_env_names are admitted at the runtime boundary (never hardcoded
+    // in generic Environment), while undeclared or forbidden names are refused.
+    let probe_ctx = ProbeContext::new("/bin/cat".into());
+    let probe_plan = ProbePlan {
+        program: "/bin/cat".into(),
+        args: vec![],
+        env_add: vec![
+            (
+                EnvName::try_from("CLAUDE_CONFIG_DIR").unwrap(),
+                root.to_str().unwrap().to_owned(),
+            ),
+            (
+                EnvName::try_from("CODEX_HOME").unwrap(),
+                root.to_str().unwrap().to_owned(),
+            ),
+        ],
+        auth_env_names: vec![
+            EnvName::try_from("CUSTOM_VENDOR_TOKEN").unwrap(),
+            EnvName::try_from("PATH").unwrap(),
+            EnvName::try_from("LD_PRELOAD").unwrap(),
+        ],
+        stdin_lines: vec![],
+        timeout_ms: 5_000,
+    };
+    let mark = SessionMark::new("probe-auth-00000000000000000000000000000001".to_owned()).unwrap();
+
+    runtime::prepare_probe_with_auth(
+        probe_plan.clone(),
+        &probe_ctx,
+        make_env(),
+        &[("CUSTOM_VENDOR_TOKEN".into(), "tok-1".into())],
+        mark.clone(),
+        &probe_tmp,
+        runtime::ProbeMode::OneShot,
+    )
+    .expect("prepare_probe_with_auth accepts adapter-declared auth variable");
+
+    // Undeclared auth variable and forbidden loader/reserved names must fail closed even
+    // if a buggy adapter tried to list PATH or LD_PRELOAD in auth_env_names.
+    for bad in ["UNDECLARED_TOKEN", "PATH", "LD_PRELOAD"] {
+        assert!(
+            runtime::prepare_probe_with_auth(
+                probe_plan.clone(),
+                &probe_ctx,
+                make_env(),
+                &[(bad.into(), "val".into())],
+                mark.clone(),
+                &probe_tmp,
+                runtime::ProbeMode::OneShot,
+            )
+            .is_err(),
+            "prepare_probe_with_auth must reject {bad}"
+        );
+    }
+
+    assert!(
+        runtime::prepare_probe(
+            probe_plan,
+            &probe_ctx,
+            ctx_env,
+            mark.clone(),
+            &probe_tmp,
+            runtime::ProbeMode::OneShot,
+        )
+        .is_err(),
+        "prepare_probe must refuse AGENT_OS_* context variables"
+    );
+
+    // Same adapter-declared auth guard on LaunchPlan via prepare_with_auth before writing files.
+    let mut launch = plan(&root);
+    launch.auth_env_names = vec![EnvName::try_from("CUSTOM_VENDOR_TOKEN").unwrap()];
+    launch.files.push(file("must-not-write", b"no"));
+    assert!(runtime::prepare_with_auth(
+        launch.clone(),
+        &context(&root),
+        make_env(),
+        &[("OTHER_TOKEN".into(), "bad".into())],
+        mark.clone(),
+    )
+    .is_err());
+    assert!(!root.join("must-not-write").exists());
+
+    runtime::prepare_with_auth(
+        launch,
+        &context(&root),
+        make_env(),
+        &[("CUSTOM_VENDOR_TOKEN".into(), "good".into())],
+        mark,
+    )
+    .expect("prepare_with_auth accepts adapter-declared auth variable");
+    assert!(root.join("must-not-write").exists());
 }

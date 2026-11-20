@@ -9,7 +9,7 @@ publish.workspace = true
 [dependencies]
 libc.workspace = true
 org-platform = { path = "../org-platform" }
-org-runtime = { path = "../org-runtime" }
+org-agent-runtime = { path = "../org-agent-runtime" }
 
 [dev-dependencies]
 # test-support: the before-main hook of tests/support/core_limit.rs and the process

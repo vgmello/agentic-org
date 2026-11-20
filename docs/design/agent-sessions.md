@@ -33,7 +33,7 @@ The decisions this design applies:
    - **Antigravity:** `agy acp` (the Agent Client Protocol), with `agy` stream-json
      as the fallback only if ACP is not ready.
 2. **One port, one adapter per runtime, one supervisor.**
-   - `org-runtime` is the **port**: `AgentRuntime`, an optional `RuntimeHost`,
+   - `org-agent-runtime` is the **port**: `AgentRuntime`, an optional `RuntimeHost`,
      `Session`, `SessionSpec`, `LaunchContext`, `LaunchPlan`, the normalized
      `SessionEvent`, `Capabilities`, usage types, and the one line framer and encoder
      every adapter and the pump share. It is a contract and does no I/O. The port is
@@ -50,16 +50,16 @@ The decisions this design applies:
      stdin), `Event`, `CloseStdin` or `Abort` (stop the process now with the fast
      stop). It never spawns, reads, writes, sleeps or reads the clock, so it is tested
      from recorded fixtures alone.
-   - Adapters (`org-runtime-claude`, `org-runtime-codex`, `org-runtime-agy`) build a
+   - Adapters (`org-agent-runtime-claude`, `org-agent-runtime-codex`, `org-agent-runtime-agy`) build a
      launch plan (argv, environment additions, files to write) and a `Session`. They
-     never spawn or touch a pipe, and depend only on `org-runtime`.
+     never spawn or touch a pipe, and depend only on `org-agent-runtime`.
    - `org-supervise` is the one place that spawns agent runtimes and their probes. It
      owns process groups, the environment allowlist, the stop sequence, reaping and
      orphan cleanup, and speaks no runtime protocol. In `dedicated-user` mode it starts
      and stops agents through the privileged launcher (ADR-0015 decision 4).
    - **The lock** on an agent is released only after verified cleanup and reaping of
      its owned processes and their descendants.
-   - **`org-office` depends on neither `org-runtime` nor `org-supervise`.** It holds
+   - **`org-office` depends on neither `org-agent-runtime` nor `org-supervise`.** It holds
      the execution rules as domain logic and defines the small trait it needs
      (`SessionControl`: start, send, interrupt and stop a session by ID, and probe a
      runtime). The integration library `org-office-sessions` implements it with
@@ -197,12 +197,17 @@ The decisions this design applies:
      and two grant no connector, so the MCP configuration is empty
      ([agent command line](agent-os-command-line.md), section 2.10). Claude's
      other tools act outside the office or the sandbox (cross-session messaging,
-     scheduling and remote triggers, work that continues in the background after a
-     result, worktrees, web access). The adapter passes the built-in names as `--tools`, the whole list as the
-     inline agent's `tools`, and every other known tool in `--disallowedTools`.
+     scheduling and remote triggers, worktrees, web access). The adapter passes the
+     built-in names as `--tools`, the whole list as the inline agent's `tools`, and
+     every other known risky tool in `--disallowedTools`.
      `ToolSearch` is disallowed and `ENABLE_TOOL_SEARCH=false`, so a granted
-     connector's tools are never deferred. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` turns off Bash's
-     background mode. The adapter checks every `init`: `init.tools` must be a subset of
+     connector's tools are never deferred. Per [ADR-0025](../adr/0025-agents-start-sub-agents.md)
+     decision 6 (amended 2026-11-19), background commands and background sub-agents
+     stay **enabled** in persistent `stream-json` sessions so an agent remains
+     conversational while background work completes; the adapter never disables
+     background tasks, and Pause, Stop, Offboard or stall timeout stops and reaps every
+     remaining background task and sub-agent.
+     The adapter checks every `init`: `init.tools` must be a subset of
      the allowlist, or the start fails or the session is stopped with the fast stop
      (an in-band `interrupt`, every later `can_use_tool` denied, `Abort`). Remote
      control stays off and a session reporting it active fails. Web access is off. Codex
@@ -228,7 +233,11 @@ The decisions this design applies:
      `interrupt: true` is used only when the office means to end the turn.
    - **Expiry.** An unanswered approval expires after 30 minutes (configurable) and is
      a deny; waiting does not count toward run time. A request the runtime withdraws is
-     `cancelled`, and so is one pending when its turn or process ends. At startup,
+     `cancelled`, and so is one pending when its process ends. A turn's end does not
+     cancel a pending request: the adapter does not track background activity, and a
+     background command or sub-agent may still be waiting on it
+     ([ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6), so it stays
+     answerable until the runtime withdraws it, the process ends or it expires. At startup,
      pending approvals of dead sessions become `expired`. Answering any of these returns
      `not_found`.
    - Needs you shows the structured tool input; the agent's own justification is shown
@@ -356,7 +365,10 @@ A turn starts only from an explicit instruction, the answer to a required ask, b
 addressed by another agent or receiving an answer to its own question while idle
 ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), a direct message or a
 mention from a person or a task assigned to the agent
-([ADR-0028](../adr/0028-an-agent-is-always-available.md)), or a recovery. Other
+([ADR-0028](../adr/0028-an-agent-is-always-available.md)), a reactive completion wake
+from the agent's own active background task or background sub-agent
+(`background_wake`, [ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6), or
+a recovery. Other
 messages and schedules never create model work by themselves.
 A second open turn returns `BUSY`. An agent ends a turn with one line saying what it
 did; the office keeps it as the turn's outcome summary, shown in the turn's history and
@@ -448,7 +460,9 @@ When an agent is offboarded or removed:
 
 ## Taking over
 
-There is no terminal in the browser. A person at the office's machine takes an agent
+Take-over is paused (owner decision 2026-11-20) and moved to late v1, built only if
+needed ([FC-151](../FEATURES.md)); this design is kept for then. Until it is built,
+`held` and **With you** do not occur. There is no terminal in the browser. A person at the office's machine takes an agent
 over with an `agentic-org` command (ADR-0004 decision 4):
 
 1. The office stops the headless run (for Codex, `thread/unsubscribe` first), keeps
@@ -656,7 +670,9 @@ office.
 - Claude: under the isolation switches, no user instruction file, skill, agent,
   command, synced plugin or user MCP server loads; `init.tools` holds only the allowlist
   under `--tools` and `--disallowedTools`; `init.mcp_servers` is empty while no
-  connector is granted; no work continues after a `result`; remote control is off.
+  connector is granted; active background tasks and sub-agents stay tracked and confined
+  inside the session, and no work continues after Pause, Stop, Offboard or stall timeout
+  (ADR-0025 decision 6, `SUB-5`); remote control is off.
 - Codex: the permissions profile holds every fixed deny in live turns; commits work in
   a worktree under it; managed requirements are tried to lock `danger-full-access` out
   of the interactive tool.
@@ -724,10 +740,12 @@ real runtime is opt-in.
 
 ## What the code does today
 
-`crates/org-runtime` implements the synchronous sans-I/O contract: `SessionSpec` with
-validated paths and `spec_hash` (`crates/org-runtime/src/spec.rs`), events, framing
+`crates/org-agent-runtime` implements the synchronous sans-I/O contract: `SessionSpec` with
+validated paths and `spec_hash` (`crates/org-agent-runtime/src/spec.rs`), events, framing
 and probes. It has no `isolation_mode` yet, and it still has a one-off session
 kind, which is not part of v1. `crates/org-supervise` implements piped
-spawn, identity ordering, stop and reap and the recovery API. No adapter crate exists;
-the vendor protocol fixtures are research evidence. Nothing launches an agent
+spawn, identity ordering, stop and reap and the recovery API. `crates/org-agent-runtime-claude`
+implements the Claude Code adapter as an internal foundation with no production caller
+yet ([FC-101](../FEATURES.md)); the other vendors' protocol fixtures are research
+evidence. Nothing launches an agent
 (implementation plan C1, C3).

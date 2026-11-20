@@ -28,6 +28,10 @@ pub struct ProbeContext {
     /// `--gemini-dir`, so a sign-in check sees the same config the sessions use). `None` for
     /// a runtime-wide probe. A real path.
     pub runtime_dir: Option<SpecPath>,
+    /// Optional non-secret real path to a connection/agent private vendor config directory
+    /// (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) so auth probes inspect the selected binding rather
+    /// than ambient personal folders (ADR-0015 decision 11).
+    pub config_dir: Option<SpecPath>,
 }
 
 impl ProbeContext {
@@ -37,6 +41,7 @@ impl ProbeContext {
             runtime_path,
             runtime_version: None,
             runtime_dir: None,
+            config_dir: None,
         }
     }
 }
