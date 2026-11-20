@@ -43,7 +43,7 @@ in the "What the code does today" section of each design.
 | How agents run, isolation, private homes | [ADR-0004](../adr/0004-headless-agent-sessions.md), [ADR-0015](../adr/0015-agent-isolation-modes.md), [agent sessions](agent-sessions.md) |
 | Browser sessions | [ADR-0013](../adr/0013-stored-browser-sessions.md), [web API](web-api-v1.md) |
 | Platforms and containers | [ADR-0017](../adr/0017-linux-and-container-hosting.md) |
-| Installation, service and privilege boundaries | [Standalone design](standalone-server.md), [host boundary](office-host-boundary.md), [installation UX](../specs/server-installation-and-access-ux.md), [ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md) |
+| Installation, service and privilege boundaries | [Standalone design](standalone-server.md), [host boundary](office-host-boundary.md), [installation UX](../specs/server-installation-and-access-ux.md), [ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md). Proposed, not accepted: [dedicated accounts, the agent sandbox and extensions](accounts-sandbox-and-extensions.md); the accepted documents win until its ADRs are written |
 | Executable names and which entry points work | [Executables and entry points](executable-migration.md) |
 | Code layout and dependency direction | [Architecture rules](../architecture-rules.md), [project structure](project-structure.md) |
 | What must be preserved from before | Nothing: [no compatibility obligations before v1 ships](organization-data/README.md#no-compatibility-obligations-before-v1-ships) |

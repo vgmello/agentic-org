@@ -34,6 +34,8 @@ Ask the owner before starting anything new.
 | B3, A5, O1, A6, B4, B6 | Not started | — | In `docs/implementation-plan.md` order, after B2 |
 | C1 · the sign-in spike | Done | v1 03df9805 (PR 17) | Result: `docs/research/c1-sign-in-spike.md`; first adapter `crates/org-agent-runtime-claude` (internal foundation, no production caller). Its remaining checks are in FEATURES FC-161, FC-098; Codex sub-agent isolation with FC-172/FC-101 |
 | L15 · `os-sandbox` isolation mode (v1 scope, owner 2026-11-20) | Not started | — | Planned: FEATURES FC-190, ADR-0015 decision 12 (design proposed). First step: the macOS spike (an iOS app built with `xcodebuild`, its simulator tests run under a Seatbelt profile) |
+| L16 · dedicated accounts and one-command secure setup (late v1, owner 2026-11-20) | Not started | — | Design proposed: `docs/design/accounts-sandbox-and-extensions.md`, FEATURES FC-191. First step: the accounts, launcher, security and secrets spikes (note section 11); ADRs follow them. Open owner questions in the note's section 12 |
+| L17 · extensions: Containers (Colima) and Xcode (late v1, not milestone one, owner 2026-11-20) | Not started | — | Design proposed: same note, section 8; FEATURES FC-192 to FC-194. The web app's extension slot waits for ui-dev's agreement (request in `docs/workstreams/ui.md`) |
 | C2 to C5 (agents) | Not started | — | C3's next adapter work (the office session runner on `org-agent-runtime-claude`) has not started. Owner decides |
 
 ## Next up

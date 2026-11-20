@@ -137,8 +137,13 @@ section 8.
     a Seatbelt deny-by-default profile on macOS. It needs its own spike and is not a
     v1 commitment.
     *Owner direction 2026-11-20:* the owner moved `os-sandbox` into v1 scope on
-    2026-11-20 (FC-190, plan row L15); that replaces "not a v1 commitment" above. Its
-    design is still proposed, not yet accepted as a full decision. The office puts its
+    2026-11-20 (FC-190, plan row L15). That replaces "not a v1 commitment" above, the
+    words "not v1" in this decision's heading, and, in decision 2, "Two modes in v1"
+    and "reserved for later modes" as they apply to `os-sandbox` (`container` stays
+    reserved for later); the accepted text is left as it was. Its design is still
+    proposed, not yet accepted as a full decision. How it sits inside dedicated
+    accounts, and the extensions that add allowances to its profiles, are proposed in
+    [accounts, sandbox and extensions](../design/accounts-sandbox-and-extensions.md). The office puts its
     own OS sandbox around the whole agent process, for every kind of agent: Seatbelt on
     macOS; on Linux a spike decides between Landlock, the mount-namespace root above,
     and bubblewrap (installable). Profiles depend on the kind of agent: a standard
