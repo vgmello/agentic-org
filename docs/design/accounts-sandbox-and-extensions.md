@@ -74,7 +74,9 @@ drop each one.
 | ASX-17 | The Containers extension gives each agent account its own Colima VM (rootless fallback without KVM), plain `docker` through `DOCKER_HOST`, never the `docker` group, and no `agent-os` container commands | [8.5](#85-the-containers-extension) |
 | ASX-18 | The Xcode extension is macOS only, with its checklist, its allowances and a signing keychain per agent account unlocked by the office | [8.6](#86-the-xcode-extension) |
 
-ASX-14 to ASX-16 are verified by review and by a CI check of dependency sources, to be added with L17 (no core crate or app depends on anything under `extensions/`), not by a spike.
+ASX-14 to ASX-16 are verified without a spike. A CI check of dependency sources, to be
+added with L17, covers ASX-14's first clause (no core crate or app depends on anything
+under `extensions/`); review covers the rest of ASX-14, and ASX-15 and ASX-16.
 
 ## Where this is tracked
 
@@ -243,7 +245,8 @@ setting.
   affected agents; it never switches itself to `off`.
 - **The composition root selects adapters once.** The host and the office read the
   setting at start and pick one adapter for each seam below. No other code reads the
-  setting, so there are no scattered `if isolated` checks
+  setting (nor the host placement, the second choice setup records if
+  [section 6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac) is adopted), so there are no scattered `if isolated` checks
   ([architecture rules](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
 
 | Seam | `off` | `accounts` | Where it lives |
@@ -520,7 +523,9 @@ hired. Its safeguards:
 
 - It is not a daemon: it runs for one request and exits.
 - Only the service account may run it (and the command-line group, for "start this
-  instance's service" alone).
+  instance's service" alone; under the host placement of
+  [section 6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac) the person
+  is left out of that grant and reaches the helper only through the authenticated relay).
 - The host calls it only for an operation an authorized person asked for (an
   administrator's grant, checked by the host), and the helper checks its own list
   whatever the caller: it never adds an account to `admin`, `wheel`, `sudo` or
@@ -709,10 +714,17 @@ accounts.
   in addition to the service account's grant to the agent accounts.
 - **Who calls the helper.** [Section 5.2](#52-administrator-rights-after-setup) lets
   only the service account run the helper, and has the host call it; here the host runs
-  as the person. The person's UID is never granted the helper. The host relays each
-  request through a process of the service account (an office, or a small relay the
-  launcher starts as the service account), which runs the helper; the helper's own
-  checks stay the same (HLP-2 restated for this placement).
+  as the person. In this placement the person's UID is never granted the helper, not
+  even the command-line group's "start this instance's service" operation: the person
+  is left out of that group's helper grant, because their host is a per-user launchd
+  agent and needs no such start. The host relays each request through a process of the
+  service account (an office, or a small relay the launcher starts as the service
+  account), which runs the helper; the helper's own checks stay the same (HLP-2
+  restated for this placement).
+- **The relay must authenticate its caller** in the same way as the launcher (the
+  host's audit token on a socket it verifies, or a one-time secret only the host
+  holds). Otherwise any of the person's programs could reach the relay and get helper
+  operations run (KEY-9).
 - It hands the secrets down in memory exactly as now: the launch contract's per-spawn
   rendezvous socket and its handoff line, then the descriptors of the transfer
   records, including the writer-control connection
@@ -727,9 +739,10 @@ accounts.
   by the caller's code identity (audit token), or requires a secret only the host
   holds. Under sudoers option 1 the launcher's parent is `sudo`, not the host, so the
   check cannot look at the parent process: the host presents a token over a socket
-  whose peer the launcher verifies (the host's audit token), or a one-time secret. It accepts the office and web images and the pair (person, service account)
-  for them, and does not apply the agent sandbox profile to them: the web process
-  confines itself (ADR-0008), and the office keeps its own rules.
+  whose peer the launcher verifies (the host's audit token), or a one-time secret. It
+  accepts the office and web images and the pair (person, service account) for them,
+  and does not apply the agent sandbox profile to them: the web process confines
+  itself (ADR-0008), and the office keeps its own rules.
 
 | | Pros | Cons |
 | --- | --- | --- |
@@ -749,7 +762,7 @@ that too. **It adds:** admission without a suspended spawn, signalling through t
 launcher, the host's read access to service-owned folders, a person-to-service-account
 grant, and a second host placement. It does not help headless servers.
 
-**Recommendation, if the spike (KEY-1 to KEY-8) holds:** use it on desktop Macs under
+**Recommendation, if the spike (KEY-1 to KEY-9) holds:** use it on desktop Macs under
 `accounts`, chosen by setup on macOS when it runs in a graphical session, and the
 service-account host everywhere else. It is not a third value of the isolation setting,
 but it is a second choice setup records (the host placement), read only by the
@@ -1156,6 +1169,7 @@ Proves: ASX-4 and ASX-6 (their desktop exceptions). macOS only.
 | KEY-6 | Stop, the final kill and orphan cleanup reach the service account's processes through the launcher; after logout the instance stops and says so at the next login | A process is left, or the stop hangs |
 | KEY-7 | A process of the person that is not the host runs the launcher as the service account: it cannot get an office to start or to serve data | It can |
 | KEY-8 | The catalog, `office.json` (owned by the service account), the move to `.refused/<id>`, the office logs and the orphan-key sweep all work across the two accounts | Any of them fails |
+| KEY-9 | A program of the person that is not the host connects to the service-account relay and asks for a helper operation: it is refused, and no helper operation runs | A helper operation runs |
 
 ### 11.8 Administrator rights after setup
 
@@ -1170,7 +1184,7 @@ Proves: ASX-8, ASX-9.
 | PRE-1 | Alternative (b) only: the pool's unused accounts have no password, no login shell, no group beyond those setup recorded, and cannot be logged into | Any of these |
 | PRE-2 | Alternative (b) only: with the pool used up, adding an office is refused with a plain message naming `agentic-org setup --grow-pool`, which asks exactly once; enabling an extension setup did not prepare needs exactly one prompt through `agentic-org extension prepare`, in a terminal, never from the browser | A silent failure, a shared account, more than one prompt, or a browser-triggered elevation |
 | HLP-1 | The helper refuses every operation outside its list, including adding an account to `admin`, `wheel`, `sudo` or `docker`, creating an account without our prefix, removing an account it did not create, installing an unpinned package or one with a wrong checksum, and installing from a manifest that does not verify against the root-owned publisher key | Any of these succeeds |
-| HLP-2 | Only the service account can invoke the helper, and the command-line group only its "start this instance's service" operation; the agent accounts cannot invoke it at all. Under the host placement of [6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac), the person's UID still cannot invoke it, and the host's requests reach it only through the service-account relay | Another account can, or the group can call another operation, or the person's UID can run the helper |
+| HLP-2 | Only the service account can invoke the helper, and the command-line group only its "start this instance's service" operation; the agent accounts cannot invoke it at all. Under the host placement of [6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac), the person is not in the group's helper grant, so the person's UID cannot invoke the helper at all, and the host's requests reach it only through the authenticated service-account relay | Another account can, or the group can call another operation, or (under 6.5) the person's UID can run the helper |
 | HLP-3 | A simulated compromise of the service account cannot obtain a root shell or write an arbitrary root-owned file through the helper | It can |
 | HLP-4 | The helper is not running between requests; each request and its result are logged | A resident helper, or an unlogged operation |
 
@@ -1214,7 +1228,7 @@ Proves: ASX-8, ASX-9.
 12. **Signing identities for iOS agents.** Accept that an agent account with the Xcode
     extension holds its signing identity, as a named exception to non-negotiable 10?
 13. **The host with the person on a desktop Mac** ([section 6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac)):
-    adopt it for desktop Macs if KEY-1 to KEY-8 pass?
+    adopt it for desktop Macs if KEY-1 to KEY-9 pass?
 
 ## What the code does today
 
