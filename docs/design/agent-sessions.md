@@ -233,10 +233,11 @@ The decisions this design applies:
      `interrupt: true` is used only when the office means to end the turn.
    - **Expiry.** An unanswered approval expires after 30 minutes (configurable) and is
      a deny; waiting does not count toward run time. A request the runtime withdraws is
-     `cancelled`, and so is one pending when its process ends. A pending request stays
-     answerable across the end of a turn while background work is active: a background
-     command or sub-agent may still be waiting on it ([ADR-0025](../adr/0025-agents-start-sub-agents.md)
-     decision 6). At startup,
+     `cancelled`, and so is one pending when its process ends. A turn's end does not
+     cancel a pending request: the adapter does not track background activity, and a
+     background command or sub-agent may still be waiting on it
+     ([ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6), so it stays
+     answerable until the runtime withdraws it, the process ends or it expires. At startup,
      pending approvals of dead sessions become `expired`. Answering any of these returns
      `not_found`.
    - Needs you shows the structured tool input; the agent's own justification is shown

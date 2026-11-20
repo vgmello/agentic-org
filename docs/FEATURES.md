@@ -29,9 +29,9 @@ Evidence describes what the code holds, read from the source; "(not verified)" m
 | --- | ---: |
 | Done | 9 |
 | In progress | 74 |
-| Planned | 61 |
+| Planned | 60 |
 | Blocked | 1 |
-| Deferred | 44 |
+| Deferred | 45 |
 | Needs verification | 0 |
 | **Total** | **189** |
 

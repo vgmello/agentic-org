@@ -1543,24 +1543,96 @@ fn l4_command_prefix_and_mcp_rules_only_for_tools_claude_can_express() {
 
 #[test]
 fn l4_prefix_allows_are_word_bounded_and_denies_keep_the_literal_prefix() {
-    // `rm` must not allow `rmdir`: Claude's word-bounded form plus the bare command.
-    let allow = allow_keeping_spec(vec![rule("Bash", prefix("rm")), rule("*", prefix("git "))]);
+    // `rm` must not allow `rmdir`: Claude 2.1.311 reads `Bash(rm *)` as `^rm( .*)?$`, which
+    // matches `rm` and `rm ...` only, so no separate `Bash(rm)` is needed.
+    let allow = allow_keeping_spec(vec![
+        rule("Bash", prefix("rm")),
+        rule("*", prefix("npm run test:")),
+    ]);
     let rules = settings_rules(&allow, "allow").unwrap();
     assert_eq!(
         rules,
-        vec![
-            "Bash(rm)".to_owned(),
-            "Bash(rm *)".to_owned(),
-            "Bash(git *)".to_owned()
-        ]
+        vec!["Bash(rm *)".to_owned(), "Bash(npm run test: *)".to_owned()]
     );
-    assert!(!rules.iter().any(|r| r == "Bash(rm*)"));
+
+    // A prefix ending in whitespace has no exact allow form (`Bash(git *)` would also
+    // allow bare `git`; trimming `git  ` or `git\u{3000}` would allow `git status`): dropped.
+    for p in ["git ", "git  ", "git\u{3000}"] {
+        let allow = allow_keeping_spec(vec![rule("Bash", prefix(p))]);
+        assert_eq!(
+            settings_rules(&allow, "allow").unwrap(),
+            Vec::<String>::new(),
+            "allow prefix {p:?} must be dropped"
+        );
+    }
 
     // A deny keeps the literal prefix (it also covers `rmdir`; a deny never shrinks).
     let mut deny = sample_spec();
-    deny.policy.deny = vec![rule("Bash", prefix("rm"))];
+    deny.policy.deny = vec![rule("Bash", prefix("rm")), rule("Bash", prefix("git "))];
     let rules = settings_rules(&deny, "deny").unwrap();
     assert!(rules.contains(&"Bash(rm*)".to_owned()), "{rules:?}");
+    assert!(rules.contains(&"Bash(git *)".to_owned()), "{rules:?}");
+
+    // A deny prefix ending in `:` would become Claude's legacy `Bash(x:*)` form, which stops
+    // covering `npm run test:unit`: refused.
+    let mut deny = sample_spec();
+    deny.policy.deny = vec![rule("Bash", prefix("npm run test:"))];
+    assert!(matches!(
+        settings_rules(&deny, "deny"),
+        Err(PlanError::Unsupported(_))
+    ));
+}
+
+#[test]
+fn l4_mcp_tool_names_holding_a_double_underscore_are_ambiguous() {
+    // `mcp__a__b__c` for server `a` could be tool `c` of a server `a__b`.
+    let mut deny = sample_spec();
+    deny.policy.deny = vec![rule("mcp__a__b__c", mcp("a"))];
+    assert!(matches!(
+        settings_rules(&deny, "deny"),
+        Err(PlanError::Unsupported(_))
+    ));
+    let allow = allow_keeping_spec(vec![
+        rule("mcp__a__b__c", mcp("a")),
+        rule("mcp__a__b", mcp("a")),
+    ]);
+    assert_eq!(
+        settings_rules(&allow, "allow").unwrap(),
+        vec!["mcp__a__b".to_owned()]
+    );
+}
+
+#[test]
+fn l7_an_unsolicited_turn_keeps_waiting_on_approval_while_approvals_are_pending() {
+    let mut session = ready_session(&sample_spec());
+    send_turn(session.as_mut());
+    let _ = session.on_line(
+        br#"{"type":"control_request","request_id":"req-bg","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"}}}"#,
+        Instant::now(),
+    );
+    let _ = session.on_line(
+        br#"{"type":"result","subtype":"success","is_error":false}"#,
+        Instant::now(),
+    );
+    // A background wake starts a turn by itself while the approval is still pending.
+    let wake = session.on_line(
+        br#"{"type":"system","subtype":"init","session_id":"00000000-0000-0000-0000-000000000001"}"#,
+        Instant::now(),
+    );
+    assert!(wake.iter().any(|o| matches!(
+        o,
+        Output::Event(SessionEvent::TurnStarted {
+            solicited: false,
+            ..
+        })
+    )));
+    assert!(
+        wake.contains(&Output::Event(SessionEvent::Status(
+            Activity::WaitingOnApproval
+        ))),
+        "{wake:?}"
+    );
+    assert!(!wake.contains(&Output::Event(SessionEvent::Status(Activity::Busy))));
 }
 
 #[test]

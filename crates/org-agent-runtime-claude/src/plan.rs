@@ -557,22 +557,22 @@ fn format_rule(rule: &Rule, kind: RuleKind) -> Option<Vec<String>> {
             Some(tools.iter().map(|t| format!("{t}({path})")).collect())
         }
         RuleScope::CommandPrefix(prefix) if any_tool || tool == SHELL_TOOL => {
-            Some(command_prefix_rules(prefix.as_str(), kind))
+            command_prefix_rules(prefix.as_str(), kind)
         }
         // Claude has no command-prefix rule for any other tool.
         RuleScope::CommandPrefix(_) => None,
         RuleScope::McpServer(server) => {
             let server_tools = format!("mcp__{}__", server.as_str());
             if any_tool {
-                Some(vec![format!("{server_tools}*")])
-            } else if tool.len() > server_tools.len() && tool.starts_with(&server_tools) {
-                // One tool of that server, by its full Claude name.
-                Some(vec![tool.to_owned()])
-            } else {
-                // A tool that isn't the server's: no Claude form says "this tool, of that
-                // server".
-                None
+                return Some(vec![format!("{server_tools}*")]);
             }
+            // One tool of that server, by its full Claude name. A tool that isn't the
+            // server's has no Claude form ("this tool, of that server"), and a name holding
+            // `__` (`mcp__a__b__c` for server `a`) is refused: it could as well be tool `c`
+            // of a server `a__b`.
+            tool.strip_prefix(&server_tools)
+                .filter(|name| !name.is_empty() && !name.contains("__"))
+                .map(|name| vec![format!("{server_tools}{name}")])
         }
         _ => None,
     }
@@ -587,28 +587,25 @@ enum RuleKind {
 }
 
 /// Claude Code rules for shell commands starting with `prefix` (a literal prefix, per
-/// `CommandPrefix`).
+/// `CommandPrefix`), or `None` when Claude 2.1.311 has no form at least as wide (deny) or at
+/// most as wide (allow). How 2.1.311 reads the forms used here: `Bash(x:*)` is its legacy
+/// word-bounded prefix (`x` or `x ...`); a single trailing ` *` compiles to `^x( .*)?$`
+/// (`x` or `x ...`); any other `*` matches anything.
 ///
 /// - A deny keeps the literal prefix, `Bash(rm*)`: it also matches `rmdir`, as the contract's
-///   literal prefix does, and a deny must never shrink.
-/// - An allow uses Claude's word-bounded form, `Bash(rm)` plus `Bash(rm *)` (the
-///   `Bash(git *)` form `claude --help` documents for 2.1.311), so `rm` never allows
-///   `rmdir`. That is narrower than the literal prefix: the rest goes to the approval bridge.
-///   A prefix that already ends in whitespace (`git `) is word-bounded as written.
-fn command_prefix_rules(prefix: &str, kind: RuleKind) -> Vec<String> {
+///   literal prefix does, and a deny must never shrink. A prefix ending in `:` is refused:
+///   `Bash(test:*)` would be read as the legacy form and stop covering `test:unit`.
+/// - An allow uses the word-bounded form, `Bash(rm *)` (the `Bash(git *)` form
+///   `claude --help` documents), which matches `rm` and `rm ...` but never `rmdir`: narrower
+///   than the literal prefix, the rest goes to the approval bridge. A prefix ending in
+///   whitespace (`git `) is dropped: `Bash(git *)` would also allow bare `git`, which the
+///   literal prefix `git ` doesn't cover, and Claude has no exact form for it.
+fn command_prefix_rules(prefix: &str, kind: RuleKind) -> Option<Vec<String>> {
     match kind {
-        RuleKind::Deny => vec![format!("{SHELL_TOOL}({prefix}*)")],
-        RuleKind::Allow => {
-            let word = prefix.trim_end();
-            if word.len() == prefix.len() {
-                vec![
-                    format!("{SHELL_TOOL}({word})"),
-                    format!("{SHELL_TOOL}({word} *)"),
-                ]
-            } else {
-                vec![format!("{SHELL_TOOL}({word} *)")]
-            }
-        }
+        RuleKind::Deny if prefix.ends_with(':') => None,
+        RuleKind::Deny => Some(vec![format!("{SHELL_TOOL}({prefix}*)")]),
+        RuleKind::Allow if prefix.ends_with(char::is_whitespace) => None,
+        RuleKind::Allow => Some(vec![format!("{SHELL_TOOL}({prefix} *)")]),
     }
 }
 
