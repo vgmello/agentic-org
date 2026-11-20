@@ -45,7 +45,7 @@ goes there.
 | D12 | The web app's extension slot is proposed to the UI stream, which agrees it with the backend stream | [Section 8.4](#84-the-ui-slot-proposal), [UI stream request](../workstreams/ui.md#request-from-the-backend-stream-the-extension-ui-slot) |
 | D13 | Data at rest is protected by disk encryption, file permissions and isolation (ADR-0016); private keys and provider credentials stay wrapped by the office secrets key | [Section 6](#6-secrets), [ADR-0016](../adr/0016-no-application-level-data-encryption.md) |
 | D14 | Not adopted (owner, after evaluation): the host staying with the person on a desktop Mac. The host runs as the service account everywhere under `accounts` | [Section 6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac) |
-| D15 | Linux: each office is an instance of one shared template unit, `agentic-org-office@.service`, with a polkit rule letting the service account start and stop only `agentic-org-office@*`; the host unit keeps `NoNewPrivileges=yes`; macOS starts offices as today | [Section 4.1](#41-options) |
+| D15 | Linux: each office runs as its own instance of one shared template unit (`User=` the service account), `agentic-org-office@.service`, with a polkit rule letting the service account start and stop only `agentic-org-office@*`; the host unit keeps `NoNewPrivileges=yes`; macOS starts offices as today | [Section 4.1](#41-options) |
 | D16 | Host secrets are owner-only files for now, on macOS too; the Keychain with a Developer-ID-signed host is a later release option; development never requires signing; per-office service accounts stay a later option | [Section 6.3](#63-no-dependency-on-the-macos-login-keychain) |
 | D17 | Each extension has its own small `platform` module, an exception to LNX-5 for extensions | [Section 8.3](#83-where-the-code-lives) |
 | D18 | ui-dev leads the extension UI slot with the backend stream, when L17 starts | [Section 8.4](#84-the-ui-slot-proposal) |
@@ -154,7 +154,7 @@ it for the person's other programs."
 | Account | Kind | Runs | Owns | Started by |
 | --- | --- | --- | --- | --- |
 | The person's own account | Unchanged, may be an administrator | `agentic-org` commands and the browser only | Nothing of the instance | The person |
-| **Service account** (one per instance) | Hidden, non-administrator, no login shell, no password | `agentic-org serve` (the host), `agentic-org-web`, every `agentic-org-office` | The data root, the host's secrets, the office sockets' directory | At boot, with nobody logged in: a system launchd daemon with `UserName` on macOS; a system systemd unit with `User=` on Linux; the container runtime in a container |
+| **Service account** (one per instance) | Hidden, non-administrator, no login shell, no password | `agentic-org serve` (the host), `agentic-org-web`, every `agentic-org-office` | The data root, the host's secrets, the office sockets' directory | At boot, with nobody logged in: a system launchd daemon with `UserName` on macOS; a system systemd unit with `User=` on Linux, each office in an instance of the template unit `agentic-org-office@.service` (`User=` the service account, D15); the container runtime in a container |
 | **Agent account**, one per office first, made at setup or later by the helper | Hidden, non-administrator, no login shell, no password | The agents of that office | Only the agents' private homes and workspaces (ADR-0015 decisions 2 and 10) | The office, through the launcher of [section 4](#4-starting-agents-as-their-accounts-without-being-an-administrator) |
 | Agent account, one per agent (later) | As above | One agent | That agent's home and workspaces | As above |
 | Office account, one per office (optional, later) | Hidden, non-administrator | One `agentic-org-office` | That office's data | The host, through the same kind of grant |
@@ -260,10 +260,10 @@ setting.
 | Seam | `off` | `accounts` | Where it lives |
 | --- | --- | --- | --- |
 | 1. Process launch | Direct spawn, as `org-supervise` does today | Through the launcher, as the agent account | The launch contract (`org_platform::isolation`, [Linux host design 3.5](linux-host.md#35-agent-isolation)) |
-| 2. Service registration | User level: launchd agent, systemd user unit | System level: launchd daemon with `UserName`, systemd system unit with `User=` | `org_platform::service` |
+| 2. Service registration | User level: launchd agent, systemd user unit | System level: launchd daemon with `UserName`, systemd system unit with `User=`; on Linux also the office template unit `agentic-org-office@.service` (D15) | `org_platform::service` |
 | 3. Socket admission | Allowed UIDs: the person (who is also the service user) | `host.sock`: the person; office sockets: the agent accounts; with matching directory and socket modes | Data passed to the peer check (today one UID, `peer_allowed(&stream, expected_uid)`), not a second adapter |
 | 4. Data-root and secrets locations | In the person's home (`org_platform::dirs` today) | System locations owned by the service account ([section 3.2](#32-the-data-root-moves-out-of-the-persons-home)) | `org_platform::dirs` |
-| 5. Secrets custody | Today's credential provider | The custody the spike chooses for a service account ([section 6.3](#63-no-dependency-on-the-macos-login-keychain)) | `org_platform_host::credentials` |
+| 5. Secrets custody | Today's credential provider | Owner-only files of the service account (D16); the Keychain with a signed host is a later release option ([section 6.3](#63-no-dependency-on-the-macos-login-keychain)) | `org_platform_host::credentials` |
 | Setup's privileged plan | Empty | The full plan of [section 5](#5-one-command-setup) | Setup |
 
 The os-sandbox is the same in both settings; only the paths in its profile differ.
@@ -318,14 +318,16 @@ the owner's answer for Linux below.
 as root and the grant is visible in one file.
 
 **Owner's answer for Linux (2026-11-20).** Each office runs as its own instance of one
-shared systemd template unit, `agentic-org-office@.service`, which setup installs, and
-which does not set `NoNewPrivileges`, so the office's `sudo` to the launcher works. A
+shared systemd template unit, `agentic-org-office@.service`, which setup installs; it
+runs as the service account (`User=`) and does not set `NoNewPrivileges`, so the office's `sudo` to the launcher works. A
 polkit rule, also installed at setup, lets the service account start and stop only
 `agentic-org-office@*`. The host unit keeps `NoNewPrivileges=yes`, and so does the web
 process. A new office needs no new file and no administrator. Consequence for the
-design: on Linux the host no longer starts the office itself, so Linux admission
-(the verified memory-file start of ADR-0017 decision 7) and the rendezvous peer check
-must be redone for an office that systemd starts; the accounts ADR designs it and the
+design: on Linux the host no longer starts the office itself, so four things the host
+does today for a child it starts ([host boundary](office-host-boundary.md#admission-and-the-verified-rendezvous))
+must be redone for an office that systemd starts: admission (the verified memory-file
+start of ADR-0017 decision 7), the non-secret launch line on the office's stdin, the
+pidfd the host supervises it by, and the rendezvous peer check; the accounts ADR designs it and the
 spike checks it (ACCT-6). On macOS the issue does not exist: the host starts offices
 as today, and any per-office system file goes through the helper.
 
@@ -396,7 +398,9 @@ prompt:
    launcher daemon, per [section 4](#4-starting-agents-as-their-accounts-without-being-an-administrator)),
    and install the closed-list helper with its grant ([section 5.2](#52-administrator-rights-after-setup)).
 4. Register the system-level service (launchd daemon with `UserName`, or a systemd
-   system unit with `User=`) and start it.
+   system unit with `User=`) and start it; on Linux also install the office template
+   unit `agentic-org-office@.service` (`User=` the service account) and its polkit rule
+   (D15).
 5. Run the privileged steps declared by the extensions the person chooses to
    prepare (for example adding the agent accounts to the `kvm` group,
    [section 8.5](#85-the-containers-extension), or the `_developer` group,
@@ -610,12 +614,11 @@ chain today, as accepted and as the code holds it:
 **What changes under a service account nobody logs into.** Step 3 on macOS is the one
 link in question: whether the Data Protection keychain serves a launchd daemon running
 as an account that never logs in is unverified, and that account's login keychain is
-locked. The options, for the spike to decide (SECR-1 to SECR-3):
-
-- an owner-only file, as on Linux (the same directory store already serves development
-  builds on macOS);
-- a dedicated keychain file that the helper or the host unlocks at start;
-- a key bound to the hardware: the Secure Enclave on macOS, a TPM on Linux.
+locked. **Decided (D16):** owner-only files of the service account, as on Linux (the
+same directory store already serves development builds on macOS); SECR-1 checks them.
+Later options, for releases: the Keychain with a Developer-ID-signed host, a dedicated
+keychain file that the helper or the host unlocks at start, or a key bound to the
+hardware (the Secure Enclave on macOS, a TPM on Linux) (SECR-2, SECR-3).
 
 Steps 1, 2, 4 and 5 do not change.
 
@@ -1058,12 +1061,12 @@ through the chosen grant; send the launcher bad requests.
 
 | ID | PASS | FAIL |
 | --- | --- | --- |
-| ACCT-1 | Setup asks for administrator rights exactly once and creates the service account, one agent account, bound to the first office when it is created (or the pool, under alternative (b)), the data root, the secrets directory, the launcher, the helper (under (a)), their grants and the system service | A second prompt; any of those items left to the checklist; or a half-done state after a cancelled prompt |
+| ACCT-1 | Setup asks for administrator rights exactly once and creates the service account, one agent account, bound to the first office when it is created (or the pool, under alternative (b)), the data root, the secrets directory, the launcher, the helper (under (a)), their grants and the system service, and on Linux the office template unit `agentic-org-office@.service` (`User=` the service account) and its polkit rule | A second prompt; any of those items left to the checklist; or a half-done state after a cancelled prompt |
 | ACCT-2 | After a reboot with nobody logged in, the host, the web process and an office run as the service account and the browser reaches the instance | Any of them needs a login, or runs as another account |
 | ACCT-3 | The office starts an agent as its agent account through the launcher; `ps` shows that account; stop, cleanup after a crash and orphan recovery work through the launcher with the ownership mark | The agent runs as the service account, or stop or cleanup fails |
 | ACCT-4 | The launcher refuses an unregistered account, an unregistered program, a working directory outside the account's roots and extra arguments, and logs each | Any of them starts a process |
 | ACCT-5 | No process of ours runs as root except setup's privileged step, the closed-list helper for one listed operation, and, in launcher option 3 only, the root launcher daemon; no root process sits between the office and the agent; `sudo -l` for the service account lists only the launcher and the helper | Any other root process (including a `sudo` monitor kept for the agent's run) or a broader grant |
-| ACCT-6 | On Linux, a new office starts as `agentic-org-office@<id>` with no new file and no prompt; the polkit rule lets the service account start and stop only `agentic-org-office@*` (another unit is refused); the host and web keep no-new-privileges; the office's `sudo` to the launcher works; the host still verifies the office it hands secrets to | The option silently needs a weaker unit than recorded |
+| ACCT-6 | On Linux, a new office starts as `agentic-org-office@<id>` with no new file and no prompt; the polkit rule lets the service account start and stop only `agentic-org-office@*` (another unit is refused); the host and web keep no-new-privileges; the office's `sudo` to the launcher works; the host still admits the office, gives it its launch line, supervises it and checks the rendezvous peer before it hands secrets over | The option silently needs a weaker unit than recorded |
 | ACCT-7 | In a container built from the repository's image, the accounts and grant made at build time work without an administrator step, including under the documented hardened run (`--security-opt no-new-privileges`, all capabilities dropped but three; `deploy/container/README.md`), or the spike records that `accounts` in a container needs a less hardened run | Any step needs root at run time, or the grant does not work |
 | ACCT-8 | Option 1: the process tree is office → launcher-run agent with no root process between them; the office's ownership mark, pidfd (Linux) and start time identify the agent; stop and kill reach it | A root process between them, or evidence or signals that do not reach the agent |
 | ACCT-9 | The launcher reads its length-prefixed request from standard input and then hands standard input to the vendor tool, whose headless session works end to end through `sudo` | The request cannot be framed this way, or the session breaks |
@@ -1176,7 +1179,7 @@ Proves: ASX-6, ASX-10.
 | --- | --- | --- |
 | SECR-1 | Host secrets as owner-only files under the service account: the host starts unattended after a reboot; nothing else can read them; a scan finds no secret elsewhere (ENC-2) | Any other account can read them, or the host needs a login |
 | SECR-2 | Later, for releases only: the Keychain with a Developer-ID-signed host (or a headless keychain) is evaluated against owner-only files and recorded with a recommendation | No recommendation when the release option is taken up |
-| SECR-3 | Each option of [section 6.4](#64-options-for-the-spike-to-evaluate) is tried where the system has it (Secure Enclave from a daemon under the service account; TPM-sealed `systemd-creds`; required disk encryption is not tried, D21) and recorded with a recommendation | An option skipped without a recorded reason |
+| SECR-3 | Later, for releases only (like SECR-2): each remaining option of [section 6.4](#64-options-for-the-spike-to-evaluate) is tried where the system has it (Secure Enclave from a daemon under the service account; TPM-sealed `systemd-creds`; required disk encryption is not tried, D21) and recorded with a recommendation | An option skipped without a recorded reason |
 | SECR-4 | A copy of the data root alone, taken to another machine, yields no usable private key or provider credential (ENC-5) | Any usable key or credential |
 
 ### 11.7a The host with the person on a desktop Mac
@@ -1216,10 +1219,11 @@ Proves: ASX-8, ASX-9.
 
 Answered on 2026-11-20 unless marked **open**.
 
-1. **Launcher grant.** Answered (D15): option 1 (sudoers to the launcher); on Linux each
-   office runs in the template unit `agentic-org-office@.service` with a polkit rule,
-   and the host unit keeps `NoNewPrivileges=yes`
-   ([section 4.1](#41-options)).
+1. **Launcher grant.** Partly answered (D15): on Linux each office runs as its own
+   instance of the template unit `agentic-org-office@.service` with a polkit rule, and
+   the host unit keeps `NoNewPrivileges=yes` ([section 4.1](#41-options)). Which grant
+   starts agents (option 1, sudoers to the launcher, is recommended) is still the
+   spike's call.
 2. **Host secrets.** Answered (D16): owner-only files for now, on macOS too; the
    Keychain with a Developer-ID-signed host later for releases; per-office service
    accounts a later option.
