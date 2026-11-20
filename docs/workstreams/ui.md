@@ -71,7 +71,8 @@ their own panels, discovery of enabled extensions from the office through the we
 that lives in `extensions/<name>/ui/` and is built into the web app (never Tailwind Plus outside
 `apps/agentic-org-ui`). Proposal: [accounts, sandbox and extensions, section 8.4](../design/accounts-sandbox-and-extensions.md#84-the-ui-slot-proposal).
 ui-dev is asked to review it, brainstorm the slot with backend-dev, and agree its shape before either
-side builds it. One point to settle together: building extension UI into the app must not make the
+side builds it. Owner answer 2026-11-20: ui-dev leads the slot's design with the backend stream when L17
+starts. One point to settle together: building extension UI into the app must not make the
 app and the extension UI import each other (the note offers a shared UI-foundation package or
 slot-provided primitives). Nothing under `apps/agentic-org-ui` was changed. Until then, milestone-one UI only keeps
 the navigation and settings sections driven by data where that is cheap.

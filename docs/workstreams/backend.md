@@ -45,14 +45,14 @@ merge). The owner's answers to Q1 to Q5 are at the end of the B2 plan.
 
 Accounts, sandbox and extensions (late v1, after milestone one's increments; the owner decides when): start
 with the spikes in [the note's section 11](../design/accounts-sandbox-and-extensions.md#11-spikes) (accounts and launcher, security, isolation setting,
-secrets, the host-with-the-person option, administrator rights; the macOS iOS-build spike of FC-190), record
+secrets, administrator rights; the macOS iOS-build spike of FC-190), record
 the results in `docs/research/`, write the ADRs of [section 10](../design/accounts-sandbox-and-extensions.md#10-adrs-and-designs-to-write-or-update-after-the-spikes),
 then build L15 (`os-sandbox`, FC-190) and L16 (accounts and setup, FC-191, with L6 / FC-161), then L17
 (extensions, FC-192 to FC-194). Each spike section names the requirements (`ASX-`) it proves.
 
 ## Owner decisions 2026-11-20
 
-The full list (D1 to D14) is in [the note's owner decisions](../design/accounts-sandbox-and-extensions.md#owner-decisions-and-direction-2026-11-20);
+The full list (D1 to D23) is in [the note's owner decisions](../design/accounts-sandbox-and-extensions.md#owner-decisions-and-direction-2026-11-20);
 its requirements are `ASX-1` to `ASX-18` ([requirements](../design/accounts-sandbox-and-extensions.md#requirements)); where each is tracked is
 [its tracking table](../design/accounts-sandbox-and-extensions.md#where-this-is-tracked).
 
@@ -61,7 +61,8 @@ its requirements are `ASX-1` to `ASX-18` ([requirements](../design/accounts-sand
 - `os-sandbox` is v1 (late) (D4; FC-190, L15); Claude Code's sandbox switch is on by default (D2; FC-189).
 - Extensions after milestone one: Containers (Colima) and Xcode, with a UI slot to agree with ui-dev (D9 to D12; FC-192 to FC-194, L17).
 - Take-over paused to late v1 (D3; FC-151). Background tasks and sub-agents stay on (D1; ADR-0025).
-- Under evaluation: the host stays with the person on a desktop Mac (D14).
+- Answers of 2026-11-20 (D14 to D23): Linux offices in the template unit `agentic-org-office@.service` with a polkit rule; host secrets in owner-only files for now; extension `platform` modules (LNX-5 exception); ui-dev leads the UI slot at L17; agent accounts per office, separate from the service account; helper confirmed pending the spike; disk encryption check-and-warn; Git rules carry over; `uninstall` and changing the isolation setting ask once; the host-with-the-person option not adopted.
+- Still open (note section 12): recovery presence and authority under a service-account host (question 3), a `same-user` agent under `accounts` (11), iOS signing and the non-negotiable-10 exception (12).
 
 ## In flight
 
