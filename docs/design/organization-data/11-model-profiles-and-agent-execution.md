@@ -1,6 +1,6 @@
 # Model profiles, provider connections and agent execution
 
-Status: **selected** data and execution contract, revision 8. This document defines the data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
+Status: **selected** data and execution contract, revision 9. This document defines the data model, process ownership, commands, state transitions and acceptance criteria for this feature. Implement the decisions here; do not substitute an independently chosen process topology or retry policy.
 
 This document owns provider connections, subscription identity, model profiles and their ordered memberships, discovered models, agent execution configuration, office-local bindings, shared admission records, and execution turns/attempts/process ownership. It is a first-class member of the [organization data specification](README.md), with its SQL included in the consolidated [schema.sql](schema.sql). The SQL is a design contract; the code does not implement it yet.
 

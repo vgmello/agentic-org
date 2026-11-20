@@ -112,7 +112,10 @@ to a sandboxed workspace with interactive approval routing (`safe_ask` → `Ask`
 `AcceptEdits` + named workspace-scoped sandboxed command allow rules;
 [ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)).
 The product never exposes a bypass / unrestricted skip-permissions switch, preserving
-the `org-agent-runtime` no-bypass invariant. Browser-driven one-time subscription sign-in for
+the `org-agent-runtime` no-bypass invariant.
+A per-agent sandbox on/off switch in Advanced settings, on by default, is planned
+(owner decision 2026-11-20, FC-189 follow-up); it is not built yet and adds no stored field until it is.
+Browser-driven one-time subscription sign-in for
 connections (Claude paste-code / `setup-token` and Codex device-code) is also defined
 in ADR-0032 under ADR-0004 decision 3's narrow enrollment exception without exposing a
 browser terminal for agent sessions.

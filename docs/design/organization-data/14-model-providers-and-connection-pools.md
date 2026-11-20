@@ -1,6 +1,6 @@
 # Model providers, connections and pools
 
-Status: **selected** data contract, revision 1. This is the data-model view of the selected [execution contract](11-model-profiles-and-agent-execution.md), using the same records and SQL. It defines no second provider/pool system. Supervision, turn admission, failover, process recovery and installation remain in document 11.
+Status: **selected** data contract, revision 2. This is the data-model view of the selected [execution contract](11-model-profiles-and-agent-execution.md), using the same records and SQL. It defines no second provider/pool system. Supervision, turn admission, failover, process recovery and installation remain in document 11.
 
 ## Concepts and boundaries
 
