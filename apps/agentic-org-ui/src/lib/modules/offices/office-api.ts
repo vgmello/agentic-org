@@ -1,13 +1,5 @@
-import {
-	toAppError,
-	type Connection,
-	type HelloResult,
-	type Organization,
-	type StatusUpdate
-} from '$lib/proto';
+import type { Connection, HelloResult, Organization, StatusUpdate } from '$lib/proto';
 import { unavailableCall } from '$lib/platform/unavailable-api';
-
-export { toAppError };
 
 /** Browser office capability. Concrete gateway adapters replace the unavailable default. */
 export interface OfficeApi {

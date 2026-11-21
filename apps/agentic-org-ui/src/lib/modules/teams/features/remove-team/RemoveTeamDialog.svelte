@@ -16,7 +16,7 @@
 		DialogHeader,
 		DialogTitle
 	} from '$lib/components/ui/dialog';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { teamsApi } from '../../api';
 	import { blockedSentence, isBlocked, type BlockerCheck, type TeamRemoval } from '../../blockers';
 	import TeamBlockers from '../../components/TeamBlockers.svelte';

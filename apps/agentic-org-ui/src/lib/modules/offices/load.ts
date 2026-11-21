@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
-import { officeApi, toAppError } from './office-api';
+import { toAppError } from '$lib/proto';
+import { officeApi } from './office-api';
 
 /**
  * The remembered connections, oldest first. If they can't be read (an unsupported file version,

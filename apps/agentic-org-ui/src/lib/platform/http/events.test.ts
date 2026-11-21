@@ -94,23 +94,45 @@ describe('readSseFrames', () => {
 		await expect(drain(badFrame)).rejects.toBeInstanceOf(WireDecodeError);
 	});
 
-	it('enforces maxEventBytes against oversized SSE frames', async () => {
-		const huge = streamFromChunks([
+	it('handles CR + empty chunk + LF without flushing early, joins multi-line data, and ignores non-frame events', async () => {
+		const splitCrlf = [
+			'event: ignored_custom\n',
+			'data: {"not":"a frame"}\n\n',
+			'event: frame\r',
+			new Uint8Array(0),
+			'\ndata: {"type":"heartbeat",\r',
+			new Uint8Array(0),
+			'\ndata: "server_time_ms":42}\r',
+			new Uint8Array(0),
+			'\n\r',
+			new Uint8Array(0),
+			'\n'
+		];
+		const frames: EventFrame[] = [];
+		for await (const frame of readSseFrames(streamFromChunks(splitCrlf))) frames.push(frame);
+		expect(frames).toEqual([{ type: 'heartbeat', server_time_ms: 42 }]);
+	});
+
+	it('enforces maxEventBytes using UTF-8 byte length against oversized SSE frames', async () => {
+		const multiByte = streamFromChunks([
 			sseLine({
 				type: 'change',
 				scope: ORG_SCOPE,
 				feed: 'organization',
 				cursor: 'c1',
 				event: 'x',
-				data: { blob: 'x'.repeat(256) }
+				// 15 CJK chars = 45 UTF-8 bytes, total payload ~120 chars / ~150 bytes
+				data: { blob: '東'.repeat(15) }
 			})
 		]);
-		const drain = async () => {
+		const drain = async (stream: ReadableStream<Uint8Array>, maxEventBytes: number) => {
 			const frames: EventFrame[] = [];
-			for await (const frame of readSseFrames(huge, { maxEventBytes: 64 })) frames.push(frame);
+			for await (const frame of readSseFrames(stream, { maxEventBytes })) frames.push(frame);
 			return frames;
 		};
-		await expect(drain()).rejects.toThrow('SSE event exceeds its byte limit');
+		// Limit 160 exceeds UTF-16 char length of data line (~155) only if char count were used;
+		// UTF-8 byte length of the data line is ~185 bytes so it must reject.
+		await expect(drain(multiByte, 160)).rejects.toThrow('SSE event exceeds its byte limit');
 	});
 });
 
@@ -268,9 +290,93 @@ describe('createEventStreamClient', () => {
 		expect(result.reason).toBe('aborted');
 		expect(handle.cursor(ORG_SCOPE, 'organization')).toBe('org:3:live');
 		expect(cancelled).toBe(true);
+
+		let closeCancelled = false;
+		const closeStream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(
+					enc.encode(
+						sseLine({
+							type: 'ready',
+							subscriptions: [{ scope: ORG_SCOPE, feed: 'organization', cursor: 'org:3:close' }]
+						})
+					)
+				);
+			},
+			cancel() {
+				closeCancelled = true;
+			}
+		});
+		const closeClient = createEventStreamClient({
+			origin: ORIGIN,
+			fetch: vi.fn(
+				async () =>
+					new Response(closeStream, {
+						status: 200,
+						headers: { 'content-type': 'text/event-stream; charset=utf-8' }
+					})
+			) as unknown as typeof fetch
+		});
+		const handleRef = closeClient.open({
+			subscriptions: SUBS,
+			proof: PROOF,
+			handlers: {
+				onReady: () => handleRef.close()
+			}
+		});
+		const closeResult = await handleRef.closed;
+		expect(closeResult.reason).toBe('aborted');
+		expect(handleRef.cursor(ORG_SCOPE, 'organization')).toBe('org:3:close');
+		expect(closeCancelled).toBe(true);
 	});
 
-	it('surfaces non-200 HTTP errors with decoded GatewayError and rejects non-SSE 200 responses', async () => {
+	it('does not swallow handler errors or WireDecodeError even when aborted', async () => {
+		const handlerAbort = new AbortController();
+		const client = createEventStreamClient({
+			origin: ORIGIN,
+			fetch: vi.fn(
+				async () =>
+					new Response(
+						streamFromChunks([
+							sseLine({
+								type: 'ready',
+								subscriptions: [{ scope: ORG_SCOPE, feed: 'organization', cursor: 'c0' }]
+							})
+						]),
+						{ status: 200, headers: { 'content-type': 'text/event-stream' } }
+					)
+			) as unknown as typeof fetch
+		});
+		const handlerBoom = new Error('handler exploded');
+		const h = client.open({
+			subscriptions: SUBS,
+			proof: PROOF,
+			signal: handlerAbort.signal,
+			handlers: {
+				onReady: () => {
+					handlerAbort.abort();
+					throw handlerBoom;
+				}
+			}
+		});
+		await expect(h.closed).rejects.toBe(handlerBoom);
+
+		const badClient = createEventStreamClient({
+			origin: ORIGIN,
+			fetch: vi.fn(
+				async () =>
+					new Response(streamFromChunks(['event: frame\ndata: {bad\n\n']), {
+						status: 200,
+						headers: { 'content-type': 'text/event-stream' }
+					})
+			) as unknown as typeof fetch
+		});
+		await expect(
+			badClient.open({ subscriptions: SUBS, proof: PROOF }).closed
+		).rejects.toBeInstanceOf(WireDecodeError);
+	});
+
+	it('surfaces non-200 HTTP errors (JSON, non-JSON, oversized JSON) and rejects non-SSE 200 responses', async () => {
 		const authFail = vi.fn(
 			async () =>
 				new Response(
@@ -298,6 +404,42 @@ describe('createEventStreamClient', () => {
 			}
 		});
 
+		const plainFail = vi.fn(
+			async () =>
+				new Response('Bad Gateway', { status: 502, headers: { 'content-type': 'text/plain' } })
+		);
+		const plainClient = createEventStreamClient({
+			origin: ORIGIN,
+			fetch: plainFail as unknown as typeof fetch
+		});
+		await expect(
+			plainClient.open({ subscriptions: SUBS, proof: PROOF }).closed
+		).rejects.toMatchObject({
+			name: 'EventStreamError',
+			status: 502,
+			gatewayError: undefined
+		});
+
+		const hugeJsonFail = vi.fn(
+			async () =>
+				new Response(JSON.stringify({ error: { code: 'unavailable', message: 'x'.repeat(256) } }), {
+					status: 503,
+					headers: { 'content-type': 'application/json' }
+				})
+		);
+		const boundedClient = createEventStreamClient({
+			origin: ORIGIN,
+			maxErrorBytes: 64,
+			fetch: hugeJsonFail as unknown as typeof fetch
+		});
+		await expect(
+			boundedClient.open({ subscriptions: SUBS, proof: PROOF }).closed
+		).rejects.toMatchObject({
+			name: 'EventStreamError',
+			status: 503,
+			gatewayError: undefined
+		});
+
 		const wrongType = vi.fn(
 			async () =>
 				new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } })
@@ -311,7 +453,7 @@ describe('createEventStreamClient', () => {
 		);
 	});
 
-	it('refuses invalid proofs, empty/oversized subscriptions, proof leakage, and pre-aborted signals before dispatch', () => {
+	it('refuses invalid proofs, empty/oversized/unknown-feed subscriptions, proof leakage, and pre-aborted signals before dispatch', () => {
 		const fetchMock = vi.fn();
 		const client = createEventStreamClient({
 			origin: ORIGIN,
@@ -322,6 +464,12 @@ describe('createEventStreamClient', () => {
 		expect(() =>
 			client.open({
 				subscriptions: Array.from({ length: 33 }, () => SUBS[0]),
+				proof: PROOF
+			})
+		).toThrow(NotDispatchedError);
+		expect(() =>
+			client.open({
+				subscriptions: [{ scope: ORG_SCOPE, feed: 'unknown' as unknown as Subscription['feed'] }],
 				proof: PROOF
 			})
 		).toThrow(NotDispatchedError);

@@ -6,7 +6,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Dialog,

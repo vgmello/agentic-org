@@ -12,7 +12,7 @@
 	import MoveTeamDialog from '$lib/modules/organization/features/teams/MoveTeamDialog.svelte';
 	import RenameTeamDialog from '$lib/modules/organization/features/teams/RenameTeamDialog.svelte';
 	import { membersApi } from '$lib/modules/members';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import type { OrgSession } from '$lib/modules/organization/session';
 	import { deleteSummary } from '$lib/modules/organization/team-edit';
 	import type { OrgSnapshot } from '$lib/proto';

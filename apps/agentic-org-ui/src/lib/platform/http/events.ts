@@ -16,10 +16,11 @@ export const EVENTS_STREAM_PATH = '/api/v1/events/stream';
 export const MAX_SUBSCRIPTIONS = 32;
 export const DEFAULT_MAX_REQUEST_BYTES = 64 * 1024;
 export const DEFAULT_MAX_EVENT_BYTES = 1024 * 1024;
+export const DEFAULT_MAX_ERROR_BYTES = 64 * 1024;
 
 export type StreamRequest = ReturnType<typeof readStreamRequest>;
-export type Subscription = StreamRequest['subscriptions'][number];
-export type Feed = Subscription['feed'];
+export type Feed = Exclude<StreamRequest['subscriptions'][number]['feed'], 'unknown'>;
+export type Subscription = Omit<StreamRequest['subscriptions'][number], 'feed'> & { feed: Feed };
 export type { EventFrame };
 
 export interface EventStreamHandlers {
@@ -50,6 +51,7 @@ export interface EventStreamClientOptions {
 	fetch?: typeof fetch;
 	maxRequestBytes?: number;
 	maxEventBytes?: number;
+	maxErrorBytes?: number;
 }
 
 export interface EventStreamOpenRequest {
@@ -73,9 +75,30 @@ export interface EventStreamHandle {
 interface SseParserState {
 	lineBuffer: string;
 	sawTrailingCr: boolean;
+	eventType: string;
 	dataLines: string[];
 	eventBytes: number;
 	readonly maxEventBytes: number;
+}
+
+class SseLimitError extends Error {
+	constructor() {
+		super('SSE event exceeds its byte limit');
+		this.name = 'SseLimitError';
+	}
+}
+
+class HandlerErrorBox {
+	readonly cause: unknown;
+	constructor(cause: unknown) {
+		this.cause = cause;
+	}
+}
+
+const utf8Encoder = new TextEncoder();
+
+function utf8ByteLength(value: string): number {
+	return utf8Encoder.encode(value).byteLength;
 }
 
 function assertHeaderProof(proof: unknown): asserts proof is string {
@@ -132,27 +155,37 @@ function decodeSseData(lines: readonly string[]): EventFrame {
 	return readEventFrame(parsed);
 }
 
+function flushSseEvent(state: SseParserState): EventFrame | undefined {
+	const lines = state.dataLines;
+	const eventType = state.eventType;
+	state.dataLines = [];
+	state.eventType = '';
+	state.eventBytes = 0;
+	if (lines.length === 0) return undefined;
+	if (eventType !== '' && eventType !== 'frame') return undefined;
+	return decodeSseData(lines);
+}
+
 function parseSseLine(line: string, state: SseParserState): EventFrame | undefined {
-	if (line === '') {
-		if (state.dataLines.length === 0) return undefined;
-		const lines = state.dataLines;
-		state.dataLines = [];
-		state.eventBytes = 0;
-		return decodeSseData(lines);
-	}
+	if (line === '') return flushSseEvent(state);
 	if (line.startsWith(':')) return undefined;
 	const colon = line.indexOf(':');
 	const field = colon === -1 ? line : line.slice(0, colon);
-	if (field !== 'data') return undefined;
 	const raw = colon === -1 ? '' : line.slice(colon + 1);
 	const value = raw.startsWith(' ') ? raw.slice(1) : raw;
-	state.eventBytes += value.length + 1;
-	if (state.eventBytes > state.maxEventBytes) throw new Error('SSE event exceeds its byte limit');
+	if (field === 'event') {
+		state.eventType = value;
+		return undefined;
+	}
+	if (field !== 'data') return undefined;
+	state.eventBytes += utf8ByteLength(value) + 1;
+	if (state.eventBytes > state.maxEventBytes) throw new SseLimitError();
 	state.dataLines.push(value);
 	return undefined;
 }
 
 function splitSseLines(text: string, state: SseParserState): string[] {
+	if (text.length === 0) return [];
 	const lines: string[] = [];
 	let start = 0;
 	if (state.sawTrailingCr) {
@@ -172,8 +205,8 @@ function splitSseLines(text: string, state: SseParserState): string[] {
 	}
 	if (start < text.length) {
 		state.lineBuffer += text.slice(start);
-		if (state.eventBytes + state.lineBuffer.length > state.maxEventBytes)
-			throw new Error('SSE event exceeds its byte limit');
+		if (state.eventBytes + utf8ByteLength(state.lineBuffer) > state.maxEventBytes)
+			throw new SseLimitError();
 	}
 	return lines;
 }
@@ -207,6 +240,7 @@ export async function* readSseFrames(
 	const state: SseParserState = {
 		lineBuffer: '',
 		sawTrailingCr: false,
+		eventType: '',
 		dataLines: [],
 		eventBytes: 0,
 		maxEventBytes
@@ -234,14 +268,58 @@ export async function* readSseFrames(
 	}
 }
 
-async function readErrorPayload(response: Response): Promise<GatewayError | undefined> {
+async function readBoundedBytes(
+	body: ReadableStream<Uint8Array>,
+	maxBytes: number,
+	signal?: AbortSignal
+): Promise<Uint8Array | undefined> {
+	const reader = body.getReader();
+	const cancel = () => {
+		void reader.cancel().catch(() => {});
+	};
+	signal?.addEventListener('abort', cancel, { once: true });
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	try {
+		while (!signal?.aborted) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			size += value.byteLength;
+			if (size > maxBytes) {
+				await reader.cancel();
+				return undefined;
+			}
+			chunks.push(value);
+		}
+	} catch {
+		return undefined;
+	} finally {
+		signal?.removeEventListener('abort', cancel);
+		reader.releaseLock();
+	}
+	const bytes = new Uint8Array(size);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return bytes;
+}
+
+async function readErrorPayload(
+	response: Response,
+	maxErrorBytes: number,
+	signal?: AbortSignal
+): Promise<GatewayError | undefined> {
 	const contentType = response.headers.get('content-type') ?? '';
-	if (!/^application\/(?:[\w.+-]+\+)?json(?:;|$)/i.test(contentType)) {
+	if (!/^application\/(?:[\w.+-]+\+)?json(?:;|$)/i.test(contentType) || !response.body) {
 		void response.body?.cancel().catch(() => {});
 		return undefined;
 	}
+	const bytes = await readBoundedBytes(response.body, maxErrorBytes, signal);
+	if (!bytes) return undefined;
 	try {
-		const raw: unknown = await response.json();
+		const raw: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
 		const decoded = readResponse(raw, readJsonObject);
 		return 'error' in decoded ? decoded.error : undefined;
 	} catch {
@@ -276,12 +354,14 @@ function encodeStreamPayload(
 	const validated = readStreamRequest({ subscriptions });
 	if (validated.subscriptions.length === 0 || validated.subscriptions.length > MAX_SUBSCRIPTIONS)
 		throw new NotDispatchedError('Event stream requires 1 to 32 subscriptions');
+	if (validated.subscriptions.some((sub) => sub.feed === 'unknown'))
+		throw new NotDispatchedError('Unsupported event feed');
 	const encoded = JSON.stringify(validated, (key, value: unknown) => {
 		if (key.includes(proof) || (typeof value === 'string' && value.includes(proof)))
 			throw new NotDispatchedError('Session proof must be supplied only in the header');
 		return value;
 	});
-	if (new TextEncoder().encode(encoded).byteLength > maxRequestBytes)
+	if (utf8ByteLength(encoded) > maxRequestBytes)
 		throw new NotDispatchedError('Stream request exceeds its limit');
 	return encoded;
 }
@@ -309,9 +389,10 @@ function prepareOpenRequest(
 function recordCursorEntry(
 	cursors: Map<string, string>,
 	scope: unknown,
-	feed: Feed,
+	feed: StreamRequest['subscriptions'][number]['feed'],
 	cursor: string
 ) {
+	if (feed === 'unknown') return;
 	try {
 		cursors.set(subscriptionKey(readScope(scope), feed), cursor);
 	} catch {
@@ -328,9 +409,15 @@ function recordFrameCursor(cursors: Map<string, string>, frame: EventFrame): voi
 	}
 }
 
-async function validateStreamResponse(response: Response): Promise<ReadableStream<Uint8Array>> {
-	if (response.status !== 200)
-		throw new EventStreamError(response.status, await readErrorPayload(response));
+async function validateStreamResponse(
+	response: Response,
+	maxErrorBytes: number,
+	signal: AbortSignal
+): Promise<ReadableStream<Uint8Array>> {
+	if (response.status !== 200) {
+		const gatewayError = await readErrorPayload(response, maxErrorBytes, signal);
+		throw new EventStreamError(response.status, gatewayError);
+	}
 	const contentType = response.headers.get('content-type') ?? '';
 	if (!/^text\/event-stream(?:\s*;|$)/i.test(contentType)) {
 		void response.body?.cancel().catch(() => {});
@@ -341,6 +428,17 @@ async function validateStreamResponse(response: Response): Promise<ReadableStrea
 	return response.body;
 }
 
+async function dispatchHandlerFrame(
+	frame: EventFrame,
+	handlers: EventStreamHandlers
+): Promise<void> {
+	try {
+		await dispatchEventFrame(frame, handlers);
+	} catch (cause) {
+		throw new HandlerErrorBox(cause);
+	}
+}
+
 async function consumeStream(params: {
 	url: URL;
 	send: typeof fetch;
@@ -348,10 +446,21 @@ async function consumeStream(params: {
 	headers: Headers;
 	controller: AbortController;
 	maxEventBytes: number;
+	maxErrorBytes: number;
 	cursors: Map<string, string>;
 	handlers: EventStreamHandlers;
 }): Promise<EventStreamResult> {
-	const { url, send, encoded, headers, controller, maxEventBytes, cursors, handlers } = params;
+	const {
+		url,
+		send,
+		encoded,
+		headers,
+		controller,
+		maxEventBytes,
+		maxErrorBytes,
+		cursors,
+		handlers
+	} = params;
 	const response = await send(url, {
 		method: 'POST',
 		headers,
@@ -362,10 +471,10 @@ async function consumeStream(params: {
 		cache: 'no-store',
 		signal: controller.signal
 	});
-	const body = await validateStreamResponse(response);
+	const body = await validateStreamResponse(response, maxErrorBytes, controller.signal);
 	for await (const frame of readSseFrames(body, { signal: controller.signal, maxEventBytes })) {
 		recordFrameCursor(cursors, frame);
-		await dispatchEventFrame(frame, handlers);
+		await dispatchHandlerFrame(frame, handlers);
 		if (frame.type === 'session_ended')
 			return { reason: 'session_ended', cursors: new Map(cursors) };
 	}
@@ -373,6 +482,22 @@ async function consumeStream(params: {
 		reason: controller.signal.aborted ? 'aborted' : 'ended',
 		cursors: new Map(cursors)
 	};
+}
+
+function handleStreamFailure(
+	error: unknown,
+	aborted: boolean,
+	cursors: Map<string, string>
+): EventStreamResult {
+	if (error instanceof HandlerErrorBox) throw error.cause;
+	if (
+		error instanceof WireDecodeError ||
+		error instanceof EventStreamError ||
+		error instanceof SseLimitError
+	)
+		throw error;
+	if (aborted) return { reason: 'aborted', cursors: new Map(cursors) };
+	throw error;
 }
 
 /**
@@ -383,11 +508,13 @@ export function createEventStreamClient({
 	origin,
 	fetch: send = globalThis.fetch,
 	maxRequestBytes = DEFAULT_MAX_REQUEST_BYTES,
-	maxEventBytes = DEFAULT_MAX_EVENT_BYTES
+	maxEventBytes = DEFAULT_MAX_EVENT_BYTES,
+	maxErrorBytes = DEFAULT_MAX_ERROR_BYTES
 }: EventStreamClientOptions) {
 	const url = parseClientUrl(origin);
 	assertPositiveLimit(maxRequestBytes);
 	assertPositiveLimit(maxEventBytes);
+	assertPositiveLimit(maxErrorBytes);
 
 	return Object.freeze({
 		open(request: EventStreamOpenRequest): EventStreamHandle {
@@ -405,13 +532,11 @@ export function createEventStreamClient({
 				headers,
 				controller,
 				maxEventBytes,
+				maxErrorBytes,
 				cursors,
 				handlers
 			})
-				.catch((error: unknown): EventStreamResult => {
-					if (controller.signal.aborted) return { reason: 'aborted', cursors: new Map(cursors) };
-					throw error;
-				})
+				.catch((error: unknown) => handleStreamFailure(error, controller.signal.aborted, cursors))
 				.finally(() => {
 					request.signal?.removeEventListener('abort', onAbort);
 				});

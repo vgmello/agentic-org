@@ -1,5 +1,5 @@
-import { toAppError, type OfficeApi } from '$lib/modules/offices/office-api';
-import type { AppError, Connection, Organization } from '$lib/proto';
+import type { OfficeApi } from '$lib/modules/offices/office-api';
+import { toAppError, type AppError, type Connection, type Organization } from '$lib/proto';
 
 /** What the welcome screen knows about the organizations on this Mac. */
 export type Listing =

@@ -22,7 +22,7 @@
 	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { updateAgent, updatePerson } from '$lib/modules/organization/actions';
 	import { messagingNameError } from '$lib/modules/organization/agents';
 	import { checkPersonName } from '$lib/modules/organization/people-edit';

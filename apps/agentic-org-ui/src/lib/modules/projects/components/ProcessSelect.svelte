@@ -10,7 +10,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { processesApi } from '$lib/modules/processes';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { projectsApi } from '../api';
 	import type { ProcessPreview } from '../types';
 

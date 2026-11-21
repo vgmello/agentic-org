@@ -8,7 +8,7 @@
 <script lang="ts">
 	import { mobileButton } from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { employeesApi } from '../../api';
 	import { ageWords, backoff, clockWords, draftingPhase } from '../../hire';
 	import { pollWhile } from '../../poll.svelte';

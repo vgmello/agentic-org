@@ -19,7 +19,7 @@
 	import { focusDestinationHeading } from './focus-destination';
 	import { NewMessageDialog } from '$lib/modules/messaging';
 	import { chatMembers } from '$lib/modules/messaging/model';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { orgApi } from '$lib/modules/organization/api';
 	import { withoutFormer } from '$lib/modules/organization/model';
 	import { sessionFor } from '$lib/modules/organization/session';

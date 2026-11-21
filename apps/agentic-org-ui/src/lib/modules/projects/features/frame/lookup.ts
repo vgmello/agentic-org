@@ -1,6 +1,6 @@
 // A project read whose "not there" is an answer, not a failure: the frame shows Project not found with the reason
 // and keeps the Projects back link, rather than an error with Retry that could never succeed.
-import { toAppError } from '$lib/modules/offices/office-api';
+import { toAppError } from '$lib/proto';
 import type { ProjectDetail } from '../../types';
 
 export type ProjectLookup =

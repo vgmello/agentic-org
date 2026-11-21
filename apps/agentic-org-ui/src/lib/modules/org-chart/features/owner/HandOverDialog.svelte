@@ -23,7 +23,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { membersApi } from '$lib/modules/members';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import type { ChartEmployee } from '../../types';
 	import BusyLabel from '../../components/BusyLabel.svelte';
 

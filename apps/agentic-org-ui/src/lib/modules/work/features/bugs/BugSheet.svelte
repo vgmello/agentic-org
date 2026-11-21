@@ -11,7 +11,7 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import type { OrgSnapshot, Priority, WorkItem, WorkItemSummary } from '$lib/proto';
 	import { workApi, type WorkDraft } from '$lib/modules/work';
 	import {

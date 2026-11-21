@@ -7,7 +7,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
 	import {
 		Dialog,

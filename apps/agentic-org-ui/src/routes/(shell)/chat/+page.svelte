@@ -53,7 +53,7 @@
 		Reaction
 	} from '$lib/modules/messaging';
 	import { newId } from '$lib/modules/organization/commands';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 
 	/** Chat (docs/specs/chat-ux.md): channels, DMs and threads where agents and people talk. A mock office; always sample data. */
 	let { data } = $props();

@@ -18,7 +18,7 @@
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { accountZone } from '$lib/modules/preferences';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { rolesApi } from '../../api';
 	import {
 		CHANGES_PAUSED,

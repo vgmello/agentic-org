@@ -14,7 +14,7 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { newId } from '$lib/modules/organization/commands';
 	import type { OrgSnapshot, Priority, TaskStatus, WorkItem } from '$lib/proto';
 	import { WORK_LIMITS } from '$lib/proto';

@@ -17,7 +17,7 @@
 	import { tone } from '$lib/components/pills';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { employeesApi } from '../../api';
 	import { pollWhile } from '../../poll.svelte';
 	import {

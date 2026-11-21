@@ -2,7 +2,7 @@
 // flow. The production web API does not serve it yet (`unavailable`); the directory must still show its own state
 // then, so this read answers `null` and the page leaves Add a person out instead of failing.
 import { error } from '@sveltejs/kit';
-import { toAppError } from '$lib/modules/offices/office-api';
+import { toAppError } from '$lib/proto';
 import { orgApi } from '$lib/modules/organization/api';
 import { noteShown } from '$lib/modules/organization/live';
 import type { OrgSnapshot } from '$lib/proto';

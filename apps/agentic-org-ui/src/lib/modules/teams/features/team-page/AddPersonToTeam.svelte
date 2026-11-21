@@ -23,7 +23,7 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { byName, withoutFormer } from '$lib/modules/organization/model';
 	import { teamOptions } from '$lib/modules/organization/team-edit';
 	import type { Connection, OrgSnapshot } from '$lib/proto';

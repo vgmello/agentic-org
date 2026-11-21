@@ -22,7 +22,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { kindWord } from '$lib/modules/members';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { orgChartApi } from '../../api';
 	import BusyLabel from '../../components/BusyLabel.svelte';
 	import { listText, type ManagerChoice } from '../../tree';

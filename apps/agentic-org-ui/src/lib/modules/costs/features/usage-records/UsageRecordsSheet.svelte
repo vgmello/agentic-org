@@ -18,7 +18,7 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { costsApi } from '../../api';
 	import { formatCount } from '../../money';
 	import { periodLabel } from '../../present';

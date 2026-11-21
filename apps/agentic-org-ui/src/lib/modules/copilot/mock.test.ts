@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toAppError } from '$lib/modules/offices/office-api';
+import { toAppError } from '$lib/proto';
 import { createMockCopilot, guessSeverity, tidy, type CopilotScenario } from './mock';
 import { COPILOT_LIMITS } from './types';
 

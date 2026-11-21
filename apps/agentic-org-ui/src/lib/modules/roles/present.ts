@@ -1,5 +1,5 @@
 // Words and checks for the Roles screens (roles-ux §1, ROLE-10). Pure: no API, no DOM.
-import { toAppError } from '$lib/modules/offices/office-api';
+import { toAppError } from '$lib/proto';
 import type { Attribution, Role, RoleDraft, RoleField, RoleSummary } from './types';
 
 /** roles-ux §1, word for word. */

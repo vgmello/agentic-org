@@ -34,7 +34,7 @@
 	} from '$lib/modules/copilot/bug-prefill';
 	import { createDraftFlow, isDrafting, type DraftPhase } from '$lib/modules/copilot/draft-flow';
 	import { COPILOT_LIMITS, type BugDraft, type CopilotFeature } from '$lib/modules/copilot/types';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { newId } from '$lib/modules/organization/commands';
 	import type { Severity, WorkAccepted, WorkItemSummary } from '$lib/proto';
 	import { WORK_LIMITS } from '$lib/proto';

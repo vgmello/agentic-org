@@ -11,7 +11,7 @@
 		SheetHeader,
 		SheetTitle
 	} from '$lib/components/ui/sheet';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { newId } from '$lib/modules/organization/commands';
 	import { isFormer, teamsOfProject } from '$lib/modules/organization/model';
 	import type { DraftTask, OrgSnapshot, WorkEvent, WorkItem, WorkItemSummary } from '$lib/proto';

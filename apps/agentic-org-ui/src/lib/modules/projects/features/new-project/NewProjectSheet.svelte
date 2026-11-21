@@ -31,7 +31,7 @@
 		SheetTitle
 	} from '$lib/components/ui/sheet';
 	import { newId } from '$lib/modules/organization/commands';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { registerModalBack } from '$lib/platform/shell/modal-back';
 	import { projectsApi } from '../../api';
 	import { OUTCOME_UNKNOWN } from '../../outcome';

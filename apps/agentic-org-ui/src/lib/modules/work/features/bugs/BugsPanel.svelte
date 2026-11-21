@@ -5,7 +5,7 @@
 	import BugSheet from '$lib/modules/work/features/bugs/BugSheet.svelte';
 	import ReportBugDialog from '$lib/modules/work/features/bugs/ReportBugDialog.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { sender, workApi } from '$lib/modules/work';
 	import {

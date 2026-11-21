@@ -30,7 +30,7 @@
 		DropdownMenuTrigger
 	} from '$lib/components/ui/dropdown-menu';
 	import { pageTitle } from '$lib/nav';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { offboardAgent, setAgentStatus } from '$lib/modules/organization/actions';
 	import { offboardSummary } from '$lib/modules/organization/agents';
 	import { orgApi } from '$lib/modules/organization/api';

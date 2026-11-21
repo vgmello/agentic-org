@@ -10,7 +10,7 @@
 	import RequestsPanel from '$lib/modules/work/features/requests/RequestsPanel.svelte';
 	import TaskSheet from '$lib/modules/work/features/tasks/TaskSheet.svelte';
 	import { Badge } from '$lib/components/ui/badge';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import type { WorkItemSummary } from '$lib/proto';
 	import { sender, workApi } from '$lib/modules/work';
 	import { requestsNeedingYou } from '$lib/modules/work/requests-view';

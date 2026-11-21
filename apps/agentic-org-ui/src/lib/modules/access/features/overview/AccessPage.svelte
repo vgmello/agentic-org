@@ -22,7 +22,7 @@
 	import { mobileButton } from '$lib/components/classes';
 	import { focusHeadingAfterShell, focusIsFree, neighbourFocus } from '$lib/components/focus';
 	import { Resource } from '$lib/components/resource.svelte';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import {
 		NOT_IN_ORGANIZATION,
 		SignInAccessDialogs,

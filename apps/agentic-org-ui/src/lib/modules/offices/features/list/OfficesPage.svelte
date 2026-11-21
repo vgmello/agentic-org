@@ -19,7 +19,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { OffboardAgentDialog } from '$lib/modules/employees';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import {
 		agentsIn,
 		isHq,

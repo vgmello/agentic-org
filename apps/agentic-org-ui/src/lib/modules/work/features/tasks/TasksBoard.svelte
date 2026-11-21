@@ -24,7 +24,7 @@
 	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import type { OrgSnapshot, TaskStatus, WorkItemSummary } from '$lib/proto';
 	import { WORK_LIMITS } from '$lib/proto';
 	import { sender, workApi } from '$lib/modules/work';

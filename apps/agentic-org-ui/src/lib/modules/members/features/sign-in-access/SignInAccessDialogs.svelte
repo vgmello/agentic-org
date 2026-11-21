@@ -45,7 +45,7 @@
 		DialogHeader,
 		DialogTitle
 	} from '$lib/components/ui/dialog';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { membersApi } from '../../api';
 	import OneTimeLink from './OneTimeLink.svelte';
 

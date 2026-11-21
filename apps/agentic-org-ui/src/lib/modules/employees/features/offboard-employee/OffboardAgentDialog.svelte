@@ -10,7 +10,7 @@
 		DialogHeader,
 		DialogTitle
 	} from '$lib/components/ui/dialog';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { offboardAgent } from '$lib/modules/organization/actions';
 	import { offboardSummary } from '$lib/modules/organization/agents';
 	import type { OrgSession } from '$lib/modules/organization/session';

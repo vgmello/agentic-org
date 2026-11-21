@@ -15,7 +15,7 @@
 	import { mobileButton } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { employeesApi } from '../../api';
 	import { runtimeText, runtimeWarning } from '../../hire';
 	import type { HireChoices, HireProposal, HireTeam } from '../../types';

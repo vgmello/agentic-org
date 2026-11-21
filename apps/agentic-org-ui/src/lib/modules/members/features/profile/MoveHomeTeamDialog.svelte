@@ -17,7 +17,7 @@
 		DialogHeader,
 		DialogTitle
 	} from '$lib/components/ui/dialog';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { teamOptions } from '$lib/modules/organization/team-edit';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { membersApi } from '../../api';

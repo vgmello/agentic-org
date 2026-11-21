@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@ui-subagent'
 created_date: '2026-11-20T23:24:00Z'
-updated_date: '2026-11-21T03:12:00Z'
+updated_date: '2026-11-21T03:58:00Z'
 labels:
   - ui
   - architecture
@@ -46,6 +46,8 @@ Audit finding M-11: Legacy apps/agentic-org-ui/src/lib/{org,work,office,offices}
 
 <!-- SECTION:NOTES:BEGIN -->
 Migrated src/lib/{org,work,office,offices}/ into src/lib/modules/{organization,work,offices}/ (and wire-shapes.test.ts to src/lib/), moved 17 domain dialogs/sheets/panels out of src/lib/components/ into owning feature modules, moved toAppError to src/lib/proto.ts (eliminating agent-setup -> organization -> offices -> employees -> members cycle), deleted Membership / OrgSnapshot.memberships / retired team.add_member & team.remove_member across proto/model/reducer/actions/sample/mock/components/fakes/tests, implemented POST /api/v1/events/stream SSE client in src/lib/platform/http/events.ts (+10 unit tests in events.test.ts), updated e2e/gate-manifest.json and eslint-suppressions.json. Verified format:check, lint, check, test (143 files / 2415 tests), build (productionImportGuard error mode + check-build-assets), and Playwright production-unavailable (6/6).
+
+Review repair pass (6/6 findings resolved): (1) Rewrote all remaining 72 toAppError imports across src/ and e2e/ to $lib/proto and removed toAppError re-exports from modules/offices/office-api.ts and e2e/fakes/office-api.ts (verified 0 cycles across all 23 modules and 0 office-api imports in components/employees/members/organization/platform/shell); (2) Fixed splitSseLines CRLF handling on empty chunks; (3) Rejected outbound 'unknown' feed before dispatch and narrowed Subscription['feed']; (4) Hardened SSE parser with event: filtering (empty or 'frame' only), UTF-8 byte-length accounting, and bounded readErrorPayload; (5) Preserved WireDecodeError/EventStreamError/SseLimitError and handler exceptions even when aborted; (6) Updated stale office/mock.ts comments in e2e/mock-organization.ts. Re-verified format:check (773/0), lint (0/0), check (0/0), test (Test Files 143 passed (143); Tests 2417 passed (2417); 9 tests in events.test.ts), build (4 CSS, 156 JS), and Playwright production-unavailable (6/6).
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

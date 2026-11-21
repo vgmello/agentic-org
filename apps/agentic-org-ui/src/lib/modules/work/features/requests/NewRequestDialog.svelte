@@ -11,7 +11,7 @@
 		DialogTitle
 	} from '$lib/components/ui/dialog';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/modules/offices/office-api';
+	import { toAppError } from '$lib/proto';
 	import { newId } from '$lib/modules/organization/commands';
 	import { isFormer } from '$lib/modules/organization/model';
 	import type { OrgSnapshot, RequestKind, WorkAccepted, WorkItemSummary } from '$lib/proto';
