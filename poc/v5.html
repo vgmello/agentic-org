@@ -344,9 +344,18 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .cmdk-esc:hover { background: rgba(186, 222, 255, .16); color: #F8FAFC; box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .32); }
 .cmdk-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 3px; }
 .cmdk-ai-pane { display: flex; flex-direction: column; gap: 10px; padding: 6px 8px 4px; flex: 1; min-height: 0; }
-.cmdk-ai-thread { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 310px; padding-right: 2px; }
-.cmdk-ai-follow { flex: none; padding-top: 4px; border-top: 1px solid rgba(186, 222, 255, .08); }
-.cmdk-ai-card.is-prev { background: rgba(15, 28, 48, .44); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .12), inset 3px 0 0 rgba(125, 211, 252, .38); opacity: .88; }
+.cmdk-ai-prev-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 2px 2px 0; }
+.cmdk-ai-prev-lbl { font-size: 0.6875rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #74849B; margin-right: 2px; }
+.cmdk-ai-prev-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 999px;
+  background: rgba(186, 222, 255, .05); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .13);
+  font-size: 0.75rem; font-weight: 500; color: #94A3B8;
+  transition: background-color .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.cmdk-ai-prev-chip:hover { background: rgba(56, 189, 248, .14); box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .32); color: #F1F5F9; }
+.cmdk-ai-prev-chip .ic { width: 12px; height: 12px; color: #7DD3FC; }
+.cmdk-ai-follow { flex: none; padding-top: 6px; border-top: 1px solid rgba(186, 222, 255, .08); }
 .cmdk-ai-card {
   padding: 16px 18px; border-radius: 13px;
   background: rgba(56, 189, 248, .09);
@@ -1594,9 +1603,9 @@ select.field option { background: #0E1629; color: #F8FAFC; }
   background: var(--hb-surface);
   backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
   box-shadow: var(--hb-shadow);
-  transition: transform .16s ease, background-color .16s ease, box-shadow .16s ease;
+  transition: background-color .16s ease, box-shadow .16s ease;
 }
-.hb-pillar:hover { background: var(--hb-surface-hi); box-shadow: var(--hb-shadow-hi); transform: translateY(-1px); }
+.hb-pillar:hover { background: var(--hb-surface-hi); box-shadow: var(--hb-shadow-hi); }
 .hb-pillar-hd {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
 }
@@ -1891,7 +1900,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   transition: background-color .14s ease, box-shadow .14s ease;
 }
 a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 226, 255, .20), inset 0 0 0 1px var(--hb-border-hi); }
-.hb-dig-ico { margin-top: 2px; flex: none; }
+.hb-dig-ico { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; margin-top: 2px; flex: none; }
 .hb-dig-item b { color: var(--hb-ink); font-weight: 600; }
 .hb-dig-item .muted { color: var(--hb-muted); }
 
@@ -1921,7 +1930,7 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 .hb-bento { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .hb-card {
   position: relative; display: flex; flex-direction: column; gap: 14px;
-  padding: 18px 20px; border-radius: 16px;
+  padding: 18px 20px; border-radius: 16px; cursor: pointer;
   background: var(--hb-surface);
   backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
   box-shadow: var(--hb-shadow);
@@ -2056,7 +2065,7 @@ a.hb-card-lead:hover { color: var(--hb-ink); }
 .hb-tseg.agents { background: linear-gradient(90deg, #38BDF8 0%, #7DD3FC 100%); }
 .hb-tseg.ci { background: linear-gradient(90deg, #10B981 0%, #34D399 100%); }
 .hb-tseg.humans { background: linear-gradient(90deg, #EAB308 0%, #F5C76B 100%); }
-.hb-tseg.queued { background: linear-gradient(90deg, #64748B 0%, #94A3B8 100%); box-shadow: inset 0 1px 0 rgba(226, 232, 240, .28); }
+.hb-tseg.queued { background: linear-gradient(90deg, #818CF8 0%, #A5B4FC 100%); box-shadow: inset 0 1px 0 rgba(224, 231, 255, .32); }
 .hb-time-legend { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 22px; }
 .hb-tleg {
   display: inline-flex; align-items: center; gap: 6px;
@@ -2068,13 +2077,13 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 .hb-tleg.agents .hb-tleg-dot { background: #38BDF8; }
 .hb-tleg.ci .hb-tleg-dot { background: #34D399; }
 .hb-tleg.humans .hb-tleg-dot { background: #F5C76B; }
-.hb-tleg.queued .hb-tleg-dot { background: #94A3B8; }
+.hb-tleg.queued .hb-tleg-dot { background: #A5B4FC; }
 .hb-tleg strong { font-size: 0.9375rem; font-weight: 650; font-variant-numeric: tabular-nums; }
 .hb-tleg .hrs { font-size: 0.75rem; color: var(--hb-dim); font-variant-numeric: tabular-nums; }
 .hb-tleg.agents strong { color: #7DD3FC; }
 .hb-tleg.ci strong { color: #6EE7B7; }
 .hb-tleg.humans strong { color: #F5C76B; }
-.hb-tleg.queued strong { color: #E2E8F0; }
+.hb-tleg.queued strong { color: #C7D2FE; }
 .hb-time-foot {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px 18px; flex-wrap: wrap;
@@ -2358,7 +2367,7 @@ const TEAMS = {
 const P = {
   "agency-v1":         { name: "Agentic Org v1.0", release: "v1.0", health: "At risk", upd: 12, lead: "ada", teams: ["leadership", "platform", "app", "quality"], goal: "Ship the first release of Agentic Org: hire agents, chat, projects and work, on one office.", updated: "12m ago", channel: "agency-v1", due: "Dec 5", dueMonth: "Dec", dueDay: "05", pace: "+2d behind", paceTone: "warn", blocker: "2 sign-offs waiting: v1.0 release & test access", unblockSpotId: "in1", unblockHref: "#/inbox/in1", unblockLabel: "Review (2)", milestoneTitle: "Agentic Org v1.0", horizonStatus: "2 sign-offs", horizonNote: "Release & test access sign-offs", risk: "Two updates wait on approval and local test access is waiting on your permission." },
   "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "File-access choice needed (25m) · Build box office offline", unblockSpotId: "in2", unblockHref: "#/inbox/in2", unblockLabel: "Decide", milestoneTitle: "Office sync test", horizonStatus: "Needs you", horizonNote: "Rowan · Office federation", risk: "The Build box office stayed offline after sleep. Sage's fix waits on your verification, and sync can't resume until the office is back online." },
-  "look-feel":         { name: "Look & feel refresh", release: "v1.1", health: "On track", upd: 60, lead: "eden", teams: ["product", "app"], goal: "One calm, consistent look across every screen, with icons and no emoji.", updated: "1h ago", channel: "design", due: "Nov 28", dueMonth: "Nov", dueDay: "28", pace: "On pace", paceTone: "ok", blocker: "", clearNote: "All checks passing · projected Nov 27 (1d early)", unblockSpotId: "in17", unblockHref: "#/inbox/in17", milestoneTitle: "Look & feel refresh", horizonStatus: "1d ahead", horizonNote: "Final design polish sign-off", risk: "" },
+  "look-feel":         { name: "Look & feel refresh", release: "v1.1", health: "On track", upd: 60, lead: "eden", teams: ["product", "app"], goal: "One calm, consistent look across every screen, with icons and no emoji.", updated: "1h ago", channel: "design", due: "Nov 28", dueMonth: "Nov", dueDay: "28", pace: "1d ahead", paceTone: "ok", blocker: "", clearNote: "All checks passing · projected Nov 27 (1d early)", unblockSpotId: "in17", unblockHref: "#/inbox/in17", milestoneTitle: "Look & feel refresh", horizonStatus: "1d ahead", horizonNote: "Final design polish sign-off", risk: "" },
   "proto-agency":      { name: "Early UI prototype", upd: 99999, lead: null, teams: ["product"], goal: "Explore the look of the app before v1.", updated: "Nov 2", channel: "design", archived: true }
 };
 const HEALTH = { "On track": { tone: "green", icon: "check-circle" }, "At risk": { tone: "red", icon: "warn" }, "Off track": { tone: "red", icon: "x-circle" } };
@@ -2790,7 +2799,7 @@ function board(items, kind) {
 /* ---------------------------------------------------------------- pages */
 function itemActionsV4(it) {
   if (it.handled) return `<p class="h4-handled-win" id="handled-${esc(it.id)}">${ic("check-circle", "ic16")}<span>${esc(it.outcome)}</span></p>`;
-  const open = `<a class="btn ghost sm" href="#/inbox/${it.id}">${ic("open", "ic16")}Open</a>`;
+  const open = `<a class="btn ghost sm" href="#/inbox/${it.id}">Details${ic("chev-right", "ic14")}</a>`;
   if (S.replying === it.id) {
     const changes = S.replyMode === "changes", deny = S.replyMode === "deny", who = esc(M[it.from].name);
     const lbl = deny ? `Optional reason for ${who}…` : changes ? `What should ${who} change?` : `Reply to ${who}`;
@@ -2963,17 +2972,20 @@ function answerOrgQuestion(rawQ) {
     };
   }
   if (/block|slow|v1|ship|merge/.test(t)) {
+    const v1Only = /v1/.test(t);
+    const scopedBlocked = v1Only ? blocked.filter((b) => b.proj === "agency-v1") : blocked;
     const plainBlocker = (b) => b.id === "T-118"
-      ? `${spotLink("in2", "file-access choice")} for <a href="#/members/sage">Sage</a>`
+      ? `${spotLink("in2", "file-access choice")} for <a href="#/members/sage">Sage</a> <em>(Office federation)</em>`
       : b.id === "T-124"
-        ? `${spotLink("in5", "local test access")} for <a href="#/members/jules">Jules</a>`
+        ? `${spotLink("in5", "local test access")} for <a href="#/members/jules">Jules</a> (security checks)`
         : `<a href="#/projects/${b.proj}/work">${esc(b.title)}</a>`;
     const syncLi = in1 && !in1.handled
       ? `<li><strong>Release sign-off:</strong> <a href="#/members/kai">Kai</a>'s v1.0 sync update passed all 412 checks and awaits your ${spotLink("in1", "approval")}.</li>`
       : `<li><strong>Release sign-off:</strong> <a href="#/members/kai">Kai</a>'s v1.0 sync update is approved.</li>`;
+    const pendingN = scopedBlocked.length + (in1 && !in1.handled ? 1 : 0);
     return {
       q,
-      html: `<strong>${plural(blocked.length, "decision is", "decisions are")} holding up active work:</strong><ul class="cmdk-ai-list">${blocked.map((b) => `<li>${plainBlocker(b)}</li>`).join("")}${syncLi}</ul>`
+      html: `<strong>${plural(pendingN, "decision is", "decisions are")} holding up ${v1Only ? "Agentic Org v1.0" : "active work"}:</strong><ul class="cmdk-ai-list">${scopedBlocked.map((b) => `<li><strong>Access request:</strong> ${plainBlocker(b)}.</li>`).join("")}${syncLi}</ul>`
     };
   }
   if (/cycle|first-pass|accept|rework|hitl|human|quality|autonom|metric|kpi|turnaround|revision|deliver/.test(t)) {
@@ -3038,7 +3050,7 @@ function pageHome() {
   const headline = st === "loading"
     ? `${greet} Preparing your briefing…`
     : st === "error"
-      ? `${greet} Reconnecting to HQ office.`
+      ? `${greet} HQ office is unreachable.`
       : st === "empty"
         ? `${greet} <em class="calm">Welcome</em> to Agentic Org.`
         : openUrgentCount
@@ -3156,7 +3168,7 @@ function pageHome() {
           <span class="hb-cleared-ring is-error">${ic("offline", "ic20")}</span>
           <h2>Couldn't reach HQ office</h2>
           <p>Your files and work are safe. We'll reconnect automatically, or you can retry now.</p>
-          <span class="hb-err-meta">${ic("office", "ic14")}<span>HQ runs on This Mac · Last connected 2m ago</span></span>
+          <span class="hb-err-meta"><span class="h4-live-dot is-error" style="width:7px;height:7px" aria-hidden="true"></span><span>Reconnecting to This Mac · Last connected 2m ago</span></span>
           <div class="hb-cleared-acts">
             <button class="btn primary sm h4-cta" data-cta-tone="reply" type="button" data-act="set" data-k="homeState" data-v="filled">
               <span class="h4-cta-fill" aria-hidden="true"></span>
@@ -3238,9 +3250,13 @@ function pageHome() {
         ${ctxOpen ? `<div class="h4-ctx-body" id="panel-${ctxKey}">${esc(it.why)}</div>` : ""}
         ${(() => {
           if (queue.length < 2) return "";
-          const nextIdx = (S.spotIdx + 1) % queue.length;
+          let nextIdx = -1;
+          for (let step = 1; step < queue.length; step++) {
+            const cand = (S.spotIdx + step) % queue.length;
+            if (!queue[cand].handled && queue[cand].id !== it.id) { nextIdx = cand; break; }
+          }
+          if (nextIdx < 0) return "";
           const nxt = queue[nextIdx];
-          if (!nxt || nxt.id === it.id) return "";
           const expTag = nxt.expires && !nxt.handled ? `<span class="hb-spot-next-exp">${ic("clock", "ic14")}${esc(nxt.expires.replace(/\s*\(.*\)/, ""))}</span>` : "";
           return `<button type="button" class="hb-spot-next" data-act="spot-go" data-v="${nextIdx}">
             <span class="hb-spot-next-l"><span class="hb-spot-next-lbl">Up next</span><span class="hb-spot-next-txt">${esc(nxt.what)}</span></span>
@@ -3286,7 +3302,7 @@ function pageHome() {
           <span class="hb-dig-time">2h</span>
         </a>
         ${activeLead ? `<a class="hb-dig-item" href="#/teams/members">
-          <span class="hb-dig-ico"><span class="h4-live-dot" style="margin-top:4px;background:#34D399" aria-hidden="true"></span></span>
+          <span class="hb-dig-ico"><span class="h4-live-dot" style="background:#34D399" aria-hidden="true"></span></span>
           <div class="hb-dig-body"><b>${liveWorkingAgents.length} agents working now</b> — ${esc(M[activeLead].name)} is in a session with you${otherActive ? `, plus ${otherActive} others delivering across 3 projects` : ""}.</div>
           <span class="hb-dig-time">Live</span>
         </a>` : `<a class="hb-dig-item" href="#/settings/agents/jules">
@@ -3359,7 +3375,7 @@ function pageHome() {
       ? `<button type="button" class="hb-unblock-btn" data-act="spot-jump" data-id="${unblockSpotId}">${esc(unblockLabel)}${ic("chev-right", "ic14")}</button>`
       : `<a class="hb-unblock-btn" href="${unblockHref}">${esc(unblockLabel)}${ic("chev-right", "ic14")}</a>`;
     const showRelTag = !!(pr.release && !pr.name.includes(pr.release));
-    return `<article class="hb-card">
+    return `<article class="hb-card" data-card-href="#/projects/${p}">
       <div class="hb-card-top">
         <div class="hb-card-id">
           <a class="hb-card-name" href="#/projects/${p}">${esc(pr.name)}</a>
@@ -3396,7 +3412,7 @@ function pageHome() {
       {
         month: "Nov", day: "22", title: "Office sync test", rel: "v0.9",
         note: "Rowan · Office federation",
-        status: in2 && !in2.handled ? "Needs you" : "Decided",
+        status: "Tomorrow",
         tone: in2 && !in2.handled ? "bad" : "ok",
         spotId: in2 && !in2.handled ? "in2" : "",
         href: in2 && !in2.handled ? "#/inbox/in2" : "#/projects/office-federation"
@@ -3404,7 +3420,7 @@ function pageHome() {
       {
         month: "Nov", day: "27", title: "Final screen polish", rel: "v1.1",
         note: "Eden · Look & feel refresh",
-        status: in17 && !in17.handled ? "Sign-off" : "Approved",
+        status: "In 6 days",
         tone: in17 && !in17.handled ? "sky" : "ok",
         spotId: in17 && !in17.handled ? "in17" : "",
         href: in17 && !in17.handled ? "#/inbox/in17" : "#/projects/look-feel"
@@ -3412,7 +3428,7 @@ function pageHome() {
       {
         month: "Dec", day: "02", title: "Release freeze", rel: "v1.0",
         note: "Ada & Kai · Agentic Org v1.0",
-        status: v1Pending.length ? `${v1Pending.length} ${v1Pending.length === 1 ? "sign-off" : "sign-offs"}` : "Ready",
+        status: "In 11 days",
         tone: v1Pending.length ? "warn" : "ok",
         spotId: v1Pending.length ? v1Pending[0].id : "",
         href: v1Pending.length ? `#/inbox/${v1Pending[0].id}` : "#/projects/agency-v1"
@@ -4986,7 +5002,7 @@ function renderNav(route) {
           const [ico, cls] = projIcon(p);
           const cur = r0 === "projects" && r1 === p;
           return `<li class="nav-fav-row">
-            <a class="nav-item" href="#/projects/${p}" title="${esc(P[p].name)} · ${esc(effectiveHealth(p) || "")}" ${cur ? 'aria-current="page"' : ""}>${ic(ico, cls)}<span class="lbl">${esc(P[p].name)}</span></a>
+            <a class="nav-item" href="#/projects/${p}" title="${esc(P[p].name)} · ${homeError ? "Offline" : esc(effectiveHealth(p) || "")}" ${cur ? 'aria-current="page"' : ""}>${ic(ico, cls)}<span class="lbl">${esc(P[p].name)}</span></a>
             <button class="fav-star-btn" type="button" data-act="fav-proj" data-id="${p}" aria-label="Remove ${esc(P[p].name)} from favorites" title="Unpin from favorites">${ic("star")}</button>
           </li>`;
         }).join("") : `<li class="nav-fav-empty">No favorite projects yet.</li>`}
@@ -5220,19 +5236,22 @@ function renderCmdk() {
     list.setAttribute("role", "tabpanel");
     list.setAttribute("aria-labelledby", "cmdk-tab-ai");
     list.removeAttribute("aria-label");
-    const ansHtml = CMDK.aiHistory.length ? `<div class="cmdk-ai-thread" role="status" aria-live="polite">${CMDK.aiHistory.map((turn, idx) => `<div class="cmdk-ai-card${idx > 0 ? " is-prev" : ""}">
+    const curTurn = CMDK.aiHistory[0] || null;
+    const prevTurns = CMDK.aiHistory.slice(1);
+    const ansHtml = curTurn ? `<div class="cmdk-ai-card" role="status" aria-live="polite">
       <div class="cmdk-ai-card-hd">
-        <span>${ic("sparkle", "ic14")} Org AI · “${esc(turn.q)}”</span>
-        ${idx === 0 ? `<button type="button" data-act="cmdk-ai-clear">${CMDK.aiHistory.length > 1 ? "Clear thread" : "Clear"}</button>` : ""}
+        <span>${ic("sparkle", "ic14")} Org AI · “${esc(curTurn.q)}”</span>
+        <button type="button" data-act="cmdk-ai-clear">${prevTurns.length ? "Clear history" : "Clear"}</button>
       </div>
-      <div>${turn.html}</div>
-    </div>`).join("")}</div>` : "";
+      <div>${curTurn.html}</div>
+    </div>` : "";
+    const prevHtml = prevTurns.length ? `<div class="cmdk-ai-prev-row"><span class="cmdk-ai-prev-lbl">Earlier</span>${prevTurns.map((turn) => `<button type="button" class="cmdk-ai-prev-chip" data-act="cmdk-ai-ask" data-v="${esc(turn.q)}">${ic("reply", "ic14")}<span>${esc(turn.q)}</span></button>`).join("")}</div>` : "";
     const askedSet = new Set(CMDK.aiHistory.map((x) => x.q.trim().toLowerCase()));
     const starters = S.homeState === "empty" ? CMDK_AI_STARTERS_EMPTY : CMDK_AI_STARTERS;
     const chips = starters.filter((s) => !askedSet.has(s.q.trim().toLowerCase()));
     const chipsHtml = chips.length ? `<div class="cmdk-ai-follow"><div class="cmdk-grp">${CMDK.aiHistory.length ? "Ask a follow-up" : "Suggested executive questions"}</div>
       <div class="cmdk-ai-chips">${chips.map((s) => `<button type="button" class="cmdk-ai-chip" data-act="cmdk-ai-ask" data-v="${esc(s.q)}">${ic("sparkle", "ic14")}<span>${esc(s.q)}</span></button>`).join("")}</div></div>` : "";
-    list.innerHTML = `<div class="cmdk-ai-pane">${ansHtml}${chipsHtml}</div>`;
+    list.innerHTML = `<div class="cmdk-ai-pane">${ansHtml}${prevHtml}${chipsHtml}</div>`;
     if (inp) inp.removeAttribute("aria-activedescendant");
     return;
   }
@@ -5385,7 +5404,13 @@ document.addEventListener("click", (e) => {
   const t = e.target.closest("[data-act]");
   if (!e.target.closest(".menu-wrap")) closeMenus();
   if (!e.target.closest(".search")) { if (SR.open) closeSearch(); if (document.body.classList.contains("searching")) { const q = document.getElementById("q"); if (q) q.value = ""; SR.q = ""; document.body.classList.remove("searching"); } }
-  if (!t) return;
+  if (!t) {
+    const card = e.target.closest("[data-card-href]");
+    if (card && !e.target.closest("a, button")) {
+      location.hash = card.dataset.cardHref;
+    }
+    return;
+  }
   const a = t.dataset.act, id = t.dataset.id, v = t.dataset.v;
   switch (a) {
     case "skip": e.preventDefault(); document.getElementById("main").focus(); break;
