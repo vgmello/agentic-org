@@ -198,6 +198,10 @@ pub struct ChatAskResult {
     pub defaults: Vec<AskDefaultEntry>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_notice: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipient_presence: Vec<crate::directory::RecipientPresence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub woke_agents: Vec<String>,
 }
 
 impl Call for ChatAsk {

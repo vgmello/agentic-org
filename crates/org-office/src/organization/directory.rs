@@ -11,7 +11,7 @@ use org_proto::directory::{
 };
 use org_proto::msg::MAX_HANDLE_BYTES;
 use org_proto::org::{
-    AgentStatus, Member, MemberKind, OrgSnapshot, RunMode, Team, OFFICE_HANDLE, OWNER_HANDLE,
+    AgentStatus, Member, MemberKind, OrgSnapshot, Team, OFFICE_HANDLE, OWNER_HANDLE,
 };
 use org_proto::{ApiError, ErrorCode};
 
@@ -268,15 +268,29 @@ fn card(
         .agent
         .as_ref()
         .filter(|_| member.kind == MemberKind::Agent);
-    // What the member reports, else offline. An agent the office runs on call or on a schedule
-    // that is not running is `asleep`: derived, never reported, so a reported `offline` for it
-    // reads as asleep too.
-    let presence = match live.as_ref().map(|r| r.presence) {
-        Some(reported) if reported != MemberPresence::Offline => reported,
-        _ => match agent.and_then(|a| a.run_mode) {
-            Some(RunMode::OnCall | RunMode::Scheduled) => MemberPresence::Asleep,
+    // ADR-0028 decision 5 (AVAIL-4): an agent that is not working is always Available,
+    // whether or not its process is running; paused agents show Paused; no Asleep/Offline
+    // state is shown for an agent. People remain Online or Offline.
+    let presence = if let Some(a) = agent {
+        if a.status == AgentStatus::Paused {
+            MemberPresence::Paused
+        } else {
+            match live.as_ref().map(|r| r.presence) {
+                Some(
+                    reported @ (MemberPresence::Busy
+                    | MemberPresence::NeedsYou
+                    | MemberPresence::WaitingForAnswer
+                    | MemberPresence::UnableToRun
+                    | MemberPresence::WithYou),
+                ) => reported,
+                _ => MemberPresence::Available,
+            }
+        }
+    } else {
+        match live.as_ref().map(|r| r.presence) {
+            Some(reported) if reported != MemberPresence::Offline => reported,
             _ => MemberPresence::Offline,
-        },
+        }
     };
     let teams: Vec<CardTeam> = member
         .home_team_id
@@ -337,6 +351,7 @@ mod tests {
     use org_proto::org::{AgentProfile, AgentRuntime, Position};
 
     use super::*;
+    use org_proto::org::RunMode;
 
     const NOW: &str = "2026-11-08T12:00:00.000Z";
     const OFFICE: ThisOffice<'static> = ThisOffice {
@@ -478,7 +493,7 @@ mod tests {
                 name: "HQ".into()
             })
         );
-        assert_eq!(pixel.presence, MemberPresence::Offline);
+        assert_eq!(pixel.presence, MemberPresence::Available);
     }
 
     #[test]
@@ -714,7 +729,7 @@ mod tests {
     }
 
     #[test]
-    fn an_office_run_agent_with_no_live_run_is_asleep_and_the_rest_are_offline() {
+    fn active_agents_without_a_live_run_are_available_and_paused_agents_are_paused() {
         let mut snapshot = org();
         let presence_with = |snapshot: &mut OrgSnapshot, mode: Option<RunMode>| {
             snapshot
@@ -732,26 +747,33 @@ mod tests {
             let presence = |n: &str| cards.iter().find(|c| c.id == id(n)).unwrap().presence;
             (presence("PIXEL"), presence("ANA"), presence("OWNER"))
         };
-        // On call or scheduled, with no live run: asleep (derived, never reported).
-        for mode in [RunMode::OnCall, RunMode::Scheduled] {
+        // ADR-0028 (AVAIL-4): active agents with no live run show Available regardless of run_mode.
+        for mode in [
+            Some(RunMode::OnCall),
+            Some(RunMode::Scheduled),
+            Some(RunMode::AlwaysOn),
+            None,
+        ] {
             assert_eq!(
-                presence_with(&mut snapshot, Some(mode)),
+                presence_with(&mut snapshot, mode),
                 (
-                    MemberPresence::Asleep,
+                    MemberPresence::Available,
                     MemberPresence::Offline,
                     MemberPresence::Offline
                 ),
                 "{mode:?}"
             );
         }
-        // Always-on and hand-run agents are offline, not asleep.
-        for mode in [Some(RunMode::AlwaysOn), None] {
-            assert_eq!(
-                presence_with(&mut snapshot, mode).0,
-                MemberPresence::Offline,
-                "{mode:?}"
-            );
-        }
+        snapshot
+            .members
+            .iter_mut()
+            .find(|m| m.id == id("PIXEL"))
+            .unwrap()
+            .agent
+            .as_mut()
+            .unwrap()
+            .status = AgentStatus::Paused;
+        assert_eq!(presence_with(&mut snapshot, None).0, MemberPresence::Paused);
     }
 
     #[test]
@@ -971,15 +993,15 @@ mod tests {
             .as_mut()
             .unwrap()
             .run_mode = Some(RunMode::OnCall);
-        // The run just ended: the runtime remembers when it was last seen, and says offline.
+        // The run just ended: the runtime remembers when it was last seen, and active agents stay Available.
         let live = Live(vec![(id("PIXEL"), runtime(MemberPresence::Offline, None))]);
         let cards = who(&snapshot, OFFICE, NOW, &live, &WhoParams::default())
             .unwrap()
             .members;
         let pixel = cards.iter().find(|c| c.id == id("PIXEL")).unwrap();
-        assert_eq!(pixel.presence, MemberPresence::Asleep);
+        assert_eq!(pixel.presence, MemberPresence::Available);
         assert!(pixel.last_seen_at.is_some());
-        // A live run is not asleep, and a hand-run agent that went offline is offline.
+        // A live run reports Busy, and an agent without a run_mode is also Available when idle.
         let busy = Live(vec![(id("PIXEL"), runtime(MemberPresence::Busy, None))]);
         let cards = who(&snapshot, OFFICE, NOW, &busy, &WhoParams::default())
             .unwrap()
@@ -1002,7 +1024,7 @@ mod tests {
             .members;
         assert_eq!(
             cards.iter().find(|c| c.id == id("PIXEL")).unwrap().presence,
-            MemberPresence::Offline
+            MemberPresence::Available
         );
     }
 

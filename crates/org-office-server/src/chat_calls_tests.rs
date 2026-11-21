@@ -1054,3 +1054,82 @@ fn b7_self_mention_does_not_self_address_and_oversized_card_or_answers_refused()
         "{huge_resp:?}"
     );
 }
+
+#[test]
+fn c10_who_reports_available_presence_and_send_returns_presence_without_waking_ordinary_posts() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let fx = LiveOfficeFixture::start();
+
+    // 1. AVAIL-4: idle active agent (HR) reports Available in `who` (never Offline/Asleep).
+    let who_req =
+        Request::new::<org_proto::directory::Who>(401, &org_proto::directory::WhoParams::default())
+            .unwrap();
+    let who_resp = fx.shared.answer_for_test(&who_req, &fx.owner_id, true);
+    let Outcome::Result(who_val) = who_resp.outcome else {
+        panic!("who failed: {who_resp:?}");
+    };
+    let who: org_proto::directory::WhoResult = serde_json::from_value(who_val).unwrap();
+    let hr_card = who.members.iter().find(|c| c.id == fx.hr_id).unwrap();
+    assert_eq!(
+        hr_card.presence,
+        org_proto::directory::MemberPresence::Available
+    );
+
+    // 2. AVAIL-3: ordinary post in #general does NOT wake HR.
+    let post_req = Request::new::<ChatSend>(
+        402,
+        &org_proto::chat::ChatSendParams {
+            id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f607920".into(),
+            to: "#general".into(),
+            kind: "message".into(),
+            priority: None,
+            subject: None,
+            body: "Good morning team!".into(),
+            meta: Default::default(),
+            reply_to: None,
+            also_in_channel: false,
+            reason: None,
+        },
+    )
+    .unwrap();
+    let post_resp = fx.shared.answer_for_test(&post_req, &fx.owner_id, true);
+    let Outcome::Result(post_val) = post_resp.outcome else {
+        panic!("post failed: {post_resp:?}");
+    };
+    let post_res: org_proto::chat::ChatSendResult = serde_json::from_value(post_val).unwrap();
+    assert!(
+        post_res.woke_agents.is_empty(),
+        "ordinary channel post must wake no agents"
+    );
+
+    // 3. AVAIL-5: DM to HR carries recipient_presence with Available.
+    let dm_req = Request::new::<ChatSend>(
+        403,
+        &org_proto::chat::ChatSendParams {
+            id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f607921".into(),
+            to: "hr".into(),
+            kind: "message".into(),
+            priority: None,
+            subject: None,
+            body: "Please check capacity".into(),
+            meta: Default::default(),
+            reply_to: None,
+            also_in_channel: false,
+            reason: None,
+        },
+    )
+    .unwrap();
+    let dm_resp = fx.shared.answer_for_test(&dm_req, &fx.owner_id, true);
+    let Outcome::Result(dm_val) = dm_resp.outcome else {
+        panic!("dm failed: {dm_resp:?}");
+    };
+    let dm_res: org_proto::chat::ChatSendResult = serde_json::from_value(dm_val).unwrap();
+    assert!(
+        dm_res
+            .recipient_presence
+            .iter()
+            .any(|p| p.member_id == fx.hr_id
+                && p.presence == org_proto::directory::MemberPresence::Available),
+        "DM must return recipient presence: {dm_res:?}"
+    );
+}

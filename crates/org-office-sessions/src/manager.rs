@@ -49,6 +49,10 @@ use crate::subagents::{
     build_general_subagent_definition, write_subagent_definition, BackgroundRegistry,
 };
 
+use crate::wake::{
+    SuspendedAskEntry, DEFAULT_HOURLY_WAKE_LIMIT, DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
+};
+
 /// Configuration for [`SessionManager`].
 #[derive(Clone)]
 pub struct SessionManagerConfig {
@@ -56,6 +60,9 @@ pub struct SessionManagerConfig {
     pub helper_dir: Option<PathBuf>,
     pub stall_timeout: Duration,
     pub enrollment_timeout: Duration,
+    pub hourly_wake_limit: usize,
+    pub wake_window: Duration,
+    pub suspend_grace: Duration,
     pub runtimes: RuntimeRegistry,
     pub enrollment_driver: Arc<dyn EnrollmentDriver>,
 }
@@ -67,22 +74,25 @@ impl SessionManagerConfig {
             helper_dir: None,
             stall_timeout: DEFAULT_STALL_TIMEOUT,
             enrollment_timeout: crate::credentials::DEFAULT_ENROLLMENT_TIMEOUT,
+            hourly_wake_limit: DEFAULT_HOURLY_WAKE_LIMIT,
+            wake_window: DEFAULT_WAKE_WINDOW,
+            suspend_grace: DEFAULT_SUSPEND_GRACE,
             runtimes: RuntimeRegistry::production(),
             enrollment_driver: Arc::new(CliEnrollmentDriver),
         }
     }
 }
 
-struct LiveSessionHandle {
-    state: Arc<Mutex<SessionRuntimeState>>,
-    tx: Sender<PumpCommand>,
-    thread: Option<JoinHandle<()>>,
+pub(crate) struct LiveSessionHandle {
+    pub state: Arc<Mutex<SessionRuntimeState>>,
+    pub tx: Sender<PumpCommand>,
+    pub thread: Option<JoinHandle<()>>,
 }
 
 #[derive(Default)]
-struct SessionRegistry {
-    live: HashMap<String, LiveSessionHandle>,
-    starting: HashSet<String>,
+pub(crate) struct SessionRegistry {
+    pub live: HashMap<String, LiveSessionHandle>,
+    pub starting: HashSet<String>,
 }
 
 struct StartSlotGuard<'a> {
@@ -178,13 +188,17 @@ impl Drop for BindingGuard<'_> {
 /// Coordinates all live agent sessions, run bindings, recovery, and provider CLI enrollments
 /// for one [`Office`].
 pub struct SessionManager {
-    office: Arc<Office>,
-    config: SessionManagerConfig,
-    store: SessionStore,
-    bindings: RunBindingRegistry,
+    pub(crate) office: Arc<Office>,
+    pub(crate) config: SessionManagerConfig,
+    pub(crate) store: SessionStore,
+    pub(crate) bindings: RunBindingRegistry,
     enrollment: EnrollmentManager,
-    registry: Mutex<SessionRegistry>,
-    last_states: Mutex<HashMap<String, SessionView>>,
+    pub(crate) registry: Arc<Mutex<SessionRegistry>>,
+    pub(crate) last_states: Arc<Mutex<HashMap<String, SessionView>>>,
+    pub(crate) open_required_asks: Arc<Mutex<HashMap<String, Vec<SuspendedAskEntry>>>>,
+    pub(crate) budget_hold: Arc<Mutex<Option<String>>>,
+    pub(crate) lifecycle_lock: Arc<Mutex<()>>,
+    pub(crate) dispatching_wakes: Arc<Mutex<HashSet<String>>>,
     startup_recovery: Mutex<RecoveryReport>,
     command_cache: Mutex<HashMap<(String, String, String), CachedRpcResponse>>,
 }
@@ -218,8 +232,12 @@ impl SessionManager {
             store,
             bindings: RunBindingRegistry::new(),
             enrollment,
-            registry: Mutex::new(SessionRegistry::default()),
-            last_states: Mutex::new(HashMap::new()),
+            registry: Arc::new(Mutex::new(SessionRegistry::default())),
+            last_states: Arc::new(Mutex::new(HashMap::new())),
+            open_required_asks: Arc::new(Mutex::new(HashMap::new())),
+            budget_hold: Arc::new(Mutex::new(None)),
+            lifecycle_lock: Arc::new(Mutex::new(())),
+            dispatching_wakes: Arc::new(Mutex::new(HashSet::new())),
             startup_recovery: Mutex::new(RecoveryReport::default()),
             command_cache: Mutex::new(HashMap::new()),
         }
@@ -326,6 +344,8 @@ impl SessionManager {
     }
 
     /// Starts (or sends a direct turn to) an agent's supervised session (`AC #1`, `LIVE-9..13`).
+    /// Per `ADR-0030` d12 (`LIVE-13`), a person's explicit `Run` clears a `stall_locked` state
+    /// while still requiring explicit clearance for `recovery_required`.
     pub fn start_session(
         &self,
         actor_member_id: &str,
@@ -334,10 +354,14 @@ impl SessionManager {
         self.authorize_owner_or_person(actor_member_id)?;
         let employee = self.require_active_agent(&params.employee_id)?;
         let emp_id = employee.id.as_str();
-        self.check_not_blocked(emp_id)?;
+        self.check_not_recovery_required(emp_id)?;
+        self.clear_persisted_stall_only(emp_id);
 
-        let (live_view, finished_handle) =
-            self.reserve_start_or_send(&employee, actor_member_id, params)?;
+        let initial_obj = params
+            .instruction
+            .as_deref()
+            .map(|text| build_objective_text(&employee, actor_member_id, text));
+        let (live_view, finished_handle) = self.reserve_start_or_send(&employee, initial_obj)?;
         if let Some(mut old) = finished_handle {
             if let Some(thread) = old.thread.take() {
                 let _ = thread.join();
@@ -350,9 +374,63 @@ impl SessionManager {
             registry: &self.registry,
             employee_id: emp_id.to_owned(),
         };
-        // Re-check after joining any finishing pump so a concurrent stall/recovery lock is honored.
+        self.check_not_recovery_required(emp_id)?;
+        self.clear_persisted_stall_only(emp_id);
+        let tokens = self.bindings.active_tokens();
+        let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+        let _ = self.store.append_history(
+            emp_id,
+            &serde_json::json!({
+                "type": "turn_trigger",
+                "kind": "run",
+                "sender_id": actor_member_id,
+                "source_id": params.command_id,
+                "at": rfc3339_now(),
+            }),
+            &refs,
+        );
+        let prepared = self.prepare_and_spawn(actor_member_id, &employee, params, None)?;
+        self.install_live_session(prepared)
+    }
+
+    /// Starts or resumes a supervised session autonomously (C6 required-ask resume, C8 peer wake,
+    /// C10 always-available wake). Uses the exact same runtime, binding, and sandbox path as `Run`.
+    pub(crate) fn spawn_or_send_autonomous(
+        &self,
+        employee: &Employee,
+        objective: String,
+        resume_runtime_session_id: Option<&str>,
+        trigger_entry: serde_json::Value,
+    ) -> Result<SessionView, ApiError> {
+        let emp_id = employee.id.as_str();
         self.check_not_blocked(emp_id)?;
-        let prepared = self.prepare_and_spawn(actor_member_id, &employee, params)?;
+        let params = MemberSessionStartParams {
+            command_id: format!("auto-{}", next_entropy_hex(8)?),
+            employee_id: emp_id.to_owned(),
+            instruction: Some(objective.clone()),
+            workspace: None,
+        };
+        let (live_view, finished_handle) =
+            self.reserve_start_or_send(employee, Some(objective.clone()))?;
+        if let Some(mut old) = finished_handle {
+            if let Some(thread) = old.thread.take() {
+                let _ = thread.join();
+            }
+        }
+        let tokens = self.bindings.active_tokens();
+        let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+        if let Some(view) = live_view {
+            let _ = self.store.append_history(emp_id, &trigger_entry, &refs);
+            return Ok(view);
+        }
+        let _guard = StartSlotGuard {
+            registry: &self.registry,
+            employee_id: emp_id.to_owned(),
+        };
+        self.check_not_blocked(emp_id)?;
+        let _ = self.store.append_history(emp_id, &trigger_entry, &refs);
+        let prepared =
+            self.prepare_and_spawn_raw(employee, &params, objective, resume_runtime_session_id)?;
         self.install_live_session(prepared)
     }
 
@@ -376,10 +454,14 @@ impl SessionManager {
             .get(target)
         {
             let guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+            let mut view = guard.to_view();
+            let spec_hash = guard.spec_hash.clone();
+            drop(guard);
+            overlay_durable_wake_state(&self.store, target, &mut view);
             return Ok(SessionInspectResult {
-                session: guard.to_view(),
+                session: view,
                 accepted_commands_count: accepted,
-                spec_hash: guard.spec_hash.clone(),
+                spec_hash,
             });
         }
         let view = self.idle_view_for(employee.id.as_str())?;
@@ -472,28 +554,50 @@ impl SessionManager {
             persisted.recovery_required = false;
             persisted.updated_at = rfc3339_now();
         });
-        if let Some(handle) = self
-            .registry
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .live
-            .get(employee_id)
-        {
-            let mut guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-            guard.watchdog.clear_stall_lock(Instant::now());
-            guard.recovery_required = false;
-            if matches!(
-                guard.state,
-                SessionState::StallLocked | SessionState::RecoveryRequired
-            ) {
-                guard.state = SessionState::Idle;
+        let dead_handle = {
+            let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            let should_remove = reg.live.get(employee_id).is_some_and(|handle| {
+                let mut guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+                guard.watchdog.clear_stall_lock(Instant::now());
+                guard.recovery_required = false;
+                matches!(
+                    guard.state,
+                    SessionState::StallLocked
+                        | SessionState::RecoveryRequired
+                        | SessionState::Stopped
+                        | SessionState::Suspended
+                )
+            });
+            if should_remove {
+                reg.live.remove(employee_id)
+            } else {
+                None
             }
-            return Ok(guard.to_view());
+        };
+        if let Some(mut old) = dead_handle {
+            if let Some(thread) = old.thread.take() {
+                let _ = thread.join();
+            }
         }
         self.last_states
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .remove(employee_id);
+        let _ = self.process_due_wakes_for(employee_id);
+        let live_view = {
+            let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+            reg.live.get(employee_id).map(|handle| {
+                handle
+                    .state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .to_view()
+            })
+        };
+        if let Some(mut view) = live_view {
+            overlay_durable_wake_state(&self.store, employee_id, &mut view);
+            return Ok(view);
+        }
         self.idle_view_for(employee_id)
     }
 
@@ -796,6 +900,28 @@ impl SessionManager {
         Ok(emp)
     }
 
+    fn check_not_recovery_required(&self, employee_id: &str) -> Result<(), ApiError> {
+        if let Ok(Some(record)) = self.store.read_active_turn(employee_id) {
+            if record.recovery_required {
+                return Err(ApiError::new(
+                    ErrorCode::Conflict,
+                    "agent session requires manual recovery before starting",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn clear_persisted_stall_only(&self, employee_id: &str) {
+        let _ = self.store.update_active_turn(employee_id, |persisted| {
+            if persisted.stall_locked {
+                persisted.consecutive_stalls = 0;
+                persisted.stall_locked = false;
+                persisted.updated_at = rfc3339_now();
+            }
+        });
+    }
+
     fn check_not_blocked(&self, employee_id: &str) -> Result<(), ApiError> {
         if let Ok(Some(record)) = self.store.read_active_turn(employee_id) {
             if record.stall_locked {
@@ -817,8 +943,7 @@ impl SessionManager {
     fn reserve_start_or_send(
         &self,
         employee: &Employee,
-        actor_member_id: &str,
-        params: &MemberSessionStartParams,
+        objective: Option<String>,
     ) -> Result<(Option<SessionView>, Option<LiveSessionHandle>), ApiError> {
         let emp_id = employee.id.as_str();
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -832,14 +957,16 @@ impl SessionManager {
             let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
             if !matches!(
                 state.state,
-                SessionState::Stopped | SessionState::StallLocked | SessionState::RecoveryRequired
+                SessionState::Stopped
+                    | SessionState::Stopping
+                    | SessionState::Suspended
+                    | SessionState::StallLocked
+                    | SessionState::RecoveryRequired
             ) {
-                if let Some(instruction) = &params.instruction {
-                    let objective = build_objective_text(employee, actor_member_id, instruction);
-                    if handle.tx.send(PumpCommand::SendTurn(objective)).is_ok() {
+                if let Some(text) = objective {
+                    if handle.tx.send(PumpCommand::SendTurn(text)).is_ok() {
                         return Ok((Some(state.to_view()), None));
                     }
-                    // Pump exited concurrently; fall through to reap & spawn fresh.
                     true
                 } else {
                     return Ok((Some(state.to_view()), None));
@@ -864,15 +991,32 @@ impl SessionManager {
         actor_member_id: &str,
         employee: &Employee,
         params: &MemberSessionStartParams,
+        resume_runtime_session_id: Option<&str>,
     ) -> Result<PreparedSessionLaunch, ApiError> {
-        let planned = self.plan_session_launch(employee, params)?;
-        self.issue_and_spawn_launch(actor_member_id, employee, params, planned)
+        let objective = params
+            .instruction
+            .as_deref()
+            .map(|text| build_objective_text(employee, actor_member_id, text))
+            .unwrap_or_default();
+        self.prepare_and_spawn_raw(employee, params, objective, resume_runtime_session_id)
+    }
+
+    fn prepare_and_spawn_raw(
+        &self,
+        employee: &Employee,
+        params: &MemberSessionStartParams,
+        objective: String,
+        resume_runtime_session_id: Option<&str>,
+    ) -> Result<PreparedSessionLaunch, ApiError> {
+        let planned = self.plan_session_launch(employee, params, resume_runtime_session_id)?;
+        self.issue_and_spawn_launch(objective, planned)
     }
 
     fn plan_session_launch(
         &self,
         employee: &Employee,
         params: &MemberSessionStartParams,
+        resume_runtime_session_id: Option<&str>,
     ) -> Result<PlannedSessionLaunch, ApiError> {
         let emp_id = employee.id.as_str().to_owned();
         let home = self
@@ -921,14 +1065,20 @@ impl SessionManager {
         let session_id = format!("sess-{}", next_entropy_hex(10)?);
         let mark_str = format!("m-{}", next_entropy_hex(12)?);
 
+        let resume_sid = resume_runtime_session_id.and_then(|raw| SessionId::try_from(raw).ok());
+        let new_sid = if resume_sid.is_some() {
+            None
+        } else {
+            SessionId::try_from(session_id.as_str()).ok()
+        };
         let ctx = LaunchContext {
             runtime_path: binary,
             runtime_version: None,
             runtime_dir: canonical_or_spec(&runtime_dir)?,
             tmpdir: canonical_or_spec(&tmpdir)?,
             office_env_names: office_env_names(),
-            new_session_id: SessionId::try_from(session_id.as_str()).ok(),
-            resume: None,
+            new_session_id: new_sid,
+            resume: resume_sid,
             config_dir: None,
         };
         let (plan, session) = resolved
@@ -956,9 +1106,7 @@ impl SessionManager {
 
     fn issue_and_spawn_launch(
         &self,
-        actor_member_id: &str,
-        employee: &Employee,
-        params: &MemberSessionStartParams,
+        objective: String,
         planned: PlannedSessionLaunch,
     ) -> Result<PreparedSessionLaunch, ApiError> {
         let PlannedSessionLaunch {
@@ -999,12 +1147,6 @@ impl SessionManager {
                     "failed to prepare supervised session",
                 )
             })?;
-
-        let objective = params
-            .instruction
-            .as_deref()
-            .map(|text| build_objective_text(employee, actor_member_id, text))
-            .unwrap_or_default();
         let persisted_stalls = self
             .store
             .read_active_turn(&emp_id)
@@ -1155,11 +1297,18 @@ impl SessionManager {
             pending_approvals: Vec::new(),
             policy: preset_cfg.policy,
             preset: preset_cfg.preset,
+            suspended_on_asks: Vec::new(),
+            waiting_for_member_id: None,
+            waiting_for_name: None,
+            suspended_since: None,
+            pending_wake_count: 0,
+            pending_wake_reason: None,
         }));
         let (tx, rx) = mpsc::channel();
         if !objective.is_empty() {
             let _ = tx.send(PumpCommand::SendTurn(objective));
         }
+        let (has_open_required_asks, on_turn_ended, on_suspended) = self.build_pump_hooks();
         let pump_ctx = PumpContext {
             employee_id: emp_id.clone(),
             run_id,
@@ -1168,6 +1317,9 @@ impl SessionManager {
             state: Arc::clone(&runtime_state),
             stop_plan: lifecycle.stop,
             cleanup_paths: lifecycle.cleanup_after_exit,
+            has_open_required_asks: Some(has_open_required_asks),
+            on_turn_ended: Some(on_turn_ended),
+            on_suspended: Some(on_suspended),
         };
         let thread_name = format!("org-session-{}", &emp_id[..emp_id.len().min(8)]);
         let spawned_child = spawned;
@@ -1425,66 +1577,178 @@ impl SessionManager {
     }
 
     fn idle_view_for(&self, employee_id: &str) -> Result<SessionView, ApiError> {
-        if let Some(last) = self
+        if let Some(mut last) = self
             .last_states
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .get(employee_id)
             .cloned()
         {
+            overlay_durable_wake_state(&self.store, employee_id, &mut last);
             return Ok(last);
         }
-        let persisted = self.store.read_active_turn(employee_id).ok().flatten();
         let (preset, sandbox_enabled) = self
             .load_preset_and_sandbox(employee_id)
             .unwrap_or((PermissionPreset::SafeAsk, true));
-        let (state, consecutive_stalls, stall_locked, recovery_required, run_id, session_id, rsid) =
-            match persisted {
-                Some(rec) => {
-                    let state = if rec.stall_locked {
-                        SessionState::StallLocked
-                    } else if rec.recovery_required {
-                        SessionState::RecoveryRequired
-                    } else {
-                        SessionState::Idle
-                    };
-                    (
-                        state,
-                        rec.consecutive_stalls,
-                        rec.stall_locked,
-                        rec.recovery_required,
-                        Some(rec.run_id),
-                        Some(rec.session_id),
-                        rec.runtime_session_id,
-                    )
-                }
-                None => (SessionState::Idle, 0, false, false, None, None, None),
-            };
-        Ok(SessionView {
-            employee_id: employee_id.to_owned(),
-            office_id: self.office.info().office_id.clone(),
-            state,
-            run_id,
-            session_id,
-            runtime_id: None,
-            runtime_session_id: rsid,
-            private_home: self
-                .office
-                .agent_private_home_path(employee_id)
-                .display()
-                .to_string(),
-            same_user_isolation_notice: SAME_USER_ISOLATION_NOTICE.to_owned(),
-            permission_preset: preset.as_str().to_owned(),
+        Ok(build_idle_session_view(
+            &self.store,
+            employee_id,
+            &self.office.info().office_id,
+            self.office.agent_private_home_path(employee_id),
+            preset,
             sandbox_enabled,
-            consecutive_stalls,
-            stall_locked,
-            recovery_required,
-            last_reply: None,
-            last_error: None,
-            background_tasks: Vec::new(),
-            pending_approvals: Vec::new(),
-            usage: Default::default(),
-        })
+        ))
+    }
+}
+
+fn overlay_durable_wake_state(store: &SessionStore, employee_id: &str, view: &mut SessionView) {
+    let suspended = store.read_suspended_state(employee_id).ok().flatten();
+    let pending_wakes = store.read_pending_wakes(employee_id).ok().flatten();
+    let blocked = view.stall_locked || view.recovery_required;
+    if let Some(ref susp) = suspended {
+        if !blocked
+            && !matches!(
+                view.state,
+                SessionState::Starting | SessionState::Running | SessionState::WaitingApproval
+            )
+        {
+            view.state = SessionState::Suspended;
+        }
+        let (w_id, w_name) = susp.primary_waiting_target();
+        view.suspended_on_asks = susp.asks.iter().map(|a| a.ask_id.clone()).collect();
+        view.waiting_for_member_id = w_id;
+        view.waiting_for_name = w_name;
+        view.suspended_since = Some(susp.suspended_since.clone());
+        if view.runtime_session_id.is_none() {
+            view.runtime_session_id = susp.runtime_session_id.clone();
+        }
+    } else {
+        view.suspended_on_asks.clear();
+        view.waiting_for_member_id = None;
+        view.waiting_for_name = None;
+        view.suspended_since = None;
+    }
+    let (count, reason) = extract_pending_wake_fields(pending_wakes.as_ref(), suspended.as_ref());
+    view.pending_wake_count = count;
+    view.pending_wake_reason = reason;
+}
+
+fn build_idle_session_view(
+    store: &SessionStore,
+    employee_id: &str,
+    office_id: &str,
+    private_home: PathBuf,
+    preset: PermissionPreset,
+    sandbox_enabled: bool,
+) -> SessionView {
+    let suspended = store.read_suspended_state(employee_id).ok().flatten();
+    let pending_wakes = store.read_pending_wakes(employee_id).ok().flatten();
+    let persisted = store.read_active_turn(employee_id).ok().flatten();
+    let (mut state, consecutive_stalls, stall_locked, recovery_required, run_id, session_id, rsid) =
+        extract_persisted_turn(persisted);
+    let (suspended_on_asks, waiting_for_member_id, waiting_for_name, suspended_since) =
+        extract_suspended_fields(
+            suspended.as_ref(),
+            stall_locked || recovery_required,
+            &mut state,
+        );
+    let (pending_wake_count, pending_wake_reason) =
+        extract_pending_wake_fields(pending_wakes.as_ref(), suspended.as_ref());
+    SessionView {
+        employee_id: employee_id.to_owned(),
+        office_id: office_id.to_owned(),
+        state,
+        run_id,
+        session_id,
+        runtime_id: None,
+        runtime_session_id: rsid.or_else(|| suspended.and_then(|s| s.runtime_session_id)),
+        private_home: private_home.display().to_string(),
+        same_user_isolation_notice: SAME_USER_ISOLATION_NOTICE.to_owned(),
+        permission_preset: preset.as_str().to_owned(),
+        sandbox_enabled,
+        consecutive_stalls,
+        stall_locked,
+        recovery_required,
+        last_reply: None,
+        last_error: None,
+        background_tasks: Vec::new(),
+        pending_approvals: Vec::new(),
+        usage: Default::default(),
+        suspended_on_asks,
+        waiting_for_member_id,
+        waiting_for_name,
+        suspended_since,
+        pending_wake_count,
+        pending_wake_reason,
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn extract_persisted_turn(
+    persisted: Option<ActiveTurnRecord>,
+) -> (
+    SessionState,
+    u32,
+    bool,
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    let Some(rec) = persisted else {
+        return (SessionState::Idle, 0, false, false, None, None, None);
+    };
+    let state = if rec.stall_locked {
+        SessionState::StallLocked
+    } else if rec.recovery_required {
+        SessionState::RecoveryRequired
+    } else {
+        SessionState::Idle
+    };
+    (
+        state,
+        rec.consecutive_stalls,
+        rec.stall_locked,
+        rec.recovery_required,
+        Some(rec.run_id),
+        Some(rec.session_id),
+        rec.runtime_session_id,
+    )
+}
+
+fn extract_suspended_fields(
+    suspended: Option<&crate::wake::SuspendedStateRecord>,
+    blocked: bool,
+    state: &mut SessionState,
+) -> (Vec<String>, Option<String>, Option<String>, Option<String>) {
+    let Some(susp) = suspended else {
+        return (Vec::new(), None, None, None);
+    };
+    if !blocked {
+        *state = SessionState::Suspended;
+    }
+    let (w_id, w_name) = susp.primary_waiting_target();
+    (
+        susp.asks.iter().map(|a| a.ask_id.clone()).collect(),
+        w_id,
+        w_name,
+        Some(susp.suspended_since.clone()),
+    )
+}
+
+fn extract_pending_wake_fields(
+    pending_wakes: Option<&crate::wake::PendingWakeQueueRecord>,
+    suspended: Option<&crate::wake::SuspendedStateRecord>,
+) -> (u32, Option<String>) {
+    match pending_wakes {
+        Some(q) if !q.items.is_empty() => (
+            q.items.len() as u32,
+            q.hold_reason.map(|r| r.as_str().to_owned()),
+        ),
+        _ => (
+            0,
+            suspended.and_then(|s| s.hold_reason.map(|r| r.as_str().to_owned())),
+        ),
     }
 }
 

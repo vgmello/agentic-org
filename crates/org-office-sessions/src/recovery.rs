@@ -198,6 +198,136 @@ impl SessionStore {
         Ok(self.employee_dir(employee_id)?.join("history.jsonl"))
     }
 
+    pub fn pending_wakes_path(&self, employee_id: &str) -> io::Result<PathBuf> {
+        Ok(self
+            .employee_dir(employee_id)?
+            .join("pending-wakes.v1.json"))
+    }
+
+    pub fn suspended_state_path(&self, employee_id: &str) -> io::Result<PathBuf> {
+        Ok(self
+            .employee_dir(employee_id)?
+            .join("suspended-asks.v1.json"))
+    }
+
+    pub fn wake_quota_path(&self, employee_id: &str) -> io::Result<PathBuf> {
+        Ok(self.employee_dir(employee_id)?.join("wake-quota.v1.json"))
+    }
+
+    pub fn read_pending_wakes(
+        &self,
+        employee_id: &str,
+    ) -> io::Result<Option<crate::wake::PendingWakeQueueRecord>> {
+        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        read_optional_json(&self.pending_wakes_path(employee_id)?)
+    }
+
+    pub fn write_pending_wakes(
+        &self,
+        record: &crate::wake::PendingWakeQueueRecord,
+    ) -> io::Result<()> {
+        self.write_pending_wakes_redacted(record, &[])
+    }
+
+    pub fn write_pending_wakes_redacted(
+        &self,
+        record: &crate::wake::PendingWakeQueueRecord,
+        active_secrets: &[&str],
+    ) -> io::Result<()> {
+        let mut clean = record.clone();
+        for item in &mut clean.items {
+            item.summary = redact_secrets(&item.summary, active_secrets);
+        }
+        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = self.employee_dir(&clean.employee_id)?;
+        ensure_owner_dirs(&dir)?;
+        write_atomic_json(&self.pending_wakes_path(&clean.employee_id)?, &clean)
+    }
+
+    pub fn clear_pending_wakes(&self, employee_id: &str) -> io::Result<()> {
+        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let path = self.pending_wakes_path(employee_id)?;
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn read_suspended_state(
+        &self,
+        employee_id: &str,
+    ) -> io::Result<Option<crate::wake::SuspendedStateRecord>> {
+        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        read_optional_json(&self.suspended_state_path(employee_id)?)
+    }
+
+    pub fn write_suspended_state(
+        &self,
+        record: &crate::wake::SuspendedStateRecord,
+    ) -> io::Result<()> {
+        self.write_suspended_state_redacted(record, &[])
+    }
+
+    pub fn write_suspended_state_redacted(
+        &self,
+        record: &crate::wake::SuspendedStateRecord,
+        active_secrets: &[&str],
+    ) -> io::Result<()> {
+        let mut clean = record.clone();
+        for ask in &mut clean.asks {
+            ask.question_summary = redact_secrets(&ask.question_summary, active_secrets);
+        }
+        for ans in &mut clean.pending_resume_answers {
+            ans.question_summary = redact_secrets(&ans.question_summary, active_secrets);
+            ans.answer_summary = redact_secrets(&ans.answer_summary, active_secrets);
+        }
+        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = self.employee_dir(&clean.employee_id)?;
+        ensure_owner_dirs(&dir)?;
+        write_atomic_json(&self.suspended_state_path(&clean.employee_id)?, &clean)
+    }
+
+    pub fn clear_suspended_state(&self, employee_id: &str) -> io::Result<()> {
+        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let path = self.suspended_state_path(employee_id)?;
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn read_wake_quota(
+        &self,
+        employee_id: &str,
+    ) -> io::Result<Option<crate::wake::WakeQuotaRecord>> {
+        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        read_optional_json(&self.wake_quota_path(employee_id)?)
+    }
+
+    pub fn write_wake_quota(&self, record: &crate::wake::WakeQuotaRecord) -> io::Result<()> {
+        let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = self.employee_dir(&record.employee_id)?;
+        ensure_owner_dirs(&dir)?;
+        write_atomic_json(&self.wake_quota_path(&record.employee_id)?, record)
+    }
+
+    /// Lists all employee IDs that currently have a session folder on disk.
+    pub fn list_employee_ids(&self) -> io::Result<Vec<String>> {
+        if !self.sessions_root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut dirs: Vec<String> = fs::read_dir(&self.sessions_root)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().is_dir())
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+            .filter(|name| is_safe_id(name))
+            .collect();
+        dirs.sort();
+        Ok(dirs)
+    }
+
     pub fn write_pending_start(&self, record: &PendingStartRecord) -> io::Result<()> {
         let dir = self.employee_dir(&record.employee_id)?;
         ensure_owner_dirs(&dir)?;

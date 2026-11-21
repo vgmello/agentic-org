@@ -97,6 +97,7 @@ pub fn parse_ask_card(msg: &MessageRecord) -> Option<AskCard> {
 pub struct AskCommitted {
     pub result: ChatAskResult,
     pub inserted: bool,
+    pub card: AskCard,
     pub message: MessageRecord,
     pub recipients: Vec<(Id, RecipientStateRecord)>,
 }
@@ -114,6 +115,9 @@ impl AskCommitted {
 #[derive(Debug)]
 pub struct AnswerCommitted {
     pub result: ChatAnswerResult,
+    pub asker_id: Option<String>,
+    pub question_summary: String,
+    pub answer_summary: String,
     pub reply_header: Option<MessageHeader>,
     pub affected_members: Vec<String>,
 }
@@ -122,6 +126,7 @@ pub struct AnswerCommitted {
 #[derive(Debug)]
 pub struct WithdrawCommitted {
     pub result: MsgWithdrawResult,
+    pub asker_id: Option<String>,
     pub affected_members: Vec<String>,
 }
 
@@ -550,8 +555,11 @@ fn check_ask_replay(
                 withdrawal: outcome.withdrawal,
                 defaults: outcome.defaults,
                 required_notice: outcome.required_notice,
+                recipient_presence: Vec::new(),
+                woke_agents: Vec::new(),
             },
             inserted: false,
+            card,
             message: existing,
             recipients: Vec::new(),
         },
@@ -819,7 +827,7 @@ fn commit_ask_record(
     let (change, recipients) = append_send_recipient_states(
         read, here, &conv.id, &record, employees, reasons, org_seq, now_utc, change,
     )?;
-    let wait_until = card.wait_until;
+    let wait_until = card.wait_until.clone();
     Ok((
         change,
         AskCommitted {
@@ -836,8 +844,11 @@ fn commit_ask_record(
                 withdrawal: None,
                 defaults: Vec::new(),
                 required_notice: None,
+                recipient_presence: Vec::new(),
+                woke_agents: Vec::new(),
             },
             inserted: true,
+            card,
             message: record,
             recipients,
         },
@@ -1228,6 +1239,13 @@ where
         reply_header = Some(hdr);
         affected.push(asker_id.as_str().to_owned());
     }
+    let question_summary = card
+        .questions
+        .iter()
+        .map(|q| q.prompt.as_str())
+        .collect::<Vec<_>>()
+        .join(" / ");
+    let answer_summary = render_answer_summary(card, &answer_record.answers);
     Ok((
         change,
         AnswerCommitted {
@@ -1236,6 +1254,12 @@ where
                 conversation_id: ask.conversation_id.as_str().to_owned(),
                 answer: answer_record,
             },
+            asker_id: ask
+                .sender_employee_id
+                .as_ref()
+                .map(|id| id.as_str().to_owned()),
+            question_summary,
+            answer_summary,
             reply_header,
             affected_members: affected,
         },
@@ -1430,6 +1454,10 @@ where
                 conversation_id: ask.conversation_id.as_str().to_owned(),
                 withdrawal,
             },
+            asker_id: ask
+                .sender_employee_id
+                .as_ref()
+                .map(|id| id.as_str().to_owned()),
             affected_members: affected,
         },
     ))
@@ -1476,6 +1504,6 @@ pub fn is_open_ask_card(read: &impl MessagingRead, msg: &MessageRecord) -> bool 
             a.is_none() && w.is_none()
         }
         Ok(None) => true,
-        Err(_) => true,
+        Err(_) => false,
     }
 }

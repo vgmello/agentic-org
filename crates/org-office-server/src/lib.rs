@@ -36,6 +36,7 @@ mod startup;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod test_support;
 mod transfer;
+mod wake_bridge;
 mod zeroed;
 
 #[cfg(test)]
@@ -649,8 +650,7 @@ fn serve_office(
         }
         host_gone.load(Ordering::SeqCst) || signals::stop_requested()
     };
-    serve::run(&listener, &shared, &stop);
-    session_manager.stop_all("office shutdown");
+    run_serve_loop(&listener, &shared, &session_manager, &stop);
     drop(transfers);
 
     drop(listener);
@@ -667,6 +667,26 @@ fn serve_office(
 
 /// The orderly stop: the store closes (flushed, confirmed, written) and leaves its clean-stop
 /// marker. An office something still holds is dropped instead: a stop without the marker.
+fn run_serve_loop(
+    listener: &std::os::unix::net::UnixListener,
+    shared: &Arc<serve::Shared>,
+    session_manager: &Arc<org_office_sessions::SessionManager>,
+    stop: &dyn Fn() -> bool,
+) {
+    let wake_stop = Arc::new(AtomicBool::new(false));
+    let wake_thread = org_office_sessions::spawn_wake_retry_loop(
+        Arc::clone(session_manager),
+        Arc::clone(&wake_stop),
+        std::time::Duration::from_secs(2),
+    );
+    serve::run(listener, shared, stop);
+    wake_stop.store(true, Ordering::SeqCst);
+    if let Some(t) = wake_thread {
+        let _ = t.join();
+    }
+    session_manager.stop_all("office shutdown");
+}
+
 fn close(office: Arc<Office>) -> i32 {
     match Arc::try_unwrap(office) {
         Ok(office) => match office.close() {
@@ -799,6 +819,7 @@ fn build_messaging_ports(
     office: &Arc<Office>,
     live: &Arc<live::LiveEvents>,
     wake: &Arc<org_feed::FeedWake>,
+    session_manager: &Arc<org_office_sessions::SessionManager>,
 ) -> MessagingPorts {
     let directory: Arc<dyn org_mailbox::MemberDirectory + Send + Sync> =
         Arc::new(directory::OfficeDirectory::of(Arc::clone(office)));
@@ -832,6 +853,7 @@ fn build_messaging_ports(
         Arc::clone(office),
         Arc::clone(live),
         Arc::clone(&mailbox),
+        Some(Arc::clone(session_manager)),
     ));
     let chat: serve::ChatFn = Box::new(move |member, via_grant, stopping, request| {
         chat_svc.dispatch(member, via_grant, stopping, request)
@@ -888,6 +910,61 @@ fn build_session_hooks(session_manager: &Arc<org_office_sessions::SessionManager
     }
 }
 
+fn build_hiring_port(
+    office: &Arc<Office>,
+    wake: &Arc<org_feed::FeedWake>,
+    session_manager: &Arc<org_office_sessions::SessionManager>,
+) -> serve::HiringFn {
+    let office = Arc::clone(office);
+    let wake = Arc::clone(wake);
+    let sessions = Arc::clone(session_manager);
+    Box::new(move |member, request| {
+        let response = office.dispatch_hiring_rpc(member, request);
+        if matches!(
+            response.as_ref().map(|r| &r.outcome),
+            Some(org_proto::Outcome::Result(_))
+        ) {
+            wake.notify();
+            notify_agent_lifecycle(&sessions, request);
+        }
+        response
+    })
+}
+
+fn notify_agent_lifecycle(
+    sessions: &org_office_sessions::SessionManager,
+    request: &org_proto::Request,
+) {
+    if request.is::<org_proto::hiring::AgentSetStatus>() {
+        if let Ok(params) = request.params::<org_proto::hiring::AgentSetStatus>() {
+            if !params.paused {
+                sessions.on_agent_resumed(&params.member_id);
+            }
+        }
+    } else if request.is::<org_proto::hiring::AgentOffboard>() {
+        if let Ok(params) = request.params::<org_proto::hiring::AgentOffboard>() {
+            sessions.on_agent_offboarded(&params.member_id);
+        }
+    }
+}
+
+fn notify_org_command_lifecycle(
+    sessions: &org_office_sessions::SessionManager,
+    command: &org_office::rules::OrgCommand,
+) {
+    match command {
+        org_office::rules::OrgCommand::MemberSetAgentStatus(params)
+            if params.status == org_proto::AgentStatus::Active =>
+        {
+            sessions.on_agent_resumed(&params.member_id);
+        }
+        org_office::rules::OrgCommand::MemberOffboard(params) => {
+            sessions.on_agent_offboarded(&params.member_id);
+        }
+        _ => {}
+    }
+}
+
 /// Composes the office RPC ports passed to `serve::Shared`.
 fn build_office_ports(
     office: Arc<Office>,
@@ -895,8 +972,9 @@ fn build_office_ports(
     live: Arc<live::LiveEvents>,
     wake: Arc<org_feed::FeedWake>,
 ) -> serve::OfficePorts {
-    let messaging = build_messaging_ports(&office, &live, &wake);
+    let messaging = build_messaging_ports(&office, &live, &wake, &session_manager);
     let session_hooks = build_session_hooks(&session_manager);
+    let hiring = build_hiring_port(&office, &wake, &session_manager);
     serve::OfficePorts {
         work: Box::new(|_, _| Ok(Err(unsupported("work", "B4")))),
         operation_get: {
@@ -928,20 +1006,7 @@ fn build_office_ports(
                     .map_err(|e| logged("project.inspect", &e))
             })
         },
-        hiring: {
-            let office = Arc::clone(&office);
-            let wake = Arc::clone(&wake);
-            Some(Box::new(move |member, request| {
-                let response = office.dispatch_hiring_rpc(member, request);
-                if matches!(
-                    response.as_ref().map(|r| &r.outcome),
-                    Some(org_proto::Outcome::Result(_))
-                ) {
-                    wake.notify();
-                }
-                response
-            }))
-        },
+        hiring: Some(hiring),
         sessions: Some(session_hooks.sessions),
         run_binding_verify: Some(session_hooks.run_binding_verify),
         run_binding_active: Some(session_hooks.run_binding_active),
@@ -957,7 +1022,13 @@ fn build_office_ports(
         },
         who: {
             let office = Arc::clone(&office);
-            Box::new(move |params| office.who(params).map_err(|e| logged("who", &e)))
+            let sessions = Arc::clone(&session_manager);
+            Box::new(move |params| {
+                let overlay = wake_bridge::SessionRuntimeOverlay::new(Arc::clone(&sessions));
+                office
+                    .who_with_runtime(params, &overlay)
+                    .map_err(|e| logged("who", &e))
+            })
         },
         status: {
             let office = Arc::clone(&office);
@@ -980,13 +1051,26 @@ fn build_office_ports(
         submit: {
             let office = Arc::clone(&office);
             let wake = Arc::clone(&wake);
+            let sessions = Arc::clone(&session_manager);
             Box::new(move |member, command, dry_run| {
                 let answer = if dry_run {
                     office.check_org(member, command)
                 } else {
+                    let lifecycle_cmd = match &command {
+                        org_office::rules::OrgCommand::MemberSetAgentStatus(p) => Some(
+                            org_office::rules::OrgCommand::MemberSetAgentStatus(p.clone()),
+                        ),
+                        org_office::rules::OrgCommand::MemberOffboard(p) => {
+                            Some(org_office::rules::OrgCommand::MemberOffboard(p.clone()))
+                        }
+                        _ => None,
+                    };
                     let res = office.submit_org(member, command);
                     if matches!(res, Ok(Ok(_))) {
                         wake.notify();
+                        if let Some(cmd) = lifecycle_cmd.as_ref() {
+                            notify_org_command_lifecycle(&sessions, cmd);
+                        }
                     }
                     res
                 };

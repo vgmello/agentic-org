@@ -216,6 +216,15 @@ impl BackgroundRegistry {
             .count()
     }
 
+    /// Human-readable labels of all currently running background tasks/sub-agents (`ASK-7`).
+    pub fn running_labels(&self) -> Vec<String> {
+        self.tasks
+            .values()
+            .filter(|t| t.state == BackgroundTaskState::Running)
+            .map(|t| format!("{} ({})", t.label, t.task_id))
+            .collect()
+    }
+
     /// Marks every still-running background task/sub-agent as `Reaped` and returns their IDs & PIDs
     /// for process cleanup on Pause, Stop, Offboard, or stall timeout (`SUB-5`, `SUB-7`).
     pub fn reap_all(&mut self, ended_at: impl Into<String>) -> Vec<(String, Option<u32>)> {

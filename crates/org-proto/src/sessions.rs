@@ -23,6 +23,7 @@ pub enum SessionState {
     Starting,
     Running,
     WaitingApproval,
+    Suspended,
     Stopping,
     Stopped,
     StallLocked,
@@ -96,6 +97,22 @@ pub struct SessionView {
     pub pending_approvals: Vec<PendingApprovalView>,
     #[serde(default)]
     pub usage: SessionUsageSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suspended_on_asks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_for_member_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_for_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspended_since: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub pending_wake_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_wake_reason: Option<String>,
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
 }
 
 /// Result of `member.session_inspect` (also backing `agent-os session inspect` / CLI-9).

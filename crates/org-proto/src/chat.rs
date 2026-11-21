@@ -405,6 +405,10 @@ pub struct ChatSendResult {
     pub mentions: Vec<MentionedMember>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmatched_mentions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipient_presence: Vec<crate::directory::RecipientPresence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub woke_agents: Vec<String>,
 }
 
 impl Call for ChatSend {

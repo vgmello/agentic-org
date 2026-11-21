@@ -883,6 +883,8 @@ where
 pub struct ChatSendCommitted {
     pub result: ChatSendResult,
     pub inserted: bool,
+    pub conversation_kind: ConversationKind,
+    pub open_question_asker_id: Option<String>,
     pub message: MessageRecord,
     pub recipients: Vec<(Id, RecipientStateRecord)>,
 }
@@ -1277,6 +1279,11 @@ fn check_chat_send_replay(
         .message_local_seq(&existing.id)
         .map_err(|_| refusal(ErrorCode::StorageError, "failed to read local_seq"))?
         .unwrap_or(existing.origin_sequence);
+    let conversation_kind = read
+        .conversation(&existing.conversation_id)
+        .ok()
+        .flatten()
+        .map_or(ConversationKind::Channel, |c| c.kind);
     Ok(Some((
         Change::new(Ack::Committed),
         ChatSendCommitted {
@@ -1288,8 +1295,12 @@ fn check_chat_send_replay(
                 origin_seq: existing.origin_sequence,
                 mentions: scan.resolved,
                 unmatched_mentions: scan.unmatched,
+                recipient_presence: Vec::new(),
+                woke_agents: Vec::new(),
             },
             inserted: false,
+            conversation_kind,
+            open_question_asker_id: None,
             message: existing,
             recipients: Vec::new(),
         },
@@ -1511,6 +1522,11 @@ fn build_send_commit_change(
     let (change, recipients) = append_send_recipient_states(
         read, here, &conv.id, &record, employees, reasons, org_seq, now_utc, change,
     )?;
+    let open_question_asker_id = thread_root_id
+        .as_deref()
+        .and_then(|root_id| read.message(root_id).ok().flatten())
+        .filter(|root| root.kind == KIND_REQUEST && super::asks::is_open_ask_card(read, root))
+        .and_then(|root| root.sender_employee_id.map(|id| id.as_str().to_owned()));
     let thread_id = thread_root_id.unwrap_or_else(|| record.id.clone());
     Ok((
         change,
@@ -1523,8 +1539,12 @@ fn build_send_commit_change(
                 origin_seq,
                 mentions: scan.resolved,
                 unmatched_mentions: scan.unmatched,
+                recipient_presence: Vec::new(),
+                woke_agents: Vec::new(),
             },
             inserted: true,
+            conversation_kind: conv.kind,
+            open_question_asker_id,
             message: record,
             recipients,
         },

@@ -393,22 +393,37 @@ impl Office {
         Ok(self.store.read(read).map_err(storage)?.0)
     }
 
+    /// Returns the office's live runtime presence/status record for `member_id`, if any (`AVAIL-5`).
+    pub fn member_runtime(&self, member_id: &str) -> Option<directory::MemberRuntime> {
+        use directory::RuntimeView;
+        self.runtime.runtime_of(member_id)
+    }
+
     /// `who`: the directory cards matching `params`, including live runtime presence and
     /// unexpired self-reported status lines (`status.set`).
     pub fn who(&self, params: &WhoParams) -> Result<Result<WhoResult, ApiError>, OfficeError> {
+        self.who_with_runtime(params, &self.runtime)
+    }
+
+    /// Like [`Self::who`], overlaying caller-provided live session presence (such as
+    /// `WaitingForAnswer`, `Busy`, or `UnableToRun` from `org-office-sessions`) on top of
+    /// stored `status.set` lines (`ASK-4`, `AVAIL-4`).
+    pub fn who_with_runtime(
+        &self,
+        params: &WhoParams,
+        runtime: &dyn directory::RuntimeView,
+    ) -> Result<Result<WhoResult, ApiError>, OfficeError> {
         let snapshot = self.org_snapshot()?;
         let office = directory::ThisOffice {
             id: &self.info.office_id,
             name: &self.info.office_name,
         };
         let now = time::format_rfc3339_ms(self.monotonic_now_ms());
-        Ok(directory::who(
-            &snapshot,
-            office,
-            &now,
-            &self.runtime,
-            params,
-        ))
+        let merged = OverlayRuntime {
+            primary: runtime,
+            fallback: &self.runtime,
+        };
+        Ok(directory::who(&snapshot, office, &now, &merged, params))
     }
 
     fn monotonic_now_ms(&self) -> u64 {
@@ -749,5 +764,35 @@ impl Office {
     #[cfg(any(test, feature = "testkit"))]
     pub fn dump(&self) -> Vec<String> {
         self.store.dump()
+    }
+}
+
+struct OverlayRuntime<'a> {
+    primary: &'a dyn directory::RuntimeView,
+    fallback: &'a dyn directory::RuntimeView,
+}
+
+impl directory::RuntimeView for OverlayRuntime<'_> {
+    fn runtime_of(&self, member_id: &str) -> Option<directory::MemberRuntime> {
+        match (
+            self.primary.runtime_of(member_id),
+            self.fallback.runtime_of(member_id),
+        ) {
+            (Some(mut prim), Some(base)) => {
+                if prim.status.is_none() {
+                    prim.status = base.status;
+                    prim.status_expires_at = base.status_expires_at;
+                }
+                if prim.current_task_id.is_none() {
+                    prim.current_task_id = base.current_task_id;
+                }
+                if prim.last_seen_at.is_none() {
+                    prim.last_seen_at = base.last_seen_at;
+                }
+                Some(prim)
+            }
+            (Some(prim), None) => Some(prim),
+            (None, base) => base,
+        }
     }
 }

@@ -95,22 +95,30 @@ impl AskWaiters {
     }
 }
 
-/// Live chat/channel/ask/events service composed over [`Office`], [`Mailbox`], and [`LiveEvents`].
+/// Live chat/channel/ask/events service composed over [`Office`], [`Mailbox`], [`LiveEvents`],
+/// and optional [`org_office_sessions::SessionManager`] for C6/C8/C10 wakes.
 pub(crate) struct ChatService {
     office: Arc<Office>,
     live: Arc<LiveEvents>,
     mailbox: Arc<Mailbox>,
+    sessions: Option<Arc<org_office_sessions::SessionManager>>,
     owner_id: String,
     ask_waiters: AskWaiters,
 }
 
 impl ChatService {
-    pub(crate) fn new(office: Arc<Office>, live: Arc<LiveEvents>, mailbox: Arc<Mailbox>) -> Self {
+    pub(crate) fn new(
+        office: Arc<Office>,
+        live: Arc<LiveEvents>,
+        mailbox: Arc<Mailbox>,
+        sessions: Option<Arc<org_office_sessions::SessionManager>>,
+    ) -> Self {
         let owner_id = office.owner_member_id().to_owned();
         Self {
             office,
             live,
             mailbox,
+            sessions,
             owner_id,
             ask_waiters: AskWaiters::default(),
         }
@@ -254,7 +262,7 @@ impl ChatService {
             }
         }
         match self.office.chat_send(member, params) {
-            Ok(Ok(committed)) => {
+            Ok(Ok(mut committed)) => {
                 if committed.inserted {
                     let mut owner_touched = false;
                     for header in committed.delivered_headers() {
@@ -268,6 +276,16 @@ impl ChatService {
                     if owner_touched {
                         self.live.record_mailbox_change();
                     }
+                }
+                if let Some(sessions) = &self.sessions {
+                    let (woke, presence) = crate::wake_bridge::on_chat_send_committed(
+                        &self.office,
+                        sessions,
+                        member,
+                        &committed,
+                    );
+                    committed.result.woke_agents = woke;
+                    committed.result.recipient_presence = presence;
                 }
                 ok_reply::<ChatSend>(request.id, &committed.result)
             }
@@ -357,7 +375,18 @@ impl ChatService {
                         self.live.record_mailbox_change();
                     }
                 }
+                let (woke, presence) = match &self.sessions {
+                    Some(sessions) => crate::wake_bridge::on_chat_ask_committed(
+                        &self.office,
+                        sessions,
+                        member,
+                        &committed,
+                    ),
+                    None => (Vec::new(), Vec::new()),
+                };
                 let mut res: ChatAskResult = committed.result;
+                res.woke_agents = woke;
+                res.recipient_presence = presence;
                 if res.status == AskStatus::Waiting && hold_ms != Some(0) {
                     if let Ok(Ok(waited)) =
                         self.hold_for_ask(member, &res.ask_id, hold_ms, stopping)
@@ -368,6 +397,11 @@ impl ChatService {
                         res.withdrawal = waited.withdrawal;
                         res.defaults = waited.defaults;
                         res.required_notice = waited.required_notice;
+                    }
+                }
+                if res.status == AskStatus::RequiredPending {
+                    if let Some(sessions) = &self.sessions {
+                        sessions.on_required_ask_wait_expired(member, &res.ask_id);
                     }
                 }
                 ok_reply::<ChatAsk>(request.id, &res)
@@ -387,7 +421,7 @@ impl ChatService {
         match self.office.chat_answer(member, params) {
             Ok(Ok(committed)) => {
                 self.ask_waiters.notify();
-                if let Some(header) = committed.reply_header {
+                if let Some(header) = committed.reply_header.clone() {
                     self.mailbox.notify_member(&header.to_member_id);
                     self.live
                         .publish_live(Live::Received(Box::new(header_only_received(header))));
@@ -398,6 +432,14 @@ impl ChatService {
                     .any(|m| m == &self.owner_id)
                 {
                     self.live.record_mailbox_change();
+                }
+                if let Some(sessions) = &self.sessions {
+                    crate::wake_bridge::on_chat_answer_committed(
+                        &self.office,
+                        sessions,
+                        member,
+                        &committed,
+                    );
                 }
                 ok_reply::<ChatAnswer>(request.id, &committed.result)
             }
@@ -423,6 +465,9 @@ impl ChatService {
                 {
                     self.live.record_mailbox_change();
                 }
+                if let Some(sessions) = &self.sessions {
+                    crate::wake_bridge::on_msg_withdraw_committed(sessions, member, &committed);
+                }
                 ok_reply::<MsgWithdraw>(request.id, &committed.result)
             }
             Ok(Err(refusal)) => Response::error(request.id, refusal),
@@ -445,7 +490,14 @@ impl ChatService {
         };
         let hold_ms = if via_grant { Some(0) } else { params.hold_ms };
         match self.hold_for_ask(member, &params.ask_id, hold_ms, stopping) {
-            Ok(Ok(result)) => ok_reply::<ChatWaitAsk>(request.id, &result),
+            Ok(Ok(result)) => {
+                if result.status == AskStatus::RequiredPending {
+                    if let Some(sessions) = &self.sessions {
+                        sessions.on_required_ask_wait_expired(member, &params.ask_id);
+                    }
+                }
+                ok_reply::<ChatWaitAsk>(request.id, &result)
+            }
             Ok(Err(refusal)) => Response::error(request.id, refusal),
             Err(error) => {
                 crate::logged("chat.wait_ask", &error);

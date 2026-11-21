@@ -15,12 +15,14 @@
 pub mod binding;
 pub mod credentials;
 pub mod instructions;
+mod lifecycle;
 pub mod manager;
 pub mod preset;
 mod pump;
 pub mod recovery;
 pub mod runtime_registry;
 pub mod subagents;
+pub mod wake;
 
 pub use binding::{AcceptedCommandRecord, ActiveRunBinding, BindingRejection, RunBindingRegistry};
 pub use credentials::{
@@ -31,6 +33,7 @@ pub use instructions::{
     assemble_standing_instructions, compose_turn_objective, verify_command_references,
     InstructionInput, TurnTrigger, BUILTIN_INSTRUCTIONS_MAX_BYTES, SAME_USER_ISOLATION_NOTICE,
 };
+pub use lifecycle::spawn_wake_retry_loop;
 pub use manager::{SessionManager, SessionManagerConfig};
 pub use preset::{
     build_grants_summary, build_session_policy, decide_escalation, EscalationDisposition,
@@ -46,6 +49,13 @@ pub use subagents::{
     build_general_subagent_definition, subset_tools, BackgroundKind, BackgroundRegistry,
     BackgroundTaskState, BackgroundWake, SubagentDefinition,
 };
+pub use wake::{
+    PendingAskAnswer, PendingWakeItem, PendingWakeQueueRecord, SuspendedAskEntry,
+    SuspendedStateRecord, WakeHoldReason, WakeKind, WakeOutcome, WakeQuotaRecord,
+    DEFAULT_HOURLY_WAKE_LIMIT, DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
+};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wake_tests;

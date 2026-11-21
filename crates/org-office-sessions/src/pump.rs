@@ -34,10 +34,20 @@ pub(crate) enum PumpCommand {
         decision: Decision,
         allow_always_tool: Option<String>,
     },
+    ArmSuspend {
+        deadline: Instant,
+    },
     Stop {
         reason: String,
     },
 }
+
+pub(crate) type TurnEndedHook = Arc<dyn Fn(&str) + Send + Sync>;
+pub(crate) type OpenRequiredAsksHook = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+/// Returns `true` when durable suspension was recorded (non-empty required asks), `false` if
+/// all required asks were answered/withdrawn before suspension took effect (`High #3`).
+pub(crate) type SuspendedHook =
+    Arc<dyn Fn(&str, Vec<String>, Option<String>, Option<String>) -> bool + Send + Sync>;
 
 pub(crate) struct SessionRuntimeState {
     pub employee_id: String,
@@ -59,6 +69,12 @@ pub(crate) struct SessionRuntimeState {
     pub pending_approvals: Vec<PendingApprovalView>,
     pub policy: PermissionPolicy,
     pub preset: PermissionPreset,
+    pub suspended_on_asks: Vec<String>,
+    pub waiting_for_member_id: Option<String>,
+    pub waiting_for_name: Option<String>,
+    pub suspended_since: Option<String>,
+    pub pending_wake_count: u32,
+    pub pending_wake_reason: Option<String>,
 }
 
 impl SessionRuntimeState {
@@ -83,6 +99,12 @@ impl SessionRuntimeState {
             background_tasks: self.backgrounds.views(),
             pending_approvals: self.pending_approvals.clone(),
             usage: self.backgrounds.usage(),
+            suspended_on_asks: self.suspended_on_asks.clone(),
+            waiting_for_member_id: self.waiting_for_member_id.clone(),
+            waiting_for_name: self.waiting_for_name.clone(),
+            suspended_since: self.suspended_since.clone(),
+            pending_wake_count: self.pending_wake_count,
+            pending_wake_reason: self.pending_wake_reason.clone(),
         }
     }
 }
@@ -95,6 +117,9 @@ pub(crate) struct PumpContext {
     pub state: Arc<Mutex<SessionRuntimeState>>,
     pub stop_plan: org_agent_runtime::StopPlan,
     pub cleanup_paths: Vec<org_agent_runtime::CleanupPath>,
+    pub has_open_required_asks: Option<OpenRequiredAsksHook>,
+    pub on_turn_ended: Option<TurnEndedHook>,
+    pub on_suspended: Option<SuspendedHook>,
 }
 
 enum ReaderMsg {
@@ -110,6 +135,9 @@ struct PumpLoopState {
     ready: bool,
     turn_active: bool,
     stop_requested: bool,
+    suspend_deadline: Option<Instant>,
+    suspend_now: bool,
+    turn_just_ended: bool,
     stalled: bool,
     exit_observed_at: Option<Instant>,
 }
@@ -123,6 +151,9 @@ impl PumpLoopState {
             ready: false,
             turn_active: false,
             stop_requested: false,
+            suspend_deadline: None,
+            suspend_now: false,
+            turn_just_ended: false,
             stalled: false,
             exit_observed_at: None,
         }
@@ -163,27 +194,115 @@ pub(crate) fn run_pump(
             break;
         }
         drive_deadlines(&mut stdin, &ctx, &mut loop_state, &mut session);
-
-        if loop_state.turn_active && check_and_handle_stall(&ctx, Instant::now()) {
-            loop_state.stalled = true;
-            break;
-        }
-        if loop_state.stop_requested {
-            break;
-        }
-        if should_finish_after_exit(&mut child, &mut loop_state) {
+        if should_exit_loop(&mut child, &ctx, &mut loop_state) {
             break;
         }
     }
 
+    // Drop the command receiver and mark state Stopping BEFORE child teardown so concurrent
+    // callers (`reserve_start_or_send`) can never push turns into a dead pump (`High #3`).
+    drop(commands);
+    {
+        let mut guard = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+        if !matches!(
+            guard.state,
+            SessionState::StallLocked | SessionState::RecoveryRequired
+        ) {
+            guard.state = SessionState::Stopping;
+        }
+    }
+
+    finish_pump(
+        child,
+        stdin,
+        &mut session,
+        &ctx,
+        &loop_state,
+        out_reader,
+        err_reader,
+    );
+}
+
+fn should_exit_loop(
+    child: &mut org_supervise::OwnedChild,
+    ctx: &PumpContext,
+    loop_state: &mut PumpLoopState,
+) -> bool {
+    let has_open_asks = ctx
+        .has_open_required_asks
+        .as_ref()
+        .is_some_and(|check| check(&ctx.employee_id));
+    if !has_open_asks {
+        // Ask was answered or withdrawn; disarm immediately so a later ask never inherits a
+        // stale deadline (ADR-0020 d10).
+        loop_state.suspend_deadline = None;
+    } else if loop_state
+        .suspend_deadline
+        .is_some_and(|deadline| Instant::now() >= deadline)
+    {
+        loop_state.suspend_now = true;
+    }
+    if loop_state.turn_active && check_and_handle_stall(ctx, Instant::now()) {
+        loop_state.stalled = true;
+        return true;
+    }
+    if loop_state.turn_just_ended {
+        loop_state.turn_just_ended = false;
+        if has_open_asks {
+            loop_state.suspend_now = true;
+        } else if !loop_state.stop_requested && !should_finish_after_exit(child, loop_state) {
+            if let Some(hook) = &ctx.on_turn_ended {
+                hook(&ctx.employee_id);
+            }
+        }
+    }
+    loop_state.suspend_now
+        || loop_state.stop_requested
+        || should_finish_after_exit(child, loop_state)
+}
+
+fn finish_pump(
+    child: org_supervise::OwnedChild,
+    stdin: org_supervise::ChildStdin,
+    session: &mut Box<dyn org_agent_runtime::Session>,
+    ctx: &PumpContext,
+    loop_state: &PumpLoopState,
+    out_reader: JoinHandle<()>,
+    err_reader: JoinHandle<()>,
+) {
+    let (reaped_bg, session_id_snap, rsid_snap) = if loop_state.suspend_now {
+        let guard = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+        (
+            guard.backgrounds.running_labels(),
+            guard.session_id.clone(),
+            guard.runtime_session_id.clone(),
+        )
+    } else {
+        (Vec::new(), None, None)
+    };
     let mode = if loop_state.stalled {
         StopMode::Fast
     } else {
         StopMode::Graceful
     };
-    finalize_child(child, stdin, &mut session, &ctx, mode);
+    finalize_child(child, stdin, session, ctx, mode, false);
     let _ = out_reader.join();
     let _ = err_reader.join();
+    if loop_state.suspend_now {
+        let persisted_suspended = ctx
+            .on_suspended
+            .as_ref()
+            .is_some_and(|hook| hook(&ctx.employee_id, reaped_bg, session_id_snap, rsid_snap));
+        if persisted_suspended {
+            let mut guard = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+            if !matches!(
+                guard.state,
+                SessionState::StallLocked | SessionState::RecoveryRequired
+            ) {
+                guard.state = SessionState::Suspended;
+            }
+        }
+    }
 }
 
 fn should_finish_after_exit(
@@ -221,6 +340,12 @@ fn drain_commands(
                 if let Ok(outs) = session.control(ctrl, Instant::now()) {
                     apply_outputs(outs, stdin, ctx, loop_state, session);
                 }
+            }
+            PumpCommand::ArmSuspend { deadline } => {
+                loop_state.suspend_deadline = Some(match loop_state.suspend_deadline {
+                    Some(existing) => existing.min(deadline),
+                    None => deadline,
+                });
             }
             PumpCommand::Stop { reason } => {
                 loop_state.stop_requested = true;
@@ -485,6 +610,7 @@ fn handle_turn_ended(
     errors: &[String],
 ) {
     loop_state.turn_active = false;
+    loop_state.turn_just_ended = true;
     state.watchdog.record_turn_completed(Instant::now());
     if !errors.is_empty() {
         state.last_error = Some(errors.join("; "));
@@ -620,6 +746,7 @@ pub(crate) fn finalize_child(
     session: &mut Box<dyn org_agent_runtime::Session>,
     ctx: &PumpContext,
     mode: StopMode,
+    suspended: bool,
 ) {
     let accepted = ctx
         .bindings
@@ -647,7 +774,9 @@ pub(crate) fn finalize_child(
     let _ = session.on_exit(exit_info, Instant::now());
     let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
     let _ = state.backgrounds.reap_all(rfc3339_now());
-    if !matches!(
+    if suspended {
+        state.state = SessionState::Suspended;
+    } else if !matches!(
         state.state,
         SessionState::StallLocked | SessionState::RecoveryRequired
     ) {

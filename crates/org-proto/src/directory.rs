@@ -33,21 +33,41 @@ pub const MAX_STATUS_TTL_MS: u64 = 24 * 3_600_000;
 pub enum MemberPresence {
     /// A person with the app open. People only.
     Online,
+    /// An active agent ready to take work (ADR-0028 decision 5 / AVAIL-4).
+    Available,
     /// Running a turn.
     Busy,
     /// Between turns, or holding an `agent-os` wait.
     Idle,
     /// Waiting for the owner: an approval or input.
     NeedsYou,
+    /// Suspended awaiting an answer to a required ask (ADR-0020 decision 11 / ASK-4).
+    WaitingForAnswer,
+    /// A paused agent that cannot take turns until resumed (ADR-0028 decision 5 / AVAIL-4).
+    Paused,
+    /// An agent unable to run (e.g. stall-locked or requiring manual recovery).
+    UnableToRun,
     /// A person has taken over the session.
     WithYou,
-    /// An on-call or scheduled agent with no live run (derived, not reported).
+    /// Legacy on-call/scheduled asleep state (superseded by `Available` under ADR-0028).
     Asleep,
-    /// No live session (an agent), or the app isn't open (a person).
+    /// No live session (legacy), or the app isn't open (a person).
     Offline,
     /// A value this build doesn't know (sent by a newer peer).
     #[serde(other)]
     Unknown,
+}
+
+/// Presence summary for a message/ask recipient returned on `chat.send` and `chat.ask`
+/// (`ADR-0028` decision 6 / `AVAIL-5`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecipientPresence {
+    pub member_id: String,
+    pub presence: MemberPresence,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub away_since: Option<String>,
 }
 
 /// A team on a directory card.
