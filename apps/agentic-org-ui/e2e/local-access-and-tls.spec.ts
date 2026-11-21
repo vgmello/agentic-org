@@ -36,6 +36,7 @@ async function newAuthCase(
 		return res.json() as Promise<{
 			authEnabled: boolean;
 			listenScheme: string;
+			hsts: string;
 			creates: { operation_id: string }[];
 			requestHeaders: Record<string, string>[];
 			tlsRequests: Record<string, unknown>[];
@@ -197,12 +198,13 @@ test('TASK-62 AC #3: admin can enable HTTPS (self-signed & supplied PEM) and liv
 		'certificate or private key is invalid'
 	);
 
-	// Simulate instance restarted on HTTPS -> live certificate rotation succeeds without restart_required and clears key textarea.
+	// Simulate instance restarted on HTTPS with HSTS=on -> live certificate rotation leaves HSTS untouched (omitted in payload), keeps restart_required=false, and clears key textarea.
 	await page.context().request.post('/__p6-auth/control', {
 		data: { id, action: 'listenScheme', value: 'https' }
 	});
 	await visit(page, '/security');
 	await expect(page.getByText('HTTPS', { exact: true }).first()).toBeVisible();
+	await expect(page.getByLabel('Strict-Transport-Security (HSTS)')).toHaveValue('');
 	await page.getByLabel('Supplied PEM certificate and private key').check();
 	await page
 		.getByLabel('Certificate PEM')
@@ -217,6 +219,46 @@ test('TASK-62 AC #3: admin can enable HTTPS (self-signed & supplied PEM) and liv
 	await expect(page.getByTestId('https-fingerprint')).toContainText('sha256:supplied');
 	await expect(page.getByTestId('https-restart-note')).toHaveCount(0);
 	await expect(page.getByLabel('Private key PEM')).toHaveValue('');
+	const afterRotate = (await (
+		await page.context().request.get(`/__p6-auth/control?id=${id}`)
+	).json()) as { hsts: string; tlsRequests: Record<string, unknown>[] };
+	expect(afterRotate.hsts).toBe('on');
+	expect('hsts' in afterRotate.tlsRequests.at(-1)!).toBe(false);
+
+	// Explicitly changing HSTS on HTTPS sends hsts and reports restart_required=true.
+	await page.getByLabel('Self-signed certificate (generated on the HQ machine)').check();
+	await page.getByLabel('Strict-Transport-Security (HSTS)').selectOption('clear');
+	await page.getByRole('button', { name: 'Replace TLS certificate' }).click();
+	await expect(page.getByTestId('https-result')).toContainText(
+		'HTTPS configured. Restart HQ to switch the browser listener.'
+	);
+});
+
+test('TASK-76 race: external auth enablement returns 401/409 and exits dead authless UI cleanly to /sign-in without phantom signed-in state', async ({
+	page
+}) => {
+	const server = await newAuthCase(page, { authEnabled: false, listenScheme: 'http_loopback' });
+	await visit(page, '/security');
+	await expect(page.getByText('Disabled (local HTTP mode)')).toBeVisible();
+
+	// Another browser/CLI enables auth before this tab submits -> real backend returns 401 (no cookie+proof pair).
+	await server.control('authEnabled', true);
+	await page.getByLabel('Username').fill('alice');
+	await page.getByLabel('Password (at least 12 characters)').fill('correct horse battery');
+	await page.getByLabel('Confirm password').fill('correct horse battery');
+	await page.getByRole('button', { name: 'Enable authentication' }).click();
+	await expect(page).toHaveURL(/\/sign-in\?next=%2Fsecurity&note=ended$/);
+
+	// Same race returning 409 without a stored pair also exits cleanly to /sign-in.
+	const server409 = await newAuthCase(page, { authEnabled: false, listenScheme: 'http_loopback' });
+	await visit(page, '/security');
+	await expect(page.getByText('Disabled (local HTTP mode)')).toBeVisible();
+	await server409.control('authEnableError', { status: 409, code: 'conflict' });
+	await page.getByLabel('Username').fill('alice');
+	await page.getByLabel('Password (at least 12 characters)').fill('correct horse battery');
+	await page.getByLabel('Confirm password').fill('correct horse battery');
+	await page.getByRole('button', { name: 'Enable authentication' }).click();
+	await expect(page).toHaveURL(/\/sign-in\?next=%2Fsecurity&note=ended$/);
 });
 
 test('SIGN-40 / FC-173: /cli-approve clears fragment secret, supports inline sign-in, approve, decline, and expired links without exposing token', async ({

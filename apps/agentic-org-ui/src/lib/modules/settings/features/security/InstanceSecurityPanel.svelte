@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import ShieldCheck from '@lucide/svelte/icons/shield-check';
 	import Lock from '@lucide/svelte/icons/lock';
 	import { Button } from '$lib/components/ui/button';
@@ -41,7 +41,7 @@
 	let tlsMode = $state<TlsMode>('self_signed');
 	let tlsCert = $state('');
 	let tlsKey = $state('');
-	let tlsHsts = $state<HstsMode>('off');
+	let tlsHsts = $state<'' | HstsMode>('');
 	let tlsFieldErrors = $state<{ cert?: string; key?: string }>({});
 	let tlsError = $state<string>();
 	let tlsResult = $state<TlsEnableResult>();
@@ -66,6 +66,18 @@
 				.catch(() => undefined);
 		}
 	});
+
+	onDestroy(() => {
+		authPassword = '';
+		authAgain = '';
+		tlsKey = '';
+	});
+
+	function selectTlsMode(mode: TlsMode) {
+		tlsMode = mode;
+		tlsFieldErrors = {};
+		if (mode === 'self_signed') tlsKey = '';
+	}
 
 	async function handleEnableAuthError(error: unknown) {
 		if (isAuthAlreadyEnabled(error)) {
@@ -127,10 +139,11 @@
 		}
 		tlsBusy = true;
 		try {
+			const hstsField = tlsHsts ? { hsts: tlsHsts } : {};
 			const payload =
 				tlsMode === 'self_signed'
-					? { mode: 'self_signed' as const, hsts: tlsHsts }
-					: { mode: 'supplied' as const, cert: tlsCert, key: tlsKey, hsts: tlsHsts };
+					? { mode: 'self_signed' as const, ...hstsField }
+					: { mode: 'supplied' as const, cert: tlsCert, key: tlsKey, ...hstsField };
 			const result = await appSession.controller().enableTls(payload);
 			tlsResult = result;
 			tlsCert = '';
@@ -345,7 +358,8 @@
 						type="radio"
 						name="tls-mode"
 						value="self_signed"
-						bind:group={tlsMode}
+						checked={tlsMode === 'self_signed'}
+						onchange={() => selectTlsMode('self_signed')}
 						class="size-4 accent-primary"
 					/>
 					<span>Self-signed certificate (generated on the HQ machine)</span>
@@ -355,7 +369,8 @@
 						type="radio"
 						name="tls-mode"
 						value="supplied"
-						bind:group={tlsMode}
+						checked={tlsMode === 'supplied'}
+						onchange={() => selectTlsMode('supplied')}
 						class="size-4 accent-primary"
 					/>
 					<span>Supplied PEM certificate and private key</span>
@@ -370,6 +385,8 @@
 						rows={5}
 						bind:value={tlsCert}
 						disabled={tlsDisabled}
+						autocomplete="off"
+						spellcheck={false}
 						placeholder="-----BEGIN CERTIFICATE-----"
 						aria-invalid={tlsFieldErrors.cert ? 'true' : undefined}
 						aria-describedby={tlsFieldErrors.cert ? 'tls-cert-error' : undefined}
@@ -389,6 +406,8 @@
 						rows={5}
 						bind:value={tlsKey}
 						disabled={tlsDisabled}
+						autocomplete="off"
+						spellcheck={false}
 						placeholder="-----BEGIN PRIVATE KEY-----"
 						aria-invalid={tlsFieldErrors.key ? 'true' : undefined}
 						aria-describedby={tlsFieldErrors.key ? 'tls-key-error' : undefined}
@@ -410,6 +429,7 @@
 					disabled={tlsDisabled}
 					class="block w-full rounded-md bg-surface-sunken px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus:outline-2 focus:-outline-offset-2 focus:outline-ring disabled:opacity-60"
 				>
+					<option value="">{isHttps ? 'Keep current setting' : 'Default (off)'}</option>
 					{#each ['off', 'on', 'clear'] as const as option (option)}
 						<option value={option}>{hstsLabel(option)}</option>
 					{/each}

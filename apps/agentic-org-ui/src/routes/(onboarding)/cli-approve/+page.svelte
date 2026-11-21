@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { onMount, tick } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { describeCliApprovalFailure } from '$lib/platform/auth/cli-approve';
@@ -19,7 +19,9 @@
 	// placed in URL query params. `takeLinkSecret` clears `location.hash` via `history.replaceState`.
 	let secret: string | undefined;
 	let linkPresent = $state(true);
-	let phase = $state<'loading' | 'ready' | 'approved' | 'declined' | 'expired'>('loading');
+	let phase = $state<'loading' | 'ready' | 'approved' | 'declined' | 'expired' | 'unknown'>(
+		'loading'
+	);
 	let errorMessage = $state<string>();
 	let deciding = $state<'approve' | 'decline'>();
 
@@ -61,6 +63,11 @@
 
 	onMount(() => {
 		void loadTokenFromLocation();
+	});
+
+	onDestroy(() => {
+		secret = undefined;
+		password = '';
 	});
 
 	function onHashChange() {
@@ -107,7 +114,9 @@
 		try {
 			const decision = await appSession.controller().decideCliApproval({ link: secret, approve });
 			secret = undefined;
-			phase = decision.status === 'approved' ? 'approved' : 'declined';
+			if (decision.status === 'approved') phase = 'approved';
+			else if (decision.status === 'declined') phase = 'declined';
+			else phase = 'unknown';
 		} catch (error) {
 			const described = describeCliApprovalFailure(error);
 			if (described.kind === 'link_used') {
@@ -154,6 +163,16 @@
 	<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">Terminal sign-in declined</h1>
 	<p class="mt-3 text-sm/6 text-fg-secondary" role="status">
 		Nothing was signed in. You can close this tab.
+	</p>
+	<a
+		href={resolve('/welcome')}
+		class="mt-6 inline-block text-sm/6 font-semibold text-link hover:text-brand-text"
+		>Open organizations</a
+	>
+{:else if phase === 'unknown'}
+	<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">Approval status unclear</h1>
+	<p class="mt-3 text-sm/6 text-fg-secondary" role="alert">
+		HQ returned an unrecognized response. Check your terminal before trying again.
 	</p>
 	<a
 		href={resolve('/welcome')}

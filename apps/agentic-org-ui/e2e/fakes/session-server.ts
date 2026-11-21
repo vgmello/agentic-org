@@ -53,6 +53,7 @@ function newCase() {
 		view: sessionView,
 		authEnabled: true,
 		listenScheme: 'http_loopback' as 'http_loopback' | 'http_published' | 'https',
+		hsts: 'off' as 'off' | 'on' | 'clear',
 		authEnableError: undefined as
 			{ status: number; code: string; field?: string; rule?: string } | undefined,
 		tlsScript: [] as ('ok' | 'invalid' | 'conflict' | 'forbidden')[],
@@ -96,7 +97,7 @@ async function body(req: IncomingMessage) {
 	let size = 0;
 	for await (const chunk of req) {
 		size += chunk.length;
-		if (size > 64 * 1024) throw new Error('Test request too large');
+		if (size > 256 * 1024) throw new Error('Test request too large');
 		chunks.push(Buffer.from(chunk));
 	}
 	return JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -212,6 +213,8 @@ export function sessionTestMiddleware() {
 						['http_loopback', 'http_published', 'https'].includes(value.value)
 					)
 						controlled.listenScheme = value.value;
+					else if (value.action === 'hsts' && ['off', 'on', 'clear'].includes(value.value))
+						controlled.hsts = value.value;
 					else if (value.action === 'authEnableError')
 						controlled.authEnableError = value.value ?? undefined;
 					else if (value.action === 'tlsScript' && Array.isArray(value.value))
@@ -232,6 +235,7 @@ export function sessionTestMiddleware() {
 					lookups: controlled.lookups,
 					authEnabled: controlled.authEnabled,
 					listenScheme: controlled.listenScheme,
+					hsts: controlled.hsts,
 					tlsRequests: controlled.tlsRequests,
 					cliApprovalDecisions: controlled.cliApprovalDecisions
 				});
@@ -290,14 +294,24 @@ export function sessionTestMiddleware() {
 			}
 			if (url.pathname === '/api/v1/instance/auth/enable' && req.method === 'POST') {
 				const sent = await body(req);
-				if (state.authEnabled) {
-					json({ error: { code: 'conflict', message: 'Authentication is already enabled.' } }, 409);
-					return;
-				}
 				if (state.authEnableError) {
 					const err = state.authEnableError;
 					state.authEnableError = undefined;
 					json({ error: { message: 'Refused.', ...err } }, err.status);
+					return;
+				}
+				if (state.authEnabled) {
+					const presented = presentedPair(req);
+					const authenticated =
+						presented !== undefined &&
+						state.pair !== undefined &&
+						presented.cookie === state.pair.cookie &&
+						presented.proof === state.pair.proof;
+					if (!authenticated) {
+						json({ error: { code: 'not_authorized', message: 'Sign in to continue.' } }, 401);
+						return;
+					}
+					json({ error: { code: 'conflict', message: 'Authentication is already enabled.' } }, 409);
 					return;
 				}
 				if (typeof sent?.login !== 'string' || typeof sent?.password !== 'string') {
@@ -414,7 +428,11 @@ export function sessionTestMiddleware() {
 					);
 					return;
 				}
-				const restart_required = state.listenScheme !== 'https';
+				const hstsChanged = sent.hsts !== undefined && sent.hsts !== state.hsts;
+				if (sent.hsts === 'off' || sent.hsts === 'on' || sent.hsts === 'clear') {
+					state.hsts = sent.hsts;
+				}
+				const restart_required = state.listenScheme !== 'https' || hstsChanged;
 				const source = sent.mode === 'supplied' ? 'supplied' : 'made';
 				respond({
 					scheme: 'https',

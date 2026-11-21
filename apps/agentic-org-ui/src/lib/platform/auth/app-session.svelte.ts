@@ -10,7 +10,7 @@ type Controller = ReturnType<typeof createSessionController>;
 
 const LIMITS = {
 	timeoutMs: 15_000,
-	maxRequestBytes: 64 * 1024,
+	maxRequestBytes: 256 * 1024,
 	maxResponseBytes: 1024 * 1024
 } as const;
 

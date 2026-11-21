@@ -340,7 +340,12 @@ export function createSessionController({
 			record = stored;
 			const retried = await http({ ...request, proof: stored.proof });
 			current();
-			if (retried.status !== 401) return retried;
+			if (retried.status !== 401) {
+				void synchronize().catch(() => {
+					/* Keep retried response if background sync transiently fails. */
+				});
+				return retried;
+			}
 		}
 		ended('ended');
 		return response;
@@ -431,6 +436,18 @@ export function createSessionController({
 		}
 		return recoverUnauthorizedCall(expected, token, caught, call);
 	}
+	async function recoverAuthEnabledRace() {
+		publishAccess({ ...accessState, auth_enabled: true });
+		if (record) return;
+		const stored = await store.read();
+		if (stored) {
+			await synchronize().catch(() => {
+				/* Keep recovered access flag if validation transiently fails. */
+			});
+			return;
+		}
+		ended('ended');
+	}
 	return Object.freeze({
 		boot,
 		access: () => accessState,
@@ -452,8 +469,11 @@ export function createSessionController({
 			try {
 				await establish((sig) => enable(credentials, sig), signal);
 			} catch (error) {
-				if (error instanceof SessionRequestError && error.status === 409) {
-					publishAccess({ ...accessState, auth_enabled: true });
+				if (
+					error instanceof SessionRequestError &&
+					(error.status === 409 || error.status === 401)
+				) {
+					await recoverAuthEnabledRace();
 				}
 				throw error;
 			}

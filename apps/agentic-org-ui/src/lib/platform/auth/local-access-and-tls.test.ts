@@ -327,6 +327,134 @@ describe('session controller authless boot, opt-in auth/TLS, and CLI approval', 
 		});
 		expect(rotated.restart_required).toBe(false);
 		expect(env.controller.access().listen_scheme).toBe('https');
+		const tlsBody = env.calls.find((c) => c.url === '/api/v1/instance/tls')?.body as Record<
+			string,
+			unknown
+		>;
+		expect('hsts' in tlsBody).toBe(false);
+	});
+
+	it.each([401, 409] as const)(
+		'ends dead authless state on enableAuth %i when no stored pair exists',
+		async (status) => {
+			const env = makeController((path) => {
+				if (path === '/api/v1/version')
+					return { status: 200, body: { result: { api_version: 1, contract_revision: 2 } } };
+				if (path === '/api/v1/access')
+					return {
+						status: 200,
+						body: { result: { auth_enabled: false, listen_scheme: 'http_loopback' } }
+					};
+				if (path === '/api/v1/session') return { status: 200, body: { result: view } };
+				if (path === '/api/v1/instance/auth/enable')
+					return {
+						status,
+						body: {
+							error: {
+								code: status === 401 ? 'not_authorized' : 'conflict',
+								message: 'Already enabled.'
+							}
+						}
+					};
+				return { status: 404, body: { error: { code: 'not_found', message: 'Not found.' } } };
+			});
+
+			await env.controller.boot();
+			expect(env.states.at(-1)).toEqual({ kind: 'signed-in', session: view, authless: true });
+
+			await expect(
+				env.controller.enableAuth({ login: 'alice', password: 'correct horse battery' })
+			).rejects.toMatchObject({ status });
+			expect(env.controller.access().auth_enabled).toBe(true);
+			expect(env.states.at(-1)).toEqual({ kind: 'signed-out', reason: 'ended' });
+		}
+	);
+
+	it.each([401, 409] as const)(
+		'adopts another tab session on enableAuth %i when a stored pair exists',
+		async (status) => {
+			const migratedView = { ...view, account: { id: 'owner-id', login: 'alice' } };
+			const env = makeController((path, init) => {
+				if (path === '/api/v1/version')
+					return { status: 200, body: { result: { api_version: 1, contract_revision: 2 } } };
+				if (path === '/api/v1/access')
+					return {
+						status: 200,
+						body: { result: { auth_enabled: false, listen_scheme: 'http_loopback' } }
+					};
+				if (path === '/api/v1/session') {
+					const headerProof = new Headers(init?.headers).get('X-Org-Session-Proof');
+					return { status: 200, body: { result: headerProof === proof ? migratedView : view } };
+				}
+				if (path === '/api/v1/instance/auth/enable')
+					return {
+						status,
+						body: {
+							error: {
+								code: status === 401 ? 'not_authorized' : 'conflict',
+								message: 'Already enabled.'
+							}
+						}
+					};
+				return { status: 404, body: { error: { code: 'not_found', message: 'Not found.' } } };
+			});
+
+			await env.controller.boot();
+			// Another tab enabled auth and wrote the new pair to shared store.
+			await env.store.write({
+				instance_id: 'hq',
+				account_id: 'owner-id',
+				login: 'alice',
+				proof,
+				rotated_at_ms: 600
+			});
+
+			await expect(
+				env.controller.enableAuth({ login: 'bob', password: 'correct horse battery' })
+			).rejects.toMatchObject({ status });
+			expect(env.controller.access().auth_enabled).toBe(true);
+			expect(env.states.at(-1)).toEqual({ kind: 'signed-in', session: migratedView });
+		}
+	);
+
+	it('synchronizes away authless state when sendAuthless retries with a stored pair after 401', async () => {
+		const migratedView = { ...view, account: { id: 'owner-id', login: 'alice' } };
+		let authEnabled = false;
+		const env = makeController((path, init) => {
+			const headerProof = new Headers(init?.headers).get('X-Org-Session-Proof');
+			if (path === '/api/v1/version')
+				return { status: 200, body: { result: { api_version: 1, contract_revision: 2 } } };
+			if (path === '/api/v1/access')
+				return {
+					status: 200,
+					body: { result: { auth_enabled: authEnabled, listen_scheme: 'http_loopback' } }
+				};
+			if (path === '/api/v1/session')
+				return { status: 200, body: { result: headerProof === proof ? migratedView : view } };
+			if (path === '/api/v1/organizations') {
+				if (authEnabled && headerProof !== proof)
+					return { status: 401, body: { error: { code: 'not_authorized', message: 'Sign in.' } } };
+				return { status: 200, body: { result: { organizations: [], creating: [] } } };
+			}
+			return { status: 404, body: { error: { code: 'not_found', message: 'Not found.' } } };
+		});
+
+		await env.controller.boot();
+		authEnabled = true;
+		await env.store.write({
+			instance_id: 'hq',
+			account_id: 'owner-id',
+			login: 'alice',
+			proof,
+			rotated_at_ms: 600
+		});
+
+		const reply = await env.controller.read('/api/v1/organizations');
+		expect(reply.status).toBe(200);
+		await vi.waitFor(() => {
+			expect(env.states.at(-1)).toEqual({ kind: 'signed-in', session: migratedView });
+		});
+		expect(env.controller.access().auth_enabled).toBe(true);
 	});
 });
 
