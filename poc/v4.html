@@ -1764,6 +1764,49 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 .hb-card-lead .ic { opacity: .5; transition: transform .16s ease, opacity .16s ease; }
 .hb-card:hover .hb-card-lead .ic { opacity: 1; transform: translateX(2px); color: #7DD3FC; }
 
+/* Zone 4: Where Task Time Goes (Segmented Bottleneck Bar) */
+.hb-time {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 18px 20px 16px; border-radius: 16px;
+  background: var(--hb-surface);
+  backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
+  box-shadow: var(--hb-shadow);
+}
+.hb-time-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.hb-time-title {
+  font-size: 0.72rem; line-height: 1rem; font-weight: 650;
+  letter-spacing: .12em; text-transform: uppercase; color: #DCEBFA;
+}
+.hb-time-unit { font-size: 0.75rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--hb-dim); }
+.hb-time-bar {
+  display: flex; align-items: stretch; gap: 3px; height: 10px;
+  border-radius: 999px; overflow: hidden;
+  background: rgba(8, 15, 28, .55);
+}
+.hb-tseg {
+  display: block; height: 100%; border-radius: 999px;
+  transition: opacity .16s ease, filter .16s ease;
+}
+.hb-time-bar:hover .hb-tseg { opacity: .55; }
+.hb-time-bar .hb-tseg:hover { opacity: 1; filter: brightness(1.12); }
+.hb-tseg.agents { background: linear-gradient(90deg, #93C5FD 0%, #BAE6FD 100%); }
+.hb-tseg.ci { background: linear-gradient(90deg, #67E8F9 0%, #A5F3FC 100%); }
+.hb-tseg.humans { background: linear-gradient(90deg, #EAB308 0%, #F5C76B 100%); }
+.hb-tseg.queued { background: linear-gradient(90deg, #274066 0%, #375580 100%); }
+.hb-time-legend { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 22px; }
+.hb-tleg {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  font-size: 0.8125rem; color: var(--hb-muted);
+  transition: color .14s ease;
+}
+a.hb-tleg:hover { color: var(--hb-ink); }
+.hb-tleg strong { font-size: 0.9375rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.hb-tleg.agents strong { color: #BAE6FD; }
+.hb-tleg.ci strong { color: #67E8F9; }
+.hb-tleg.humans strong { color: #F5C76B; }
+.hb-tleg.queued strong { color: #94A3B8; }
+.hb-time-note { font-size: 0.8125rem; line-height: 1.45; color: var(--hb-muted); }
+
 @media (max-width: 1120px) {
   .hb-metrics, .hb-kpi-ribbon { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hb-kpi-cell { border-bottom: 1px solid rgba(186, 222, 255, .08); }
@@ -2912,6 +2955,35 @@ function pageHome() {
         ? `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`
         : `<div class="h4-empty-box"><div class="hb-cleared" style="padding:8px 0"><span class="hb-cleared-ring is-muted">${ic("folder", "ic20")}</span><h2>No projects yet</h2><p>Projects group the work toward one goal.</p><div class="hb-cleared-acts"><button class="btn outline sm" type="button" data-act="proto" data-v="Create project">${ic("plus", "ic16")}Create project</button></div></div></div>`}
     </section>
+
+    ${st === "loading" ? skel(1, "Analyzing where task time goes…") : st === "error" ? "" : st === "empty" ? "" : (() => {
+      const humanPct = Math.max(8, Math.min(28, Math.round(open.length * 1.35)));
+      const agentPct = 26, ciPct = 5, queuedPct = Math.max(10, 100 - agentPct - ciPct - humanPct);
+      const constraint = queuedPct >= 40
+        ? "Agents are the constraint right now. More agents or smaller tasks would shorten the release."
+        : humanPct >= 25
+          ? "Human review is the main wait right now. Clearing the Spotlight queue will unblock downstream runs."
+          : "Work is flowing smoothly across agents, CI checks, and human decisions.";
+      return `<section class="hb-time" aria-labelledby="hb-time-h">
+        <div class="hb-time-hd">
+          <h2 class="hb-time-title" id="hb-time-h">Where task time goes</h2>
+          <span class="hb-time-unit">hours across all open tasks</span>
+        </div>
+        <div class="hb-time-bar" role="img" aria-label="Task time breakdown: ${agentPct}% agents working, ${ciPct}% verifying in CI, ${humanPct}% waiting on humans, ${queuedPct}% queued for an agent">
+          <a class="hb-tseg agents" href="#/teams/members" style="width:${agentPct}%" title="Agents working: ${agentPct}% (~14.2h)"></a>
+          <a class="hb-tseg ci" href="#/activity" style="width:${ciPct}%" title="Verifying in CI: ${ciPct}% (~2.7h)"></a>
+          <a class="hb-tseg humans" href="#/inbox" style="width:${humanPct}%" title="Waiting on humans: ${humanPct}% (~10.4h)"></a>
+          <a class="hb-tseg queued" href="#/work" style="width:${queuedPct}%" title="Queued for an agent: ${queuedPct}% (~27.3h)"></a>
+        </div>
+        <div class="hb-time-legend">
+          <a class="hb-tleg agents" href="#/teams/members"><strong>${agentPct}%</strong><span>Agents working</span></a>
+          <a class="hb-tleg ci" href="#/activity"><strong>${ciPct}%</strong><span>Verifying in CI</span></a>
+          <a class="hb-tleg humans" href="#/inbox"><strong>${humanPct}%</strong><span>Waiting on humans</span></a>
+          <a class="hb-tleg queued" href="#/work"><strong>${queuedPct}%</strong><span>Queued for an agent</span></a>
+        </div>
+        <p class="hb-time-note">${esc(constraint)}</p>
+      </section>`;
+    })()}
   </div>`;
 }
 
