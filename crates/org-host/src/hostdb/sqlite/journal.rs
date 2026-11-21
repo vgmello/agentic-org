@@ -1,44 +1,9 @@
 //! Registry-only journal transactions. Callers do all non-SQLite work between lookup/write.
 use super::clock::{advance_clock, now};
 use super::{Error, HostDb};
-use org_host_control::{journal::Journaled, HostOpResult};
+pub(super) use crate::hostdb::journal::{id_time, DAY};
+pub(crate) use crate::hostdb::journal::{Attempt, Effect, Lookup, Stored, Verifier, Write};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
-
-pub(super) const DAY: i64 = 86_400_000;
-pub(crate) type Stored = HostOpResult<serde_json::Value>;
-
-pub(crate) struct Attempt<'a> {
-    pub(crate) id: &'a str,
-    pub(crate) kind: &'static str,
-    pub(crate) fingerprint: [u8; 32],
-    pub(crate) account: &'a str,
-}
-impl<'a> Attempt<'a> {
-    pub(crate) fn new<J: Journaled>(op: &'a J, account: &'a str) -> Result<Self, Error> {
-        Ok(Self {
-            id: op.operation_id(),
-            kind: J::METHOD,
-            fingerprint: org_host_control::journal::fingerprint(op).map_err(|_| Error::Unsafe)?,
-            account,
-        })
-    }
-}
-
-pub(crate) use crate::accounts::verifier::Verifier;
-pub(crate) enum Lookup {
-    Vacant,
-    Replay(Stored),
-    NeedsVerification { verifier: Verifier, stored: Stored },
-}
-pub(crate) struct Effect {
-    pub(crate) stored: Stored,
-    /// Created account, not the acting account. Required only for a successful account.create.
-    pub(crate) verifier: Option<(String, Verifier)>,
-}
-pub(crate) enum Write {
-    Committed(Stored),
-    Existing(Lookup),
-}
 
 impl HostDb {
     pub(crate) fn lookup(&self, op: &Attempt<'_>, wall_ms: i64) -> Result<Lookup, Error> {
@@ -152,11 +117,6 @@ pub(super) fn maintain(tx: &Transaction<'_>, now: i64) -> Result<usize, Error> {
          ORDER BY j.expires_at_ms,j.operation_id LIMIT 256)",
         [now],
     )?)
-}
-pub(super) fn id_time(id: &str) -> Result<i64, Error> {
-    org_proto::ulid_time_ms(id)
-        .and_then(|n| i64::try_from(n).ok())
-        .ok_or(Error::InvalidId)
 }
 /// The stored row of `op`, as `(state, result)`, once it is known to be `op`'s: unexpired, of
 /// the same kind, fingerprint and account, and not reserved. `None`: no row, and the

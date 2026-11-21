@@ -427,7 +427,6 @@ fn another_adapter_format_is_another_schema_and_the_projection_is_made_anew() {
     assert_eq!(sources(&engine), 0);
 }
 
-#[cfg(unix)]
 #[test]
 fn a_projection_that_cannot_be_opened_is_an_error_and_is_not_deleted() {
     use std::os::unix::fs::PermissionsExt;

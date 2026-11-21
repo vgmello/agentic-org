@@ -1,8 +1,10 @@
 use super::*;
-use crate::hostdb::{
+use crate::hostdb::sqlite::{
+    connect,
     tests::{admin_fixture, fixture},
-    *,
+    DB,
 };
+use crate::hostdb::*;
 
 thread_local! {
     static ROW_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
@@ -247,7 +249,7 @@ fn read_errors_propagate_without_sql_or_secret_payloads() {
             db.account_authority(&first().account_id).err().unwrap(),
         ];
         for error in errors {
-            assert!(matches!(error, Error::Sql(_)));
+            assert!(matches!(error, Error::Store(_)));
             let shown = format!("{error:?}");
             assert!(!shown.contains(admin_fixture::PHC));
             assert!(!shown.contains(table));

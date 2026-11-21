@@ -8,7 +8,7 @@
 //! migrated (nothing has shipped).
 use crate::{
     host_secrets::{HostSecrets, Name, Value},
-    hostdb::HostDb,
+    hostdb::HostStore,
     sync::lock,
 };
 use org_office_launch::writer::{
@@ -86,7 +86,7 @@ pub(crate) struct Binding<'a> {
 }
 pub(crate) struct Writers {
     custody: Arc<dyn HostSecrets>,
-    db: Arc<HostDb>,
+    db: Arc<dyn HostStore>,
     root: Root,
     instance: String,
     active: Mutex<BTreeSet<String>>,
@@ -138,34 +138,25 @@ fn transient(kind: io::ErrorKind) -> bool {
         K::Interrupted | K::WouldBlock | K::TimedOut | K::ResourceBusy | K::OutOfMemory
     )
 }
-/// errSecInteractionNotAllowed: the keychain is locked or user interaction is not allowed
-/// now. The only keychain status that passes on its own; every other one (a missing
-/// entitlement, a decode failure, a bad parameter, no or an invalid keychain, keychain
-/// services unavailable) is lasting.
-const KEYCHAIN_INTERACTION_NOT_ALLOWED: i32 = -25308;
-/// A custody store error: a transient I/O failure, a locked keychain or an item in use is
-/// [`Unreadable`]; anything else (corrupt, unsafe, linked, missing, unsupported, any other
-/// keychain status) is a refusal.
+/// A custody store error: a transient I/O failure, a locked credential store
+/// (`InteractionNotAllowed`) or an item in use is [`Unreadable`]; anything else (corrupt,
+/// unsafe, linked, missing, unsupported, any other OS status) is a refusal.
 fn store(error: crate::host_secrets::Error) -> io::Error {
     use crate::host_secrets::Error as E;
     match error {
         E::Io(kind) if transient(kind) => unreadable(),
-        E::Os(KEYCHAIN_INTERACTION_NOT_ALLOWED) | E::InUse => unreadable(),
+        E::InteractionNotAllowed | E::InUse => unreadable(),
         _ => refused(),
     }
 }
-/// A host registry error: a busy or locked database, an OS I/O failure, no memory or a
-/// transient I/O failure is [`Unreadable`]; anything else (a corrupt or tampered registry,
-/// another schema, a binding it does not hold) is a refusal. `SystemIoFailure` is retried
-/// deliberately: it may pass, and the supervisor's give-up rule bounds one that lasts.
+/// A host registry error: a transient storage fault (busy/locked, transient I/O, out of
+/// memory) or a transient filesystem I/O failure is [`Unreadable`]; anything else (a
+/// corrupt or tampered registry, another schema, a binding it does not hold) is a refusal.
 fn registry(error: crate::hostdb::Error) -> io::Error {
     use crate::hostdb::Error as E;
-    use rusqlite::ErrorCode as C;
     match error {
         E::Io(kind) if transient(kind) => unreadable(),
-        E::Sql(C::DatabaseBusy | C::DatabaseLocked | C::SystemIoFailure | C::OutOfMemory) => {
-            unreadable()
-        }
+        E::Store(fault) if fault.is_transient() => unreadable(),
         _ => refused(),
     }
 }
@@ -257,7 +248,7 @@ fn empty_reservation_root(path: &Path) -> io::Result<()> {
 impl Writers {
     pub(crate) fn open(
         custody: Arc<dyn HostSecrets>,
-        db: Arc<HostDb>,
+        db: Arc<dyn HostStore>,
         instance: &str,
         root: &Path,
     ) -> io::Result<Arc<Self>> {
@@ -661,7 +652,7 @@ impl TestCustody {
             instance_id: instance.into(),
             clock_high_ms: 1,
         };
-        let db = Arc::new(HostDb::create(&home, &*custody, &init).unwrap());
+        let db = Arc::new(crate::hostdb::HostDb::create(&home, &*custody, &init).unwrap());
         let account = crate::ids::generate().unwrap();
         let password =
             org_host_control::Password::new("synthetic custody password".into()).unwrap();

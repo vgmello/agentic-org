@@ -340,7 +340,7 @@ fn garbage_main_file_beside_a_live_wal_is_refused_before_sqlite_reads_either() {
     let _ = fs::remove_file(home.path().join("host-registry.db-shm"));
     assert!(matches!(
         HostDb::open(home.path(), &secrets),
-        Err(Error::Sql(rusqlite::ErrorCode::NotADatabase))
+        Err(Error::Store(StoreFault::Corrupt))
     ));
     // Nothing was read into or checkpointed over either file.
     assert_eq!(fs::read(home.path().join(DB)).unwrap(), garbage);
@@ -536,7 +536,7 @@ fn real_process_death_at_every_create_checkpoint_recovers() {
         let result = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "hostdb::tests::real_process_death_at_every_create_checkpoint_recovers",
+                "hostdb::sqlite::tests::real_process_death_at_every_create_checkpoint_recovers",
                 "--nocapture",
             ])
             .env(CHILD, step.to_string())
@@ -996,7 +996,7 @@ fn schema_refusal_is_read_only_even_when_it_is_the_last_wal_connection() {
 fn hot_rollback_journal_refusal_preserves_the_database_and_journal() {
     const CHILD: &str = "SAGE_HOSTDB_HOT_JOURNAL";
     const TEST: &str =
-        "hostdb::tests::hot_rollback_journal_refusal_preserves_the_database_and_journal";
+        "hostdb::sqlite::tests::hot_rollback_journal_refusal_preserves_the_database_and_journal";
     if let Some(path) = std::env::var_os(CHILD) {
         let c = connection_for_test(Path::new(&path), OpenFlags::default()).unwrap();
         let version: i64 = std::env::var("SAGE_HOSTDB_HOT_VERSION")
@@ -1201,7 +1201,7 @@ fn committed_wal_recovers_after_real_process_death() {
     let result = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "hostdb::tests::committed_wal_recovers_after_real_process_death",
+            "hostdb::sqlite::tests::committed_wal_recovers_after_real_process_death",
             "--nocapture",
         ])
         .env(CHILD, &path)
@@ -1259,7 +1259,7 @@ fn non_directory_home_and_fifo_database_are_refused_before_sqlite() {
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "hostdb::tests::non_directory_home_and_fifo_database_are_refused_before_sqlite",
+            "hostdb::sqlite::tests::non_directory_home_and_fifo_database_are_refused_before_sqlite",
         ])
         .env(CHILD_HOME, home.path())
         .stdout(std::process::Stdio::null())
@@ -1354,7 +1354,7 @@ fn sqlite_refuses_a_valid_registry_symlink_swapped_after_validation() {
 fn restrictive_umask_still_creates_private_usable_database_and_sidecars() {
     const CHILD: &str = "SAGE_HOSTDB_UMASK_PROBE";
     if std::env::var_os(CHILD).is_none() {
-        let result=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","hostdb::tests::restrictive_umask_still_creates_private_usable_database_and_sidecars","--nocapture"]).env(CHILD,"1").output().unwrap();
+        let result=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","hostdb::sqlite::tests::restrictive_umask_still_creates_private_usable_database_and_sidecars","--nocapture"]).env(CHILD,"1").output().unwrap();
         assert!(
             result.status.success(),
             "{}\n{}",
@@ -1642,7 +1642,7 @@ fn orphan_cleanup_logs_only_the_fixed_sidecar_names() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "hostdb::tests::orphan_cleanup_logs_only_the_fixed_sidecar_names",
+            "hostdb::sqlite::tests::orphan_cleanup_logs_only_the_fixed_sidecar_names",
             "--nocapture",
         ])
         .env(CHILD, "1")

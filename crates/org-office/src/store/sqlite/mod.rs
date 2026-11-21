@@ -239,7 +239,7 @@ struct Readers {
 }
 
 /// The projection in one SQLite file.
-pub struct SqliteEngine {
+pub(crate) struct SqliteEngine {
     path: PathBuf,
     schema: Schema,
     /// The organization whose rows the organization family's ports read and write.
@@ -252,7 +252,7 @@ pub struct SqliteEngine {
 }
 
 /// The writer's open transaction. Dropped without `commit`, it rolls back.
-pub struct SqliteTx {
+pub(crate) struct SqliteTx {
     db: Option<Connection>,
     organization: Option<Id>,
     home: Home,
@@ -262,7 +262,7 @@ pub struct SqliteTx {
 }
 
 /// One read transaction on a pooled connection.
-pub struct SqliteSnapshot {
+pub(crate) struct SqliteSnapshot {
     db: Option<Connection>,
     organization: Option<Id>,
     readers: Arc<Readers>,

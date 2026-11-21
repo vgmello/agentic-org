@@ -844,6 +844,7 @@ dependencies = [
  "org-proto",
  "org-release",
  "org-socket",
+ "proc-macro2",
  "rcgen",
  "ring",
  "rusqlite",

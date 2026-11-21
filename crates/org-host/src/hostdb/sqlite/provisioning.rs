@@ -1,8 +1,9 @@
 //! Selected HQ reservations. No code/key bytes enter this table.
-use super::{accounts::Account, Error, HostDb};
+use super::{Error, HostDb};
+use crate::hostdb::accounts::Account;
+pub(crate) use crate::hostdb::provisioning::{Reservation, Taken};
 use org_proto::{selected_bootstrap::PreparedV1, OrganizationName};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
-use serde::{Deserialize, Serialize};
 pub(super) const DDL: &str = "CREATE TABLE selected_provisioning (
  operation_id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES accounts(account_id),
  fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32), name_key TEXT NOT NULL UNIQUE,
@@ -10,18 +11,6 @@ pub(super) const DDL: &str = "CREATE TABLE selected_provisioning (
  recovery_handle TEXT NOT NULL UNIQUE, key_fingerprint TEXT,
  linked INTEGER NOT NULL DEFAULT 0 CHECK(linked IN (0,1)), expires_at_ms INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;";
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Reservation {
-    pub operation_id: String,
-    pub account: String,
-    pub fingerprint: [u8; 32],
-    pub prepared: PreparedV1,
-    pub owner_member: String,
-    pub recovery_handle: String,
-    pub key_fingerprint: Option<String>,
-    pub linked: bool,
-}
 fn administrator(db: &rusqlite::Connection, account: &str) -> Result<(), Error> {
     let allowed:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1 AND admin=1 AND revoked_at_ms IS NULL)",[account],|r|r.get(0))?;
     if !allowed {
@@ -51,12 +40,6 @@ pub(super) fn read(
         })
     })
     .transpose()
-}
-/// Which of a plan's two catalog-unique values another create already holds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Taken {
-    Name,
-    Slug,
 }
 /// Names compare by their case-folded key; a slug is already lowercase.
 fn taken(db: &rusqlite::Connection, name: &str, slug: &str) -> Result<Option<Taken>, Error> {

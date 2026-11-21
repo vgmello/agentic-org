@@ -3,11 +3,12 @@
 //! code; the throttle keys use the control socket's lockout rows.
 use rusqlite::{OptionalExtension, TransactionBehavior};
 
-use super::super::{administrator, clock, links, lockout, HostDb};
+use super::super::{administrator, clock, links, HostDb};
 use crate::accounts::identity::LoginKey;
 use crate::accounts::store::{
     AccountStore, Attempt, Credentials, NewAccount, Registration, StoreError, Throttle, ThrottleKey,
 };
+use crate::hostdb::lockout;
 use crate::links::{LinkDigest, LinkKind, Token};
 
 fn unavailable<T>(_: T) -> StoreError {

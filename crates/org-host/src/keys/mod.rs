@@ -103,6 +103,8 @@ pub(crate) enum KeyStoreError {
     Corrupt,
     /// The office id isn't a plain id.
     NotPlainId,
+    /// The credential store is locked or user interaction is not allowed.
+    InteractionNotAllowed,
     /// The Keychain failed with this `OSStatus`.
     Os(i32),
     /// The development store's file I/O failed, or one of its checks refused. The error holds a
@@ -127,6 +129,9 @@ impl fmt::Display for KeyStoreError {
             KeyStoreError::Exists => f.write_str("the key store already has a key for that office"),
             KeyStoreError::Corrupt => f.write_str("the stored item isn't an office secrets key"),
             KeyStoreError::NotPlainId => f.write_str("the office id isn't a plain id"),
+            KeyStoreError::InteractionNotAllowed => {
+                f.write_str("the key store is locked or user interaction is not allowed")
+            }
             KeyStoreError::Os(status) => write!(f, "the Keychain failed (OSStatus {status})"),
             KeyStoreError::Io(e) => write!(f, "the key folder: {e}"),
             KeyStoreError::Unsupported => {

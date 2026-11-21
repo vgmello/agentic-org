@@ -495,7 +495,7 @@ fn the_first_start_makes_a_pair_and_later_starts_keep_it() {
     let line = lines.join("\n");
     assert!(line.contains(&fingerprint.to_string()), "{line}");
     assert!(line.contains("made by this instance"), "{line}");
-    assert!(!line.contains("BEGIN"), "{line}");
+    assert!(!line.contains("-----BEGIN"), "{line}");
     let (chain, key) = tls.fetch().unwrap();
     assert_eq!(chain, stored.cert_pem);
     assert!(f.secrets.holds(key.expose()));
@@ -617,7 +617,7 @@ fn a_supplied_pair_that_does_not_verify_refuses_the_first_start_and_stores_nothi
         .err()
         .unwrap();
     assert!(refused.0.contains("tls_key_mismatch"), "{refused}");
-    assert!(!refused.0.contains("BEGIN"), "{refused}");
+    assert!(!refused.0.contains("-----BEGIN"), "{refused}");
     assert!(f.db.web_tls_pair().unwrap().is_none());
     assert!(f.secrets.names().is_empty());
     std::fs::remove_file(&key_path).unwrap();

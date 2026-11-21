@@ -149,7 +149,7 @@ pub trait ReadOp {
 }
 
 /// A store and the engine under it.
-pub struct Opened<E: OfficeEngine> {
+struct Opened<E: OfficeEngine> {
     store: Store<E>,
     engine: Arc<E>,
     /// Where an orderly stop leaves its marker, and for which journal.
@@ -160,20 +160,22 @@ pub struct Opened<E: OfficeEngine> {
     stopped_cleanly: bool,
 }
 
-/// An office's open store.
-pub enum OfficeStore {
+enum OfficeStoreInner {
     Sqlite(Opened<SqliteEngine>),
     #[cfg(any(test, feature = "testkit"))]
     Memory(Opened<org_store::testkit::MemoryEngine>),
 }
 
+/// An office's open store. Engine variants stay private so callers cannot bypass [`open_store`].
+pub struct OfficeStore(OfficeStoreInner);
+
 /// The same expression on whichever arm is open.
 macro_rules! on_store {
     ($office:expr, $opened:ident => $body:expr) => {
-        match $office {
-            OfficeStore::Sqlite($opened) => $body,
+        match &$office.0 {
+            OfficeStoreInner::Sqlite($opened) => $body,
             #[cfg(any(test, feature = "testkit"))]
-            OfficeStore::Memory($opened) => $body,
+            OfficeStoreInner::Memory($opened) => $body,
         }
     };
 }
@@ -182,7 +184,8 @@ macro_rules! on_store {
 fn sqlite_engine(config: &StoreConfig) -> Result<SqliteEngine, StoreError> {
     let path = config.projection_path();
     let folder = path.parent().expect("the projection is in a folder");
-    let made = std::fs::create_dir_all(folder).and_then(|()| owner_only(folder));
+    let made =
+        std::fs::create_dir_all(folder).and_then(|()| org_platform::fs::set_owner_only_dir(folder));
     made.map_err(|error| EngineError::new(format!("making the runtime folder: {error}")))?;
     #[cfg(test)]
     if let Some(ddl) = config.testing.extra_ddl {
@@ -191,17 +194,6 @@ fn sqlite_engine(config: &StoreConfig) -> Result<SqliteEngine, StoreError> {
     }
     let engine = SqliteEngine::open(&path)?;
     Ok(engine.for_organization(&config.identity.organization_id))
-}
-
-#[cfg(unix)]
-fn owner_only(folder: &std::path::Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700))
-}
-
-#[cfg(not(unix))]
-fn owner_only(_folder: &std::path::Path) -> std::io::Result<()> {
-    Ok(())
 }
 
 /// The memory projection: always empty when opened, so the store rebuilds it.
@@ -307,12 +299,15 @@ impl Marker {
 /// clean-stop marker is consumed: [`OfficeStore::stopped_cleanly`] reports it.
 pub fn open_store(config: &StoreConfig) -> Result<OfficeStore, StoreError> {
     match config.engine {
-        EngineChoice::Sqlite => Ok(OfficeStore::Sqlite(open_on(
+        EngineChoice::Sqlite => Ok(OfficeStore(OfficeStoreInner::Sqlite(open_on(
             config,
             sqlite_engine(config)?,
-        )?)),
+        )?))),
         #[cfg(any(test, feature = "testkit"))]
-        EngineChoice::Memory => Ok(OfficeStore::Memory(open_on(config, memory_engine())?)),
+        EngineChoice::Memory => Ok(OfficeStore(OfficeStoreInner::Memory(open_on(
+            config,
+            memory_engine(),
+        )?))),
     }
 }
 
@@ -353,14 +348,14 @@ impl OfficeStore {
     /// clean-stop marker is written last. A store that is dropped instead does no such
     /// work and loses nothing by it, and the next opening is told the stop was not clean.
     pub fn close(self) -> Result<(), StoreError> {
-        let marker = match self {
-            OfficeStore::Sqlite(opened) => {
+        let marker = match self.0 {
+            OfficeStoreInner::Sqlite(opened) => {
                 let (engine, marker) = opened.close_store()?;
                 engine.checkpoint()?;
                 marker
             }
             #[cfg(any(test, feature = "testkit"))]
-            OfficeStore::Memory(opened) => opened.close_store()?.1,
+            OfficeStoreInner::Memory(opened) => opened.close_store()?.1,
         };
         marker.write()
     }
@@ -368,9 +363,9 @@ impl OfficeStore {
     /// The digest of the DDL the SQLite projection is made from.
     #[cfg(test)]
     pub(crate) fn schema_digest(&self) -> Option<String> {
-        match self {
-            OfficeStore::Sqlite(opened) => Some(opened.engine.schema_digest()),
-            OfficeStore::Memory(_) => None,
+        match &self.0 {
+            OfficeStoreInner::Sqlite(opened) => Some(opened.engine.schema_digest()),
+            OfficeStoreInner::Memory(_) => None,
         }
     }
 

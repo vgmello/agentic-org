@@ -279,6 +279,7 @@ impl From<CredentialError> for KeyStoreError {
             CredentialError::Exists => KeyStoreError::Exists,
             CredentialError::Corrupt => KeyStoreError::Corrupt,
             CredentialError::InvalidName => KeyStoreError::NotPlainId,
+            CredentialError::InteractionNotAllowed => KeyStoreError::InteractionNotAllowed,
             CredentialError::Os(status) => KeyStoreError::Os(status),
             CredentialError::Malformed => KeyStoreError::Os(NOT_DATA),
             CredentialError::Io(kind) => KeyStoreError::Io(io::Error::from(kind)),

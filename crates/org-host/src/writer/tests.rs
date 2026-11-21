@@ -1,5 +1,8 @@
 use super::*;
-use crate::{accounts::identity::AccountId, hostdb::HostDbInit};
+use crate::{
+    accounts::identity::AccountId,
+    hostdb::{HostDb, HostDbInit},
+};
 use org_office_launch::writer::HighWaters;
 use std::os::unix::fs::PermissionsExt;
 
@@ -458,9 +461,11 @@ fn lasting_custody_failures_are_refusals_not_unreadable() {
 /// it open, so its classification is checked here directly.)
 #[test]
 fn only_transient_store_and_registry_failures_are_unreadable() {
-    use crate::{host_secrets::Error as S, hostdb::Error as D};
+    use crate::{
+        host_secrets::Error as S,
+        hostdb::{Error as D, StoreFault as F},
+    };
     use io::ErrorKind as K;
-    use rusqlite::ErrorCode as C;
     let of = |error: io::Error| AdmitError::from(error);
     for kind in [
         K::Interrupted,
@@ -476,18 +481,13 @@ fn only_transient_store_and_registry_failures_are_unreadable() {
             "{kind:?}"
         );
     }
-    assert_eq!(of(store(S::Os(-25308))), AdmitError::Unreadable);
+    assert_eq!(of(store(S::InteractionNotAllowed)), AdmitError::Unreadable);
     assert_eq!(of(store(S::InUse)), AdmitError::Unreadable);
-    for code in [
-        C::DatabaseBusy,
-        C::DatabaseLocked,
-        C::SystemIoFailure,
-        C::OutOfMemory,
-    ] {
+    for fault in [F::Busy, F::TransientIo, F::OutOfMemory] {
         assert_eq!(
-            of(registry(D::Sql(code))),
+            of(registry(D::Store(fault))),
             AdmitError::Unreadable,
-            "{code:?}"
+            "{fault:?}"
         );
     }
     for kind in [
@@ -518,15 +518,12 @@ fn only_transient_store_and_registry_failures_are_unreadable() {
         let shown = format!("{error:?}");
         assert_eq!(of(store(error)), AdmitError::Refused, "{shown}");
     }
-    for code in [
-        C::NotADatabase,
-        C::DatabaseCorrupt,
-        C::SchemaChanged,
-        C::ConstraintViolation,
-        C::PermissionDenied,
-        C::ReadOnly,
-    ] {
-        assert_eq!(of(registry(D::Sql(code))), AdmitError::Refused, "{code:?}");
+    for fault in [F::Corrupt, F::Constraint, F::Other] {
+        assert_eq!(
+            of(registry(D::Store(fault))),
+            AdmitError::Refused,
+            "{fault:?}"
+        );
     }
     for error in [D::Unsafe, D::Version, D::Outdated] {
         assert_eq!(of(registry(error)), AdmitError::Refused);

@@ -452,7 +452,6 @@ const KILL_ROOT: &str = "ORG_TEST_OFFICE_STORE_KILL_ROOT";
 const KILL_POINT: &str = "ORG_TEST_OFFICE_STORE_KILL_POINT";
 
 /// The three points a kill is tried at, by the name the child is given.
-#[cfg(unix)]
 const KILL_POINTS: [(&str, CrashPoint); 3] = [
     ("during_apply", CrashPoint::DuringApply),
     ("after_append", CrashPoint::AfterAppend),
@@ -462,7 +461,6 @@ const KILL_POINTS: [(&str, CrashPoint); 3] = [
 /// The child of the test below; alone it does nothing. It creates an office on SQLite,
 /// acknowledges one team, then sends itself SIGKILL from the writer's thread at the
 /// selected point of a second team's creation and never goes past it.
-#[cfg(unix)]
 #[test]
 fn sigkill_child() {
     let (Some(root), Ok(selected)) = (std::env::var_os(KILL_ROOT), std::env::var(KILL_POINT))
@@ -496,7 +494,6 @@ fn sigkill_child() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn a_real_sigkill_at_three_points_reopens_to_what_the_journal_holds() {
     use std::os::unix::process::ExitStatusExt;

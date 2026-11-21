@@ -258,11 +258,7 @@ fn schema_has_pinned_columns_storage_flags_link_index_and_foreign_key() {
 
 fn constraint(c: &Connection, sql: &str) {
     let error = Error::from(c.execute_batch(sql).unwrap_err());
-    assert_eq!(
-        error,
-        Error::Sql(rusqlite::ErrorCode::ConstraintViolation),
-        "{sql}"
-    );
+    assert_eq!(error, Error::Store(StoreFault::Constraint), "{sql}");
     assert!(!format!("{error:?}").contains(PHC));
 }
 
@@ -276,10 +272,7 @@ fn account_constraints_accept_boundaries_and_reject_invalid_or_duplicate_rows() 
         let error = c
             .execute("UPDATE accounts SET account_id=?1", [invalid_id])
             .unwrap_err();
-        assert_eq!(
-            Error::from(error),
-            Error::Sql(rusqlite::ErrorCode::ConstraintViolation)
-        );
+        assert_eq!(Error::from(error), Error::Store(StoreFault::Constraint));
     }
     // A different 26-byte identity is valid before it has any links.
     c.execute("UPDATE accounts SET account_id=?1", ["B".repeat(26)])
@@ -384,10 +377,7 @@ fn link_and_lockout_keys_constraints_and_socket_isolation_are_enforced() {
                 [socket],
             )
             .unwrap_err();
-        assert_eq!(
-            Error::from(error),
-            Error::Sql(rusqlite::ErrorCode::ConstraintViolation)
-        );
+        assert_eq!(Error::from(error), Error::Store(StoreFault::Constraint));
     }
     constraint(&c, "UPDATE login_lockout SET failures='not an integer'");
     for column in [

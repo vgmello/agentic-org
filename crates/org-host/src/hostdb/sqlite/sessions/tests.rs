@@ -5,7 +5,8 @@ use std::os::unix::fs::PermissionsExt;
 use rusqlite::OpenFlags;
 
 use super::super::tests::connection_for_test;
-use crate::hostdb::{Error, HostDb, DB};
+use crate::hostdb::sqlite::{HostDb, DB};
+use crate::hostdb::Error;
 use crate::sessions::contract_tests::{new_session, origin, raw, sqlite, NoSecrets};
 use crate::sessions::{BrowserSessions, SessionDigest};
 

@@ -1,9 +1,10 @@
 //! Protected REC-DEL-1 facts and deletion intents. Never stores a code or key.
 use super::{provisioning, Error, HostDb};
 use crate::host_secrets::{HostSecrets, Name};
+use crate::hostdb::provisioning::Reservation;
+pub(crate) use crate::hostdb::recovery::{Ledger, State};
 use org_office_launch::recovery::{PublicRecord, Request};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
-use serde::{Deserialize, Serialize};
 
 pub(super) const DDL: &str = "CREATE TABLE selected_recovery (
  operation_id TEXT PRIMARY KEY REFERENCES selected_provisioning(operation_id),
@@ -17,39 +18,6 @@ CREATE TABLE selected_recovery_audit (
  PRIMARY KEY(operation_id,ordinal,action)
 ) STRICT, WITHOUT ROWID;";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum State {
-    Pending,
-    Delivered,
-    AckPending,
-    Acknowledged,
-}
-impl From<State> for org_host_control::recovery::DeliveryState {
-    fn from(s: State) -> Self {
-        match s {
-            State::Pending => Self::Pending,
-            State::Delivered => Self::Delivered,
-            State::AckPending => Self::AckPending,
-            State::Acknowledged => Self::Acknowledged,
-        }
-    }
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Ledger {
-    pub version: u32,
-    pub binding: Request,
-    pub public_key: String,
-    pub package_sha256: String,
-    pub state: State,
-    pub ordinal: i64,
-    pub first_shown_ms: Option<i64>,
-    pub last_redelivered_ms: Option<i64>,
-    pub redelivery_count: i64,
-    pub acknowledged_ms: Option<i64>,
-    pub acknowledged_by: Option<String>,
-}
 fn administrator(db: &Connection, account: &str) -> Result<(), Error> {
     let valid:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE account_id=?1 AND admin=1 AND revoked_at_ms IS NULL)",[account],|r|r.get(0))?;
     if valid {
@@ -58,7 +26,7 @@ fn administrator(db: &Connection, account: &str) -> Result<(), Error> {
         Err(Error::Unsafe)
     }
 }
-fn source(db: &Connection, binding: &Request) -> Result<provisioning::Reservation, Error> {
+fn source(db: &Connection, binding: &Request) -> Result<Reservation, Error> {
     binding.check().map_err(|_| Error::Unsafe)?;
     let instance: String =
         db.query_row("SELECT value FROM meta WHERE key='instance_id'", [], |r| {
@@ -268,7 +236,7 @@ impl HostDb {
         let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
         read(&db, operation)?.ok_or(Error::Unsafe)
     }
-    pub(crate) fn recovery_source(&self, org: &str) -> Result<provisioning::Reservation, Error> {
+    pub(crate) fn recovery_source(&self, org: &str) -> Result<Reservation, Error> {
         let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
         let mut statement = db.prepare("SELECT operation_id FROM selected_provisioning WHERE linked=1 AND json_extract(prepared,'$.organization_id')=?1 LIMIT 2")?;
         let mut rows = statement.query([org])?;

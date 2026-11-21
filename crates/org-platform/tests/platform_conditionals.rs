@@ -5,12 +5,13 @@
 //! file of the repository, requires that `syn` parses it, and
 //! counts in its tokens:
 //!
-//! - each `cfg` or `cfg_attr` attribute and each `cfg!` call that names `target_os`,
-//!   `target_vendor`, `target_env` or `target_family`, wherever it is written,
-//!   including inside macro calls and definitions;
-//! - each other use of one of those four names as an identifier: a key of a
-//!   `cfg_select!` or `cfg_match!` arm, or a key handed to a macro that builds the
-//!   `cfg`. The names are reserved for `org-platform`.
+//! - each `cfg` or `cfg_attr` attribute, each `cfg!` call, and each `cfg_select!` /
+//!   `cfg_match!` arm predicate that names `target_os`, `target_vendor`, `target_env`,
+//!   `target_family`, `unix`, or `windows`, wherever it is written, including inside
+//!   macro calls and definitions;
+//! - each other use of `target_os`, `target_vendor`, `target_env`, or `target_family` as
+//!   an identifier: a key handed to a macro that builds the `cfg`. Those four names are
+//!   reserved for `org-platform`.
 //!
 //! The files that had such predicates when the check was written (increment X1a) are
 //! listed, each with its count, in `.github/platform-conditionals.allow`. The test fails when:
@@ -29,13 +30,13 @@
 //! The list is empty when Track X is complete. CI also checks that a change never
 //! adds a line to it or raises a count (`.github/scripts/platform_allowlist_shrinks.py`).
 //!
-//! Not predicates: string literals and comments. Outside the check: `cfg(unix)`,
-//! because a non-Unix target cannot build `org-platform` at all; and what this scan
-//! does not see, which review covers: a build script that emits its own `cfg`, a
+//! Not predicates: string literals, comments, and ordinary identifiers named `unix` or
+//! `windows` outside configuration predicates (such as `std::os::unix::...`). Outside
+//! what this scan sees, which review covers: a build script that emits its own `cfg`, a
 //! `--cfg` flag, `std::env::consts::OS` compared at run time, code in a
 //! documentation test (it is a string literal here), a Cargo target whose `path`
-//! is not a `.rs` file, a `[target.'cfg(..)']` table in a manifest, `cfg(windows)`
-//! and `cfg(target_feature = "crt-static")`, and an `include!` or `path` attribute
+//! is not a `.rs` file, a `[target.'cfg(..)']` table in a manifest,
+//! `cfg(target_feature = "crt-static")`, and an `include!` or `path` attribute
 //! that a macro assembles from its arguments. If a later `syn`
 //! cannot parse valid new syntax, the check fails and the `syn` pin is raised.
 //!
@@ -56,6 +57,9 @@ const EXEMPT: [&str; 2] = ["crates/org-platform", "crates/org-platform-host"];
 /// How the messages name them.
 const HOME: &str = "crates/org-platform (or crates/org-platform-host for what only the host links)";
 const TARGET_KEYS: [&str; 4] = ["target_os", "target_vendor", "target_env", "target_family"];
+/// Bare platform flags forbidden in configuration predicates outside `org-platform`
+/// (prevents fail-open `#[cfg(unix)]` / `#[cfg(not(unix))]` / `#[cfg(windows)]` seams).
+const PLATFORM_FLAGS: [&str; 2] = ["unix", "windows"];
 /// The attributes and macros whose arguments are configuration predicates.
 const CONDITIONALS: [&str; 2] = ["cfg", "cfg_attr"];
 /// Macros whose arms pair a predicate with ordinary code. Their bodies are walked
@@ -104,14 +108,30 @@ fn walk(tokens: TokenStream, inside: bool, findings: &mut Findings) {
     while index < tokens.len() {
         match &tokens[index] {
             TokenTree::Ident(ident) if named(ident, &CONDITIONALS) => {
-                // `cfg(..)` in an attribute, or `cfg!(..)` with any delimiter.
+                // `cfg(..)` / `cfg_attr(..)` in an attribute, or `cfg!(..)` with any delimiter.
                 let after_bang = usize::from(punct(tokens.get(index + 1), '!'));
                 if let Some(TokenTree::Group(arguments)) = tokens.get(index + 1 + after_bang) {
-                    let counted = names_a_target_directly(arguments.stream());
-                    if counted {
-                        findings.predicates.push(ident.span().start().line);
+                    if named(ident, &["cfg_attr"]) {
+                        let args: Vec<TokenTree> = arguments.stream().into_iter().collect();
+                        let split = args
+                            .iter()
+                            .position(|token| punct(Some(token), ','))
+                            .unwrap_or(args.len());
+                        let predicate: TokenStream = args[..split].iter().cloned().collect();
+                        let rest: TokenStream = args[split..].iter().cloned().collect();
+                        let counted = names_a_target_directly(predicate.clone());
+                        if counted {
+                            findings.predicates.push(ident.span().start().line);
+                        }
+                        walk(predicate, counted, findings);
+                        walk(rest, false, findings);
+                    } else {
+                        let counted = names_a_target_directly(arguments.stream());
+                        if counted {
+                            findings.predicates.push(ident.span().start().line);
+                        }
+                        walk(arguments.stream(), counted, findings);
                     }
-                    walk(arguments.stream(), counted, findings);
                     index += 2 + after_bang;
                     continue;
                 }
@@ -120,7 +140,7 @@ fn walk(tokens: TokenStream, inside: bool, findings: &mut Findings) {
                 if let (true, Some(TokenTree::Group(arms))) =
                     (punct(tokens.get(index + 1), '!'), tokens.get(index + 2))
                 {
-                    walk(arms.stream(), false, findings);
+                    walk_selector_arms(arms.stream(), findings);
                     index += 3;
                     continue;
                 }
@@ -197,8 +217,48 @@ fn rust_path_literal(tokens: TokenStream) -> bool {
     syn::parse2::<syn::LitStr>(tokens).is_ok_and(|literal| literal.value().ends_with(".rs"))
 }
 
-/// Whether a conditional's own arguments name a target key. A conditional nested in
-/// them is not this one's: the walk counts it by itself.
+/// Walks the arms of `cfg_select!` / `cfg_match!`: each arm's predicate (tokens before
+/// `=>`) is checked for both target keys and bare `unix` / `windows` flags, and each
+/// arm's body is walked as ordinary code.
+fn walk_selector_arms(tokens: TokenStream, findings: &mut Findings) {
+    let tokens: Vec<TokenTree> = tokens.into_iter().collect();
+    let mut index = 0;
+    while index < tokens.len() {
+        let start = index;
+        while index + 1 < tokens.len()
+            && !(punct(tokens.get(index), '=') && punct(tokens.get(index + 1), '>'))
+        {
+            index += 1;
+        }
+        if index + 1 >= tokens.len() {
+            let tail: TokenStream = tokens[start..].iter().cloned().collect();
+            walk(tail, false, findings);
+            break;
+        }
+        let predicate_slice = &tokens[start..index];
+        let predicate: TokenStream = predicate_slice.iter().cloned().collect();
+        let counted = names_a_target_directly(predicate.clone());
+        if counted {
+            if let Some(first) = predicate_slice.first() {
+                findings.predicates.push(first.span().start().line);
+            }
+        }
+        walk(predicate, counted, findings);
+        // Skip `=>`.
+        index += 2;
+        if let Some(body) = tokens.get(index) {
+            walk(TokenStream::from(body.clone()), false, findings);
+            index += 1;
+        }
+        if punct(tokens.get(index), ',') {
+            index += 1;
+        }
+    }
+}
+
+/// Whether a conditional's own predicate names a target key or bare platform flag
+/// (`unix`, `windows`). A conditional nested in it is not this one's: the walk counts it
+/// by itself.
 fn names_a_target_directly(tokens: TokenStream) -> bool {
     let tokens: Vec<TokenTree> = tokens.into_iter().collect();
     let mut index = 0;
@@ -214,7 +274,11 @@ fn names_a_target_directly(tokens: TokenStream) -> bool {
                     continue;
                 }
             }
-            TokenTree::Ident(ident) if named(ident, &TARGET_KEYS) => return true,
+            TokenTree::Ident(ident)
+                if named(ident, &TARGET_KEYS) || named(ident, &PLATFORM_FLAGS) =>
+            {
+                return true;
+            }
             TokenTree::Group(group) if names_a_target_directly(group.stream()) => return true,
             _ => {}
         }
@@ -548,11 +612,41 @@ fn f() {
     }
 
     #[test]
+    fn bare_unix_and_windows_predicates_are_found_while_ordinary_idents_pass() {
+        let source = r#"
+#[cfg(unix)]
+fn a() {}
+#[cfg(not(unix))]
+fn b() {}
+#[cfg(windows)]
+fn c() {}
+#[cfg(all(test, any(unix, windows)))]
+fn d() {}
+#[cfg_attr(unix, allow(dead_code))]
+fn e() -> bool {
+    cfg!(windows) || cfg!(not(unix))
+}
+cfg_select! {
+    unix => { fn os() -> u8 { 1 } }
+    windows => { fn os() -> u8 { 2 } }
+    _ => { fn os() -> u8 { 0 } }
+}
+fn ordinary() {
+    let unix = 1;
+    let windows = 2;
+    let _ = (unix, windows);
+    #[cfg_attr(test, allow(dead_code))]
+    let _ = std::os::unix::fs::PermissionsExt::mode;
+}
+"#;
+        assert_eq!(lines(source), [2, 4, 6, 8, 10, 12, 12, 15, 16]);
+    }
+
+    #[test]
     fn other_conditions_strings_and_comments_are_not_predicates() {
         let source = r##"
 // #[cfg(target_os = "macos")]
 /// cfg!(target_os = "linux")
-#[cfg(unix)]
 #[cfg(test)]
 #[cfg(all(feature = "x", target_arch = "x86_64", target_pointer_width = "64"))]
 #[cfg_attr(test, allow(dead_code))]
@@ -650,12 +744,12 @@ fn handler() {}
     #[test]
     fn inclusion_inside_a_conditional_or_under_another_name_is_checked() {
         let source = r#"
-cfg_select! { unix => { include!("os.inc"); } _ => {} }
+cfg_select! { test => { include!("os.inc"); } _ => {} }
 #[cfg_attr(all(), path = "os.inc")]
 mod os;
-#[cfg_attr(unix, cfg_attr(test, path = "nested.inc"))]
+#[cfg_attr(debug_assertions, cfg_attr(test, path = "nested.inc"))]
 mod nested;
-#[cfg_attr(unix, path = "fine.rs", allow(dead_code))]
+#[cfg_attr(debug_assertions, path = "fine.rs", allow(dead_code))]
 mod fine;
 use std::include as pull;
 pull!("os.inc");

@@ -285,7 +285,7 @@ impl Authentication {
     ) -> std::io::Result<Arc<crate::writer::Writers>> {
         crate::writer::Writers::open(
             Arc::clone(&self._custody),
-            Arc::clone(&self.db),
+            Arc::clone(&self.db) as Arc<dyn crate::hostdb::HostStore>,
             instance,
             root,
         )
