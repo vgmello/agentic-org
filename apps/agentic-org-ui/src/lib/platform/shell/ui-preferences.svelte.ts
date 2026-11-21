@@ -148,6 +148,7 @@ class UiPreferencesStore {
 	favoriteProjects = $state<string[]>([]);
 	singleKeyShortcuts = $state(true);
 	#hydrated = false;
+	#explicitTheme = false;
 
 	hydrate(search = typeof window !== 'undefined' ? window.location.search : ''): void {
 		const envDefault =
@@ -168,6 +169,14 @@ class UiPreferencesStore {
 
 		// Persist explicit URL overrides so navigation preserves the chosen flag/theme.
 		const params = new URLSearchParams(search);
+		const storedTheme = (() => {
+			try {
+				return storage?.getItem(STORAGE_KEYS.theme) ?? null;
+			} catch {
+				return null;
+			}
+		})();
+		this.#explicitTheme = isUiTheme(params.get('theme')) || isUiTheme(storedTheme);
 		if (params.has('ui')) this.#save(STORAGE_KEYS.executiveUi, this.executiveUi ? '1' : '0');
 		if (params.has('theme') && isUiTheme(params.get('theme'))) {
 			this.#save(STORAGE_KEYS.theme, this.theme);
@@ -182,13 +191,16 @@ class UiPreferencesStore {
 	setExecutiveUi(enabled: boolean): void {
 		this.executiveUi = enabled;
 		this.#save(STORAGE_KEYS.executiveUi, enabled ? '1' : '0');
-		// If turning Executive UI on while still on untouched default, keep user's chosen theme.
+		if (enabled && !this.#explicitTheme) {
+			this.theme = 'ocean';
+		}
 		this.syncDom();
 	}
 
 	setTheme(next: UiTheme): void {
 		if (!isUiTheme(next)) return;
 		this.theme = next;
+		this.#explicitTheme = true;
 		this.#save(STORAGE_KEYS.theme, next);
 		this.syncDom();
 	}
