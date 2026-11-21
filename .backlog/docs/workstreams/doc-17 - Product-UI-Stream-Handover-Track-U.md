@@ -3,7 +3,7 @@ id: doc-17
 title: Product UI Stream Handover (Track U)
 type: guide
 created_date: '2026-11-21T00:16:00Z'
-updated_date: '2026-11-21T00:16:00Z'
+updated_date: '2026-11-21T01:49:00Z'
 tags:
   - workstreams
   - ui
@@ -15,8 +15,7 @@ tags:
 > Remaining Track U work (Step 4 Work tab & queued shared fixes, Steps 5–9, a2ui interaction review, and ADR-0031 private task notes UX) is now tracked in Backlog.md (`TASK-12`, `TASK-17`, `TASK-65`–`TASK-71`). Unmerged WIP branches noted for pickup: `v1-ui-work`, `v1-ui-chat-wip`, and `origin/app-frontend-dev/pointer-focus`.
 
 Last updated: 2026-11-19 (ui-dev). The steps are those of the [UI plan](../plans/doc-19%20-%20v1-UI-Screens-Build-Plan.md) .
-Every screen runs against mock APIs (`bun run dev:mock`); production calls refuse until the backend
-serves them. **The owner paused new work on 2026-11-19: finish, validate and merge what is built.**
+Most screens still run against mock APIs (`bun run dev:mock`); TASK-5 wired the first unmocked vertical slice in production (`apps/agentic-org-ui/src/lib/org/http-api.ts` + `api.ts` -> `GET /api/v1/organizations/{org}/snapshot` and `POST /api/v1/organizations/{org}/teams` over `appSession.controller()`, failing closed when signed out with zero mock fallback, verified by `http-api.test.ts` and real-process E2E). **The owner paused new work on 2026-11-19: finish, validate and merge what is built.**
 
 ## Status
 

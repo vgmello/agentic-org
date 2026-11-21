@@ -3,7 +3,7 @@ id: doc-15
 title: Backend Stream Handover (Tracks A and B)
 type: guide
 created_date: '2026-11-21T00:16:00Z'
-updated_date: '2026-11-21T00:16:00Z'
+updated_date: '2026-11-21T01:49:00Z'
 tags:
   - workstreams
   - backend
@@ -40,7 +40,7 @@ Ask the owner before starting anything new.
 
 | Increment | Status | Evidence | Next / remaining |
 | --- | --- | --- | --- |
-| A1 to A4 (setup, registration, sign-in, create organization) | In progress | v1 (merged before 74865317) | Per their FEATURES rows. The browser-to-office path in A3's Build is not built: no browser request reaches an office yet |
+| A1 to A4 (setup, registration, sign-in, create organization) | In progress | v1 (merged before 74865317; TASK-5 B2 Q8 bridge landed on v1) | Per their FEATURES rows. Browser-to-office Web channel bridge (`browser.open_channel`/`browser.grant` + `OfficeBridge` + `/snapshot` + `/teams`) is live and E2E-verified across `office.db` rebuild (`actual_browser_reads_live_org_snapshot_and_creates_team_surviving_projection_rebuild`). Remaining: async multiplexed office/SSE channels (`TASK-16`) and remaining B2.2–B2.4 routes (`TASK-14`, `TASK-34`). |
 | B1a · office store core | Done | v1 (merged before 74865317) | — |
 | B1b · the office runs on the new store | Done | v1 5f9941f1 | Narrowings recorded in FC-146: real-host delete-runtime with office calls, and journal corruption or rollback, move to A5. Rewritten LNX-2 including step 10 passed in CI's container job on GitHub's Ubuntu runner (run 44552811792); rewritten LNX-1 not yet run on Linux |
 | B2.1 · one home team on the store (domain) | Done | v1 7f3000bc | FEATURES FC-025..029 and "code today" text not yet updated; old test vectors `crates/org-office/test-vectors/{org-commands,deferred-org-commands,organization}.json` describe the deleted model (only UI tests read them; freeze or replace with B2.2) |
