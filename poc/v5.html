@@ -390,35 +390,23 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   font-family: inherit; font-size: 0.6875rem; color: #94A3B8;
 }
 
-/* Elegant Quick CTAs in Home Briefing Header */
+/* Elegant Win-Sweep CTA in Home Briefing Header */
 .hb-quick-acts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.hb-qbtn {
-  display: inline-flex; align-items: center; gap: 7px;
-  height: 34px; padding: 0 13px; border-radius: 10px;
-  background: rgba(13, 24, 42, .48);
-  backdrop-filter: blur(16px) saturate(150%); -webkit-backdrop-filter: blur(16px) saturate(150%);
-  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .11), inset 0 0 0 1px rgba(186, 222, 255, .13);
-  font-size: 0.8125rem; font-weight: 500; color: #CBD5E1;
-  transition: background-color .15s ease, box-shadow .15s ease, color .15s ease, transform .14s ease;
+.h4-cta.hb-cta-glass {
+  height: 36px; padding: 0 15px; border-radius: 10px;
+  background: rgba(56, 189, 248, .14);
+  backdrop-filter: blur(12px) saturate(145%); -webkit-backdrop-filter: blur(12px) saturate(145%);
+  box-shadow: inset 0 1px 0 rgba(186, 230, 253, .24), inset 0 0 0 1px rgba(125, 211, 252, .32), 0 8px 22px -10px rgba(0, 0, 0, .50);
+  color: #E0F2FE; font-size: 0.8125rem; font-weight: 600;
 }
-.hb-qbtn .ic { width: 15px; height: 15px; color: #8BA1BE; }
-.hb-qbtn:hover {
-  background: rgba(19, 34, 58, .66);
-  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .20), inset 0 0 0 1px rgba(186, 222, 255, .26);
-  color: #F8FAFC; transform: translateY(-1px);
-}
-.hb-qbtn:hover .ic { color: #E2E8F0; }
-.hb-qbtn.accent {
-  background: rgba(56, 189, 248, .13);
-  box-shadow: inset 0 1px 0 rgba(186, 230, 253, .22), inset 0 0 0 1px rgba(125, 211, 252, .30);
-  color: #E0F2FE; font-weight: 600;
-}
-.hb-qbtn.accent .ic { color: #7DD3FC; }
-.hb-qbtn.accent:hover {
-  background: rgba(56, 189, 248, .22);
-  box-shadow: inset 0 1px 0 rgba(224, 242, 254, .32), inset 0 0 0 1px rgba(125, 211, 252, .50), 0 6px 18px -6px rgba(56, 189, 248, .45);
+.h4-cta.hb-cta-glass .h4-cta-lbl.base .ic { color: #7DD3FC; }
+.h4-cta.hb-cta-glass:hover,
+.h4-cta.hb-cta-glass:focus-visible {
   color: #FFFFFF;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .30), inset 0 0 0 1px rgba(52, 211, 153, .55), 0 10px 26px -6px rgba(16, 185, 129, .48);
 }
+.h4-cta.hb-cta-glass:hover .h4-cta-lbl.hover .ic,
+.h4-cta.hb-cta-glass:focus-visible .h4-cta-lbl.hover .ic { color: #FFFFFF; }
 .search {
   position: relative; display: grid; flex: 0 1 240px; width: 240px; max-width: 240px; height: 34px;
   border-radius: 999px;
@@ -2171,7 +2159,6 @@ a.hb-tleg:hover { color: var(--hb-ink); }
       </select>
     </label>
     <div class="bctl" id="banner-ctl"></div>
-    <button class="link" type="button" data-act="changes">What changed</button>
     <button class="btn ghost sm icon" type="button" data-act="banner-close" aria-label="Dismiss prototype banner"><svg class="ic ic16" aria-hidden="true"><use href="#i-x"/></svg></button>
   </div>
   <header class="topbar">
@@ -3226,7 +3213,14 @@ function pageHome() {
         <h1 class="hb-title" tabindex="-1">${headline}</h1>
       </div>
       ${st !== "error" ? `<div class="hb-quick-acts" aria-label="Quick actions">
-        <button class="hb-qbtn accent" type="button" data-act="proto" data-v="New task">${ic("plus", "ic16")}<span>New task</span></button>
+        <button class="btn primary sm h4-cta hb-cta-glass" data-cta-tone="win" type="button" data-act="proto" data-v="New task">
+          <span class="h4-cta-fill" aria-hidden="true"></span>
+          <span class="h4-cta-sheen" aria-hidden="true"></span>
+          <span class="h4-cta-inner">
+            <span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>New task</span></span>
+            <span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("sparkle", "ic16")}</span><span>Launch task</span></span>
+          </span>
+        </button>
       </div>` : ""}
     </header>
 
@@ -3247,7 +3241,7 @@ function pageHome() {
       </div>
       ${st === "loading" ? skel(3, "Loading projects…") : st === "error" ? "" : projs.length
         ? `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`
-        : `<div class="h4-empty-box"><div class="hb-cleared" style="padding:8px 0"><span class="hb-cleared-ring is-muted">${ic("folder", "ic20")}</span><h2>No projects yet</h2><p>Projects group the work toward one goal.</p><div class="hb-cleared-acts"><button class="btn outline sm" type="button" data-act="proto" data-v="Create project">${ic("plus", "ic16")}Create project</button></div></div></div>`}
+        : `<div class="h4-empty-box"><div class="hb-cleared" style="padding:8px 0"><span class="hb-cleared-ring is-muted">${ic("folder", "ic20")}</span><h2>No projects yet</h2><p>Projects group the work toward one goal.</p><div class="hb-cleared-acts"><button class="btn primary sm h4-cta hb-cta-glass" data-cta-tone="win" type="button" data-act="proto" data-v="Create project"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>Create project</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("sparkle", "ic16")}</span><span>Start project</span></span></span></button></div></div></div>`}
     </section>
 
     ${renderReleaseHorizon()}
@@ -5187,7 +5181,6 @@ document.addEventListener("click", (e) => {
     case "cmdk-ai-clear": CMDK.aiAns = null; renderCmdk(); { const i = document.getElementById("cmdk-input"); if (i) i.focus(); } break;
     case "cmdk-run": runCmdkItem(Number(v)); break;
     case "banner-close": document.getElementById("banner").remove(); { const c = document.getElementById("cmdk-trigger"); if (c) c.focus(); } break;
-    case "changes": openChanges(t); break;
     case "close-sheet": closeSheet(); break;
     case "drawer": document.body.classList.add("drawer"); document.querySelector("#nav a").focus(); break;
     case "drawer-close": document.body.classList.remove("drawer"); break;
@@ -5271,39 +5264,8 @@ if (window.matchMedia) { const mq = window.matchMedia("(max-width: 959px)"); con
   const mqp = window.matchMedia("(max-width: 639px)"); if (mqp.addEventListener) mqp.addEventListener("change", applyShortcuts); else if (mqp.addListener) mqp.addListener(applyShortcuts); }
 window.addEventListener("hashchange", () => { document.body.classList.remove("drawer"); S.thread = null; S.replying = null; S.replyMode = null; IN.forEach((i) => { if (i.handled) i.handledNow = false; }); render(true); });
 
-/* ---------------------------------------------------------------- what changed */
+/* ---------------------------------------------------------------- dialogs */
 let sheetReturn = null;
-const CHANGES = [
-  ["Agents (landing page, roster)", "Teams > Members for the colleague face; Organization settings > Agent setup for the configuration face"],
-  ["Agent console", "Agent profile (Members > [Agent]): persistent live neural orb, queue, and context window rail alongside Overview, Tasks, Sessions, Journal, Memory, Knowledge, and Settings"],
-  ["Org chart (Teams, People, Reporting lines)", "Teams > Org chart: one reporting tree under the owner card"],
-  ["Chat, including its Needs you section", "Chat. Needs you moves to Inbox and the Home summary; Between agents threads are read-only"],
-  ["Projects, Project page", "Projects, with Team, Activity and Conversations tabs on the page"],
-  ["Work", "Work, with Show (Needs me, Mine, By project, By assignee) and a List or Board toggle"],
-  ["Activity", "Activity: each run is an entry with its log; the member profile shows that member's runs"],
-  ["Offices", "Organization settings > Offices, plus the status line in the sidebar footer"],
-  ["Processes (hidden in v1.0)", "Organization settings > Processes: the link stays, and the page is the Unavailable page, \"Processes isn't available yet\""],
-  ["Settings", "Organization settings: General, Offices, Agent setup, Roles, Processes, Members and access, Updates"],
-  ["Add an agent", "New > Hire an agent, and Hire or add on team pages, Members and Org chart"],
-  ["Your profile", "None: the sidebar footer \"You · Owner\" opens an account menu"]
-];
-const INBOX_KINDS = [
-  ["Approvals", "Hire requests, run approvals, permission requests, fixes to verify, reviews requested, hand-offs to you", "Approve, Deny (Approve fix, Reopen for a fix to verify; Approve, Request changes for a review requested; Accept for a hand-off), Open", "When answered, here or anywhere (a hand-off when accepted, here or in Chat)"],
-  ["Questions", "An agent asks you something, or a question about a work item", "Reply, Open", "When answered"],
-  ["Decisions", "Escalations with options and the agent's recommendation", "Choose an option, Open", "When you choose"],
-  ["Problems", "Work blocked on you, goal paused, run error or crash, budget reached, critical bug, unplaced agent", "Open; Resume when a goal is paused; Assign… for a critical bug; Dismiss for errors and crashes; Dismiss for this month for a budget", "When resolved (a critical bug when assigned to anyone or closed; an unplaced agent when placed); errors, crashes and budgets can be dismissed"]
-];
-function openChanges(trigger) {
-  sheetReturn = trigger;
-  document.getElementById("overlay-root").innerHTML = `<div class="overlay" data-act="close-sheet"></div><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sh-title">
-    <header><h2 id="sh-title">What changed</h2><button class="btn ghost icon" type="button" data-act="close-sheet" aria-label="Close">${ic("x", "ic20")}</button></header>
-    <div class="body"><p class="muted">Information architecture v2 organizes the app like a company: what needs you first, then projects and work, then teams, then settings. Here is where each screen of today's app goes.</p>
-    <table><thead><tr><th scope="col">Today</th><th scope="col">In v2</th></tr></thead><tbody>${CHANGES.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("")}</tbody></table>
-    <h3>Inbox kinds</h3>
-    <table><thead><tr><th scope="col">Kind</th><th scope="col">Includes</th><th scope="col">Actions</th><th scope="col">Clears</th></tr></thead><tbody>${INBOX_KINDS.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>
-    <div><button class="btn primary" type="button" data-act="close-sheet">Got it</button></div></div></div>`;
-  document.querySelector(".sheet button").focus();
-}
 function openDialog(trigger, title, desc, body, foot) {
   sheetReturn = trigger;
   document.getElementById("overlay-root").innerHTML = `<div class="overlay" data-act="close-sheet"></div><div class="sheet dialog" role="dialog" aria-modal="true" aria-labelledby="dlg-t"${desc ? ' aria-describedby="dlg-d"' : ""}>
