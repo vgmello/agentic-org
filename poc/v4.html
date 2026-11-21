@@ -199,11 +199,11 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: linear-gradient(180deg, rgba(6, 13, 25, .74) 0%, rgba(6, 13, 25, .42) 72%, rgba(6, 13, 25, 0) 100%); backdrop-filter: blur(18px) saturate(145%); -webkit-backdrop-filter: blur(18px) saturate(145%); -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 76%, transparent 100%); mask-image: linear-gradient(180deg, #000 0%, #000 76%, transparent 100%); }
 .topbar .menu-btn { position: absolute; left: 12px; }
 
-/* Unified Floating Command & Org AI Capsule */
+/* Unified Floating Command & Org AI Bar */
 .cmdk-shell {
   display: inline-flex; align-items: center;
-  width: min(640px, 100%); height: 46px; padding: 5px 6px 5px 8px;
-  border-radius: 999px;
+  width: min(640px, 100%); height: 46px; padding: 5px 6px 5px 6px;
+  border-radius: 14px;
   background: linear-gradient(180deg, rgba(16, 31, 55, .76) 0%, rgba(11, 22, 40, .72) 100%);
   backdrop-filter: blur(22px) saturate(170%); -webkit-backdrop-filter: blur(22px) saturate(170%);
   box-shadow: inset 0 1px 0 rgba(186, 222, 255, .20), inset 0 0 0 1px rgba(186, 222, 255, .16), 0 10px 30px -10px rgba(0, 0, 0, .58);
@@ -217,7 +217,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .cmdk-trigger {
   flex: 1; min-width: 0; height: 100%;
   display: inline-flex; align-items: center; gap: 11px;
-  padding: 0 12px 0 12px; border-radius: 999px;
+  padding: 0 10px 0 12px; border-radius: 10px;
   color: #9BB0C9; font-size: 0.875rem; font-weight: 450; letter-spacing: -.005em;
   transition: color .14s ease, background-color .14s ease;
 }
@@ -227,7 +227,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .cmdk-ph { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cmdk-trigger kbd {
   display: inline-flex; align-items: center; justify-content: center;
-  height: 24px; padding: 0 8px; border-radius: 7px;
+  height: 24px; padding: 0 8px; border-radius: 6px;
   background: rgba(186, 222, 255, .08);
   box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .15);
   font-family: inherit; font-size: 0.72rem; font-weight: 600; color: #94A3B8;
@@ -235,7 +235,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 }
 .cmdk-sep { width: 1px; height: 22px; background: rgba(186, 222, 255, .13); margin: 0 6px; flex: none; }
 .cmdk-ai-btn {
-  height: 34px; padding: 0 15px; border-radius: 999px; flex: none;
+  height: 34px; padding: 0 14px; border-radius: 9px; flex: none;
   display: inline-flex; align-items: center; gap: 7px;
   background: linear-gradient(135deg, rgba(56, 189, 248, .24) 0%, rgba(14, 165, 233, .16) 100%);
   box-shadow: inset 0 1px 0 rgba(224, 242, 254, .28), inset 0 0 0 1px rgba(125, 211, 252, .34);
@@ -304,7 +304,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .cmdk-in-row input:focus-visible { outline: none; }
 .cmdk-in-row input::-webkit-search-cancel-button { display: none; }
 .cmdk-ask-go {
-  height: 32px; padding: 0 14px; border-radius: 999px; flex: none;
+  height: 32px; padding: 0 14px; border-radius: 9px; flex: none;
   display: inline-flex; align-items: center; gap: 5px;
   background: rgba(56, 189, 248, .24); color: #E0F2FE;
   box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .42);
