@@ -694,7 +694,6 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   --h4-emerald: #34D399;
   --h4-rose: #FB7185;
   padding: 24px var(--gutter) 56px;
-  max-width: 1080px;
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -799,8 +798,12 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .h4-proj-details { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
 .h4-proj-goal { font-size: 0.78125rem; line-height: 1.45; color: var(--h4-body); }
 
+/* Step 1 Urgent Grid: 2-up side-by-side on wide screens, 1-col below 1180px */
+.h4-urgent-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.h4-urgent-grid:has(> :only-child) { grid-template-columns: minmax(0, 1fr); }
+
 /* Step 4: Collapsible Organization Pulse Accordions */
-.h4-pulse-accs { display: flex; flex-direction: column; gap: 10px; }
+.h4-pulse-accs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
 .h4-sec-acc {
   border-radius: 12px; overflow: hidden;
   background: var(--h4-surface);
@@ -1188,7 +1191,7 @@ select.field, input.field, textarea {
 select.field option { background: #0E1629; color: #F8FAFC; }
 
 @media (max-width: 1180px) {
-  .h4-grid { grid-template-columns: 1fr; }
+  .h4-grid, .h4-urgent-grid, .h4-pulse-accs { grid-template-columns: 1fr; }
   .h4-rail { position: static; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 }
 @media (max-width: 900px) {
@@ -1986,7 +1989,7 @@ function pageHome() {
           <a class="link" href="#/inbox">${st === "error" ? "Open Inbox" : `Open Inbox (${open.length})`}${ic("chev-right", "ic16")}</a>
         </div>
         ${body("Loading time-sensitive items…", () => urgentCards.length
-          ? `<div class="h4-stack">${urgentCards.map(needsCardV4).join("")}</div>`
+          ? `<div class="h4-urgent-grid">${urgentCards.map(needsCardV4).join("")}</div>`
           : `<div class="h4-empty-box">${ic("check-circle", "ic48")}<h3>Nothing expiring right now</h3><p>Time-sensitive approvals and blockers appear here first.</p></div>`)}
       </section>
 
