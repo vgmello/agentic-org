@@ -92,6 +92,10 @@ describe('budget parsing and 20% extension (BUD-1, BUD-3)', () => {
 		expect(parseBudgetUsd('')).toEqual({ ok: false, error: 'Enter a budget amount.' });
 		expect(parseBudgetUsd('0')).toEqual({ ok: false, error: 'Enter an amount greater than zero.' });
 		expect(parseBudgetUsd('-5').ok).toBe(false);
+		expect(parseBudgetUsd('2000000')).toEqual({
+			ok: false,
+			error: 'That budget amount is too large. Check the amount.'
+		});
 
 		expect(parseBudgetTokens('25,000,000')).toEqual({ ok: true, value: 25_000_000 });
 		expect(parseBudgetTokens('')).toEqual({ ok: false, error: 'Enter a token limit.' });

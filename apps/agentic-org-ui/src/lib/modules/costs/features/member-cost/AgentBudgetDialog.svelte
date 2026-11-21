@@ -118,18 +118,16 @@
 		} catch (e) {
 			const err = toAppError(e);
 			const raw = e as { code?: string; field?: string };
-			if (raw?.code === OUTCOME_UNKNOWN) {
+			if (err.code === OUTCOME_UNKNOWN || raw?.code === OUTCOME_UNKNOWN) {
 				unknownOpId = op;
 				formError =
 					'Save not confirmed. The connection dropped before HQ answered. Check status before trying again.';
-			} else {
+			} else if (raw?.field === 'limit') {
 				operationId = newId();
-				if (raw?.field === 'limit') {
-					fieldError = err.message;
-					await focusAmount();
-				} else {
-					formError = err.message;
-				}
+				fieldError = err.message;
+				await focusAmount();
+			} else {
+				formError = err.message;
 			}
 		} finally {
 			busy = false;

@@ -171,7 +171,7 @@
 			class="flex flex-wrap items-start justify-between gap-4 border-b border-line-subtle py-6 {gutters}"
 		>
 			<div class="min-w-0 flex-1 basis-72">
-				<h4 class="text-sm/6 font-semibold text-fg">Investment</h4>
+				<h3 class="text-base/7 font-semibold text-fg">Investment</h3>
 				<p
 					class="mt-1 text-sm/6 text-fg-secondary [overflow-wrap:anywhere]"
 					data-testid="project-investment-lead"
@@ -239,6 +239,17 @@
 					description="No usage records were counted for this project in these dates. Usage that hasn't reported yet isn't here, so this is not proof that nothing ran."
 					class="py-12"
 				/>
+				<div class="flex flex-col gap-1 pb-6 text-xs/5 {gutters}">
+					{#each data.coverage.gaps as gap (gap.source)}
+						<p class="text-fg-muted">{gap.source}: {gap.reason}</p>
+					{/each}
+					<p class="text-fg-muted">
+						Counted up to the ledger checkpoint of {formatDayTime(
+							new Date(data.coverage.checkpointAt),
+							data.period.timeZone
+						)}.
+					</p>
+				</div>
 			{:else}
 				<dl
 					class="mt-3 grid grid-cols-1 gap-px border-y border-line-subtle bg-surface-raised min-[640px]:grid-cols-2 min-[1280px]:grid-cols-4"
@@ -313,75 +324,6 @@
 
 				<ProjectBreakdowns breakdowns={data.breakdowns} total={totals} onopen={openRowRecords} />
 
-				{#if data.releaseCaps.length > 0}
-					<section
-						aria-labelledby="release-caps-heading"
-						class="border-t border-line-subtle py-6 {gutters}"
-						data-testid="release-caps"
-					>
-						<h3 id="release-caps-heading" class="text-base/7 font-semibold text-fg">
-							Release caps
-						</h3>
-						<p class="mt-1 text-sm/6 text-fg-muted">
-							Release caps emit neutral warnings only and never place holds on work.
-						</p>
-						<ul role="list" class="mt-4 flex flex-col gap-4">
-							{#each data.releaseCaps as rel (rel.releaseId)}
-								{@const pct =
-									rel.capLimit && rel.capLimit > 0
-										? Math.floor((rel.spent * 100) / rel.capLimit)
-										: undefined}
-								<li
-									class="rounded-lg border border-line-subtle bg-surface-raised/30 p-4"
-									data-release-cap={rel.releaseId}
-								>
-									<div class="flex flex-wrap items-baseline justify-between gap-2">
-										<a
-											href={resolve(
-												`/projects/${encodeURIComponent(projectId)}/releases/${encodeURIComponent(rel.releaseId)}` as '/'
-											)}
-											class="rounded-sm text-sm/6 font-semibold text-fg hover:text-brand-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-										>
-											<span class="font-mono text-xs/5 text-fg-muted">R-{rel.number}</span>
-											{rel.title}{#if rel.versionLabel}
-												<span class="ml-1.5 text-xs/5 font-normal text-fg-muted">
-													{rel.versionLabel}
-												</span>
-											{/if}
-										</a>
-										<span class="text-xs/5 text-fg-secondary tabular-nums">
-											{releaseCapText(rel)}
-										</span>
-									</div>
-									{#if pct !== undefined}
-										<div
-											role="meter"
-											aria-label="R-{rel.number} {rel.title} cap progress"
-											aria-valuemin={0}
-											aria-valuemax={100}
-											aria-valuenow={Math.min(pct, 100)}
-											aria-valuetext="{releaseCapText(rel)} ({pct}%)"
-											class="relative mt-2 h-2 overflow-hidden rounded-full bg-surface-overlay"
-										>
-											<span
-												class="absolute inset-y-0 left-0 rounded-full bg-brand"
-												style:width="{Math.min(pct, 100)}%"
-											></span>
-											<span aria-hidden="true" class="absolute inset-y-0 left-4/5 w-px bg-fg-muted"
-											></span>
-										</div>
-									{/if}
-									{#if !rel.complete}
-										<p class="mt-1.5 text-xs/5 text-fg-muted">
-											Usage incomplete; spent shown is a lower bound.
-										</p>
-									{/if}
-								</li>
-							{/each}
-						</ul>
-					</section>
-				{/if}
-
 				{#if data.speed.length > 0}
 					<section
 						aria-labelledby="speed-heading"
@@ -436,6 +378,73 @@
 						</div>
 					</section>
 				{/if}
+			{/if}
+
+			{#if data.releaseCaps.length > 0}
+				<section
+					aria-labelledby="release-caps-heading"
+					class="border-t border-line-subtle py-6 {gutters}"
+					data-testid="release-caps"
+				>
+					<h3 id="release-caps-heading" class="text-base/7 font-semibold text-fg">Release caps</h3>
+					<p class="mt-1 text-sm/6 text-fg-muted">
+						Release caps emit neutral warnings only and never place holds on work.
+					</p>
+					<ul role="list" class="mt-4 flex flex-col gap-4">
+						{#each data.releaseCaps as rel (rel.releaseId)}
+							{@const pct =
+								rel.capLimit && rel.capLimit > 0
+									? Math.floor((rel.spent * 100) / rel.capLimit)
+									: undefined}
+							<li
+								class="rounded-lg border border-line-subtle bg-surface-raised/30 p-4"
+								data-release-cap={rel.releaseId}
+							>
+								<div class="flex flex-wrap items-baseline justify-between gap-2">
+									<a
+										href={resolve(
+											`/projects/${encodeURIComponent(projectId)}/releases/${encodeURIComponent(rel.releaseId)}` as '/'
+										)}
+										class="rounded-sm text-sm/6 font-semibold text-fg hover:text-brand-text hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+									>
+										<span class="font-mono text-xs/5 text-fg-muted">R-{rel.number}</span>
+										{rel.title}{#if rel.versionLabel}
+											<span class="ml-1.5 text-xs/5 font-normal text-fg-muted">
+												{rel.versionLabel}
+											</span>
+										{/if}
+									</a>
+									<span class="text-xs/5 text-fg-secondary tabular-nums">
+										{releaseCapText(rel)}
+									</span>
+								</div>
+								{#if pct !== undefined}
+									<div
+										role="meter"
+										aria-label="R-{rel.number} {rel.title} cap progress"
+										aria-valuemin={0}
+										aria-valuemax={100}
+										aria-valuenow={Math.min(pct, 100)}
+										aria-valuetext="{releaseCapText(rel)} ({pct}%)"
+										class="relative mt-2 h-2 overflow-hidden rounded-full bg-surface-overlay"
+									>
+										<span
+											class="absolute inset-y-0 left-0 rounded-full bg-brand"
+											style:width="{Math.min(pct, 100)}%"
+										></span>
+										<span aria-hidden="true" class="absolute inset-y-0 left-4/5 w-px bg-fg-muted"
+										></span>
+									</div>
+								{/if}
+								{#if !rel.complete}
+									<p class="mt-1.5 text-xs/5 text-fg-muted">
+										Usage incomplete; spent shown is a lower bound.
+									</p>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				</section>
 			{/if}
 		</div>
 	</div>

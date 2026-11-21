@@ -854,7 +854,7 @@ export const costsApi: CostsApi = {
 		});
 		const notOnTask = managed
 			? undefined
-			: totalsOf(periodRecords.filter((r) => !r.attribution.projectId));
+			: totalsOf(visibleAll.filter((r) => within(r, thisMonth) && !r.attribution.projectId));
 		const totalTotals = totalsOf(periodRecords);
 		const cancelled = periodRecords.filter((r) => isCancelledTask(r));
 		const insights = buildOrgInsightsNotices(projects, totalTotals);
@@ -1178,6 +1178,14 @@ export const costsApi: CostsApi = {
 			message = 'Agent will remain paused until the period resets.';
 		}
 		budgetOperations.set(action.operationId, { applied: true, message });
+		if (on('action-unknown') && !budgetUnknownOnce) {
+			budgetUnknownOnce = true;
+			throw Object.assign(new Error('The connection to HQ dropped before it answered.'), {
+				source: 'app',
+				code: OUTCOME_UNKNOWN,
+				message: 'The connection to HQ dropped before it answered.'
+			});
+		}
 		return { message };
 	},
 

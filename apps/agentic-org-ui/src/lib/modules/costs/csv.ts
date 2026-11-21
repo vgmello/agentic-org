@@ -2,8 +2,8 @@
 // Escapes spreadsheet formula-injection prefixes (=, +, -, @, \t, \r) on every text cell and obeys RFC 4180 quoting.
 import type { Coverage, UsageRecord } from './types';
 
-const FORMULA_PREFIX = /^[=+\-@\t\r]/;
-const LEADING_SPACE_FORMULA = /^[ \f\v]+[=+\-@]/;
+const FORMULA_PREFIX = /^[=+\-@\t\r\n]/;
+const LEADING_SPACE_FORMULA = /^\s+[=+\-@]/;
 
 /**
  * Neutralizes spreadsheet formula injection (CSV/DDE injection) and formats a single RFC 4180 cell.

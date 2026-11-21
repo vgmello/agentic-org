@@ -321,7 +321,10 @@
 							>
 								<span>{lead.value}</span>
 								{#if row.itemsDone !== null && row.sampleCount > 0 && row.sampleCount < 5}
-									<span class="block text-xs/5 text-fg-muted">{row.sampleCount} items</span>
+									<span class="block text-xs/5 text-fg-muted">
+										{row.sampleCount}
+										{row.sampleCount === 1 ? 'item' : 'items'}
+									</span>
 								{/if}
 							</td>
 						</tr>
@@ -343,6 +346,8 @@
 							>
 								{row.label}{#if row.subtitle}
 									<span class="ml-1.5 text-xs/5 font-normal text-fg-muted">{row.subtitle}</span>
+								{/if}{#if row.archived}
+									<span class="ml-1.5 text-xs/5 font-normal text-fg-muted">archived</span>
 								{/if}
 							</p>
 							<button
@@ -356,8 +361,10 @@
 						<div class="mt-2">{@render shareBar(row)}</div>
 						<p class="mt-2 text-xs/5 text-fg-muted tabular-nums">
 							{formatTokens(row.totals.knownTokens)} tokens · Working: — ({WORKING_TIME_NOT_TRACKED}){#if row.itemsDone !== null}
-								· {formatCount(row.itemsDone)} items · {formatCost(row.costPerTaskMicroUsd)}/item ·
-								Median lead {lead.value}
+								· {formatCount(row.itemsDone)}
+								{row.itemsDone === 1 ? 'item' : 'items'} · {formatCost(
+									row.costPerTaskMicroUsd
+								)}/item · Median lead {lead.value}
 							{/if}
 						</p>
 						{#if inc}

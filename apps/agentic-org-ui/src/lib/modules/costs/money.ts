@@ -105,7 +105,12 @@ export function parseBudgetUsd(
 	input: string
 ): { ok: true; value: number } | { ok: false; error: string } {
 	const parsed = parseRate(input);
-	if (!parsed.ok) return parsed;
+	if (!parsed.ok) {
+		if (parsed.error.includes('provider charges')) {
+			return { ok: false, error: 'That budget amount is too large. Check the amount.' };
+		}
+		return parsed;
+	}
 	if (parsed.value === null) return { ok: false, error: 'Enter a budget amount.' };
 	if (parsed.value <= 0) return { ok: false, error: 'Enter an amount greater than zero.' };
 	return { ok: true, value: parsed.value };

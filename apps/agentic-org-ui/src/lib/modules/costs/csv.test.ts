@@ -10,6 +10,8 @@ describe('CSV formula-injection escaping and RFC 4180 encoding', () => {
 		['@SUM(1+1)', "'@SUM(1+1)"],
 		['\t=1+1', "'\t=1+1"],
 		['\r=1+1', `"'\r=1+1"`],
+		['\n=1+1', `"'\n=1+1"`],
+		[' \n=1+1', `"' \n=1+1"`],
 		['   =1+1', "'   =1+1"]
 	])('neutralizes leading formula trigger %j', (input, expected) => {
 		expect(escapeCsvCell(input)).toBe(expected);

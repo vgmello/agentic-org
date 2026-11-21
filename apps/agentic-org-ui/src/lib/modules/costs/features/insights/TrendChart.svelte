@@ -41,16 +41,18 @@
 		if (count === 0) return [];
 		const usableW = VIEW_W - PAD_X * 2;
 		const slotW = usableW / count;
-		const barW = Math.max(4, Math.min(28, slotW * 0.62));
+		const barW = Math.min(28, Math.max(1, slotW * 0.62));
 		return buckets.map((bucket, idx) => {
+			const known = bucket.totals.knownCostMicroUsd !== null;
 			const cost = bucket.totals.knownCostMicroUsd ?? 0;
-			const ratio = maxMicro > 0 ? cost / chartScale : 0;
-			const h = cost > 0 ? Math.max(3, Math.round(ratio * PLOT_H)) : 0;
+			const ratio = known && maxMicro > 0 ? cost / chartScale : 0;
+			const h = known && cost > 0 ? Math.max(3, Math.round(ratio * PLOT_H)) : 0;
 			const cx = PAD_X + slotW * idx + slotW / 2;
 			const y = PAD_TOP + (PLOT_H - h);
 			const incomplete = Boolean(incompleteText(bucket.totals));
 			return {
 				bucket,
+				known,
 				cx,
 				x: cx - barW / 2,
 				barW,
@@ -61,9 +63,20 @@
 		});
 	});
 
-	const linePath = $derived(
-		points.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt.cx.toFixed(1)} ${pt.y.toFixed(1)}`).join(' ')
-	);
+	/** Connects consecutive known-cost buckets and restarts with M after unknown (`null`) gaps. */
+	const linePath = $derived.by(() => {
+		const cmds: string[] = [];
+		let open = false;
+		for (const pt of points) {
+			if (!pt.known) {
+				open = false;
+				continue;
+			}
+			cmds.push(`${open ? 'L' : 'M'} ${pt.cx.toFixed(1)} ${pt.y.toFixed(1)}`);
+			open = true;
+		}
+		return cmds.join(' ');
+	});
 
 	function showLabel(index: number): boolean {
 		const n = buckets.length;
@@ -176,7 +189,7 @@
 							</rect>
 						{/if}
 					{/each}
-					{#if points.length > 1}
+					{#if linePath}
 						<path
 							d={linePath}
 							fill="none"
@@ -187,20 +200,39 @@
 						/>
 					{/if}
 					{#each points as pt, i (pt.bucket.key)}
-						<circle
-							cx={pt.cx}
-							cy={pt.y}
-							r="3"
-							class={pt.incomplete ? 'fill-warning stroke-surface' : 'fill-brand stroke-surface'}
-							stroke-width="1.5"
-						>
-							<title>{pt.bucket.label}: {formatCost(pt.bucket.totals.knownCostMicroUsd)}</title>
-						</circle>
+						{#if pt.known}
+							<circle
+								cx={pt.cx}
+								cy={pt.y}
+								r="3"
+								class={pt.incomplete ? 'fill-warning stroke-surface' : 'fill-brand stroke-surface'}
+								stroke-width="1.5"
+							>
+								<title>{pt.bucket.label}: {formatCost(pt.bucket.totals.knownCostMicroUsd)}</title>
+							</circle>
+						{:else if pt.bucket.totals.records > 0}
+							<circle
+								cx={pt.cx}
+								cy={PAD_TOP + PLOT_H}
+								r="3"
+								class="fill-surface stroke-warning"
+								stroke-dasharray="2 1"
+								stroke-width="1.5"
+							>
+								<title>{pt.bucket.label}: cost unknown (—)</title>
+							</circle>
+						{/if}
 						{#if showLabel(i)}
 							<text
 								x={pt.cx}
 								y={VIEW_H - 6}
-								text-anchor={i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'middle'}
+								text-anchor={points.length === 1
+									? 'middle'
+									: i === 0
+										? 'start'
+										: i === points.length - 1
+											? 'end'
+											: 'middle'}
 								class="fill-fg-muted text-[11px]"
 							>
 								{pt.bucket.label}{pt.bucket.partial ? '*' : ''}

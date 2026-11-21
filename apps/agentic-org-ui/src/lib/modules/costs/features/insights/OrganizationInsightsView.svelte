@@ -109,25 +109,52 @@
 		return sortDir === 'asc' ? 'ascending' : 'descending';
 	}
 
+	const thisMonthRequest = $derived<PeriodRequest>({ kind: 'this_month', timeZone: zone });
+	const showNotOnTask = $derived.by(() => {
+		if (!data?.notOnTask) return false;
+		const needle = query.trim().toLowerCase();
+		if (!needle) return true;
+		return 'not on a task'.includes(needle) || 'overhead'.includes(needle);
+	});
+
 	function openOrgRecords(
 		title: string,
 		fetchPage: (cursor?: string) => Promise<import('../../types').UsageRecordPage>,
-		from: HTMLElement
+		from: HTMLElement,
+		subtitle = `${periodLabel(period.kind)} · effective records, newest first`
 	) {
 		opener = from;
-		sheet?.showCustom(
-			title,
-			`${periodLabel(period.kind)} · effective records, newest first`,
-			fetchPage
-		);
+		sheet?.showCustom(title, subtitle, fetchPage);
 	}
 
 	function openProjectRecords(row: OrgInsightProjectRow, from: HTMLElement) {
 		openOrgRecords(
 			`Usage records: ${row.name}`,
 			(cursor) =>
-				costsApi.projectRecords(organizationId, row.projectId, period, { all: true }, cursor),
-			from
+				costsApi.projectRecords(
+					organizationId,
+					row.projectId,
+					thisMonthRequest,
+					{ all: true },
+					cursor
+				),
+			from,
+			'This month · effective records, newest first'
+		);
+	}
+
+	function openNotOnTaskRecords(from: HTMLElement) {
+		openOrgRecords(
+			'Usage records: Not on a task',
+			(cursor) =>
+				costsApi.records(
+					organizationId,
+					thisMonthRequest,
+					{ dimension: 'project', notOnTask: true },
+					cursor
+				),
+			from,
+			'This month · effective records, newest first'
 		);
 	}
 
@@ -283,6 +310,17 @@
 						description="No usage records were counted for these dates. Usage that hasn't reported yet isn't here, so this is not proof that nothing ran."
 						class="py-12"
 					/>
+					<div class="flex flex-col gap-1 pb-6 text-xs/5 {gutters}">
+						{#each data.coverage.gaps as gap (gap.source)}
+							<p class="text-fg-muted">{gap.source}: {gap.reason}</p>
+						{/each}
+						<p class="text-fg-muted">
+							Counted up to the ledger checkpoint of {formatDayTime(
+								new Date(data.coverage.checkpointAt),
+								data.period.timeZone
+							)}.
+						</p>
+					</div>
 				{:else}
 					<dl
 						class="mt-3 grid grid-cols-1 gap-px border-y border-line-subtle bg-surface-raised min-[640px]:grid-cols-2 min-[1280px]:grid-cols-4"
@@ -401,7 +439,7 @@
 						</div>
 
 						<div class="mt-4 @container">
-							{#if visibleProjects.length === 0}
+							{#if visibleProjects.length === 0 && !showNotOnTask}
 								<p class="py-8 text-sm/6 text-fg-muted {gutters}" data-testid="org-projects-empty">
 									{query.trim()
 										? `No projects match "${query.trim()}".`
@@ -557,7 +595,7 @@
 												</td>
 											</tr>
 										{/each}
-										{#if data.notOnTask}
+										{#if showNotOnTask && data.notOnTask}
 											<tr
 												class="border-t border-t-line border-b border-line-subtle align-top"
 												data-org-project="not-on-a-task"
@@ -568,7 +606,7 @@
 												>
 													<span class="font-semibold text-fg">Not on a task</span>
 													<p class="mt-0.5 text-xs/5 text-fg-muted">
-														Team and organization overhead with no project recorded.
+														Team and organization overhead with no project recorded (this month).
 													</p>
 												</th>
 												<td class="px-3 py-4 text-right text-fg-muted">—</td>
@@ -576,18 +614,11 @@
 													<button
 														type="button"
 														class={figureClass}
-														onclick={(e) =>
-															openOrgRecords(
-																'Usage records: Not on a task',
-																(cursor) =>
-																	costsApi.records(
-																		organizationId,
-																		period,
-																		{ dimension: 'project', notOnTask: true },
-																		cursor
-																	),
-																e.currentTarget
-															)}>{formatCost(data.notOnTask.knownCostMicroUsd)}</button
+														aria-label="{formatCost(
+															data.notOnTask.knownCostMicroUsd
+														)} this month. Open records for Not on a task"
+														onclick={(e) => openNotOnTaskRecords(e.currentTarget)}
+														>{formatCost(data.notOnTask.knownCostMicroUsd)}</button
 													>
 												</td>
 												<td class="px-3 py-4 text-right text-fg-muted">—</td>
@@ -621,22 +652,67 @@
 													<span class="ml-1.5 font-mono text-xs/5 font-normal text-fg-muted">
 														P-{proj.projectNumber}
 													</span>
+													{#if proj.archived}
+														<span class="ml-1.5 text-xs/5 font-normal text-fg-muted">archived</span>
+													{/if}
 												</p>
 												<span class="text-sm/6 font-semibold text-fg tabular-nums">
 													{formatCost(proj.toDate.knownCostMicroUsd)} to date
 												</span>
 											</div>
-											<p class="mt-1 text-xs/5 text-fg-secondary tabular-nums">
-												This month {formatCost(proj.thisMonth.knownCostMicroUsd)} · Last month {formatCost(
-													proj.lastMonth.knownCostMicroUsd
-												)} ({formatChangePercent(proj.changePercent)}) · Working: — ({WORKING_TIME_NOT_TRACKED})
-												· {formatCount(proj.itemsDone)} items done
-											</p>
+											<div
+												class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs/5 text-fg-secondary tabular-nums"
+											>
+												<span>
+													This month:
+													<button
+														type="button"
+														class={figureClass}
+														aria-label="{formatCost(
+															proj.thisMonth.knownCostMicroUsd
+														)} this month. Open records for {proj.name}"
+														onclick={(e) => openProjectRecords(proj, e.currentTarget)}
+														>{formatCost(proj.thisMonth.knownCostMicroUsd)}</button
+													>
+												</span>
+												<span>
+													· Last month {formatCost(proj.lastMonth.knownCostMicroUsd)} ({formatChangePercent(
+														proj.changePercent
+													)}) · Working: — ({WORKING_TIME_NOT_TRACKED}) · {formatCount(
+														proj.itemsDone
+													)}
+													{proj.itemsDone === 1 ? 'item' : 'items'} done
+												</span>
+											</div>
 											{#if rowInc}
 												<p class="mt-1 text-xs/5 text-fg-muted">{rowInc}</p>
 											{/if}
 										</li>
 									{/each}
+									{#if showNotOnTask && data.notOnTask}
+										<li
+											class="border-t border-line py-4 {gutters}"
+											data-org-project="not-on-a-task"
+										>
+											<div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+												<div class="min-w-0 flex-1 basis-40">
+													<p class="text-sm/6 font-semibold text-fg">Not on a task</p>
+													<p class="mt-0.5 text-xs/5 text-fg-muted">
+														Team and organization overhead with no project recorded (this month).
+													</p>
+												</div>
+												<button
+													type="button"
+													class="text-sm/6 {figureClass}"
+													aria-label="{formatCost(
+														data.notOnTask.knownCostMicroUsd
+													)} this month. Open records for Not on a task"
+													onclick={(e) => openNotOnTaskRecords(e.currentTarget)}
+													>{formatCost(data.notOnTask.knownCostMicroUsd)}</button
+												>
+											</div>
+										</li>
+									{/if}
 								</ul>
 								<p class="mt-3 text-xs/5 text-fg-muted {gutters}">
 									Working time: {WORKING_TIME_NOT_TRACKED}.

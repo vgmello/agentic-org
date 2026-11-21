@@ -25,6 +25,7 @@
 	import { costsApi } from '../../api';
 	import { formatDayTime } from '../../dates';
 	import { formatCost, formatCount, formatTokens } from '../../money';
+	import { OUTCOME_UNKNOWN } from '../../outcome';
 	import {
 		API_EQUIVALENT_NOTE,
 		budgetState,
@@ -38,7 +39,8 @@
 		BudgetPeriodState,
 		MemberProjectSpendRow,
 		MemberRecordsFilter,
-		MemberTaskSpendRow
+		MemberTaskSpendRow,
+		UsageTotals
 	} from '../../types';
 	import BudgetBar from '../agent-budgets/BudgetBar.svelte';
 	import CostsError from '../states/CostsError.svelte';
@@ -66,6 +68,15 @@
 
 	let actionBusy = $state<string | undefined>();
 	let actionError = $state<string | undefined>();
+	let unknownAction = $state<
+		| {
+				periodKind: 'daily' | 'monthly';
+				action: 'clear' | 'allow_once' | 'keep_paused';
+				operationId: string;
+		  }
+		| undefined
+	>();
+	let checkingAction = $state(false);
 	let sheet = $state<ReturnType<typeof UsageRecordsSheet>>();
 	let budgetDialog = $state<ReturnType<typeof AgentBudgetDialog>>();
 	let opener: HTMLElement | null = null;
@@ -80,6 +91,66 @@
 			data.byProject.length > 0
 		);
 	});
+
+	/** Aggregated totals across all visible records (disjoint byProject partition) for page-level completeness notes. */
+	const combinedTotals = $derived.by((): UsageTotals | undefined => {
+		if (!data) return undefined;
+		const sources =
+			data.byProject.length > 0
+				? data.byProject.map((r) => r.totals)
+				: [
+						data.periods.today,
+						data.periods.thisWeek,
+						data.periods.thisMonth,
+						data.periods.lastMonth
+					];
+		let records = 0;
+		let knownCostMicroUsd: number | null = null;
+		let knownTokens: number | null = null;
+		let cacheReadTokens: number | null = null;
+		let tokenIncompleteRecords = 0;
+		let costIncompleteRecords = 0;
+		let unpricedRecords = 0;
+		let unknownCostRecords = 0;
+		let includesApiEquivalent = false;
+		for (const s of sources) {
+			records += s.records;
+			if (s.knownCostMicroUsd !== null)
+				knownCostMicroUsd = (knownCostMicroUsd ?? 0) + s.knownCostMicroUsd;
+			if (s.knownTokens !== null) knownTokens = (knownTokens ?? 0) + s.knownTokens;
+			if (s.cacheReadTokens !== null) cacheReadTokens = (cacheReadTokens ?? 0) + s.cacheReadTokens;
+			tokenIncompleteRecords += s.tokenIncompleteRecords;
+			costIncompleteRecords += s.costIncompleteRecords;
+			unpricedRecords += s.unpricedRecords;
+			unknownCostRecords += s.unknownCostRecords;
+			if (s.includesApiEquivalent) includesApiEquivalent = true;
+		}
+		if (
+			data.periods.today.includesApiEquivalent ||
+			data.periods.thisWeek.includesApiEquivalent ||
+			data.periods.thisMonth.includesApiEquivalent ||
+			data.periods.lastMonth.includesApiEquivalent
+		) {
+			includesApiEquivalent = true;
+		}
+		return {
+			records,
+			knownCostMicroUsd,
+			knownTokens,
+			cacheReadTokens,
+			tokenIncompleteRecords,
+			costIncompleteRecords,
+			unpricedRecords,
+			unknownCostRecords,
+			includesApiEquivalent
+		};
+	});
+
+	function periodTileDetail(totals: UsageTotals, emptyLabel: string): string {
+		if (totals.records === 0) return emptyLabel;
+		if (totals.knownCostMicroUsd === null) return unknownCostReason(totals);
+		return `${formatTokens(totals.knownTokens)} tokens`;
+	}
 
 	function openRecords(title: string, filter: MemberRecordsFilter, from: HTMLElement) {
 		opener = from;
@@ -113,22 +184,54 @@
 		periodKind: 'daily' | 'monthly',
 		action: 'clear' | 'allow_once' | 'keep_paused'
 	) {
-		if (actionBusy) return;
+		if (actionBusy || checkingAction || unknownAction) return;
 		const key = `${periodKind}:${action}`;
+		const op = newId();
 		actionBusy = key;
 		actionError = undefined;
 		try {
 			const res = await costsApi.agentBudgetAction(organizationId, memberId, {
 				periodKind,
 				action,
-				operationId: newId()
+				operationId: op
 			});
 			toast.success(res.message);
 			await costRes.reload();
 		} catch (e) {
-			actionError = toAppError(e).message;
+			const err = toAppError(e);
+			const raw = e as { code?: string };
+			if (err.code === OUTCOME_UNKNOWN || raw?.code === OUTCOME_UNKNOWN) {
+				unknownAction = { periodKind, action, operationId: op };
+				actionError =
+					'Change not confirmed. The connection dropped before HQ answered. Check status before trying again.';
+			} else {
+				actionError = err.message;
+			}
 		} finally {
 			actionBusy = undefined;
+		}
+	}
+
+	async function checkActionStatus() {
+		if (!unknownAction || checkingAction) return;
+		checkingAction = true;
+		try {
+			const status = await costsApi.agentBudgetOperation(organizationId, unknownAction.operationId);
+			if (status.state === 'applied') {
+				unknownAction = undefined;
+				actionError = undefined;
+				toast.success('Budget change was confirmed.');
+				await costRes.reload();
+			} else if (status.state === 'not_applied') {
+				unknownAction = undefined;
+				actionError = status.reason;
+			} else {
+				actionError = 'Still waiting for confirmation from HQ. Check status again shortly.';
+			}
+		} catch (e) {
+			actionError = toAppError(e).message;
+		} finally {
+			checkingAction = false;
 		}
 	}
 
@@ -164,13 +267,14 @@
 		{#if budget}
 			<BudgetBar {budget} {kind} zone={bZone} />
 			{#if canManage}
+				{@const actionsLocked = !!actionBusy || checkingAction || !!unknownAction}
 				<div class="flex flex-wrap items-center gap-2 pt-1">
 					<Button
 						type="button"
 						variant="outline"
 						size="sm"
 						class={mobileButton}
-						disabled={!!actionBusy}
+						disabled={actionsLocked}
 						onclick={(e) => openBudgetDialog(kind, budget, e.currentTarget)}
 						>{reached ? 'Raise budget…' : 'Change budget…'}</Button
 					>
@@ -180,7 +284,7 @@
 							variant="outline"
 							size="sm"
 							class={mobileButton}
-							disabled={!!actionBusy}
+							disabled={actionsLocked}
 							onclick={() => runBudgetAction(kind, 'allow_once')}
 							>{actionBusy === `${kind}:allow_once` ? 'Working…' : 'Allow 20% more once'}</Button
 						>
@@ -191,7 +295,7 @@
 							variant="outline"
 							size="sm"
 							class={mobileButton}
-							disabled={!!actionBusy}
+							disabled={actionsLocked}
 							onclick={() => runBudgetAction(kind, 'keep_paused')}
 							>{actionBusy === `${kind}:keep_paused`
 								? 'Working…'
@@ -203,7 +307,7 @@
 						variant="ghost"
 						size="sm"
 						class={mobileButton}
-						disabled={!!actionBusy}
+						disabled={actionsLocked}
 						onclick={() => runBudgetAction(kind, 'clear')}
 						>{actionBusy === `${kind}:clear` ? 'Working…' : 'Clear budget'}</Button
 					>
@@ -258,6 +362,13 @@
 		</div>
 		<div class="mt-6"><SkeletonRows label="agent cost breakdown" rows={3} /></div>
 	</div>
+{:else if costRes.state === 'unsupported'}
+	<div class="py-6 {gutters}" data-testid="resource-unsupported">
+		<h3 class="text-sm/6 font-semibold text-fg">Not available in this version</h3>
+		<p class="mt-1 max-w-xl text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
+			{costRes.message || "This version of the office doesn't support member cost."}
+		</p>
+	</div>
 {:else if costRes.state === 'error'}
 	<div class="py-6">
 		<CostsError
@@ -310,8 +421,21 @@
 					description="No usage records were counted here yet. Usage that hasn't reported yet isn't here, so this is not proof of zero use."
 					class="py-10"
 				/>
+				<div class="flex flex-col gap-1 text-xs/5 {gutters}">
+					{#each data.coverage.gaps as gap (gap.source)}
+						<p class="text-fg-muted">{gap.source}: {gap.reason}</p>
+					{/each}
+					<p class="text-fg-muted">
+						Counted up to the ledger checkpoint of {formatDayTime(
+							new Date(data.coverage.checkpointAt),
+							data.timeZone
+						)}.
+					</p>
+				</div>
 			{:else}
-				{@const monthInc = incompleteText(data.periods.thisMonth, data.coverage)}
+				{@const overallInc = combinedTotals
+					? incompleteText(combinedTotals, data.coverage)
+					: undefined}
 				<dl
 					class="mt-4 grid grid-cols-1 gap-px border-y border-line-subtle bg-surface-raised min-[640px]:grid-cols-2 min-[1280px]:grid-cols-4"
 					data-testid="member-period-tiles"
@@ -319,41 +443,34 @@
 					<StatTile
 						label="Today"
 						value={data.periods.today.records === 0 ? '—' : costValue(data.periods.today)}
-						detail={data.periods.today.records === 0
-							? 'No records today'
-							: `${formatTokens(data.periods.today.knownTokens)} tokens`}
+						detail={periodTileDetail(data.periods.today, 'No records today')}
 					/>
 					<StatTile
 						label="This week"
 						value={data.periods.thisWeek.records === 0 ? '—' : costValue(data.periods.thisWeek)}
-						detail={data.periods.thisWeek.records === 0
-							? 'No records this week'
-							: `${formatTokens(data.periods.thisWeek.knownTokens)} tokens`}
+						detail={periodTileDetail(data.periods.thisWeek, 'No records this week')}
 					/>
 					<StatTile
 						label="This month"
 						value={data.periods.thisMonth.records === 0 ? '—' : costValue(data.periods.thisMonth)}
-						detail={data.periods.thisMonth.records === 0
-							? 'No records this month'
-							: data.periods.thisMonth.knownCostMicroUsd === null
-								? unknownCostReason(data.periods.thisMonth)
-								: `${formatTokens(data.periods.thisMonth.knownTokens)} tokens`}
+						detail={periodTileDetail(data.periods.thisMonth, 'No records this month')}
 					/>
 					<StatTile
 						label="Last month"
 						value={data.periods.lastMonth.records === 0 ? '—' : costValue(data.periods.lastMonth)}
-						detail={data.periods.lastMonth.records === 0
-							? 'No records last month'
-							: `${formatTokens(data.periods.lastMonth.knownTokens)} tokens`}
+						detail={periodTileDetail(data.periods.lastMonth, 'No records last month')}
 					/>
 				</dl>
 				<div class="mt-3 flex flex-col gap-1 text-xs/5 {gutters}">
-					{#if data.periods.thisMonth.includesApiEquivalent}
+					{#if combinedTotals?.includesApiEquivalent}
 						<p class="text-fg-secondary">{API_EQUIVALENT_NOTE}</p>
 					{/if}
-					{#if monthInc}
-						<p class="text-fg-secondary" data-testid="member-incomplete">{monthInc}</p>
+					{#if overallInc}
+						<p class="text-fg-secondary" data-testid="member-incomplete">{overallInc}</p>
 					{/if}
+					{#each data.coverage.gaps as gap (gap.source)}
+						<p class="text-fg-muted">{gap.source}: {gap.reason}</p>
+					{/each}
 					<p class="text-fg-muted">
 						Counted up to the ledger checkpoint of {formatDayTime(
 							new Date(data.coverage.checkpointAt),
@@ -395,7 +512,23 @@
 				{/if}
 
 				{#if actionError}
-					<p class="mt-3 text-xs/5 text-danger-text" role="alert">{actionError}</p>
+					<div
+						class="mt-3 flex flex-wrap items-center gap-3 rounded-md bg-danger-emphasis/10 px-3 py-2 text-xs/5 text-danger-text ring-1 ring-danger-emphasis/20"
+						role="alert"
+						data-testid="budget-action-outcome"
+					>
+						<p class="min-w-0 flex-1">{actionError}</p>
+						{#if unknownAction}
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								class={mobileButton}
+								disabled={checkingAction}
+								onclick={checkActionStatus}>{checkingAction ? 'Checking…' : 'Check status'}</Button
+							>
+						{/if}
+					</div>
 				{/if}
 
 				{#if !data.budgets.zone.name}

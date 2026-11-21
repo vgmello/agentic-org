@@ -112,9 +112,19 @@ test('INS-1..5: Project Insights shows investment lead, KPI tiles, trend chart/t
 	const csvText = await readFile(csvPath!, 'utf8');
 	expect(csvText.split('\r\n')[0]).toContain('event_id,occurred_at,consumer_kind');
 	expect(csvText).toContain('beacon');
+
+	// Period switching updates KPI tiles and period range cleanly
+	await page.getByTestId('period-menu').click();
+	await page.getByRole('menuitemradio', { name: 'Last month' }).click();
+	await expect(page.getByTestId('period-menu')).toHaveText(/Last month/);
+	await expect(page.getByTestId('period-range')).toContainText('1 Oct – 31 Oct 2026');
+	await page.getByTestId('period-menu').click();
+	await page.getByRole('menuitemradio', { name: 'All time' }).click();
+	await expect(page.getByTestId('period-menu')).toHaveText(/All time/);
+	await expect(page.getByTestId('period-range')).toContainText('Everything recorded');
 });
 
-test('INS-5 & scope: Organization Insights (/insights) sorts, filters, drills into project insights, and enforces PM/viewer scope', async ({
+test('INS-5 & scope: Organization Insights (/insights) sorts, filters, switches periods, drills into project insights, and enforces PM/viewer scope', async ({
 	page
 }) => {
 	await openOrganization(page);
@@ -133,10 +143,27 @@ test('INS-5 & scope: Organization Insights (/insights) sorts, filters, drills in
 	await expect(table.locator('[data-org-project="beacon"]')).toContainText('Beacon');
 	await expect(table.locator('[data-org-project="not-on-a-task"]')).toContainText('Not on a task');
 
-	// Filter projects by name
+	// Switch period to Last month: KPI updates to Last month, while Projects "This month" drill-down stays scoped to This month
+	await page.getByTestId('period-menu').click();
+	await page.getByRole('menuitemradio', { name: 'Last month' }).click();
+	await expect(tiles).toContainText('≈ $278.66');
+	await expect(page.getByTestId('period-range')).toContainText('1 Oct – 31 Oct 2026');
+	const thisMonthBtn = table
+		.locator('[data-org-project="atlas"]')
+		.getByRole('button', { name: /this month\. Open records for Atlas/ });
+	await thisMonthBtn.click();
+	const sheet = page.getByRole('dialog');
+	await expect(sheet).toContainText('This month · effective records, newest first');
+	await page.keyboard.press('Escape');
+	await expect(sheet).toBeHidden();
+
+	// Filter projects by name, and also verify "Not on a task" can be filtered alone
 	await page.getByTestId('org-projects-filter').fill('Beacon');
 	await expect(table.locator('[data-org-project="beacon"]')).toBeVisible();
 	await expect(table.locator('[data-org-project="atlas"]')).toHaveCount(0);
+	await expect(table.locator('[data-org-project="not-on-a-task"]')).toHaveCount(0);
+	await page.getByTestId('org-projects-filter').fill('overhead');
+	await expect(table.locator('[data-org-project="not-on-a-task"]')).toBeVisible();
 	await page.getByTestId('org-projects-filter').fill('');
 
 	// Sort projects by name
@@ -203,7 +230,7 @@ test('COST-7 & BUD-1..4: Member profile Cost tab shows spend, owner budgets, PM 
 	await expect(sheet).toBeHidden();
 	await expect(projBtn).toBeFocused();
 
-	// 2. Owner viewing Pax (no budget set) -> Set budget dialog validation & save
+	// 2. Owner viewing Pax (no budget set) -> Set budget dialog validation, save, clear, save-fails, save-unknown
 	await visit(page, '/members/pax/cost');
 	await expect(page.getByTestId('member-no-budget')).toContainText('No budget set');
 	await page.getByRole('button', { name: 'Set budget…' }).click();
@@ -214,6 +241,32 @@ test('COST-7 & BUD-1..4: Member profile Cost tab shows spend, owner budgets, PM 
 	await dialog.getByRole('button', { name: 'Set budget' }).click();
 	await expect(dialog).toBeHidden();
 	await expect(page.locator('[data-member-budget="daily"]')).toContainText('$15.00');
+	await page
+		.locator('[data-member-budget="daily"]')
+		.getByRole('button', { name: 'Clear budget' })
+		.click();
+	await expect(page.getByTestId('member-no-budget')).toContainText('No budget set');
+
+	// Verified failure keeps entered value
+	await visit(page, '/members/pax/cost?mock=save-fails');
+	await page.getByRole('button', { name: 'Set budget…' }).click();
+	await dialog.getByLabel('Limit (USD)').fill('18');
+	await dialog.getByRole('button', { name: 'Set budget' }).click();
+	await expect(dialog.getByTestId('agent-budget-error')).toContainText("HQ couldn't write");
+	await expect(dialog.getByLabel('Limit (USD)')).toHaveValue('18');
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(dialog).toBeHidden();
+
+	// Unknown outcome shows Check status and reconciles without re-submitting blind
+	await visit(page, '/members/pax/cost?mock=save-unknown');
+	await page.getByRole('button', { name: 'Set budget…' }).click();
+	await dialog.getByLabel('Limit (USD)').fill('22');
+	await dialog.getByRole('button', { name: 'Set budget' }).click();
+	await expect(dialog.getByTestId('agent-budget-error')).toContainText('Save not confirmed');
+	await expect(dialog.getByRole('button', { name: 'Set budget' })).toHaveCount(0);
+	await dialog.getByRole('button', { name: 'Check status' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(page.locator('[data-member-budget="daily"]')).toContainText('$22.00');
 
 	// 3. Owner viewing Kai (held + already extended): Paused · Budget reached, no Allow 20% once
 	await visit(page, '/members/kai/cost');
@@ -223,12 +276,16 @@ test('COST-7 & BUD-1..4: Member profile Cost tab shows spend, owner budgets, PM 
 	await expect(kaiMonthly.getByRole('button', { name: 'Allow 20% more once' })).toHaveCount(0);
 	await expect(kaiMonthly.getByRole('button', { name: 'Raise budget…' })).toBeVisible();
 
-	// 4. Owner viewing Mira (stop_pending) + neutral budget reset notice
+	// 4. Owner viewing Mira (stop_pending) + neutral budget reset notice + Keep paused + Allow 20% more once
 	await visit(page, '/members/mira/cost?mock=budget-reset');
 	await expect(page.getByTestId('budget-reset-note')).toContainText('Budget reset');
-	await expect(page.locator('[data-member-budget="daily"]')).toContainText(
-		'Stopping · Budget reached'
-	);
+	const miraDaily = page.locator('[data-member-budget="daily"]');
+	await expect(miraDaily).toContainText('Stopping · Budget reached');
+	await miraDaily.getByRole('button', { name: 'Keep paused until reset' }).click();
+	await expect(miraDaily).toContainText('Paused · Budget reached');
+	await miraDaily.getByRole('button', { name: 'Allow 20% more once' }).click();
+	await expect(miraDaily).toContainText('limit $6.00 + $1.20 = $7.20');
+	await expect(miraDaily.getByRole('button', { name: 'Allow 20% more once' })).toHaveCount(0);
 
 	// 5. Project manager (?mock=manager, lead of Web/Beacon):
 	//    - On Mira (has Beacon spend): labelled "in your projects", NO budget section, NO org Not on a task, only Beacon

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@ui-engineer'
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-21T16:30:00Z'
+updated_date: '2026-11-21T16:50:00Z'
 labels:
   - ui
   - costs
@@ -54,4 +54,6 @@ Implemented Step 7 (Costs & Insights + Member Cost tab) on branch feat/task-69-u
 - Member Profile Cost tab: replaced NotBuilt placeholder in CostTab.svelte with MemberCostView + AgentBudgetDialog (period spend tiles, owner-only daily/monthly BudgetBars + Set/Change/Clear/Allow 20% once/Keep paused controls, PM 'in your projects' scope without budgets/org overhead, empty/error/unauthorized/person states).
 - Fakes strictly under e2e/fakes/modules/{costs,members}.ts. Production capabilities.ts and production-unavailable.spec.ts keep /insights, /projects/[id]/insights, and /members/[id]/cost unavailable until L2/L3 gateway routes land.
 - Verified: svelte-autofixer (0 issues on all 11 touched .svelte files), format:check, check (0/0), lint (--max-warnings=0), test (167 files / 2530 tests), build + check:build-assets, Playwright chromium (insights/costs/projects: 36/36), Playwright production (7/7).
+
+Addressed all 10 Pass 1 review findings on feat/task-69-ui-costs-insights: aligned OrganizationInsightsView This month drill-downs, Not on a task filtering/mobile parity, and empty-period coverage/release-caps visibility; added unsupported state, OUTCOME_UNKNOWN Check status reconciliation, full period unknown-cost & coverage gaps to MemberCostView and AgentBudgetDialog; hardened CSV formula-injection prefix with newline; fixed TrendChart null gap breaking, single-point anchor, and bar width clamping; fixed singular item copy, archived badge, Investment h3 level, and budget over-max copy; expanded E2E coverage for PeriodMenu switching and budget save-unknown/save-fails/allow_once/keep_paused/clear flows.
 <!-- SECTION:NOTES:END -->
