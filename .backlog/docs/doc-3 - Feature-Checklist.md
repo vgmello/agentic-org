@@ -3,7 +3,7 @@ id: doc-3
 title: Feature Checklist
 type: guide
 created_date: '2026-11-21T00:14:00Z'
-updated_date: '2026-11-21T17:44:00Z'
+updated_date: '2026-11-21T18:30:00Z'
 tags:
   - features
   - checklist
@@ -221,7 +221,7 @@ Full requirements: [Usage, costs and budgets](specs/doc-51%20-%20Spec-Costs-Budg
 | [ ] | FC-084 | [Immutable durable usage ledger and corrections](organization-data/doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md) | Planned | Only usage event types/fakes found; no real durable ledger, collector, protected archive or correction service. |
 | [ ] | FC-085 | [Historical consumer, team, task and release attribution](organization-data/doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md) | Planned | No execution-time consumer/scope/historical-attribution capture service found. |
 | [ ] | FC-086 | [Price versions, tokens, USD and coverage states](specs/doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md) | Planned | Only token/USD event types/fakes found; no real capture, versioned pricing or coverage service. |
-| [ ] | FC-087 | [Cost views, scoped permissions and CSV export](specs/doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md) | In progress | UI against mock data only: Organization settings › Costs shows the organization's cost, why, and the prices behind it (commits 4940b647, ab090eea; [`costs.spec.ts`](../../apps/agentic-org-ui/e2e/costs.spec.ts)); its production API refuses, and project and organization Insights are plan step 7. No live ledger cost views, authorized amount reads or CSV export; request estimates are not recorded spend. |
+| [ ] | FC-087 | [Cost views, scoped permissions and CSV export](specs/doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md) | In progress | UI against mock data only: Organization settings › Costs, Project Insights (`/projects/[id]/insights`), Organization Insights (`/insights`), Member profile Cost tab (`MemberCostView` + `AgentBudgetDialog`), and safe RFC 4180 CSV export landed (TASK-69 merged to `v1`; [`costs.spec.ts`](../../apps/agentic-org-ui/e2e/costs.spec.ts), [`insights.spec.ts`](../../apps/agentic-org-ui/e2e/insights.spec.ts)); production APIs fail closed until L2/L3 ledger routes land. Remaining: live ledger cost views, authorized amount reads, and backend CSV export. |
 | [ ] | FC-088 | [Period queries, bucketing and duration formatting](specs/doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md) | Planned | No ledger period/bucket query or persisted account-zone service; generic formatting is insufficient. |
 | [ ] | FC-089 | [Task lifetime and agent daily/monthly budgets](organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md) | Planned | Data index explicitly states budget runtime service unimplemented; selected definitions are not admission enforcement. |
 | [ ] | FC-090 | [Release warning caps](organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md) | Planned | Selected warning-only policy; budget runtime service still unimplemented. |

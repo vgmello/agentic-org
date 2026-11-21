@@ -1,11 +1,11 @@
 ---
 id: TASK-69
 title: 'UI Step 7: Costs and Insights screens and Member Cost tab'
-status: In Progress
+status: Done
 assignee:
   - '@ui-engineer'
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-21T16:50:00Z'
+updated_date: '2026-11-21T18:30:00Z'
 labels:
   - ui
   - costs
@@ -29,9 +29,9 @@ Implement Step 7 of v1-ui-screens.md: Project Insights (/projects/[id]/insights 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Project Insights, Organization Insights, and Member profile Cost tab match costs-and-insights-ux specs.
-- [ ] #2 Module mocks live strictly under e2e/fakes/ and production api.ts fails closed until L2/L3 routes land.
-- [ ] #3 Type check, unit tests, lint, build, and Playwright specs pass.
+- [x] #1 Project Insights, Organization Insights, and Member profile Cost tab match costs-and-insights-ux specs.
+- [x] #2 Module mocks live strictly under e2e/fakes/ and production api.ts fails closed until L2/L3 routes land.
+- [x] #3 Type check, unit tests, lint, build, and Playwright specs pass.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,3 +57,9 @@ Implemented Step 7 (Costs & Insights + Member Cost tab) on branch feat/task-69-u
 
 Addressed all 10 Pass 1 review findings on feat/task-69-ui-costs-insights: aligned OrganizationInsightsView This month drill-downs, Not on a task filtering/mobile parity, and empty-period coverage/release-caps visibility; added unsupported state, OUTCOME_UNKNOWN Check status reconciliation, full period unknown-cost & coverage gaps to MemberCostView and AgentBudgetDialog; hardened CSV formula-injection prefix with newline; fixed TrendChart null gap breaking, single-point anchor, and bar width clamping; fixed singular item copy, archived badge, Investment h3 level, and budget over-max copy; expanded E2E coverage for PeriodMenu switching and budget save-unknown/save-fails/allow_once/keep_paused/clear flows.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Merged approved TASK-69 (UI Step 7: Project Insights, Organization Insights, Member Cost tab, AgentBudgetDialog, safe CSV export, e2e/fakes/modules/costs.ts, insights.spec.ts, fail-closed production api.ts) into v1. Separate Fresh Final UI Reviewer (24c926a1) returned VERDICT: APPROVE; post-merge svelte-check, vitest (167 files), and bun run build passed on v1.
+<!-- SECTION:FINAL_SUMMARY:END -->
