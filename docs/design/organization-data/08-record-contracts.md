@@ -133,7 +133,10 @@ CREATE TABLE links (
   source_id TEXT NOT NULL,
   id TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('depends_on', 'relates_to', 'fixes')),
-  target_kind TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN (
+    'project', 'feature', 'release', 'milestone', 'deployment',
+    'task', 'document', 'development_process', 'media'
+  )),
   target_id TEXT NOT NULL,
   PRIMARY KEY (organization_id, source_kind, source_id, id),
   UNIQUE (organization_id, source_kind, source_id, kind, target_kind, target_id),

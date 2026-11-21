@@ -223,6 +223,7 @@ erDiagram
         INTEGER revision "required"
         TEXT team_id "optional"
         TEXT project_id "optional"
+        TEXT office_code "optional"
         INTEGER number "optional"
         TEXT type "optional"
         TEXT feature_id "optional"
@@ -368,7 +369,11 @@ CREATE TABLE task_repositories (
 
 CREATE TABLE record_refs (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
-  kind TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN (
+    'organization', 'office', 'team', 'project', 'feature', 'release',
+    'milestone', 'deployment', 'task', 'document', 'development_process',
+    'media', 'employee', 'repository', 'role'
+  )),
   id TEXT NOT NULL,
   is_deleted INTEGER NOT NULL CHECK (is_deleted IN (0, 1)),
   PRIMARY KEY (organization_id, kind, id)
@@ -378,13 +383,17 @@ CREATE TABLE record_refs (
 
 CREATE TABLE tombstones (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
-  kind TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN (
+    'project', 'feature', 'release', 'milestone', 'deployment',
+    'task', 'document', 'development_process', 'media'
+  )),
   id TEXT NOT NULL,
   key TEXT,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   team_id TEXT,
   project_id TEXT,
+  office_code TEXT CHECK (office_code IS NULL OR (length(office_code) BETWEEN 1 AND 8 AND office_code NOT GLOB '*[^A-Z]*')),
   number INTEGER CHECK (number > 0),
   type TEXT,
   feature_id TEXT,

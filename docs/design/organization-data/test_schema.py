@@ -1619,12 +1619,21 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
                       project_id="project", kind="product-dss", title="User authentication",
                       path=f"product/{document}.md")
         values.update(fields)
+        self.db.execute(
+            "INSERT OR IGNORE INTO record_refs(organization_id, kind, id, is_deleted) VALUES (?, 'document', ?, 0)",
+            (values["organization_id"], values["id"]),
+        )
         insert(self.db, "documents", **values)
 
-    def issue(self, document="spec", version=1, revision=1):
+    def issue(self, document="spec", version=1, revision=1, project_id="project", register_ref=True):
+        if register_ref:
+            self.db.execute(
+                "INSERT OR IGNORE INTO record_refs(organization_id, kind, id, is_deleted) VALUES ('org', 'document', ?, 0)",
+                (document,),
+            )
         insert(self.db, "document_versions", organization_id="org", document_id=document,
-               version=version, revision=revision, title="User authentication", body_sha256=self.SHA,
-               body_markdown="## Purpose", issued_at="2026-11-18T09:00:00Z",
+               project_id=project_id, version=version, revision=revision, title="User authentication",
+               body_sha256=self.SHA, body_markdown="## Purpose", issued_at="2026-11-18T09:00:00Z",
                issued_by_kind="employee", issued_by_id="reporter")
 
     def refused(self, statement):
@@ -2041,6 +2050,117 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         release_plan = plan_lines(self.db, "SELECT * FROM release_progress WHERE organization_id=?", ("org",))
         milestone_evals = sum(1 for line in release_plan if "CO-ROUTINE milestone_progress" in line)
         self.assertLessEqual(milestone_evals, 1, "\n".join(release_plan))
+
+    def test_task_7_integrity_holes_closed(self):
+        # H-08: budgeted task can be tombstoned cleanly while budget remains intact via record_refs.
+        seed_task(self.db, task="budgeted-task")
+        insert(self.db, "budgets", organization_id="org", id="b-task", current_revision=1,
+               scope_kind="task", task_id="budgeted-task", period_kind="lifetime",
+               time_zone="UTC", time_zone_source="hq", created_at="2026-11-21T00:00:00Z")
+        insert(self.db, "budget_policy_versions", organization_id="org", budget_id="b-task",
+               revision=1, state="active", unit="tokens", limit_amount=1000,
+               changed_by_id="reporter", changed_at="2026-11-21T00:00:00Z")
+        self.db.commit()
+        insert(self.db, "tombstones", organization_id="org", kind="task", id="budgeted-task",
+               schema_version=1, revision=1, project_id="project", office_code="A", number=99,
+               terminal_state="done")
+        self.db.execute("UPDATE record_refs SET is_deleted=1 WHERE kind='task' AND id='budgeted-task'")
+        self.db.execute("DELETE FROM tasks WHERE id='budgeted-task'")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT task_id FROM budgets WHERE id='b-task'").fetchone()[0], "budgeted-task")
+        self.assertEqual(self.db.execute("SELECT office_code FROM tombstones WHERE id='budgeted-task'").fetchone()[0], "A")
+
+        # H-11: cross-project affects_feature_id refused on deferred insert, task_details.task_id update,
+        # and feature.project_id update.
+        insert(self.db, "projects", organization_id="org", id="p2", schema_version=1, revision=1,
+               slug="p2", name="P2", owner_team_id="payments")
+        insert(self.db, "features", organization_id="org", id="f1", schema_version=1, revision=1,
+               project_id="project", local_slug="f1", title="F1", status="planned")
+        insert(self.db, "features", organization_id="org", id="f2", schema_version=1, revision=1,
+               project_id="p2", local_slug="f2", title="F2", status="planned")
+        seed_task(self.db, task="t-p1")
+        seed_task(self.db, task="t-p2", project="p2")
+        # Deferred insert: task_details inserted before task of wrong project must fail on task insert.
+        insert(self.db, "task_details", organization_id="org", task_id="deferred-wrong", affects_feature_id="f1")
+        assert_refused(self, self.db, "affected feature belongs to another project", lambda: (
+            insert(self.db, "record_refs", organization_id="org", kind="task", id="deferred-wrong", is_deleted=0),
+            insert(self.db, "tasks", organization_id="org", id="deferred-wrong", office_code="A", number=103,
+                   schema_version=1, revision=1, team_id="payments", project_id="p2", title="Wrong", status="todo"),
+        ))
+        # Updating task_details.task_id to a task in another project must fail.
+        insert(self.db, "task_details", organization_id="org", task_id="t-p1", affects_feature_id="f1")
+        self.db.commit()
+        assert_refused(self, self.db, "affected feature belongs to another project",
+                       "UPDATE task_details SET task_id='t-p2' WHERE task_id='t-p1'")
+        # Updating features.project_id while referenced by a project-1 task must fail.
+        assert_refused(self, self.db, "affected feature belongs to another project",
+                       "UPDATE features SET project_id='p2' WHERE id='f1'")
+
+        # H-12: document_versions record_refs FK, same-project superkey, no-replace (even with recursive_triggers=OFF),
+        # and document_version_sources immutability & same-project guard.
+        self.refused(lambda: self.issue("unregistered-doc", register_ref=False))
+        self.document("doc-p1", project_id="project", path="product/doc-p1.md")
+        self.document("doc-p2", project_id="p2", path="product/doc-p2.md")
+        self.issue("doc-p1", project_id="project")
+        self.issue("doc-p2", project_id="p2")
+        self.db.commit()
+        # Cross-project version source is refused.
+        assert_refused(self, self.db, "document version sources must belong to the same project", lambda: insert(
+            self.db, "document_version_sources", organization_id="org",
+            document_id="doc-p1", version=1, source_document_id="doc-p2", source_version=1))
+        # Cross-project task_document_versions is refused.
+        assert_refused(self, self.db, "realizing task and document version must belong to the same project", lambda: insert(
+            self.db, "task_document_versions", organization_id="org",
+            task_id="t-p2", document_id="doc-p1", version=1))
+        # Same-project source works and is immutable (no UPDATE / DELETE).
+        self.document("doc-p1-b", project_id="project", path="product/doc-p1-b.md")
+        self.issue("doc-p1-b", project_id="project")
+        insert(self.db, "document_version_sources", organization_id="org",
+               document_id="doc-p1-b", version=1, source_document_id="doc-p1", source_version=1)
+        self.db.commit()
+        assert_refused(self, self.db, "document version sources are never changed",
+                       "UPDATE document_version_sources SET source_version=1")
+        assert_refused(self, self.db, "document version sources are never removed",
+                       "DELETE FROM document_version_sources")
+        # BEFORE INSERT no-replace blocks INSERT OR REPLACE on document_versions even if recursive_triggers=OFF.
+        self.db.execute("PRAGMA recursive_triggers = OFF")
+        try:
+            assert_refused(self, self.db, "an issued document version is never replaced",
+                           "INSERT OR REPLACE INTO document_versions SELECT * FROM document_versions WHERE document_id='doc-p1'")
+        finally:
+            self.db.execute("PRAGMA recursive_triggers = ON")
+
+        # H-14: kind CHECKs on record_refs/tombstones/links, release_tasks same-project,
+        # and blocking new operational children on tombstoned tasks.
+        for bad_kind in ("", "bug"):
+            with self.subTest(bad_kind=bad_kind):
+                self.refused(lambda: insert(self.db, "record_refs", organization_id="org", kind=bad_kind, id="x", is_deleted=0))
+                self.refused(lambda: insert(self.db, "tombstones", organization_id="org", kind=bad_kind, id="x",
+                                            schema_version=1, revision=1, terminal_state="done"))
+        self.refused(lambda: insert(self.db, "links", organization_id="org", source_kind="task", source_id="t-p1",
+                                    id="l-bad", kind="relates_to", target_kind="bogus", target_id="t-p2"))
+        # release_tasks same-project check.
+        insert(self.db, "releases", organization_id="org", id="rel-p1", schema_version=1, revision=1,
+               project_id="project", title="Rel P1")
+        self.db.commit()
+        assert_refused(self, self.db, "release task belongs to another project", lambda: insert(
+            self.db, "release_tasks", organization_id="org", release_id="rel-p1", project_id="project", task_id="t-p2"))
+        # New operational children on a tombstoned task (budgeted-task, is_deleted=1) are rejected.
+        assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
+            self.db, "comments", organization_id="org", target_kind="task", target_id="budgeted-task",
+            id="c1", position=0, author_id="reporter", created_at="2026-11-21T00:00:00Z", body_markdown="Late"))
+        assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
+            self.db, "checklist_steps", organization_id="org", target_kind="task", target_id="budgeted-task",
+            id="s1", position=0, text="Late", required=0, done=0))
+        assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
+            self.db, "watchers", organization_id="org", target_kind="task", target_id="budgeted-task",
+            id="w1", watcher_kind="owner"))
+        assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
+            self.db, "owner_questions", organization_id="org", target_kind="task", target_id="budgeted-task",
+            id="q1", question_comment_id="c1", asked_by_id="reporter", state="open", created_at="2026-11-21T00:00:00Z"))
+        assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
+            self.db, "waiting_spans", organization_id="org", target_kind="task", target_id="budgeted-task",
+            id="ws1", reason="waiting", waiting_on_kind="owner", started_at="2026-11-21T00:00:00Z"))
 
 
 if __name__ == "__main__":

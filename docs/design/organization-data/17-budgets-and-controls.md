@@ -97,6 +97,7 @@ CREATE TABLE budgets (
   current_revision INTEGER NOT NULL CHECK (current_revision>0),
   scope_kind TEXT NOT NULL CHECK (scope_kind IN ('task','agent','release')),
   task_id TEXT,
+  task_kind TEXT NOT NULL DEFAULT 'task' CHECK (task_kind='task'),
   agent_id TEXT,
   release_id TEXT,
   period_kind TEXT NOT NULL CHECK (period_kind IN ('lifetime','day','month')),
@@ -109,7 +110,7 @@ CREATE TABLE budgets (
   CHECK ((scope_kind='task' AND task_id IS NOT NULL AND agent_id IS NULL AND release_id IS NULL AND period_kind='lifetime')
     OR (scope_kind='agent' AND task_id IS NULL AND agent_id IS NOT NULL AND release_id IS NULL AND period_kind IN ('day','month'))
     OR (scope_kind='release' AND task_id IS NULL AND agent_id IS NULL AND release_id IS NOT NULL AND period_kind='lifetime')),
-  FOREIGN KEY (organization_id,task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,agent_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,release_id) REFERENCES releases(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,id,current_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
@@ -217,7 +218,7 @@ CREATE TABLE budget_holds (
   FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE TRIGGER budget_target_immutable BEFORE UPDATE ON budgets
-WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kind<>OLD.scope_kind OR NEW.task_id IS NOT OLD.task_id
+WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kind<>OLD.scope_kind OR NEW.task_id IS NOT OLD.task_id OR NEW.task_kind<>OLD.task_kind
  OR NEW.agent_id IS NOT OLD.agent_id OR NEW.release_id IS NOT OLD.release_id OR NEW.period_kind<>OLD.period_kind
  OR NEW.current_revision<OLD.current_revision
  OR ((NEW.time_zone<>OLD.time_zone OR NEW.time_zone_source<>OLD.time_zone_source OR NEW.time_zone_subject_ref IS NOT OLD.time_zone_subject_ref)
@@ -263,7 +264,7 @@ BEGIN SELECT RAISE(ABORT,'release caps do not stop work'); END;
 
 ```mermaid
 erDiagram
-    tasks o|--o| budgets : task_limit
+    record_refs o|--o| budgets : task_limit
     employees o|--o{ budgets : agent_limits
     releases o|--o| budgets : warning_cap
     budgets ||--|{ budget_policy_versions : retained_policies
@@ -279,6 +280,7 @@ erDiagram
         INTEGER current_revision FK "required"
         TEXT scope_kind "required"
         TEXT task_id FK "optional"
+        TEXT task_kind "required"
         TEXT agent_id FK "optional"
         TEXT release_id FK "optional"
         TEXT period_kind "required"

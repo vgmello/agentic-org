@@ -354,7 +354,7 @@ CREATE TABLE documents (
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, feature_id, project_id) REFERENCES features(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id, id, version) REFERENCES document_versions(organization_id, document_id, version)
+  FOREIGN KEY (organization_id, id, version, project_id) REFERENCES document_versions(organization_id, document_id, version, project_id)
     DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
@@ -468,7 +468,11 @@ CREATE TABLE task_repositories (
 
 CREATE TABLE record_refs (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
-  kind TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN (
+    'organization', 'office', 'team', 'project', 'feature', 'release',
+    'milestone', 'deployment', 'task', 'document', 'development_process',
+    'media', 'employee', 'repository', 'role'
+  )),
   id TEXT NOT NULL,
   is_deleted INTEGER NOT NULL CHECK (is_deleted IN (0, 1)),
   PRIMARY KEY (organization_id, kind, id)
@@ -518,7 +522,10 @@ CREATE TABLE links (
   source_id TEXT NOT NULL,
   id TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('depends_on', 'relates_to', 'fixes')),
-  target_kind TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN (
+    'project', 'feature', 'release', 'milestone', 'deployment',
+    'task', 'document', 'development_process', 'media'
+  )),
   target_id TEXT NOT NULL,
   PRIMARY KEY (organization_id, source_kind, source_id, id),
   UNIQUE (organization_id, source_kind, source_id, kind, target_kind, target_id),
@@ -532,13 +539,17 @@ CREATE TABLE links (
 
 CREATE TABLE tombstones (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
-  kind TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN (
+    'project', 'feature', 'release', 'milestone', 'deployment',
+    'task', 'document', 'development_process', 'media'
+  )),
   id TEXT NOT NULL,
   key TEXT,
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   team_id TEXT,
   project_id TEXT,
+  office_code TEXT CHECK (office_code IS NULL OR (length(office_code) BETWEEN 1 AND 8 AND office_code NOT GLOB '*[^A-Z]*')),
   number INTEGER CHECK (number > 0),
   type TEXT,
   feature_id TEXT,
@@ -2144,6 +2155,7 @@ CREATE TABLE budgets (
   current_revision INTEGER NOT NULL CHECK (current_revision>0),
   scope_kind TEXT NOT NULL CHECK (scope_kind IN ('task','agent','release')),
   task_id TEXT,
+  task_kind TEXT NOT NULL DEFAULT 'task' CHECK (task_kind='task'),
   agent_id TEXT,
   release_id TEXT,
   period_kind TEXT NOT NULL CHECK (period_kind IN ('lifetime','day','month')),
@@ -2156,7 +2168,7 @@ CREATE TABLE budgets (
   CHECK ((scope_kind='task' AND task_id IS NOT NULL AND agent_id IS NULL AND release_id IS NULL AND period_kind='lifetime')
     OR (scope_kind='agent' AND task_id IS NULL AND agent_id IS NOT NULL AND release_id IS NULL AND period_kind IN ('day','month'))
     OR (scope_kind='release' AND task_id IS NULL AND agent_id IS NULL AND release_id IS NOT NULL AND period_kind='lifetime')),
-  FOREIGN KEY (organization_id,task_id) REFERENCES tasks(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,agent_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,release_id) REFERENCES releases(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,id,current_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
@@ -2264,7 +2276,7 @@ CREATE TABLE budget_holds (
   FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE TRIGGER budget_target_immutable BEFORE UPDATE ON budgets
-WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kind<>OLD.scope_kind OR NEW.task_id IS NOT OLD.task_id
+WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kind<>OLD.scope_kind OR NEW.task_id IS NOT OLD.task_id OR NEW.task_kind<>OLD.task_kind
  OR NEW.agent_id IS NOT OLD.agent_id OR NEW.release_id IS NOT OLD.release_id OR NEW.period_kind<>OLD.period_kind
  OR NEW.current_revision<OLD.current_revision
  OR ((NEW.time_zone<>OLD.time_zone OR NEW.time_zone_source<>OLD.time_zone_source OR NEW.time_zone_subject_ref IS NOT OLD.time_zone_subject_ref)
@@ -2523,6 +2535,8 @@ CREATE TABLE documentation_media (
 CREATE TABLE document_versions (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   document_id TEXT NOT NULL,
+  document_kind TEXT NOT NULL DEFAULT 'document' CHECK (document_kind = 'document'),
+  project_id TEXT NOT NULL,
   version INTEGER NOT NULL CHECK (version >= 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   title TEXT NOT NULL,
@@ -2533,9 +2547,22 @@ CREATE TABLE document_versions (
   issued_by_kind TEXT NOT NULL CHECK (issued_by_kind IN ('employee', 'system')),
   issued_by_id TEXT,
   PRIMARY KEY (organization_id, document_id, version),
+  UNIQUE (organization_id, document_id, version, project_id),
   CHECK ((issued_by_kind = 'employee' AND issued_by_id IS NOT NULL) OR (issued_by_kind <> 'employee' AND issued_by_id IS NULL)),
+  FOREIGN KEY (organization_id, document_kind, document_id) REFERENCES record_refs(organization_id, kind, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, issued_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE TRIGGER document_versions_no_replace
+BEFORE INSERT ON document_versions
+WHEN EXISTS (
+  SELECT 1 FROM document_versions v
+  WHERE v.organization_id = NEW.organization_id AND v.document_id = NEW.document_id AND v.version = NEW.version
+)
+BEGIN
+  SELECT RAISE(ABORT, 'an issued document version is never replaced');
+END;
 
 CREATE TRIGGER document_versions_are_written_once
 BEFORE UPDATE ON document_versions
@@ -2562,6 +2589,18 @@ CREATE TABLE document_version_sources (
   FOREIGN KEY (organization_id, source_document_id, source_version) REFERENCES document_versions(organization_id, document_id, version)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE TRIGGER document_version_sources_are_written_once
+BEFORE UPDATE ON document_version_sources
+BEGIN
+  SELECT RAISE(ABORT, 'document version sources are never changed');
+END;
+
+CREATE TRIGGER document_version_sources_are_kept
+BEFORE DELETE ON document_version_sources
+BEGIN
+  SELECT RAISE(ABORT, 'document version sources are never removed');
+END;
 
 CREATE TABLE document_code_links (
   organization_id TEXT NOT NULL,
@@ -2614,17 +2653,29 @@ LEFT JOIN task_document_versions r
 LEFT JOIN tasks t ON t.organization_id = r.organization_id AND t.id = r.task_id
 GROUP BY v.organization_id, v.document_id, v.version;
 
--- Review of 2026-11-18: rules the documents state that no constraint held.
+-- Review of 2026-11-18 and TASK-7 integrity triggers (H-08, H-11, H-12, H-14).
 CREATE TRIGGER task_affects_feature_same_project_insert BEFORE INSERT ON task_details
 WHEN NEW.affects_feature_id IS NOT NULL
 BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
  SELECT 1 FROM tasks t JOIN features f ON f.organization_id=t.organization_id AND f.id=NEW.affects_feature_id
  WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT f.project_id); END;
-CREATE TRIGGER task_affects_feature_same_project_update BEFORE UPDATE OF affects_feature_id ON task_details
+CREATE TRIGGER task_affects_feature_same_project_update BEFORE UPDATE OF organization_id,task_id,affects_feature_id ON task_details
 WHEN NEW.affects_feature_id IS NOT NULL
 BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
  SELECT 1 FROM tasks t JOIN features f ON f.organization_id=t.organization_id AND f.id=NEW.affects_feature_id
  WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT f.project_id); END;
+CREATE TRIGGER task_insert_keeps_affected_feature AFTER INSERT ON tasks
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM task_details d JOIN features f ON f.organization_id=d.organization_id AND f.id=d.affects_feature_id
+ WHERE d.organization_id=NEW.organization_id AND d.task_id=NEW.id AND NEW.project_id IS NOT f.project_id); END;
+CREATE TRIGGER feature_insert_keeps_affected_task AFTER INSERT ON features
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM task_details d JOIN tasks t ON t.organization_id=d.organization_id AND t.id=d.task_id
+ WHERE d.organization_id=NEW.organization_id AND d.affects_feature_id=NEW.id AND t.project_id IS NOT NEW.project_id); END;
+CREATE TRIGGER feature_project_keeps_affected_task BEFORE UPDATE OF project_id ON features
+BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM task_details d JOIN tasks t ON t.organization_id=d.organization_id AND t.id=d.task_id
+ WHERE d.organization_id=NEW.organization_id AND d.affects_feature_id=NEW.id AND t.project_id IS NOT NEW.project_id); END;
 CREATE TRIGGER cleanup_record_same_office_insert BEFORE INSERT ON process_cleanup_records
 WHEN NEW.execution_process_id IS NOT NULL
 BEGIN SELECT RAISE(ABORT,'cleanup record and its process are in different offices') WHERE EXISTS (
@@ -2643,6 +2694,72 @@ CREATE TRIGGER task_project_keeps_affected_feature BEFORE UPDATE OF project_id O
 BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
  SELECT 1 FROM task_details d JOIN features f ON f.organization_id=d.organization_id AND f.id=d.affects_feature_id
  WHERE d.organization_id=NEW.organization_id AND d.task_id=NEW.id AND NEW.project_id IS NOT f.project_id); END;
+
+-- H-12: same-project enforcement on document_versions, document_version_sources, and task_document_versions.
+CREATE TRIGGER document_versions_match_document_project BEFORE INSERT ON document_versions
+BEGIN SELECT RAISE(ABORT,'document version project must match document project') WHERE EXISTS (
+ SELECT 1 FROM documents d WHERE d.organization_id=NEW.organization_id AND d.id=NEW.document_id AND d.project_id<>NEW.project_id); END;
+CREATE TRIGGER document_project_keeps_versions BEFORE UPDATE OF project_id ON documents
+BEGIN SELECT RAISE(ABORT,'document with issued versions cannot move projects') WHERE EXISTS (
+ SELECT 1 FROM document_versions v WHERE v.organization_id=NEW.organization_id AND v.document_id=NEW.id AND v.project_id<>NEW.project_id); END;
+CREATE TRIGGER document_version_sources_same_project BEFORE INSERT ON document_version_sources
+BEGIN SELECT RAISE(ABORT,'document version sources must belong to the same project') WHERE EXISTS (
+ SELECT 1 FROM document_versions v
+ JOIN document_versions s ON s.organization_id=NEW.organization_id AND s.document_id=NEW.source_document_id AND s.version=NEW.source_version
+ WHERE v.organization_id=NEW.organization_id AND v.document_id=NEW.document_id AND v.version=NEW.version
+   AND v.project_id<>s.project_id); END;
+CREATE TRIGGER task_document_versions_same_project_insert BEFORE INSERT ON task_document_versions
+BEGIN SELECT RAISE(ABORT,'realizing task and document version must belong to the same project') WHERE EXISTS (
+ SELECT 1 FROM tasks t
+ JOIN document_versions v ON v.organization_id=NEW.organization_id AND v.document_id=NEW.document_id AND v.version=NEW.version
+ WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT v.project_id); END;
+CREATE TRIGGER task_document_versions_same_project_update BEFORE UPDATE OF organization_id,task_id,document_id,version ON task_document_versions
+BEGIN SELECT RAISE(ABORT,'realizing task and document version must belong to the same project') WHERE EXISTS (
+ SELECT 1 FROM tasks t
+ JOIN document_versions v ON v.organization_id=NEW.organization_id AND v.document_id=NEW.document_id AND v.version=NEW.version
+ WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT v.project_id); END;
+CREATE TRIGGER task_insert_keeps_document_versions AFTER INSERT ON tasks
+BEGIN SELECT RAISE(ABORT,'realizing task and document version must belong to the same project') WHERE EXISTS (
+ SELECT 1 FROM task_document_versions r
+ JOIN document_versions v ON v.organization_id=r.organization_id AND v.document_id=r.document_id AND v.version=r.version
+ WHERE r.organization_id=NEW.organization_id AND r.task_id=NEW.id AND NEW.project_id IS NOT v.project_id); END;
+CREATE TRIGGER task_project_keeps_document_versions BEFORE UPDATE OF project_id ON tasks
+BEGIN SELECT RAISE(ABORT,'realizing task and document version must belong to the same project') WHERE EXISTS (
+ SELECT 1 FROM task_document_versions r
+ JOIN document_versions v ON v.organization_id=r.organization_id AND v.document_id=r.document_id AND v.version=r.version
+ WHERE r.organization_id=NEW.organization_id AND r.task_id=NEW.id AND NEW.project_id IS NOT v.project_id); END;
+
+-- H-14: release_tasks same-project enforcement and rejecting operational children on deleted tasks.
+CREATE TRIGGER release_tasks_same_project_insert BEFORE INSERT ON release_tasks
+BEGIN SELECT RAISE(ABORT,'release task belongs to another project') WHERE
+ EXISTS (SELECT 1 FROM tasks t WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT NEW.project_id)
+ OR EXISTS (SELECT 1 FROM tombstones tb WHERE tb.organization_id=NEW.organization_id AND tb.kind='task' AND tb.id=NEW.task_id AND tb.project_id IS NOT NEW.project_id); END;
+CREATE TRIGGER release_tasks_same_project_update BEFORE UPDATE OF organization_id,project_id,task_id ON release_tasks
+BEGIN SELECT RAISE(ABORT,'release task belongs to another project') WHERE
+ EXISTS (SELECT 1 FROM tasks t WHERE t.organization_id=NEW.organization_id AND t.id=NEW.task_id AND t.project_id IS NOT NEW.project_id)
+ OR EXISTS (SELECT 1 FROM tombstones tb WHERE tb.organization_id=NEW.organization_id AND tb.kind='task' AND tb.id=NEW.task_id AND tb.project_id IS NOT NEW.project_id); END;
+CREATE TRIGGER task_insert_keeps_release_tasks AFTER INSERT ON tasks
+BEGIN SELECT RAISE(ABORT,'release task belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM release_tasks rt WHERE rt.organization_id=NEW.organization_id AND rt.task_id=NEW.id AND NEW.project_id IS NOT rt.project_id); END;
+CREATE TRIGGER task_project_keeps_release_tasks BEFORE UPDATE OF project_id ON tasks
+BEGIN SELECT RAISE(ABORT,'release task belongs to another project') WHERE EXISTS (
+ SELECT 1 FROM release_tasks rt WHERE rt.organization_id=NEW.organization_id AND rt.task_id=NEW.id AND NEW.project_id IS NOT rt.project_id); END;
+
+CREATE TRIGGER comments_reject_deleted_task BEFORE INSERT ON comments
+BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
+ SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
+CREATE TRIGGER checklist_steps_reject_deleted_task BEFORE INSERT ON checklist_steps
+BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
+ SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
+CREATE TRIGGER watchers_reject_deleted_task BEFORE INSERT ON watchers
+BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
+ SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
+CREATE TRIGGER owner_questions_reject_deleted_task BEFORE INSERT ON owner_questions
+BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
+ SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
+CREATE TRIGGER waiting_spans_reject_deleted_task BEFORE INSERT ON waiting_spans
+BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
+ SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
 
 -- Targeted hot-path composite indexes and high-fanout FK indexes (TASK-6: H-10, H-13).
 CREATE INDEX tasks_by_feature ON tasks(organization_id, feature_id);

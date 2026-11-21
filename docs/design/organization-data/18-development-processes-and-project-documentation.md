@@ -129,6 +129,8 @@ erDiagram
     document_versions {
         TEXT organization_id PK "required"
         TEXT document_id PK "required"
+        TEXT document_kind FK "required"
+        TEXT project_id FK "required"
         INTEGER version PK "required"
         INTEGER revision "required"
         TEXT title "required"
@@ -653,6 +655,8 @@ CREATE TABLE documentation_media (
 CREATE TABLE document_versions (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   document_id TEXT NOT NULL,
+  document_kind TEXT NOT NULL DEFAULT 'document' CHECK (document_kind = 'document'),
+  project_id TEXT NOT NULL,
   version INTEGER NOT NULL CHECK (version >= 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   title TEXT NOT NULL,
@@ -663,9 +667,22 @@ CREATE TABLE document_versions (
   issued_by_kind TEXT NOT NULL CHECK (issued_by_kind IN ('employee', 'system')),
   issued_by_id TEXT,
   PRIMARY KEY (organization_id, document_id, version),
+  UNIQUE (organization_id, document_id, version, project_id),
   CHECK ((issued_by_kind = 'employee' AND issued_by_id IS NOT NULL) OR (issued_by_kind <> 'employee' AND issued_by_id IS NULL)),
+  FOREIGN KEY (organization_id, document_kind, document_id) REFERENCES record_refs(organization_id, kind, id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id, project_id) REFERENCES projects(organization_id, id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, issued_by_id) REFERENCES employees(organization_id, id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE TRIGGER document_versions_no_replace
+BEFORE INSERT ON document_versions
+WHEN EXISTS (
+  SELECT 1 FROM document_versions v
+  WHERE v.organization_id = NEW.organization_id AND v.document_id = NEW.document_id AND v.version = NEW.version
+)
+BEGIN
+  SELECT RAISE(ABORT, 'an issued document version is never replaced');
+END;
 
 CREATE TRIGGER document_versions_are_written_once
 BEFORE UPDATE ON document_versions
@@ -692,6 +709,18 @@ CREATE TABLE document_version_sources (
   FOREIGN KEY (organization_id, source_document_id, source_version) REFERENCES document_versions(organization_id, document_id, version)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+
+CREATE TRIGGER document_version_sources_are_written_once
+BEFORE UPDATE ON document_version_sources
+BEGIN
+  SELECT RAISE(ABORT, 'document version sources are never changed');
+END;
+
+CREATE TRIGGER document_version_sources_are_kept
+BEFORE DELETE ON document_version_sources
+BEGIN
+  SELECT RAISE(ABORT, 'document version sources are never removed');
+END;
 
 CREATE TABLE document_code_links (
   organization_id TEXT NOT NULL,
@@ -745,9 +774,9 @@ LEFT JOIN tasks t ON t.organization_id = r.organization_id AND t.id = r.task_id
 GROUP BY v.organization_id, v.document_id, v.version;
 ```
 
-`document_versions` has no foreign key to `documents`: an issued version is history and outlives the live row, resolved through `record_refs` like any historical reference. The other direction is enforced: a document's `version` must be one of its issued versions. Version rows are written once; the two triggers refuse an update, a delete and a replace.
+`document_versions` resolves its `document_id` through `record_refs` (`(organization_id, document_kind, document_id)`) rather than a live-only FK to `documents`, so an issued version remains structurally resolvable if its live row is ever archived or tombstoned (in normal workflow an issued document is deprecated rather than deleted, §Issued versions above). Each version also carries `project_id` and enforces a same-project superkey against `documents(organization_id, id, version, project_id)`, `document_version_sources`, and `task_document_versions`. Version rows and their `document_version_sources` provenance are written once; triggers refuse updates, deletes, and `INSERT OR REPLACE`.
 
-Rules checked by the accepting service, not by SQL: a project's development process is `current` when chosen; a stage's `lead_role` is a declared role; a `documents` tab names a declared folder and kinds that are built in or declared, a `work` tab names at least one task type, and a process lists the `features` view and the `releases` view at most once each; a document's kind is built in or declared by a development process; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is not deleted; a version's sources and a task's `realizes[]` belong to the same project and sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
+Rules checked by the accepting service, not by SQL: a project's development process is `current` when chosen; a stage's `lead_role` is a declared role; a `documents` tab names a declared folder and kinds that are built in or declared, a `work` tab names at least one task type, and a process lists the `features` view and the `releases` view at most once each; a document's kind is built in or declared by a development process; a document of a kind that is not `versioned` is never issued, versions are issued in order with no gap and a document's `version` never goes down; a document that has been issued is deprecated rather than deleted; a version's sources form no cycle; a code link's repository is one of the project's and a document does not hold the same link twice; folder names contain no dot, a path has at most eight levels, no path is `index.yaml`, and every file's folder has a section.
 
 ## Acceptance criteria
 
