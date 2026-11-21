@@ -1495,6 +1495,31 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 .hb-metric-sub { font-size: 0.75rem; line-height: 1.25; color: var(--hb-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hb-mini-bar { height: 4px; border-radius: 999px; background: rgba(186, 222, 255, .14); overflow: hidden; margin-top: 2px; }
 .hb-mini-bar > span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #38BDF8 0%, #FBBF24 100%); }
+.hb-metric-cap { font-size: 0.8125rem; font-weight: 500; color: var(--hb-dim); font-variant-numeric: tabular-nums; }
+
+/* Compact Frosted Quality & Autonomy Metrics Ribbon */
+.hb-kpi-ribbon {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-radius: 12px; overflow: hidden;
+  background: rgba(10, 19, 34, .44);
+  backdrop-filter: blur(18px) saturate(150%); -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .10), inset 0 0 0 1px var(--hb-border);
+}
+.hb-kpi-cell {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 15px; min-width: 0;
+  border-right: 1px solid rgba(186, 222, 255, .08);
+  transition: background-color .14s ease;
+}
+.hb-kpi-cell:last-child { border-right: 0; }
+.hb-kpi-cell:hover { background: rgba(186, 222, 255, .05); }
+.hb-kpi-lbl { font-size: 0.75rem; font-weight: 500; color: var(--hb-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb-kpi-r { display: inline-flex; align-items: baseline; gap: 6px; flex: none; font-variant-numeric: tabular-nums; }
+.hb-kpi-r strong { font-size: 0.9375rem; font-weight: 650; color: var(--hb-ink); }
+.hb-kpi-r .d { font-size: 0.7rem; font-weight: 600; color: #6EE7B7; }
+.hb-kpi-r .d.neutral { color: #7DD3FC; }
+.hb-kpi-r .d.warn { color: #FDE68A; }
+.hb-metrics-wrap { display: flex; flex-direction: column; gap: 10px; }
 
 /* Zone 2: Balanced 2-Column Hero Stage (Spotlight + Autonomous Catch-up & AI Ask) */
 .hb-stage { display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(350px, 1fr); gap: 20px; align-items: stretch; }
@@ -1740,13 +1765,18 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 .hb-card:hover .hb-card-lead .ic { opacity: 1; transform: translateX(2px); color: #7DD3FC; }
 
 @media (max-width: 1120px) {
-  .hb-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hb-metrics, .hb-kpi-ribbon { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hb-kpi-cell { border-bottom: 1px solid rgba(186, 222, 255, .08); }
+  .hb-kpi-cell:nth-child(2n) { border-right: 0; }
+  .hb-kpi-cell:nth-last-child(-n+2) { border-bottom: 0; }
   .hb-stage { grid-template-columns: 1fr; }
   .hb-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
   .hb { padding: 20px var(--gutter) 40px; gap: 20px; }
-  .hb-metrics, .hb-bento { grid-template-columns: 1fr; }
+  .hb-metrics, .hb-kpi-ribbon, .hb-bento { grid-template-columns: 1fr; }
+  .hb-kpi-cell { border-right: 0; border-bottom: 1px solid rgba(186, 222, 255, .08); }
+  .hb-kpi-cell:last-child { border-bottom: 0; }
   .hb-spot { padding: 18px; min-height: 0; }
 }
 
@@ -2560,10 +2590,16 @@ function answerOrgQuestion(rawQ) {
       html: `<strong>2 tasks are blocked on you</strong> across active delivery: <a href="#/projects/office-federation/work">T-118</a> (custody lock ruling for <a href="#/members/sage">Sage</a>) and <a href="#/projects/agency-v1/work">T-124</a> (localhost:8443 dev permission for <a href="#/members/jules">Jules</a>). Meanwhile, <a href="#/members/kai">Kai</a>'s codec split <code>0a520e5b</code> passed 412 tests and awaits your <a href="#/inbox/in1">merge approval</a>.`
     };
   }
-  if (/budget|spend|cost|office|fleet|offline|jules|noor|health/.test(t)) {
+  if (/cycle|first-pass|accept|rework|hitl|human|quality|autonom|metric|kpi/.test(t)) {
     return {
       q,
-      html: `<strong>Model budget is at 68%</strong> this month — <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Offices: <strong>HQ is online</strong>, while the <strong>Build box satellite is offline</strong> (pausing <a href="#/members/quinn">Quinn</a> on T-135), and <a href="#/members/noor">Noor</a> still needs office placement.`
+      html: `Last 7 days delivery quality: <strong>Cycle time 18m</strong> (-14% faster), <strong>First-pass acceptance 84%</strong> (+6%), <strong>Rework rate 16%</strong> (3 of 19 tasks), and <strong>HITL rate 22%</strong> (78% completed autonomously without human intervention). Spend sits at <strong>$142 / $210</strong>.`
+    };
+  }
+  if (/budget|spend|cost|\$|dollar|office|fleet|offline|jules|noor|health/.test(t)) {
+    return {
+      q,
+      html: `<strong>Monthly spend is $142 of $210 (68%)</strong> — <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Offices: <strong>HQ is online</strong>, while the <strong>Build box satellite is offline</strong> (pausing <a href="#/members/quinn">Quinn</a> on T-135), and <a href="#/members/noor">Noor</a> still needs office placement.`
     };
   }
   if (/run|overnight|happen|catch|digest|summary|activity|away/.test(t)) {
@@ -2625,28 +2661,50 @@ function pageHome() {
     if (st === "loading") return skel(4, "Loading organization vital signs…");
     if (st === "error") return "";
     const emptyMode = st === "empty";
-    return `<section class="hb-metrics" aria-label="Organization vital signs">
-      <a class="hb-metric" href="#/activity">
-        <div class="hb-metric-top"><span>Completed (24h)</span>${ic("check-circle", "ic14 c-green")}</div>
-        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "0" : "6"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">on pace</span>`}</div>
-        <div class="hb-metric-sub">${emptyMode ? "No finished work yet" : v1 ? "8 autonomous runs · 1 issue" : `${working.length} active now · 1 needs check`}</div>
-      </a>
-      <a class="hb-metric" href="#/work">
-        <div class="hb-metric-top"><span>Needs attention</span>${ic("warn", "ic14 c-amber")}</div>
-        <div class="hb-metric-val"><span class="hb-metric-num">${blockedWork.length}</span>${blockedWork.length ? `<span class="hb-metric-delta warn">blocked</span>` : `<span class="hb-metric-delta">clear</span>`}</div>
-        <div class="hb-metric-sub">${blockedWork.length ? `${plural(blockedWork.length, "task", "tasks")} paused · ${open.length} in Inbox` : "All work flowing smoothly"}</div>
-      </a>
-      <a class="hb-metric" href="#/settings/offices">
-        <div class="hb-metric-top"><span>Team &amp; offices</span>${ic("office", "ic14 c-indigo")}</div>
-        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "1 / 1" : "1 / 2"}</span>${emptyMode ? `<span class="hb-metric-delta">all online</span>` : `<span class="hb-metric-delta bad">1 offline</span>`}</div>
-        <div class="hb-metric-sub">${emptyMode ? "HQ online · ready" : "HQ live · Build box offline"}</div>
-      </a>
-      <a class="hb-metric" href="#/settings/agents/jules">
-        <div class="hb-metric-top"><span>Monthly budget</span>${ic("bolt", "ic14 c-amber")}</div>
-        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "0%" : "68%"}</span>${emptyMode ? "" : `<span class="hb-metric-delta warn">Jules at cap</span>`}</div>
-        <div class="hb-mini-bar" aria-hidden="true"><span style="width:${emptyMode ? 0 : 68}%"></span></div>
-      </a>
-    </section>`;
+    return `<div class="hb-metrics-wrap">
+      <section class="hb-metrics" aria-label="Organization vital signs">
+        <a class="hb-metric" href="#/activity">
+          <div class="hb-metric-top"><span>Completed (24h)</span>${ic("check-circle", "ic14 c-green")}</div>
+          <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "0" : "6"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">on pace</span>`}</div>
+          <div class="hb-metric-sub">${emptyMode ? "No finished work yet" : v1 ? "8 autonomous runs · 1 issue" : `${working.length} active now · 1 needs check`}</div>
+        </a>
+        <a class="hb-metric" href="#/work">
+          <div class="hb-metric-top"><span>Needs attention</span>${ic("warn", "ic14 c-amber")}</div>
+          <div class="hb-metric-val"><span class="hb-metric-num">${blockedWork.length}</span>${blockedWork.length ? `<span class="hb-metric-delta warn">blocked</span>` : `<span class="hb-metric-delta">clear</span>`}</div>
+          <div class="hb-metric-sub">${blockedWork.length ? `${plural(blockedWork.length, "task", "tasks")} paused · ${open.length} in Inbox` : "All work flowing smoothly"}</div>
+        </a>
+        <a class="hb-metric" href="#/settings/offices">
+          <div class="hb-metric-top"><span>Team &amp; offices</span>${ic("office", "ic14 c-indigo")}</div>
+          <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "1 / 1" : "1 / 2"}</span>${emptyMode ? `<span class="hb-metric-delta">all online</span>` : `<span class="hb-metric-delta bad">1 offline</span>`}</div>
+          <div class="hb-metric-sub">${emptyMode ? "HQ online · ready" : "HQ live · Build box offline"}</div>
+        </a>
+        <a class="hb-metric" href="#/settings/agents/jules">
+          <div class="hb-metric-top"><span>Monthly spend</span>${ic("bolt", "ic14 c-amber")}</div>
+          <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-metric-cap">${emptyMode ? "/ $210" : "/ $210 · 68%"}</span></div>
+          <div class="hb-mini-bar" aria-hidden="true"><span style="width:${emptyMode ? 0 : 68}%"></span></div>
+          <div class="hb-metric-sub">${emptyMode ? "No spend recorded yet" : "Jules at cap · ~$6.80/day"}</div>
+        </a>
+      </section>
+
+      <section class="hb-kpi-ribbon" aria-label="Delivery and autonomy metrics">
+        <div class="hb-kpi-cell" title="Average time from task start to accepted completion (last 7 days)">
+          <span class="hb-kpi-lbl">Cycle time</span>
+          <span class="hb-kpi-r"><strong>${emptyMode ? "—" : "18m"}</strong>${emptyMode ? "" : `<span class="d">-14%</span>`}</span>
+        </div>
+        <div class="hb-kpi-cell" title="Percentage of tasks accepted on the first pass without rework">
+          <span class="hb-kpi-lbl">First-pass acceptance</span>
+          <span class="hb-kpi-r"><strong>${emptyMode ? "—" : "84%"}</strong>${emptyMode ? "" : `<span class="d">+6%</span>`}</span>
+        </div>
+        <div class="hb-kpi-cell" title="Percentage of completed tasks sent back for rework or changes">
+          <span class="hb-kpi-lbl">Rework rate</span>
+          <span class="hb-kpi-r"><strong>${emptyMode ? "—" : "16%"}</strong>${emptyMode ? "" : `<span class="d">-3%</span>`}</span>
+        </div>
+        <div class="hb-kpi-cell" title="Human-in-the-Loop rate: percentage of autonomous runs that paused for human input">
+          <span class="hb-kpi-lbl">HITL rate</span>
+          <span class="hb-kpi-r"><strong>${emptyMode ? "—" : "22%"}</strong>${emptyMode ? "" : `<span class="d neutral">78% auto</span>`}</span>
+        </div>
+      </section>
+    </div>`;
   };
 
   const renderSpotlight = () => {
