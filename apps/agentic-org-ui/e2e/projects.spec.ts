@@ -131,6 +131,9 @@ test(
 		await expect(tabs(page)).toHaveText([
 			'Overview',
 			'Work',
+			'Features',
+			'Releases',
+			'Docs',
 			'Team',
 			'Activity',
 			'Conversations',

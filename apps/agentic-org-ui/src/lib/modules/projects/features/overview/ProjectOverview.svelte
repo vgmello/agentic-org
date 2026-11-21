@@ -135,8 +135,8 @@
 			{/if}
 		{:else}
 			<p class="mt-1 max-w-prose text-sm/6 text-fg-muted" data-testid="no-brief">
-				No brief yet. The brief says what {p.name} is for and what it leaves out; it is written in the
-				project's Docs, which aren't built yet.
+				No brief yet. The brief says what {p.name} is for and what it leaves out; write it in
+				<a href={resolve(projectHref(p.id, 'docs') as '/')} class={inlineLink.sm}>Docs</a>.
 			</p>
 		{/if}
 	</section>

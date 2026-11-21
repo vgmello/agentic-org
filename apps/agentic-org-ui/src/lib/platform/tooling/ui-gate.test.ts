@@ -1513,6 +1513,7 @@ describe('selector', () => {
 		expect(step.cmd.filter((word) => word.startsWith('e2e/')).sort()).toEqual(
 			[
 				'e2e/projects\\.spec\\.ts$',
+				'e2e/docs-features-releases\\.spec\\.ts$',
 				'e2e/work\\.spec\\.ts$',
 				'e2e/tasks\\.spec\\.ts$',
 				'e2e/dialog-block-title\\.spec\\.ts$',
