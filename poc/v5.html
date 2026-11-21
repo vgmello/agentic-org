@@ -357,11 +357,16 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .cmdk-ai-prev-chip .ic { width: 12px; height: 12px; color: #7DD3FC; }
 .cmdk-ai-follow { flex: none; padding-top: 6px; border-top: 1px solid rgba(186, 222, 255, .08); }
 .cmdk-ai-card {
-  padding: 16px 18px; border-radius: 13px;
+  position: relative; overflow: hidden;
+  padding: 15px 18px 15px 20px; border-radius: 13px;
   background: rgba(56, 189, 248, .09);
-  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .24), inset 3px 0 0 #38BDF8;
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .24);
   display: flex; flex-direction: column; gap: 8px;
   font-size: 0.875rem; line-height: 1.58; color: #E2E8F0;
+}
+.cmdk-ai-card::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(180deg, #38BDF8 0%, #0EA5E9 100%);
 }
 .cmdk-ai-card-hd {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -1630,7 +1635,8 @@ a.hb-pillar-pill:hover { filter: brightness(1.14); transform: translateY(-0.5px)
 .hb-pillar-pill.ok { background: rgba(52, 211, 153, .12); color: #6EE7B7; box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .28); }
 .hb-pillar-pill.sky { background: rgba(56, 189, 248, .13); color: #BAE6FD; box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .30); }
 
-.hb-pillar-hero { display: flex; flex-direction: column; gap: 7px; }
+.hb-pillar-hero { display: flex; flex-direction: column; gap: 7px; border-radius: 10px; padding: 4px 6px; margin: -4px -6px; transition: background-color .14s ease; }
+a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
 .hb-pillar-valrow { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .hb-pillar-primary { display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
 .hb-pillar-num {
@@ -1648,7 +1654,7 @@ a.hb-pillar-pill:hover { filter: brightness(1.14); transform: translateY(-0.5px)
   background: rgba(186, 222, 255, .12);
 }
 .hb-pillar-bar > span { display: block; height: 100%; border-radius: 999px; }
-.hb-pillar-bar .seg-spend { background: linear-gradient(90deg, #38BDF8 0%, #FBBF24 100%); }
+.hb-pillar-bar .seg-spend { background: linear-gradient(90deg, #0EA5E9 0%, #38BDF8 100%); }
 .hb-pillar-bar .seg-auto { background: linear-gradient(90deg, #38BDF8 0%, #7DD3FC 100%); }
 .hb-pillar-bar .seg-human { background: rgba(251, 191, 36, .75); }
 .hb-pillar-bar .seg-pass { background: linear-gradient(90deg, #10B981 0%, #34D399 100%); }
@@ -1691,7 +1697,8 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   overflow: hidden;
   transition: box-shadow .28s ease;
 }
-.hb-spot.is-centered { max-width: 680px; width: 100%; margin: 12px auto 0; }
+.hb-spot.is-centered { max-width: 640px; width: 100%; margin: 12px auto 0; }
+.hb-spot.is-empty-hero { min-height: 248px; }
 .hb-spot.is-pulse { box-shadow: inset 0 1px 0 rgba(186, 222, 255, .28), inset 0 0 0 1.5px rgba(56, 189, 248, .55), 0 18px 46px -12px rgba(14, 165, 233, .36); }
 .hb-spot::before {
   content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
@@ -1799,7 +1806,6 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 }
 .hb-spot-ctx-row { display: flex; align-items: center; gap: 10px; }
 .hb-spot-next {
-  margin-top: auto;
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 8px 11px; border-radius: 9px;
   background: rgba(7, 14, 26, .26);
@@ -1822,6 +1828,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .hb-spot-next-exp .ic { width: 11px; height: 11px; color: #FBBF24; }
 .hb-spot-next .ic { flex: none; color: var(--hb-dim); }
 .hb-spot-foot {
+  margin-top: auto;
   padding-top: 14px;
   border-top: 1px solid var(--hb-border);
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
@@ -2047,8 +2054,8 @@ a.hb-card-lead:hover { color: var(--hb-ink); }
 }
 .hb-time-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .hb-time-title {
-  font-size: 0.72rem; line-height: 1rem; font-weight: 650;
-  letter-spacing: .12em; text-transform: uppercase; color: #DCEBFA;
+  font-size: 0.96875rem; line-height: 1.3; font-weight: 600;
+  letter-spacing: -.01em; color: var(--hb-ink);
 }
 .hb-time-unit { font-size: 0.78125rem; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--hb-dim); }
 .hb-time-bar {
@@ -2065,7 +2072,7 @@ a.hb-card-lead:hover { color: var(--hb-ink); }
 .hb-tseg.agents { background: linear-gradient(90deg, #38BDF8 0%, #7DD3FC 100%); }
 .hb-tseg.ci { background: linear-gradient(90deg, #10B981 0%, #34D399 100%); }
 .hb-tseg.humans { background: linear-gradient(90deg, #EAB308 0%, #F5C76B 100%); }
-.hb-tseg.queued { background: linear-gradient(90deg, #818CF8 0%, #A5B4FC 100%); box-shadow: inset 0 1px 0 rgba(224, 231, 255, .32); }
+.hb-tseg.queued { background: linear-gradient(90deg, #E11D48 0%, #FB7185 100%); box-shadow: inset 0 1px 0 rgba(254, 205, 211, .34); }
 .hb-time-legend { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 22px; }
 .hb-tleg {
   display: inline-flex; align-items: center; gap: 6px;
@@ -2077,13 +2084,15 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 .hb-tleg.agents .hb-tleg-dot { background: #38BDF8; }
 .hb-tleg.ci .hb-tleg-dot { background: #34D399; }
 .hb-tleg.humans .hb-tleg-dot { background: #F5C76B; }
-.hb-tleg.queued .hb-tleg-dot { background: #A5B4FC; }
+.hb-tleg.queued .hb-tleg-dot { background: #FB7185; }
 .hb-tleg strong { font-size: 0.9375rem; font-weight: 650; font-variant-numeric: tabular-nums; }
 .hb-tleg .hrs { font-size: 0.75rem; color: var(--hb-dim); font-variant-numeric: tabular-nums; }
 .hb-tleg.agents strong { color: #7DD3FC; }
 .hb-tleg.ci strong { color: #6EE7B7; }
 .hb-tleg.humans strong { color: #F5C76B; }
-.hb-tleg.queued strong { color: #C7D2FE; }
+.hb-tleg.queued strong { color: #FDA4AF; }
+.hb-skel-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.hb-skel-card { padding: 18px; border-radius: 16px; background: var(--hb-surface); box-shadow: var(--hb-shadow); display: flex; flex-direction: column; gap: 12px; }
 .hb-time-foot {
   display: flex; align-items: center; justify-content: space-between;
   gap: 8px 18px; flex-wrap: wrap;
@@ -2366,7 +2375,7 @@ const TEAMS = {
 };
 const P = {
   "agency-v1":         { name: "Agentic Org v1.0", release: "v1.0", health: "At risk", upd: 12, lead: "ada", teams: ["leadership", "platform", "app", "quality"], goal: "Ship the first release of Agentic Org: hire agents, chat, projects and work, on one office.", updated: "12m ago", channel: "agency-v1", due: "Dec 5", dueMonth: "Dec", dueDay: "05", pace: "+2d behind", paceTone: "warn", blocker: "2 sign-offs waiting: v1.0 release & test access", unblockSpotId: "in1", unblockHref: "#/inbox/in1", unblockLabel: "Review (2)", milestoneTitle: "Agentic Org v1.0", horizonStatus: "2 sign-offs", horizonNote: "Release & test access sign-offs", risk: "Two updates wait on approval and local test access is waiting on your permission." },
-  "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "File-access choice needed (25m) · Build box office offline", unblockSpotId: "in2", unblockHref: "#/inbox/in2", unblockLabel: "Decide", milestoneTitle: "Office sync test", horizonStatus: "Needs you", horizonNote: "Rowan · Office federation", risk: "The Build box office stayed offline after sleep. Sage's fix waits on your verification, and sync can't resume until the office is back online." },
+  "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "File-access choice waiting 25m · Build box office offline", unblockSpotId: "in2", unblockHref: "#/inbox/in2", unblockLabel: "Decide", milestoneTitle: "Office sync test", horizonStatus: "Needs you", horizonNote: "Rowan · Office federation", risk: "The Build box office stayed offline after sleep. Sage's fix waits on your verification, and sync can't resume until the office is back online." },
   "look-feel":         { name: "Look & feel refresh", release: "v1.1", health: "On track", upd: 60, lead: "eden", teams: ["product", "app"], goal: "One calm, consistent look across every screen, with icons and no emoji.", updated: "1h ago", channel: "design", due: "Nov 28", dueMonth: "Nov", dueDay: "28", pace: "1d ahead", paceTone: "ok", blocker: "", clearNote: "All checks passing · projected Nov 27 (1d early)", unblockSpotId: "in17", unblockHref: "#/inbox/in17", milestoneTitle: "Look & feel refresh", horizonStatus: "1d ahead", horizonNote: "Final design polish sign-off", risk: "" },
   "proto-agency":      { name: "Early UI prototype", upd: 99999, lead: null, teams: ["product"], goal: "Explore the look of the app before v1.", updated: "Nov 2", channel: "design", archived: true }
 };
@@ -2685,6 +2694,8 @@ function showMenu(id, groups, align = "") {
 const empty = (icon, title, text, cls = "", action = "") => `<div class="empty ${cls}">${ic(icon, "ic48")}<h3>${esc(title)}</h3><p>${esc(text)}</p>${action ? `<div style="margin-top:24px">${action}</div>` : ""}</div>`;
 const skel = (n, label, avatar = true) => `<div class="skel" aria-busy="true"><span class="sr-only">${esc(label)}</span>${Array.from({ length: n }, (_, i) => `<div class="skel-row" aria-hidden="true">${avatar ? '<span class="skel-c"></span>' : ""}<span style="flex:1;display:flex;flex-direction:column;gap:8px"><span class="skel-b" style="width:${60 - i * 8}%"></span><span class="skel-b" style="width:${35 + i * 5}%;height:10px"></span></span></div>`).join("")}</div>`;
 const officeDown = () => `<div class="section" style="padding-bottom:0"><div class="callout" role="alert">${ic("warn", "ic20 c-amber")}<div><p>Couldn't reach the office. Your data is safe.</p><button class="btn outline sm" type="button" data-act="set" data-k="homeState" data-v="filled">${ic("refresh", "ic16")}Try again</button></div></div></div>`;
+const SPOT_ORDER = ["in1", "in5", "in2", "in17", "in16"];
+const spotQueue = () => SPOT_ORDER.map((id) => IN.find((i) => i.id === id)).filter((i) => i && (!i.handled || i.handledNow));
 function effectiveHealth(p) {
   if (p === "agency-v1") {
     const pending = ["in1", "in5"].map((id) => IN.find((i) => i.id === id)).filter((i) => i && !i.handled);
@@ -2962,6 +2973,14 @@ function answerOrgQuestion(rawQ) {
   const in17 = IN.find((i) => i.id === "in17");
   const v1Pending = [in1, in5].filter((i) => i && !i.handled);
   const spotLink = (id, label) => `<a href="#/inbox/${id}" data-act="spot-jump" data-id="${id}">${label}</a>`;
+  if (/kai|sync update|should i approve|publish/.test(t)) {
+    return {
+      q,
+      html: in1 && !in1.handled
+        ? `<strong>Yes — Ada recommends approving Kai's v1.0 sync update:</strong><ul class="cmdk-ai-list"><li><strong>Low risk:</strong> easy to roll back; all 412 automated checks passed and Tomas approved with zero open issues.</li><li><strong>High impact:</strong> unblocks Agentic Org v1.0 launch (window closes in 4 hours). ${spotLink("in1", "Jump to decision")}.</li></ul>`
+        : `<strong>Already approved:</strong> Kai's v1.0 sync update is cleared for release.`
+    };
+  }
   if (/horizon|schedule|slip|pace|milestone|standard|promote|14 day|release/.test(t)) {
     const lockTxt = in2 && !in2.handled ? `${spotLink("in2", "file-access choice")} pending` : `file-access choice decided`;
     const polishTxt = in17 && !in17.handled ? `pending your ${spotLink("in17", "final design polish sign-off")}` : `final polish approved`;
@@ -3027,8 +3046,7 @@ function answerOrgQuestion(rawQ) {
 function pageHome() {
   const st = S.homeState;
   const open = st === "empty" ? [] : unhandled();
-  const rawQueue = st === "empty" ? [] : IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
-  const queue = [...rawQueue.filter((i) => !!i.expires), ...rawQueue.filter((i) => !i.expires)];
+  const queue = st === "empty" ? [] : spotQueue();
   const openUrgentCount = open.filter((i) => i.expires).length;
   const working = st === "empty" ? [] : memberIds().filter((k) => ["working", "withyou"].includes(presence(k)));
   const blockedWork = st === "empty" ? [] : W.filter((w) => w.status === "Blocked");
@@ -3050,7 +3068,7 @@ function pageHome() {
   const headline = st === "loading"
     ? `${greet} Preparing your briefing…`
     : st === "error"
-      ? `${greet} HQ office is unreachable.`
+      ? `${greet}`
       : st === "empty"
         ? `${greet} <em class="calm">Welcome</em> to Agentic Org.`
         : openUrgentCount
@@ -3066,26 +3084,28 @@ function pageHome() {
   const offlineSpecsN = allAgents.filter((m) => m.setup && m.setup.office && OFFICES[m.setup.office] && OFFICES[m.setup.office].status === "Offline").length;
   const liveWorkingAgents = st === "empty" ? [] : Object.keys(M).filter((k) => M[k].kind === "agent" && ["working", "withyou"].includes(M[k].live) && !M[k].paused && !M[k].budgetCapped);
 
+  const skelCards = (n, label) => `<div class="hb-skel-grid" aria-busy="true"><span class="sr-only">${esc(label)}</span>${Array.from({ length: n }, () => `<div class="hb-skel-card" aria-hidden="true"><span class="skel-b" style="width:38%;height:11px"></span><span class="skel-b" style="width:62%;height:22px"></span><span class="skel-b" style="width:100%;height:6px"></span><span class="skel-b" style="width:74%;height:11px"></span></div>`).join("")}</div>`;
+
   const renderMetrics = () => {
-    if (st === "loading") return skel(3, "Loading executive overview…");
+    if (st === "loading") return skelCards(3, "Loading executive overview…");
     if (st === "error") return "";
     const emptyMode = st === "empty";
-    return `<section class="hb-pillars" aria-label="Executive overview: Financials, Team, and Projects">
+    return `<section class="hb-pillars" aria-label="Executive overview: Financials, Team, and Delivery">
       <article class="hb-pillar" aria-labelledby="hb-pil-fin">
         <div class="hb-pillar-hd">
           <a class="hb-pillar-name" id="hb-pil-fin" href="#/settings">${ic("currency", "ic14 c-amber")}<span>Financials</span></a>
           <a class="hb-pillar-pill ${emptyMode ? "ok" : "warn"}" href="${emptyMode ? "#/settings" : "#/settings/agents/jules"}">${emptyMode ? "No spend yet" : "Jules at cap"}</a>
         </div>
-        <div class="hb-pillar-hero">
+        <a class="hb-pillar-hero" href="#/settings">
           <div class="hb-pillar-valrow">
             <div class="hb-pillar-primary">
               <span class="hb-pillar-num">${emptyMode ? "$0" : "$142"}</span>
               <span class="hb-pillar-unit">${emptyMode ? "spent" : "/ $210 monthly"}</span>
             </div>
-            ${emptyMode ? `<a class="hb-pillar-right" href="#/settings" style="color:#7DD3FC">Set monthly cap</a>` : `<span class="hb-pillar-right">68% · ~$204 est.</span>`}
+            <span class="hb-pillar-right" ${emptyMode ? 'style="color:#7DD3FC"' : ""}>${emptyMode ? "Set monthly cap" : "68% · ~$204 est."}</span>
           </div>
           <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-spend" style="width:${emptyMode ? 0 : 68}%"></span></div>
-        </div>
+        </a>
         <div class="hb-pillar-sub">
           <a class="hb-sub-item" href="#/activity" title="Average AI spend per completed task (last 7 days)">
             <span class="hb-sub-lbl">Cost per task · 7d</span>
@@ -3101,9 +3121,9 @@ function pageHome() {
       <article class="hb-pillar" aria-labelledby="hb-pil-team">
         <div class="hb-pillar-hd">
           <a class="hb-pillar-name" id="hb-pil-team" href="#/teams/members">${ic("user-group", "ic14 c-indigo")}<span>Team</span></a>
-          <a class="hb-pillar-pill ${emptyMode ? "ok" : "bad"}" href="#/settings/offices">${emptyMode ? "HQ online" : "1 office offline"}</a>
+          <a class="hb-pillar-pill ${emptyMode ? "ok" : "bad"}" href="#/settings/offices">${emptyMode ? "HQ online" : "Build box offline"}</a>
         </div>
-        <div class="hb-pillar-hero" title="Share of work completed autonomously without needing your input (last 7 days)">
+        <a class="hb-pillar-hero" href="#/teams/members" title="Share of work completed autonomously without needing your input (last 7 days)">
           <div class="hb-pillar-valrow">
             <div class="hb-pillar-primary">
               <span class="hb-pillar-num">${emptyMode ? "—" : "78%"}</span>
@@ -3115,15 +3135,15 @@ function pageHome() {
             <span class="seg-auto" style="width:${emptyMode ? 0 : 78}%"></span>
             <span class="seg-human" style="width:${emptyMode ? 0 : 22}%"></span>
           </div>
-        </div>
+        </a>
         <div class="hb-pillar-sub is-team">
           <a class="hb-sub-item" href="#/teams/members" title="All ${allAgents.length} agents: ${liveWorkingAgents.length} active, ${idleSpecsN} idle (Jules at budget cap, Avery paused, Noor unplaced), ${offlineSpecsN} waiting on offline Build box (Quinn)">
             <span class="hb-sub-lbl">${emptyMode ? "Team capacity" : `${leadsN} leads · ${specsN} specialists`}</span>
-            <span class="hb-sub-val">${emptyMode ? "0 agents" : `${liveWorkingAgents.length} active`}${emptyMode ? `<span class="hb-sub-meta">· 1 person</span>` : `<span class="hb-sub-meta warn">· ${idleSpecsN} idle</span>${offlineSpecsN ? `<span class="hb-sub-meta bad">· ${offlineSpecsN} offline</span>` : ""}`}</span>
+            <span class="hb-sub-val">${emptyMode ? "0 agents" : `${liveWorkingAgents.length} active`}${emptyMode ? `<span class="hb-sub-meta">· 1 person</span>` : `<span class="hb-sub-meta warn">· ${idleSpecsN} idle</span>${offlineSpecsN ? `<span class="hb-sub-meta bad">· ${offlineSpecsN} off</span>` : ""}`}</span>
           </a>
           <a class="hb-sub-item" href="#/settings/offices" title="Connected offices running agent work (HQ online, Build box offline)">
             <span class="hb-sub-lbl">Offices</span>
-            <span class="hb-sub-val">${emptyMode ? "1 online" : "1 online"}${emptyMode ? `<span class="hb-sub-meta ok">· HQ</span>` : `<span class="hb-sub-meta bad">· 1 offline</span>`}</span>
+            <span class="hb-sub-val">${emptyMode ? "1 of 1" : "1 of 2"}${emptyMode ? `<span class="hb-sub-meta ok">online</span>` : `<span class="hb-sub-meta">online</span>`}</span>
           </a>
         </div>
       </article>
@@ -3131,9 +3151,9 @@ function pageHome() {
       <article class="hb-pillar" aria-labelledby="hb-pil-proj">
         <div class="hb-pillar-hd">
           <a class="hb-pillar-name" id="hb-pil-proj" href="#/work">${ic("check-circle", "ic14 c-green")}<span>Delivery</span></a>
-          <a class="hb-pillar-pill ${emptyMode ? "" : needsAttnProjs ? (offTrackProjs && !atRiskProjs ? "bad" : "warn") : "ok"}" href="#/projects">${emptyMode ? "No deliveries yet" : !needsAttnProjs ? "All on track" : offTrackProjs && !atRiskProjs ? `${plural(offTrackProjs, "project", "projects")} off track` : `${plural(needsAttnProjs, "project", "projects")} behind`}</a>
+          <a class="hb-pillar-pill ${emptyMode ? "" : needsAttnProjs ? (offTrackProjs && !atRiskProjs ? "bad" : "warn") : "ok"}" href="#/projects">${emptyMode ? "No deliveries yet" : !needsAttnProjs ? "All on track" : offTrackProjs && !atRiskProjs ? `${plural(offTrackProjs, "project", "projects")} off track` : `${needsAttnProjs} need attention`}</a>
         </div>
-        <div class="hb-pillar-hero" title="Percentage of completed tasks approved on the first try without revisions (last 7 days)">
+        <a class="hb-pillar-hero" href="#/work" title="Percentage of completed tasks approved on the first try without revisions (last 7 days)">
           <div class="hb-pillar-valrow">
             <div class="hb-pillar-primary">
               <span class="hb-pillar-num">${emptyMode ? "—" : "84%"}</span>
@@ -3145,7 +3165,7 @@ function pageHome() {
             <span class="seg-pass" style="width:${emptyMode ? 0 : 84}%"></span>
             <span class="seg-rework" style="width:${emptyMode ? 0 : 16}%"></span>
           </div>
-        </div>
+        </a>
         <div class="hb-pillar-sub">
           <a class="hb-sub-item" href="#/activity" title="Average time from task start to approval (last 7 days)">
             <span class="hb-sub-lbl">Avg. turnaround · 7d</span>
@@ -3184,7 +3204,7 @@ function pageHome() {
     }
     if (!queue.length || (allQueueCleared && !S.v4Open["spot-review"])) {
       const isFreshEmpty = st === "empty";
-      return `<section class="hb-spot is-done${isFreshEmpty ? " is-centered" : ""}" aria-label="${isFreshEmpty ? "Get started" : "Decision spotlight"}">
+      return `<section class="hb-spot is-done${isFreshEmpty ? " is-empty-hero" : ""}" aria-label="${isFreshEmpty ? "Get started" : "Decision spotlight"}">
         <div class="hb-cleared">
           <span class="hb-cleared-ring">${ic(isFreshEmpty ? "sparkle" : "check-circle", "ic20")}</span>
           <h2>${allQueueCleared ? "Priority spotlight cleared" : isFreshEmpty ? "Launch your organization" : "Nothing needs your decision"}</h2>
@@ -3248,21 +3268,6 @@ function pageHome() {
           </button>
         </div>
         ${ctxOpen ? `<div class="h4-ctx-body" id="panel-${ctxKey}">${esc(it.why)}</div>` : ""}
-        ${(() => {
-          if (queue.length < 2) return "";
-          let nextIdx = -1;
-          for (let step = 1; step < queue.length; step++) {
-            const cand = (S.spotIdx + step) % queue.length;
-            if (!queue[cand].handled && queue[cand].id !== it.id) { nextIdx = cand; break; }
-          }
-          if (nextIdx < 0) return "";
-          const nxt = queue[nextIdx];
-          const expTag = nxt.expires && !nxt.handled ? `<span class="hb-spot-next-exp">${ic("clock", "ic14")}${esc(nxt.expires.replace(/\s*\(.*\)/, ""))}</span>` : "";
-          return `<button type="button" class="hb-spot-next" data-act="spot-go" data-v="${nextIdx}">
-            <span class="hb-spot-next-l"><span class="hb-spot-next-lbl">Up next</span><span class="hb-spot-next-txt">${esc(nxt.what)}</span></span>
-            <span class="hb-spot-next-r">${expTag}${ic("chev-right", "ic14")}</span>
-          </button>`;
-        })()}
       </div>
 
       <div class="hb-spot-foot">
@@ -3272,6 +3277,22 @@ function pageHome() {
           ${remainingInInbox ? `<a class="hb-skip-btn" href="#/inbox">All ${open.length} in Inbox${ic("chev-right", "ic14")}</a>` : ""}
         </div>
       </div>
+
+      ${(() => {
+        if (queue.length < 2) return "";
+        let nextIdx = -1;
+        for (let step = 1; step < queue.length; step++) {
+          const cand = (S.spotIdx + step) % queue.length;
+          if (!queue[cand].handled && queue[cand].id !== it.id) { nextIdx = cand; break; }
+        }
+        if (nextIdx < 0) return "";
+        const nxt = queue[nextIdx];
+        const expTag = nxt.expires && !nxt.handled ? `<span class="hb-spot-next-exp">${ic("clock", "ic14")}${esc(nxt.expires.replace(/\s*\(.*\)/, ""))}</span>` : "";
+        return `<button type="button" class="hb-spot-next" data-act="spot-go" data-v="${nextIdx}">
+          <span class="hb-spot-next-l"><span class="hb-spot-next-lbl">Up next</span><span class="hb-spot-next-txt">${esc(nxt.what)}</span></span>
+          <span class="hb-spot-next-r">${expTag}${ic("chev-right", "ic14")}</span>
+        </button>`;
+      })()}
     </section>`;
   };
 
@@ -3279,28 +3300,38 @@ function pageHome() {
     if (st === "error" || st === "empty") return "";
     const activeLead = liveWorkingAgents.includes("kai") ? "kai" : (liveWorkingAgents[0] || null);
     const otherActive = Math.max(0, liveWorkingAgents.length - 1);
+    const recentDone = IN.filter((i) => i.handled && i.handledNow).slice(0, 2);
+    const staticRows = [
+      `<a class="hb-dig-item" href="#/projects/agency-v1">
+        <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
+        <div class="hb-dig-body"><b>Release notes &amp; onboarding drafted</b> — Ada &amp; Maya completed v1.0 release notes and the new-member checklist.</div>
+        <span class="hb-dig-time">18m</span>
+      </a>`,
+      `<a class="hb-dig-item" href="#/projects/look-feel">
+        <span class="hb-dig-ico">${ic("check-circle", "ic16 c-indigo")}</span>
+        <div class="hb-dig-body"><b>2 UI polish tasks shipped</b> — Avery completed status pill restyling and mobile badge alignment for Look &amp; feel refresh.</div>
+        <span class="hb-dig-time">1h</span>
+      </a>`,
+      `<a class="hb-dig-item" href="#/inbox/in11">
+        <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
+        <div class="hb-dig-body"><b>Reconnect fix ready</b> — Sage fixed the Build box office sleep disconnect on a test setup; ready for your check.</div>
+        <span class="hb-dig-time">2h</span>
+      </a>`
+    ];
+    const dynamicRows = recentDone.map((d) => `<a class="hb-dig-item" href="#/inbox/${d.id}">
+      <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
+      <div class="hb-dig-body"><b>${esc(d.outcome)}</b> — ${esc(d.what)} (${esc(M[d.from].name)} notified).</div>
+      <span class="hb-dig-time">Now</span>
+    </a>`);
+    const shownRows = [...dynamicRows, ...staticRows].slice(0, 3).join("");
     return `<aside class="hb-catchup" aria-label="Autonomous catch-up">
       <div class="hb-cu-hd">
-        <div class="hb-cu-title">${ic("sparkle", "ic16")}<span>Catch-up</span></div>
+        <div class="hb-cu-title">${ic("signal", "ic16")}<span>Catch-up</span></div>
         <span class="hb-cu-window"><span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>Last 4 hours</span>
       </div>
 
       ${st === "loading" ? skel(4, "Summarizing recent activity…") : `<div class="hb-digest">
-        <a class="hb-dig-item" href="#/projects/agency-v1">
-          <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-          <div class="hb-dig-body"><b>Release notes &amp; onboarding drafted</b> — Ada &amp; Maya completed v1.0 release notes and the new-member checklist.</div>
-          <span class="hb-dig-time">18m</span>
-        </a>
-        <a class="hb-dig-item" href="#/projects/look-feel">
-          <span class="hb-dig-ico">${ic("sparkle", "ic16 c-indigo")}</span>
-          <div class="hb-dig-body"><b>2 UI polish tasks shipped</b> — Avery completed status pill restyling and mobile badge alignment for Look &amp; feel refresh.</div>
-          <span class="hb-dig-time">1h</span>
-        </a>
-        <a class="hb-dig-item" href="#/inbox/in11">
-          <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-          <div class="hb-dig-body"><b>Reconnect fix ready</b> — Sage fixed the Build box office sleep disconnect on a test setup; ready for your check.</div>
-          <span class="hb-dig-time">2h</span>
-        </a>
+        ${shownRows}
         ${activeLead ? `<a class="hb-dig-item" href="#/teams/members">
           <span class="hb-dig-ico"><span class="h4-live-dot" style="background:#34D399" aria-hidden="true"></span></span>
           <div class="hb-dig-body"><b>${liveWorkingAgents.length} agents working now</b> — ${esc(M[activeLead].name)} is in a session with you${otherActive ? `, plus ${otherActive} others delivering across 3 projects` : ""}.</div>
@@ -3361,9 +3392,9 @@ function pageHome() {
     } else if (p === "look-feel") {
       const in17 = IN.find((i) => i.id === "in17");
       if (in17 && !in17.handled) {
-        blockerText = "1d ahead · final design polish ready for sign-off";
+        blockerText = "Final design polish ready for your sign-off";
         blockerTone = "sky";
-        blockerIco = "sparkle";
+        blockerIco = "flag";
         blockerIcoCls = "c-indigo";
         unblockLabel = "Sign off";
         unblockSpotId = "in17";
@@ -3493,10 +3524,8 @@ function pageHome() {
         </div>
         <a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>
       </div>
-      ${st === "loading" ? skel(3, "Loading projects…") : `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`}
+      ${st === "loading" ? skelCards(3, "Loading projects…") : `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`}
     </section>`}
-
-    ${renderReleaseHorizon()}
 
     ${st === "loading" ? skel(1, "Analyzing where task time goes…") : st === "error" || st === "empty" ? "" : (() => {
       const agentH = 10.0, ciH = 1.9, queuedH = 18.0;
@@ -4986,7 +5015,7 @@ function renderNav(route) {
     <li>
       <div class="nav-label">Workspace</div>
       <ul class="nav-list" role="list">
-        <li class="nav-rail-only"><a class="nav-item${inProj ? " cur" : ""}" href="#/projects" title="Projects" ${inProj && !r1 ? 'aria-current="page"' : ""}>${ic("folder")}<span class="lbl">Projects</span></a></li>
+        ${item("#/projects", "Projects", "folder", r0 === "projects" && !r1)}
         ${item("#/work", "Work", "clipboard", r0 === "work")}
         ${item("#/chat", "Chat", "chat", r0 === "chat")}
         ${item("#/activity", "Activity", "signal", r0 === "activity")}
@@ -5007,9 +5036,6 @@ function renderNav(route) {
           </li>`;
         }).join("") : `<li class="nav-fav-empty">No favorite projects yet.</li>`}
       </ul>` : ""}
-      <ul class="nav-list nav-all-projs" role="list">
-        ${item("#/projects", "All projects", "folder", r0 === "projects" && !r1)}
-      </ul>
     </li>
     <li>
       <div class="nav-label">Organization</div>
@@ -5245,7 +5271,7 @@ function renderCmdk() {
       </div>
       <div>${curTurn.html}</div>
     </div>` : "";
-    const prevHtml = prevTurns.length ? `<div class="cmdk-ai-prev-row"><span class="cmdk-ai-prev-lbl">Earlier</span>${prevTurns.map((turn) => `<button type="button" class="cmdk-ai-prev-chip" data-act="cmdk-ai-ask" data-v="${esc(turn.q)}">${ic("reply", "ic14")}<span>${esc(turn.q)}</span></button>`).join("")}</div>` : "";
+    const prevHtml = prevTurns.length ? `<div class="cmdk-ai-prev-row"><span class="cmdk-ai-prev-lbl">Earlier</span>${prevTurns.map((turn) => `<button type="button" class="cmdk-ai-prev-chip" data-act="cmdk-ai-ask" data-v="${esc(turn.q)}">${ic("clock", "ic14")}<span>${esc(turn.q)}</span></button>`).join("")}</div>` : "";
     const askedSet = new Set(CMDK.aiHistory.map((x) => x.q.trim().toLowerCase()));
     const starters = S.homeState === "empty" ? CMDK_AI_STARTERS_EMPTY : CMDK_AI_STARTERS;
     const chips = starters.filter((s) => !askedSet.has(s.q.trim().toLowerCase()));
@@ -5355,8 +5381,7 @@ function handle(id, outcome) {
     toast("Undone — returned to your queue.", "refresh");
   });
   if (route()[0] === "home") {
-    const rawQ = IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
-    const q = [...rawQ.filter((i) => !!i.expires), ...rawQ.filter((i) => !i.expires)];
+    const q = spotQueue();
     const nextIdx = q.findIndex((x, idx) => idx > S.spotIdx && !x.handled);
     const wrapIdx = q.findIndex((x) => !x.handled);
     if (nextIdx >= 0) S.spotIdx = nextIdx;
@@ -5373,8 +5398,7 @@ document.addEventListener("click", (e) => {
   const spotJump = e.target.closest('[data-act="spot-jump"]');
   if (spotJump && route()[0] === "home") {
     const sid = spotJump.dataset.id;
-    const rawQ = IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
-    const q = [...rawQ.filter((i) => !!i.expires), ...rawQ.filter((i) => !i.expires)];
+    const q = spotQueue();
     const idx = q.findIndex((x) => x.id === sid);
     if (idx >= 0) {
       e.preventDefault();
@@ -5458,8 +5482,7 @@ document.addEventListener("click", (e) => {
     case "run": S.openRuns[id] = !S.openRuns[id]; render(false); { const b = document.querySelector(`[data-act="run"][data-id="${id}"]`); if (b) b.focus(); } break;
     case "v4-acc": S.v4Open[id] = !S.v4Open[id]; render(false); { const b = document.querySelector(`[data-act="v4-acc"][data-id="${id}"]`); if (b) b.focus(); } break;
     case "spot-step": {
-      const rawQ = IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
-      const n = rawQ.length || 1;
+      const n = spotQueue().length || 1;
       S.spotIdx = (S.spotIdx + Number(v || 1) + n) % n;
       S.replying = null;
       render(false);
