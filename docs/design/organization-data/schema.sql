@@ -1827,21 +1827,6 @@ organization_id TEXT NOT NULL,
   FOREIGN KEY (organization_id,predecessor_attempt_id,turn_id) REFERENCES agent_execution_attempts(organization_id,id,turn_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE supervisor_command_receipts (
-organization_id TEXT NOT NULL,
-  office_id TEXT NOT NULL,
-  operation_id TEXT NOT NULL,
-  command TEXT NOT NULL CHECK (command IN ('RunTurn','ResumeTurn','CancelTurn','StopAgent','BindConnection','RefreshConnection')),
-  employee_id TEXT,
-  payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256)=64),
-  outcome TEXT NOT NULL CHECK (outcome IN ('accepted','rejected')),
-  response_json TEXT NOT NULL CHECK (json_valid(response_json) AND json_type(response_json)='object'),
-  recorded_at TEXT NOT NULL,
-  PRIMARY KEY (organization_id,office_id,operation_id),
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-
 CREATE TRIGGER placement_generation_must_advance BEFORE UPDATE ON agent_placements
 WHEN NEW.placement_generation<OLD.placement_generation OR (NEW.office_id<>OLD.office_id AND NEW.placement_generation<=OLD.placement_generation)
 BEGIN SELECT RAISE(ABORT,'office changes require a newer placement generation'); END;

@@ -1,6 +1,6 @@
 # Schema coverage and integrity review
 
-The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 91 tables and 12 views; the private side has 4 tables. These are draft definitions, not application migrations.
+The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 90 tables and 12 views; the private side has 4 tables. These are draft definitions, not application migrations.
 
 ## Record inventory
 
@@ -16,7 +16,7 @@ The primary design documents define two SQL artifacts. Load `schema.sql` once in
 | [08](08-record-contracts.md) | [schema.sql](schema.sql) | `links`, `entity_relationships` |
 | [09](09-release-content-and-flags.md) | [schema.sql](schema.sql) | `release_features`, `release_tasks`, `feature_flags`, `release_flag_settings`, `deployment_flag_settings` |
 | [10](10-usage-and-cost-accounting.md) | [schema.sql](schema.sql) | `model_prices`, `usage_records`, `usage_stream_checkpoints`, `usage_stream_coverage`, `effective_usage_records`, `usage_task_totals`, `usage_agent_totals`, `usage_project_totals` |
-| [11](11-model-profiles-and-agent-execution.md) | [schema.sql](schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `supervisor_command_receipts`, `model_profile_model_union` |
+| [11](11-model-profiles-and-agent-execution.md) | [schema.sql](schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `model_profile_model_union` |
 | [12](12-task-assignment-and-history.md) | Task semantics | Uses `tasks` from 03 and `task_events` from 05; no additional tables |
 | [05: private operational data](05-operational-data.md#private-notes-attached-to-tasks) | [private-notes-schema.sql](private-notes-schema.sql) | `private_note_authors`, `private_note_tasks`, `private_task_notes`, `private_note_command_receipts` |
 | [15](15-messaging-and-chat.md) | [schema.sql](schema.sql) | `conversations`, `conversation_memberships`, `messages`, `message_recipient_states`, `conversation_preferences`, `conversation_read_markers`, `message_attachments`, `message_reactions` |
@@ -33,7 +33,7 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code loads this table with these columns and actively reads/writes it through its domain port), **DDL loaded only** (created verbatim from `schema.sql` by `crates/org-office/src/store/sqlite/schema.rs`, with no domain projector or read/write port yet), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (not loaded in the runtime schema and no code).
 
-As of 2026-11-21 (`B1b` and `B2.1` landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all 91 shared tables and 12 views plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **81 tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), and the 4 `private-notes-schema.sql` tables remain **Absent**.
+As of 2026-11-21 (`B1b` and `B2.1` landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all 90 shared tables and 12 views plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **80 tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), and the 4 `private-notes-schema.sql` tables remain **Absent**.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |
@@ -115,7 +115,6 @@ As of 2026-11-21 (`B1b` and `B2.1` landed; legacy `org.db` v3 and `office.db` v8
 | `repository_caches` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `roles` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
 | `structure_documents` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `supervisor_command_receipts` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `task_details` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `task_document_versions` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `task_events` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `work_events`/`selected_events` deleted) |

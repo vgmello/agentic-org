@@ -102,9 +102,9 @@ The [standalone installation contract](../standalone-server.md#4-setup-and-servi
     ├── auth/<connection-id>/               # Private CLI state, or external vault binding
     └── supervision/
         ├── supervisor.lock
-        ├── turns/<turn-id>/turn.json       # Turn state, attempts and process records
+        ├── processes/<process-instance-id>.json  # Standalone warm/active process record & lifecycle cleanup evidence (H-09, M-04)
+        ├── turns/<turn-id>/turn.json       # Turn state and attempts (references process_instance_id)
         ├── turns/<turn-id>/input.json
-        ├── receipts/<operation-id>.json    # Supervisor command receipts
         ├── pending-starts/<employee-id>.json   # ADR-0030
         ├── checkpoints/<checkpoint-id>.json
         └── tools/<operation-id>.json
@@ -123,7 +123,8 @@ The [standalone installation contract](../standalone-server.md#4-setup-and-servi
 | `office_connection_state`, `office_connection_models` | Supervisor-owned discovery/auth observations, rebuilt from verified probes after cache loss. Their journal snapshots improve startup but are not fresh proof after restart. |
 | `agent_placements.placement_generation` | HQ's agent-execution record files, written through HQ's acceptance journal; current placement row remains the existing employee-to-office projection. |
 | `connection_quota_state`, `connection_turn_permits` | HQ's agent-execution record files, written through HQ's acceptance journal; committed before permit acknowledgement. |
-| `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `supervisor_command_receipts` | The turn and receipt files under `supervision/`, with the immutable input/checkpoint/tool files. A supervisor command's receipt is the receipt of its journal entry ([document 16](16-recovery-and-office-continuity.md#selected-immutable-acceptance-journal)); `supervisor_command_receipts` projects the fields execution needs from it and is not a second receipt store. |
+| `agent_process_instances` | Standalone `supervision/processes/<process-instance-id>.json`, preserving single-writer ownership across warm multi-turn reuse and stopping independently of any single turn (Non-Negotiable #3). |
+| `agent_execution_turns`, `agent_execution_attempts` | `supervision/turns/<turn-id>/turn.json` referencing `process_instance_id`, with immutable input/checkpoint/tool files. Supervisor command receipts (`RunTurn`, `ResumeTurn`, `CancelTurn`, `StopAgent`, `BindConnection`, `RefreshConnection`) are stored in the canonical `mutation_receipts` table of [document 16](16-recovery-and-office-continuity.md#what-recovery-means) using access-checked `result_ref` pointers (never inline `response_json` in `office.db`). |
 
 **There is no execution journal.** Every durable execution state transition (a turn or attempt transition, a process record, a permit acquisition/release_pending/release, a cooldown, a command receipt, a pending start) is a change to a record file, accepted as one entry of the office's one acceptance journal like any other change (document 16; [ADR-0021](../../adr/0021-office-store-architecture.md); owner, 2026-11-18). High-frequency 10-second permit lease heartbeats are **in-memory lease extensions only**—they never write durable `F_FULLFSYNC` entries through the shared acceptance journal or SQLite writer, preserving committed-class `agent-os` hot-path latency (Non-Negotiable #18). An entry holds file changes, never table rows; the projector builds the tables of section 12 from the files, and a rebuilt cache reads them again. Execution records under `local/` are never published to HQ or to Git; they are replayed only by their own office, and satellite rebuilds never depend on HQ-only `connection_turn_permits` rows. Durable execution transitions are acknowledged in the durable class ([ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 3) and have no flush rule of their own: the journal's flush is the only one. Input, checkpoint and tool files that a change names are written in the same entry. Hashes use `canonical-json/2` ([hash codec registry](08-record-contracts.md#hash-codec-registry)). This paragraph replaces the earlier supervision journal of transaction envelopes with row snapshots.
 
@@ -450,7 +451,6 @@ erDiagram
     agent_execution_configs ||--o{ agent_process_instances : owns
     agent_execution_turns ||--o{ agent_execution_attempts : bounded_attempts
     agent_process_instances o|--o{ agent_execution_attempts : executes
-    offices ||--o{ supervisor_command_receipts : deduplicates
     agent_placements {
         TEXT organization_id PK, FK "required"
         TEXT employee_id PK, FK "required"
@@ -586,17 +586,6 @@ erDiagram
         TEXT started_at "optional"
         TEXT ended_at "optional"
         TEXT error_code "optional"
-    }
-    supervisor_command_receipts {
-        TEXT organization_id PK, FK "required"
-        TEXT office_id PK, FK "required"
-        TEXT operation_id PK "required"
-        TEXT command "required"
-        TEXT employee_id FK "optional"
-        TEXT payload_sha256 "required"
-        TEXT outcome "required"
-        TEXT response_json "required"
-        TEXT recorded_at "required"
     }
 ```
 
@@ -901,21 +890,6 @@ organization_id TEXT NOT NULL,
   FOREIGN KEY (organization_id,process_instance_id,employee_id,office_id,placement_generation) REFERENCES agent_process_instances(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,predecessor_attempt_id,turn_id) REFERENCES agent_execution_attempts(organization_id,id,turn_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-
-CREATE TABLE supervisor_command_receipts (
-organization_id TEXT NOT NULL,
-  office_id TEXT NOT NULL,
-  operation_id TEXT NOT NULL,
-  command TEXT NOT NULL CHECK (command IN ('RunTurn','ResumeTurn','CancelTurn','StopAgent','BindConnection','RefreshConnection')),
-  employee_id TEXT,
-  payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256)=64),
-  outcome TEXT NOT NULL CHECK (outcome IN ('accepted','rejected')),
-  response_json TEXT NOT NULL CHECK (json_valid(response_json) AND json_type(response_json)='object'),
-  recorded_at TEXT NOT NULL,
-  PRIMARY KEY (organization_id,office_id,operation_id),
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TRIGGER placement_generation_must_advance BEFORE UPDATE ON agent_placements

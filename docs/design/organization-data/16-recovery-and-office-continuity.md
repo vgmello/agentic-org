@@ -8,11 +8,11 @@ Recovery is answering, after a crash or lost cache: “Did this command already 
 
 | Record | Why it exists | Code today |
 | --- | --- | --- |
-| `mutation_receipts` | Stable command identity, request fingerprint, bound actor, state and protected result reference; retries reuse the recorded outcome | Organization `commands`, office `work_change_results`; host operation journal remains separately protected |
+| `mutation_receipts` | Single canonical idempotency receipt table across all families (including supervisor commands from document 11): stable command identity, request fingerprint, bound actor, state and access-checked `result_ref` (never inline plaintext response payloads); retries reuse the recorded outcome | Consolidated receipt model; host operation journal remains separately protected |
 | `office_origin_streams` | Per-office/incarnation high-water identity and journal head; never reuse acknowledged source sequence IDs after restore | `work_origin_counter/log`, message origin sequences and incarnation metadata |
 | `office_recovery_checkpoints` | Last applied org epoch/sequence, highest known authority epoch, base digest, pending restore state | `org_replica`, `org_replica_base` |
 | `recovery_snapshot_transfers` | Verified snapshot content identity and staging/install state; interruption does not masquerade as a complete install | `org_snapshot_stage/install`, snapshot artifact |
-| `process_cleanup_records` | Ownership mark/generation plus machine/boot/start identity and process inventory, linked optionally to a new execution process | `owned_processes`; document 11's process instances and placement fencing remain authoritative |
+| `process_cleanup_records` | Process-cleanup lifecycle extension: for managed agent processes, projected directly from `supervision/processes/<process-instance-id>.json` (document 11) linked via `execution_process_id`; standalone `cleanup/<cleanup-id>.json` files are reserved strictly for unmanaged/orphan OS process cleanup (`execution_process_id IS NULL`) | Document 11's standalone process records and placement fencing remain authoritative |
 
 ## Ownership, storage and rebuilding
 
@@ -20,8 +20,8 @@ Organization domain records live in organization Git; these operational records 
 
 ```text
 <data-root>/<organization-id>/durable/recovery/     # protected, never org Git
-├── commands/<command-id>.json                    # receipt, immutable fingerprint/actor
-├── results/<content-id>                          # protected command outcome
+├── commands/<command-id>.json                    # canonical receipt for all families (incl. supervisor commands), immutable fingerprint/actor
+├── results/<content-id>                          # access-checked protected command outcome referenced by result_ref
 ├── offices/<office-id>/
 │   ├── journals/acceptance/<journal-incarnation>/
 │   │   ├── anchor.json                          # immutable retained continuity evidence
@@ -29,7 +29,7 @@ Organization domain records live in organization Git; these operational records 
 │   │   └── segments/<first-ordinal>.log          # append-only accepted entries
 │   ├── checkpoint.json                          # current verified authority checkpoint
 │   ├── snapshots/<snapshot-id>.json              # transfer metadata and verified content ref
-│   └── cleanup/<cleanup-id>.json                 # process ownership evidence
+│   └── cleanup/<cleanup-id>.json                 # orphan/unmanaged OS process cleanup only (managed processes live in supervision/processes/)
 └── snapshots/<content-sha256>                    # immutable protected snapshot content
 ```
 
@@ -297,6 +297,18 @@ with retained-head evidence, a new incarnation), not a new record format. Until
 then, any change that would bind a durable record to a machine-local identity
 without an incarnation, epoch or generation needs a recorded decision, because it
 would close that path.
+
+## Retention, compaction and archival windows
+
+Append-only operational streams and receipts are bounded by explicit, reviewed maintenance compaction and archival windows rather than ad-hoc SQL `DELETE` statements:
+
+| Store / stream | Active window | Compaction / archival procedure |
+| --- | --- | --- |
+| Acceptance journal segments (`durable/recovery/offices/<id>/journals/acceptance/`) | Until covered by flushed `checkpoint.json` head, high-water marks, and full file materialization (configurable minimum floor, default 7 days) | Release covered segments only after `checkpoint.json` records the flushed head hash, origin high-waters, and materialized mark |
+| `mutation_receipts` (`durable/recovery/commands/` & `results/`) | Until terminal state + `expires_at` (default 30 days after terminal completion/rejection, unless pinned by an open turn, active hold, or recovery checkpoint) | Archive expired terminal receipts to immutable cold archive bundles and prune from active projection via the reviewed maintenance compaction job |
+| Per-participant messaging state (`durable/messaging/.../participants/<emp>/received/`) | Bounded append-only `segments/<first-seq>.jsonl` (default compact at 64 KiB or 256 records) | Compact closed segments atomically into `received/snapshot.json` and release superseded segment files |
+| Accounting ledger (`durable/accounting/`, `usage_records`) | Rolling 13-month active window in disposable office projections | Seal closed calendar months into immutable monthly archive bundles with SHA-256 manifests and verified summary checkpoints before pruning older detail rows from office caches |
+| Budget periods & events (`durable/budgets/`) | Active periods plus rolling 13-month closed window | Archive closed `budget_periods` and `budget_events` alongside monthly accounting bundles while retaining `budgets` and current `budget_policy_versions` rows |
 
 ## Loss boundaries
 
