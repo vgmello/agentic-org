@@ -75,16 +75,13 @@ test('A3, A4, U1: enabled session and live org routes require sign-in without a 
 		await expect(page.getByRole('heading', { level: 1, name: /^Sign in to HQ at / })).toBeVisible();
 		await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
 	}
-	await visit(page, '/cli-approve');
-	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
-	await expect(
-		page.getByRole('heading', { level: 1, name: 'This link has expired or was already used.' })
-	).toBeVisible();
-	await visit(page, '/set-password');
-	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
-	await expect(
-		page.getByRole('heading', { level: 1, name: 'This link has expired or was already used.' })
-	).toBeVisible();
+	for (const linkPath of ['/approve', '/cli-approve', '/set-password']) {
+		await visit(page, linkPath);
+		await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
+		await expect(
+			page.getByRole('heading', { level: 1, name: 'This link has expired or was already used.' })
+		).toBeVisible();
+	}
 	await visit(page, '/home');
 	await expect(page.getByTestId('area-unavailable')).toBeVisible();
 });

@@ -1,12 +1,10 @@
-export { chatSender, type ChatApi, type ChatDraft } from '../../../src/lib/modules/messaging/api';
 export {
+	chatApi,
+	chatSender,
 	createMockChat,
+	sender,
+	type ChatApi,
+	type ChatDraft,
 	type ChatScenario,
 	type MockChatOptions
-} from '../../../src/lib/modules/messaging/mock';
-import { orgApi } from '$lib/modules/organization/api';
-import { chatSender } from '../../../src/lib/modules/messaging/api';
-import { createMockChat } from '../../../src/lib/modules/messaging/mock';
-
-export const chatApi = createMockChat(orgApi);
-export const sender = chatSender(chatApi);
+} from './chat';

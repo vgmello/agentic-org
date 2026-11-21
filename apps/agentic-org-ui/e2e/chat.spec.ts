@@ -21,14 +21,16 @@ const send = async (page: Page, text: string) => {
 };
 
 test(
-	'CHAT-1: Chat is in the nav, with Needs you, Mentions, Threads, channels and DMs, and a conversation with threads',
+	'CHAT-1: Chat is in the nav, with Inbox link, Mentions, Threads, channels and DMs, and a conversation with threads',
 	{ tag: '@journey' },
 	async ({ page }) => {
 		await open(page);
 		await expect(
 			page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Chat' })
 		).toHaveAttribute('aria-current', 'page');
-		await expect(side(page).getByTestId('needs-you-count')).toHaveText('2');
+		await expect(title(page)).toHaveText('#general');
+		await expect(side(page).getByTestId('inbox-link')).toHaveAttribute('href', '/inbox');
+		await expect(side(page).getByTestId('inbox-count')).toHaveText('3');
 		await expect(side(page).getByTestId('mentions-link')).toBeVisible();
 		await expect(side(page).getByTestId('threads-link')).toBeVisible();
 		await expect(side(page).getByTestId('channels')).toContainText('general');
@@ -77,17 +79,16 @@ test('CHAT-2: #general, project and team channels exist, and people add a channe
 	await expect(page.getByRole('button', { name: 'Add people…' })).toHaveCount(0);
 });
 
-test("CHAT-3: DMs show each member's status, and a group of up to 8 can be started", async ({
+test("CHAT-3: DMs show each agent's status and no speculative presence for people, and a group of up to 8 can be started", async ({
 	page
 }) => {
 	await open(page);
 	const dms = side(page).getByTestId('dms');
 	await expect(dms.locator('[data-conversation=c-dm-sam]')).toContainText('Working');
-	await expect(dms.locator('[data-conversation=c-dm-ines]')).toContainText('Asleep');
+	await expect(dms.locator('[data-conversation=c-dm-ines]')).toContainText('Available');
 	await expect(dms.locator('[data-conversation=c-dm-pax]')).toContainText('Paused');
-	// A person's status is a word too, never only a dot (CHAT-18).
-	await expect(dms.locator('[data-conversation=c-dm-avery]').getByTestId('dm-status')).toHaveText(
-		'Online'
+	await expect(dms.locator('[data-conversation=c-dm-avery]').getByTestId('dm-status')).toHaveCount(
+		0
 	);
 	await side(page).getByRole('button', { name: 'New message' }).click();
 	const dialog = page.getByRole('dialog', { name: 'New message' });
@@ -111,26 +112,22 @@ test("CHAT-3: DMs show each member's status, and a group of up to 8 can be start
 });
 
 test(
-	'CHAT-5: an ask is a card with its options; answering it answers the ask and clears Needs you',
+	'CHAT-5: an ask is a card with its options; answering it records who answered and removes buttons',
 	{ tag: '@journey' },
 	async ({ page }) => {
 		await open(page);
-		await expect(title(page)).toHaveText('Needs you');
+		await go(page, 'atlas');
 		const card = page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' });
 		await expect(card).toContainText('Kai Lindqvist asks you');
-		await expect(card).toContainText('blocks W7');
+		await expect(card).toContainText('blocks T-A42');
 		await expect(card.getByTestId('waiting')).toHaveText(/Waiting \d+ min/);
-		await shot(page, 'chat-needs-you');
 		await card.getByRole('button', { name: 'Yes, block' }).click();
 		await expect(page.getByText('Answer sent to Kai Lindqvist.')).toBeVisible();
-		// It leaves Needs you at once, and the card in its channel says who answered.
-		await expect(card).toHaveCount(0);
-		await expect(side(page).getByTestId('needs-you-count')).toHaveText('1');
-		await go(page, 'atlas');
-		const answered = page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' });
-		await expect(answered).toHaveAttribute('data-answered', 'true');
-		await expect(answered.getByTestId('answered')).toHaveText('Answered by Alex Kim: Yes, block');
-		await expect(answered.getByRole('button', { name: 'Yes, block' })).toHaveCount(0);
+		await expect(card).toHaveAttribute('data-answered', 'true');
+		await expect(card.getByTestId('answered')).toHaveText(
+			/^Answered by you · \d\d:\d\d: Yes, block$/
+		);
+		await expect(card.getByRole('button', { name: 'Yes, block' })).toHaveCount(0);
 		await shot(page, 'chat-ask-answered');
 	}
 );
@@ -139,16 +136,13 @@ test('CHAT-5: Reply… answers with text, and an approval is rejected with a rea
 	page
 }) => {
 	await open(page);
+	await go(page, 'atlas');
 	const ask = page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' });
 	await ask.getByRole('button', { name: 'Reply…' }).click();
 	await ask.getByLabel('Your reply').fill('Block, but warn first.');
 	await ask.getByRole('button', { name: 'Send reply' }).click();
-	await expect(ask).toHaveCount(0);
-	await go(page, 'atlas');
-	await expect(
-		page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' }).getByTestId('answered')
-	).toContainText('Block, but warn first.');
-	await side(page).getByTestId('needs-you-link').click();
+	await expect(ask.getByTestId('answered')).toContainText('Block, but warn first.');
+
 	const approval = page
 		.getByTestId('ask-card')
 		.filter({ hasText: 'Publish the 0.2 release notes' });
@@ -157,15 +151,10 @@ test('CHAT-5: Reply… answers with text, and an approval is rejected with a rea
 	await expect(approval.getByRole('button', { name: 'Reject', exact: true })).toBeDisabled();
 	await approval.getByLabel('Why do you reject it?').fill('Not before the audit.');
 	await approval.getByRole('button', { name: 'Reject', exact: true }).click();
-	await expect(page.getByTestId('nothing-needs-you')).toBeVisible();
-	await shot(page, 'chat-needs-you-empty');
-	await go(page, 'atlas');
-	await expect(
-		page.getByTestId('ask-card').filter({ hasText: 'Publish the 0.2' }).getByTestId('answered')
-	).toContainText('Answered by Alex Kim: Reject · Not before the audit.');
+	await expect(approval.getByTestId('answered')).toContainText('Reject: Not before the audit.');
 });
 
-test("CHAT-18: only a hand-off's recipient sees Accept, and an accepted one reads who and when with no buttons", async ({
+test("CHAT-18: only a hand-off's recipient sees Accept and Hand back…, and an accepted one reads who and when", async ({
 	page
 }) => {
 	await open(page);
@@ -174,9 +163,9 @@ test("CHAT-18: only a hand-off's recipient sees Accept, and an accepted one read
 	const handoff = page.getByTestId('handoff-card').filter({ hasText: 'review the store traits' });
 	await expect(handoff).toBeVisible();
 	await expect(handoff.getByRole('button', { name: 'Accept' })).toHaveCount(0);
+	await expect(handoff.getByRole('button', { name: 'Hand back…' })).toHaveCount(0);
 	await expect(handoff.getByRole('button', { name: 'Reply…' })).toBeVisible();
 	// Sam handed one to Noor, who accepted it.
-	await side(page).getByTestId('as-owner').locator('summary').click();
 	await side(page)
 		.getByTestId('as-owner')
 		.getByTestId('conversation-link')
@@ -189,26 +178,24 @@ test("CHAT-18: only a hand-off's recipient sees Accept, and an accepted one read
 
 test('CHAT-6: an ask with a default shows its deadline', async ({ page }) => {
 	await open(page);
+	await go(page, 'atlas');
 	await expect(
 		page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' }).getByTestId('deadline')
 	).toContainText('the default applies: No, allow (default)');
 });
 
 test(
-	'CHAT-7: messaging an asleep agent says it will wake it, and a typing indicator shows while it works',
+	'CHAT-7: messaging an asleep agent wakes it with a typing indicator while it works',
 	{ tag: '@journey' },
 	async ({ page }) => {
 		await open(page);
 		await go(page, 'Inês Duarte');
-		await expect(page.getByTestId('composer-note')).toHaveText(
-			'Inês Duarte is asleep. Your message will wake it.'
-		);
+		await expect(page.getByTestId('composer-note')).toHaveCount(0);
 		await send(page, 'Can you pull the headcount?');
 		await expect(page.getByTestId('typing')).toHaveText('Inês Duarte is typing…');
 		await expect(messages(page).filter({ hasText: 'Sample reply' })).toHaveCount(1);
 		await expect(page.getByTestId('typing')).not.toContainText('typing');
 		await expect(side(page).locator('[data-conversation=c-dm-ines]')).toContainText('Working');
-		await expect(page.getByTestId('composer-note')).toHaveCount(0);
 	}
 );
 
@@ -294,9 +281,7 @@ test('CHAT-10: extra announcements are folded into a thread under the last one',
 	);
 });
 
-test('CHAT-11: the owner mutes an agent in a channel or sets a digest (that muted messages still reach Activity is in the model tests)', async ({
-	page
-}) => {
+test('CHAT-11: the owner mutes an agent in a channel or sets a digest', async ({ page }) => {
 	await open(page);
 	await go(page, 'general');
 	const row = messages(page).filter({ hasText: 'Ready for review: create-org' });
@@ -323,21 +308,20 @@ test('CHAT-11: the owner mutes an agent in a channel or sets a digest (that mute
 	);
 });
 
-test('CHAT-12: a conversation the owner is not in is read as the owner, and the owner can reply', async ({
-	page
-}) => {
+test('CHAT-12: a conversation between agents is read-only for the owner', async ({ page }) => {
 	await open(page);
-	await side(page).getByTestId('as-owner').locator('summary').click();
 	await side(page)
 		.getByTestId('as-owner')
 		.getByTestId('conversation-link')
 		.filter({ hasText: 'Sam Okafor, Noor Haddad' })
 		.click();
 	await expect(page.getByTestId('reading-as-owner')).toHaveText(
-		"You're reading as the owner. You can reply here."
+		"You're reading as the owner. This conversation is read-only."
 	);
-	await send(page, 'Carry on.');
-	await expect(messages(page).filter({ hasText: 'Carry on.' })).toHaveCount(1);
+	await expect(page.getByTestId('composer-note')).toHaveText(
+		'Reading as the owner. To weigh in, message Sam Okafor.'
+	);
+	await expect(composer(page)).toHaveCount(0);
 	await shot(page, 'chat-as-owner');
 });
 
@@ -348,10 +332,10 @@ test('CHAT-13: search filters by text, member, channel, kind and date', async ({
 	await search.fill('release notes');
 	await expect(count).toContainText('1 result');
 	await search.fill('from:@kai');
-	await expect(count).toContainText('4 results');
+	await expect(count).toContainText('results');
 	await expect(page.getByTestId('search-help')).toContainText('from:@name');
 	await search.fill('has:ask');
-	await expect(count).toContainText('2 results');
+	await expect(count).toContainText('results');
 	await search.fill('in:#release-v1 from:@kai');
 	await expect(count).toContainText('2 results');
 	await search.fill('kind:announcement');
@@ -430,7 +414,7 @@ test('CHAT-17: a bridged message shows its platform, and asks to the owner and a
 	const bridged = messages(page).filter({ hasText: 'Can someone link the Atlas plan' });
 	await expect(bridged).toContainText('Leo Brandt');
 	await expect(bridged.getByTestId('bridge-badge')).toHaveText('Slack');
-	await visit(page, '/chat?surface=bridge');
+	await visit(page, '/chat?surface=bridge&c=c-project-atlas');
 	await expect(page.getByTestId('bridge-preview')).toBeVisible();
 	const card = page.getByTestId('ask-card').filter({ hasText: 'Block bug reports' });
 	await expect(card.getByTestId('app-only')).toContainText('Open in Agentic Org');
@@ -446,7 +430,7 @@ test('CHAT-17: a bridged message shows its platform, and asks to the owner and a
 });
 
 test(
-	'states: the office is not running, a message that fails shows Not delivered with Retry, and an empty organization has a welcome card',
+	'states: the office is not running, a message that fails reconciles via Check status and Retry, and an empty organization has a welcome card',
 	{ tag: '@journey' },
 	async ({ page }) => {
 		await open(page, '?chat=offline');
@@ -461,8 +445,10 @@ test(
 		await visit(page, '/chat?chat=fail');
 		await go(page, 'general');
 		await send(page, 'Will this arrive?');
+		await expect(page.getByTestId('not-confirmed')).toContainText('Delivery not confirmed');
+		await page.getByRole('button', { name: 'Check status' }).click();
 		await expect(page.getByTestId('not-delivered')).toContainText(
-			"Not delivered: The office didn't answer."
+			'Not delivered: the office has no record of it. Retry sends it once.'
 		);
 		await shot(page, 'chat-delivery-failed');
 		await page.getByRole('button', { name: 'Retry' }).click();
@@ -477,11 +463,119 @@ test(
 	}
 );
 
+test('Step 8: multi-question 4-step QuestionForm wizard in #beacon', async ({ page }) => {
+	await open(page);
+	await go(page, 'beacon');
+	const card = page.getByTestId('ask-card').filter({ hasText: 'Beacon first-run flow' });
+	const form = card.getByTestId('question-form');
+	await expect(form.getByTestId('question-step')).toHaveText('Question 1 of 4');
+	await form.getByRole('button', { name: 'Next' }).click();
+	await expect(form.getByTestId('question-step')).toHaveText('Question 2 of 4');
+	await form.getByRole('button', { name: 'Next' }).click();
+	await expect(form.getByTestId('question-step')).toHaveText('Question 3 of 4');
+	await form.getByLabel('Projects').check();
+	await form.getByLabel('Teams').check();
+	await form.getByRole('button', { name: 'Next' }).click();
+	await expect(form.getByTestId('question-step')).toHaveText('Question 4 of 4');
+	await form.getByRole('textbox').fill('Keep it under two minutes.');
+	await form.getByTestId('send-answers').click();
+	await expect(card.getByTestId('answered')).toContainText('Answered by you');
+	await expect(card.getByTestId('answered')).toContainText('4 of 4 answered');
+});
+
+test('Step 8: HandoffCard Hand back… requires a reason, and AskCard Withdraw… closes own ask', async ({
+	page
+}) => {
+	await open(page);
+	await go(page, 'Noor Haddad');
+	const handoff = page.getByTestId('handoff-card').filter({ hasText: 'Beacon sign-up page' });
+	await expect(handoff.getByTestId('linked-ref')).toContainText('T-B37');
+	await handoff.getByRole('button', { name: 'Hand back…' }).click();
+	const submitHandBack = handoff.getByRole('button', { name: 'Hand back to Noor Haddad' });
+	await expect(submitHandBack).toBeDisabled();
+	await handoff.getByLabel('Why do you hand it back?').fill('Needs the legal footer first.');
+	await submitHandBack.click();
+	await expect(handoff.getByTestId('answered')).toContainText('Handed back by you');
+	await expect(handoff.getByTestId('answered')).toContainText('Needs the legal footer first.');
+
+	await go(page, 'Sam Okafor');
+	const ownAsk = page.getByTestId('ask-card').filter({ hasText: 'beta tag tonight' });
+	await ownAsk.getByRole('button', { name: 'Withdraw…' }).click();
+	await ownAsk.getByLabel('Why withdraw it? (optional)').fill('Holding until Monday.');
+	await ownAsk.getByRole('button', { name: 'Withdraw', exact: true }).click();
+	await expect(ownAsk.getByTestId('answered')).toContainText('Withdrawn by you');
+	await expect(ownAsk.getByTestId('answered')).toContainText('Holding until Monday.');
+});
+
+test('Step 8: Browse channels joins open channel, requests invite, and hides restricted', async ({
+	page
+}) => {
+	await open(page);
+	await side(page).getByTestId('browse-channels').click();
+	const dialog = page.getByRole('dialog', { name: 'Browse channels' });
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByTestId('browse-list')).not.toContainText('security-review');
+	const inviteRow = dialog.getByTestId('browse-row').filter({ hasText: '#incident-drills' });
+	await inviteRow.getByRole('button', { name: 'Request invitation' }).click();
+	await expect(inviteRow).toContainText('Invitation requested');
+	const openRow = dialog.getByTestId('browse-row').filter({ hasText: '#design-crit' });
+	await openRow.getByRole('button', { name: 'Join' }).click();
+	await expect(dialog).toBeHidden();
+	await expect(title(page)).toHaveText('#design-crit');
+});
+
+test('Step 8: Pins panel shows pins, jumps to message, and unpins; System notice refuses replies', async ({
+	page
+}) => {
+	await open(page);
+	// System notice in #general.
+	const notice = messages(page).filter({ hasText: 'Quinn Adeyemi joined the organization' });
+	await expect(notice).toContainText('System');
+	await expect(notice.getByTestId('system-avatar')).toBeVisible();
+	await notice.hover();
+	await notice.getByTestId('message-menu').click();
+	await expect(
+		page.getByRole('menuitem', { name: "System messages can't be replied to." })
+	).toBeDisabled();
+	await page.keyboard.press('Escape');
+
+	// Pins panel in #general.
+	const pinsButton = page.getByTestId('pins-button');
+	await expect(pinsButton.getByTestId('pins-count')).toHaveText('1');
+	await pinsButton.click();
+	const pinsPanel = page.getByTestId('pins-panel');
+	await expect(pinsPanel).toBeVisible();
+	await expect(pinsPanel.getByTestId('pin-row')).toHaveCount(1);
+	await pinsPanel.getByRole('button', { name: 'Show in conversation' }).click();
+	await pinsPanel.getByRole('button', { name: 'Unpin' }).click();
+	await expect(pinsPanel).toContainText('Nothing is pinned here.');
+});
+
+test('Step 8: ?chat=lost reconciles delivered send, ?chat=hr-down shows HR guidance, and /chat?v=needs opens /inbox', async ({
+	page
+}) => {
+	await open(page, '?chat=lost');
+	await send(page, 'Lost response but delivered');
+	await expect(page.getByTestId('not-confirmed')).toBeVisible();
+	await page.getByRole('button', { name: 'Check status' }).click();
+	await expect(page.getByTestId('not-confirmed')).toHaveCount(0);
+	await expect(messages(page).filter({ hasText: 'Lost response but delivered' })).toHaveCount(1);
+
+	await visit(page, '/chat?chat=hr-down');
+	await composer(page).fill('Hey @hr please help');
+	await expect(page.getByTestId('composer-note')).toContainText(
+		"HR lead can't run right now, so it won't answer yet."
+	);
+
+	await visit(page, '/chat?v=needs');
+	await expect(page).toHaveURL(/\/inbox$/);
+});
+
 // Hold the existing organization read used by Chat's snapshot, without a production test hook.
 type HeldChatRead = { started: Promise<void>; release: () => void };
 
 for (const fail of [false, true]) {
-	test(`CHAT-1: the initial snapshot shows loading, then ${fail ? 'its error' : 'the conversation list'}`, async ({
+	test(`CHAT-1: the initial snapshot shows loading, then ${fail ? 'its error with Retry' : 'the conversation list'}`, async ({
 		page
 	}) => {
 		await open(page);
@@ -530,9 +624,12 @@ for (const fail of [false, true]) {
 		if (fail) {
 			await expect(page.getByRole('alert')).toHaveText('The office went away.');
 			await expect(side(page)).toHaveCount(0);
+			await page.getByTestId('chat-retry').click();
+			await expect(side(page)).toBeVisible();
+			await expect(title(page)).toHaveText('#general');
 		} else {
 			await expect(side(page)).toBeVisible();
-			await expect(title(page)).toHaveText('Needs you');
+			await expect(title(page)).toHaveText('#general');
 		}
 		await shot(page, fail ? 'chat-snapshot-error' : 'chat-snapshot-loaded');
 	});

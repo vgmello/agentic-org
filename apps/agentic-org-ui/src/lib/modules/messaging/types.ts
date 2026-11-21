@@ -32,11 +32,23 @@ export const REASON_LABEL: Record<AnnouncementReason, string> = {
 export type AutoChannel =
 	{ type: 'general' } | { type: 'project'; project_id: string } | { type: 'team'; team_id: string };
 
+/**
+ * Who can find and join a channel (chat-ux §4.1). `open`: listed in Browse channels, anyone eligible joins.
+ * `invite`: listed, joined by invitation ("Request invitation"). `restricted`: never listed or searchable for a non-member.
+ */
+export type ChannelAccess = 'open' | 'invite' | 'restricted';
+
 export interface Conversation {
 	id: string;
 	kind: ConversationKind;
 	/** Channels only: lowercase, no spaces. */
 	name?: string;
+	/** Channels only: what the channel is for, one line. */
+	purpose?: string;
+	/** Channels only; automatic channels are `open` to whoever the organization admits. */
+	access?: ChannelAccess;
+	/** Members who asked to be invited (`invite` channels). */
+	invite_requests?: string[];
 	members: string[];
 	archived?: boolean;
 	/** Set on the channels the office keeps in sync with the organization. */
@@ -47,6 +59,32 @@ export interface Conversation {
 export interface AskOption {
 	id: string;
 	label: string;
+	/** REQ-04: one line under the label. */
+	description?: string;
+}
+
+export type QuestionType = 'choice' | 'yes_no' | 'free_text';
+
+/** One question of an ask (REQ-04, `card.questions[]`): an ask holds one to eight. */
+export interface AskQuestion {
+	id: string;
+	question_type: QuestionType;
+	prompt: string;
+	/** `choice` only. */
+	options?: AskOption[];
+	/** `choice` only: checkboxes instead of a radio group. */
+	allow_multiple?: boolean;
+	/** Preselected in the form; an option id, or `yes` / `no`. Never recorded as the person's answer. */
+	default_option?: string;
+	/** Not needed for Send answers. */
+	optional?: boolean;
+}
+
+/** The answer to one question: one option id, several for a multi-select, or text. */
+export interface QuestionAnswer {
+	question_id: string;
+	option_ids?: string[];
+	text?: string;
 }
 
 export type Reaction = 'seen' | 'looking';
@@ -76,6 +114,16 @@ export interface Answer {
 	at: string;
 	option_id?: string;
 	text?: string;
+	/** An ask with several questions: one entry per answered question. */
+	answers?: QuestionAnswer[];
+}
+
+/** An ask closed by its asker, or by the system when either party left the organization. */
+export interface Withdrawal {
+	/** A member id, or `office` (shown as System). */
+	by: string;
+	at: string;
+	reason?: string;
 }
 
 export interface ChatMessage {
@@ -98,8 +146,17 @@ export interface ChatMessage {
 	default_option?: string;
 	/** RFC 3339: when the default is applied if nobody answered. */
 	default_at?: string;
-	/** What the ask blocks, e.g. "W7". */
+	/** What the ask blocks, e.g. "T-A42". */
 	blocks?: string;
+	/** `request`: the asker can't continue without the answer; a default never answers it (ADR-0020). */
+	required?: boolean;
+	/** `request`: when the asker's bounded wait ends (RFC 3339). For a required ask, the time it was stopped. */
+	wait_until?: string;
+	/** `request` with several questions, or one typed question (REQ-04). */
+	questions?: AskQuestion[];
+	withdrawn?: Withdrawal;
+	/** `handoff`: given back to its sender, with the reason. */
+	handed_back?: { by: string; at: string; reason: string };
 	/** An ask with Approve and Reject, answered only in the app. */
 	approval?: boolean;
 	answer?: Answer;
@@ -115,6 +172,8 @@ export interface ChatMessage {
 	pinned?: boolean;
 	/** The task or bug a hand-off is linked to. */
 	linked_ref?: string;
+	/** Accepted and waiting in the message queue for HQ: shown as "Sending…" until delivered. */
+	queued?: boolean;
 }
 
 export type Presence = 'working' | 'waiting' | 'asleep' | 'offline' | 'paused' | 'online';
@@ -168,11 +227,25 @@ export type ChatCall =
 			default_at?: string;
 			blocks?: string;
 			approval?: boolean;
+			required?: boolean;
+			wait_until?: string;
+			questions?: AskQuestion[];
 			attachments?: string[];
 			linked_ref?: string;
 	  }
-	| { method: 'chat.answer'; change_id: string; ask_id: string; option_id?: string; text?: string }
+	| {
+			method: 'chat.answer';
+			change_id: string;
+			ask_id: string;
+			option_id?: string;
+			text?: string;
+			answers?: QuestionAnswer[];
+	  }
+	| { method: 'chat.withdraw'; change_id: string; ask_id: string; reason?: string }
 	| { method: 'chat.accept_handoff'; change_id: string; message_id: string }
+	| { method: 'chat.hand_back'; change_id: string; message_id: string; reason: string }
+	| { method: 'channel.join'; change_id: string; id: string }
+	| { method: 'channel.request_invitation'; change_id: string; id: string }
 	| { method: 'chat.react'; change_id: string; message_id: string; reaction: Reaction }
 	| {
 			method: 'chat.mute';
@@ -237,4 +310,22 @@ export interface ChatSnapshot {
 	sample: boolean;
 	/** The office isn't running: read-only from the last copy. */
 	office_running: boolean;
+	/** With the office not running: when the retained copy was taken (RFC 3339). */
+	copy_at?: string;
+	/** Members chat knows that the organization snapshot doesn't list (HR lead, offboarded records). */
+	directory?: {
+		id: string;
+		kind: 'agent' | 'person';
+		name: string;
+		handle: string;
+		former?: boolean;
+	}[];
+	/** Agents that can't run right now (runtime fact). */
+	cannot_run?: string[];
 }
+
+/** What the office knows of a call whose answer was lost (`msg.status`, by its change id). */
+export type ChatCallStatus = { state: 'applied'; accepted: ChatAccepted } | { state: 'not_found' };
+
+/** Questions in one ask (REQ-04). */
+export const ASK_QUESTIONS_MAX = 8;

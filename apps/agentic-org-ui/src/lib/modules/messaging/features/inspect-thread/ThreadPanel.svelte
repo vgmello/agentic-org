@@ -9,6 +9,7 @@
 		ChatState,
 		Conversation,
 		MuteMode,
+		QuestionAnswer,
 		Reaction
 	} from '$lib/modules/messaging/types';
 	import Composer from '$lib/modules/messaging/features/send-message/Composer.svelte';
@@ -28,6 +29,7 @@
 		sidebarInline = true,
 		now,
 		officeRunning,
+		cannotRun = [],
 		readOnly = false,
 		onclose,
 		undelivered,
@@ -37,7 +39,9 @@
 		onmute,
 		onpin,
 		onanswer,
-		onaccept
+		onaccept,
+		onhandback,
+		onwithdraw
 	}: {
 		root: ChatMessage;
 		conversation: Conversation;
@@ -50,6 +54,7 @@
 		sidebarInline?: boolean;
 		now: string;
 		officeRunning: boolean;
+		cannotRun?: readonly string[];
 		/** The bridge preview: asks to the owner and approvals are read-only, and nothing is posted. */
 		readOnly?: boolean;
 		onclose: () => void;
@@ -64,16 +69,18 @@
 		onpin: (m: ChatMessage) => void;
 		onanswer: (
 			m: ChatMessage,
-			answer: { option_id?: string; text?: string }
+			answer: { option_id?: string; text?: string; answers?: QuestionAnswer[] }
 		) => Promise<void> | void;
 		onaccept: (m: ChatMessage) => Promise<void> | void;
+		onhandback?: (m: ChatMessage, reason: string) => Promise<void> | void;
+		onwithdraw?: (m: ChatMessage, reason: string) => Promise<void> | void;
 	} = $props();
 
 	const draftStore = useDraftStore();
 	const threadId = $derived(root.id);
 	const drafts = $derived(draftStore.forThread(threadId));
 	const replies = $derived(rows.forMessage(root).replies);
-	const compose = $derived(composerState(chatState, ctx, conversation, officeRunning));
+	const compose = $derived(composerState(chatState, ctx, conversation, officeRunning, cannotRun));
 	const title = $derived(titleOf(conversation, ctx, ctx.owner));
 	let closeButton = $state<HTMLButtonElement | HTMLAnchorElement | null>(null);
 	export function focusClose() {
@@ -86,7 +93,7 @@
 	data-chat-panel
 	class="absolute inset-y-0 right-0 {sidebarInline
 		? 'left-[256px]'
-		: 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none border-l border-line bg-surface"
+		: 'left-0'} z-30 flex h-full min-w-0 shrink-0 flex-col overflow-y-auto border-l border-line bg-surface shadow-xl min-[1280px]:static min-[1280px]:w-[384px] min-[1280px]:shadow-none"
 	aria-label="Thread"
 	data-testid="thread-panel"
 >
@@ -133,6 +140,8 @@
 					{onpin}
 					{onanswer}
 					{onaccept}
+					{onhandback}
+					{onwithdraw}
 				/>
 				<p class="px-2 pt-2 text-xs/5 text-fg-muted" aria-live="off" data-testid="thread-count">
 					{replies.length}
@@ -156,6 +165,8 @@
 						{onpin}
 						{onanswer}
 						{onaccept}
+						{onhandback}
+						{onwithdraw}
 					/>
 				{/each}
 			</div>
@@ -166,6 +177,7 @@
 		placeholder="Reply in thread"
 		canWrite={compose.canWrite && !readOnly}
 		note={compose.note}
+		{cannotRun}
 		{conversation}
 		{ctx}
 		resetKey="thread:{root.id}"

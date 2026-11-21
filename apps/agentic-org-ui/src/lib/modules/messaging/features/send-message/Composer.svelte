@@ -7,6 +7,8 @@
 	import type { ChatContext } from '$lib/modules/messaging/engine';
 	import {
 		applyMention,
+		cannotRunFor,
+		cannotRunWords,
 		mentionAt,
 		mentionOptions,
 		parseSlash,
@@ -22,6 +24,7 @@
 		placeholder,
 		canWrite,
 		note,
+		cannotRun = [],
 		conversation,
 		ctx,
 		resetKey,
@@ -32,6 +35,7 @@
 		placeholder: string;
 		canWrite: boolean;
 		note?: string;
+		cannotRun?: readonly string[];
 		conversation: Conversation;
 		ctx: ChatContext;
 		/** A draft is kept per key (a conversation or a thread). */
@@ -224,15 +228,21 @@
 		picked = 0;
 	};
 	const rows = $derived(Math.min(8, Math.max(2, text.split('\n').length)));
+	const mentionBlocked = $derived(
+		canWrite && cannotRun.length ? cannotRunFor(ctx, conversation, text, cannotRun) : []
+	);
+	const displayNote = $derived(
+		note ?? (mentionBlocked.length ? cannotRunWords(ctx, mentionBlocked[0]) : undefined)
+	);
 </script>
 
 <div class="border-t border-line px-4 py-3">
-	{#if note}<p
+	{#if displayNote}<p
 			class="mb-2 text-sm/6 {canWrite ? 'text-info-text-strong' : 'text-fg-secondary'}"
 			data-testid="composer-note"
 			aria-live="polite"
 		>
-			{note}
+			{displayNote}
 		</p>{/if}
 	{#if canWrite}
 		<div class="relative">
@@ -318,9 +328,9 @@
 				data-testid="composer"></textarea>
 		</div>
 		{#if error}<p id="composer-error-{resetKey}" class="mt-2 text-sm/6 text-danger" role="alert">
-				<span>{error}</span>{#if unknownCommand}{' '}<button
+				<span>{error}</span>{#if unknownCommand}<button
 						type="button"
-						class="font-semibold underline"
+						class="ml-1 font-semibold underline"
 						disabled={busy}
 						onclick={() => void send(true)}>Send as message</button
 					>{/if}

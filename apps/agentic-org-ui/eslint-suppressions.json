@@ -34,16 +34,6 @@
       "count": 1
     }
   },
-  "src/lib/modules/messaging/features/answer-ask/AskCard.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    }
-  },
-  "src/lib/modules/messaging/features/manage-channel/MembersPanel.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
   "src/lib/modules/messaging/features/open-dm/ChatSidebar.svelte": {
     "@typescript-eslint/no-unused-vars": {
       "count": 1
@@ -55,11 +45,6 @@
     }
   },
   "src/lib/modules/messaging/features/run-command/CommandDialog.svelte": {
-    "svelte/no-useless-mustaches": {
-      "count": 1
-    }
-  },
-  "src/lib/modules/messaging/features/send-message/Composer.svelte": {
     "svelte/no-useless-mustaches": {
       "count": 1
     }
@@ -179,17 +164,6 @@
   "src/lib/platform/tooling/ui-gate.test.ts": {
     "no-useless-escape": {
       "count": 2
-    }
-  },
-  "src/routes/(shell)/chat/+page.svelte": {
-    "no-undef": {
-      "count": 2
-    },
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    },
-    "svelte/no-useless-mustaches": {
-      "count": 1
     }
   },
   "src/routes/+error.svelte": {

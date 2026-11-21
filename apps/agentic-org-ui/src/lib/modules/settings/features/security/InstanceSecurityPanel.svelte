@@ -8,6 +8,7 @@
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { tone } from '$lib/components/pills';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
+	import ChangePasswordDialog from '$lib/platform/auth/ChangePasswordDialog.svelte';
 	import PasswordField from '$lib/platform/auth/PasswordField.svelte';
 	import { checkRegistration } from '$lib/platform/auth/credential-rules';
 	import {
@@ -46,6 +47,7 @@
 	let tlsError = $state<string>();
 	let tlsResult = $state<TlsEnableResult>();
 	let tlsBusy = $state(false);
+	let changePasswordOpen = $state(false);
 
 	const session = $derived(
 		appSession.state.kind === 'signed-in' ? appSession.state.session : undefined
@@ -192,12 +194,24 @@
 		{/if}
 
 		{#if authEnabled}
-			<p class="text-sm/6 text-fg-secondary" data-testid="auth-enabled-summary">
-				Password and session sign-in is active for this HQ instance.
+			<div class="flex flex-wrap items-center justify-between gap-3">
+				<p class="text-sm/6 text-fg-secondary" data-testid="auth-enabled-summary">
+					Password and session sign-in is active for this HQ instance.
+					{#if session}
+						Signed in as <span class="font-semibold text-fg">{session.account.login}</span>.
+					{/if}
+				</p>
 				{#if session}
-					Signed in as <span class="font-semibold text-fg">{session.account.login}</span>.
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						onclick={() => (changePasswordOpen = true)}
+					>
+						Change password
+					</Button>
 				{/if}
-			</p>
+			</div>
 		{:else}
 			<p class="text-sm/6 text-fg-secondary">
 				This local HQ started over plain HTTP without a sign-in wall. Create the administrator
@@ -448,3 +462,4 @@
 		</form>
 	</section>
 </div>
+<ChangePasswordDialog bind:open={changePasswordOpen} />

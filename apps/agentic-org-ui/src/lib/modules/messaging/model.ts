@@ -3,12 +3,15 @@ import type { OrgSnapshot } from '$lib/proto';
 import { isFormer } from '$lib/modules/organization/model';
 import { span } from '$lib/modules/work/time';
 import {
+	answerText,
 	canRead,
 	isMember,
 	memberOf,
 	mentionsHere,
 	mentionsIn,
 	OFFICE,
+	optionsOf,
+	questionsOf,
 	slug,
 	type ChatContext,
 	type ChatMember
@@ -54,15 +57,18 @@ export function chatContext(
 		surface?: ChatContext['surface'];
 		newId?: ChatContext['newId'];
 		typing_ms?: number;
+		directory?: ChatMember[];
 	}
 ): ChatContext {
 	const owner = s.members.find((m) => m.owner)?.id ?? 'owner';
+	const members = chatMembers(s);
+	for (const m of init.directory ?? []) if (!members.some((x) => x.id === m.id)) members.push(m);
 	return {
 		now: init.now,
 		actor: init.actor ?? owner,
 		surface: init.surface ?? 'app',
 		owner,
-		members: chatMembers(s),
+		members,
 		teams: s.teams.map((t) => ({
 			id: t.id,
 			name: t.name,
@@ -81,8 +87,19 @@ export function chatContext(
 
 // ---- naming ----------------------------------------------------------------------------------------
 
+/** Product notices show as System: display copy over `sender_kind: office`, never a member (chat-ux §4.2). */
+export const SYSTEM_NAME = 'System';
+
 export const nameOf = (ctx: ChatContext, id: string): string =>
-	id === 'default' ? 'Default' : id === OFFICE ? 'Office' : (memberOf(ctx, id)?.name ?? 'Someone');
+	id === 'default'
+		? 'Default'
+		: id === OFFICE
+			? SYSTEM_NAME
+			: (memberOf(ctx, id)?.name ?? 'Someone');
+
+/** "you" for the viewer, the name for anyone else (chat-ux §2.1: app copy uses you). */
+export const whoOf = (ctx: ChatContext, id: string): string =>
+	id === ctx.actor ? 'you' : nameOf(ctx, id);
 
 /** "#agentic-org", a person's or agent's name, or the group's names (CHAT-3). */
 export function titleOf(c: Conversation, ctx: ChatContext, viewer: string): string {
@@ -93,12 +110,16 @@ export function titleOf(c: Conversation, ctx: ChatContext, viewer: string): stri
 
 export const PRESENCE_WORD: Record<Presence, string> = {
 	working: 'Working',
-	waiting: 'Waiting',
-	asleep: 'Asleep',
+	waiting: 'Waiting for an answer',
+	asleep: 'Available',
 	offline: 'Offline',
 	paused: 'Paused',
 	online: 'Online'
 };
+
+/** The presence to show for a member, or none: people have no speculative runtime presence (CHAT-3). */
+export const presenceOf = (s: ChatState, member: ChatMember | undefined): Presence | undefined =>
+	member?.kind === 'agent' ? (s.presence[member.id] ?? 'offline') : undefined;
 
 export const KIND_WORD: Record<MessageKind, string> = {
 	msg: 'Message',
@@ -118,7 +139,8 @@ export const muteOf = (s: ChatState, conversationId: string, from: string) =>
 /** An ask or hand-off for the owner that has not been answered or accepted: always in Needs you, whatever is muted. */
 export const waitingOnOwner = (m: ChatMessage, ctx: ChatContext): boolean =>
 	m.addressed_to === ctx.owner &&
-	((m.kind === 'request' && !m.answer) || (m.kind === 'handoff' && !m.accepted_by));
+	((m.kind === 'request' && !m.answer && !m.withdrawn) ||
+		(m.kind === 'handoff' && !m.accepted_by && !m.handed_back));
 
 /** Asks and hand-offs waiting for the owner, newest first (the **Needs you** group). */
 export const needsYou = (s: ChatState, ctx: ChatContext): ChatMessage[] =>
@@ -232,14 +254,13 @@ const rowOf = (s: ChatState, ctx: ChatContext, c: Conversation): ConversationRow
 					c.members.find((id) => id !== ctx.owner)
 				)
 			: undefined;
+	const presence = presenceOf(s, other);
 	return {
 		conversation: c,
 		title: titleOf(c, ctx, ctx.owner),
 		...unreadIn(s, ctx, c),
 		...(other ? { other } : {}),
-		...(other
-			? { presence: s.presence[other.id] ?? (other.kind === 'agent' ? 'offline' : 'online') }
-			: {}),
+		...(presence ? { presence } : {}),
 		readingAsOwner: !isMember(c, ctx.owner)
 	};
 };
@@ -359,11 +380,32 @@ export interface ComposerState {
 	wakes: string[];
 }
 
+/** "HR lead can't run right now, so it won't answer yet." (chat-ux decision 8, §6). */
+export function cannotRunWords(ctx: ChatContext, id: string): string {
+	const name = nameOf(ctx, id);
+	return memberOf(ctx, id)?.handle === 'hr'
+		? `${name} can't run right now, so it won't answer yet. To hire, use Hire and fill in the details yourself.`
+		: `${name} can't run right now, so it won't answer yet.`;
+}
+
+/** The agents a message here would reach that can't run: the other member of a DM, or agents mentioned by name. */
+export function cannotRunFor(
+	ctx: ChatContext,
+	c: Conversation,
+	body: string,
+	cannotRun: readonly string[] = []
+): string[] {
+	const reached =
+		c.kind === 'dm' ? c.members.filter((id) => id !== ctx.actor) : mentionsIn(body, ctx);
+	return reached.filter((id) => cannotRun.includes(id));
+}
+
 export function composerState(
 	s: ChatState,
 	ctx: ChatContext,
 	c: Conversation,
-	officeRunning: boolean
+	officeRunning: boolean,
+	cannotRun: readonly string[] = []
 ): ComposerState {
 	if (!officeRunning)
 		return {
@@ -380,14 +422,17 @@ export function composerState(
 	const gone =
 		c.kind === 'dm' ? c.members.map((id) => memberOf(ctx, id)).find((m) => m?.former) : undefined;
 	if (gone) return { canWrite: false, note: `${gone.name} was offboarded.`, wakes: [] };
-	const others = c.kind === 'dm' ? c.members.filter((id) => id !== ctx.owner) : [];
-	const asleep = others.filter((id) => s.presence[id] === 'asleep');
-	if (asleep.length)
+	if (!isMember(c, ctx.owner)) {
+		const agent = c.members.map((id) => memberOf(ctx, id)).find((m) => m?.kind === 'agent');
 		return {
-			canWrite: true,
-			note: `${asleep.map((id) => nameOf(ctx, id)).join(' and ')} ${asleep.length === 1 ? 'is' : 'are'} asleep. Your message will wake ${asleep.length === 1 ? 'it' : 'them'}.`,
-			wakes: asleep
+			canWrite: false,
+			note: `Reading as the owner. To weigh in, message ${agent?.name ?? 'a member'}.`,
+			wakes: []
 		};
+	}
+	const others = c.kind === 'dm' ? c.members.filter((id) => id !== ctx.owner) : [];
+	const blocked = cannotRunFor(ctx, c, '', cannotRun);
+	if (blocked.length) return { canWrite: true, note: cannotRunWords(ctx, blocked[0]), wakes: [] };
 	const paused = others.filter((id) => s.presence[id] === 'paused');
 	if (paused.length)
 		return {
@@ -576,14 +621,25 @@ export interface DeadlineWords {
 	applied: boolean;
 }
 
+function defaultSummaryOf(m: ChatMessage): string | undefined {
+	if (m.default_option) {
+		return m.options?.find((o) => o.id === m.default_option)?.label ?? m.default_option;
+	}
+	const labels = m.questions
+		?.filter((q) => q.default_option)
+		.map((q) => optionsOf(q).find((o) => o.id === q.default_option)?.label ?? q.default_option!);
+	return labels?.length ? labels.join(', ') : undefined;
+}
+
 /** "If no answer by 18:00, I'll allow it" before the deadline; "Default applied: …" after (CHAT-6). */
 export function deadlineWords(
 	m: ChatMessage,
 	now: string,
 	clock: (iso: string) => string = clockTime
 ): DeadlineWords | undefined {
-	if (m.kind !== 'request' || !m.default_option || !m.default_at) return undefined;
-	const label = m.options?.find((o) => o.id === m.default_option)?.label ?? m.default_option;
+	if (m.kind !== 'request' || !m.default_at) return undefined;
+	const label = defaultSummaryOf(m);
+	if (!label) return undefined;
 	if (m.answer?.by === 'default')
 		return {
 			text: `No answer by ${clock(m.default_at)}: the default was applied (${label}).`,
@@ -623,6 +679,119 @@ export function answerWords(m: ChatMessage, ctx: ChatContext): string | undefine
 export const appOnly = (m: ChatMessage, ctx: ChatContext): boolean =>
 	(m.kind === 'request' && (m.addressed_to === ctx.owner || !!m.approval)) ||
 	(m.kind === 'handoff' && m.addressed_to === ctx.owner);
+
+/**
+ * How an ask closed, in the app's words (chat-ux §2.1): "Answered by you · 14:02: Yes", "Default applied · 18:00: Allow",
+ * "Withdrawn by Mira Castillo · 14:10: Not needed". Undefined while it is open.
+ */
+export function outcomeWords(
+	m: ChatMessage,
+	ctx: ChatContext,
+	clock: (iso: string) => string = clockTime
+): string | undefined {
+	if (m.withdrawn) {
+		const reason = m.withdrawn.reason ? `: ${m.withdrawn.reason}` : '';
+		return `Withdrawn by ${whoOf(ctx, m.withdrawn.by)} · ${clock(m.withdrawn.at)}${reason}`;
+	}
+	if (!m.answer) return undefined;
+	const questions = questionsOf(m);
+	const said = m.answer.answers
+		? questions.length === 1
+			? answerText(questions[0], m.answer.answers[0])
+			: `${m.answer.answers.length} of ${questions.length} answered`
+		: [m.options?.find((o) => o.id === m.answer!.option_id)?.label.replace(/…$/, ''), m.answer.text]
+				.filter(Boolean)
+				.join(': ');
+	const suffix = said ? `: ${said}` : '';
+	if (m.answer.by === 'default') return `Default applied · ${clock(m.answer.at)}${suffix}`;
+	return `Answered by ${whoOf(ctx, m.answer.by)} · ${clock(m.answer.at)}${suffix}`;
+}
+
+/** "Accepted by you · 09:12" or "Handed back by Sam Okafor · 09:20: Needs the design first" (CHAT-18). */
+export function handoffOutcome(
+	m: ChatMessage,
+	ctx: ChatContext,
+	clock: (iso: string) => string = clockTime
+): string | undefined {
+	if (m.kind !== 'handoff') return undefined;
+	if (m.accepted_by)
+		return `Accepted by ${whoOf(ctx, m.accepted_by)}${m.accepted_at ? ` · ${clock(m.accepted_at)}` : ''}`;
+	if (m.handed_back)
+		return `Handed back by ${whoOf(ctx, m.handed_back.by)} · ${clock(m.handed_back.at)}: ${m.handed_back.reason}`;
+	return undefined;
+}
+
+/** What a required ask means for its asker (ADR-0020): it can't go on without the answer, and is stopped once its wait ends. */
+export function requiredWords(m: ChatMessage, ctx: ChatContext, now: string): string | undefined {
+	if (m.kind !== 'request' || !m.required || m.answer || m.withdrawn) return undefined;
+	const asker = nameOf(ctx, m.from);
+	if (m.wait_until && ms(m.wait_until) <= ms(now))
+		return `Required · ${asker} is stopped, waiting for this answer`;
+	return `Required · ${asker} can't continue without this answer`;
+}
+
+// ---- Browse channels (chat-ux §4.1) -----------------------------------------------------------------
+
+export interface BrowseRow {
+	conversation: Conversation;
+	scope?: string;
+	member: boolean;
+	action: 'open' | 'join' | 'request' | 'requested' | 'none';
+}
+
+function browseScope(
+	c: Conversation,
+	projects: { id: string; name: string }[],
+	teams: { id: string; name: string }[]
+): string | undefined {
+	if (!c.auto) return undefined;
+	if (c.auto.type === 'general') return 'Everyone';
+	if (c.auto.type === 'project') {
+		const id = c.auto.project_id;
+		return `${projects.find((p) => p.id === id)?.name ?? 'A'} project`;
+	}
+	const id = c.auto.team_id;
+	return `${teams.find((t) => t.id === id)?.name ?? 'A'} team`;
+}
+
+function browseAction(c: Conversation, viewer: string, member: boolean): BrowseRow['action'] {
+	if (member) return 'open';
+	if (c.auto) return 'none';
+	if (c.access === 'invite') return c.invite_requests?.includes(viewer) ? 'requested' : 'request';
+	return 'join';
+}
+
+/** The channels the viewer may find: every listed channel, never a restricted one they are not in. */
+export function browseChannels(
+	s: ChatState,
+	ctx: ChatContext,
+	projects: { id: string; name: string }[] = [],
+	teams: { id: string; name: string }[] = []
+): BrowseRow[] {
+	const viewer = ctx.actor;
+	return s.conversations
+		.filter(
+			(c) =>
+				c.kind === 'channel' && !c.archived && (isMember(c, viewer) || c.access !== 'restricted')
+		)
+		.map((c) => {
+			const member = isMember(c, viewer);
+			const scope = browseScope(c, projects, teams);
+			return {
+				conversation: c,
+				...(scope ? { scope } : {}),
+				member,
+				action: browseAction(c, viewer, member)
+			};
+		})
+		.sort((a, b) => (a.conversation.name ?? '').localeCompare(b.conversation.name ?? ''));
+}
+
+/** A conversation's pinned messages, newest first (the pins keep the conversation's scope). */
+export const pinsIn = (s: ChatState, conversationId: string): ChatMessage[] =>
+	s.messages
+		.filter((m) => m.conversation_id === conversationId && m.pinned)
+		.sort((a, b) => ms(b.created_at) - ms(a.created_at));
 
 // ---- long text (CHAT-14) ---------------------------------------------------------------------------
 

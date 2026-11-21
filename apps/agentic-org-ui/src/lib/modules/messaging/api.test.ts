@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { OrgApi } from '$lib/modules/organization/api';
 import { emptyOrg, sampleOrg } from '$lib/modules/organization/sample';
-import { createMockChat } from './mock';
+import { createMockChat } from '../../../../e2e/fakes/modules/chat';
 import { minutesAfter, NOW } from './testkit';
 import type { ChatCall } from './types';
 

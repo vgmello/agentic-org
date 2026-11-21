@@ -7,6 +7,7 @@
 	import {
 		credentialCopy,
 		describeCredentialFailure,
+		PASSWORD_SET_NOTE,
 		rateLimitCopy,
 		rateLimitExpired,
 		type CredentialFailure
@@ -28,13 +29,13 @@
 	let timer: ReturnType<typeof setInterval> | undefined;
 
 	const address = $derived(page.url.host);
-	const note = $derived(
-		page.url.searchParams.get('note') === 'signed-out'
-			? 'You signed out.'
-			: page.url.searchParams.get('note') === 'ended'
-				? 'Your session ended. Sign in again.'
-				: undefined
-	);
+	const note = $derived.by(() => {
+		const kind = page.url.searchParams.get('note');
+		if (kind === 'signed-out') return 'You signed out.';
+		if (kind === 'password-set') return PASSWORD_SET_NOTE;
+		if (kind === 'ended') return 'Your session ended. Sign in again.';
+		return undefined;
+	});
 	const limited = $derived(retryUntil !== undefined && now < retryUntil);
 	const failureText = $derived(
 		failure?.kind === 'rate_limited' && retryUntil !== undefined
@@ -80,6 +81,8 @@
 	}
 
 	onMount(async () => {
+		const prefilled = page.url.searchParams.get('login');
+		if (prefilled && !login) login = prefilled;
 		await appSession.boot();
 		if (appSession.state.kind === 'signed-in' && appSession.state.reauth === undefined) {
 			await enter();

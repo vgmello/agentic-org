@@ -1,5 +1,13 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import {
+	ACCOUNT_PROTECTED_PATHS,
+	ACCOUNT_PUBLIC_PATHS,
+	createAccountLinkState,
+	handleChangePasswordRoute,
+	handlePublicAccountRoute,
+	type FakeLinkEntry
+} from './session-account-routes.ts';
 
 export const sessionView = {
 	instance_id: 'hq',
@@ -60,6 +68,7 @@ function newCase() {
 		tlsRequests: [] as Record<string, unknown>[],
 		cliApprovalLinks: new Set<string>(),
 		cliApprovalDecisions: [] as { link: string; approve: boolean }[],
+		accountLinks: createAccountLinkState(),
 		refreshCount: 0,
 		gets: 0,
 		signOutFails: false,
@@ -221,7 +230,13 @@ export function sessionTestMiddleware() {
 						controlled.tlsScript = value.value;
 					else if (value.action === 'cliApprovalLinks' && Array.isArray(value.value))
 						controlled.cliApprovalLinks = new Set(value.value);
-					else {
+					else if (value.action === 'links' && value.value && typeof value.value === 'object') {
+						controlled.accountLinks.links = new Map(
+							Object.entries(value.value as Record<string, FakeLinkEntry>)
+						);
+					} else if (value.action === 'currentPassword' && typeof value.value === 'string') {
+						controlled.accountLinks.currentPassword = value.value;
+					} else {
 						json({}, 400);
 						return;
 					}
@@ -237,7 +252,10 @@ export function sessionTestMiddleware() {
 					listenScheme: controlled.listenScheme,
 					hsts: controlled.hsts,
 					tlsRequests: controlled.tlsRequests,
-					cliApprovalDecisions: controlled.cliApprovalDecisions
+					cliApprovalDecisions: controlled.cliApprovalDecisions,
+					passwordChanges: controlled.accountLinks.passwordChanges,
+					registered: controlled.accountLinks.registered,
+					passwordResets: controlled.accountLinks.passwordResets
 				});
 				return;
 			}
@@ -272,6 +290,8 @@ export function sessionTestMiddleware() {
 				url.pathname !== '/api/v1/instance/auth/enable' &&
 				url.pathname !== '/api/v1/instance/tls' &&
 				url.pathname !== '/api/v1/cli-approvals/decide' &&
+				!ACCOUNT_PUBLIC_PATHS.has(url.pathname) &&
+				!ACCOUNT_PROTECTED_PATHS.has(url.pathname) &&
 				url.pathname !== '/api/v1/organizations' &&
 				url.pathname !== '/api/v1/instance' &&
 				!hostLookup.test(url.pathname) &&
@@ -325,6 +345,25 @@ export function sessionTestMiddleware() {
 					admin: true
 				};
 				establish();
+				return;
+			}
+			if (
+				await handlePublicAccountRoute(
+					url.pathname,
+					req,
+					body,
+					state.accountLinks,
+					(value, status) => json(value, status),
+					(login, admin) => {
+						state.view = {
+							...sessionView,
+							account: { id: `${login.toLowerCase()}-id`, login },
+							admin
+						};
+						establish();
+					}
+				)
+			) {
 				return;
 			}
 			if (url.pathname === '/api/v1/session/sign-in' && req.method === 'POST') {
@@ -444,6 +483,17 @@ export function sessionTestMiddleware() {
 					source,
 					restart_required
 				});
+				return;
+			}
+			if (
+				await handleChangePasswordRoute(
+					url.pathname,
+					req,
+					body,
+					state.accountLinks,
+					(value, status) => json(value, status)
+				)
+			) {
 				return;
 			}
 			if (url.pathname === '/api/v1/cli-approvals/decide' && req.method === 'POST') {

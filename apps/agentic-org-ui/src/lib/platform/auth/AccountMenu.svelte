@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { appSession } from './app-session.svelte';
+	import ChangePasswordDialog from './ChangePasswordDialog.svelte';
 	import type { SessionView } from './session-gateway';
 	import { signOutFlow } from './sign-out-flow.svelte';
 
 	let { session }: { session: SessionView } = $props();
 	let open = $state(false);
+	let changePasswordOpen = $state(false);
 	const authEnabled = $derived(appSession.authEnabled);
 </script>
 
@@ -45,6 +47,15 @@
 			{#if authEnabled}
 				<button
 					type="button"
+					onclick={() => {
+						open = false;
+						changePasswordOpen = true;
+					}}
+					class="block w-full px-3 py-2 text-left text-sm/6 text-fg hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-ring"
+					>Change password</button
+				>
+				<button
+					type="button"
 					disabled={signOutFlow.signingOut}
 					onclick={() => signOutFlow.request()}
 					class="block w-full px-3 py-2 text-left text-sm/6 text-fg hover:bg-surface-raised disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-ring"
@@ -54,3 +65,4 @@
 		</div>
 	{/if}
 </div>
+<ChangePasswordDialog bind:open={changePasswordOpen} />

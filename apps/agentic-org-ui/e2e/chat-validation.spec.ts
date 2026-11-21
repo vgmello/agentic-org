@@ -183,8 +183,6 @@ test('CHAT-1/3 BUG-57: document titles name each channel, person and inbox view'
 	page
 }) => {
 	await open(page);
-	await expect(page).toHaveTitle('Needs you · Chat · Agentic Org');
-	await go(page, 'general');
 	await expect(page).toHaveTitle('#general · Chat · Agentic Org');
 	await go(page, 'Inês Duarte');
 	await expect(page).toHaveTitle('Inês Duarte · Chat · Agentic Org');
@@ -208,7 +206,7 @@ for (const target of ['message', 'ask'] as const) {
 		page
 	}) => {
 		await open(page);
-		if (target === 'message') await go(page, 'general');
+		await go(page, target === 'message' ? 'general' : 'atlas');
 		const row =
 			target === 'message'
 				? page.getByTestId('message').filter({ hasText: 'Ready for review: create-org' })
@@ -434,6 +432,8 @@ for (const place of ['conversation', 'thread'] as const) {
 		await composer.fill(text);
 		await composer.press('Control+Enter');
 		const failed = area.getByTestId('message').filter({ hasText: text });
+		await expect(failed.getByTestId('not-confirmed')).toBeVisible();
+		await failed.getByRole('button', { name: 'Check status', exact: true }).click();
 		await expect(failed.getByTestId('not-delivered')).toBeVisible();
 		await failed.getByRole('button', { name: 'Retry', exact: true }).click();
 		await expect(area.getByTestId('not-delivered')).toHaveCount(0);
