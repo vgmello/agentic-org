@@ -1,0 +1,167 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { OrgSnapshot } from '$lib/proto';
+import { createHttpMembersApi } from './http-api';
+
+const ORG = '0193a5c0-0000-7000-8000-000000000001';
+const TEAM_A = '0193a5c0-0000-7000-8000-000000000002';
+const TEAM_B = '0193a5c0-0000-7000-8000-000000000003';
+const OWNER = '0193a5c0-0000-7000-8000-000000000004';
+const SAM = '0193a5c0-0000-7000-8000-000000000005';
+const NEW_MEM = '0193a5c0-0000-7000-8000-000000000006';
+
+const SNAPSHOT: OrgSnapshot = {
+	position: { epoch: 1, seq: 2 },
+	teams: [
+		{ id: TEAM_A, name: 'Engineering', lead_member_id: OWNER, version: 1 },
+		{ id: TEAM_B, name: 'Design', owner_team_id: TEAM_A, version: 1 }
+	],
+	members: [
+		{
+			id: OWNER,
+			kind: 'person',
+			name: 'Alex Owner',
+			handle: 'alex',
+			home_team_id: TEAM_A,
+			owner: true,
+			version: 1
+		},
+		{
+			id: SAM,
+			kind: 'person',
+			name: 'Sam Ortiz',
+			handle: 'sam',
+			home_team_id: TEAM_A,
+			reports_to_member_id: OWNER,
+			contact: 'sam@acme.test',
+			version: 3
+		}
+	]
+};
+
+describe('createHttpMembersApi', () => {
+	it('builds directory and profile from live snapshot and access entries', async () => {
+		const read = vi.fn(async (path: string) => {
+			if (path.endsWith('/access')) {
+				return {
+					status: 200,
+					body: {
+						result: {
+							entries: [
+								{
+									member_id: OWNER,
+									account_id: 'acc-1',
+									login: 'alex',
+									admin: true,
+									owner: true,
+									pending_invite: false,
+									pending_password_reset: false
+								},
+								{
+									member_id: SAM,
+									account_id: null,
+									login: null,
+									admin: false,
+									owner: false,
+									pending_invite: true,
+									pending_password_reset: false
+								}
+							]
+						}
+					}
+				};
+			}
+			return {
+				status: 200,
+				body: {
+					result: {
+						organizations: [
+							{
+								id: ORG,
+								slug: 'acme',
+								name: 'Acme',
+								created_at: '2026-11-20T00:00:00Z',
+								employee_id: OWNER,
+								recovery: 'acknowledged',
+								offices: []
+							}
+						],
+						creating: []
+					}
+				}
+			};
+		});
+		const api = createHttpMembersApi({
+			http: { read, submit: vi.fn() },
+			orgApi: {
+				view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }),
+				command: vi.fn()
+			},
+			session: () => ({ accountAdmin: true }),
+			newEntityId: () => NEW_MEM
+		});
+
+		const rows = await api.directory(ORG);
+		expect(rows).toHaveLength(2);
+		expect(rows.find((r) => r.id === OWNER)?.canSignIn).toBe(true);
+		expect(rows.find((r) => r.id === SAM)?.canSignIn).toBe(false);
+		expect(rows.find((r) => r.id === SAM)?.office).toBeUndefined();
+
+		const profile = await api.profile(ORG, SAM);
+		expect(profile.reportsTo).toEqual({ id: OWNER, name: 'Alex Owner' });
+		expect(profile.viewer.isOwnerOrAdmin).toBe(true);
+		expect(profile.invitePending).toBeDefined();
+	});
+
+	it('moves home team and wires invite, reset-link, remove-access, and handover routes', async () => {
+		const command = vi.fn().mockResolvedValue({ status: 'committed' });
+		const submit = vi.fn(async (path: string) => {
+			if (path.endsWith('/invite') || path.endsWith('/reset-link')) {
+				return {
+					status: 200,
+					body: {
+						result: { url: 'http://127.0.0.1/register#tok', expires_at_ms: 1_800_000_000_000 }
+					}
+				};
+			}
+			if (path.endsWith('/owner/handover')) {
+				return {
+					status: 403,
+					body: { error: { code: 'not_authorized', message: 'Wrong password.' } }
+				};
+			}
+			return { status: 200, body: { result: {} } };
+		});
+		const api = createHttpMembersApi({
+			http: { read: vi.fn(), submit },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }), command },
+			session: () => ({ accountAdmin: true }),
+			newEntityId: () => NEW_MEM
+		});
+
+		await api.moveHomeTeam(ORG, SAM, TEAM_B);
+		expect(command).toHaveBeenCalledWith(ORG, {
+			method: 'member.move',
+			params: {
+				membership_id: SAM,
+				expected_version: 3,
+				new_membership_id: NEW_MEM,
+				to_team_id: TEAM_B
+			}
+		});
+
+		const invite = await api.inviteToSignIn(ORG, SAM);
+		expect(invite.url).toBe('http://127.0.0.1/register#tok');
+		expect(submit).toHaveBeenCalledWith(`/api/v1/organizations/${ORG}/access/invite`, {
+			member_id: SAM
+		});
+
+		await api.removeAccess(ORG, SAM);
+		expect(submit).toHaveBeenCalledWith(`/api/v1/organizations/${ORG}/access/remove`, {
+			member_id: SAM
+		});
+
+		await expect(api.handOverOwnership(ORG, SAM, 'wrong')).rejects.toMatchObject({
+			code: 'wrong_password'
+		});
+	});
+});

@@ -2,21 +2,15 @@ import { expect, test } from '@playwright/test';
 import { visit } from './ready';
 import { shot } from './shot';
 
-// Each path with the area the shell names for it (app-shell-ux §0): the navigation's destinations, then the old
-// addresses, which keep working and name the area they moved into.
+// Each unbuilt path with the area the shell names for it (app-shell-ux §0): routes without a live
+// gateway adapter stay explicitly unavailable in production builds.
 const areas = [
 	['home', 'Home'],
-	['projects', 'Projects'],
 	['work', 'Work'],
 	['chat', 'Chat'],
 	['activity', 'Activity'],
-	['teams', 'Teams'],
-	['teams/members', 'Teams'],
 	['settings', 'Organization settings'],
-	['agents', 'Teams'],
-	['org-chart', 'Teams'],
 	['processes', 'Organization settings'],
-	['offices', 'Organization settings'],
 	['sessions', 'Activity']
 ] as const;
 const heading = (area?: string) =>
@@ -36,7 +30,8 @@ test(
 		});
 		for (const [path, area] of [
 			...areas.map(([path, name]) => [`/${path}`, name] as const),
-			['/projects/a-project', 'Projects']
+			['/teams/hire', 'Teams'],
+			['/settings/costs', 'Organization settings']
 		] as const) {
 			await visit(page, path);
 			await expect(page.getByTestId('area-unavailable')).toBeVisible();
@@ -58,11 +53,23 @@ test(
 	}
 );
 
-test('A3, A4: the session pages and Create organization are enabled in the release, and the other areas stay unavailable', async ({
+test('A3, A4, U1: enabled session and live org routes require sign-in without a gateway, while unbuilt routes stay unavailable', async ({
 	page
 }) => {
-	// No gateway answers the static preview, so the instance URL, /welcome, /create and /security open sign-in (SIGN-1, SIGN-7).
-	for (const path of ['/', '/welcome', '/sign-in', '/create', '/security']) {
+	// No gateway answers the static preview, so enabled routes redirect to sign-in (SIGN-1, SIGN-7).
+	for (const path of [
+		'/',
+		'/welcome',
+		'/sign-in',
+		'/create',
+		'/security',
+		'/teams',
+		'/teams/members',
+		'/teams/org-chart',
+		'/projects',
+		'/settings/offices',
+		'/settings/access'
+	]) {
 		await visit(page, path);
 		await expect(page).toHaveURL(/\/sign-in(\?|$)/);
 		await expect(page.getByRole('heading', { level: 1, name: /^Sign in to HQ at / })).toBeVisible();
@@ -73,7 +80,12 @@ test('A3, A4: the session pages and Create organization are enabled in the relea
 	await expect(
 		page.getByRole('heading', { level: 1, name: 'This link has expired or was already used.' })
 	).toBeVisible();
-	await visit(page, '/org-chart');
+	await visit(page, '/set-password');
+	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
+	await expect(
+		page.getByRole('heading', { level: 1, name: 'This link has expired or was already used.' })
+	).toBeVisible();
+	await visit(page, '/home');
 	await expect(page.getByTestId('area-unavailable')).toBeVisible();
 });
 
@@ -88,8 +100,8 @@ test(
 				JSON.stringify([{ organization: { id: 'forged', name: 'Forged sample' } }])
 			);
 		});
-		await visit(page, '/org-chart?org=empty&mock=healthy&copilot=on');
-		await expect(page.getByRole('heading', { name: "Teams isn't available yet" })).toBeVisible();
+		await visit(page, '/home?org=empty&mock=healthy&copilot=on');
+		await expect(page.getByRole('heading', { name: "Home isn't available yet" })).toBeVisible();
 		await expect(page.getByText('Forged sample')).toHaveCount(0);
 		await expect(page.getByRole('button', { name: /add|create|bring in/i })).toHaveCount(0);
 		await page.getByRole('link', { name: 'Chat', exact: true }).click();
@@ -118,7 +130,7 @@ test('SRV-18 / BUG-53: unknown routes keep their error and a named browser tab',
 	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
 });
 
-for (const [path, area] of [['/agents', 'Teams']] as const) {
+for (const [path, area] of [['/home', 'Home']] as const) {
 	test(`BUG-53: ${path} keeps its wrapping navigation and readable copy at 320px`, async ({
 		page
 	}) => {
@@ -178,7 +190,7 @@ test('Step 6 routes stay unavailable in the static production release with zero 
 test('BUG-53: the unavailable header home link has the design-system keyboard focus ring', async ({
 	page
 }) => {
-	await visit(page, '/org-chart');
+	await visit(page, '/home');
 	await page.keyboard.press('Tab');
 	const home = page.getByRole('link', { name: 'Agentic Org', exact: true });
 	await expect(home).toBeFocused();

@@ -33,7 +33,17 @@ type ControllerGateway = Pick<
 	'version' | 'signIn' | 'register' | 'get' | 'refresh' | 'signOut'
 > &
 	Partial<
-		Pick<SessionGateway, 'access' | 'getLocal' | 'enableAuth' | 'enableTls' | 'decideCliApproval'>
+		Pick<
+			SessionGateway,
+			| 'access'
+			| 'getLocal'
+			| 'enableAuth'
+			| 'enableTls'
+			| 'decideCliApproval'
+			| 'registerSignIn'
+			| 'inspectLink'
+			| 'setPassword'
+		>
 	>;
 type Options = {
 	store: SessionStore;
@@ -462,6 +472,25 @@ export function createSessionController({
 		/** Redeems a registration link; the new account is signed in exactly as by sign-in. */
 		register: (request: unknown, signal?: AbortSignal) =>
 			establish((signal) => gateway.register(request, signal), signal),
+		/** Attaches an organization invite link to an existing account by signing in. */
+		registerSignIn: (request: unknown, signal?: AbortSignal) => {
+			if (!gateway.registerSignIn) throw new Error('Invite sign-in unavailable');
+			const fn = gateway.registerSignIn;
+			return establish((sig) => fn(request, sig), signal);
+		},
+		/** Inspects a registration or set-password link without redeeming it. */
+		inspectLink: (
+			request: { link: string; kind: 'registration' | 'set_password' },
+			signal?: AbortSignal
+		) => {
+			if (!gateway.inspectLink) throw new Error('Link inspection unavailable');
+			return gateway.inspectLink(request, signal);
+		},
+		/** Redeems a one-time set-password link. */
+		setPassword: (request: { link: string; password: string }, signal?: AbortSignal) => {
+			if (!gateway.setPassword) throw new Error('Password reset unavailable');
+			return gateway.setPassword(request, signal);
+		},
 		/** Opt-in authentication enablement from local authless HTTP mode (ADR-0034). */
 		async enableAuth(credentials: unknown, signal?: AbortSignal) {
 			if (!gateway.enableAuth) throw new Error('Authentication enablement unavailable');

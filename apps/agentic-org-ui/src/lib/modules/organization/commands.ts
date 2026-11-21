@@ -2,6 +2,8 @@
 // carries a client-made `command_id` (a ULID; a retry with the same id gets the same answer) and
 // client-made ids for anything it creates, and the `expected_version` of what it edits.
 
+import { formatUuidV7 } from '$lib/platform/http/clock';
+
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 /** A new ULID: 10 characters of time (ms) and 16 of randomness, in Crockford base32. */
@@ -14,6 +16,14 @@ export function newId(now: number = Date.now(), random: () => number = Math.rand
 	let rand = '';
 	for (const b of bytes) rand += CROCKFORD[b % 32];
 	return time + rand;
+}
+
+/** A canonical lowercase UUIDv7 stable entity identifier accepted by the live organization gateway. */
+export function newStableId(now: number = Date.now()): string {
+	const bytes = new Uint8Array(10);
+	if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
+	else bytes.forEach((_, i) => (bytes[i] = Math.floor(Math.random() * 256)));
+	return formatUuidV7(now, bytes);
 }
 
 import type { AgentProfile, AgentRuntime, AgentStatus, RunMode, Schedule } from '$lib/proto';

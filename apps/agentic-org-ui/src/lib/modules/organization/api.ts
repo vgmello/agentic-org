@@ -43,7 +43,7 @@ export const orgApi: OrgApi = Object.freeze<OrgApi>({
 		signedInSession() ? gatewayOrgApi.view(organizationId) : unavailableCall(),
 	command: (organizationId: string, input: OrgCommandInput | OrgCommand) =>
 		signedInSession() ? gatewayOrgApi.command(organizationId, input) : unavailableCall(),
-	onFeed: unavailableCall,
-	retryFeed: unavailableCall,
-	feedLive: unavailableCall
+	onFeed: () => (signedInSession() ? Promise.resolve(() => {}) : unavailableCall()),
+	retryFeed: () => (signedInSession() ? Promise.resolve() : unavailableCall()),
+	feedLive: () => (signedInSession() ? Promise.resolve(true) : unavailableCall())
 });

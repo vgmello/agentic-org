@@ -5,7 +5,8 @@ import { createContext } from 'svelte';
 import type { OrgSnapshot } from '$lib/proto';
 import type { MemberProfile } from '../../types';
 
-export type ProfileAction = 'run' | 'assign' | 'pause' | 'resume' | 'offboard' | 'edit' | 'move';
+export type ProfileAction =
+	'run' | 'assign' | 'pause' | 'resume' | 'offboard' | 'remove' | 'edit' | 'move';
 
 export interface ProfileContext {
 	readonly organizationId: string;

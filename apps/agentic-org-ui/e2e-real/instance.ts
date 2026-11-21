@@ -71,8 +71,9 @@ export async function startInstance(prefix: string, portBase?: number): Promise<
 	const root = realpathSync(mkdtempSync(`/tmp/${prefix}.`));
 	chmodSync(root, 0o700);
 	for (const dir of ['keys', 'svc', 'bin']) mkdirSync(join(root, dir), { mode: 0o700 });
+	const binDir = process.env.ORG_REAL_BIN_DIR || join(repo, 'target/debug');
 	for (const bin of ['agentic-org', 'agentic-org-office', 'agentic-org-web']) {
-		cpSync(join(repo, 'target/debug', bin), join(root, 'bin', bin));
+		cpSync(join(binDir, bin), join(root, 'bin', bin));
 	}
 	cpSync(join(repo, 'apps/agentic-org-ui/build'), join(root, 'bin/ui'), { recursive: true });
 	const port = portBase ? await freePortFrom(portBase) : await freePort();

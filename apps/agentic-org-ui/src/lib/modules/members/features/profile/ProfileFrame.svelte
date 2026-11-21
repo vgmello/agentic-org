@@ -31,9 +31,10 @@
 	} from '$lib/components/ui/dropdown-menu';
 	import { pageTitle } from '$lib/nav';
 	import { toAppError } from '$lib/proto';
-	import { offboardAgent, setAgentStatus } from '$lib/modules/organization/actions';
+	import { offboardAgent, removePerson, setAgentStatus } from '$lib/modules/organization/actions';
 	import { offboardSummary } from '$lib/modules/organization/agents';
 	import { orgApi } from '$lib/modules/organization/api';
+	import { removePersonSummary } from '$lib/modules/organization/people-edit';
 	import { sessionFor } from '$lib/modules/organization/session';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { membersApi } from '../../api';
@@ -132,7 +133,9 @@
 							record,
 							record.agent?.messaging_name ?? ''
 						)
-					: []
+					: record
+						? removePersonSummary(snapshot, record, organizationName)
+						: []
 		});
 
 	/** Edit, Move and Run now start afresh each time they open: a new key mounts a fresh dialog. */
@@ -142,7 +145,7 @@
 		opener = from ?? moreButton;
 		if (action === 'resume') void resume();
 		else {
-			if (action === 'pause' || action === 'offboard') freeze();
+			if (action === 'pause' || action === 'offboard' || action === 'remove') freeze();
 			if (action === 'edit' || action === 'move' || action === 'run') opening++;
 			dialog = action;
 		}
@@ -290,6 +293,14 @@
 		reloadOnClose = true;
 	}
 
+	async function remove() {
+		const p = profile.data;
+		if (!p) return;
+		await removePerson(session, p.id).catch((e) => refreshOnConflict(e, p.name));
+		toast.success(`Removed ${p.name}. The record and handle stay.`);
+		reloadOnClose = true;
+	}
+
 	const open = (action: ProfileAction) => ({
 		get value() {
 			return dialog === action;
@@ -302,6 +313,7 @@
 	const assignOpen = open('assign');
 	const pauseOpen = open('pause');
 	const offboardOpen = open('offboard');
+	const removeOpen = open('remove');
 	const editOpen = open('edit');
 	const moveOpen = open('move');
 
@@ -508,6 +520,13 @@
 												class="max-[639px]:min-h-11"
 												onSelect={() => act('offboard')}>Offboard…</DropdownMenuItem
 											>
+										{:else if !p.owner}
+											<DropdownMenuSeparator />
+											<DropdownMenuItem
+												variant="destructive"
+												class="max-[639px]:min-h-11"
+												onSelect={() => act('remove')}>Remove person…</DropdownMenuItem
+											>
 										{/if}
 									</DropdownMenuContent>
 								</DropdownMenu>
@@ -573,6 +592,24 @@
 					busyLabel="Offboarding…"
 					destructive
 					onconfirm={offboard}
+					onCloseAutoFocus={restoreAfterChange}
+				>
+					{#snippet body()}
+						<ul role="list" class="list-disc space-y-1 pl-5">
+							{#each shown.lines as line, i (i)}<li>
+									{line}
+								</li>{/each}
+						</ul>
+					{/snippet}
+				</ConfirmDialog>
+				<ConfirmDialog
+					bind:open={removeOpen.value}
+					title="Remove {p.name}?"
+					description="{p.name} becomes a former member. This is what changes:"
+					confirmLabel="Remove person"
+					busyLabel="Removing…"
+					destructive
+					onconfirm={remove}
 					onCloseAutoFocus={restoreAfterChange}
 				>
 					{#snippet body()}

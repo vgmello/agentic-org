@@ -1,32 +1,55 @@
 import { redirect } from '@sveltejs/kit';
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { readJsonObject, readResponse } from '$lib/platform/http/wire';
+import { selection } from '$lib/platform/organizations/selection';
 
-async function hasNoOrganizations(): Promise<boolean> {
+interface ListedOrganizations {
+	ids: string[];
+	creatingCount: number;
+}
+
+async function listOrganizations(): Promise<ListedOrganizations | undefined> {
 	try {
 		const reply = await appSession.controller().read('/api/v1/organizations');
-		if (reply.status !== 200) return false;
+		if (reply.status !== 200) return undefined;
 		const body = readResponse(reply.body, readJsonObject);
-		if (!('result' in body) || !Array.isArray(body.result.organizations)) return false;
-		const creating = Array.isArray(body.result.creating) ? body.result.creating : [];
-		return body.result.organizations.length === 0 && creating.length === 0;
+		if (!('result' in body) || !Array.isArray(body.result.organizations)) return undefined;
+		const ids = body.result.organizations
+			.map((entry) =>
+				entry && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string'
+					? (entry as { id: string }).id
+					: undefined
+			)
+			.filter((id): id is string => id !== undefined);
+		const creatingCount = Array.isArray(body.result.creating) ? body.result.creating.length : 0;
+		return { ids, creatingCount };
 	} catch {
-		return false;
+		return undefined;
 	}
 }
 
 // The instance URL:
-// - When auth_enabled is false (local HTTP HQ, ADR-0034), a fresh HQ with no organizations opens
-//   the organization creation wizard (/create) directly with zero sign-in wall; existing
-//   organizations open /welcome directly.
-// - When auth_enabled is true, signed-in opens /welcome and signed-out opens /sign-in (SIGN-1).
+// - Signed out -> /sign-in (SIGN-1).
+// - Signed in with a selected organization that exists on this instance -> /teams (live shell).
+// - Local authless HQ with zero organizations -> /create (ADR-0034).
+// - Otherwise -> /welcome.
 export async function load() {
 	await appSession.boot();
 	if (appSession.state.kind !== 'signed-in') {
 		redirect(307, '/sign-in');
 	}
-	if (!appSession.authEnabled && (await hasNoOrganizations())) {
-		redirect(307, '/create');
+	const listed = await listOrganizations();
+	if (listed) {
+		const selected = selection.current({
+			instanceId: appSession.state.session.instance_id,
+			accountId: appSession.state.session.account.id
+		});
+		if (selected && listed.ids.includes(selected)) {
+			redirect(307, '/teams');
+		}
+		if (!appSession.authEnabled && listed.ids.length === 0 && listed.creatingCount === 0) {
+			redirect(307, '/create');
+		}
 	}
 	redirect(307, '/welcome');
 }

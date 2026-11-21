@@ -10,16 +10,16 @@
 		LINK_USED_COPY,
 		type CredentialFailure
 	} from '$lib/platform/auth/credential-copy';
-	import { checkRegistration } from '$lib/platform/auth/credential-rules';
+	import { checkRegistration, checkSignIn } from '$lib/platform/auth/credential-rules';
 	import { takeLinkSecret } from '$lib/platform/auth/link-fragment';
 	import PasswordField from '$lib/platform/auth/PasswordField.svelte';
 
 	// Held in this closure only after mount: never in reactive state, storage, a request or a log.
 	// The address bar and history entry lose the fragment before any request (takeLinkSecret).
-	// SvelteKit's `page.url` keeps the URL this page view loaded with, fragment included, until the
-	// next navigation: shallow routing never rewrites it. This page reads only `page.url.host`.
 	let secret: string | undefined;
 	let linkPresent = $state(true);
+	let inviteOrgName = $state<string>();
+	let mode = $state<'create' | 'sign-in'>('create');
 	let login = $state('');
 	let password = $state('');
 	let again = $state('');
@@ -34,49 +34,87 @@
 	onMount(async () => {
 		secret = takeLinkSecret(location, history);
 		linkPresent = secret !== undefined;
+		if (secret) {
+			try {
+				const info = await appSession
+					.controller()
+					.inspectLink({ link: secret, kind: 'registration' });
+				if (info.kind === 'organization_invite') {
+					inviteOrgName = info.org_name;
+				}
+			} catch {
+				// Leave the form visible so submitting reports the gateway's exact link refusal.
+			}
+		}
 		await tick();
 		loginInput?.focus();
 	});
+
+	function switchMode(next: 'create' | 'sign-in') {
+		mode = next;
+		loginError = passwordError = undefined;
+		failure = undefined;
+		password = again = '';
+	}
+
+	function validateForm(isAttach: boolean): boolean {
+		const ctx = isAttach ? 'sign-in' : 'register';
+		const problems = isAttach
+			? checkSignIn(login, password)
+			: checkRegistration(login, password, again);
+		for (const p of problems) {
+			if (p.field === 'login') loginError = credentialCopy(p.field, p.rule, ctx);
+			else passwordError = credentialCopy(p.field, p.rule, ctx);
+		}
+		if (problems.some((p) => p.rule === 'mismatch')) password = again = '';
+		if (problems.length === 0) return true;
+		(problems[0].field === 'login' ? loginInput : passwordInput)?.focus();
+		return false;
+	}
+
+	async function handleSubmitError(error: unknown, isAttach: boolean) {
+		const result = describeCredentialFailure(error, Date.now(), isAttach ? 'sign-in' : 'register');
+		if (result.kind === 'field') {
+			if (result.field === 'login') loginError = result.message;
+			else passwordError = result.message;
+			await tick();
+			(result.field === 'login' ? loginInput : passwordInput)?.focus();
+			return;
+		}
+		if (result.kind === 'link_used') {
+			secret = undefined;
+			linkPresent = false;
+			return;
+		}
+		failure = result;
+	}
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
 		if (busy || !secret) return;
 		failure = undefined;
 		loginError = passwordError = undefined;
-		const problems = checkRegistration(login, password, again);
-		for (const p of problems) {
-			if (p.field === 'login') loginError = credentialCopy(p.field, p.rule, 'register');
-			else passwordError = credentialCopy(p.field, p.rule, 'register');
-		}
-		if (problems.some((p) => p.rule === 'mismatch')) password = again = '';
-		if (problems.length > 0) {
-			(problems[0].field === 'login' ? loginInput : passwordInput)?.focus();
-			return;
-		}
+		const isAttach = Boolean(inviteOrgName) && mode === 'sign-in';
+		if (!validateForm(isAttach)) return;
 		busy = true;
 		try {
-			await appSession.controller().register({ link: secret, login, password });
+			const payload = { link: secret, login, password };
+			if (isAttach) await appSession.controller().registerSignIn(payload);
+			else await appSession.controller().register(payload);
 			secret = undefined;
 			password = again = '';
 			await goto(resolve('/welcome'), { replaceState: true });
 		} catch (error) {
-			const result = describeCredentialFailure(error, Date.now(), 'register');
-			if (result.kind === 'field') {
-				if (result.field === 'login') loginError = result.message;
-				else passwordError = result.message;
-				await tick();
-				(result.field === 'login' ? loginInput : passwordInput)?.focus();
-			} else if (result.kind === 'link_used') {
-				secret = undefined;
-				linkPresent = false;
-			} else failure = result;
+			await handleSubmitError(error, isAttach);
 		} finally {
 			busy = false;
 		}
 	}
 </script>
 
-<svelte:head><title>Create your account · Agentic Org</title></svelte:head>
+<svelte:head>
+	<title>{inviteOrgName ? `Join ${inviteOrgName}` : 'Create your account'} · Agentic Org</title>
+</svelte:head>
 
 {#if !linkPresent}
 	<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">{LINK_USED_COPY}</h1>
@@ -93,10 +131,41 @@
 		class="mt-6 inline-block text-sm/6 font-semibold text-link hover:text-brand-text">Sign in</a
 	>
 {:else}
-	<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">
-		Create your account on HQ at {address}
-	</h1>
-	<p class="mt-2 text-sm/6 text-fg-muted">It will be this instance's administrator.</p>
+	{#if inviteOrgName}
+		<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">
+			Join {inviteOrgName} on HQ at {address}
+		</h1>
+		<p class="mt-2 text-sm/6 text-fg-muted">
+			{mode === 'create'
+				? 'Create an account to sign in, or attach an account you already have on this instance.'
+				: 'Sign in with your existing account on this instance to accept this invitation.'}
+		</p>
+		<div class="mt-4 flex gap-x-2" role="group" aria-label="Invitation method">
+			<button
+				type="button"
+				disabled={busy}
+				onclick={() => switchMode('create')}
+				class="rounded-md px-3 py-1.5 text-sm/6 font-semibold {mode === 'create'
+					? 'bg-primary text-on-emphasis'
+					: 'bg-surface-raised text-fg outline-1 -outline-offset-1 outline-line hover:bg-surface-overlay'}"
+				>Create new account</button
+			>
+			<button
+				type="button"
+				disabled={busy}
+				onclick={() => switchMode('sign-in')}
+				class="rounded-md px-3 py-1.5 text-sm/6 font-semibold {mode === 'sign-in'
+					? 'bg-primary text-on-emphasis'
+					: 'bg-surface-raised text-fg outline-1 -outline-offset-1 outline-line hover:bg-surface-overlay'}"
+				>Use existing account</button
+			>
+		</div>
+	{:else}
+		<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">
+			Create your account on HQ at {address}
+		</h1>
+		<p class="mt-2 text-sm/6 text-fg-muted">It will be this instance's administrator.</p>
+	{/if}
 
 	<div aria-live="assertive">
 		{#if failure}
@@ -138,27 +207,45 @@
 			/>
 			{#if loginError}<p id="login-error" class="mt-2 text-sm/6 text-danger">{loginError}</p>{/if}
 		</div>
-		<PasswordField
-			id="password"
-			label="Password (at least 12 characters)"
-			autocomplete="new-password"
-			bind:value={password}
-			bind:input={passwordInput}
-			error={passwordError}
-			readonly={busy}
-		/>
-		<PasswordField
-			id="password-again"
-			label="Password again"
-			autocomplete="new-password"
-			bind:value={again}
-			readonly={busy}
-		/>
+		{#if inviteOrgName && mode === 'sign-in'}
+			<PasswordField
+				id="password"
+				label="Password"
+				autocomplete="current-password"
+				bind:value={password}
+				bind:input={passwordInput}
+				error={passwordError}
+				readonly={busy}
+			/>
+		{:else}
+			<PasswordField
+				id="password"
+				label="Password (at least 12 characters)"
+				autocomplete="new-password"
+				bind:value={password}
+				bind:input={passwordInput}
+				error={passwordError}
+				readonly={busy}
+			/>
+			<PasswordField
+				id="password-again"
+				label="Password again"
+				autocomplete="new-password"
+				bind:value={again}
+				readonly={busy}
+			/>
+		{/if}
 		<button
 			type="submit"
 			disabled={busy}
 			class="flex w-full justify-center rounded-md bg-primary px-3 py-1.5 text-sm/6 font-semibold text-on-emphasis hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-			>{busy ? 'Creating account…' : 'Create account'}</button
+			>{busy
+				? inviteOrgName && mode === 'sign-in'
+					? 'Signing in…'
+					: 'Creating account…'
+				: inviteOrgName && mode === 'sign-in'
+					? 'Sign in and join'
+					: 'Create account'}</button
 		>
 	</form>
 {/if}

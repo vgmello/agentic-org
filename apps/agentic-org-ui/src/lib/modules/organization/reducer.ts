@@ -130,9 +130,12 @@ const checkText = (t: string | undefined) => {
 		);
 };
 
-/** The id of a new member is exactly 26 ASCII letters or digits (ULID-shaped); the sample's readable ids are display fixtures. */
+/** The id of a new member is a 26-char ULID or canonical lowercase UUIDv7; the sample's readable ids are display fixtures. */
 function checkNewMemberId(id: string) {
-	if (!/^[A-Za-z0-9]{26}$/.test(id))
+	if (
+		!/^[A-Za-z0-9]{26}$/.test(id) &&
+		!/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)
+	)
 		fail('invalid_request', "A new member's id is 26 letters or digits.");
 }
 
