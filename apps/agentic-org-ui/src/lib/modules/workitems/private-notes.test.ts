@@ -99,4 +99,35 @@ describe('private-notes helpers', () => {
 			'Visible to people and the author; hidden from other agents'
 		);
 	});
+
+	it('sorts RFC 3339 timestamps with differing timezone offsets and fractional seconds chronologically', () => {
+		const notes: PrivateNote[] = [
+			makeNote({
+				id: 'pn-sam-late-z',
+				author: { id: 'sam', name: 'Sam Okafor', kind: 'agent' },
+				createdAt: '2026-11-20T10:00:00.500Z',
+				updatedAt: '2026-11-20T10:00:00.500Z'
+			}),
+			makeNote({
+				id: 'pn-sam-early-offset',
+				author: { id: 'sam', name: 'Sam Okafor', kind: 'agent' },
+				// 09:30:00Z, even though lexicographically "11:30" > "10:00"
+				createdAt: '2026-11-20T11:30:00+02:00',
+				updatedAt: '2026-11-20T11:30:00+02:00'
+			}),
+			makeNote({
+				id: 'pn-noor-most-recent',
+				author: { id: 'noor', name: 'Noor Haddad', kind: 'agent' },
+				// 10:30:00Z, even though lexicographically "05:30" < "10:00"
+				createdAt: '2026-11-20T05:30:00-05:00',
+				updatedAt: '2026-11-20T05:30:00-05:00'
+			})
+		];
+
+		const groups = groupPrivateNotes(notes);
+		// Noor (10:30Z) is more recent than Sam (10:00:00.500Z).
+		expect(groups.map((g) => g.author.id)).toEqual(['noor', 'sam']);
+		// Within Sam's group: 09:30Z precedes 10:00:00.500Z.
+		expect(groups[1].notes.map((n) => n.id)).toEqual(['pn-sam-early-offset', 'pn-sam-late-z']);
+	});
 });

@@ -32,6 +32,15 @@ export function isNoteEdited(
 	return note.revision > 1 || note.updatedAt !== note.createdAt;
 }
 
+function compareTimestamps(a: string, b: string): number {
+	const ta = Date.parse(a);
+	const tb = Date.parse(b);
+	if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) {
+		return ta - tb;
+	}
+	return a.localeCompare(b);
+}
+
 /**
  * Groups private notes by author.
  * Order: signed-in viewer's own group first (when present), then agents (most recently active first),
@@ -45,7 +54,7 @@ export function groupPrivateNotes(notes: PrivateNote[]): PrivateNoteAuthorGroup[
 		if (existing) {
 			existing.notes.push(note);
 			existing.mine = existing.mine || note.mine;
-			if (activityAt.localeCompare(existing.latestAt) > 0) {
+			if (compareTimestamps(activityAt, existing.latestAt) > 0) {
 				existing.latestAt = activityAt;
 			}
 		} else {
@@ -61,7 +70,7 @@ export function groupPrivateNotes(notes: PrivateNote[]): PrivateNoteAuthorGroup[
 	const groups = [...map.values()].map((group) => ({
 		...group,
 		notes: [...group.notes].sort(
-			(a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
+			(a, b) => compareTimestamps(a.createdAt, b.createdAt) || a.id.localeCompare(b.id)
 		)
 	}));
 
@@ -70,7 +79,7 @@ export function groupPrivateNotes(notes: PrivateNote[]): PrivateNoteAuthorGroup[
 	return groups.sort(
 		(a, b) =>
 			tier(a) - tier(b) ||
-			b.latestAt.localeCompare(a.latestAt) ||
+			compareTimestamps(b.latestAt, a.latestAt) ||
 			a.author.name.localeCompare(b.author.name) ||
 			a.author.id.localeCompare(b.author.id)
 	);

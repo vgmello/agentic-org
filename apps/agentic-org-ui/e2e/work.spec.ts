@@ -474,8 +474,8 @@ test('PRIVATE NOTES (TASK-67 / ADR-0031): per-agent grouped pane, visibility cop
 	await filterBar.getByRole('button', { name: /All authors/ }).click();
 	await expect(groups).toHaveCount(4);
 
-	// Author group collapse & expand disclosure works accessibly.
-	const samToggle = samGroup.getByRole('button', { name: /2 notes/ });
+	// Author group collapse & expand disclosure works accessibly (with distinct author-qualified name).
+	const samToggle = samGroup.getByRole('button', { name: /Sam Okafor: 2 notes/ });
 	await expect(samToggle).toHaveAttribute('aria-expanded', 'true');
 	await samToggle.click();
 	await expect(samToggle).toHaveAttribute('aria-expanded', 'false');
@@ -504,6 +504,28 @@ test('PRIVATE NOTES (TASK-67 / ADR-0031): per-agent grouped pane, visibility cop
 	await expect(deleteDialog).toBeVisible();
 	await deleteDialog.getByRole('button', { name: 'Delete note' }).click();
 	await expect(createdNoteItem).toHaveCount(0);
+
+	// Regression: deleting the last note under an active author filter resets filter to All authors
+	// so adding a new note for that author later stays on All authors instead of snapping back.
+	await filterBar.locator('[data-author-filter=you]').click();
+	await expect(groups).toHaveCount(1);
+	await expect(groups.first()).toHaveAttribute('data-author-id', 'you');
+	const seedOwnNote = pane.locator('[data-note-id="pn-40-1"]');
+	await seedOwnNote.getByRole('button', { name: 'Delete' }).click();
+	await expect(deleteDialog).toBeVisible();
+	await deleteDialog.getByRole('button', { name: 'Delete note' }).click();
+	await expect(groups).toHaveCount(3);
+	await expect(filterBar.getByRole('button', { name: /All authors/ })).toHaveAttribute(
+		'aria-pressed',
+		'true'
+	);
+	await pane.getByLabel(/Add a private note/).fill('Fresh note after filter reset');
+	await pane.getByRole('button', { name: 'Save private note' }).click();
+	await expect(groups).toHaveCount(4);
+	await expect(filterBar.getByRole('button', { name: /All authors/ })).toHaveAttribute(
+		'aria-pressed',
+		'true'
+	);
 
 	// Revision conflict recovery on edit preserves draft text and retries cleanly after reload.
 	await visit(page, '/work/T-A40?mock=notes-conflict');

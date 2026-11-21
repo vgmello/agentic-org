@@ -81,6 +81,17 @@
 			: 'all'
 	);
 
+	async function reloadNotes() {
+		await notesRead.reload();
+		if (
+			notesRead.state === 'ready' &&
+			selectedAuthorId !== 'all' &&
+			!groups.some((g) => g.author.id === selectedAuthorId)
+		) {
+			selectedAuthorId = 'all';
+		}
+	}
+
 	function isCollapsed(authorId: string): boolean {
 		return Boolean(collapsedAuthors[authorId]);
 	}
@@ -127,7 +138,7 @@
 			noteBody = '';
 			noteOpId = null;
 			toast.success('Private note saved.');
-			await notesRead.reload();
+			await reloadNotes();
 		} catch (e) {
 			// Private save failure never falls back to a shared comment.
 			noteError = toAppError(e).message;
@@ -155,7 +166,7 @@
 			});
 			editingNote = null;
 			toast.success('Private note updated.');
-			await notesRead.reload();
+			await reloadNotes();
 		} catch (e) {
 			const err = toAppError(e);
 			editError = err.message;
@@ -169,7 +180,11 @@
 		if (!editingNote) return;
 		const draftBody = editingNote.body;
 		const targetId = editingNote.id;
-		await notesRead.reload();
+		await reloadNotes();
+		if (notesRead.state !== 'ready') {
+			toast.error("Couldn't reload private notes. Your draft was kept.");
+			return;
+		}
 		const latest = notesRead.data?.notes.find((n) => n.id === targetId && n.mine);
 		if (latest) {
 			editingNote = {
@@ -184,11 +199,19 @@
 			editingNote = null;
 			editError = undefined;
 			editConflict = false;
+			toast.error('This private note was deleted in another session.');
 		}
 	}
 
 	async function confirmDeleteNote() {
 		if (!deleteTarget) return;
+		if (!deleteTarget.note.mine || !canWrite) {
+			throw new Error(
+				stale
+					? 'Offline copy — private note edits are paused while read-only.'
+					: "You don't have permission to delete this private note."
+			);
+		}
 		await workItemsApi.deleteNote(organizationId, taskId, deleteTarget.note.id, {
 			expectedRevision: deleteTarget.note.revision,
 			operationId: deleteTarget.operationId
@@ -198,11 +221,18 @@
 		}
 		deleteTarget = null;
 		toast.success('Private note deleted.');
-		await notesRead.reload();
+		await reloadNotes();
 	}
 
 	async function confirmPublishNote() {
 		if (!publishTarget) return;
+		if (!publishTarget.note.mine || !canWrite) {
+			throw new Error(
+				stale
+					? 'Offline copy — private note edits are paused while read-only.'
+					: "You don't have permission to publish this private note."
+			);
+		}
 		await workItemsApi.publishNote(organizationId, taskId, publishTarget.note.id, {
 			expectedRevision: publishTarget.note.revision,
 			operationId: publishTarget.operationId
@@ -258,7 +288,7 @@
 					size="sm"
 					class={mobileButton}
 					disabled={notesRead.reloading}
-					onclick={() => notesRead.reload()}
+					onclick={() => reloadNotes()}
 				>
 					{notesRead.reloading ? 'Retrying…' : 'Retry'}
 				</Button>
@@ -367,6 +397,7 @@
 								onclick={() => toggleAuthorGroup(group.author.id)}
 								class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs/5 text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-focus max-[639px]:min-h-11"
 							>
+								<span class="sr-only">{group.author.name}:</span>
 								<span class="tabular-nums">{privateNoteCountLabel(group.notes.length)}</span>
 								<WorkIcon name={collapsed ? 'down' : 'up'} class="size-3.5" />
 							</button>
@@ -411,6 +442,10 @@
 													id="{uid}-edit-{note.id}"
 													rows={3}
 													bind:value={editingNote.body}
+													oninput={() => {
+														if (editingNote) editingNote.operationId = newId();
+														if (editError && !editConflict) editError = undefined;
+													}}
 													disabled={editBusy || notesRead.reloading}
 													aria-invalid={editError ? 'true' : undefined}
 													aria-describedby={editError ? `${uid}-edit-err-${note.id}` : undefined}
