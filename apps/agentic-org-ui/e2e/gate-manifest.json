@@ -462,7 +462,7 @@
 				"src/routes/(shell)/{home,inbox,activity,search,preferences,insights,members}/**",
 				"src/routes/(shell)/teams/(views)/+page.svelte",
 				"src/routes/(shell)/teams/[teamId]/**",
-				"src/routes/(shell)/settings/{+page.svelte,agents/**,roles/**,access/**,costs/**,updates/**}",
+				"src/routes/(shell)/settings/{+page.svelte,agents/**,roles/**,access/**,security/**,costs/**,updates/**}",
 				"src/lib/components/testing/look-primitives.*",
 				"src/lib/components/testing/focus-primitives.*",
 				"e2e/focus-primitives.ts"
@@ -508,7 +508,8 @@
 				"retired-import.spec.ts",
 				"session-foundation.spec.ts",
 				"accessibility.spec.ts",
-				"organizations.spec.ts"
+				"organizations.spec.ts",
+				"local-access-and-tls.spec.ts"
 			],
 			"sources": [
 				"src/routes/(onboarding)/**",
@@ -654,6 +655,11 @@
 			"from": "e2e/processes{,-bugs}.spec.ts",
 			"to": "src/routes/(shell)/settings/+page.svelte",
 			"why": "The route scanner reads only the first path segment, so /settings/processes/** (owned by processes) is seen as the General settings page; the processes specs never open General itself."
+		},
+		{
+			"from": "e2e/local-access-and-tls.spec.ts",
+			"to": "src/routes/(shell)/settings/+page.svelte",
+			"why": "The route scanner reads only the first path segment, so /settings/security (which composes the shared InstanceSecurityPanel) is seen as the General settings page; this spec never opens General itself."
 		}
 	],
 	"rules": {

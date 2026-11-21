@@ -50,7 +50,9 @@
 	);
 
 	function destination() {
-		return safeReturnTarget(page.url.searchParams.get('next'), page.url.origin) ?? '/welcome';
+		const target = safeReturnTarget(page.url.searchParams.get('next'), page.url.origin);
+		if (target) return target;
+		return appSession.authEnabled ? '/welcome' : '/';
 	}
 
 	/**

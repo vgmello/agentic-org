@@ -467,13 +467,69 @@ export const readCancelResult = checked((value) => {
 });
 export const cancelStatus = (result: ReturnType<typeof readCancelResult>): number | undefined =>
 	['abandoned', 'linked'].includes(result.state) ? 200 : undefined;
+const listenScheme = word(['https', 'http_loopback', 'http_published'] as const);
+export type ListenScheme = ReturnType<typeof listenScheme>;
+export const readAccess = checked(
+	object({
+		auth_enabled: bool,
+		listen_scheme: listenScheme
+	})
+);
+export type AccessView = ReturnType<typeof readAccess>;
+
+export type HstsMode = 'off' | 'on' | 'clear';
+const strictHsts: Reader<HstsMode> = (value) => {
+	const name = text(value);
+	return name === 'off' || name === 'on' || name === 'clear' ? name : invalid();
+};
+export type TlsEnableRequest =
+	| { mode: 'self_signed'; hsts?: HstsMode }
+	| { mode: 'supplied'; cert: string; key: string; hsts?: HstsMode };
+export const readTlsEnableRequest: Reader<TlsEnableRequest> = checked((value) => {
+	const input = fields(value);
+	const keys = Object.keys(input);
+	const mode = text(field(input, 'mode'));
+	const hsts = optional(strictHsts)(field(input, 'hsts'));
+	if (mode === 'self_signed') {
+		if (keys.some((key) => key !== 'mode' && key !== 'hsts')) return invalid();
+		return hsts === undefined ? { mode } : { mode, hsts };
+	}
+	if (mode === 'supplied') {
+		if (keys.some((key) => !['mode', 'cert', 'key', 'hsts'].includes(key))) return invalid();
+		const cert = nonempty(field(input, 'cert'));
+		const key = nonempty(field(input, 'key'));
+		return hsts === undefined ? { mode, cert, key } : { mode, cert, key, hsts };
+	}
+	return invalid();
+});
+export const readTlsEnableResult = checked(
+	object({
+		scheme: listenScheme,
+		origin: nonempty,
+		fingerprint: nonempty,
+		source: word(['made', 'supplied'] as const),
+		restart_required: bool
+	})
+);
+export type TlsEnableResult = ReturnType<typeof readTlsEnableResult>;
+
+export const readCliApprovalDecide = checked(object({ link: nonempty, approve: bool }));
+export type CliApprovalDecide = ReturnType<typeof readCliApprovalDecide>;
+export const readCliApprovalDecision = checked(
+	object({
+		status: word(['approved', 'declined'] as const)
+	})
+);
+export type CliApprovalDecision = ReturnType<typeof readCliApprovalDecision>;
+
 export const readInstance = checked(
 	object({
 		instance_id: text,
 		name: text,
 		server_version: text,
 		web_status: word(['ok', 'degraded'] as const),
-		listen_scheme: word(['https', 'http_loopback', 'http_published'] as const),
+		listen_scheme: listenScheme,
+		auth_enabled: optional(bool),
 		tls: optional(word(['ok', 'missing', 'expiring'] as const)),
 		server_time_ms: readSafeInteger
 	})

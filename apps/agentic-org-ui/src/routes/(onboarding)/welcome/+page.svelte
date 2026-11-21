@@ -255,13 +255,21 @@
 		</h1>
 		<div class="mt-6 flex items-center gap-x-4">
 			{@render createLink()}
-			<button
-				type="button"
-				disabled={signOutFlow.signingOut}
-				onclick={signOut}
-				class="rounded-md bg-surface-overlay px-3 py-2 text-sm font-semibold text-fg hover:bg-tint/20"
-				>Sign out</button
-			>
+			{#if appSession.authEnabled}
+				<button
+					type="button"
+					disabled={signOutFlow.signingOut}
+					onclick={signOut}
+					class="rounded-md bg-surface-overlay px-3 py-2 text-sm font-semibold text-fg hover:bg-tint/20"
+					>Sign out</button
+				>
+			{:else}
+				<a
+					href={resolve('/security')}
+					class="rounded-md bg-surface-overlay px-3 py-2 text-sm font-semibold text-fg hover:bg-tint/20 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+					>Security &amp; Access</a
+				>
+			{/if}
 		</div>
 	{:else}
 		<!-- SIGN-9, any other account. -->
