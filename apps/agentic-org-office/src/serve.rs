@@ -2631,7 +2631,7 @@ mod tests {
                     .collect();
                 let mut snapshot: OrgSnapshot = serde_json::from_value(serde_json::json!({
                     "position": {"epoch": 1, "seq": 1},
-                    "teams": [], "members": [], "memberships": []
+                    "teams": [], "members": []
                 }))
                 .unwrap();
                 snapshot.teams = teams;
@@ -3067,8 +3067,6 @@ mod tests {
             TeamMove::METHOD,
             TeamSetLead::METHOD,
             TeamDelete::METHOD,
-            TeamAddMember::METHOD,
-            TeamRemoveMember::METHOD,
             TeamSetTitle::METHOD,
             MemberAddPerson::METHOD,
             MemberAddAgent::METHOD,

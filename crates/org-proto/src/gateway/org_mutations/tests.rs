@@ -31,10 +31,10 @@ fn assert_native(command: &OrgMutation, expected: &Value) {
 }
 
 #[test]
-fn all_fifteen_operations_map_to_their_typed_native_call_with_every_optional_field() {
+fn all_thirteen_operations_map_to_their_typed_native_call_with_every_optional_field() {
     let vectors = fixture(
         include_str!("../../../test-vectors/v2/gateway/org-mutation-mappings.json"),
-        16,
+        14,
     );
     let scope: Scope = serde_json::from_value(vectors["route_scope"].clone()).unwrap();
     let mut seen = BTreeSet::new();
@@ -58,12 +58,14 @@ fn all_fifteen_operations_map_to_their_typed_native_call_with_every_optional_fie
             .unwrap()
             .starts_with("/api/v1/organizations/"));
     }
-    assert_eq!(OrgOperation::ALL.len(), 15);
+    assert_eq!(OrgOperation::ALL.len(), 13);
     assert_eq!(seen, OrgOperation::ALL.iter().map(|op| op.name()).collect());
     for excluded in [
         "member.offboard",
         "member.add_agent",
         "project.create",
+        "team.add_member",
+        "team.remove_member",
         "team.rename ",
     ] {
         assert!(serde_json::from_value::<OrgOperation>(json!(excluded)).is_err());
@@ -74,7 +76,7 @@ fn all_fifteen_operations_map_to_their_typed_native_call_with_every_optional_fie
 fn shared_optional_fields_and_strict_decode_matrix() {
     let vectors = fixture(
         include_str!("../../../test-vectors/v2/gateway/org-mutation-inputs.json"),
-        233,
+        208,
     );
     let scope: Scope = serde_json::from_value(vectors["route_scope"].clone()).unwrap();
     let cases = vectors["cases"].as_array().unwrap();
@@ -117,14 +119,14 @@ fn shared_optional_fields_and_strict_decode_matrix() {
             .iter()
             .filter(|case| case["group"] == "optional")
             .count(),
-        22
+        20
     );
     assert_eq!(
         cases
             .iter()
             .filter(|case| case["group"] == "invalid_version")
             .count(),
-        55
+        50
     );
     for op in OrgOperation::ALL {
         let selected = |group: &str| {

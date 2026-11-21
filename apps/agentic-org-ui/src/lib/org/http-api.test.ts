@@ -17,8 +17,17 @@ describe('createHttpOrgApi', () => {
 						snapshot: {
 							position: { epoch: 1, seq: 2 },
 							teams: [{ id: PARENT, name: 'Example', version: 1 }],
-							members: [{ id: 'm1', kind: 'person', name: 'Owner', owner: true, version: 1 }],
-							memberships: []
+							members: [
+								{
+									id: 'm1',
+									kind: 'person',
+									name: 'Owner',
+									handle: 'owner',
+									home_team_id: PARENT,
+									owner: true,
+									version: 1
+								}
+							]
 						},
 						resume_cursor: `org:${ORG}:1:2`
 					}

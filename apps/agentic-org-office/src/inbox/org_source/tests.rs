@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 fn snapshot() -> OrgSnapshot {
     serde_json::from_value(json!({
-        "position":{"epoch":1,"seq":1},"teams":[],"members":[],"memberships":[],
+        "position":{"epoch":1,"seq":1},"teams":[],"members":[],
         "project_teams":[]
     }))
     .unwrap()
@@ -189,15 +189,13 @@ fn d26_unplaced_mapping_uses_only_authoritative_absence_not_foreign_office_ids()
 }
 
 #[test]
-fn all_current_memberships_and_project_links_filter_items_never_open_counts() {
+fn home_team_and_project_links_filter_items_never_open_counts() {
     let mut view = snapshot();
-    view.members = vec![member("a", "agent", None), member("b", "agent", None)];
-    view.memberships = serde_json::from_value(json!([
-        {"id":"ma1","team_id":"T1","member_id":"a","version":1},
-        {"id":"ma2","team_id":"T2","member_id":"a","version":1},
-        {"id":"mb","team_id":"T3","member_id":"b","version":1}
-    ]))
-    .unwrap();
+    let mut a = member("a", "agent", None);
+    a.home_team_id = Some("T2".into());
+    let mut b = member("b", "agent", None);
+    b.home_team_id = Some("T3".into());
+    view.members = vec![a, b];
     view.project_teams = serde_json::from_value(json!([
         {"id":"pt","project_id":"P","team_id":"T2","version":1},
         {"id":"pt2","project_id":"Q","team_id":"T3","version":1}
@@ -212,7 +210,7 @@ fn all_current_memberships_and_project_links_filter_items_never_open_counts() {
         (None, Some("Q"), vec!["b"]),
         (None, Some("missing"), vec![]),
         (Some("T2"), Some("Q"), vec![]),
-        (Some("T1"), Some("P"), vec!["a"]),
+        (Some("T2"), Some("P"), vec!["a"]),
     ] {
         let result = source
             .read(&Query {
@@ -412,12 +410,14 @@ fn offboarded_unknown_or_absent_profiles_never_create_unplaced_problems() {
 fn late_matching_team_and_project_members_remain_reachable_before_the_page_cap() {
     let mut view = snapshot();
     view.members = (0..102)
-        .map(|n| member(&format!("m{n:03}"), "agent", None))
+        .map(|n| {
+            let mut m = member(&format!("m{n:03}"), "agent", None);
+            if n == 101 {
+                m.home_team_id = Some("T".into());
+            }
+            m
+        })
         .collect();
-    view.memberships = serde_json::from_value(json!([
-        {"id":"late","team_id":"T","member_id":"m101","version":1}
-    ]))
-    .unwrap();
     view.project_teams = serde_json::from_value(json!([
         {"id":"project","project_id":"P","team_id":"T","version":1}
     ]))

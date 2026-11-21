@@ -1,4 +1,4 @@
-//! The organization's structure: teams, members, memberships, projects, the teams working on
+//! The organization's structure: teams, members, projects, the teams working on
 //! each project, and each project's areas (see `docs/design/teams-and-org-chart.md` and
 //! `docs/design/tasks-projects-docs.md` §1.9, §2.5 and §4.8).
 //!
@@ -67,8 +67,7 @@
 //! ## Limits every command shares
 //! All are `invalid_request`, so a client can check them before sending:
 //! - **Client-made ids**, the ones a command creates (`team.create`'s `team_id`,
-//!   `team.add_member`'s and `member.move`'s new `membership_id`, `project.add_team`'s
-//!   `project_team_id`, and so on): 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` or `_`
+//!   `project.add_team`'s `project_team_id`, and so on): 1 to [`ID_MAX_CHARS`] ASCII letters, digits, `-` or `_`
 //!   ([`is_valid_id`]). A ULID fits. An id that names something that already exists is only
 //!   looked up (`not_found`).
 //! - **Member ids** (`member.add_person`'s and `member.add_agent`'s `member_id`): exactly
@@ -95,7 +94,7 @@
 //! area's team is always one of its project's teams, or none: while the project has no team,
 //! after its team left as the project's last one, or after its team was deleted (the app then
 //! asks for one). HQ keeps that true inside the organization event that would break it:
-//! - an area lead who leaves the area's team (`team.remove_member`, `member.move`,
+//! - an area lead who leaves the area's team (`member.move`,
 //!   `member.offboard`, `member.remove`) stops being its lead, and the area's version goes up;
 //! - `project.remove_team` moves the leaving team's areas to `areas_to_team_id`, or leaves
 //!   them team-less when it was the project's last team (see [`ProjectRemoveTeam`]);
@@ -522,17 +521,6 @@ pub struct Member {
     pub version: u64,
 }
 
-/// A member in a team. A member can be in any number of teams.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Membership {
-    pub id: String,
-    pub team_id: String,
-    pub member_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title_in_team: Option<String>,
-    pub version: u64,
-}
-
 /// A team working on a project. Usually one per project; several teams can share one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectTeam {
@@ -752,14 +740,10 @@ pub struct OrgSnapshot {
     pub position: Position,
     pub teams: Vec<Team>,
     pub members: Vec<Member>,
-    pub memberships: Vec<Membership>,
     #[serde(default)]
     pub projects: Vec<Project>,
     #[serde(default)]
     pub project_teams: Vec<ProjectTeam>,
-    /// Every project's areas, deleted ones (tombstones) included.
-    #[serde(default)]
-    pub areas: Vec<Area>,
 }
 
 /// What happened to an organization command.
@@ -867,25 +851,6 @@ command!(
     /// teams), `conflict`, `not_found`.
     TeamDelete, "team.delete", TeamDeleteParams {
         team_id: String,
-        expected_version: u64,
-    }
-);
-command!(
-    /// `team.add_member`. `membership_id` is client-made. Errors: `owner_protected`,
-    /// `not_found`, `invalid_request` (the member is an offboarded agent), `already_exists`.
-    TeamAddMember, "team.add_member", TeamAddMemberParams {
-        membership_id: String,
-        team_id: String,
-        member_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        title_in_team: Option<String>,
-    }
-);
-command!(
-    /// `team.remove_member`. Removing the lead clears the lead. Errors: `conflict`,
-    /// `not_found`.
-    TeamRemoveMember, "team.remove_member", TeamRemoveMemberParams {
-        membership_id: String,
         expected_version: u64,
     }
 );
@@ -1279,12 +1244,6 @@ pub enum OrgChange {
     },
     MemberRemoved {
         member_id: String,
-    },
-    MembershipUpserted {
-        membership: Membership,
-    },
-    MembershipRemoved {
-        membership_id: String,
     },
     ProjectTeamAdded {
         project_team: ProjectTeam,

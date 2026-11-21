@@ -209,6 +209,9 @@ export interface Member {
 	id: string;
 	kind: MemberKind;
 	name: string;
+	handle?: string;
+	home_team_id?: string;
+	title_in_team?: string;
 	contact?: string;
 	owner?: boolean;
 	office_id?: string;

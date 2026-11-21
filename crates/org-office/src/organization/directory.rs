@@ -211,13 +211,7 @@ pub fn who(
             None => true,
         })
         .filter(|m| {
-            wanted_team.is_none_or(|team| {
-                m.home_team_id.as_deref() == Some(team.id.as_str())
-                    || snapshot
-                        .memberships
-                        .iter()
-                        .any(|ms| ms.member_id == m.id && ms.team_id == team.id)
-            })
+            wanted_team.is_none_or(|team| m.home_team_id.as_deref() == Some(team.id.as_str()))
         })
         .map(|m| (name_key(&m.name), m))
         .collect();
@@ -284,41 +278,18 @@ fn card(
             _ => MemberPresence::Offline,
         },
     };
-    let mut teams: Vec<(String, CardTeam)> = if let Some(home_team_id) = &member.home_team_id {
-        snapshot
-            .teams
-            .iter()
-            .find(|t| &t.id == home_team_id)
-            .map(|team| {
-                vec![(
-                    name_key(&team.name),
-                    CardTeam {
-                        id: team.id.clone(),
-                        name: team.name.clone(),
-                        title_in_team: member.title_in_team.clone(),
-                    },
-                )]
-            })
-            .unwrap_or_default()
-    } else {
-        snapshot
-            .memberships
-            .iter()
-            .filter(|ms| ms.member_id == member.id)
-            .filter_map(|ms| {
-                let team = snapshot.teams.iter().find(|t| t.id == ms.team_id)?;
-                Some((
-                    name_key(&team.name),
-                    CardTeam {
-                        id: team.id.clone(),
-                        name: team.name.clone(),
-                        title_in_team: ms.title_in_team.clone(),
-                    },
-                ))
-            })
-            .collect()
-    };
-    teams.sort_by(|a, b| (&a.0, &a.1.id).cmp(&(&b.0, &b.1.id)));
+    let teams: Vec<CardTeam> = member
+        .home_team_id
+        .as_deref()
+        .and_then(|home_team_id| snapshot.teams.iter().find(|t| t.id == home_team_id))
+        .map(|team| {
+            vec![CardTeam {
+                id: team.id.clone(),
+                name: team.name.clone(),
+                title_in_team: member.title_in_team.clone(),
+            }]
+        })
+        .unwrap_or_default();
     DirectoryCard {
         id: member.id.clone(),
         name: member.name.clone(),
@@ -328,7 +299,7 @@ fn card(
         agent_status: (member.kind == MemberKind::Agent)
             .then(|| agent.map_or(AgentStatus::Unknown, |a| a.status)),
         role_title: agent.map(|a| a.title.clone()),
-        teams: teams.into_iter().map(|(_, team)| team).collect(),
+        teams,
         reports_to: member
             .reports_to_member_id
             .as_deref()
@@ -363,7 +334,7 @@ fn card(
 
 #[cfg(test)]
 mod tests {
-    use org_proto::org::{AgentProfile, AgentRuntime, Membership, Position};
+    use org_proto::org::{AgentProfile, AgentRuntime, Position};
 
     use super::*;
 
@@ -433,21 +404,15 @@ mod tests {
         }
     }
 
-    fn joined(ms: &str, tid: &str, member: &str, title: Option<&str>) -> Membership {
-        Membership {
-            id: ms.into(),
-            team_id: tid.into(),
-            member_id: id(member),
-            title_in_team: title.map(Into::into),
-            version: 1,
-        }
-    }
-
     /// An owner, a person (Ana), two agents (Pixel active, Gone offboarded), two teams.
     fn org() -> OrgSnapshot {
         let mut pixel = agent("PIXEL", "Pixel the designer", "pixel", AgentStatus::Active);
+        pixel.home_team_id = Some("t-design".into());
+        pixel.title_in_team = Some("Lead designer".into());
         pixel.reports_to_member_id = Some(id("ANA"));
         let mut ana = person("ANA", "Ana");
+        ana.home_team_id = Some("t-eng".into());
+        ana.title_in_team = Some("Manager".into());
         ana.reports_to_member_id = None;
         OrgSnapshot {
             position: Position { epoch: 1, seq: 9 },
@@ -462,14 +427,8 @@ mod tests {
                 pixel,
                 agent("GONE", "Gone", "gone", AgentStatus::Offboarded),
             ],
-            memberships: vec![
-                joined("m1", "t-design", "PIXEL", Some("Lead designer")),
-                joined("m2", "t-eng", "PIXEL", None),
-                joined("m3", "t-eng", "ANA", Some("Manager")),
-            ],
             projects: vec![],
             project_teams: vec![],
-            areas: vec![],
         }
     }
 
@@ -500,16 +459,13 @@ mod tests {
         assert_eq!(pixel.agent_status, Some(AgentStatus::Active));
         assert_eq!(pixel.role_title.as_deref(), Some("Senior Engineer"));
         assert!(!pixel.owner);
-        // Teams by name, with the title in each.
+        // Home team with its title.
         let teams: Vec<_> = pixel
             .teams
             .iter()
             .map(|t| (t.name.as_str(), t.title_in_team.as_deref()))
             .collect();
-        assert_eq!(
-            teams,
-            [("Design", Some("Lead designer")), ("Engineering", None)]
-        );
+        assert_eq!(teams, [("Design", Some("Lead designer"))]);
         assert_eq!(
             pixel.reports_to.as_ref().unwrap().handle.as_deref(),
             Some("Ana")
@@ -608,8 +564,8 @@ mod tests {
             })
         };
         // By id, and by name ignoring case.
-        assert_eq!(team("t-eng"), Ok(vec![id("ANA"), id("PIXEL")]));
-        assert_eq!(team("engineering"), Ok(vec![id("ANA"), id("PIXEL")]));
+        assert_eq!(team("t-eng"), Ok(vec![id("ANA")]));
+        assert_eq!(team("engineering"), Ok(vec![id("ANA")]));
         assert_eq!(team("t-design"), Ok(vec![id("PIXEL")]));
         // "Design" names two teams (one under Engineering): ambiguous, the id works.
         assert_eq!(team("Design"), Err(ErrorCode::InvalidRequest));
@@ -852,15 +808,14 @@ mod tests {
     }
 
     #[test]
-    fn a_cards_teams_are_ordered_by_name_whatever_order_the_memberships_are_in() {
-        let mut snapshot = org();
-        snapshot.memberships.reverse();
+    fn a_cards_home_team_carries_its_name_and_title() {
+        let snapshot = org();
         let cards = who(&snapshot, OFFICE, NOW, &NothingLive, &WhoParams::default())
             .unwrap()
             .members;
         let pixel = cards.iter().find(|c| c.id == id("PIXEL")).unwrap();
         let names: Vec<_> = pixel.teams.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, ["Design", "Engineering"]);
+        assert_eq!(names, ["Design"]);
     }
 
     #[test]
@@ -969,16 +924,19 @@ mod tests {
     }
 
     #[test]
-    fn a_membership_of_a_team_that_is_gone_is_left_off_the_card() {
+    fn a_home_team_that_is_gone_is_left_off_the_card() {
         let mut snapshot = org();
         snapshot
-            .memberships
-            .push(joined("m9", "t-gone", "ANA", None));
+            .members
+            .iter_mut()
+            .find(|m| m.id == id("ANA"))
+            .unwrap()
+            .home_team_id = Some("t-gone".into());
         let cards = who(&snapshot, OFFICE, NOW, &NothingLive, &WhoParams::default())
             .unwrap()
             .members;
         let ana = cards.iter().find(|c| c.id == id("ANA")).unwrap();
-        assert_eq!(ana.teams.len(), 1);
+        assert!(ana.teams.is_empty());
     }
 
     #[test]

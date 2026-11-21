@@ -124,8 +124,8 @@ pub use operation::{OperationGet, OperationGetParams, OperationKind, OperationOu
 pub use org::{
     has_reserved_branch_prefix, is_shaped_like_an_address, is_valid_id, is_valid_member_id,
     AgentProfile, AgentProfileInput, AgentRuntime, AgentStatus, Area, CommandAccepted,
-    CommandStatus, GithubRepo, Member, MemberKind, Membership, OrgChange, OrgChanged,
-    OrgChangedData, OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position, Project,
+    CommandStatus, GithubRepo, Member, MemberKind, OrgChange, OrgChanged, OrgChangedData,
+    OrgRejected, OrgRejectedData, OrgSnapshot, OrgSnapshotCall, Position, Project,
     ProjectCreateTeam, ProjectRepo, ProjectSummary, ProjectTeam, RepoHost, RepoSpec, RunMode,
     Schedule, Team, AGENT_HOME_MAX_BYTES, AGENT_MESSAGING_NAME_MAX_CHARS, AGENT_TEXT_MAX_CHARS,
     AGENT_TIME_ZONE_MAX_CHARS, AREA_NAME_MAX_CHARS, ID_MAX_CHARS, MEMBER_ID_CHARS, OFFICE_HANDLE,

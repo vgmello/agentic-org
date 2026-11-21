@@ -8,7 +8,7 @@ fn shared() -> Shared {
     let mut ports = super::super::super::tests::ports(Box::new(|| {
         Ok(
             serde_json::from_value(json!({"position":{"epoch":1,"seq":1},"teams":[],
-            "members":[],"memberships":[],"projects":[],"project_teams":[],"areas":[]}))
+            "members":[],"projects":[],"project_teams":[]}))
             .unwrap(),
         )
     }));
@@ -99,7 +99,7 @@ fn verified_owner_dispatches_snapshot_who_operation_inbox_and_all_current_writes
         assert!(response.get("result").is_some(), "{method}: {response}");
     }
     let rows: Value = serde_json::from_str(include_str!("operations.json")).unwrap();
-    assert_eq!(rows.as_array().unwrap().len(), 45);
+    assert_eq!(rows.as_array().unwrap().len(), 43);
     for row in rows.as_array().unwrap() {
         let method = row["method"].as_str().unwrap();
         let request = signed(&shared, method, row["params"].clone());

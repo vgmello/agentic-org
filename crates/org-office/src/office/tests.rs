@@ -619,8 +619,9 @@ fn the_projection_holds_no_form_of_the_ca_key() {
     }
 }
 
-/// `team.create` from the creator answers; every other organization command is
-/// `unsupported`; `who` and the snapshot read the projection.
+/// All implemented organization-family commands commit through `organization::records`;
+/// unbuilt HR/project commands return `unsupported`; `who` and `org_snapshot` omit archived
+/// teams and deactivated people.
 #[test]
 fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_domains() {
     use org_proto::org::{
@@ -629,6 +630,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         TeamSetLeadParams, TeamSetTitleParams,
     };
     const PERSON_A: &str = "019a0000-0000-7000-8000-0000000000a1";
+    let cmd = |n: u32| format!("01HZY8M6V2Q3D4E5F{n:07}00");
     let office = Office::for_test(TestOffice::default());
     // 1. Create two teams under TOP_TEAM.
     let created = office
@@ -653,7 +655,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::TeamRename(TeamRenameParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000300".into(),
+                command_id: cmd(300),
                 team_id: TEAM_A.into(),
                 expected_version: 1,
                 name: "Platform".into(),
@@ -667,7 +669,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::MemberAddPerson(MemberAddPersonParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000301".into(),
+                command_id: cmd(301),
                 member_id: PERSON_A.into(),
                 name: "Ada Lovelace".into(),
                 contact: Some("ada@example.test".into()),
@@ -681,7 +683,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000302".into(),
+                command_id: cmd(302),
                 member_id: PERSON_A.into(),
                 expected_version: 1,
                 name: Some("Ada Byron".into()),
@@ -695,7 +697,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::TeamSetTitle(TeamSetTitleParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000303".into(),
+                command_id: cmd(303),
                 membership_id: PERSON_A.into(),
                 expected_version: 2,
                 title_in_team: Some("Principal Engineer".into()),
@@ -707,7 +709,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000304".into(),
+                command_id: cmd(304),
                 member_id: PERSON_A.into(),
                 expected_version: 3,
                 reports_to_member_id: Some(CREATOR.into()),
@@ -719,7 +721,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::TeamSetLead(TeamSetLeadParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000305".into(),
+                command_id: cmd(305),
                 team_id: TEAM_A.into(),
                 expected_version: 2,
                 lead_member_id: Some(PERSON_A.into()),
@@ -732,7 +734,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::TeamSetLead(TeamSetLeadParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000306".into(),
+                command_id: cmd(306),
                 team_id: TEAM_A.into(),
                 expected_version: 3,
                 lead_member_id: None,
@@ -744,7 +746,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::MemberMove(MemberMoveParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000307".into(),
+                command_id: cmd(307),
                 membership_id: PERSON_A.into(),
                 expected_version: 4,
                 new_membership_id: PERSON_A.into(),
@@ -754,11 +756,17 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         )
         .unwrap()
         .unwrap();
+    // Before deactivation, PERSON_A is active in TEAM_B and visible in snapshot & directory.
+    let mid = office.org_snapshot().unwrap();
+    assert!(mid
+        .members
+        .iter()
+        .any(|m| m.id == PERSON_A && m.home_team_id.as_deref() == Some(TEAM_B)));
     office
         .submit_org(
             CREATOR,
             OrgCommand::TeamMove(TeamMoveParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000308".into(),
+                command_id: cmd(308),
                 team_id: TEAM_A.into(),
                 expected_version: 4,
                 owner_team_id: Some(TEAM_B.into()),
@@ -770,7 +778,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::TeamDelete(TeamDeleteParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000309".into(),
+                command_id: cmd(309),
                 team_id: TEAM_A.into(),
                 expected_version: 5,
             }),
@@ -781,7 +789,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::MemberRemove(MemberRemoveParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000310".into(),
+                command_id: cmd(310),
                 member_id: PERSON_A.into(),
                 expected_version: 5,
             }),
@@ -793,7 +801,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .submit_org(
             CREATOR,
             OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
-                command_id: "01HZY8M6V2Q3D4E5F000000311".into(),
+                command_id: cmd(311),
                 project_team_id: "019a0000-0000-7000-8000-0000000000d1".into(),
                 project_id: "019a0000-0000-7000-8000-0000000000d2".into(),
                 team_id: TEAM_B.into(),
@@ -810,12 +818,12 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         .map(|m| m.id.as_str())
         .collect();
     assert_eq!(owners, [CREATOR]);
-    assert!(snapshot
-        .members
-        .iter()
-        .any(|m| m.id == PERSON_A && m.home_team_id.as_deref() == Some(TEAM_B)));
+    // Archived TEAM_A and deactivated PERSON_A are excluded from snapshot and directory.
+    assert!(!snapshot.teams.iter().any(|t| t.id == TEAM_A));
+    assert!(!snapshot.members.iter().any(|m| m.id == PERSON_A));
     let who = office.who(&WhoParams::default()).unwrap().unwrap();
     assert!(who.members.iter().any(|c| c.id == CREATOR));
+    assert!(!who.members.iter().any(|c| c.id == PERSON_A));
     office.close().unwrap();
 }
 

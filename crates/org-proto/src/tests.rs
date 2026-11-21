@@ -735,8 +735,6 @@ fn org_wire_names_are_pinned() {
         (TeamMove::METHOD, "team.move"),
         (TeamSetLead::METHOD, "team.set_lead"),
         (TeamDelete::METHOD, "team.delete"),
-        (TeamAddMember::METHOD, "team.add_member"),
-        (TeamRemoveMember::METHOD, "team.remove_member"),
         (TeamSetTitle::METHOD, "team.set_title"),
         (MemberAddPerson::METHOD, "member.add_person"),
         (MemberAddAgent::METHOD, "member.add_agent"),
@@ -850,13 +848,6 @@ fn snapshot_and_changes_round_trip_and_unknown_changes_are_tolerated() {
             version: 2,
         }],
         members: vec![],
-        memberships: vec![Membership {
-            id: "ms1".into(),
-            team_id: "t1".into(),
-            member_id: "a1".into(),
-            title_in_team: None,
-            version: 1,
-        }],
         projects: vec![ProjectSummary::new("p1", "Checkout")],
         project_teams: vec![ProjectTeam {
             id: "pt1".into(),
@@ -864,7 +855,6 @@ fn snapshot_and_changes_round_trip_and_unknown_changes_are_tolerated() {
             team_id: "t1".into(),
             version: 1,
         }],
-        areas: vec![],
     };
     let v = serde_json::to_value(Response::ok::<OrgSnapshotCall>(1, &snap).unwrap()).unwrap();
     assert_eq!(v["result"]["teams"][0]["name"], "Product");
@@ -1351,7 +1341,7 @@ fn a_runtime_from_a_newer_build_never_stops_a_member_a_change_or_a_snapshot_deco
 
         let snapshot: OrgSnapshot = serde_json::from_value(json!({
             "position": {"epoch": 1, "seq": 1},
-            "teams": [], "members": [member], "memberships": [],
+            "teams": [], "members": [member],
         }))
         .unwrap_or_else(|e| panic!("runtime {runtime} broke the snapshot: {e}"));
         assert_eq!(snapshot.members.len(), 1);
@@ -1382,24 +1372,28 @@ fn agent_limits_are_pinned() {
 }
 
 #[test]
-fn the_three_changes_of_a_member_move_that_leaves_a_led_team_have_these_wire_shapes() {
-    // What the contract says HQ emits when the member led the team it leaves: three changes in
-    // one event. This pins the shapes of those changes only; the move itself is HQ's, and is
-    // tested where it is implemented.
+fn the_changes_of_a_member_move_that_leaves_a_led_team_have_these_wire_shapes() {
+    // What the contract says HQ emits when the member led the team it leaves: the moved member
+    // (updated home_team_id) and the team whose lead was cleared.
     let changed = OrgChangedData {
         position: Position { epoch: 1, seq: 9 },
         command_id: "01C".into(),
         changes: vec![
-            OrgChange::MembershipRemoved {
-                membership_id: "ms1".into(),
-            },
-            OrgChange::MembershipUpserted {
-                membership: Membership {
-                    id: "ms2".into(),
-                    team_id: "t2".into(),
-                    member_id: "a1".into(),
+            OrgChange::MemberUpserted {
+                member: Member {
+                    id: "a1".into(),
+                    kind: MemberKind::Agent,
+                    name: "Ada".into(),
+                    handle: Some("ada".into()),
+                    home_team_id: Some("t2".into()),
                     title_in_team: None,
-                    version: 1,
+                    contact: None,
+                    owner: false,
+                    office_id: None,
+                    agent: None,
+                    reports_to_member_id: None,
+                    created_at: None,
+                    version: 2,
                 },
             },
             OrgChange::TeamUpserted {
@@ -1420,9 +1414,9 @@ fn the_three_changes_of_a_member_move_that_leaves_a_led_team_have_these_wire_sha
             "position": {"epoch": 1, "seq": 9},
             "command_id": "01C",
             "changes": [
-                {"type": "membership_removed", "membership_id": "ms1"},
-                {"type": "membership_upserted", "membership": {
-                    "id": "ms2", "team_id": "t2", "member_id": "a1", "version": 1}},
+                {"type": "member_upserted", "member": {
+                    "id": "a1", "kind": "agent", "name": "Ada", "handle": "ada",
+                    "home_team_id": "t2", "version": 2}},
                 {"type": "team_upserted", "team": {
                     "id": "t1", "name": "Platform", "version": 3}},
             ],
@@ -3629,14 +3623,13 @@ fn the_project_record_replaces_project_summary_and_old_records_still_read() {
 }
 
 #[test]
-fn an_org_snapshot_without_areas_still_reads_and_areas_round_trip() {
+fn an_org_snapshot_reads_projects_and_areas_round_trip() {
     let old: OrgSnapshot = serde_json::from_value(json!({
-        "position": {"epoch": 1, "seq": 7}, "teams": [], "members": [], "memberships": [],
+        "position": {"epoch": 1, "seq": 7}, "teams": [], "members": [],
         "projects": [{"id": "p1", "name": "Checkout"}],
         "project_teams": []
     }))
     .unwrap();
-    assert!(old.areas.is_empty());
     assert_eq!(old.projects, vec![Project::new("p1", "Checkout")]);
 
     let general = Area {
@@ -3666,14 +3659,15 @@ fn an_org_snapshot_without_areas_still_reads_and_areas_round_trip() {
         json!({"id": "ar1", "project_id": "p1", "name": "General", "team_id": "t1",
                "general": true, "version": 1})
     );
-    let snapshot = OrgSnapshot {
-        areas: vec![general, tombstone],
-        ..old
-    };
-    let v = serde_json::to_value(&snapshot).unwrap();
-    assert_eq!(v["areas"][1]["deleted"], true);
-    assert_eq!(v["areas"][1]["replaced_by"], "ar1");
-    assert_eq!(serde_json::from_value::<OrgSnapshot>(v).unwrap(), snapshot);
+    let tombstone_value = serde_json::to_value(&tombstone).unwrap();
+    assert_eq!(tombstone_value["deleted"], true);
+    assert_eq!(tombstone_value["replaced_by"], "ar1");
+    assert_eq!(
+        serde_json::from_value::<Area>(tombstone_value).unwrap(),
+        tombstone
+    );
+    let v = serde_json::to_value(&old).unwrap();
+    assert_eq!(serde_json::from_value::<OrgSnapshot>(v).unwrap(), old);
 }
 
 #[test]

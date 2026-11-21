@@ -212,10 +212,8 @@
             },
             "teams": [],
             "members": [],
-            "memberships": [],
             "projects": [],
-            "project_teams": [],
-            "areas": []
+            "project_teams": []
           },
           "resume_cursor": "fixture-org-position-4"
         }
@@ -231,10 +229,8 @@
               },
               "teams": [],
               "members": [],
-              "memberships": [],
               "projects": [],
-              "project_teams": [],
-              "areas": []
+              "project_teams": []
             },
             "resume_cursor": "fixture-org-position-4"
           }
@@ -413,10 +409,8 @@
             },
             "teams": [],
             "members": [],
-            "memberships": [],
             "projects": [],
-            "project_teams": [],
-            "areas": []
+            "project_teams": []
           }
         }
       },
@@ -436,10 +430,8 @@
             },
             "teams": [],
             "members": [],
-            "memberships": [],
             "projects": [],
-            "project_teams": [],
-            "areas": []
+            "project_teams": []
           },
           "resume_cursor": ""
         }

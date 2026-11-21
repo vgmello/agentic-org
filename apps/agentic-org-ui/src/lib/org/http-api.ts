@@ -49,8 +49,7 @@ function isSnapshot(value: unknown): value is OrgSnapshot {
 		typeof s.position.epoch === 'number' &&
 		typeof s.position.seq === 'number' &&
 		Array.isArray(s.teams) &&
-		Array.isArray(s.members) &&
-		Array.isArray(s.memberships)
+		Array.isArray(s.members)
 	);
 }
 
@@ -97,7 +96,21 @@ export function createHttpOrgApi({
 					message: 'The organization snapshot could not be read.'
 				} satisfies AppError;
 			}
-			return { snapshot: normalizeKinds(snapshot), sample: false };
+			const hydrated: OrgSnapshot = {
+				...snapshot,
+				memberships: Array.isArray(snapshot.memberships)
+					? snapshot.memberships
+					: snapshot.members
+							.filter((m) => typeof m.home_team_id === 'string' && m.home_team_id.length > 0)
+							.map((m) => ({
+								id: m.id,
+								team_id: m.home_team_id!,
+								member_id: m.id,
+								...(m.title_in_team ? { title_in_team: m.title_in_team } : {}),
+								version: m.version
+							}))
+			};
+			return { snapshot: normalizeKinds(hydrated), sample: false };
 		},
 
 		async command(

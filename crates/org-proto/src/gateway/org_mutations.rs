@@ -186,17 +186,6 @@ mutations! {
         team_id: String,
         expected_version: ExpectedVersion,
     };
-    TeamAddMember, TeamAddMemberParams, TeamAddMember, TeamAddMemberParams, "team.add_member" {
-        membership_id: String,
-        team_id: String,
-        member_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        title_in_team: Option<String>,
-    };
-    TeamRemoveMember, TeamRemoveMemberParams, TeamRemoveMember, TeamRemoveMemberParams, "team.remove_member" {
-        membership_id: String,
-        expected_version: ExpectedVersion,
-    };
     TeamSetTitle, TeamSetTitleParams, TeamSetTitle, TeamSetTitleParams, "team.set_title" {
         membership_id: String,
         expected_version: ExpectedVersion,

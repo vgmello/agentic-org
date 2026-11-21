@@ -617,19 +617,15 @@ const memberReader = object({
 	id: text,
 	kind: word(['agent', 'person'] as const),
 	name: text,
+	handle: optional(text),
+	home_team_id: optional(text),
+	title_in_team: optional(text),
 	contact: optional(text),
 	owner: omittedFalse,
 	office_id: optional(text),
 	agent: optional(agentReader),
 	reports_to_member_id: optional(text),
 	created_at: optional(text),
-	version: readSafeInteger
-});
-const membershipReader = object({
-	id: text,
-	team_id: text,
-	member_id: text,
-	title_in_team: optional(text),
 	version: readSafeInteger
 });
 const projectTeamReader = object({
@@ -661,26 +657,13 @@ const projectReader = object({
 	created_at: optional(text),
 	version: defaulted(readSafeInteger, () => 0)
 });
-const areaReader = object({
-	id: text,
-	project_id: text,
-	name: text,
-	team_id: optional(text),
-	lead_member_id: optional(text),
-	general: omittedFalse,
-	deleted: omittedFalse,
-	replaced_by: optional(text),
-	version: readSafeInteger
-});
 export const readOrgSnapshot = checked(
 	object({
 		position: readPosition,
 		teams: array(teamReader),
 		members: array(memberReader),
-		memberships: array(membershipReader),
 		projects: defaulted(array(projectReader), () => []),
-		project_teams: defaulted(array(projectTeamReader), () => []),
-		areas: defaulted(array(areaReader), () => [])
+		project_teams: defaulted(array(projectTeamReader), () => [])
 	})
 );
 const cursor = nonempty;

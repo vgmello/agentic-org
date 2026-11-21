@@ -464,18 +464,11 @@ fn the_snapshot_of_the_golden_creation() {
         assert_eq!((hr.agent.clone(), hr.office_id.clone()), (None, None));
         assert_eq!(hr.reports_to_member_id, None);
 
-        // One membership each, of the home team.
-        let mut memberships: Vec<_> = snapshot
-            .memberships
-            .iter()
-            .map(|m| (m.member_id.clone(), m.team_id.clone(), m.id.clone()))
-            .collect();
-        memberships.sort();
+        // Each employee belongs to the top team as its home team.
         let home = id(TOP_TEAM).to_string();
-        let expected = |n: u64| (id(n).to_string(), home.clone(), id(n).to_string());
-        assert_eq!(memberships, vec![expected(CREATOR), expected(HR)]);
+        assert_eq!(creator.home_team_id.as_deref(), Some(home.as_str()));
+        assert_eq!(hr.home_team_id.as_deref(), Some(home.as_str()));
         assert!(snapshot.projects.is_empty() && snapshot.project_teams.is_empty());
-        assert!(snapshot.areas.is_empty());
 
         // Another owner is told apart by the ID alone.
         let (other, _) = store.read(DirectorySnapshot { owner: id(HR) }).unwrap();
@@ -666,10 +659,6 @@ fn team_create_refusals_carry_the_protocols_codes() {
         let creator = id(CREATOR).to_string();
         let ask = |member: &str, request: TeamCreateParams| wire_create(&store, member, &request);
 
-        // A top-level team arrives with B2; it is never read as "under the top team".
-        let top = ask(&creator, params(1, 0x21, None)).expect_err("refused");
-        assert_eq!(top.code, ErrorCode::InvalidRequest);
-        assert!(top.message.contains("B2"), "{top:?}");
         assert_eq!(
             code(ask(&creator, params(2, 0x21, Some(0x99)))),
             ErrorCode::NotFound
@@ -696,6 +685,11 @@ fn team_create_refusals_carry_the_protocols_codes() {
         // None of these recorded anything or took a generation.
         assert_eq!(store.read(DirectoryGeneration).unwrap().0, 1, "{engine:?}");
         assert_eq!(directory(&store).teams.len(), 1);
+
+        // A top-level team commits cleanly with no parent.
+        let top = ask(&creator, params(1, 0x20, None)).expect("top-level team");
+        assert_eq!(top.status, org_proto::org::CommandStatus::Committed);
+        assert_eq!(directory(&store).teams.len(), 2);
 
         // An archived parent is the wrong state: a recorded rejection, invalid_request
         // (the wire contract's code for it), and the same on a retry.

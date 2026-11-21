@@ -56,16 +56,14 @@ impl Source for OrgSource {
                 .is_none_or(|kinds| kinds.contains(&InboxKind::Problem))
         {
             for member in members {
-                let teams: Vec<_> = snapshot
-                    .memberships
-                    .iter()
-                    .filter(|membership| membership.member_id == member.id)
-                    .map(|membership| membership.team_id.as_str())
-                    .collect();
-                if query.team.is_some_and(|team| !teams.contains(&team))
+                let home_team = member.home_team_id.as_deref();
+                if query.team.is_some_and(|team| home_team != Some(team))
                     || query.project.is_some_and(|project| {
-                        !snapshot.project_teams.iter().any(|link| {
-                            link.project_id == project && teams.contains(&link.team_id.as_str())
+                        !home_team.is_some_and(|team_id| {
+                            snapshot
+                                .project_teams
+                                .iter()
+                                .any(|link| link.project_id == project && link.team_id == team_id)
                         })
                     })
                 {

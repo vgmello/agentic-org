@@ -146,62 +146,6 @@
       }
     },
     {
-      "name": "team.add_member all optional fields",
-      "reader": "Rust+TS",
-      "operation": "team.add_member",
-      "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/add-member",
-      "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
-        "scope": {
-          "kind": "organization",
-          "instance_id": "01M72N8MG00000000000000001",
-          "org_id": "01M72N8MG00000000000000003"
-        },
-        "params": {
-          "membership_id": "01M72N8MG0000000000000000A",
-          "team_id": "01M72N8MG00000000000000007",
-          "member_id": "01M72N8MG00000000000000009",
-          "title_in_team": "Staff engineer"
-        }
-      },
-      "native": {
-        "method": "team.add_member",
-        "params": {
-          "command_id": "01M72N8MG00000000000000006",
-          "membership_id": "01M72N8MG0000000000000000A",
-          "team_id": "01M72N8MG00000000000000007",
-          "member_id": "01M72N8MG00000000000000009",
-          "title_in_team": "Staff engineer"
-        }
-      }
-    },
-    {
-      "name": "team.remove_member all optional fields",
-      "reader": "Rust+TS",
-      "operation": "team.remove_member",
-      "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/remove-member",
-      "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
-        "scope": {
-          "kind": "organization",
-          "instance_id": "01M72N8MG00000000000000001",
-          "org_id": "01M72N8MG00000000000000003"
-        },
-        "params": {
-          "membership_id": "01M72N8MG0000000000000000A",
-          "expected_version": 3
-        }
-      },
-      "native": {
-        "method": "team.remove_member",
-        "params": {
-          "command_id": "01M72N8MG00000000000000006",
-          "membership_id": "01M72N8MG0000000000000000A",
-          "expected_version": 3
-        }
-      }
-    },
-    {
       "name": "team.set_title all optional fields",
       "reader": "Rust+TS",
       "operation": "team.set_title",
@@ -276,7 +220,9 @@
         "params": {
           "member_id": "01M72N8MG00000000000000009",
           "name": "Pat",
-          "contact": "pat@example.test"
+          "contact": "pat@example.test",
+          "handle": "pat",
+          "home_team_id": "01M72N8MG00000000000000007"
         }
       },
       "native": {
@@ -285,7 +231,9 @@
           "command_id": "01M72N8MG00000000000000006",
           "member_id": "01M72N8MG00000000000000009",
           "name": "Pat",
-          "contact": "pat@example.test"
+          "contact": "pat@example.test",
+          "handle": "pat",
+          "home_team_id": "01M72N8MG00000000000000007"
         }
       }
     },

@@ -273,7 +273,7 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
         org_proto::ErrorCode::InvalidRequest,
         "the same id with other params"
     );
-    // A top-level team arrives with B2: never reinterpreted.
+    // Top-level teams commit with `owner_team_id: None`.
     let top_level = owner
         .call::<org_proto::org::TeamCreate>(&org_proto::org::TeamCreateParams {
             command_id: command_id(3),
@@ -281,8 +281,8 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
             name: "Elsewhere".into(),
             owner_team_id: None,
         })
-        .unwrap_err();
-    assert_eq!(top_level.code, org_proto::ErrorCode::InvalidRequest);
+        .unwrap();
+    assert_eq!(top_level.status, org_proto::org::CommandStatus::Committed);
     // Operation lookup is `unsupported` until B2 maps the store's receipts. What is refused
     // before the lookup is unchanged.
     let get = |id: &str| org_proto::OperationGetParams {
@@ -311,7 +311,7 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
     team(&mut owner, &refusal_id, " ").unwrap_err();
     let after = snapshot(&mut owner);
     assert_eq!(platform(&after).unwrap().name, "Platform");
-    assert_eq!(after.teams.len(), 2);
+    assert_eq!(after.teams.len(), 3);
     drop((client, reader, owner));
     first.stop();
 

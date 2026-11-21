@@ -47,25 +47,6 @@
   },
   {
     "group": "org",
-    "method": "team.add_member",
-    "params": {
-      "membership_id": "fixture",
-      "team_id": "fixture",
-      "member_id": "fixture",
-      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-    }
-  },
-  {
-    "group": "org",
-    "method": "team.remove_member",
-    "params": {
-      "membership_id": "fixture",
-      "expected_version": 1,
-      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-    }
-  },
-  {
-    "group": "org",
     "method": "team.set_title",
     "params": {
       "membership_id": "fixture",

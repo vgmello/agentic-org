@@ -101,17 +101,18 @@ pub fn team_create_request(
 ) -> Result<TeamCreateRequest, ApiError> {
     let (operation_id, by) = parse_header(member, &params.command_id)?;
     let team = require_id(&params.team_id, "team_id")?;
-    let Some(parent) = &params.owner_team_id else {
-        return Err(invalid("a top-level team arrives on the wire with B2.2"));
-    };
-    let parent = require_id(parent, "owner_team_id")?;
+    let parent = params
+        .owner_team_id
+        .as_deref()
+        .map(|parent| require_id(parent, "owner_team_id"))
+        .transpose()?;
     Ok(StructureRequest {
         operation_id,
         by,
         command: CreateTeam {
             id: team,
             name: params.name.clone(),
-            parent: Some(parent),
+            parent,
         },
     })
 }
@@ -189,14 +190,29 @@ fn team_delete_request(
 fn add_person_request(
     member: &str,
     params: &MemberAddPersonParams,
-    default_home_team: Option<Id>,
-) -> Result<StructureRequest<AddPerson>, ApiError> {
-    let (operation_id, by) = parse_header(member, &params.command_id)?;
-    let id = require_id(&params.member_id, "member_id")?;
+    default_home_team: impl FnOnce() -> Result<Option<Id>, StoreError>,
+) -> Result<Result<StructureRequest<AddPerson>, ApiError>, StoreError> {
+    let (operation_id, by) = match parse_header(member, &params.command_id) {
+        Ok(header) => header,
+        Err(err) => return Ok(Err(err)),
+    };
+    let id = match require_id(&params.member_id, "member_id") {
+        Ok(id) => id,
+        Err(err) => return Ok(Err(err)),
+    };
     let home_team = match &params.home_team_id {
-        Some(team) => require_id(team, "home_team_id")?,
-        None => default_home_team
-            .ok_or_else(|| invalid("home_team_id is required when no top-level team exists"))?,
+        Some(team) => match require_id(team, "home_team_id") {
+            Ok(id) => id,
+            Err(err) => return Ok(Err(err)),
+        },
+        None => match default_home_team()? {
+            Some(id) => id,
+            None => {
+                return Ok(Err(invalid(
+                    "home_team_id is required when no top-level team exists",
+                )))
+            }
+        },
     };
     let handle = params
         .handle
@@ -204,11 +220,11 @@ fn add_person_request(
         .unwrap_or_else(|| derive_handle(&params.name));
     let mut command = AddPerson::new(id, &handle, &params.name, home_team);
     command.contact = params.contact.clone();
-    Ok(StructureRequest {
+    Ok(Ok(StructureRequest {
         operation_id,
         by,
         command,
-    })
+    }))
 }
 
 fn update_person_request(
@@ -277,6 +293,11 @@ fn move_person_request(
     params: &MemberMoveParams,
 ) -> Result<StructureRequest<MovePerson>, ApiError> {
     let (operation_id, by) = parse_header(member, &params.command_id)?;
+    if params.title_in_team.is_some() {
+        return Err(invalid(
+            "title_in_team cannot be changed by member.move; use team.set_title",
+        ));
+    }
     let id = require_id(&params.membership_id, "membership_id")?;
     let home_team = require_id(&params.to_team_id, "to_team_id")?;
     Ok(StructureRequest {
@@ -306,9 +327,8 @@ fn remove_person_request(
     })
 }
 
-/// Decodes any implemented [`OrgCommand`] into a typed [`WireOp`]. Retired many-to-many
-/// membership commands return `invalid_request`; unbuilt HR/project commands return
-/// `unsupported`.
+/// Decodes any implemented [`OrgCommand`] into a typed [`WireOp`]. Unbuilt HR/project
+/// commands return `unsupported`.
 pub fn parse_command(
     member: &str,
     command: &OrgCommand,
@@ -321,12 +341,7 @@ pub fn parse_command(
         OrgCommand::TeamMove(p) => team_move_request(member, p).map(WireOp::MoveTeam),
         OrgCommand::TeamDelete(p) => team_delete_request(member, p).map(WireOp::ArchiveTeam),
         OrgCommand::MemberAddPerson(p) => {
-            let team = if p.home_team_id.is_some() {
-                None
-            } else {
-                default_home_team()?
-            };
-            add_person_request(member, p, team).map(WireOp::AddPerson)
+            add_person_request(member, p, default_home_team)?.map(WireOp::AddPerson)
         }
         OrgCommand::MemberUpdatePerson(p) => {
             update_person_request(member, p).map(WireOp::UpdatePerson)
@@ -339,9 +354,6 @@ pub fn parse_command(
         OrgCommand::MemberRemove(p) => {
             remove_person_request(member, p).map(WireOp::DeactivatePerson)
         }
-        OrgCommand::TeamAddMember(_) | OrgCommand::TeamRemoveMember(_) => Err(invalid(
-            "employees belong to one home team: use member.add_person or member.move",
-        )),
         OrgCommand::MemberAddAgent(_)
         | OrgCommand::MemberUpdateAgent(_)
         | OrgCommand::MemberSetAgentStatus(_)
@@ -500,7 +512,10 @@ mod tests {
             owner_team_id: None,
             ..params()
         };
-        assert_eq!(refused(top, &member), ErrorCode::InvalidRequest);
+        assert_eq!(
+            team_create_request(&member, &top).unwrap().command.parent,
+            None
+        );
         let lower = TeamCreateParams {
             command_id: "01arz3ndektsv4rrffq69g5fav".into(),
             ..params()
@@ -595,6 +610,138 @@ mod tests {
         assert!(
             matches!(garbled, Err(StoreError::Internal(_))),
             "{garbled:?}"
+        );
+    }
+
+    #[test]
+    fn derive_handle_normalizes_punctuation_and_non_ascii() {
+        assert_eq!(derive_handle("Ada Lovelace"), "ada-lovelace");
+        assert_eq!(
+            derive_handle("  Dr. Mary_Jane--O'Connor! "),
+            "dr-mary-jane-oconnor"
+        );
+        assert_eq!(derive_handle("Éva 42"), "va-42");
+        assert_eq!(derive_handle("   ---   "), "");
+    }
+
+    #[test]
+    fn parse_command_validates_all_wired_operations_and_defers_default_home_team_read() {
+        let actor = id(0x12).to_string();
+        let cmd_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string();
+        let no_read = || -> Result<Option<Id>, StoreError> {
+            panic!("default_home_team should not be queried")
+        };
+
+        // Invalid header on MemberAddPerson must NOT call default_home_team().
+        let bad_add = OrgCommand::MemberAddPerson(MemberAddPersonParams {
+            command_id: "bad".into(),
+            member_id: id(0x31).to_string(),
+            name: "Ada".into(),
+            contact: None,
+            handle: None,
+            home_team_id: None,
+        });
+        assert_eq!(
+            parse_command(&actor, &bad_add, no_read)
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidRequest
+        );
+
+        // Omitted handle and home_team_id fall back cleanly.
+        let fallback_add = OrgCommand::MemberAddPerson(MemberAddPersonParams {
+            command_id: cmd_id.clone(),
+            member_id: id(0x31).to_string(),
+            name: "Ada Lovelace".into(),
+            contact: Some("ada@example.test".into()),
+            handle: None,
+            home_team_id: None,
+        });
+        match parse_command(&actor, &fallback_add, || Ok(Some(id(0x11))))
+            .unwrap()
+            .unwrap()
+        {
+            WireOp::AddPerson(req) => {
+                assert_eq!(req.command.handle, "ada-lovelace");
+                assert_eq!(req.command.home_team, id(0x11));
+                assert_eq!(req.command.contact.as_deref(), Some("ada@example.test"));
+            }
+            other => panic!("unexpected op: {other:?}"),
+        }
+
+        // MemberUpdatePerson refuses contact + clear_contact together, maps Keep/Set/Clear.
+        let both = OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+            command_id: cmd_id.clone(),
+            member_id: id(0x31).to_string(),
+            expected_version: 1,
+            name: None,
+            contact: Some("a@b".into()),
+            clear_contact: true,
+        });
+        assert_eq!(
+            parse_command(&actor, &both, no_read)
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidRequest
+        );
+        let clear = OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+            command_id: cmd_id.clone(),
+            member_id: id(0x31).to_string(),
+            expected_version: 2,
+            name: Some("Ada".into()),
+            contact: None,
+            clear_contact: true,
+        });
+        match parse_command(&actor, &clear, no_read).unwrap().unwrap() {
+            WireOp::UpdatePerson(req) => {
+                assert_eq!(req.command.name.as_deref(), Some("Ada"));
+                assert_eq!(req.command.contact, Edit::Clear);
+            }
+            other => panic!("unexpected op: {other:?}"),
+        }
+
+        // TeamSetTitle and MemberSetReportsTo clear when None.
+        let clear_title = OrgCommand::TeamSetTitle(TeamSetTitleParams {
+            command_id: cmd_id.clone(),
+            membership_id: id(0x31).to_string(),
+            expected_version: 2,
+            title_in_team: None,
+        });
+        match parse_command(&actor, &clear_title, no_read)
+            .unwrap()
+            .unwrap()
+        {
+            WireOp::UpdatePerson(req) => assert_eq!(req.command.title_in_team, Edit::Clear),
+            other => panic!("unexpected op: {other:?}"),
+        }
+        let clear_mgr = OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
+            command_id: cmd_id.clone(),
+            member_id: id(0x31).to_string(),
+            expected_version: 2,
+            reports_to_member_id: None,
+        });
+        match parse_command(&actor, &clear_mgr, no_read).unwrap().unwrap() {
+            WireOp::UpdatePerson(req) => assert_eq!(req.command.manager, Edit::Clear),
+            other => panic!("unexpected op: {other:?}"),
+        }
+
+        // MemberMove refuses non-None title_in_team instead of silently dropping it.
+        let move_with_title = OrgCommand::MemberMove(MemberMoveParams {
+            command_id: cmd_id.clone(),
+            membership_id: id(0x31).to_string(),
+            expected_version: 2,
+            new_membership_id: id(0x31).to_string(),
+            to_team_id: id(0x22).to_string(),
+            title_in_team: Some("Lead".into()),
+        });
+        assert_eq!(
+            parse_command(&actor, &move_with_title, no_read)
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidRequest
         );
     }
 }

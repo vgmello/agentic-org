@@ -3,12 +3,12 @@
 //! it reads through the read port and names no store and no engine.
 //!
 //! What the records do not hold yet, the snapshot leaves empty until the family that owns
-//! it is built: projects, project teams and areas; an agent's profile and its office
-//! (agents are hired through HR from B2 on, so the built-in HR lead has neither, and no
-//! reader takes it for an agent waiting to be placed). Every employee is a member of one
-//! team, its home team (data contract document 01), so each has one membership.
+//! it is built: projects and project teams; an agent's profile and its office (agents are
+//! hired through HR from B2 on, so the built-in HR lead has neither, and no reader takes it
+//! for an agent waiting to be placed). Every employee belongs to one home team
+//! (`Member::home_team_id`, data contract document 01).
 
-use org_proto::org::{Member, MemberKind, Membership, OrgSnapshot, Position, Team};
+use org_proto::org::{Member, MemberKind, OrgSnapshot, Position, Team};
 use org_store::{EngineError, Id};
 
 use super::{
@@ -30,18 +30,24 @@ pub fn position(generation: u64) -> Position {
 /// the creator, as the creation binding names them (document 04).
 pub fn project(read: &impl OrganizationRead, owner: &Id) -> Result<OrgSnapshot, EngineError> {
     let generation = read.generation()?;
-    let teams = read.teams()?.into_iter().map(team).collect();
+    let teams = read
+        .teams()?
+        .into_iter()
+        .filter(|t| t.is_active())
+        .map(team)
+        .collect();
     let employees = read.employees()?;
-    let memberships = employees.iter().map(membership).collect();
-    let members = employees.iter().map(|e| member(e, owner)).collect();
+    let members = employees
+        .iter()
+        .filter(|e| e.status != records::EmployeeStatus::Inactive)
+        .map(|e| member(e, owner))
+        .collect();
     Ok(OrgSnapshot {
         position: position(generation),
         teams,
         members,
-        memberships,
         projects: Vec::new(),
         project_teams: Vec::new(),
-        areas: Vec::new(),
     })
 }
 
@@ -76,18 +82,6 @@ fn member(record: &records::Employee, owner: &Id) -> Member {
         agent: None,
         reports_to_member_id: reports_to,
         created_at: record.meta.created_at.clone(),
-        version: record.meta.revision,
-    }
-}
-
-/// An employee's membership of its home team. It has no record of its own, so it is named
-/// by its employee: each employee has exactly one.
-fn membership(record: &records::Employee) -> Membership {
-    Membership {
-        id: record.id.to_string(),
-        team_id: record.home_team_id.to_string(),
-        member_id: record.id.to_string(),
-        title_in_team: record.title_in_team.clone(),
         version: record.meta.revision,
     }
 }
