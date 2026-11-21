@@ -84,7 +84,7 @@ pub fn office_restart(
     )
 }
 
-fn connect_and_sign_in(
+pub(super) fn connect_and_sign_in(
     target: &Target<'_>,
     login: &str,
     password: AskPassword<'_>,

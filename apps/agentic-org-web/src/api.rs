@@ -117,6 +117,9 @@ pub enum Route {
     Organizations(PresentedPair),
     CreateOrganization(PresentedPair),
     OrgSnapshot(PresentedPair, String),
+    OrgProjects(PresentedPair, String, bool),
+    OrgProjectInspect(PresentedPair, String, String),
+    OrgProjectCreate(PresentedPair, String),
     OrgOffices(PresentedPair, String),
     OfficeRestart(PresentedPair, String, String),
     OrgMutation(PresentedPair, String, OrgOperation),
@@ -135,6 +138,14 @@ pub enum Call {
     Organizations(PresentedPair),
     CreateOrganization(PresentedPair, OperationId, PlanV1),
     OrgSnapshot(PresentedPair, String),
+    OrgProjects(PresentedPair, String, bool),
+    OrgProjectInspect(PresentedPair, String, String),
+    OrgProjectCreate(
+        PresentedPair,
+        String,
+        OperationId,
+        org_proto::projects::ProjectCreateWebParams,
+    ),
     OrgOffices(PresentedPair, String),
     OfficeRestart(PresentedPair, String, String, OperationId),
     OrgMutation(PresentedPair, String, OrgMutation),
@@ -171,7 +182,7 @@ struct RegisterBody {
 #[serde(deny_unknown_fields)]
 struct EmptyBody {}
 
-fn invalid() -> ApiReply {
+pub(super) fn invalid() -> ApiReply {
     ApiReply::error(
         StatusCode::BAD_REQUEST,
         WebErrorCode::InvalidRequest,
@@ -628,54 +639,8 @@ impl ApiBackend for SessionApi {
             ["api", "v1", "organizations"] if post => {
                 Route::CreateOrganization(self.pair(request)?)
             }
-            ["api", "v1", "organizations", org, "snapshot"] if get => {
-                let pair = self.pair(request)?;
-                if !org_office_launch::is_storage_id(org) {
-                    return Err(invalid());
-                }
-                Route::OrgSnapshot(pair, (*org).to_owned())
-            }
-            ["api", "v1", "organizations", org, "offices"] if get => {
-                let pair = self.pair(request)?;
-                if !org_office_launch::is_storage_id(org) {
-                    return Err(invalid());
-                }
-                Route::OrgOffices(pair, (*org).to_owned())
-            }
-            ["api", "v1", "organizations", org, "offices", office, "restart"] if post => {
-                let pair = self.pair(request)?;
-                if !org_office_launch::is_storage_id(org)
-                    || !org_office_launch::is_storage_id(office)
-                {
-                    return Err(invalid());
-                }
-                Route::OfficeRestart(pair, (*org).to_owned(), (*office).to_owned())
-            }
-            ["api", "v1", "organizations", org, "teams"] if post => {
-                let pair = self.pair(request)?;
-                if !org_office_launch::is_storage_id(org) {
-                    return Err(invalid());
-                }
-                Route::OrgMutation(pair, (*org).to_owned(), OrgOperation::TeamCreate)
-            }
-            ["api", "v1", "organizations", org, resource @ ("teams" | "members"), action]
-                if post =>
-            {
-                let Some(op) = org_routes::route_org_action(resource, action) else {
-                    return Err(not_found());
-                };
-                let pair = self.pair(request)?;
-                if !org_office_launch::is_storage_id(org) {
-                    return Err(invalid());
-                }
-                Route::OrgMutation(pair, (*org).to_owned(), op)
-            }
-            ["api", "v1", "organizations", org, "projects", "add-team" | "remove-team"] if post => {
-                let _ = self.pair(request)?;
-                if !org_office_launch::is_storage_id(org) {
-                    return Err(invalid());
-                }
-                return Err(unavailable());
+            ["api", "v1", "organizations", org, tail @ ..] => {
+                return org_routes::route_organization(self, request, org, tail, get, post, query);
             }
             ["api", "v1", "events", "stream"] if post => Route::EventsStream(self.pair(request)?),
             ["api", "v1", "operations", "host", id]
@@ -702,13 +667,6 @@ impl ApiBackend for SessionApi {
             | ["api", "v1", "session"]
             | ["api", "v1", "session", "sign-out"]
             | ["api", "v1", "organizations"]
-            | ["api", "v1", "organizations", _, "snapshot"]
-            | ["api", "v1", "organizations", _, "offices"]
-            | ["api", "v1", "organizations", _, "offices", _, "restart"]
-            | ["api", "v1", "organizations", _, "teams"]
-            | ["api", "v1", "organizations", _, "teams", "create" | "rename" | "move" | "set-lead" | "delete" | "set-title"]
-            | ["api", "v1", "organizations", _, "members", "add-person" | "update-person" | "remove" | "set-reports-to" | "move"]
-            | ["api", "v1", "organizations", _, "projects", "add-team" | "remove-team"]
             | ["api", "v1", "events", "stream"]
             | ["api", "v1", "operations", "host", _]
             | ["api", "v1", "operations", "org", _] => return Err(invalid()),
@@ -723,28 +681,18 @@ impl ApiBackend for SessionApi {
             Route::Session(pair) => empty().map(|()| Call::Session(pair))?,
             Route::Organizations(pair) => empty().map(|()| Call::Organizations(pair))?,
             Route::OrgSnapshot(pair, org) => empty().map(|()| Call::OrgSnapshot(pair, org))?,
+            Route::OrgProjects(pair, org, include_archived) => {
+                empty().map(|()| Call::OrgProjects(pair, org, include_archived))?
+            }
+            Route::OrgProjectInspect(pair, org, project) => {
+                empty().map(|()| Call::OrgProjectInspect(pair, org, project))?
+            }
+            Route::OrgProjectCreate(pair, org) => {
+                return org_routes::prepare_project_create(self, pair, org, bytes);
+            }
             Route::OrgOffices(pair, org) => empty().map(|()| Call::OrgOffices(pair, org))?,
             Route::OfficeRestart(pair, org, office) => {
-                let raw: serde_json::Value =
-                    serde_json::from_slice(bytes).map_err(|_| invalid())?;
-                let id_str = raw
-                    .get("operation_id")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                let id = organizations::host_operation_id(id_str).map_err(bad_input)?;
-                let request: gateway::OfficeRestartRequest =
-                    gateway::decode_request(bytes).map_err(|_| invalid())?;
-                let target = Scope::Office {
-                    instance_id: self.host.instance().to_owned(),
-                    org_id: org.clone(),
-                    office_id: office.clone(),
-                };
-                request.scope.check_target(&target).map_err(|_| invalid())?;
-                return Ok(PreparedCall::mutation(
-                    Call::OfficeRestart(pair, org, office, id.clone()),
-                    id,
-                    bytes.len(),
-                ));
+                return org_routes::prepare_office_restart(self, pair, org, office, bytes);
             }
             Route::OrgMutation(pair, org, op) => {
                 let scope = Scope::Organization {
@@ -824,6 +772,33 @@ impl ApiBackend for SessionApi {
             Call::OrgSnapshot(pair, org_id) => AsyncDispatch::Async {
                 future: Box::pin(async move {
                     WebReply::Json(org_routes::execute_org_snapshot(&self, pair, &org_id).await)
+                }),
+                streaming: false,
+            },
+            Call::OrgProjects(pair, org_id, include_archived) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_projects_list(&self, pair, &org_id, include_archived)
+                            .await,
+                    )
+                }),
+                streaming: false,
+            },
+            Call::OrgProjectInspect(pair, org_id, project_ref) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_project_inspect(&self, pair, &org_id, &project_ref)
+                            .await,
+                    )
+                }),
+                streaming: false,
+            },
+            Call::OrgProjectCreate(pair, org_id, op_id, params) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_project_create(&self, pair, &org_id, op_id, params)
+                            .await,
+                    )
                 }),
                 streaming: false,
             },
@@ -953,6 +928,9 @@ impl ApiBackend for SessionApi {
                 )
             }
             Call::OrgSnapshot(_, _)
+            | Call::OrgProjects(_, _, _)
+            | Call::OrgProjectInspect(_, _, _)
+            | Call::OrgProjectCreate(_, _, _, _)
             | Call::OrgOffices(_, _)
             | Call::OfficeRestart(_, _, _, _)
             | Call::OrgMutation(_, _, _)

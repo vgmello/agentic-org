@@ -22,7 +22,7 @@ pub mod create_team;
 pub mod deactivate_person;
 pub mod move_person;
 pub mod move_team;
-mod shared;
+pub(crate) mod shared;
 pub mod update_person;
 pub mod update_team;
 
@@ -40,7 +40,7 @@ pub use move_team::MoveTeam;
 pub use update_person::{Edit, UpdatePerson};
 pub use update_team::UpdateTeam;
 
-use super::ports::OrganizationRead;
+use crate::projects::ports::ProjectsRead;
 
 /// Every operation of the family. The one place their acknowledgement classes are
 /// declared (ADR-0014).
@@ -55,10 +55,13 @@ pub enum Op {
     UpdatePerson,
     MovePerson,
     DeactivatePerson,
+    CreateProject,
+    AddProjectTeam,
+    RemoveProjectTeam,
 }
 
 impl Op {
-    pub const ALL: [Op; 9] = [
+    pub const ALL: [Op; 12] = [
         Op::CreateOrganization,
         Op::CreateTeam,
         Op::UpdateTeam,
@@ -68,6 +71,9 @@ impl Op {
         Op::UpdatePerson,
         Op::MovePerson,
         Op::DeactivatePerson,
+        Op::CreateProject,
+        Op::AddProjectTeam,
+        Op::RemoveProjectTeam,
     ];
 
     /// Structure changes answer only once durable (ADR-0014).
@@ -87,6 +93,9 @@ impl Op {
             Op::UpdatePerson => "organization.update_person",
             Op::MovePerson => "organization.move_person",
             Op::DeactivatePerson => "organization.deactivate_person",
+            Op::CreateProject => "organization.create_project",
+            Op::AddProjectTeam => "organization.add_project_team",
+            Op::RemoveProjectTeam => "organization.remove_project_team",
         }
     }
 }
@@ -140,7 +149,7 @@ pub trait Feature: Serialize + Clone + Send + 'static {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: OrganizationRead;
+        E::Tx: ProjectsRead;
 
     /// The identity a retry is matched on.
     fn operation(&self, id: Id, by: &Actor) -> Operation {
@@ -149,7 +158,7 @@ pub trait Feature: Serialize + Clone + Send + 'static {
 }
 
 /// What a retry of `command` is matched on: its kind, who asked and every field of it.
-fn operation(op: Op, id: Id, actor: Actor, command: &impl Serialize) -> Operation {
+pub(crate) fn operation(op: Op, id: Id, actor: Actor, command: &impl Serialize) -> Operation {
     let fields = serde_json::to_vec(command).expect("a command is plain data");
     Operation {
         id,
@@ -160,12 +169,12 @@ fn operation(op: Op, id: Id, actor: Actor, command: &impl Serialize) -> Operatio
 }
 
 /// A reply in its byte form: JSON.
-fn reply(value: &impl Serialize) -> Vec<u8> {
+pub(crate) fn reply(value: &impl Serialize) -> Vec<u8> {
     serde_json::to_vec(value).expect("a reply is plain data")
 }
 
 /// Refused before admission: nothing is recorded.
-fn invalid<T>(reason: &str) -> Result<T, Refusal> {
+pub(crate) fn invalid<T>(reason: &str) -> Result<T, Refusal> {
     Err(Refusal::invalid(reason))
 }
 
@@ -177,13 +186,13 @@ fn require(holds: bool, reason: &str) -> Result<(), Refusal> {
 }
 
 /// `id` is a stable ID, or the command is malformed.
-fn stable(id: &Id, what: &str) -> Result<(), Refusal> {
+pub(crate) fn stable(id: &Id, what: &str) -> Result<(), Refusal> {
     let reason = format!("{what} is a UUIDv7 in lowercase text");
     require(super::records::is_stable_id(id.as_str()), &reason)
 }
 
 /// A completed change's reply.
-fn changed(id: &Id, revision: u64, generation: u64) -> Vec<u8> {
+pub(crate) fn changed(id: &Id, revision: u64, generation: u64) -> Vec<u8> {
     reply(&Changed {
         id: id.clone(),
         revision,

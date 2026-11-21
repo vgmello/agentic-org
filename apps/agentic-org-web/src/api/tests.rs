@@ -1260,23 +1260,49 @@ fn a_host_operation_lookup_checks_its_id_and_scope_before_asking_the_host() {
         .status,
         StatusCode::NOT_FOUND
     );
-    // Unbuilt project mutation routes fail closed with 503 before dispatch (web-api-v1 §9).
-    for project_route in [
+    // Live project mutation routes validate envelopes before touching the host (B3).
+    for (project_route, body) in [
+        (format!("/api/v1/organizations/{ORG}/projects"), "{}"),
+        (format!("/api/v1/organizations/{ORG}/projects"), "[]"),
+        (
+            format!("/api/v1/organizations/{ORG}/projects/add-team"),
+            "{}",
+        ),
+        (
+            format!("/api/v1/organizations/{ORG}/projects/remove-team"),
+            "{}",
+        ),
+    ] {
+        let reply = send(
+            &gateway,
+            Method::POST,
+            &project_route,
+            body,
+            Some(&pair),
+            &[],
+        );
+        assert_eq!(
+            reply.status,
+            StatusCode::BAD_REQUEST,
+            "{project_route} {body}"
+        );
+        assert!(
+            reply.body["error"].get("field").is_none(),
+            "malformed envelope must not leak field rule: {}",
+            reply.body
+        );
+    }
+    // Project GET routes reject unexpected query strings and reserved action segments with 400.
+    for bad_project_get in [
+        format!("/api/v1/organizations/{ORG}/projects?foo=bar"),
+        format!("/api/v1/organizations/{ORG}/projects/P-1?foo=bar"),
         format!("/api/v1/organizations/{ORG}/projects/add-team"),
         format!("/api/v1/organizations/{ORG}/projects/remove-team"),
     ] {
         assert_eq!(
-            send(
-                &gateway,
-                Method::POST,
-                &project_route,
-                "{}",
-                Some(&pair),
-                &[]
-            )
-            .status,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "{project_route}"
+            get(&bad_project_get).status,
+            StatusCode::BAD_REQUEST,
+            "{bad_project_get}"
         );
     }
     assert_eq!(calls.methods(), before, "none of them reached the host");

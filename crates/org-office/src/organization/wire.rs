@@ -5,7 +5,8 @@
 use org_proto::{
     org::{
         CommandAccepted, CommandStatus, MemberAddPersonParams, MemberMoveParams,
-        MemberRemoveParams, MemberSetReportsToParams, MemberUpdatePersonParams, TeamCreateParams,
+        MemberRemoveParams, MemberSetReportsToParams, MemberUpdatePersonParams,
+        ProjectAddTeamParams, ProjectCreateParams, ProjectRemoveTeamParams, TeamCreateParams,
         TeamDeleteParams, TeamMoveParams, TeamRenameParams, TeamSetLeadParams, TeamSetTitleParams,
     },
     ApiError, ErrorCode, OperationOutcome,
@@ -26,7 +27,12 @@ use super::{
     },
     records, snapshot,
 };
-use crate::rules::OrgCommand;
+use crate::{
+    projects::features::{
+        AddProjectTeam, CreateProject, OwnerTeamChoice, ProjectCreated, RemoveProjectTeam,
+    },
+    rules::OrgCommand,
+};
 
 /// A validated wire command mapped onto one organization-family feature.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -51,6 +57,9 @@ pub enum WireOp {
     UpdatePerson(StructureRequest<UpdatePerson>),
     MovePerson(StructureRequest<MovePerson>),
     DeactivatePerson(StructureRequest<DeactivatePerson>),
+    CreateProject(StructureRequest<CreateProject>),
+    AddProjectTeam(StructureRequest<AddProjectTeam>),
+    RemoveProjectTeam(StructureRequest<RemoveProjectTeam>),
 }
 
 impl WireOp {
@@ -64,6 +73,9 @@ impl WireOp {
             Self::UpdatePerson(r) => &r.operation_id,
             Self::MovePerson(r) => &r.operation_id,
             Self::DeactivatePerson(r) => &r.operation_id,
+            Self::CreateProject(r) => &r.operation_id,
+            Self::AddProjectTeam(r) => &r.operation_id,
+            Self::RemoveProjectTeam(r) => &r.operation_id,
         }
     }
 }
@@ -431,11 +443,127 @@ fn with_placeholder_command_id(command: &OrgCommand) -> OrgCommand {
             p.command_id = id;
             OrgCommand::MemberSetReportsTo(p)
         }
+        OrgCommand::ProjectCreate(mut p) => {
+            p.command_id = id;
+            OrgCommand::ProjectCreate(p)
+        }
+        OrgCommand::ProjectAddTeam(mut p) => {
+            p.command_id = id;
+            OrgCommand::ProjectAddTeam(p)
+        }
+        OrgCommand::ProjectRemoveTeam(mut p) => {
+            p.command_id = id;
+            OrgCommand::ProjectRemoveTeam(p)
+        }
         other => other,
     }
 }
 
-/// Decodes any implemented [`OrgCommand`] into a typed [`WireOp`]. Unbuilt HR/project
+fn project_create_request(
+    member: &str,
+    params: &ProjectCreateParams,
+) -> Result<StructureRequest<CreateProject>, ApiError> {
+    let (operation_id, by) = parse_header(member, &params.command_id)?;
+    let id = require_id(&params.project_id, "project_id")?;
+    if params.repo.is_some() || params.integration_branch.is_some() {
+        return Err(invalid(
+            "project repositories and integration branches are not supported in B3",
+        ));
+    }
+    if params.key.is_some()
+        || params.description.is_some()
+        || !params.teams.is_empty()
+        || !params.general_area_id.is_empty()
+        || params.general_area_name.is_some()
+    {
+        return Err(invalid(
+            "legacy project.create fields (key, description, teams, general_area_id, general_area_name) are not supported in B3",
+        ));
+    }
+    let owner_team = match (&params.owner_team_id, &params.create_team_id) {
+        (Some(_), Some(_)) => {
+            return Err(invalid(
+                "specify either owner_team_id or create_team_id, not both",
+            ));
+        }
+        (Some(existing), None) => {
+            if params.parent_team_id.is_some() {
+                return Err(invalid(
+                    "parent_team_id is only allowed when creating a new owning team",
+                ));
+            }
+            OwnerTeamChoice::Existing(require_id(existing, "owner_team_id")?)
+        }
+        (None, Some(new_team)) => OwnerTeamChoice::CreateDefault {
+            team_id: require_id(new_team, "create_team_id")?,
+            parent_team_id: params
+                .parent_team_id
+                .as_deref()
+                .map(|p| require_id(p, "parent_team_id"))
+                .transpose()?,
+        },
+        (None, None) => {
+            return Err(invalid(
+                "either owner_team_id (existing team) or create_team_id (default owning team) is required",
+            ));
+        }
+    };
+    let mut contributing_team_ids = Vec::with_capacity(params.contributing_team_ids.len());
+    for tid in &params.contributing_team_ids {
+        contributing_team_ids.push(require_id(tid, "contributing_team_ids")?);
+    }
+    Ok(StructureRequest {
+        operation_id,
+        by,
+        command: CreateProject {
+            id,
+            name: params.name.clone(),
+            slug: params.slug.clone(),
+            owner_team,
+            contributing_team_ids,
+        },
+    })
+}
+
+fn project_add_team_request(
+    member: &str,
+    params: &ProjectAddTeamParams,
+) -> Result<StructureRequest<AddProjectTeam>, ApiError> {
+    let (operation_id, by) = parse_header(member, &params.command_id)?;
+    Ok(StructureRequest {
+        operation_id,
+        by,
+        command: AddProjectTeam {
+            project_id: require_id(&params.project_id, "project_id")?,
+            team_id: require_id(&params.team_id, "team_id")?,
+        },
+    })
+}
+
+fn project_remove_team_request(
+    member: &str,
+    params: &ProjectRemoveTeamParams,
+) -> Result<StructureRequest<RemoveProjectTeam>, ApiError> {
+    let (operation_id, by) = parse_header(member, &params.command_id)?;
+    if params.areas_to_team_id.is_some() {
+        return Err(invalid("areas_to_team_id is not supported in B3"));
+    }
+    let (project_raw, team_raw) = params
+        .project_team_id
+        .split_once(':')
+        .ok_or_else(|| invalid("project_team_id must be '<project_id>:<team_id>'"))?;
+    Ok(StructureRequest {
+        operation_id,
+        by,
+        command: RemoveProjectTeam {
+            project_id: require_id(project_raw, "project_id")?,
+            team_id: require_id(team_raw, "team_id")?,
+            expected_revision: params.expected_version,
+        },
+    })
+}
+
+/// Decodes any implemented [`OrgCommand`] into a typed [`WireOp`]. Unbuilt HR
 /// commands return `unsupported`.
 pub fn parse_command(
     member: &str,
@@ -462,13 +590,20 @@ pub fn parse_command(
         OrgCommand::MemberRemove(p) => {
             remove_person_request(member, p).map(WireOp::DeactivatePerson)
         }
+        OrgCommand::ProjectCreate(p) => {
+            project_create_request(member, p).map(WireOp::CreateProject)
+        }
+        OrgCommand::ProjectAddTeam(p) => {
+            project_add_team_request(member, p).map(WireOp::AddProjectTeam)
+        }
+        OrgCommand::ProjectRemoveTeam(p) => {
+            project_remove_team_request(member, p).map(WireOp::RemoveProjectTeam)
+        }
         OrgCommand::MemberAddAgent(_)
         | OrgCommand::MemberUpdateAgent(_)
         | OrgCommand::MemberSetAgentStatus(_)
         | OrgCommand::MemberOffboard(_)
-        | OrgCommand::MemberSetRunMode(_)
-        | OrgCommand::ProjectAddTeam(_)
-        | OrgCommand::ProjectRemoveTeam(_) => Err(refused(
+        | OrgCommand::MemberSetRunMode(_) => Err(refused(
             ErrorCode::Unsupported,
             "this office does not serve this organization command yet",
         )),
@@ -573,6 +708,9 @@ pub fn operation_outcome_from_receipt(receipt: &Receipt) -> Result<OperationOutc
             let generation = serde_json::from_slice::<TeamCreated>(&receipt.reply)
                 .map(|c| c.generation)
                 .or_else(|_| {
+                    serde_json::from_slice::<ProjectCreated>(&receipt.reply).map(|c| c.generation)
+                })
+                .or_else(|_| {
                     serde_json::from_slice::<Changed>(&receipt.reply).map(|c| c.generation)
                 })
                 .map_err(|_| unreadable())?;
@@ -599,6 +737,17 @@ pub fn team_create_answer(
 ) -> Result<Result<CommandAccepted, ApiError>, StoreError> {
     decode_answer("team.create", answer, |bytes| {
         serde_json::from_slice::<TeamCreated>(bytes)
+            .ok()
+            .map(|c| c.generation)
+    })
+}
+
+/// The protocol's answer to `project.create` from the store's.
+pub fn project_create_answer(
+    answer: Result<Reply, StoreError>,
+) -> Result<Result<CommandAccepted, ApiError>, StoreError> {
+    decode_answer("project.create", answer, |bytes| {
+        serde_json::from_slice::<ProjectCreated>(bytes)
             .ok()
             .map(|c| c.generation)
     })

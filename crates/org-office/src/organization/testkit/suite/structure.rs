@@ -6,7 +6,7 @@
 use super::*;
 
 /// Teams 0x21 and 0x22 under the top-level team.
-fn two_teams<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) -> Bench<E, G> {
+fn two_teams<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) -> Bench<E, G> {
     let bench = Bench::created(open);
     bench.created_team(2, 0x21, TEAM);
     bench.created_team(3, 0x22, TEAM);
@@ -14,11 +14,7 @@ fn two_teams<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) -> Bench<
 }
 
 /// The owner creates `command`'s team, under operation `op`.
-fn create<E: OrganizationEngine, G>(
-    bench: &Bench<E, G>,
-    op: u64,
-    command: &CreateTeam,
-) -> TeamCreated {
+fn create<E: ProjectsEngine, G>(bench: &Bench<E, G>, op: u64, command: &CreateTeam) -> TeamCreated {
     let reply = bench.owner(op, command).expect("a decided creation");
     assert_eq!(reply.outcome, Outcome::Completed, "{:?}", rejection(&reply));
     serde_json::from_slice(&reply.bytes).expect("a team reply")
@@ -32,14 +28,14 @@ fn named(team: u64, parent: Option<u64>, name: &str) -> CreateTeam {
     }
 }
 
-fn rename(bench: &Bench<impl OrganizationEngine, impl Sized>, team: u64, name: &str) -> UpdateTeam {
+fn rename(bench: &Bench<impl ProjectsEngine, impl Sized>, team: u64, name: &str) -> UpdateTeam {
     UpdateTeam {
         name: Some(name.into()),
         ..UpdateTeam::new(id(team), bench.team(team).meta.revision)
     }
 }
 
-fn lead(bench: &Bench<impl OrganizationEngine, impl Sized>, team: u64, lead: u64) -> UpdateTeam {
+fn lead(bench: &Bench<impl ProjectsEngine, impl Sized>, team: u64, lead: u64) -> UpdateTeam {
     UpdateTeam {
         lead: Some(id(lead)),
         ..UpdateTeam::new(id(team), bench.team(team).meta.revision)
@@ -47,7 +43,7 @@ fn lead(bench: &Bench<impl OrganizationEngine, impl Sized>, team: u64, lead: u64
 }
 
 fn manager(
-    bench: &Bench<impl OrganizationEngine, impl Sized>,
+    bench: &Bench<impl ProjectsEngine, impl Sized>,
     person: u64,
     manager: u64,
 ) -> UpdatePerson {
@@ -57,10 +53,7 @@ fn manager(
     }
 }
 
-fn deactivation(
-    bench: &Bench<impl OrganizationEngine, impl Sized>,
-    person: u64,
-) -> DeactivatePerson {
+fn deactivation(bench: &Bench<impl ProjectsEngine, impl Sized>, person: u64) -> DeactivatePerson {
     DeactivatePerson {
         id: id(person),
         expected_revision: bench.employee(person).meta.revision,
@@ -83,7 +76,7 @@ fn profile_file(chain: &[u64], kind: EmployeeKind, employee: u64) -> String {
 
 /// R2: a team keeps its number through a move and an archive; numbers are never given
 /// again, and the allocations stand.
-pub fn archive_and_move_keep_the_number<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn archive_and_move_keep_the_number<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = two_teams(open);
     let allocations = bench.read(|snapshot| snapshot.team_allocations());
     bench.done(4, &bench.move_team(0x22, 0x21));
@@ -103,7 +96,7 @@ pub fn archive_and_move_keep_the_number<E: OrganizationEngine, G>(open: &dyn Fn(
 }
 
 /// R3: a team never moves under itself or a team below it.
-pub fn moving_a_team_cannot_make_a_loop<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn moving_a_team_cannot_make_a_loop<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = Bench::created(open);
     bench.created_team(2, 0x21, TEAM);
     bench.created_team(3, 0x22, 0x21);
@@ -123,7 +116,7 @@ pub fn moving_a_team_cannot_make_a_loop<E: OrganizationEngine, G>(open: &dyn Fn(
 
 /// R3: the depth limit counts the whole moved subtree, and a team is only made where an
 /// employee's profile still fits.
-pub fn a_move_past_the_depth_limit_is_refused<E: OrganizationEngine, G>(
+pub fn a_move_past_the_depth_limit_is_refused<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = Bench::created(open);
@@ -177,7 +170,7 @@ pub fn a_move_past_the_depth_limit_is_refused<E: OrganizationEngine, G>(
 
 /// R4: a move rewrites the team, every team below it and every profile homed in its
 /// subtree, in one entry, with nothing left at the old paths; a rebuild agrees.
-pub fn a_subtree_move_rewrites_every_path_once<E: OrganizationEngine, G>(
+pub fn a_subtree_move_rewrites_every_path_once<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = Bench::created(open);
@@ -259,7 +252,7 @@ pub fn a_subtree_move_rewrites_every_path_once<E: OrganizationEngine, G>(
 
 /// R5 and Q1: the organization is a forest; the owner makes more top-level teams, which
 /// can move and be archived, but the creation's team never is.
-pub fn the_first_team_stays_top_level<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn the_first_team_stays_top_level<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = Bench::created(open);
     let top = create(&bench, 2, &named(0x30, None, "Second"));
     assert_eq!(top.number, 2);
@@ -285,7 +278,7 @@ pub fn the_first_team_stays_top_level<E: OrganizationEngine, G>(open: &dyn Fn() 
 
 /// R6: a team's name is one line of at most 200 characters, unique among the active
 /// teams of one parent ignoring case; archived siblings and other parents do not clash.
-pub fn sibling_team_names_clash_ignoring_case_but_not_across_parents<E: OrganizationEngine, G>(
+pub fn sibling_team_names_clash_ignoring_case_but_not_across_parents<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = Bench::created(open);
@@ -323,7 +316,7 @@ pub fn sibling_team_names_clash_ignoring_case_but_not_across_parents<E: Organiza
 }
 
 /// R7: an archived team takes no new team, move or person, and is not changed again.
-pub fn archived_teams_take_nothing_new<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn archived_teams_take_nothing_new<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = two_teams(open);
     bench.created_team(4, 0x23, TEAM);
     bench.add_person(5, 0x31, 0x22);
@@ -348,7 +341,7 @@ pub fn archived_teams_take_nothing_new<E: OrganizationEngine, G>(open: &dyn Fn()
 
 /// R7 and Q5: only an empty team is archived: no active child team and no employee who
 /// is not inactive. Archived child teams and inactive employees stay with it.
-pub fn archive_needs_an_empty_team<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn archive_needs_an_empty_team<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = Bench::created(open);
     bench.created_team(2, 0x21, TEAM);
     bench.created_team(3, 0x22, 0x21);
@@ -381,7 +374,7 @@ pub fn archive_needs_an_empty_team<E: OrganizationEngine, G>(open: &dyn Fn() -> 
 
 /// R8: a lead is a direct, active employee of the team (its home team is the team),
 /// person or agent; the appointment is set, replaced and cleared by the owner.
-pub fn a_teams_lead_is_a_direct_active_employee<E: OrganizationEngine, G>(
+pub fn a_teams_lead_is_a_direct_active_employee<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = two_teams(open);
@@ -419,7 +412,7 @@ pub fn a_teams_lead_is_a_direct_active_employee<E: OrganizationEngine, G>(
 
 /// R9 and Q3: a team's lead does not move to another team until the appointment is
 /// cleared or another lead appointed; the refusal names the team.
-pub fn moving_a_lead_is_refused_until_the_appointment_is_cleared<E: OrganizationEngine, G>(
+pub fn moving_a_lead_is_refused_until_the_appointment_is_cleared<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = two_teams(open);
@@ -446,9 +439,7 @@ pub fn moving_a_lead_is_refused_until_the_appointment_is_cleared<E: Organization
 
 /// R10: an employee has one home team, which exists and is active, for an addition and
 /// for a move; the profile lives in that team's folder.
-pub fn a_person_needs_an_active_home_team<E: OrganizationEngine, G>(
-    open: &dyn Fn() -> (Arc<E>, G),
-) {
+pub fn a_person_needs_an_active_home_team<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = two_teams(open);
     assert_eq!(
         bench.refused(4, &person_command(0x31, 0x99)).code,
@@ -479,7 +470,7 @@ pub fn a_person_needs_an_active_home_team<E: OrganizationEngine, G>(
 
 /// R11: one handle namespace for the organization, over every status; a handle is
 /// lowercase, not reserved and not shaped like an address.
-pub fn people_share_one_handle_namespace<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn people_share_one_handle_namespace<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = two_teams(open);
     let with = |person: u64, handle: &str| AddPerson {
         handle: handle.into(),
@@ -515,7 +506,7 @@ pub fn people_share_one_handle_namespace<E: OrganizationEngine, G>(open: &dyn Fn
 }
 
 /// R11: an inactive person's handle stays theirs.
-pub fn an_inactive_persons_handle_stays_taken<E: OrganizationEngine, G>(
+pub fn an_inactive_persons_handle_stays_taken<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = two_teams(open);
@@ -531,7 +522,7 @@ pub fn an_inactive_persons_handle_stays_taken<E: OrganizationEngine, G>(
 
 /// R12: deactivating sets `inactive` and `offboarded_at` and keeps the handle, the home
 /// team and the profile's path; an inactive person changes no further.
-pub fn deactivate_sets_inactive_and_offboarded_at_and_keeps_the_handle<E: OrganizationEngine, G>(
+pub fn deactivate_sets_inactive_and_offboarded_at_and_keeps_the_handle<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = two_teams(open);
@@ -573,7 +564,7 @@ pub fn deactivate_sets_inactive_and_offboarded_at_and_keeps_the_handle<E: Organi
 
 /// R13: a reporting line names an existing employee, never the person, and never comes
 /// back to the person, however far up.
-pub fn reporting_lines_have_no_loops<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn reporting_lines_have_no_loops<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = two_teams(open);
     bench.add_person(4, 0x31, 0x21);
     bench.add_person(5, 0x32, 0x21);
@@ -598,7 +589,7 @@ pub fn reporting_lines_have_no_loops<E: OrganizationEngine, G>(open: &dyn Fn() -
 }
 
 /// R13: nobody starts to report to an inactive employee.
-pub fn nobody_new_reports_to_an_inactive_person<E: OrganizationEngine, G>(
+pub fn nobody_new_reports_to_an_inactive_person<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = two_teams(open);
@@ -631,7 +622,7 @@ pub fn nobody_new_reports_to_an_inactive_person<E: OrganizationEngine, G>(
 }
 
 /// R14: the owner is never deactivated, ahead of every other rule that would refuse it.
-pub fn the_owner_cannot_be_deactivated<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn the_owner_cannot_be_deactivated<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = Bench::created(open);
     // The owner also leads the top-level team: `owner_protected` comes first.
     let refused = bench.refused(2, &deactivation(&bench, CREATOR));
@@ -641,7 +632,7 @@ pub fn the_owner_cannot_be_deactivated<E: OrganizationEngine, G>(open: &dyn Fn()
 
 /// R14 and Q2: a person who leads a team or has active direct reports is refused with
 /// `not_empty`, naming what to clear; nothing changes until it is cleared.
-pub fn deactivating_refuses_a_lead_or_a_manager<E: OrganizationEngine, G>(
+pub fn deactivating_refuses_a_lead_or_a_manager<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = two_teams(open);
@@ -683,7 +674,7 @@ pub fn deactivating_refuses_a_lead_or_a_manager<E: OrganizationEngine, G>(
 
 /// R15: a new person is an active person who may hire, with no builtin key, no manager
 /// and the owner as creator.
-pub fn a_new_person_may_hire<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn a_new_person_may_hire<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = two_teams(open);
     let generation = bench.generation();
     let added = bench.done(
@@ -718,7 +709,7 @@ pub fn a_new_person_may_hire<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E
 
 /// R16 and Q4: a team takes six by hiring unless changed; people are not limited, by
 /// addition or by a move.
-pub fn team_member_limit<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn team_member_limit<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = two_teams(open);
     assert_eq!(bench.team(0x21).max_members, records::DEFAULT_MAX_MEMBERS);
     let files = bench.state_files();
@@ -739,7 +730,7 @@ pub fn team_member_limit<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G
 
 /// R18: a role reference names a role record of the organization; roles are read-only,
 /// so the role here is written as a file the way a repository would carry it.
-pub fn a_role_reference_must_exist<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn a_role_reference_must_exist<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = two_teams(open);
     let with_role = |person: u64, role: u64| AddPerson {
         role: Some(id(role)),
@@ -775,7 +766,7 @@ pub fn a_role_reference_must_exist<E: OrganizationEngine, G>(open: &dyn Fn() -> 
 /// R19: only the owner changes the structure. Anyone else (a person who leads a team, an
 /// agent, the system, nobody on record) is refused unrecorded for every command, and so
 /// is a command whose IDs are not stable IDs.
-pub fn only_the_owner_changes_structure<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn only_the_owner_changes_structure<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = two_teams(open);
     bench.add_person(4, 0x31, 0x21);
     bench.add_person(5, 0x32, 0x21);
@@ -863,7 +854,7 @@ pub fn only_the_owner_changes_structure<E: OrganizationEngine, G>(open: &dyn Fn(
 /// R20: every change raises the changed record's revision by one, names the owner and
 /// the instant, and leaves a receipt of its kind and actor; an edit that changes nothing
 /// still counts.
-pub fn every_write_raises_the_revision_by_one_and_is_receipted<E: OrganizationEngine, G>(
+pub fn every_write_raises_the_revision_by_one_and_is_receipted<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = two_teams(open);
@@ -934,7 +925,7 @@ pub fn every_write_raises_the_revision_by_one_and_is_receipted<E: OrganizationEn
 
 /// R21: a stale `expected_revision` is `conflict`, told after every other rule but
 /// `already_exists`.
-pub fn a_domain_rule_is_told_before_a_stale_revision<E: OrganizationEngine, G>(
+pub fn a_domain_rule_is_told_before_a_stale_revision<E: ProjectsEngine, G>(
     open: &dyn Fn() -> (Arc<E>, G),
 ) {
     let bench = two_teams(open);
@@ -1012,7 +1003,7 @@ pub fn a_domain_rule_is_told_before_a_stale_revision<E: OrganizationEngine, G>(
 
 /// R17: one built-in HR lead: a second employee with `builtin_key: hr` is refused by the
 /// projection, on every engine.
-pub fn one_builtin_hr_lead<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+pub fn one_builtin_hr_lead<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = Bench::created(open);
     let mut second = bench.employee(HR);
     second.id = id(0x3a);
@@ -1025,9 +1016,7 @@ pub fn one_builtin_hr_lead<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>,
 
 /// The rules only `validate` holds for roles: a role reference names a role, and a key
 /// names one role.
-pub fn roles_are_checked_by_the_projection<E: OrganizationEngine, G>(
-    open: &dyn Fn() -> (Arc<E>, G),
-) {
+pub fn roles_are_checked_by_the_projection<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
     let bench = Bench::created(open);
     let mut person = bench.employee(CREATOR);
     person.role_id = Some(id(0x71));
@@ -1068,7 +1057,7 @@ fn durable(path: &str) -> org_store::DurablePath {
 
 /// `faulty` files break a rule `validate` holds: an engine with constraints of its own
 /// fails the write; otherwise the write lands and the rebuild is refused.
-fn refused_by_validation<E: OrganizationEngine, G>(
+fn refused_by_validation<E: ProjectsEngine, G>(
     bench: Bench<E, G>,
     open: &dyn Fn() -> (Arc<E>, G),
     faulty: Change,

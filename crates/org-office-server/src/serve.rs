@@ -39,6 +39,10 @@ use org_proto::msg::{
     json_string_len, MsgBind, MsgBindResult, MsgWait, MAX_HANDLE_BYTES, OFFICE_SENDER,
 };
 use org_proto::org::{CommandAccepted, TeamCreate};
+use org_proto::projects::{
+    ProjectInspect, ProjectInspectParams, ProjectList, ProjectListParams, ProjectListResult,
+    ProjectRecord,
+};
 use org_proto::work::{TaskCreate, WorkAccepted};
 use org_proto::{AgentStatus, MemberKind};
 use org_proto::{
@@ -89,9 +93,21 @@ pub type StatusFn = Box<
 pub type WorkFn =
     Box<dyn Fn(Caller, WorkCall) -> Result<Result<WorkAccepted, ApiError>, String> + Send + Sync>;
 
+/// Lists projects in this organization (`project.list`).
+pub type ProjectsListFn = Box<
+    dyn Fn(&ProjectListParams) -> Result<Result<ProjectListResult, ApiError>, String> + Send + Sync,
+>;
+
+/// Inspects one project by ID, `P-<number>`, or slug (`project.inspect`).
+pub type ProjectInspectFn = Box<
+    dyn Fn(&ProjectInspectParams) -> Result<Result<ProjectRecord, ApiError>, String> + Send + Sync,
+>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
+    pub projects_list: ProjectsListFn,
+    pub project_inspect: ProjectInspectFn,
     pub submit: SubmitFn,
     pub work: WorkFn,
     pub operation_get: OperationFn,
@@ -1094,29 +1110,10 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
         };
     }
     if request.is::<OrgSnapshotCall>() {
-        // The whole organization: for a bound connection (the app; agents bind with messaging),
-        // like `who` and `subscribe`.
-        if !binding.is_bound() {
-            return Response::error(
-                request.id,
-                ApiError::new(
-                    ErrorCode::NotAuthorized,
-                    "bind before reading the organization",
-                ),
-            );
-        }
-        return match (shared.ports.snapshot)() {
-            Ok(snapshot) => Response::ok::<OrgSnapshotCall>(request.id, &snapshot)
-                .unwrap_or_else(|_| internal(request.id)),
-            Err(SnapshotFailure::Unavailable) => Response::error(
-                request.id,
-                ApiError::new(
-                    ErrorCode::Unavailable,
-                    "organization snapshot is not available yet",
-                ),
-            ),
-            Err(SnapshotFailure::Storage) => internal(request.id),
-        };
+        return org_snapshot(request, shared, binding);
+    }
+    if let Some(response) = project_read(request, shared, binding) {
+        return response;
     }
     if request.is::<Who>() {
         return who(request, shared, binding);
@@ -1199,6 +1196,92 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
             format!("this office does not know `{}`", request.method),
         ),
     )
+}
+
+/// `org.snapshot`: the whole organization for a bound connection.
+fn org_snapshot(request: &Request, shared: &Shared, binding: &Binding) -> Response {
+    if !binding.is_bound() {
+        return Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "bind before reading the organization",
+            ),
+        );
+    }
+    match (shared.ports.snapshot)() {
+        Ok(snapshot) => Response::ok::<OrgSnapshotCall>(request.id, &snapshot)
+            .unwrap_or_else(|_| internal(request.id)),
+        Err(SnapshotFailure::Unavailable) => Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::Unavailable,
+                "organization snapshot is not available yet",
+            ),
+        ),
+        Err(SnapshotFailure::Storage) => internal(request.id),
+    }
+}
+
+/// Dispatches `project.list` and `project.inspect` when `request` names one of them.
+fn project_read(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if request.is::<ProjectList>() {
+        Some(project_list(request, shared, binding))
+    } else if request.is::<ProjectInspect>() {
+        Some(project_inspect(request, shared, binding))
+    } else {
+        None
+    }
+}
+
+/// `project.list`: lists projects in the organization for a bound connection.
+fn project_list(request: &Request, shared: &Shared, binding: &Binding) -> Response {
+    if !binding.is_bound() {
+        return Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotAuthorized, "bind before reading projects"),
+        );
+    }
+    let params = match request.params::<ProjectList>() {
+        Ok(params) => params,
+        Err(_) => {
+            return Response::error(
+                request.id,
+                ApiError::new(ErrorCode::InvalidRequest, "invalid project.list params"),
+            );
+        }
+    };
+    match (shared.ports.projects_list)(&params) {
+        Ok(Ok(listed)) => Response::ok::<ProjectList>(request.id, &listed)
+            .unwrap_or_else(|_| internal(request.id)),
+        Ok(Err(refusal)) => Response::error(request.id, refusal),
+        Err(_) => internal(request.id),
+    }
+}
+
+/// `project.inspect`: inspects one project by ID, `P-<number>`, or slug for a bound connection.
+fn project_inspect(request: &Request, shared: &Shared, binding: &Binding) -> Response {
+    if !binding.is_bound() {
+        return Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotAuthorized, "bind before reading projects"),
+        );
+    }
+    let params = match request.params::<ProjectInspect>() {
+        Ok(params) => params,
+        Err(_) => {
+            return Response::error(
+                request.id,
+                ApiError::new(ErrorCode::InvalidRequest, "invalid project.inspect params"),
+            );
+        }
+    };
+    match (shared.ports.project_inspect)(&params) {
+        Ok(Ok(project)) => Response::ok::<ProjectInspect>(request.id, &project)
+            .unwrap_or_else(|_| internal(request.id)),
+        Ok(Err(refusal)) => Response::error(request.id, refusal),
+        Err(_) => internal(request.id),
+    }
 }
 
 /// `who`: the directory, for a bound connection (`not_bound` otherwise, as that call's contract
@@ -2263,6 +2346,8 @@ mod tests {
                 )))
             }),
             snapshot,
+            projects_list: Box::new(|_| Err("none".to_owned())),
+            project_inspect: Box::new(|_| Err("none".to_owned())),
             submit: Box::new(|_, _, _| Err("none".to_owned())),
             who: Box::new(|_| Err("none".to_owned())),
             status: Box::new(|_, _| Err("none".to_owned())),
@@ -2714,6 +2799,8 @@ mod tests {
                     )))
                 }),
                 snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
+                projects_list: Box::new(|_| Err("none".to_owned())),
+                project_inspect: Box::new(|_| Err("none".to_owned())),
                 submit: Box::new(move |_, _, _| {
                     counter.fetch_add(1, Ordering::SeqCst);
                     answer()
@@ -3185,6 +3272,8 @@ mod tests {
                         )))
                     }),
                     snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
+                    projects_list: Box::new(|_| Err("none".to_owned())),
+                    project_inspect: Box::new(|_| Err("none".to_owned())),
                     submit: Box::new(|_, _, _| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
                     status: Box::new(|_, _| Err("none".to_owned())),
@@ -3675,6 +3764,8 @@ mod tests {
                     )))
                 }),
                 snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
+                projects_list: Box::new(|_| Err("none".to_owned())),
+                project_inspect: Box::new(|_| Err("none".to_owned())),
                 submit: Box::new(|_, _, _| Err("none".to_owned())),
                 who: Box::new(move |params| {
                     counter.fetch_add(1, Ordering::SeqCst);

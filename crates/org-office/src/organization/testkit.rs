@@ -42,6 +42,16 @@ fn record_ref(kind: &str, id: &Id) -> RecordRef {
     }
 }
 
+impl OrganizationTables {
+    pub(crate) fn insert_record_ref(&mut self, kind: &str, id: &Id) {
+        self.record_refs.insert(record_ref(kind, id));
+    }
+
+    pub(crate) fn remove_record_ref(&mut self, kind: &str, id: &Id) {
+        self.record_refs.remove(&record_ref(kind, id));
+    }
+}
+
 impl FamilyTable for OrganizationTables {
     fn name(&self) -> &'static str {
         "organization"
@@ -302,13 +312,14 @@ mod suite {
             Creator, DeactivatePerson, Edit, Feature, MovePerson, MoveTeam, Op, OrgRejection,
             OrganizationCreated, RejectCode, TeamCreated, UpdatePerson, UpdateTeam, NOT_AUTHORIZED,
         },
-        ports::{OrganizationEngine, OrganizationRead},
+        ports::OrganizationRead,
         projector::OrganizationFiles,
         records::{
             self, BuiltinKey, By, EmployeeKind, EmployeeStatus, Meta, OfficeRole, Role,
             TeamCounter, TeamStatus,
         },
     };
+    use crate::projects::ports::ProjectsEngine;
 
     /// The instant of every suite operation, and of the golden creation files.
     pub const CREATION_AT: Timestamp = Timestamp(1_700_000_000_000);
@@ -400,7 +411,7 @@ mod suite {
             })
         }
 
-        fn create_organization<E: OrganizationEngine>(
+        fn create_organization<E: ProjectsEngine>(
             &self,
             command: &CreateOrganization,
         ) -> Decision<E> {
@@ -409,18 +420,14 @@ mod suite {
         }
 
         /// `command` from `by`, decided as the office decides it: the owner is the creator.
-        fn feature<E: OrganizationEngine, C: Feature>(
-            &self,
-            by: &Actor,
-            command: &C,
-        ) -> Decision<E> {
+        fn feature<E: ProjectsEngine, C: Feature>(&self, by: &Actor, command: &C) -> Decision<E> {
             let (by, command) = (by.clone(), command.clone());
             self.counted(move |uow, here| command.decide(uow, here, &id(CREATOR), &by))
         }
 
         /// The owner archives `team` at whatever revision it has when decided, or at 1 when
         /// it does not exist.
-        fn archive_team<E: OrganizationEngine>(&self, team: &Id) -> Decision<E> {
+        fn archive_team<E: ProjectsEngine>(&self, team: &Id) -> Decision<E> {
             let team = team.clone();
             self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
                 let revision = uow.view().team(&team)?.map_or(1, |t| t.meta.revision);
@@ -433,7 +440,7 @@ mod suite {
         }
 
         /// The owner moves `team` under `parent` at whatever revision it has when decided.
-        fn move_team<E: OrganizationEngine>(&self, team: &Id, parent: &Id) -> Decision<E> {
+        fn move_team<E: ProjectsEngine>(&self, team: &Id, parent: &Id) -> Decision<E> {
             let (team, parent) = (team.clone(), parent.clone());
             self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
                 let revision = uow.view().team(&team)?.map_or(1, |t| t.meta.revision);
@@ -447,7 +454,7 @@ mod suite {
         }
 
         /// The owner moves `person` to `team` at whatever revision it has when decided.
-        fn move_person<E: OrganizationEngine>(&self, person: &Id, team: &Id) -> Decision<E> {
+        fn move_person<E: ProjectsEngine>(&self, person: &Id, team: &Id) -> Decision<E> {
             let (person, team) = (person.clone(), team.clone());
             self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
                 let revision = uow.view().employee(&person)?.map_or(1, |e| e.meta.revision);
@@ -462,7 +469,7 @@ mod suite {
 
         /// The owner appoints `lead` to `team` (none: clears it) at whatever revision the
         /// team has when decided.
-        fn set_lead<E: OrganizationEngine>(&self, team: &Id, lead: Option<Id>) -> Decision<E> {
+        fn set_lead<E: ProjectsEngine>(&self, team: &Id, lead: Option<Id>) -> Decision<E> {
             let team = team.clone();
             self.counted(move |uow: &mut UnitOfWork<'_, E>, here| {
                 let revision = uow.view().team(&team)?.map_or(1, |t| t.meta.revision);
@@ -477,7 +484,7 @@ mod suite {
 
         /// Any files at all, with a generation taken: what a faulty or foreign writer
         /// could leave behind for a rebuild to find.
-        fn write<E: OrganizationEngine>(&self, change: Change) -> Decision<E> {
+        fn write<E: ProjectsEngine>(&self, change: Change) -> Decision<E> {
             self.counted(move |uow: &mut UnitOfWork<'_, E>, _| {
                 uow.next(Stream::Organization)?;
                 Ok(change.clone())
@@ -505,7 +512,7 @@ mod suite {
         _dir: tempfile::TempDir,
     }
 
-    fn open_store<E: OrganizationEngine>(
+    fn open_store<E: ProjectsEngine>(
         root: &Path,
         custody: &Arc<FakeCustody>,
         engine: Arc<E>,
@@ -526,7 +533,7 @@ mod suite {
         Store::open(parts)
     }
 
-    impl<E: OrganizationEngine, G> Bench<E, G> {
+    impl<E: ProjectsEngine, G> Bench<E, G> {
         /// A new office with an empty journal and no organization.
         fn new(open: &dyn Fn() -> (Arc<E>, G)) -> Self {
             let dir = tempfile::tempdir().expect("a temporary directory");
@@ -804,7 +811,7 @@ mod suite {
 
     /// Creation writes its nine state files with the golden bytes and its receipt (ten
     /// files, one entry), at generation 1, with the creator as lead.
-    pub fn creation<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn creation<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::new(open);
         assert_eq!(bench.generation(), 0);
         let command = creation_command();
@@ -888,7 +895,7 @@ mod suite {
 
     /// A retry returns the original reply without deciding again; the same ID with other
     /// content conflicts.
-    pub fn creation_retry_and_conflict<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn creation_retry_and_conflict<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::new(open);
         let command = creation_command();
         let first = bench.create_organization(1, &command).expect("created");
@@ -912,7 +919,7 @@ mod suite {
 
     /// A second creation is refused, and so is one this store cannot hold; nothing is
     /// recorded, so a retry of a failed creation with the same ID decides afresh.
-    pub fn creation_refusals<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn creation_refusals<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::new(open);
         let good = creation_command();
         let refused = |change: &dyn Fn(&mut CreateOrganization)| {
@@ -961,7 +968,7 @@ mod suite {
 
     /// Teams take the numbers 2 and 3, each with the counter and its allocation, and one
     /// generation each.
-    pub fn team_numbers<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn team_numbers<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::created(open);
         let expected = |team: u64, number: u64| TeamCreated {
             id: id(team),
@@ -1016,7 +1023,7 @@ mod suite {
     /// rejection that takes no generation and no number, and its retry is the same answer;
     /// an actor who is not the owner is refused unrecorded; an operation ID used again with
     /// another command conflicts.
-    pub fn team_refusals<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn team_refusals<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::created(open);
         assert_eq!(bench.created_team(2, 0x21, TEAM).number, 2);
         bench.archive_team(3, 0x21);
@@ -1115,7 +1122,7 @@ mod suite {
     }
 
     /// Every row of the family and its generation, to compare across a rebuild.
-    fn rows<E: OrganizationEngine, G>(bench: &Bench<E, G>) -> impl PartialEq + std::fmt::Debug {
+    fn rows<E: ProjectsEngine, G>(bench: &Bench<E, G>) -> impl PartialEq + std::fmt::Debug {
         bench.read(|snapshot| {
             Ok((
                 snapshot.generation()?,
@@ -1135,7 +1142,7 @@ mod suite {
 
     /// Creations submitted at once are numbered one after another: no number and no
     /// generation is given twice or skipped, whatever order the store took them in.
-    pub fn concurrent_team_numbers<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn concurrent_team_numbers<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         const TEAMS: u64 = 8;
         let bench = Bench::created(open);
         let by = Actor::Employee(id(CREATOR));
@@ -1209,7 +1216,7 @@ mod suite {
     /// Tests both deterministic serial orders and a real multi-threaded writer race,
     /// verifying that the final file sits solely at the moved path with the new name,
     /// nothing remains at the old path, and a full rebuild matches byte-for-byte.
-    pub fn team_move_racing_descendant_rename<E: OrganizationEngine, G>(
+    pub fn team_move_racing_descendant_rename<E: ProjectsEngine, G>(
         open: &dyn Fn() -> (Arc<E>, G),
     ) {
         let setup = || {
@@ -1320,7 +1327,7 @@ mod suite {
 
     /// A team's file is nested in its parent's folder, at every depth, until the tree is
     /// too deep for a path.
-    pub fn nested_team_path<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn nested_team_path<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::created(open);
         bench.created_team(2, 0x21, TEAM);
         bench.created_team(3, 0x22, 0x21);
@@ -1364,7 +1371,7 @@ mod suite {
     /// The generation is the organization stream's high-water: a read returns its
     /// snapshot's, a refusal leaves it alone, and a rebuild from the files and the journal
     /// arrives at the same one with the same rows.
-    pub fn generation_and_rebuild<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn generation_and_rebuild<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let bench = Bench::created(open);
         bench.created_team(2, 0x21, TEAM);
         bench.archive_team(3, 0x21);
@@ -1391,7 +1398,7 @@ mod suite {
     /// organization record, and a team led from outside it. An engine with constraints
     /// of its own does not let such files in at all: its backstop fails the write with
     /// an internal error, never a refusal, and nothing is accepted.
-    pub fn rebuild_validation<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
+    pub fn rebuild_validation<E: ProjectsEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
         let refused = |bench: Bench<E, G>, faulty: Change, reason: &str| {
             let generation = bench.generation();
             let decide = bench.decisions.write(faulty);
@@ -1496,7 +1503,7 @@ mod suite {
         }
     }
 
-    impl<E: OrganizationEngine> FamilyScript<E> for OrganizationScript {
+    impl<E: ProjectsEngine> FamilyScript<E> for OrganizationScript {
         type Spec = Step;
 
         fn projectors(&self, identity: &OfficeIdentity) -> Vec<Arc<dyn Projector<E>>> {
@@ -1611,7 +1618,7 @@ mod suite {
     /// files it left, with and without a crash. Every failure prints its seed.
     pub fn rebuild_equivalent<E, G>(open: &dyn Fn() -> (Arc<E>, G))
     where
-        E: OrganizationEngine + Dump,
+        E: ProjectsEngine + Dump,
     {
         rebuild_equivalence(open, &OrganizationScript::new(), 0..8);
     }

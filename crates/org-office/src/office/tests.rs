@@ -626,8 +626,8 @@ fn the_projection_holds_no_form_of_the_ca_key() {
 fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_domains() {
     use org_proto::org::{
         MemberAddPersonParams, MemberMoveParams, MemberRemoveParams, MemberSetReportsToParams,
-        MemberUpdatePersonParams, ProjectAddTeamParams, TeamDeleteParams, TeamMoveParams,
-        TeamSetLeadParams, TeamSetTitleParams,
+        MemberUpdatePersonParams, TeamDeleteParams, TeamMoveParams, TeamSetLeadParams,
+        TeamSetTitleParams,
     };
     const PERSON_A: &str = "019a0000-0000-7000-8000-0000000000a1";
     let cmd = |n: u32| format!("018bce27-f800-7000-8000-{n:012x}");
@@ -796,15 +796,14 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         )
         .unwrap()
         .unwrap();
-    // Unbuilt project-team domain still answers Unsupported.
+    // Unbuilt HR agent domain still answers Unsupported.
     let unbuilt = office
         .submit_org(
             CREATOR,
-            OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
+            OrgCommand::MemberOffboard(org_proto::org::MemberOffboardParams {
                 command_id: cmd(311),
-                project_team_id: "019a0000-0000-7000-8000-0000000000d1".into(),
-                project_id: "019a0000-0000-7000-8000-0000000000d2".into(),
-                team_id: TEAM_B.into(),
+                member_id: "019a0000-0000-7000-8000-0000000000d2".into(),
+                expected_version: 1,
             }),
         )
         .unwrap();

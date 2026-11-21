@@ -574,8 +574,8 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
             .code,
         ErrorCode::NotFound
     );
-    // An unbuilt organization command (projects are not wired on org-store yet).
-    assert!(owner_unsupported(
+    // Project commands are wired on org-store (B3): unknown project_id -> not_found.
+    assert_eq!(
         owner
             .call::<org_proto::org::ProjectAddTeam>(&org_proto::org::ProjectAddTeamParams {
                 command_id: command_id(7),
@@ -583,6 +583,29 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
                 project_id: command_id(13),
                 team_id: TEAM.into(),
             })
+            .unwrap_err()
+            .code,
+        ErrorCode::NotFound
+    );
+    // An unbuilt organization command (direct agent add is replaced by HR hire in C2).
+    let add_agent: org_proto::org::MemberAddAgentParams =
+        serde_json::from_value(serde_json::json!({
+            "command_id": command_id(14),
+            "member_id": command_id(15),
+            "name": "Bot",
+            "office_id": "0190a5d2-7c3e-7000-8000-000000000002",
+            "profile": {
+                "role": "engineer",
+                "title": "Engineer",
+                "runtime": "codex",
+                "messaging_name": "bot",
+                "status": "active"
+            }
+        }))
+        .unwrap();
+    assert!(owner_unsupported(
+        owner
+            .call::<org_proto::org::MemberAddAgent>(&add_agent)
             .unwrap_err()
     ));
     // A wired organization command commits through the real worker.

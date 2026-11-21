@@ -1125,6 +1125,7 @@ command!(
         description: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         teams: Vec<ProjectCreateTeam>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         general_area_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         general_area_name: Option<String>,
@@ -1132,6 +1133,22 @@ command!(
         repo: Option<RepoSpec>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         integration_branch: Option<String>,
+        /// Canonical lowercase project slug (B3). Derived from `name` by HQ when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
+        /// Existing active team accountable for the project (B3). When omitted, HQ creates a
+        /// new owning team named after the project under `parent_team_id` (default `TEAM-1`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner_team_id: Option<String>,
+        /// Caller-minted UUIDv7 for the new owning team when `owner_team_id` is omitted (B3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        create_team_id: Option<String>,
+        /// Optional parent team for the newly created owning team (defaults to `TEAM-1`, B3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_team_id: Option<String>,
+        /// Optional contributing teams (active teams distinct from the owning team, B3).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        contributing_team_ids: Vec<String>,
     }
 );
 command!(

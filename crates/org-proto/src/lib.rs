@@ -95,6 +95,7 @@ pub mod inbox;
 pub mod location;
 pub mod msg;
 pub mod org;
+pub mod projects;
 pub mod retired;
 pub mod web;
 pub mod work;

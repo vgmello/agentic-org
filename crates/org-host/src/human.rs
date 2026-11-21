@@ -51,6 +51,24 @@ impl Wire {
             }
         }
     }
+    pub(crate) fn receive_office_channel(&mut self) -> Result<UnixStream, String> {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let (marker, mut fds) = self.byte_until(1, deadline)?;
+        if marker != ops::HOST_SOCK_MARKER || fds.len() != 1 {
+            return Err(unavailable());
+        }
+        let stream = org_socket::rights::connected_unix_stream(fds.pop().unwrap())
+            .map_err(|_| unavailable())?;
+        stream.set_nonblocking(false).map_err(|_| unavailable())?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(30)))
+            .map_err(|_| unavailable())?;
+        stream
+            .set_write_timeout(Some(Duration::from_secs(30)))
+            .map_err(|_| unavailable())?;
+        Ok(stream)
+    }
+
     pub(crate) fn call<C: Call>(
         &mut self,
         params: &C::Params,

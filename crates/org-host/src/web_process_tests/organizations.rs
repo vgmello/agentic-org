@@ -1772,3 +1772,334 @@ fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
 
     stop(host, &base);
 }
+
+/// Real-process B3 (FC-030 / FC-038): browser `/api/v1/organizations/{org}/projects` routes
+/// (`GET`, `POST`, `GET /{project}`, `POST /add-team`, `POST /remove-team`), `org.snapshot`
+/// consistency, idempotent replay + `operation.get`, native CLI `project list|inspect|create`,
+/// and full survival across host restart and deleting `office.db` (projection rebuild).
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_browser_and_native_cli_projects_lifecycle_survives_restart_and_rebuild() {
+    let Launched {
+        temp: _temp,
+        address,
+        host,
+        socket,
+        base,
+        ..
+    } = launch(Seed::Administrator);
+    wait_serving(&host, address);
+    let browser = Browser::sign_in(&host, address);
+    let (_, view) = browser.create("Example", "example");
+    let (organization, office, _creator) = checked(&view, "Example", "example");
+    wait_offices_active(&host, 1);
+
+    let instance_id = host.service.instance_id_for_test().unwrap().to_owned();
+    let scope = json!({
+        "kind": "organization",
+        "instance_id": instance_id,
+        "org_id": organization,
+    });
+
+    // 1. Create a contributing team ("Platform") and a second team ("Security").
+    let platform_team_id = crate::ids::uuid_v7().unwrap();
+    let create_platform = browser.post(
+        &format!("/api/v1/organizations/{organization}/teams"),
+        &json!({
+            "operation_id": crate::ids::uuid_v7().unwrap(),
+            "scope": scope,
+            "params": { "team_id": platform_team_id, "name": "Platform" }
+        })
+        .to_string(),
+    );
+    assert_eq!(create_platform.status, 200, "{}", create_platform.body);
+    assert_eq!(create_platform.body["outcome"], "completed");
+
+    let security_team_id = crate::ids::uuid_v7().unwrap();
+    let create_security = browser.post(
+        &format!("/api/v1/organizations/{organization}/teams"),
+        &json!({
+            "operation_id": crate::ids::uuid_v7().unwrap(),
+            "scope": scope,
+            "params": { "team_id": security_team_id, "name": "Security" }
+        })
+        .to_string(),
+    );
+    assert_eq!(create_security.status, 200, "{}", create_security.body);
+    assert_eq!(create_security.body["outcome"], "completed");
+
+    // 2. Create project P-1 ("Billing Service") without `owner_team_id`, passing caller-minted
+    // `create_team_id` so HQ creates a new accountable owning team under TEAM-1 atomically.
+    let project_id = crate::ids::uuid_v7().unwrap();
+    let expected_owner_team_id = crate::ids::uuid_v7().unwrap();
+    let create_project_op = crate::ids::uuid_v7().unwrap();
+    let create_project_body = json!({
+        "operation_id": create_project_op,
+        "scope": scope,
+        "params": {
+            "project_id": project_id,
+            "name": "Billing Service",
+            "create_team_id": expected_owner_team_id,
+            "contributing_team_ids": [platform_team_id]
+        }
+    })
+    .to_string();
+    let created = browser.post(
+        &format!("/api/v1/organizations/{organization}/projects"),
+        &create_project_body,
+    );
+    assert_eq!(created.status, 200, "{}", created.body);
+    assert_eq!(created.body["outcome"], "completed");
+    assert_eq!(created.body["operation_id"], create_project_op);
+
+    // 2b. Idempotent replay returns 200 completed; changed payload returns 409 operation_reused;
+    // and `/api/v1/operations/org/{op}` returns the retained outcome.
+    let replayed = browser.post(
+        &format!("/api/v1/organizations/{organization}/projects"),
+        &create_project_body,
+    );
+    assert_eq!(replayed.status, 200, "{}", replayed.body);
+    assert_eq!(replayed.body["outcome"], "completed");
+
+    let reused = browser.post(
+        &format!("/api/v1/organizations/{organization}/projects"),
+        &json!({
+            "operation_id": create_project_op,
+            "scope": scope,
+            "params": {
+                "project_id": project_id,
+                "name": "Different Project Name",
+                "create_team_id": expected_owner_team_id
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(reused.status, 409, "{}", reused.body);
+    assert_eq!(reused.body["outcome"], "rejected");
+    assert_eq!(reused.body["error"]["code"], "operation_reused");
+
+    let op_lookup = browser.get(&format!(
+        "/api/v1/operations/org/{create_project_op}?instance_id={instance_id}&org_id={organization}"
+    ));
+    assert_eq!(op_lookup.status, 200, "{}", op_lookup.body);
+    assert_eq!(op_lookup.body["result"]["outcome"], "completed");
+
+    // 3. List and inspect P-1 by key (`P-1`), slug (`billing-service`), and UUIDv7.
+    let listed = browser.get(&format!("/api/v1/organizations/{organization}/projects"));
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let projects = listed.body["result"]["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 1, "{}", listed.body);
+    assert_eq!(projects[0]["id"], project_id);
+    assert_eq!(projects[0]["number"], 1);
+    assert_eq!(projects[0]["key"], "P-1");
+    assert_eq!(projects[0]["slug"], "billing-service");
+    assert_eq!(projects[0]["name"], "Billing Service");
+    let owner_team_id = text(&projects[0]["owner_team_id"]).to_owned();
+    assert_eq!(owner_team_id, expected_owner_team_id);
+    assert_ne!(owner_team_id, platform_team_id);
+    assert_eq!(
+        projects[0]["contributing_team_ids"],
+        json!([platform_team_id])
+    );
+
+    for reference in ["P-1", "p-1", "billing-service", project_id.as_str()] {
+        let inspected = browser.get(&format!(
+            "/api/v1/organizations/{organization}/projects/{reference}"
+        ));
+        assert_eq!(inspected.status, 200, "{reference}: {}", inspected.body);
+        assert_eq!(inspected.body["result"]["id"], project_id);
+        assert_eq!(inspected.body["result"]["key"], "P-1");
+    }
+    let missing = browser.get(&format!(
+        "/api/v1/organizations/{organization}/projects/P-999"
+    ));
+    assert_eq!(missing.status, 404, "{}", missing.body);
+
+    // 4. Snapshot contains the project, its newly created owning team, and contributing link.
+    let snap = browser.get(&format!("/api/v1/organizations/{organization}/snapshot"));
+    assert_eq!(snap.status, 200, "{}", snap.body);
+    let snap_projects = snap.body["result"]["snapshot"]["projects"]
+        .as_array()
+        .unwrap();
+    assert_eq!(snap_projects.len(), 1, "{}", snap.body);
+    assert_eq!(snap_projects[0]["id"], project_id);
+    assert_eq!(snap_projects[0]["key"], "P-1");
+    let snap_teams = snap.body["result"]["snapshot"]["teams"].as_array().unwrap();
+    assert!(
+        snap_teams
+            .iter()
+            .any(|t| t["id"] == owner_team_id && t["name"] == "Billing Service"),
+        "owning team missing from snapshot: {snap_teams:?}"
+    );
+    let snap_links = snap.body["result"]["snapshot"]["project_teams"]
+        .as_array()
+        .unwrap();
+    assert_eq!(snap_links.len(), 2, "{}", snap.body);
+    assert!(
+        snap_links.iter().any(|l| l["team_id"] == owner_team_id),
+        "owning team link missing: {snap_links:?}"
+    );
+    assert!(
+        snap_links.iter().any(|l| l["team_id"] == platform_team_id),
+        "contributing team link missing: {snap_links:?}"
+    );
+
+    // 5. Add and remove a contributing team via `/projects/add-team` and `/projects/remove-team`.
+    let add_link_id = crate::ids::uuid_v7().unwrap();
+    let added = browser.post(
+        &format!("/api/v1/organizations/{organization}/projects/add-team"),
+        &json!({
+            "operation_id": crate::ids::uuid_v7().unwrap(),
+            "scope": scope,
+            "params": {
+                "project_team_id": add_link_id,
+                "project_id": project_id,
+                "team_id": security_team_id
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(added.status, 200, "{}", added.body);
+    assert_eq!(added.body["outcome"], "completed");
+
+    let after_add = browser.get(&format!(
+        "/api/v1/organizations/{organization}/projects/P-1"
+    ));
+    assert_eq!(after_add.status, 200, "{}", after_add.body);
+    let rev_after_add = after_add.body["result"]["revision"].as_u64().unwrap();
+    let contrib_after_add = after_add.body["result"]["contributing_team_ids"]
+        .as_array()
+        .unwrap();
+    assert_eq!(contrib_after_add.len(), 2, "{}", after_add.body);
+
+    // `project_team_id` in snapshot encodes `<project_id>:<team_id>`.
+    let remove_link_id = format!("{project_id}:{security_team_id}");
+    let removed = browser.post(
+        &format!("/api/v1/organizations/{organization}/projects/remove-team"),
+        &json!({
+            "operation_id": crate::ids::uuid_v7().unwrap(),
+            "scope": scope,
+            "params": {
+                "project_team_id": remove_link_id,
+                "expected_version": rev_after_add
+            }
+        })
+        .to_string(),
+    );
+    assert_eq!(removed.status, 200, "{}", removed.body);
+    assert_eq!(removed.body["outcome"], "completed");
+
+    let after_remove = browser.get(&format!(
+        "/api/v1/organizations/{organization}/projects/P-1"
+    ));
+    assert_eq!(after_remove.status, 200, "{}", after_remove.body);
+    assert_eq!(
+        after_remove.body["result"]["contributing_team_ids"],
+        json!([platform_team_id])
+    );
+
+    // 6. Exercise native `setup_flow::project_command` (`list`, `inspect`, `create`) over `host.sock`.
+    let mut expected_count = 1usize;
+    {
+        use crate::setup_flow::office_command::Target;
+        use crate::setup_flow::project_command::{create, inspect, list, ProjectCreateInput};
+        let target = Target {
+            socket: &socket,
+            instance_id: &instance_id,
+            name: None,
+        };
+        let mut typed = || Ok(org_host_control::Password::new(PASSWORD.into()).unwrap());
+        let by_code = matches!(
+            crate::test_programs::image_identity(),
+            org_platform_host::admission::ImageIdentity::CodeSignature
+        );
+        let mut out = Vec::new();
+        if by_code {
+            list(
+                &target,
+                "Owner",
+                Some(&organization),
+                false,
+                false,
+                &mut typed,
+                &mut out,
+            )
+            .unwrap();
+            let text_out = String::from_utf8(out.clone()).unwrap();
+            assert!(text_out.contains("P-1\tbilling-service"), "{text_out}");
+
+            out.clear();
+            inspect(
+                &target,
+                "Owner",
+                Some(&organization),
+                "P-1",
+                true,
+                &mut typed,
+                &mut out,
+            )
+            .unwrap();
+            let parsed: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(parsed["id"], project_id);
+            assert_eq!(parsed["key"], "P-1");
+
+            out.clear();
+            create(
+                &target,
+                "Owner",
+                &ProjectCreateInput {
+                    org_id: Some(&organization),
+                    name: "Analytics",
+                    slug: None,
+                    owner_team_id: Some(&security_team_id),
+                    parent_team_id: None,
+                    json: true,
+                },
+                &mut typed,
+                &mut out,
+            )
+            .unwrap();
+            let created_cli: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(created_cli["key"], "P-2");
+            assert_eq!(created_cli["slug"], "analytics");
+            assert_eq!(created_cli["owner_team_id"], security_team_id);
+            expected_count = 2;
+        }
+    }
+
+    // 7. Stop the host, DELETE the SQLite projection (`runtime/<office>/office.db`), restart the
+    // host, and verify projects + owning teams + contributing teams rebuild cleanly from durable YAML.
+    stop(host, &base);
+    let database = Path::new(&organization)
+        .join("runtime")
+        .join(&office)
+        .join("office.db");
+    let projection = all_files(&base)
+        .into_iter()
+        .find(|p| p.ends_with(&database))
+        .unwrap_or_else(|| panic!("no {database:?} under {base:?}"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    fs::remove_dir_all(&projection).unwrap();
+    assert!(!projection.exists());
+
+    let host = restart(&base, address);
+    wait_offices_active(&host, 1);
+    assert!(projection.join("office.db").is_file());
+
+    let after_rebuild = browser.get(&format!("/api/v1/organizations/{organization}/projects"));
+    assert_eq!(after_rebuild.status, 200, "{}", after_rebuild.body);
+    let rebuilt = after_rebuild.body["result"]["projects"].as_array().unwrap();
+    assert_eq!(rebuilt.len(), expected_count, "{}", after_rebuild.body);
+    assert_eq!(rebuilt[0]["id"], project_id);
+    assert_eq!(rebuilt[0]["key"], "P-1");
+    assert_eq!(rebuilt[0]["slug"], "billing-service");
+    assert_eq!(rebuilt[0]["owner_team_id"], owner_team_id);
+    assert_eq!(
+        rebuilt[0]["contributing_team_ids"],
+        json!([platform_team_id])
+    );
+
+    stop(host, &base);
+}

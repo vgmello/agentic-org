@@ -12,7 +12,7 @@ use crate::organization::{
 };
 
 /// A rule refused the change: recorded with its operation, so a retry gets this answer.
-pub(super) fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<T, Refusal> {
+pub(crate) fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<T, Refusal> {
     let rejection = OrgRejection {
         code,
         message: message.into(),
@@ -21,7 +21,7 @@ pub(super) fn reject<T>(code: RejectCode, message: impl Into<String>) -> Result<
 }
 
 /// What an admitted change knows before it reads its records.
-pub(super) struct Admitted {
+pub(crate) struct Admitted {
     /// The directory generation the change becomes.
     pub generation: u64,
     pub now: Timestamp,
@@ -34,7 +34,7 @@ pub(super) struct Admitted {
 /// change what"): `by` must be the employee `owner`, an active person on record. The
 /// caller's grant authority has already checked the connection; this is the
 /// organization's own check. Anything else is refused unrecorded.
-pub(super) fn admit<E: Engine>(
+pub(crate) fn admit<E: Engine>(
     uow: &mut UnitOfWork<'_, E>,
     here: &OfficeIdentity,
     owner: &Id,
@@ -72,7 +72,7 @@ where
 }
 
 /// `meta` after one more change by `by` at `now`.
-pub(super) fn touched(meta: &Meta, by: &By, now: Timestamp) -> Meta {
+pub(crate) fn touched(meta: &Meta, by: &By, now: Timestamp) -> Meta {
     Meta {
         revision: meta.revision + 1,
         updated_at: Some(records::time_text(now)),
@@ -82,7 +82,7 @@ pub(super) fn touched(meta: &Meta, by: &By, now: Timestamp) -> Meta {
 }
 
 /// A stale `expected_revision`: told after every other rule but `already_exists`.
-pub(super) fn check_revision(current: u64, expected: u64) -> Result<(), Refusal> {
+pub(crate) fn check_revision(current: u64, expected: u64) -> Result<(), Refusal> {
     if current == expected {
         return Ok(());
     }
@@ -93,8 +93,8 @@ pub(super) fn check_revision(current: u64, expected: u64) -> Result<(), Refusal>
 }
 
 /// Whether `id` names any record of the organization, whatever its kind.
-pub(super) fn id_in_use(
-    view: &impl OrganizationRead,
+pub(crate) fn id_in_use(
+    view: &impl crate::projects::ports::ProjectsRead,
     organization: &Organization,
     id: &Id,
 ) -> Result<bool, StoreError> {
@@ -103,12 +103,13 @@ pub(super) fn id_in_use(
         || view.office(id)?.is_some()
         || view.employee(id)?.is_some()
         || view.role(id)?.is_some()
+        || view.project(id)?.is_some()
         || view.repositories()?.iter().any(|r| r.id == *id))
 }
 
 /// Whether another active team under `parent` (none: the top level) has `name`, ignoring
 /// case. Archived teams keep their names without blocking them.
-pub(super) fn sibling_named(
+pub(crate) fn sibling_named(
     view: &impl OrganizationRead,
     parent: Option<&Id>,
     name: &str,
@@ -129,7 +130,7 @@ pub(super) const TOO_DEEP: &str = "the team tree would be too deep";
 /// The file of the team at the end of `chain`, or the rule's refusal when the tree is too
 /// deep for the limit or for a path. A team is only where an employee's profile also fits
 /// (its path is the longer), so every team can take a person or an agent.
-pub(super) fn team_file(chain: &[Id]) -> Result<DurablePath, Refusal> {
+pub(crate) fn team_file(chain: &[Id]) -> Result<DurablePath, Refusal> {
     let Some(last) = chain.last() else {
         return invalid("a team path names a team");
     };

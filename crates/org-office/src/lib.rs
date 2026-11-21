@@ -45,6 +45,7 @@ mod office_file;
 /// feature: a CA fixture.
 pub mod office_local;
 mod private_fs;
+pub mod projects;
 pub mod rules;
 mod store;
 #[cfg(any(test, feature = "testkit"))]

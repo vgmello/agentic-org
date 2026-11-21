@@ -127,7 +127,7 @@ pub(super) struct ReadDirectory;
 impl ReadOp for ReadDirectory {
     type Out = Directory;
 
-    fn read<S: OrganizationRead>(self, snapshot: &S) -> Result<Directory, StoreError> {
+    fn read<S: ProjectsRead>(self, snapshot: &S) -> Result<Directory, StoreError> {
         Ok(Directory {
             generation: snapshot.generation()?,
             organization: snapshot.organization()?,
@@ -345,7 +345,7 @@ struct HeldRead {
 impl ReadOp for HeldRead {
     type Out = u64;
 
-    fn read<S: OrganizationRead>(self, snapshot: &S) -> Result<u64, StoreError> {
+    fn read<S: ProjectsRead>(self, snapshot: &S) -> Result<u64, StoreError> {
         let generation = snapshot.generation()?;
         self.began.send(()).expect("the test is waiting");
         self.end.recv().expect("the test ends the read");
@@ -394,4 +394,399 @@ fn the_sqlite_log_stops_growing_while_the_store_stays_open_and_a_long_read_only_
     assert!(sizes.iter().all(|size| *size == after), "{sizes:?}");
     assert_eq!(directory(&store).teams.len(), 37);
     store.close().unwrap();
+}
+
+/// Engine-independent B3 projects suite (TASK-36 AC #1): default owning-team creation under
+/// TEAM-1, binding an existing active team, HQ `P-<n>` numbering & slug derivation/deduplication,
+/// contributing teams (add/remove/revision conflict), `archive_team` active-project guard,
+/// dry-run check, idempotent replay, and SQLite runtime projection rebuild after deleting `office.db`.
+#[test]
+fn projects_suite_passes_on_memory_and_sqlite_and_survives_rebuild() {
+    use crate::organization::features::{ArchiveTeam, OrgRejection, RejectCode};
+    use crate::projects::features::{
+        AddProjectTeam, CreateProject, OwnerTeamChoice, ProjectCreated, RemoveProjectTeam,
+    };
+
+    struct RecordRefsRead;
+    impl ReadOp for RecordRefsRead {
+        type Out = Vec<RecordRef>;
+        fn read<S: crate::projects::ports::ProjectsRead>(
+            self,
+            view: &S,
+        ) -> Result<Self::Out, StoreError> {
+            Ok(view.record_refs()?)
+        }
+    }
+
+    let mut engine_outputs = Vec::new();
+    for engine in ENGINES {
+        let place = Place::new();
+        let store = place.create(engine);
+        let creation = creation_command();
+        let owner = creation.creator.employee_id.clone();
+        let team1 = creation.team_id.clone();
+        let by = Actor::Employee(owner.clone());
+
+        let created_org = store
+            .run(CreateOrganizationOp {
+                operation_id: id(1),
+                here: identity(),
+                ca: ca_material(&creation.organization_id, 1),
+                command: creation,
+            })
+            .unwrap();
+        assert_eq!(created_org.outcome, Outcome::Completed);
+
+        // Create an extra standalone team `Design` (TEAM-2) to test existing-team & contributing-team flows.
+        let design_team = id(20);
+        let team_res = store
+            .run(CreateTeamOp {
+                operation_id: id(21),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: CreateTeam {
+                    id: design_team.clone(),
+                    name: "Design".into(),
+                    parent: Some(team1.clone()),
+                },
+            })
+            .unwrap();
+        assert_eq!(team_res.outcome, Outcome::Completed);
+
+        // 1. Dry-run `CreateProject` leaves zero projects and does not advance counters.
+        let dry = store
+            .run(ProjectCheckOp {
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: CreateProject {
+                    id: id(30),
+                    name: "Reservations".into(),
+                    slug: None,
+                    owner_team: OwnerTeamChoice::CreateDefault {
+                        team_id: id(31),
+                        parent_team_id: None,
+                    },
+                    contributing_team_ids: vec![design_team.clone()],
+                },
+            })
+            .unwrap();
+        assert_eq!(dry.outcome, Outcome::Completed);
+        assert!(
+            store
+                .read(ProjectsList {
+                    include_archived: true
+                })
+                .unwrap()
+                .0
+                .is_empty(),
+            "{engine:?}: dry-run must not persist projects"
+        );
+
+        // 2. Real create with default owning team (under TEAM-1) + derived slug + contributing team.
+        let proj1_id = id(30);
+        let proj1_team = id(31);
+        let create1 = CreateProject {
+            id: proj1_id.clone(),
+            name: "Reservations".into(),
+            slug: None,
+            owner_team: OwnerTeamChoice::CreateDefault {
+                team_id: proj1_team.clone(),
+                parent_team_id: None,
+            },
+            contributing_team_ids: vec![design_team.clone()],
+        };
+        let reply1 = store
+            .run(CreateProjectOp {
+                operation_id: id(32),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: create1.clone(),
+            })
+            .unwrap();
+        assert_eq!(reply1.outcome, Outcome::Completed);
+        let parsed1: ProjectCreated = serde_json::from_slice(&reply1.bytes).unwrap();
+        assert_eq!(parsed1.number, 1);
+        assert_eq!(parsed1.key, "P-1");
+        assert_eq!(parsed1.slug, "reservations");
+        assert_eq!(parsed1.owner_team_id, proj1_team);
+        assert_eq!(parsed1.created_team_number, Some(3)); // TEAM-1 (org), TEAM-2 (Design), TEAM-3 (Reservations)
+
+        // Idempotent replay with the same operation_id returns identical bytes.
+        let replay1 = store
+            .run(CreateProjectOp {
+                operation_id: id(32),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: create1,
+            })
+            .unwrap();
+        assert_eq!(replay1.bytes, reply1.bytes);
+
+        // Verify the created owning team is under TEAM-1 and named "Reservations".
+        let dir = directory(&store);
+        let created_team = dir.teams.iter().find(|t| t.id == proj1_team).unwrap();
+        assert_eq!(created_team.name, "Reservations");
+        assert_eq!(created_team.parent_team_id.as_ref(), Some(&team1));
+
+        // 3. Create second project bound to existing team `Design` with explicit slug.
+        let proj2_id = id(40);
+        let reply2 = store
+            .run(CreateProjectOp {
+                operation_id: id(41),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: CreateProject {
+                    id: proj2_id.clone(),
+                    name: "Design System".into(),
+                    slug: Some("design-sys".into()),
+                    owner_team: OwnerTeamChoice::Existing(design_team.clone()),
+                    contributing_team_ids: vec![],
+                },
+            })
+            .unwrap();
+        assert_eq!(reply2.outcome, Outcome::Completed);
+        let parsed2: ProjectCreated = serde_json::from_slice(&reply2.bytes).unwrap();
+        assert_eq!(parsed2.number, 2);
+        assert_eq!(parsed2.key, "P-2");
+        assert_eq!(parsed2.slug, "design-sys");
+        assert_eq!(parsed2.owner_team_id, design_team);
+        assert_eq!(parsed2.created_team_number, None);
+
+        // 4. Archiving a team that owns or contributes to an active project is refused (`NotEmpty`).
+        let archive_owner = store
+            .run(ArchiveTeamOp {
+                operation_id: id(50),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: ArchiveTeam {
+                    id: proj1_team.clone(),
+                    expected_revision: 1,
+                },
+            })
+            .unwrap();
+        assert_eq!(archive_owner.outcome, Outcome::Rejected);
+        let rej: OrgRejection = serde_json::from_slice(&archive_owner.bytes).unwrap();
+        assert_eq!(rej.code, RejectCode::NotEmpty);
+
+        // 5. Add and remove a contributing team on P-2, checking revision conflicts.
+        let add_contrib = store
+            .run(AddProjectTeamOp {
+                operation_id: id(51),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: AddProjectTeam {
+                    project_id: proj2_id.clone(),
+                    team_id: proj1_team.clone(),
+                },
+            })
+            .unwrap();
+        assert_eq!(add_contrib.outcome, Outcome::Completed);
+
+        let stale_remove = store
+            .run(RemoveProjectTeamOp {
+                operation_id: id(52),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: RemoveProjectTeam {
+                    project_id: proj2_id.clone(),
+                    team_id: proj1_team.clone(),
+                    expected_revision: 1,
+                },
+            })
+            .unwrap();
+        assert_eq!(stale_remove.outcome, Outcome::Rejected);
+        let rej: OrgRejection = serde_json::from_slice(&stale_remove.bytes).unwrap();
+        assert_eq!(rej.code, RejectCode::Conflict);
+
+        let remove_contrib = store
+            .run(RemoveProjectTeamOp {
+                operation_id: id(53),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: RemoveProjectTeam {
+                    project_id: proj2_id.clone(),
+                    team_id: proj1_team.clone(),
+                    expected_revision: 2,
+                },
+            })
+            .unwrap();
+        assert_eq!(remove_contrib.outcome, Outcome::Completed);
+
+        // 6. Inspect by UUIDv7, `P-<n>` (case-insensitive), and canonical slug.
+        for query in [proj1_id.as_str(), "P-1", "p-1", "reservations"] {
+            let found = store
+                .read(ProjectInspectByRef(query.into()))
+                .unwrap()
+                .0
+                .expect("project found");
+            assert_eq!(found.id, proj1_id, "{engine:?} query={query}");
+            assert_eq!(found.contributing_team_ids, vec![design_team.clone()]);
+        }
+
+        // 6b. Cross-family UUID collision: creating a team or person with an existing project's
+        // UUID must fail with AlreadyExists, and reserved slugs (`p-1`, `add-team`) must fail.
+        let collide_team = store
+            .run(CreateTeamOp {
+                operation_id: id(54),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: CreateTeam {
+                    id: proj1_id.clone(),
+                    name: "Colliding Team".into(),
+                    parent: Some(team1.clone()),
+                },
+            })
+            .unwrap();
+        assert_eq!(collide_team.outcome, Outcome::Rejected);
+        let rej: OrgRejection = serde_json::from_slice(&collide_team.bytes).unwrap();
+        assert_eq!(rej.code, RejectCode::AlreadyExists);
+
+        let collide_person = store
+            .run(AddPersonOp {
+                operation_id: id(55),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: crate::organization::features::AddPerson::new(
+                    proj1_id.clone(),
+                    "colliding",
+                    "Colliding Person",
+                    team1.clone(),
+                ),
+            })
+            .unwrap();
+        assert_eq!(collide_person.outcome, Outcome::Rejected);
+        let rej: OrgRejection = serde_json::from_slice(&collide_person.bytes).unwrap();
+        assert_eq!(rej.code, RejectCode::AlreadyExists);
+
+        for reserved in ["p-1", "add-team", "remove-team"] {
+            let bad_slug = store
+                .run(CreateProjectOp {
+                    operation_id: id(56 + reserved.len() as u64),
+                    here: identity(),
+                    owner: owner.clone(),
+                    by: by.clone(),
+                    command: CreateProject {
+                        id: id(0x299),
+                        name: "Reserved Slug Test".into(),
+                        slug: Some(reserved.into()),
+                        owner_team: OwnerTeamChoice::Existing(design_team.clone()),
+                        contributing_team_ids: vec![],
+                    },
+                })
+                .unwrap();
+            assert_eq!(bad_slug.outcome, Outcome::Rejected, "slug={reserved}");
+            let rej: OrgRejection = serde_json::from_slice(&bad_slug.bytes).unwrap();
+            assert_eq!(rej.code, RejectCode::InvalidName, "slug={reserved}");
+        }
+
+        // 6c. Unsorted contributing teams are stored and returned in canonical sorted order.
+        let team_lo = id(0x110);
+        let team_hi = id(0x111);
+        for (op_n, tid, tname) in [(70, &team_lo, "Alpha"), (71, &team_hi, "Beta")] {
+            let res = store
+                .run(CreateTeamOp {
+                    operation_id: id(op_n),
+                    here: identity(),
+                    owner: owner.clone(),
+                    by: by.clone(),
+                    command: CreateTeam {
+                        id: tid.clone(),
+                        name: tname.into(),
+                        parent: Some(team1.clone()),
+                    },
+                })
+                .unwrap();
+            assert_eq!(res.outcome, Outcome::Completed);
+        }
+        let proj3_id = id(0x203);
+        let create_p3 = store
+            .run(CreateProjectOp {
+                operation_id: id(72),
+                here: identity(),
+                owner: owner.clone(),
+                by: by.clone(),
+                command: CreateProject {
+                    id: proj3_id.clone(),
+                    name: "Sorted Contrib".into(),
+                    slug: None,
+                    owner_team: OwnerTeamChoice::Existing(design_team.clone()),
+                    // Deliberately pass high-ID before low-ID to verify canonical sorting parity.
+                    contributing_team_ids: vec![team_hi.clone(), team_lo.clone()],
+                },
+            })
+            .unwrap();
+        assert_eq!(create_p3.outcome, Outcome::Completed);
+        let p3 = store
+            .read(ProjectInspectByRef("P-3".into()))
+            .unwrap()
+            .0
+            .unwrap();
+        assert_eq!(
+            p3.contributing_team_ids,
+            vec![team_lo.clone(), team_hi.clone()]
+        );
+
+        let before_list = store
+            .read(ProjectsList {
+                include_archived: false,
+            })
+            .unwrap()
+            .0;
+        assert_eq!(before_list.len(), 3);
+        let before_snap = store
+            .read(DirectorySnapshot {
+                owner: owner.clone(),
+            })
+            .unwrap()
+            .0;
+        assert_eq!(before_snap.projects.len(), 3);
+        let before_refs = store.read(RecordRefsRead).unwrap().0;
+        assert!(
+            before_refs
+                .iter()
+                .any(|r| r.kind == "project" && r.id == proj1_id && !r.is_deleted),
+            "{engine:?}: project record_ref missing: {before_refs:?}"
+        );
+
+        // 7. Close, delete SQLite projection file (`runtime/<office>/office.db`), reopen, and verify rebuild!
+        store.close().unwrap();
+        if engine == EngineChoice::Sqlite {
+            let db_path = place.config(engine, Opening::Existing).projection_path();
+            assert!(db_path.is_file());
+            std::fs::remove_file(&db_path).unwrap();
+        }
+        let reopened = place.reopen(engine);
+        let after_list = reopened
+            .read(ProjectsList {
+                include_archived: false,
+            })
+            .unwrap()
+            .0;
+        assert_eq!(after_list, before_list, "{engine:?}: rebuild parity");
+        let after_snap = reopened.read(DirectorySnapshot { owner }).unwrap().0;
+        assert_eq!(after_snap.projects, before_snap.projects);
+        assert_eq!(after_snap.project_teams, before_snap.project_teams);
+        let after_refs = reopened.read(RecordRefsRead).unwrap().0;
+        assert_eq!(
+            after_refs, before_refs,
+            "{engine:?}: record_refs rebuild parity"
+        );
+        reopened.close().unwrap();
+        engine_outputs.push((after_list, after_snap, after_refs));
+    }
+    assert_eq!(
+        engine_outputs[0], engine_outputs[1],
+        "SQLite and Memory projections must be identical across projects, snapshot, and record_refs"
+    );
 }

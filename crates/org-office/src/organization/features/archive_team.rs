@@ -14,6 +14,7 @@ use crate::organization::{
     ports::OrganizationRead,
     records::{self, EmployeeStatus, Team, TeamStatus},
 };
+use crate::projects::ports::ProjectsRead;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 pub struct ArchiveTeam {
@@ -32,7 +33,7 @@ impl Feature for ArchiveTeam {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: OrganizationRead,
+        E::Tx: ProjectsRead,
     {
         decide(uow, here, owner, by, self)
     }
@@ -46,7 +47,7 @@ pub fn decide<E: Engine>(
     command: &ArchiveTeam,
 ) -> Result<Change, Refusal>
 where
-    E::Tx: OrganizationRead,
+    E::Tx: ProjectsRead,
 {
     stable(&command.id, "the team's ID")?;
     let admitted = admit(uow, here, owner, by)?;
@@ -82,6 +83,15 @@ where
             count(members, "employee", "employees"),
         );
         return reject(RejectCode::NotEmpty, message);
+    }
+    let projects = view.projects()?;
+    if projects.iter().any(|p| {
+        !p.archived && (p.owner_team_id == team.id || p.contributing_team_ids.contains(&team.id))
+    }) {
+        return reject(
+            RejectCode::NotEmpty,
+            "the team is still accountable for or contributing to an active project",
+        );
     }
     check_revision(team.meta.revision, command.expected_revision)?;
     let Some(chain) = view.team_chain(&team.id)? else {

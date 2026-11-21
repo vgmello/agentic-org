@@ -3,7 +3,7 @@
 //! directory and snapshot read from it.
 pub mod directory;
 pub mod features;
-mod names;
+pub(crate) mod names;
 pub mod ports;
 pub mod projector;
 pub mod records;

@@ -8,13 +8,11 @@
 //! for an agent waiting to be placed). Every employee belongs to one home team
 //! (`Member::home_team_id`, data contract document 01).
 
-use org_proto::org::{Member, MemberKind, OrgSnapshot, Position, Team};
+use org_proto::org::{Member, MemberKind, OrgSnapshot, Position, Project, ProjectTeam, Team};
 use org_store::{EngineError, Id};
 
-use super::{
-    ports::OrganizationRead,
-    records::{self, EmployeeKind},
-};
+use super::records::{self, EmployeeKind};
+use crate::projects::{ports::ProjectsRead, records::Project as ProjectRecord};
 
 /// The protocol position of directory generation `generation`. The organization's
 /// positions are one sequence, the generation, in the one epoch the store has: `epoch` is
@@ -28,7 +26,7 @@ pub fn position(generation: u64) -> Position {
 
 /// The snapshot `read` shows. `owner` is the person whose account owns the organization:
 /// the creator, as the creation binding names them (document 04).
-pub fn project(read: &impl OrganizationRead, owner: &Id) -> Result<OrgSnapshot, EngineError> {
+pub fn project(read: &impl ProjectsRead, owner: &Id) -> Result<OrgSnapshot, EngineError> {
     let generation = read.generation()?;
     let teams = read
         .teams()?
@@ -42,13 +40,42 @@ pub fn project(read: &impl OrganizationRead, owner: &Id) -> Result<OrgSnapshot, 
         .filter(|e| e.status != records::EmployeeStatus::Inactive)
         .map(|e| member(e, owner))
         .collect();
+    let project_records = read.projects()?;
+    let mut projects = Vec::with_capacity(project_records.len());
+    let mut project_teams = Vec::new();
+    for record in &project_records {
+        projects.push(project_summary(record));
+        project_teams.push(ProjectTeam {
+            id: format!("{}:{}", record.id, record.owner_team_id),
+            project_id: record.id.to_string(),
+            team_id: record.owner_team_id.to_string(),
+            version: record.meta.revision,
+        });
+        for team_id in &record.contributing_team_ids {
+            project_teams.push(ProjectTeam {
+                id: format!("{}:{}", record.id, team_id),
+                project_id: record.id.to_string(),
+                team_id: team_id.to_string(),
+                version: record.meta.revision,
+            });
+        }
+    }
     Ok(OrgSnapshot {
         position: position(generation),
         teams,
         members,
-        projects: Vec::new(),
-        project_teams: Vec::new(),
+        projects,
+        project_teams,
     })
+}
+
+fn project_summary(record: &ProjectRecord) -> Project {
+    let mut summary = Project::new(record.id.to_string(), record.name.clone());
+    summary.key = record.key();
+    summary.archived = record.archived;
+    summary.created_at = record.meta.created_at.clone();
+    summary.version = record.meta.revision;
+    summary
 }
 
 fn team(record: records::Team) -> Team {

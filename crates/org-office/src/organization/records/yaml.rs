@@ -184,6 +184,24 @@ impl Reader {
         readers.collect()
     }
 
+    /// A list of strings.
+    pub fn strings(&mut self, key: &str) -> Result<Vec<String>, RecordError> {
+        let Value::Array(items) = self.take(key)? else {
+            return Err(self.error(key, "not a list"));
+        };
+        items
+            .into_iter()
+            .enumerate()
+            .map(|(i, item)| match item {
+                Value::String(text) => Ok(text),
+                _ => Err(RecordError::new(
+                    format!("{}[{i}]", self.path(key)),
+                    "not a string",
+                )),
+            })
+            .collect()
+    }
+
     /// Whether the file has `key` and nothing took it yet: for a field a file may omit.
     pub fn has(&self, key: &str) -> bool {
         self.fields.contains_key(key)

@@ -19,9 +19,15 @@ use org_host_control::{
     organization::BrowserAuth,
 };
 use org_proto::{
-    web::org_mutations::OrgMutation, ApiRange, Empty, Hello, HelloParams, HelloResult,
-    OperationGet, OperationGetParams, OperationKind as NativeOperationKind, OperationOutcome,
-    OrgSnapshot, OrgSnapshotCall, Outcome, Principal, Request, Response, MAX_FRAME_BYTES,
+    org::{ProjectCreate, ProjectCreateParams},
+    projects::{
+        ProjectInspect, ProjectInspectParams, ProjectList, ProjectListParams, ProjectListResult,
+        ProjectRecord,
+    },
+    web::org_mutations::OrgMutation,
+    ApiRange, Empty, Hello, HelloParams, HelloResult, OperationGet, OperationGetParams,
+    OperationKind as NativeOperationKind, OperationOutcome, OrgSnapshot, OrgSnapshotCall, Outcome,
+    Principal, Request, Response, MAX_FRAME_BYTES,
 };
 use serde_json::Value;
 use tokio::{
@@ -302,6 +308,137 @@ impl OfficeBridge {
                 serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
             }
             Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
+        }
+    }
+
+    /// Lists projects asynchronously over the multiplexed office channel (`project.list`).
+    pub async fn projects_list(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        include_archived: bool,
+    ) -> Result<ProjectListResult, OfficeFailure> {
+        match self
+            .projects_list_once(auth, office_id, include_archived)
+            .await
+        {
+            Err(OfficeFailure::Transport) => {
+                self.projects_list_once(auth, office_id, include_archived)
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    async fn projects_list_once(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        include_archived: bool,
+    ) -> Result<ProjectListResult, OfficeFailure> {
+        let channel = self.get_or_open(auth, office_id).await?;
+        let principal = match self.grant(auth, office_id, &channel.channel_id).await {
+            Ok(principal) => principal,
+            Err(Failure::Unavailable) => {
+                self.evict(office_id, &channel.channel_id);
+                return Err(OfficeFailure::Transport);
+            }
+            Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
+        };
+        let rpc_id = self.next_rpc_id();
+        let params = ProjectListParams { include_archived };
+        let request = Request::new::<ProjectList>(rpc_id, &params)
+            .and_then(|req| req.with_principal(&principal))
+            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        let raw = match channel.roundtrip_raw(&request, rpc_id).await {
+            Ok(raw) => raw,
+            Err(_) => {
+                self.evict(office_id, &channel.channel_id);
+                return Err(OfficeFailure::Transport);
+            }
+        };
+        let response: Response =
+            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
+        match response.outcome {
+            Outcome::Result(value) => {
+                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
+            }
+            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
+        }
+    }
+
+    /// Inspects one project by ID, `P-<number>`, or slug (`project.inspect`).
+    pub async fn project_inspect(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        project: &str,
+    ) -> Result<ProjectRecord, OfficeFailure> {
+        match self.project_inspect_once(auth, office_id, project).await {
+            Err(OfficeFailure::Transport) => {
+                self.project_inspect_once(auth, office_id, project).await
+            }
+            other => other,
+        }
+    }
+
+    async fn project_inspect_once(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        project: &str,
+    ) -> Result<ProjectRecord, OfficeFailure> {
+        let channel = self.get_or_open(auth, office_id).await?;
+        let principal = match self.grant(auth, office_id, &channel.channel_id).await {
+            Ok(principal) => principal,
+            Err(Failure::Unavailable) => {
+                self.evict(office_id, &channel.channel_id);
+                return Err(OfficeFailure::Transport);
+            }
+            Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
+        };
+        let rpc_id = self.next_rpc_id();
+        let params = ProjectInspectParams {
+            project: project.to_owned(),
+        };
+        let request = Request::new::<ProjectInspect>(rpc_id, &params)
+            .and_then(|req| req.with_principal(&principal))
+            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        let raw = match channel.roundtrip_raw(&request, rpc_id).await {
+            Ok(raw) => raw,
+            Err(_) => {
+                self.evict(office_id, &channel.channel_id);
+                return Err(OfficeFailure::Transport);
+            }
+        };
+        let response: Response =
+            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
+        match response.outcome {
+            Outcome::Result(value) => {
+                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
+            }
+            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
+        }
+    }
+
+    /// Dispatches `project.create` asynchronously over the multiplexed office channel.
+    pub async fn project_create(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        params: &ProjectCreateParams,
+    ) -> Result<Option<Value>, OfficeFailure> {
+        let (channel, principal) = self.channel_and_grant(auth, office_id).await?;
+        let rpc_id = self.next_rpc_id();
+        let request = Request::new::<ProjectCreate>(rpc_id, params)
+            .and_then(|req| req.with_principal(&principal))
+            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        match channel.roundtrip_raw(&request, rpc_id).await {
+            Ok(reply) => Ok(Some(reply)),
+            Err(_) => {
+                self.evict(office_id, &channel.channel_id);
+                Ok(None)
+            }
         }
     }
 

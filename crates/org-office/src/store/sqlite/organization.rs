@@ -25,14 +25,14 @@ use crate::organization::{
 };
 
 /// The columns of document 08's fields, as every attributed table has them.
-const META: &str = "revision, created_at, created_by_kind, created_by_id, updated_at, \
+pub(super) const META: &str = "revision, created_at, created_by_kind, created_by_id, updated_at, \
                     updated_by_kind, updated_by_id";
 
 /// The one counter of this family: team numbers, scoped by the organization.
 const TEAM_SCOPE: &str = "scope_kind = 'organization' AND scope_id = ?1 AND entity_kind = 'team'";
 
 /// A transaction's or a snapshot's connection, and the organization it is scoped to.
-trait View {
+pub(super) trait View {
     fn view(&self) -> Result<(&Connection, &str), EngineError>;
 }
 
@@ -61,18 +61,18 @@ fn foreign(column: usize, what: &str) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(column, Type::Text, what.into())
 }
 
-fn id(row: &Row<'_>, column: usize) -> rusqlite::Result<Id> {
+pub(super) fn id(row: &Row<'_>, column: usize) -> rusqlite::Result<Id> {
     let text: String = row.get(column)?;
     Id::parse(&text).map_err(|_| foreign(column, "not an ID"))
 }
 
-fn optional_id(row: &Row<'_>, column: usize) -> rusqlite::Result<Option<Id>> {
+pub(super) fn optional_id(row: &Row<'_>, column: usize) -> rusqlite::Result<Option<Id>> {
     let text: Option<String> = row.get(column)?;
     let parsed = text.map(|text| Id::parse(&text).map_err(|_| foreign(column, "not an ID")));
     parsed.transpose()
 }
 
-fn number(row: &Row<'_>, column: usize) -> rusqlite::Result<u64> {
+pub(super) fn number(row: &Row<'_>, column: usize) -> rusqlite::Result<u64> {
     let stored: i64 = row.get(column)?;
     u64::try_from(stored).map_err(|_| foreign(column, "a negative number"))
 }
@@ -102,7 +102,7 @@ fn by(row: &Row<'_>, column: usize) -> rusqlite::Result<By> {
 }
 
 /// The [`META`] columns, the first of them at `column`.
-fn meta(row: &Row<'_>, column: usize) -> rusqlite::Result<Meta> {
+pub(super) fn meta(row: &Row<'_>, column: usize) -> rusqlite::Result<Meta> {
     Ok(Meta {
         revision: number(row, column)?,
         created_at: row.get(column + 1)?,
@@ -112,7 +112,7 @@ fn meta(row: &Row<'_>, column: usize) -> rusqlite::Result<Meta> {
     })
 }
 
-fn all<T>(
+pub(super) fn all<T>(
     db: &Connection,
     sql: &str,
     values: Vec<Value>,
@@ -127,7 +127,7 @@ fn all<T>(
     query().map_err(|error| failed(db, "reading organization rows", &error))
 }
 
-fn one<T>(
+pub(super) fn one<T>(
     db: &Connection,
     sql: &str,
     values: Vec<Value>,
@@ -136,15 +136,15 @@ fn one<T>(
     Ok(all(db, sql, values, read)?.pop())
 }
 
-fn text(value: &str) -> Value {
+pub(super) fn text(value: &str) -> Value {
     Value::Text(value.to_owned())
 }
 
-fn optional(value: Option<&str>) -> Value {
+pub(super) fn optional(value: Option<&str>) -> Value {
     value.map_or(Value::Null, text)
 }
 
-fn whole(value: u64) -> Result<Value, EngineError> {
+pub(super) fn whole(value: u64) -> Result<Value, EngineError> {
     let stored = i64::try_from(value);
     stored
         .map(Value::Integer)
@@ -412,7 +412,7 @@ sqlite_read!(SqliteTx, SqliteSnapshot);
 
 // ---- writing ----
 
-fn run(db: &Connection, sql: &str, values: Vec<Value>) -> Result<(), EngineError> {
+pub(super) fn run(db: &Connection, sql: &str, values: Vec<Value>) -> Result<(), EngineError> {
     db.prepare_cached(sql)
         .and_then(|mut write| write.execute(params_from_iter(values)))
         .map_err(|error| failed(db, "writing an organization row", &error))?;
@@ -422,7 +422,7 @@ fn run(db: &Connection, sql: &str, values: Vec<Value>) -> Result<(), EngineError
 /// Inserts a row, or replaces every other column of the row with the same key: the first
 /// `key` columns. A row is never deleted to be replaced, so what refers to it stays
 /// resolved.
-fn put(
+pub(super) fn put(
     db: &Connection,
     table: &str,
     columns: &str,
@@ -457,7 +457,7 @@ fn by_values(by: &By, values: &mut Vec<Value>) {
 }
 
 /// The values of `schema_version` and the [`META`] columns.
-fn meta_values(meta: &Meta, values: &mut Vec<Value>) -> Result<(), EngineError> {
+pub(super) fn meta_values(meta: &Meta, values: &mut Vec<Value>) -> Result<(), EngineError> {
     values.push(Value::Integer(1));
     values.push(whole(meta.revision)?);
     values.push(optional(meta.created_at.as_deref()));
@@ -467,12 +467,17 @@ fn meta_values(meta: &Meta, values: &mut Vec<Value>) -> Result<(), EngineError> 
     Ok(())
 }
 
-fn optional_id_value(id: Option<&Id>) -> Value {
+pub(super) fn optional_id_value(id: Option<&Id>) -> Value {
     optional(id.map(Id::as_str))
 }
 
 /// The row other families refer to a record of this one by.
-fn put_record_ref(db: &Connection, scope: &str, kind: &str, id: &Id) -> Result<(), EngineError> {
+pub(super) fn put_record_ref(
+    db: &Connection,
+    scope: &str,
+    kind: &str,
+    id: &Id,
+) -> Result<(), EngineError> {
     let values = vec![
         text(scope),
         text(kind),

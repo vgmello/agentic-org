@@ -480,6 +480,23 @@ fn serve_office(
                 let office = Arc::clone(&office);
                 Box::new(move || office.org_snapshot().map_err(|e| snapshot_failure(&e)))
             },
+            projects_list: {
+                let office = Arc::clone(&office);
+                Box::new(move |params| {
+                    office
+                        .list_projects(params.include_archived)
+                        .map(Ok)
+                        .map_err(|e| logged("project.list", &e))
+                })
+            },
+            project_inspect: {
+                let office = Arc::clone(&office);
+                Box::new(move |params| {
+                    office
+                        .inspect_project(&params.project)
+                        .map_err(|e| logged("project.inspect", &e))
+                })
+            },
             who: {
                 let office = Arc::clone(&office);
                 // Status lines and runtime presence are unavailable until B6: everyone reads

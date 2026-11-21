@@ -157,6 +157,15 @@
   },
   {
     "group": "org",
+    "method": "project.create",
+    "params": {
+      "project_id": "fixture",
+      "name": "fixture",
+      "command_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    }
+  },
+  {
+    "group": "org",
     "method": "project.add_team",
     "params": {
       "project_team_id": "fixture",

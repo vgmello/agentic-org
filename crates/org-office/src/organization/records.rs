@@ -5,7 +5,7 @@
 //! set. Team and employee files do not hold the organization ID: an office store holds one
 //! organization.
 
-mod yaml;
+pub(crate) mod yaml;
 
 use org_store::{DurablePath, Id, StoreError, Timestamp};
 use serde_json::{json, Value};
@@ -159,7 +159,7 @@ impl Meta {
         }
     }
 
-    fn write(&self, fields: &mut Fields) {
+    pub(crate) fn write(&self, fields: &mut Fields) {
         fields.insert("schema_version".into(), json!(SCHEMA_VERSION));
         fields.insert("revision".into(), json!(self.revision));
         fields.insert("created_at".into(), json!(self.created_at));
@@ -168,7 +168,7 @@ impl Meta {
         self.updated_by.write(fields, "updated");
     }
 
-    fn read(reader: &mut Reader) -> Result<Self, RecordError> {
+    pub(crate) fn read(reader: &mut Reader) -> Result<Self, RecordError> {
         if reader.number("schema_version")? != SCHEMA_VERSION {
             return Err(reader.error("schema_version", "not 1"));
         }
@@ -953,7 +953,7 @@ pub enum Kind {
 }
 
 /// A number as a path writes it: decimal, no sign, no leading zero, at least 1.
-fn path_number(text: &str) -> Option<u64> {
+pub(crate) fn path_number(text: &str) -> Option<u64> {
     let canonical = !text.starts_with('0') && text.bytes().all(|b| b.is_ascii_digit());
     text.parse().ok().filter(|_| canonical)
 }

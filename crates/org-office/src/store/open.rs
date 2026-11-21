@@ -28,17 +28,19 @@ use org_store::{
 };
 
 pub use operations::{
-    AddPersonOp, ArchiveTeamOp, CheckOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
-    DirectoryGeneration, DirectorySnapshot, MovePersonOp, MoveTeamOp, OfficeStanding, ReceiptById,
-    Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
+    AddPersonOp, AddProjectTeamOp, ArchiveTeamOp, CheckOp, CreateOrganizationOp, CreateProjectOp,
+    CreateTeamOp, DeactivatePersonOp, DirectoryGeneration, DirectorySnapshot, MovePersonOp,
+    MoveTeamOp, OfficeStanding, ProjectCheckOp, ProjectInspectByRef, ProjectsList, ReceiptById,
+    RemoveProjectTeamOp, Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
 };
 
 use super::sqlite::SqliteEngine;
 use crate::{
     office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
-    organization::{
-        ports::{OrganizationEngine, OrganizationRead},
-        projector::OrganizationFiles,
+    organization::projector::OrganizationFiles,
+    projects::{
+        ports::{ProjectsEngine, ProjectsRead},
+        projector::ProjectFiles,
     },
 };
 
@@ -132,9 +134,9 @@ impl StoreConfig {
 }
 
 /// An engine every family of the office runs on. It grows by one bound per family.
-pub trait OfficeEngine: OrganizationEngine {}
+pub trait OfficeEngine: ProjectsEngine {}
 
-impl<E: OrganizationEngine> OfficeEngine for E {}
+impl<E: ProjectsEngine> OfficeEngine for E {}
 
 /// One operation on the store, whichever engine holds the projection.
 pub trait StoreOp {
@@ -145,7 +147,7 @@ pub trait StoreOp {
 /// One read of a consistent snapshot, whichever engine holds the projection.
 pub trait ReadOp {
     type Out;
-    fn read<S: OrganizationRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
+    fn read<S: ProjectsRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
 }
 
 /// A store and the engine under it.
@@ -208,9 +210,10 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let here = &config.identity;
     let organization = here.organization_id.clone();
     let files: Arc<dyn Projector<E>> = Arc::new(OrganizationFiles::new(organization.clone()));
+    let projects: Arc<dyn Projector<E>> = Arc::new(ProjectFiles::new(organization.clone()));
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
     #[cfg_attr(not(any(test, feature = "testkit")), allow(unused_mut))]
-    let mut projectors: Vec<Arc<dyn Projector<E>>> = vec![files, Arc::new(local)];
+    let mut projectors: Vec<Arc<dyn Projector<E>>> = vec![files, projects, Arc::new(local)];
     #[cfg(any(test, feature = "testkit"))]
     if let Some(probe) = &config.testing.probe {
         projectors.push(probe.projector());

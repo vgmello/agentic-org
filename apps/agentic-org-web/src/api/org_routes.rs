@@ -2,22 +2,199 @@
 //! Extracted from `api.rs` to keep the session/host API surface decoupled from
 //! browser-to-office organization routing and `web-api-v1` §9 authorization rechecks.
 
-use hyper::StatusCode;
+use hyper::{http::request::Parts, Method, StatusCode};
 use org_host_control::{
     browser::{BrowserOfficeRestart, BrowserOfficeRestartParams},
     organization::{self as host_org, BrowserAuth},
     HostOpResult,
 };
 use org_proto::web::{
+    self as gateway,
     org_mutations::{classify_org_reply, OrgMutation, OrgOperation, OrgReplyClassification},
-    MutationOutcome, OfficeList, OfficeRestartResult, OfficeView, OperationId, OperationKind,
-    OperationLookup, ResumeCursor, SnapshotResponse, WebError, WebErrorCode,
+    organizations, MutationOutcome, OfficeList, OfficeRestartResult, OfficeView, OperationId,
+    OperationKind, OperationLookup, ResumeCursor, Scope, SnapshotResponse, WebError, WebErrorCode,
 };
 
 use super::{
-    failure, mutation, not_found, result, signed_out, unavailable, PresentedPair, SessionApi,
+    bad_input, failure, invalid, mutation, not_found, result, signed_out, unavailable, Call,
+    PresentedPair, Route, SessionApi,
 };
-use crate::{host::Failure, office::OfficeFailure, service::ApiReply, sse::HubEvent};
+use crate::{
+    host::Failure,
+    office::OfficeFailure,
+    service::{ApiReply, PreparedCall},
+    sse::HubEvent,
+};
+
+fn valid_org_id(id: &str) -> Result<(), ApiReply> {
+    org_office_launch::is_storage_id(id)
+        .then_some(())
+        .ok_or_else(invalid)
+}
+
+fn route_projects(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+    tail: &[&str],
+    post: bool,
+    query: bool,
+) -> Result<Route, ApiReply> {
+    let is_get = matches!(request.method, Method::GET | Method::HEAD);
+    match tail {
+        [] if is_get => {
+            let pair = api.pair(request)?;
+            valid_org_id(org)?;
+            let include_archived = match request.uri.query() {
+                None | Some("include_archived=false") => false,
+                Some("include_archived=true") => true,
+                Some(_) => return Err(invalid()),
+            };
+            Ok(Route::OrgProjects(pair, org.to_owned(), include_archived))
+        }
+        [] if post => {
+            let pair = api.pair(request)?;
+            valid_org_id(org)?;
+            Ok(Route::OrgProjectCreate(pair, org.to_owned()))
+        }
+        [project] if is_get => {
+            if query || matches!(*project, "add-team" | "remove-team") {
+                return Err(invalid());
+            }
+            let pair = api.pair(request)?;
+            valid_org_id(org)?;
+            if project.is_empty() || project.len() > 128 {
+                return Err(invalid());
+            }
+            Ok(Route::OrgProjectInspect(
+                pair,
+                org.to_owned(),
+                (*project).to_owned(),
+            ))
+        }
+        [action] if post => {
+            let Some(op) = route_org_action("projects", action) else {
+                return Err(not_found());
+            };
+            let pair = api.pair(request)?;
+            valid_org_id(org)?;
+            Ok(Route::OrgMutation(pair, org.to_owned(), op))
+        }
+        [] | ["add-team" | "remove-team"] => Err(invalid()),
+        _ => Err(not_found()),
+    }
+}
+
+pub(super) fn route_organization(
+    api: &SessionApi,
+    request: &Parts,
+    org: &str,
+    tail: &[&str],
+    get: bool,
+    post: bool,
+    query: bool,
+) -> Result<Route, ApiReply> {
+    if let ["projects", rest @ ..] = tail {
+        return route_projects(api, request, org, rest, post, query);
+    }
+    Ok(match tail {
+        ["snapshot"] if get => {
+            let pair = api.pair(request)?;
+            valid_org_id(org)?;
+            Route::OrgSnapshot(pair, org.to_owned())
+        }
+        ["offices"] if get => {
+            let pair = api.pair(request)?;
+            valid_org_id(org)?;
+            Route::OrgOffices(pair, org.to_owned())
+        }
+        ["offices", office, "restart"] if post => {
+            let pair = api.pair(request)?;
+            valid_org_id(org)?;
+            valid_org_id(office)?;
+            Route::OfficeRestart(pair, org.to_owned(), (*office).to_owned())
+        }
+        ["teams"] if post => {
+            let pair = api.pair(request)?;
+            valid_org_id(org)?;
+            Route::OrgMutation(pair, org.to_owned(), OrgOperation::TeamCreate)
+        }
+        [resource @ ("teams" | "members"), action] if post => {
+            let Some(op) = route_org_action(resource, action) else {
+                return Err(not_found());
+            };
+            let pair = api.pair(request)?;
+            valid_org_id(org)?;
+            Route::OrgMutation(pair, org.to_owned(), op)
+        }
+        ["snapshot"]
+        | ["offices"]
+        | ["offices", _, "restart"]
+        | ["teams"]
+        | ["teams", "create" | "rename" | "move" | "set-lead" | "delete" | "set-title"]
+        | ["members", "add-person" | "update-person" | "remove" | "set-reports-to" | "move"] => {
+            return Err(invalid())
+        }
+        _ => return Err(not_found()),
+    })
+}
+
+pub(super) fn prepare_project_create(
+    api: &SessionApi,
+    pair: PresentedPair,
+    org: String,
+    bytes: &[u8],
+) -> Result<PreparedCall<Call>, ApiReply> {
+    let raw: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    if !raw.is_object() {
+        return Err(invalid());
+    }
+    let id_str = raw
+        .get("operation_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(invalid)?;
+    let id = organizations::host_operation_id(id_str).map_err(bad_input)?;
+    let request: org_proto::projects::ProjectCreateWebRequest =
+        gateway::decode_request(bytes).map_err(|_| invalid())?;
+    let target = Scope::Organization {
+        instance_id: api.host.instance().to_owned(),
+        org_id: org.clone(),
+    };
+    request.scope.check_target(&target).map_err(|_| invalid())?;
+    Ok(PreparedCall::mutation(
+        Call::OrgProjectCreate(pair, org, id.clone(), request.params),
+        id,
+        bytes.len(),
+    ))
+}
+
+pub(super) fn prepare_office_restart(
+    api: &SessionApi,
+    pair: PresentedPair,
+    org: String,
+    office: String,
+    bytes: &[u8],
+) -> Result<PreparedCall<Call>, ApiReply> {
+    let raw: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    let id_str = raw
+        .get("operation_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let id = organizations::host_operation_id(id_str).map_err(bad_input)?;
+    let request: gateway::OfficeRestartRequest =
+        gateway::decode_request(bytes).map_err(|_| invalid())?;
+    let target = Scope::Office {
+        instance_id: api.host.instance().to_owned(),
+        org_id: org.clone(),
+        office_id: office.clone(),
+    };
+    request.scope.check_target(&target).map_err(|_| invalid())?;
+    Ok(PreparedCall::mutation(
+        Call::OfficeRestart(pair, org, office, id.clone()),
+        id,
+        bytes.len(),
+    ))
+}
 
 /// Maps the `(resource, action)` segments of `/api/v1/organizations/{org}/{resource}/{action}`
 /// to a closed typed [`OrgOperation`].
@@ -38,6 +215,8 @@ pub(super) fn route_org_action(resource: &str, action: &str) -> Option<OrgOperat
             OrgOperation::MemberSetReportsTo,
         ),
         ("members", "move", OrgOperation::MemberMove),
+        ("projects", "add-team", OrgOperation::ProjectAddTeam),
+        ("projects", "remove-team", OrgOperation::ProjectRemoveTeam),
     ];
     TABLE
         .iter()
@@ -188,6 +367,154 @@ pub(super) async fn execute_org_mutation(
     finish_org_mutation(api, org_id, &command, op_id, classified)
 }
 
+pub(super) async fn execute_projects_list(
+    api: &SessionApi,
+    pair: PresentedPair,
+    org_id: &str,
+    include_archived: bool,
+) -> ApiReply {
+    let mut office_id = match resolve_hq_office(api, pair, org_id).await {
+        Ok(id) => id,
+        Err(Failure::Refused(_)) => return unavailable(),
+        Err(error) => return failure(error),
+    };
+    let auth = api.auth(&pair);
+    let mut reply = api
+        .offices
+        .projects_list(&auth, &office_id, include_archived)
+        .await;
+    if matches!(
+        &reply,
+        Err(OfficeFailure::Refused(e)) if e.code == org_proto::ErrorCode::NotAuthorized
+    ) {
+        office_id = match revalidate_and_resolve_hq(api, pair, org_id).await {
+            Ok(id) => id,
+            Err(Failure::Refused(_)) => return unavailable(),
+            Err(error) => return failure(error),
+        };
+        reply = api
+            .offices
+            .projects_list(&auth, &office_id, include_archived)
+            .await;
+    }
+    match reply {
+        Ok(listed) => result(listed),
+        Err(error) => map_read_office_error(
+            error,
+            "You are not authorized to view projects in this organization.",
+        ),
+    }
+}
+
+pub(super) async fn execute_project_inspect(
+    api: &SessionApi,
+    pair: PresentedPair,
+    org_id: &str,
+    project_ref: &str,
+) -> ApiReply {
+    let mut office_id = match resolve_hq_office(api, pair, org_id).await {
+        Ok(id) => id,
+        Err(Failure::Refused(_)) => return unavailable(),
+        Err(error) => return failure(error),
+    };
+    let auth = api.auth(&pair);
+    let mut reply = api
+        .offices
+        .project_inspect(&auth, &office_id, project_ref)
+        .await;
+    if matches!(
+        &reply,
+        Err(OfficeFailure::Refused(e)) if e.code == org_proto::ErrorCode::NotAuthorized
+    ) {
+        office_id = match revalidate_and_resolve_hq(api, pair, org_id).await {
+            Ok(id) => id,
+            Err(Failure::Refused(_)) => return unavailable(),
+            Err(error) => return failure(error),
+        };
+        reply = api
+            .offices
+            .project_inspect(&auth, &office_id, project_ref)
+            .await;
+    }
+    match reply {
+        Ok(project) => result(project),
+        Err(error) => map_read_office_error(error, "You are not authorized to view this project."),
+    }
+}
+
+pub(super) async fn execute_project_create(
+    api: &SessionApi,
+    pair: PresentedPair,
+    org_id: &str,
+    op_id: OperationId,
+    params: org_proto::projects::ProjectCreateWebParams,
+) -> ApiReply {
+    let office_id = match resolve_hq_office(api, pair, org_id).await {
+        Ok(id) => id,
+        Err(error) => return mutation_setup_failure(error, op_id),
+    };
+    let auth = api.auth(&pair);
+    let native = org_proto::org::ProjectCreateParams {
+        project_id: params.project_id,
+        name: params.name,
+        key: None,
+        description: None,
+        teams: Vec::new(),
+        general_area_id: String::new(),
+        general_area_name: None,
+        repo: None,
+        integration_branch: None,
+        slug: params.slug,
+        owner_team_id: params.owner_team_id,
+        create_team_id: params.create_team_id,
+        parent_team_id: params.parent_team_id,
+        contributing_team_ids: params.contributing_team_ids,
+        command_id: op_id.as_str().to_owned(),
+    };
+    let mut classified =
+        match dispatch_project_create(api, &auth, &office_id, &native, &op_id).await {
+            Ok(c) => c,
+            Err(reply) => return reply,
+        };
+    if matches!(
+        classified,
+        OrgReplyClassification::NeedsAuthorizationRecheck
+    ) {
+        let fresh_office = match revalidate_and_resolve_hq(api, pair, org_id).await {
+            Ok(id) => id,
+            Err(error) => return mutation_setup_failure(error, op_id),
+        };
+        classified = match dispatch_project_create(api, &auth, &fresh_office, &native, &op_id).await
+        {
+            Ok(c) => c,
+            Err(reply) => return reply,
+        };
+    }
+    finish_named_org_mutation(api, org_id, "project.create", op_id, classified)
+}
+
+async fn dispatch_project_create(
+    api: &SessionApi,
+    auth: &BrowserAuth,
+    office_id: &str,
+    params: &org_proto::org::ProjectCreateParams,
+    op_id: &OperationId,
+) -> Result<OrgReplyClassification, ApiReply> {
+    match api.offices.project_create(auth, office_id, params).await {
+        Ok(reply) => Ok(classify_org_reply(op_id.clone(), reply.as_ref())),
+        Err(OfficeFailure::BeforeDispatch(error)) => {
+            Err(mutation_setup_failure(error, op_id.clone()))
+        }
+        Err(_) => Err(mutation(
+            MutationOutcome::<org_proto::Empty>::Rejected {
+                operation_id: op_id.clone(),
+                error: WebError::new(WebErrorCode::Unavailable, "Service unavailable."),
+            },
+            false,
+        )),
+    }
+}
+
 pub(super) async fn execute_org_operation(
     api: &SessionApi,
     pair: PresentedPair,
@@ -299,6 +626,16 @@ fn finish_org_mutation(
     op_id: OperationId,
     classified: OrgReplyClassification,
 ) -> ApiReply {
+    finish_named_org_mutation(api, org_id, command.operation().name(), op_id, classified)
+}
+
+fn finish_named_org_mutation(
+    api: &SessionApi,
+    org_id: &str,
+    event_name: &str,
+    op_id: OperationId,
+    classified: OrgReplyClassification,
+) -> ApiReply {
     match classified {
         OrgReplyClassification::Outcome { outcome, issue } => {
             if let Some(issue) = issue {
@@ -308,7 +645,7 @@ fn finish_org_mutation(
                 api.hub.publish(HubEvent::OrganizationChanged {
                     org_id: org_id.to_owned(),
                     cursor: format!("org:{org_id}:{}", op_id.as_str()),
-                    event: command.operation().name().to_owned(),
+                    event: event_name.to_owned(),
                     data: serde_json::json!({ "operation_id": op_id.as_str() }),
                 });
             }

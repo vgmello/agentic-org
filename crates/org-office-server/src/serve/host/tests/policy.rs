@@ -27,6 +27,26 @@ fn shared() -> Shared {
         ))
     });
     ports.who = Box::new(|_| Ok(Ok(WhoResult { members: vec![] })));
+    ports.projects_list = Box::new(|_| {
+        Ok(Ok(org_proto::projects::ProjectListResult {
+            projects: vec![],
+        }))
+    });
+    ports.project_inspect = Box::new(|_| {
+        Ok(Ok(org_proto::projects::ProjectRecord {
+            id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071f1".into(),
+            number: 1,
+            key: "P-1".into(),
+            slug: "fixture".into(),
+            name: "Fixture".into(),
+            owner_team_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071f2".into(),
+            contributing_team_ids: vec![],
+            archived: false,
+            revision: 1,
+            created_at: None,
+            updated_at: None,
+        }))
+    });
     ports.operation_get = Box::new(|_, _| {
         Ok(Ok(org_proto::OperationOutcome::Committed {
             result: json!({"status":"committed"}),
@@ -88,6 +108,8 @@ fn verified_owner_dispatches_snapshot_who_operation_inbox_and_all_current_writes
     let ctx = context();
     for (method, params) in [
         ("org.snapshot", json!({})),
+        ("project.list", json!({})),
+        ("project.inspect", json!({"project": "P-1"})),
         ("who", json!({})),
         (
             "operation.get",
@@ -99,7 +121,7 @@ fn verified_owner_dispatches_snapshot_who_operation_inbox_and_all_current_writes
         assert!(response.get("result").is_some(), "{method}: {response}");
     }
     let rows: Value = serde_json::from_str(include_str!("operations.json")).unwrap();
-    assert_eq!(rows.as_array().unwrap().len(), 43);
+    assert_eq!(rows.as_array().unwrap().len(), 44);
     for row in rows.as_array().unwrap() {
         let method = row["method"].as_str().unwrap();
         let request = signed(&shared, method, row["params"].clone());

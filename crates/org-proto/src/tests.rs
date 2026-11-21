@@ -3729,6 +3729,11 @@ fn project_and_area_commands_are_pinned() {
             general_area_name: None,
             repo: Some(RepoSpec::NewLocal {}),
             integration_branch: None,
+            slug: None,
+            owner_team_id: None,
+            create_team_id: None,
+            parent_team_id: None,
+            contributing_team_ids: vec![],
         },
         json!({
             "command_id": "01C", "project_id": "p1", "name": "Checkout", "key": "chk",
@@ -3750,6 +3755,11 @@ fn project_and_area_commands_are_pinned() {
                 path: "/Users/me/src/billing".into(),
             }),
             integration_branch: Some("v1".into()),
+            slug: None,
+            owner_team_id: None,
+            create_team_id: None,
+            parent_team_id: None,
+            contributing_team_ids: vec![],
         },
         json!({
             "command_id": "01C", "project_id": "p2", "name": "Billing",

@@ -11,8 +11,12 @@ use crate::{
             create_organization, AddPerson, ArchiveTeam, CreateOrganization, CreateTeam,
             DeactivatePerson, Feature, MovePerson, MoveTeam, UpdatePerson, UpdateTeam,
         },
-        ports::OrganizationRead,
         records, snapshot,
+    },
+    projects::{
+        features::{AddProjectTeam, CreateProject, ProjectFeature, RemoveProjectTeam},
+        ports::ProjectsRead,
+        records::Project as ProjectRecord,
     },
 };
 
@@ -154,8 +158,123 @@ pub struct ReceiptById(pub Id);
 impl ReadOp for ReceiptById {
     type Out = Option<Receipt>;
 
-    fn read<S: OrganizationRead>(self, read: &S) -> Result<Option<Receipt>, StoreError> {
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Option<Receipt>, StoreError> {
         Ok(read.receipt(&self.0)?)
+    }
+}
+
+/// Runs a project-family write operation on the store.
+pub struct ProjectOp<C> {
+    pub operation_id: Id,
+    pub here: OfficeIdentity,
+    pub owner: Id,
+    pub by: Actor,
+    pub command: C,
+}
+
+impl<C> ProjectOp<C> {
+    pub fn from_request(
+        request: crate::organization::wire::StructureRequest<C>,
+        here: OfficeIdentity,
+        owner: Id,
+    ) -> Self {
+        Self {
+            operation_id: request.operation_id,
+            here,
+            owner,
+            by: request.by,
+            command: request.command,
+        }
+    }
+}
+
+impl<C: ProjectFeature> StoreOp for ProjectOp<C> {
+    type Out = Result<Reply, StoreError>;
+
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let Self {
+            operation_id,
+            here,
+            owner,
+            by,
+            command,
+        } = self;
+        let operation = command.operation(operation_id, &by);
+        store.submit(Some(operation), false, move |uow| {
+            command.decide(uow, &here, &owner, &by)
+        })
+    }
+}
+
+/// Dry-run of one project-family write operation on the single writer.
+pub struct ProjectCheckOp<C> {
+    pub here: OfficeIdentity,
+    pub owner: Id,
+    pub by: Actor,
+    pub command: C,
+}
+
+impl<C> ProjectCheckOp<C> {
+    pub fn from_request(
+        request: crate::organization::wire::StructureRequest<C>,
+        here: OfficeIdentity,
+        owner: Id,
+    ) -> Self {
+        Self {
+            here,
+            owner,
+            by: request.by,
+            command: request.command,
+        }
+    }
+}
+
+impl<C: ProjectFeature> StoreOp for ProjectCheckOp<C> {
+    type Out = Result<Reply, StoreError>;
+
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let Self {
+            here,
+            owner,
+            by,
+            command,
+        } = self;
+        store.check(move |uow| command.decide(uow, &here, &owner, &by))
+    }
+}
+
+/// Creates a project with HQ number/slug and its accountable owning team.
+pub type CreateProjectOp = ProjectOp<CreateProject>;
+/// Adds a contributing team to a project.
+pub type AddProjectTeamOp = ProjectOp<AddProjectTeam>;
+/// Removes a contributing team from a project.
+pub type RemoveProjectTeamOp = ProjectOp<RemoveProjectTeam>;
+
+/// Lists projects from a consistent snapshot.
+pub struct ProjectsList {
+    pub include_archived: bool,
+}
+
+impl ReadOp for ProjectsList {
+    type Out = Vec<ProjectRecord>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        let mut projects = read.projects()?;
+        if !self.include_archived {
+            projects.retain(|p| !p.archived);
+        }
+        Ok(projects)
+    }
+}
+
+/// Resolves one project by UUIDv7 ID, `P-<number>`, or canonical slug.
+pub struct ProjectInspectByRef(pub String);
+
+impl ReadOp for ProjectInspectByRef {
+    type Out = Option<ProjectRecord>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.resolve_project(&self.0)?)
     }
 }
 
@@ -182,7 +301,7 @@ pub struct DirectoryGeneration;
 impl ReadOp for DirectoryGeneration {
     type Out = u64;
 
-    fn read<S: OrganizationRead>(self, snapshot: &S) -> Result<u64, StoreError> {
+    fn read<S: ProjectsRead>(self, snapshot: &S) -> Result<u64, StoreError> {
         Ok(snapshot.generation()?)
     }
 }
@@ -193,7 +312,7 @@ pub struct TopTeamId;
 impl ReadOp for TopTeamId {
     type Out = Option<Id>;
 
-    fn read<S: OrganizationRead>(self, read: &S) -> Result<Option<Id>, StoreError> {
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Option<Id>, StoreError> {
         Ok(read
             .teams()?
             .into_iter()
@@ -212,7 +331,7 @@ pub struct DirectorySnapshot {
 impl ReadOp for DirectorySnapshot {
     type Out = org_proto::OrgSnapshot;
 
-    fn read<S: OrganizationRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(snapshot::project(read, &self.owner)?)
     }
 }
@@ -234,7 +353,7 @@ pub struct OfficeStanding {
 impl ReadOp for OfficeStanding {
     type Out = Standing;
 
-    fn read<S: OrganizationRead>(self, read: &S) -> Result<Standing, StoreError> {
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Standing, StoreError> {
         let organization = read.organization()?.map(|record| record.id);
         let office = read.office(&self.office)?;
         let hq = office.is_some_and(|office| office.role == records::OfficeRole::Hq);

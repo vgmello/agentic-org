@@ -17,6 +17,7 @@
 #[cfg(any(test, feature = "testkit"))]
 mod dump;
 mod organization;
+mod projects;
 mod receipts;
 mod schema;
 #[cfg(test)]

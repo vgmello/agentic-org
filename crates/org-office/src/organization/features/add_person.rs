@@ -70,7 +70,7 @@ impl Feature for AddPerson {
         by: &Actor,
     ) -> Result<Change, Refusal>
     where
-        E::Tx: OrganizationRead,
+        E::Tx: crate::projects::ports::ProjectsRead,
     {
         decide(uow, here, owner, by, self)
     }
@@ -84,7 +84,7 @@ pub fn decide<E: Engine>(
     command: &AddPerson,
 ) -> Result<Change, Refusal>
 where
-    E::Tx: OrganizationRead,
+    E::Tx: crate::projects::ports::ProjectsRead,
 {
     stable(&command.id, "the person's ID")?;
     stable(&command.home_team, "the home team's ID")?;

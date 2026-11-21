@@ -54,9 +54,10 @@ use crate::{
     organization::{directory, records, wire},
     rules::OrgCommand,
     store::open::{
-        open_store, AddPersonOp, ArchiveTeamOp, CheckOp, CreateTeamOp, DeactivatePersonOp,
-        DirectorySnapshot, EngineChoice, MovePersonOp, MoveTeamOp, OfficeStanding, OfficeStore,
-        ReceiptById, StoreConfig, TopTeamId, UpdatePersonOp, UpdateTeamOp,
+        open_store, AddPersonOp, AddProjectTeamOp, ArchiveTeamOp, CheckOp, CreateProjectOp,
+        CreateTeamOp, DeactivatePersonOp, DirectorySnapshot, EngineChoice, MovePersonOp,
+        MoveTeamOp, OfficeStanding, OfficeStore, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
+        ReceiptById, RemoveProjectTeamOp, StoreConfig, TopTeamId, UpdatePersonOp, UpdateTeamOp,
     },
     time,
 };
@@ -448,6 +449,25 @@ impl Office {
                         owner.clone(),
                     )),
                 ),
+                wire::WireOp::CreateProject(r) => wire::project_create_answer(self.store.run(
+                    CreateProjectOp::from_request(r, here.clone(), owner.clone()),
+                )),
+                wire::WireOp::AddProjectTeam(r) => wire::changed_answer(
+                    "project.add_team",
+                    self.store.run(AddProjectTeamOp::from_request(
+                        r,
+                        here.clone(),
+                        owner.clone(),
+                    )),
+                ),
+                wire::WireOp::RemoveProjectTeam(r) => wire::changed_answer(
+                    "project.remove_team",
+                    self.store.run(RemoveProjectTeamOp::from_request(
+                        r,
+                        here.clone(),
+                        owner.clone(),
+                    )),
+                ),
             }
         };
         run(op).map_err(storage)
@@ -519,9 +539,52 @@ impl Office {
                     self.store
                         .run(CheckOp::from_request(r, here.clone(), owner.clone())),
                 ),
+                wire::WireOp::CreateProject(r) => wire::checked_answer(
+                    "project.create",
+                    self.store
+                        .run(ProjectCheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::AddProjectTeam(r) => wire::checked_answer(
+                    "project.add_team",
+                    self.store
+                        .run(ProjectCheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::RemoveProjectTeam(r) => wire::checked_answer(
+                    "project.remove_team",
+                    self.store
+                        .run(ProjectCheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
             }
         };
         run(op).map_err(storage)
+    }
+
+    /// Lists projects from a consistent snapshot of the office store (B3).
+    pub fn list_projects(
+        &self,
+        include_archived: bool,
+    ) -> Result<org_proto::projects::ProjectListResult, OfficeError> {
+        let (projects, _) = self
+            .store
+            .read(ProjectsList { include_archived })
+            .map_err(storage)?;
+        Ok(org_proto::projects::ProjectListResult {
+            projects: projects.iter().map(|p| p.to_wire()).collect(),
+        })
+    }
+
+    /// Inspects one project by UUIDv7 ID, `P-<number>`, or canonical slug (B3).
+    pub fn inspect_project(
+        &self,
+        reference: &str,
+    ) -> Result<Result<org_proto::projects::ProjectRecord, ApiError>, OfficeError> {
+        let (found, _) = self
+            .store
+            .read(ProjectInspectByRef(reference.to_owned()))
+            .map_err(storage)?;
+        Ok(found
+            .map(|p| p.to_wire())
+            .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "project not found")))
     }
 
     /// Reads the stored outcome of an organization command by its UUIDv7 `command_id` for
