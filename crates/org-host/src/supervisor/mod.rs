@@ -341,6 +341,14 @@ impl Supervisor {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn kill_office_for_test(&self, office_id: &str) {
+        let state = lock(&self.state);
+        if let Some(slot) = state.offices.get(office_id) {
+            let _ = slot.signals.send(Signal::KillForTest);
+        }
+    }
+
     /// Protected selected reservation has already installed its original key and
     /// writer custody. No create/discard cleanup is permitted on this path.
     pub(crate) fn begin_hq_create(
@@ -461,6 +469,8 @@ impl Supervisor {
                     child.kill();
                     return DiscardOutcome::TimedOut;
                 }
+                #[cfg(test)]
+                Ok(Signal::KillForTest) => continue,
             };
             // It exits right after reporting.
             child.stop(Instant::now() + timings.shutdown_grace);
@@ -708,6 +718,8 @@ impl<'a> PendingCreate<'a> {
                     self.child.stop(Instant::now() + grace);
                     return CreateOutcome::Crashed;
                 }
+                #[cfg(test)]
+                Signal::KillForTest => {}
             }
         }
     }

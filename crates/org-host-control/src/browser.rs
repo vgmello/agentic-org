@@ -219,6 +219,44 @@ impl Call for BrowserSessionGrant {
     type Result = SessionGrantResult;
 }
 
+/// `browser.office_restart`: restart an `offline` or `unavailable` office on behalf of a
+/// live browser session (admitted web connection only; administrator or organization owner).
+/// Journaled under `office.restart` by `operation_id`.
+pub struct BrowserOfficeRestart;
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserOfficeRestartParams {
+    pub auth: BrowserAuth,
+    pub operation_id: String,
+    pub org_id: String,
+    pub office_id: String,
+}
+impl Call for BrowserOfficeRestart {
+    const METHOD: &'static str = "browser.office_restart";
+    type Params = BrowserOfficeRestartParams;
+    type Result = crate::HostOpResult<Empty>;
+}
+impl crate::journal::Journaled for BrowserOfficeRestartParams {
+    const METHOD: &'static str = crate::ops::OfficeRestart::METHOD;
+    fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
+        let BrowserOfficeRestartParams {
+            auth: _,
+            operation_id: _,
+            org_id,
+            office_id,
+        } = self;
+        #[derive(Serialize)]
+        struct Fields<'a> {
+            office_id: &'a str,
+            org_id: &'a str,
+        }
+        serde_json::to_string(&Fields { office_id, org_id })
+    }
+}
+
 /// Host→web event: the session no longer exists; drop it from every cache.
 pub const SESSION_ENDED: &str = "session.ended";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

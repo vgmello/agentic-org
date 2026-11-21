@@ -117,6 +117,8 @@ pub enum Route {
     Organizations(PresentedPair),
     CreateOrganization(PresentedPair),
     OrgSnapshot(PresentedPair, String),
+    OrgOffices(PresentedPair, String),
+    OfficeRestart(PresentedPair, String, String),
     OrgMutation(PresentedPair, String, OrgOperation),
     OrgOperation(PresentedPair, String, OperationId),
     EventsStream(PresentedPair),
@@ -133,6 +135,8 @@ pub enum Call {
     Organizations(PresentedPair),
     CreateOrganization(PresentedPair, OperationId, PlanV1),
     OrgSnapshot(PresentedPair, String),
+    OrgOffices(PresentedPair, String),
+    OfficeRestart(PresentedPair, String, String, OperationId),
     OrgMutation(PresentedPair, String, OrgMutation),
     OrgOperation(PresentedPair, String, OperationId),
     EventsStream(PresentedPair, StreamRequest),
@@ -631,6 +635,22 @@ impl ApiBackend for SessionApi {
                 }
                 Route::OrgSnapshot(pair, (*org).to_owned())
             }
+            ["api", "v1", "organizations", org, "offices"] if get => {
+                let pair = self.pair(request)?;
+                if !org_office_launch::is_storage_id(org) {
+                    return Err(invalid());
+                }
+                Route::OrgOffices(pair, (*org).to_owned())
+            }
+            ["api", "v1", "organizations", org, "offices", office, "restart"] if post => {
+                let pair = self.pair(request)?;
+                if !org_office_launch::is_storage_id(org)
+                    || !org_office_launch::is_storage_id(office)
+                {
+                    return Err(invalid());
+                }
+                Route::OfficeRestart(pair, (*org).to_owned(), (*office).to_owned())
+            }
             ["api", "v1", "organizations", org, "teams"] if post => {
                 let pair = self.pair(request)?;
                 if !org_office_launch::is_storage_id(org) {
@@ -683,6 +703,8 @@ impl ApiBackend for SessionApi {
             | ["api", "v1", "session", "sign-out"]
             | ["api", "v1", "organizations"]
             | ["api", "v1", "organizations", _, "snapshot"]
+            | ["api", "v1", "organizations", _, "offices"]
+            | ["api", "v1", "organizations", _, "offices", _, "restart"]
             | ["api", "v1", "organizations", _, "teams"]
             | ["api", "v1", "organizations", _, "teams", "create" | "rename" | "move" | "set-lead" | "delete" | "set-title"]
             | ["api", "v1", "organizations", _, "members", "add-person" | "update-person" | "remove" | "set-reports-to" | "move"]
@@ -701,6 +723,29 @@ impl ApiBackend for SessionApi {
             Route::Session(pair) => empty().map(|()| Call::Session(pair))?,
             Route::Organizations(pair) => empty().map(|()| Call::Organizations(pair))?,
             Route::OrgSnapshot(pair, org) => empty().map(|()| Call::OrgSnapshot(pair, org))?,
+            Route::OrgOffices(pair, org) => empty().map(|()| Call::OrgOffices(pair, org))?,
+            Route::OfficeRestart(pair, org, office) => {
+                let raw: serde_json::Value =
+                    serde_json::from_slice(bytes).map_err(|_| invalid())?;
+                let id_str = raw
+                    .get("operation_id")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let id = organizations::host_operation_id(id_str).map_err(bad_input)?;
+                let request: gateway::OfficeRestartRequest =
+                    gateway::decode_request(bytes).map_err(|_| invalid())?;
+                let target = Scope::Office {
+                    instance_id: self.host.instance().to_owned(),
+                    org_id: org.clone(),
+                    office_id: office.clone(),
+                };
+                request.scope.check_target(&target).map_err(|_| invalid())?;
+                return Ok(PreparedCall::mutation(
+                    Call::OfficeRestart(pair, org, office, id.clone()),
+                    id,
+                    bytes.len(),
+                ));
+            }
             Route::OrgMutation(pair, org, op) => {
                 let scope = Scope::Organization {
                     instance_id: self.host.instance().to_owned(),
@@ -779,6 +824,21 @@ impl ApiBackend for SessionApi {
             Call::OrgSnapshot(pair, org_id) => AsyncDispatch::Async {
                 future: Box::pin(async move {
                     WebReply::Json(org_routes::execute_org_snapshot(&self, pair, &org_id).await)
+                }),
+                streaming: false,
+            },
+            Call::OrgOffices(pair, org_id) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(org_routes::execute_org_offices(&self, pair, &org_id).await)
+                }),
+                streaming: false,
+            },
+            Call::OfficeRestart(pair, org_id, office_id, op_id) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_office_restart(&self, pair, &org_id, &office_id, op_id)
+                            .await,
+                    )
                 }),
                 streaming: false,
             },
@@ -893,6 +953,8 @@ impl ApiBackend for SessionApi {
                 )
             }
             Call::OrgSnapshot(_, _)
+            | Call::OrgOffices(_, _)
+            | Call::OfficeRestart(_, _, _, _)
             | Call::OrgMutation(_, _, _)
             | Call::OrgOperation(_, _, _)
             | Call::EventsStream(_, _) => {

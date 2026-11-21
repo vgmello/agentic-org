@@ -207,10 +207,6 @@ impl Offices {
     /// `office.restart`: starts an `offline` or `unavailable` office again now (see
     /// [`Supervisor::restart`]). Waits for the startup discards first, like a create. The
     /// caller's code signature is checked before this.
-    #[cfg_attr(
-        not(any(test, all(feature = "test-support", debug_assertions))),
-        expect(dead_code, reason = "activated by 2b.3 CLI")
-    )]
     pub(crate) fn restart_office(&self, office_id: &str) -> Result<(), ApiError> {
         self.wait_for_startup(Instant::now() + self.create_wait)?;
         self.settled_office(office_id)?;
@@ -268,6 +264,16 @@ impl Offices {
             return Err(ApiError::new(ErrorCode::NotFound, "no such office here"));
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_catalog_for_test(&self, office: org_office_launch::OfficeFile) {
+        lock(&self.catalog).insert(office);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kill_office_for_test(&self, office_id: &str) {
+        self.supervisor.kill_office_for_test(office_id);
     }
 
     #[cfg(all(feature = "test-support", debug_assertions))]

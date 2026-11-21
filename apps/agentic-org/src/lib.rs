@@ -1,12 +1,13 @@
 //! Human CLI dispatch and host composition. No agent CLI or office data ownership.
 mod admin;
+mod office;
 mod serve;
 mod service;
 mod setup;
 
 use std::collections::BTreeMap;
 
-const HELP: &str = "Agentic Org\n\nUsage: agentic-org <command>\n\nCommands:\n  serve      Run the installed service host in the foreground\n  setup      Set up this computer's instance and register its service\n  admin      admin reset: a new administrator registration link; admin tls set: replace the TLS pair\n  service    start, stop or show the instance's service\n\nOptions:\n  --help     Show this help\n  --version  Show the release version\n\nSatellite enrollment is initiated separately from HQ.";
+const HELP: &str = "Agentic Org\n\nUsage: agentic-org <command>\n\nCommands:\n  serve      Run the installed service host in the foreground\n  setup      Set up this computer's instance and register its service\n  admin      admin reset: a new administrator registration link; admin tls set: replace the TLS pair\n  office     office list: list offices; office restart: restart an offline or unavailable office\n  service    start, stop or show the instance's service\n\nOptions:\n  --help     Show this help\n  --version  Show the release version\n\nSatellite enrollment is initiated separately from HQ.";
 
 /// Dispatches a human CLI command.
 pub fn run(arguments: Vec<String>) -> Result<(), String> {
@@ -31,6 +32,7 @@ pub fn run(arguments: Vec<String>) -> Result<(), String> {
         [command, rest @ ..] if command == "recovery" => org_host::human::recovery(rest),
         [command, rest @ ..] if command == "setup" => setup::run(rest),
         [command, rest @ ..] if command == "admin" => admin::run(rest),
+        [command, rest @ ..] if command == "office" => office::run(rest),
         [command, rest @ ..] if command == "service" => service::run(rest),
         _ => Err(format!("unrecognized command or arguments\n{HELP}")),
     }

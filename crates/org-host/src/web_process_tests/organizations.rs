@@ -1464,3 +1464,311 @@ fn actual_browser_exercises_all_org_mutations_and_operation_lookup_surviving_res
     assert_eq!(after_rej.body["result"]["error"]["code"], "conflict");
     stop(host, &base);
 }
+
+/// Real-process O1 (FC-019 / FC-021): browser `GET /api/v1/organizations/{org}/offices`,
+/// browser `POST /api/v1/organizations/{org}/offices/{office}/restart`, and native `host.sock`
+/// `office.list` / `office.restart` share live office state without exposing private endpoints.
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
+    let Launched {
+        temp: _temp,
+        address,
+        host,
+        socket,
+        base,
+        ..
+    } = launch(Seed::Administrator);
+    wait_serving(&host, address);
+    let browser = Browser::sign_in(&host, address);
+    let (_, view) = browser.create("Example", "example");
+    let (organization, office, _creator) = checked(&view, "Example", "example");
+    wait_offices_active(&host, 1);
+
+    let instance_id = host.service.instance_id_for_test().unwrap().to_owned();
+
+    // 1. Browser lists live offices for the organization (no private endpoint leaked).
+    let listed = browser.get(&format!("/api/v1/organizations/{organization}/offices"));
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    let offices = listed.body["result"]["offices"].as_array().unwrap();
+    assert_eq!(offices.len(), 1, "{}", listed.body);
+    assert_eq!(offices[0]["id"], office.as_str());
+    assert_eq!(offices[0]["organization_id"], organization.as_str());
+    assert_eq!(offices[0]["role"], "hq");
+    assert_eq!(offices[0]["status"], "active");
+    assert!(offices[0].get("endpoint").is_none());
+
+    // Foreign organization returns 404.
+    let foreign_org = crate::ids::uuid_v7().unwrap();
+    let missing_org = browser.get(&format!("/api/v1/organizations/{foreign_org}/offices"));
+    assert_eq!(missing_org.status, 404, "{}", missing_org.body);
+
+    // 2. Browser restart on an active office returns 409 conflict.
+    let op_conflict = crate::ids::uuid_v7().unwrap();
+    let active_restart = browser.post(
+        &format!("/api/v1/organizations/{organization}/offices/{office}/restart"),
+        &json!({
+            "operation_id": op_conflict,
+            "scope": {
+                "kind": "office",
+                "instance_id": instance_id,
+                "org_id": organization,
+                "office_id": office
+            },
+            "params": {}
+        })
+        .to_string(),
+    );
+    assert_eq!(active_restart.status, 409, "{}", active_restart.body);
+    assert_eq!(active_restart.body["outcome"], "rejected");
+    assert_eq!(active_restart.body["error"]["code"], "conflict");
+
+    // 3. Native `host.sock` session lists offices and enforces `office.restart` rules.
+    let stream = UnixStream::connect(&socket).unwrap();
+    stream.set_read_timeout(Some(super::WAIT)).unwrap();
+    let mut wire = BufReader::new(stream);
+    super::answer::<org_host_control::Hello>(&mut wire, 1, &Default::default()).unwrap();
+    let native = super::answer::<ops::AccountVerify>(
+        &mut wire,
+        2,
+        &ops::AccountVerifyParams {
+            login: "Owner".into(),
+            password: org_host_control::Password::new(PASSWORD.into()).unwrap(),
+        },
+    )
+    .unwrap();
+    let handle = || org_host_control::SessionHandle::new(native.session.expose().into()).unwrap();
+
+    let native_list = super::answer::<ops::OfficeList>(
+        &mut wire,
+        3,
+        &ops::OfficeListParams {
+            session: handle(),
+            org_id: Some(organization.clone()),
+        },
+    )
+    .unwrap();
+    assert_eq!(native_list.offices.len(), 1);
+    assert_eq!(native_list.offices[0].id, office);
+    assert_eq!(
+        native_list.offices[0].status,
+        org_proto::OfficeStatus::Active
+    );
+    assert!(native_list.offices[0].endpoint.is_none());
+
+    let foreign_list = super::answer::<ops::OfficeList>(
+        &mut wire,
+        4,
+        &ops::OfficeListParams {
+            session: handle(),
+            org_id: Some(foreign_org),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(foreign_list.code, org_proto::ErrorCode::NotFound);
+
+    let native_conflict = super::answer::<ops::OfficeRestart>(
+        &mut wire,
+        5,
+        &ops::OfficeRestartParams {
+            session: handle(),
+            operation_id: crate::ids::uuid_v7().unwrap(),
+            office_id: office.clone(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(native_conflict.code, org_proto::ErrorCode::Conflict);
+
+    let native_missing = super::answer::<ops::OfficeRestart>(
+        &mut wire,
+        6,
+        &ops::OfficeRestartParams {
+            session: handle(),
+            operation_id: crate::ids::uuid_v7().unwrap(),
+            office_id: crate::ids::uuid_v7().unwrap(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(native_missing.code, org_proto::ErrorCode::NotFound);
+
+    // `browser.office_restart` is strictly refused on `host.sock`.
+    let browser_on_host_sock = super::answer::<org_host_control::browser::BrowserOfficeRestart>(
+        &mut wire,
+        7,
+        &org_host_control::browser::BrowserOfficeRestartParams {
+            auth: org_host_control::organization::BrowserAuth {
+                cookie_digest: org_host_control::browser::Digest32([0; 32]),
+                proof_digest: org_host_control::browser::Digest32([0; 32]),
+                origin: org_host_control::browser::BrowserOrigin {
+                    scheme: "http".into(),
+                    host: "127.0.0.1".into(),
+                    port: address.port(),
+                },
+            },
+            operation_id: crate::ids::uuid_v7().unwrap(),
+            org_id: organization.clone(),
+            office_id: office.clone(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(
+        browser_on_host_sock.code,
+        org_proto::ErrorCode::NotAuthorized
+    );
+
+    super::answer::<ops::SessionEnd>(&mut wire, 8, &ops::SessionParams { session: handle() })
+        .unwrap();
+    drop(wire);
+
+    // 3b. Exercise `setup_flow::office_command` (`agentic-org office list` & `office restart`)
+    // directly against the live `host.sock` (text + JSON + error translation + SessionEnd).
+    {
+        use crate::setup_flow::office_command::{list, restart, Target};
+        let target = Target {
+            socket: &socket,
+            instance_id: &instance_id,
+            name: None,
+        };
+        let mut typed = || Ok(org_host_control::Password::new(PASSWORD.into()).unwrap());
+        let mut wrong =
+            || Ok(org_host_control::Password::new("not the real password".into()).unwrap());
+        let by_code = matches!(
+            crate::test_programs::image_identity(),
+            org_platform_host::admission::ImageIdentity::CodeSignature
+        );
+        let mut out = Vec::new();
+        if by_code {
+            // Wrong password is refused cleanly.
+            let bad_pw = list(&target, "Owner", None, false, &mut wrong, &mut out).unwrap_err();
+            assert!(bad_pw.contains("invalid login or password"), "{bad_pw}");
+
+            // Human-readable list prints office id and status without leaking endpoints.
+            out.clear();
+            list(
+                &target,
+                "Owner",
+                Some(&organization),
+                false,
+                &mut typed,
+                &mut out,
+            )
+            .unwrap();
+            let text = String::from_utf8(out.clone()).unwrap();
+            assert!(text.contains(&office), "{text}");
+            assert!(text.contains("status=Active"), "{text}");
+            assert!(!text.contains(".sock"), "{text}");
+
+            // JSON list decodes as valid JSON with `endpoint` omitted.
+            out.clear();
+            list(
+                &target,
+                "Owner",
+                Some(&organization),
+                true,
+                &mut typed,
+                &mut out,
+            )
+            .unwrap();
+            let parsed: Value = serde_json::from_slice(&out).unwrap();
+            assert_eq!(parsed["offices"][0]["id"], office.as_str());
+            assert!(parsed["offices"][0].get("endpoint").is_none());
+
+            // CLI restart on an active office reports the human conflict message.
+            out.clear();
+            let conflict_msg =
+                restart(&target, "Owner", &office, false, &mut typed, &mut out).unwrap_err();
+            assert!(
+                conflict_msg.contains("not offline or unavailable"),
+                "{conflict_msg}"
+            );
+        } else {
+            let asked = std::cell::Cell::new(0);
+            let mut count_pw = || {
+                asked.set(asked.get() + 1);
+                Ok(org_host_control::Password::new(PASSWORD.into()).unwrap())
+            };
+            let err = list(&target, "Owner", None, false, &mut count_pw, &mut out).unwrap_err();
+            assert!(err.contains("browser"), "{err}");
+            assert_eq!(
+                asked.get(),
+                0,
+                "no password asked when host cannot be identified"
+            );
+        }
+    }
+
+    // 4. Restart host with a 60s crash backoff, kill the real office worker, confirm browser
+    // observes `offline` (`crashed` + `next_restart_at`), trigger `POST .../restart`, verify
+    // it returns `active` promptly, and confirm idempotent replay of the same `operation_id`.
+    stop(host, &base);
+    let mut long_backoff = fixture_config(&base);
+    long_backoff.timings.backoff_initial = std::time::Duration::from_secs(60);
+    long_backoff.timings.exit_poll = std::time::Duration::from_millis(50);
+    let (host, _socket) = host_at(long_backoff, &base, |_, _, _| {});
+    wait_serving(&host, address);
+    wait_offices_active(&host, 1);
+
+    host.offices.kill_office_for_test(&office);
+    let offices_path = format!("/api/v1/organizations/{organization}/offices");
+    let deadline = std::time::Instant::now() + super::WAIT;
+    let offline_view = loop {
+        let resp = browser.get(&offices_path);
+        assert_eq!(resp.status, 200, "{}", resp.body);
+        let item = resp.body["result"]["offices"][0].clone();
+        if item["status"] == "offline" {
+            break item;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "office never reached offline state: {item}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+    assert_eq!(offline_view["status_reason"], "crashed", "{offline_view}");
+    assert!(
+        offline_view["next_restart_at"].is_string(),
+        "{offline_view}"
+    );
+
+    let op_restart = crate::ids::uuid_v7().unwrap();
+    let restart_path = format!("/api/v1/organizations/{organization}/offices/{office}/restart");
+    let restart_body = json!({
+        "operation_id": op_restart,
+        "scope": {
+            "kind": "office",
+            "instance_id": instance_id,
+            "org_id": organization,
+            "office_id": office
+        },
+        "params": {}
+    })
+    .to_string();
+    let restarted = browser.post(&restart_path, &restart_body);
+    assert_eq!(restarted.status, 200, "{}", restarted.body);
+    assert_eq!(restarted.body["outcome"], "completed");
+    assert_eq!(restarted.body["operation_id"], op_restart);
+
+    // Wait for the restarted worker to become active (proves restart broke out of 60s backoff).
+    let active_deadline = std::time::Instant::now() + super::WAIT;
+    loop {
+        let resp = browser.get(&offices_path);
+        assert_eq!(resp.status, 200, "{}", resp.body);
+        if resp.body["result"]["offices"][0]["status"] == "active" {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < active_deadline,
+            "office did not recover to active after restart: {}",
+            resp.body
+        );
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+
+    // Replaying the same `operation_id` after recovery returns `200 completed` idempotently.
+    let replayed = browser.post(&restart_path, &restart_body);
+    assert_eq!(replayed.status, 200, "{}", replayed.body);
+    assert_eq!(replayed.body["outcome"], "completed");
+    assert_eq!(replayed.body["operation_id"], op_restart);
+
+    stop(host, &base);
+}

@@ -309,6 +309,11 @@ impl OfficeRunner {
                 }
                 // It's already running: nothing to restart.
                 Signal::Restart => {}
+                #[cfg(test)]
+                Signal::KillForTest => {
+                    child.kill();
+                    return after_exit(failure, ready_at);
+                }
                 Signal::Event { generation, .. } | Signal::Closed { generation }
                     if generation != child.generation => {}
                 Signal::Event { event, .. } => match event {

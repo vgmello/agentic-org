@@ -1350,3 +1350,236 @@ fn authenticated_org_mutation_not_authorized_is_403_and_pair_checked_before_org_
         "unauthenticated calls never hit host"
     );
 }
+
+#[test]
+fn org_offices_list_and_restart_enforce_scope_auth_and_error_mapping() {
+    const OFFICE: &str = "0193a5c0-0000-7000-8000-000000000002";
+    const OTHER_OFFICE: &str = "0193a5c0-0000-7000-8000-00000000000b";
+    const FOREIGN_ORG: &str = "0193a5c0-0000-7000-8000-0000000000ff";
+
+    let restart_mode = std::sync::Arc::new(std::sync::Mutex::new("completed"));
+    let session_valid = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let mode_for_script = restart_mode.clone();
+    let valid_for_script = session_valid.clone();
+
+    let (gateway, calls) = gateway(organization_script(move |method, params| match method {
+        "session.validate" if !valid_for_script.load(std::sync::atomic::Ordering::Acquire) => {
+            Some(vec![
+                json!({"error": {"code": "not_authorized", "message": "revoked"}}),
+            ])
+        }
+        "organization.list" => Some(vec![json!({
+            "result": {
+                "organizations": [host_organization()],
+                "creating": []
+            }
+        })]),
+        "browser.office_restart" => {
+            assert_eq!(params["org_id"], ORG);
+            let reply = match *mode_for_script.lock().unwrap() {
+                "completed" => json!({"result": {"status": "completed", "result": {}}}),
+                "conflict" => json!({"error": {"code": "conflict", "message": "active"}}),
+                "not_ready" => json!({"error": {"code": "not_ready", "message": "starting"}}),
+                "reused" => json!({"error": {"code": "operation_reused", "message": "reused"}}),
+                "expired" => json!({"error": {"code": "expired", "message": "old"}}),
+                "not_found" => json!({"error": {"code": "not_found", "message": "missing"}}),
+                "denied" => json!({"error": {"code": "not_authorized", "message": "not owner"}}),
+                _ => json!({"error": {"code": "unavailable", "message": "down"}}),
+            };
+            Some(vec![reply])
+        }
+        _ => None,
+    }));
+
+    // Unauthenticated requests fail 401 before touching the host.
+    let offices_path = format!("/api/v1/organizations/{ORG}/offices");
+    let restart_path = format!("/api/v1/organizations/{ORG}/offices/{OFFICE}/restart");
+    assert_eq!(
+        send(&gateway, Method::GET, &offices_path, "", None, &[]).status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        send(&gateway, Method::POST, &restart_path, "{}", None, &[]).status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(calls.methods().is_empty());
+
+    let pair = sign_in(&gateway).pair();
+
+    // GET /api/v1/organizations/{org}/offices returns public OfficeView list (no endpoint).
+    let listed = send(&gateway, Method::GET, &offices_path, "", Some(&pair), &[]);
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.body);
+    let offices = listed.body["result"]["offices"].as_array().unwrap();
+    assert_eq!(offices.len(), 1);
+    assert_eq!(offices[0]["id"], OFFICE);
+    assert_eq!(offices[0]["status"], "active");
+    assert!(offices[0].get("endpoint").is_none());
+
+    // Foreign organization returns 404.
+    let missing_org = send(
+        &gateway,
+        Method::GET,
+        &format!("/api/v1/organizations/{FOREIGN_ORG}/offices"),
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(missing_org.status, StatusCode::NOT_FOUND);
+
+    // Invalid operation_id or mismatched scope fails 400 before host call.
+    let calls_before = calls.methods().len();
+    let bad_op = send(
+        &gateway,
+        Method::POST,
+        &restart_path,
+        &json!({
+            "operation_id": "01M72N8MG00000000000000006",
+            "scope": {"kind": "office", "instance_id": INSTANCE, "org_id": ORG, "office_id": OFFICE},
+            "params": {}
+        })
+        .to_string(),
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(bad_op.status, StatusCode::BAD_REQUEST);
+    assert_eq!(bad_op.body["error"]["field"], "operation_id");
+
+    let bad_scope = send(
+        &gateway,
+        Method::POST,
+        &restart_path,
+        &json!({
+            "operation_id": OPERATION,
+            "scope": {"kind": "office", "instance_id": INSTANCE, "org_id": ORG, "office_id": OTHER_OFFICE},
+            "params": {}
+        })
+        .to_string(),
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(bad_scope.status, StatusCode::BAD_REQUEST);
+    assert_eq!(calls.methods().len(), calls_before);
+
+    let restart_body = json!({
+        "operation_id": OPERATION,
+        "scope": {"kind": "office", "instance_id": INSTANCE, "org_id": ORG, "office_id": OFFICE},
+        "params": {}
+    })
+    .to_string();
+
+    // Completed restart -> 200.
+    let ok = send(
+        &gateway,
+        Method::POST,
+        &restart_path,
+        &restart_body,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
+    assert_eq!(ok.body["outcome"], "completed");
+    assert_eq!(ok.body["operation_id"], OPERATION);
+
+    // Conflict (already active) -> 409 conflict.
+    *restart_mode.lock().unwrap() = "conflict";
+    let conflict = send(
+        &gateway,
+        Method::POST,
+        &restart_path,
+        &restart_body,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(conflict.status, StatusCode::CONFLICT, "{}", conflict.body);
+    assert_eq!(conflict.body["outcome"], "rejected");
+    assert_eq!(conflict.body["error"]["code"], "conflict");
+
+    // NotReady -> 503 not_ready.
+    *restart_mode.lock().unwrap() = "not_ready";
+    let not_ready = send(
+        &gateway,
+        Method::POST,
+        &restart_path,
+        &restart_body,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(
+        not_ready.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        not_ready.body
+    );
+    assert_eq!(not_ready.body["error"]["code"], "not_ready");
+
+    // OperationReused -> 409 operation_reused.
+    *restart_mode.lock().unwrap() = "reused";
+    let reused = send(
+        &gateway,
+        Method::POST,
+        &restart_path,
+        &restart_body,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(reused.status, StatusCode::CONFLICT, "{}", reused.body);
+    assert_eq!(reused.body["error"]["code"], "operation_reused");
+
+    // Expired -> 410 expired (plain error envelope, not rejected outcome).
+    *restart_mode.lock().unwrap() = "expired";
+    let expired = send(
+        &gateway,
+        Method::POST,
+        &restart_path,
+        &restart_body,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(expired.status, StatusCode::GONE, "{}", expired.body);
+    assert_eq!(expired.body["error"]["code"], "expired");
+    assert!(expired.body.get("outcome").is_none());
+
+    // Missing office -> 404 not_found.
+    *restart_mode.lock().unwrap() = "not_found";
+    let missing = send(
+        &gateway,
+        Method::POST,
+        &restart_path,
+        &restart_body,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.body);
+    assert_eq!(missing.body["error"]["code"], "not_found");
+
+    // Non-owner with valid session -> 403 not_authorized (NOT 401!).
+    *restart_mode.lock().unwrap() = "denied";
+    let forbidden = send(
+        &gateway,
+        Method::POST,
+        &restart_path,
+        &restart_body,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(
+        forbidden.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        forbidden.body
+    );
+    assert_eq!(forbidden.body["outcome"], "rejected");
+    assert_eq!(forbidden.body["error"]["code"], "not_authorized");
+
+    // Revoked session -> revalidation fails -> 401 signed_out.
+    session_valid.store(false, std::sync::atomic::Ordering::Release);
+    let revoked = send(
+        &gateway,
+        Method::POST,
+        &restart_path,
+        &restart_body,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(revoked.status, StatusCode::UNAUTHORIZED, "{}", revoked.body);
+}

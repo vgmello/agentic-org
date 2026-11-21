@@ -156,6 +156,8 @@ fn decode<T: DeserializeOwned>(bytes: &[u8], id: u64, desync: &dyn Fn()) -> Resu
                 org_proto::ErrorCode::InvalidRequest
                     | org_proto::ErrorCode::RateLimited
                     | org_proto::ErrorCode::AlreadyExists
+                    | org_proto::ErrorCode::Conflict
+                    | org_proto::ErrorCode::NotReady
                     | org_proto::ErrorCode::OperationReused
                     | org_proto::ErrorCode::Expired
                     | org_proto::ErrorCode::ClockSkew

@@ -43,6 +43,9 @@ pub(crate) enum Signal {
     },
     /// `office.restart`: start the office again now, if it isn't running.
     Restart,
+    /// Tests only: SIGKILL the live office worker so supervision observes a real crash.
+    #[cfg(test)]
+    KillForTest,
 }
 
 /// The environment a server gets, besides `ORG_OFFICE_HOME`: only these of the host's own, so

@@ -5,6 +5,7 @@
 
 pub(crate) mod authentication;
 pub(crate) mod listener;
+mod office_ops;
 pub(crate) mod organizations;
 use authentication::Authentication;
 mod request;
@@ -39,6 +40,9 @@ pub(crate) struct Service {
     /// The registered instance's name, installed once by the registered start; until then
     /// `instance.view` answers `unavailable`.
     instance_name: std::sync::OnceLock<String>,
+    /// Serializes journaled `office.restart` / `browser.office_restart` lookup -> restart ->
+    /// journal write so concurrent retries cannot race into false `Conflict` or duplicate restarts.
+    pub(super) office_restarting: std::sync::Mutex<()>,
     /// Browser ops this service accepted on a web connection; real-process tests prove
     /// that an ingress refusal reaches no host op.
     #[cfg(test)]
@@ -65,6 +69,7 @@ impl Service {
             web_tls: None,
             admin: std::sync::OnceLock::new(),
             instance_name: std::sync::OnceLock::new(),
+            office_restarting: std::sync::Mutex::new(()),
             #[cfg(test)]
             browser_ops: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
@@ -413,7 +418,9 @@ impl Service {
     /// connection. Each `session.ended` push is written before the reply on the
     /// connection's one ordered writer, after the record's delete.
     fn browser_op(&self, request: &Request, connection: &Arc<Connection>) -> bool {
-        use org_host_control::browser::{BrowserOpenChannel, BrowserSessionGrant, InstanceView};
+        use org_host_control::browser::{
+            BrowserOfficeRestart, BrowserOpenChannel, BrowserSessionGrant, InstanceView,
+        };
         if !is_browser_op(request) || connection.web_listen().is_none() {
             return false;
         }
@@ -439,6 +446,8 @@ impl Service {
             self.open_browser_channel(authentication, request, connection);
         } else if request.is::<BrowserSessionGrant>() {
             self.grant_browser_channel(authentication, request, connection);
+        } else if request.is::<BrowserOfficeRestart>() {
+            office_ops::restart_browser_office(self, authentication, request, connection);
         } else {
             browser_session_op(authentication, request, connection);
         }
@@ -521,8 +530,8 @@ impl Service {
     }
     fn authenticate(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::ops::{
-            AccountVerify, FdsReceived, OfficeOpenChannel, SessionEnd, SessionGrant,
-            SessionInspect, SessionRenew,
+            AccountVerify, FdsReceived, OfficeList, OfficeOpenChannel, OfficeRestart, SessionEnd,
+            SessionGrant, SessionInspect, SessionRenew,
         };
         if request.is::<FdsReceived>() {
             acknowledge_descriptors(request, connection);
@@ -541,6 +550,10 @@ impl Service {
             self.sign_in(authentication, request, connection);
         } else if request.is::<OfficeOpenChannel>() {
             self.open_authenticated_channel(authentication, request, connection);
+        } else if request.is::<OfficeList>() {
+            office_ops::list_session_offices(self, authentication, request, connection);
+        } else if request.is::<OfficeRestart>() {
+            office_ops::restart_session_office(self, authentication, request, connection);
         } else if request.is::<SessionGrant>() {
             let result = request
                 .params::<SessionGrant>()
@@ -653,8 +666,8 @@ impl Service {
 
 fn is_browser_op(request: &Request) -> bool {
     use org_host_control::browser::{
-        BrowserOpenChannel, BrowserSessionEnd, BrowserSessionGrant, InstanceView, LinkRegister,
-        SessionSignIn, SessionValidate,
+        BrowserOfficeRestart, BrowserOpenChannel, BrowserSessionEnd, BrowserSessionGrant,
+        InstanceView, LinkRegister, SessionSignIn, SessionValidate,
     };
     request.is::<LinkRegister>()
         || request.is::<SessionSignIn>()
@@ -663,6 +676,7 @@ fn is_browser_op(request: &Request) -> bool {
         || request.is::<InstanceView>()
         || request.is::<BrowserOpenChannel>()
         || request.is::<BrowserSessionGrant>()
+        || request.is::<BrowserOfficeRestart>()
 }
 
 fn browser_session_op(authentication: &Authentication, request: &Request, connection: &Connection) {
@@ -789,12 +803,15 @@ fn web_reports_serving(request: &Request, connection: &Arc<Connection>) {
 
 fn session_auth_method(request: &Request) -> bool {
     use org_host_control::ops::{
-        AccountVerify, OfficeOpenChannel, SessionEnd, SessionGrant, SessionInspect, SessionRenew,
+        AccountVerify, OfficeList, OfficeOpenChannel, OfficeRestart, SessionEnd, SessionGrant,
+        SessionInspect, SessionRenew,
     };
     request.is::<AccountVerify>()
         || request.is::<SessionRenew>()
         || request.is::<SessionEnd>()
         || request.is::<OfficeOpenChannel>()
+        || request.is::<OfficeList>()
+        || request.is::<OfficeRestart>()
         || request.is::<SessionGrant>()
         || request.is::<SessionInspect>()
 }
@@ -1258,7 +1275,7 @@ pub(crate) mod tests {
     }
 
     /// [`web_peer_on`] over a service the caller prepared.
-    fn web_peer_for(
+    pub(crate) fn web_peer_for(
         mut service: Service,
         listen: &str,
     ) -> (
@@ -1278,7 +1295,7 @@ pub(crate) mod tests {
         (web, std::io::BufReader::new(peer), offices)
     }
 
-    fn exchange<C: Call>(
+    pub(crate) fn exchange<C: Call>(
         peer: &mut std::io::BufReader<std::os::unix::net::UnixStream>,
         id: u64,
         params: &C::Params,

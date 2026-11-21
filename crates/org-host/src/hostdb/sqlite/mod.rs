@@ -326,6 +326,40 @@ impl HostDb {
         )?;
         Ok(())
     }
+
+    #[cfg(test)]
+    pub(crate) fn seed_link_for_test(
+        &self,
+        account_id: &str,
+        org_id: &str,
+        member_id: &str,
+    ) -> Result<(), Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        db.execute(
+            "INSERT INTO account_links VALUES (?1,?2,?3)",
+            (account_id, org_id, member_id),
+        )?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn seed_owner_for_test(
+        &self,
+        account_id: &str,
+        org_id: &str,
+        member_id: &str,
+    ) -> Result<(), Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        db.execute(
+            "INSERT INTO org_owners VALUES (?1,?2,?3)",
+            (org_id, account_id, member_id),
+        )?;
+        db.execute(
+            "INSERT INTO account_links VALUES (?1,?2,?3) ON CONFLICT(account_id,org_id) DO NOTHING",
+            (account_id, org_id, member_id),
+        )?;
+        Ok(())
+    }
 }
 
 fn absent(path: &Path, present: Error) -> Result<(), Error> {

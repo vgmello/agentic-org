@@ -57,8 +57,10 @@ use crate::release::ReleasePin;
 
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub mod fixture;
+pub(crate) mod office_command;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod seed;
+pub use office_command::{office_list, office_restart, HELP as OFFICE_HELP};
 pub(crate) mod tls_command;
 pub use tls_command::{admin_tls_set, HELP as ADMIN_TLS_SET_HELP};
 #[cfg(test)]
