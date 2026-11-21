@@ -28,11 +28,12 @@ use org_store::{
 };
 
 pub use operations::{
-    AddPersonOp, AddProjectTeamOp, ArchiveTeamOp, CheckOp, CreateOrganizationOp, CreateProjectOp,
-    CreateTeamOp, DeactivatePersonOp, DirectoryGeneration, DirectorySnapshot, ImportOrganizationOp,
-    MovePersonOp, MoveTeamOp, OfficeStanding, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
-    ReceiptById, RemoveProjectTeamOp, Standing, StructureOp, TopTeamId, UpdatePersonOp,
-    UpdateTeamOp,
+    AddPersonOp, AddProjectTeamOp, AgentExecutionById, ArchiveTeamOp, CheckHrMessageAccess,
+    CheckOp, CreateOrganizationOp, CreateProjectOp, CreateTeamOp, DeactivatePersonOp,
+    DirectoryGeneration, DirectorySnapshot, HireInspectById, HiresList, ImportOrganizationOp,
+    ModelProfilesList, MovePersonOp, MoveTeamOp, OfficeStanding, ProjectCheckOp,
+    ProjectInspectByRef, ProjectsList, ReceiptById, RemoveProjectTeamOp, RoleInspectByRef,
+    RolesList, Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
 };
 
 use super::sqlite::SqliteEngine;

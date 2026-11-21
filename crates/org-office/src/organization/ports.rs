@@ -8,7 +8,8 @@
 use org_store::{CoreRead, Engine, EngineError, Id};
 
 use super::records::{
-    Employee, Office, OfficeCode, Organization, Repository, Role, Team, TeamAllocation, TeamCounter,
+    AgentExecutionConfig, Employee, HireRequest, ModelProfile, Office, OfficeCode, Organization,
+    ProviderConnection, Repository, Role, Team, TeamAllocation, TeamCounter,
 };
 
 /// The deepest team tree a chain is followed through. A path cannot hold more.
@@ -50,6 +51,21 @@ pub trait OrganizationRead: CoreRead {
     fn employees(&self) -> Result<Vec<Employee>, EngineError>;
     /// Whether any employee, of any status, has this handle.
     fn handle_in_use(&self, handle: &str) -> Result<bool, EngineError>;
+    fn hire_request(&self, id: &Id) -> Result<Option<HireRequest>, EngineError>;
+    /// In order of ID.
+    fn hire_requests(&self) -> Result<Vec<HireRequest>, EngineError>;
+    fn agent_execution(
+        &self,
+        employee_id: &Id,
+    ) -> Result<Option<AgentExecutionConfig>, EngineError>;
+    /// In order of employee ID.
+    fn agent_executions(&self) -> Result<Vec<AgentExecutionConfig>, EngineError>;
+    fn provider_connection(&self, id: &Id) -> Result<Option<ProviderConnection>, EngineError>;
+    /// In order of ID.
+    fn provider_connections(&self) -> Result<Vec<ProviderConnection>, EngineError>;
+    fn model_profile(&self, id: &Id) -> Result<Option<ModelProfile>, EngineError>;
+    /// In order of ID.
+    fn model_profiles(&self) -> Result<Vec<ModelProfile>, EngineError>;
     fn team_counter(&self) -> Result<Option<TeamCounter>, EngineError>;
     /// In order of number.
     fn team_allocations(&self) -> Result<Vec<TeamAllocation>, EngineError>;
@@ -101,6 +117,14 @@ pub trait OrganizationWrite: OrganizationRead {
     fn remove_team(&mut self, id: &Id) -> Result<(), EngineError>;
     fn put_employee(&mut self, record: &Employee) -> Result<(), EngineError>;
     fn remove_employee(&mut self, id: &Id) -> Result<(), EngineError>;
+    fn put_hire_request(&mut self, record: &HireRequest) -> Result<(), EngineError>;
+    fn remove_hire_request(&mut self, id: &Id) -> Result<(), EngineError>;
+    fn put_agent_execution(&mut self, record: &AgentExecutionConfig) -> Result<(), EngineError>;
+    fn remove_agent_execution(&mut self, employee_id: &Id) -> Result<(), EngineError>;
+    fn put_provider_connection(&mut self, record: &ProviderConnection) -> Result<(), EngineError>;
+    fn remove_provider_connection(&mut self, id: &Id) -> Result<(), EngineError>;
+    fn put_model_profile(&mut self, record: &ModelProfile) -> Result<(), EngineError>;
+    fn remove_model_profile(&mut self, id: &Id) -> Result<(), EngineError>;
     fn put_team_counter(&mut self, record: &TeamCounter) -> Result<(), EngineError>;
     fn remove_team_counter(&mut self) -> Result<(), EngineError>;
     fn put_team_allocation(&mut self, record: &TeamAllocation) -> Result<(), EngineError>;

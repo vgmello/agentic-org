@@ -108,6 +108,36 @@ where
                 tx.put_employee(&record)?;
             }
             (Kind::Employee(_, _, id), None) => tx.remove_employee(&id)?,
+            (Kind::AgentExecution(chain, id), Some(bytes)) => {
+                let record = decoded(path, records::decode_agent_execution(bytes))?;
+                agree(path, record.employee_id == id, "employee_id")?;
+                agree(path, !chain.is_empty(), "home_team_id")?;
+                tx.put_agent_execution(&record)?;
+            }
+            (Kind::AgentExecution(_, id), None) => tx.remove_agent_execution(&id)?,
+            (Kind::HireRequest(chain, id), Some(bytes)) => {
+                let record = decoded(path, records::decode_hire_request(bytes))?;
+                agree(path, record.id == id, "id")?;
+                agree(
+                    path,
+                    Some(&record.home_team_id) == chain.last(),
+                    "home_team_id",
+                )?;
+                tx.put_hire_request(&record)?;
+            }
+            (Kind::HireRequest(_, id), None) => tx.remove_hire_request(&id)?,
+            (Kind::ProviderConnection(id), Some(bytes)) => {
+                let record = decoded(path, records::decode_provider_connection(bytes))?;
+                agree(path, record.id == id, "id")?;
+                tx.put_provider_connection(&record)?;
+            }
+            (Kind::ProviderConnection(id), None) => tx.remove_provider_connection(&id)?,
+            (Kind::ModelProfile(id), Some(bytes)) => {
+                let record = decoded(path, records::decode_model_profile(bytes))?;
+                agree(path, record.id == id, "id")?;
+                tx.put_model_profile(&record)?;
+            }
+            (Kind::ModelProfile(id), None) => tx.remove_model_profile(&id)?,
             (Kind::TeamCounter(scope), Some(bytes)) => {
                 ours(&scope)?;
                 let record = decoded(path, records::decode_team_counter(bytes))?;
@@ -166,7 +196,8 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
             && teams.is_empty()
             && employees.is_empty()
             && counter.is_none()
-            && allocations.is_empty();
+            && allocations.is_empty()
+            && hiring_records_empty(tx)?;
         if empty {
             return Ok(());
         }
@@ -337,6 +368,27 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
         return Err(refuse(&profile(employee).expect("checked above"), reason));
     }
 
+    verify_team_folders(
+        tx,
+        &organization_path,
+        &roles,
+        &employees,
+        &chains,
+        &home_of,
+        &profile,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_team_folders<'a>(
+    tx: &impl OrganizationWrite,
+    organization_path: &DurablePath,
+    roles: &[records::Role],
+    employees: &'a [records::Employee],
+    chains: &BTreeMap<&Id, Vec<Id>>,
+    home_of: &BTreeMap<&Id, &Id>,
+    profile: &impl Fn(&'a records::Employee) -> Option<DurablePath>,
+) -> Result<(), ProjectionError> {
     // Folders match the fields: every file is where its record's parent chain puts it.
     let mut expected: BTreeSet<DurablePath> = BTreeSet::new();
     expected.extend(
@@ -345,10 +397,176 @@ fn validate(tx: &impl OrganizationWrite) -> Result<(), ProjectionError> {
             .filter_map(|chain| records::team_path(chain).ok()),
     );
     expected.extend(employees.iter().filter_map(profile));
+    validate_hiring_and_collect_paths(
+        tx,
+        organization_path,
+        roles,
+        employees,
+        chains,
+        home_of,
+        &mut expected,
+    )?;
     let teams_folder = DurablePath::parse("state/teams").expect("a fixed path");
     for path in tx.sources_under(&teams_folder)? {
         if records::kind_of(&path).is_some() && !expected.contains(&path) {
             return Err(refuse(&path, "not in the folder its parent chain names"));
+        }
+    }
+    Ok(())
+}
+
+fn hiring_records_empty(tx: &impl OrganizationWrite) -> Result<bool, ProjectionError> {
+    Ok(tx.hire_requests()?.is_empty()
+        && tx.agent_executions()?.is_empty()
+        && tx.provider_connections()?.is_empty()
+        && tx.model_profiles()?.is_empty())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_hiring_and_collect_paths(
+    tx: &impl OrganizationWrite,
+    organization_path: &DurablePath,
+    roles: &[records::Role],
+    employees: &[records::Employee],
+    chains: &BTreeMap<&Id, Vec<Id>>,
+    home_of: &BTreeMap<&Id, &Id>,
+    expected: &mut BTreeSet<DurablePath>,
+) -> Result<(), ProjectionError> {
+    let hire_requests = tx.hire_requests()?;
+    let agent_executions = tx.agent_executions()?;
+    let provider_connections = tx.provider_connections()?;
+    let model_profiles = tx.model_profiles()?;
+    validate_providers_and_profiles(&provider_connections, &model_profiles)?;
+    validate_executions_and_hires(
+        organization_path,
+        roles,
+        employees,
+        chains,
+        &hire_requests,
+        &agent_executions,
+        &model_profiles,
+        home_of,
+    )?;
+    expected.extend(agent_executions.iter().filter_map(|exec| {
+        let chain = chains.get(home_of.get(&exec.employee_id)?)?;
+        records::agent_execution_path(chain, &exec.employee_id).ok()
+    }));
+    expected.extend(hire_requests.iter().filter_map(|req| {
+        let chain = chains.get(&req.home_team_id)?;
+        records::hire_request_path(chain, &req.id).ok()
+    }));
+    Ok(())
+}
+
+fn validate_providers_and_profiles(
+    provider_connections: &[records::ProviderConnection],
+    model_profiles: &[records::ModelProfile],
+) -> Result<(), ProjectionError> {
+    let mut conn_ids = BTreeSet::new();
+    let mut conn_keys = BTreeSet::new();
+    let mut conn_subs = BTreeSet::new();
+    for conn in provider_connections {
+        let p = records::provider_connection_path(&conn.id);
+        conn_ids.insert(&conn.id);
+        if !conn_keys.insert(conn.key.as_str()) {
+            return Err(refuse(&p, "duplicate provider connection key"));
+        }
+        if let Some(sub) = &conn.subscription_identity {
+            if !conn_subs.insert((conn.provider_type.as_str(), sub.as_str())) {
+                return Err(refuse(
+                    &p,
+                    "duplicate provider_type and subscription_identity",
+                ));
+            }
+        }
+    }
+    let mut profile_keys = BTreeSet::new();
+    let mut generated_for = BTreeSet::new();
+    for mp in model_profiles {
+        let p = records::model_profile_path(&mp.id);
+        if !profile_keys.insert(mp.key.as_str()) {
+            return Err(refuse(&p, "duplicate model profile key"));
+        }
+        if let Some(gen_id) = &mp.generated_for_connection_id {
+            if !conn_ids.contains(gen_id) {
+                return Err(refuse(
+                    &p,
+                    "generated_for_connection_id names no provider connection",
+                ));
+            }
+            if !generated_for.insert(gen_id) {
+                return Err(refuse(
+                    &p,
+                    "another model profile is already generated for this connection",
+                ));
+            }
+        }
+        for cid in &mp.connection_ids {
+            if !conn_ids.contains(cid) {
+                return Err(refuse(&p, "connection_id names no provider connection"));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_executions_and_hires(
+    organization_path: &DurablePath,
+    roles: &[records::Role],
+    employees: &[records::Employee],
+    chains: &BTreeMap<&Id, Vec<Id>>,
+    hire_requests: &[records::HireRequest],
+    agent_executions: &[records::AgentExecutionConfig],
+    model_profiles: &[records::ModelProfile],
+    home_of: &BTreeMap<&Id, &Id>,
+) -> Result<(), ProjectionError> {
+    let profile_ids: BTreeSet<&Id> = model_profiles.iter().map(|p| &p.id).collect();
+    let emp_by_id: BTreeMap<&Id, &records::Employee> =
+        employees.iter().map(|e| (&e.id, e)).collect();
+    for exec in agent_executions {
+        let Some(emp) = emp_by_id.get(&exec.employee_id) else {
+            return Err(refuse(
+                organization_path,
+                "execution.md names no employee on record",
+            ));
+        };
+        let p = chains
+            .get(&emp.home_team_id)
+            .and_then(|c| records::agent_execution_path(c, &exec.employee_id).ok())
+            .unwrap_or_else(|| organization_path.clone());
+        if emp.kind != records::EmployeeKind::Agent {
+            return Err(refuse(&p, "only agents have execution.md"));
+        }
+        if !profile_ids.contains(&exec.model_profile_id) {
+            return Err(refuse(&p, "model_profile_id names no model profile"));
+        }
+    }
+    let mut hired_employees = BTreeSet::new();
+    for req in hire_requests {
+        let Some(chain) = chains.get(&req.home_team_id) else {
+            return Err(refuse(organization_path, "hire request names no home team"));
+        };
+        let p = records::hire_request_path(chain, &req.id)
+            .unwrap_or_else(|_| organization_path.clone());
+        if !home_of.contains_key(&req.requested_by_employee_id) {
+            return Err(refuse(&p, "requested_by_employee_id names no employee"));
+        }
+        if let Some(role) = &req.role_id {
+            if !roles.iter().any(|r| r.id == *role) {
+                return Err(refuse(&p, "role_id names no role"));
+            }
+        }
+        if let Some(emp_id) = &req.employee_id {
+            let Some(emp) = emp_by_id.get(emp_id) else {
+                return Err(refuse(&p, "employee_id names no employee"));
+            };
+            if emp.kind != records::EmployeeKind::Agent {
+                return Err(refuse(&p, "hire request employee must be an agent"));
+            }
+            if !hired_employees.insert(emp_id) {
+                return Err(refuse(&p, "another hire request produced this employee"));
+            }
         }
     }
     Ok(())

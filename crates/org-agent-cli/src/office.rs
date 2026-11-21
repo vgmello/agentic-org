@@ -196,7 +196,16 @@ fn map_connect_error(error: ClientError, office_id: Option<&str>) -> Refusal {
 
 fn map_client_error(error: ClientError) -> Refusal {
     match error {
-        ClientError::Api(api) => Refusal::new(api.code, api.message, hint_for(api.code)),
+        ClientError::Api(api) => {
+            let hint = if api.code == ErrorCode::NotAuthorized
+                && api.message.contains("Ask your team lead.")
+            {
+                "Ask your team lead."
+            } else {
+                hint_for(api.code)
+            };
+            Refusal::new(api.code, api.message, hint)
+        }
         ClientError::RequestTooLarge => Refusal::new(
             ErrorCode::TooLarge,
             "The request exceeded the office socket frame limit.",

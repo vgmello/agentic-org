@@ -18,6 +18,7 @@
 
 mod creation;
 mod folder;
+mod hiring;
 mod intent;
 #[cfg(any(test, feature = "testkit"))]
 mod testkit;

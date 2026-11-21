@@ -103,11 +103,20 @@ pub type ProjectInspectFn = Box<
     dyn Fn(&ProjectInspectParams) -> Result<Result<ProjectRecord, ApiError>, String> + Send + Sync,
 >;
 
+/// Dispatches C2 role, HR hiring, `may_hire`, team-limit, and agent lifecycle RPCs.
+pub type HiringFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
+/// Checks whether a member may send a message to `target` (ADR-0029 decision 3 / HIRE-2).
+pub type HrMessageGuardFn =
+    Box<dyn Fn(&str, &str) -> Result<Result<(), ApiError>, String> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
     pub projects_list: ProjectsListFn,
     pub project_inspect: ProjectInspectFn,
+    pub hiring: Option<HiringFn>,
+    pub hr_message_guard: Option<HrMessageGuardFn>,
     pub submit: SubmitFn,
     pub work: WorkFn,
     pub operation_get: OperationFn,
@@ -1122,7 +1131,7 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     if request.is::<OrgSnapshotCall>() {
         return org_snapshot(request, shared, binding);
     }
-    if let Some(response) = project_read(request, shared, binding) {
+    if let Some(response) = project_or_hiring(request, shared, binding) {
         return response;
     }
     if request.is::<Who>() {
@@ -1134,9 +1143,7 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     if request.is::<MsgBind>() {
         return bind_connection(request, shared, binding);
     }
-    if let Some(response) =
-        msg_calls::answer(request, shared.ports.mailbox.as_deref(), binding.member())
-    {
+    if let Some(response) = answer_message(request, shared, binding) {
         return response;
     }
     match WorkCall::parse(request) {
@@ -1234,6 +1241,98 @@ fn org_snapshot(request: &Request, shared: &Shared, binding: &Binding) -> Respon
 }
 
 /// Dispatches `project.list` and `project.inspect` when `request` names one of them.
+fn is_role_method(request: &Request) -> bool {
+    use org_proto::hiring::{RoleCreate, RoleInspect, RoleList, RoleUpdate};
+    request.is::<RoleList>()
+        || request.is::<RoleInspect>()
+        || request.is::<RoleCreate>()
+        || request.is::<RoleUpdate>()
+}
+
+fn is_hr_hire_method(request: &Request) -> bool {
+    use org_proto::hiring::{
+        HrHire, HrHireConfirm, HrHireDraft, HrHireInspect, HrHireList, HrHireWithdraw,
+    };
+    request.is::<HrHireList>()
+        || request.is::<HrHireInspect>()
+        || request.is::<HrHireDraft>()
+        || request.is::<HrHireConfirm>()
+        || request.is::<HrHire>()
+        || request.is::<HrHireWithdraw>()
+}
+
+fn is_agent_lifecycle_method(request: &Request) -> bool {
+    use org_proto::hiring::{
+        AgentExecutionGet, AgentExecutionSet, AgentMove, AgentOffboard, AgentSetStatus, AgentUpdate,
+    };
+    request.is::<AgentUpdate>()
+        || request.is::<AgentMove>()
+        || request.is::<AgentSetStatus>()
+        || request.is::<AgentOffboard>()
+        || request.is::<AgentExecutionGet>()
+        || request.is::<AgentExecutionSet>()
+}
+
+fn is_hiring_policy_method(request: &Request) -> bool {
+    use org_proto::hiring::{
+        MemberSetMayHire, ModelProfileList, ProviderConnectionCreate, TeamSetMaxMembers,
+    };
+    request.is::<MemberSetMayHire>()
+        || request.is::<TeamSetMaxMembers>()
+        || request.is::<ProviderConnectionCreate>()
+        || request.is::<ModelProfileList>()
+}
+
+fn is_hiring_method(request: &Request) -> bool {
+    is_role_method(request)
+        || is_hr_hire_method(request)
+        || is_agent_lifecycle_method(request)
+        || is_hiring_policy_method(request)
+}
+
+fn project_or_hiring(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    project_read(request, shared, binding).or_else(|| hiring_rpc(request, shared, binding))
+}
+
+fn answer_message(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if request.is::<org_proto::msg::MsgSend>() {
+        if let (Some(guard), Some(member)) = (&shared.ports.hr_message_guard, binding.member()) {
+            if let Ok(params) = request.params::<org_proto::msg::MsgSend>() {
+                match guard(member, &params.to) {
+                    Ok(Ok(())) => {}
+                    Ok(Err(refusal)) => return Some(Response::error(request.id, refusal)),
+                    Err(_) => return Some(internal(request.id)),
+                }
+            }
+        }
+    }
+    msg_calls::answer(request, shared.ports.mailbox.as_deref(), binding.member())
+}
+
+fn hiring_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !is_hiring_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(hiring) = &shared.ports.hiring {
+        if let Some(response) = hiring(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
+}
+
 fn project_read(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
     if request.is::<ProjectList>() {
         Some(project_list(request, shared, binding))
@@ -2358,6 +2457,8 @@ mod tests {
             snapshot,
             projects_list: Box::new(|_| Err("none".to_owned())),
             project_inspect: Box::new(|_| Err("none".to_owned())),
+            hiring: None,
+            hr_message_guard: None,
             submit: Box::new(|_, _, _| Err("none".to_owned())),
             who: Box::new(|_| Err("none".to_owned())),
             status: Box::new(|_, _| Err("none".to_owned())),
@@ -2811,6 +2912,8 @@ mod tests {
                 snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
                 projects_list: Box::new(|_| Err("none".to_owned())),
                 project_inspect: Box::new(|_| Err("none".to_owned())),
+                hiring: None,
+                hr_message_guard: None,
                 submit: Box::new(move |_, _, _| {
                     counter.fetch_add(1, Ordering::SeqCst);
                     answer()
@@ -3284,6 +3387,8 @@ mod tests {
                     snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
                     projects_list: Box::new(|_| Err("none".to_owned())),
                     project_inspect: Box::new(|_| Err("none".to_owned())),
+                    hiring: None,
+                    hr_message_guard: None,
                     submit: Box::new(|_, _, _| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
                     status: Box::new(|_, _| Err("none".to_owned())),
@@ -3776,6 +3881,8 @@ mod tests {
                 snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
                 projects_list: Box::new(|_| Err("none".to_owned())),
                 project_inspect: Box::new(|_| Err("none".to_owned())),
+                hiring: None,
+                hr_message_guard: None,
                 submit: Box::new(|_, _, _| Err("none".to_owned())),
                 who: Box::new(move |params| {
                     counter.fetch_add(1, Ordering::SeqCst);

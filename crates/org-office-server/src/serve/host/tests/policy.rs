@@ -587,5 +587,40 @@ fn what_the_office_answers_is_what_the_grant_bound_owner_gets() {
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
 
+#[test]
+fn msg_send_enforces_hr_message_guard_before_delivery() {
+    let mut shared = shared();
+    shared.ports.hr_message_guard = Some(Box::new(|_sender, target| {
+        let trimmed = target.trim().trim_start_matches('@');
+        if trimmed.eq_ignore_ascii_case("hr") {
+            Ok(Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "You don't have access to hire. Ask your team lead.",
+            )))
+        } else {
+            Ok(Ok(()))
+        }
+    }));
+    let ctx = context();
+    for target in ["hr", " hr ", "@hr"] {
+        let req = signed(
+            &shared,
+            "msg.send",
+            json!({
+                "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "to": target,
+                "kind": "msg",
+                "body": "please hire",
+            }),
+        );
+        let resp = answer(&shared, &ctx, &req);
+        assert_eq!(resp["error"]["code"], "not_authorized", "{target}: {resp}");
+        assert_eq!(
+            resp["error"]["message"],
+            "You don't have access to hire. Ask your team lead."
+        );
+    }
+}
+
 #[path = "inventory.rs"]
 mod inventory;

@@ -119,6 +119,8 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             snapshot,
             projects_list: Box::new(|_| panic!("host touched Office project.list")),
             project_inspect: Box::new(|_| panic!("host touched Office project.inspect")),
+            hiring: None,
+            hr_message_guard: None,
             submit: Box::new(|_, _, _| panic!("host touched Office submit")),
             work: Box::new(|_, _| panic!("host touched Office work")),
             operation_get: Box::new(|_, _| panic!("host touched Office operation")),

@@ -29,6 +29,9 @@ use crate::{
     store::open::Testing,
 };
 
+#[path = "hiring_tests.rs"]
+mod hiring_tests;
+
 const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
 const CREATOR: &str = "01900000-0000-7000-8000-000000000012";
 const HR: &str = "01900000-0000-7000-8000-000000000013";

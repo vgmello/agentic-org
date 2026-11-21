@@ -9,6 +9,7 @@
 //! browser's address comes from the accepted socket ([`PeerAddress`]), never a
 //! header. Nothing else forwards to the host or a local socket.
 mod account_routes;
+mod hiring_routes;
 mod instance_routes;
 mod open_routes;
 mod org_routes;
@@ -161,6 +162,7 @@ pub enum Route {
     Operation(CallerAuth, OperationId),
     Account(account_routes::AccountRoute),
     OpenOrg(open_routes::OpenRoute),
+    Hiring(hiring_routes::HiringRoute),
 }
 
 pub enum Call {
@@ -193,6 +195,7 @@ pub enum Call {
     Operation(CallerAuth, OperationId),
     Account(account_routes::AccountCall),
     OpenOrg(open_routes::OpenCall),
+    Hiring(hiring_routes::HiringCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -935,6 +938,7 @@ impl ApiBackend for SessionApi {
             }
             Route::Account(route) => return account_routes::prepare(route, bytes),
             Route::OpenOrg(route) => return open_routes::prepare(route, bytes),
+            Route::Hiring(route) => return hiring_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -1016,6 +1020,12 @@ impl ApiBackend for SessionApi {
                 }),
                 streaming: false,
             },
+            Call::Hiring(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(hiring_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
         }
     }
@@ -1031,6 +1041,7 @@ impl ApiBackend for SessionApi {
             }
             Call::Account(call) => account_routes::execute(self, call),
             Call::OpenOrg(call) => open_routes::execute(self, call),
+            Call::Hiring(_) => unreachable!("Call::Hiring is dispatched asynchronously"),
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))

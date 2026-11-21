@@ -6,6 +6,8 @@
 #![deny(unsafe_code)]
 
 pub mod dispatch;
+pub mod hiring_dispatch;
+pub mod hiring_table;
 pub mod keys;
 pub mod office;
 pub mod sources;

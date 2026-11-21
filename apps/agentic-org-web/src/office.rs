@@ -203,6 +203,60 @@ impl OfficeBridge {
         })
     }
 
+    /// Sends one typed `org-proto` RPC over the authenticated host channel to `office_id`.
+    /// Reads may pass `retry_on_transport = true` to retry once after evicting a stale channel;
+    /// mutations pass `false` so an uncertain transport failure is never auto-retried blindly.
+    pub async fn call_typed<C: org_proto::Call>(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        params: &C::Params,
+        retry_on_transport: bool,
+    ) -> Result<C::Result, OfficeFailure> {
+        match self.call_typed_once::<C>(auth, office_id, params).await {
+            Err(OfficeFailure::Transport) if retry_on_transport => {
+                self.call_typed_once::<C>(auth, office_id, params).await
+            }
+            other => other,
+        }
+    }
+
+    async fn call_typed_once<C: org_proto::Call>(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        params: &C::Params,
+    ) -> Result<C::Result, OfficeFailure> {
+        let channel = self.get_or_open(auth, office_id).await?;
+        let principal = match self.grant(auth, office_id, &channel.channel_id).await {
+            Ok(principal) => principal,
+            Err(Failure::Unavailable) => {
+                self.evict(office_id, &channel.channel_id);
+                return Err(OfficeFailure::Transport);
+            }
+            Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
+        };
+        let rpc_id = self.next_rpc_id();
+        let request = Request::new::<C>(rpc_id, params)
+            .and_then(|req| req.with_principal(&principal))
+            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        let raw = match channel.roundtrip_raw(&request, rpc_id).await {
+            Ok(raw) => raw,
+            Err(_) => {
+                self.evict(office_id, &channel.channel_id);
+                return Err(OfficeFailure::Transport);
+            }
+        };
+        let response: Response =
+            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
+        match response.outcome {
+            Outcome::Result(value) => {
+                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
+            }
+            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
+        }
+    }
+
     /// Reads `org.snapshot` asynchronously over the multiplexed office channel.
     /// If a cached channel went stale (e.g., office restart), evicts and retries once.
     pub async fn org_snapshot(

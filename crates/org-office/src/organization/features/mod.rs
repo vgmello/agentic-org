@@ -16,13 +16,19 @@
 //! revision (`conflict`), then `already_exists`.
 
 pub mod add_person;
+pub mod agent_lifecycle;
 pub mod archive_team;
+pub mod authority;
 pub mod create_organization;
 pub mod create_team;
 pub mod deactivate_person;
+pub mod hiring;
+pub mod may_hire;
 pub mod move_person;
 pub mod move_team;
+pub mod roles;
 pub(crate) mod shared;
+pub mod team_limit;
 pub mod update_person;
 pub mod update_team;
 
@@ -31,12 +37,21 @@ use org_store::{Ack, Actor, Change, Engine, Id, OfficeIdentity, Operation, Refus
 use serde::{Deserialize, Serialize};
 
 pub use add_person::AddPerson;
+pub use agent_lifecycle::{
+    CreateProviderConnection, MoveAgent, OffboardAgent, SetAgentStatus, UpdateAgent,
+    UpsertAgentExecution,
+};
 pub use archive_team::ArchiveTeam;
+pub use authority::HIRE_DENIED;
 pub use create_organization::{CreateOrganization, Creator, OrganizationCreated};
 pub use create_team::{CreateTeam, TeamCreated};
 pub use deactivate_person::DeactivatePerson;
+pub use hiring::{ConfirmHire, DraftHire, HireAgent, HireChanged, WithdrawHire};
+pub use may_hire::SetMayHire;
 pub use move_person::MovePerson;
 pub use move_team::MoveTeam;
+pub use roles::{CreateRole, UpdateRole};
+pub use team_limit::SetTeamMaxMembers;
 pub use update_person::{Edit, UpdatePerson};
 pub use update_team::UpdateTeam;
 
@@ -50,29 +65,57 @@ pub enum Op {
     ImportOrganization,
     CreateTeam,
     UpdateTeam,
+    SetTeamMaxMembers,
     MoveTeam,
     ArchiveTeam,
     AddPerson,
     UpdatePerson,
     MovePerson,
     DeactivatePerson,
+    SetMayHire,
+    CreateRole,
+    UpdateRole,
+    DraftHire,
+    ConfirmHire,
+    HireAgent,
+    WithdrawHire,
+    UpdateAgent,
+    MoveAgent,
+    SetAgentStatus,
+    OffboardAgent,
+    UpsertAgentExecution,
+    CreateProviderConnection,
     CreateProject,
     AddProjectTeam,
     RemoveProjectTeam,
 }
 
 impl Op {
-    pub const ALL: [Op; 13] = [
+    pub const ALL: [Op; 27] = [
         Op::CreateOrganization,
         Op::ImportOrganization,
         Op::CreateTeam,
         Op::UpdateTeam,
+        Op::SetTeamMaxMembers,
         Op::MoveTeam,
         Op::ArchiveTeam,
         Op::AddPerson,
         Op::UpdatePerson,
         Op::MovePerson,
         Op::DeactivatePerson,
+        Op::SetMayHire,
+        Op::CreateRole,
+        Op::UpdateRole,
+        Op::DraftHire,
+        Op::ConfirmHire,
+        Op::HireAgent,
+        Op::WithdrawHire,
+        Op::UpdateAgent,
+        Op::MoveAgent,
+        Op::SetAgentStatus,
+        Op::OffboardAgent,
+        Op::UpsertAgentExecution,
+        Op::CreateProviderConnection,
         Op::CreateProject,
         Op::AddProjectTeam,
         Op::RemoveProjectTeam,
@@ -90,12 +133,26 @@ impl Op {
             Op::ImportOrganization => "organization.import",
             Op::CreateTeam => "organization.create_team",
             Op::UpdateTeam => "organization.update_team",
+            Op::SetTeamMaxMembers => "organization.set_team_max_members",
             Op::MoveTeam => "organization.move_team",
             Op::ArchiveTeam => "organization.archive_team",
             Op::AddPerson => "organization.add_person",
             Op::UpdatePerson => "organization.update_person",
             Op::MovePerson => "organization.move_person",
             Op::DeactivatePerson => "organization.deactivate_person",
+            Op::SetMayHire => "organization.set_may_hire",
+            Op::CreateRole => "organization.create_role",
+            Op::UpdateRole => "organization.update_role",
+            Op::DraftHire => "organization.draft_hire",
+            Op::ConfirmHire => "organization.confirm_hire",
+            Op::HireAgent => "organization.hire_agent",
+            Op::WithdrawHire => "organization.withdraw_hire",
+            Op::UpdateAgent => "organization.update_agent",
+            Op::MoveAgent => "organization.move_agent",
+            Op::SetAgentStatus => "organization.set_agent_status",
+            Op::OffboardAgent => "organization.offboard_agent",
+            Op::UpsertAgentExecution => "organization.upsert_agent_execution",
+            Op::CreateProviderConnection => "organization.create_provider_connection",
             Op::CreateProject => "organization.create_project",
             Op::AddProjectTeam => "organization.add_project_team",
             Op::RemoveProjectTeam => "organization.remove_project_team",

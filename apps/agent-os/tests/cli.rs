@@ -318,3 +318,191 @@ fn selected_office_uuid_addressing_and_unknown_office_or_agent_refusals() {
 
     server.join().unwrap();
 }
+
+#[test]
+fn c2_cli14_roles_and_hr_hire_authorized_and_unauthorized() {
+    use org_proto::hiring::{
+        HireOpResult, HrHire, RoleInspect, RoleList, RoleListResult, RoleRecord,
+    };
+    use org_proto::msg::{MsgBind, MsgBindResult};
+
+    let dir = tempfile::Builder::new().prefix("aos-c2").tempdir().unwrap();
+    let sock = dir.path().join("office.sock");
+    let listener = UnixListener::bind(&sock).unwrap();
+
+    let authorized_agent = "0193a5c0-0000-7000-8000-0000000000a1";
+    let unauthorized_agent = "0193a5c0-0000-7000-8000-0000000000a2";
+
+    let server = thread::spawn(move || {
+        for _ in 0..4 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut bound: Option<String> = None;
+            while let Ok(Some(line)) = frame::read_line(&mut reader) {
+                let req: Request = serde_json::from_slice(&line).unwrap();
+                let resp = if req.is::<Hello>() {
+                    let hello: HelloResult = serde_json::from_value(serde_json::json!({
+                        "api_version": 2,
+                        "server_version": "test",
+                        "capabilities": []
+                    }))
+                    .unwrap();
+                    Response::ok::<Hello>(req.id, &hello).unwrap()
+                } else if req.is::<MsgBind>() {
+                    let p: org_proto::msg::MsgBindParams =
+                        serde_json::from_value(req.params.clone()).unwrap();
+                    bound = p.member.clone();
+                    Response::ok::<MsgBind>(
+                        req.id,
+                        &MsgBindResult {
+                            member_id: bound.clone(),
+                            office_id: "0193a5c0-0000-7000-8000-0000000000f1".into(),
+                        },
+                    )
+                    .unwrap()
+                } else if req.is::<RoleList>() {
+                    Response::ok::<RoleList>(
+                        req.id,
+                        &RoleListResult {
+                            roles: vec![RoleRecord {
+                                id: "0193a5c0-0000-7000-8000-000000000040".into(),
+                                key: Some("backend-engineer".into()),
+                                name: "Backend Engineer".into(),
+                                body: "Builds Rust services.".into(),
+                                revision: 1,
+                                created_at: None,
+                                updated_at: None,
+                            }],
+                        },
+                    )
+                    .unwrap()
+                } else if req.is::<RoleInspect>() {
+                    Response::ok::<RoleInspect>(
+                        req.id,
+                        &RoleRecord {
+                            id: "0193a5c0-0000-7000-8000-000000000040".into(),
+                            key: Some("backend-engineer".into()),
+                            name: "Backend Engineer".into(),
+                            body: "Builds Rust services.".into(),
+                            revision: 1,
+                            created_at: None,
+                            updated_at: None,
+                        },
+                    )
+                    .unwrap()
+                } else if req.is::<HrHire>() {
+                    if bound.as_deref() == Some(authorized_agent) {
+                        Response::ok::<HrHire>(
+                            req.id,
+                            &HireOpResult {
+                                request_id: "0193a5c0-0000-7000-8000-000000000050".into(),
+                                state: "hired".into(),
+                                employee_id: Some("0193a5c0-0000-7000-8000-000000000051".into()),
+                                failed_step: None,
+                                revision: 1,
+                                generation: 5,
+                            },
+                        )
+                        .unwrap()
+                    } else {
+                        Response::error(
+                            req.id,
+                            org_proto::ApiError::new(
+                                org_proto::ErrorCode::NotAuthorized,
+                                "You don't have access to hire. Ask your team lead.",
+                            ),
+                        )
+                    }
+                } else {
+                    panic!("unexpected method: {}", req.method);
+                };
+                frame::write_message(&mut stream, &resp).unwrap();
+            }
+        }
+    });
+
+    // 1. role list & role inspect
+    let list = bin()
+        .args(["role", "list"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .env("AGENT_OS_AGENT_ID", authorized_agent)
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "{}",
+        String::from_utf8_lossy(&list.stdout)
+    );
+    let env: Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(env["data"][0]["key"], "backend-engineer");
+
+    let inspect = bin()
+        .args(["role", "inspect", "--role", "backend-engineer"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .env("AGENT_OS_AGENT_ID", authorized_agent)
+        .output()
+        .unwrap();
+    assert!(inspect.status.success());
+    let env: Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(env["data"]["name"], "Backend Engineer");
+
+    // 2. Authorized agent hr hire succeeds.
+    let ok_hire = bin()
+        .args([
+            "hr",
+            "hire",
+            "--team",
+            "0193a5c0-0000-7000-8000-000000000001",
+            "--name",
+            "Turing",
+            "--handle",
+            "turing",
+            "--reason",
+            "Need backend capacity",
+        ])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .env("AGENT_OS_AGENT_ID", authorized_agent)
+        .output()
+        .unwrap();
+    assert!(
+        ok_hire.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok_hire.stdout)
+    );
+    let env: Value = serde_json::from_slice(&ok_hire.stdout).unwrap();
+    assert_eq!(env["data"]["state"], "hired");
+
+    // 3. Unauthorized agent hr hire refuses with ADR-0029 message and hint.
+    let denied_hire = bin()
+        .args([
+            "hr",
+            "hire",
+            "--team",
+            "0193a5c0-0000-7000-8000-000000000001",
+            "--name",
+            "Turing",
+            "--handle",
+            "turing",
+            "--reason",
+            "Unauthorized attempt",
+        ])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .env("AGENT_OS_AGENT_ID", unauthorized_agent)
+        .output()
+        .unwrap();
+    assert_eq!(denied_hire.status.code(), Some(1));
+    let env: Value = serde_json::from_slice(&denied_hire.stdout).unwrap();
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "not_authorized");
+    assert_eq!(
+        env["error"]["message"],
+        "You don't have access to hire. Ask your team lead."
+    );
+    assert_eq!(env["error"]["hint"], "Ask your team lead.");
+
+    server.join().unwrap();
+}

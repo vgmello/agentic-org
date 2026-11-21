@@ -44,6 +44,7 @@ use std::{
 };
 
 mod browser_sessions;
+mod c2_hiring_and_agents;
 mod cli_and_custody;
 mod local_onboarding_and_tls;
 mod multi_person_accounts;

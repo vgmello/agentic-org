@@ -18,9 +18,11 @@ use super::{failed, SqliteSnapshot, SqliteTx};
 use crate::organization::{
     ports::{OrganizationRead, OrganizationWrite, RecordRef},
     records::{
-        BuiltinKey, By, Employee, EmployeeKind, EmployeeStatus, Meta, Office, OfficeCode,
-        OfficeRole, Organization, Repository, RepositoryKind, Role, Team, TeamAllocation,
-        TeamCounter, TeamStatus,
+        yaml::canonical_json, AgentExecutionConfig, BuiltinKey, By, Employee, EmployeeKind,
+        EmployeeStatus, HireProposal, HireRequest, HireState, Meta, ModelProfile, Office,
+        OfficeCode, OfficeRole, Organization, PermissionPreset, ProviderAuthMode,
+        ProviderConnection, Repository, RepositoryKind, Role, Team, TeamAllocation, TeamCounter,
+        TeamStatus,
     },
 };
 
@@ -279,6 +281,95 @@ fn record_ref_row(row: &Row<'_>) -> rusqlite::Result<RecordRef> {
     })
 }
 
+fn hire_request_row(row: &Row<'_>) -> rusqlite::Result<HireRequest> {
+    let state_text: String = row.get(2)?;
+    let state = HireState::parse(&state_text).ok_or_else(|| foreign(2, "not a hire state"))?;
+    let proposal_json: String = row.get(6)?;
+    let proposal: HireProposal =
+        serde_json::from_str(&proposal_json).map_err(|_| foreign(6, "invalid proposal_json"))?;
+    Ok(HireRequest {
+        id: id(row, 0)?,
+        revision: number(row, 1)?,
+        state,
+        requested_by_employee_id: id(row, 3)?,
+        home_team_id: id(row, 4)?,
+        role_id: optional_id(row, 5)?,
+        proposal,
+        reason: row.get(7)?,
+        confirmed_at: row.get(8)?,
+        closed_reason: row.get(9)?,
+        employee_id: optional_id(row, 10)?,
+        failed_step: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+    })
+}
+
+fn agent_execution_row(row: &Row<'_>) -> rusqlite::Result<AgentExecutionConfig> {
+    let tools_json: String = row.get(4)?;
+    let tools_config: Vec<String> =
+        serde_json::from_str(&tools_json).map_err(|_| foreign(4, "invalid tools_config_json"))?;
+    let preset_text: String = row.get(5)?;
+    let permission_preset = PermissionPreset::parse(&preset_text)
+        .ok_or_else(|| foreign(5, "not a permission preset"))?;
+    Ok(AgentExecutionConfig {
+        employee_id: id(row, 0)?,
+        model_profile_id: id(row, 1)?,
+        model_id: row.get(2)?,
+        system_prompt_markdown: row.get(3)?,
+        tools_config,
+        permission_preset,
+        enabled: row.get(6)?,
+        meta: meta(row, 7)?,
+    })
+}
+
+fn provider_connection_row(row: &Row<'_>) -> rusqlite::Result<ProviderConnection> {
+    let auth_text: String = row.get(4)?;
+    let auth_mode =
+        ProviderAuthMode::parse(&auth_text).ok_or_else(|| foreign(4, "not an auth mode"))?;
+    Ok(ProviderConnection {
+        id: id(row, 0)?,
+        key: row.get(1)?,
+        name: row.get(2)?,
+        provider_type: row.get(3)?,
+        auth_mode,
+        subscription_identity: row.get(5)?,
+        runtime_driver: row.get(6)?,
+        endpoint_url: row.get(7)?,
+        enabled: row.get(8)?,
+        archived: row.get(9)?,
+        max_concurrent_turns: number(row, 10)?,
+        meta: meta(row, 11)?,
+    })
+}
+
+fn model_profile_base_row(row: &Row<'_>) -> rusqlite::Result<ModelProfile> {
+    Ok(ModelProfile {
+        id: id(row, 0)?,
+        key: row.get(1)?,
+        name: row.get(2)?,
+        description: row.get(3)?,
+        is_auto_generated: row.get(4)?,
+        generated_for_connection_id: optional_id(row, 5)?,
+        archived: row.get(6)?,
+        connection_ids: Vec::new(),
+        meta: meta(row, 7)?,
+    })
+}
+
+fn profile_connections(
+    db: &Connection,
+    scope: &str,
+    profile_id: &Id,
+) -> Result<Vec<Id>, EngineError> {
+    let sql = "SELECT connection_id FROM model_profile_connections \
+               WHERE organization_id = ?1 AND model_profile_id = ?2 ORDER BY priority";
+    all(db, sql, vec![text(scope), text(profile_id.as_str())], |r| {
+        id(r, 0)
+    })
+}
+
 const ORGANIZATION: &str = "id, slug, name, organization_repository_id, state_branch";
 const REPOSITORY: &str = "id, key, kind, remote_url";
 const OFFICE: &str = "id, slug, name, role";
@@ -287,6 +378,15 @@ const TEAM: &str = "id, name, number, parent_team_id, lead_employee_id, status, 
 const EMPLOYEE: &str = "id, handle, kind, name, home_team_id, role_id, reports_to_employee_id, \
                         status, contact, title, focus, role_text, title_in_team, offboarded_at, \
                         may_hire, builtin_key, body_markdown";
+const HIRE_REQUEST: &str = "id, revision, state, requested_by_employee_id, home_team_id, role_id, \
+                            proposal_json, reason, confirmed_at, closed_reason, employee_id, \
+                            failed_step, created_at, updated_at";
+const AGENT_EXEC: &str = "employee_id, model_profile_id, model_id, system_prompt_markdown, \
+                          tools_config_json, permission_preset, enabled";
+const PROVIDER_CONN: &str = "id, key, name, provider_type, auth_mode, subscription_identity, \
+                             runtime_driver, endpoint_url, enabled, archived, max_concurrent_turns";
+const MODEL_PROFILE: &str =
+    "id, key, name, description, is_auto_generated, generated_for_connection_id, archived";
 
 /// Every row of `table` in the organization, or those `filter` (on `?2`) keeps.
 fn select(columns: &str, table: &str, filter: &str, order: &str) -> String {
@@ -377,6 +477,95 @@ macro_rules! sqlite_read {
                 let sql = "SELECT 1 FROM employees WHERE organization_id = ?1 AND handle = ?2";
                 let found = one(db, sql, vec![text(scope), text(handle)], |_| Ok(()))?;
                 Ok(found.is_some())
+            }
+
+            fn hire_request(&self, id: &Id) -> Result<Option<HireRequest>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = format!(
+                    "SELECT {HIRE_REQUEST} FROM hire_requests \
+                     WHERE organization_id = ?1 AND id = ?2"
+                );
+                one(db, &sql, vec![text(scope), text(id.as_str())], hire_request_row)
+            }
+
+            fn hire_requests(&self) -> Result<Vec<HireRequest>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = format!(
+                    "SELECT {HIRE_REQUEST} FROM hire_requests \
+                     WHERE organization_id = ?1 ORDER BY id"
+                );
+                all(db, &sql, vec![text(scope)], hire_request_row)
+            }
+
+            fn agent_execution(
+                &self,
+                employee_id: &Id,
+            ) -> Result<Option<AgentExecutionConfig>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = select(
+                    AGENT_EXEC,
+                    "agent_execution_configs",
+                    " AND employee_id = ?2",
+                    "employee_id",
+                );
+                one(
+                    db,
+                    &sql,
+                    vec![text(scope), text(employee_id.as_str())],
+                    agent_execution_row,
+                )
+            }
+
+            fn agent_executions(&self) -> Result<Vec<AgentExecutionConfig>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = select(AGENT_EXEC, "agent_execution_configs", "", "employee_id");
+                all(db, &sql, vec![text(scope)], agent_execution_row)
+            }
+
+            fn provider_connection(
+                &self,
+                id: &Id,
+            ) -> Result<Option<ProviderConnection>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = select(PROVIDER_CONN, "provider_connections", " AND id = ?2", "id");
+                one(
+                    db,
+                    &sql,
+                    vec![text(scope), text(id.as_str())],
+                    provider_connection_row,
+                )
+            }
+
+            fn provider_connections(&self) -> Result<Vec<ProviderConnection>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = select(PROVIDER_CONN, "provider_connections", "", "id");
+                all(db, &sql, vec![text(scope)], provider_connection_row)
+            }
+
+            fn model_profile(&self, id: &Id) -> Result<Option<ModelProfile>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = select(MODEL_PROFILE, "model_profiles", " AND id = ?2", "id");
+                let Some(mut profile) = one(
+                    db,
+                    &sql,
+                    vec![text(scope), text(id.as_str())],
+                    model_profile_base_row,
+                )?
+                else {
+                    return Ok(None);
+                };
+                profile.connection_ids = profile_connections(db, scope, &profile.id)?;
+                Ok(Some(profile))
+            }
+
+            fn model_profiles(&self) -> Result<Vec<ModelProfile>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = select(MODEL_PROFILE, "model_profiles", "", "id");
+                let mut profiles = all(db, &sql, vec![text(scope)], model_profile_base_row)?;
+                for profile in &mut profiles {
+                    profile.connection_ids = profile_connections(db, scope, &profile.id)?;
+                }
+                Ok(profiles)
             }
 
             fn team_counter(&self) -> Result<Option<TeamCounter>, EngineError> {
@@ -662,6 +851,141 @@ impl OrganizationWrite for SqliteTx {
     fn remove_employee(&mut self, id: &Id) -> Result<(), EngineError> {
         let (db, scope) = self.view()?;
         let sql = "DELETE FROM employees WHERE organization_id = ?1 AND id = ?2";
+        run(db, sql, vec![text(scope), text(id.as_str())])
+    }
+
+    fn put_hire_request(&mut self, record: &HireRequest) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let proposal_val = serde_json::to_value(&record.proposal)
+            .map_err(|e| EngineError::new(format!("proposal json: {e}")))?;
+        let values = vec![
+            text(scope),
+            text(record.id.as_str()),
+            Value::Integer(1),
+            whole(record.revision)?,
+            text(record.state.as_str()),
+            text(record.requested_by_employee_id.as_str()),
+            text(record.home_team_id.as_str()),
+            optional_id_value(record.role_id.as_ref()),
+            text(&canonical_json(&proposal_val)),
+            text(&record.reason),
+            optional(record.confirmed_at.as_deref()),
+            optional(record.closed_reason.as_deref()),
+            optional_id_value(record.employee_id.as_ref()),
+            optional(record.failed_step.as_deref()),
+            text(&record.created_at),
+            text(&record.updated_at),
+        ];
+        let columns = "organization_id, id, schema_version, revision, state, \
+                       requested_by_employee_id, home_team_id, role_id, proposal_json, reason, \
+                       confirmed_at, closed_reason, employee_id, failed_step, created_at, \
+                       updated_at";
+        put(db, "hire_requests", columns, 2, values)
+    }
+
+    fn remove_hire_request(&mut self, id: &Id) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let sql = "DELETE FROM hire_requests WHERE organization_id = ?1 AND id = ?2";
+        run(db, sql, vec![text(scope), text(id.as_str())])
+    }
+
+    fn put_agent_execution(&mut self, record: &AgentExecutionConfig) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let tools_json = serde_json::to_string(&record.tools_config)
+            .map_err(|e| EngineError::new(format!("tools json: {e}")))?;
+        let mut values = vec![
+            text(scope),
+            text(record.employee_id.as_str()),
+            text(record.model_profile_id.as_str()),
+            text(&record.model_id),
+            text(&record.system_prompt_markdown),
+            text(&tools_json),
+            text(record.permission_preset.as_str()),
+            Value::Integer(i64::from(record.enabled)),
+        ];
+        meta_values(&record.meta, &mut values)?;
+        let columns = format!("organization_id, {AGENT_EXEC}, schema_version, {META}");
+        put(db, "agent_execution_configs", &columns, 2, values)
+    }
+
+    fn remove_agent_execution(&mut self, employee_id: &Id) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let sql =
+            "DELETE FROM agent_execution_configs WHERE organization_id = ?1 AND employee_id = ?2";
+        run(db, sql, vec![text(scope), text(employee_id.as_str())])
+    }
+
+    fn put_provider_connection(&mut self, record: &ProviderConnection) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let mut values = vec![
+            text(scope),
+            text(record.id.as_str()),
+            text(&record.key),
+            text(&record.name),
+            text(&record.provider_type),
+            text(record.auth_mode.as_str()),
+            optional(record.subscription_identity.as_deref()),
+            text(&record.runtime_driver),
+            optional(record.endpoint_url.as_deref()),
+            Value::Integer(i64::from(record.enabled)),
+            Value::Integer(i64::from(record.archived)),
+            whole(record.max_concurrent_turns)?,
+        ];
+        meta_values(&record.meta, &mut values)?;
+        let columns = format!("organization_id, {PROVIDER_CONN}, schema_version, {META}");
+        put(db, "provider_connections", &columns, 2, values)
+    }
+
+    fn remove_provider_connection(&mut self, id: &Id) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let sql = "DELETE FROM provider_connections WHERE organization_id = ?1 AND id = ?2";
+        run(db, sql, vec![text(scope), text(id.as_str())])
+    }
+
+    fn put_model_profile(&mut self, record: &ModelProfile) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let mut values = vec![
+            text(scope),
+            text(record.id.as_str()),
+            text(&record.key),
+            text(&record.name),
+            text(&record.description),
+            Value::Integer(i64::from(record.is_auto_generated)),
+            optional_id_value(record.generated_for_connection_id.as_ref()),
+            Value::Integer(i64::from(record.archived)),
+        ];
+        meta_values(&record.meta, &mut values)?;
+        let columns = format!("organization_id, {MODEL_PROFILE}, schema_version, {META}");
+        put(db, "model_profiles", &columns, 2, values)?;
+        run(
+            db,
+            "DELETE FROM model_profile_connections WHERE organization_id = ?1 AND model_profile_id = ?2",
+            vec![text(scope), text(record.id.as_str())],
+        )?;
+        for (idx, conn_id) in record.connection_ids.iter().enumerate() {
+            let priority = i64::try_from(idx + 1).map_err(|_| EngineError::new("priority"))?;
+            run(
+                db,
+                "INSERT INTO model_profile_connections (organization_id, model_profile_id, connection_id, priority) VALUES (?1, ?2, ?3, ?4)",
+                vec![
+                    text(scope),
+                    text(record.id.as_str()),
+                    text(conn_id.as_str()),
+                    Value::Integer(priority),
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn remove_model_profile(&mut self, id: &Id) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        run(
+            db,
+            "DELETE FROM model_profile_connections WHERE organization_id = ?1 AND model_profile_id = ?2",
+            vec![text(scope), text(id.as_str())],
+        )?;
+        let sql = "DELETE FROM model_profiles WHERE organization_id = ?1 AND id = ?2";
         run(db, sql, vec![text(scope), text(id.as_str())])
     }
 

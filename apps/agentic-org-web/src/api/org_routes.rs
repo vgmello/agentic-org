@@ -112,6 +112,10 @@ pub(super) fn route_organization(
     if let ["projects", rest @ ..] = tail {
         return route_projects(api, request, org, rest, post, query);
     }
+    if let Some(routed) = super::hiring_routes::try_route(api, request, org, tail, get, post, query)
+    {
+        return routed;
+    }
     Ok(match tail {
         ["snapshot"] if get => {
             let pair = api.caller_auth(request)?;
@@ -611,7 +615,7 @@ pub(super) async fn execute_org_operation(
     }
 }
 
-async fn resolve_hq_office(
+pub(super) async fn resolve_hq_office(
     api: &SessionApi,
     pair: CallerAuth,
     org_id: &str,
@@ -626,7 +630,7 @@ async fn resolve_hq_office(
     find_hq_office(list, org_id)
 }
 
-async fn revalidate_and_resolve_hq(
+pub(super) async fn revalidate_and_resolve_hq(
     api: &SessionApi,
     pair: CallerAuth,
     org_id: &str,

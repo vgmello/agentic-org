@@ -603,6 +603,20 @@ fn serve_office(
                         .map_err(|e| logged("project.inspect", &e))
                 })
             },
+            hiring: {
+                let office = Arc::clone(&office);
+                Some(Box::new(move |member, request| {
+                    office.dispatch_hiring_rpc(member, request)
+                }))
+            },
+            hr_message_guard: {
+                let office = Arc::clone(&office);
+                Some(Box::new(move |sender, target| {
+                    office
+                        .check_hr_message_allowed(sender, target)
+                        .map_err(|e| logged("msg.send", &e))
+                }))
+            },
             who: {
                 let office = Arc::clone(&office);
                 // Status lines and runtime presence are unavailable until B6: everyone reads

@@ -398,3 +398,125 @@ impl ReadOp for OfficeStanding {
         Ok(Standing { organization, hq })
     }
 }
+
+/// Lists all roles in this organization ordered by ID (`role.list`).
+pub struct RolesList;
+
+impl ReadOp for RolesList {
+    type Out = Vec<records::Role>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.roles()?)
+    }
+}
+
+/// Inspects one role by UUIDv7 ID, canonical key, or unique name (`role.inspect`).
+pub struct RoleInspectByRef(pub String);
+
+impl ReadOp for RoleInspectByRef {
+    type Out = Option<records::Role>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        let target = self.0.trim();
+        let roles = read.roles()?;
+        if let Some(found) = roles
+            .iter()
+            .find(|r| r.id.as_str() == target || r.key.as_deref() == Some(target))
+        {
+            return Ok(Some(found.clone()));
+        }
+        let mut by_name = roles
+            .into_iter()
+            .filter(|r| r.name.eq_ignore_ascii_case(target));
+        let first = by_name.next();
+        if by_name.next().is_some() {
+            Ok(None)
+        } else {
+            Ok(first)
+        }
+    }
+}
+
+/// Lists hire requests optionally filtered by `team_id` and `state` (`hr.hire.list`).
+pub struct HiresList {
+    pub team_id: Option<String>,
+    pub state: Option<String>,
+}
+
+impl ReadOp for HiresList {
+    type Out = Vec<records::HireRequest>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        let mut hires = read.hire_requests()?;
+        if let Some(team) = &self.team_id {
+            hires.retain(|h| h.home_team_id.as_str() == team);
+        }
+        if let Some(state) = &self.state {
+            hires.retain(|h| h.state.as_str() == state);
+        }
+        Ok(hires)
+    }
+}
+
+/// Reads one hire request by UUIDv7 ID (`hr.hire.inspect`).
+pub struct HireInspectById(pub Id);
+
+impl ReadOp for HireInspectById {
+    type Out = Option<records::HireRequest>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.hire_request(&self.0)?)
+    }
+}
+
+/// Reads one agent's execution configuration (`agent.execution.get`).
+pub struct AgentExecutionById(pub Id);
+
+impl ReadOp for AgentExecutionById {
+    type Out = Option<records::AgentExecutionConfig>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.agent_execution(&self.0)?)
+    }
+}
+
+/// Lists model profiles ordered by ID (`model_profile.list`).
+pub struct ModelProfilesList;
+
+impl ReadOp for ModelProfilesList {
+    type Out = Vec<records::ModelProfile>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.model_profiles()?)
+    }
+}
+
+/// Checks whether `member` may send a message to the built-in HR lead (ADR-0029 decision 3 /
+/// HIRE-2) when addressing `target` (`"hr"` or the HR lead's employee ID).
+pub struct CheckHrMessageAccess {
+    pub owner: Id,
+    pub sender: Id,
+    pub target: String,
+}
+
+impl ReadOp for CheckHrMessageAccess {
+    type Out = bool;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<bool, StoreError> {
+        let employees = read.employees()?;
+        let hr = employees
+            .iter()
+            .find(|e| e.builtin_key == Some(records::BuiltinKey::Hr));
+        let raw = self.target.trim_matches(|c: char| c.is_ascii_whitespace());
+        let trimmed = raw.strip_prefix('@').unwrap_or(raw);
+        let target_is_hr = trimmed.eq_ignore_ascii_case("hr")
+            || hr.is_some_and(|e| e.id.as_str() == raw || e.handle.eq_ignore_ascii_case(trimmed));
+        if !target_is_hr {
+            return Ok(true);
+        }
+        let Some(sender) = employees.iter().find(|e| e.id == self.sender) else {
+            return Ok(false);
+        };
+        crate::organization::features::authority::may_hire_anywhere(read, &self.owner, sender)
+    }
+}

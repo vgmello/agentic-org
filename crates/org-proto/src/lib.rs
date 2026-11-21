@@ -91,6 +91,7 @@ pub mod selected_bootstrap;
 pub use identity::{is_uuid_v7, uuid_v7_time_ms};
 pub mod directory;
 pub mod frame;
+pub mod hiring;
 pub mod inbox;
 pub mod location;
 pub mod msg;

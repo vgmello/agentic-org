@@ -103,6 +103,9 @@ pub(crate) fn id_in_use(
         || view.office(id)?.is_some()
         || view.employee(id)?.is_some()
         || view.role(id)?.is_some()
+        || view.hire_request(id)?.is_some()
+        || view.provider_connection(id)?.is_some()
+        || view.model_profile(id)?.is_some()
         || view.project(id)?.is_some()
         || view.repositories()?.iter().any(|r| r.id == *id))
 }
@@ -198,6 +201,27 @@ pub(super) fn relocate(
             from: profile(from)?,
             to: profile_file(to, employee.kind, &employee.id)?,
             bytes: records::encode_employee(&employee),
+        });
+        if employee.kind == EmployeeKind::Agent {
+            if let Some(exec) = view.agent_execution(&employee.id)? {
+                moved.push(Moved {
+                    from: records::agent_execution_path(from, &employee.id)?,
+                    to: records::agent_execution_path(to, &employee.id)
+                        .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
+                    bytes: records::encode_agent_execution(&exec),
+                });
+            }
+        }
+    }
+    for req in view.hire_requests()? {
+        let Some((from, to)) = chains.get(&req.home_team_id) else {
+            continue;
+        };
+        moved.push(Moved {
+            from: records::hire_request_path(from, &req.id)?,
+            to: records::hire_request_path(to, &req.id)
+                .or_else(|_| reject(RejectCode::InvalidRequest, TOO_DEEP))?,
+            bytes: records::encode_hire_request(&req),
         });
     }
     Ok(moved)
