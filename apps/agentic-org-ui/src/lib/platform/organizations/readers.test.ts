@@ -83,7 +83,7 @@ describe('organization list', () => {
 			creating: []
 		});
 	});
-	it('refuses a list without organizations and a create without a ULID', () => {
+	it('refuses a list without organizations and a create without a UUIDv7', () => {
 		expect(() => readOrganizationsList({ creating: [] })).toThrow(WireDecodeError);
 		expect(() =>
 			readOrganizationsList({

@@ -586,7 +586,7 @@ it('does not hide malformed known frames behind future-scope compatibility', () 
 });
 it('copies prepared params and future scopes instead of retaining mutable network objects', () => {
 	const input = {
-		operation_id: '01M72N8MG00000000000000006',
+		operation_id: '01a1c554-5200-7000-8000-000000000006',
 		scope: { kind: 'instance', instance_id: 'instance' },
 		params: { nested: { title: 'before' } }
 	};
@@ -605,7 +605,7 @@ it('preserves exact integer normalization for negative zero and the pre-move reu
 });
 
 const terminatorReaders: Record<string, (suffix: string) => unknown> = {
-	'operation ID': (suffix) => wire.readOperationId('01M72N8MG00000000000000006' + suffix),
+	'operation ID': (suffix) => wire.readOperationId('01a1c554-5200-7000-8000-000000000006' + suffix),
 	'lookup ID': (suffix) => wire.readLookupQuery([['instance_id', 'instance' + suffix]]),
 	proof: (suffix) =>
 		wire.readEstablishedSession({

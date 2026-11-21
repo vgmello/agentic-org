@@ -44,7 +44,7 @@ type CreateStep =
 	| { refused: Refusal };
 type LookupStep =
 	'accepted' | 'completed' | 'missing' | 'unavailable' | 'expired' | { rejected: Refusal };
-const ulid = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+const uuidV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const hostLookup = /^\/api\/v1\/operations\/host\/([^/]+)$/;
 function newCase() {
 	return {
@@ -341,7 +341,7 @@ export function sessionTestMiddleware() {
 				const operation_id = sent?.operation_id;
 				if (
 					typeof operation_id !== 'string' ||
-					!ulid.test(operation_id) ||
+					!uuidV7.test(operation_id) ||
 					Object.keys(sent).sort().join() !== 'operation_id,params,scope' ||
 					sent.scope?.kind !== 'instance' ||
 					sent.scope?.instance_id !== state.view.instance_id ||
@@ -379,7 +379,7 @@ export function sessionTestMiddleware() {
 				const operation_id = looked[1];
 				if (
 					req.method !== 'GET' ||
-					!ulid.test(operation_id) ||
+					!uuidV7.test(operation_id) ||
 					url.search !== `?instance_id=${state.view.instance_id}`
 				) {
 					json(invalidRequest, 400);

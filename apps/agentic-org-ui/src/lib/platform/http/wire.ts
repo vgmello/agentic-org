@@ -116,17 +116,15 @@ const jsonObject: Reader<JsonObject> = (value) => {
 	return json(value) as JsonObject;
 };
 export const readJsonObject = checked(jsonObject);
+const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const operationId: Reader<string> = (value) => {
 	const id = text(value);
-	return /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(id) ? id : invalid();
+	return UUID_V7.test(id) ? id : invalid();
 };
 export const readOperationId = checked(operationId);
 export function operationTimeMs(value: unknown): number {
 	const id = readOperationId(value);
-	return [...id.slice(0, 10)].reduce(
-		(time, digit) => time * 32 + '0123456789ABCDEFGHJKMNPQRSTVWXYZ'.indexOf(digit),
-		0
-	);
+	return Number.parseInt(id.slice(0, 8) + id.slice(9, 13), 16);
 }
 export const readVersion = checked(object({ api_version: u32, contract_revision: u32 }));
 export type Version = ReturnType<typeof readVersion>;

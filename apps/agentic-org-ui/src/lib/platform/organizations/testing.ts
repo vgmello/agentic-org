@@ -3,8 +3,8 @@ import { createOrganizationsApi } from './api';
 
 /** Test fixtures shared by this module's tests; never imported by production code. */
 export const INSTANCE = '0193a5c0-0000-7000-8000-000000000009';
-export const OP = '01M72N8MG00000000000000006';
-export const OP2 = '01M72N8MG00000000000000007';
+export const OP = '01a1c554-5200-7000-8000-000000000006';
+export const OP2 = '01a1c554-5200-7000-8000-000000000007';
 export const office = {
 	id: '0193a5c0-0000-7000-8000-000000000002',
 	organization_id: '0193a5c0-0000-7000-8000-000000000001',

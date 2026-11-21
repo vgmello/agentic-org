@@ -6,6 +6,8 @@ import {
 	type OrgSnapshot
 } from '$lib/proto';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { formatUuidV7 } from '$lib/platform/http/clock';
+import { readOperationId } from '$lib/platform/http/wire';
 import { ready, type OrgCommand, type OrgCommandInput } from './commands';
 import { normalizeKinds } from './model';
 import type { OrgApi } from './api';
@@ -51,6 +53,25 @@ function isSnapshot(value: unknown): value is OrgSnapshot {
 		Array.isArray(s.teams) &&
 		Array.isArray(s.members)
 	);
+}
+
+function prepareOrgCommand(input: OrgCommandInput | OrgCommand): OrgCommand {
+	const explicitId = 'command_id' in input.params ? input.params.command_id : undefined;
+	const operationId =
+		explicitId !== undefined
+			? readOperationId(explicitId)
+			: formatUuidV7(Date.now(), globalThis.crypto.getRandomValues(new Uint8Array(10)));
+	return ready({
+		...input,
+		params: { ...input.params, command_id: operationId }
+	} as OrgCommand);
+}
+
+function commandFailureFallback(status: number): ApiErrorCode {
+	if (status === 401) return 'not_authorized';
+	if (status === 404) return 'not_found';
+	if (status === 409) return 'conflict';
+	return 'unavailable';
 }
 
 /**
@@ -103,7 +124,7 @@ export function createHttpOrgApi({
 			organizationId: string,
 			input: OrgCommandInput | OrgCommand
 		): Promise<CommandAccepted> {
-			const command = ready(input);
+			const command = prepareOrgCommand(input);
 			if (command.method !== 'team.create') {
 				throw {
 					source: 'api',
@@ -156,15 +177,11 @@ export function createHttpOrgApi({
 					message: 'The outcome of this request is not confirmed yet.'
 				} satisfies AppError;
 			}
-			const fallback: ApiErrorCode =
-				reply.status === 401
-					? 'not_authorized'
-					: reply.status === 404
-						? 'not_found'
-						: reply.status === 409
-							? 'conflict'
-							: 'unavailable';
-			throw readAppError(reply.body, fallback, 'The change was refused.');
+			throw readAppError(
+				reply.body,
+				commandFailureFallback(reply.status),
+				'The change was refused.'
+			);
 		},
 
 		onFeed: unavailableCall,
