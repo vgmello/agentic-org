@@ -255,7 +255,7 @@
 				},
 				{
 					"spec": "work.spec.ts",
-					"match": "WORK: tasks and bugs from every project",
+					"match": "WORK-1/2/11: /work defaults to Needs me",
 					"count": 1
 				},
 				{
@@ -541,11 +541,6 @@
 	],
 	"allowedCoupling": [
 		{
-			"from": "src/lib/modules/projects/features/work/ProjectWork.svelte",
-			"to": "src/lib/modules/work/features/{bugs/BugsPanel,tasks/TasksBoard}.svelte",
-			"why": "Until Work items (plan step 5) builds the project board and list, the project's Work tab shows v1's task board and bug list so the release keeps them; the tasks, bugs, copilot and dialog-title specs keep covering them. Removed when step 5 replaces them."
-		},
-		{
 			"from": "src/lib/modules/projects/{components/ProcessSelect,features/overview/ProjectOverview}.svelte",
 			"to": "src/lib/modules/processes/index.ts",
 			"why": "A project chooses its development process from the processes module's catalogue and links to it (development-processes §3, PKG-4), through that module's public index; the processes specs cover the catalogue, the projects spec covers the choice."
@@ -567,8 +562,8 @@
 		},
 		{
 			"from": "src/lib/platform/shell/NewMenu.svelte",
-			"to": "src/lib/modules/{work/features/requests/NewRequestDialog.svelte,organization/features/add-person/AddPersonSheet.svelte,employees/index.ts,messaging/{index,model,api}.ts}",
-			"why": "The top-bar New menu opens the existing creation flows (request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
+			"to": "src/lib/modules/{organization/features/add-person/AddPersonSheet.svelte,employees/index.ts,messaging/{index,model,api}.ts}",
+			"why": "The top-bar New menu opens the existing creation flows (work item, request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
 		},
 		{
 			"from": "src/routes/(shell)/+layout.svelte",

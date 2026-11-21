@@ -1,21 +1,21 @@
 <!--
   @component
   Top-bar New (app-shell-ux §0.2): an outline menu button that opens the creation flows that exist, in the
-  spec's order: Project, Work item, Request, Message, a separator, Hire an agent (the Hire page), Add a person. Project
-  opens New project on the Projects page. Work item is omitted until a flow exists that does not need a project page
-  (New task needs its project). Below 640 px it is a 44 px icon button named New. `openMenu()` is what the
-  N / Shift+N shortcut calls. Closing or finishing a flow returns focus to this button.
+  spec's order: Project, Work item, Request, Message, a separator, Hire an agent (the Hire page), Add a person.
+  Project opens New project on the Projects page. Work item and Request open the Work items capture dialog.
+  Below 640 px it is a 44 px icon button named New. `openMenu()` is what the N / Shift+N shortcut calls.
+  Closing or finishing a flow returns focus to this button.
 -->
 <script lang="ts">
 	import { goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
-	import NewRequestDialog from '$lib/modules/work/features/requests/NewRequestDialog.svelte';
 	import AddPersonSheet from '$lib/modules/organization/features/add-person/AddPersonSheet.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { hireUrl } from '$lib/modules/employees';
 	import { newProjectUrl } from '$lib/modules/projects';
+	import { CaptureDialog, taskHref } from '$lib/modules/workitems';
 	import { focusDestinationHeading } from './focus-destination';
 	import { NewMessageDialog } from '$lib/modules/messaging';
 	import { chatMembers } from '$lib/modules/messaging/model';
@@ -24,7 +24,6 @@
 	import { withoutFormer } from '$lib/modules/organization/model';
 	import { sessionFor } from '$lib/modules/organization/session';
 	import type { Connection, OrgSnapshot } from '$lib/proto';
-	import { sender as workSender, workApi } from '$lib/modules/work';
 
 	let { connection, shortcutHint = false }: { connection: Connection; shortcutHint?: boolean } =
 		$props();
@@ -33,7 +32,7 @@
 	let menuOpen = $state(false);
 	let trigger = $state<HTMLButtonElement | null>(null);
 	let snapshot = $state.raw<OrgSnapshot | undefined>();
-	let flow = $state<'request' | 'message' | 'person' | undefined>();
+	let flow = $state<'work_item' | 'request' | 'message' | 'person' | undefined>();
 	let loading = $state(false);
 
 	/** Opens the menu; the N / Shift+N shortcut calls this. */
@@ -41,8 +40,8 @@
 		menuOpen = true;
 	}
 
-	// Each flow reads the organization as it is now, so names and teams are current.
-	async function start(name: NonNullable<typeof flow>) {
+	// Message and Add a person read the current organization snapshot; Work item / Request load their own choices.
+	async function startOrgFlow(name: 'message' | 'person') {
 		loading = true;
 		try {
 			snapshot = (await orgApi.view(organizationId)).snapshot;
@@ -55,9 +54,6 @@
 		}
 	}
 
-	const send = $derived(workSender(organizationId));
-	const find = (text: string) =>
-		workApi.similar(organizationId, { text, limit: 2 }).then((r) => r.items);
 	const session = $derived(sessionFor(orgApi, organizationId));
 
 	async function openDm(ids: string[]) {
@@ -111,10 +107,13 @@
 		<DropdownMenu.Item class={itemClass} onSelect={() => goto(resolve(newProjectUrl() as '/'))}
 			>Project</DropdownMenu.Item
 		>
-		<DropdownMenu.Item class={itemClass} onSelect={() => start('request')}
+		<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'work_item')}
+			>Work item</DropdownMenu.Item
+		>
+		<DropdownMenu.Item class={itemClass} onSelect={() => (flow = 'request')}
 			>Request</DropdownMenu.Item
 		>
-		<DropdownMenu.Item class={itemClass} onSelect={() => start('message')}
+		<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('message')}
 			>Message</DropdownMenu.Item
 		>
 		<DropdownMenu.Separator class="bg-surface-overlay" />
@@ -124,22 +123,28 @@
 			onSelect={() => goto(resolve(hireUrl() as '/')).then(focusDestinationHeading)}
 			>Hire an agent</DropdownMenu.Item
 		>
-		<DropdownMenu.Item class={itemClass} onSelect={() => start('person')}
+		<DropdownMenu.Item class={itemClass} onSelect={() => startOrgFlow('person')}
 			>Add a person</DropdownMenu.Item
 		>
 	</DropdownMenu.Content>
 </DropdownMenu.Root>
 
+<CaptureDialog
+	bind:open={
+		() => flow === 'work_item' || flow === 'request',
+		(open) => {
+			if (!open) flow = undefined;
+		}
+	}
+	{organizationId}
+	initialType={flow === 'request' ? 'request' : 'task'}
+	allowTypeSwitch={flow === 'work_item'}
+	oncreated={(created) => {
+		void goto(resolve(taskHref(created.ref) as '/'));
+	}}
+/>
+
 {#if snapshot}
-	<NewRequestDialog
-		bind:open={() => flow === 'request', (open) => (flow = open ? 'request' : undefined)}
-		{snapshot}
-		{find}
-		{send}
-		ondone={({ ref, sentTo }) =>
-			toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`)}
-		onadded={(ref) => toast.success(`Added to ${ref}.`)}
-	/>
 	<NewMessageDialog
 		bind:open={() => flow === 'message', (open) => (flow = open ? 'message' : undefined)}
 		members={chatMembers(snapshot)}
