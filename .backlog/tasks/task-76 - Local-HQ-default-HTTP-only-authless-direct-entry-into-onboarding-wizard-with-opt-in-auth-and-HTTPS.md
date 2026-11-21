@@ -3,11 +3,11 @@ id: TASK-76
 title: >-
   Local HQ default: HTTP-only & authless direct entry into onboarding wizard
   with opt-in auth and HTTPS
-status: In Progress
+status: Done
 assignee:
   - '@lead'
 created_date: '2026-11-21T05:16:00Z'
-updated_date: '2026-11-21T11:37:00Z'
+updated_date: '2026-11-21T13:08:00Z'
 labels:
   - backend
   - ui
@@ -44,7 +44,7 @@ Authentication (accounts, passwords, registration links, sessions) and HTTPS rem
 - [x] #1 When HQ is local, the server serves the browser over plain HTTP by default with no HTTPS authorization prompt required.
 - [x] #2 By default on local HQ, authentication is disabled and opening the app lands directly in the organization / onboarding wizard without requiring sign-in or a registration link.
 - [x] #3 Users/teams can opt in to enable authentication (accounts/sign-in) and/or HTTPS from inside the app settings; once enabled, auth/HTTPS enforcement activates cleanly.
-- [ ] #4 Onboarding wizard UI flow is coordinated with the UI stream (after TASK-65) and verified end-to-end against a real local HQ instance.
+- [x] #4 Onboarding wizard UI flow is coordinated with the UI stream (after TASK-65) and verified end-to-end against a real local HQ instance.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,3 +60,9 @@ Backend complete (Pass 1 + Pass 2 + Final Rust review VERDICT: APPROVE): fresh l
 
 UI authless boot via GET /api/v1/access + direct entry into /create (0 orgs) or /welcome (>0 orgs) with zero sign-in/HTTPS wall; opt-in POST /api/v1/instance/auth/enable & POST /api/v1/instance/tls in Security & Access (/security and /settings/security); /cli-approve (SIGN-40 / FC-173) fragment-stripped approval flow. Verified with Vitest (2486 passed), svelte-autofixer (0 issues), format/lint/check/build/e2e:verify, and Playwright (67 passed across chromium/production/webkit). Real-instance E2E (AC #4) remains for Lead merge verification.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed TASK-76 (ADR-0034): fresh local HTTP HQ starts authless into the onboarding wizard without requiring HTTPS cert authorization or sign-in; opt-in authentication (POST /api/v1/instance/auth/enable) and opt-in HTTPS (POST /api/v1/instance/tls) are wired end-to-end across org-host, agentic-org-web, and agentic-org-ui (InstanceSecurityPanel.svelte, /security, /settings/security, /cli-approve). Verified by real-process E2Es (local_onboarding_and_tls 2/2), UI unit+Playwright suites (2491/2491 vitest, 68/68 Playwright), and real-instance Playwright suite (5/5 against real agentic-org + agentic-org-web + agentic-org-office + static UI build). Both backend and UI passed full two-pass independent reviews (VERDICT: APPROVE).
+<!-- SECTION:FINAL_SUMMARY:END -->

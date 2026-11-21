@@ -3,11 +3,11 @@ id: TASK-62
 title: >-
   X7 & ADR-0033: Default HTTP hosting between browser and office with opt-in
   in-app HTTPS enablement
-status: In Progress
+status: Done
 assignee:
   - '@lead'
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-21T11:37:00Z'
+updated_date: '2026-11-21T13:06:00Z'
 labels:
   - linux
   - container
@@ -51,3 +51,9 @@ Backend complete (Pass 1 + Pass 2 + Final Rust review VERDICT: APPROVE): X7 P3 b
 
 UI Settings -> Security & Access (/security and /settings/security) wired to GET /api/v1/access and POST /api/v1/instance/tls (self-signed & supplied PEM, HSTS off/on/clear, auth-first guard, origin/fingerprint/restart instructions, live HTTPS cert rotation). Verified with Vitest, svelte-autofixer (0 issues), build/production-import-guard, and Playwright (chromium/production/webkit).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed TASK-62 (X7 & ADR-0033): default HTTP hosting between browser and office across macOS/Linux/containers with opt-in HTTPS via POST /api/v1/instance/tls + UI Settings Security panel (InstanceSecurityPanel.svelte) and admin tls set; bounded tls.renew retry on failed fetch and tightened gate cache docs; verified by real-process HTTP->HTTPS E2E (local_onboarding_and_tls) and Playwright UI suite (local-access-and-tls.spec.ts). Both backend and UI passed full two-pass independent reviews (VERDICT: APPROVE).
+<!-- SECTION:FINAL_SUMMARY:END -->
