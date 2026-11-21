@@ -2643,7 +2643,7 @@ function answerOrgQuestion(rawQ) {
   if (/budget|spend|cost|\$|dollar|office|fleet|offline|jules|noor|health/.test(t)) {
     return {
       q,
-      html: `<strong>Monthly spend is $142 of $210 (68%)</strong> — <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Offices: <strong>HQ is online</strong>, while the <strong>Build box satellite is offline</strong> (pausing <a href="#/members/quinn">Quinn</a> on T-135), and <a href="#/members/noor">Noor</a> still needs office placement.`
+      html: `<strong>Monthly spend is $142 of $210 (68%)</strong> — averaging <strong>$7.45 per accepted task</strong> (-11% vs last week). <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Offices: <strong>HQ is online</strong>, while the <strong>Build box satellite is offline</strong> (pausing <a href="#/members/quinn">Quinn</a> on T-135), and <a href="#/members/noor">Noor</a> still needs office placement.`
     };
   }
   if (/run|overnight|happen|catch|digest|summary|activity|away/.test(t)) {
@@ -2706,16 +2706,16 @@ function pageHome() {
     if (st === "error") return "";
     const emptyMode = st === "empty";
     return `<section class="hb-metrics" aria-label="Decision metrics">
-      <a class="hb-metric" href="#/work">
-        <div class="hb-metric-top"><span>Needs attention</span>${ic("warn", "ic14 c-amber")}</div>
-        <div class="hb-metric-val"><span class="hb-metric-num">${blockedWork.length}</span>${blockedWork.length ? `<span class="hb-metric-delta warn">blocked</span>` : `<span class="hb-metric-delta">clear</span>`}</div>
-        <div class="hb-metric-sub">${blockedWork.length ? `${plural(blockedWork.length, "task", "tasks")} paused · ${open.length} in Inbox` : "All work flowing smoothly"}</div>
-      </a>
       <a class="hb-metric" href="#/settings/agents/jules">
         <div class="hb-metric-top"><span>Monthly spend</span>${ic("bolt", "ic14 c-amber")}</div>
         <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-metric-cap">${emptyMode ? "/ $210" : "/ $210 · 68%"}</span></div>
         <div class="hb-mini-bar" aria-hidden="true"><span style="width:${emptyMode ? 0 : 68}%"></span></div>
         <div class="hb-metric-sub">${emptyMode ? "No spend recorded yet" : "Jules at cap · ~$6.80/day"}</div>
+      </a>
+      <a class="hb-metric" href="#/activity" title="Average model spend per accepted task (last 7 days)">
+        <div class="hb-metric-top"><span>Cost per task</span>${ic("sparkle", "ic14 c-indigo")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "—" : "$7.45"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">-11%</span>`}</div>
+        <div class="hb-metric-sub">${emptyMode ? "No accepted tasks yet" : "Avg per accepted task · 7d"}</div>
       </a>
       <a class="hb-metric" href="#/activity" title="Average time from task start to accepted completion (last 7 days)">
         <div class="hb-metric-top"><span>Cycle time</span>${ic("clock", "ic14 c-indigo")}</div>
