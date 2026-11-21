@@ -1387,6 +1387,9 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 .hb-spot.is-done::before {
   background: linear-gradient(90deg, #34D399 0%, rgba(52, 211, 153, .3) 55%, transparent 100%);
 }
+.hb-spot.is-error::before {
+  background: linear-gradient(90deg, #FB7185 0%, rgba(251, 191, 36, .35) 55%, transparent 100%);
+}
 .hb-spot-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .hb-spot-badge {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1471,6 +1474,16 @@ select.field option { background: #0E1629; color: #F8FAFC; }
   background: rgba(52, 211, 153, .14); box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .36);
   color: #6EE7B7;
 }
+.hb-cleared-ring.is-error {
+  background: rgba(251, 113, 133, .13); box-shadow: inset 0 0 0 1px rgba(251, 113, 133, .38);
+  color: #FDA4AF;
+}
+.hb-cleared-ring.is-muted {
+  background: rgba(148, 179, 214, .12); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .24);
+  color: #94A3B8;
+}
+.h4-live-dot.is-error { background: #FB7185; }
+.h4-live-dot.is-error::after { border-color: rgba(251, 113, 133, .55); }
 .hb-cleared h2 { font-size: 1.125rem; font-weight: 600; color: var(--hb-ink); }
 .hb-cleared p { font-size: 0.875rem; color: var(--hb-muted); max-width: 38ch; }
 .hb-cleared-acts { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
@@ -2509,7 +2522,26 @@ function pageHome() {
 
   const renderSpotlight = () => {
     if (st === "loading") return `<div class="hb-spot">${skel(3, "Loading spotlight decision…")}</div>`;
-    if (st === "error") return `<div class="hb-spot"><div class="callout h4-callout" role="alert">${ic("warn", "ic20 c-amber")}<div><p>Couldn't reach the office. Your data is safe.</p><button class="btn outline sm" type="button" data-act="set" data-k="homeState" data-v="filled">${ic("refresh", "ic16")}Try again</button></div></div></div>`;
+    if (st === "error") {
+      return `<section class="hb-spot is-error" role="alert" aria-label="Connection status">
+        <div class="hb-cleared">
+          <span class="hb-cleared-ring is-error">${ic("offline", "ic20")}</span>
+          <h2>Couldn't reach HQ office</h2>
+          <p>Your files and work are safe. We'll reconnect automatically, or you can retry now.</p>
+          <div class="hb-cleared-acts">
+            <button class="btn primary sm h4-cta" data-cta-tone="reply" type="button" data-act="set" data-k="homeState" data-v="filled">
+              <span class="h4-cta-fill" aria-hidden="true"></span>
+              <span class="h4-cta-sheen" aria-hidden="true"></span>
+              <span class="h4-cta-inner">
+                <span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("refresh", "ic16")}</span><span>Try again</span></span>
+                <span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("refresh", "ic16")}</span><span>Reconnect now</span></span>
+              </span>
+            </button>
+            <a class="btn ghost sm" href="#/settings/offices">Check offices${ic("chev-right", "ic14")}</a>
+          </div>
+        </div>
+      </section>`;
+    }
     if (!queue.length || (allQueueCleared && !S.v4Open["spot-review"])) {
       return `<section class="hb-spot is-done" aria-label="Decision spotlight">
         <div class="hb-cleared">
@@ -2585,13 +2617,22 @@ function pageHome() {
   const renderCatchupPanel = () => {
     const activeLead = working.length ? working[0] : null;
     const emptyMode = st === "empty";
+    const errMode = st === "error";
     return `<aside class="hb-catchup" aria-label="Autonomous catch-up and AI briefing">
       <div class="hb-cu-hd">
         <div class="hb-cu-title">${ic("sparkle", "ic16")}<span>Catch-up</span></div>
-        <span class="hb-cu-window">${emptyMode || v1 ? "Idle" : `<span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>`}Last 4 hours</span>
+        <span class="hb-cu-window">${errMode ? `<span class="h4-live-dot is-error" style="width:6px;height:6px" aria-hidden="true"></span>Offline` : `${emptyMode || v1 ? "Idle · " : `<span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>`}Last 4 hours`}</span>
       </div>
 
-      ${st === "loading" ? skel(3, "Summarizing autonomous activity…") : emptyMode ? `<p class="h4-rail-empty">All quiet over the last 4 hours. Ask anything below to check in on your organization.</p>` : `<div class="hb-digest">
+      ${st === "loading" ? skel(3, "Summarizing autonomous activity…") : errMode ? `<div class="hb-cleared" style="padding:18px 8px">
+        <span class="hb-cleared-ring is-error" style="width:44px;height:44px">${ic("warn", "ic18")}</span>
+        <h2 style="font-size:0.9375rem">Catch-up paused</h2>
+        <p style="font-size:0.8125rem">Live digest and Org AI resume automatically once HQ office reconnects.</p>
+      </div>` : emptyMode ? `<div class="hb-cleared" style="padding:18px 8px">
+        <span class="hb-cleared-ring is-muted" style="width:44px;height:44px">${ic("sparkle", "ic18")}</span>
+        <h2 style="font-size:0.9375rem">All quiet so far</h2>
+        <p style="font-size:0.8125rem">Autonomous updates and run summaries will show up here as work happens.</p>
+      </div>` : `<div class="hb-digest">
         <a class="hb-dig-item" href="#/activity">
           <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
           <div><b>Ready to ship</b> — Kai finished the codec split (all checks passed) and Tomas approved the review.</div>
@@ -2609,7 +2650,7 @@ function pageHome() {
         </a>`}
       </div>`}
 
-      <div class="hb-ask-wrap">
+      ${errMode ? "" : `<div class="hb-ask-wrap">
         ${S.askAns ? `<div class="hb-ai-reply" id="hb-ai-reply" role="status" aria-live="polite">
           <div class="hb-ai-reply-hd"><span>${ic("sparkle", "ic14")} Org AI · “${esc(S.askAns.q)}”</span><button type="button" data-act="hb-ask-clear" aria-label="Clear answer">Clear</button></div>
           <div>${S.askAns.html}</div>
@@ -2625,7 +2666,7 @@ function pageHome() {
           <button type="button" class="hb-ask-chip" data-act="hb-ask-chip" data-v="What's blocking v1.0?">What's slowing v1.0?</button>
           <button type="button" class="hb-ask-chip" data-act="hb-ask-chip" data-v="Budget & offices status">Budget &amp; team</button>
         </div>
-      </div>
+      </div>`}
     </aside>`;
   };
 
@@ -2657,7 +2698,7 @@ function pageHome() {
   return `<div class="hb">
     <header class="hb-hero">
       <div class="hb-brief">
-        <div class="hb-eyebrow"><span class="h4-live-dot" aria-hidden="true"></span><span>HQ Office · Online</span></div>
+        <div class="hb-eyebrow"><span class="h4-live-dot${st === "error" ? " is-error" : ""}" aria-hidden="true"></span><span>${st === "error" ? "HQ Office · Unreachable" : "HQ Office · Online"}</span></div>
         <h1 class="hb-title" tabindex="-1">${headline}</h1>
       </div>
     </header>
@@ -2679,7 +2720,7 @@ function pageHome() {
       </div>
       ${st === "loading" ? skel(3, "Loading projects…") : st === "error" ? "" : projs.length
         ? `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`
-        : `<div class="h4-empty-box">${ic("folder", "ic48")}<h3>No projects yet</h3><p>Projects group the work toward one goal.</p><button class="btn outline" type="button" data-act="proto" data-v="Create project">${ic("plus", "ic20")}Create project</button></div>`}
+        : `<div class="h4-empty-box"><div class="hb-cleared" style="padding:8px 0"><span class="hb-cleared-ring is-muted">${ic("folder", "ic20")}</span><h2>No projects yet</h2><p>Projects group the work toward one goal.</p><div class="hb-cleared-acts"><button class="btn outline sm" type="button" data-act="proto" data-v="Create project">${ic("plus", "ic16")}Create project</button></div></div></div>`}
     </section>
   </div>`;
 }
