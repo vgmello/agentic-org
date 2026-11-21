@@ -1244,8 +1244,41 @@ fn a_host_operation_lookup_checks_its_id_and_scope_before_asking_the_host() {
             "/api/v1/operations/org/{OPERATION}?instance_id={INSTANCE}"
         ))
         .status,
+        StatusCode::BAD_REQUEST
+    );
+    for bad_org_lookup in [
+        format!("/api/v1/operations/org/{OPERATION}?instance_id={INSTANCE}&org_id={ORG}&office_id=01M72N8MG00000000000000005"),
+        format!("/api/v1/operations/org/{OPERATION}?instance_id=01ARZ3NDEKTSV4RRFFQ69G5FAW&org_id={ORG}"),
+        format!("/api/v1/operations/org/01M72N8MG00000000000000006?instance_id={INSTANCE}&org_id={ORG}"),
+    ] {
+        assert_eq!(get(&bad_org_lookup).status, StatusCode::BAD_REQUEST, "{bad_org_lookup}");
+    }
+    assert_eq!(
+        get(&format!(
+            "/api/v1/operations/work/{OPERATION}?instance_id={INSTANCE}"
+        ))
+        .status,
         StatusCode::NOT_FOUND
     );
+    // Unbuilt project mutation routes fail closed with 503 before dispatch (web-api-v1 §9).
+    for project_route in [
+        format!("/api/v1/organizations/{ORG}/projects/add-team"),
+        format!("/api/v1/organizations/{ORG}/projects/remove-team"),
+    ] {
+        assert_eq!(
+            send(
+                &gateway,
+                Method::POST,
+                &project_route,
+                "{}",
+                Some(&pair),
+                &[]
+            )
+            .status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{project_route}"
+        );
+    }
     assert_eq!(calls.methods(), before, "none of them reached the host");
     let other = "01a1c554-5200-7000-8000-000000000007";
     let missing = get(&format!(
@@ -1267,4 +1300,53 @@ fn a_host_operation_lookup_checks_its_id_and_scope_before_asking_the_host() {
     assert_eq!(expired.body["error"]["code"], "expired");
     assert!(expired.body.get("result").is_none());
     assert!(!expired.body.to_string().contains("host words"));
+}
+
+#[test]
+fn authenticated_org_mutation_not_authorized_is_403_and_pair_checked_before_org_id() {
+    let op_id = OperationId::parse(OPERATION.into()).unwrap();
+    // Critical regression check: authenticated org mutation permission refusal MUST be 403,
+    // never 401 (which would trigger browser sign-out).
+    let forbidden = super::mutation(
+        MutationOutcome::<org_proto::Empty>::Rejected {
+            operation_id: op_id.clone(),
+            error: WebError::new(
+                WebErrorCode::NotAuthorized,
+                "You are not authorized to perform this action.",
+            ),
+        },
+        false,
+    );
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+    // `accepted_allowed = false` must refuse `Accepted` (202) with 503.
+    let disallowed_accepted = super::mutation(
+        MutationOutcome::<org_proto::Empty>::Accepted {
+            operation_id: op_id,
+        },
+        false,
+    );
+    assert_eq!(
+        disallowed_accepted.status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+
+    // Unauthenticated requests to `/api/v1/organizations/{org}/*` return 401 before org ID shape.
+    let (gateway, calls) = gateway(organization_script(|_, _| None));
+    let before = calls.methods();
+    for (method, path) in [
+        (Method::GET, "/api/v1/organizations/bad!org/snapshot"),
+        (Method::POST, "/api/v1/organizations/bad!org/teams/create"),
+        (
+            Method::POST,
+            "/api/v1/organizations/bad!org/projects/add-team",
+        ),
+    ] {
+        let reply = send(&gateway, method, path, "{}", None, &[]);
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{path}");
+    }
+    assert_eq!(
+        calls.methods(),
+        before,
+        "unauthenticated calls never hit host"
+    );
 }

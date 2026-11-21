@@ -1205,6 +1205,119 @@ mod suite {
         assert_eq!((next.number, next.generation), (TEAMS + 2, TEAMS + 2));
     }
 
+    /// B2 risk C1: moving a parent team while a descendant team is renamed concurrently.
+    /// Tests both deterministic serial orders and a real multi-threaded writer race,
+    /// verifying that the final file sits solely at the moved path with the new name,
+    /// nothing remains at the old path, and a full rebuild matches byte-for-byte.
+    pub fn team_move_racing_descendant_rename<E: OrganizationEngine, G>(
+        open: &dyn Fn() -> (Arc<E>, G),
+    ) {
+        let setup = || {
+            let bench = Bench::created(open);
+            // Tree: TEAM -> B (0x21) -> D (0x22), and TEAM -> C (0x23).
+            bench.created_team(2, 0x21, TEAM);
+            bench.created_team(3, 0x22, 0x21);
+            bench.created_team(4, 0x23, TEAM);
+            bench
+        };
+        let verify_final = |bench: Bench<E, G>, label: &str| {
+            let team_d = bench.team(0x22);
+            assert_eq!(team_d.name, "Renamed D", "{label}");
+            assert_eq!(team_d.parent_team_id, Some(id(0x21)), "{label}");
+            assert_eq!(bench.team(0x21).parent_team_id, Some(id(0x23)), "{label}");
+            let new_chain = vec![id(TEAM), id(0x23), id(0x21), id(0x22)];
+            assert_eq!(
+                bench.read(|s| s.team_chain(&id(0x22))),
+                Some(new_chain.clone()),
+                "{label}"
+            );
+            let files = bench.state_files();
+            let old_path = format!(
+                "state/teams/{}/teams/{}/teams/{}/team.yaml",
+                id(TEAM),
+                id(0x21),
+                id(0x22)
+            );
+            let new_path = records::team_path(&new_chain).expect("new path");
+            assert!(
+                !files.contains_key(&old_path),
+                "{label}: stale file left at {old_path}"
+            );
+            let decoded =
+                records::decode_team(&files[new_path.as_str()]).expect("moved descendant file");
+            assert_eq!(decoded.name, "Renamed D", "{label}");
+            let before = rows(&bench);
+            let rebuilt = bench.rebuilt(open).expect("rebuild after move+rename");
+            assert!(rows(&rebuilt) == before, "{label}: rebuild row mismatch");
+            assert_eq!(
+                text(&rebuilt.state_files()),
+                text(&files),
+                "{label}: rebuild file mismatch"
+            );
+        };
+
+        // Order 1: move B under C, then rename descendant D.
+        {
+            let bench = setup();
+            let mv = bench.move_team(0x21, 0x23);
+            let mut rename = UpdateTeam::new(id(0x22), bench.team(0x22).meta.revision);
+            rename.name = Some("Renamed D".into());
+            bench.done(10, &mv);
+            bench.done(11, &rename);
+            verify_final(bench, "move-then-rename");
+        }
+
+        // Order 2: rename descendant D, then move B under C.
+        {
+            let bench = setup();
+            let mv = bench.move_team(0x21, 0x23);
+            let mut rename = UpdateTeam::new(id(0x22), bench.team(0x22).meta.revision);
+            rename.name = Some("Renamed D".into());
+            bench.done(11, &rename);
+            bench.done(10, &mv);
+            verify_final(bench, "rename-then-move");
+        }
+
+        // Concurrent race: two threads submit move(B -> C) and rename(D) at the same barrier.
+        {
+            let bench = setup();
+            let mv = bench.move_team(0x21, 0x23);
+            let mut rename = UpdateTeam::new(id(0x22), bench.team(0x22).meta.revision);
+            rename.name = Some("Renamed D".into());
+            let start = std::sync::Barrier::new(2);
+            let by = Actor::Employee(id(CREATOR));
+            std::thread::scope(|scope| {
+                let s1 = &bench.store;
+                let d1 = &bench.decisions;
+                let b1 = &by;
+                let start1 = &start;
+                let t1 = scope.spawn(move || {
+                    let decide = d1.feature(b1, &mv);
+                    let op = mv.operation(id(20), b1);
+                    start1.wait();
+                    let reply = s1.submit(Some(op), false, decide).expect("move submitted");
+                    assert_eq!(reply.outcome, Outcome::Completed);
+                });
+                let s2 = &bench.store;
+                let d2 = &bench.decisions;
+                let b2 = &by;
+                let start2 = &start;
+                let t2 = scope.spawn(move || {
+                    let decide = d2.feature(b2, &rename);
+                    let op = rename.operation(id(21), b2);
+                    start2.wait();
+                    let reply = s2
+                        .submit(Some(op), false, decide)
+                        .expect("rename submitted");
+                    assert_eq!(reply.outcome, Outcome::Completed);
+                });
+                t1.join().expect("move thread");
+                t2.join().expect("rename thread");
+            });
+            verify_final(bench, "concurrent-race");
+        }
+    }
+
     /// A team's file is nested in its parent's folder, at every depth, until the tree is
     /// too deep for a path.
     pub fn nested_team_path<E: OrganizationEngine, G>(open: &dyn Fn() -> (Arc<E>, G)) {
@@ -1528,6 +1641,10 @@ macro_rules! organization_conformance_tests {
         #[test]
         fn organization_concurrent_team_numbers() {
             $crate::organization_family::testkit::concurrent_team_numbers(&$open);
+        }
+        #[test]
+        fn organization_team_move_racing_descendant_rename() {
+            $crate::organization_family::testkit::team_move_racing_descendant_rename(&$open);
         }
         #[test]
         fn organization_team_refusals() {

@@ -11,8 +11,14 @@ use org_proto::org::TeamCreateParams;
 const TOP_TEAM: &str = "019a8928-1337-7456-8456-0123456789ae";
 
 fn team_create(n: u64) -> OrgCommand {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let hi = (now_ms >> 16) as u32;
+    let lo = (now_ms & 0xffff) as u16;
     OrgCommand::TeamCreate(TeamCreateParams {
-        command_id: format!("019a0000-0000-7000-8000-{n:012x}"),
+        command_id: format!("{hi:08x}-{lo:04x}-7000-8000-{n:012x}"),
         team_id: format!("01900000-0000-7000-8000-{n:012x}"),
         name: format!("Team {n}"),
         owner_team_id: Some(TOP_TEAM.into()),

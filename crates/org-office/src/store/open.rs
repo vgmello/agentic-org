@@ -28,9 +28,9 @@ use org_store::{
 };
 
 pub use operations::{
-    AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
-    DirectoryGeneration, DirectorySnapshot, MovePersonOp, MoveTeamOp, OfficeStanding, Standing,
-    StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
+    AddPersonOp, ArchiveTeamOp, CheckOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
+    DirectoryGeneration, DirectorySnapshot, MovePersonOp, MoveTeamOp, OfficeStanding, ReceiptById,
+    Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
 };
 
 use super::sqlite::SqliteEngine;

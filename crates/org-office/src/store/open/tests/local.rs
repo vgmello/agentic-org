@@ -612,17 +612,17 @@ fn team_create_answers_committed_and_a_retry_gets_the_same_answer() {
         // The same command again: the same answer, and nothing new.
         assert_eq!(wire_create(&store, &creator, &request), Ok(committed));
         assert_eq!(store.read(DirectoryGeneration).unwrap().0, 2, "{engine:?}");
-        // Another payload with that command ID: invalid_request only.
+        // Another payload with that command ID: operation_reused only.
         let mut other = params(1, 0x22, Some(TOP_TEAM));
         assert_eq!(
             code(wire_create(&store, &creator, &other)),
-            ErrorCode::InvalidRequest
+            ErrorCode::OperationReused
         );
         other = params(1, 0x21, Some(TOP_TEAM));
         other.name = "Renamed".into();
         assert_eq!(
             code(wire_create(&store, &creator, &other)),
-            ErrorCode::InvalidRequest
+            ErrorCode::OperationReused
         );
         // The receipt uses the native UUIDv7 command ID directly, and the snapshot shows the team.
         let mapped = command_id(1);

@@ -117,9 +117,9 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
         std::path::Path::new("/unused"),
         serve::OfficePorts {
             snapshot,
-            submit: Box::new(|_, _| panic!("host touched Office submit")),
+            submit: Box::new(|_, _, _| panic!("host touched Office submit")),
             work: Box::new(|_, _| panic!("host touched Office work")),
-            operation_get: Box::new(|_| panic!("host touched Office operation")),
+            operation_get: Box::new(|_, _| panic!("host touched Office operation")),
             who: Box::new(|_| panic!("host touched Office who")),
             status: Box::new(|_, _| panic!("host touched Office status")),
             feed: Some(Box::new(DarkFeed)),

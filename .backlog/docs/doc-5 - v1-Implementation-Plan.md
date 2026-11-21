@@ -3,7 +3,7 @@ id: doc-5
 title: v1 Implementation Plan
 type: guide
 created_date: '2026-11-21T00:14:00Z'
-updated_date: '2026-11-21T00:14:00Z'
+updated_date: '2026-11-21T05:16:00Z'
 tags:
   - plan
   - v1
@@ -32,6 +32,34 @@ How to read an increment:
 - **Needs** names the increments that must be finished first.
 
 New here? Read [START-HERE](doc-2%20-%20Start-Here.md) first.
+
+## Backlog Task Mapping (Milestones `m-0`..`m-5`)
+
+Every v1 implementation plan increment is tracked as an actionable Backlog.md task under milestone `m-0` (`v1`), with completed architecture remediation & doc migration tasks under `m-2`–`m-5` and v2 deferrals under `m-1` (`TASK-72`–`TASK-75`):
+
+| Track / Step | Increment | Backlog Task(s) | Status / Notes |
+| --- | --- | --- | --- |
+| Foundation | Architecture & CI remediation (`TASK-1`–`TASK-19`), Backlog docs migration (`TASK-20`–`TASK-32`) | `TASK-1`–`TASK-32` (`m-2`–`m-5`) | **Done** (`5cc368ba`); includes `TASK-5` (B2.3a browser-to-office bridge), `TASK-14` (wire cutover), `TASK-15` (org-office-server, UUIDv7), `TASK-16` (SSE), `TASK-17` (UI modules) |
+| Step 1 · Getting in | A1, A2, A3, A4, K1 | Merged on `v1`; remaining A5 -> `TASK-35` | Core A1–A4 + K1 merged; A5 CLI sign-in & selected-office addressing in `TASK-35` |
+| Step 1/2 | B1c (store latency & engine independence) | `TASK-33` | `m-0` |
+| Step 2 · Organization | B2.2 & B2.3b (dry-run, `operation.get`, `/api/v1` org routes, UI wire mirrors) | `TASK-34` | `m-0` (In Progress — unlocks 26 transitive tasks) |
+| Step 1/2 | A5 & B2.4 (person CLI sign-in, selected-office addressing, org CLI rows) | `TASK-35` | `m-0` |
+| Step 2 · Organization | B3 (projects minimum — accountable/contributing teams, `/api/v1`, CLI) | `TASK-36` | `m-0` |
+| Step 2 · Organization | O1 (offices live list, readiness, host restart) | `TASK-37` | `m-0` |
+| Step 2 · Organization | A6 (multi-person accounts, browser invites, resets, handover) | `TASK-38` | `m-0` |
+| Step 2 · Organization | R1 (open existing organization from Git files) | `TASK-39` | `m-0` |
+| Step 2 · Organization | U1 (connect Offices, Teams, People, Projects browser screens to live `/api/v1`) | `TASK-40` | `m-0` |
+| Step 3 · Agents | C1 (merged); C2 (hire via HR), C3 (supervision/session runner), C4 (session log viewer), C5 (processes/standards) | `TASK-41`, `TASK-42`, `TASK-43`, `TASK-44` | `m-0` |
+| Step 4 · Messages | B6 (conversations/chat/presence/SSE), B7 (structured asks), C6/C8/C10 (suspend/wake/always-available), C9 (channel watcher) | `TASK-45`, `TASK-46`, `TASK-47`, `TASK-48` | `m-0` |
+| Step 5 · Tasks | B4 & B5 (typed tasks, checklists, history, CLI, live views), L8 (private task notes), C7 (shared repos/worktrees) | `TASK-49`, `TASK-50`, `TASK-51` | `m-0` |
+| Milestone 2 · Linux (Track X) | X1a–X5 merged; X7 & ADR-0033 (default HTTP hosting + opt-in in-app HTTPS), X6 (remove final allowlist predicates), release container image | `TASK-62`, `TASK-63`, `TASK-64` | `m-0`; **Owner requirement (ADR-0033, 2026-11-21):** server starts hosted via HTTP between browser and office by default; teams opt in to HTTPS inside the app |
+| Milestone 3 · Second office | S1 (second office enrollment, replication, cross-office relay, HQ re-enrollment) | `TASK-52` | `m-0` |
+| Later (v1) | L1–L3 (`TASK-53`), L4 (`TASK-54`), L7 & L11 (`TASK-55`), L12–L14 (`TASK-56`), L15 (`TASK-57`), L16 (`TASK-58`), L17 (`TASK-59`), L9 & Diagnostics (`TASK-60`), backend cleanups (`TASK-61`) | `TASK-53`–`TASK-61` | `m-0` |
+| UI Stream (v1) | UI Steps 4–9 & Private Task Notes UX | `TASK-65`–`TASK-71` | `m-0` (`TASK-65` In Progress) |
+| v2 Deferrals | Recovery code / CA escrow / protected delivery, take-over, analytics | `TASK-72`–`TASK-75` | `m-1` (`v2`) |
+
+> [!IMPORTANT] Owner Requirement — ADR-0033 (2026-11-21)
+> To reduce operational complexity, servers (macOS, Linux, and container deployments) are allowed to start hosted via **HTTP** between the browser and the office by default. Teams that want **HTTPS** can enable it opt-in inside the app (and via `agentic-org admin tls set`). Tracked in [ADR-0033](../decisions/decision-33%20-%20ADR-0033-Default-HTTP-server-hosting-between-browser-and-office-with-opt-in-HTTPS-enabled-in-app.md), [ADR-0034](../decisions/decision-34%20-%20ADR-0034-Local-HQ-starts-authless-over-HTTP-directly-into-the-onboarding-wizard-auth-and-HTTPS-are-opt-in.md), `TASK-62`, and `TASK-76` (local HQ defaults to plain HTTP + authless direct entry into the onboarding wizard; auth and HTTPS are opt-in in app settings).
 
 ## The path
 

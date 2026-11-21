@@ -101,6 +101,11 @@ impl ApiReply {
         )
     }
 
+    #[cfg(test)]
+    pub(crate) fn status(&self) -> StatusCode {
+        self.status
+    }
+
     fn into_http(self, head: bool) -> Response<WebBody> {
         let mut response = response(
             self.status,

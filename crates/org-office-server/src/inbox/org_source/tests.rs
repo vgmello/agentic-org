@@ -68,8 +68,9 @@ fn create_team(office: &Office, n: u64) {
         .unwrap()
         .id
         .clone();
+    // `Office::for_test` uses a fixed clock at `CREATION_AT` (1_700_000_000_000 ms = 0x018bce27f800).
     let command = OrgCommand::TeamCreate(TeamCreateParams {
-        command_id: format!("019a0000-0000-7000-8000-{n:012x}"),
+        command_id: format!("018bce27-f800-7000-8000-{n:012x}"),
         team_id: format!("01900000-0000-7000-8000-{n:012x}"),
         name: format!("Team {n}"),
         owner_team_id: Some(top),

@@ -753,6 +753,8 @@ pub struct OrgSnapshot {
 pub enum CommandStatus {
     /// HQ committed it; `position` says where.
     Committed,
+    /// Dry-run validation succeeded without persisting any change; `position` is `None`.
+    Checked,
     /// HQ is unreachable, so this satellite queued it in its outbox. It's **pending**: not
     /// in the copy yet. The outcome arrives later, matched by `command_id`: an `org.changed`
     /// event if HQ commits it, or an `org.rejected` event (shown as blocked) if not.

@@ -466,9 +466,16 @@ fn serve_office(
         &socket,
         serve::OfficePorts {
             // Calls only the old tables served answer `unsupported` until their family is
-            // rebuilt on the office store: work in B4, operation lookup in B2.
+            // rebuilt on the office store: work in B4, status lines in B6.
             work: Box::new(|_, _| Ok(Err(unsupported("work", "B4")))),
-            operation_get: Box::new(|_| Ok(Err(unsupported("operation lookup", "B2")))),
+            operation_get: {
+                let office = Arc::clone(&office);
+                Box::new(move |member, id| {
+                    office
+                        .operation(member, id)
+                        .map_err(|e| logged("operation.get", &e))
+                })
+            },
             snapshot: {
                 let office = Arc::clone(&office);
                 Box::new(move || office.org_snapshot().map_err(|e| snapshot_failure(&e)))
@@ -486,10 +493,13 @@ fn serve_office(
             directory: Arc::new(directory::OfficeDirectory::of(Arc::clone(&office))),
             submit: {
                 let office = Arc::clone(&office);
-                Box::new(move |member, command| {
-                    office
-                        .submit_org(member, command)
-                        .map_err(|e| logged("command", &e))
+                Box::new(move |member, command, dry_run| {
+                    let answer = if dry_run {
+                        office.check_org(member, command)
+                    } else {
+                        office.submit_org(member, command)
+                    };
+                    answer.map_err(|e| logged("command", &e))
                 })
             },
         },

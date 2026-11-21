@@ -349,6 +349,7 @@ pub fn classify_org_reply(
                     }
                 }
                 org::CommandStatus::Committed => unknown(OrgReplyIssue::CommittedWithoutPosition),
+                org::CommandStatus::Checked => unknown(OrgReplyIssue::UnknownStatus),
                 org::CommandStatus::Queued => unknown(OrgReplyIssue::Queued),
                 org::CommandStatus::Unknown => unknown(OrgReplyIssue::UnknownStatus),
             }

@@ -1,7 +1,7 @@
 //! The office's operations as [`StoreOp`]s, and its reads as [`ReadOp`]s. The composition
 //! names the families; a family does not name the store's seam.
 
-use org_store::{Actor, Id, OfficeIdentity, Reply, Store, StoreError};
+use org_store::{Actor, Id, OfficeIdentity, Receipt, Reply, Store, StoreError};
 
 use super::{OfficeEngine, ReadOp, StoreOp};
 use crate::{
@@ -107,6 +107,55 @@ impl<C: Feature> StoreOp for StructureOp<C> {
         store.submit(Some(operation), false, move |uow| {
             command.decide(uow, &here, &owner, &by)
         })
+    }
+}
+
+/// Dry-run of one structure change on the single writer: decides, frames, applies and
+/// validates, then unconditionally undoes with zero journal entries, files, or receipts.
+pub struct CheckOp<C> {
+    pub here: OfficeIdentity,
+    pub owner: Id,
+    pub by: Actor,
+    pub command: C,
+}
+
+impl<C> CheckOp<C> {
+    pub fn from_request(
+        request: crate::organization::wire::StructureRequest<C>,
+        here: OfficeIdentity,
+        owner: Id,
+    ) -> Self {
+        Self {
+            here,
+            owner,
+            by: request.by,
+            command: request.command,
+        }
+    }
+}
+
+impl<C: Feature> StoreOp for CheckOp<C> {
+    type Out = Result<Reply, StoreError>;
+
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let Self {
+            here,
+            owner,
+            by,
+            command,
+        } = self;
+        store.check(move |uow| command.decide(uow, &here, &owner, &by))
+    }
+}
+
+/// Looks up one stored operation receipt by its UUIDv7 operation ID.
+pub struct ReceiptById(pub Id);
+
+impl ReadOp for ReceiptById {
+    type Out = Option<Receipt>;
+
+    fn read<S: OrganizationRead>(self, read: &S) -> Result<Option<Receipt>, StoreError> {
+        Ok(read.receipt(&self.0)?)
     }
 }
 

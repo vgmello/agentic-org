@@ -1204,3 +1204,263 @@ fn actual_browser_reads_live_org_snapshot_and_creates_team_surviving_projection_
     assert_eq!(after_logout.status, 401, "{}", after_logout.body);
     stop(host, &base);
 }
+
+/// B2.3b production-path proof: exercises every wired `/api/v1/organizations/{org}/*`
+/// mutation route (teams & people) and `GET /api/v1/operations/org/{id}` over real
+/// `agentic-org-web` -> `org-host` -> `agentic-org-office`, verifying idempotent replay,
+/// different-payload command_id conflict, stale expected_version 409, stored rejected
+/// receipt lookup, and persistence across host/office restart.
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_browser_exercises_all_org_mutations_and_operation_lookup_surviving_restart() {
+    let Launched {
+        temp: _temp,
+        address,
+        host,
+        base,
+        ..
+    } = launch(Seed::Administrator);
+    wait_serving(&host, address);
+    let browser = Browser::sign_in(&host, address);
+    let (_, view) = browser.create("Example", "example");
+    let (organization, _office, creator) = checked(&view, "Example", "example");
+    wait_offices_active(&host, 1);
+
+    let snap_path = format!("/api/v1/organizations/{organization}/snapshot");
+    let snap0 = browser.get(&snap_path);
+    assert_eq!(snap0.status, 200, "{}", snap0.body);
+    let root_team_id = text(&snap0.body["result"]["snapshot"]["teams"][0]["id"]).to_owned();
+
+    let scope = json!({
+        "kind": "organization",
+        "instance_id": browser.instance,
+        "org_id": organization
+    });
+    let submit = |route: &str, op_id: &str, params: Value| -> Reply {
+        let body = json!({
+            "operation_id": op_id,
+            "scope": scope,
+            "params": params
+        });
+        browser.post(
+            &format!("/api/v1/organizations/{organization}/{route}"),
+            &body.to_string(),
+        )
+    };
+    let org_lookup = |op_id: &str| -> Reply {
+        browser.get(&format!(
+            "/api/v1/operations/org/{op_id}?instance_id={}&org_id={organization}",
+            browser.instance
+        ))
+    };
+
+    // 1. Create two child teams (`teams/create`), verify replay & different-payload refusal.
+    let team_a = crate::ids::uuid_v7().unwrap();
+    let team_b = crate::ids::uuid_v7().unwrap();
+    let op_create_a = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/create",
+        &op_create_a,
+        json!({ "team_id": team_a, "name": "Engineering", "owner_team_id": root_team_id }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert_eq!(r.body["outcome"], "completed");
+
+    let replay = submit(
+        "teams/create",
+        &op_create_a,
+        json!({ "team_id": team_a, "name": "Engineering", "owner_team_id": root_team_id }),
+    );
+    assert_eq!(replay.status, 200, "{}", replay.body);
+    assert_eq!(replay.body["outcome"], "completed");
+
+    let reused = submit(
+        "teams/create",
+        &op_create_a,
+        json!({ "team_id": team_a, "name": "Different", "owner_team_id": root_team_id }),
+    );
+    assert_eq!(reused.status, 409, "{}", reused.body);
+    assert_eq!(reused.body["outcome"], "rejected");
+    assert_eq!(reused.body["error"]["code"], "operation_reused");
+
+    let op_create_b = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/create",
+        &op_create_b,
+        json!({ "team_id": team_b, "name": "Platform", "owner_team_id": root_team_id }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // 2. Rename team_b, verify stale expected_version -> 409 conflict (stored rejection).
+    let op_rename = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/rename",
+        &op_rename,
+        json!({ "team_id": team_b, "expected_version": 1, "name": "Core Platform" }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_stale = crate::ids::uuid_v7().unwrap();
+    let stale = submit(
+        "teams/rename",
+        &op_stale,
+        json!({ "team_id": team_b, "expected_version": 1, "name": "Stale" }),
+    );
+    assert_eq!(stale.status, 409, "{}", stale.body);
+    assert_eq!(stale.body["outcome"], "rejected");
+    assert_eq!(stale.body["error"]["code"], "conflict");
+
+    // 3. Move team_b under team_a (`teams/move`).
+    let op_move_team = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/move",
+        &op_move_team,
+        json!({ "team_id": team_b, "expected_version": 2, "owner_team_id": team_a }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // 4. Add a person (`members/add-person`), update (`members/update-person`),
+    // set title (`teams/set-title`), set as lead (`teams/set-lead`), set manager (`members/set-reports-to`).
+    let person_id = crate::ids::uuid_v7().unwrap();
+    let op_add_person = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "members/add-person",
+        &op_add_person,
+        json!({
+            "member_id": person_id,
+            "name": "Ada Lovelace",
+            "contact": "ada@example.test",
+            "handle": "ada",
+            "home_team_id": team_b
+        }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_update_person = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "members/update-person",
+        &op_update_person,
+        json!({
+            "member_id": person_id,
+            "expected_version": 1,
+            "name": "Ada King",
+            "clear_contact": true
+        }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_set_title = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/set-title",
+        &op_set_title,
+        json!({
+            "membership_id": person_id,
+            "expected_version": 2,
+            "title_in_team": "Principal Engineer"
+        }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_set_lead = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/set-lead",
+        &op_set_lead,
+        json!({ "team_id": team_b, "expected_version": 3, "lead_member_id": person_id }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_set_mgr = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "members/set-reports-to",
+        &op_set_mgr,
+        json!({
+            "member_id": person_id,
+            "expected_version": 3,
+            "reports_to_member_id": creator
+        }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // Clear lead, move person to team_a, deactivate person, and archive empty team_b.
+    let op_clear_lead = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/set-lead",
+        &op_clear_lead,
+        json!({ "team_id": team_b, "expected_version": 4 }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_move_person = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "members/move",
+        &op_move_person,
+        json!({
+            "membership_id": person_id,
+            "expected_version": 4,
+            "new_membership_id": person_id,
+            "to_team_id": team_a
+        }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_remove_person = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "members/remove",
+        &op_remove_person,
+        json!({ "member_id": person_id, "expected_version": 5 }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    let op_archive_b = crate::ids::uuid_v7().unwrap();
+    let r = submit(
+        "teams/delete",
+        &op_archive_b,
+        json!({ "team_id": team_b, "expected_version": 5 }),
+    );
+    assert_eq!(r.status, 200, "{}", r.body);
+
+    // 5. Lookup committed, rejected, and unknown operations via `GET /api/v1/operations/org/{id}`.
+    let ok_lookup = org_lookup(&op_create_a);
+    assert_eq!(ok_lookup.status, 200, "{}", ok_lookup.body);
+    assert_eq!(
+        ok_lookup.body["result"],
+        json!({
+            "operation_id": op_create_a,
+            "kind": "org",
+            "outcome": "completed",
+            "result": {}
+        })
+    );
+
+    let rej_lookup = org_lookup(&op_stale);
+    assert_eq!(rej_lookup.status, 200, "{}", rej_lookup.body);
+    assert_eq!(rej_lookup.body["result"]["kind"], "org");
+    assert_eq!(rej_lookup.body["result"]["outcome"], "rejected");
+    assert_eq!(rej_lookup.body["result"]["error"]["code"], "conflict");
+
+    let unknown_id = crate::ids::uuid_v7().unwrap();
+    let missing_lookup = org_lookup(&unknown_id);
+    assert_eq!(missing_lookup.status, 404, "{}", missing_lookup.body);
+
+    // 6. Restart host+office and confirm snapshot and operation lookup survive intact.
+    let snap_before = browser.get(&snap_path);
+    assert_eq!(snap_before.status, 200, "{}", snap_before.body);
+    stop(host, &base);
+    let host = restart(&base, address);
+    wait_offices_active(&host, 1);
+
+    let snap_after = browser.get(&snap_path);
+    assert_eq!(snap_after.status, 200, "{}", snap_after.body);
+    assert_eq!(
+        snap_after.body["result"]["snapshot"],
+        snap_before.body["result"]["snapshot"]
+    );
+    let after_lookup = org_lookup(&op_create_a);
+    assert_eq!(after_lookup.status, 200, "{}", after_lookup.body);
+    assert_eq!(after_lookup.body["result"]["outcome"], "completed");
+    let after_rej = org_lookup(&op_stale);
+    assert_eq!(after_rej.status, 200, "{}", after_rej.body);
+    assert_eq!(after_rej.body["result"]["outcome"], "rejected");
+    assert_eq!(after_rej.body["result"]["error"]["code"], "conflict");
+    stop(host, &base);
+}

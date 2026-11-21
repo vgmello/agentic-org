@@ -19,8 +19,9 @@ use org_host_control::{
     organization::BrowserAuth,
 };
 use org_proto::{
-    web::org_mutations::OrgMutation, ApiRange, Empty, Hello, HelloParams, HelloResult, OrgSnapshot,
-    OrgSnapshotCall, Outcome, Principal, Request, Response, MAX_FRAME_BYTES,
+    web::org_mutations::OrgMutation, ApiRange, Empty, Hello, HelloParams, HelloResult,
+    OperationGet, OperationGetParams, OperationKind as NativeOperationKind, OperationOutcome,
+    OrgSnapshot, OrgSnapshotCall, Outcome, Principal, Request, Response, MAX_FRAME_BYTES,
 };
 use serde_json::Value;
 use tokio::{
@@ -225,6 +226,66 @@ impl OfficeBridge {
         };
         let rpc_id = self.next_rpc_id();
         let request = Request::new::<OrgSnapshotCall>(rpc_id, &Empty {})
+            .and_then(|req| req.with_principal(&principal))
+            .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
+        let raw = match channel.roundtrip_raw(&request, rpc_id).await {
+            Ok(raw) => raw,
+            Err(_) => {
+                self.evict(office_id, &channel.channel_id);
+                return Err(OfficeFailure::Transport);
+            }
+        };
+        let response: Response =
+            serde_json::from_value(raw).map_err(|_| OfficeFailure::Transport)?;
+        match response.outcome {
+            Outcome::Result(value) => {
+                serde_json::from_value(value).map_err(|_| OfficeFailure::Transport)
+            }
+            Outcome::Error(error) => Err(OfficeFailure::Refused(error)),
+        }
+    }
+
+    /// Reads `operation.get` (`kind: org`) asynchronously over the multiplexed office channel.
+    /// If a cached channel went stale (e.g., office restart), evicts and retries once.
+    pub async fn org_operation_get(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        operation_id: &str,
+    ) -> Result<OperationOutcome, OfficeFailure> {
+        match self
+            .org_operation_get_once(auth, office_id, operation_id)
+            .await
+        {
+            Err(OfficeFailure::Transport) => {
+                self.org_operation_get_once(auth, office_id, operation_id)
+                    .await
+            }
+            other => other,
+        }
+    }
+
+    async fn org_operation_get_once(
+        &self,
+        auth: &BrowserAuth,
+        office_id: &str,
+        operation_id: &str,
+    ) -> Result<OperationOutcome, OfficeFailure> {
+        let channel = self.get_or_open(auth, office_id).await?;
+        let principal = match self.grant(auth, office_id, &channel.channel_id).await {
+            Ok(principal) => principal,
+            Err(Failure::Unavailable) => {
+                self.evict(office_id, &channel.channel_id);
+                return Err(OfficeFailure::Transport);
+            }
+            Err(error) => return Err(OfficeFailure::BeforeDispatch(error)),
+        };
+        let rpc_id = self.next_rpc_id();
+        let params = OperationGetParams {
+            kind: NativeOperationKind::Org,
+            id: operation_id.to_owned(),
+        };
+        let request = Request::new::<OperationGet>(rpc_id, &params)
             .and_then(|req| req.with_principal(&principal))
             .map_err(|_| OfficeFailure::BeforeDispatch(Failure::Unavailable))?;
         let raw = match channel.roundtrip_raw(&request, rpc_id).await {

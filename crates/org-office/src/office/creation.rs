@@ -248,6 +248,7 @@ impl Office {
             spoil();
         }
         let bytes = office_file::encode(&info)?;
+        let clock_high_ms = std::sync::atomic::AtomicU64::new(options.clock.now().0);
         let office = Office {
             folder,
             info,
@@ -257,6 +258,8 @@ impl Office {
             creation,
             creation_command,
             secrets_key: key,
+            clock: options.clock,
+            clock_high_ms,
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]

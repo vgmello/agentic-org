@@ -27,15 +27,20 @@ mod tests;
 use std::{
     fs::File,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
 use org_proto::{
     directory::{WhoParams, WhoResult},
     org::{CommandAccepted, OrgSnapshot},
-    ApiError,
+    ApiError, ErrorCode, OperationOutcome,
 };
-use org_store::{Clock, Files, Id, OfficeIdentity, StoreError, SystemClock, WriterAuthority};
+use org_store::{
+    Actor, Clock, Files, Id, OfficeIdentity, StoreError, SystemClock, WriterAuthority,
+};
 
 #[cfg(any(test, feature = "testkit"))]
 pub use self::testkit::TestOffice;
@@ -46,12 +51,12 @@ use crate::{
     model::OfficeInfo,
     office_file,
     office_local::{read_ca, CaRecords},
-    organization::{directory, wire},
+    organization::{directory, records, wire},
     rules::OrgCommand,
     store::open::{
-        open_store, AddPersonOp, ArchiveTeamOp, CreateTeamOp, DeactivatePersonOp,
+        open_store, AddPersonOp, ArchiveTeamOp, CheckOp, CreateTeamOp, DeactivatePersonOp,
         DirectorySnapshot, EngineChoice, MovePersonOp, MoveTeamOp, OfficeStanding, OfficeStore,
-        StoreConfig, TopTeamId, UpdatePersonOp, UpdateTeamOp,
+        ReceiptById, StoreConfig, TopTeamId, UpdatePersonOp, UpdateTeamOp,
     },
     time,
 };
@@ -131,6 +136,9 @@ pub struct Office {
     /// The creation request's canonical lowercase UUIDv7 command ID as the host sent it.
     creation_command: String,
     secrets_key: Option<Key>,
+    clock: Arc<dyn Clock>,
+    /// Monotonic high-water mark of `clock` (ms), so wall-clock rollbacks never reopen expired windows.
+    clock_high_ms: AtomicU64,
     // The store closes before the lock is released: fields drop in order.
     store: OfficeStore,
     _lock: File,
@@ -249,6 +257,7 @@ impl Office {
         let creation_command = intent.operation.clone();
 
         let store = open_store(&options.config(&roots, &custody)).map_err(storage)?;
+        let clock_high_ms = AtomicU64::new(options.clock.now().0);
         let office = Office {
             folder,
             info,
@@ -258,6 +267,8 @@ impl Office {
             creation,
             creation_command,
             secrets_key: key,
+            clock: options.clock,
+            clock_high_ms,
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]
@@ -348,14 +359,27 @@ impl Office {
         ))
     }
 
+    fn monotonic_now_ms(&self) -> u64 {
+        let now = self.clock.now().0;
+        self.clock_high_ms
+            .fetch_max(now, Ordering::Relaxed)
+            .max(now)
+    }
+
     /// Runs one organization command from `member`, the member the caller's grant is bound
     /// to, dispatching all implemented organization-family operations on `org-store`. A
-    /// retry with the same `command_id` gets the same answer.
+    /// retry with the same `command_id` gets the same answer, bypassing age/skew checks.
     pub fn submit_org(
         &self,
         member: &str,
         command: OrgCommand,
     ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
+        if member != self.owner.as_str() {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                crate::organization::features::NOT_AUTHORIZED,
+            )));
+        }
         let op = match wire::parse_command(member, &command, || {
             self.store.read(TopTeamId).map(|(team, _)| team)
         })
@@ -364,6 +388,20 @@ impl Office {
             Ok(op) => op,
             Err(refusal) => return Ok(Err(refusal)),
         };
+        // Stored answers always replay even after the 29-day window; only unknown command IDs
+        // are subject to `expired` and `clock_skew` admission rules (unrecorded).
+        let op_id = op.operation_id().clone();
+        let (existing, _) = self
+            .store
+            .read(ReceiptById(op_id.clone()))
+            .map_err(storage)?;
+        if existing.is_none() {
+            if let Err(refusal) =
+                wire::check_command_window(op_id.as_str(), self.monotonic_now_ms())
+            {
+                return Ok(Err(refusal));
+            }
+        }
         let here = &self.identity;
         let owner = &self.owner;
         let run = |op: wire::WireOp| -> Result<Result<CommandAccepted, ApiError>, StoreError> {
@@ -413,6 +451,117 @@ impl Office {
             }
         };
         run(op).map_err(storage)
+    }
+
+    /// Runs a dry-run check of one organization command from `member` through `Store::check`:
+    /// decides, frames, applies, validates, and unconditionally undoes with zero journal
+    /// entries, files, receipts, or sequence advancement.
+    pub fn check_org(
+        &self,
+        member: &str,
+        command: OrgCommand,
+    ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
+        if member != self.owner.as_str() {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                crate::organization::features::NOT_AUTHORIZED,
+            )));
+        }
+        let op = match wire::parse_check_command(member, &command, || {
+            self.store.read(TopTeamId).map(|(team, _)| team)
+        })
+        .map_err(storage)?
+        {
+            Ok(op) => op,
+            Err(refusal) => return Ok(Err(refusal)),
+        };
+        let here = &self.identity;
+        let owner = &self.owner;
+        let run = |op: wire::WireOp| -> Result<Result<CommandAccepted, ApiError>, StoreError> {
+            match op {
+                wire::WireOp::CreateTeam(r) => wire::checked_answer(
+                    "team.create",
+                    self.store
+                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::UpdateTeam(r) => wire::checked_answer(
+                    "team.update",
+                    self.store
+                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::MoveTeam(r) => wire::checked_answer(
+                    "team.move",
+                    self.store
+                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::ArchiveTeam(r) => wire::checked_answer(
+                    "team.delete",
+                    self.store
+                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::AddPerson(r) => wire::checked_answer(
+                    "member.add_person",
+                    self.store
+                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::UpdatePerson(r) => wire::checked_answer(
+                    "member.update_person",
+                    self.store
+                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::MovePerson(r) => wire::checked_answer(
+                    "member.move",
+                    self.store
+                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::DeactivatePerson(r) => wire::checked_answer(
+                    "member.remove",
+                    self.store
+                        .run(CheckOp::from_request(r, here.clone(), owner.clone())),
+                ),
+            }
+        };
+        run(op).map_err(storage)
+    }
+
+    /// Reads the stored outcome of an organization command by its UUIDv7 `command_id` for
+    /// `member`. Refuses another actor's receipt and non-organization receipts as `not_found`.
+    pub fn operation(
+        &self,
+        member: &str,
+        command_id: &str,
+    ) -> Result<Result<OperationOutcome, ApiError>, OfficeError> {
+        let not_found = || ApiError::new(ErrorCode::NotFound, "operation not found");
+        if !records::is_stable_id(command_id) {
+            return Ok(Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "command_id is not a UUIDv7 in lowercase text",
+            )));
+        }
+        let Ok(op_id) = Id::parse(command_id) else {
+            return Ok(Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "command_id is not a UUIDv7 in lowercase text",
+            )));
+        };
+        if !records::is_stable_id(member) {
+            return Ok(Err(not_found()));
+        }
+        let Ok(actor_id) = Id::parse(member) else {
+            return Ok(Err(not_found()));
+        };
+        let (receipt, _) = self.store.read(ReceiptById(op_id)).map_err(storage)?;
+        let Some(receipt) = receipt else {
+            return Ok(Err(not_found()));
+        };
+        if !receipt.kind.starts_with("organization.")
+            || receipt.kind == "organization.create"
+            || receipt.actor != Actor::Employee(actor_id)
+        {
+            return Ok(Err(not_found()));
+        }
+        let outcome = wire::operation_outcome_from_receipt(&receipt).map_err(storage)?;
+        Ok(Ok(outcome))
     }
 
     /// Whether this office is its organization's HQ, as the projection holds it.

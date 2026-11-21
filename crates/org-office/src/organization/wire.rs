@@ -8,9 +8,16 @@ use org_proto::{
         MemberRemoveParams, MemberSetReportsToParams, MemberUpdatePersonParams, TeamCreateParams,
         TeamDeleteParams, TeamMoveParams, TeamRenameParams, TeamSetLeadParams, TeamSetTitleParams,
     },
-    ApiError, ErrorCode,
+    ApiError, ErrorCode, OperationOutcome,
 };
-use org_store::{Actor, Id, Outcome, Reply, StoreError};
+use org_store::{Actor, Id, Outcome, Receipt, Reply, StoreError};
+
+/// Maximum accepted age of an unknown organization `command_id` (29 days).
+pub const MAX_COMMAND_AGE_MS: u64 = 29 * 86_400_000;
+/// Maximum accepted future skew of an unknown organization `command_id` (5 minutes).
+pub const MAX_COMMAND_SKEW_MS: u64 = 300_000;
+/// Synthetic placeholder operation ID used solely inside dry-run checks (never stored).
+const DRY_RUN_PLACEHOLDER_ID: &str = "01900000-0000-7000-8000-000000000000";
 
 use super::{
     features::{
@@ -44,6 +51,43 @@ pub enum WireOp {
     UpdatePerson(StructureRequest<UpdatePerson>),
     MovePerson(StructureRequest<MovePerson>),
     DeactivatePerson(StructureRequest<DeactivatePerson>),
+}
+
+impl WireOp {
+    pub fn operation_id(&self) -> &Id {
+        match self {
+            Self::CreateTeam(r) => &r.operation_id,
+            Self::UpdateTeam(r) => &r.operation_id,
+            Self::MoveTeam(r) => &r.operation_id,
+            Self::ArchiveTeam(r) => &r.operation_id,
+            Self::AddPerson(r) => &r.operation_id,
+            Self::UpdatePerson(r) => &r.operation_id,
+            Self::MovePerson(r) => &r.operation_id,
+            Self::DeactivatePerson(r) => &r.operation_id,
+        }
+    }
+}
+
+/// Enforces the organization `command_id` age (>29 days -> `expired`) and future skew
+/// (>5 minutes -> `clock_skew`) window against the office's monotonic high-water clock.
+/// Must only be called when no stored receipt exists for `command_id` (replays bypass age/skew).
+pub fn check_command_window(command_id: &str, high_water_ms: u64) -> Result<(), ApiError> {
+    let Some(id_ms) = org_proto::uuid_v7_time_ms(command_id) else {
+        return Err(invalid("command_id is not a UUIDv7 in lowercase text"));
+    };
+    if high_water_ms.saturating_sub(id_ms) > MAX_COMMAND_AGE_MS {
+        return Err(refused(
+            ErrorCode::Expired,
+            "command_id is older than 29 days",
+        ));
+    }
+    if id_ms.saturating_sub(high_water_ms) > MAX_COMMAND_SKEW_MS {
+        return Err(refused(
+            ErrorCode::ClockSkew,
+            "command_id is more than 5 minutes ahead of the office clock",
+        ));
+    }
+    Ok(())
 }
 
 fn refused(code: ErrorCode, message: &str) -> ApiError {
@@ -326,6 +370,71 @@ fn remove_person_request(
     })
 }
 
+/// Decodes any implemented [`OrgCommand`] for dry-run validation. Rejects any non-empty
+/// `command_id` (`dry_run` must not carry an operation ID).
+pub fn parse_check_command(
+    member: &str,
+    command: &OrgCommand,
+    default_home_team: impl FnOnce() -> Result<Option<Id>, StoreError>,
+) -> Result<Result<WireOp, ApiError>, StoreError> {
+    if !command.command_id().is_empty() {
+        return Ok(Err(invalid("dry_run must not carry a command_id")));
+    }
+    let patched = with_placeholder_command_id(command);
+    parse_command(member, &patched, default_home_team)
+}
+
+fn with_placeholder_command_id(command: &OrgCommand) -> OrgCommand {
+    let id = DRY_RUN_PLACEHOLDER_ID.to_owned();
+    match command.clone() {
+        OrgCommand::TeamCreate(mut p) => {
+            p.command_id = id;
+            OrgCommand::TeamCreate(p)
+        }
+        OrgCommand::TeamRename(mut p) => {
+            p.command_id = id;
+            OrgCommand::TeamRename(p)
+        }
+        OrgCommand::TeamMove(mut p) => {
+            p.command_id = id;
+            OrgCommand::TeamMove(p)
+        }
+        OrgCommand::TeamSetLead(mut p) => {
+            p.command_id = id;
+            OrgCommand::TeamSetLead(p)
+        }
+        OrgCommand::TeamDelete(mut p) => {
+            p.command_id = id;
+            OrgCommand::TeamDelete(p)
+        }
+        OrgCommand::TeamSetTitle(mut p) => {
+            p.command_id = id;
+            OrgCommand::TeamSetTitle(p)
+        }
+        OrgCommand::MemberAddPerson(mut p) => {
+            p.command_id = id;
+            OrgCommand::MemberAddPerson(p)
+        }
+        OrgCommand::MemberUpdatePerson(mut p) => {
+            p.command_id = id;
+            OrgCommand::MemberUpdatePerson(p)
+        }
+        OrgCommand::MemberMove(mut p) => {
+            p.command_id = id;
+            OrgCommand::MemberMove(p)
+        }
+        OrgCommand::MemberRemove(mut p) => {
+            p.command_id = id;
+            OrgCommand::MemberRemove(p)
+        }
+        OrgCommand::MemberSetReportsTo(mut p) => {
+            p.command_id = id;
+            OrgCommand::MemberSetReportsTo(p)
+        }
+        other => other,
+    }
+}
+
 /// Decodes any implemented [`OrgCommand`] into a typed [`WireOp`]. Unbuilt HR/project
 /// commands return `unsupported`.
 pub fn parse_command(
@@ -390,7 +499,7 @@ fn decode_answer(
         Ok(reply) => reply,
         Err(StoreError::Conflict) => {
             let message = "command_id was used before with other params";
-            return Ok(Err(refused(ErrorCode::InvalidRequest, message)));
+            return Ok(Err(refused(ErrorCode::OperationReused, message)));
         }
         Err(StoreError::Invalid(reason)) => {
             let code = if reason == NOT_AUTHORIZED {
@@ -418,6 +527,68 @@ fn decode_answer(
                 rejection_code(rejected.code),
                 rejected.message,
             )))
+        }
+    }
+}
+
+/// The protocol's answer to any dry-run organization check.
+pub fn checked_answer(
+    label: &str,
+    answer: Result<Reply, StoreError>,
+) -> Result<Result<CommandAccepted, ApiError>, StoreError> {
+    let reply = match answer {
+        Ok(reply) => reply,
+        Err(StoreError::Invalid(reason)) => {
+            let code = if reason == NOT_AUTHORIZED {
+                ErrorCode::NotAuthorized
+            } else {
+                ErrorCode::InvalidRequest
+            };
+            return Ok(Err(ApiError::new(code, reason)));
+        }
+        Err(error) => return Err(error),
+    };
+    let unreadable = || StoreError::Internal(format!("an unreadable {label} dry-run reply"));
+    match reply.outcome {
+        Outcome::Completed => Ok(Ok(CommandAccepted {
+            status: CommandStatus::Checked,
+            position: None,
+        })),
+        Outcome::Rejected => {
+            let rejected: OrgRejection =
+                serde_json::from_slice(&reply.bytes).map_err(|_| unreadable())?;
+            Ok(Err(ApiError::new(
+                rejection_code(rejected.code),
+                rejected.message,
+            )))
+        }
+    }
+}
+
+/// Decodes a stored organization operation receipt into [`OperationOutcome`] for `operation.get`.
+pub fn operation_outcome_from_receipt(receipt: &Receipt) -> Result<OperationOutcome, StoreError> {
+    let unreadable = || StoreError::Internal("an unreadable organization receipt".into());
+    match receipt.outcome {
+        Outcome::Completed => {
+            let generation = serde_json::from_slice::<TeamCreated>(&receipt.reply)
+                .map(|c| c.generation)
+                .or_else(|_| {
+                    serde_json::from_slice::<Changed>(&receipt.reply).map(|c| c.generation)
+                })
+                .map_err(|_| unreadable())?;
+            let accepted = CommandAccepted {
+                status: CommandStatus::Committed,
+                position: Some(snapshot::position(generation)),
+            };
+            let result = serde_json::to_value(accepted).map_err(|_| unreadable())?;
+            Ok(OperationOutcome::Committed { result })
+        }
+        Outcome::Rejected => {
+            let rejected: OrgRejection =
+                serde_json::from_slice(&receipt.reply).map_err(|_| unreadable())?;
+            Ok(OperationOutcome::Rejected {
+                refusal: ApiError::new(rejection_code(rejected.code), rejected.message),
+            })
         }
     }
 }
@@ -585,7 +756,7 @@ mod tests {
         }
 
         let code = |error: StoreError| team_create_answer(Err(error)).unwrap().unwrap_err().code;
-        assert_eq!(code(StoreError::Conflict), ErrorCode::InvalidRequest);
+        assert_eq!(code(StoreError::Conflict), ErrorCode::OperationReused);
         assert_eq!(
             code(StoreError::invalid(NOT_AUTHORIZED)),
             ErrorCode::NotAuthorized

@@ -270,7 +270,7 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
     assert_eq!(team(&mut owner, &command, "Platform").unwrap(), accepted);
     assert_eq!(
         team(&mut owner, &command, "Other").unwrap_err().code,
-        org_proto::ErrorCode::InvalidRequest,
+        org_proto::ErrorCode::OperationReused,
         "the same id with other params"
     );
     // Top-level teams commit with `owner_team_id: None`.
@@ -283,20 +283,20 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
         })
         .unwrap();
     assert_eq!(top_level.status, org_proto::org::CommandStatus::Committed);
-    // Operation lookup is `unsupported` until B2 maps the store's receipts. What is refused
-    // before the lookup is unchanged.
+    // Operation lookup is backed by the store's receipts: returns committed/rejected for the
+    // acting owner and refuses another actor or anonymous caller with `not_found`.
     let get = |id: &str| org_proto::OperationGetParams {
         kind: org_proto::OperationKind::Org,
         id: id.into(),
     };
-    let unsupported = |caller: &mut Caller, id: &str| {
-        caller
-            .call::<org_proto::OperationGet>(&get(id))
-            .unwrap_err()
-            .code
-            == org_proto::ErrorCode::Unsupported
-    };
-    assert!(unsupported(&mut owner, &command));
+    assert_eq!(
+        owner
+            .call::<org_proto::OperationGet>(&get(&command))
+            .unwrap(),
+        org_proto::OperationOutcome::Committed {
+            result: serde_json::to_value(accepted).unwrap(),
+        }
+    );
     let reader = Client::connect(socket(&world)).unwrap();
     let lookup = |client: &Client, id: &str| client.call::<org_proto::OperationGet>(&get(id));
     assert_eq!(
@@ -308,17 +308,30 @@ fn only_the_grant_bound_owner_changes_the_organization_and_what_it_changed_survi
         org_proto::ErrorCode::InvalidRequest
     );
     let refusal_id = command_id(2);
-    team(&mut owner, &refusal_id, " ").unwrap_err();
+    let refusal = team(&mut owner, &refusal_id, " ").unwrap_err();
+    assert_eq!(
+        owner
+            .call::<org_proto::OperationGet>(&get(&refusal_id))
+            .unwrap(),
+        org_proto::OperationOutcome::Rejected { refusal }
+    );
     let after = snapshot(&mut owner);
     assert_eq!(platform(&after).unwrap().name, "Platform");
     assert_eq!(after.teams.len(), 3);
     drop((client, reader, owner));
     first.stop();
 
-    // After a restart the team is there, and the old command id still gets its answer.
+    // After a restart the team is there, and both the old command id and operation.get answer.
     let mut again = live(&world);
     let mut owner = again.caller(Some(&owner_id));
-    assert!(unsupported(&mut owner, &command));
+    assert_eq!(
+        owner
+            .call::<org_proto::OperationGet>(&get(&command))
+            .unwrap(),
+        org_proto::OperationOutcome::Committed {
+            result: serde_json::to_value(accepted).unwrap(),
+        }
+    );
     assert_eq!(snapshot(&mut owner), after);
     assert_eq!(team(&mut owner, &command, "Platform").unwrap(), accepted);
     assert_eq!(snapshot(&mut owner), after);
@@ -550,14 +563,17 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
     assert!(owner_unsupported(
         owner.call::<WorkDelete>(&delete).unwrap_err()
     ));
-    assert!(owner_unsupported(
+    // operation.get is served for org receipts (unknown ID -> not_found).
+    assert_eq!(
         owner
             .call::<OperationGet>(&OperationGetParams {
                 kind: OperationKind::Org,
-                id: command_id(1),
+                id: command_id(99),
             })
             .unwrap_err()
-    ));
+            .code,
+        ErrorCode::NotFound
+    );
     // An unbuilt organization command (projects are not wired on org-store yet).
     assert!(owner_unsupported(
         owner

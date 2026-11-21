@@ -57,15 +57,20 @@ pub enum SnapshotFailure {
 
 pub type SnapshotFn = Box<dyn Fn() -> Result<OrgSnapshot, SnapshotFailure> + Send + Sync>;
 
-/// Runs one organization command from a member (the office's `submit_org`): the member the
-/// caller's grant is bound to. HQ's answer, or why it could not answer at all (storage).
+/// Runs one organization command from a member (the office's `submit_org` or `check_org` when
+/// `dry_run` is true): the member the caller's grant is bound to. HQ's answer, or why it
+/// could not answer at all (storage).
 pub type SubmitFn = Box<
-    dyn Fn(&str, OrgCommand) -> Result<Result<CommandAccepted, ApiError>, String> + Send + Sync,
+    dyn Fn(&str, OrgCommand, bool) -> Result<Result<CommandAccepted, ApiError>, String>
+        + Send
+        + Sync,
 >;
 
-/// Reads a retained owner operation, after the office socket checks the binding.
+/// Reads a retained operation for the acting grant-bound member (`(member, operation_id)`).
 pub type OperationFn = Box<
-    dyn Fn(&str) -> Result<Result<org_proto::OperationOutcome, ApiError>, String> + Send + Sync,
+    dyn Fn(&str, &str) -> Result<Result<org_proto::OperationOutcome, ApiError>, String>
+        + Send
+        + Sync,
 >;
 
 /// Answers `who` (the office's `who`): the cards, the caller's mistake, or why it could not
@@ -1078,7 +1083,10 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
                 ApiError::new(ErrorCode::NotFound, "operation not found"),
             );
         }
-        return match (shared.ports.operation_get)(&params.id) {
+        let Some(member) = binding.member() else {
+            return internal(request.id);
+        };
+        return match (shared.ports.operation_get)(member, &params.id) {
             Ok(Ok(outcome)) => Response::ok::<org_proto::OperationGet>(request.id, &outcome)
                 .unwrap_or_else(|_| internal(request.id)),
             Ok(Err(refusal)) => Response::error(request.id, refusal),
@@ -1157,7 +1165,7 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     }
     // An organization command: read to tell it from an unknown method, but the caller is checked
     // BEFORE anything else is said about it (a bad param is not told to an anonymous client).
-    match OrgCommand::parse(request) {
+    match OrgCommand::parse_request(request) {
         Ok(None) => {}
         Ok(Some(_)) | Err(_) if !binding.via_grant() => {
             return Response::error(
@@ -1169,12 +1177,12 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
             );
         }
         Err(refusal) => return Response::error(request.id, refusal),
-        Ok(Some(command)) => {
+        Ok(Some(parsed)) => {
             // Only a grant-bound member reaches here (checked above).
             let Some(member) = binding.member() else {
                 return internal(request.id);
             };
-            return match (shared.ports.submit)(member, command) {
+            return match (shared.ports.submit)(member, parsed.command, parsed.dry_run) {
                 // Every organization command answers with `CommandAccepted`; any command's call
                 // type serializes the same way.
                 Ok(Ok(accepted)) => Response::ok::<TeamCreate>(request.id, &accepted)
@@ -2113,7 +2121,7 @@ mod tests {
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&calls);
-        ports.operation_get = Box::new(move |_| {
+        ports.operation_get = Box::new(move |_, _| {
             observed.fetch_add(1, Ordering::SeqCst);
             Err("SECRET SQL /private/organization".into())
         });
@@ -2248,14 +2256,14 @@ mod tests {
         let (mailbox, directory) = messaging();
         OfficePorts {
             work: Box::new(|_, _| Err("none".into())),
-            operation_get: Box::new(|_| {
+            operation_get: Box::new(|_, _| {
                 Ok(Err(ApiError::new(
                     ErrorCode::NotFound,
                     "operation not found",
                 )))
             }),
             snapshot,
-            submit: Box::new(|_, _| Err("none".to_owned())),
+            submit: Box::new(|_, _, _| Err("none".to_owned())),
             who: Box::new(|_| Err("none".to_owned())),
             status: Box::new(|_, _| Err("none".to_owned())),
             feed: Some(Box::new(Arc::new(FakeFeed::default()))),
@@ -2281,7 +2289,7 @@ mod tests {
             let dir = tempfile::TempDir::new().unwrap();
             let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
             let stored = outcome.clone();
-            ports.operation_get = Box::new(move |_| Ok(Ok(stored.clone())));
+            ports.operation_get = Box::new(move |_, _| Ok(Ok(stored.clone())));
             let shared = Shared::new(
                 &test_info(),
                 &dir.path().join("s.sock"),
@@ -2699,14 +2707,14 @@ mod tests {
             path,
             OfficePorts {
                 work: Box::new(|_, _| Err("none".into())),
-                operation_get: Box::new(|_| {
+                operation_get: Box::new(|_, _| {
                     Ok(Err(ApiError::new(
                         ErrorCode::NotFound,
                         "operation not found",
                     )))
                 }),
                 snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
-                submit: Box::new(move |_, _| {
+                submit: Box::new(move |_, _, _| {
                     counter.fetch_add(1, Ordering::SeqCst);
                     answer()
                 }),
@@ -3170,14 +3178,14 @@ mod tests {
                 path,
                 OfficePorts {
                     work: Box::new(|_, _| Err("none".into())),
-                    operation_get: Box::new(|_| {
+                    operation_get: Box::new(|_, _| {
                         Ok(Err(ApiError::new(
                             ErrorCode::NotFound,
                             "operation not found",
                         )))
                     }),
                     snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
-                    submit: Box::new(|_, _| Err("none".to_owned())),
+                    submit: Box::new(|_, _, _| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
                     status: Box::new(|_, _| Err("none".to_owned())),
                     feed: Some(Box::new(Arc::clone(&feed))),
@@ -3660,14 +3668,14 @@ mod tests {
             path,
             OfficePorts {
                 work: Box::new(|_, _| Err("none".into())),
-                operation_get: Box::new(|_| {
+                operation_get: Box::new(|_, _| {
                     Ok(Err(ApiError::new(
                         ErrorCode::NotFound,
                         "operation not found",
                     )))
                 }),
                 snapshot: Box::new(|| Err(SnapshotFailure::Storage)),
-                submit: Box::new(|_, _| Err("none".to_owned())),
+                submit: Box::new(|_, _, _| Err("none".to_owned())),
                 who: Box::new(move |params| {
                     counter.fetch_add(1, Ordering::SeqCst);
                     answer(params)
@@ -3800,7 +3808,7 @@ mod tests {
     ) {
         let (mailbox, directory) = messaging();
         let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-        ports.submit = Box::new(|_, _| committed());
+        ports.submit = Box::new(|_, _, _| committed());
         ports.mailbox = Some(Arc::clone(&mailbox));
         ports.directory = directory.clone();
         let shared = Arc::new(Shared::new(&test_info(), path, ports, launch_key()));

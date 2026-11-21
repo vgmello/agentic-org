@@ -3,9 +3,11 @@ id: TASK-34
 title: >-
   B2.2 & B2.3b: Complete B2 dry-run, operation.get, /api/v1 organization routes,
   and UI wire mirrors
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lead'
 created_date: '2026-11-21T00:11:00Z'
+updated_date: '2026-11-21T05:54:00Z'
 labels:
   - backend
   - rust
@@ -32,8 +34,18 @@ Complete the remaining B2.2 and B2.3b scope not covered by TASK-5 (B2.3a browser
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 org_store::Store::check executes dry-run decide+apply+validate+undo with zero journal frames, files, or receipts, and command_id expired/clock_skew rules pass.
-- [ ] #2 operation.get returns committed and rejected organization receipts for the acting principal and refuses another actor's receipt as not_found.
-- [ ] #3 All /api/v1/organizations/{org}/* mutation routes and GET /api/v1/operations/org/{id} pass real-process HTTP tests including replay, conflict, and restart.
+- [x] #1 org_store::Store::check executes dry-run decide+apply+validate+undo with zero journal frames, files, or receipts, and command_id expired/clock_skew rules pass.
+- [x] #2 operation.get returns committed and rejected organization receipts for the acting principal and refuses another actor's receipt as not_found.
+- [x] #3 All /api/v1/organizations/{org}/* mutation routes and GET /api/v1/operations/org/{id} pass real-process HTTP tests including replay, conflict, and restart.
 - [ ] #4 Stale pre-B2.1 test vectors are replaced/removed, UI wire mirrors are updated in sync, team-move vs descendant-rename concurrency (risk C1) is tested, and FEATURES FC-025..029 are updated.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add org_store::Store::check dry-run (mark, decide, frame, apply_entry, tx.check, unconditional undo) with memory+SQLite tests.
+2. Add dry_run support + command_id expired (>29d)/clock_skew (>5m) validation (after known-receipt replay check) in org-proto and org-office.
+3. Implement Office::operation(member, command_id) backed by store receipts (enforcing actor match -> not_found on mismatch) and wire ports.operation_get in org-office-server.
+4. Wire all /api/v1/organizations/{org}/* mutation routes and GET /api/v1/operations/org/{id} in agentic-org-web + real-process HTTP tests (replay, conflict, restart).
+5. Add B2 risk C1 concurrency test (team move racing descendant rename), prune 25 retired multi-membership vectors in org-commands.json, sync UI wire mirrors after TASK-65 merges, update FC-025..029, and run fresh two-pass review.
+<!-- SECTION:PLAN:END -->

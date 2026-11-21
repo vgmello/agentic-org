@@ -33,7 +33,84 @@ pub enum OrgCommand {
     ProjectRemoveTeam(ProjectRemoveTeamParams),
 }
 
+/// A decoded organization command plus whether the caller asked for a dry-run check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedOrgCommand {
+    pub command: OrgCommand,
+    pub dry_run: bool,
+}
+
 impl OrgCommand {
+    /// Whether `method` names an organization command known to this build.
+    fn is_org_method(request: &Request) -> bool {
+        use org_proto::Call;
+        const METHODS: &[&str] = &[
+            TeamCreate::METHOD,
+            TeamRename::METHOD,
+            TeamMove::METHOD,
+            TeamSetLead::METHOD,
+            TeamDelete::METHOD,
+            TeamSetTitle::METHOD,
+            MemberAddPerson::METHOD,
+            MemberAddAgent::METHOD,
+            MemberUpdateAgent::METHOD,
+            MemberSetAgentStatus::METHOD,
+            MemberOffboard::METHOD,
+            MemberSetRunMode::METHOD,
+            MemberUpdatePerson::METHOD,
+            MemberMove::METHOD,
+            MemberRemove::METHOD,
+            MemberSetReportsTo::METHOD,
+            ProjectAddTeam::METHOD,
+            ProjectRemoveTeam::METHOD,
+        ];
+        METHODS.contains(&request.method.as_str())
+    }
+
+    /// Reads `request` as an organization command, also extracting optional `dry_run: bool`.
+    /// When `dry_run` is `true`, `command_id` must be absent or empty (`invalid_request` otherwise).
+    pub fn parse_request(request: &Request) -> Result<Option<ParsedOrgCommand>, ApiError> {
+        if !Self::is_org_method(request) {
+            return Ok(None);
+        }
+        let invalid = |msg: &str| ApiError::new(ErrorCode::InvalidRequest, msg);
+        let dry_run = match request.params.as_object().and_then(|m| m.get("dry_run")) {
+            None => false,
+            Some(v) => v
+                .as_bool()
+                .ok_or_else(|| invalid("dry_run must be a boolean"))?,
+        };
+        if !dry_run {
+            return Self::parse(request).map(|opt| {
+                opt.map(|command| ParsedOrgCommand {
+                    command,
+                    dry_run: false,
+                })
+            });
+        }
+        let mut patched = request.clone();
+        if let Some(obj) = patched.params.as_object_mut() {
+            match obj.get("command_id") {
+                None => {
+                    obj.insert(
+                        "command_id".into(),
+                        serde_json::Value::String(String::new()),
+                    );
+                }
+                Some(serde_json::Value::String(s)) if s.is_empty() => {}
+                Some(_) => {
+                    return Err(invalid("dry_run must not carry a command_id"));
+                }
+            }
+        }
+        Self::parse(&patched).map(|opt| {
+            opt.map(|command| ParsedOrgCommand {
+                command,
+                dry_run: true,
+            })
+        })
+    }
+
     /// Reads `request` as an organization command: `Ok(None)` if its method is not one this
     /// build handles, `Err(invalid_request)` if the method is but its params are not valid.
     pub fn parse(request: &Request) -> Result<Option<Self>, ApiError> {

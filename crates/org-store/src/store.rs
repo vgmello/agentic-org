@@ -146,6 +146,7 @@ pub(crate) type Decide<E> =
 pub(crate) struct Job<E: Engine> {
     pub(crate) op: Option<Operation>,
     pub(crate) durable: bool,
+    pub(crate) dry_run: bool,
     pub(crate) decide: Decide<E>,
     pub(crate) to: SyncSender<Result<Reply, StoreError>>,
 }
@@ -495,10 +496,35 @@ impl<E: Engine> Store<E> {
     where
         F: FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send + 'static,
     {
+        self.enqueue(op, durable, false, decide)
+    }
+
+    /// Runs `decide`, entry framing, projector application and engine validation on the
+    /// single writer, then unconditionally undoes the transaction to its savepoint.
+    /// Produces zero journal entries, zero files, zero receipts, and zero sequence or
+    /// feed advancement.
+    pub fn check<F>(&self, decide: F) -> Result<Reply, StoreError>
+    where
+        F: FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send + 'static,
+    {
+        self.enqueue(None, false, true, decide)
+    }
+
+    fn enqueue<F>(
+        &self,
+        op: Option<Operation>,
+        durable: bool,
+        dry_run: bool,
+        decide: F,
+    ) -> Result<Reply, StoreError>
+    where
+        F: FnMut(&mut UnitOfWork<'_, E>) -> Result<Change, Refusal> + Send + 'static,
+    {
         let (to, answer) = mpsc::sync_channel(1);
         let job = Job {
             op,
             durable,
+            dry_run,
             decide: Box::new(decide),
             to,
         };
