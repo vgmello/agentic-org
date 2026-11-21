@@ -343,8 +343,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 }
 .cmdk-esc:hover { background: rgba(186, 222, 255, .16); color: #F8FAFC; box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .32); }
 .cmdk-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 3px; }
-.cmdk-ai-pane { display: flex; flex-direction: column; gap: 12px; padding: 8px; }
-.cmdk-ai-thread { display: flex; flex-direction: column; gap: 10px; }
+.cmdk-ai-pane { display: flex; flex-direction: column; gap: 10px; padding: 6px 8px 4px; flex: 1; min-height: 0; }
+.cmdk-ai-thread { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; max-height: 310px; padding-right: 2px; }
+.cmdk-ai-follow { flex: none; padding-top: 4px; border-top: 1px solid rgba(186, 222, 255, .08); }
 .cmdk-ai-card.is-prev { background: rgba(15, 28, 48, .44); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .12), inset 3px 0 0 rgba(125, 211, 252, .38); opacity: .88; }
 .cmdk-ai-card {
   padding: 16px 18px; border-radius: 13px;
@@ -1314,14 +1315,14 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   box-shadow: inset 0 1px 0 rgba(186, 230, 253, .22), inset 0 0 0 1px rgba(125, 211, 252, .30), 0 8px 22px -10px rgba(0, 0, 0, .50);
   color: #E0F2FE; font-size: 0.8125rem; font-weight: 600;
 }
-.h4-cta.hb-cta-glass .h4-cta-lbl.base .ic { color: #7DD3FC; }
+.h4-cta.hb-cta-glass .h4-cta-lbl .ic { color: #7DD3FC; transition: color .18s ease; }
 .h4-cta.hb-cta-glass:hover,
 .h4-cta.hb-cta-glass:focus-visible {
   color: #FFFFFF;
   box-shadow: inset 0 1px 0 rgba(224, 242, 254, .34), inset 0 0 0 1px rgba(125, 211, 252, .58), 0 10px 26px -6px rgba(14, 165, 233, .46);
 }
-.h4-cta.hb-cta-glass:hover .h4-cta-lbl.hover .ic,
-.h4-cta.hb-cta-glass:focus-visible .h4-cta-lbl.hover .ic { color: #FFFFFF; }
+.h4-cta.hb-cta-glass:hover .h4-cta-lbl .ic,
+.h4-cta.hb-cta-glass:focus-visible .h4-cta-lbl .ic { color: #FFFFFF; }
 .h4-cta-sheen {
   position: absolute; top: -20%; bottom: -20%; left: 0; width: 42%; z-index: 1; pointer-events: none;
   background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, .28) 50%, transparent 100%);
@@ -1330,27 +1331,23 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 }
 .h4-cta-inner {
   position: relative; z-index: 2;
-  display: inline-grid;
-  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1.25rem;
   height: 1.25rem;
-  align-items: center;
 }
 .h4-cta-ico {
   display: inline-flex; align-items: center; justify-content: center;
   transition: transform .28s cubic-bezier(.34, 1.56, .64, 1);
 }
 .h4-cta-lbl {
-  grid-area: 1 / 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   white-space: nowrap;
-  transition: transform .3s cubic-bezier(.22, 1, .36, 1), opacity .22s ease;
 }
-.h4-cta-lbl.base { transform: translateY(0); opacity: 1; }
-.h4-cta-lbl.hover { transform: translateY(125%); opacity: 0; }
 
 .h4-cta:hover,
 .h4-cta:focus-visible,
@@ -1375,14 +1372,6 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .h4-cta:hover .h4-cta-ico,
 .h4-cta:focus-visible .h4-cta-ico {
   transform: scale(1.16) rotate(-5deg);
-}
-.h4-cta:hover .h4-cta-lbl.base,
-.h4-cta:focus-visible .h4-cta-lbl.base {
-  transform: translateY(-120%); opacity: 0;
-}
-.h4-cta:hover .h4-cta-lbl.hover,
-.h4-cta:focus-visible .h4-cta-lbl.hover {
-  transform: translateY(0); opacity: 1;
 }
 .h4-cta:active {
   transform: translateY(0) scale(.98);
@@ -1630,6 +1619,7 @@ a.hb-pillar-pill:hover { filter: brightness(1.14); transform: translateY(-0.5px)
 .hb-pillar-pill.warn { background: rgba(251, 191, 36, .12); color: #FDE68A; box-shadow: inset 0 0 0 1px rgba(251, 191, 36, .28); }
 .hb-pillar-pill.bad { background: rgba(251, 113, 133, .12); color: #FDA4AF; box-shadow: inset 0 0 0 1px rgba(251, 113, 133, .28); }
 .hb-pillar-pill.ok { background: rgba(52, 211, 153, .12); color: #6EE7B7; box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .28); }
+.hb-pillar-pill.sky { background: rgba(56, 189, 248, .13); color: #BAE6FD; box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .30); }
 
 .hb-pillar-hero { display: flex; flex-direction: column; gap: 7px; }
 .hb-pillar-valrow { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
@@ -1862,7 +1852,14 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .h4-live-dot.is-error { background: #FB7185; }
 .h4-live-dot.is-error::after { border-color: rgba(251, 113, 133, .55); }
 .hb-cleared h2 { font-size: 1.125rem; font-weight: 600; color: var(--hb-ink); }
-.hb-cleared p { font-size: 0.875rem; color: var(--hb-muted); max-width: 38ch; }
+.hb-cleared p { font-size: 0.875rem; color: var(--hb-muted); max-width: 40ch; }
+.hb-err-meta {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border-radius: 999px; margin-top: 2px;
+  background: rgba(186, 222, 255, .06); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .12);
+  font-size: 0.75rem; font-weight: 500; color: var(--hb-muted);
+}
+.hb-err-meta .ic { width: 13px; height: 13px; color: #7DD3FC; }
 .hb-cleared-acts { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
 
 /* Right: Autonomous Catch-up Digest + Interactive Org AI Ask Panel */
@@ -1884,10 +1881,10 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   font-size: 0.72rem; font-weight: 500; color: var(--hb-muted);
 }
 
-.hb-digest { display: flex; flex-direction: column; gap: 8px; }
+.hb-digest { display: flex; flex-direction: column; gap: 10px; flex: 1; justify-content: space-between; }
 .hb-dig-item {
   display: flex; align-items: flex-start; gap: 10px;
-  padding: 9px 11px; border-radius: 10px;
+  padding: 12px 13px; border-radius: 10px;
   background: var(--hb-well);
   box-shadow: inset 0 1px 0 rgba(186, 226, 255, .10), inset 0 0 0 1px rgba(186, 226, 255, .10);
   font-size: 0.8125rem; line-height: 1.42; color: var(--hb-body);
@@ -1966,6 +1963,12 @@ a.hb-card-name:hover { color: #BAE6FD; }
   box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .16);
   color: var(--hb-muted);
 }
+.hb-blocker.sky {
+  background: rgba(56, 189, 248, .07);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .20);
+  color: #E2E8F0;
+}
+.nav-all-projs { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(186, 222, 255, .07); }
 .hb-blocker-txt { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
 .hb-blocker-txt .ic { flex: none; margin-top: 2px; }
 .hb-unblock-btn {
@@ -2354,7 +2357,7 @@ const TEAMS = {
 };
 const P = {
   "agency-v1":         { name: "Agentic Org v1.0", release: "v1.0", health: "At risk", upd: 12, lead: "ada", teams: ["leadership", "platform", "app", "quality"], goal: "Ship the first release of Agentic Org: hire agents, chat, projects and work, on one office.", updated: "12m ago", channel: "agency-v1", due: "Dec 5", dueMonth: "Dec", dueDay: "05", pace: "+2d behind", paceTone: "warn", blocker: "2 sign-offs waiting: v1.0 release & test access", unblockSpotId: "in1", unblockHref: "#/inbox/in1", unblockLabel: "Review (2)", milestoneTitle: "Agentic Org v1.0", horizonStatus: "2 sign-offs", horizonNote: "Release & test access sign-offs", risk: "Two updates wait on approval and local test access is waiting on your permission." },
-  "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "Build box office offline · waiting 25m on your decision", unblockSpotId: "in2", unblockHref: "#/inbox/in2", unblockLabel: "Decide", milestoneTitle: "Office sync test", horizonStatus: "Needs you", horizonNote: "Rowan · Office federation", risk: "The Build box office stayed offline after sleep. Sage's fix waits on your verification, and sync can't resume until the office is back online." },
+  "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "File-access choice needed (25m) · Build box office offline", unblockSpotId: "in2", unblockHref: "#/inbox/in2", unblockLabel: "Decide", milestoneTitle: "Office sync test", horizonStatus: "Needs you", horizonNote: "Rowan · Office federation", risk: "The Build box office stayed offline after sleep. Sage's fix waits on your verification, and sync can't resume until the office is back online." },
   "look-feel":         { name: "Look & feel refresh", release: "v1.1", health: "On track", upd: 60, lead: "eden", teams: ["product", "app"], goal: "One calm, consistent look across every screen, with icons and no emoji.", updated: "1h ago", channel: "design", due: "Nov 28", dueMonth: "Nov", dueDay: "28", pace: "On pace", paceTone: "ok", blocker: "", clearNote: "All checks passing · projected Nov 27 (1d early)", unblockSpotId: "in17", unblockHref: "#/inbox/in17", milestoneTitle: "Look & feel refresh", horizonStatus: "1d ahead", horizonNote: "Final design polish sign-off", risk: "" },
   "proto-agency":      { name: "Early UI prototype", upd: 99999, lead: null, teams: ["product"], goal: "Explore the look of the app before v1.", updated: "Nov 2", channel: "design", archived: true }
 };
@@ -2394,7 +2397,7 @@ const IN = [
   { id: "in1", kind: "approval", sub: "Release sign-off", from: "ada", time: "12m", group: "Today", what: "Approve publishing Kai's sync update to v1.0", why: "Kai's update makes office syncing cleaner and more reliable for v1.0. All 412 automated checks passed and Tomas approved review with zero open issues. High-impact release changes require your final sign-off before publishing.", rec: "Ada recommends: approve. Tomas completed review with no open issues.", impact: [["shield-check", "ok", "Low risk", "Easy to roll back"], ["bolt", "", "High impact", "Unblocks v1.0 launch"], ["check-circle", "ok", "Checks passed", "412 automated checks"]], proj: "agency-v1", task: "T-121", expires: "Expires in 4 hours (release window)" },
   { id: "in5", kind: "approval", sub: "Access request", from: "jules", time: "3h", group: "Today", what: "Allow local test access for Jules's security checks", why: "Jules needs temporary permission to run security checks against the local test server only. No live customer or company data is exposed, and only the owner can grant local access permissions.", rec: "Jules recommends: allow for testing only.", impact: [["shield-check", "ok", "Low risk", "Test sandbox only"], ["bolt", "", "High impact", "Unblocks v1.0 security"], ["lock", "", "Limited scope", "No live data access"]], proj: "agency-v1", task: "T-124", expires: "Expires tomorrow" },
   { id: "in2", kind: "decision", sub: "Direction needed", from: "sage", time: "25m", group: "Today", what: "Choose how offices coordinate shared files: timed access or fixed lock", why: "Work on second-office syncing is paused until you pick. Automatic timed access recovers cleanly if an office goes offline; a fixed per-office lock is a day faster to finish.", rec: "Sage recommends timed access. Rowan agrees.", impact: [["shield-alert", "warn", "Moderate risk", "Harder to change later"], ["bolt", "warn", "High impact", "Unblocks Office sync"], ["scale", "", "Safety vs. speed", "Auto-recovers · +1 day"]], proj: "office-federation", task: "T-118", opts: ["Use timed access", "Fixed office lock"], expires: "" },
-  { id: "in16", kind: "approval", sub: "Company standard", from: "rowan", time: "45m", group: "Today", what: "Use automatic timed file access across all future projects?", why: "Office federation proved the timed access pattern recovers cleanly when a second office goes offline. Adopting it company-wide means every new project inherits the rule automatically—avoiding repeat escalations.", rec: "Rowan & Ada recommend: adopt standard. Eliminates repeat sync questions across teams.", impact: [["shield-check", "ok", "Low risk", "Proven in Office sync"], ["sparkle", "", "Org-wide impact", "Applies to future projects"], ["adjustments", "muted", "Reversible", "Override per project"]], proj: "office-federation", task: "T-118", expires: "",
+  { id: "in16", kind: "approval", sub: "Company standard", from: "rowan", time: "45m", group: "Today", what: "Require automated checks before every release?", why: "Agentic Org v1.0 and Look & feel refresh both cut revision rates by running automated checks before handoff. Adopting this company-wide means every new project enforces the same quality bar automatically.", rec: "Rowan & Ada recommend: adopt standard. Keeps first-try approval rates above 80%.", impact: [["shield-check", "ok", "Low risk", "Proven across 2 projects"], ["sparkle", "", "Org-wide impact", "Applies to future projects"], ["adjustments", "muted", "Reversible", "Override per project"]], proj: "agency-v1", task: "T-121", expires: "",
     acts: [["Adopt company standard", "Adopted as company standard", "sparkle"], ["Keep project-only", "Kept project-only", "x"]], clears: "When you adopt or keep it project-only" },
   { id: "in17", kind: "approval", sub: "Design sign-off", from: "emery", time: "1h", group: "Today", what: "Approve final design polish for Look & feel refresh", why: "Half of the v1.1 refresh is already shipped (3 of 6 tasks done, 1 day ahead). Approving the final design polish unlocks the remaining 3 screens for the Nov 28 milestone, well within your monthly budget.", rec: "Emery & Eden recommend: approve. All design and budget checks passed.", impact: [["shield-check", "ok", "Low risk", "Visual polish only"], ["bolt", "", "Medium impact", "Unlocks final 3 screens"], ["calendar-check", "ok", "1 day ahead", "3 of 6 tasks done"]], proj: "look-feel", task: "T-131", expires: "",
     acts: [["Approve polish", "Design polish approved", "check"], ["Request changes", "Changes requested", "pencil", "changes"]], clears: "When you approve or request changes" },
@@ -2785,21 +2788,6 @@ function board(items, kind) {
 }
 
 /* ---------------------------------------------------------------- pages */
-function hoverWinCopy(it, label) {
-  if (it.id === "in1") return "Approve & publish";
-  if (it.id === "in2" && /lease/i.test(label)) return "Confirm timed lease";
-  if (it.id === "in3") return "Write reply";
-  if (it.id === "in4") return "Approve hire";
-  if (it.id === "in5") return "Grant test access";
-  if (it.id === "in16") return "Adopt company rule";
-  if (it.id === "in17") return "Approve final polish";
-  if (/^Approve fix/i.test(label)) return "Approve fix";
-  if (/^Approve$/i.test(label)) return "Approve";
-  if (/^Accept$/i.test(label)) return "Accept task";
-  if (/^Resume$/i.test(label)) return "Resume work";
-  if (/^Reply$/i.test(label)) return "Write reply";
-  return `${label} →`;
-}
 function itemActionsV4(it) {
   if (it.handled) return `<p class="h4-handled-win" id="handled-${esc(it.id)}">${ic("check-circle", "ic16")}<span>${esc(it.outcome)}</span></p>`;
   const open = `<a class="btn ghost sm" href="#/inbox/${it.id}">${ic("open", "ic16")}Open</a>`;
@@ -2807,18 +2795,16 @@ function itemActionsV4(it) {
     const changes = S.replyMode === "changes", deny = S.replyMode === "deny", who = esc(M[it.from].name);
     const lbl = deny ? `Optional reason for ${who}…` : changes ? `What should ${who} change?` : `Reply to ${who}`;
     return `<div class="reply"><label class="sr-only" for="r-${it.id}">${lbl}</label><textarea id="r-${it.id}" rows="2" placeholder="${lbl}"></textarea>
-      <div class="actions"><button class="btn ${deny ? "outline" : "primary h4-cta"} sm" ${deny ? "" : 'data-cta-tone="reply"'} type="button" data-act="send-reply" data-id="${it.id}">${deny ? `${ic("deny", "ic16")}Confirm deny` : `<span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("send", "ic16")}</span><span>${changes ? "Send changes" : "Send reply"}</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("send", "ic16")}</span><span>${changes ? "Send it" : "Send & notify"}</span></span></span>`}</button><button class="btn ghost sm" type="button" data-act="cancel-reply" data-id="${it.id}">Cancel</button></div></div>`;
+      <div class="actions"><button class="btn ${deny ? "outline" : "primary h4-cta"} sm" ${deny ? "" : 'data-cta-tone="reply"'} type="button" data-act="send-reply" data-id="${it.id}">${deny ? `${ic("deny", "ic16")}Confirm deny` : `<span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("send", "ic16")}</span><span>${changes ? "Send changes" : "Send reply"}</span></span></span>`}</button><button class="btn ghost sm" type="button" data-act="cancel-reply" data-id="${it.id}">Cancel</button></div></div>`;
   }
   const b = [];
   const primaryBtn = (act, v, icon, label, tone = "win") => {
-    const hoverLbl = hoverWinCopy(it, label);
     const ico = icon ? `<span class="h4-cta-ico">${ic(icon, "ic16")}</span>` : "";
     return `<button class="btn primary sm h4-cta" data-cta-tone="${tone}" type="button" data-act="${act}" data-id="${it.id}"${v ? ` data-v="${esc(v)}"` : ""}>
       <span class="h4-cta-fill" aria-hidden="true"></span>
       <span class="h4-cta-sheen" aria-hidden="true"></span>
       <span class="h4-cta-inner">
-        <span class="h4-cta-lbl base">${ico}<span>${esc(label)}</span></span>
-        <span class="h4-cta-lbl hover" aria-hidden="true">${ico}<span>${esc(hoverLbl)}</span></span>
+        <span class="h4-cta-lbl">${ico}<span>${esc(label)}</span></span>
       </span>
     </button>`;
   };
@@ -2960,27 +2946,25 @@ function answerOrgQuestion(rawQ) {
   }
   const open = unhandled();
   const blocked = W.filter((w) => w.status === "Blocked");
-  const runs = A.filter((a) => a.type === "run");
+  const finishedRuns = A.filter((a) => a.type === "run" && /finished/.test(a.summary || ""));
   const in1 = IN.find((i) => i.id === "in1");
   const in5 = IN.find((i) => i.id === "in5");
   const in2 = IN.find((i) => i.id === "in2");
-  const in16 = IN.find((i) => i.id === "in16");
   const in17 = IN.find((i) => i.id === "in17");
   const v1Pending = [in1, in5].filter((i) => i && !i.handled);
   const spotLink = (id, label) => `<a href="#/inbox/${id}" data-act="spot-jump" data-id="${id}">${label}</a>`;
   if (/horizon|schedule|slip|pace|milestone|standard|promote|14 day|release/.test(t)) {
-    const lockTxt = in2 && !in2.handled ? `${spotLink("in2", "office file-sharing choice")} pending` : `file-sharing choice decided`;
+    const lockTxt = in2 && !in2.handled ? `${spotLink("in2", "file-access choice")} pending` : `file-access choice decided`;
     const polishTxt = in17 && !in17.handled ? `pending your ${spotLink("in17", "final design polish sign-off")}` : `final polish approved`;
     const v1Txt = v1Pending.length ? `waiting on ${plural(v1Pending.length, "sign-off", "sign-offs")} (${spotLink(v1Pending[0].id, "review now")})` : `all sign-offs cleared`;
-    const stdLi = in16 && !in16.handled ? `<li><strong>Company standard:</strong> ${spotLink("in16", "Adopt automatic timed file access")} across future projects.</li>` : "";
     return {
       q,
-      html: `Upcoming checkpoints over the next 14 days:<ul class="cmdk-ai-list"><li><strong>Nov 22 · Office sync test (v0.9):</strong> Build box office offline + ${lockTxt}.</li><li><strong>Nov 27 · Final screen polish (v1.1):</strong> 1 day ahead, ${polishTxt}.</li><li><strong>Dec 2 · Release freeze (v1.0):</strong> ${v1Txt}.</li>${stdLi}</ul>`
+      html: `Upcoming checkpoints over the next 14 days:<ul class="cmdk-ai-list"><li><strong>Nov 22 · Office sync test (v0.9):</strong> Build box office offline + ${lockTxt}.</li><li><strong>Nov 27 · Final screen polish (v1.1):</strong> 1 day ahead, ${polishTxt}.</li><li><strong>Dec 2 · Release freeze (v1.0):</strong> ${v1Txt}.</li></ul>`
     };
   }
   if (/block|slow|v1|ship|merge/.test(t)) {
     const plainBlocker = (b) => b.id === "T-118"
-      ? `${spotLink("in2", "office file-sharing choice")} for <a href="#/members/sage">Sage</a>`
+      ? `${spotLink("in2", "file-access choice")} for <a href="#/members/sage">Sage</a>`
       : b.id === "T-124"
         ? `${spotLink("in5", "local test access")} for <a href="#/members/jules">Jules</a>`
         : `<a href="#/projects/${b.proj}/work">${esc(b.title)}</a>`;
@@ -3001,19 +2985,19 @@ function answerOrgQuestion(rawQ) {
   if (/budget|spend|cost|\$|dollar|office|fleet|offline|jules|noor|health|pool|headroom|idle|spin|capacity/.test(t)) {
     return {
       q,
-      html: `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per completed task</strong> (-11%), with <strong>74% AI capacity free</strong>. <a href="#/members/jules">Jules</a> is paused at its monthly cap (<a href="#/settings/agents/jules">raise cap</a>). Team: <strong>11 agents</strong> (7 active · 3 idle: <a href="#/members/jules">Jules</a>, <a href="#/members/avery">Avery</a>, <a href="#/members/noor">Noor</a> · 1 offline: <a href="#/members/quinn">Quinn</a> on Build box).`
+      html: `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per completed task</strong> (-11%), with <strong>74% AI capacity available</strong>. <a href="#/members/jules">Jules</a> is paused at its monthly cap (<a href="#/settings/agents/jules">raise cap</a>). Team: <strong>11 agents</strong> (7 active · 3 idle: <a href="#/members/jules">Jules</a>, <a href="#/members/avery">Avery</a>, <a href="#/members/noor">Noor</a> · 1 offline: <a href="#/members/quinn">Quinn</a> on Build box office).`
     };
   }
   if (/run|overnight|happen|catch|digest|summary|activity|away/.test(t)) {
     return {
       q,
-      html: `In the last 4 hours: <strong>${runs.length} autonomous sessions</strong> completed. <a href="#/members/ada">Ada</a> &amp; <a href="#/members/maya">Maya</a> drafted v1.0 release notes &amp; onboarding; <a href="#/members/avery">Avery</a> shipped 2 UI polish tasks; <a href="#/members/sage">Sage</a> verified the auto-reconnect fix. <a href="#/activity">Open activity log</a>.`
+      html: `In the last 4 hours: <strong>${plural(finishedRuns.length, "autonomous session", "autonomous sessions")}</strong> completed. <a href="#/members/ada">Ada</a> &amp; <a href="#/members/maya">Maya</a> drafted v1.0 release notes &amp; onboarding; <a href="#/members/avery">Avery</a> shipped 2 UI polish tasks; <a href="#/members/sage">Sage</a> prepared the reconnect fix. <a href="#/activity">Open activity log</a>.`
     };
   }
-  if (/federation|sage|lock|satellite/.test(t)) {
+  if (/federation|sage|lock|satellite|access/.test(t)) {
     return {
       q,
-      html: `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box went offline after sleep (auto-reconnect fix is ready to <a href="#/inbox/in11">verify</a>)${in2 && !in2.handled ? `, and <a href="#/members/sage">Sage</a> is waiting on your <a href="#/inbox/in2">office lock choice</a> (Sage &amp; Rowan recommend the timed lease)` : `, and your office lock choice is locked in`}.`
+      html: `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box office went offline after sleep (reconnect fix is ready to <a href="#/inbox/in11">verify</a>)${in2 && !in2.handled ? `, and <a href="#/members/sage">Sage</a> is waiting on your ${spotLink("in2", "file-access choice")} (Sage &amp; Rowan recommend timed access)` : `, and your file-access choice is locked in`}.`
     };
   }
   if (/need|urgent|priority|first|inbox|ada|hire/.test(t)) {
@@ -3056,7 +3040,7 @@ function pageHome() {
     : st === "error"
       ? `${greet} Reconnecting to HQ office.`
       : st === "empty"
-        ? `${greet} <em class="calm">Ready to launch</em> your organization.`
+        ? `${greet} <em class="calm">Welcome</em> to Agentic Org.`
         : openUrgentCount
           ? `${greet} <em>${plural(openUrgentCount, "time-sensitive decision", "time-sensitive decisions")}</em> ${openUrgentCount === 1 ? "needs" : "need"} you.`
           : open.length
@@ -3135,7 +3119,7 @@ function pageHome() {
       <article class="hb-pillar" aria-labelledby="hb-pil-proj">
         <div class="hb-pillar-hd">
           <a class="hb-pillar-name" id="hb-pil-proj" href="#/work">${ic("check-circle", "ic14 c-green")}<span>Delivery</span></a>
-          <a class="hb-pillar-pill ${emptyMode ? "" : needsAttnProjs ? (offTrackProjs && !atRiskProjs ? "bad" : "warn") : "ok"}" href="#/projects">${emptyMode ? "No deliveries yet" : !needsAttnProjs ? "All on track" : offTrackProjs && !atRiskProjs ? `${offTrackProjs} off track` : `${needsAttnProjs} need attention`}</a>
+          <a class="hb-pillar-pill ${emptyMode ? "" : needsAttnProjs ? (offTrackProjs && !atRiskProjs ? "bad" : "warn") : "ok"}" href="#/projects">${emptyMode ? "No deliveries yet" : !needsAttnProjs ? "All on track" : offTrackProjs && !atRiskProjs ? `${plural(offTrackProjs, "project", "projects")} off track` : `${plural(needsAttnProjs, "project", "projects")} behind`}</a>
         </div>
         <div class="hb-pillar-hero" title="Percentage of completed tasks approved on the first try without revisions (last 7 days)">
           <div class="hb-pillar-valrow">
@@ -3172,13 +3156,13 @@ function pageHome() {
           <span class="hb-cleared-ring is-error">${ic("offline", "ic20")}</span>
           <h2>Couldn't reach HQ office</h2>
           <p>Your files and work are safe. We'll reconnect automatically, or you can retry now.</p>
+          <span class="hb-err-meta">${ic("office", "ic14")}<span>HQ runs on This Mac · Last connected 2m ago</span></span>
           <div class="hb-cleared-acts">
             <button class="btn primary sm h4-cta" data-cta-tone="reply" type="button" data-act="set" data-k="homeState" data-v="filled">
               <span class="h4-cta-fill" aria-hidden="true"></span>
               <span class="h4-cta-sheen" aria-hidden="true"></span>
               <span class="h4-cta-inner">
-                <span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("refresh", "ic16")}</span><span>Try again</span></span>
-                <span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("refresh", "ic16")}</span><span>Reconnect now</span></span>
+                <span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("refresh", "ic16")}</span><span>Try again</span></span>
               </span>
             </button>
             <a class="btn ghost sm" href="#/settings/offices">Check offices${ic("chev-right", "ic14")}</a>
@@ -3191,16 +3175,16 @@ function pageHome() {
       return `<section class="hb-spot is-done${isFreshEmpty ? " is-centered" : ""}" aria-label="${isFreshEmpty ? "Get started" : "Decision spotlight"}">
         <div class="hb-cleared">
           <span class="hb-cleared-ring">${ic(isFreshEmpty ? "sparkle" : "check-circle", "ic20")}</span>
-          <h2>${allQueueCleared ? "Priority spotlight cleared" : isFreshEmpty ? "Your organization is ready" : "Nothing needs your decision"}</h2>
+          <h2>${allQueueCleared ? "Priority spotlight cleared" : isFreshEmpty ? "Launch your organization" : "Nothing needs your decision"}</h2>
           <p>${allQueueCleared
             ? (open.length ? `You cleared all ${queue.length} spotlight items. ${plural(open.length, "more item", "more items")} still waiting in Inbox.` : "Everything waiting on you is handled. Your agents have what they need to keep moving.")
             : isFreshEmpty
-              ? "Start by creating your first project or hiring your first autonomous agent. Approvals, questions, and progress updates will show up right here."
+              ? "Create your first project or hire an autonomous agent. Approvals, updates, and executive metrics will appear here automatically."
               : "When an agent needs an approval, decision, or answer, it appears right here."}</p>
           <div class="hb-cleared-acts">
-            ${isFreshEmpty ? `<button class="btn primary sm h4-cta" data-cta-tone="win" type="button" data-act="proto" data-v="Create project"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>Create first project</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("sparkle", "ic16")}</span><span>Start project</span></span></span></button>
+            ${isFreshEmpty ? `<button class="btn primary sm h4-cta" data-cta-tone="win" type="button" data-act="proto" data-v="Create project"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>Create first project</span></span></span></button>
             <button class="btn outline sm" type="button" data-act="proto" data-v="Hire an agent">${ic("user-plus", "ic16")}Hire first agent</button>` : ""}
-            ${!isFreshEmpty && open.length ? `<a class="btn primary sm h4-cta" href="#/inbox"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span>Open Inbox (${open.length})</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span>Continue in Inbox →</span></span></span></a>` : ""}
+            ${!isFreshEmpty && open.length ? `<a class="btn primary sm h4-cta" href="#/inbox"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl"><span>Open Inbox (${open.length})</span></span></span></a>` : ""}
             ${allQueueCleared ? `<button class="btn ghost sm" type="button" data-act="v4-acc" data-id="spot-review">Review handled</button>` : ""}
           </div>
         </div>
@@ -3331,6 +3315,9 @@ function pageHome() {
     let unblockHref = pr.unblockHref || `#/projects/${p}`;
     let unblockSpotId = pr.unblockSpotId || "";
     let clearNote = pr.clearNote || "All checks passing · on schedule";
+    let blockerTone = pr.paceTone === "warn" ? "warn" : "";
+    let blockerIco = "warn";
+    let blockerIcoCls = pr.paceTone === "warn" ? "c-amber" : "c-red";
     if (p === "agency-v1") {
       const pending = ["in1", "in5"].map((id) => IN.find((i) => i.id === id)).filter((i) => i && !i.handled);
       if (pending.length === 2) {
@@ -3355,6 +3342,17 @@ function pageHome() {
         unblockSpotId = "";
         unblockHref = "#/settings/offices";
       }
+    } else if (p === "look-feel") {
+      const in17 = IN.find((i) => i.id === "in17");
+      if (in17 && !in17.handled) {
+        blockerText = "1d ahead · final design polish ready for sign-off";
+        blockerTone = "sky";
+        blockerIco = "sparkle";
+        blockerIcoCls = "c-indigo";
+        unblockLabel = "Sign off";
+        unblockSpotId = "in17";
+        unblockHref = "#/inbox/in17";
+      }
     }
     const canSpotJump = !!(unblockSpotId && queue.some((q) => q.id === unblockSpotId && !q.handled));
     const unblockEl = canSpotJump
@@ -3376,8 +3374,8 @@ function pageHome() {
         </div>
         <div class="h4-bar ${healthTone}" role="progressbar" aria-label="${esc(pr.name)} progress" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><span style="width:${pct}%"></span></div>
       </div>
-      ${blockerText ? `<div class="hb-blocker ${pr.paceTone === "warn" ? "warn" : ""}">
-        <span class="hb-blocker-txt">${ic("warn", "ic14 " + (pr.paceTone === "warn" ? "c-amber" : "c-red"))}<span>${esc(blockerText)}</span></span>
+      ${blockerText ? `<div class="hb-blocker ${blockerTone}">
+        <span class="hb-blocker-txt">${ic(blockerIco, "ic14 " + blockerIcoCls)}<span>${esc(blockerText)}</span></span>
         ${unblockEl}
       </div>` : `<div class="hb-blocker ok">
         <span class="hb-blocker-txt">${ic("check-circle", "ic14 c-green")}<span>${esc(clearNote)}</span></span>
@@ -3407,7 +3405,7 @@ function pageHome() {
         month: "Nov", day: "27", title: "Final screen polish", rel: "v1.1",
         note: "Eden · Look & feel refresh",
         status: in17 && !in17.handled ? "Sign-off" : "Approved",
-        tone: "ok",
+        tone: in17 && !in17.handled ? "sky" : "ok",
         spotId: in17 && !in17.handled ? "in17" : "",
         href: in17 && !in17.handled ? "#/inbox/in17" : "#/projects/look-feel"
       },
@@ -3453,19 +3451,23 @@ function pageHome() {
           <span class="h4-cta-fill" aria-hidden="true"></span>
           <span class="h4-cta-sheen" aria-hidden="true"></span>
           <span class="h4-cta-inner">
-            <span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>New task</span></span>
-            <span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("sparkle", "ic16")}</span><span>Launch task</span></span>
+            <span class="h4-cta-lbl"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>New task</span></span>
           </span>
         </button>
       </div>` : ""}
     </header>
 
+    ${st === "empty" ? `
+    <div class="hb-stage is-single">
+      ${renderSpotlight()}
+    </div>
+    ${renderMetrics()}` : `
     ${renderMetrics()}
 
-    <div class="hb-stage${st === "error" || st === "empty" ? " is-single" : ""}">
+    <div class="hb-stage${st === "error" ? " is-single" : ""}">
       ${renderSpotlight()}
       ${renderCatchupPanel()}
-    </div>
+    </div>`}
 
     ${st === "error" || st === "empty" ? "" : `<section class="hb-proj-sec" aria-labelledby="hb-projs-h">
       <div class="hb-proj-head">
@@ -3513,8 +3515,11 @@ function pageHome() {
         <div class="hb-time-foot">
           <p class="hb-time-note">${esc(constraint)}</p>
           <div class="hb-time-acts">
-            <a class="hb-inline-act" href="#/settings/offices">Check Build box office${ic("chev-right", "ic14")}</a>
-            <a class="hb-inline-act" href="#/teams/members">Review ${idleSpecsN} idle agents${ic("chev-right", "ic14")}</a>
+            ${queuedPct >= 40
+              ? `<a class="hb-inline-act" href="#/settings/offices">Check Build box office${ic("chev-right", "ic14")}</a><a class="hb-inline-act" href="#/teams/members">Review ${idleSpecsN} idle agents${ic("chev-right", "ic14")}</a>`
+              : humanPct >= 25
+                ? `<a class="hb-inline-act" href="#/inbox">Review pending decisions${ic("chev-right", "ic14")}</a>`
+                : `<a class="hb-inline-act" href="#/activity">Open activity log${ic("chev-right", "ic14")}</a>`}
           </div>
         </div>
       </section>`;
@@ -4986,7 +4991,7 @@ function renderNav(route) {
           </li>`;
         }).join("") : `<li class="nav-fav-empty">No favorite projects yet.</li>`}
       </ul>` : ""}
-      <ul class="nav-list" role="list">
+      <ul class="nav-list nav-all-projs" role="list">
         ${item("#/projects", "All projects", "folder", r0 === "projects" && !r1)}
       </ul>
     </li>
@@ -5139,7 +5144,7 @@ function askInCmdk(rawQ) {
   if (ans) {
     ans._state = S.homeState;
     CMDK.aiAns = ans;
-    CMDK.aiHistory = [ans, ...CMDK.aiHistory.filter((x) => x.q.toLowerCase() !== ans.q.toLowerCase())].slice(0, 3);
+    CMDK.aiHistory = [ans, ...CMDK.aiHistory.filter((x) => x.q.toLowerCase() !== ans.q.toLowerCase())];
   }
   CMDK.q = "";
   const inp = document.getElementById("cmdk-input");
@@ -5225,8 +5230,8 @@ function renderCmdk() {
     const askedSet = new Set(CMDK.aiHistory.map((x) => x.q.trim().toLowerCase()));
     const starters = S.homeState === "empty" ? CMDK_AI_STARTERS_EMPTY : CMDK_AI_STARTERS;
     const chips = starters.filter((s) => !askedSet.has(s.q.trim().toLowerCase()));
-    const chipsHtml = chips.length ? `<div class="cmdk-grp">${CMDK.aiHistory.length ? "Ask a follow-up" : "Suggested executive questions"}</div>
-      <div class="cmdk-ai-chips">${chips.map((s) => `<button type="button" class="cmdk-ai-chip" data-act="cmdk-ai-ask" data-v="${esc(s.q)}">${ic("sparkle", "ic14")}<span>${esc(s.q)}</span></button>`).join("")}</div>` : "";
+    const chipsHtml = chips.length ? `<div class="cmdk-ai-follow"><div class="cmdk-grp">${CMDK.aiHistory.length ? "Ask a follow-up" : "Suggested executive questions"}</div>
+      <div class="cmdk-ai-chips">${chips.map((s) => `<button type="button" class="cmdk-ai-chip" data-act="cmdk-ai-ask" data-v="${esc(s.q)}">${ic("sparkle", "ic14")}<span>${esc(s.q)}</span></button>`).join("")}</div></div>` : "";
     list.innerHTML = `<div class="cmdk-ai-pane">${ansHtml}${chipsHtml}</div>`;
     if (inp) inp.removeAttribute("aria-activedescendant");
     return;
