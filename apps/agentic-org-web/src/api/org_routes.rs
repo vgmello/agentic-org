@@ -20,7 +20,7 @@ use org_proto::web::{
 
 use super::{
     bad_input, failure, invalid, mutation, not_found, result, signed_out, unavailable, Call,
-    PresentedPair, Route, SessionApi,
+    CallerAuth, Route, SessionApi,
 };
 use crate::{
     host::Failure,
@@ -46,7 +46,7 @@ fn route_projects(
     let is_get = matches!(request.method, Method::GET | Method::HEAD);
     match tail {
         [] if is_get => {
-            let pair = api.pair(request)?;
+            let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
             let include_archived = match request.uri.query() {
                 None | Some("include_archived=false") => false,
@@ -56,7 +56,7 @@ fn route_projects(
             Ok(Route::OrgProjects(pair, org.to_owned(), include_archived))
         }
         [] if post => {
-            let pair = api.pair(request)?;
+            let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
             Ok(Route::OrgProjectCreate(pair, org.to_owned()))
         }
@@ -64,7 +64,7 @@ fn route_projects(
             if query || matches!(*project, "add-team" | "remove-team") {
                 return Err(invalid());
             }
-            let pair = api.pair(request)?;
+            let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
             if project.is_empty() || project.len() > 128 {
                 return Err(invalid());
@@ -79,7 +79,7 @@ fn route_projects(
             let Some(op) = route_org_action("projects", action) else {
                 return Err(not_found());
             };
-            let pair = api.pair(request)?;
+            let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
             Ok(Route::OrgMutation(pair, org.to_owned(), op))
         }
@@ -102,23 +102,23 @@ pub(super) fn route_organization(
     }
     Ok(match tail {
         ["snapshot"] if get => {
-            let pair = api.pair(request)?;
+            let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
             Route::OrgSnapshot(pair, org.to_owned())
         }
         ["offices"] if get => {
-            let pair = api.pair(request)?;
+            let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
             Route::OrgOffices(pair, org.to_owned())
         }
         ["offices", office, "restart"] if post => {
-            let pair = api.pair(request)?;
+            let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
             valid_org_id(office)?;
             Route::OfficeRestart(pair, org.to_owned(), (*office).to_owned())
         }
         ["teams"] if post => {
-            let pair = api.pair(request)?;
+            let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
             Route::OrgMutation(pair, org.to_owned(), OrgOperation::TeamCreate)
         }
@@ -126,7 +126,7 @@ pub(super) fn route_organization(
             let Some(op) = route_org_action(resource, action) else {
                 return Err(not_found());
             };
-            let pair = api.pair(request)?;
+            let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
             Route::OrgMutation(pair, org.to_owned(), op)
         }
@@ -144,7 +144,7 @@ pub(super) fn route_organization(
 
 pub(super) fn prepare_project_create(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org: String,
     bytes: &[u8],
 ) -> Result<PreparedCall<Call>, ApiReply> {
@@ -173,7 +173,7 @@ pub(super) fn prepare_project_create(
 
 pub(super) fn prepare_office_restart(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org: String,
     office: String,
     bytes: &[u8],
@@ -293,7 +293,7 @@ fn classify_stored_outcome(op_id: OperationId, outcome: org_proto::OperationOutc
 
 pub(super) async fn execute_org_snapshot(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org_id: &str,
 ) -> ApiReply {
     let mut office_id = match resolve_hq_office(api, pair, org_id).await {
@@ -338,7 +338,7 @@ pub(super) async fn execute_org_snapshot(
 
 pub(super) async fn execute_org_mutation(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org_id: &str,
     command: OrgMutation,
 ) -> ApiReply {
@@ -372,7 +372,7 @@ pub(super) async fn execute_org_mutation(
 
 pub(super) async fn execute_projects_list(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org_id: &str,
     include_archived: bool,
 ) -> ApiReply {
@@ -411,7 +411,7 @@ pub(super) async fn execute_projects_list(
 
 pub(super) async fn execute_project_inspect(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org_id: &str,
     project_ref: &str,
 ) -> ApiReply {
@@ -447,7 +447,7 @@ pub(super) async fn execute_project_inspect(
 
 pub(super) async fn execute_project_create(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org_id: &str,
     op_id: OperationId,
     params: org_proto::projects::ProjectCreateWebParams,
@@ -520,7 +520,7 @@ async fn dispatch_project_create(
 
 pub(super) async fn execute_org_operation(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org_id: &str,
     op_id: OperationId,
 ) -> ApiReply {
@@ -558,7 +558,7 @@ pub(super) async fn execute_org_operation(
 
 async fn resolve_hq_office(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org_id: &str,
 ) -> Result<String, Failure> {
     api.validate_async(pair).await?;
@@ -573,7 +573,7 @@ async fn resolve_hq_office(
 
 async fn revalidate_and_resolve_hq(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org_id: &str,
 ) -> Result<String, Failure> {
     api.revalidate_session_async(pair).await?;
@@ -669,7 +669,7 @@ fn finish_named_org_mutation(
 
 pub(super) async fn execute_org_offices(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org_id: &str,
 ) -> ApiReply {
     if let Err(error) = api.validate_async(pair).await {
@@ -712,7 +712,7 @@ fn office_restart_error(host: WebError) -> WebError {
 
 pub(super) async fn execute_office_restart(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     org_id: &str,
     office_id: &str,
     op_id: OperationId,
@@ -790,7 +790,7 @@ pub(super) async fn execute_office_restart(
 
 pub(super) async fn execute_cli_approval_decide(
     api: &SessionApi,
-    pair: PresentedPair,
+    pair: CallerAuth,
     link: LinkToken,
     approve: bool,
 ) -> ApiReply {

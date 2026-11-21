@@ -37,6 +37,32 @@ view_enum!(CancelState {
     InProgress
 });
 
+fn default_auth_enabled() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+/// Public, unauthenticated bootstrap access view (`GET /api/v1/access`, ADR-0033 / ADR-0034).
+/// Tells the browser whether authentication is currently enabled and which listen scheme is active.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccessView {
+    pub auth_enabled: bool,
+    pub listen_scheme: ListenScheme,
+}
+
+/// Result of opt-in HTTPS enablement or live certificate replacement (`POST /api/v1/instance/tls`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TlsEnableResult {
+    pub scheme: ListenScheme,
+    pub origin: String,
+    pub fingerprint: String,
+    pub source: String,
+    pub restart_required: bool,
+}
+
 /// The minimum protected instance status. No paths, sockets, keys or certificate material.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstanceView {
@@ -45,6 +71,10 @@ pub struct InstanceView {
     pub server_version: String,
     pub web_status: WebStatus,
     pub listen_scheme: ListenScheme,
+    /// Whether password/session authentication is enforced (`false` in default local HTTP mode).
+    /// Omitted when `true` to stay wire-compatible with frozen v2 `InstanceView` vectors.
+    #[serde(default = "default_auth_enabled", skip_serializing_if = "is_true")]
+    pub auth_enabled: bool,
     /// Absent until the instance serves TLS; never certificate material.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tls: Option<TlsStatus>,

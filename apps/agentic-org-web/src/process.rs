@@ -26,7 +26,10 @@ use std::{
         unix::net::{UnixDatagram, UnixStream},
     },
     path::Path,
-    sync::{mpsc, Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex, OnceLock,
+    },
     time::{Duration, Instant},
 };
 use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
@@ -276,17 +279,32 @@ fn watch_stdin(mut input: impl Read + Send + 'static, host: Arc<HostControl>) ->
         .map(drop)
 }
 
-/// Applies the host's `session.ended` and `account.changed` pushes to the cache on the
-/// reader thread.
+/// Applies the host's `session.ended`, `account.changed`, and `auth.mode_changed`
+/// pushes on the reader thread.
 /// No session request precedes serving, so the generation is set before any
 /// event can name a cached session; an event before then has nothing to drop.
+#[cfg(test)]
 pub(crate) fn session_events(
     cache: Arc<SessionCache>,
     generation: Arc<OnceLock<u64>>,
 ) -> EventSink {
-    use org_host_control::browser::{SessionEnded, SESSION_ENDED};
+    session_events_with_access(cache, generation, Arc::new(AtomicBool::new(true)))
+}
+
+pub(crate) fn session_events_with_access(
+    cache: Arc<SessionCache>,
+    generation: Arc<OnceLock<u64>>,
+    auth_enabled: Arc<AtomicBool>,
+) -> EventSink {
+    use org_host_control::browser::{AuthModeChanged, SessionEnded, SESSION_ENDED};
     use org_host_control::organization::AccountChangedData;
     Arc::new(move |name: &str, data: &serde_json::Value| {
+        if name == org_host_control::event::AUTH_MODE_CHANGED {
+            if let Ok(changed) = serde_json::from_value::<AuthModeChanged>(data.clone()) {
+                auth_enabled.store(changed.auth_enabled, Ordering::Release);
+            }
+            return;
+        }
         // An organization was linked: the account's cached sessions predate it.
         if name == org_host_control::event::ACCOUNT_CHANGED {
             if let (Some(generation), Ok(changed)) = (
@@ -481,9 +499,14 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     let cache = Arc::new(SessionCache::default());
     let hub = EventHub::default();
     let generation = Arc::new(OnceLock::new());
+    let auth_enabled = Arc::new(AtomicBool::new(true));
     let (renewed, renewals) = mpsc::channel();
     let events_hub = hub.clone();
-    let session_sink = session_events(Arc::clone(&cache), Arc::clone(&generation));
+    let session_sink = session_events_with_access(
+        Arc::clone(&cache),
+        Arc::clone(&generation),
+        Arc::clone(&auth_enabled),
+    );
     let combined_sink: EventSink = Arc::new(move |name: &str, data: &serde_json::Value| {
         session_sink(name, data);
         events_hub.observe_host_event(name, data);
@@ -498,6 +521,13 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     let _ = generation.set(host.generation());
     let fetched = host.fetch_listener().map_err(|_| failure())?;
     let scheme = fetched.listen().ok_or_else(failure)?.0;
+    if scheme != org_host_control::listen::ListenMode::Https {
+        if let Ok(view) =
+            host.request::<org_host_control::browser::InstanceView>(&Default::default())
+        {
+            auth_enabled.store(view.auth_enabled, Ordering::Release);
+        }
+    }
     let (mode, origin, hsts) = match fetched {
         TlsFetchResult::HttpLoopback { origin, hsts } => (ListenMode::HttpLoopback, origin, hsts),
         TlsFetchResult::HttpPublished { origin, hsts } => (ListenMode::HttpPublished, origin, hsts),
@@ -546,8 +576,14 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         config,
         files,
         move || {
-            let backend =
-                SessionApi::with_hub(Arc::clone(&host), cache, &browser_origin, scheme, hub);
+            let backend = SessionApi::with_access(
+                Arc::clone(&host),
+                cache,
+                &browser_origin,
+                scheme,
+                hub,
+                auth_enabled,
+            );
             Ok((backend, host_lost(host)))
         },
         serving,

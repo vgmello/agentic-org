@@ -45,6 +45,7 @@ use std::{
 
 mod browser_sessions;
 mod cli_and_custody;
+mod local_onboarding_and_tls;
 mod organizations;
 mod recovery_custody;
 
@@ -222,6 +223,8 @@ pub(super) enum Seed {
     Administrator,
     /// No account; one pending registration link, as `admin.link.initial` leaves it.
     RegistrationLink,
+    /// Fresh local HTTP instance with zero accounts and zero links (ADR-0034 default authless mode).
+    LocalAuthless,
 }
 
 /// Opens the fixture instance under `base`, runs `create` (first start only) with its
@@ -305,6 +308,7 @@ fn start_registered_host(
                     .expect("the first registration link");
                 link = Some(issued.token.encode().to_string());
             }
+            Seed::LocalAuthless => {}
         }
     });
     (host, socket, link)

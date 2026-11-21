@@ -883,3 +883,79 @@ fn cli_approval_wire_shapes_round_trip_and_redact_secrets() {
     .unwrap();
     assert!(!format!("{decide:?}").contains("secret-approval-tok"));
 }
+
+#[test]
+fn local_access_and_tls_enable_wire_shapes_round_trip_and_redact_secrets() {
+    use crate::browser::{
+        AuthModeChanged, BrowserAuthEnable, BrowserAuthEnableParams, BrowserLocalSession,
+        BrowserLocalSessionParams, BrowserOrigin, BrowserTlsEnable, BrowserTlsEnableParams,
+        BrowserTlsEnableResult, Digest32, TlsEnableMode,
+    };
+    use crate::listen::Hsts;
+    use crate::organization::BrowserAuth;
+    use org_proto::web::ListenScheme;
+
+    assert_eq!(BrowserLocalSession::METHOD, "browser.local_session");
+    assert_eq!(BrowserAuthEnable::METHOD, "browser.auth_enable");
+    assert_eq!(BrowserTlsEnable::METHOD, "browser.tls_enable");
+    assert_eq!(crate::event::AUTH_MODE_CHANGED, "auth.mode_changed");
+
+    let origin = BrowserOrigin {
+        scheme: "http".into(),
+        host: "127.0.0.1".into(),
+        port: 8080,
+    };
+    let local = BrowserLocalSessionParams {
+        origin: origin.clone(),
+    };
+    let local_json = serde_json::to_value(&local).unwrap();
+    let _: BrowserLocalSessionParams = serde_json::from_value(local_json).unwrap();
+
+    let auth_enable = BrowserAuthEnableParams {
+        login: "Owner".into(),
+        password: Password::new("super-secret-pass".into()).unwrap(),
+        client_address: "127.0.0.1".parse().unwrap(),
+        cookie_digest: Digest32([0xaa; 32]),
+        proof_digest: Digest32([0xbb; 32]),
+        origin: origin.clone(),
+    };
+    assert!(!format!("{auth_enable:?}").contains("super-secret-pass"));
+    let auth_json = serde_json::to_value(&auth_enable).unwrap();
+    let _: BrowserAuthEnableParams = serde_json::from_value(auth_json).unwrap();
+
+    let tls_supplied = BrowserTlsEnableParams {
+        auth: BrowserAuth::local_authless(origin.clone()),
+        mode: TlsEnableMode::Supplied {
+            cert: "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----".into(),
+            key: TlsPrivateKey::new("PRIVATE-KEY-SECRET-BYTES".into()).unwrap(),
+        },
+        hsts: Some(Hsts::On),
+    };
+    let debug = format!("{tls_supplied:?}");
+    assert!(!debug.contains("PRIVATE-KEY-SECRET-BYTES"));
+    assert!(!debug.contains("BEGIN CERTIFICATE"));
+    let tls_json = serde_json::to_value(&tls_supplied).unwrap();
+    assert_eq!(tls_json["auth"]["local_authless"], true);
+    assert_eq!(tls_json["mode"]["mode"], "supplied");
+    let _: BrowserTlsEnableParams = serde_json::from_value(tls_json).unwrap();
+
+    let tls_result = BrowserTlsEnableResult {
+        scheme: ListenScheme::Https,
+        origin: "https://127.0.0.1:8080".into(),
+        fingerprint: "sha256:00".into(),
+        source: "self_signed".into(),
+        restart_required: true,
+    };
+    let res_json = serde_json::to_value(&tls_result).unwrap();
+    assert_eq!(
+        serde_json::from_value::<BrowserTlsEnableResult>(res_json).unwrap(),
+        tls_result
+    );
+
+    let changed = AuthModeChanged { auth_enabled: true };
+    let ev_json = serde_json::to_value(&changed).unwrap();
+    assert_eq!(
+        serde_json::from_value::<AuthModeChanged>(ev_json).unwrap(),
+        changed
+    );
+}

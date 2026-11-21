@@ -24,6 +24,9 @@ impl HostDb {
         let Some((account_id, phc)) = row else {
             return Ok(None);
         };
+        if phc == super::local_auth::LOCAL_AUTHLESS_VERIFIER {
+            return Ok(None);
+        }
         let verifier = Verifier::new(phc)?;
         let account_id = AccountId::parse(&account_id).map_err(|_| Error::Unsafe)?;
         let account = read(&tx, &account_id)?.ok_or(Error::Unsafe)?;

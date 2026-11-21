@@ -92,6 +92,7 @@ fn refused_web_start_never_becomes_ready() {
             critical_paths: vec![],
             release: None,
             tls: None,
+            on_renewal_kept: None,
         },
         None,
         Arc::new(NoOps),
@@ -138,6 +139,7 @@ fn an_admission_refusal_inside_start_keeps_its_cause() {
         critical_paths: vec![],
         release: None,
         tls: None,
+        on_renewal_kept: None,
     };
     let Err(error) = start(&config, Arc::new(NoOps)) else {
         panic!("a release build without a team or a selected release never spawns")
@@ -781,6 +783,7 @@ fn scripted_config(
         critical_paths: vec![],
         release: None,
         tls: None,
+        on_renewal_kept: None,
     };
     (dir, config)
 }
@@ -1002,7 +1005,7 @@ fn a_running_request_never_keeps_the_web_process_alive() {
             description: "nothing: a test's own child".to_owned(),
             landlock_missing: false,
         },
-        captured: Stderr::capture(spawned.stderr, "stderr-held-request-test").unwrap(),
+        captured: Stderr::capture(spawned.stderr, "stderr-held-request-test", None).unwrap(),
     };
     let hello = org_proto::Request::new::<org_host_control::Hello>(1, &Default::default());
     org_proto::frame::write_message(&mut peer, &hello.unwrap()).unwrap();
@@ -1217,6 +1220,7 @@ fn the_supervisor_refuses_an_https_listener_without_a_stored_pair() {
             critical_paths: vec![],
             release: None,
             tls: None,
+            on_renewal_kept: None,
         },
         None,
         Arc::new(NoOps),
@@ -1320,6 +1324,7 @@ fn startable(dir: &Path) -> Configuration {
         critical_paths: vec![],
         release: None,
         tls: None,
+        on_renewal_kept: None,
     }
 }
 
@@ -1780,7 +1785,7 @@ fn running_ended_reads_the_refusal_the_reaped_child_and_the_control_eof() {
                 description: "nothing: a test's own child".to_owned(),
                 landlock_missing: false,
             },
-            captured: Stderr::capture(spawned.stderr, "stderr-unit-test").unwrap(),
+            captured: Stderr::capture(spawned.stderr, "stderr-unit-test", None).unwrap(),
         };
         (running, io::BufReader::new(peer))
     };
@@ -1937,6 +1942,7 @@ fn unchecked(dir: &Path, program: PathBuf) -> Configuration {
         critical_paths: vec![],
         release: None,
         tls: None,
+        on_renewal_kept: None,
     }
 }
 
@@ -2252,13 +2258,18 @@ fn a_refusal_line_is_found_only_whole_printable_and_bounded() {
 fn only_the_start_of_a_childs_standard_error_is_kept() {
     let reason = "kept";
     let early = format!("{REFUSAL_PREFIX}{reason}\n{}", "x".repeat(100_000));
-    let captured =
-        Stderr::capture(io::Cursor::new(early.into_bytes()), "stderr-unit-test").unwrap();
+    let captured = Stderr::capture(
+        io::Cursor::new(early.into_bytes()),
+        "stderr-unit-test",
+        None,
+    )
+    .unwrap();
     assert!(matches!(captured.ending(WAIT), Ending::Refused(found) if found == reason));
     assert_eq!(lock(&captured.kept).0.len(), STDERR_KEPT);
     // A refusal line after the kept bytes is not seen, and nothing whole was kept.
     let late = format!("{}\n{REFUSAL_PREFIX}{reason}\n", "x".repeat(STDERR_KEPT));
-    let captured = Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test").unwrap();
+    let captured =
+        Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test", None).unwrap();
     assert!(matches!(captured.ending(WAIT), Ending::Silent));
     assert!(lock(&captured.kept).1, "read to its end");
 }
@@ -2272,6 +2283,7 @@ fn a_child_that_ended_otherwise_is_reported_with_its_last_whole_line() {
         let captured = Stderr::capture(
             io::Cursor::new(text.as_bytes().to_vec()),
             "stderr-unit-test",
+            None,
         )
         .unwrap();
         match captured.ending(WAIT) {
@@ -2363,15 +2375,18 @@ fn the_reason_for_a_missing_landlock_layer_is_read_from_a_running_childs_standar
     let ended = Stderr::capture(
         io::Cursor::new(b"something else\n".to_vec()),
         "stderr-unit-test",
+        None,
     )
     .unwrap();
     let full = Stderr::capture(
         io::Cursor::new(vec![b'x'; 10 * STDERR_KEPT]),
         "stderr-unit-test",
+        None,
     )
     .unwrap();
     let late = format!("{}\n{line}\n", "x".repeat(STDERR_KEPT));
-    let late = Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test").unwrap();
+    let late =
+        Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test", None).unwrap();
     let asked = Instant::now();
     for captured in [ended, full, late] {
         assert_eq!(captured.landlock_not_applied(WAIT), None);
@@ -2418,7 +2433,7 @@ fn stepping(steps: &str) -> (Child, Arc<Stderr>, (fs::File, tempfile::TempDir)) 
         .unwrap()
         .spawn(&[OsStr::new("--serve")], &web_env(), &SPAWN_LOCK)
         .unwrap();
-    let captured = Stderr::capture(spawned.stderr, "stderr-unit-test").unwrap();
+    let captured = Stderr::capture(spawned.stderr, "stderr-unit-test", None).unwrap();
     (spawned.child, captured, (spawned.stdin, dir))
 }
 
@@ -2598,6 +2613,7 @@ fn real_web() -> RealWeb {
             critical_paths: vec![root.join("critical")],
             release: None,
             tls: None,
+            on_renewal_kept: None,
         },
         handler,
         offices,
@@ -2915,4 +2931,27 @@ fn a_kept_renewal_line_is_found_across_reads_and_only_for_known_reasons() {
     let many = format!("{RENEWAL_KEPT_PREFIX}fetch_failed\n").repeat(40);
     assert_eq!(kept.read(many.as_bytes()).len(), RENEWAL_KEPT_LOGGED - 2);
     assert!(renewal_kept_text("fetch_failed").contains("fetch_failed"));
+}
+
+#[test]
+fn stderr_capture_triggers_retry_only_for_transient_renewal_failures() {
+    use std::sync::{Arc, Mutex};
+    let seen = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+    let cb_seen = Arc::clone(&seen);
+    let input = format!(
+        "{RENEWAL_KEPT_PREFIX}fetch_failed\n\
+         {RENEWAL_KEPT_PREFIX}unusable_pair\n\
+         {RENEWAL_KEPT_PREFIX}unavailable\n\
+         {RENEWAL_KEPT_PREFIX}replace_failed\n"
+    );
+    let captured = Stderr::capture(
+        std::io::Cursor::new(input.into_bytes()),
+        "retry-test-instance",
+        Some(Arc::new(move |reason| {
+            cb_seen.lock().unwrap().push(reason);
+        })),
+    )
+    .unwrap();
+    let _ = captured.ending(Duration::from_secs(5));
+    assert_eq!(*seen.lock().unwrap(), vec!["fetch_failed", "unavailable"]);
 }

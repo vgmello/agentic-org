@@ -8,6 +8,7 @@ mod administrator;
 mod clock;
 pub(crate) mod journal;
 pub(crate) mod links;
+pub(crate) mod local_auth;
 pub(crate) mod lockout;
 pub(crate) mod provisioning;
 pub(crate) mod recovery;

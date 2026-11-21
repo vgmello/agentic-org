@@ -1698,3 +1698,353 @@ fn cli_approval_decide_requires_browser_session_and_maps_host_decisions() {
     assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.body);
     assert_eq!(missing.body["error"]["code"], "not_found");
 }
+
+fn gateway_with_auth_enabled(
+    script: Arc<Script>,
+    mode: org_host_control::listen::ListenMode,
+    initial_auth_enabled: bool,
+) -> (WebService<SessionApi>, Calls) {
+    let (web, peer) = UnixStream::pair().unwrap();
+    let calls = Calls::default();
+    let seen = calls.clone();
+    std::thread::spawn(move || {
+        let mut reader = io::BufReader::new(peer);
+        while let Ok(Some(request)) = org_proto::frame::read_message::<Value>(&mut reader) {
+            let method = request["method"].as_str().unwrap_or_default().to_owned();
+            let frames = if method == "hello" {
+                let result =
+                    org_proto::HelloResult::host("test", "disposable").with_instance_id(INSTANCE);
+                vec![json!({"result": result})]
+            } else {
+                seen.0
+                    .lock()
+                    .unwrap()
+                    .push((method.clone(), request["params"].clone()));
+                script(&method, &request["params"])
+            };
+            for mut frame in frames {
+                if frame.get("event").is_none() {
+                    frame["id"] = request["id"].clone();
+                }
+                if org_proto::frame::write_message(reader.get_mut(), &frame).is_err() {
+                    return;
+                }
+            }
+        }
+    });
+    let cache = Arc::new(SessionCache::default());
+    let sink_cache = Arc::clone(&cache);
+    let generation = Arc::new(std::sync::OnceLock::<u64>::new());
+    let sink_generation = Arc::clone(&generation);
+    let auth_enabled = Arc::new(AtomicBool::new(initial_auth_enabled));
+    let sink_auth = Arc::clone(&auth_enabled);
+    let host = HostControl::from_handoff(
+        web.into(),
+        UnixDatagram::pair().unwrap().0.into(),
+        INSTANCE.into(),
+        Arc::new(|| panic!("unexpected ancillary failure")),
+        crate::process::session_events_with_access(sink_cache, sink_generation, sink_auth),
+    )
+    .unwrap();
+    generation.set(host.generation()).unwrap();
+    let origin = ListenOrigin::parse(ORIGIN).unwrap();
+    let files =
+        BuildFiles::from_files([("index.html".into(), b"<script>0</script>".to_vec())]).unwrap();
+    let api = SessionApi::with_access(
+        host,
+        cache,
+        &origin,
+        mode,
+        EventHub::default(),
+        auth_enabled,
+    );
+    let gateway = WebService::new(
+        StaticUi::new(files, origin.clone(), Hsts::Off),
+        api,
+        ApiLimits::default(),
+        RequestAdmission::new(origin),
+    )
+    .unwrap();
+    (gateway, calls)
+}
+
+#[test]
+fn local_authless_access_and_opt_in_auth_enable_flow() {
+    let enabled = Arc::new(AtomicBool::new(false));
+    let enabled_script = Arc::clone(&enabled);
+    let base = default_script();
+    let script: Arc<Script> = Arc::new(move |method, params| match method {
+        "browser.local_session" => {
+            if enabled_script.load(Ordering::Acquire) {
+                vec![json!({"error": {"code": "not_authorized", "message": "auth enabled"}})]
+            } else {
+                vec![json!({"result": record(1)})]
+            }
+        }
+        "browser.auth_enable" => {
+            if enabled_script.swap(true, Ordering::AcqRel) {
+                vec![json!({"error": {"code": "conflict", "message": "already enabled"}})]
+            } else {
+                assert!(params["cookie_digest"].is_string());
+                assert!(params["proof_digest"].is_string());
+                vec![
+                    json!({"event": "auth.mode_changed", "seq": 1, "data": {"auth_enabled": true}}),
+                    json!({"result": record(2)}),
+                ]
+            }
+        }
+        "organization.list" => {
+            if !enabled_script.load(Ordering::Acquire) {
+                assert_eq!(params["auth"]["local_authless"], true);
+            }
+            vec![json!({"result": {"organizations": [], "creating": []}})]
+        }
+        _ => base(method, params),
+    });
+
+    let (gateway, _calls) = gateway_with_auth_enabled(
+        script,
+        org_host_control::listen::ListenMode::HttpLoopback,
+        false,
+    );
+
+    // Public GET /api/v1/access reports auth_enabled: false.
+    let access = send(&gateway, Method::GET, "/api/v1/access", "", None, &[]);
+    assert_eq!(access.status, StatusCode::OK, "{}", access.body);
+    assert_eq!(access.body["result"]["auth_enabled"], false);
+    assert_eq!(access.body["result"]["listen_scheme"], "http_loopback");
+
+    // Unauthenticated GET /api/v1/session and GET /api/v1/organizations succeed in authless mode.
+    let session = send(&gateway, Method::GET, "/api/v1/session", "", None, &[]);
+    assert_eq!(session.status, StatusCode::OK, "{}", session.body);
+    assert_eq!(session.body["result"]["admin"], true);
+    let orgs = send(
+        &gateway,
+        Method::GET,
+        "/api/v1/organizations",
+        "",
+        None,
+        &[],
+    );
+    assert_eq!(orgs.status, StatusCode::OK, "{}", orgs.body);
+
+    // Opt-in enable auth establishes a browser pair and flips auth_enabled to true.
+    let enabled_reply = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/instance/auth/enable",
+        r#"{"login":"Owner","password":"long-valid-password-123"}"#,
+        None,
+        &[],
+    );
+    assert_eq!(
+        enabled_reply.status,
+        StatusCode::OK,
+        "{}",
+        enabled_reply.body
+    );
+    let pair = enabled_reply.pair();
+
+    let access_after = send(&gateway, Method::GET, "/api/v1/access", "", None, &[]);
+    assert_eq!(access_after.status, StatusCode::OK);
+    assert_eq!(access_after.body["result"]["auth_enabled"], true);
+
+    // Unauthenticated requests immediately fail 401; paired requests stay authorized.
+    let unauth_after = send(&gateway, Method::GET, "/api/v1/session", "", None, &[]);
+    assert_eq!(unauth_after.status, StatusCode::UNAUTHORIZED);
+    let authed_after = send(
+        &gateway,
+        Method::GET,
+        "/api/v1/session",
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(authed_after.status, StatusCode::OK);
+
+    // Calling auth/enable a second time when authenticated returns 409 Conflict.
+    let second = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/instance/auth/enable",
+        r#"{"login":"Owner2","password":"long-valid-password-123"}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(second.status, StatusCode::CONFLICT, "{}", second.body);
+
+    // Forged or revoked cookie+proof once auth is enabled MUST fail 401 before BrowserAuthEnable.
+    let forged = Pair {
+        cookie: format!("org_session_{INSTANCE}=forged-cookie-value"),
+        proof: "forged-proof-value".into(),
+    };
+    let forged_reply = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/instance/auth/enable",
+        r#"{"login":"x","password":"short"}"#,
+        Some(&forged),
+        &[],
+    );
+    assert_eq!(
+        forged_reply.status,
+        StatusCode::UNAUTHORIZED,
+        "{}",
+        forged_reply.body
+    );
+}
+
+#[test]
+fn opt_in_tls_enable_forwards_and_sanitizes_errors() {
+    let tls_mode = Arc::new(Mutex::new("ok"));
+    let tls_mode_script = Arc::clone(&tls_mode);
+    let (gateway, calls) = gateway(organization_script(move |method, params| {
+        (method == "browser.tls_enable").then(|| match *tls_mode_script.lock().unwrap() {
+            "ok" => {
+                assert_eq!(params["mode"]["mode"], "self_signed");
+                vec![json!({"result": {
+                    "scheme": "https",
+                    "origin": "https://127.0.0.1:8080",
+                    "fingerprint": "AA:BB",
+                    "source": "made",
+                    "restart_required": true
+                }})]
+            }
+            "supplied" => {
+                assert_eq!(params["mode"]["mode"], "supplied");
+                assert_eq!(
+                    params["mode"]["cert"],
+                    "-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----"
+                );
+                assert_eq!(
+                    params["mode"]["key"],
+                    "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----"
+                );
+                vec![json!({"result": {
+                    "scheme": "https",
+                    "origin": "https://127.0.0.1:8080",
+                    "fingerprint": "CC:DD",
+                    "source": "supplied",
+                    "restart_required": false
+                }})]
+            }
+            "bad_cert" => vec![json!({"error": {
+                "code": "invalid_request",
+                "message": "internal-host-secret-detail-must-not-leak"
+            }})],
+            _ => vec![json!({"error": {
+                "code": "not_authorized",
+                "message": "administrator required"
+            }})],
+        })
+    }));
+
+    // Unauthenticated fails 401 before host call.
+    let unauth = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/instance/tls",
+        r#"{"mode":"self_signed"}"#,
+        None,
+        &[],
+    );
+    assert_eq!(unauth.status, StatusCode::UNAUTHORIZED);
+    assert!(calls.methods().is_empty());
+
+    let pair = sign_in(&gateway).pair();
+
+    // Unknown mode, unknown fields, or mismatched cert/key fields fail 400 before host call.
+    let before = calls.methods().len();
+    for bad in [
+        "{}",
+        r#"{"mode":"bogus"}"#,
+        r#"{"mode":"self_signed","extra":1}"#,
+        r#"{"mode":"self_signed","cert":"abc"}"#,
+        r#"{"mode":"supplied","cert":"abc"}"#,
+        r#"{"mode":"supplied","cert":"abc","key":null}"#,
+    ] {
+        let reply = send(
+            &gateway,
+            Method::POST,
+            "/api/v1/instance/tls",
+            bad,
+            Some(&pair),
+            &[],
+        );
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    assert_eq!(calls.methods().len(), before);
+
+    // Self-signed succeeds with TlsEnableResult.
+    let ok_reply = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/instance/tls",
+        r#"{"mode":"self_signed"}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(ok_reply.status, StatusCode::OK, "{}", ok_reply.body);
+    assert_eq!(ok_reply.body["result"]["scheme"], "https");
+    assert_eq!(ok_reply.body["result"]["restart_required"], true);
+
+    // Supplied PEM with escaped `\n` newlines decodes via zeroizing raw deserializer and succeeds.
+    *tls_mode.lock().unwrap() = "supplied";
+    let supplied_reply = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/instance/tls",
+        r#"{"mode":"supplied","cert":"-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----","key":"-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----"}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(
+        supplied_reply.status,
+        StatusCode::OK,
+        "{}",
+        supplied_reply.body
+    );
+    assert_eq!(supplied_reply.body["result"]["source"], "supplied");
+
+    // Host invalid_request never leaks internal host error text.
+    *tls_mode.lock().unwrap() = "bad_cert";
+    let bad_cert = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/instance/tls",
+        r#"{"mode":"self_signed"}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(
+        bad_cert.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        bad_cert.body
+    );
+    assert!(
+        !bad_cert
+            .body
+            .to_string()
+            .contains("internal-host-secret-detail"),
+        "host wording leaked: {}",
+        bad_cert.body
+    );
+
+    // Non-admin valid session -> 403 Forbidden.
+    *tls_mode.lock().unwrap() = "forbidden";
+    let forbidden = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/instance/tls",
+        r#"{"mode":"self_signed"}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(
+        forbidden.status,
+        StatusCode::FORBIDDEN,
+        "{}",
+        forbidden.body
+    );
+}

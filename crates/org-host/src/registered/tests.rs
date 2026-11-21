@@ -608,3 +608,95 @@ fn a_foreground_record_without_its_secrets_volume_does_not_start_where_one_is_re
     assert!(f.custody().is_empty(), "custody was written");
     assert!(!f.registry_db().exists());
 }
+
+#[test]
+fn registered_start_and_cli_origin_accept_opt_in_https_upgrade_and_refuse_tamper_or_downgrade() {
+    let f = fixture();
+    let http_listen = listen(7420);
+    let id = f.reserve(Some(&http_listen));
+    f.record(http_listen.clone(), Some(id.clone()));
+
+    // First start over default plain HTTP succeeds.
+    let host = f.start().expect("initial HTTP registered start");
+    host.shutdown();
+
+    // Upgrade instance.json to HTTPS on the exact same address/port/host (ADR-0033).
+    let https_listen: ListenConfig = serde_json::from_value(serde_json::json!({
+        "address": "127.0.0.1",
+        "port": 7420,
+        "scheme": "https",
+        "origin": "https://127.0.0.1:7420",
+        "hsts": "off"
+    }))
+    .unwrap();
+    {
+        let registry = Registry::open(&f.paths.locator, &f.paths.user_temp).unwrap();
+        let instance = registry.reserve(None, &f.base.join("instance")).unwrap();
+        instance.upgrade_browser_to_https(&https_listen).unwrap();
+    }
+
+    // CLI origin resolution (`admin tls set` / `admin reset`) now sees the upgraded https:// origin.
+    let (_rec, resolved_id, _sock, resolved_origin) =
+        crate::setup_flow::registered_with_origin(&f.paths, None).unwrap();
+    assert_eq!(resolved_id, id);
+    assert_eq!(resolved_origin.as_str(), "https://127.0.0.1:7420");
+
+    // Registered host restarts cleanly on HTTPS (also persists HSTS updates).
+    let upgraded_host = f
+        .start()
+        .expect("registered start after HTTP->HTTPS upgrade");
+    assert!(
+        upgraded_host.service.web_tls_for_test().is_some(),
+        "upgraded registered host initialized WebTls"
+    );
+    upgraded_host.shutdown();
+
+    // HSTS change on the same HTTPS listener is also accepted on registered restart.
+    let hsts_on: ListenConfig = serde_json::from_value(serde_json::json!({
+        "address": "127.0.0.1",
+        "port": 7420,
+        "scheme": "https",
+        "origin": "https://127.0.0.1:7420",
+        "hsts": "on"
+    }))
+    .unwrap();
+    {
+        let registry = Registry::open(&f.paths.locator, &f.paths.user_temp).unwrap();
+        let instance = registry.reserve(None, &f.base.join("instance")).unwrap();
+        instance.upgrade_browser_to_https(&hsts_on).unwrap();
+    }
+    let hsts_host = f.start().expect("registered start after HSTS update");
+    hsts_host.shutdown();
+
+    // Tampered port is still refused on registered start.
+    let wrong_port: ListenConfig = serde_json::from_value(serde_json::json!({
+        "address": "127.0.0.1",
+        "port": 7499,
+        "scheme": "https",
+        "origin": "https://127.0.0.1:7499",
+        "hsts": "off"
+    }))
+    .unwrap();
+    assert!(!browser_matches_setup(&wrong_port, &http_listen));
+    // HTTPS setup record refuses downgrade to plain HTTP.
+    assert!(!browser_matches_setup(&http_listen, &https_listen));
+    {
+        let registry = Registry::open(&f.paths.locator, &f.paths.user_temp).unwrap();
+        let instance = registry.reserve(None, &f.base.join("instance")).unwrap();
+        assert!(
+            instance.upgrade_browser_to_https(&wrong_port).is_err(),
+            "upgrade_browser_to_https refuses port change"
+        );
+    }
+    // Even if instance.json is tampered with directly on disk, start_registered_at refuses it.
+    let cfg_path = f.base.join("instance/instance.json");
+    let tampered = fs::read_to_string(&cfg_path)
+        .unwrap()
+        .replace("7420", "7499");
+    fs::write(&cfg_path, tampered).unwrap();
+    let refused = f.start().err().expect("tampered port refused").to_string();
+    assert!(
+        refused.contains("differs from setup"),
+        "unexpected refusal: {refused}"
+    );
+}

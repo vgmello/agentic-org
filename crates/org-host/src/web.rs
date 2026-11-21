@@ -286,7 +286,11 @@ impl Stderr {
     /// Reads `stderr` to its end on a new thread, keeping its first [`STDERR_KEPT`]
     /// bytes and dropping the rest, so that a child never blocks on a full pipe.
     /// A test build also copies all of it into [`CAPTURED_STDERR`] under `instance`.
-    fn capture(mut stderr: impl Read + Send + 'static, instance: &str) -> io::Result<Arc<Self>> {
+    fn capture(
+        mut stderr: impl Read + Send + 'static,
+        instance: &str,
+        on_renewal_kept: Option<Arc<dyn Fn(&'static str) + Send + Sync>>,
+    ) -> io::Result<Arc<Self>> {
         #[cfg(test)]
         let instance = instance.to_owned();
         #[cfg(not(test))]
@@ -331,6 +335,11 @@ impl Stderr {
                     };
                     for reason in renewals.read(&bytes[..read]) {
                         crate::host_log::log(&renewal_kept_text(reason));
+                        if matches!(reason, "fetch_failed" | "unavailable") {
+                            if let Some(callback) = &on_renewal_kept {
+                                callback(reason);
+                            }
+                        }
                     }
                     #[cfg(test)]
                     lock(&CAPTURED_STDERR)
@@ -535,6 +544,9 @@ pub(crate) struct Configuration {
     pub release: Option<org_host_control::web::WebRelease>,
     /// The `https` listener's pair (`crate::web_tls`); `None` for plain HTTP.
     pub tls: Option<Arc<crate::web_tls::WebTls>>,
+    /// Invoked when the running web process reports a transient `tls.renew` fetch failure
+    /// (`fetch_failed` or `unavailable`), so the host can schedule a bounded re-announcement.
+    pub on_renewal_kept: Option<Arc<dyn Fn(&'static str) + Send + Sync>>,
 }
 /// The selected release's web process image pin (`Err`: the release has none) and the
 /// release identity bound into the web process's first line.
@@ -674,8 +686,10 @@ const HTTPS_GATE_EVERY: Duration = Duration::from_secs(2);
 /// `eligible`, and the `https` gate ([`https_gate`]) for `tls`: the web process starts only
 /// while the stored pair can be served, and the supervisor waits, without counting a failed
 /// start, while it cannot (a supplied pair that expired waits for the administrator's
-/// `tls.set`); a running one is stopped when it no longer can. The gate is asked at most
-/// every [`HTTPS_GATE_EVERY`], and each change of its answer is logged once.
+/// `tls.set`); a running one is stopped when it no longer can. To avoid repeating the gate
+/// check on every 50 ms supervisor poll, the last boolean verdict is cached for up to
+/// [`HTTPS_GATE_EVERY`] (2 s), after which `https_gate` re-evaluates the stored pair and its
+/// validity window against the current clock; each change of verdict is logged once.
 fn gated(
     eligible: Arc<dyn Fn() -> bool + Send + Sync>,
     tls: Arc<crate::web_tls::WebTls>,
@@ -1140,8 +1154,12 @@ impl Running {
             .map_err(os_failed("start the stdout drain"))?;
         // Its standard error is drained too; only its start is kept, for the one line
         // of a child that could not confine itself.
-        let captured = Stderr::capture(spawned.stderr, &config.instance)
-            .map_err(os_failed("start the stderr drain"))?;
+        let captured = Stderr::capture(
+            spawned.stderr,
+            &config.instance,
+            config.on_renewal_kept.clone(),
+        )
+        .map_err(os_failed("start the stderr drain"))?;
         let until = Instant::now() + wait;
         let mut stream = rendezvous
             .accept(&mut spawned.child, until, stop)

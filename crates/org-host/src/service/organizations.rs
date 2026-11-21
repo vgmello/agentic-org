@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use org_host_control::browser::{SessionEnded, SessionValidateParams, SESSION_ENDED};
 use org_host_control::journal;
+use org_host_control::listen::ListenMode;
 use org_host_control::organization::{BrowserAuth, Create, List, OperationLookup};
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 use serde_json::Value;
@@ -21,6 +22,7 @@ use crate::service::authentication::Authentication;
 /// `web` says whether the request arrived on the admitted web connection. `push` queues an
 /// event on that connection ahead of the returned response (a `session.ended` for a session
 /// this call found dead).
+#[cfg(test)]
 pub(crate) fn dispatch(
     request: &Request,
     web: bool,
@@ -28,22 +30,38 @@ pub(crate) fn dispatch(
     provisioning: Option<&Arc<Provisioning>>,
     push: &mut dyn FnMut(&'static str, Value),
 ) -> Option<Response> {
+    dispatch_with_listen(
+        request,
+        web.then_some(ListenMode::Https),
+        authentication,
+        provisioning,
+        push,
+    )
+}
+
+pub(crate) fn dispatch_with_listen(
+    request: &Request,
+    web_listen: Option<ListenMode>,
+    authentication: Option<&Authentication>,
+    provisioning: Option<&Arc<Provisioning>>,
+    push: &mut dyn FnMut(&'static str, Value),
+) -> Option<Response> {
     if !(request.is::<Create>() || request.is::<List>() || request.is::<OperationLookup>()) {
         return None;
     }
-    let reply = answer(request, web, authentication, provisioning, push);
+    let reply = answer(request, web_listen, authentication, provisioning, push);
     Some(reply.unwrap_or_else(|error| Response::error(request.id, error)))
 }
 
 fn answer(
     request: &Request,
-    web: bool,
+    web_listen: Option<ListenMode>,
     authentication: Option<&Authentication>,
     provisioning: Option<&Arc<Provisioning>>,
     push: &mut dyn FnMut(&'static str, Value),
 ) -> Result<Response, ApiError> {
     let denied = || ApiError::new(ErrorCode::NotAuthorized, "not authorized");
-    let (true, Some(authentication)) = (web, authentication) else {
+    let (Some(listen), Some(authentication)) = (web_listen, authentication) else {
         return Err(denied());
     };
     let invalid = |_| ApiError::new(ErrorCode::InvalidRequest, "invalid organization request");
@@ -59,6 +77,21 @@ fn answer(
             .ok()
             .and_then(|wall| i64::try_from(wall.as_millis()).ok())
             .ok_or_else(|| ApiError::new(ErrorCode::Unavailable, "clock unavailable"))?;
+        if auth.local_authless {
+            if !matches!(listen, ListenMode::HttpLoopback | ListenMode::HttpPublished) {
+                return Err(denied());
+            }
+            let (db, _) = authentication.provisioning_storage();
+            let id = db
+                .local_authless_account()
+                .map_err(|_| unavailable())?
+                .ok_or_else(denied)?;
+            return db
+                .account_authority(&id)
+                .map_err(|_| unavailable())?
+                .filter(|a| a.revoked_at_ms().is_none())
+                .ok_or_else(denied);
+        }
         let mut ended = Vec::new();
         let account = authentication.browser_account(
             &SessionValidateParams {

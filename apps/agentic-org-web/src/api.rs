@@ -8,7 +8,10 @@
 //! session in memory for the connection generation that validated it. The
 //! browser's address comes from the accepted socket ([`PeerAddress`]), never a
 //! header. Nothing else forwards to the host or a local socket.
+mod instance_routes;
 mod org_routes;
+
+pub use instance_routes::{CallerAuth, TlsEnableInput};
 
 use crate::{
     body::BusinessBody,
@@ -23,9 +26,10 @@ use crate::{
 use hyper::{header::SET_COOKIE, http::request::Parts, Method, StatusCode};
 use org_host_control::{
     browser::{
-        BrowserOrigin, BrowserSession, BrowserSessionEnd, BrowserSessionEndParams, InstanceView,
-        InstanceViewResult, LinkRegister, LinkRegisterParams, SessionSignIn, SessionSignInParams,
-        SessionValidate, SessionValidateParams,
+        BrowserLocalSession, BrowserLocalSessionParams, BrowserOrigin, BrowserSession,
+        BrowserSessionEnd, BrowserSessionEndParams, InstanceView, InstanceViewResult, LinkRegister,
+        LinkRegisterParams, SessionSignIn, SessionSignInParams, SessionValidate,
+        SessionValidateParams,
     },
     listen::ListenOrigin,
     ops::RecoveryState as HostRecoveryState,
@@ -49,7 +53,10 @@ use serde::Deserialize;
 use std::{
     collections::BTreeSet,
     net::IpAddr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -62,6 +69,7 @@ pub struct SessionApi {
     cookie: CookieName,
     origin: BrowserOrigin,
     listen_scheme: ListenScheme,
+    auth_enabled: Arc<AtomicBool>,
 }
 
 impl SessionApi {
@@ -84,6 +92,24 @@ impl SessionApi {
         mode: org_host_control::listen::ListenMode,
         hub: EventHub,
     ) -> Self {
+        Self::with_access(
+            host,
+            cache,
+            origin,
+            mode,
+            hub,
+            Arc::new(AtomicBool::new(true)),
+        )
+    }
+
+    pub fn with_access(
+        host: Arc<HostControl>,
+        cache: Arc<SessionCache>,
+        origin: &ListenOrigin,
+        mode: org_host_control::listen::ListenMode,
+        hub: EventHub,
+        auth_enabled: Arc<AtomicBool>,
+    ) -> Self {
         use org_host_control::listen::ListenMode;
         let scheme = origin.scheme().as_str();
         let offices = OfficeBridge::new(Arc::clone(&host), hub.clone());
@@ -103,57 +129,64 @@ impl SessionApi {
             offices,
             hub,
             cache,
+            auth_enabled,
         }
     }
 }
 
 pub enum Route {
     Version,
+    Access,
     SignIn(IpAddr),
     Register(IpAddr),
-    Session(PresentedPair),
+    EnableAuth(IpAddr, Option<PresentedPair>),
+    EnableTls(CallerAuth),
+    Session(CallerAuth),
     SignOut(PresentedPair),
-    Instance(PresentedPair),
-    Organizations(PresentedPair),
-    CreateOrganization(PresentedPair),
-    OrgSnapshot(PresentedPair, String),
-    OrgProjects(PresentedPair, String, bool),
-    OrgProjectInspect(PresentedPair, String, String),
-    OrgProjectCreate(PresentedPair, String),
-    OrgOffices(PresentedPair, String),
-    OfficeRestart(PresentedPair, String, String),
-    OrgMutation(PresentedPair, String, OrgOperation),
-    OrgOperation(PresentedPair, String, OperationId),
-    EventsStream(PresentedPair),
-    CliApprovalDecide(PresentedPair),
-    Operation(PresentedPair, OperationId),
+    Instance(CallerAuth),
+    Organizations(CallerAuth),
+    CreateOrganization(CallerAuth),
+    OrgSnapshot(CallerAuth, String),
+    OrgProjects(CallerAuth, String, bool),
+    OrgProjectInspect(CallerAuth, String, String),
+    OrgProjectCreate(CallerAuth, String),
+    OrgOffices(CallerAuth, String),
+    OfficeRestart(CallerAuth, String, String),
+    OrgMutation(CallerAuth, String, OrgOperation),
+    OrgOperation(CallerAuth, String, OperationId),
+    EventsStream(CallerAuth),
+    CliApprovalDecide(CallerAuth),
+    Operation(CallerAuth, OperationId),
 }
 
 pub enum Call {
     Version,
+    Access,
     SignIn(IpAddr, Credentials),
     Register(IpAddr, LinkToken, Credentials),
-    Session(PresentedPair),
+    EnableAuth(IpAddr, Option<PresentedPair>, Credentials),
+    EnableTls(CallerAuth, TlsEnableInput),
+    Session(CallerAuth),
     SignOut(PresentedPair),
-    Instance(PresentedPair),
-    Organizations(PresentedPair),
-    CreateOrganization(PresentedPair, OperationId, PlanV1),
-    OrgSnapshot(PresentedPair, String),
-    OrgProjects(PresentedPair, String, bool),
-    OrgProjectInspect(PresentedPair, String, String),
+    Instance(CallerAuth),
+    Organizations(CallerAuth),
+    CreateOrganization(CallerAuth, OperationId, PlanV1),
+    OrgSnapshot(CallerAuth, String),
+    OrgProjects(CallerAuth, String, bool),
+    OrgProjectInspect(CallerAuth, String, String),
     OrgProjectCreate(
-        PresentedPair,
+        CallerAuth,
         String,
         OperationId,
         org_proto::projects::ProjectCreateWebParams,
     ),
-    OrgOffices(PresentedPair, String),
-    OfficeRestart(PresentedPair, String, String, OperationId),
-    OrgMutation(PresentedPair, String, OrgMutation),
-    OrgOperation(PresentedPair, String, OperationId),
-    EventsStream(PresentedPair, StreamRequest),
-    CliApprovalDecide(PresentedPair, LinkToken, bool),
-    Operation(PresentedPair, OperationId),
+    OrgOffices(CallerAuth, String),
+    OfficeRestart(CallerAuth, String, String, OperationId),
+    OrgMutation(CallerAuth, String, OrgMutation),
+    OrgOperation(CallerAuth, String, OperationId),
+    EventsStream(CallerAuth, StreamRequest),
+    CliApprovalDecide(CallerAuth, LinkToken, bool),
+    Operation(CallerAuth, OperationId),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -397,6 +430,7 @@ fn instance_view(
             _ => WebStatus::Degraded,
         },
         listen_scheme,
+        auth_enabled: host.auth_enabled,
         tls: host.tls,
         server_time_ms: Milliseconds::new(now_ms()).map_err(|_| Failure::Unavailable)?,
     })
@@ -436,11 +470,23 @@ impl SessionApi {
             .ok_or_else(unavailable)
     }
 
-    fn auth(&self, pair: &PresentedPair) -> BrowserAuth {
-        BrowserAuth {
-            cookie_digest: pair.cookie_digest,
-            proof_digest: pair.proof_digest,
-            origin: self.origin.clone(),
+    pub(super) fn is_auth_enabled(&self) -> bool {
+        self.auth_enabled.load(Ordering::Acquire)
+    }
+
+    pub(super) fn set_auth_enabled(&self, enabled: bool) {
+        self.auth_enabled.store(enabled, Ordering::Release);
+    }
+
+    pub(super) fn auth(&self, caller: &CallerAuth) -> BrowserAuth {
+        match caller {
+            CallerAuth::Pair(pair) => BrowserAuth {
+                cookie_digest: pair.cookie_digest,
+                proof_digest: pair.proof_digest,
+                origin: self.origin.clone(),
+                local_authless: false,
+            },
+            CallerAuth::LocalAuthless => BrowserAuth::local_authless(self.origin.clone()),
         }
     }
 
@@ -482,8 +528,19 @@ impl SessionApi {
         }
     }
 
-    /// A protected route needs exactly one cookie of this instance's name and one
-    /// proof header; anything else is 401 before any host call.
+    /// A protected route needs a cookie+proof pair when authentication is enabled,
+    /// or falls back to local-authless mode when this instance has auth disabled.
+    pub(super) fn caller_auth(&self, request: &Parts) -> Result<CallerAuth, ApiReply> {
+        if let Some(pair) = PresentedPair::read(&self.cookie, &request.headers) {
+            return Ok(CallerAuth::Pair(pair));
+        }
+        if !self.is_auth_enabled() {
+            return Ok(CallerAuth::LocalAuthless);
+        }
+        Err(signed_out())
+    }
+
+    /// Routes that strictly require an explicit cookie+proof pair (e.g., sign-out).
     fn pair(&self, request: &Parts) -> Result<PresentedPair, ApiReply> {
         PresentedPair::read(&self.cookie, &request.headers).ok_or_else(signed_out)
     }
@@ -491,7 +548,7 @@ impl SessionApi {
     /// Inserts a successful reply into the cache on the host reader thread, under
     /// this connection's generation, before any later host frame is applied: a
     /// `session.ended` that follows the reply removes the entry it made.
-    fn caching(
+    pub(super) fn caching(
         &self,
         pair: &PresentedPair,
     ) -> impl FnOnce(&Result<BrowserSession, Failure>) + Send + 'static {
@@ -508,26 +565,41 @@ impl SessionApi {
         }
     }
 
-    /// The live session for a presented pair: the cache for this connection's
-    /// generation, else one `session.validate`.
-    fn validate(&self, pair: PresentedPair) -> Result<BrowserSession, Failure> {
-        let generation = self.host.generation();
-        if let Some(session) = self.cache.lookup(
-            &pair.cookie_digest,
-            &pair.proof_digest,
-            generation,
-            now_ms(),
-        ) {
-            return Ok(session);
+    /// The live session for a caller: cached or `session.validate` for a pair,
+    /// or `browser.local_session` in local-authless mode.
+    pub(super) fn validate(&self, caller: CallerAuth) -> Result<BrowserSession, Failure> {
+        match caller {
+            CallerAuth::Pair(pair) => {
+                let generation = self.host.generation();
+                if let Some(session) = self.cache.lookup(
+                    &pair.cookie_digest,
+                    &pair.proof_digest,
+                    generation,
+                    now_ms(),
+                ) {
+                    return Ok(session);
+                }
+                self.host.request_then::<SessionValidate>(
+                    &SessionValidateParams {
+                        cookie_digest: pair.cookie_digest,
+                        proof_digest: pair.proof_digest,
+                        origin: self.origin.clone(),
+                    },
+                    self.caching(&pair),
+                )
+            }
+            CallerAuth::LocalAuthless => {
+                let reply = self
+                    .host
+                    .request::<BrowserLocalSession>(&BrowserLocalSessionParams {
+                        origin: self.origin.clone(),
+                    });
+                if matches!(reply, Err(Failure::Denied)) {
+                    self.set_auth_enabled(true);
+                }
+                reply
+            }
         }
-        self.host.request_then::<SessionValidate>(
-            &SessionValidateParams {
-                cookie_digest: pair.cookie_digest,
-                proof_digest: pair.proof_digest,
-                origin: self.origin.clone(),
-            },
-            self.caching(&pair),
-        )
     }
 
     /// Sign-in and registration: mint a fresh pair, let the host create the
@@ -565,46 +637,67 @@ impl SessionApi {
     /// Async validation for non-blocking office RPCs and SSE streams.
     pub(super) async fn validate_async(
         &self,
-        pair: PresentedPair,
+        caller: CallerAuth,
     ) -> Result<BrowserSession, Failure> {
-        let generation = self.host.generation();
-        if let Some(session) = self.cache.lookup(
-            &pair.cookie_digest,
-            &pair.proof_digest,
-            generation,
-            now_ms(),
-        ) {
-            return Ok(session);
+        match caller {
+            CallerAuth::Pair(pair) => {
+                let generation = self.host.generation();
+                if let Some(session) = self.cache.lookup(
+                    &pair.cookie_digest,
+                    &pair.proof_digest,
+                    generation,
+                    now_ms(),
+                ) {
+                    return Ok(session);
+                }
+                self.revalidate_session_async(caller).await
+            }
+            CallerAuth::LocalAuthless => self.revalidate_session_async(caller).await,
         }
-        self.revalidate_session_async(pair).await
     }
 
     /// Re-validates directly with the host, bypassing the in-memory session cache.
     pub(super) async fn revalidate_session_async(
         &self,
-        pair: PresentedPair,
+        caller: CallerAuth,
     ) -> Result<BrowserSession, Failure> {
-        self.host
-            .request_then_async::<SessionValidate>(
-                &SessionValidateParams {
-                    cookie_digest: pair.cookie_digest,
-                    proof_digest: pair.proof_digest,
-                    origin: self.origin.clone(),
-                },
-                Some(Box::new(self.caching(&pair))),
-            )
-            .await
+        match caller {
+            CallerAuth::Pair(pair) => {
+                self.host
+                    .request_then_async::<SessionValidate>(
+                        &SessionValidateParams {
+                            cookie_digest: pair.cookie_digest,
+                            proof_digest: pair.proof_digest,
+                            origin: self.origin.clone(),
+                        },
+                        Some(Box::new(self.caching(&pair))),
+                    )
+                    .await
+            }
+            CallerAuth::LocalAuthless => {
+                let reply = self
+                    .host
+                    .request_async::<BrowserLocalSession>(&BrowserLocalSessionParams {
+                        origin: self.origin.clone(),
+                    })
+                    .await;
+                if matches!(reply, Err(Failure::Denied)) {
+                    self.set_auth_enabled(true);
+                }
+                reply
+            }
+        }
     }
 
-    async fn execute_events_stream(&self, pair: PresentedPair, request: StreamRequest) -> WebReply {
-        let session = match self.validate_async(pair).await {
+    async fn execute_events_stream(&self, caller: CallerAuth, request: StreamRequest) -> WebReply {
+        let session = match self.validate_async(caller).await {
             Ok(session) => session,
             Err(error) => return WebReply::Json(failure(error)),
         };
         let list = match self
             .host
             .request_async::<host_org::List>(&host_org::ListParams {
-                auth: self.auth(&pair),
+                auth: self.auth(&caller),
             })
             .await
         {
@@ -639,42 +732,61 @@ impl ApiBackend for SessionApi {
         let segments: Vec<&str> = path.segments().iter().map(String::as_str).collect();
         Ok(match segments.as_slice() {
             ["api", "v1", "version"] if get => Route::Version,
+            ["api", "v1", "access"] if get => Route::Access,
             ["api", "v1", "session", "sign-in"] if post => Route::SignIn(Self::peer(request)?),
             ["api", "v1", "links", "register"] if post => Route::Register(Self::peer(request)?),
-            ["api", "v1", "session"] if get => Route::Session(self.pair(request)?),
+            ["api", "v1", "instance", "auth", "enable"] if post => {
+                let pair = if self.is_auth_enabled() {
+                    Some(self.pair(request)?)
+                } else {
+                    None
+                };
+                Route::EnableAuth(Self::peer(request)?, pair)
+            }
+            ["api", "v1", "instance", "tls"] if post => {
+                Route::EnableTls(self.caller_auth(request)?)
+            }
+            ["api", "v1", "session"] if get => Route::Session(self.caller_auth(request)?),
             ["api", "v1", "session", "sign-out"] if post => {
                 Route::SignOut(self.pair(request).map_err(|r| self.clear(r))?)
             }
-            ["api", "v1", "organizations"] if get => Route::Organizations(self.pair(request)?),
+            ["api", "v1", "organizations"] if get => {
+                Route::Organizations(self.caller_auth(request)?)
+            }
             ["api", "v1", "organizations"] if post => {
-                Route::CreateOrganization(self.pair(request)?)
+                Route::CreateOrganization(self.caller_auth(request)?)
             }
             ["api", "v1", "organizations", org, tail @ ..] => {
                 return org_routes::route_organization(self, request, org, tail, get, post, query);
             }
-            ["api", "v1", "events", "stream"] if post => Route::EventsStream(self.pair(request)?),
+            ["api", "v1", "events", "stream"] if post => {
+                Route::EventsStream(self.caller_auth(request)?)
+            }
             ["api", "v1", "cli-approvals", "decide"] if post => {
-                Route::CliApprovalDecide(self.pair(request)?)
+                Route::CliApprovalDecide(self.caller_auth(request)?)
             }
             ["api", "v1", "operations", "host", id]
                 if matches!(request.method, Method::GET | Method::HEAD) =>
             {
-                let pair = self.pair(request)?;
+                let caller = self.caller_auth(request)?;
                 let id = organizations::host_operation_id(id).map_err(bad_input)?;
                 self.host_lookup_scope(request.uri.query())?;
-                Route::Operation(pair, id)
+                Route::Operation(caller, id)
             }
             ["api", "v1", "operations", "org", id]
                 if matches!(request.method, Method::GET | Method::HEAD) =>
             {
-                let pair = self.pair(request)?;
+                let caller = self.caller_auth(request)?;
                 let id = organizations::host_operation_id(id).map_err(bad_input)?;
                 let org_id = self.org_lookup_scope(request.uri.query())?;
-                Route::OrgOperation(pair, org_id, id)
+                Route::OrgOperation(caller, org_id, id)
             }
-            ["api", "v1", "instance"] if get => Route::Instance(self.pair(request)?),
+            ["api", "v1", "instance"] if get => Route::Instance(self.caller_auth(request)?),
             ["api", "v1", "version"]
+            | ["api", "v1", "access"]
             | ["api", "v1", "instance"]
+            | ["api", "v1", "instance", "auth", "enable"]
+            | ["api", "v1", "instance", "tls"]
             | ["api", "v1", "session", "sign-in"]
             | ["api", "v1", "links", "register"]
             | ["api", "v1", "session"]
@@ -692,6 +804,11 @@ impl ApiBackend for SessionApi {
         let empty = || bytes.is_empty().then_some(()).ok_or_else(invalid);
         let call = match route {
             Route::Version => empty().map(|()| Call::Version)?,
+            Route::Access => empty().map(|()| Call::Access)?,
+            Route::EnableAuth(peer, pair) => {
+                return instance_routes::prepare_auth_enable(peer, pair, bytes);
+            }
+            Route::EnableTls(caller) => return instance_routes::prepare_tls_enable(caller, bytes),
             Route::Session(pair) => empty().map(|()| Call::Session(pair))?,
             Route::Organizations(pair) => empty().map(|()| Call::Organizations(pair))?,
             Route::OrgSnapshot(pair, org) => empty().map(|()| Call::OrgSnapshot(pair, org))?,
@@ -870,6 +987,13 @@ impl ApiBackend for SessionApi {
     fn execute(&self, call: Call) -> ApiReply {
         match call {
             Call::Version => result(Version::default()),
+            Call::Access => instance_routes::execute_access(self),
+            Call::EnableAuth(client_address, pair, credentials) => {
+                instance_routes::execute_auth_enable(self, client_address, pair, credentials)
+            }
+            Call::EnableTls(caller, input) => {
+                instance_routes::execute_tls_enable(self, caller, input)
+            }
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))
@@ -1014,7 +1138,7 @@ impl ApiBackend for SessionApi {
             Call::SignOut(pair) => {
                 // The host deletes the record and pushes `session.ended` before this
                 // reply; the event sink drops the cache entry on the reader thread.
-                let ended = self.validate(pair).and_then(|session| {
+                let ended = self.validate(CallerAuth::Pair(pair)).and_then(|session| {
                     self.host
                         .request::<BrowserSessionEnd>(&BrowserSessionEndParams {
                             session_id: session.session_id,
@@ -1040,9 +1164,10 @@ impl ApiBackend for SessionApi {
                     )
                 })
             }
-            Call::Register(client_address, link, Credentials { login, password }) => self
-                .establish(|pair| {
-                    self.host.request_then::<LinkRegister>(
+            Call::Register(client_address, link, Credentials { login, password }) => {
+                let auth_flag = Arc::clone(&self.auth_enabled);
+                self.establish(|pair| {
+                    let reply = self.host.request_then::<LinkRegister>(
                         &LinkRegisterParams {
                             link,
                             login,
@@ -1053,8 +1178,13 @@ impl ApiBackend for SessionApi {
                             origin: self.origin.clone(),
                         },
                         self.caching(pair),
-                    )
-                }),
+                    );
+                    if reply.is_ok() {
+                        auth_flag.store(true, Ordering::Release);
+                    }
+                    reply
+                })
+            }
         }
     }
 }

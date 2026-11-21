@@ -1604,6 +1604,7 @@ fn actual_browser_and_native_cli_list_offices_and_restart_contract() {
                     host: "127.0.0.1".into(),
                     port: address.port(),
                 },
+                local_authless: false,
             },
             operation_id: crate::ids::uuid_v7().unwrap(),
             org_id: organization.clone(),

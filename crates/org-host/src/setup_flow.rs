@@ -1980,19 +1980,41 @@ const HELD_FOR: Duration = Duration::from_secs(1);
 
 /// Finds the registered instance `name`: its ID and `host.sock`.
 fn registered(paths: &Paths, name: Option<&str>) -> Result<(Record, String, PathBuf), String> {
+    let (record, id, socket, _) = registered_with_origin(paths, name)?;
+    Ok((record, id, socket))
+}
+
+/// Like [`registered`], also resolving the active browser origin from `instance.json` when
+/// present (reflecting opt-in HTTPS upgrades), falling back to the setup record's origin.
+pub(crate) fn registered_with_origin(
+    paths: &Paths,
+    name: Option<&str>,
+) -> Result<
+    (
+        Record,
+        String,
+        PathBuf,
+        org_host_control::listen::ListenOrigin,
+    ),
+    String,
+> {
     let record =
         Journal::snapshot(&paths.base, name).map_err(|e| fail("reading the setup record", e))?;
     let registry = Registry::open(&paths.locator, &paths.user_temp)
         .map_err(|e| fail("opening the instance locator", e))?;
     // A service that is just starting holds the locator's lock for a moment (it reserves
     // its instance again): the registry waits for it rather than failing.
-    let (id, temp) = registry
-        .locate(name, &record.input.root)
+    let (id, temp, browser) = registry
+        .locate_with_browser(name, &record.input.root)
         .map_err(|e| fail("locating the instance", e))?;
     if record.instance_id.as_deref() != Some(id.as_str()) {
         return Err("the instance is not the one setup recorded; run agentic-org setup".into());
     }
-    Ok((record, id, temp.join("host.sock")))
+    let origin = browser
+        .filter(|active| crate::registered::browser_matches_setup(active, &record.input.listen))
+        .map(|active| active.origin().clone())
+        .unwrap_or_else(|| record.input.listen.origin().clone());
+    Ok((record, id, temp.join("host.sock"), origin))
 }
 
 /// What `admin reset` answers when its output is not a terminal (spec §4a.4).
@@ -2040,9 +2062,10 @@ pub fn admin_reset(
     match acting_for {
         Some(account) => reset_for(account, name, || crate::human::paths(name), out),
         None => {
-            let (record, id, socket) = registered(&crate::human::paths(name)?, name)?;
+            let (_record, id, socket, origin) =
+                registered_with_origin(&crate::human::paths(name)?, name)?;
             let wire = connect(&socket, &id).map_err(|why| not_running(name, why))?;
-            reset_over(wire, record.input.listen.origin(), name, out)
+            reset_over(wire, &origin, name, out)
         }
     }
 }
@@ -2067,7 +2090,8 @@ fn reset_for(
     out: &mut dyn Write,
 ) -> Result<(), String> {
     let reset = || {
-        let (record, id, socket) = as_account(account, || registered(&paths()?, name))?;
+        let (_record, id, socket, origin) =
+            as_account(account, || registered_with_origin(&paths()?, name))?;
         // The first line names the user whose instance this is, so that a reset never
         // lands on another user's instance unnoticed (SIGN-33).
         say(
@@ -2085,7 +2109,7 @@ fn reset_for(
             ask_reset(wire)
         })
         .map_err(|why| not_running(name, why))?;
-        answer_reset(result, record.input.listen.origin(), name, out)
+        answer_reset(result, &origin, name, out)
     };
     reset().map_err(|why| crate::host_log::untrusted(&why))
 }

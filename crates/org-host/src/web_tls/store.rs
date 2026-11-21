@@ -51,9 +51,12 @@ pub(crate) struct WebTls {
     origin: ListenOrigin,
     /// Held by whatever installs a pair: the start, `tls.set` and the renewal.
     writing: Mutex<()>,
-    /// The last stored pair the web start's gate verified with its key: its pair
-    /// fingerprint and validity bounds. While the row names that pair, the gate judges only
-    /// its validity, without reading the key again.
+    /// Cached verification summary for the last stored pair checked by the web start's gate
+    /// and `instance.view`: its `(pair_fp, not_before, not_after)` tuple. Every check still
+    /// reads the registry row and tests `now` against `(not_before, not_after)`; only
+    /// re-reading and re-parsing the private key from host secrets is skipped while the stored
+    /// row still names that exact `pair_fp`. Replacing the pair or crossing validity bounds
+    /// immediately invalidates the cached result.
     verified: Mutex<Option<([u8; 32], i64, i64)>>,
 }
 
@@ -205,6 +208,66 @@ impl WebTls {
         tls.sweep(&current.pair());
         drop(_writing);
         Ok(tls)
+    }
+
+    /// Installs a verified pair on a plain-HTTP instance that is opting in to HTTPS
+    /// (ADR-0033 / TASK-62). Writes the private key to host secrets first, then stores the
+    /// certificate row in `HostDb::web_tls`, cleaning up an orphan key on DB failure.
+    pub(crate) fn install_for_upgrade(
+        db: &HostDb,
+        secrets: &dyn HostSecrets,
+        checked: &Checked,
+        source: Source,
+    ) -> Result<super::Fingerprint, String> {
+        let pair = StoredPair {
+            source,
+            cert_pem: checked.chain().to_owned(),
+            pair_fp: checked.pair(),
+            set_at_ms: wall_ms().ok_or("the clock is unavailable")?,
+        };
+        let previous = db
+            .web_tls_pair()
+            .map_err(|e| format!("reading the stored TLS pair: {e:?}"))?;
+        let name = secret_name(&checked.pair())?;
+        let value = Value::new(checked.key().as_bytes().to_vec())
+            .map_err(|e| format!("keeping the TLS key: {e:?}"))?;
+        secrets
+            .put(&name, &value)
+            .map_err(|e| format!("keeping the TLS key in the host's secrets: {e:?}"))?;
+        if let Err(e) = db.set_web_tls_pair(&pair) {
+            if previous.as_ref().is_none_or(|p| p.pair_fp != pair.pair_fp) {
+                let _ = secrets.delete(&name);
+            }
+            return Err(format!("storing the TLS pair: {e:?}"));
+        }
+        if let Some(prev) = previous.filter(|p| p.pair_fp != pair.pair_fp) {
+            if let Ok(prev_name) = secret_name(&prev.pair_fp) {
+                let _ = secrets.delete(&prev_name);
+            }
+        }
+        Ok(checked.fingerprint())
+    }
+
+    /// Generates and installs a fresh self-signed certificate on a live HTTPS host under the
+    /// write lock, updating the gate cache so the caller can announce `tls.renew`.
+    pub(crate) fn install_made(&self, now_secs: i64) -> Result<super::Fingerprint, String> {
+        let _guard = crate::sync::lock(&self.writing);
+        let checked = make(&self.origin, now_secs)?;
+        let previous = self
+            .db
+            .web_tls_pair()
+            .map_err(|e| format!("reading the stored TLS pair: {e:?}"))?;
+        self.install(&checked, Source::Made, previous.as_ref())?;
+        let fingerprint = checked.fingerprint();
+        *crate::sync::lock(&self.verified) =
+            Some((checked.pair(), checked.not_before, checked.not_after));
+        Ok(fingerprint)
+    }
+
+    /// The leaf SHA-256 fingerprint of the currently stored pair, if readable.
+    pub(crate) fn stored_fingerprint(&self) -> Option<String> {
+        let stored = self.db.web_tls_pair().ok()??;
+        Some(leaf_fingerprint(&stored.cert_pem).to_string())
     }
 
     /// Adds the key of `checked`, makes the registry name it (with `source`), then deletes the

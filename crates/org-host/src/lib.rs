@@ -401,7 +401,7 @@ pub struct Host {
     offices: Arc<Offices>,
     listener: Option<Listener>,
     lock: Option<HostLock>,
-    instance: Option<instance::registry::Instance>,
+    instance: Option<Arc<instance::registry::Instance>>,
     authentication_lifecycle: Option<service::authentication::Lifecycle>,
     web: Option<web::Supervisor>,
     /// The renewal of an `https` listener's own certificate while the host runs.
@@ -677,6 +677,7 @@ fn startup_web(
         check,
         critical_paths,
         tls,
+        on_renewal_kept: None,
     }))
 }
 
@@ -903,6 +904,8 @@ impl Host {
             .as_ref()
             .and_then(|i| i.browser().ok().flatten())
             .map(|l| l.origin().as_str().to_owned());
+        maybe_init_local_authless(instance.as_ref(), authentication.as_ref());
+        let instance = instance.map(Arc::new);
         let creating = provisioning.clone();
         let service = Arc::new(
             Service::new(
@@ -914,6 +917,7 @@ impl Host {
             .with_provisioning(provisioning)
             .with_recovery(recovery)
             .with_web_tls(web_tls.clone())
+            .with_instance(instance.clone())
             .with_browser_origin(browser_origin)
             .with_web_state(Arc::clone(&gateway_state)),
         );
@@ -948,7 +952,13 @@ impl Host {
             .browser_listener
             .take()
             .and_then(|listener| listener.take());
-        let web = web_config.and_then(|web_config| {
+        let web = web_config.and_then(|mut web_config| {
+            let retrying = Arc::downgrade(&service);
+            web_config.on_renewal_kept = Some(Arc::new(move |_| {
+                if let Some(service) = retrying.upgrade() {
+                    service.schedule_tls_renewal_retry();
+                }
+            }));
             match web::Supervisor::start(
                 web_config,
                 held,
@@ -1083,6 +1093,43 @@ impl Host {
 impl Drop for Host {
     fn drop(&mut self) {
         self.stop(std::time::Instant::now());
+    }
+}
+
+/// Activates local authless onboarding mode (ADR-0034) on a brand-new local HTTP instance
+/// that has zero accounts and zero issued registration links.
+fn maybe_init_local_authless(
+    instance: Option<&instance::registry::Instance>,
+    authentication: Option<&Arc<service::authentication::Authentication>>,
+) {
+    let is_local_http = instance
+        .and_then(|i| i.browser().ok().flatten())
+        .is_some_and(|l| match l.scheme() {
+            org_host_control::listen::ListenMode::HttpLoopback => true,
+            org_host_control::listen::ListenMode::HttpPublished => matches!(
+                l.origin().host().to_string().as_str(),
+                "127.0.0.1" | "[::1]" | "::1" | "localhost"
+            ),
+            org_host_control::listen::ListenMode::Https => false,
+        });
+    if !is_local_http {
+        return;
+    }
+    let Some(auth) = authentication else {
+        return;
+    };
+    let Some(now_ms) = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_millis()).ok())
+    else {
+        return;
+    };
+    let (db, _) = auth.provisioning_storage();
+    if let Err(err) = db.init_local_authless_if_empty(now_ms) {
+        host_log::log(&format!(
+            "could not initialize local authless onboarding mode ({err:?}); authentication remains enforced"
+        ));
     }
 }
 

@@ -27,12 +27,29 @@ use crate::ops::RecoveryState;
 use crate::HostOpResult;
 
 /// The browser session a call acts for: the pair digests and the origin they are bound to.
+/// When `local_authless` is set on a local plain-HTTP instance whose authentication is disabled,
+/// the host authorizes the implicit local owner account and ignores the sentinel digests; the
+/// host refuses `local_authless` whenever authentication is enabled or the listener is HTTPS.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserAuth {
     pub cookie_digest: Digest32,
     pub proof_digest: Digest32,
     pub origin: BrowserOrigin,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub local_authless: bool,
+}
+
+impl BrowserAuth {
+    /// Constructs a local-authless browser auth envelope for an unauthenticated local HTTP HQ.
+    pub fn local_authless(origin: BrowserOrigin) -> Self {
+        Self {
+            cookie_digest: Digest32([0u8; 32]),
+            proof_digest: Digest32([0u8; 32]),
+            origin,
+            local_authless: true,
+        }
+    }
 }
 
 /// `organization.create`: admit a create, or report on the one `operation_id` names.
@@ -153,6 +170,7 @@ mod tests {
                 host: "127.0.0.1".into(),
                 port: 8080,
             },
+            local_authless: false,
         }
     }
     fn params(byte: u8, operation_id: &str) -> CreateParams {

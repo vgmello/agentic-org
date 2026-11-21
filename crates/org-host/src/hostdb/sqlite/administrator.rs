@@ -9,11 +9,12 @@ impl HostDb {
     }
 }
 
-/// Whether an unrevoked administrator account exists, read on `db` (or a transaction on it).
+/// Whether an unrevoked password-authenticated administrator account exists, read on `db`.
+/// Excludes the implicit local-authless placeholder account (`!local-authless`, ADR-0034).
 pub(super) fn exists(db: &rusqlite::Connection) -> rusqlite::Result<bool> {
     db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM accounts WHERE admin=1 AND revoked_at_ms IS NULL)",
-        [],
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE admin=1 AND revoked_at_ms IS NULL AND password_phc <> ?1)",
+        [super::local_auth::LOCAL_AUTHLESS_VERIFIER],
         |r| r.get(0),
     )
 }

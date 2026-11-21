@@ -7,7 +7,7 @@
 //! zeroizing body buffer, never copied by `serde_json`) and are unescaped here into a
 //! zeroizing buffer sized up front, which then becomes the secret newtype's own bytes.
 
-use org_host_control::{LinkToken, Password};
+use org_host_control::{LinkToken, Password, TlsPrivateKey};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use serde_json::value::RawValue;
@@ -19,6 +19,19 @@ pub fn password<'de, D: Deserializer<'de>>(d: D) -> Result<Password, D::Error> {
 
 pub fn link<'de, D: Deserializer<'de>>(d: D) -> Result<LinkToken, D::Error> {
     secret(d, LinkToken::new)
+}
+
+/// Decodes an optional PEM private key directly from the zeroizing JSON body buffer without
+/// allocating an intermediate unzeroed `serde` `Content` copy.
+pub fn optional_tls_private_key<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<Option<TlsPrivateKey>, D::Error> {
+    let raw = <&'de RawValue>::deserialize(d)?;
+    if raw.get() == "null" {
+        return Ok(None);
+    }
+    let text = unescape(raw.get()).ok_or_else(|| D::Error::custom("expected a secret string"))?;
+    TlsPrivateKey::new(text).map(Some).map_err(D::Error::custom)
 }
 
 fn secret<'de, D: Deserializer<'de>, T>(

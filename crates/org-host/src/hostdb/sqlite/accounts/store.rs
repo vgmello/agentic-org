@@ -51,33 +51,60 @@ impl AccountStore for HostDb {
         if administrator::exists(&tx).map_err(unavailable)? {
             return Ok(Registration::AdministratorExists);
         }
+        let local_authless =
+            super::super::local_auth::local_authless_id(&tx).map_err(unavailable)?;
         let key = new.username.key().as_str();
         let taken = tx
-            .query_row("SELECT 1 FROM accounts WHERE login_key=?1", [key], |_| {
-                Ok(())
-            })
+            .query_row(
+                "SELECT 1 FROM accounts WHERE login_key=?1 AND (?2 IS NULL OR account_id<>?2)",
+                (key, local_authless.as_deref()),
+                |_| Ok(()),
+            )
             .optional()
             .map_err(unavailable)?
             .is_some();
         if taken {
             return Ok(Registration::LoginTaken);
         }
-        tx.execute(
-            "INSERT INTO accounts VALUES (?1,?2,?3,?4,1,?5,?5,NULL)",
-            (
-                new.account_id.as_str(),
-                key,
-                new.username.display(),
-                new.verifier.expose(),
-                now,
-            ),
-        )
-        .map_err(unavailable)?;
+        let account_id = if let Some(existing_id) = local_authless {
+            let updated = tx
+                .execute(
+                    "UPDATE accounts SET login=?1, login_key=?2, password_phc=?3, password_changed_at_ms=?4 WHERE account_id=?5 AND admin=1 AND revoked_at_ms IS NULL",
+                    (
+                        new.username.display(),
+                        key,
+                        new.verifier.expose(),
+                        now,
+                        existing_id.as_str(),
+                    ),
+                )
+                .map_err(unavailable)?;
+            if updated != 1 {
+                return Err(StoreError::Unavailable);
+            }
+            tx.execute(
+                "DELETE FROM meta WHERE key=?1",
+                [super::super::local_auth::LOCAL_AUTHLESS_META],
+            )
+            .map_err(unavailable)?;
+            crate::accounts::identity::AccountId::parse(&existing_id).map_err(unavailable)?
+        } else {
+            tx.execute(
+                "INSERT INTO accounts VALUES (?1,?2,?3,?4,1,?5,?5,NULL)",
+                (
+                    new.account_id.as_str(),
+                    key,
+                    new.username.display(),
+                    new.verifier.expose(),
+                    now,
+                ),
+            )
+            .map_err(unavailable)?;
+            new.account_id.clone()
+        };
         clock::advance_clock(&tx, now).map_err(unavailable)?;
         tx.commit().map_err(unavailable)?;
-        Ok(Registration::Registered {
-            account_id: new.account_id.clone(),
-        })
+        Ok(Registration::Registered { account_id })
     }
     fn credentials(&self, key: &LoginKey) -> Result<Option<Credentials>, StoreError> {
         Ok(self

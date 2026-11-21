@@ -230,6 +230,7 @@ impl Host {
             cookie_digest: params.cookie_digest,
             proof_digest: params.proof_digest,
             origin: params.origin,
+            local_authless: false,
         }
     }
     fn seed(&self, login: &str, admin: bool) -> String {

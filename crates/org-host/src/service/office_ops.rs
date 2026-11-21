@@ -2,7 +2,7 @@
 //! sessions (implementation plan O1, FC-019, FC-021).
 
 use org_host_control::{
-    browser::{BrowserOfficeRestart, SessionValidateParams},
+    browser::BrowserOfficeRestart,
     ops::{OfficeList, OfficeRestart},
     HostOpResult,
 };
@@ -143,15 +143,7 @@ pub(super) fn restart_browser_office(
         let p = request
             .params::<BrowserOfficeRestart>()
             .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid restart request"))?;
-        let account = authentication.browser_account(
-            &SessionValidateParams {
-                cookie_digest: p.auth.cookie_digest,
-                proof_digest: p.auth.proof_digest,
-                origin: p.auth.origin.clone(),
-            },
-            now,
-            &mut ended,
-        )?;
+        let account = authentication.browser_auth_account(connection, &p.auth, now, &mut ended)?;
         let (db, _) = authentication.provisioning_storage();
         let attempt = Attempt::new(&p, account.account_id()).map_err(journal_error)?;
         run_journaled_restart(
@@ -556,6 +548,7 @@ mod tests {
                 cookie_digest,
                 proof_digest,
                 origin: origin.clone(),
+                local_authless: false,
             }
         };
 

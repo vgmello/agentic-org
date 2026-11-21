@@ -12,11 +12,13 @@ use std::time::Duration;
 
 use argon2::password_hash::{PasswordHash, PasswordVerifier};
 use org_host_control::browser::{
-    BrowserAccount, BrowserOpenChannelParams, BrowserOrigin, BrowserSession,
-    BrowserSessionGrantParams, Digest32, LinkRegisterParams, SessionSignInParams,
+    BrowserAccount, BrowserAuthEnableParams, BrowserOpenChannelParams, BrowserOrigin,
+    BrowserSession, BrowserSessionGrantParams, Digest32, LinkRegisterParams, SessionSignInParams,
     SessionValidateParams,
 };
+use org_host_control::listen::ListenMode;
 use org_host_control::ops::LinkedOrg;
+use org_host_control::organization::BrowserAuth;
 use org_proto::{ApiError, ErrorCode};
 
 use super::{
@@ -133,19 +135,32 @@ impl Authentication {
             let _permit = self.permit()?;
             hash_password(&params.password)?
         };
+        let was_authless = self
+            .db
+            .local_authless_account()
+            .map_err(|_| unavailable())?
+            .is_some();
         let new = NewAccount::new(username, verifier).map_err(store_error)?;
         match accounts
             .register_administrator(&token, &new, now_ms)
             .map_err(store_error)?
         {
-            Registration::Registered { account_id } => self.start(
-                &account_id,
-                digest(&params.cookie_digest),
-                digest(&params.proof_digest),
-                origin,
-                now_ms,
-                ended,
-            ),
+            Registration::Registered { account_id } => {
+                if was_authless {
+                    ended.push(Ended {
+                        id: Self::LOCAL_AUTHLESS_SESSION_ID.to_owned(),
+                        account_id: account_id.as_str().to_owned(),
+                    });
+                }
+                self.start(
+                    &account_id,
+                    digest(&params.cookie_digest),
+                    digest(&params.proof_digest),
+                    origin,
+                    now_ms,
+                    ended,
+                )
+            }
             Registration::Link(_) | Registration::AdministratorExists => refuse(),
             Registration::LoginTaken => Err(ApiError::rule("login", "taken")),
         }
@@ -178,7 +193,10 @@ impl Authentication {
         let credentials = match &key {
             Some(key) => accounts.credentials(key).map_err(store_error)?,
             None => None,
-        };
+        }
+        .filter(|c| {
+            c.verifier.expose() != crate::hostdb::sqlite::local_auth::LOCAL_AUTHLESS_VERIFIER
+        });
         let verifier = credentials.as_ref().map_or(&self.dummy, |c| &c.verifier);
         let parsed = PasswordHash::new(verifier.expose()).map_err(|_| unavailable())?;
         let matches = argon()?
@@ -264,6 +282,135 @@ impl Authentication {
             .ok_or_else(denied)
     }
 
+    /// Whether authentication is currently enforced on this host (`false` on default local HTTP HQ).
+    pub(crate) fn auth_enabled(&self) -> Result<bool, ApiError> {
+        self.db.auth_enabled().map_err(|_| unavailable())
+    }
+
+    /// Synthetic session ID used for HMAC grants in local-authless mode (valid 26-char ULID).
+    const LOCAL_AUTHLESS_SESSION_ID: &'static str = "01000000000000000000000000";
+
+    /// Verifies that `connection` is an admitted plain-HTTP web connection and returns the
+    /// active local-authless owner account ID, failing closed with `not_authorized` otherwise.
+    fn local_authless_owner_id(&self, connection: &Connection) -> Result<AccountId, ApiError> {
+        if !matches!(
+            connection.web_listen().map(|c| c.scheme()),
+            Some(ListenMode::HttpLoopback | ListenMode::HttpPublished)
+        ) {
+            return Err(denied());
+        }
+        self.db
+            .local_authless_account()
+            .map_err(|_| unavailable())?
+            .ok_or_else(denied)
+    }
+
+    /// `browser.local_session`: returns the implicit local owner's session view while auth is
+    /// disabled on a local plain-HTTP instance.
+    pub(crate) fn local_authless_session(
+        &self,
+        connection: &Connection,
+        now_ms: i64,
+    ) -> Result<BrowserSession, ApiError> {
+        let id = self.local_authless_owner_id(connection)?;
+        self.view(Self::LOCAL_AUTHLESS_SESSION_ID, &id, now_ms)
+            .map_err(store_error)?
+            .ok_or_else(denied)
+    }
+
+    /// Authorizes a [`BrowserAuth`] envelope, allowing `local_authless` ONLY on a local plain-HTTP
+    /// instance whose authentication is disabled; otherwise validates the session pair digests.
+    pub(crate) fn browser_auth_account(
+        &self,
+        connection: &Connection,
+        auth: &BrowserAuth,
+        now_ms: i64,
+        ended: &mut Vec<Ended>,
+    ) -> Result<crate::hostdb::accounts::Account, ApiError> {
+        if auth.local_authless {
+            let id = self.local_authless_owner_id(connection)?;
+            return self
+                .db
+                .account_authority(&id)
+                .map_err(|_| unavailable())?
+                .filter(|a| a.revoked_at_ms().is_none())
+                .ok_or_else(denied);
+        }
+        self.browser_account(
+            &SessionValidateParams {
+                cookie_digest: auth.cookie_digest,
+                proof_digest: auth.proof_digest,
+                origin: auth.origin.clone(),
+            },
+            now_ms,
+            ended,
+        )
+    }
+
+    /// `browser.auth_enable`: opt-in authentication enablement on a local authless HTTP instance.
+    /// Validates login/password rules, hashes password with Argon2id, upgrades the local owner
+    /// account atomically (preserving all linked orgs), and starts a real browser session.
+    pub(crate) fn enable_local_auth(
+        &self,
+        connection: &Connection,
+        params: &BrowserAuthEnableParams,
+        now_ms: i64,
+        ended: &mut Vec<Ended>,
+    ) -> Result<BrowserSession, ApiError> {
+        if !matches!(
+            connection.web_listen().map(|c| c.scheme()),
+            Some(ListenMode::HttpLoopback | ListenMode::HttpPublished)
+        ) {
+            return Err(denied());
+        }
+        if self
+            .db
+            .local_authless_account()
+            .map_err(|_| unavailable())?
+            .is_none()
+        {
+            return Err(ApiError::new(
+                ErrorCode::Conflict,
+                "authentication is already enabled",
+            ));
+        }
+        if params.login.len() > FIELD_MAX_BYTES {
+            return Err(ApiError::rule("login", "format"));
+        }
+        let username =
+            Username::new(&params.login).map_err(|_| ApiError::rule("login", "format"))?;
+        check_new_password(params.password.expose()).map_err(|rule| match rule {
+            PasswordRule::TooShort => ApiError::rule("password", "too_short"),
+            PasswordRule::TooLong => ApiError::rule("password", "too_long"),
+        })?;
+        let origin = origin(&params.origin)?;
+        let verifier = {
+            let _permit = self.permit()?;
+            hash_password(&params.password)?
+        };
+        let account_id = self
+            .db
+            .enable_local_auth(&username, &verifier, now_ms)
+            .map_err(|err| match err {
+                crate::hostdb::Error::Conflict => {
+                    ApiError::new(ErrorCode::Conflict, "authentication is already enabled")
+                }
+                _ => unavailable(),
+            })?;
+        ended.push(Ended {
+            id: Self::LOCAL_AUTHLESS_SESSION_ID.to_owned(),
+            account_id: account_id.as_str().to_owned(),
+        });
+        self.start(
+            &account_id,
+            digest(&params.cookie_digest),
+            digest(&params.proof_digest),
+            origin,
+            now_ms,
+            ended,
+        )
+    }
+
     /// `session.end`: deletes one session. Ending an unknown session is not an error.
     pub(crate) fn end_browser(&self, session_id: &str) -> Result<Vec<Ended>, ApiError> {
         let sessions: &dyn BrowserSessions = &*self.db;
@@ -292,12 +439,7 @@ impl Authentication {
         ),
         ApiError,
     > {
-        let validate = SessionValidateParams {
-            cookie_digest: params.auth.cookie_digest,
-            proof_digest: params.auth.proof_digest,
-            origin: params.auth.origin.clone(),
-        };
-        let account = self.browser_account(&validate, now_ms, ended)?;
+        let account = self.browser_auth_account(connection, &params.auth, now_ms, ended)?;
         if !account
             .links()
             .iter()
@@ -308,9 +450,9 @@ impl Authentication {
         let (id, socket, slot) = endpoint
             .open(org_office_launch::ChannelKind::Web)
             .map_err(|_| unavailable())?;
-        // Recheck session authority after worker handoff so a concurrent sign-out cannot
-        // install a channel.
-        let account = self.browser_account(&validate, now_ms, ended)?;
+        // Recheck session authority after worker handoff so a concurrent sign-out or auth enable
+        // cannot install a channel.
+        let account = self.browser_auth_account(connection, &params.auth, now_ms, ended)?;
         if !account
             .links()
             .iter()
@@ -355,12 +497,16 @@ impl Authentication {
         if !connection.channel_received(&params.channel_id) {
             return Err(denied());
         }
-        let validate = SessionValidateParams {
-            cookie_digest: params.auth.cookie_digest,
-            proof_digest: params.auth.proof_digest,
-            origin: params.auth.origin.clone(),
+        let session = if params.auth.local_authless {
+            self.local_authless_session(connection, now_ms)?
+        } else {
+            let validate = SessionValidateParams {
+                cookie_digest: params.auth.cookie_digest,
+                proof_digest: params.auth.proof_digest,
+                origin: params.auth.origin.clone(),
+            };
+            self.validate_browser(&validate, now_ms, ended)?
         };
-        let session = self.validate_browser(&validate, now_ms, ended)?;
         let account_id = AccountId::parse(&session.account.id).map_err(|_| unavailable())?;
         let account = self
             .db

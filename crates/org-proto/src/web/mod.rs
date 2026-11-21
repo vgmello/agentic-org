@@ -27,9 +27,9 @@ pub use stream::{
     Subscription, SubscriptionCursor,
 };
 pub use views::{
-    CancelResult, CancelResultState, CancelState, Capabilities, Capability, InstanceView,
-    ListenScheme, OfficeRestartResult, OfficeView, OrganizationView, RecoveryState, SessionReason,
-    TlsStatus, WebStatus,
+    AccessView, CancelResult, CancelResultState, CancelState, Capabilities, Capability,
+    InstanceView, ListenScheme, OfficeRestartResult, OfficeView, OrganizationView, RecoveryState,
+    SessionReason, TlsEnableResult, TlsStatus, WebStatus,
 };
 
 /// HTTP API and contract revision. Revisions are additive; breaking changes need a new API.
