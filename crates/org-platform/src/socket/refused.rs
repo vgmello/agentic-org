@@ -32,6 +32,10 @@ pub(super) fn peer_uid(_fd: RawFd) -> io::Result<u32> {
     Err(Refused::unsupported("socket").into())
 }
 
+pub(super) fn peer_pid(_fd: RawFd) -> io::Result<libc::pid_t> {
+    Err(Refused::unsupported("socket").into())
+}
+
 /// Never constructed: [`descriptor_receive`] always refuses, so no receive begins.
 pub(super) struct DescriptorReceive<'fence> {
     never: Infallible,
@@ -103,6 +107,8 @@ mod tests {
         let (stream, _peer) = UnixStream::pair().unwrap();
         assert_refused(peer_uid(stream.as_raw_fd()));
         assert_refused(peer_uid(-1));
+        assert_refused(peer_pid(stream.as_raw_fd()));
+        assert_refused(peer_pid(-1));
     }
 
     #[test]

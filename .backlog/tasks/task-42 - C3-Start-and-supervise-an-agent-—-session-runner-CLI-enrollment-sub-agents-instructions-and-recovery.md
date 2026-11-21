@@ -3,9 +3,11 @@ id: TASK-42
 title: >-
   C3: Start and supervise an agent — session runner, CLI enrollment, sub-agents,
   instructions, and recovery
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@lead'
 created_date: '2026-11-21T00:11:00Z'
+updated_date: '2026-11-21T18:23:00Z'
 labels:
   - backend
   - rust
@@ -37,8 +39,14 @@ Build the production office session runner over org-agent-runtime-claude (and pr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A hired agent completes an instruction from its profile page in its private home, and the built-in HR lead drafts hire proposals when called.
-- [ ] #2 agent-os requires a live run binding (descendant check via org-platform on macOS and Linux) and serves session inspect and grant list (CLI-9, CLI-10, CLI-12).
-- [ ] #3 ADR-0025 SUB-1..5/SUB-7, ADR-0030 LIVE-9..13, built-in instruction scenarios (INSTR-4/5/7/8/12/15/21), and ADR-0032 ENROLL-1..7 pass.
-- [ ] #4 B2 Q9 placed-agent checks (agent-os who, offboarded bind refusal, LNX-2 container agent-os) pass and FEATURES rows FC-031/098/100..102/171/172/189 are updated.
+- [x] #1 A hired agent completes an instruction from its profile page in its private home, and the built-in HR lead drafts hire proposals when called.
+- [x] #2 agent-os requires a live run binding (descendant check via org-platform on macOS and Linux) and serves session inspect and grant list (CLI-9, CLI-10, CLI-12).
+- [x] #3 ADR-0025 SUB-1..5/SUB-7, ADR-0030 LIVE-9..13, built-in instruction scenarios (INSTR-4/5/7/8/12/15/21), and ADR-0032 ENROLL-1..7 pass.
+- [x] #4 B2 Q9 placed-agent checks (agent-os who, offboarded bind refusal, LNX-2 container agent-os) pass and FEATURES rows FC-031/098/100..102/171/172/189 are updated.
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Delivered C3 production office session runner (crates/org-office-sessions), org-platform peer_pid & parent_pid/is_descendant_of (macOS/Linux/refused, 0 allowlist predicates), 12 typed session & provider-enrollment RPCs (org-proto, org-office-server, agentic-org-web), agent-os session inspect / grant list / who with run-binding token & descendant verification, ADR-0025 sub-agent tool subsetting/tracking/reaping, ADR-0030 crash recovery & persisted 3-stall lock, ADR-0032 browser CLI enrollment & wrapped credential custody + permission_preset policy, HR lead guidance & org.snapshot agent profiles, updated doc-3 rows FC-031/098/100..102/168/171/172/189, passed full cargo fmt/clippy/test --workspace + real-process C3 E2E, and obtained Separate Fresh Final Rust Reviewer APPROVE (d425a2b2).
+<!-- SECTION:FINAL_SUMMARY:END -->

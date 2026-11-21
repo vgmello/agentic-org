@@ -106,6 +106,22 @@ pub type ProjectInspectFn = Box<
 /// Dispatches C2 role, HR hiring, `may_hire`, team-limit, and agent lifecycle RPCs.
 pub type HiringFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches C3 agent session, grant, and provider CLI enrollment RPCs.
+pub type SessionsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
+/// Verifies a managed agent's per-run `AGENT_OS_SESSION_TOKEN` and peer PID ancestry (`CLI-12`, `SUB-3`).
+pub type RunBindingVerifyFn =
+    Box<dyn Fn(&str, Option<&str>, Option<libc::pid_t>) -> bool + Send + Sync>;
+
+/// Checks whether a bound managed agent still has an active run binding on this office.
+pub type RunBindingActiveFn = Box<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// Records an accepted `agent-os` command for a bound managed run (`ADR-0030` decision 8).
+pub type RecordCommandFn = Box<dyn Fn(&str, &str) + Send + Sync>;
+
+/// Stops an agent's active session and revokes its binding when paused or offboarded (`SUB-5`, `B2 Q9`).
+pub type AgentLifecycleHookFn = Box<dyn Fn(&str, &str) + Send + Sync>;
+
 /// Checks whether a member may send a message to `target` (ADR-0029 decision 3 / HIRE-2).
 pub type HrMessageGuardFn =
     Box<dyn Fn(&str, &str) -> Result<Result<(), ApiError>, String> + Send + Sync>;
@@ -116,6 +132,11 @@ pub struct OfficePorts {
     pub projects_list: ProjectsListFn,
     pub project_inspect: ProjectInspectFn,
     pub hiring: Option<HiringFn>,
+    pub sessions: Option<SessionsFn>,
+    pub run_binding_verify: Option<RunBindingVerifyFn>,
+    pub run_binding_active: Option<RunBindingActiveFn>,
+    pub record_agent_command: Option<RecordCommandFn>,
+    pub on_agent_stop: Option<AgentLifecycleHookFn>,
     pub hr_message_guard: Option<HrMessageGuardFn>,
     pub submit: SubmitFn,
     pub work: WorkFn,
@@ -764,6 +785,7 @@ fn serve_connection_as(
     poll: impl FnMut(std::os::fd::RawFd, Duration) -> std::io::Result<bool>,
     initial: Binding,
 ) {
+    let peer_pid = org_socket::peer_pid(&stream).ok();
     let Ok(out) = stream.try_clone() else {
         return;
     };
@@ -822,13 +844,7 @@ fn serve_connection_as(
             }
             // The member this connection acts as is checked on every call, not only at bind, and
             // the watcher may have ended the connection's held calls already.
-            let member_lookup = if control.revoked.load(Ordering::SeqCst) {
-                Some(Lookup::Not)
-            } else {
-                binding
-                    .member()
-                    .map(|member| lookup_binding(shared, member))
-            };
+            let member_lookup = lookup_live_binding(shared, &binding, &control);
             if matches!(member_lookup, Some(Lookup::Not)) || control.revoked.load(Ordering::SeqCst)
             {
                 refuse_revoked(&out, request.id, &control, shared.timing);
@@ -979,7 +995,7 @@ fn serve_connection_as(
                     Err(refusal) => Response::error(request.id, refusal),
                 }
             } else {
-                answer(&request, shared, &mut binding)
+                answer_and_record(&request, shared, &mut binding, peer_pid)
             };
             // The watcher finds this connection by the member it now acts as. Registered before
             // the answer goes out, so a client that has its bind's answer is already watched.
@@ -1064,147 +1080,65 @@ fn hello_response(request: &Request, shared: &Shared) -> Response {
     }
 }
 
+fn answer_and_record(
+    request: &Request,
+    shared: &Shared,
+    binding: &mut Binding,
+    peer_pid: Option<libc::pid_t>,
+) -> Response {
+    let response = answer_with_peer(request, shared, binding, peer_pid);
+    if matches!(response.outcome, org_proto::Outcome::Result(_))
+        && !request.is::<MsgBind>()
+        && !binding.via_grant()
+    {
+        if let (Some(member), Some(recorder)) =
+            (binding.member(), &shared.ports.record_agent_command)
+        {
+            recorder(member, &request.method);
+        }
+    }
+    response
+}
+
+fn lookup_live_binding(shared: &Shared, binding: &Binding, control: &Control) -> Option<Lookup> {
+    let run_revoked = !binding.via_grant()
+        && binding.member().is_some_and(|member| {
+            shared
+                .ports
+                .run_binding_active
+                .as_ref()
+                .is_some_and(|active| !active(member))
+        });
+    if control.revoked.load(Ordering::SeqCst) || run_revoked {
+        Some(Lookup::Not)
+    } else {
+        binding
+            .member()
+            .map(|member| lookup_binding(shared, member))
+    }
+}
+
 fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
-    if request.is::<org_proto::inbox::InboxList>() {
-        if let Some(inbox) = &shared.inbox {
-            if !matches!(live_owner(shared, binding), Ok(true)) {
-                return bind_error(
-                    request.id,
-                    ErrorCode::NotAuthorized,
-                    "inbox is for the live owner",
-                );
-            }
-            return match request.params::<org_proto::inbox::InboxList>() {
-                Ok(params) => match inbox.list(params) {
-                    Ok(result) => Response::ok::<org_proto::inbox::InboxList>(request.id, &result)
-                        .unwrap_or_else(|_| internal(request.id)),
-                    Err(error) => Response::error(request.id, error),
-                },
-                Err(_) => bind_error(
-                    request.id,
-                    ErrorCode::InvalidRequest,
-                    "invalid inbox list parameters",
-                ),
-            };
-        }
-    }
-    if request.is::<org_proto::OperationGet>() {
-        let params = match request.params::<org_proto::OperationGet>() {
-            Ok(params) if org_proto::is_uuid_v7(&params.id) => params,
-            _ => {
-                return Response::error(
-                    request.id,
-                    ApiError::new(
-                        ErrorCode::InvalidRequest,
-                        "invalid operation lookup parameters",
-                    ),
-                )
-            }
-        };
-        if params.kind != org_proto::OperationKind::Org {
-            return Response::error(
-                request.id,
-                ApiError::new(
-                    ErrorCode::Unavailable,
-                    "this operation kind is not available yet",
-                ),
-            );
-        }
-        // Retained owner and NULL-principal rows are private to grant-bound callers.
-        // Member-specific lookup is a later slice; never query this owner port for agents.
-        if !binding.via_grant() {
-            return Response::error(
-                request.id,
-                ApiError::new(ErrorCode::NotFound, "operation not found"),
-            );
-        }
-        let Some(member) = binding.member() else {
-            return internal(request.id);
-        };
-        return match (shared.ports.operation_get)(member, &params.id) {
-            Ok(Ok(outcome)) => Response::ok::<org_proto::OperationGet>(request.id, &outcome)
-                .unwrap_or_else(|_| internal(request.id)),
-            Ok(Err(refusal)) => Response::error(request.id, refusal),
-            Err(_) => internal(request.id),
-        };
-    }
-    if request.is::<OrgSnapshotCall>() {
-        return org_snapshot(request, shared, binding);
-    }
-    if let Some(response) = project_or_hiring(request, shared, binding) {
+    answer_with_peer(request, shared, binding, None)
+}
+
+fn answer_with_peer(
+    request: &Request,
+    shared: &Shared,
+    binding: &mut Binding,
+    peer_pid: Option<libc::pid_t>,
+) -> Response {
+    if let Some(response) = answer_inbox_or_operation(request, shared, binding) {
         return response;
     }
-    if request.is::<Who>() {
-        return who(request, shared, binding);
-    }
-    if request.is::<StatusSet>() {
-        return status_set(request, shared, binding);
-    }
-    if request.is::<MsgBind>() {
-        return bind_connection(request, shared, binding);
-    }
-    if let Some(response) = answer_message(request, shared, binding) {
+    if let Some(response) = answer_directory_or_session(request, shared, binding, peer_pid) {
         return response;
     }
-    match WorkCall::parse(request) {
-        Ok(None) => {}
-        parsed => {
-            let Binding::Member { id, via_grant } = binding else {
-                return bind_error(
-                    request.id,
-                    ErrorCode::NotBound,
-                    "bind as a member to change work",
-                );
-            };
-            if WorkCall::is_grant_only(request) && !*via_grant {
-                return Response::error(request.id, WorkCall::grant_only_refusal(&request.method));
-            }
-            let call = match parsed {
-                Err(refusal) => return Response::error(request.id, refusal),
-                Ok(Some(call)) => call,
-                Ok(None) => unreachable!("unknown work method fell through"),
-            };
-            let caller = if *via_grant {
-                Caller::grant_bound(id.as_str())
-            } else {
-                Caller::agent(id.as_str())
-            };
-            return match (shared.ports.work)(caller, call) {
-                Ok(Ok(accepted)) => Response::ok::<TaskCreate>(request.id, &accepted)
-                    .unwrap_or_else(|_| internal(request.id)),
-                Ok(Err(refusal)) => Response::error(request.id, refusal),
-                Err(_) => internal(request.id),
-            };
-        }
+    if let Some(response) = answer_work_call(request, shared, binding) {
+        return response;
     }
-    // An organization command: read to tell it from an unknown method, but the caller is checked
-    // BEFORE anything else is said about it (a bad param is not told to an anonymous client).
-    match OrgCommand::parse_request(request) {
-        Ok(None) => {}
-        Ok(Some(_)) | Err(_) if !binding.via_grant() => {
-            return Response::error(
-                request.id,
-                ApiError::new(
-                    ErrorCode::NotAuthorized,
-                    "organization commands are for the app",
-                ),
-            );
-        }
-        Err(refusal) => return Response::error(request.id, refusal),
-        Ok(Some(parsed)) => {
-            // Only a grant-bound member reaches here (checked above).
-            let Some(member) = binding.member() else {
-                return internal(request.id);
-            };
-            return match (shared.ports.submit)(member, parsed.command, parsed.dry_run) {
-                // Every organization command answers with `CommandAccepted`; any command's call
-                // type serializes the same way.
-                Ok(Ok(accepted)) => Response::ok::<TeamCreate>(request.id, &accepted)
-                    .unwrap_or_else(|_| internal(request.id)),
-                Ok(Err(refusal)) => Response::error(request.id, refusal),
-                Err(_) => internal(request.id),
-            };
-        }
+    if let Some(response) = answer_org_command(request, shared, binding) {
+        return response;
     }
     Response::error(
         request.id,
@@ -1213,6 +1147,174 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
             format!("this office does not know `{}`", request.method),
         ),
     )
+}
+
+fn answer_inbox_or_operation(
+    request: &Request,
+    shared: &Shared,
+    binding: &Binding,
+) -> Option<Response> {
+    if request.is::<org_proto::inbox::InboxList>() {
+        let inbox = shared.inbox.as_ref()?;
+        if !matches!(live_owner(shared, binding), Ok(true)) {
+            return Some(bind_error(
+                request.id,
+                ErrorCode::NotAuthorized,
+                "inbox is for the live owner",
+            ));
+        }
+        return Some(match request.params::<org_proto::inbox::InboxList>() {
+            Ok(params) => match inbox.list(params) {
+                Ok(result) => Response::ok::<org_proto::inbox::InboxList>(request.id, &result)
+                    .unwrap_or_else(|_| internal(request.id)),
+                Err(error) => Response::error(request.id, error),
+            },
+            Err(_) => bind_error(
+                request.id,
+                ErrorCode::InvalidRequest,
+                "invalid inbox list parameters",
+            ),
+        });
+    }
+    if request.is::<org_proto::OperationGet>() {
+        return Some(answer_operation_get(request, shared, binding));
+    }
+    None
+}
+
+fn answer_operation_get(request: &Request, shared: &Shared, binding: &Binding) -> Response {
+    let params = match request.params::<org_proto::OperationGet>() {
+        Ok(params) if org_proto::is_uuid_v7(&params.id) => params,
+        _ => {
+            return Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "invalid operation lookup parameters",
+                ),
+            )
+        }
+    };
+    if params.kind != org_proto::OperationKind::Org {
+        return Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::Unavailable,
+                "this operation kind is not available yet",
+            ),
+        );
+    }
+    if !binding.via_grant() {
+        return Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotFound, "operation not found"),
+        );
+    }
+    let Some(member) = binding.member() else {
+        return internal(request.id);
+    };
+    match (shared.ports.operation_get)(member, &params.id) {
+        Ok(Ok(outcome)) => Response::ok::<org_proto::OperationGet>(request.id, &outcome)
+            .unwrap_or_else(|_| internal(request.id)),
+        Ok(Err(refusal)) => Response::error(request.id, refusal),
+        Err(_) => internal(request.id),
+    }
+}
+
+fn answer_directory_or_session(
+    request: &Request,
+    shared: &Shared,
+    binding: &mut Binding,
+    peer_pid: Option<libc::pid_t>,
+) -> Option<Response> {
+    if request.is::<OrgSnapshotCall>() {
+        return Some(org_snapshot(request, shared, binding));
+    }
+    if let Some(response) = project_or_hiring(request, shared, binding) {
+        return Some(response);
+    }
+    if request.is::<Who>() {
+        return Some(who(request, shared, binding));
+    }
+    if request.is::<StatusSet>() {
+        return Some(status_set(request, shared, binding));
+    }
+    if request.is::<MsgBind>() {
+        return Some(bind_connection(request, shared, binding, peer_pid));
+    }
+    answer_message(request, shared, binding)
+}
+
+fn answer_work_call(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    let parsed = match WorkCall::parse(request) {
+        Ok(None) => return None,
+        other => other,
+    };
+    let Binding::Member { id, via_grant } = binding else {
+        return Some(bind_error(
+            request.id,
+            ErrorCode::NotBound,
+            "bind as a member to change work",
+        ));
+    };
+    if WorkCall::is_grant_only(request) && !*via_grant {
+        return Some(Response::error(
+            request.id,
+            WorkCall::grant_only_refusal(&request.method),
+        ));
+    }
+    let call = match parsed {
+        Err(refusal) => return Some(Response::error(request.id, refusal)),
+        Ok(Some(call)) => call,
+        Ok(None) => unreachable!("unknown work method fell through"),
+    };
+    let caller = if *via_grant {
+        Caller::grant_bound(id.as_str())
+    } else {
+        Caller::agent(id.as_str())
+    };
+    Some(match (shared.ports.work)(caller, call) {
+        Ok(Ok(accepted)) => Response::ok::<TaskCreate>(request.id, &accepted)
+            .unwrap_or_else(|_| internal(request.id)),
+        Ok(Err(refusal)) => Response::error(request.id, refusal),
+        Err(_) => internal(request.id),
+    })
+}
+
+fn answer_org_command(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    match OrgCommand::parse_request(request) {
+        Ok(None) => None,
+        Ok(Some(_)) | Err(_) if !binding.via_grant() => Some(Response::error(
+            request.id,
+            ApiError::new(
+                ErrorCode::NotAuthorized,
+                "organization commands are for the app",
+            ),
+        )),
+        Err(refusal) => Some(Response::error(request.id, refusal)),
+        Ok(Some(parsed)) => {
+            let Some(member) = binding.member() else {
+                return Some(internal(request.id));
+            };
+            let dry_run = parsed.dry_run;
+            let stop_target = (!dry_run)
+                .then(|| org_command_stop_target(&parsed.command))
+                .flatten();
+            Some(
+                match (shared.ports.submit)(member, parsed.command, dry_run) {
+                    Ok(Ok(accepted)) => {
+                        if let Some((emp_id, reason)) = stop_target {
+                            stop_agent_and_revoke(shared, &emp_id, reason);
+                        }
+                        Response::ok::<TeamCreate>(request.id, &accepted)
+                            .unwrap_or_else(|_| internal(request.id))
+                    }
+                    Ok(Err(refusal)) => Response::error(request.id, refusal),
+                    Err(_) => internal(request.id),
+                },
+            )
+        }
+    }
 }
 
 /// `org.snapshot`: the whole organization for a bound connection.
@@ -1290,8 +1392,71 @@ fn is_hiring_method(request: &Request) -> bool {
         || is_hiring_policy_method(request)
 }
 
+fn is_session_control_method(request: &Request) -> bool {
+    use org_proto::sessions::{
+        MemberSessionApprovalDecide, MemberSessionClearStall, MemberSessionGrants,
+        MemberSessionInspect, MemberSessionStart, MemberSessionStop,
+    };
+    request.is::<MemberSessionStart>()
+        || request.is::<MemberSessionStop>()
+        || request.is::<MemberSessionInspect>()
+        || request.is::<MemberSessionGrants>()
+        || request.is::<MemberSessionApprovalDecide>()
+        || request.is::<MemberSessionClearStall>()
+}
+
+fn is_provider_enrollment_method(request: &Request) -> bool {
+    use org_proto::sessions::{
+        ProviderCredentialRevoke, ProviderCredentialStatus, ProviderEnrollmentCancel,
+        ProviderEnrollmentStart, ProviderEnrollmentStatus, ProviderEnrollmentSubmit,
+    };
+    request.is::<ProviderEnrollmentStart>()
+        || request.is::<ProviderEnrollmentStatus>()
+        || request.is::<ProviderEnrollmentSubmit>()
+        || request.is::<ProviderEnrollmentCancel>()
+        || request.is::<ProviderCredentialStatus>()
+        || request.is::<ProviderCredentialRevoke>()
+}
+
+fn is_session_method(request: &Request) -> bool {
+    is_session_control_method(request) || is_provider_enrollment_method(request)
+}
+
 fn project_or_hiring(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
-    project_read(request, shared, binding).or_else(|| hiring_rpc(request, shared, binding))
+    project_read(request, shared, binding)
+        .or_else(|| hiring_rpc(request, shared, binding))
+        .or_else(|| sessions_rpc(request, shared, binding))
+}
+
+fn sessions_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !is_session_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(sessions) = &shared.ports.sessions {
+        if let Some(response) = sessions(Some(member), request) {
+            if matches!(response.outcome, org_proto::Outcome::Result(_))
+                && request.is::<org_proto::sessions::MemberSessionStop>()
+            {
+                if let Ok(params) = request.params::<org_proto::sessions::MemberSessionStop>() {
+                    revoke_bound_member(shared, &params.employee_id);
+                }
+            }
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
 }
 
 fn answer_message(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
@@ -1321,6 +1486,9 @@ fn hiring_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<R
     };
     if let Some(hiring) = &shared.ports.hiring {
         if let Some(response) = hiring(Some(member), request) {
+            if matches!(response.outcome, org_proto::Outcome::Result(_)) {
+                notify_agent_stop_on_lifecycle(request, shared);
+            }
             return Some(response);
         }
     }
@@ -1458,10 +1626,55 @@ fn status_set(request: &Request, shared: &Shared, binding: &Binding) -> Response
     }
 }
 
+fn org_command_stop_target(command: &OrgCommand) -> Option<(String, &'static str)> {
+    match command {
+        OrgCommand::MemberSetAgentStatus(p) if p.status == AgentStatus::Paused => {
+            Some((p.member_id.clone(), "agent paused"))
+        }
+        OrgCommand::MemberOffboard(p) => Some((p.member_id.clone(), "agent offboarded")),
+        _ => None,
+    }
+}
+
+fn revoke_bound_member(shared: &Shared, member_id: &str) {
+    let bound = shared.bound.lock().unwrap_or_else(|p| p.into_inner());
+    for (_, control) in bound.values().filter(|(m, _)| m == member_id) {
+        control.revoked.store(true, Ordering::SeqCst);
+        control.generation.fetch_add(1, Ordering::SeqCst);
+        control.held.cancel_all();
+    }
+}
+
+fn stop_agent_and_revoke(shared: &Shared, employee_id: &str, reason: &str) {
+    if let Some(hook) = &shared.ports.on_agent_stop {
+        hook(employee_id, reason);
+    }
+    revoke_bound_member(shared, employee_id);
+}
+
+fn notify_agent_stop_on_lifecycle(request: &Request, shared: &Shared) {
+    if request.is::<org_proto::hiring::AgentSetStatus>() {
+        if let Ok(params) = request.params::<org_proto::hiring::AgentSetStatus>() {
+            if params.paused {
+                stop_agent_and_revoke(shared, &params.member_id, "agent paused");
+            }
+        }
+    } else if request.is::<org_proto::hiring::AgentOffboard>() {
+        if let Ok(params) = request.params::<org_proto::hiring::AgentOffboard>() {
+            stop_agent_and_revoke(shared, &params.member_id, "agent offboarded");
+        }
+    }
+}
+
 /// `msg.bind`, in the contract's order (`org_proto::msg::MsgBind`): the input alone, then the
 /// member; it fails closed. Each call replaces the previous binding, and a
 /// failed one leaves the connection unbound.
-fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) -> Response {
+fn bind_connection(
+    request: &Request,
+    shared: &Shared,
+    binding: &mut Binding,
+    peer_pid: Option<libc::pid_t>,
+) -> Response {
     *binding = Binding::Anonymous;
     let params = match request.params::<MsgBind>() {
         Ok(params) => params,
@@ -1472,7 +1685,13 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
     let Some(member) = params.member else {
         return bind_error(request.id, ErrorCode::InvalidRequest, "bind as a member");
     };
-    let bound = bind_member(request.id, shared, &member);
+    let bound = bind_member(
+        request.id,
+        shared,
+        &member,
+        params.session_token.as_deref(),
+        peer_pid,
+    );
     match bound {
         Ok((now, member_id)) => {
             *binding = now;
@@ -1486,13 +1705,14 @@ fn bind_connection(request: &Request, shared: &Shared, binding: &mut Binding) ->
     }
 }
 
-/// As a member: an agent of this office that may message, with no credential. A person or the
-/// owner never binds here: they act through a grant on a host channel. An office-run agent needs
-/// a session token, which this office does not issue yet: it cannot be bound.
+/// As a member: an agent of this office that may message. Office-run agents require a live
+/// `AGENT_OS_SESSION_TOKEN` and kernel descendant PID check (`CLI-12`, `SUB-3`, `B2 Q9`).
 fn bind_member(
     id: u64,
     shared: &Shared,
     member: &str,
+    session_token: Option<&str>,
+    peer_pid: Option<libc::pid_t>,
 ) -> Result<(Binding, Option<String>), Response> {
     // Step 1, which needs no lookup.
     if json_string_len(member) > MAX_HANDLE_BYTES {
@@ -1525,6 +1745,18 @@ fn bind_member(
     // A person binds only through a grant, never on this socket, and is refused as an unknown
     // member would be.
     if found.kind == MemberKind::Person {
+        return Err(refused());
+    }
+    if let Some(verify) = &shared.ports.run_binding_verify {
+        if !verify(&found.id, session_token, peer_pid) {
+            return Err(refused());
+        }
+    } else if session_token.is_some()
+        || found
+            .agent
+            .as_ref()
+            .is_some_and(|profile| profile.run_mode.is_some())
+    {
         return Err(refused());
     }
     let member_id = found.id;
@@ -1569,8 +1801,12 @@ fn lookup(shared: &Shared, handle: &str) -> Lookup {
         MemberKind::Agent => {
             found.office_id.as_deref() == Some(shared.office_id.as_str())
                 && found.agent.as_ref().is_some_and(|profile| {
-                    matches!(profile.status, AgentStatus::Active | AgentStatus::Paused)
-                        && profile.run_mode.is_none()
+                    if shared.ports.run_binding_verify.is_some() {
+                        profile.status == AgentStatus::Active
+                    } else {
+                        matches!(profile.status, AgentStatus::Active | AgentStatus::Paused)
+                            && profile.run_mode.is_none()
+                    }
                 })
         }
         _ => false,
@@ -2458,6 +2694,11 @@ mod tests {
             projects_list: Box::new(|_| Err("none".to_owned())),
             project_inspect: Box::new(|_| Err("none".to_owned())),
             hiring: None,
+            sessions: None,
+            run_binding_verify: None,
+            run_binding_active: None,
+            record_agent_command: None,
+            on_agent_stop: None,
             hr_message_guard: None,
             submit: Box::new(|_, _, _| Err("none".to_owned())),
             who: Box::new(|_| Err("none".to_owned())),
@@ -2913,6 +3154,11 @@ mod tests {
                 projects_list: Box::new(|_| Err("none".to_owned())),
                 project_inspect: Box::new(|_| Err("none".to_owned())),
                 hiring: None,
+                sessions: None,
+                run_binding_verify: None,
+                run_binding_active: None,
+                record_agent_command: None,
+                on_agent_stop: None,
                 hr_message_guard: None,
                 submit: Box::new(move |_, _, _| {
                     counter.fetch_add(1, Ordering::SeqCst);
@@ -3388,6 +3634,11 @@ mod tests {
                     projects_list: Box::new(|_| Err("none".to_owned())),
                     project_inspect: Box::new(|_| Err("none".to_owned())),
                     hiring: None,
+                    sessions: None,
+                    run_binding_verify: None,
+                    run_binding_active: None,
+                    record_agent_command: None,
+                    on_agent_stop: None,
                     hr_message_guard: None,
                     submit: Box::new(|_, _, _| Err("none".to_owned())),
                     who: Box::new(|_| Err("none".to_owned())),
@@ -3882,6 +4133,11 @@ mod tests {
                 projects_list: Box::new(|_| Err("none".to_owned())),
                 project_inspect: Box::new(|_| Err("none".to_owned())),
                 hiring: None,
+                sessions: None,
+                run_binding_verify: None,
+                run_binding_active: None,
+                record_agent_command: None,
+                on_agent_stop: None,
                 hr_message_guard: None,
                 submit: Box::new(|_, _, _| Err("none".to_owned())),
                 who: Box::new(move |params| {

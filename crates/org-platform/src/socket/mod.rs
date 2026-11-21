@@ -108,6 +108,13 @@ pub fn peer_uid(fd: RawFd) -> io::Result<u32> {
     native::peer_uid(fd)
 }
 
+/// The PID of the process at the other end of a connected Unix stream socket, as the
+/// kernel recorded it (`LOCAL_PEERPID` on macOS, `SO_PEERCRED` on Linux). Fails closed
+/// on bad descriptors, truncated responses, or targets without an adapter.
+pub fn peer_pid(fd: RawFd) -> io::Result<libc::pid_t> {
+    native::peer_pid(fd)
+}
+
 /// One nonblocking descriptor receive (`recvmsg` with `SCM_RIGHTS`) on this system.
 ///
 /// Create it immediately before each `recvmsg` attempt and keep it until the received

@@ -924,6 +924,7 @@ dependencies = [
  "org-mailbox",
  "org-office",
  "org-office-launch",
+ "org-office-sessions",
  "org-pki",
  "org-platform",
  "org-proto",
@@ -936,6 +937,28 @@ dependencies = [
  "serde_json",
  "sha2",
  "syn 2.0.119",
+ "tempfile",
+ "zeroize",
+]
+
+[[package]]
+name = "org-office-sessions"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "libc",
+ "org-agent-cli",
+ "org-agent-runtime",
+ "org-agent-runtime-claude",
+ "org-command",
+ "org-office",
+ "org-pki",
+ "org-platform",
+ "org-proto",
+ "org-supervise",
+ "ring",
+ "serde",
+ "serde_json",
  "tempfile",
  "zeroize",
 ]

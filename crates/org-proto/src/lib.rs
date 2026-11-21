@@ -98,6 +98,7 @@ pub mod msg;
 pub mod org;
 pub mod projects;
 pub mod retired;
+pub mod sessions;
 pub mod web;
 pub mod work;
 

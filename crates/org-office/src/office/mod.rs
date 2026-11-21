@@ -381,11 +381,6 @@ impl Office {
         self.store.stopped_cleanly()
     }
 
-    #[cfg(test)]
-    pub(crate) fn durable_root(&self) -> &Path {
-        &self.durable
-    }
-
     /// The organization's structure from one consistent read of the projection.
     pub fn org_snapshot(&self) -> Result<OrgSnapshot, OfficeError> {
         let read = DirectorySnapshot {
@@ -735,6 +730,16 @@ impl Office {
     /// The office's folder.
     pub fn folder(&self) -> &Path {
         &self.folder
+    }
+
+    /// The organization's durable data root (`<data-root>/<org-id>/durable`).
+    pub fn durable_root(&self) -> &Path {
+        &self.durable
+    }
+
+    /// The canonical UUIDv7 member ID of the organization's current owner.
+    pub fn owner_member_id(&self) -> &str {
+        self.owner.as_str()
     }
 
     /// Every row of the projection, to compare with another of the same engine.

@@ -181,3 +181,18 @@ fn stream_peer_close_with_unread_bytes_matches_the_fact() {
         );
     }
 }
+
+#[test]
+fn peer_pid_reports_connected_process_and_refuses_bad_fd() {
+    use std::os::unix::net::UnixListener;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("peer-pid.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let _client = UnixStream::connect(&path).unwrap();
+    let (accepted, _) = listener.accept().unwrap();
+    assert_eq!(
+        super::peer_pid(accepted.as_raw_fd()).unwrap(),
+        std::process::id() as libc::pid_t
+    );
+    assert!(super::peer_pid(-1).is_err());
+}

@@ -491,6 +491,50 @@ impl ReadOp for ModelProfilesList {
     }
 }
 
+/// Reads one employee record by UUIDv7 ID.
+pub struct EmployeeById(pub Id);
+
+impl ReadOp for EmployeeById {
+    type Out = Option<records::Employee>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.employee(&self.0)?)
+    }
+}
+
+/// Reads one role record by UUIDv7 ID.
+pub struct RoleById(pub Id);
+
+impl ReadOp for RoleById {
+    type Out = Option<records::Role>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.role(&self.0)?)
+    }
+}
+
+/// Reads one provider connection by UUIDv7 ID.
+pub struct ProviderConnectionById(pub Id);
+
+impl ReadOp for ProviderConnectionById {
+    type Out = Option<records::ProviderConnection>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.provider_connection(&self.0)?)
+    }
+}
+
+/// Reads one model profile by UUIDv7 ID.
+pub struct ModelProfileById(pub Id);
+
+impl ReadOp for ModelProfileById {
+    type Out = Option<records::ModelProfile>;
+
+    fn read<S: ProjectsRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.model_profile(&self.0)?)
+    }
+}
+
 /// Checks whether `member` may send a message to the built-in HR lead (ADR-0029 decision 3 /
 /// HIRE-2) when addressing `target` (`"hr"` or the HR lead's employee ID).
 pub struct CheckHrMessageAccess {

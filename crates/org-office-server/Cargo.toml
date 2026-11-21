@@ -21,6 +21,7 @@ org-store = { path = "../org-store" }
 org-work = { path = "../org-work" }
 org-mailbox = { path = "../org-mailbox" }
 org-office-launch = { path = "../org-office-launch" }
+org-office-sessions = { path = "../org-office-sessions" }
 # The default office home and the socket path limit of the build target.
 org-platform = { path = "../org-platform" }
 libc.workspace = true

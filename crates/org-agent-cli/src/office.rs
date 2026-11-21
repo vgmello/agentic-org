@@ -117,7 +117,11 @@ impl BoundOffice {
     }
 
     fn bind_agent(&self, client: &Client, agent_id: &str) -> Result<(), Refusal> {
-        let Err(error) = client.call::<MsgBind>(&MsgBindParams::member(agent_id.to_owned())) else {
+        let params = match &self.binding.session_token {
+            Some(token) => MsgBindParams::member_with_token(agent_id.to_owned(), token.clone()),
+            None => MsgBindParams::member(agent_id.to_owned()),
+        };
+        let Err(error) = client.call::<MsgBind>(&params) else {
             return Ok(());
         };
         let office_label = self

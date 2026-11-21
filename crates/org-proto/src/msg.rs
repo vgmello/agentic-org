@@ -432,15 +432,18 @@ pub struct MsgBind;
 
 /// `msg.bind`'s params.
 ///
-/// Office-run agents will also send a session token here (a later additive field, per the
-/// agent-sessions design).
-#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Office-run agents also send their per-run `session_token` (`AGENT_OS_SESSION_TOKEN`).
+#[derive(Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MsgBindParams {
     /// Who to act as (see [Addressing](self#addressing)); at most [`MAX_HANDLE_BYTES`]. Also
     /// read from `agent`, the ADR's name for it; params with both don't decode
     /// (`invalid_request`).
     #[serde(default, alias = "agent", skip_serializing_if = "Option::is_none")]
     pub member: Option<String>,
+    /// Per-run cryptographic session token issued by the office for managed agent runs
+    /// (`AGENT_OS_SESSION_TOKEN`). Never logged or echoed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_token: Option<String>,
     /// Retired: the app token no longer exists. Any present value, `null` included, makes the
     /// params fail to decode ([`crate::retired::app_token`]), so a server answers
     /// `invalid_request`. It is never written. Build params with [`MsgBindParams::member`].
@@ -453,11 +456,34 @@ pub struct MsgBindParams {
     pub retired_token: Option<crate::retired::Retired>,
 }
 
+impl fmt::Debug for MsgBindParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MsgBindParams")
+            .field("member", &self.member)
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("retired_token", &self.retired_token)
+            .finish()
+    }
+}
+
 impl MsgBindParams {
     /// Params to bind as `member` (a handle or member id).
     pub fn member(member: impl Into<String>) -> Self {
         MsgBindParams {
             member: Some(member.into()),
+            session_token: None,
+            retired_token: None,
+        }
+    }
+
+    /// Params to bind as `member` carrying a managed run's session binding token.
+    pub fn member_with_token(member: impl Into<String>, session_token: impl Into<String>) -> Self {
+        MsgBindParams {
+            member: Some(member.into()),
+            session_token: Some(session_token.into()),
             retired_token: None,
         }
     }

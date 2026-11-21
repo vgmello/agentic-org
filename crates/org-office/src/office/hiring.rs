@@ -30,8 +30,9 @@ use crate::organization::{
     wire,
 };
 use crate::store::open::{
-    AgentExecutionById, CheckHrMessageAccess, HireInspectById, HiresList, ModelProfilesList,
-    ReceiptById, RoleInspectByRef, RolesList, StructureOp,
+    AgentExecutionById, CheckHrMessageAccess, EmployeeById, HireInspectById, HiresList,
+    ModelProfileById, ModelProfilesList, ProviderConnectionById, ReceiptById, RoleById,
+    RoleInspectByRef, RolesList, StructureOp,
 };
 
 impl Office {
@@ -46,6 +47,68 @@ impl Office {
             .join("agents")
             .join(employee_id)
             .join("home")
+    }
+
+    /// Ensures the agent's private `0700` home directory exists and returns its path.
+    pub fn ensure_private_home(&self, employee_id: &str) -> Result<PathBuf, OfficeError> {
+        self.ensure_agent_private_home(employee_id)?;
+        Ok(self.agent_private_home_path(employee_id))
+    }
+
+    /// Reads one employee record by canonical UUIDv7 ID.
+    pub fn load_employee(
+        &self,
+        employee_id: &str,
+    ) -> Result<Option<records::Employee>, OfficeError> {
+        let Ok(id) = Id::parse(employee_id) else {
+            return Ok(None);
+        };
+        Ok(self.store.read(EmployeeById(id)).map_err(storage)?.0)
+    }
+
+    /// Reads one role record by canonical UUIDv7 ID.
+    pub fn load_role(&self, role_id: &str) -> Result<Option<records::Role>, OfficeError> {
+        let Ok(id) = Id::parse(role_id) else {
+            return Ok(None);
+        };
+        Ok(self.store.read(RoleById(id)).map_err(storage)?.0)
+    }
+
+    /// Reads one agent's execution configuration by canonical employee UUIDv7 ID.
+    pub fn load_agent_execution(
+        &self,
+        employee_id: &str,
+    ) -> Result<Option<records::AgentExecutionConfig>, OfficeError> {
+        let Ok(id) = Id::parse(employee_id) else {
+            return Ok(None);
+        };
+        Ok(self.store.read(AgentExecutionById(id)).map_err(storage)?.0)
+    }
+
+    /// Reads one provider connection by canonical UUIDv7 ID.
+    pub fn load_provider_connection(
+        &self,
+        connection_id: &str,
+    ) -> Result<Option<records::ProviderConnection>, OfficeError> {
+        let Ok(id) = Id::parse(connection_id) else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .read(ProviderConnectionById(id))
+            .map_err(storage)?
+            .0)
+    }
+
+    /// Reads one model profile by canonical UUIDv7 ID.
+    pub fn load_model_profile(
+        &self,
+        profile_id: &str,
+    ) -> Result<Option<records::ModelProfile>, OfficeError> {
+        let Ok(id) = Id::parse(profile_id) else {
+            return Ok(None);
+        };
+        Ok(self.store.read(ModelProfileById(id)).map_err(storage)?.0)
     }
 
     fn ensure_agent_private_home(&self, employee_id: &str) -> Result<(), OfficeError> {

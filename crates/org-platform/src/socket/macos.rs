@@ -36,6 +36,29 @@ pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
     super::checked_uid(rc, uid, 0, 0)
 }
 
+pub(super) fn peer_pid(fd: RawFd) -> io::Result<libc::pid_t> {
+    let mut pid: libc::pid_t = 0;
+    let expected = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    let mut length = expected;
+    // SAFETY: pid is live and writable for length bytes.
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&mut pid as *mut libc::pid_t).cast(),
+            &mut length,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length != expected || pid <= 0 {
+        return Err(invalid("unexpected peer pid response"));
+    }
+    Ok(pid)
+}
+
 /// The caller's fence, held from before `recvmsg` through every `FD_CLOEXEC` update:
 /// `recvmsg` installs descriptors without close-on-exec here.
 pub(super) struct DescriptorReceive<'fence> {

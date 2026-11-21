@@ -10,6 +10,8 @@ pub mod hiring_dispatch;
 pub mod hiring_table;
 pub mod keys;
 pub mod office;
+pub mod session_dispatch;
+pub mod session_table;
 pub mod sources;
 pub mod table;
 
@@ -29,10 +31,28 @@ pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Offi
             exit_code: 0,
         };
     }
+    let normalized: Vec<String>;
+    let effective_args: &[String] = if args.first().map(String::as_str) == Some("who") {
+        let mut rewritten = Vec::with_capacity(args.len() + 1);
+        rewritten.push("directory".to_owned());
+        rewritten.push("list".to_owned());
+        rewritten.extend_from_slice(&args[1..]);
+        normalized = rewritten;
+        &normalized
+    } else {
+        args
+    };
     let table = table::table();
     let mut sources = StdSources;
     let mut keys = UuidV7KeySource;
-    org_command::run(&table, program, args, &mut sources, &mut keys, office)
+    org_command::run(
+        &table,
+        program,
+        effective_args,
+        &mut sources,
+        &mut keys,
+        office,
+    )
 }
 
 /// Runs `agent-os` with the supplied command-line arguments and binding, returning the

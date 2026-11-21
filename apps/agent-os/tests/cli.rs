@@ -506,3 +506,226 @@ fn c2_cli14_roles_and_hr_hire_authorized_and_unauthorized() {
 
     server.join().unwrap();
 }
+
+#[test]
+fn session_inspect_grant_list_who_and_run_binding_refusals() {
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("c3-office.sock");
+    let listener = UnixListener::bind(&sock).unwrap();
+
+    let live_agent = "0193a5c0-0000-7000-8000-000000000051";
+    let offboarded_agent = "0193a5c0-0000-7000-8000-000000000052";
+    let expected_token = "live-run-session-token-0123456789abcdef";
+
+    let server = thread::spawn(move || {
+        for _ in 0..5 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut bound_token_ok = false;
+            while let Ok(Some(req)) = frame::read_message::<Request>(&mut reader) {
+                let resp = match req.method.as_str() {
+                    "hello" => Response::ok::<org_proto::Hello>(
+                        req.id,
+                        &org_proto::HelloResult::office(
+                            "0.1.0",
+                            "test-host",
+                            org_proto::OfficeHello {
+                                organization_name: "Acme".into(),
+                                office: org_proto::OfficeInfo {
+                                    id: "0193a5c0-0000-7000-8000-000000000000".into(),
+                                    organization_id: "0193a5c0-0000-7000-8000-000000000099".into(),
+                                    name: "HQ".into(),
+                                    role: org_proto::OfficeRole::Hq,
+                                    host: "test-host".into(),
+                                    endpoint: None,
+                                    status: org_proto::OfficeStatus::Active,
+                                    status_reason: None,
+                                    next_restart_at: None,
+                                },
+                            },
+                        ),
+                    )
+                    .unwrap(),
+                    "msg.bind" => {
+                        let member = req.params["member"].as_str().unwrap_or("");
+                        let token = req.params["session_token"].as_str().unwrap_or("");
+                        if member == live_agent && token == expected_token {
+                            bound_token_ok = true;
+                            Response {
+                                id: req.id,
+                                outcome: org_proto::Outcome::Result(serde_json::json!({
+                                    "member_id": live_agent,
+                                    "office_id": "0193a5c0-0000-7000-8000-000000000000"
+                                })),
+                            }
+                        } else {
+                            Response::error(
+                                req.id,
+                                org_proto::ApiError::new(
+                                    org_proto::ErrorCode::NotAuthorized,
+                                    "this office cannot bind this member",
+                                ),
+                            )
+                        }
+                    }
+                    "member.session_inspect" if bound_token_ok => Response {
+                        id: req.id,
+                        outcome: org_proto::Outcome::Result(serde_json::json!({
+                            "session": {
+                                "employee_id": live_agent,
+                                "office_id": "0193a5c0-0000-7000-8000-000000000000",
+                                "state": "running",
+                                "run_id": "run-1",
+                                "session_id": "sess-1",
+                                "runtime_id": "claude",
+                                "private_home": "/tmp/agent/home",
+                                "same_user_isolation_notice": "same-user notice",
+                                "permission_preset": "workspace_edits",
+                                "sandbox_enabled": true,
+                                "consecutive_stalls": 0,
+                                "stall_locked": false,
+                                "recovery_required": false,
+                                "usage": {
+                                    "input_tokens": 120,
+                                    "output_tokens": 45,
+                                    "cache_read_tokens": 0,
+                                    "subagent_invocations": 1
+                                }
+                            },
+                            "accepted_commands_count": 2,
+                            "spec_hash": "0123456789abcdef"
+                        })),
+                    },
+                    "member.session_grants" if bound_token_ok => Response {
+                        id: req.id,
+                        outcome: org_proto::Outcome::Result(serde_json::json!({
+                            "employee_id": live_agent,
+                            "permission_preset": "workspace_edits",
+                            "permission_mode": "accept_edits",
+                            "sandbox_enabled": true,
+                            "writable_roots": ["/tmp/agent/home"],
+                            "read_only_dirs": [],
+                            "denied_write_patterns": ["/tmp/agent/home/.git/hooks/**"],
+                            "denied_read_patterns": [],
+                            "rules": [{"effect": "allow", "tool": "Read", "scope": "any"}]
+                        })),
+                    },
+                    "who" if bound_token_ok => Response {
+                        id: req.id,
+                        outcome: org_proto::Outcome::Result(serde_json::json!({
+                            "members": [{
+                                "id": live_agent,
+                                "name": "Ada",
+                                "handle": "ada",
+                                "kind": "agent",
+                                "owner": false,
+                                "agent_status": "active",
+                                "role_title": "Engineer",
+                                "presence": "working",
+                                "teams": []
+                            }]
+                        })),
+                    },
+                    other => Response::error(
+                        req.id,
+                        org_proto::ApiError::new(
+                            org_proto::ErrorCode::UnknownMethod,
+                            format!("unexpected {other}"),
+                        ),
+                    ),
+                };
+                frame::write_message(&mut stream, &resp).unwrap();
+            }
+        }
+    });
+
+    // 0. Unbound agent-os refuses locally without connecting (CLI-12).
+    let unbound = bin()
+        .args(["session", "inspect"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_AGENT_ID", live_agent)
+        .env_remove("AGENT_OS_SESSION_TOKEN")
+        .output()
+        .unwrap();
+    assert_eq!(unbound.status.code(), Some(1));
+    let env: Value = serde_json::from_slice(&unbound.stdout).unwrap();
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "not_authorized");
+
+    // 1. CLI-9: session inspect
+    let inspect = bin()
+        .args(["session", "inspect"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", expected_token)
+        .env("AGENT_OS_AGENT_ID", live_agent)
+        .output()
+        .unwrap();
+    assert!(
+        inspect.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inspect.stdout)
+    );
+    let env: Value = serde_json::from_slice(&inspect.stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"]["session"]["state"], "running");
+    assert_eq!(env["data"]["accepted_commands_count"], 2);
+
+    // 2. CLI-10: grant list
+    let grants = bin()
+        .args(["grant", "list"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", expected_token)
+        .env("AGENT_OS_AGENT_ID", live_agent)
+        .output()
+        .unwrap();
+    assert!(
+        grants.status.success(),
+        "{}",
+        String::from_utf8_lossy(&grants.stdout)
+    );
+    let env: Value = serde_json::from_slice(&grants.stdout).unwrap();
+    assert_eq!(env["data"]["permission_preset"], "workspace_edits");
+    assert_eq!(env["data"]["sandbox_enabled"], true);
+
+    // 3. B2 Q9: agent-os who
+    let who = bin()
+        .args(["who"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", expected_token)
+        .env("AGENT_OS_AGENT_ID", live_agent)
+        .output()
+        .unwrap();
+    assert!(
+        who.status.success(),
+        "{}",
+        String::from_utf8_lossy(&who.stdout)
+    );
+    let env: Value = serde_json::from_slice(&who.stdout).unwrap();
+    assert_eq!(env["data"][0]["handle"], "ada");
+
+    // 4. CLI-12: wrong session token refused on office bind
+    let wrong_tok = bin()
+        .args(["who"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", "wrong-token")
+        .env("AGENT_OS_AGENT_ID", live_agent)
+        .output()
+        .unwrap();
+    assert_eq!(wrong_tok.status.code(), Some(1));
+    let env: Value = serde_json::from_slice(&wrong_tok.stdout).unwrap();
+    assert_eq!(env["error"]["code"], "not_authorized");
+
+    // 5. B2 Q9: offboarded agent bind refused
+    let offboarded = bin()
+        .args(["who"])
+        .env("AGENT_OS_SOCKET", &sock)
+        .env("AGENT_OS_SESSION_TOKEN", expected_token)
+        .env("AGENT_OS_AGENT_ID", offboarded_agent)
+        .output()
+        .unwrap();
+    assert_eq!(offboarded.status.code(), Some(1));
+    let env: Value = serde_json::from_slice(&offboarded.stdout).unwrap();
+    assert_eq!(env["error"]["code"], "not_authorized");
+
+    server.join().unwrap();
+}

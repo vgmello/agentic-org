@@ -424,7 +424,7 @@ fn a_fatal_store_reports_its_fault_and_its_close_leaves_no_marker() {
 }
 
 /// `org.snapshot` on the golden creation: generation 1, the creator as the owner, and the
-/// HR lead an agent with no profile and no office, so nobody is asked to place it.
+/// HR lead an active agent placed on the HQ office with its profile populated.
 #[test]
 fn the_snapshot_of_the_golden_creation() {
     for engine in ENGINES {
@@ -461,7 +461,10 @@ fn the_snapshot_of_the_golden_creation() {
         let hr = member(HR);
         assert_eq!((hr.kind, hr.name.as_str()), (MemberKind::Agent, "HR"));
         assert!(!hr.owner);
-        assert_eq!((hr.agent.clone(), hr.office_id.clone()), (None, None));
+        assert_eq!(hr.office_id.as_deref(), Some(id(0xa3).as_str()));
+        let hr_agent = hr.agent.as_ref().expect("agent profile populated");
+        assert_eq!(hr_agent.messaging_name, "hr");
+        assert_eq!(hr_agent.status, org_proto::org::AgentStatus::Active);
         assert_eq!(hr.reports_to_member_id, None);
 
         // Each employee belongs to the top team as its home team.

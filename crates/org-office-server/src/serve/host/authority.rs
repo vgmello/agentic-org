@@ -75,6 +75,14 @@ fn requires_owner(method: &str) -> bool {
             | "project.create"
             | "project.add_team"
             | "project.remove_team"
+            | "member.session_approval"
+            | "member.session_clear_stall"
+            | "provider.enrollment_start"
+            | "provider.enrollment_status"
+            | "provider.enrollment_submit"
+            | "provider.enrollment_cancel"
+            | "provider.credential_status"
+            | "provider.credential_revoke"
     )
 }
 

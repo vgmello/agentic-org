@@ -567,81 +567,9 @@ fn serve_office(
             );
         }
     };
-    let mut shared = serve::Shared::new(
-        &info,
-        &socket,
-        serve::OfficePorts {
-            // Calls only the old tables served answer `unsupported` until their family is
-            // rebuilt on the office store: work in B4, status lines in B6.
-            work: Box::new(|_, _| Ok(Err(unsupported("work", "B4")))),
-            operation_get: {
-                let office = Arc::clone(&office);
-                Box::new(move |member, id| {
-                    office
-                        .operation(member, id)
-                        .map_err(|e| logged("operation.get", &e))
-                })
-            },
-            snapshot: {
-                let office = Arc::clone(&office);
-                Box::new(move || office.org_snapshot().map_err(|e| snapshot_failure(&e)))
-            },
-            projects_list: {
-                let office = Arc::clone(&office);
-                Box::new(move |params| {
-                    office
-                        .list_projects(params.include_archived)
-                        .map(Ok)
-                        .map_err(|e| logged("project.list", &e))
-                })
-            },
-            project_inspect: {
-                let office = Arc::clone(&office);
-                Box::new(move |params| {
-                    office
-                        .inspect_project(&params.project)
-                        .map_err(|e| logged("project.inspect", &e))
-                })
-            },
-            hiring: {
-                let office = Arc::clone(&office);
-                Some(Box::new(move |member, request| {
-                    office.dispatch_hiring_rpc(member, request)
-                }))
-            },
-            hr_message_guard: {
-                let office = Arc::clone(&office);
-                Some(Box::new(move |sender, target| {
-                    office
-                        .check_hr_message_allowed(sender, target)
-                        .map_err(|e| logged("msg.send", &e))
-                }))
-            },
-            who: {
-                let office = Arc::clone(&office);
-                // Status lines and runtime presence are unavailable until B6: everyone reads
-                // as offline.
-                Box::new(move |params| office.who(params).map_err(|e| logged("who", &e)))
-            },
-            status: Box::new(|_, _| Ok(Err(unsupported("status lines", "B6")))),
-            live,
-            feed: None,
-            mailbox: None,
-            directory: Arc::new(directory::OfficeDirectory::of(Arc::clone(&office))),
-            submit: {
-                let office = Arc::clone(&office);
-                Box::new(move |member, command, dry_run| {
-                    let answer = if dry_run {
-                        office.check_org(member, command)
-                    } else {
-                        office.submit_org(member, command)
-                    };
-                    answer.map_err(|e| logged("command", &e))
-                })
-            },
-        },
-        auth,
-    );
+    let session_manager = start_session_manager(Arc::clone(&office), &socket);
+    let ports = build_office_ports(Arc::clone(&office), Arc::clone(&session_manager), live);
+    let mut shared = serve::Shared::new(&info, &socket, ports, auth);
     // The organization's directory generation: the member watcher looks again when it moves.
     // A read that fails gives a value no generation has, so the next good read differs.
     let directory_office = Arc::clone(&office);
@@ -711,13 +639,15 @@ fn serve_office(
         host_gone.load(Ordering::SeqCst) || signals::stop_requested()
     };
     serve::run(&listener, &shared, &stop);
+    session_manager.stop_all("office shutdown");
     drop(transfers);
 
     drop(listener);
     let _ = std::fs::remove_file(&socket);
     // Every connection thread is gone (joined by `serve::run`): the only owners of the office
-    // left are `shared` and this function.
+    // left are `shared`, `session_manager`, and this function.
     drop(shared);
+    drop(session_manager);
     if stopped.load(Ordering::SeqCst) {
         return 1;
     }
@@ -820,6 +750,137 @@ fn runtime_dir_from(
         Some(_) => Err("office runtime directory must be absolute"),
         None if debug => Ok(home.join("run")),
         None => Err("release worker requires an explicit office runtime directory"),
+    }
+}
+
+/// Initializes the production C3 `SessionManager` and runs startup recovery scan.
+fn start_session_manager(
+    office: Arc<Office>,
+    socket: &Path,
+) -> Arc<org_office_sessions::SessionManager> {
+    let session_manager = Arc::new(org_office_sessions::SessionManager::new(
+        office,
+        org_office_sessions::SessionManagerConfig::production(socket.to_path_buf()),
+    ));
+    match session_manager.recover_on_startup() {
+        Ok(report) if !report.actions.is_empty() => {
+            eprintln!(
+                "agentic-org-office: startup session recovery recorded {} action(s)",
+                report.actions.len()
+            );
+        }
+        Ok(_) => {}
+        Err(error) => {
+            eprintln!("agentic-org-office: startup session recovery scan failed: {error}");
+        }
+    }
+    session_manager
+}
+
+/// Composes the office RPC ports passed to `serve::Shared`.
+fn build_office_ports(
+    office: Arc<Office>,
+    session_manager: Arc<org_office_sessions::SessionManager>,
+    live: Arc<live::LiveEvents>,
+) -> serve::OfficePorts {
+    serve::OfficePorts {
+        work: Box::new(|_, _| Ok(Err(unsupported("work", "B4")))),
+        operation_get: {
+            let office = Arc::clone(&office);
+            Box::new(move |member, id| {
+                office
+                    .operation(member, id)
+                    .map_err(|e| logged("operation.get", &e))
+            })
+        },
+        snapshot: {
+            let office = Arc::clone(&office);
+            Box::new(move || office.org_snapshot().map_err(|e| snapshot_failure(&e)))
+        },
+        projects_list: {
+            let office = Arc::clone(&office);
+            Box::new(move |params| {
+                office
+                    .list_projects(params.include_archived)
+                    .map(Ok)
+                    .map_err(|e| logged("project.list", &e))
+            })
+        },
+        project_inspect: {
+            let office = Arc::clone(&office);
+            Box::new(move |params| {
+                office
+                    .inspect_project(&params.project)
+                    .map_err(|e| logged("project.inspect", &e))
+            })
+        },
+        hiring: {
+            let office = Arc::clone(&office);
+            Some(Box::new(move |member, request| {
+                office.dispatch_hiring_rpc(member, request)
+            }))
+        },
+        sessions: {
+            let sessions = Arc::clone(&session_manager);
+            Some(Box::new(move |member, request| {
+                sessions.dispatch_rpc(member, request)
+            }))
+        },
+        run_binding_verify: {
+            let sessions = Arc::clone(&session_manager);
+            Some(Box::new(move |member_id, token, peer_pid| {
+                sessions
+                    .bindings()
+                    .verify_peer(member_id, token, peer_pid)
+                    .is_ok()
+            }))
+        },
+        run_binding_active: {
+            let sessions = Arc::clone(&session_manager);
+            Some(Box::new(move |member_id| {
+                sessions.bindings().has_active(member_id)
+            }))
+        },
+        record_agent_command: {
+            let sessions = Arc::clone(&session_manager);
+            Some(Box::new(move |member_id, method| {
+                sessions.record_accepted_command(member_id, method);
+            }))
+        },
+        on_agent_stop: {
+            let sessions = Arc::clone(&session_manager);
+            Some(Box::new(move |employee_id, reason| {
+                let _ = sessions.stop_session(employee_id, reason);
+            }))
+        },
+        hr_message_guard: {
+            let office = Arc::clone(&office);
+            Some(Box::new(move |sender, target| {
+                office
+                    .check_hr_message_allowed(sender, target)
+                    .map_err(|e| logged("msg.send", &e))
+            }))
+        },
+        who: {
+            let office = Arc::clone(&office);
+            Box::new(move |params| office.who(params).map_err(|e| logged("who", &e)))
+        },
+        status: Box::new(|_, _| Ok(Err(unsupported("status lines", "B6")))),
+        live,
+        feed: None,
+        mailbox: None,
+        directory: Arc::new(directory::OfficeDirectory::of(Arc::clone(&office))),
+        submit: {
+            let office = Arc::clone(&office);
+            Box::new(move |member, command, dry_run| {
+                let answer = if dry_run {
+                    office.check_org(member, command)
+                } else {
+                    office.submit_org(member, command)
+                };
+                answer.map_err(|e| logged("command", &e))
+            })
+        },
     }
 }
 
