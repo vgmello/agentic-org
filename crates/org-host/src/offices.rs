@@ -328,6 +328,18 @@ impl Offices {
         }
     }
 
+    pub(crate) fn inspect_import(
+        &self,
+        repository_remote_url: &str,
+        state_branch: &str,
+    ) -> Result<org_office_launch::InspectImportResponse, ApiError> {
+        self.supervisor
+            .inspect_import(repository_remote_url, state_branch)
+            .map_err(|_| {
+                ApiError::new(ErrorCode::Unavailable, "organization inspector unavailable")
+            })
+    }
+
     /// `not_ready` if `office_id` is still being created, `not_found` if it isn't an office here.
     fn settled_office(&self, office_id: &str) -> Result<(), ApiError> {
         let catalog = lock(&self.catalog);

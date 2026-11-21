@@ -191,3 +191,9 @@ pub fn require_disk(dir: &File, path: &Path) -> Result<(), FilesystemRefusal> {
 pub fn set_owner_only_dir(path: &Path) -> io::Result<()> {
     native::set_owner_only_dir(path)
 }
+
+/// Atomically create a new directory at `path` accessible only to its owner (mode `0700` on
+/// macOS and GNU/Linux, with no `0755` window). Every unsupported target fails closed.
+pub fn create_owner_only_dir(path: &Path) -> io::Result<()> {
+    native::create_owner_only_dir(path)
+}

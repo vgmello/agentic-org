@@ -48,7 +48,16 @@ impl World {
         code: RecoveryCode,
     ) -> Result<Office, OfficeError> {
         let (custody, roots) = self.writer.admitted();
-        prepare(&self.folder, &new(), key, &binding(), roots, custody, code)
+        prepare(
+            &self.folder,
+            &new(),
+            key,
+            &binding(),
+            roots,
+            custody,
+            code,
+            None,
+        )
     }
 
     pub(crate) fn open(&self, key: Option<Key>) -> Result<Office, OfficeError> {

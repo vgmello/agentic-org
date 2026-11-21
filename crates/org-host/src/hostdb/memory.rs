@@ -196,6 +196,12 @@ impl Inner {
         Ok(row.link_id.clone())
     }
 
+    fn has_org_reservation(&self, org_id: &str) -> bool {
+        self.provisioning
+            .values()
+            .any(|r| r.prepared.organization_id == org_id)
+    }
+
     fn taken(&self, name: &str, slug: &str) -> Result<Option<Taken>, Error> {
         let key = OrganizationName::parse(name).map_err(|_| Error::Unsafe)?;
         for r in self.provisioning.values() {
@@ -925,6 +931,14 @@ impl HostStore for MemoryHostStore {
             .cloned())
     }
 
+    fn provisioning_for_org(&self, org: &str) -> Result<Option<Reservation>, Error> {
+        let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
+        Ok(s.provisioning
+            .values()
+            .find(|r| r.prepared.organization_id == org)
+            .cloned())
+    }
+
     fn provisioning_reserved(&self) -> Result<Vec<Reservation>, Error> {
         let s = self.inner.lock().map_err(|_| Error::Unsafe)?;
         Ok(s.provisioning
@@ -1001,15 +1015,7 @@ impl HostStore for MemoryHostStore {
         account: &Account,
         frozen: &Reservation,
     ) -> Result<Reservation, Error> {
-        if !frozen.prepared.valid()
-            || frozen.account != account.account_id()
-            || frozen.prepared.creator.employee_id != frozen.owner_member
-            || frozen.recovery_handle != format!("recovery.{}", frozen.operation_id)
-            || frozen.key_fingerprint.is_some()
-            || frozen.linked
-        {
-            return Err(Error::Unsafe);
-        }
+        check_reservation_shape(account, frozen)?;
         let _time =
             org_proto::uuid_v7_time_ms(&frozen.operation_id).ok_or(Error::InvalidId)? as i64;
         let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
@@ -1017,17 +1023,11 @@ impl HostStore for MemoryHostStore {
             return Err(Error::NotAdministrator);
         }
         if let Some(prior) = s.provisioning.get(&frozen.operation_id) {
-            if prior.account != frozen.account
-                || prior.fingerprint != frozen.fingerprint
-                || prior.prepared != frozen.prepared
-                || prior.owner_member != frozen.owner_member
-            {
-                return Err(Error::OperationReused);
-            }
-            return Ok(prior.clone());
+            return check_matching_prior(prior, frozen);
         }
         if s.taken(&frozen.prepared.plan.name, &frozen.prepared.plan.slug)?
             .is_some()
+            || s.has_org_reservation(&frozen.prepared.organization_id)
         {
             return Err(Error::Conflict);
         }
@@ -1409,4 +1409,28 @@ impl HostStore for MemoryHostStore {
         );
         Ok(None)
     }
+}
+
+fn check_reservation_shape(account: &Account, frozen: &Reservation) -> Result<(), Error> {
+    if !frozen.prepared.valid()
+        || frozen.account != account.account_id()
+        || frozen.prepared.creator.employee_id != frozen.owner_member
+        || frozen.recovery_handle != format!("recovery.{}", frozen.operation_id)
+        || frozen.key_fingerprint.is_some()
+        || frozen.linked
+    {
+        return Err(Error::Unsafe);
+    }
+    Ok(())
+}
+
+fn check_matching_prior(prior: &Reservation, frozen: &Reservation) -> Result<Reservation, Error> {
+    if prior.account != frozen.account
+        || prior.fingerprint != frozen.fingerprint
+        || prior.prepared != frozen.prepared
+        || prior.owner_member != frozen.owner_member
+    {
+        return Err(Error::OperationReused);
+    }
+    Ok(prior.clone())
 }

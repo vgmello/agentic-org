@@ -2047,3 +2047,160 @@ fn opt_in_tls_enable_forwards_and_sanitizes_errors() {
         forbidden.body
     );
 }
+
+#[test]
+fn open_existing_organization_routes_validate_auth_body_and_errors() {
+    let mode = Arc::new(Mutex::new("ok"));
+    let script_mode = Arc::clone(&mode);
+    let base = default_script();
+    let script: Arc<Script> = Arc::new(move |method, params| match method {
+        "organization.open_preview" => match *script_mode.lock().unwrap() {
+            "invalid_file" => vec![json!({"error": {
+                "code": "invalid_request",
+                "message": "state/teams/t1/team.yaml: unsupported schema_version",
+                "field": "state/teams/t1/team.yaml",
+                "rule": "invalid_file"
+            }})],
+            "forbidden" => vec![json!({"error": {
+                "code": "not_authorized",
+                "message": "instance administrator required"
+            }})],
+            _ => vec![json!({"result": {
+                "organization_id": "01945c00-0000-7000-8000-000000000010",
+                "name": "Solaris",
+                "slug": "solaris",
+                "repository_remote_url": "https://example.com/solaris.git",
+                "canonical_remote_url": "https://example.com/solaris.git",
+                "state_branch": "org/state",
+                "teams_count": 2,
+                "projects_count": 1,
+                "agents_count": 1,
+                "people": [{
+                    "id": "01945c00-0000-7000-8000-000000000020",
+                    "name": "Sam",
+                    "handle": "sam",
+                    "home_team_id": "01945c00-0000-7000-8000-000000000030"
+                }],
+                "local_only_not_restored": ["Chat conversations"]
+            }})],
+        },
+        "organization.open" => vec![json!({"result": {
+            "organization": {
+                "id": "01945c00-0000-7000-8000-000000000010",
+                "name": "Solaris",
+                "slug": "solaris",
+                "created_at": "2026-11-21T00:00:00Z",
+                "employee_id": "01945c00-0000-7000-8000-000000000020",
+                "offices": [],
+                "recovery": "pending"
+            },
+            "local_only_not_restored": ["Chat conversations"]
+        }})],
+        _ => base(method, params),
+    });
+    let (gateway, calls) = gateway(script);
+
+    // Unauthenticated requests fail 401 before reaching the host.
+    let unauth = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/organizations/open/preview",
+        r#"{"repository_remote_url":"https://example.com/solaris.git","state_branch":"org/state"}"#,
+        None,
+        &[],
+    );
+    assert_eq!(unauth.status, StatusCode::UNAUTHORIZED);
+    assert!(calls.methods().is_empty());
+
+    let pair = sign_in(&gateway).pair();
+
+    // Unknown fields or missing operation_id fail 400 before host call.
+    let before = calls.methods().len();
+    for (path, body) in [
+        (
+            "/api/v1/organizations/open/preview",
+            r#"{"repository_remote_url":"https://example.com/solaris.git","state_branch":"org/state","extra":1}"#,
+        ),
+        (
+            "/api/v1/organizations/open",
+            r#"{"operation_id":"not-a-uuid","repository_remote_url":"https://example.com/solaris.git","state_branch":"org/state","owner_member_id":"01945c00-0000-7000-8000-000000000020"}"#,
+        ),
+    ] {
+        let reply = send(&gateway, Method::POST, path, body, Some(&pair), &[]);
+        assert_eq!(
+            reply.status,
+            StatusCode::BAD_REQUEST,
+            "{path}: {}",
+            reply.body
+        );
+    }
+    assert_eq!(calls.methods().len(), before);
+
+    // Valid preview and open succeed.
+    let preview = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/organizations/open/preview",
+        r#"{"repository_remote_url":"https://example.com/solaris.git","state_branch":"org/state"}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(preview.status, StatusCode::OK, "{}", preview.body);
+    assert_eq!(preview.body["result"]["slug"], "solaris");
+
+    let opened = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/organizations/open",
+        r#"{"operation_id":"01945c00-0000-7000-8000-000000000099","repository_remote_url":"https://example.com/solaris.git","state_branch":"org/state","owner_member_id":"01945c00-0000-7000-8000-000000000020"}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(opened.status, StatusCode::OK, "{}", opened.body);
+    assert_eq!(opened.body["result"]["organization"]["slug"], "solaris");
+
+    // Invalid file surfaces field + message as 400.
+    *mode.lock().unwrap() = "invalid_file";
+    let bad = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/organizations/open/preview",
+        r#"{"repository_remote_url":"https://example.com/solaris.git","state_branch":"org/state"}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(bad.status, StatusCode::BAD_REQUEST, "{}", bad.body);
+    assert_eq!(bad.body["error"]["field"], "state/teams/t1/team.yaml");
+
+    // Non-admin with live session returns 403.
+    *mode.lock().unwrap() = "forbidden";
+    let denied = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/organizations/open/preview",
+        r#"{"repository_remote_url":"https://example.com/solaris.git","state_branch":"org/state"}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(denied.status, StatusCode::FORBIDDEN, "{}", denied.body);
+
+    // Expired/revoked cached session re-validates via session.validate and returns 401.
+    let signed_out = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/session/sign-out",
+        "{}",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(signed_out.status, StatusCode::OK);
+    let expired = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/organizations/open/preview",
+        r#"{"repository_remote_url":"https://example.com/solaris.git","state_branch":"org/state"}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(expired.status, StatusCode::UNAUTHORIZED, "{}", expired.body);
+}

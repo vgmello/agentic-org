@@ -97,6 +97,18 @@ pub(super) fn route_organization(
     post: bool,
     query: bool,
 ) -> Result<Route, ApiReply> {
+    if org == "open" {
+        return match tail {
+            ["preview"] if post => Ok(Route::OpenOrg(super::open_routes::OpenRoute::Preview(
+                api.caller_auth(request)?,
+            ))),
+            [] if post => Ok(Route::OpenOrg(super::open_routes::OpenRoute::Open(
+                api.caller_auth(request)?,
+            ))),
+            [] | ["preview"] => Err(invalid()),
+            _ => Err(not_found()),
+        };
+    }
     if let ["projects", rest @ ..] = tail {
         return route_projects(api, request, org, rest, post, query);
     }

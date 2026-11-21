@@ -100,6 +100,11 @@ pub(super) fn set_owner_only_dir(path: &Path) -> io::Result<()> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
 }
 
+pub(super) fn create_owner_only_dir(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().mode(0o700).create(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -144,6 +144,98 @@ pub struct CreatingOrganization {
     pub slug: String,
 }
 
+/// `organization.open_preview`: clone and validate an existing organization's Git state branch
+/// read-only (`TASK-39` / R1) before registering it on this host.
+pub struct OpenPreview;
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenPreviewParams {
+    pub auth: BrowserAuth,
+    pub repository_remote_url: String,
+    pub state_branch: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenPreviewPerson {
+    pub id: String,
+    pub name: String,
+    pub handle: String,
+    pub home_team_id: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenPreviewResult {
+    pub organization_id: String,
+    pub name: String,
+    pub slug: String,
+    pub repository_remote_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_remote_url: Option<String>,
+    pub state_branch: String,
+    pub teams_count: usize,
+    pub projects_count: usize,
+    pub agents_count: usize,
+    pub people: Vec<OpenPreviewPerson>,
+    pub local_only_not_restored: Vec<String>,
+}
+impl Call for OpenPreview {
+    const METHOD: &'static str = "organization.open_preview";
+    type Params = OpenPreviewParams;
+    type Result = OpenPreviewResult;
+}
+
+/// `organization.open`: open an existing organization from its Git state branch into a new HQ
+/// on this host (`TASK-39` / R1, `doc-61` D25), binding the administrator to `owner_member_id`.
+pub struct OpenExisting;
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenExistingParams {
+    pub auth: BrowserAuth,
+    pub operation_id: String,
+    pub repository_remote_url: String,
+    pub state_branch: String,
+    pub owner_member_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_owner_person: Option<org_proto::selected_bootstrap::CreatorV1>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenExistingResult {
+    pub organization: OrganizationView,
+    pub local_only_not_restored: Vec<String>,
+}
+impl Call for OpenExisting {
+    const METHOD: &'static str = "organization.open";
+    type Params = OpenExistingParams;
+    type Result = OpenExistingResult;
+}
+impl Journaled for OpenExistingParams {
+    const METHOD: &'static str = OpenExisting::METHOD;
+    fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+    fn fingerprint_fields(&self) -> Result<String, serde_json::Error> {
+        #[derive(Serialize)]
+        struct Fields<'a> {
+            repository_remote_url: &'a str,
+            state_branch: &'a str,
+            owner_member_id: &'a str,
+            new_owner_person: &'a Option<org_proto::selected_bootstrap::CreatorV1>,
+        }
+        let OpenExistingParams {
+            auth: _,
+            operation_id: _,
+            repository_remote_url,
+            state_branch,
+            owner_member_id,
+            new_owner_person,
+        } = self;
+        serde_json::to_string(&Fields {
+            repository_remote_url,
+            state_branch,
+            owner_member_id,
+            new_owner_person,
+        })
+    }
+}
+
 /// `account.changed`: what the account can open changed (an organization was linked). The web
 /// process drops that account's cached sessions.
 pub struct AccountChanged;

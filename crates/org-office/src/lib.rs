@@ -12,7 +12,7 @@
 
 pub mod hq_creation;
 mod organization;
-pub use organization::directory;
+pub use organization::{directory, import};
 /// The organization family on the office store (`docs/design/office-store.md`): its
 /// operations, its records and codec, its two ports and its projector. With the `testkit`
 /// feature: its memory port and `organization_conformance_tests!`.
@@ -54,9 +54,9 @@ pub use store::open::Testing;
 /// run on it whichever engine that is.
 pub use store::open::{
     open_store, AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
-    DirectoryGeneration, DirectorySnapshot, EngineChoice, MovePersonOp, MoveTeamOp, OfficeEngine,
-    OfficeStanding, OfficeStore, ReadOp, Standing, StoreConfig, StoreOp, StructureOp,
-    UpdatePersonOp, UpdateTeamOp,
+    DirectoryGeneration, DirectorySnapshot, EngineChoice, ImportOrganizationOp, MovePersonOp,
+    MoveTeamOp, OfficeEngine, OfficeStanding, OfficeStore, ReadOp, Standing, StoreConfig, StoreOp,
+    StructureOp, UpdatePersonOp, UpdateTeamOp,
 };
 mod time;
 

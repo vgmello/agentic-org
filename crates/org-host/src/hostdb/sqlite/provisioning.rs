@@ -107,6 +107,21 @@ impl HostDb {
             None => Ok(None),
         }
     }
+    /// Any reservation (linked or in-flight) for `org`; `None` when none exists.
+    pub(crate) fn provisioning_for_org(&self, org: &str) -> Result<Option<Reservation>, Error> {
+        let db = self.connection.lock().map_err(|_| Error::Unsafe)?;
+        let operation: Option<String> = db
+            .query_row(
+                "SELECT operation_id FROM selected_provisioning WHERE json_extract(prepared,'$.organization_id')=?1 ORDER BY operation_id LIMIT 1",
+                [org],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match operation {
+            Some(operation) => read(&db, &operation),
+            None => Ok(None),
+        }
+    }
     /// Every create that reserved its identity and has not been linked: what a starting host
     /// continues without waiting for a client.
     pub(crate) fn provisioning_reserved(&self) -> Result<Vec<Reservation>, Error> {
@@ -203,8 +218,16 @@ impl HostDb {
             return Ok(prior);
         }
         // The same check as admission, repeated in the inserting transaction; the UNIQUE
-        // constraints remain underneath it.
+        // constraints remain underneath it. Also prevent two reservations for the same org ID.
         if taken(&tx, &frozen.prepared.plan.name, &frozen.prepared.plan.slug)?.is_some() {
+            return Err(Error::Conflict);
+        }
+        let org_taken: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM selected_provisioning WHERE json_extract(prepared,'$.organization_id')=?1)",
+            [&frozen.prepared.organization_id],
+            |r| r.get(0),
+        )?;
+        if org_taken {
             return Err(Error::Conflict);
         }
         let name =

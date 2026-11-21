@@ -46,8 +46,9 @@ use launch::Launch;
 use org_office::Office;
 use org_office::OfficeError;
 use org_office_launch::{
-    office_dir, FailCode, FirstLine, LaunchError, OfficeFile, ServerEvent, CREATE_FLAG,
-    DISCARD_FLAG, OFFICE_FLAG,
+    office_dir, FailCode, FirstLine, InspectImportPerson, InspectImportPreview,
+    InspectImportRequest, InspectImportResponse, LaunchError, OfficeFile, ServerEvent, CREATE_FLAG,
+    DISCARD_FLAG, INSPECT_IMPORT_FLAG, OFFICE_FLAG,
 };
 use org_proto::location::{
     check_socket_path, office_home_from, office_socket_in, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV,
@@ -73,6 +74,7 @@ enum Mode {
     Create,
     Serve(String),
     Discard(String),
+    InspectImport,
 }
 
 fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
@@ -80,12 +82,18 @@ fn parse_args(args: &[String]) -> Result<Mode, &'static str> {
         [flag] if flag == CREATE_FLAG => Ok(Mode::Create),
         [flag, id] if flag == OFFICE_FLAG => Ok(Mode::Serve(id.clone())),
         [flag, id] if flag == DISCARD_FLAG => Ok(Mode::Discard(id.clone())),
-        _ => Err("usage: agentic-org-office --create | --office <id> | --discard <id>"),
+        [flag] if flag == INSPECT_IMPORT_FLAG => Ok(Mode::InspectImport),
+        _ => Err(
+            "usage: agentic-org-office --create | --office <id> | --discard <id> | --inspect-import",
+        ),
     }
 }
 
 /// Runs the server and returns its exit code.
 pub fn run(args: &[String], control: ControlPipe) -> i32 {
+    if matches!(parse_args(args), Ok(Mode::InspectImport)) {
+        return inspect_import(control);
+    }
     // No child-spawn paths exist today. Any future path must share this receive/spawn fence.
     let mut control = Control::new(control, Arc::new(std::sync::Mutex::new(())));
     let mode = match parse_args(args) {
@@ -108,7 +116,95 @@ pub fn run(args: &[String], control: ControlPipe) -> i32 {
         Mode::Discard(id) => discard(control, &home, &id),
         Mode::Create => create_and_serve(control, &home, &runtime),
         Mode::Serve(id) => open_and_serve(control, &home, &runtime, &id),
+        Mode::InspectImport => unreachable!(),
     }
+}
+
+/// `--inspect-import`: reads one JSON request line from `control.from_host`, clones and
+/// validates the organization's Git state branch read-only via `org_office::import`, and writes
+/// one JSON [`InspectImportResponse`] line to `control.to_host`.
+fn inspect_import(mut control: ControlPipe) -> i32 {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let mut line = String::new();
+    let read_res = BufReader::new(&mut control.from_host)
+        .take(16 * 1024)
+        .read_line(&mut line);
+    let response = match read_res
+        .ok()
+        .and_then(|n| (n > 0).then(|| serde_json::from_str::<InspectImportRequest>(&line).ok()))
+        .flatten()
+    {
+        None => InspectImportResponse::Error {
+            code: "invalid_request".into(),
+            path: None,
+            reason: "invalid inspect-import request".into(),
+        },
+        Some(req) => match org_office::import::clone_and_validate_state(
+            &req.repository_remote_url,
+            &req.state_branch,
+        ) {
+            Ok(imported) => InspectImportResponse::Ok {
+                preview: Box::new(InspectImportPreview {
+                    organization_id: imported.summary.organization_id.as_str().to_owned(),
+                    name: imported.summary.name,
+                    slug: imported.summary.slug,
+                    repository_remote_url: imported.repository_remote_url,
+                    canonical_remote_url: imported.summary.canonical_remote_url,
+                    state_branch: imported.state_branch,
+                    commit_oid: imported.commit_oid,
+                    teams_count: imported.summary.teams_count,
+                    projects_count: imported.summary.projects_count,
+                    agents_count: imported.summary.agents_count,
+                    people: imported
+                        .summary
+                        .people
+                        .into_iter()
+                        .map(|p| InspectImportPerson {
+                            id: p.id,
+                            name: p.name,
+                            handle: p.handle,
+                            home_team_id: p.home_team_id,
+                        })
+                        .collect(),
+                    reserved_handles: imported.summary.reserved_handles,
+                    reserved_entity_ids: imported.summary.reserved_entity_ids,
+                    has_active_root_team: imported.summary.has_active_root_team,
+                    local_only_not_restored: imported.local_only_not_restored,
+                }),
+            },
+            Err(org_office::import::ImportError::InvalidFile { path, reason }) => {
+                InspectImportResponse::Error {
+                    code: "invalid_file".into(),
+                    path: Some(path),
+                    reason,
+                }
+            }
+            Err(org_office::import::ImportError::GitFailed(reason)) => {
+                InspectImportResponse::Error {
+                    code: "git_failed".into(),
+                    path: None,
+                    reason,
+                }
+            }
+            Err(org_office::import::ImportError::InvalidInput(reason)) => {
+                InspectImportResponse::Error {
+                    code: "invalid_request".into(),
+                    path: None,
+                    reason,
+                }
+            }
+            Err(org_office::import::ImportError::Storage(reason)) => InspectImportResponse::Error {
+                code: "storage_error".into(),
+                path: None,
+                reason,
+            },
+        },
+    };
+    if let Ok(json) = serde_json::to_string(&response) {
+        let _ = writeln!(control.to_host, "{json}");
+        let _ = control.to_host.flush();
+    }
+    0
 }
 
 /// `--discard`: needs no key, because the databases are plain SQLite (ADR-0016); a key the
@@ -230,6 +326,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
             "protected writer admission requires recovery",
         );
     }
+    let import_source = context.import_source;
     let binding = org_office::hq_creation::Binding {
         operation_id: context.operation_id,
         owner_member_id: create.owner_member_id,
@@ -243,6 +340,7 @@ fn create_and_serve(mut control: Control, home: &Path, runtime: &Path) -> i32 {
         admitted.roots,
         admitted.custody,
         recovery,
+        import_source.as_deref(),
     );
     let office = match created {
         Ok(office) => office,

@@ -52,6 +52,7 @@ fn create_line(path: &Path) -> HostFirstLine {
             operation_id: OPERATION.into(),
             escrow_profile: 1,
             bootstrap: Box::new(plan()),
+            import_source: None,
         },
     })
 }

@@ -66,6 +66,8 @@ struct Pending {
     version: u32,
     reservation: Reservation,
     code: RecoveryCode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    import_source: Option<org_office_launch::ImportSourceV1>,
 }
 pub(crate) fn pending_recovery(
     custody: &dyn HostSecrets,
@@ -102,6 +104,24 @@ pub(crate) fn pending_recovery(
     }
     Ok(p.code)
 }
+fn generate_recovery_code() -> Result<RecoveryCode, ApiError> {
+    use std::fmt::Write as _;
+    let random = crate::secrets::generate_office_secrets_key().map_err(storage)?;
+    let mut formatted = String::with_capacity(49);
+    for (index, bytes) in random.expose_bytes()[..20]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .enumerate()
+    {
+        if index != 0 {
+            formatted.push('-');
+        }
+        write!(&mut formatted, "{:02X}{:02X}", bytes[0], bytes[1]).map_err(storage)?;
+    }
+    RecoveryCode::new(formatted).map_err(storage)
+}
+
 fn unavailable() -> ApiError {
     ApiError::new(
         ErrorCode::Unavailable,
@@ -585,6 +605,7 @@ impl Provisioning {
                 operation_id: r.operation_id.clone(),
                 escrow_profile: 1,
                 bootstrap: Box::new(r.prepared.clone()),
+                import_source: pending.import_source.map(Box::new),
             },
         };
         hq.provision_hq(first, pending.code)?;
@@ -701,25 +722,12 @@ impl Provisioning {
             key_fingerprint: None,
             linked: false,
         };
-        let random = crate::secrets::generate_office_secrets_key().map_err(storage)?;
-        use std::fmt::Write as _;
-        let mut formatted = String::with_capacity(49);
-        for (index, bytes) in random.expose_bytes()[..20]
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .enumerate()
-        {
-            if index != 0 {
-                formatted.push('-');
-            }
-            write!(&mut formatted, "{:02X}{:02X}", bytes[0], bytes[1]).map_err(storage)?;
-        }
-        let code = RecoveryCode::new(formatted).map_err(storage)?;
+        let code = generate_recovery_code()?;
         let pending = Pending {
             version: 1,
             reservation,
             code,
+            import_source: None,
         };
         let bytes = Value::new(serde_json::to_vec(&pending).map_err(storage)?).map_err(storage)?;
         self.custody.put(handle, &bytes).map_err(storage)?;
@@ -911,6 +919,14 @@ pub(crate) trait Hq: Send + Sync {
     ) -> Result<(), ApiError>;
     /// The organization with its offices on this host, HQ first.
     fn organization(&self, id: &str) -> Option<org_proto::Organization>;
+    /// Clones and validates an existing organization's Git state branch read-only (`TASK-39` / R1).
+    fn inspect_import(
+        &self,
+        _repository_remote_url: &str,
+        _state_branch: &str,
+    ) -> Result<org_office_launch::InspectImportResponse, ApiError> {
+        Err(unavailable())
+    }
 }
 impl Hq for Offices {
     fn provision_hq(
@@ -922,6 +938,13 @@ impl Hq for Offices {
     }
     fn organization(&self, id: &str) -> Option<org_proto::Organization> {
         self.organization_by_id(id)
+    }
+    fn inspect_import(
+        &self,
+        repository_remote_url: &str,
+        state_branch: &str,
+    ) -> Result<org_office_launch::InspectImportResponse, ApiError> {
+        Offices::inspect_import(self, repository_remote_url, state_branch)
     }
 }
 
@@ -963,6 +986,9 @@ impl Drop for Claim {
         }
     }
 }
+
+#[path = "provisioning/import.rs"]
+mod import;
 
 #[cfg(test)]
 mod tests;

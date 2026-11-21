@@ -262,6 +262,7 @@ fn create_line() -> serde_json::Value {
             operation_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071f1".into(),
             escrow_profile: 1,
             bootstrap: Box::new(prepared),
+            import_source: None,
         },
     });
     serde_json::to_value(&line).unwrap()

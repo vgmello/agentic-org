@@ -307,6 +307,14 @@ fn provisioning_lifecycle_conformance() {
             h.store.provision_key_stored(&r, "fp-other"),
             Err(Error::Conflict)
         );
+        // Unlinked reservation is visible via provisioning_for_org (not provisioning_linked_to).
+        assert!(h.store.provisioning_linked_to(ORG_ID).unwrap().is_none());
+        let unlinked = h
+            .store
+            .provisioning_for_org(ORG_ID)
+            .unwrap()
+            .expect("unlinked org reservation");
+        assert!(!unlinked.linked);
         h.store.provision_linked(&r).unwrap();
         assert!(h.store.provisioning_reserved().unwrap().is_empty());
         let linked = h
@@ -316,6 +324,7 @@ fn provisioning_lifecycle_conformance() {
             .expect("linked");
         assert!(linked.linked);
         assert_eq!(linked.key_fingerprint.as_deref(), Some("fp-1"));
+        assert!(h.store.provisioning_for_org(ORG_ID).unwrap().is_some());
     });
 }
 

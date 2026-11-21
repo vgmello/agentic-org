@@ -158,6 +158,89 @@ pub struct CreateLine {
     pub hq_creation: HqCreationV1,
 }
 
+/// Canonical summary of local-only data that never lives in organization Git (`doc-91` Loss
+/// Boundaries) and therefore does not come back when opening an organization from Git alone.
+pub const LOCAL_ONLY_NOT_RESTORED: &[&str] = &[
+    "Browser accounts and sign-in sessions (other people must be invited again)",
+    "Chat conversations, channels, and direct messages (protected local messaging store)",
+    "Usage and cost accounting ledger (protected local accounting store)",
+    "Budget policies, periods, and holds (protected local budget store)",
+    "Private task notes (HQ-only private store)",
+    "Operation receipts and office acceptance journals (protected local recovery store)",
+    "Previous HQ certificate authority private key (a new HQ CA was generated; other offices must re-enroll)",
+];
+
+/// Optional Git source for opening an existing organization (`TASK-39` / R1) into a new HQ.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportSourceV1 {
+    pub repository_remote_url: String,
+    pub state_branch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_oid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_owner_person: Option<org_proto::selected_bootstrap::CreatorV1>,
+}
+
+/// Request written on stdin for `agentic-org-office --inspect-import`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InspectImportRequest {
+    pub repository_remote_url: String,
+    pub state_branch: String,
+}
+
+/// Active person summary returned by `agentic-org-office --inspect-import`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InspectImportPerson {
+    pub id: String,
+    pub name: String,
+    pub handle: String,
+    pub home_team_id: String,
+}
+
+/// Preview payload returned when `--inspect-import` validates an organization repository cleanly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InspectImportPreview {
+    pub organization_id: String,
+    pub name: String,
+    pub slug: String,
+    pub repository_remote_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_remote_url: Option<String>,
+    pub state_branch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_oid: Option<String>,
+    pub teams_count: usize,
+    pub projects_count: usize,
+    pub agents_count: usize,
+    pub people: Vec<InspectImportPerson>,
+    #[serde(default)]
+    pub reserved_handles: Vec<String>,
+    #[serde(default)]
+    pub reserved_entity_ids: Vec<String>,
+    #[serde(default)]
+    pub has_active_root_team: bool,
+    pub local_only_not_restored: Vec<String>,
+}
+
+/// One-line JSON response printed on stdout by `agentic-org-office --inspect-import`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum InspectImportResponse {
+    Ok {
+        preview: Box<InspectImportPreview>,
+    },
+    Error {
+        code: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+        reason: String,
+    },
+}
+
 /// The protected creation context of an HQ create, version 2. It names no path: the
 /// organization's data roots travel only in the writer admission
 /// ([`crate::writer::Admission`]), which the host sends before the worker creates anything.
@@ -169,6 +252,9 @@ pub struct HqCreationV1 {
     pub escrow_profile: u32,
     /// The prepared organization: every creation carries it.
     pub bootstrap: Box<org_proto::selected_bootstrap::PreparedV1>,
+    /// Present only when opening an existing organization from Git files (`TASK-39` / R1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_source: Option<Box<ImportSourceV1>>,
 }
 
 impl HqCreationV1 {

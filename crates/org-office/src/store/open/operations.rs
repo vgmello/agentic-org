@@ -66,6 +66,44 @@ impl StoreOp for CreateOrganizationOp {
     }
 }
 
+/// Imports an existing organization from validated Git state files as Entry 1 of a new HQ office
+/// (`TASK-39` / R1, `doc-61` D25), generating a fresh HQ CA escrow package in the same atomic
+/// journal entry.
+pub struct ImportOrganizationOp {
+    pub operation_id: Id,
+    pub here: OfficeIdentity,
+    pub command: crate::organization::import::ImportOrganization,
+    pub ca: CaMaterial,
+}
+
+impl StoreOp for ImportOrganizationOp {
+    type Out = Result<Reply, StoreError>;
+
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let Self {
+            operation_id,
+            here,
+            command,
+            ca,
+        } = self;
+        let key = ca.record(&here, &operation_id);
+        key.check()
+            .map_err(|why| StoreError::invalid(format!("the CA key record: {why}")))?;
+        let sealed = records::ca_escrow_public_key(&ca.package, &here.organization_id)
+            .map_err(|why| StoreError::invalid(format!("the CA escrow package: {why}")))?;
+        if sealed != ca.public_key {
+            return Err(StoreError::invalid(
+                "the CA public key is not the escrow package's",
+            ));
+        }
+        let operation = key.bind(command.operation(operation_id));
+        store.submit(Some(operation), false, move |uow| {
+            let change = crate::organization::import::decide_import(uow, &here, &command)?;
+            Ok(change.create(records::ca_escrow_path(), ca.package.clone()))
+        })
+    }
+}
+
 /// One structure change the organization's owner asks for: the family decides it, and
 /// with it whether `by` may (only the owner, `owner`, does). The caller has authenticated
 /// `by`; the organization decides what `by` may do.

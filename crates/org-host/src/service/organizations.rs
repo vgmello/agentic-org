@@ -10,7 +10,9 @@ use std::sync::Arc;
 use org_host_control::browser::{SessionEnded, SessionValidateParams, SESSION_ENDED};
 use org_host_control::journal;
 use org_host_control::listen::ListenMode;
-use org_host_control::organization::{BrowserAuth, Create, List, OperationLookup};
+use org_host_control::organization::{
+    BrowserAuth, Create, List, OpenExisting, OpenPreview, OperationLookup,
+};
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 use serde_json::Value;
 
@@ -46,7 +48,12 @@ pub(crate) fn dispatch_with_listen(
     provisioning: Option<&Arc<Provisioning>>,
     push: &mut dyn FnMut(&'static str, Value),
 ) -> Option<Response> {
-    if !(request.is::<Create>() || request.is::<List>() || request.is::<OperationLookup>()) {
+    if !(request.is::<Create>()
+        || request.is::<List>()
+        || request.is::<OperationLookup>()
+        || request.is::<OpenPreview>()
+        || request.is::<OpenExisting>())
+    {
         return None;
     }
     let reply = answer(request, web_listen, authentication, provisioning, push);
@@ -131,6 +138,24 @@ fn answer(
             .ok_or_else(unavailable)?
             .lookup(&account, &params.operation_id)?;
         encode::<OperationLookup>(request.id, &result)
+    } else if request.is::<OpenPreview>() {
+        let params = request.params::<OpenPreview>().map_err(invalid)?;
+        let account = account(&params.auth)?;
+        let result = provisioning.ok_or_else(unavailable)?.open_preview(
+            &account,
+            &params.repository_remote_url,
+            &params.state_branch,
+        )?;
+        encode::<OpenPreview>(request.id, &result)
+    } else if request.is::<OpenExisting>() {
+        let params = request.params::<OpenExisting>().map_err(invalid)?;
+        let account = account(&params.auth)?;
+        let fingerprint = journal::fingerprint(&params).map_err(invalid)?;
+        let result =
+            provisioning
+                .ok_or_else(unavailable)?
+                .open_existing(&account, &params, fingerprint)?;
+        encode::<OpenExisting>(request.id, &result)
     } else {
         let params = request.params::<List>().map_err(invalid)?;
         let account = account(&params.auth)?;

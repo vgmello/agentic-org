@@ -10,6 +10,7 @@
 //! header. Nothing else forwards to the host or a local socket.
 mod account_routes;
 mod instance_routes;
+mod open_routes;
 mod org_routes;
 
 pub use instance_routes::{CallerAuth, TlsEnableInput};
@@ -159,6 +160,7 @@ pub enum Route {
     CliApprovalDecide(CallerAuth),
     Operation(CallerAuth, OperationId),
     Account(account_routes::AccountRoute),
+    OpenOrg(open_routes::OpenRoute),
 }
 
 pub enum Call {
@@ -190,6 +192,7 @@ pub enum Call {
     CliApprovalDecide(CallerAuth, LinkToken, bool),
     Operation(CallerAuth, OperationId),
     Account(account_routes::AccountCall),
+    OpenOrg(open_routes::OpenCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -931,6 +934,7 @@ impl ApiBackend for SessionApi {
                 Call::Register(address, link, Credentials { login, password })
             }
             Route::Account(route) => return account_routes::prepare(route, bytes),
+            Route::OpenOrg(route) => return open_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -1026,6 +1030,7 @@ impl ApiBackend for SessionApi {
                 instance_routes::execute_tls_enable(self, caller, input)
             }
             Call::Account(call) => account_routes::execute(self, call),
+            Call::OpenOrg(call) => open_routes::execute(self, call),
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))

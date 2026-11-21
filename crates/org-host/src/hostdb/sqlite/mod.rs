@@ -550,6 +550,12 @@ impl HostStore for HostDb {
     ) -> Result<Option<super::provisioning::Reservation>, Error> {
         HostDb::provisioning_linked_to(self, org)
     }
+    fn provisioning_for_org(
+        &self,
+        org: &str,
+    ) -> Result<Option<super::provisioning::Reservation>, Error> {
+        HostDb::provisioning_for_org(self, org)
+    }
     fn provisioning_reserved(&self) -> Result<Vec<super::provisioning::Reservation>, Error> {
         HostDb::provisioning_reserved(self)
     }

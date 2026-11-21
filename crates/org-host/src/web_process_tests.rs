@@ -47,6 +47,7 @@ mod browser_sessions;
 mod cli_and_custody;
 mod local_onboarding_and_tls;
 mod multi_person_accounts;
+mod open_existing_org;
 mod organizations;
 mod recovery_custody;
 

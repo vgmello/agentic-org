@@ -47,6 +47,7 @@ use crate::projects::ports::ProjectsRead;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Op {
     CreateOrganization,
+    ImportOrganization,
     CreateTeam,
     UpdateTeam,
     MoveTeam,
@@ -61,8 +62,9 @@ pub enum Op {
 }
 
 impl Op {
-    pub const ALL: [Op; 12] = [
+    pub const ALL: [Op; 13] = [
         Op::CreateOrganization,
+        Op::ImportOrganization,
         Op::CreateTeam,
         Op::UpdateTeam,
         Op::MoveTeam,
@@ -85,6 +87,7 @@ impl Op {
     pub const fn kind(self) -> &'static str {
         match self {
             Op::CreateOrganization => "organization.create",
+            Op::ImportOrganization => "organization.import",
             Op::CreateTeam => "organization.create_team",
             Op::UpdateTeam => "organization.update_team",
             Op::MoveTeam => "organization.move_team",

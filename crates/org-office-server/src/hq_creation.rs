@@ -51,6 +51,7 @@ pub(crate) fn prepare(
     roots: DataRoots,
     custody: Custody,
     recovery: RecoveryCode,
+    import_source: Option<&org_office_launch::ImportSourceV1>,
 ) -> Result<Office, OfficeError> {
     let Some(key) = key else {
         return Err(invalid());
@@ -63,35 +64,69 @@ pub(crate) fn prepare(
     // The original wrapper and parsed KDF bytes both drop before serving.
     drop(recovery);
     let secrets = key.clone();
-    Office::provision_hq(folder, new, key, binding, roots, custody, move |prior| {
+    let org_id_for_ca = new.org_id.clone();
+    let office_id_for_ca = new.office_id.clone();
+    let material = move |prior: Option<LocalRecord>| -> Result<LocalRecord, OfficeError> {
         if let Some(prior) = prior {
-            if prior.organization_id != new.org_id || prior.operation_id != operation {
+            if prior.organization_id != org_id_for_ca || prior.operation_id != operation {
                 return Err(invalid());
             }
             let recovered =
-                org_pki::recover(&prior.package, &new.org_id, &code).map_err(|_| invalid())?;
-            unwrap_ca(&secrets, &prior, &new.office_id)?;
+                org_pki::recover(&prior.package, &org_id_for_ca, &code).map_err(|_| invalid())?;
+            unwrap_ca(&secrets, &prior, &office_id_for_ca)?;
             if recovered.public_key() != prior.public_key {
                 return Err(invalid());
             }
             return Ok(prior);
         }
         let ca = org_pki::SigningKey::generate().map_err(|_| invalid())?;
-        let package = ca.seal(&new.org_id, &code).map_err(|_| invalid())?;
+        let package = ca.seal(&org_id_for_ca, &code).map_err(|_| invalid())?;
         let wrapped = org_pki::wrap::wrap(
             secrets.expose_bytes(),
-            &ca_binding(&new.org_id, &new.office_id),
+            &ca_binding(&org_id_for_ca, &office_id_for_ca),
             ca.local_der(),
         )
         .map_err(|_| invalid())?;
-        LocalRecord::new(
-            new.org_id.clone(),
-            operation,
-            ca.public_key(),
-            package,
-            wrapped,
-        )
-    })
+        LocalRecord::new(org_id_for_ca, operation, ca.public_key(), package, wrapped)
+    };
+    if let Some(src) = import_source.cloned() {
+        let expected_org_id = new.org_id.clone();
+        let load_import = move || {
+            let imported = org_office::import::clone_and_validate_state(
+                &src.repository_remote_url,
+                &src.state_branch,
+            )
+            .map_err(|_| OfficeError::Invalid("invalid imported organization repository"))?;
+            if imported.summary.organization_id.as_str() != expected_org_id {
+                return Err(invalid());
+            }
+            if let Some(pinned) = &src.commit_oid {
+                if imported.commit_oid.as_deref() != Some(pinned.as_str()) {
+                    return Err(invalid());
+                }
+            }
+            let new_owner = match &src.new_owner_person {
+                Some(c) => Some(org_office::organization_family::Creator {
+                    employee_id: org_store::Id::parse(&c.employee_id).map_err(|_| invalid())?,
+                    name: c.name.clone(),
+                    handle: c.handle.clone(),
+                }),
+                None => None,
+            };
+            Ok((imported, new_owner))
+        };
+        return Office::import_hq(
+            folder,
+            new,
+            key,
+            binding,
+            roots,
+            custody,
+            load_import,
+            material,
+        );
+    }
+    Office::provision_hq(folder, new, key, binding, roots, custody, material)
 }
 
 /// Whether this run can sign with the organization CA.

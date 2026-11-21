@@ -65,6 +65,10 @@ pub(super) fn set_owner_only_dir(_path: &Path) -> io::Result<()> {
     refused()
 }
 
+pub(super) fn create_owner_only_dir(_path: &Path) -> io::Result<()> {
+    refused()
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::{self, File};

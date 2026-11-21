@@ -461,6 +461,7 @@ pub(crate) trait HostStore:
     fn provisioning_known(&self, operation: &str) -> Result<bool, Error>;
     fn provisioning_linked_to(&self, org: &str)
         -> Result<Option<provisioning::Reservation>, Error>;
+    fn provisioning_for_org(&self, org: &str) -> Result<Option<provisioning::Reservation>, Error>;
     fn provisioning_reserved(&self) -> Result<Vec<provisioning::Reservation>, Error>;
     fn provisioning_of(&self, account: &str) -> Result<Vec<provisioning::Reservation>, Error>;
     fn provisioning_lookup(

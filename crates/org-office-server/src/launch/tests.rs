@@ -49,6 +49,7 @@ fn create() -> CreateLine {
                 hr_employee_id: id(0xa3),
                 creator: CreatorV1::from_login(OWNER.into(), "Ana"),
             }),
+            import_source: None,
         },
     }
 }

@@ -380,6 +380,11 @@ impl Office {
         self.store.stopped_cleanly()
     }
 
+    #[cfg(test)]
+    pub(crate) fn durable_root(&self) -> &Path {
+        &self.durable
+    }
+
     /// The organization's structure from one consistent read of the projection.
     pub fn org_snapshot(&self) -> Result<OrgSnapshot, OfficeError> {
         let read = DirectorySnapshot {

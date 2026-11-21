@@ -361,7 +361,7 @@ fn issued_link_reply(res: org_host_control::browser_accounts::IssuedLinkResult) 
     }))
 }
 
-fn handle_denied(
+pub(super) fn handle_denied(
     api: &SessionApi,
     caller: CallerAuth,
     forbidden_message: &'static str,
