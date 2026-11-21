@@ -232,7 +232,19 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .sopt.sall { font-weight: 600; color: var(--indigo-400); border-top: 1px solid var(--line); margin-top: 4px; }
 body.nokeys .search kbd { display: none; }
 .search .sclose { display: none; }
-.new-btn .new-chev { color: var(--gray-400); }
+.btn.new-btn {
+  height: 34px; padding: 0 12px; border-radius: 999px;
+  background: rgba(99, 102, 241, .20);
+  color: #EEF2FF;
+  box-shadow: inset 0 1px 0 rgba(199, 210, 254, .30), inset 0 0 0 1px rgba(129, 140, 248, .45), 0 2px 10px -3px rgba(79, 70, 229, .45);
+  transition: background-color .16s ease, box-shadow .16s ease, transform .14s ease;
+}
+.btn.new-btn:hover {
+  background: rgba(99, 102, 241, .34);
+  box-shadow: inset 0 1px 0 rgba(224, 231, 255, .40), inset 0 0 0 1px rgba(165, 180, 252, .65), 0 4px 16px -4px rgba(99, 102, 241, .6);
+  transform: translateY(-1px);
+}
+.new-btn .new-chev { color: #C7D2FE; }
 .topbar .spacer { flex: 1; }
 
 /* Buttons */
@@ -1331,8 +1343,29 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 .hb-pill-link:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 222, 255, .18), inset 0 0 0 1px var(--hb-border-hi); color: var(--hb-ink); }
 .hb-pill-link b { color: var(--hb-ink); font-weight: 650; font-variant-numeric: tabular-nums; }
 
-/* Zone 2: Balanced 2-Column Hero Stage (Spotlight + Live AI Presence) */
-.hb-stage { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(320px, 0.92fr); gap: 20px; align-items: stretch; }
+/* Zone 1b: 4-Up Mission-Control Vital Sign Metrics (always visible, even when Inbox = 0) */
+.hb-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.hb-metric {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 13px 15px; border-radius: 14px;
+  background: var(--hb-surface);
+  backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
+  box-shadow: var(--hb-shadow);
+  transition: transform .16s ease, background-color .16s ease, box-shadow .16s ease;
+}
+.hb-metric:hover { background: var(--hb-surface-hi); box-shadow: var(--hb-shadow-hi); transform: translateY(-1px); }
+.hb-metric-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 0.72rem; font-weight: 600; color: var(--hb-muted); letter-spacing: .01em; }
+.hb-metric-val { display: flex; align-items: baseline; gap: 8px; }
+.hb-metric-num { font-size: 1.375rem; line-height: 1.15; font-weight: 650; letter-spacing: -.025em; color: var(--hb-ink); font-variant-numeric: tabular-nums; }
+.hb-metric-delta { font-size: 0.72rem; font-weight: 600; color: #6EE7B7; }
+.hb-metric-delta.warn { color: #FDE68A; }
+.hb-metric-delta.bad { color: #FDA4AF; }
+.hb-metric-sub { font-size: 0.75rem; line-height: 1.25; color: var(--hb-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb-mini-bar { height: 4px; border-radius: 999px; background: rgba(186, 222, 255, .14); overflow: hidden; margin-top: 2px; }
+.hb-mini-bar > span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #38BDF8 0%, #FBBF24 100%); }
+
+/* Zone 2: Balanced 2-Column Hero Stage (Spotlight + Autonomous Catch-up & AI Ask) */
+.hb-stage { display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(350px, 1fr); gap: 20px; align-items: stretch; }
 
 /* Left: Focused Decision Spotlight Card */
 .hb-spot {
@@ -1442,60 +1475,93 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 .hb-cleared p { font-size: 0.875rem; color: var(--hb-muted); max-width: 38ch; }
 .hb-cleared-acts { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
 
-/* Right: Live AI Office Presence Tile (Neural Orb + Active Agent + Quiet Activity Drawer) */
-.hb-alive {
-  display: flex; flex-direction: column; justify-content: space-between; gap: 16px;
-  padding: 20px 22px 16px; border-radius: 18px;
-  background: radial-gradient(circle at 50% 24%, rgba(56, 189, 248, .13) 0%, transparent 62%), var(--hb-surface);
+/* Right: Autonomous Catch-up Digest + Interactive Org AI Ask Panel */
+.hb-catchup {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 20px 22px 18px; border-radius: 18px;
+  background: radial-gradient(circle at 90% 8%, rgba(56, 189, 248, .12) 0%, transparent 56%), var(--hb-surface);
   backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
   box-shadow: var(--hb-shadow);
   min-width: 0;
 }
-.hb-orb-row { display: flex; align-items: center; gap: 16px; }
-.hb-orb-wrap {
-  position: relative; width: 112px; height: 112px; flex: none;
-  border-radius: 999px;
-  background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, .16) 0%, rgba(14, 116, 144, .04) 58%, transparent 74%);
+.hb-cu-hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.hb-cu-title { display: inline-flex; align-items: center; gap: 7px; font-size: 0.9375rem; font-weight: 600; color: var(--hb-ink); }
+.hb-cu-title .ic { color: #7DD3FC; }
+.hb-cu-window {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 999px;
+  background: rgba(186, 222, 255, .07); box-shadow: inset 0 0 0 1px var(--hb-border);
+  font-size: 0.72rem; font-weight: 500; color: var(--hb-muted);
 }
-#home-orb-canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
-.hb-alive-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.hb-alive-state {
-  display: inline-flex; align-items: center; gap: 7px;
-  font-size: 0.9375rem; font-weight: 600; color: var(--hb-ink);
-}
-.hb-alive-sub { font-size: 0.8125rem; line-height: 1.4; color: var(--hb-muted); }
 
-.hb-now-card {
-  display: flex; align-items: center; gap: 12px;
-  padding: 11px 13px; border-radius: 12px;
+.hb-digest { display: flex; flex-direction: column; gap: 8px; }
+.hb-dig-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 11px; border-radius: 10px;
   background: var(--hb-well);
-  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .08), inset 0 0 0 1px var(--hb-border);
-  transition: background-color .15s ease, box-shadow .15s ease;
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .06), inset 0 0 0 1px rgba(186, 222, 255, .08);
+  font-size: 0.8125rem; line-height: 1.42; color: var(--hb-body);
+  transition: background-color .14s ease, box-shadow .14s ease;
 }
-.hb-now-card:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 222, 255, .15), inset 0 0 0 1px var(--hb-border-hi); }
-.hb-now-card .grow { min-width: 0; flex: 1; }
-.hb-now-card .nm { font-size: 0.875rem; font-weight: 600; color: var(--hb-ink); display: flex; align-items: baseline; gap: 6px; }
-.hb-now-card .rl { font-size: 0.75rem; font-weight: 400; color: var(--hb-muted); }
-.hb-now-card .st { font-size: 0.75rem; color: #7DD3FC; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hb-now-card .chev { color: var(--hb-dim); flex: none; }
+a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 222, 255, .14), inset 0 0 0 1px var(--hb-border-hi); }
+.hb-dig-ico { margin-top: 2px; flex: none; }
+.hb-dig-item b { color: var(--hb-ink); font-weight: 600; }
+.hb-dig-item .muted { color: var(--hb-muted); }
 
-.hb-act-foot { border-top: 1px solid var(--hb-border); padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
-.hb-act-toggle {
-  width: 100%; display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px; margin: -4px -8px; border-radius: 8px; text-align: left;
-  font-size: 0.78125rem; color: var(--hb-muted);
+/* Interactive Org AI Ask Box */
+.hb-ask-wrap {
+  margin-top: auto; padding-top: 14px;
+  border-top: 1px solid var(--hb-border);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.hb-ask-form {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 4px 4px 12px; border-radius: 12px;
+  background: rgba(8, 15, 28, .62);
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .08), inset 0 0 0 1px rgba(125, 211, 252, .22);
+  transition: box-shadow .16s ease, background-color .16s ease;
+}
+.hb-ask-form:focus-within {
+  background: rgba(10, 19, 36, .82);
+  box-shadow: inset 0 0 0 1.5px rgba(125, 211, 252, .58), 0 0 0 3px rgba(56, 189, 248, .12);
+}
+.hb-ask-form .ic { color: #7DD3FC; flex: none; }
+.hb-ask-form input {
+  flex: 1; min-width: 0; border: 0; background: transparent;
+  color: var(--hb-ink); font: inherit; font-size: 0.8125rem; padding: 6px 4px;
+}
+.hb-ask-form input::placeholder { color: #7C91AE; }
+.hb-ask-form input:focus-visible { outline: none; }
+.hb-ask-send {
+  height: 30px; padding: 0 11px; border-radius: 8px; flex: none;
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(56, 189, 248, .18); color: #E0F2FE;
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .34);
+  font-size: 0.78125rem; font-weight: 600;
   transition: background-color .14s ease, color .14s ease;
 }
-.hb-act-toggle:hover { background: rgba(186, 222, 255, .07); color: var(--hb-ink); }
-.hb-act-toggle .lbl { font-weight: 600; color: var(--hb-body); flex: none; }
-.hb-act-toggle .prev { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hb-act-toggle .h4-chev { flex: none; transition: transform .18s ease; }
-.hb-act-toggle[aria-expanded="true"] .h4-chev { transform: rotate(90deg); color: var(--hb-ink); }
-.hb-act-mini { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
-.hb-act-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.78125rem; line-height: 1.4; color: var(--hb-body); }
-.hb-act-row b { color: var(--hb-ink); font-weight: 600; flex: none; }
-.hb-act-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hb-muted); }
-.hb-act-row time { color: var(--hb-dim); font-size: 0.72rem; flex: none; }
+.hb-ask-send:hover { background: rgba(56, 189, 248, .30); color: #FFFFFF; }
+.hb-ask-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.hb-ask-chip {
+  padding: 4px 9px; border-radius: 999px;
+  background: rgba(186, 222, 255, .06);
+  box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .11);
+  font-size: 0.72rem; font-weight: 500; color: var(--hb-muted);
+  transition: background-color .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.hb-ask-chip:hover { background: rgba(56, 189, 248, .14); box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .30); color: var(--hb-ink); }
+.hb-ai-reply {
+  padding: 11px 13px; border-radius: 10px;
+  background: rgba(56, 189, 248, .08);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .22), inset 3px 0 0 #38BDF8;
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 0.8125rem; line-height: 1.48; color: #E2E8F0;
+}
+.hb-ai-reply-hd { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.72rem; font-weight: 600; color: #7DD3FC; }
+.hb-ai-reply-hd button { font-size: 0.72rem; color: var(--hb-muted); padding: 1px 5px; border-radius: 4px; }
+.hb-ai-reply-hd button:hover { color: var(--hb-ink); background: rgba(255, 255, 255, .08); }
+.hb-ai-reply a { color: #7DD3FC; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
+.hb-ai-reply a:hover { color: #BAE6FD; }
 
 /* Zone 3: Clean Bento Portfolio Row */
 .hb-proj-sec { display: flex; flex-direction: column; gap: 14px; }
@@ -1529,15 +1595,14 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 .hb-card:hover .hb-card-lead .ic { opacity: 1; transform: translateX(2px); color: #7DD3FC; }
 
 @media (max-width: 1120px) {
+  .hb-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hb-stage { grid-template-columns: 1fr; }
   .hb-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
   .hb { padding: 20px var(--gutter) 40px; gap: 20px; }
-  .hb-bento { grid-template-columns: 1fr; }
+  .hb-metrics, .hb-bento { grid-template-columns: 1fr; }
   .hb-spot { padding: 18px; min-height: 0; }
-  .hb-orb-row { gap: 12px; }
-  .hb-orb-wrap { width: 88px; height: 88px; }
 }
 
 /* Desktop Collapsible Sidebar (68px frosted icon rail) */
@@ -1657,6 +1722,7 @@ select.field option { background: #0E1629; color: #F8FAFC; }
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9"/></symbol>
   <symbol id="i-star" viewBox="0 0 24 24"><path d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z"/></symbol>
   <symbol id="i-sidebar" viewBox="0 0 24 24"><path d="M3.75 5.25A2.25 2.25 0 0 1 6 3h12a2.25 2.25 0 0 1 2.25 2.25v13.5A2.25 2.25 0 0 1 18 21H6a2.25 2.25 0 0 1-2.25-2.25V5.25ZM9 3v18"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></symbol>
 </svg>
 
 <a class="skip" href="#main" data-act="skip">Skip to content</a>
@@ -1956,7 +2022,7 @@ const PAST_SESSIONS = [
 /* ---------------------------------------------------------------- state */
 const S = { truth: "demo", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
   projLayout: "list", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
-  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0 };
+  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null };
 const NAV_COLLAPSE_STORE = "agentic-org.v4.navCollapsed";
 try { if (localStorage.getItem(NAV_COLLAPSE_STORE) === "1") S.navCollapsed = true; } catch (e) {}
 function applyNavCollapsed() {
@@ -2339,23 +2405,48 @@ function feedV4(items) {
     </li>`;
   }).join("")}</ul>`;
 }
-function mountHomeOrb() {
-  const canvas = document.getElementById("home-orb-canvas");
-  if (!canvas) return;
-  const v1 = S.truth === "v1";
-  const st = S.homeState;
-  const orb = new NeuralOrb(canvas);
-  orb.setState(v1 || st === "empty" ? "paused" : "working");
-  orb.setContext(v1 || st === "empty" ? 0.14 : 0.44, true);
-  orb.start();
-  if (!v1 && st !== "empty") orb.pulse(0.7);
-  requestAnimationFrame(() => orb.resize());
-  if ("ResizeObserver" in window && canvas.parentElement) {
-    const ro = new ResizeObserver(() => orb.resize());
-    ro.observe(canvas.parentElement);
-    orb._ro = ro;
+function answerOrgQuestion(rawQ) {
+  const q = String(rawQ || "").trim();
+  const t = q.toLowerCase();
+  const open = unhandled();
+  const blocked = W.filter((w) => w.status === "Blocked");
+  const runs = A.filter((a) => a.type === "run");
+  if (!q) return null;
+  if (/block|v1|ship|merge|release/.test(t)) {
+    return {
+      q,
+      html: `<strong>2 tasks are blocked on you</strong> across active delivery: <a href="#/projects/office-federation/work">T-118</a> (custody lock ruling for <a href="#/members/sage">Sage</a>) and <a href="#/projects/agency-v1/work">T-124</a> (localhost:8443 dev permission for <a href="#/members/jules">Jules</a>). Meanwhile, <a href="#/members/kai">Kai</a>'s codec split <code>0a520e5b</code> passed 412 tests and awaits your <a href="#/inbox/in1">merge approval</a>.`
+    };
   }
-  activeOrb = orb;
+  if (/budget|spend|cost|office|fleet|offline|jules|noor|health/.test(t)) {
+    return {
+      q,
+      html: `<strong>Model budget is at 68%</strong> this month — <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Offices: <strong>HQ is online</strong>, while the <strong>Build box satellite is offline</strong> (pausing <a href="#/members/quinn">Quinn</a> on T-135), and <a href="#/members/noor">Noor</a> still needs office placement.`
+    };
+  }
+  if (/run|overnight|happen|catch|digest|summary|activity|away/.test(t)) {
+    return {
+      q,
+      html: `In the last 4 hours: <strong>${runs.length} autonomous runs</strong> executed. <a href="#/members/kai">Kai</a> finished codec split T-121 (412 passed) and <a href="#/members/tomas">Tomas</a> marked it READY; <a href="#/members/sage">Sage</a> paused T-118 waiting on your lock ruling; <a href="#/members/rowan">Rowan</a> had 1 crashed cert run on T-138. <a href="#/activity">Open activity log</a>.`
+    };
+  }
+  if (/federation|sage|lock|satellite/.test(t)) {
+    return {
+      q,
+      html: `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box went offline after wake (BUG-81 fix is ready to <a href="#/inbox/in11">verify</a>), and <a href="#/members/sage">Sage</a> is waiting on your <a href="#/inbox/in2">custody lock decision</a> (Sage &amp; Rowan recommend the lease).`
+    };
+  }
+  if (/need|urgent|priority|first|inbox|ada|hire/.test(t)) {
+    const urg = open.filter((i) => i.expires);
+    return {
+      q,
+      html: `<strong>${open.length} items need you</strong> (${urg.length} time-sensitive). Start with <a href="#/inbox/in1">Kai's v1 merge approval</a> (closes in 4h) and <a href="#/inbox/in5">Jules's dev port permission</a> (expires tomorrow). <a href="#/members/ada">ada</a> also requested hiring a Playwright QA agent to clear Tomas's 6-branch queue.`
+    };
+  }
+  return {
+    q,
+    html: `Right now <strong>${open.length} decisions</strong> wait in <a href="#/inbox">Inbox</a>, <strong>${blocked.length} work items</strong> are blocked, <strong>1 of 2 offices</strong> is online, and <a href="#/members/kai">Kai</a> is active in a session with you. Try asking about <em>v1.0 blockers</em>, <em>overnight runs</em>, or <em>budget &amp; offices</em>.`
+  };
 }
 function pageHome() {
   const st = S.homeState, v1 = S.truth === "v1";
@@ -2364,14 +2455,12 @@ function pageHome() {
   const queue = [...rawQueue.filter((i) => !!i.expires), ...rawQueue.filter((i) => !i.expires)];
   const openUrgentCount = open.filter((i) => i.expires).length;
   const working = v1 || st === "empty" ? [] : memberIds().filter((k) => ["working", "withyou"].includes(presence(k)));
-  const agentsCount = memberIds().filter((k) => M[k].kind === "agent").length;
+  const blockedWork = st === "empty" ? [] : W.filter((w) => w.status === "Blocked");
   const riskRank = { "Off track": 0, "At risk": 1, "On track": 2 };
   const projs = st === "empty" ? [] : Object.keys(P).filter((p) => !P[p].archived).sort((a, b) => (riskRank[P[a].health] ?? 9) - (riskRank[P[b].health] ?? 9));
   const needsAttnProjs = projs.filter((p) => P[p].health === "At risk" || P[p].health === "Off track").length;
-  const recentActs = st === "empty" ? [] : acts().slice(0, 4);
-  const actOpen = !!S.v4Open["hb-act"];
 
-  // Keep spotlight index in bounds and prefer first unhandled item if current index is out of range
+  // Keep spotlight index in bounds
   if (S.spotIdx >= queue.length) S.spotIdx = 0;
   if (S.spotIdx < 0) S.spotIdx = 0;
   const allQueueCleared = queue.length > 0 && queue.every((i) => i.handled);
@@ -2389,6 +2478,34 @@ function pageHome() {
         : open.length
           ? `${greet} <em class="calm">${plural(open.length, "item", "items")}</em> waiting when you're ready.`
           : `${greet} <em class="ok">All clear</em> across your organization.`;
+
+  const renderMetrics = () => {
+    if (st === "loading") return skel(4, "Loading organization vital signs…");
+    if (st === "error") return "";
+    const emptyMode = st === "empty";
+    return `<section class="hb-metrics" aria-label="Organization vital signs">
+      <a class="hb-metric" href="#/activity">
+        <div class="hb-metric-top"><span>Completed (24h)</span>${ic("check-circle", "ic14 c-green")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "0" : "6"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">on pace</span>`}</div>
+        <div class="hb-metric-sub">${emptyMode ? "No finished work yet" : v1 ? "8 autonomous runs · 1 issue" : `${working.length} active now · 1 needs check`}</div>
+      </a>
+      <a class="hb-metric" href="#/work">
+        <div class="hb-metric-top"><span>Needs attention</span>${ic("warn", "ic14 c-amber")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${blockedWork.length}</span>${blockedWork.length ? `<span class="hb-metric-delta warn">blocked</span>` : `<span class="hb-metric-delta">clear</span>`}</div>
+        <div class="hb-metric-sub">${blockedWork.length ? `${plural(blockedWork.length, "task", "tasks")} paused · ${open.length} in Inbox` : "All work flowing smoothly"}</div>
+      </a>
+      <a class="hb-metric" href="#/settings/offices">
+        <div class="hb-metric-top"><span>Team &amp; offices</span>${ic("office", "ic14 c-indigo")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "1 / 1" : "1 / 2"}</span>${emptyMode ? `<span class="hb-metric-delta">all online</span>` : `<span class="hb-metric-delta bad">1 offline</span>`}</div>
+        <div class="hb-metric-sub">${emptyMode ? "HQ online · ready" : "HQ live · Build box offline"}</div>
+      </a>
+      <a class="hb-metric" href="#/settings/agents/jules">
+        <div class="hb-metric-top"><span>Monthly budget</span>${ic("bolt", "ic14 c-amber")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "0%" : "68%"}</span>${emptyMode ? "" : `<span class="hb-metric-delta warn">Jules at cap</span>`}</div>
+        <div class="hb-mini-bar" aria-hidden="true"><span style="width:${emptyMode ? 0 : 68}%"></span></div>
+      </a>
+    </section>`;
+  };
 
   const renderSpotlight = () => {
     if (st === "loading") return `<div class="hb-spot">${skel(3, "Loading spotlight decision…")}</div>`;
@@ -2465,33 +2582,49 @@ function pageHome() {
     </section>`;
   };
 
-  const renderAliveTile = () => {
-    const standby = Math.max(0, agentsCount - working.length);
+  const renderCatchupPanel = () => {
     const activeLead = working.length ? working[0] : null;
-    const latestAct = recentActs[0];
-    return `<aside class="hb-alive" aria-label="Live organization presence">
-      <div class="hb-orb-row">
-        <div class="hb-orb-wrap"><canvas id="home-orb-canvas" role="img" aria-label="Live neural orb reflecting organization activity"></canvas></div>
-        <div class="hb-alive-copy">
-          <div class="hb-alive-state">${v1 || st === "empty" ? "" : `<span class="h4-live-dot" aria-hidden="true"></span>`}${v1 ? "HQ office online" : st === "empty" ? "Office standing by" : "Office alive"}</div>
-          <p class="hb-alive-sub">${v1 ? "Live agent telemetry arrives in the next release." : working.length ? `${plural(working.length, "agent", "agents")} working · ${standby} standing by` : `${agentsCount} agents ready for work`}</p>
-        </div>
+    const emptyMode = st === "empty";
+    return `<aside class="hb-catchup" aria-label="Autonomous catch-up and AI briefing">
+      <div class="hb-cu-hd">
+        <div class="hb-cu-title">${ic("sparkle", "ic16")}<span>Catch-up</span></div>
+        <span class="hb-cu-window">${emptyMode || v1 ? "Idle" : `<span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>`}Last 4 hours</span>
       </div>
 
-      ${v1 ? `<a class="hb-now-card" href="#/teams/members">${ic("user-group", "ic20 muted")}<div class="grow"><div class="nm">View team &amp; agents</div><div class="st">Open member directory</div></div>${ic("chev-right", "ic16 chev")}</a>`
-        : activeLead ? `<a class="hb-now-card" href="#/members/${activeLead}">${av(activeLead, 32, "tip")}<div class="grow"><div class="nm">${esc(M[activeLead].name)} <span class="rl">${esc(M[activeLead].role)}</span></div><div class="st">${statusLine(activeLead)}</div></div>${ic("chev-right", "ic16 chev")}</a>`
-        : `<a class="hb-now-card" href="#/teams/members">${ic("signal", "ic20 muted")}<div class="grow"><div class="nm">Quiet right now</div><div class="st">No active runs · View members</div></div>${ic("chev-right", "ic16 chev")}</a>`}
+      ${st === "loading" ? skel(3, "Summarizing autonomous activity…") : emptyMode ? `<p class="h4-rail-empty">All quiet over the last 4 hours. Ask anything below to check in on your organization.</p>` : `<div class="hb-digest">
+        <a class="hb-dig-item" href="#/activity">
+          <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
+          <div><b>Ready to ship</b> — Kai finished the codec split (all checks passed) and Tomas approved the review.</div>
+        </a>
+        <a class="hb-dig-item" href="#/inbox/in2">
+          <span class="hb-dig-ico">${ic("warn", "ic16 c-amber")}</span>
+          <div><b>Paused for your call</b> — Sage stopped on the custody lock fix while waiting for your direction.</div>
+        </a>
+        ${!v1 && activeLead ? `<a class="hb-dig-item" href="#/members/${activeLead}">
+          <span class="hb-dig-ico"><span class="h4-live-dot" style="margin-top:3px" aria-hidden="true"></span></span>
+          <div><b>${esc(M[activeLead].name)} is working now</b> — ${esc(statusLine(activeLead))} <span class="muted">· Open ›</span></div>
+        </a>` : `<a class="hb-dig-item" href="#/settings/agents/jules">
+          <span class="hb-dig-ico">${ic("bolt", "ic16 c-amber")}</span>
+          <div><b>Budget reached</b> — Jules hit its monthly spend limit; new work waits until Dec 1.</div>
+        </a>`}
+      </div>`}
 
-      <div class="hb-act-foot">
-        <button class="hb-act-toggle" type="button" data-act="v4-acc" data-id="hb-act" aria-expanded="${actOpen}" aria-controls="panel-hb-act">
-          ${ic("chev-right", "ic14 h4-chev")}
-          <span class="lbl">Activity</span>
-          <span class="prev">${latestAct ? `${esc(M[latestAct.who].name)} ${esc(latestAct.text)} · ${esc(latestAct.time)}` : "No recent updates"}</span>
-        </button>
-        ${actOpen ? `<div class="hb-act-mini" id="panel-hb-act">
-          ${recentActs.length ? recentActs.map((a) => `<div class="hb-act-row"><b>${esc(M[a.who].name)}</b><span>${esc(a.text)}</span><time>${esc(a.time)}</time></div>`).join("") : `<p class="h4-rail-empty">No activity yet.</p>`}
-          <a class="link" style="font-size:0.75rem;margin-top:2px" href="#/activity">Open full activity log${ic("chev-right", "ic14")}</a>
+      <div class="hb-ask-wrap">
+        ${S.askAns ? `<div class="hb-ai-reply" id="hb-ai-reply" role="status" aria-live="polite">
+          <div class="hb-ai-reply-hd"><span>${ic("sparkle", "ic14")} Org AI · “${esc(S.askAns.q)}”</span><button type="button" data-act="hb-ask-clear" aria-label="Clear answer">Clear</button></div>
+          <div>${S.askAns.html}</div>
         </div>` : ""}
+        <form class="hb-ask-form" id="hb-ask-form">
+          ${ic("sparkle", "ic16")}
+          <label class="sr-only" for="hb-ask-input">Ask your organization AI</label>
+          <input id="hb-ask-input" type="text" value="${esc(S.askQ)}" placeholder="Ask anything — what's blocked, who's busy, or budget…" autocomplete="off">
+          <button class="hb-ask-send" type="submit">Ask</button>
+        </form>
+        <div class="hb-ask-chips" aria-label="Suggested questions">
+          <button type="button" class="hb-ask-chip" data-act="hb-ask-chip" data-v="What needs me first?">What needs me first?</button>
+          <button type="button" class="hb-ask-chip" data-act="hb-ask-chip" data-v="What's blocking v1.0?">What's slowing v1.0?</button>
+          <button type="button" class="hb-ask-chip" data-act="hb-ask-chip" data-v="Budget & offices status">Budget &amp; team</button>
+        </div>
       </div>
     </aside>`;
   };
@@ -2527,16 +2660,13 @@ function pageHome() {
         <div class="hb-eyebrow"><span class="h4-live-dot" aria-hidden="true"></span><span>HQ Office · Online</span></div>
         <h1 class="hb-title" tabindex="-1">${headline}</h1>
       </div>
-      ${st !== "error" && st !== "loading" ? `<div class="hb-pills" aria-label="Quick overview">
-        <a class="hb-pill-link" href="#/inbox">${ic("inbox", "ic14 c-amber")}<b>${open.length}</b><span>in Inbox</span></a>
-        <a class="hb-pill-link" href="#/projects">${ic("folder", "ic14 c-indigo")}<b>${projs.length}</b><span>Projects</span></a>
-        <a class="hb-pill-link" href="#/teams/members">${v1 ? ic("user-group", "ic14 muted") : `<span class="h4-live-dot" aria-hidden="true"></span>`}<b>${v1 ? agentsCount : working.length}</b><span>${v1 ? "Agents" : "Active"}</span></a>
-      </div>` : ""}
     </header>
+
+    ${renderMetrics()}
 
     <div class="hb-stage">
       ${renderSpotlight()}
-      ${renderAliveTile()}
+      ${renderCatchupPanel()}
     </div>
 
     <section class="hb-proj-sec" aria-labelledby="hb-projs-h">
@@ -4080,7 +4210,6 @@ function render(focus = true) {
   main.innerHTML = html;
   const shell = document.getElementById("agent-shell");
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
-  else if (r0 === "home") mountHomeOrb();
   renderNav(r);
   renderBanner(r0);
   const titleBase = r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found");
@@ -4222,6 +4351,8 @@ document.addEventListener("click", (e) => {
       render(false);
     } break;
     case "spot-go": S.spotIdx = Number(v || 0); S.replying = null; render(false); break;
+    case "hb-ask-chip": S.askQ = ""; S.askAns = answerOrgQuestion(v); render(false); { const r = document.getElementById("hb-ai-reply"); if (r) r.scrollIntoView({ block: "nearest" }); } break;
+    case "hb-ask-clear": S.askAns = null; S.askQ = ""; render(false); { const i = document.getElementById("hb-ask-input"); if (i) i.focus(); } break;
     case "nav-collapse": S.navCollapsed = !S.navCollapsed; try { localStorage.setItem(NAV_COLLAPSE_STORE, S.navCollapsed ? "1" : "0"); } catch (e) {} applyNavCollapsed(); break;
     case "fav-proj": {
       const idx = S.favProjs.indexOf(id);
@@ -4461,6 +4592,20 @@ if (verSel) {
   verSel.addEventListener("change", () => { location.href = verSel.value + (location.hash || ""); });
   window.addEventListener("pageshow", () => { verSel.value = verSel.dataset.cur; });
 }
+
+document.addEventListener("submit", (e) => {
+  if (e.target && e.target.id === "hb-ask-form") {
+    e.preventDefault();
+    const inp = document.getElementById("hb-ask-input");
+    const val = (inp && inp.value || "").trim();
+    if (!val) return;
+    S.askQ = "";
+    S.askAns = answerOrgQuestion(val);
+    render(false);
+    const nextInp = document.getElementById("hb-ask-input");
+    if (nextInp) nextInp.focus();
+  }
+});
 
 applyNavCollapsed();
 if (!location.hash) {
