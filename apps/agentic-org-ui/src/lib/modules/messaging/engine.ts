@@ -631,7 +631,11 @@ function applyRequestChoices(
 	if (call.questions?.length) {
 		m.questions = validQuestions(call.questions);
 		const first = m.questions.length === 1 ? m.questions[0] : undefined;
-		if (first?.question_type === 'choice' && !first.allow_multiple) m.options = first.options;
+		const singleButtons =
+			first &&
+			(first.question_type === 'yes_no' ||
+				(first.question_type === 'choice' && !first.allow_multiple));
+		if (singleButtons) m.options = optionsOf(first);
 		return;
 	}
 	if (call.options?.length) m.options = validateAskOptions(call.options);

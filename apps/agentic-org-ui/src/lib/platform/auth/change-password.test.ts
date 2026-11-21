@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { JsonHttpRequest } from '../http/json-http';
 import {
+	CHANGE_PASSWORD_ERROR_COPY,
 	CURRENT_PASSWORD_WRONG_COPY,
 	describeChangePasswordFailure,
+	describeCredentialFailure,
+	LINK_USED_COPY,
+	SESSION_ENDED_COPY,
 	UNREACHABLE_COPY
 } from './credential-copy';
 import { createSessionController } from './session-controller';
@@ -104,6 +108,37 @@ describe('change password', () => {
 		).toEqual({
 			kind: 'general',
 			message: UNREACHABLE_COPY
+		});
+
+		expect(
+			describeChangePasswordFailure(
+				new SessionRequestError(401, { code: 'not_authorized', message: 'Session ended.' }),
+				1_000
+			)
+		).toEqual({
+			kind: 'session_ended',
+			message: SESSION_ENDED_COPY
+		});
+
+		expect(
+			describeChangePasswordFailure(
+				new SessionRequestError(500, { code: 'internal_error', message: 'Boom.' }),
+				1_000
+			)
+		).toEqual({
+			kind: 'general',
+			message: CHANGE_PASSWORD_ERROR_COPY
+		});
+
+		expect(
+			describeCredentialFailure(
+				new SessionRequestError(410, { code: 'expired', message: 'Link expired.' }),
+				1_000,
+				'register'
+			)
+		).toEqual({
+			kind: 'link_used',
+			message: LINK_USED_COPY
 		});
 	});
 

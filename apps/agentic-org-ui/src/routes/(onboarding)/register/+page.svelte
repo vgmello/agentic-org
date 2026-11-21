@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { onMount, tick } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import {
 		credentialCopy,
@@ -59,6 +59,12 @@
 		inspecting = false;
 		await tick();
 		loginInput?.focus();
+	});
+
+	onDestroy(() => {
+		secret = undefined;
+		password = '';
+		again = '';
 	});
 
 	function switchMode(next: 'create' | 'sign-in') {

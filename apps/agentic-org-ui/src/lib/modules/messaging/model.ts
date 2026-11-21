@@ -10,6 +10,7 @@ import {
 	mentionsHere,
 	mentionsIn,
 	OFFICE,
+	optionsOf,
 	questionsOf,
 	slug,
 	type ChatContext,
@@ -620,14 +621,25 @@ export interface DeadlineWords {
 	applied: boolean;
 }
 
+function defaultSummaryOf(m: ChatMessage): string | undefined {
+	if (m.default_option) {
+		return m.options?.find((o) => o.id === m.default_option)?.label ?? m.default_option;
+	}
+	const labels = m.questions
+		?.filter((q) => q.default_option)
+		.map((q) => optionsOf(q).find((o) => o.id === q.default_option)?.label ?? q.default_option!);
+	return labels?.length ? labels.join(', ') : undefined;
+}
+
 /** "If no answer by 18:00, I'll allow it" before the deadline; "Default applied: …" after (CHAT-6). */
 export function deadlineWords(
 	m: ChatMessage,
 	now: string,
 	clock: (iso: string) => string = clockTime
 ): DeadlineWords | undefined {
-	if (m.kind !== 'request' || !m.default_option || !m.default_at) return undefined;
-	const label = m.options?.find((o) => o.id === m.default_option)?.label ?? m.default_option;
+	if (m.kind !== 'request' || !m.default_at) return undefined;
+	const label = defaultSummaryOf(m);
+	if (!label) return undefined;
 	if (m.answer?.by === 'default')
 		return {
 			text: `No answer by ${clock(m.default_at)}: the default was applied (${label}).`,

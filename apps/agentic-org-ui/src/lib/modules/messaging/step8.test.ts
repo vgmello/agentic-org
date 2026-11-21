@@ -9,6 +9,7 @@ import {
 	cannotRunFor,
 	cannotRunWords,
 	chatContext,
+	deadlineWords,
 	handoffOutcome,
 	nameOf,
 	outcomeWords,
@@ -252,5 +253,76 @@ describe('Step 8 chat domain rules', () => {
 		const hrDownApi = createMockChat(orgOf(), { now: () => NOW, scenario: () => 'hr-down' });
 		const snap = await hrDownApi.snapshot('o');
 		expect(snap.cannot_run).toEqual(['hr']);
+	});
+
+	it('single yes_no ask populates options and default_option, shows deadlineWords, and accepts option_id answers', () => {
+		const ctx = chatContext(org, { now: NOW, actor: 'mira' });
+		let state = sampleChatFull(chatContext(org, { now: NOW, directory: SAMPLE_DIRECTORY }));
+		const created = run(
+			state,
+			{
+				method: 'msg.send',
+				conversation_id: 'c-general',
+				kind: 'request',
+				addressed_to: 'you',
+				body: 'Ship the hotfix tonight?',
+				questions: [
+					{ id: 'q1', prompt: 'Ship tonight?', question_type: 'yes_no', default_option: 'no' }
+				],
+				default_at: '2026-11-18T18:00:00Z'
+			},
+			ctx
+		);
+		state = created.state;
+		const ask = state.messages.find((m) => m.id === created.accepted.id)!;
+		expect(ask.options?.map((o) => o.id)).toEqual(['yes', 'no']);
+		expect(ask.default_option).toBe('no');
+		expect(deadlineWords(ask, NOW)?.text).toContain('No');
+
+		const answered = run(
+			state,
+			{ method: 'chat.answer', ask_id: ask.id, option_id: 'yes' },
+			chatContext(org, { now: '2026-11-18T10:05:00Z', actor: 'you' })
+		);
+		const updated = answered.state.messages.find((m) => m.id === ask.id)!;
+		expect(updated.answer?.option_id).toBe('yes');
+		expect(outcomeWords(updated, chatContext(org, { now: NOW }))).toContain('Yes');
+	});
+
+	it('multi-question ask with question-level defaults shows deadlineWords before and after tick', () => {
+		const ctx = chatContext(org, { now: NOW, actor: 'mira' });
+		const base = sampleChatFull(chatContext(org, { now: NOW, directory: SAMPLE_DIRECTORY }));
+		const created = run(
+			base,
+			{
+				method: 'msg.send',
+				conversation_id: 'c-general',
+				kind: 'request',
+				addressed_to: 'you',
+				body: 'Two rollout questions',
+				questions: [
+					{ id: 'q1', prompt: 'Enable flag?', question_type: 'yes_no', default_option: 'yes' },
+					{
+						id: 'q2',
+						prompt: 'Region?',
+						question_type: 'choice',
+						options: [
+							{ id: 'eu', label: 'EU first' },
+							{ id: 'us', label: 'US first' }
+						],
+						default_option: 'eu'
+					}
+				],
+				default_at: '2026-11-18T18:00:00Z'
+			},
+			ctx
+		);
+		const ask = created.state.messages.find((m) => m.id === created.accepted.id)!;
+		expect(deadlineWords(ask, NOW)?.text).toContain('Yes, EU first');
+
+		const ticked = tick(created.state, '2026-11-18T18:05:00Z');
+		const after = ticked.messages.find((m) => m.id === ask.id)!;
+		expect(deadlineWords(after, '2026-11-18T18:05:00Z')?.applied).toBe(true);
+		expect(deadlineWords(after, '2026-11-18T18:05:00Z')?.text).toContain('Yes, EU first');
 	});
 });

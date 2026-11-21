@@ -95,7 +95,10 @@
 			onchanged?.();
 		} catch (error) {
 			const result = describeChangePasswordFailure(error, Date.now());
-			if (result.kind === 'current_password') {
+			if (result.kind === 'session_ended') {
+				resetFields();
+				open = false;
+			} else if (result.kind === 'current_password') {
 				currentPassword = '';
 				currentError = result.message;
 				await tick();

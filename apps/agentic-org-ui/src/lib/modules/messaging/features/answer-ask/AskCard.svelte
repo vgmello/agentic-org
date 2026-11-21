@@ -22,8 +22,8 @@
 	} from '$lib/modules/messaging/model';
 	import type { AskOption, ChatMessage, QuestionAnswer } from '$lib/modules/messaging/types';
 	import Rich from '../../components/Rich.svelte';
-	import QuestionForm from '$lib/modules/chat/features/answer-ask/QuestionForm.svelte';
-	import HandoffCard from '$lib/modules/chat/features/hand-off/HandoffCard.svelte';
+	import QuestionForm from './QuestionForm.svelte';
+	import HandoffCard from '../hand-off/HandoffCard.svelte';
 
 	/**
 	 * An ask or an approval as a card (chat-ux §2, §2.1; REQ-04; CHAT-5, CHAT-6, CHAT-44). Only its addressed actor answers;
@@ -66,6 +66,7 @@
 	let expanded = $state(false);
 	let mode = $state<'reply' | 'reject' | 'withdraw' | undefined>();
 	let text = $state('');
+	let withdrawReason = $state('');
 	let replyBox = $state<HTMLTextAreaElement>();
 	let busy = $state(false);
 	let error = $state<string | undefined>();
@@ -104,12 +105,13 @@
 		const current = draft;
 		if (!current) return;
 		text = current.read();
+		withdrawReason = '';
 		mode = undefined;
 	});
 	$effect(() => {
 		const element = replyBox;
 		if (!element || !draft) return;
-		const end = untrack(() => text.length);
+		const end = untrack(() => (mode === 'withdraw' ? withdrawReason.length : text.length));
 		element.setSelectionRange(end, end);
 	});
 	$effect(() => {
@@ -129,6 +131,7 @@
 			if (answeringDraft === draft) {
 				mode = undefined;
 				text = '';
+				withdrawReason = '';
 			}
 		} catch (e) {
 			error = (e as { message?: string }).message ?? 'That did not go through.';
@@ -156,10 +159,11 @@
 	const submitLabel = $derived(
 		mode === 'reject' ? 'Reject' : mode === 'withdraw' ? 'Withdraw' : 'Send reply'
 	);
+	const activeText = $derived(mode === 'withdraw' ? withdrawReason : text);
 
 	function submitText(event: SubmitEvent) {
 		event.preventDefault();
-		if (mode === 'withdraw') return void go(() => onwithdraw?.(text));
+		if (mode === 'withdraw') return void go(() => onwithdraw?.(withdrawReason));
 		return void go(() => onanswer(mode === 'reject' ? { option_id: 'reject', text } : { text }));
 	}
 </script>
@@ -346,9 +350,15 @@
 				<textarea
 					id="ask-text-{message.id}"
 					bind:this={replyBox}
-					bind:value={text}
+					value={activeText}
 					oninput={(event) => {
-						if (mode !== 'withdraw') draft?.write(event.currentTarget.value);
+						const next = event.currentTarget.value;
+						if (mode === 'withdraw') {
+							withdrawReason = next;
+						} else {
+							text = next;
+							draft?.write(next);
+						}
 					}}
 					rows="2"
 					maxlength={20000}

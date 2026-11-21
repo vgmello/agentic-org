@@ -547,6 +547,7 @@
 				"src/lib/modules/employees/features/pause-employee/PauseAgentDialog.svelte",
 				"src/lib/modules/messaging/features/manage-channel/ChannelDialog.svelte",
 				"src/lib/modules/messaging/features/open-dm/NewMessageDialog.svelte",
+				"src/lib/modules/chat/features/browse-channels/BrowseChannelsDialog.svelte",
 				"src/lib/modules/messaging/features/run-command/CommandDialog.svelte"
 			],
 			"why": "Every migrated DialogTitle consumer also runs exact heading/accessible name/selection, closing text and word geometry regressions in the title category. Existing owning categories, shared FULL and unknown fail-closed mappings remain in effect. Route visits live in the helper; the literal route scanner cannot inventory them."

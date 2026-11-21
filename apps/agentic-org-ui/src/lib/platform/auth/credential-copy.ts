@@ -35,10 +35,14 @@ export const LINK_USED_COPY = 'This link has expired or was already used.';
 export const CURRENT_PASSWORD_WRONG_COPY = "That isn't your current password.";
 export const PASSWORD_CHANGED_COPY = "Password changed. You're signed out everywhere else.";
 export const PASSWORD_SET_NOTE = 'Password set. Sign in with the new password.';
+export const CHANGE_PASSWORD_ERROR_COPY =
+	"HQ couldn't change your password because of a problem on the HQ machine. Try again. If it keeps happening, run agentic-org doctor --name <instance> there.";
+export const SESSION_ENDED_COPY = 'Your session has ended. Sign in again to change your password.';
 
 export type ChangePasswordFailure =
 	| { kind: 'current_password'; message: string }
 	| { kind: 'new_password'; message: string }
+	| { kind: 'session_ended'; message: string }
 	| { kind: 'general'; message: string; reload?: true };
 
 /** Maps password-change failures to exact §4a.2 copy without exposing raw server strings. */
@@ -46,6 +50,9 @@ export function describeChangePasswordFailure(
 	error: unknown,
 	nowMs: number
 ): ChangePasswordFailure {
+	if (error instanceof SessionRequestError && error.status === 401) {
+		return { kind: 'session_ended', message: SESSION_ENDED_COPY };
+	}
 	if (error instanceof SessionRequestError && error.status === 403) {
 		return { kind: 'current_password', message: CURRENT_PASSWORD_WRONG_COPY };
 	}
@@ -53,6 +60,9 @@ export function describeChangePasswordFailure(
 	if (described.kind === 'field') return { kind: 'new_password', message: described.message };
 	if (described.kind === 'out_of_date') {
 		return { kind: 'general', message: described.message, reload: true };
+	}
+	if (described.kind === 'hq_error') {
+		return { kind: 'general', message: CHANGE_PASSWORD_ERROR_COPY };
 	}
 	return { kind: 'general', message: described.message };
 }
@@ -86,6 +96,41 @@ export function rateLimitExpired(failure: CredentialFailure | undefined, nowMs: 
 	);
 }
 
+function fieldValidationFailure(
+	error: SessionRequestError,
+	context: CopyContext
+): CredentialFailure | undefined {
+	if (error.status !== 400) return undefined;
+	const field = error.field && error.field !== 'unknown' ? error.field : undefined;
+	const rule = error.rule && error.rule !== 'unknown' ? error.rule : undefined;
+	if (!field || !rule) return undefined;
+	return { kind: 'field', field, rule, message: credentialCopy(field, rule, context) };
+}
+
+function describeSessionRequestError(
+	error: SessionRequestError,
+	nowMs: number,
+	context: CopyContext
+): CredentialFailure {
+	if (error.status === 429) {
+		const retryUntilMs = error.retryAfterMs === undefined ? undefined : nowMs + error.retryAfterMs;
+		return {
+			kind: 'rate_limited',
+			message: rateLimitCopy(error.retryAfterMs),
+			...(retryUntilMs === undefined ? {} : { retryUntilMs })
+		};
+	}
+	const fieldFailure = fieldValidationFailure(error, context);
+	if (fieldFailure) return fieldFailure;
+	if (error.status === 401 && context === 'sign-in')
+		return { kind: 'mismatch', message: MISMATCH_COPY };
+	if (context === 'register' && (error.status === 404 || error.status === 410))
+		return { kind: 'link_used', message: LINK_USED_COPY };
+	// The web process answers 503 when it cannot reach the host: HQ is not reachable.
+	if (error.status === 503) return { kind: 'unreachable', message: UNREACHABLE_COPY };
+	return { kind: 'hq_error', message: HQ_ERROR_COPY };
+}
+
 /** Maps any sign-in/registration failure to its page state. Server message text is never shown. */
 export function describeCredentialFailure(
 	error: unknown,
@@ -94,37 +139,8 @@ export function describeCredentialFailure(
 ): CredentialFailure {
 	if (error instanceof UpdateRequiredError)
 		return { kind: 'out_of_date', message: OUT_OF_DATE_COPY };
-	if (error instanceof SessionRequestError) {
-		if (error.status === 429) {
-			const retryUntilMs =
-				error.retryAfterMs === undefined ? undefined : nowMs + error.retryAfterMs;
-			return {
-				kind: 'rate_limited',
-				message: rateLimitCopy(error.retryAfterMs),
-				...(retryUntilMs === undefined ? {} : { retryUntilMs })
-			};
-		}
-		if (
-			error.status === 400 &&
-			error.field &&
-			error.rule &&
-			error.field !== 'unknown' &&
-			error.rule !== 'unknown'
-		)
-			return {
-				kind: 'field',
-				field: error.field,
-				rule: error.rule,
-				message: credentialCopy(error.field, error.rule, context)
-			};
-		if (error.status === 401 && context === 'sign-in')
-			return { kind: 'mismatch', message: MISMATCH_COPY };
-		if (error.status === 404 && context === 'register')
-			return { kind: 'link_used', message: LINK_USED_COPY };
-		// The web process answers 503 when it cannot reach the host: HQ is not reachable.
-		if (error.status === 503) return { kind: 'unreachable', message: UNREACHABLE_COPY };
-		return { kind: 'hq_error', message: HQ_ERROR_COPY };
-	}
+	if (error instanceof SessionRequestError)
+		return describeSessionRequestError(error, nowMs, context);
 	if (error instanceof WireDecodeError || error instanceof NotDispatchedError)
 		return { kind: 'hq_error', message: HQ_ERROR_COPY };
 	// fetch rejections, timeouts and dropped connections: nothing usable came back.

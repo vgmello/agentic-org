@@ -9,10 +9,11 @@
 	import { officeApi } from '$lib/modules/offices/office-api';
 	import { appSession } from '$lib/platform/auth/app-session.svelte';
 	import { toAppError, type Connection } from '$lib/proto';
+	import { areaCapability } from './capabilities';
 
 	/**
 	 * Quick organization switcher in the shell sidebar header. Lists authorized organizations via
-	 * `officeApi.listOrganizations()` (backed by `GET /api/v1/organizations` in production),
+	 * `officeApi.peekOrganizations()` (backed by `GET /api/v1/organizations` in production),
 	 * switches the active organization cleanly, and links to `/welcome` (All organizations).
 	 */
 	let { connection }: { connection: Connection } = $props();
@@ -80,7 +81,7 @@
 			await openById(org.id);
 			await invalidate('app:connections');
 			await invalidate('app:org');
-			await goto(resolve('/home'));
+			await goto(resolve(areaCapability('/home').available ? '/home' : '/teams'));
 		} catch (error) {
 			const failure = toAppError(error);
 			if (failure.code === 'not_found') {
