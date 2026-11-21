@@ -2,7 +2,9 @@
 
 Status: accepted; decision 1's SQLCipher requirement is superseded by
 [ADR-0016](0016-no-application-level-data-encryption.md) (the workspace no longer builds
-SQLCipher). Refines [ADR-0001](0001-app-is-a-client-office-is-a-server.md).
+SQLCipher). Refines [ADR-0001](0001-app-is-a-client-office-is-a-server.md); the office
+acceptance journal and projection split are governed by
+[ADR-0021](0021-office-store-architecture.md).
 Where data lives on disk is owned by the
 [organization-data storage contract](../design/organization-data/README.md#shared-storage-contract):
 one root, with sources under `durable/` and the database projection under
@@ -102,7 +104,10 @@ before its runtime cache can be discarded.
 - Each database has one writer. Readers use WAL. Acknowledgements follow the
   operation's declared class, and failures never manufacture successful receipts.
 - The private-note store adds a distinct authorization and recovery boundary.
-  Administrator, owner, assignee or team-lead status grants no implicit note access.
+  Under [ADR-0031](0031-any-employee-changes-tasks.md), a private note is read by
+  its author and by people who can read the task (read-only for non-authors), and
+  never by another agent regardless of assignee, team-lead, or role status; only
+  the author edits or deletes a note.
 - Recovery tests cover preserved message visibility, accounting gaps, consumed
   budget extensions, independent holds, numbering allocations and live processes,
   as well as successful SQL replay.

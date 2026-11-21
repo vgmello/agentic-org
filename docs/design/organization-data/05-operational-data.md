@@ -482,7 +482,7 @@ erDiagram
 | --- | --- |
 | `id` | Stable UUIDv7 for new notes; no readable number; retained after deletion |
 | `organization_id`, `task_id` | Immutable attachment; an existing task of any type, including projectless tasks |
-| `author_id` | Immutable original author and exclusive default reader/editor; derived from the bound actor |
+| `author_id` | Immutable original author and exclusive editor/deleter; read by its author and by people who can read the task, never by another agent ([ADR-0031](../../adr/0031-any-employee-changes-tasks.md)); derived from the bound actor |
 | `schema_version`, `revision` | Format 1; revision starts at 1 and advances by exactly one on each edit/deletion |
 | `body_markdown` | Nonempty current Markdown text; null on a deletion tombstone |
 | `created_at`, `updated_at` | Server-generated canonical UTC timestamps using fixed precision; creation is immutable, update time never decreases |

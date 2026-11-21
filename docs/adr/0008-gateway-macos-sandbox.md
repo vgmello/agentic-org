@@ -1,9 +1,10 @@
 # ADR-0008 · macOS confinement of the web process (GW-SBX-MAC-1)
 
-Status: accepted. Implementation pending. This is the macOS implementation of the
+Status: accepted; **implemented** in `crates/org-platform-host/src/confinement/` and
+composed by `apps/agentic-org-web`. This is the macOS implementation of the
 confinement contract of [ADR-0017](0017-linux-and-container-hosting.md); the Linux
-implementation (Landlock and seccomp) is a separate v1 adapter. "Web" means the
-`agentic-org-web` process.
+implementation (Landlock and seccomp) is a separate v1 adapter in the same module.
+"Web" means the `agentic-org-web` process.
 
 ## Requirement and boundary
 

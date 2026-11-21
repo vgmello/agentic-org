@@ -267,7 +267,7 @@ Save it at `projects/<project-id>/features/<feature-id>/designs/<document-id>.md
 | `milestones` | Milestone front matter: common identity fields, required `project_id`, required `release_id`, `title`, and Markdown body. Path and explicit parent IDs must agree. |
 | `documents` | Supporting document front matter: stable `id`, optional `key`, revision fields, required `project_id`, nullable `feature_id`, `release_id` or `deployment_id` (at most one), `kind`, `status`, `owner_employee_id`, common attribution, `title`, and body; for a tree document also `summary`, `path`, `version` and `issued_revision` (document 18). Parent folder and explicit fields agree. Structural process/standard content is owned by document 01. |
 
-A manifest may cover multiple code repositories. Release deployment records are defined in [document 07](07-release-deployments.md), including environment/target, outcomes, rollback references and exact commit snapshots. Build artifacts are out of scope. Dates, release gates, progression rules, budgets and delivery execution are not fixed by this structural draft. They require separate lifecycle/operations decisions; they are not automatically imported from v1.
+A manifest may cover multiple code repositories. Release deployment records are defined in [document 07](07-release-deployments.md), including environment/target, outcomes, rollback references and exact commit snapshots. Build artifacts are out of scope. Dates, release gates, progression rules and delivery execution are not fixed by this structural draft; budgets are defined in [document 17](17-budgets-and-controls.md). They require separate lifecycle/operations decisions; they are not automatically imported from v1.
 
 ## SQLite tables
 

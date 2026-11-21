@@ -2,7 +2,7 @@
 
 Status: **selected** data contract, revision 6. This document owns task activity history and separate team and individual assignment. Private task notes are owned by [document 05](05-operational-data.md#private-notes-attached-to-tasks). It extends [typed tasks](03-features-and-work.md) and [record contracts](08-record-contracts.md).
 
-Code today: tasks have individual assignment only. The acceptance journal that this contract's writes go through exists as an internal foundation ([executable migration](../executable-migration.md#where-the-entry-points-stand-2026-11-18)); no command reaches it yet. The selected model replaces the code's task model.
+Code today: tasks have individual assignment only. The acceptance journal and organization-family store landed in `B1b`–`B2.1` ([executable migration](../executable-migration.md#where-the-entry-points-stand-2026-11-21)); task commands and the work family remain pending (`B4`). The selected model replaces the code's task model.
 
 ## Ownership and current responsibility
 
@@ -22,7 +22,7 @@ All task types use these fields. A projectless task has the same assignment choi
 
 An assignment command supplies the complete desired pair, including explicit nulls, and the expected task revision. It replaces that pair atomically and appends an `assignment_changed` event with both old and new values. A stale revision conflicts without changing either field. Clearing the individual while retaining a team explicitly returns the task to that team's queue. Clearing a team does not silently infer another from the individual's profile.
 
-Project ownership changes update affected project tasks' owning `team_id` together, recording their changes in the same recoverable operation. Assigned teams/individuals stay as recorded. Projectless ownership moves retain the separate scope/number-allocation rules in [document 06](06-identity-and-numbering.md).
+Project ownership changes update affected project tasks' owning `team_id` together, recording their changes in the same recoverable operation. Assigned teams/individuals stay as recorded. Projectless task ownership moves update `team_id` in place without renumbering the task; task numbers are organization-scoped and permanent ([document 06](06-identity-and-numbering.md)).
 
 ## Reporter and resolution actors
 

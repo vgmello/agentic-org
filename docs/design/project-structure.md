@@ -102,12 +102,15 @@ crates/
 
   org-store/                         # Engine-neutral store: journal, writer, files, rebuild, Engine and Projector
   org-proto/                         # Local request and event contracts
+  org-host-control/                  # Host-control socket protocol between agentic-org-web and org-host
   org-office-launch/                 # Private host/worker launch contract (the verified rendezvous)
   org-client/                        # Local IPC client
   org-command/                       # The command contract: table, parser, envelope, help, schemas, contract tests
-  org-platform/                      # Every OS difference: platform contracts and their macOS, Linux and refusing adapters
+  org-platform/                      # Core OS primitives: fs, durable flush, permissions, process confinement contracts
+  org-platform-host/                 # Host-specific OS adapters: admission, confinement, service manager, presence, credential custody
   org-socket/                        # Portable Unix-socket I/O: ticked reads, descriptor passing
   org-agent-runtime/                 # Vendor runtime contract and conformance support
+  org-agent-runtime-claude/          # Claude Code vendor adapter behind org-agent-runtime
   org-supervise/                     # OS process ownership and cleanup
   org-process/                       # Process and standard resolution
   org-docs/                          # Document and front-matter parsing and editing
@@ -118,8 +121,7 @@ crates/
   org-copilot/                       # Bounded draft-only helper
   # Added when their first caller is built:
   org-git/                           # Local Git adapter
-  org-agent-runtime-claude/          # Vendor adapters behind org-agent-runtime
-  org-agent-runtime-codex/
+  org-agent-runtime-codex/           # Additional vendor adapters behind org-agent-runtime
   org-agent-runtime-agy/
   org-office-sessions/               # Agent sessions in the office (agent-sessions design)
 
@@ -287,9 +289,11 @@ and build, and the relevant browser tests.
 
 ## What the code does today
 
-The application renames and host extraction are done. The domain modules above are
-not finished: `org-office` has `organization`, `employees`, `processes` and `rules`
-modules that implement the older model with several memberships per member, and `store` holds the SQL for all of them,
-with SQL in four files outside it (`organization/bootstrap.rs`,
-`organization/admission.rs`, `office.rs`, `office/hq_creation.rs`). `org-store` exists since B1a; B1b deletes today's `store` whole and the SQL outside it. `org-git` and the vendor runtime adapters do
-not exist yet.
+The application renames, host extraction (`org-host`, `org-host-control`), platform
+split (`org-platform`, `org-platform-host`), command contract (`org-command`), and
+office store cutover (`org-store`, B1a/B1b, and organization family B2.1) are landed.
+`org-office` loads `schema.sql` verbatim via `crates/org-office/src/store/sqlite/` and
+no SQL lives outside the store boundary; the legacy `org.db`/`office.db` store and
+old multi-membership modules were deleted. `org-agent-runtime-claude` exists behind
+`org-agent-runtime`; `org-git`, additional vendor adapters, and the projects/work/messaging
+family ports (`B3`–`B8`) remain pending.

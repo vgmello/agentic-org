@@ -1,6 +1,7 @@
 # ADR-0011 · Protected recovery delivery (REC-DEL-1)
 
-Status: accepted. Implementation pending. Builds on
+Status: accepted, **deferred to v2** (owner decision D24, 2026-11-20; see
+`docs/FEATURES.md`). Builds on
 [ADR-0007](0007-hq-creation-escrow.md), whose code, KDF, envelope, CA identity,
 worker-only key custody, public and private exclusions and retry rules are
 unchanged. This is not full recovery after losing HQ (REC-1).

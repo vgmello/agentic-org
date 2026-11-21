@@ -1,7 +1,8 @@
 # ADR-0013 · Browser sessions are stored at the host and survive restarts
 
 Status: **accepted by the owner 2026-11-17** during the architecture review (conflict
-plan entry F-01). Implementation pending. Amends
+plan entry F-01); **implemented** in `crates/org-host/src/hostdb/` and
+`apps/agentic-org-web/src/api.rs`. Amends
 [web-api-v1.md](../design/web-api-v1.md) section 4 and the session-end
 rules in [server installation and access UX](../specs/server-installation-and-access-ux.md)
 section 4a.4. Where those say that a restart ends sessions, this ADR governs.

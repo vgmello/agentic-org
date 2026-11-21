@@ -4,7 +4,9 @@ Status: **accepted by the owner 2026-11-17** (conflict plan entry B-09): "we nee
 I need to be able to host the office inside a Docker container; we need to abstract what
 we need properly." Linux is built now, as its own track alongside milestone one
 (owner decision 2026-11-17); the design is [Linux host](../design/linux-host.md) and the
-increments are X1a to X6 of the implementation plan. Implementation pending. Amends the platform statements of
+increments are X1a to X6 of the implementation plan. **Implemented** (`X1a`–`X5` landed
+in `crates/org-platform` and `crates/org-platform-host`; container packaging `X6` tracked
+in backlog). Amends the platform statements of
 [standalone-server.md](../design/standalone-server.md),
 [office-host-boundary.md](../design/office-host-boundary.md),
 [ADR-0008](0008-gateway-macos-sandbox.md), which is macOS only, and

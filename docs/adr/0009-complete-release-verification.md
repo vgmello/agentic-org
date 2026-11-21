@@ -1,6 +1,7 @@
 # ADR-0009 · Authenticated complete release bundles
 
-Status: accepted. Implementation pending. Setup uses this verifier before it
+Status: accepted; **implemented** in `crates/org-release` and wired into
+`crates/org-host/src/release/`. Setup uses this verifier before it
 provisions anything ([standalone design](../design/standalone-server.md)). Process
 admission per platform is owned by [ADR-0017](0017-linux-and-container-hosting.md);
 web confinement on macOS by [ADR-0008](0008-gateway-macos-sandbox.md).

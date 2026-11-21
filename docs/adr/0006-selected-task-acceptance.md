@@ -291,8 +291,8 @@ Policy and ports are in `org-work`; storage, journal and directory adapters in
 host composition in `org-host`; browser adaptation in `agentic-org-web`. The
 browser never imports native storage, and the web app does not depend on the office
 app. No domain-to-office or domain-to-host dependency and no app-to-app source edge
-exists. The web process uses `org-socket` framing and `org-office-launch` descriptor
-transfer for host-control browser sessions privately; `org-client` is the office
+exists. The web process uses `org-host-control`, `org-socket` framing and `org-office-launch`
+descriptor transfer for host-control browser sessions privately; `org-client` is the office
 RPC adapter. The host owns password verification, sessions and grant minting and
 revocation.
 
@@ -324,7 +324,9 @@ without removing the durable-commit obligation.
 - A retry after later changes, deactivation, response loss and restart obtains the
   original authorized outcome without an extra revision or event. Another account,
   scope or fingerprint can neither replay nor inspect it. Revoked, expired and
-  wrong-channel grants and agents without the capability are denied.
+  wrong-channel grants and paused, offboarded or deactivated employees are denied
+  (any active employee may change tasks per
+  [ADR-0031](0031-any-employee-changes-tasks.md)).
 - Failures injected around the journal append, the group flush, the SQL commit,
   file materialization, read publication and response recover the same accepted
   outcome after reopening, from organization data plus the retained journal and

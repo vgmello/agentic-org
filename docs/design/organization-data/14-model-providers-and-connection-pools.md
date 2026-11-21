@@ -156,7 +156,7 @@ The pool's minimum size, contiguous priorities, generated-profile contents, regi
 └── auth/<connection-id>/             # Private CLI state or vault reference
 ```
 
-Shared records use the common stable IDs, revisions and attribution from [record contracts](08-record-contracts.md). File IDs must match row IDs. Private bindings and auth/model observations are not organization Git content. Observation caches are rebuilt by verified probes; recovering a cached observation does not make it fresh. Document 11 owns their journal and refresh protocol.
+Shared records use the common stable IDs, revisions and attribution from [record contracts](08-record-contracts.md). File IDs must match row IDs. Private bindings and auth/model observations are not organization Git content. Observation caches are rebuilt by verified probes; recovering a cached observation does not make it fresh. Document 11 owns their record files (written through the office's acceptance journal per [document 16](16-recovery-and-office-continuity.md)) and refresh protocol.
 
 ## Examples
 

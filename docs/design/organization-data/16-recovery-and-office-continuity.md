@@ -302,7 +302,7 @@ would close that path.
 
 | What is lost | Expected result |
 | --- | --- |
-| Office SQLite projections/unread indexes | Rebuild from Git plus protected operational sources; rebind credentials; reconcile process ownership before execution |
+| Office SQLite projections/unread indexes | Rebuild from Git plus protected operational sources (including durable local bindings under `durable/local/`); reconcile process ownership before execution; rebind credentials only if durable local auth state or host key custody was lost |
 | Office running process | Restart from retained receipts, stream/checkpoint and cleanup evidence; uncertain effects remain unknown until reconciled |
 | Runtime cache/temp/typing/status | Recreate; stale presence expires; no mutation is replayed merely because its UI status vanished |
 | The host's own database (accounts, sessions, the organization registry) | Register a new administrator with `agentic-org admin reset`, then open each organization again from its files ([opening an existing organization](#opening-an-existing-organization)); people are invited again, because accounts are host data |

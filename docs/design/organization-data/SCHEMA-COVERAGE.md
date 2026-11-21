@@ -31,115 +31,126 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 ## Implementation status
 
-This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code has this table with these columns), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (no code).
+This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code loads this table with these columns and actively reads/writes it through its domain port), **DDL loaded only** (created verbatim from `schema.sql` by `crates/org-office/src/store/sqlite/schema.rs`, with no domain projector or read/write port yet), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (not loaded in the runtime schema and no code).
 
-As of 2026-11-18 none of the 91 tables or 12 views is implemented as drafted. 16 have a counterpart of a different shape in the code and 87 are absent. The comparison is by table name and by reading the current in-code schemas (`org.db` version 3, `office.db` version 8); it was not run.
+As of 2026-11-21 (`B1b` and `B2.1` landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all 91 shared tables and 12 views plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **81 tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), and the 4 `private-notes-schema.sql` tables remain **Absent**.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |
-| `agent_execution_attempts` | table | Absent |  |
-| `agent_execution_configs` | table | Absent |  |
-| `agent_execution_turns` | table | Absent |  |
-| `agent_placements` | table | Absent |  |
-| `agent_process_instances` | table | Absent |  |
-| `budget_events` | table | Absent |  |
-| `budget_holds` | table | Absent |  |
-| `budget_notices` | table | Absent |  |
-| `budget_periods` | table | Absent |  |
-| `budget_policy_versions` | table | Absent |  |
-| `budgets` | table | Absent |  |
-| `checklist_steps` | table | Absent |  |
-| `comments` | table | Absent |  |
-| `connection_quota_state` | table | Absent |  |
-| `connection_turn_permits` | table | Absent |  |
-| `conversation_memberships` | table | Absent |  |
-| `conversation_preferences` | table | Absent |  |
-| `conversation_read_markers` | table | Absent |  |
-| `conversations` | table | Different shape in code | Closest current table: `msg_threads` |
-| `deployment_flag_settings` | table | Absent |  |
-| `deployment_repository_commits` | table | Absent |  |
-| `deployments` | table | Absent |  |
-| `document_code_links` | table | Absent |  |
-| `document_version_sources` | table | Absent |  |
-| `document_versions` | table | Absent |  |
-| `documentation_media` | table | Absent |  |
-| `documentation_sections` | table | Absent |  |
-| `documents` | table | Absent |  |
-| `employees` | table | Different shape in code | Closest current table: `members`, `memberships` |
-| `feature_flags` | table | Absent |  |
-| `hire_requests` | table | Absent |  |
-| `features` | table | Absent |  |
-| `links` | table | Absent |  |
-| `local_repository_locations` | table | Absent |  |
-| `message_attachments` | table | Absent |  |
-| `message_reactions` | table | Absent |  |
-| `message_recipient_states` | table | Different shape in code | Closest current table: `msg_state`, `msg_unread` |
-| `messages` | table | Different shape in code | Closest current table: `msg_headers`, `msg_bodies` |
-| `milestones` | table | Absent |  |
-| `model_prices` | table | Absent |  |
-| `model_profile_connections` | table | Absent |  |
-| `model_profiles` | table | Absent |  |
-| `mutation_receipts` | table | Different shape in code | Closest current table: `commands`, `work_change_results`, `selected_receipts` |
-| `office_codes` | table | Absent |  |
-| `office_connection_bindings` | table | Absent |  |
-| `office_connection_models` | table | Absent |  |
-| `office_connection_state` | table | Absent |  |
-| `office_origin_streams` | table | Different shape in code | Closest current table: `work_origin_counter`, `work_origin_log` |
-| `office_recovery_checkpoints` | table | Different shape in code | Closest current table: `org_replica`, `org_replica_base` |
-| `office_task_counters` | table | Absent |  |
-| `offices` | table | Absent |  |
-| `organizations` | table | Different shape in code | Same name in `org.db`, different columns |
-| `owner_questions` | table | Absent |  |
-| `process_cleanup_records` | table | Different shape in code | Closest current table: `owned_processes` |
-| `development_process_folders` | table | Absent |  |
-| `development_process_kinds` | table | Absent |  |
-| `development_process_roles` | table | Absent |  |
-| `development_process_skill_roles` | table | Absent |  |
-| `development_process_skills` | table | Absent |  |
-| `development_process_tabs` | table | Absent |  |
-| `development_processes` | table | Absent |  |
-| `project_contributing_teams` | table | Different shape in code | Closest current table: `project_teams` |
-| `project_repositories` | table | Absent |  |
-| `projects` | table | Different shape in code | Same name in `org.db`, different columns |
-| `provider_connections` | table | Absent |  |
-| `record_refs` | table | Absent |  |
-| `recovery_snapshot_transfers` | table | Different shape in code | Closest current table: `org_snapshot_stage`, `org_snapshot_install` |
-| `reference_allocations` | table | Absent |  |
-| `reference_counters` | table | Different shape in code | Closest current table: `work_number_counters` |
-| `release_features` | table | Absent |  |
-| `release_flag_settings` | table | Absent |  |
-| `release_repository_commits` | table | Absent |  |
-| `release_tasks` | table | Absent |  |
-| `releases` | table | Absent |  |
-| `repositories` | table | Absent |  |
-| `repository_caches` | table | Absent |  |
-| `roles` | table | Absent |  |
-| `structure_documents` | table | Absent |  |
-| `supervisor_command_receipts` | table | Absent |  |
-| `task_details` | table | Absent |  |
-| `task_document_versions` | table | Absent |  |
-| `task_events` | table | Different shape in code | Closest current table: `work_events`, `selected_events` |
-| `task_repositories` | table | Absent |  |
-| `task_workspaces` | table | Absent |  |
-| `tasks` | table | Different shape in code | Closest current table: `work_items` |
-| `teams` | table | Different shape in code | Same name in `org.db`, different columns |
-| `tombstones` | table | Absent |  |
-| `usage_records` | table | Absent |  |
-| `usage_stream_checkpoints` | table | Absent |  |
-| `waiting_spans` | table | Absent |  |
-| `watchers` | table | Absent |  |
-| `document_version_progress` | view | Absent |  |
-| `effective_usage_records` | view | Absent |  |
-| `entity_relationships` | view | Absent |  |
-| `feature_slugs` | view | Absent |  |
-| `milestone_progress` | view | Absent |  |
-| `model_profile_model_union` | view | Absent |  |
-| `release_progress` | view | Absent |  |
-| `task_releases` | view | Absent |  |
-| `usage_agent_totals` | view | Absent |  |
-| `usage_project_totals` | view | Absent |  |
-| `usage_stream_coverage` | view | Absent |  |
-| `usage_task_totals` | view | Absent |  |
+| `agent_execution_attempts` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `agent_execution_configs` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `agent_execution_turns` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `agent_placements` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `agent_process_instances` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `budget_events` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `budget_holds` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `budget_notices` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `budget_periods` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `budget_policy_versions` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `budgets` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `checklist_steps` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `comments` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `connection_quota_state` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `connection_turn_permits` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `conversation_memberships` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `conversation_preferences` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `conversation_read_markers` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `conversations` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `msg_threads` deleted) |
+| `deployment_flag_settings` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `deployment_repository_commits` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `deployments` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `document_code_links` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `document_version_sources` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `document_versions` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `documentation_media` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `documentation_sections` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `documents` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `employees` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
+| `feature_flags` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `hire_requests` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `features` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `links` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `local_repository_locations` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `message_attachments` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `message_reactions` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `message_recipient_states` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `msg_state`/`msg_unread` deleted) |
+| `messages` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `msg_headers`/`msg_bodies` deleted) |
+| `milestones` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `model_prices` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `model_profile_connections` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `model_profiles` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `mutation_receipts` | table | DDL loaded only | Created by verbatim `schema.sql`; adapter receipts currently tracked in `store_receipts` |
+| `office_codes` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
+| `office_connection_bindings` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `office_connection_models` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `office_connection_state` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `office_origin_streams` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `work_origin_*` deleted) |
+| `office_recovery_checkpoints` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `org_replica*` deleted) |
+| `office_task_counters` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `offices` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
+| `organizations` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
+| `owner_questions` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `process_cleanup_records` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `owned_processes` deleted) |
+| `development_process_folders` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `development_process_kinds` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `development_process_roles` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `development_process_skill_roles` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `development_process_skills` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `development_process_tabs` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `development_processes` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `project_contributing_teams` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `project_teams` deleted) |
+| `project_repositories` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `projects` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `org.db` table deleted) |
+| `provider_connections` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `record_refs` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
+| `recovery_snapshot_transfers` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `org_snapshot_*` deleted) |
+| `reference_allocations` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
+| `reference_counters` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
+| `release_features` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `release_flag_settings` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `release_repository_commits` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `release_tasks` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `releases` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `repositories` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
+| `repository_caches` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `roles` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
+| `structure_documents` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `supervisor_command_receipts` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `task_details` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `task_document_versions` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `task_events` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `work_events`/`selected_events` deleted) |
+| `task_repositories` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `task_workspaces` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `tasks` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `work_items` deleted) |
+| `teams` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
+| `tombstones` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `usage_records` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `usage_stream_checkpoints` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `waiting_spans` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `watchers` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `document_version_progress` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `effective_usage_records` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `entity_relationships` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `feature_slugs` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `milestone_progress` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `model_profile_model_union` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `release_progress` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `task_releases` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `usage_agent_totals` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `usage_project_totals` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `usage_stream_coverage` | view | DDL loaded only | Created by verbatim `schema.sql` |
+| `usage_task_totals` | view | DDL loaded only | Created by verbatim `schema.sql` |
+
+### SQLite adapter metadata tables (outside `schema.sql`)
+
+In addition to the verbatim `schema.sql` contract tables above, `crates/org-office/src/store/sqlite/schema.rs` maintains four adapter-internal metadata tables inside the disposable SQLite projection database:
+
+- `store_schema` — schema version and SHA-256 digest of the loaded `schema.sql` used to detect schema drift and trigger clean rebuild.
+- `store_cursor` — last applied acceptance-journal ordinal and anchor hash.
+- `store_sources` — tracked durable source files and digests for rebuild verification.
+- `store_receipts` — adapter-level idempotency receipt projection keyed by operation ID.
+
+These four tables are engine-private adapter state ([ADR-0018](../../adr/0018-storage-engine-independence.md)), never part of the portable domain contract or organization Git.
 
 ## Relationships and enforcement
 

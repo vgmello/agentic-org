@@ -70,7 +70,7 @@ Three consequences remain open and must be settled before the target adapter is 
 
 Each employee's state is stored in that employee's own files (see [Storage and durability](#storage-and-durability)), so no message file has two writers. A read, done or defer writes one small file locally and stays in the committed class.
 
-**Speed of a send.** A plain send is acknowledged in single-digit milliseconds in every topology, including when the recipient is in another office: the sender's office commits it locally and answers; relaying to HQ and the recipient's office happens afterwards and is retried until it succeeds or the message expires. An ask is the one holding operation. It always has a deadline, the sender may state how long a reply is expected to take, and the wait is bounded by a system setting. An ask marked required suspends its asker when the wait ends without an answer, and the answer resumes it ([ADR-0020](../../adr/0020-required-asks-suspend-and-resume.md)). See [ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) decisions 1 and 9.
+**Speed of a send.** A plain send is acknowledged in single-digit milliseconds in every topology, including when the recipient is in another office: the sender's office commits it locally and answers; relaying to HQ and the recipient's office happens afterwards and is retried until it succeeds or the message expires. An ask is the one holding operation: an ask that is not required carries a deadline (`expires_at`), the sender may state how long a reply is expected to take, and the wait is bounded by a system setting; a required ask carries no expiry deadline, suspends its asker when the wait ends without an answer, and is resumed when the answer arrives ([ADR-0020](../../adr/0020-required-asks-suspend-and-resume.md)). See [ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) decisions 1 and 9.
 
 ## File/SQL mapping
 
@@ -79,7 +79,7 @@ Each employee's state is stored in that employee's own files (see [Storage and d
 | `conversations` | conversation.json scalar fields, including definition revision |
 | `conversation_memberships` | `memberships[]`; preserve joined/left state; rejoining updates the current membership snapshot under the envelope revision. This schema does not grant historical access merely because the membership row exists |
 | `messages` | Message JSON immutable envelope; `body_markdown` is the body and `metadata_json` the structured metadata; never silently rewrite custom kind tags |
-| `message_recipient_states` | `participants/<employee-id>/received/<message-id>.json`; state, triage generation, snooze/read/expiry/dead-letter facts and origin ownership map to same-named columns; `local_seq` is office-specific derived ordering, not global identity |
+| `message_recipient_states` | `participants/<employee-id>/received/<message-id>.json`; state, triage generation, snooze/read/expiry/dead-letter facts, `delivered_because`, `related_message_ids_json`, and origin ownership (`origin_office_id`, `origin_incarnation`, `origin_sequence`) map to same-named columns |
 | `conversation_preferences` | `preferences[]` in the viewer's `participants/<employee-id>/state.json`, keyed by viewer and muted employee; mute state only |
 | `conversation_read_markers` | `read_markers[]` in the viewer's `participants/<employee-id>/state.json`, keyed by conversation/viewer; optional last-read message must be in that conversation |
 | `message_attachments` | `attachments[]`: content reference, media type, bytes/hash; content never resides in organization Git |
@@ -110,8 +110,7 @@ Typing/presence indicators and unsent composer drafts remain runtime/UI state. N
   "archived": false,
   "created_at": "2026-11-15T12:00:00Z",
   "memberships": [{"employee_id": "agent-id", "joined_at": "2026-11-15T12:00:00Z", "left_at": null}],
-  "preferences": [],
-  "read_markers": []
+  "pins": []
 }
 ```
 

@@ -122,7 +122,7 @@ In v1 the **organization authority is the HQ office worker**. It is a role of th
 | Organization owner | The person whose account holds ownership: the creator, until handed over; ownership is a permission of that account at the host. Records that address `owner` mean that person at the time they are read |
 | Creating an organization | The signed-in administrator creates it; one transaction makes the organization, HQ office, top-level team named after it, the creator's person record as its lead and the HR lead ([document 01](01-organization-structure.md#creating-an-organization)) |
 | Agents | Built-in HR lead, an agent that runs only when called; agents are onboarded only through the HR hire flow, started by someone who may hire; an agent follows whoever it reports to, up to the owner ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)) |
-| Project teams | Creating a project creates its owning team under the top-level team by default, or names an existing team ([document 02](02-project-structure.md#creating-a-project)) |
+| Project teams | Creating a project creates its owning team under the named parent team—or as a root team with no parent when none is named—by default, or names an existing active team ([document 02](02-project-structure.md#creating-a-project)) |
 | Tasks | One entity with required team, optional project and extensible type |
 | Task responsibility | Required accountable `team_id`; independent nullable `assigned_team_id` and individual `assignee_id`; assignment never renumbers a task |
 | Reporter and task history | Immutable creator as reporter/originator; ordered task events preserve assignment, status and other task changes after closure/archival |

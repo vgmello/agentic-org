@@ -1,7 +1,8 @@
 # ADR-0007 · HQ creation escrow format (REC-ESC-1)
 
-Status: accepted. Implementation exists in `crates/org-pki`; acceptance below is
-pending. Key protection follows
+Status: accepted, **deferred to v2** (owner decision D24, 2026-11-20; see
+`docs/FEATURES.md`). Foundation code exists in `crates/org-pki`, while end-to-end
+recovery/promotion flows are deferred to v2. Key protection follows
 [ADR-0016](0016-no-application-level-data-encryption.md); recovery-code delivery
 follows [ADR-0011](0011-protected-recovery-delivery.md).
 
