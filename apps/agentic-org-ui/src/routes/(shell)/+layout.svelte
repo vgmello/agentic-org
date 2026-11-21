@@ -157,11 +157,13 @@
 	});
 </script>
 
-<!-- The app fills the window edge to edge. -->
-<div class="fixed inset-0 overflow-hidden bg-surface">
+<!-- The app fills the window edge to edge. The full 18 rem desktop sidebar needs at least 40 rem of viewport
+  (leaving >= 22 rem for the page), so enlarged text at 960–1279 px reflows to the 4 rem icon rail instead of
+  starving the content column (app-shell-ux SHELL-30). -->
+<div class="fixed inset-0 @container overflow-hidden bg-surface">
 	<div
 		bind:this={desktopNavigation}
-		class="fixed inset-y-0 z-50 hidden w-16 flex-col min-[640px]:flex min-[960px]:w-72"
+		class="fixed inset-y-0 z-50 hidden w-16 flex-col min-[640px]:flex min-[960px]:@min-[40rem]:w-72"
 	>
 		<Sidebar
 			connection={data.connection}
@@ -172,7 +174,7 @@
 	</div>
 	<main
 		aria-labelledby="shell-page-title"
-		class="h-full overflow-y-auto min-[640px]:pl-16 min-[960px]:pl-72"
+		class="h-full overflow-y-auto min-[640px]:pl-16 min-[960px]:@min-[40rem]:pl-72"
 	>
 		<ShellTopbar heading={areaFor(page.url.pathname)} connection={data.connection}>
 			<MobileNavigation

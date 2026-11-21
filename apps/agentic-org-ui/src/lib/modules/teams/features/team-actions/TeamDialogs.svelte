@@ -7,6 +7,7 @@
   says so; a removed or created team goes to the caller, which knows where focus belongs.
 -->
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import NewTeamSheet from '$lib/modules/organization/features/teams/NewTeamSheet.svelte';
 	import MoveTeamDialog from '$lib/modules/organization/features/teams/MoveTeamDialog.svelte';
@@ -85,10 +86,10 @@
 		}
 	}
 
-	/** What still points at `teamId`, read fresh each time Archive or Delete is chosen (§7.10, TEAM-9). */
-	async function checkBlockers(teamId: string, kind: TeamRemoval) {
+	/** What still points at `teamId`, read fresh each time Archive or Delete is chosen or the org changes (§7.10, TEAM-9). */
+	async function checkBlockers(teamId: string, kind: TeamRemoval, quiet = false) {
 		const run = ++checkRun;
-		check = { state: 'checking' };
+		if (!quiet) check = { state: 'checking' };
 		try {
 			const [teams, members, projects, work] = await Promise.all([
 				teamsApi.list(organizationId),
@@ -105,6 +106,18 @@
 			if (run === checkRun) check = { state: 'failed', message: toAppError(e).message };
 		}
 	}
+
+	// Live updates apply in place while Archive or Delete is open (offices-and-teams-ux §7.10).
+	let seenPosition = untrack(() => `${snapshot.position.epoch}:${snapshot.position.seq}`);
+	$effect(() => {
+		const pos = `${snapshot.position.epoch}:${snapshot.position.seq}`;
+		if (pos === seenPosition) return;
+		seenPosition = pos;
+		const active = untrack(() => current);
+		const team = untrack(() => target);
+		if ((active === 'archive' || active === 'delete') && team)
+			untrack(() => void checkBlockers(team.id, active, true));
+	});
 
 	/** Opens New team, at the top level or under `parentId`. */
 	export function openNew(parentId?: string) {

@@ -8,6 +8,7 @@
   taken) stays inline with the input kept.
 -->
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import Callout from '$lib/components/Callout.svelte';
 	import DescriptionList, { type DescriptionItem } from '$lib/components/DescriptionList.svelte';
 	import ErrorState from '$lib/components/ErrorState.svelte';
@@ -18,7 +19,7 @@
 	import { toAppError } from '$lib/proto';
 	import { employeesApi } from '../../api';
 	import { runtimeText, runtimeWarning } from '../../hire';
-	import type { HireChoices, HireProposal, HireTeam } from '../../types';
+	import type { HireChoices, HirePreview, HireProposal, HireTeam } from '../../types';
 
 	let {
 		organizationId,
@@ -27,7 +28,8 @@
 		choices,
 		teams,
 		onback,
-		onconfirm
+		onconfirm,
+		previewResource
 	}: {
 		organizationId: string;
 		organizationName: string;
@@ -37,9 +39,14 @@
 		onback: () => void;
 		/** Confirms the proposal; rejects with HQ's refusal. */
 		onconfirm: () => Promise<void>;
+		/** Optional pre-created preview resource (primarily for tests). */
+		previewResource?: Resource<HirePreview>;
 	} = $props();
 
-	const preview = new Resource(() => employeesApi.preview(organizationId, proposal));
+	const ownedPreview = untrack(() => previewResource)
+		? undefined
+		: new Resource(() => employeesApi.preview(organizationId, proposal));
+	const preview = $derived(previewResource ?? ownedPreview!);
 	let busy = $state(false);
 	let refusal = $state<string | undefined>();
 
@@ -96,6 +103,16 @@
 
 {#if preview.state === 'loading'}
 	<SkeletonRows label="what will be created" rows={6} lines={1} />
+{:else if preview.state === 'unsupported'}
+	<div class="px-4 py-12 min-[640px]:px-6 min-[1024px]:px-8" data-testid="resource-unsupported">
+		<h4 class="text-sm/6 font-semibold text-fg">Not available in this version</h4>
+		<p class="mt-1 max-w-xl text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
+			{preview.message || 'Not available in this version.'}
+		</p>
+	</div>
+	<div class="px-4 min-[640px]:px-6 min-[1024px]:px-8">
+		<Button variant="outline" class={mobileButton} onclick={onback}>Back</Button>
+	</div>
 {:else if preview.state === 'error' || preview.state === 'unavailable'}
 	<ErrorState
 		level={4}

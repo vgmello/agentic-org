@@ -10,6 +10,7 @@ import {
 	projectTabs,
 	slugFrom,
 	slugProblem,
+	sortActivityNewestFirst,
 	sortProjects,
 	tabAt,
 	type ServedTabs
@@ -148,6 +149,22 @@ describe('counts', () => {
 				{ name: 'Zed', archived: false }
 			]).map((p) => p.name)
 		).toEqual(['beacon', 'Zed', 'Atlas']);
+	});
+	it('sorts project activity newest first with invalid timestamps last', () => {
+		const input = [
+			{ id: 'old', at: '2026-11-18T08:00:00Z' },
+			{ id: 'bad', at: 'not-a-date' },
+			{ id: 'newest', at: '2026-11-20T12:00:00Z' },
+			{ id: 'mid', at: '2026-11-19T10:30:00Z' }
+		];
+		expect(sortActivityNewestFirst(input).map((r) => r.id)).toEqual([
+			'newest',
+			'mid',
+			'old',
+			'bad'
+		]);
+		// Pure: does not mutate the caller's array.
+		expect(input.map((r) => r.id)).toEqual(['old', 'bad', 'newest', 'mid']);
 	});
 });
 

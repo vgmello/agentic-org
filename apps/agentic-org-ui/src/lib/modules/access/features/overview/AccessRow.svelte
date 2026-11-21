@@ -21,6 +21,7 @@
 
 	let {
 		person,
+		username,
 		canManage,
 		busy,
 		waiting,
@@ -28,6 +29,8 @@
 		onact
 	}: {
 		person: AccessPerson;
+		/** Present only when the viewer may see this person's username (owner, administrator or self). */
+		username?: string;
 		canManage: boolean;
 		/** The action this row's person is running right now, while its link is being made. */
 		busy?: 'invite' | 'reset';
@@ -42,8 +45,8 @@
 		!person.active
 			? 'Deactivated · no access'
 			: person.state === 'signed_in'
-				? person.username
-					? `${stateWord.signed_in} · username ${person.username}`
+				? username
+					? `${stateWord.signed_in} · username ${username}`
 					: stateWord.signed_in
 				: person.state === 'invited'
 					? person.inviteExpiresAt

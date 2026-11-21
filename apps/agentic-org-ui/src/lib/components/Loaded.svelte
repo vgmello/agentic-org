@@ -62,6 +62,15 @@
 			</p>
 		</div>
 	{/if}
+{:else if resource.state === 'unsupported'}
+	<div class="px-4 py-12 min-[640px]:px-6 min-[1024px]:px-8" data-testid="resource-unsupported">
+		<svelte:element this={`h${errorLevel}`} class="text-sm/6 font-semibold text-fg"
+			>Not available in this version</svelte:element
+		>
+		<p class="mt-1 max-w-xl text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
+			{resource.message || `This version of the office doesn't support ${label}.`}
+		</p>
+	</div>
 {:else if resource.state === 'error'}
 	<ErrorState
 		level={errorLevel}

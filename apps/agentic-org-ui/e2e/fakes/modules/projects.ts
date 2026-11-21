@@ -311,13 +311,14 @@ export const projectsApi: ProjectsApi = {
 	async activity(organizationId, projectId) {
 		await read();
 		const { e } = await projectRow(organizationId, projectId);
-		return e.activity.map((a) => ({
+		const rows = e.activity.map((a) => ({
 			id: a.id,
 			at: ago(a.agoMin),
 			actor: a.actor,
 			kind: a.kind,
 			text: a.text
 		}));
+		return on('oldest-first') ? rows.toReversed() : rows;
 	},
 
 	async conversations(organizationId, projectId) {

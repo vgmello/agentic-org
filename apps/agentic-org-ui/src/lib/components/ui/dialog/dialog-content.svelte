@@ -1,12 +1,13 @@
 <script lang="ts">
-	import { Dialog as DialogPrimitive } from "bits-ui";
+	import { Dialog as DialogPrimitive } from 'bits-ui';
 	import XIcon from '@lucide/svelte/icons/x';
-	import { Button } from "$lib/components/ui/button/index.js";
-	import { cn, type WithoutChildrenOrChild } from "$lib/utils.js";
-	import DialogOverlay from "./dialog-overlay.svelte";
-	import DialogPortal from "./dialog-portal.svelte";
-	import type { Snippet } from "svelte";
-	import type { ComponentProps } from "svelte";
+	import { returnFocus } from '$lib/components/focus';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import { cn, type WithoutChildrenOrChild } from '$lib/utils.js';
+	import DialogOverlay from './dialog-overlay.svelte';
+	import DialogPortal from './dialog-portal.svelte';
+	import type { Snippet } from 'svelte';
+	import type { ComponentProps } from 'svelte';
 
 	let {
 		ref = $bindable(null),
@@ -14,12 +15,26 @@
 		portalProps,
 		children,
 		showCloseButton = true,
+		opener,
+		fallback,
+		onCloseAutoFocus,
 		...restProps
 	}: WithoutChildrenOrChild<DialogPrimitive.ContentProps> & {
 		portalProps?: WithoutChildrenOrChild<ComponentProps<typeof DialogPortal>>;
 		children: Snippet;
 		showCloseButton?: boolean;
+		/** The control that opened the dialog: gets focus back on close even when opened by pointer in WebKit. */
+		opener?: HTMLElement | null;
+		/** Where focus goes if `opener` is gone or unusable when the dialog closes. */
+		fallback?: () => HTMLElement | null;
 	} = $props();
+
+	const closeFocus = (e: Event) => {
+		onCloseAutoFocus?.(e);
+		if (e.defaultPrevented || opener === undefined) return;
+		e.preventDefault();
+		void returnFocus(opener, { within: ref, fallback });
+	};
 </script>
 
 <DialogPortal {...portalProps}>
@@ -27,8 +42,9 @@
 	<DialogPrimitive.Content
 		bind:ref
 		data-slot="dialog-content"
+		onCloseAutoFocus={closeFocus}
 		class={cn(
-			"bg-popover text-popover-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 ring-foreground/10 grid max-w-[calc(100%_-_2rem)] gap-6 rounded-xl p-6 text-sm ring-1 duration-100 sm:max-w-md fixed top-1/2 left-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 outline-none",
+			'bg-popover text-popover-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 ring-foreground/10 grid max-w-[calc(100%_-_2rem)] gap-6 rounded-xl p-6 text-sm ring-1 duration-100 sm:max-w-md fixed top-1/2 left-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2 outline-none',
 			className
 		)}
 		{...restProps}
@@ -38,7 +54,7 @@
 			<DialogPrimitive.Close data-slot="dialog-close">
 				{#snippet child({ props })}
 					<Button variant="ghost" class="absolute top-4 right-4" size="icon-sm" {...props}>
-						<XIcon  />
+						<XIcon />
 						<span class="sr-only">Close</span>
 					</Button>
 				{/snippet}

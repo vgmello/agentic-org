@@ -43,13 +43,14 @@ test('ACC-1: the owner and administrator are shown, and people are grouped by si
 
 	const facts = page.locator('dl').first();
 	await expect(facts).toContainText('Alex Kim');
-	await expect(facts).toContainText('alex');
+	await expect(facts).toContainText('Alex Kim (alex)');
 
 	await expect(row(page, 'Alex Kim')).toContainText('Owner');
 	await expect(row(page, 'Alex Kim')).toContainText('Administrator');
+	await expect(row(page, 'Alex Kim')).toContainText('Can sign in · username alex');
 	// One pill per row: Owner is the pill, Administrator a fact in the meta line (app-shell-ux §6a).
 	await expect(row(page, 'Alex Kim').locator('[title]')).toHaveCount(1);
-	await expect(row(page, 'Avery Stone')).toContainText('Can sign in');
+	await expect(row(page, 'Avery Stone')).toContainText('Can sign in · username avery');
 	await expect(row(page, 'Hana Weiss')).toContainText('No account yet');
 	await expect(section(page, 'No account yet').locator('[data-access-row]')).toHaveCount(2);
 	await expect(row(page, 'Leo Brandt')).toContainText('No account yet');
@@ -135,12 +136,17 @@ test('ACC-9: cancelling Remove access returns focus to the button that opened it
 	).toBeFocused();
 });
 
-test('ACC-4: a viewer without manage rights sees the lists and no actions, with the reason', async ({
+test('ACC-4: a viewer without manage rights sees the lists, only their own username, and no actions', async ({
 	page
 }) => {
 	await openOrganization(page);
 	await visit(page, '/settings/access?mock=viewer');
 	await expect(row(page, 'Avery Stone')).toBeVisible();
+	// Regular member (Avery) sees her own username, never another person's or the administrator's.
+	await expect(row(page, 'Avery Stone')).toContainText('Can sign in · username avery');
+	await expect(row(page, 'Alex Kim')).toContainText('Can sign in');
+	await expect(row(page, 'Alex Kim')).not.toContainText('username alex');
+	await expect(factValue(page, 'Administrator')).toHaveText('Alex Kim');
 	await expect(
 		page.getByRole('button', { name: /Invite to sign in|New sign-in link|Remove access/ })
 	).toHaveCount(0);
@@ -148,6 +154,28 @@ test('ACC-4: a viewer without manage rights sees the lists and no actions, with 
 		page.getByText('Only the owner or the administrator changes sign-in access.')
 	).toBeVisible();
 });
+
+test(
+	'ACC-19: browser Back closes an open ConfirmDialog without navigating away and returns focus',
+	{ tag: '@webkit' },
+	async ({ page }) => {
+		await openOrganization(page);
+		await visit(page, '/settings');
+		await page
+			.getByRole('navigation', { name: 'Organization settings' })
+			.getByRole('link', { name: 'Members and access' })
+			.click();
+		await expect(page).toHaveURL(/\/settings\/access$/);
+		const remove = row(page, 'Avery Stone').getByRole('button', { name: 'Remove access…' });
+		await remove.click();
+		const confirm = page.getByRole('dialog');
+		await expect(confirm).toContainText("Remove Avery's access to Lumen Labs?");
+		await page.evaluate(() => window.history.back());
+		await expect(confirm).toHaveCount(0);
+		await expect(page).toHaveURL(/\/settings\/access$/);
+		await expect(remove).toBeFocused();
+	}
+);
 
 test('ACC-5: loading, error with Retry, empty and unavailable are each shown in words', async ({
 	page

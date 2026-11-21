@@ -31,7 +31,14 @@
 		type SignInPerson
 	} from '$lib/modules/members';
 	import { accessApi } from '../../api';
-	import { MANAGERS_ONLY, groupPeople, listOf, type AccessList } from '../../present';
+	import {
+		MANAGERS_ONLY,
+		groupPeople,
+		listOf,
+		visibleAdminUsername,
+		visibleUsername,
+		type AccessList
+	} from '../../present';
 	import type { AccessPerson } from '../../types';
 	import AccessRow from './AccessRow.svelte';
 
@@ -221,10 +228,11 @@
 			{/if}
 		{/snippet}
 		{#snippet adminFact()}
+			{@const adminUsername = visibleAdminUsername(admin, overview.viewer)}
 			<span class="block" data-fact="administrator"
 				>{admin.name
-					? `${admin.name}${admin.username ? ` (${admin.username})` : ''}`
-					: `${admin.username ?? 'An account'} · no person in this organization yet`}{admin.isYou
+					? `${admin.name}${adminUsername ? ` (${adminUsername})` : ''}`
+					: `${adminUsername ?? 'An account'} · no person in this organization yet`}{admin.isYou
 					? ' · you'
 					: ''}</span
 			>
@@ -250,6 +258,7 @@
 					{#each people as person (person.memberId)}
 						<AccessRow
 							{person}
+							username={visibleUsername(person, overview.viewer)}
 							{canManage}
 							busy={busy?.memberId === person.memberId ? busy.kind : undefined}
 							waiting={busy && busy.memberId !== person.memberId

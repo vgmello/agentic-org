@@ -249,6 +249,13 @@
 	<SkeletonRows label="the editor" rows={5} lines={2} />
 {:else if resource.state === 'unavailable'}
 	<NotBuilt title="Processes" place="Processes" area="Organization settings" />
+{:else if resource.state === 'unsupported'}
+	<div class="px-4 py-12 min-[640px]:px-6 min-[1024px]:px-8" data-testid="resource-unsupported">
+		<h3 class="text-sm/6 font-semibold text-fg">Not available in this version</h3>
+		<p class="mt-1 max-w-xl text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
+			{resource.message || "This version of the office doesn't support editing processes."}
+		</p>
+	</div>
 {:else if notFound}
 	<EmptyState
 		title="That document isn't here"

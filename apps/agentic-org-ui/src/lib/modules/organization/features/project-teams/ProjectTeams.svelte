@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import { openerFrom } from '$lib/components/focus';
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import { toast } from 'svelte-sonner';
 	import { Badge } from '$lib/components/ui/badge';
@@ -34,6 +35,7 @@
 	>();
 
 	let chips = $state<HTMLDivElement>();
+	let removeOpener = $state<HTMLElement | null>(null);
 	let restoreLast: (() => Promise<void>) | undefined;
 	function removalFocus(teamId: string) {
 		const removed = chips?.querySelector(`[data-team="${CSS.escape(teamId)}"]`);
@@ -57,10 +59,11 @@
 		await done(r);
 		if (r.message) await restore?.();
 	}
-	async function take(teamId: string, teamName: string) {
+	async function take(teamId: string, teamName: string, event: MouseEvent) {
 		const restore = removalFocus(teamId);
 		// No confirmation while other teams remain; the last one asks first (it becomes unassigned).
 		if (isLastTeam(snapshot, row.project.id, teamId)) {
+			removeOpener = openerFrom(event);
 			removing = { projectId: row.project.id, projectName: row.project.name, teamName, teamId };
 			restoreLast = restore;
 			removeOpen = true;
@@ -97,7 +100,7 @@
 				type="button"
 				aria-label="Remove {row.project.name} from {team.name}"
 				title="Remove {row.project.name} from {team.name}"
-				onclick={() => take(team.id, team.name)}
+				onclick={(e) => take(team.id, team.name, e)}
 				class="inline-flex size-6 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-surface-overlay hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 				><HeroIcon variant="mini" name="x-mark" class="size-4!" /></button
 			>
@@ -122,4 +125,11 @@
 	{session}
 	ondone={done}
 />
-<RemoveProjectDialog bind:open={removeOpen} target={removing} {session} ondone={removed} />
+<RemoveProjectDialog
+	bind:open={removeOpen}
+	target={removing}
+	opener={removeOpener}
+	fallback={() => chips?.querySelector<HTMLButtonElement>('[data-assign-team]') ?? null}
+	{session}
+	ondone={removed}
+/>

@@ -56,6 +56,13 @@
 			<p class="px-4 text-sm/6 text-fg-muted min-[640px]:px-6 min-[1024px]:px-8">
 				This server doesn't serve agent budgets yet. Nothing is shown rather than a guess.
 			</p>
+		{:else if resource.state === 'unsupported'}
+			<div class="px-4 min-[640px]:px-6 min-[1024px]:px-8" data-testid="resource-unsupported">
+				<h4 class="text-sm/6 font-semibold text-fg">Not available in this version</h4>
+				<p class="mt-1 max-w-xl text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
+					{resource.message || "This version of the office doesn't support agent budgets."}
+				</p>
+			</div>
 		{:else if resource.state === 'error'}
 			<CostsError
 				title="Couldn't load the agent budgets"
