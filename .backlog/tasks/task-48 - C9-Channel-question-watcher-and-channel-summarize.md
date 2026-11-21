@@ -1,9 +1,11 @@
 ---
 id: TASK-48
 title: 'C9: Channel question watcher and channel summarize'
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lead'
 created_date: '2026-11-21T00:11:00Z'
+updated_date: '2026-11-21T23:58:00Z'
 labels:
   - backend
   - rust
