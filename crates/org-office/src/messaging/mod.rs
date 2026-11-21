@@ -6,6 +6,7 @@
 //! `runtime/<office-id>/protected/messaging.db` database (`messaging-schema.sql`), never into
 //! shared `office.db`.
 
+pub mod asks;
 pub mod features;
 pub mod mentions;
 pub mod ports;

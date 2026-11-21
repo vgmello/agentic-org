@@ -3,9 +3,11 @@ id: TASK-46
 title: >-
   B7: Structured asks, shadcn-svelte question components, answers, and timeouts
   (REQ-04)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lead'
 created_date: '2026-11-21T00:11:00Z'
+updated_date: '2026-11-21T21:40:00Z'
 labels:
   - backend
   - ui

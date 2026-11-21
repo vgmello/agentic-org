@@ -42,7 +42,7 @@ use super::{
 const MAX_GROUP_DM_MEMBERS: usize = 8;
 const MAX_CHANNEL_NAME_LEN: usize = 64;
 
-fn refusal(code: ErrorCode, msg: impl Into<String>) -> Refusal {
+pub(super) fn refusal(code: ErrorCode, msg: impl Into<String>) -> Refusal {
     Refusal::rejected(serde_json::to_vec(&ApiError::new(code, msg)).expect("ApiError serializes"))
 }
 
@@ -55,11 +55,11 @@ pub fn decode_refusal(r: &Refusal) -> ApiError {
     }
 }
 
-fn is_active_employee(emp: &Employee) -> bool {
+pub(super) fn is_active_employee(emp: &Employee) -> bool {
     matches!(emp.status, EmployeeStatus::Active | EmployeeStatus::Paused)
 }
 
-fn resolve_employee<'a>(
+pub(super) fn resolve_employee<'a>(
     employees: &'a [Employee],
     owner: &Id,
     reference: &str,
@@ -90,7 +90,7 @@ fn resolve_employee<'a>(
 /// Enforces `HIRE-2` (`doc-78`, ADR-0029 decision 3): only the owner, an active employee
 /// who `may_hire_anywhere` (leads a team with `may_hire == true`), or HR itself may address
 /// or `@mention` the builtin HR lead.
-fn check_hr_access(
+pub(super) fn check_hr_access(
     read: &impl MessagingRead,
     employees: &[Employee],
     owner: &Id,
@@ -297,7 +297,7 @@ fn active_member(conv: &ConversationRecord, employee_id: &Id) -> bool {
         .any(|m| m.employee_id == *employee_id && m.left_at.is_none())
 }
 
-fn effective_auto_members(
+pub(super) fn effective_auto_members(
     read: &impl MessagingRead,
     conv: &ConversationRecord,
     owner: &Id,
@@ -957,7 +957,7 @@ fn validate_chat_send_inputs(params: &ChatSendParams) -> Result<MessagePriority,
     Ok(priority)
 }
 
-fn resolve_send_target(
+pub(super) fn resolve_send_target(
     read: &impl MessagingRead,
     here: &OfficeIdentity,
     owner: &Id,
@@ -1160,7 +1160,7 @@ fn collect_recipient_reasons(
     Ok(reasons)
 }
 
-fn upsert_participant_snapshot(
+pub(super) fn upsert_participant_snapshot(
     read: &impl MessagingRead,
     org_id: &Id,
     conv_id: &Id,
@@ -1198,7 +1198,7 @@ fn upsert_participant_snapshot(
     })
 }
 
-fn build_mention_candidates(
+pub(super) fn build_mention_candidates(
     employees: &[Employee],
     active_members: &[Id],
     owner: &Id,
@@ -1370,7 +1370,7 @@ fn build_new_message_record(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn append_send_recipient_states(
+pub(super) fn append_send_recipient_states(
     read: &impl MessagingRead,
     here: &OfficeIdentity,
     conv_id: &Id,
@@ -1793,16 +1793,20 @@ fn build_chat_message_view(
             created_at: r.created_at,
         })
         .collect();
-    let acceptance = read
+    let answer_file = read
         .answer_for_message(&m.id)
-        .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read acceptance"))?
-        .and_then(|a| {
-            Some(HandoffAcceptanceView {
-                accepted_by: a.accepted_by?.as_str().to_owned(),
-                accepted_at: a.accepted_at?,
-                reason: a.reason,
-            })
-        });
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "failed to read acceptance"))?;
+    let acceptance = answer_file.as_ref().and_then(|a| {
+        Some(HandoffAcceptanceView {
+            accepted_by: a.accepted_by.as_ref()?.as_str().to_owned(),
+            accepted_at: a.accepted_at.clone()?,
+            reason: a.reason.clone(),
+        })
+    });
+    let (answer, withdrawal) = answer_file
+        .as_ref()
+        .map(super::asks::decode_ask_answer_file)
+        .unwrap_or((None, None));
     let mentions = m
         .metadata
         .get("mentions")
@@ -1832,6 +1836,8 @@ fn build_chat_message_view(
         mentions,
         reactions,
         acceptance,
+        answer,
+        withdrawal,
     })
 }
 
@@ -1889,7 +1895,7 @@ pub fn list_chat_messages(
     })
 }
 
-fn require_conversation_access(
+pub(super) fn require_conversation_access(
     read: &impl MessagingRead,
     owner: &Id,
     caller: &Id,
@@ -1921,7 +1927,7 @@ fn require_conversation_access(
     Ok((conv, was_persisted))
 }
 
-fn put_or_create_file<E: Engine>(
+pub(super) fn put_or_create_file<E: Engine>(
     uow: &UnitOfWork<'_, E>,
     change: Change,
     path: org_store::DurablePath,

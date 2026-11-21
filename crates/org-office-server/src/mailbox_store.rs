@@ -251,65 +251,113 @@ impl Source for MailboxInboxSource {
     }
 
     fn read(&self, query: &Query<'_>) -> Result<SourceRead, SourceFailure> {
-        let owner_id = self.office.owner_member_id().to_owned();
-        let page = self
-            .office
-            .mailbox_list_headers(Some(&owner_id), None, None, None, true, false, None, 100)
-            .map_err(|err| {
-                crate::logged("inbox.mailbox", &err);
-                SourceFailure
-            })?;
-        let count = page.headers.len() as u64;
-        let counts = InboxCounts {
-            questions: count,
-            total: count,
-            ..InboxCounts::default()
-        };
+        let entries = self.office.open_owner_inbox_entries(100).map_err(|err| {
+            crate::logged("inbox.mailbox", &err);
+            SourceFailure
+        })?;
+        let mut counts = InboxCounts::default();
         let mut items = Vec::new();
-        if query.state == InboxState::Open
-            && query
-                .kinds
-                .is_none_or(|kinds| kinds.contains(&InboxKind::Question))
-            && query.project.is_none()
-            && query.team.is_none()
-        {
-            for header in page.headers {
-                let summary = header
-                    .subject
-                    .clone()
-                    .unwrap_or_else(|| format!("Message from {}", header.from_display_name));
-                let item = InboxItem {
-                    reference: format!("{}:msg:{}", self.office_id, header.id),
-                    source: "mailbox".into(),
-                    kind: InboxKind::Question,
-                    member: Some(header.from_member_id.clone()),
-                    project: None,
-                    team: None,
-                    summary,
-                    context: None,
-                    recommendation: None,
-                    options: None,
-                    created_at_ms: None,
-                    expires_at_ms: None,
-                    state: InboxState::Open,
-                    handled_at_ms: None,
-                    outcome: None,
-                    clears: InboxClears::Answered,
-                    dismissable: true,
-                    actions: vec![Action::Open {
-                        label: "Open".into(),
-                        open: Open {
-                            target: OpenTarget::Message,
-                            id: header.id.clone(),
-                        },
-                    }],
-                };
-                if query.after.is_none_or(|after| after.admits(&item)) {
-                    items.push(item);
-                }
+        for entry in entries {
+            let item = build_inbox_item(&self.office_id, entry);
+            match item.kind {
+                InboxKind::Approval => counts.approvals = counts.approvals.saturating_add(1),
+                InboxKind::Decision => counts.decisions = counts.decisions.saturating_add(1),
+                InboxKind::Problem => counts.problems = counts.problems.saturating_add(1),
+                _ => counts.questions = counts.questions.saturating_add(1),
             }
-            items.truncate(query.limit.min(500));
+            counts.total = counts.total.saturating_add(1);
+            let include = query.state == InboxState::Open
+                && query.kinds.is_none_or(|kinds| kinds.contains(&item.kind))
+                && query.project.is_none()
+                && query.team.is_none()
+                && query.after.is_none_or(|after| after.admits(&item));
+            if include {
+                items.push(item);
+            }
         }
+        items.truncate(query.limit.min(500));
         Ok(SourceRead { items, counts })
+    }
+}
+
+fn build_inbox_item(office_id: &str, entry: org_office::OwnerInboxEntry) -> InboxItem {
+    let header = entry.header;
+    let open_action = Action::Open {
+        label: "Open".into(),
+        open: Open {
+            target: OpenTarget::Message,
+            id: header.id.clone(),
+        },
+    };
+    let created_at_ms = org_office::parse_rfc3339_ms(&header.created_at);
+    let Some(card) = entry.card else {
+        let summary = header
+            .subject
+            .clone()
+            .unwrap_or_else(|| format!("Message from {}", header.from_display_name));
+        return InboxItem {
+            reference: format!("{office_id}:msg:{}", header.id),
+            source: "mailbox".into(),
+            kind: InboxKind::Question,
+            member: Some(header.from_member_id),
+            project: None,
+            team: None,
+            summary,
+            context: (!entry.body.is_empty()).then_some(entry.body),
+            recommendation: None,
+            options: None,
+            created_at_ms,
+            expires_at_ms: header
+                .expires_at
+                .as_deref()
+                .and_then(org_office::parse_rfc3339_ms),
+            state: InboxState::Open,
+            handled_at_ms: None,
+            outcome: None,
+            clears: InboxClears::Answered,
+            dismissable: true,
+            actions: vec![open_action],
+        };
+    };
+    let kind = if card.approval {
+        InboxKind::Approval
+    } else if card.questions.len() == 1 && !card.options.is_empty() {
+        InboxKind::Decision
+    } else {
+        InboxKind::Question
+    };
+    let options =
+        (!card.options.is_empty()).then(|| card.options.iter().map(|o| o.label.clone()).collect());
+    let summary = header
+        .subject
+        .clone()
+        .or_else(|| card.questions.first().map(|q| q.prompt.clone()))
+        .unwrap_or_else(|| format!("Ask from {}", header.from_display_name));
+    let expires_at_ms = (!card.required)
+        .then(|| org_office::parse_rfc3339_ms(&card.wait_until))
+        .flatten();
+    InboxItem {
+        reference: format!("{office_id}:msg:{}", header.id),
+        source: if card.approval {
+            "approval".into()
+        } else {
+            "ask".into()
+        },
+        kind,
+        member: Some(header.from_member_id),
+        project: None,
+        team: None,
+        summary,
+        context: (!entry.body.is_empty()).then_some(entry.body),
+        recommendation: card.default_option,
+        options,
+        created_at_ms,
+        expires_at_ms,
+        state: InboxState::Open,
+        handled_at_ms: None,
+        outcome: None,
+        clears: InboxClears::Answered,
+        dismissable: !card.required,
+        actions: vec![open_action],
     }
 }

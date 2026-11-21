@@ -10,6 +10,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ask::{AskAnswerRecord, AskWithdrawalRecord};
 use crate::calls::Call;
 use crate::directory::MemberPresenceChangedData;
 use crate::inbox::InboxChangedData;
@@ -213,6 +214,10 @@ pub struct ChatMessageView {
     pub reactions: Vec<ReactionView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acceptance: Option<HandoffAcceptanceView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<AskAnswerRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub withdrawal: Option<AskWithdrawalRecord>,
 }
 
 impl fmt::Debug for ChatMessageView {

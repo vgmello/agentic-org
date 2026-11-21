@@ -1,5 +1,6 @@
 //! Messaging, presence/status lines, `OrgFeed` replay, and mailbox store methods on [`Office`].
 
+use org_proto::ask::{ChatAnswerParams, ChatAskParams, ChatWaitAskResult, MsgWithdrawParams};
 use org_proto::chat::{
     ChatChannelCreateParams, ChatChannelCreateResult, ChatChannelMembershipParams,
     ChatChannelMembershipResult, ChatChannelsParams, ChatChannelsResult, ChatConversationsParams,
@@ -18,18 +19,23 @@ use org_store::Id;
 
 use crate::{
     error::OfficeError,
-    messaging::features::ChatSendCommitted,
+    messaging::{
+        asks::{AnswerCommitted, AskCommitted, WithdrawCommitted},
+        features::ChatSendCommitted,
+    },
     office::{storage, Office},
     store::open::{
         messaging_ops::{
             LocalTransitionInput, MailboxCommitInput, MailboxCommitOut, MailboxStored,
-            NotifyCandidateOut, PeekUnreadOut,
+            NotifyCandidateOut, OwnerInboxEntry, PeekUnreadOut,
         },
-        ChannelCreateOp, ChannelMembershipOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead,
-        ChatMuteOp, ChatReactOp, ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, DmOpenOp,
-        FindReplyForAskRead, GetMailboxMessageRead, ListActiveSnoozeDeadlinesRead,
-        ListChannelsRead, ListConversationsRead, ListMailboxHeadersRead, MailboxCheckNotifyOp,
-        MailboxUpdateStateOp, MsgAcceptOp, OrgChangesAfterRead, PeekUnreadRead,
+        ChannelCreateOp, ChannelMembershipOp, ChatAnswerOp, ChatInboxRead, ChatMarkReadOp,
+        ChatMessagesRead, ChatMuteOp, ChatReactOp, ChatSendOp, ClaimMailboxReadOp,
+        CommitMailboxMessageOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
+        InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead,
+        ListConversationsRead, ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxUpdateStateOp,
+        MsgAcceptOp, MsgAskOp, MsgWithdrawOp, OpenOwnerInboxRead, OrgChangesAfterRead,
+        PeekUnreadRead,
     },
     time,
 };
@@ -326,6 +332,118 @@ impl Office {
                 now_utc,
             })
             .map_err(storage)
+    }
+
+    pub fn msg_ask(
+        &self,
+        caller: &str,
+        params: ChatAskParams,
+    ) -> Result<Result<AskCommitted, ApiError>, OfficeError> {
+        let Ok(caller_id) = parse_member_id(caller) else {
+            return Ok(Err(ApiError::new(ErrorCode::NotBound, "invalid caller")));
+        };
+        let org_seq = self.org_snapshot()?.position.seq;
+        let now_ms = self.monotonic_now_ms();
+        self.store
+            .run(MsgAskOp {
+                here: self.identity.clone(),
+                owner: self.owner.clone(),
+                caller: caller_id,
+                params,
+                org_seq,
+                now_ms,
+            })
+            .map_err(storage)
+    }
+
+    pub fn chat_answer(
+        &self,
+        caller: &str,
+        params: ChatAnswerParams,
+    ) -> Result<Result<AnswerCommitted, ApiError>, OfficeError> {
+        let Ok(caller_id) = parse_member_id(caller) else {
+            return Ok(Err(ApiError::new(ErrorCode::NotBound, "invalid caller")));
+        };
+        let org_seq = self.org_snapshot()?.position.seq;
+        let now_ms = self.monotonic_now_ms();
+        let now_utc = time::format_rfc3339_ms(now_ms);
+        let reply_id = crate::messaging::records::derive_conversation_id(
+            "ask_reply",
+            &format!(
+                "{}:{}:{caller_id}:{now_ms}",
+                self.identity.organization_id, params.ask_id
+            ),
+        )
+        .as_str()
+        .to_owned();
+        self.store
+            .run(ChatAnswerOp {
+                here: self.identity.clone(),
+                owner: self.owner.clone(),
+                caller: caller_id,
+                params,
+                reply_id,
+                org_seq,
+                now_utc,
+            })
+            .map_err(storage)
+    }
+
+    pub fn msg_withdraw(
+        &self,
+        caller: &str,
+        params: MsgWithdrawParams,
+    ) -> Result<Result<WithdrawCommitted, ApiError>, OfficeError> {
+        let Ok(caller_id) = parse_member_id(caller) else {
+            return Ok(Err(ApiError::new(ErrorCode::NotBound, "invalid caller")));
+        };
+        let org_seq = self.org_snapshot()?.position.seq;
+        let now_utc = time::format_rfc3339_ms(self.monotonic_now_ms());
+        self.store
+            .run(MsgWithdrawOp {
+                here: self.identity.clone(),
+                owner: self.owner.clone(),
+                caller: caller_id,
+                params,
+                org_seq,
+                now_utc,
+            })
+            .map_err(storage)
+    }
+
+    pub fn inspect_ask_status(
+        &self,
+        caller: &str,
+        ask_id: &str,
+    ) -> Result<Result<ChatWaitAskResult, ApiError>, OfficeError> {
+        let Ok(caller_id) = parse_member_id(caller) else {
+            return Ok(Err(ApiError::new(ErrorCode::NotBound, "invalid caller")));
+        };
+        let now_ms = self.monotonic_now_ms();
+        let (res, _) = self
+            .store
+            .read(InspectAskStatusRead {
+                owner: self.owner.clone(),
+                caller: caller_id,
+                ask_id: ask_id.to_owned(),
+                now_ms,
+            })
+            .map_err(storage)?;
+        Ok(res)
+    }
+
+    pub fn open_owner_inbox_entries(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<OwnerInboxEntry>, OfficeError> {
+        let (rows, _) = self
+            .store
+            .read(OpenOwnerInboxRead {
+                owner: self.owner.clone(),
+                limit,
+            })
+            .map_err(storage)?;
+        Ok(rows)
     }
 
     // ---- Low-level org-mailbox storage bridge methods ----

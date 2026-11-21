@@ -890,3 +890,321 @@ fn messaging_pass2_dm_hijack_and_handoff_hr_guard_regressions() {
         store.close().unwrap();
     }
 }
+
+#[test]
+fn b7_structured_asks_all_question_types_defaults_required_withdraw_and_rebuild() {
+    use org_proto::ask::{
+        AskOption, AskQuestion, AskQuestionType, AskStatus, ChatAnswerParams, ChatAskParams,
+        MsgWithdrawParams, QuestionAnswer,
+    };
+
+    for engine in ENGINES {
+        let place = Place::new();
+        let (store, owner, ada) = seed_org_with_two_people(&place, engine);
+        let here = identity();
+        let t0_ms: u64 = 1_700_000_010_000;
+        let now = crate::time::format_rfc3339_ms(t0_ms);
+
+        // ASK-1: wait_ms above maximum (3_600_000 ms) is refused.
+        let bad_wait = store
+            .run(MsgAskOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatAskParams {
+                    id: id(500).as_str().to_owned(),
+                    to: "owner".into(),
+                    body: None,
+                    subject: None,
+                    questions: vec![AskQuestion {
+                        id: "q1".into(),
+                        question_type: AskQuestionType::YesNo,
+                        prompt: "Proceed?".into(),
+                        options: Vec::new(),
+                        allow_multiple: false,
+                        default_value: Some("yes".into()),
+                        optional: false,
+                    }],
+                    required: false,
+                    wait_ms: Some(4_000_000),
+                    hold_ms: Some(0),
+                    blocks: None,
+                    approval: false,
+                    addressed_to: None,
+                    meta: Meta::new(),
+                },
+                org_seq: 2,
+                now_ms: t0_ms,
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(bad_wait.code, ErrorCode::InvalidRequest, "{engine:?}");
+
+        // 1. Send a 4-question ask covering single choice, multi choice, yes_no, free_text.
+        let ask_id = id(501).as_str().to_owned();
+        let questions = vec![
+            AskQuestion {
+                id: "env".into(),
+                question_type: AskQuestionType::Choice,
+                prompt: "Target environment?".into(),
+                options: vec![
+                    AskOption {
+                        id: "dev".into(),
+                        label: "Dev".into(),
+                        description: Some("Staging".into()),
+                    },
+                    AskOption {
+                        id: "prod".into(),
+                        label: "Prod".into(),
+                        description: None,
+                    },
+                ],
+                allow_multiple: false,
+                default_value: Some("dev".into()),
+                optional: false,
+            },
+            AskQuestion {
+                id: "checks".into(),
+                question_type: AskQuestionType::Choice,
+                prompt: "Which checks?".into(),
+                options: vec![
+                    AskOption {
+                        id: "lint".into(),
+                        label: "Lint".into(),
+                        description: None,
+                    },
+                    AskOption {
+                        id: "e2e".into(),
+                        label: "E2E".into(),
+                        description: None,
+                    },
+                ],
+                allow_multiple: true,
+                default_value: None,
+                optional: false,
+            },
+            AskQuestion {
+                id: "notify".into(),
+                question_type: AskQuestionType::YesNo,
+                prompt: "Notify channel?".into(),
+                options: Vec::new(),
+                allow_multiple: false,
+                default_value: Some("no".into()),
+                optional: false,
+            },
+            AskQuestion {
+                id: "notes".into(),
+                question_type: AskQuestionType::FreeText,
+                prompt: "Release notes?".into(),
+                options: Vec::new(),
+                allow_multiple: false,
+                default_value: None,
+                optional: false,
+            },
+        ];
+        let committed = store
+            .run(MsgAskOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatAskParams {
+                    id: ask_id.clone(),
+                    to: "owner".into(),
+                    body: Some("Release configuration".into()),
+                    subject: Some("Release config".into()),
+                    questions,
+                    required: false,
+                    wait_ms: Some(10_000),
+                    hold_ms: Some(0),
+                    blocks: Some("T-46".into()),
+                    approval: false,
+                    addressed_to: None,
+                    meta: Meta::new(),
+                },
+                org_seq: 2,
+                now_ms: t0_ms,
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(committed.result.status, AskStatus::Waiting);
+
+        // ASK-2: after wait_ms on non-required ask, inspect returns TimedOut + defaults!
+        let (timed_out, _) = store
+            .read(InspectAskStatusRead {
+                owner: owner.clone(),
+                caller: ada.clone(),
+                ask_id: ask_id.clone(),
+                now_ms: t0_ms + 10_000,
+            })
+            .unwrap();
+        let timed_out = timed_out.unwrap();
+        assert_eq!(timed_out.status, AskStatus::TimedOut, "{engine:?}");
+        assert_eq!(timed_out.defaults.len(), 2, "{timed_out:?}");
+
+        // Owner answers all 4 questions together (partial answers refused first).
+        let partial_err = store
+            .run(ChatAnswerOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: ChatAnswerParams {
+                    ask_id: ask_id.clone(),
+                    answers: vec![QuestionAnswer {
+                        question_id: "env".into(),
+                        option_ids: vec!["prod".into()],
+                        text: None,
+                    }],
+                    option_id: None,
+                    text: None,
+                },
+                reply_id: id(502).as_str().to_owned(),
+                org_seq: 2,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(partial_err.code, ErrorCode::InvalidRequest);
+
+        let answered = store
+            .run(ChatAnswerOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: ChatAnswerParams {
+                    ask_id: ask_id.clone(),
+                    answers: vec![
+                        QuestionAnswer {
+                            question_id: "env".into(),
+                            option_ids: vec!["prod".into()],
+                            text: None,
+                        },
+                        QuestionAnswer {
+                            question_id: "checks".into(),
+                            option_ids: vec!["lint".into(), "e2e".into()],
+                            text: None,
+                        },
+                        QuestionAnswer {
+                            question_id: "notify".into(),
+                            option_ids: vec!["yes".into()],
+                            text: None,
+                        },
+                        QuestionAnswer {
+                            question_id: "notes".into(),
+                            option_ids: Vec::new(),
+                            text: Some("Ship it!".into()),
+                        },
+                    ],
+                    option_id: None,
+                    text: None,
+                },
+                reply_id: id(503).as_str().to_owned(),
+                org_seq: 2,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(answered.result.answer.answers.len(), 4);
+
+        // 2. Required ask with default_value: after wait_ms returns RequiredPending and NEVER defaults!
+        let req_ask_id = id(504).as_str().to_owned();
+        let _ = store
+            .run(MsgAskOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatAskParams {
+                    id: req_ask_id.clone(),
+                    to: "owner".into(),
+                    body: None,
+                    subject: Some("Required confirmation".into()),
+                    questions: vec![AskQuestion {
+                        id: "ok".into(),
+                        question_type: AskQuestionType::YesNo,
+                        prompt: "Delete production cluster?".into(),
+                        options: Vec::new(),
+                        allow_multiple: false,
+                        default_value: Some("no".into()),
+                        optional: false,
+                    }],
+                    required: true,
+                    wait_ms: Some(5_000),
+                    hold_ms: Some(0),
+                    blocks: None,
+                    approval: true,
+                    addressed_to: None,
+                    meta: Meta::new(),
+                },
+                org_seq: 2,
+                now_ms: t0_ms,
+            })
+            .unwrap()
+            .unwrap();
+        let (req_status, _) = store
+            .read(InspectAskStatusRead {
+                owner: owner.clone(),
+                caller: ada.clone(),
+                ask_id: req_ask_id.clone(),
+                now_ms: t0_ms + 5_000,
+            })
+            .unwrap();
+        let req_status = req_status.unwrap();
+        assert_eq!(req_status.status, AskStatus::RequiredPending, "{engine:?}");
+        assert!(
+            req_status.defaults.is_empty(),
+            "ADR-0020 decision 14: defaults must NEVER stand in for required asks"
+        );
+        assert!(req_status.required_notice.is_some());
+
+        // Withdraw required ask cleanly.
+        let wd = store
+            .run(MsgWithdrawOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: MsgWithdrawParams {
+                    ask_id: req_ask_id.clone(),
+                    reason: Some("Canceled plan".into()),
+                },
+                org_seq: 2,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(wd.result.withdrawal.by, ada.as_str());
+
+        // 3. Delete runtime and rebuild: verify answer + withdrawal survive identically!
+        let before = store.dump();
+        store.close().unwrap();
+        if engine == EngineChoice::Sqlite {
+            let office_db = place.config(engine, Opening::Existing).projection_path();
+            std::fs::remove_dir_all(office_db.parent().unwrap()).unwrap();
+        }
+        let reopened = place.reopen(engine);
+        assert_eq!(before, reopened.dump(), "{engine:?}: ask rebuild mismatch");
+        let (rebuilt_msgs, _) = reopened
+            .read(ChatMessagesRead {
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: ChatMessagesParams {
+                    conversation: Some(committed.result.conversation_id.clone()),
+                    ..Default::default()
+                },
+                now_utc: now,
+            })
+            .unwrap();
+        let rebuilt_msgs = rebuilt_msgs.unwrap();
+        let ans_view = rebuilt_msgs
+            .messages
+            .iter()
+            .find(|m| m.id == ask_id)
+            .expect("answered ask rebuilt");
+        assert_eq!(ans_view.answer.as_ref().unwrap().answers.len(), 4);
+        let wd_view = rebuilt_msgs
+            .messages
+            .iter()
+            .find(|m| m.id == req_ask_id)
+            .expect("withdrawn ask rebuilt");
+        assert_eq!(wd_view.withdrawal.as_ref().unwrap().by, ada.as_str());
+        reopened.close().unwrap();
+    }
+}

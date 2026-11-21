@@ -579,6 +579,17 @@ impl Client {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, ClientError> {
+        self.call_raw_with_timeout(method, params, default_timeout(method))
+    }
+
+    /// Sends one raw JSON-RPC method and params object with an explicit timeout budget (used for
+    /// bounded short-hold calls such as `chat.ask`, `chat.wait_ask`, and `msg.wait`).
+    pub fn call_raw_with_timeout(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, ClientError> {
         let id = self.next_request_id()?;
         let request = Request {
             id,
@@ -586,7 +597,7 @@ impl Client {
             params,
             principal: None,
         };
-        let response = self.send_request(request, default_timeout(method), &mut false)?;
+        let response = self.send_request(request, timeout, &mut false)?;
         match response.outcome {
             org_proto::Outcome::Result(value) => Ok(value),
             org_proto::Outcome::Error(error) => Err(ClientError::Api(error)),

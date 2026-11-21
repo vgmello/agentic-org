@@ -2,6 +2,10 @@
 //! read markers, mute preferences, handoff acceptance, triage, and owner inbox (`TASK-45`).
 
 use hyper::{http::request::Parts, Method, StatusCode};
+use org_proto::ask::{
+    ChatAnswer, ChatAnswerParams, ChatAsk, ChatAskParams, ChatWaitAsk, ChatWaitAskParams,
+    MsgWithdraw, MsgWithdrawParams,
+};
 use org_proto::chat::{
     ChatChannelCreate, ChatChannelCreateParams, ChatChannelJoin, ChatChannelLeave,
     ChatChannelMembershipParams, ChatChannels, ChatChannelsParams, ChatConversations,
@@ -39,6 +43,10 @@ pub enum ChatRoute {
     Reply(CallerAuth, String),
     Done(CallerAuth, String),
     Defer(CallerAuth, String),
+    Ask(CallerAuth, String),
+    Answer(CallerAuth, String),
+    Withdraw(CallerAuth, String),
+    WaitAsk(CallerAuth, String),
     OwnerInbox(CallerAuth, String),
 }
 
@@ -59,6 +67,10 @@ pub enum ChatCall {
     Reply(CallerAuth, String, Box<MsgReplyParams>),
     Done(CallerAuth, String, MsgDoneParams),
     Defer(CallerAuth, String, MsgDeferParams),
+    Ask(CallerAuth, String, Box<ChatAskParams>),
+    Answer(CallerAuth, String, Box<ChatAnswerParams>),
+    Withdraw(CallerAuth, String, MsgWithdrawParams),
+    WaitAsk(CallerAuth, String, ChatWaitAskParams),
     OwnerInbox(CallerAuth, String),
 }
 
@@ -122,6 +134,10 @@ fn route_chat(
         ["reply"] if post => Some(auth_org(api, request, org, ChatRoute::Reply)),
         ["done"] if post => Some(auth_org(api, request, org, ChatRoute::Done)),
         ["defer"] if post => Some(auth_org(api, request, org, ChatRoute::Defer)),
+        ["ask"] if post => Some(auth_org(api, request, org, ChatRoute::Ask)),
+        ["ask", "wait"] if post => Some(auth_org(api, request, org, ChatRoute::WaitAsk)),
+        ["answer"] if post => Some(auth_org(api, request, org, ChatRoute::Answer)),
+        ["withdraw"] if post => Some(auth_org(api, request, org, ChatRoute::Withdraw)),
         _ => None,
     }
 }
@@ -162,6 +178,18 @@ pub(super) fn prepare(route: ChatRoute, bytes: &[u8]) -> Result<PreparedCall<Cal
         ChatRoute::Reply(c, o) => ChatCall::Reply(c, o, Box::new(decode(bytes)?)),
         ChatRoute::Done(c, o) => ChatCall::Done(c, o, decode(bytes)?),
         ChatRoute::Defer(c, o) => ChatCall::Defer(c, o, decode(bytes)?),
+        ChatRoute::Ask(c, o) => {
+            let mut p: ChatAskParams = decode(bytes)?;
+            p.hold_ms = Some(0);
+            ChatCall::Ask(c, o, Box::new(p))
+        }
+        ChatRoute::Answer(c, o) => ChatCall::Answer(c, o, Box::new(decode(bytes)?)),
+        ChatRoute::Withdraw(c, o) => ChatCall::Withdraw(c, o, decode(bytes)?),
+        ChatRoute::WaitAsk(c, o) => {
+            let mut p: ChatWaitAskParams = decode(bytes)?;
+            p.hold_ms = Some(0);
+            ChatCall::WaitAsk(c, o, p)
+        }
         ChatRoute::OwnerInbox(c, o) => {
             empty(bytes)?;
             ChatCall::OwnerInbox(c, o)
@@ -217,11 +245,13 @@ fn map_office_failure(error: OfficeFailure) -> ApiReply {
         OfficeFailure::Refused(err) => {
             let web = WebError::from(err);
             let status = match web.code {
-                WebErrorCode::InvalidRequest | WebErrorCode::InvalidName | WebErrorCode::Cycle => {
-                    StatusCode::BAD_REQUEST
-                }
+                WebErrorCode::InvalidRequest
+                | WebErrorCode::InvalidName
+                | WebErrorCode::Cycle
+                | WebErrorCode::UnknownRecipient => StatusCode::BAD_REQUEST,
                 WebErrorCode::NotAuthorized | WebErrorCode::OwnerProtected => StatusCode::FORBIDDEN,
                 WebErrorCode::NotFound => return not_found(),
+                WebErrorCode::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
                 WebErrorCode::Conflict
                 | WebErrorCode::AlreadyExists
                 | WebErrorCode::NotEmpty
@@ -267,6 +297,10 @@ pub(super) async fn execute(api: &SessionApi, call: ChatCall) -> ApiReply {
         ChatCall::Reply(c, o, p) => run_office::<MsgReply>(api, c, &o, &p, false).await,
         ChatCall::Done(c, o, p) => run_office::<MsgDone>(api, c, &o, &p, false).await,
         ChatCall::Defer(c, o, p) => run_office::<MsgDefer>(api, c, &o, &p, false).await,
+        ChatCall::Ask(c, o, p) => run_office::<ChatAsk>(api, c, &o, &p, false).await,
+        ChatCall::Answer(c, o, p) => run_office::<ChatAnswer>(api, c, &o, &p, false).await,
+        ChatCall::Withdraw(c, o, p) => run_office::<MsgWithdraw>(api, c, &o, &p, false).await,
+        ChatCall::WaitAsk(c, o, p) => run_office::<ChatWaitAsk>(api, c, &o, &p, true).await,
         ChatCall::OwnerInbox(c, o) => {
             let params = InboxListParams {
                 state: org_proto::inbox::InboxState::Open,

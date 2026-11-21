@@ -686,3 +686,371 @@ fn b6_non_owner_grant_caller_cannot_read_other_members_private_messages() {
         "owner grant caller should read via msg.get: {owner_get:?}"
     );
 }
+
+#[test]
+fn b7_msg_ask_short_hold_wait_answer_withdraw_and_live_inbox_surfacing() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let fx = LiveOfficeFixture::start();
+    let hr_binding = fx.issue_binding_for(&fx.hr_id);
+
+    let run_cli = |args: &[&str]| -> Value {
+        let vec: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
+        let out = org_agent_cli::execute(&vec, hr_binding.clone());
+        assert_eq!(out.exit_code, 0, "args={args:?} out={}", out.stdout);
+        serde_json::from_str(&out.stdout).unwrap()
+    };
+
+    // 1. HR agent asks owner a structured 2-question approval ask with a 30ms short hold.
+    let ask_json = json!({
+        "to": "owner",
+        "subject": "Approve hire",
+        "approval": true,
+        "required": true,
+        "wait_ms": 60_000,
+        "hold_ms": 30,
+        "questions": [
+            {
+                "id": "decision",
+                "question_type": "choice",
+                "prompt": "Approve hiring Ada?",
+                "options": [
+                    { "id": "approve", "label": "Approve" },
+                    { "id": "reject", "label": "Reject" }
+                ]
+            },
+            {
+                "id": "note",
+                "question_type": "free_text",
+                "prompt": "Optional note",
+                "optional": true
+            }
+        ]
+    });
+    let asked = run_cli(&["msg", "ask", "--json", &ask_json.to_string()]);
+    assert_eq!(asked["ok"], true, "{asked}");
+    assert_eq!(asked["data"]["status"], "waiting", "{asked}");
+    let ask_id = asked["data"]["ask_id"].as_str().unwrap().to_owned();
+
+    // 2. Live unified Inbox surfaces the open approval ask with counts.approvals == 1.
+    let inbox_open = fx
+        .shared
+        .inbox
+        .as_ref()
+        .unwrap()
+        .list(org_proto::inbox::InboxListParams {
+            state: org_proto::inbox::InboxState::Open,
+            kinds: None,
+            project: None,
+            team: None,
+            cursor: None,
+            limit: None,
+        })
+        .unwrap();
+    assert_eq!(inbox_open.counts.approvals, 1, "{inbox_open:?}");
+    assert!(inbox_open
+        .items
+        .iter()
+        .any(|i| i.reference.ends_with(&format!(":msg:{ask_id}"))
+            && i.kind == org_proto::inbox::InboxKind::Approval));
+
+    // 3. Spawn concurrent `agent-os msg wait --ask <id> --timeout-ms 5000`, then answer as owner.
+    let wait_binding = hr_binding.clone();
+    let wait_ask_id = ask_id.clone();
+    let waiter = std::thread::spawn(move || {
+        let args = vec![
+            "msg".to_owned(),
+            "wait".to_owned(),
+            "--ask".to_owned(),
+            wait_ask_id,
+            "--timeout-ms".to_owned(),
+            "5000".to_owned(),
+        ];
+        let out = org_agent_cli::execute(&args, wait_binding);
+        assert_eq!(out.exit_code, 0, "{}", out.stdout);
+        serde_json::from_str::<Value>(&out.stdout).unwrap()
+    });
+    std::thread::sleep(Duration::from_millis(40));
+
+    let answer_req = Request::new::<org_proto::ask::ChatAnswer>(
+        201,
+        &org_proto::ask::ChatAnswerParams {
+            ask_id: ask_id.clone(),
+            answers: vec![
+                org_proto::ask::QuestionAnswer {
+                    question_id: "decision".into(),
+                    option_ids: vec!["approve".into()],
+                    text: None,
+                },
+                org_proto::ask::QuestionAnswer {
+                    question_id: "note".into(),
+                    option_ids: Vec::new(),
+                    text: Some("Welcome aboard".into()),
+                },
+            ],
+            option_id: None,
+            text: None,
+        },
+    )
+    .unwrap();
+    let answer_resp = fx.shared.answer_for_test(&answer_req, &fx.owner_id, true);
+    assert!(
+        matches!(answer_resp.outcome, Outcome::Result(_)),
+        "{answer_resp:?}"
+    );
+
+    let waited = waiter.join().unwrap();
+    assert_eq!(waited["data"]["woken"], true, "{waited}");
+    assert_eq!(waited["data"]["status"], "answered", "{waited}");
+    assert!(waited["data"]["answer"]
+        .as_str()
+        .unwrap()
+        .contains("Welcome aboard"));
+
+    // Inbox approval count immediately clears to 0!
+    let inbox_after = fx
+        .shared
+        .inbox
+        .as_ref()
+        .unwrap()
+        .list(org_proto::inbox::InboxListParams {
+            state: org_proto::inbox::InboxState::Open,
+            kinds: None,
+            project: None,
+            team: None,
+            cursor: None,
+            limit: None,
+        })
+        .unwrap();
+    assert_eq!(inbox_after.counts.approvals, 0, "{inbox_after:?}");
+
+    // 4. Send a second ask and withdraw it via `agent-os msg withdraw`.
+    let ask2_json = json!({
+        "to": "owner",
+        "hold_ms": 0,
+        "questions": [{
+            "id": "q1",
+            "question_type": "yes_no",
+            "prompt": "Keep old branch?",
+            "default_value": "no"
+        }]
+    });
+    let asked2 = run_cli(&["msg", "ask", "--json", &ask2_json.to_string()]);
+    let ask2_id = asked2["data"]["ask_id"].as_str().unwrap().to_owned();
+    let withdrawn = run_cli(&["msg", "withdraw", "--id", &ask2_id, "--reason", "Resolved"]);
+    assert_eq!(withdrawn["data"]["ask_id"], ask2_id);
+    assert_eq!(withdrawn["data"]["reason"], "Resolved");
+}
+
+fn sample_yes_no_ask(id: String, to: &str, hold_ms: u64, addressed_to: Option<String>) -> Request {
+    Request::new::<org_proto::ask::ChatAsk>(
+        301,
+        &org_proto::ask::ChatAskParams {
+            id,
+            to: to.into(),
+            subject: Some("Ask check".into()),
+            body: None,
+            questions: vec![org_proto::ask::AskQuestion {
+                id: "q1".into(),
+                question_type: org_proto::ask::AskQuestionType::YesNo,
+                prompt: "Proceed?".into(),
+                options: Vec::new(),
+                allow_multiple: false,
+                optional: false,
+                default_value: None,
+            }],
+            required: false,
+            wait_ms: Some(60_000),
+            hold_ms: Some(hold_ms),
+            addressed_to,
+            blocks: None,
+            approval: false,
+            meta: Default::default(),
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn b7_ask_refuses_self_addressed_and_never_blocks_host_channel() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let fx = LiveOfficeFixture::start();
+
+    let self_ask = sample_yes_no_ask(
+        "0190a5d2-7c3e-7a01-8b2c-3d4e5f607901".into(),
+        "owner",
+        0,
+        Some(fx.hr_id.clone()),
+    );
+    let self_resp = fx.shared.answer_for_test(&self_ask, &fx.hr_id, false);
+    assert!(
+        matches!(self_resp.outcome, Outcome::Error(ref e) if e.code == ErrorCode::InvalidRequest),
+        "{self_resp:?}"
+    );
+
+    let grant_ask = sample_yes_no_ask(
+        "0190a5d2-7c3e-7a01-8b2c-3d4e5f607902".into(),
+        "hr",
+        90_000,
+        None,
+    );
+    let started = std::time::Instant::now();
+    let grant_resp = fx.shared.answer_for_test(&grant_ask, &fx.owner_id, true);
+    assert!(
+        matches!(grant_resp.outcome, Outcome::Result(_)),
+        "{grant_resp:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "via_grant chat.ask must never block host channel: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn b7_open_ask_stays_in_owner_inbox_after_msg_read() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let fx = LiveOfficeFixture::start();
+    let hr_binding = fx.issue_binding_for(&fx.hr_id);
+
+    let owner_ask_json = json!({
+        "to": "owner",
+        "hold_ms": 0,
+        "required": true,
+        "approval": true,
+        "questions": [{
+            "id": "q1",
+            "question_type": "yes_no",
+            "prompt": "Approve?"
+        }]
+    });
+    let out = org_agent_cli::execute(
+        &[
+            "msg".into(),
+            "ask".into(),
+            "--json".into(),
+            owner_ask_json.to_string(),
+        ],
+        hr_binding,
+    );
+    assert_eq!(out.exit_code, 0, "{}", out.stdout);
+    let parsed: Value = serde_json::from_str(&out.stdout).unwrap();
+    let owner_ask_id = parsed["data"]["ask_id"].as_str().unwrap().to_owned();
+    let read_req = Request::new::<org_proto::msg::MsgRead>(
+        303,
+        &org_proto::msg::MsgReadParams {
+            id: Some(owner_ask_id.clone()),
+        },
+    )
+    .unwrap();
+    let read_resp = fx.shared.answer_for_test(&read_req, &fx.owner_id, true);
+    assert!(
+        matches!(read_resp.outcome, Outcome::Result(_)),
+        "{read_resp:?}"
+    );
+    let inbox = fx
+        .shared
+        .inbox
+        .as_ref()
+        .unwrap()
+        .list(org_proto::inbox::InboxListParams {
+            state: org_proto::inbox::InboxState::Open,
+            kinds: None,
+            project: None,
+            team: None,
+            cursor: None,
+            limit: None,
+        })
+        .unwrap();
+    assert!(
+        inbox
+            .items
+            .iter()
+            .any(|i| i.reference.ends_with(&format!(":msg:{owner_ask_id}"))),
+        "open ask must stay in owner Inbox after msg.read: {inbox:?}"
+    );
+}
+
+fn free_text_ask_req(id: &str, to: &str, body: Option<&str>, prompt: String) -> Request {
+    Request::new::<org_proto::ask::ChatAsk>(
+        310,
+        &org_proto::ask::ChatAskParams {
+            id: id.into(),
+            to: to.into(),
+            subject: None,
+            body: body.map(str::to_owned),
+            questions: vec![org_proto::ask::AskQuestion {
+                id: "q1".into(),
+                question_type: org_proto::ask::AskQuestionType::FreeText,
+                prompt,
+                options: Vec::new(),
+                allow_multiple: false,
+                optional: false,
+                default_value: None,
+            }],
+            required: false,
+            wait_ms: Some(60_000),
+            hold_ms: Some(0),
+            addressed_to: None,
+            blocks: None,
+            approval: false,
+            meta: Default::default(),
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn b7_self_mention_does_not_self_address_and_oversized_card_or_answers_refused() {
+    let _spawn = crate::transfer::tests::without_process_spawn();
+    let fx = LiveOfficeFixture::start();
+    let ask_id = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607910";
+
+    // 1. Channel ask mentioning only @hr (the sender) stays open for owner to answer.
+    let self_mention_ask = free_text_ask_req(ask_id, "#general", Some("cc @hr"), "Details?".into());
+    let asked = fx
+        .shared
+        .answer_for_test(&self_mention_ask, &fx.hr_id, false);
+    assert!(matches!(asked.outcome, Outcome::Result(_)), "{asked:?}");
+
+    // 2. Oversized answer (> MAX_META_BYTES) is refused with TooLarge; normal answer succeeds.
+    let make_ans = |text: String| {
+        Request::new::<org_proto::ask::ChatAnswer>(
+            311,
+            &org_proto::ask::ChatAnswerParams {
+                ask_id: ask_id.into(),
+                answers: vec![org_proto::ask::QuestionAnswer {
+                    question_id: "q1".into(),
+                    option_ids: Vec::new(),
+                    text: Some(text),
+                }],
+                option_id: None,
+                text: None,
+            },
+        )
+        .unwrap()
+    };
+    let big_resp = fx
+        .shared
+        .answer_for_test(&make_ans("x".repeat(70_000)), &fx.owner_id, true);
+    assert!(
+        matches!(big_resp.outcome, Outcome::Error(ref e) if e.code == ErrorCode::TooLarge),
+        "{big_resp:?}"
+    );
+    let ok_resp = fx
+        .shared
+        .answer_for_test(&make_ans("All clear".into()), &fx.owner_id, true);
+    assert!(matches!(ok_resp.outcome, Outcome::Result(_)), "{ok_resp:?}");
+
+    // 3. Oversized AskCard (> MAX_META_BYTES) is refused with TooLarge.
+    let huge_ask = free_text_ask_req(
+        "0190a5d2-7c3e-7a01-8b2c-3d4e5f607911",
+        "owner",
+        None,
+        "p".repeat(70_000),
+    );
+    let huge_resp = fx.shared.answer_for_test(&huge_ask, &fx.hr_id, false);
+    assert!(
+        matches!(huge_resp.outcome, Outcome::Error(ref e) if e.code == ErrorCode::TooLarge),
+        "{huge_resp:?}"
+    );
+}

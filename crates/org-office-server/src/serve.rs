@@ -126,8 +126,12 @@ pub type AgentLifecycleHookFn = Box<dyn Fn(&str, &str) + Send + Sync>;
 pub type HrMessageGuardFn =
     Box<dyn Fn(&str, &str) -> Result<Result<(), ApiError>, String> + Send + Sync>;
 
-/// Dispatches B6 `dm.open`, `chat.*`, and `msg.accept` RPCs.
-pub type ChatFn = Box<dyn Fn(Option<&str>, bool, &Request) -> Option<Response> + Send + Sync>;
+/// Dispatches B6/B7 `dm.open`, `chat.*`, `msg.accept`, and `msg.withdraw` RPCs.
+pub type ChatFn = Box<
+    dyn Fn(Option<&str>, bool, &std::sync::atomic::AtomicBool, &Request) -> Option<Response>
+        + Send
+        + Sync,
+>;
 
 /// What the connections ask of the office.
 pub struct OfficePorts {
@@ -369,6 +373,7 @@ pub struct Shared {
     directory_change_token: Option<Box<dyn Fn() -> u64 + Send + Sync>>,
     pub(crate) inbox: Option<crate::inbox::Hq>,
     hint: Option<crate::inbox::Hint>,
+    pub(crate) stopping: std::sync::atomic::AtomicBool,
 }
 
 impl Shared {
@@ -395,6 +400,7 @@ impl Shared {
             directory_change_token: None,
             inbox: None,
             hint: None,
+            stopping: std::sync::atomic::AtomicBool::new(false),
             // Part 1 implements only what every server of this api_version has: no capabilities.
             hello: HelloResult::office(
                 env!("CARGO_PKG_VERSION"),
@@ -618,6 +624,7 @@ fn run_for_uid(
     }
     // The tick also observes stop if a platform shutdown misses its reader wakeup.
     stopping.store(true, Ordering::SeqCst);
+    shared.stopping.store(true, Ordering::SeqCst);
     // Stop: close every connection, then wait for the threads.
     for stream in open.lock().unwrap_or_else(|p| p.into_inner()).values() {
         let _ = stream.shutdown(std::net::Shutdown::Both);
@@ -1504,8 +1511,13 @@ fn sessions_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option
 fn answer_message(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
     if crate::chat_calls::is_chat_method(request) {
         return Some(match &shared.ports.chat {
-            Some(chat) => chat(binding.member(), binding.via_grant(), request)
-                .unwrap_or_else(|| msg_calls::unsupported(request.id)),
+            Some(chat) => chat(
+                binding.member(),
+                binding.via_grant(),
+                &shared.stopping,
+                request,
+            )
+            .unwrap_or_else(|| msg_calls::unsupported(request.id)),
             None => msg_calls::unsupported(request.id),
         });
     }

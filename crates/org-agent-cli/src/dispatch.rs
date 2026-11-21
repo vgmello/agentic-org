@@ -14,6 +14,16 @@ use crate::keys::UuidV7KeySource;
 /// Transport abstraction shared by `agent-os` (`org-client`) and `agentic-org` (`host.sock`).
 pub trait OfficeTransport {
     fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal>;
+
+    /// Like [`Self::call_method`], with an explicit timeout budget for short-hold waits.
+    fn call_method_with_timeout(
+        &mut self,
+        method: &str,
+        params: Value,
+        _timeout: std::time::Duration,
+    ) -> Result<Value, Refusal> {
+        self.call_method(method, params)
+    }
 }
 
 /// Adapts any [`OfficeTransport`] into an [`org_command::Office`].

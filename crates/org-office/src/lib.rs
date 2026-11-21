@@ -51,7 +51,7 @@ pub mod rules;
 mod store;
 pub use store::open::messaging_ops::{
     LocalTransitionInput, MailboxCommitInput, MailboxCommitOut, MailboxStored, NotifyCandidateOut,
-    PeekUnreadOut,
+    OwnerInboxEntry, PeekUnreadOut,
 };
 #[cfg(any(test, feature = "testkit"))]
 pub use store::open::Testing;
@@ -64,6 +64,7 @@ pub use store::open::{
     StructureOp, UpdatePersonOp, UpdateTeamOp,
 };
 mod time;
+pub use time::parse_rfc3339_ms;
 
 pub use error::{NameError, OfficeError};
 pub use key::Key;

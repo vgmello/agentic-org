@@ -833,8 +833,9 @@ fn build_messaging_ports(
         Arc::clone(live),
         Arc::clone(&mailbox),
     ));
-    let chat: serve::ChatFn =
-        Box::new(move |member, via_grant, request| chat_svc.dispatch(member, via_grant, request));
+    let chat: serve::ChatFn = Box::new(move |member, via_grant, stopping, request| {
+        chat_svc.dispatch(member, via_grant, stopping, request)
+    });
     let feed: Box<dyn follow::OrgFeed> = Box::new(org_feed::OfficeOrgFeed::new(
         Arc::clone(office),
         Arc::clone(wake),

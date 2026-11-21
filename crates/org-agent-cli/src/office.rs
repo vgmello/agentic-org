@@ -183,6 +183,18 @@ impl OfficeTransport for BoundOffice {
         let client = self.client()?;
         client.call_raw(method, params).map_err(map_client_error)
     }
+
+    fn call_method_with_timeout(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value, Refusal> {
+        let client = self.client()?;
+        client
+            .call_raw_with_timeout(method, params, timeout)
+            .map_err(map_client_error)
+    }
 }
 
 impl Office for BoundOffice {

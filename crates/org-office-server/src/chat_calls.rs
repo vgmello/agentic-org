@@ -1,9 +1,15 @@
 //! Socket and host-channel dispatch for `dm.open`, `chat.*`, and `msg.accept` (`doc-90`, `B6`).
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use org_mailbox::Mailbox;
 use org_office::Office;
+use org_proto::ask::{
+    AskStatus, ChatAnswer, ChatAsk, ChatAskResult, ChatWaitAsk, ChatWaitAskResult, MsgWithdraw,
+    MAX_SHORT_HOLD_MS,
+};
 use org_proto::chat::{
     header_only_received, ChatChannelCreate, ChatChannelJoin, ChatChannelLeave, ChatChannels,
     ChatConversations, ChatEventsPoll, ChatEventsPollResult, ChatInbox, ChatMarkRead, ChatMessages,
@@ -13,11 +19,19 @@ use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
 use crate::live::{Live, LiveEvents};
 
-/// Returns `true` if `request` names one of the B6 chat/channel/DM/accept/events-poll methods.
+/// Returns `true` if `request` names one of the B6/B7 chat, channel, DM, ask, accept, or poll methods.
 pub(crate) fn is_chat_method(request: &Request) -> bool {
     is_channel_or_dm_method(request)
         || is_message_chat_method(request)
+        || is_ask_method(request)
         || request.is::<ChatEventsPoll>()
+}
+
+fn is_ask_method(request: &Request) -> bool {
+    request.is::<ChatAsk>()
+        || request.is::<ChatAnswer>()
+        || request.is::<MsgWithdraw>()
+        || request.is::<ChatWaitAsk>()
 }
 
 fn is_channel_or_dm_method(request: &Request) -> bool {
@@ -39,12 +53,55 @@ fn is_message_chat_method(request: &Request) -> bool {
         || request.is::<MsgAccept>()
 }
 
-/// Live chat/channel/events service composed over [`Office`], [`Mailbox`], and [`LiveEvents`].
+/// Bounded tick interval while waiting on `AskWaiters` so server shutdown wakes promptly.
+const ASK_WAIT_TICK: Duration = Duration::from_millis(100);
+
+/// In-memory condvar registry waking short-hold `chat.ask` / `chat.wait_ask` callers when an
+/// answer or withdrawal commits (`ASK-10`). Uses a single monotonic generation counter (`O(1)`).
+#[derive(Default)]
+struct AskWaiters {
+    gen: Mutex<u64>,
+    cv: Condvar,
+}
+
+impl AskWaiters {
+    fn generation(&self) -> u64 {
+        *self.gen.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn notify(&self) {
+        let mut guard = self.gen.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = guard.saturating_add(1);
+        self.cv.notify_all();
+    }
+
+    fn wait_change(&self, seen: u64, deadline: Instant, stopping: &AtomicBool) -> u64 {
+        let mut guard = self.gen.lock().unwrap_or_else(|p| p.into_inner());
+        loop {
+            if *guard != seen || stopping.load(Ordering::SeqCst) {
+                return *guard;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return *guard;
+            }
+            let step = deadline.saturating_duration_since(now).min(ASK_WAIT_TICK);
+            let (next, _) = self
+                .cv
+                .wait_timeout(guard, step)
+                .unwrap_or_else(|p| p.into_inner());
+            guard = next;
+        }
+    }
+}
+
+/// Live chat/channel/ask/events service composed over [`Office`], [`Mailbox`], and [`LiveEvents`].
 pub(crate) struct ChatService {
     office: Arc<Office>,
     live: Arc<LiveEvents>,
     mailbox: Arc<Mailbox>,
     owner_id: String,
+    ask_waiters: AskWaiters,
 }
 
 impl ChatService {
@@ -55,14 +112,16 @@ impl ChatService {
             live,
             mailbox,
             owner_id,
+            ask_waiters: AskWaiters::default(),
         }
     }
 
-    /// Dispatches one chat/DM/accept/events-poll request for `member` (with `via_grant` authority).
+    /// Dispatches one chat/DM/ask/accept/events-poll request for `member` (with `via_grant` authority).
     pub(crate) fn dispatch(
         &self,
         member: Option<&str>,
         via_grant: bool,
+        stopping: &AtomicBool,
         request: &Request,
     ) -> Option<Response> {
         if !is_chat_method(request) {
@@ -80,8 +139,33 @@ impl ChatService {
         if let Some(resp) = self.dispatch_message_ops(member, request) {
             return Some(resp);
         }
+        if let Some(resp) = self.dispatch_ask_ops(member, via_grant, stopping, request) {
+            return Some(resp);
+        }
         if request.is::<ChatEventsPoll>() {
             return Some(self.handle_events_poll(member, via_grant, request));
+        }
+        None
+    }
+
+    fn dispatch_ask_ops(
+        &self,
+        member: &str,
+        via_grant: bool,
+        stopping: &AtomicBool,
+        request: &Request,
+    ) -> Option<Response> {
+        if request.is::<ChatAsk>() {
+            return Some(self.handle_msg_ask(member, via_grant, stopping, request));
+        }
+        if request.is::<ChatAnswer>() {
+            return Some(self.handle_chat_answer(member, request));
+        }
+        if request.is::<MsgWithdraw>() {
+            return Some(self.handle_msg_withdraw(member, request));
+        }
+        if request.is::<ChatWaitAsk>() {
+            return Some(self.handle_wait_ask(member, via_grant, stopping, request));
         }
         None
     }
@@ -209,6 +293,162 @@ impl ChatService {
             Ok(Err(refusal)) => Response::error(request.id, refusal),
             Err(error) => {
                 crate::logged("msg.accept", &error);
+                storage_err(request.id)
+            }
+        }
+    }
+
+    fn hold_for_ask(
+        &self,
+        member: &str,
+        ask_id: &str,
+        hold_ms: Option<u64>,
+        stopping: &AtomicBool,
+    ) -> Result<Result<ChatWaitAskResult, ApiError>, org_office::OfficeError> {
+        let max_hold = hold_ms.unwrap_or(MAX_SHORT_HOLD_MS).min(MAX_SHORT_HOLD_MS);
+        let mut seen = self.ask_waiters.generation();
+        let initial = match self.office.inspect_ask_status(member, ask_id)? {
+            Ok(v) => v,
+            Err(e) => return Ok(Err(e)),
+        };
+        if initial.status != AskStatus::Waiting || max_hold == 0 {
+            return Ok(Ok(initial));
+        }
+        let bounded = max_hold.min(initial.remaining_ms.unwrap_or(max_hold));
+        let deadline = Instant::now() + Duration::from_millis(bounded);
+        let mut latest = initial;
+        while latest.status == AskStatus::Waiting
+            && Instant::now() < deadline
+            && !stopping.load(Ordering::SeqCst)
+        {
+            seen = self.ask_waiters.wait_change(seen, deadline, stopping);
+            latest = match self.office.inspect_ask_status(member, ask_id)? {
+                Ok(v) => v,
+                Err(e) => return Ok(Err(e)),
+            };
+        }
+        Ok(Ok(latest))
+    }
+
+    fn handle_msg_ask(
+        &self,
+        member: &str,
+        via_grant: bool,
+        stopping: &AtomicBool,
+        request: &Request,
+    ) -> Response {
+        let Ok(params) = request.params::<ChatAsk>() else {
+            return invalid_params(request.id, ChatAsk::METHOD);
+        };
+        let hold_ms = if via_grant { Some(0) } else { params.hold_ms };
+        match self.office.msg_ask(member, params) {
+            Ok(Ok(committed)) => {
+                if committed.inserted {
+                    let mut owner_touched = false;
+                    for header in committed.delivered_headers() {
+                        self.mailbox.notify_member(&header.to_member_id);
+                        if header.to_member_id == self.owner_id {
+                            owner_touched = true;
+                        }
+                        self.live
+                            .publish_live(Live::Received(Box::new(header_only_received(header))));
+                    }
+                    if owner_touched {
+                        self.live.record_mailbox_change();
+                    }
+                }
+                let mut res: ChatAskResult = committed.result;
+                if res.status == AskStatus::Waiting && hold_ms != Some(0) {
+                    if let Ok(Ok(waited)) =
+                        self.hold_for_ask(member, &res.ask_id, hold_ms, stopping)
+                    {
+                        res.status = waited.status;
+                        res.remaining_ms = waited.remaining_ms;
+                        res.answer = waited.answer;
+                        res.withdrawal = waited.withdrawal;
+                        res.defaults = waited.defaults;
+                        res.required_notice = waited.required_notice;
+                    }
+                }
+                ok_reply::<ChatAsk>(request.id, &res)
+            }
+            Ok(Err(refusal)) => Response::error(request.id, refusal),
+            Err(error) => {
+                crate::logged("msg.ask", &error);
+                storage_err(request.id)
+            }
+        }
+    }
+
+    fn handle_chat_answer(&self, member: &str, request: &Request) -> Response {
+        let Ok(params) = request.params::<ChatAnswer>() else {
+            return invalid_params(request.id, ChatAnswer::METHOD);
+        };
+        match self.office.chat_answer(member, params) {
+            Ok(Ok(committed)) => {
+                self.ask_waiters.notify();
+                if let Some(header) = committed.reply_header {
+                    self.mailbox.notify_member(&header.to_member_id);
+                    self.live
+                        .publish_live(Live::Received(Box::new(header_only_received(header))));
+                }
+                if committed
+                    .affected_members
+                    .iter()
+                    .any(|m| m == &self.owner_id)
+                {
+                    self.live.record_mailbox_change();
+                }
+                ok_reply::<ChatAnswer>(request.id, &committed.result)
+            }
+            Ok(Err(refusal)) => Response::error(request.id, refusal),
+            Err(error) => {
+                crate::logged("chat.answer", &error);
+                storage_err(request.id)
+            }
+        }
+    }
+
+    fn handle_msg_withdraw(&self, member: &str, request: &Request) -> Response {
+        let Ok(params) = request.params::<MsgWithdraw>() else {
+            return invalid_params(request.id, MsgWithdraw::METHOD);
+        };
+        match self.office.msg_withdraw(member, params) {
+            Ok(Ok(committed)) => {
+                self.ask_waiters.notify();
+                if committed
+                    .affected_members
+                    .iter()
+                    .any(|m| m == &self.owner_id)
+                {
+                    self.live.record_mailbox_change();
+                }
+                ok_reply::<MsgWithdraw>(request.id, &committed.result)
+            }
+            Ok(Err(refusal)) => Response::error(request.id, refusal),
+            Err(error) => {
+                crate::logged("msg.withdraw", &error);
+                storage_err(request.id)
+            }
+        }
+    }
+
+    fn handle_wait_ask(
+        &self,
+        member: &str,
+        via_grant: bool,
+        stopping: &AtomicBool,
+        request: &Request,
+    ) -> Response {
+        let Ok(params) = request.params::<ChatWaitAsk>() else {
+            return invalid_params(request.id, ChatWaitAsk::METHOD);
+        };
+        let hold_ms = if via_grant { Some(0) } else { params.hold_ms };
+        match self.hold_for_ask(member, &params.ask_id, hold_ms, stopping) {
+            Ok(Ok(result)) => ok_reply::<ChatWaitAsk>(request.id, &result),
+            Ok(Err(refusal)) => Response::error(request.id, refusal),
+            Err(error) => {
+                crate::logged("chat.wait_ask", &error);
                 storage_err(request.id)
             }
         }

@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use org_proto::ask::{ChatAnswerParams, ChatAskParams, ChatWaitAskResult, MsgWithdrawParams};
 use org_proto::chat::{
     ChatChannelCreateParams, ChatChannelCreateResult, ChatChannelMembershipParams,
     ChatChannelMembershipResult, ChatChannelsParams, ChatChannelsResult, ChatConversationsParams,
@@ -21,6 +22,7 @@ use org_store::{Ack, Change, Id, OfficeIdentity, Outcome, Refusal, Reply, Store,
 
 use super::{OfficeEngine, ReadOp, StoreOp};
 use crate::messaging::{
+    asks::{self, AnswerCommitted, AskCard, AskCommitted, WithdrawCommitted},
     features::{self, decode_refusal, to_wire_header, ChatSendCommitted},
     ports::MessagingRead,
     records::{
@@ -284,6 +286,178 @@ impl StoreOp for MsgAcceptOp {
             Ok(change)
         });
         unwrap_reply(reply, out)
+    }
+}
+
+pub struct MsgAskOp {
+    pub here: OfficeIdentity,
+    pub owner: Id,
+    pub caller: Id,
+    pub params: ChatAskParams,
+    pub org_seq: u64,
+    pub now_ms: u64,
+}
+
+impl StoreOp for MsgAskOp {
+    type Out = Result<Result<AskCommitted, ApiError>, StoreError>;
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let out = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot = std::sync::Arc::clone(&out);
+        let reply = store.submit(None, false, move |uow| {
+            let (change, res) = asks::decide_msg_ask(
+                uow,
+                &self.here,
+                &self.owner,
+                &self.caller,
+                &self.params,
+                self.org_seq,
+                self.now_ms,
+            )?;
+            *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(res);
+            Ok(change)
+        });
+        unwrap_reply(reply, out)
+    }
+}
+
+pub struct ChatAnswerOp {
+    pub here: OfficeIdentity,
+    pub owner: Id,
+    pub caller: Id,
+    pub params: ChatAnswerParams,
+    pub reply_id: String,
+    pub org_seq: u64,
+    pub now_utc: String,
+}
+
+impl StoreOp for ChatAnswerOp {
+    type Out = Result<Result<AnswerCommitted, ApiError>, StoreError>;
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let out = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot = std::sync::Arc::clone(&out);
+        let reply = store.submit(None, false, move |uow| {
+            let (change, res) = asks::decide_chat_answer(
+                uow,
+                &self.here,
+                &self.owner,
+                &self.caller,
+                &self.params,
+                &self.reply_id,
+                self.org_seq,
+                &self.now_utc,
+            )?;
+            *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(res);
+            Ok(change)
+        });
+        unwrap_reply(reply, out)
+    }
+}
+
+pub struct MsgWithdrawOp {
+    pub here: OfficeIdentity,
+    pub owner: Id,
+    pub caller: Id,
+    pub params: MsgWithdrawParams,
+    pub org_seq: u64,
+    pub now_utc: String,
+}
+
+impl StoreOp for MsgWithdrawOp {
+    type Out = Result<Result<WithdrawCommitted, ApiError>, StoreError>;
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let out = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot = std::sync::Arc::clone(&out);
+        let reply = store.submit(None, false, move |uow| {
+            let (change, res) = asks::decide_msg_withdraw(
+                uow,
+                &self.here,
+                &self.owner,
+                &self.caller,
+                &self.params,
+                self.org_seq,
+                &self.now_utc,
+            )?;
+            *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(res);
+            Ok(change)
+        });
+        unwrap_reply(reply, out)
+    }
+}
+
+pub struct InspectAskStatusRead {
+    pub owner: Id,
+    pub caller: Id,
+    pub ask_id: String,
+    pub now_ms: u64,
+}
+
+impl ReadOp for InspectAskStatusRead {
+    type Out = Result<ChatWaitAskResult, ApiError>;
+    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        Ok(asks::inspect_ask_status(
+            snapshot,
+            &self.owner,
+            &self.caller,
+            &self.ask_id,
+            self.now_ms,
+        ))
+    }
+}
+
+/// One unread owner inbox entry enriched with parsed [`AskCard`] metadata when present.
+#[derive(Debug, Clone)]
+pub struct OwnerInboxEntry {
+    pub header: MessageHeader,
+    pub body: String,
+    pub card: Option<AskCard>,
+}
+
+pub struct OpenOwnerInboxRead {
+    pub owner: Id,
+    pub limit: usize,
+}
+
+impl ReadOp for OpenOwnerInboxRead {
+    type Out = Vec<OwnerInboxEntry>;
+    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        let mut entries = Vec::new();
+        for st in snapshot.recipient_states_for_employee(&self.owner)? {
+            if st.state == MessageLifecycleState::Done {
+                continue;
+            }
+            let Some(msg) = snapshot.message(&st.message_id)? else {
+                continue;
+            };
+            let card = asks::parse_ask_card(&msg);
+            let include = match &card {
+                Some(ask_card) => {
+                    asks::is_open_ask_card(snapshot, &msg)
+                        && (matches!(
+                            st.state,
+                            MessageLifecycleState::Unread | MessageLifecycleState::Read
+                        ) || (ask_card.required && st.state == MessageLifecycleState::Snoozed))
+                }
+                None => st.state == MessageLifecycleState::Unread,
+            };
+            if !include {
+                continue;
+            }
+            let seq = resolve_local_seq(snapshot, &msg)?;
+            let header = to_wire_header(&msg, Some(&st), seq);
+            entries.push(OwnerInboxEntry {
+                header,
+                body: msg.body_markdown,
+                card,
+            });
+        }
+        entries.sort_by(|a, b| {
+            b.header
+                .local_seq
+                .cmp(&a.header.local_seq)
+                .then_with(|| b.header.id.cmp(&a.header.id))
+        });
+        entries.truncate(self.limit);
+        Ok(entries)
     }
 }
 
