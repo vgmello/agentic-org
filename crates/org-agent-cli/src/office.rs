@@ -1,4 +1,7 @@
-//! Bound office transport implementing `org_command::Office` over `org-client`.
+//! Bound office transport implementing `org_command::Office` over `org-client` for `agent-os`.
+//!
+//! Supports both direct socket injection (`AGENT_OS_SOCKET`) and selected UUIDv7 office
+//! addressing (`AGENT_OS_OFFICE` + `AGENT_OS_RUNTIME_DIR` / `ORG_OFFICE_HOME`, `doc-5` A5).
 
 use std::env;
 use std::fmt;
@@ -6,14 +9,19 @@ use std::path::PathBuf;
 
 use org_client::{Client, ClientError};
 use org_command::{Answer, Office, Refusal, Request};
-use org_proto::directory::{DirectoryCard, Who, WhoParams};
+use org_proto::location::{selected_office_socket_in, OFFICE_HOME_ENV, OFFICE_RUNTIME_DIR_ENV};
 use org_proto::msg::{MsgBind, MsgBindParams};
-use org_proto::org::{MemberKind, OrgSnapshot, OrgSnapshotCall, Team};
-use org_proto::{Empty, ErrorCode};
-use serde_json::{json, Value};
+use org_proto::ErrorCode;
+use serde_json::Value;
+
+use crate::dispatch::{self, hint_for, OfficeTransport};
 
 /// Environment variable naming the office socket path (`doc-28` §2.8).
 pub const SOCKET_ENV: &str = "AGENT_OS_SOCKET";
+/// Environment variable naming a selected UUIDv7 office ID (`doc-5` A5).
+pub const OFFICE_ENV: &str = "AGENT_OS_OFFICE";
+/// Environment variable naming the private runtime socket directory for `AGENT_OS_OFFICE`.
+pub const RUNTIME_DIR_ENV: &str = "AGENT_OS_RUNTIME_DIR";
 /// Environment variable carrying the run's session binding token (`doc-28` §2.8).
 pub const SESSION_TOKEN_ENV: &str = "AGENT_OS_SESSION_TOKEN";
 /// Environment variable naming the bound agent's employee ID (`doc-28` §2.8).
@@ -23,6 +31,8 @@ pub const AGENT_ID_ENV: &str = "AGENT_OS_AGENT_ID";
 #[derive(Clone, Default)]
 pub struct Binding {
     pub socket: Option<PathBuf>,
+    pub office_id: Option<String>,
+    pub runtime_dir: Option<PathBuf>,
     pub session_token: Option<String>,
     pub agent_id: Option<String>,
 }
@@ -31,6 +41,8 @@ impl fmt::Debug for Binding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Binding")
             .field("socket", &self.socket)
+            .field("office_id", &self.office_id)
+            .field("runtime_dir", &self.runtime_dir)
             .field(
                 "session_token",
                 &self.session_token.as_ref().map(|_| "<redacted>"),
@@ -49,8 +61,14 @@ impl Binding {
                 .map(|v| v.trim().to_owned())
                 .filter(|v| !v.is_empty())
         };
+        let runtime_dir = non_empty(RUNTIME_DIR_ENV)
+            .or_else(|| non_empty(OFFICE_RUNTIME_DIR_ENV))
+            .map(PathBuf::from)
+            .or_else(|| non_empty(OFFICE_HOME_ENV).map(|h| PathBuf::from(h).join("run")));
         Self {
             socket: non_empty(SOCKET_ENV).map(PathBuf::from),
+            office_id: non_empty(OFFICE_ENV),
+            runtime_dir,
             session_token: non_empty(SESSION_TOKEN_ENV),
             agent_id: non_empty(AGENT_ID_ENV),
         }
@@ -71,234 +89,109 @@ impl BoundOffice {
         }
     }
 
+    fn connect_selected(&self, office_id: &str) -> Result<Client, Refusal> {
+        if !org_proto::is_uuid_v7(office_id) {
+            return Err(Refusal::new(
+                ErrorCode::InvalidRequest,
+                format!("Unknown or malformed office `{office_id}` (expected UUIDv7 office ID)."),
+                "Set AGENT_OS_OFFICE to a selected UUIDv7 office ID or pass AGENT_OS_SOCKET.",
+            ));
+        }
+        let Some(runtime_dir) = &self.binding.runtime_dir else {
+            return Err(Refusal::new(
+                ErrorCode::NotFound,
+                format!("No runtime socket directory configured for office `{office_id}`."),
+                "Set AGENT_OS_RUNTIME_DIR or ORG_OFFICE_HOME to the office runtime directory.",
+            ));
+        };
+        if !runtime_dir.is_absolute() || selected_office_socket_in(runtime_dir, office_id).is_none()
+        {
+            return Err(Refusal::new(
+                ErrorCode::NotFound,
+                format!("Office `{office_id}` cannot be addressed under that runtime directory."),
+                "Pass an absolute AGENT_OS_RUNTIME_DIR for a valid UUIDv7 office.",
+            ));
+        }
+        Client::connect_selected_office(office_id, runtime_dir)
+            .map_err(|e| map_connect_error(e, Some(office_id)))
+    }
+
+    fn bind_agent(&self, client: &Client, agent_id: &str) -> Result<(), Refusal> {
+        let Err(error) = client.call::<MsgBind>(&MsgBindParams::member(agent_id.to_owned())) else {
+            return Ok(());
+        };
+        let office_label = self
+            .binding
+            .office_id
+            .as_deref()
+            .or_else(|| self.binding.socket.as_deref().and_then(|p| p.to_str()))
+            .unwrap_or("office");
+        let mut refusal = map_client_error(error);
+        refusal.message = format!(
+            "Office `{office_label}` refused agent `{agent_id}`: {}",
+            refusal.message
+        );
+        Err(refusal)
+    }
+
+    fn connect_client(&self) -> Result<Client, Refusal> {
+        if self.binding.session_token.is_none() {
+            return Err(Refusal::new(
+                ErrorCode::NotAuthorized,
+                "agent-os requires a run binding from its office.",
+                "Run agent-os inside an office-started agent session with AGENT_OS_SESSION_TOKEN and AGENT_OS_SOCKET (or AGENT_OS_OFFICE) set.",
+            ));
+        }
+        let client = if let Some(socket) = &self.binding.socket {
+            Client::connect(socket)
+                .map_err(|e| map_connect_error(e, self.binding.office_id.as_deref()))?
+        } else if let Some(office_id) = &self.binding.office_id {
+            self.connect_selected(office_id)?
+        } else {
+            return Err(Refusal::new(
+                ErrorCode::NotAuthorized,
+                "agent-os requires a run binding from its office.",
+                "Set AGENT_OS_SOCKET or AGENT_OS_OFFICE + AGENT_OS_RUNTIME_DIR alongside AGENT_OS_SESSION_TOKEN.",
+            ));
+        };
+        if let Some(agent_id) = &self.binding.agent_id {
+            self.bind_agent(&client, agent_id)?;
+        }
+        Ok(client)
+    }
+
     fn client(&mut self) -> Result<&mut Client, Refusal> {
         if self.client.is_none() {
-            // Fail closed unless both socket path and session token are injected by the office.
-            // Note: `MsgBindParams` does not yet carry a wire token field; wire session-token
-            // verification lands with the agent session-binding slice (TASK-35 / B6).
-            let (Some(socket), Some(_token)) = (&self.binding.socket, &self.binding.session_token)
-            else {
-                return Err(Refusal::new(
-                    ErrorCode::NotAuthorized,
-                    "agent-os requires a run binding from its office.",
-                    "Run agent-os inside an office-started agent session with AGENT_OS_SOCKET and AGENT_OS_SESSION_TOKEN set.",
-                ));
-            };
-            let client = Client::connect(socket).map_err(map_client_error)?;
-            if let Some(agent_id) = &self.binding.agent_id {
-                client
-                    .call::<MsgBind>(&MsgBindParams::member(agent_id.clone()))
-                    .map_err(map_client_error)?;
-            }
+            let client = self.connect_client()?;
             self.client = Some(client);
         }
         Ok(self.client.as_mut().expect("client just connected"))
     }
 }
 
+impl OfficeTransport for BoundOffice {
+    fn call_method(&mut self, method: &str, params: Value) -> Result<Value, Refusal> {
+        let client = self.client()?;
+        client.call_raw(method, params).map_err(map_client_error)
+    }
+}
+
 impl Office for BoundOffice {
     fn call(&mut self, request: &Request) -> Result<Answer, Refusal> {
-        let client = self.client()?;
-        match (request.command.resource, request.command.verb) {
-            ("org", "inspect") => {
-                let snapshot = client
-                    .call::<OrgSnapshotCall>(&Empty {})
-                    .map_err(map_client_error)?;
-                Ok(Answer::completed(snapshot_value(&snapshot)))
-            }
-            ("team", "list") => {
-                let offset = parse_cursor(request.cursor.as_deref())?;
-                let snapshot = client
-                    .call::<OrgSnapshotCall>(&Empty {})
-                    .map_err(map_client_error)?;
-                let mut teams: Vec<&Team> = snapshot.teams.iter().collect();
-                teams.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
-                let total = teams.len();
-                let limit = request.limit.unwrap_or(org_command::DEFAULT_LIMIT) as usize;
-                let items: Vec<Value> = teams
-                    .into_iter()
-                    .skip(offset)
-                    .take(limit)
-                    .map(team_value)
-                    .collect();
-                let next = offset.saturating_add(items.len());
-                let mut answer = Answer::completed(Value::Array(items));
-                if next < total {
-                    answer.next_cursor = Some(next.to_string());
-                }
-                Ok(answer)
-            }
-            ("team", "inspect") => {
-                let target = request
-                    .input
-                    .get("team")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        Refusal::new(
-                            ErrorCode::InvalidRequest,
-                            "missing required --team flag.",
-                            "Pass --team <team-id-or-name>.",
-                        )
-                    })?;
-                let snapshot = client
-                    .call::<OrgSnapshotCall>(&Empty {})
-                    .map_err(map_client_error)?;
-                let team = find_team(&snapshot, target)?;
-                let who = client
-                    .call::<Who>(&WhoParams {
-                        team: Some(team.id.clone()),
-                        ..WhoParams::default()
-                    })
-                    .map_err(map_client_error)?;
-                let members: Vec<Value> = who.members.iter().map(card_value).collect();
-                let mut obj = match team_value(team) {
-                    Value::Object(map) => map,
-                    _ => unreachable!(),
-                };
-                obj.insert("members".into(), Value::Array(members));
-                Ok(Answer::completed(Value::Object(obj)))
-            }
-            (resource @ ("person" | "agent"), "inspect") => {
-                let member = request
-                    .input
-                    .get("member")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        Refusal::new(
-                            ErrorCode::InvalidRequest,
-                            "missing required --member flag.",
-                            "Pass --member <id-or-handle>.",
-                        )
-                    })?;
-                let who = client
-                    .call::<Who>(&WhoParams {
-                        member: Some(member.to_owned()),
-                        ..WhoParams::default()
-                    })
-                    .map_err(map_client_error)?;
-                let expected = expected_kind(resource);
-                let Some(card) = who.members.iter().find(|c| c.kind == expected) else {
-                    return Err(Refusal::new(
-                        ErrorCode::NotFound,
-                        format!("No active {resource} matches that reference."),
-                        "Run `agent-os org inspect` to see active members.",
-                    ));
-                };
-                Ok(Answer::completed(card_value(card)))
-            }
-            (resource, verb) => Err(Refusal::new(
-                ErrorCode::Unsupported,
-                format!("`{resource} {verb}` is not wired to the office yet."),
-                "Run `agent-os --help` to see available commands.",
-            )),
-        }
+        dispatch::execute(self, request)
     }
 }
 
-fn find_team<'a>(snapshot: &'a OrgSnapshot, target: &str) -> Result<&'a Team, Refusal> {
-    if let Some(team) = snapshot.teams.iter().find(|t| t.id == target) {
-        return Ok(team);
-    }
-    let needle = target.trim().to_lowercase();
-    let matches: Vec<&Team> = snapshot
-        .teams
-        .iter()
-        .filter(|t| t.name.trim().to_lowercase() == needle)
-        .collect();
-    match matches.as_slice() {
-        [only] => Ok(only),
-        [] => Err(Refusal::new(
+fn map_connect_error(error: ClientError, office_id: Option<&str>) -> Refusal {
+    let target = office_id.unwrap_or("bound office");
+    match error {
+        ClientError::NotRunning(_) | ClientError::OfficeNotReachable => Refusal::new(
             ErrorCode::NotFound,
-            "No active team matches that reference.",
-            "Run `agent-os team list` to see active teams.",
-        )),
-        _ => Err(Refusal::new(
-            ErrorCode::InvalidRequest,
-            "More than one team has that name.",
-            "Pass the team's UUIDv7 ID with --team.",
-        )),
+            format!("Office `{target}` is not running or its socket was not found."),
+            "Check that the office is active and AGENT_OS_OFFICE / AGENT_OS_SOCKET is correct.",
+        ),
+        other => map_client_error(other),
     }
-}
-
-fn team_value(team: &Team) -> Value {
-    let mut map = serde_json::Map::new();
-    map.insert("id".into(), json!(team.id));
-    map.insert("name".into(), json!(team.name));
-    if let Some(parent) = &team.owner_team_id {
-        map.insert("owner_team_id".into(), json!(parent));
-    }
-    if let Some(lead) = &team.lead_member_id {
-        map.insert("lead_member_id".into(), json!(lead));
-    }
-    map.insert("version".into(), json!(team.version));
-    Value::Object(map)
-}
-
-fn snapshot_value(snapshot: &OrgSnapshot) -> Value {
-    let teams: Vec<Value> = snapshot.teams.iter().map(team_value).collect();
-    let members: Vec<Value> = snapshot
-        .members
-        .iter()
-        .map(|m| {
-            let mut map = serde_json::Map::new();
-            map.insert("id".into(), json!(m.id));
-            map.insert("kind".into(), json!(m.kind));
-            map.insert("name".into(), json!(m.name));
-            if let Some(handle) = &m.handle {
-                map.insert("handle".into(), json!(handle));
-            }
-            if let Some(home) = &m.home_team_id {
-                map.insert("home_team_id".into(), json!(home));
-            }
-            if let Some(title) = &m.title_in_team {
-                map.insert("title_in_team".into(), json!(title));
-            }
-            map.insert("owner".into(), json!(m.owner));
-            map.insert("version".into(), json!(m.version));
-            Value::Object(map)
-        })
-        .collect();
-    json!({
-        "position": {
-            "epoch": snapshot.position.epoch,
-            "seq": snapshot.position.seq,
-        },
-        "teams": teams,
-        "members": members,
-    })
-}
-
-fn card_value(card: &DirectoryCard) -> Value {
-    let teams: Vec<Value> = card
-        .teams
-        .iter()
-        .map(|t| {
-            let mut map = serde_json::Map::new();
-            map.insert("id".into(), json!(t.id));
-            map.insert("name".into(), json!(t.name));
-            if let Some(title) = &t.title_in_team {
-                map.insert("title_in_team".into(), json!(title));
-            }
-            Value::Object(map)
-        })
-        .collect();
-    let mut map = serde_json::Map::new();
-    map.insert("id".into(), json!(card.id));
-    map.insert("name".into(), json!(card.name));
-    if let Some(handle) = &card.handle {
-        map.insert("handle".into(), json!(handle));
-    }
-    map.insert("kind".into(), json!(card.kind));
-    map.insert("owner".into(), json!(card.owner));
-    if let Some(status) = card.agent_status {
-        map.insert("agent_status".into(), json!(status));
-    }
-    if let Some(title) = &card.role_title {
-        map.insert("role_title".into(), json!(title));
-    }
-    map.insert("presence".into(), json!(card.presence));
-    map.insert("teams".into(), Value::Array(teams));
-    Value::Object(map)
 }
 
 fn map_client_error(error: ClientError) -> Refusal {
@@ -327,40 +220,6 @@ fn map_client_error(error: ClientError) -> Refusal {
     }
 }
 
-fn expected_kind(resource: &str) -> MemberKind {
-    match resource {
-        "person" => MemberKind::Person,
-        "agent" => MemberKind::Agent,
-        _ => unreachable!(),
-    }
-}
-
-fn parse_cursor(cursor: Option<&str>) -> Result<usize, Refusal> {
-    let Some(raw) = cursor else {
-        return Ok(0);
-    };
-    raw.parse::<usize>().map_err(|_| {
-        Refusal::new(
-            ErrorCode::InvalidRequest,
-            "Invalid pagination cursor.",
-            "Pass the next_cursor returned by the previous list call.",
-        )
-    })
-}
-
-fn hint_for(code: ErrorCode) -> &'static str {
-    match code {
-        ErrorCode::NotAuthorized | ErrorCode::NotBound => {
-            "Check your session binding and permissions for this action."
-        }
-        ErrorCode::NotFound => "Check the ID or name and retry.",
-        ErrorCode::Conflict => "Read the current record and retry with the latest --if-match.",
-        ErrorCode::Unsupported => "This office build does not serve that command yet.",
-        ErrorCode::Unavailable | ErrorCode::NotReady => "Wait briefly and retry the command.",
-        _ => "Check the flags with --help and retry.",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,6 +228,8 @@ mod tests {
     fn binding_debug_redacts_session_token() {
         let binding = Binding {
             socket: Some(PathBuf::from("/tmp/office.sock")),
+            office_id: Some("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a0".into()),
+            runtime_dir: Some(PathBuf::from("/tmp")),
             session_token: Some("super-secret-session-token".into()),
             agent_id: Some("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1".into()),
         };
@@ -381,19 +242,29 @@ mod tests {
     }
 
     #[test]
-    fn parse_cursor_accepts_non_negative_offsets_and_rejects_garbage() {
-        assert_eq!(parse_cursor(None).unwrap(), 0);
-        assert_eq!(parse_cursor(Some("0")).unwrap(), 0);
-        assert_eq!(parse_cursor(Some("25")).unwrap(), 25);
-        assert_eq!(
-            parse_cursor(Some("not-a-number")).unwrap_err().code,
-            ErrorCode::InvalidRequest
-        );
-    }
+    fn unknown_or_malformed_selected_office_refuses_immediately() {
+        let office = BoundOffice::new(Binding {
+            socket: None,
+            office_id: Some("not-a-uuidv7".into()),
+            runtime_dir: Some(PathBuf::from("/tmp")),
+            session_token: Some("token".into()),
+            agent_id: None,
+        });
+        let err = office.connect_client().err().expect("refused");
+        assert_eq!(err.code, ErrorCode::InvalidRequest);
+        assert!(err.message.contains("not-a-uuidv7"), "{}", err.message);
 
-    #[test]
-    fn expected_kind_matches_resource_name() {
-        assert_eq!(expected_kind("person"), MemberKind::Person);
-        assert_eq!(expected_kind("agent"), MemberKind::Agent);
+        let dir = tempfile::tempdir().unwrap();
+        let missing_id = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071ff";
+        let missing = BoundOffice::new(Binding {
+            socket: None,
+            office_id: Some(missing_id.into()),
+            runtime_dir: Some(dir.path().to_path_buf()),
+            session_token: Some("token".into()),
+            agent_id: None,
+        });
+        let err = missing.connect_client().err().expect("refused");
+        assert_eq!(err.code, ErrorCode::NotFound);
+        assert!(err.message.contains(missing_id), "{}", err.message);
     }
 }

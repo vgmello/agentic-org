@@ -142,6 +142,10 @@ impl Admin {
         self.setup_operation == setup_operation && self.origin.as_str() == origin
     }
 
+    pub(crate) fn origin(&self) -> &str {
+        self.origin.as_str().trim_end_matches('/')
+    }
+
     /// The admission of every administrator's host call (`tls.set` too): a local
     /// `host.sock` client that passes the host's signing check.
     pub(crate) fn admit_peer(&self, c: &Connection, received: Received) -> Result<(), ApiError> {

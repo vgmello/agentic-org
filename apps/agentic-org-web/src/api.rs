@@ -125,6 +125,7 @@ pub enum Route {
     OrgMutation(PresentedPair, String, OrgOperation),
     OrgOperation(PresentedPair, String, OperationId),
     EventsStream(PresentedPair),
+    CliApprovalDecide(PresentedPair),
     Operation(PresentedPair, OperationId),
 }
 
@@ -151,6 +152,7 @@ pub enum Call {
     OrgMutation(PresentedPair, String, OrgMutation),
     OrgOperation(PresentedPair, String, OperationId),
     EventsStream(PresentedPair, StreamRequest),
+    CliApprovalDecide(PresentedPair, LinkToken, bool),
     Operation(PresentedPair, OperationId),
 }
 
@@ -176,6 +178,14 @@ struct RegisterBody {
     login: String,
     #[serde(deserialize_with = "crate::secret_json::password")]
     password: Password,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CliApprovalDecideBody {
+    #[serde(deserialize_with = "crate::secret_json::link")]
+    link: LinkToken,
+    approve: bool,
 }
 
 #[derive(Deserialize)]
@@ -643,6 +653,9 @@ impl ApiBackend for SessionApi {
                 return org_routes::route_organization(self, request, org, tail, get, post, query);
             }
             ["api", "v1", "events", "stream"] if post => Route::EventsStream(self.pair(request)?),
+            ["api", "v1", "cli-approvals", "decide"] if post => {
+                Route::CliApprovalDecide(self.pair(request)?)
+            }
             ["api", "v1", "operations", "host", id]
                 if matches!(request.method, Method::GET | Method::HEAD) =>
             {
@@ -668,6 +681,7 @@ impl ApiBackend for SessionApi {
             | ["api", "v1", "session", "sign-out"]
             | ["api", "v1", "organizations"]
             | ["api", "v1", "events", "stream"]
+            | ["api", "v1", "cli-approvals", "decide"]
             | ["api", "v1", "operations", "host", _]
             | ["api", "v1", "operations", "org", _] => return Err(invalid()),
             _ => return Err(not_found()),
@@ -717,6 +731,11 @@ impl ApiBackend for SessionApi {
                     return Err(invalid());
                 }
                 Call::EventsStream(pair, request)
+            }
+            Route::CliApprovalDecide(pair) => {
+                let CliApprovalDecideBody { link, approve } =
+                    serde_json::from_slice(bytes).map_err(|_| invalid())?;
+                Call::CliApprovalDecide(pair, link, approve)
             }
             Route::Instance(pair) => empty().map(|()| Call::Instance(pair))?,
             Route::Operation(pair, id) => empty().map(|()| Call::Operation(pair, id))?,
@@ -837,6 +856,14 @@ impl ApiBackend for SessionApi {
                 future: Box::pin(async move { self.execute_events_stream(pair, request).await }),
                 streaming: true,
             },
+            Call::CliApprovalDecide(pair, link, approve) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(
+                        org_routes::execute_cli_approval_decide(&self, pair, link, approve).await,
+                    )
+                }),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
         }
     }
@@ -935,7 +962,8 @@ impl ApiBackend for SessionApi {
             | Call::OfficeRestart(_, _, _, _)
             | Call::OrgMutation(_, _, _)
             | Call::OrgOperation(_, _, _)
-            | Call::EventsStream(_, _) => {
+            | Call::EventsStream(_, _)
+            | Call::CliApprovalDecide(_, _, _) => {
                 unreachable!("office RPCs and SSE streams dispatch asynchronously")
             }
             Call::Operation(pair, id) => {

@@ -409,6 +409,8 @@ pub struct Host {
     service: Arc<Service>,
     /// Organization creation, kept to end its threads when the host stops.
     creating: Option<Arc<provisioning::Provisioning>>,
+    #[cfg(test)]
+    writers: Option<Arc<writer::Writers>>,
     /// How long the servers get to exit when the host stops.
     shutdown_grace: std::time::Duration,
 }
@@ -867,10 +869,12 @@ impl Host {
         }
         .with_protected_offices(protected_offices);
         let ProtectedServices {
-            writers: _writers,
+            writers,
             supervisor,
             provisioning,
         } = startup_protected_services(&instance, &authentication, supervisor, &keys, &layout)?;
+        #[cfg(not(test))]
+        let _ = writers;
         let broadcast = Arc::new(Broadcast::default());
         let offices = Offices::start(
             &layout.home,
@@ -895,6 +899,10 @@ impl Host {
             ))),
             _ => None,
         };
+        let browser_origin = instance
+            .as_ref()
+            .and_then(|i| i.browser().ok().flatten())
+            .map(|l| l.origin().as_str().to_owned());
         let creating = provisioning.clone();
         let service = Arc::new(
             Service::new(
@@ -906,6 +914,7 @@ impl Host {
             .with_provisioning(provisioning)
             .with_recovery(recovery)
             .with_web_tls(web_tls.clone())
+            .with_browser_origin(browser_origin)
             .with_web_state(Arc::clone(&gateway_state)),
         );
         let tls_renewal = match web_tls {
@@ -970,8 +979,17 @@ impl Host {
             tls_renewal,
             service,
             creating,
+            #[cfg(test)]
+            writers,
             shutdown_grace: config.timings.shutdown_grace,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn close_writer_channel_for_test(&self, office: &str) -> bool {
+        self.writers
+            .as_ref()
+            .is_some_and(|w| w.close_channel_for_test(office))
     }
 
     /// The office home this host serves.

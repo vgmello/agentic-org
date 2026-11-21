@@ -55,6 +55,7 @@ use crate::instance::registry::Registry;
 use crate::instance::setup::{Configured, Input, Journal, Paths, Record, Service};
 use crate::release::ReleasePin;
 
+pub mod cli_context;
 #[cfg(all(feature = "test-support", debug_assertions))]
 pub mod fixture;
 pub(crate) mod office_command;
@@ -64,6 +65,11 @@ pub use office_command::{office_list, office_restart, HELP as OFFICE_HELP};
 pub(crate) mod project_command;
 pub use project_command::{
     project_create, project_inspect, project_list, ProjectCreateInput, HELP as PROJECT_HELP,
+};
+pub mod sign_in_command;
+pub use sign_in_command::{
+    context_clear, context_show, context_use, open_for_command, sign_in_only,
+    ApprovedOfficeChannel, CONTEXT_HELP, SIGN_IN_HELP,
 };
 pub(crate) mod tls_command;
 pub use tls_command::{admin_tls_set, HELP as ADMIN_TLS_SET_HELP};

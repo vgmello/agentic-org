@@ -469,6 +469,23 @@ impl Authentication {
         let account = current.ok_or_else(denied)?;
         self.issue(connection, account)
     }
+    /// Issues a connection-bound native session (`SES-8`) for an account that approved a
+    /// terminal sign-in link in the browser (`FC-173` / `SIGN-40`), without a password.
+    pub(crate) fn issue_for_account(
+        &self,
+        connection: &Connection,
+        account_id: &AccountId,
+    ) -> Result<AccountVerifyResult, ApiError> {
+        let account = self
+            .db
+            .account_authority(account_id)
+            .map_err(storage)?
+            .ok_or_else(denied)?;
+        if account.revoked_at_ms().is_some() {
+            return Err(denied());
+        }
+        self.issue(connection, account)
+    }
     fn issue(
         &self,
         connection: &Connection,

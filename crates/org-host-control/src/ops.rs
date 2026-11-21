@@ -21,7 +21,7 @@ use crate::listen::{
     Hsts, InvalidListenConfig, ListenFailure, ListenMode, ListenOrigin, Uncovered,
 };
 use crate::pem::{self, InvalidPem};
-use crate::{HostOpResult, Password, RecoveryCode, SessionHandle, TlsPrivateKey};
+use crate::{HostOpResult, OneTimeLinkUrl, Password, RecoveryCode, SessionHandle, TlsPrivateKey};
 
 /// `account.verify` (open): sign in. Argon2id on a bounded pool; an unknown login hashes against
 /// a dummy, and every failure is the same `not_authorized`. Lockout is per login and per socket;
@@ -59,6 +59,60 @@ impl Call for AccountVerify {
     const METHOD: &'static str = "account.verify";
     type Params = AccountVerifyParams;
     type Result = AccountVerifyResult;
+}
+
+/// `cli.approval.create` (open on `host.sock`): starts a browser-approved terminal sign-in
+/// (FC-173 / SIGN-40 / SES-8). Returns a one-time approval URL (10-minute TTL) whose secret
+/// travels only after `#`, bound to this `host.sock` connection.
+pub struct CliApprovalCreate;
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CliApprovalCreateParams {}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CliApprovalCreateResult {
+    pub approval_id: String,
+    pub url: OneTimeLinkUrl,
+    pub expires_at_ms: i64,
+}
+
+impl Call for CliApprovalCreate {
+    const METHOD: &'static str = "cli.approval.create";
+    type Params = CliApprovalCreateParams;
+    type Result = CliApprovalCreateResult;
+}
+
+/// `cli.approval.poll` (open on `host.sock`, same connection that created `approval_id`):
+/// checks approval status; once approved in a signed-in browser, issues a connection-bound
+/// native session (`SES-8`) on this connection without a terminal password.
+pub struct CliApprovalPoll;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CliApprovalPollParams {
+    pub approval_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CliApprovalPollResult {
+    Pending,
+    Approved {
+        session: SessionHandle,
+        account: String,
+        admin: bool,
+        orgs: Vec<LinkedOrg>,
+    },
+    Declined,
+    Expired,
+}
+
+impl Call for CliApprovalPoll {
+    const METHOD: &'static str = "cli.approval.poll";
+    type Params = CliApprovalPollParams;
+    type Result = CliApprovalPollResult;
 }
 
 /// The params of an op that names only its session.

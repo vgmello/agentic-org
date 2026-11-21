@@ -90,6 +90,8 @@ pub(crate) struct Writers {
     root: Root,
     instance: String,
     active: Mutex<BTreeSet<String>>,
+    #[cfg(test)]
+    streams: Mutex<std::collections::HashMap<String, UnixStream>>,
     gate: Mutex<()>,
 }
 impl std::fmt::Debug for Writers {
@@ -106,6 +108,8 @@ struct Lease {
 impl Drop for Lease {
     fn drop(&mut self) {
         lock(&self.writers.active).remove(&self.office);
+        #[cfg(test)]
+        lock(&self.writers.streams).remove(&self.office);
     }
 }
 fn refused() -> io::Error {
@@ -259,6 +263,8 @@ impl Writers {
             root: Root::read(root)?,
             instance: instance.into(),
             active: Mutex::default(),
+            #[cfg(test)]
+            streams: Mutex::default(),
             gate: Mutex::new(()),
         }))
     }
@@ -511,6 +517,10 @@ impl Writers {
         if !lock(&self.active).insert(office.into()) {
             return Err(refused());
         }
+        #[cfg(test)]
+        if let Ok(cloned) = stream.try_clone() {
+            lock(&self.streams).insert(office.into(), cloned);
+        }
         let lease = Lease {
             writers: Arc::clone(self),
             office: office.into(),
@@ -523,6 +533,15 @@ impl Writers {
                 let _ = lease.run(stream);
             })?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn close_channel_for_test(&self, office: &str) -> bool {
+        let Some(stream) = lock(&self.streams).remove(office) else {
+            return false;
+        };
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+        true
     }
 }
 impl Lease {

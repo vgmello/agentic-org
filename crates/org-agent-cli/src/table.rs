@@ -1,6 +1,6 @@
-//! The `agent-os` command table (`org-command` rows, `doc-28` §3).
+//! The shared B2.4 / B3 organization and project command table (`org-command` rows, `doc-28` §3.2).
 
-use org_command::{Command, CommandTable, Example, Field, Kind, Type};
+use org_command::{Ack, Command, CommandTable, Example, Field, IfMatch, Kind, Type};
 use org_proto::ErrorCode;
 
 const POSITION_FIELDS: &[Field] = &[
@@ -24,6 +24,7 @@ const CARD_TEAM_FIELDS: &[Field] = &[
 
 const CARD_TEAM_TYPE: Type = Type::Object(CARD_TEAM_FIELDS);
 const TEAM_TYPE: Type = Type::Object(TEAM_FIELDS);
+const STRING_TYPE: Type = Type::String;
 
 const MEMBER_SUMMARY_FIELDS: &[Field] = &[
     Field::required("id", Type::String, "Employee ID"),
@@ -72,6 +73,22 @@ const DIRECTORY_CARD_FIELDS: &[Field] = &[
 
 const DIRECTORY_CARD_TYPE: Type = Type::Object(DIRECTORY_CARD_FIELDS);
 
+const PROJECT_FIELDS: &[Field] = &[
+    Field::required("id", Type::String, "Project ID"),
+    Field::required("number", Type::Integer, "Project sequence number"),
+    Field::required("key", Type::String, "Project reference key (P-<number>)"),
+    Field::required("slug", Type::String, "Canonical project slug"),
+    Field::required("name", Type::String, "Project name"),
+    Field::required("owner_team_id", Type::String, "Accountable owning team ID"),
+    Field::required(
+        "contributing_team_ids",
+        Type::List(&STRING_TYPE),
+        "Contributing team IDs",
+    ),
+    Field::required("archived", Type::Boolean, "Whether the project is archived"),
+    Field::required("revision", Type::Integer, "Project record revision"),
+];
+
 const ORG_INSPECT_OUTPUT: &[Field] = &[
     Field::required(
         "position",
@@ -83,6 +100,20 @@ const ORG_INSPECT_OUTPUT: &[Field] = &[
         "members",
         Type::List(&MEMBER_SUMMARY_TYPE),
         "Active members",
+    ),
+];
+
+const MUTATION_OUTPUT: &[Field] = &[
+    Field::required("id", Type::String, "Target entity UUIDv7"),
+    Field::required(
+        "status",
+        Type::Enum(&["committed", "checked", "queued"]),
+        "Office command acknowledgement status",
+    ),
+    Field::optional(
+        "position",
+        Type::Object(POSITION_FIELDS),
+        "Committed organization position",
     ),
 ];
 
@@ -105,11 +136,103 @@ const TEAM_INSPECT_OUTPUT: &[Field] = &[
     ),
 ];
 
+const TEAM_CREATE_INPUT: &[Field] = &[
+    Field::required("name", Type::String, "New team name"),
+    Field::optional("parent_team_id", Type::String, "Parent team UUIDv7"),
+    Field::optional("team_id", Type::String, "Caller-supplied team UUIDv7"),
+];
+
+const TEAM_UPDATE_INPUT: &[Field] = &[
+    Field::required("team", Type::String, "Team UUIDv7"),
+    Field::optional("name", Type::String, "New team name"),
+    Field::optional("lead_member_id", Type::String, "New lead employee UUIDv7"),
+    Field::optional("clear_lead", Type::Boolean, "Clear the current team lead"),
+];
+
+const TEAM_MOVE_INPUT: &[Field] = &[
+    Field::required("team", Type::String, "Team UUIDv7"),
+    Field::required("parent_team_id", Type::String, "New parent team UUIDv7"),
+];
+
+const TEAM_ARCHIVE_INPUT: &[Field] = &[Field::required("team", Type::String, "Team UUIDv7")];
+
 const MEMBER_INSPECT_INPUT: &[Field] = &[Field::required(
     "member",
     Type::String,
     "Employee ID, handle, or owner",
 )];
+
+const PERSON_ADD_INPUT: &[Field] = &[
+    Field::required("name", Type::String, "Person display name"),
+    Field::optional("handle", Type::String, "Addressing handle"),
+    Field::optional("home_team_id", Type::String, "Home team UUIDv7"),
+    Field::optional("contact", Type::String, "Contact information"),
+    Field::optional("member_id", Type::String, "Caller-supplied person UUIDv7"),
+];
+
+const PERSON_UPDATE_INPUT: &[Field] = &[
+    Field::required("member", Type::String, "Person UUIDv7"),
+    Field::optional("name", Type::String, "Updated display name"),
+    Field::optional("contact", Type::String, "Updated contact information"),
+    Field::optional("clear_contact", Type::Boolean, "Clear contact information"),
+    Field::optional(
+        "reports_to_member_id",
+        Type::String,
+        "Manager employee UUIDv7",
+    ),
+    Field::optional(
+        "clear_reports_to",
+        Type::Boolean,
+        "Clear the person's reporting manager",
+    ),
+    Field::optional("title_in_team", Type::String, "Updated title in home team"),
+];
+
+const PERSON_MOVE_INPUT: &[Field] = &[
+    Field::required("member", Type::String, "Person UUIDv7"),
+    Field::required("to_team_id", Type::String, "Destination home team UUIDv7"),
+];
+
+const PERSON_DEACTIVATE_INPUT: &[Field] =
+    &[Field::required("member", Type::String, "Person UUIDv7")];
+
+const PROJECT_LIST_INPUT: &[Field] = &[Field::optional(
+    "include_archived",
+    Type::Boolean,
+    "Include archived projects",
+)];
+
+const PROJECT_INSPECT_INPUT: &[Field] = &[Field::required(
+    "project",
+    Type::String,
+    "Project UUIDv7, P-<number> key, or slug",
+)];
+
+const PROJECT_CREATE_INPUT: &[Field] = &[
+    Field::required("name", Type::String, "Project name"),
+    Field::optional("slug", Type::String, "Canonical lowercase project slug"),
+    Field::optional(
+        "owner_team_id",
+        Type::String,
+        "Existing accountable owning team UUIDv7",
+    ),
+    Field::optional(
+        "create_team_id",
+        Type::String,
+        "Caller-supplied UUIDv7 for the default new owning team",
+    ),
+    Field::optional(
+        "parent_team_id",
+        Type::String,
+        "Parent team UUIDv7 for a newly created owning team",
+    ),
+    Field::optional(
+        "contributing_team_ids",
+        Type::List(&STRING_TYPE),
+        "Contributing team UUIDv7s",
+    ),
+    Field::optional("project_id", Type::String, "Caller-supplied project UUIDv7"),
+];
 
 const READ_ERRORS: &[ErrorCode] = &[
     ErrorCode::InvalidRequest,
@@ -118,7 +241,19 @@ const READ_ERRORS: &[ErrorCode] = &[
     ErrorCode::Unavailable,
 ];
 
-/// All commands exposed by `agent-os` on the shared `org-command` grammar.
+const WRITE_ERRORS: &[ErrorCode] = &[
+    ErrorCode::InvalidRequest,
+    ErrorCode::InvalidName,
+    ErrorCode::AlreadyExists,
+    ErrorCode::NotFound,
+    ErrorCode::NotEmpty,
+    ErrorCode::Conflict,
+    ErrorCode::OperationReused,
+    ErrorCode::NotAuthorized,
+    ErrorCode::Unavailable,
+];
+
+/// All organization and project commands exposed on the shared `org-command` grammar.
 pub const COMMANDS: &[Command] = &[
     Command {
         resource: "org",
@@ -166,6 +301,78 @@ pub const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        resource: "team",
+        verb: "create",
+        summary: "Create a team in the organization",
+        call: "team.create",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::No,
+        },
+        input: TEAM_CREATE_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"name":"Platform"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000010","status":"committed","position":{"epoch":1,"seq":3}}"#,
+        },
+    },
+    Command {
+        resource: "team",
+        verb: "update",
+        summary: "Rename a team or change its lead",
+        call: "team.rename",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::Required,
+        },
+        input: TEAM_UPDATE_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"team":"0193a5c0-0000-7000-8000-000000000010","name":"Core Platform"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000010","status":"committed","position":{"epoch":1,"seq":4}}"#,
+        },
+    },
+    Command {
+        resource: "team",
+        verb: "move",
+        summary: "Move a team under a different parent team",
+        call: "team.move",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::Required,
+        },
+        input: TEAM_MOVE_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"team":"0193a5c0-0000-7000-8000-000000000010","parent_team_id":"0193a5c0-0000-7000-8000-000000000001"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000010","status":"committed","position":{"epoch":1,"seq":5}}"#,
+        },
+    },
+    Command {
+        resource: "team",
+        verb: "archive",
+        summary: "Archive an empty team",
+        call: "team.delete",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::Required,
+        },
+        input: TEAM_ARCHIVE_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"team":"0193a5c0-0000-7000-8000-000000000010"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000010","status":"committed","position":{"epoch":1,"seq":6}}"#,
+        },
+    },
+    Command {
         resource: "person",
         verb: "inspect",
         summary: "Inspect a person's directory card",
@@ -178,6 +385,78 @@ pub const COMMANDS: &[Command] = &[
         example: Example {
             input: r#"{"member":"owner"}"#,
             output: r#"{"id":"0193a5c0-0000-7000-8000-000000000002","name":"Owner","handle":"owner","kind":"person","owner":true,"presence":"offline","teams":[{"id":"0193a5c0-0000-7000-8000-000000000001","name":"Core"}]}"#,
+        },
+    },
+    Command {
+        resource: "person",
+        verb: "add",
+        summary: "Add a person to the organization",
+        call: "member.add_person",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::No,
+        },
+        input: PERSON_ADD_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"name":"Ada Lovelace","handle":"ada","home_team_id":"0193a5c0-0000-7000-8000-000000000001"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000020","status":"committed","position":{"epoch":1,"seq":7}}"#,
+        },
+    },
+    Command {
+        resource: "person",
+        verb: "update",
+        summary: "Update a person's name, contact, reporting manager, or team title",
+        call: "member.update_person",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::Required,
+        },
+        input: PERSON_UPDATE_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"member":"0193a5c0-0000-7000-8000-000000000020","name":"Ada Byron"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000020","status":"committed","position":{"epoch":1,"seq":8}}"#,
+        },
+    },
+    Command {
+        resource: "person",
+        verb: "move",
+        summary: "Move a person to another home team",
+        call: "member.move",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::Required,
+        },
+        input: PERSON_MOVE_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"member":"0193a5c0-0000-7000-8000-000000000020","to_team_id":"0193a5c0-0000-7000-8000-000000000010"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000020","status":"committed","position":{"epoch":1,"seq":9}}"#,
+        },
+    },
+    Command {
+        resource: "person",
+        verb: "deactivate",
+        summary: "Deactivate a person in the organization",
+        call: "member.remove",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::Required,
+        },
+        input: PERSON_DEACTIVATE_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"member":"0193a5c0-0000-7000-8000-000000000020"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000020","status":"committed","position":{"epoch":1,"seq":10}}"#,
         },
     },
     Command {
@@ -195,9 +474,57 @@ pub const COMMANDS: &[Command] = &[
             output: r#"{"id":"0193a5c0-0000-7000-8000-000000000003","name":"HR","handle":"hr","kind":"agent","owner":false,"agent_status":"active","role_title":"HR Lead","presence":"offline","teams":[{"id":"0193a5c0-0000-7000-8000-000000000001","name":"Core"}]}"#,
         },
     },
+    Command {
+        resource: "project",
+        verb: "list",
+        summary: "List projects in the organization",
+        call: "project.list",
+        kind: Kind::List,
+        input: PROJECT_LIST_INPUT,
+        content_field: None,
+        output: PROJECT_FIELDS,
+        errors: READ_ERRORS,
+        example: Example {
+            input: "{}",
+            output: r#"[{"id":"0193a5c0-0000-7000-8000-000000000030","number":1,"key":"P-1","slug":"billing","name":"Billing","owner_team_id":"0193a5c0-0000-7000-8000-000000000010","contributing_team_ids":[],"archived":false,"revision":1}]"#,
+        },
+    },
+    Command {
+        resource: "project",
+        verb: "inspect",
+        summary: "Inspect a project by ID, P-<number> key, or slug",
+        call: "project.inspect",
+        kind: Kind::Read,
+        input: PROJECT_INSPECT_INPUT,
+        content_field: None,
+        output: PROJECT_FIELDS,
+        errors: READ_ERRORS,
+        example: Example {
+            input: r#"{"project":"P-1"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000030","number":1,"key":"P-1","slug":"billing","name":"Billing","owner_team_id":"0193a5c0-0000-7000-8000-000000000010","contributing_team_ids":[],"archived":false,"revision":1}"#,
+        },
+    },
+    Command {
+        resource: "project",
+        verb: "create",
+        summary: "Create a project with an accountable owning team",
+        call: "project.create",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::No,
+        },
+        input: PROJECT_CREATE_INPUT,
+        content_field: None,
+        output: MUTATION_OUTPUT,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"name":"Billing"}"#,
+            output: r#"{"id":"0193a5c0-0000-7000-8000-000000000030","status":"committed","position":{"epoch":1,"seq":11}}"#,
+        },
+    },
 ];
 
-/// Builds and validates the `agent-os` command table.
+/// Builds and validates the shared organization/project command table.
 pub fn table() -> CommandTable {
     CommandTable::new(&[COMMANDS]).expect("agent-os command table is valid")
 }

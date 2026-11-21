@@ -4,9 +4,12 @@
 
 use hyper::{http::request::Parts, Method, StatusCode};
 use org_host_control::{
-    browser::{BrowserOfficeRestart, BrowserOfficeRestartParams},
+    browser::{
+        BrowserCliApprovalDecide, BrowserCliApprovalDecideParams, BrowserOfficeRestart,
+        BrowserOfficeRestartParams,
+    },
     organization::{self as host_org, BrowserAuth},
-    HostOpResult,
+    HostOpResult, LinkToken,
 };
 use org_proto::web::{
     self as gateway,
@@ -783,4 +786,33 @@ pub(super) async fn execute_office_restart(
         },
     };
     mutation(outcome, false)
+}
+
+pub(super) async fn execute_cli_approval_decide(
+    api: &SessionApi,
+    pair: PresentedPair,
+    link: LinkToken,
+    approve: bool,
+) -> ApiReply {
+    if let Err(error) = api.validate_async(pair).await {
+        return failure(error);
+    }
+    let reply = api
+        .host
+        .request_async::<BrowserCliApprovalDecide>(&BrowserCliApprovalDecideParams {
+            auth: api.auth(&pair),
+            link,
+            approve,
+        })
+        .await;
+    match reply {
+        Ok(decided) => result(decided),
+        Err(Failure::NotFound) => ApiReply::error(
+            StatusCode::NOT_FOUND,
+            WebErrorCode::NotFound,
+            "This link has expired or was already used.",
+        ),
+        Err(Failure::Denied) => signed_out(),
+        Err(_) => unavailable(),
+    }
 }

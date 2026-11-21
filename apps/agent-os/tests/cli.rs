@@ -13,6 +13,9 @@ use serde_json::Value;
 fn bin() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_agent-os"));
     cmd.env_remove("AGENT_OS_SOCKET")
+        .env_remove("AGENT_OS_OFFICE")
+        .env_remove("AGENT_OS_RUNTIME_DIR")
+        .env_remove("ORG_OFFICE_HOME")
         .env_remove("AGENT_OS_SESSION_TOKEN")
         .env_remove("AGENT_OS_AGENT_ID");
     cmd
@@ -170,6 +173,148 @@ fn bound_agent_os_reads_teams_and_directory_over_office_socket() {
     let env: Value = serde_json::from_slice(&person.stdout).unwrap();
     assert_eq!(env["ok"], true);
     assert_eq!(env["data"]["handle"], "owner");
+
+    server.join().unwrap();
+}
+
+#[test]
+fn selected_office_uuid_addressing_and_unknown_office_or_agent_refusals() {
+    let dir = tempfile::Builder::new()
+        .prefix("aos-sel")
+        .tempdir()
+        .unwrap();
+    let office_id = "0193a5c0-0000-7000-8000-0000000000aa";
+    let missing_office_id = "0193a5c0-0000-7000-8000-0000000000bb";
+    let sock = org_proto::location::selected_office_socket_in(dir.path(), office_id).unwrap();
+    std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+    let listener = UnixListener::bind(&sock).unwrap();
+
+    // 1. Unknown office ID is refused before any RPC, naming the requested office.
+    let missing = bin()
+        .args(["team", "list"])
+        .env("AGENT_OS_OFFICE", missing_office_id)
+        .env("AGENT_OS_RUNTIME_DIR", dir.path())
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    let env: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "not_found");
+    assert!(
+        env["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(missing_office_id),
+        "{env}"
+    );
+
+    // 2. Malformed office ID is refused as invalid_request.
+    let malformed = bin()
+        .args(["team", "list"])
+        .env("AGENT_OS_OFFICE", "../escape")
+        .env("AGENT_OS_RUNTIME_DIR", dir.path())
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .output()
+        .unwrap();
+    assert_eq!(malformed.status.code(), Some(1));
+    let env: Value = serde_json::from_slice(&malformed.stdout).unwrap();
+    assert_eq!(env["error"]["code"], "invalid_request");
+
+    // 3. Valid selected office UUIDv7 connects via `<runtime>/<last-12-hex>.sock`, verifies
+    //    `hello.office.office.id == office_id`, and refuses unknown agent bind with details.
+    let server = thread::spawn(move || {
+        for call_idx in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            while let Ok(Some(line)) = frame::read_line(&mut reader) {
+                let req: Request = serde_json::from_slice(&line).unwrap();
+                let resp = if req.is::<Hello>() {
+                    let hello: HelloResult = serde_json::from_value(serde_json::json!({
+                        "api_version": 1,
+                        "server_version": "test",
+                        "host": "test",
+                        "capabilities": [],
+                        "office": {
+                            "office": {
+                                "id": office_id,
+                                "organization_id": "0193a5c0-0000-7000-8000-000000000001",
+                                "name": "HQ",
+                                "role": "hq",
+                                "host": "test",
+                                "status": "active"
+                            },
+                            "organization_name": "Example"
+                        }
+                    }))
+                    .unwrap();
+                    Response::ok::<Hello>(req.id, &hello).unwrap()
+                } else if call_idx == 0 && req.is::<OrgSnapshotCall>() {
+                    Response::ok::<OrgSnapshotCall>(
+                        req.id,
+                        &OrgSnapshot {
+                            position: Position { epoch: 1, seq: 1 },
+                            teams: vec![Team {
+                                id: "0193a5c0-0000-7000-8000-000000000001".into(),
+                                name: "Selected".into(),
+                                owner_team_id: None,
+                                lead_member_id: None,
+                                version: 1,
+                            }],
+                            members: vec![],
+                            projects: vec![],
+                            project_teams: vec![],
+                        },
+                    )
+                    .unwrap()
+                } else {
+                    Response::error(
+                        req.id,
+                        org_proto::ApiError::new(
+                            org_proto::ErrorCode::NotAuthorized,
+                            "unknown agent",
+                        ),
+                    )
+                };
+                frame::write_message(&mut stream, &resp).unwrap();
+            }
+        }
+    });
+
+    let ok = bin()
+        .args(["team", "list"])
+        .env("AGENT_OS_OFFICE", office_id)
+        .env("AGENT_OS_RUNTIME_DIR", dir.path())
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&ok.stdout),
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let env: Value = serde_json::from_slice(&ok.stdout).unwrap();
+    assert_eq!(env["ok"], true);
+    assert_eq!(env["data"][0]["name"], "Selected");
+
+    let bad_agent = bin()
+        .args(["team", "list"])
+        .env("AGENT_OS_OFFICE", office_id)
+        .env("AGENT_OS_RUNTIME_DIR", dir.path())
+        .env("AGENT_OS_SESSION_TOKEN", "session-token-fixture")
+        .env("AGENT_OS_AGENT_ID", "0193a5c0-0000-7000-8000-0000000000ff")
+        .output()
+        .unwrap();
+    assert_eq!(bad_agent.status.code(), Some(1));
+    let env: Value = serde_json::from_slice(&bad_agent.stdout).unwrap();
+    assert_eq!(env["ok"], false);
+    assert_eq!(env["error"]["code"], "not_authorized");
+    let msg = env["error"]["message"].as_str().unwrap();
+    assert!(
+        msg.contains(office_id) && msg.contains("0193a5c0-0000-7000-8000-0000000000ff"),
+        "{msg}"
+    );
 
     server.join().unwrap();
 }

@@ -46,6 +46,12 @@ fn op_methods() {
         (crate::browser::SessionSignIn::METHOD, "session.sign_in"),
         (crate::browser::SessionValidate::METHOD, "session.validate"),
         (crate::browser::BrowserSessionEnd::METHOD, "session.end"),
+        (
+            crate::browser::BrowserCliApprovalDecide::METHOD,
+            "browser.cli_approval_decide",
+        ),
+        (CliApprovalCreate::METHOD, "cli.approval.create"),
+        (CliApprovalPoll::METHOD, "cli.approval.poll"),
     ] {
         assert_eq!(method, want);
     }
@@ -825,4 +831,55 @@ fn host_errors_carry_retry_and_rule_fields_only_when_set() {
     );
     let back: org_proto::ApiError = serde_json::from_value(limited).unwrap();
     assert_eq!(back.retry_after_ms, Some(1500));
+}
+
+#[test]
+fn cli_approval_wire_shapes_round_trip_and_redact_secrets() {
+    let created = CliApprovalCreateResult {
+        approval_id: "0193a5c0-0000-7000-8000-000000000001".into(),
+        url: OneTimeLinkUrl::new("http://127.0.0.1:7420/cli-approve#secret-approval-tok".into())
+            .unwrap(),
+        expires_at_ms: 1_762_766_700_000,
+    };
+    assert!(!format!("{created:?}").contains("secret-approval-tok"));
+    let created_json = serde_json::to_value(&created).unwrap();
+    let created_back: CliApprovalCreateResult = serde_json::from_value(created_json).unwrap();
+    assert_eq!(created_back.url.expose(), created.url.expose());
+
+    let approved = CliApprovalPollResult::Approved {
+        session: SessionHandle::new("native-session-secret".into()).unwrap(),
+        account: "0193a5c0-0000-7000-8000-000000000002".into(),
+        admin: true,
+        orgs: vec![],
+    };
+    assert!(!format!("{approved:?}").contains("native-session-secret"));
+    let approved_json = serde_json::to_value(&approved).unwrap();
+    assert_eq!(approved_json["status"], "approved");
+    let approved_back: CliApprovalPollResult = serde_json::from_value(approved_json).unwrap();
+    assert!(matches!(
+        approved_back,
+        CliApprovalPollResult::Approved { admin: true, .. }
+    ));
+
+    for (val, expected) in [
+        (CliApprovalPollResult::Pending, "pending"),
+        (CliApprovalPollResult::Declined, "declined"),
+        (CliApprovalPollResult::Expired, "expired"),
+    ] {
+        let j = serde_json::to_value(&val).unwrap();
+        assert_eq!(j["status"], expected);
+    }
+
+    let digest = "ab".repeat(32);
+    let decide: crate::browser::BrowserCliApprovalDecideParams = serde_json::from_value(json!({
+        "auth": {
+            "cookie_digest": digest,
+            "proof_digest": digest,
+            "origin": {"scheme": "http", "host": "127.0.0.1", "port": 7420}
+        },
+        "link": "secret-approval-tok",
+        "approve": true
+    }))
+    .unwrap();
+    assert!(!format!("{decide:?}").contains("secret-approval-tok"));
 }

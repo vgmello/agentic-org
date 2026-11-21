@@ -257,6 +257,37 @@ impl crate::journal::Journaled for BrowserOfficeRestartParams {
     }
 }
 
+/// `browser.cli_approval_decide`: approve or decline a pending terminal sign-in link on behalf
+/// of a signed-in browser session (FC-173 / SIGN-40; admitted web connection only).
+pub struct BrowserCliApprovalDecide;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserCliApprovalDecideParams {
+    pub auth: BrowserAuth,
+    pub link: LinkToken,
+    pub approve: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CliApprovalDecision {
+    Approved,
+    Declined,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserCliApprovalDecideResult {
+    pub status: CliApprovalDecision,
+}
+
+impl Call for BrowserCliApprovalDecide {
+    const METHOD: &'static str = "browser.cli_approval_decide";
+    type Params = BrowserCliApprovalDecideParams;
+    type Result = BrowserCliApprovalDecideResult;
+}
+
 /// Host→web event: the session no longer exists; drop it from every cache.
 pub const SESSION_ENDED: &str = "session.ended";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

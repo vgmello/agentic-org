@@ -1609,3 +1609,92 @@ fn org_offices_list_and_restart_enforce_scope_auth_and_error_mapping() {
     );
     assert_eq!(revoked.status, StatusCode::UNAUTHORIZED, "{}", revoked.body);
 }
+
+#[test]
+fn cli_approval_decide_requires_browser_session_and_maps_host_decisions() {
+    let mode = std::sync::Arc::new(std::sync::Mutex::new("approved"));
+    let mode_for_script = mode.clone();
+    let (gateway, calls) = gateway(organization_script(move |method, params| {
+        (method == "browser.cli_approval_decide").then(|| {
+            assert!(params["auth"]["cookie_digest"].is_string());
+            assert!(params["link"].is_string());
+            match *mode_for_script.lock().unwrap() {
+                "approved" => vec![json!({"result": {"status": "approved"}})],
+                "declined" => vec![json!({"result": {"status": "declined"}})],
+                "not_found" => vec![json!({"error": {"code": "not_found", "message": "gone"}})],
+                _ => vec![json!({"error": {"code": "not_authorized", "message": "expired"}})],
+            }
+        })
+    }));
+
+    // Unauthenticated fails 401 before host call.
+    let unauth = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/cli-approvals/decide",
+        r#"{"link":"tok","approve":true}"#,
+        None,
+        &[],
+    );
+    assert_eq!(unauth.status, StatusCode::UNAUTHORIZED);
+    assert!(calls.methods().is_empty());
+
+    let pair = sign_in(&gateway).pair();
+
+    // Malformed body or empty link fails 400 before host call.
+    let before = calls.methods().len();
+    for bad in [
+        "{}",
+        r#"{"link":"","approve":true}"#,
+        r#"{"link":"tok","approve":true,"extra":1}"#,
+    ] {
+        let reply = send(
+            &gateway,
+            Method::POST,
+            "/api/v1/cli-approvals/decide",
+            bad,
+            Some(&pair),
+            &[],
+        );
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+    assert_eq!(calls.methods().len(), before);
+
+    // Approved -> 200 { result: { status: "approved" } }.
+    let approved = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/cli-approvals/decide",
+        r#"{"link":"tok-1","approve":true}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(approved.status, StatusCode::OK, "{}", approved.body);
+    assert_eq!(approved.body["result"]["status"], "approved");
+
+    // Declined -> 200 { result: { status: "declined" } }.
+    *mode.lock().unwrap() = "declined";
+    let declined = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/cli-approvals/decide",
+        r#"{"link":"tok-2","approve":false}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(declined.status, StatusCode::OK, "{}", declined.body);
+    assert_eq!(declined.body["result"]["status"], "declined");
+
+    // Missing / already used / expired -> 404.
+    *mode.lock().unwrap() = "not_found";
+    let missing = send(
+        &gateway,
+        Method::POST,
+        "/api/v1/cli-approvals/decide",
+        r#"{"link":"tok-3","approve":true}"#,
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.body);
+    assert_eq!(missing.body["error"]["code"], "not_found");
+}

@@ -283,16 +283,29 @@ fn office_socket(office: &OfficeInfo, home: &Path) -> Result<PathBuf, ClientErro
 }
 
 /// Where office `office_id` listens, by the rule in `org_proto::location`, with the same checks
-/// as [`office_socket`]. The id may come from the environment or a file, so a non-plain id has
-/// no socket.
+/// as [`office_socket`]. Supports both selected UUIDv7 office IDs and legacy plain office IDs.
 fn office_socket_by_id(home: &Path, office_id: &str) -> Result<PathBuf, ClientError> {
     if !home.is_absolute() {
         return Err(ClientError::NoOfficeHome);
     }
-    let socket =
-        location::office_socket_path(home, office_id).ok_or(ClientError::OfficeNotReachable)?;
+    let run = home.join("run");
+    let socket = location::selected_office_socket_in(&run, office_id)
+        .or_else(|| location::office_socket_path(home, office_id))
+        .ok_or(ClientError::OfficeNotReachable)?;
     check_socket_path(&socket)?;
-    check_not_redirected(&home.join("run"), &socket)?;
+    check_not_redirected(&run, &socket)?;
+    Ok(socket)
+}
+
+/// Where a selected UUIDv7 office listens inside an explicit runtime directory.
+fn selected_office_socket(runtime_dir: &Path, office_id: &str) -> Result<PathBuf, ClientError> {
+    if !runtime_dir.is_absolute() {
+        return Err(ClientError::NoOfficeHome);
+    }
+    let socket = location::selected_office_socket_in(runtime_dir, office_id)
+        .ok_or(ClientError::OfficeNotReachable)?;
+    check_socket_path(&socket)?;
+    check_not_redirected(runtime_dir, &socket)?;
     Ok(socket)
 }
 
@@ -328,6 +341,102 @@ fn check_not_redirected(run: &Path, socket: &Path) -> Result<(), ClientError> {
     }
 }
 
+fn encode_request(request: &Request) -> Result<Vec<u8>, ClientError> {
+    let mut line = serde_json::to_vec(request).map_err(|e| ClientError::Protocol(e.to_string()))?;
+    if line.len() > MAX_FRAME_BYTES {
+        return Err(ClientError::RequestTooLarge);
+    }
+    line.push(b'\n');
+    Ok(line)
+}
+
+fn enqueue_request(
+    shared: &Shared,
+    outbound: Option<&SyncSender<Outgoing>>,
+    id: u64,
+    message: Outgoing,
+    deadline: Instant,
+    sent: &mut bool,
+) -> Result<(), ClientError> {
+    let size = message.line.len();
+    let mut waiting = Some(message);
+    loop {
+        let message = waiting
+            .take()
+            .expect("the message is put back before looping");
+        let Some(outbound) = outbound.filter(|_| !shared.closed.load(Ordering::SeqCst)) else {
+            lock(&shared.pending).remove(&id);
+            return Err(ClientError::Disconnected);
+        };
+        let reserved = shared
+            .queued_bytes
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |queued| {
+                (queued + size <= MAX_QUEUED_BYTES).then_some(queued + size)
+            })
+            .is_ok();
+        if !reserved {
+            waiting = Some(message);
+        } else {
+            match outbound.try_send(message) {
+                Ok(()) => {
+                    *sent = true;
+                    return Ok(());
+                }
+                Err(TrySendError::Full(message)) => {
+                    shared.queued_bytes.fetch_sub(size, Ordering::SeqCst);
+                    waiting = Some(message);
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    shared.queued_bytes.fetch_sub(size, Ordering::SeqCst);
+                    lock(&shared.pending).remove(&id);
+                    return Err(ClientError::Disconnected);
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            lock(&shared.pending).remove(&id);
+            return Err(ClientError::Timeout);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn await_response(
+    shared: &Shared,
+    id: u64,
+    answer: &Receiver<Result<Response, ClientError>>,
+    deadline: Instant,
+) -> Result<Result<Response, ClientError>, mpsc::RecvTimeoutError> {
+    let mut outcome = answer.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+    let entry = lock(&shared.pending).remove(&id);
+    if matches!(outcome, Err(mpsc::RecvTimeoutError::Timeout)) {
+        let late = if entry.is_none() {
+            answer.recv_timeout(Duration::from_millis(100)).ok()
+        } else {
+            answer.try_recv().ok()
+        };
+        if let Some(late) = late {
+            outcome = Ok(late);
+        }
+    }
+    outcome
+}
+
+fn finish_outcome(
+    outcome: Result<Result<Response, ClientError>, mpsc::RecvTimeoutError>,
+    deadline: Instant,
+) -> Result<Response, ClientError> {
+    match outcome {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(error)) => Err(error),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(ClientError::Timeout),
+        Err(mpsc::RecvTimeoutError::Disconnected) if Instant::now() >= deadline => {
+            Err(ClientError::Timeout)
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(ClientError::Disconnected),
+    }
+}
+
 impl Client {
     /// Connects to this machine's host (see [`default_host_socket_path`]).
     pub fn connect_host() -> Result<Self, ClientError> {
@@ -351,6 +460,24 @@ impl Client {
     /// client that knows its office's id, such as an agent's CLI (see [`agent`]).
     pub fn connect_office_id(office_id: &str, home: &Path) -> Result<Self, ClientError> {
         Self::connect(office_socket_by_id(home, office_id)?)
+    }
+
+    /// Connects to a selected UUIDv7 office inside `runtime_dir` (`selected_office_socket_in`),
+    /// refusing non-UUIDv7 office IDs or mismatched server office identities immediately.
+    pub fn connect_selected_office(
+        office_id: &str,
+        runtime_dir: &Path,
+    ) -> Result<Self, ClientError> {
+        let client = Self::connect(selected_office_socket(runtime_dir, office_id)?)?;
+        let matched = client
+            .hello()?
+            .office
+            .as_ref()
+            .is_some_and(|office| office.office.id == office_id);
+        if !matched {
+            return Err(ClientError::OfficeNotReachable);
+        }
+        Ok(client)
     }
 
     /// Connects to the server listening on `socket`.
@@ -445,6 +572,37 @@ impl Client {
         self.call_tracked::<C>(params, timeout, &mut false)
     }
 
+    /// Sends one raw JSON-RPC method and params object (for example organization writes that
+    /// carry `dry_run: true` without a `command_id`) and returns the JSON `result` value.
+    pub fn call_raw(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, ClientError> {
+        let id = self.next_request_id()?;
+        let request = Request {
+            id,
+            method: method.to_owned(),
+            params,
+            principal: None,
+        };
+        let response = self.send_request(request, default_timeout(method), &mut false)?;
+        match response.outcome {
+            org_proto::Outcome::Result(value) => Ok(value),
+            org_proto::Outcome::Error(error) => Err(ClientError::Api(error)),
+        }
+    }
+
+    fn next_request_id(&self) -> Result<u64, ClientError> {
+        let id = self.shared.next_id.fetch_add(1, Ordering::SeqCst);
+        if id > MAX_REQUEST_ID {
+            return Err(ClientError::Protocol(
+                "this connection has used up its request ids; reconnect".into(),
+            ));
+        }
+        Ok(id)
+    }
+
     /// [`Client::call_with_timeout`], also saying whether the request was handed to the writer
     /// and not withdrawn again (`sent`), i.e. whether the server may have seen any of it.
     fn call_tracked<C: Call>(
@@ -453,130 +611,57 @@ impl Client {
         timeout: Duration,
         sent: &mut bool,
     ) -> Result<C::Result, ClientError> {
+        let id = self.next_request_id()?;
+        let request =
+            Request::new::<C>(id, params).map_err(|e| ClientError::Protocol(e.to_string()))?;
+        let response = self.send_request(request, timeout, sent)?;
+        response.into_result::<C>().map_err(|error| match error {
+            CallError::Api(error) => ClientError::Api(error),
+            CallError::Decode(_) => {
+                ClientError::undecodable(&format!("the result of `{}`", C::METHOD))
+            }
+        })
+    }
+
+    fn send_request(
+        &self,
+        request: Request,
+        timeout: Duration,
+        sent: &mut bool,
+    ) -> Result<Response, ClientError> {
         let started = Instant::now();
-        // A timeout too large to add to a clock reading means "very long".
         let deadline = started
             .checked_add(timeout)
             .unwrap_or_else(|| started + Duration::from_secs(60 * 60 * 24 * 365));
-        let id = self.shared.next_id.fetch_add(1, Ordering::SeqCst);
-        if id > MAX_REQUEST_ID {
-            return Err(ClientError::Protocol(
-                "this connection has used up its request ids; reconnect".into(),
-            ));
-        }
-        let request =
-            Request::new::<C>(id, params).map_err(|e| ClientError::Protocol(e.to_string()))?;
-        let mut line =
-            serde_json::to_vec(&request).map_err(|e| ClientError::Protocol(e.to_string()))?;
-        if line.len() > MAX_FRAME_BYTES {
-            // Nothing is sent, so the connection stays in step.
-            return Err(ClientError::RequestTooLarge);
-        }
-        line.push(b'\n');
-        let size = line.len();
+        let id = request.id;
+        let line = encode_request(&request)?;
 
-        // Register before sending, so the answer can't beat the registration.
         let (answer_to, answer) = mpsc::sync_channel(1);
         lock(&self.shared.pending).insert(id, answer_to);
-        // Registered first, then checked: either the reader's cleanup sees this call or this
-        // check sees `closed`, so a call on a dead connection never waits out its timeout.
         if self.shared.closed.load(Ordering::SeqCst) {
             lock(&self.shared.pending).remove(&id);
             return Err(ClientError::Disconnected);
         }
 
         let state = Arc::new(AtomicU8::new(QUEUED));
-        // Wait for room, but only until this call's deadline: a burst of large requests is no
-        // reason to give the connection up. A genuinely stuck write is dealt with by the call
-        // that is waiting on it (see `settle`), and the connection closes then.
-        let mut waiting = Some(Outgoing {
-            line,
+        enqueue_request(
+            &self.shared,
+            self.outbound.as_ref(),
+            id,
+            Outgoing {
+                line,
+                deadline,
+                state: Arc::clone(&state),
+            },
             deadline,
-            state: Arc::clone(&state),
-        });
-        loop {
-            let message = waiting
-                .take()
-                .expect("the message is put back before looping");
-            let outbound = match (&self.outbound, self.shared.closed.load(Ordering::SeqCst)) {
-                (Some(outbound), false) => outbound,
-                _ => {
-                    lock(&self.shared.pending).remove(&id);
-                    return Err(ClientError::Disconnected);
-                }
-            };
-            // Reserve room in the byte budget, never going over it (not even for a moment).
-            let reserved = self
-                .shared
-                .queued_bytes
-                .try_update(Ordering::SeqCst, Ordering::SeqCst, |queued| {
-                    (queued + size <= MAX_QUEUED_BYTES).then_some(queued + size)
-                })
-                .is_ok();
-            if reserved {
-                match outbound.try_send(message) {
-                    Ok(()) => {
-                        *sent = true;
-                        break;
-                    }
-                    Err(TrySendError::Full(message)) => {
-                        self.shared.queued_bytes.fetch_sub(size, Ordering::SeqCst);
-                        waiting = Some(message);
-                    }
-                    Err(TrySendError::Disconnected(_)) => {
-                        self.shared.queued_bytes.fetch_sub(size, Ordering::SeqCst);
-                        lock(&self.shared.pending).remove(&id);
-                        return Err(ClientError::Disconnected);
-                    }
-                }
-            } else {
-                waiting = Some(message);
-            }
-            if Instant::now() >= deadline {
-                lock(&self.shared.pending).remove(&id);
-                return Err(ClientError::Timeout);
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
+            sent,
+        )?;
 
-        let mut outcome = answer.recv_timeout(deadline.saturating_duration_since(Instant::now()));
-        // On timeout the entry is still there: drop it, so a late answer is ignored.
-        let entry = lock(&self.shared.pending).remove(&id);
-        if matches!(outcome, Err(mpsc::RecvTimeoutError::Timeout)) {
-            // An answer that came in between the wait ending and the entry going is still an
-            // answer: a call that succeeded is not reported as timed out (the caller might
-            // retry a create that went through). If the entry was already gone, the reader has
-            // taken it and is about to send: wait a moment for that.
-            let late = if entry.is_none() {
-                answer.recv_timeout(Duration::from_millis(100)).ok()
-            } else {
-                answer.try_recv().ok()
-            };
-            if let Some(late) = late {
-                outcome = Ok(late);
-            }
-        }
+        let outcome = await_response(&self.shared, id, &answer, deadline);
         if !matches!(outcome, Ok(Ok(_))) && self.settle(&state) {
-            // Withdrawn before the writer started on it: the server never saw any of it.
             *sent = false;
         }
-        match outcome {
-            Ok(Ok(response)) => response.into_result::<C>().map_err(|error| match error {
-                CallError::Api(error) => ClientError::Api(error),
-                CallError::Decode(_) => {
-                    ClientError::undecodable(&format!("the result of `{}`", C::METHOD))
-                }
-            }),
-            Ok(Err(error)) => Err(error),
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(ClientError::Timeout),
-            // A connection closed at or after the call's deadline (the close above, or the
-            // writer giving up a half-sent request) means this call ran out of time: say so,
-            // whichever of the two got there first.
-            Err(mpsc::RecvTimeoutError::Disconnected) if Instant::now() >= deadline => {
-                Err(ClientError::Timeout)
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(ClientError::Disconnected),
-        }
+        finish_outcome(outcome, deadline)
     }
 
     /// This call is out of time (or the connection is going away). What happens to its request
@@ -1534,5 +1619,58 @@ mod tests {
         .err()
         .unwrap();
         assert_eq!(error.kind(), ErrorKind::WouldBlock);
+    }
+
+    #[test]
+    fn connect_selected_office_fails_closed_on_missing_or_mismatched_office_hello() {
+        let dir = tempfile::Builder::new()
+            .prefix("ocl-sel")
+            .tempdir()
+            .unwrap();
+        let office_id = "0193a5c0-0000-7000-8000-0000000000aa";
+        let other_id = "0193a5c0-0000-7000-8000-0000000000bb";
+        let sock = location::selected_office_socket_in(dir.path(), office_id).unwrap();
+        std::fs::create_dir_all(sock.parent().unwrap()).unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+
+        let server = std::thread::spawn(move || {
+            for reply_hello in [
+                HelloResult::host("test", "test"),
+                HelloResult::office(
+                    "test",
+                    "test",
+                    org_proto::OfficeHello {
+                        organization_name: "Other".into(),
+                        office: OfficeInfo {
+                            id: other_id.into(),
+                            organization_id: "0193a5c0-0000-7000-8000-000000000001".into(),
+                            name: "Other".into(),
+                            role: org_proto::OfficeRole::Hq,
+                            host: "test".into(),
+                            endpoint: None,
+                            status: org_proto::OfficeStatus::Active,
+                            status_reason: None,
+                            next_restart_at: None,
+                        },
+                    },
+                ),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let req: Request = frame::read_message(&mut reader).unwrap().unwrap();
+                let resp = Response::ok::<Hello>(req.id, &reply_hello).unwrap();
+                frame::write_message(&mut stream, &resp).unwrap();
+            }
+        });
+
+        assert!(matches!(
+            Client::connect_selected_office(office_id, dir.path()),
+            Err(ClientError::OfficeNotReachable)
+        ));
+        assert!(matches!(
+            Client::connect_selected_office(office_id, dir.path()),
+            Err(ClientError::OfficeNotReachable)
+        ));
+        server.join().unwrap();
     }
 }

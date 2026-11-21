@@ -42,10 +42,10 @@ use std::{
 
 /// A signed-in browser. Every reply it reads is kept, so a test can prove what never
 /// crossed HTTP.
-struct Browser {
+pub(super) struct Browser {
     address: SocketAddr,
     pair: Pair,
-    instance: String,
+    pub(super) instance: String,
     seen: RefCell<Vec<String>>,
 }
 impl Browser {
@@ -58,7 +58,7 @@ impl Browser {
         }
     }
     /// Signs in as the seeded administrator.
-    fn sign_in(host: &Host, address: SocketAddr) -> Self {
+    pub(super) fn sign_in(host: &Host, address: SocketAddr) -> Self {
         let reply = post_until_available(address, "/api/v1/session/sign-in", &credentials());
         let browser = Self::new(host, address, pair(&reply, "sign-in"));
         browser
@@ -74,17 +74,17 @@ impl Browser {
             .push(format!("{}\n{}", reply.headers, reply.body));
         reply
     }
-    fn get(&self, path: &str) -> Reply {
+    pub(super) fn get(&self, path: &str) -> Reply {
         self.keep(http(self.address, "GET", path, &self.pair.headers(), ""))
     }
-    fn post(&self, path: &str, body: &str) -> Reply {
+    pub(super) fn post(&self, path: &str, body: &str) -> Reply {
         self.keep(http(self.address, "POST", path, &self.pair.headers(), body))
     }
     fn body(&self, operation: &str, name: &str, slug: &str) -> String {
         create_body(&self.instance, operation, name, slug, remote(slug))
     }
     /// Posts a create and follows it on the lookup route to its organization view.
-    fn create(&self, name: &str, slug: &str) -> (String, Value) {
+    pub(super) fn create(&self, name: &str, slug: &str) -> (String, Value) {
         let operation = crate::ids::uuid_v7().unwrap();
         let posted = self.post("/api/v1/organizations", &self.body(&operation, name, slug));
         assert!(
@@ -145,7 +145,7 @@ fn is_uuid_v7(id: &str) -> bool {
 
 /// The view of a completed create: its name, UUIDv7 ids, one HQ office, the creator's
 /// person and the recovery state, never the code. Returns (organization, office, creator).
-fn checked(view: &Value, name: &str, slug: &str) -> (String, String, String) {
+pub(super) fn checked(view: &Value, name: &str, slug: &str) -> (String, String, String) {
     assert_eq!(view["name"], name, "{view}");
     assert_eq!(view["slug"], slug, "{view}");
     let (id, creator) = (text(&view["id"]), text(&view["employee_id"]));
@@ -162,7 +162,7 @@ fn checked(view: &Value, name: &str, slug: &str) -> (String, String, String) {
     (id.to_owned(), office.to_owned(), creator.to_owned())
 }
 
-fn all_files(root: &Path) -> Vec<PathBuf> {
+pub(super) fn all_files(root: &Path) -> Vec<PathBuf> {
     let mut all = Vec::new();
     files(root, &mut all);
     all.sort();
@@ -275,7 +275,7 @@ fn assert_no_process_left(base: &Path) {
 /// Stops the host and waits until nothing of it creates any more: no web or worker
 /// process, and no create thread (a create in flight runs on its own thread, which owns
 /// the host's creation state and ends when the supervisor stops its server).
-fn stop(host: Host, base: &Path) {
+pub(super) fn stop(host: Host, base: &Path) {
     let creating = Arc::downgrade(
         host.service
             .provisioning_for_test()
@@ -288,13 +288,13 @@ fn stop(host: Host, base: &Path) {
     assert_no_process_left(base);
 }
 
-fn restart(base: &Path, address: SocketAddr) -> Host {
+pub(super) fn restart(base: &Path, address: SocketAddr) -> Host {
     let (host, _socket) = host_at(fixture_config(base), base, |_, _, _| {});
     wait_serving(&host, address);
     host
 }
 
-fn wait_offices_active(host: &Host, count: usize) {
+pub(super) fn wait_offices_active(host: &Host, count: usize) {
     wait_until("every office active", || {
         let offices = host.offices.offices();
         offices.len() == count && offices.iter().all(|o| o.status == OfficeStatus::Active)

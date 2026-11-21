@@ -4,6 +4,7 @@
 //! for an `https` listener, the administrator's `tls.set` (`crate::web_tls`).
 
 pub(crate) mod authentication;
+mod cli_approvals;
 pub(crate) mod listener;
 mod office_ops;
 pub(crate) mod organizations;
@@ -37,12 +38,16 @@ pub(crate) struct Service {
     /// Installed once by the registered start after composition; until then the admin calls
     /// answer `unavailable`.
     admin: std::sync::OnceLock<Arc<crate::admin::Admin>>,
+    /// The registered instance's browser origin (`http://...` or `https://...`) used when
+    /// minting browser-approved CLI sign-in URLs (`cli.approval.create`).
+    browser_origin: Option<String>,
     /// The registered instance's name, installed once by the registered start; until then
     /// `instance.view` answers `unavailable`.
     instance_name: std::sync::OnceLock<String>,
     /// Serializes journaled `office.restart` / `browser.office_restart` lookup -> restart ->
     /// journal write so concurrent retries cannot race into false `Conflict` or duplicate restarts.
     pub(super) office_restarting: std::sync::Mutex<()>,
+    cli_approvals: cli_approvals::CliApprovals,
     /// Browser ops this service accepted on a web connection; real-process tests prove
     /// that an ingress refusal reaches no host op.
     #[cfg(test)]
@@ -68,8 +73,10 @@ impl Service {
             recovery: None,
             web_tls: None,
             admin: std::sync::OnceLock::new(),
+            browser_origin: None,
             instance_name: std::sync::OnceLock::new(),
             office_restarting: std::sync::Mutex::new(()),
+            cli_approvals: cli_approvals::CliApprovals::new(),
             #[cfg(test)]
             browser_ops: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
@@ -100,6 +107,10 @@ impl Service {
     }
     pub(crate) fn with_web_tls(mut self, web_tls: Option<Arc<crate::web_tls::WebTls>>) -> Self {
         self.web_tls = web_tls;
+        self
+    }
+    pub(crate) fn with_browser_origin(mut self, origin: Option<String>) -> Self {
+        self.browser_origin = origin;
         self
     }
     #[cfg(test)]
@@ -419,7 +430,8 @@ impl Service {
     /// connection's one ordered writer, after the record's delete.
     fn browser_op(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::browser::{
-            BrowserOfficeRestart, BrowserOpenChannel, BrowserSessionGrant, InstanceView,
+            BrowserCliApprovalDecide, BrowserOfficeRestart, BrowserOpenChannel,
+            BrowserSessionGrant, InstanceView,
         };
         if !is_browser_op(request) || connection.web_listen().is_none() {
             return false;
@@ -448,6 +460,8 @@ impl Service {
             self.grant_browser_channel(authentication, request, connection);
         } else if request.is::<BrowserOfficeRestart>() {
             office_ops::restart_browser_office(self, authentication, request, connection);
+        } else if request.is::<BrowserCliApprovalDecide>() {
+            self.decide_cli_approval(authentication, request, connection);
         } else {
             browser_session_op(authentication, request, connection);
         }
@@ -528,10 +542,126 @@ impl Service {
             Err(error) => connection.send_response(Response::error(request.id, error)),
         }
     }
+    fn decide_cli_approval(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::browser::{
+            BrowserCliApprovalDecide, BrowserCliApprovalDecideResult, SessionValidateParams,
+        };
+        let mut ended = Vec::new();
+        let result = browser_now_ms().and_then(|now| {
+            let Some(instance_id) = self.instance_id.as_deref() else {
+                return Err(ApiError::new(
+                    ErrorCode::Unavailable,
+                    "host instance is not registered",
+                ));
+            };
+            let p = request.params::<BrowserCliApprovalDecide>().map_err(|_| {
+                ApiError::new(ErrorCode::InvalidRequest, "invalid cli approval decision")
+            })?;
+            let account = authentication.browser_account(
+                &SessionValidateParams {
+                    cookie_digest: p.auth.cookie_digest,
+                    proof_digest: p.auth.proof_digest,
+                    origin: p.auth.origin.clone(),
+                },
+                now,
+                &mut ended,
+            )?;
+            let account_id = crate::accounts::identity::AccountId::parse(account.account_id())
+                .map_err(|_| ApiError::new(ErrorCode::Unavailable, "invalid account id"))?;
+            let status =
+                self.cli_approvals
+                    .decide(instance_id, &p.link, account_id, p.approve, now)?;
+            Ok(BrowserCliApprovalDecideResult { status })
+        });
+        finish_ended_browser_sessions(authentication, connection, ended);
+        match result {
+            Ok(res) => connection.send_response(ok::<BrowserCliApprovalDecide>(request.id, &res)),
+            Err(err) => connection.send_response(Response::error(request.id, err)),
+        }
+    }
+    fn create_cli_approval(&self, request: &Request, connection: &Arc<Connection>) {
+        use org_host_control::ops::CliApprovalCreate;
+        if connection.web_listen().is_some() {
+            connection.send_response(not_authorized(request.id));
+            return;
+        }
+        let result = browser_now_ms().and_then(|now| {
+            request.params::<CliApprovalCreate>().map_err(|_| {
+                ApiError::new(ErrorCode::InvalidRequest, "invalid cli approval request")
+            })?;
+            let Some(instance_id) = self.instance_id.as_deref() else {
+                return Err(ApiError::new(
+                    ErrorCode::Unavailable,
+                    "host instance is not registered",
+                ));
+            };
+            let origin = self
+                .admin
+                .get()
+                .map(|a| a.origin())
+                .or(self.browser_origin.as_deref())
+                .ok_or_else(|| ApiError::new(ErrorCode::Unavailable, "web origin unavailable"))?;
+            self.cli_approvals
+                .create(instance_id, origin, connection, now)
+        });
+        match result {
+            Ok(created) => secret_response(connection, request.id, &created),
+            Err(err) => connection.send_response(Response::error(request.id, err)),
+        }
+    }
+    fn poll_cli_approval(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::ops::{CliApprovalPoll, CliApprovalPollResult};
+        if connection.web_listen().is_some() {
+            connection.send_response(not_authorized(request.id));
+            return;
+        }
+        let result = browser_now_ms().and_then(|now| {
+            let p = request.params::<CliApprovalPoll>().map_err(|_| {
+                ApiError::new(ErrorCode::InvalidRequest, "invalid cli approval poll")
+            })?;
+            match self.cli_approvals.poll(connection, &p.approval_id, now)? {
+                cli_approvals::PollOutcome::Pending => Ok(CliApprovalPollResult::Pending),
+                cli_approvals::PollOutcome::Declined => Ok(CliApprovalPollResult::Declined),
+                cli_approvals::PollOutcome::Expired => Ok(CliApprovalPollResult::Expired),
+                cli_approvals::PollOutcome::Approved(account_id) => {
+                    let mut issued = authentication.issue_for_account(connection, &account_id)?;
+                    let offices = self.offices.offices();
+                    for link in &mut issued.orgs {
+                        link.office_ids = offices
+                            .iter()
+                            .filter(|o| o.organization_id == link.org_id)
+                            .map(|o| o.id.clone())
+                            .collect();
+                    }
+                    Ok(CliApprovalPollResult::Approved {
+                        session: issued.session,
+                        account: issued.account,
+                        admin: issued.admin,
+                        orgs: issued.orgs,
+                    })
+                }
+            }
+        });
+        match result {
+            Ok(res) => secret_response(connection, request.id, &res),
+            Err(err) => connection.send_response(Response::error(request.id, err)),
+        }
+    }
     fn authenticate(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::ops::{
-            AccountVerify, FdsReceived, OfficeList, OfficeOpenChannel, OfficeRestart, SessionEnd,
-            SessionGrant, SessionInspect, SessionRenew,
+            AccountVerify, CliApprovalCreate, CliApprovalPoll, FdsReceived, OfficeList,
+            OfficeOpenChannel, OfficeRestart, SessionEnd, SessionGrant, SessionInspect,
+            SessionRenew,
         };
         if request.is::<FdsReceived>() {
             acknowledge_descriptors(request, connection);
@@ -548,6 +678,10 @@ impl Service {
         };
         if request.is::<AccountVerify>() {
             self.sign_in(authentication, request, connection);
+        } else if request.is::<CliApprovalCreate>() {
+            self.create_cli_approval(request, connection);
+        } else if request.is::<CliApprovalPoll>() {
+            self.poll_cli_approval(authentication, request, connection);
         } else if request.is::<OfficeOpenChannel>() {
             self.open_authenticated_channel(authentication, request, connection);
         } else if request.is::<OfficeList>() {
@@ -666,8 +800,8 @@ impl Service {
 
 fn is_browser_op(request: &Request) -> bool {
     use org_host_control::browser::{
-        BrowserOfficeRestart, BrowserOpenChannel, BrowserSessionEnd, BrowserSessionGrant,
-        InstanceView, LinkRegister, SessionSignIn, SessionValidate,
+        BrowserCliApprovalDecide, BrowserOfficeRestart, BrowserOpenChannel, BrowserSessionEnd,
+        BrowserSessionGrant, InstanceView, LinkRegister, SessionSignIn, SessionValidate,
     };
     request.is::<LinkRegister>()
         || request.is::<SessionSignIn>()
@@ -677,6 +811,7 @@ fn is_browser_op(request: &Request) -> bool {
         || request.is::<BrowserOpenChannel>()
         || request.is::<BrowserSessionGrant>()
         || request.is::<BrowserOfficeRestart>()
+        || request.is::<BrowserCliApprovalDecide>()
 }
 
 fn browser_session_op(authentication: &Authentication, request: &Request, connection: &Connection) {
@@ -803,10 +938,12 @@ fn web_reports_serving(request: &Request, connection: &Arc<Connection>) {
 
 fn session_auth_method(request: &Request) -> bool {
     use org_host_control::ops::{
-        AccountVerify, OfficeList, OfficeOpenChannel, OfficeRestart, SessionEnd, SessionGrant,
-        SessionInspect, SessionRenew,
+        AccountVerify, CliApprovalCreate, CliApprovalPoll, OfficeList, OfficeOpenChannel,
+        OfficeRestart, SessionEnd, SessionGrant, SessionInspect, SessionRenew,
     };
     request.is::<AccountVerify>()
+        || request.is::<CliApprovalCreate>()
+        || request.is::<CliApprovalPoll>()
         || request.is::<SessionRenew>()
         || request.is::<SessionEnd>()
         || request.is::<OfficeOpenChannel>()
@@ -832,6 +969,7 @@ fn acknowledge_descriptors(request: &Request, connection: &Arc<Connection>) {
 impl Handler for Service {
     fn disconnected(&self, connection: &Arc<Connection>) {
         connection.clear_recovery_permission();
+        self.cli_approvals.disconnect(connection);
         if let Some(authentication) = &self.authentication {
             authentication.disconnect(connection);
         }
@@ -1698,6 +1836,25 @@ pub(crate) mod tests {
             response.outcome,
             org_proto::Outcome::Error(ref e) if e.code == ErrorCode::InvalidRequest
         ));
+        // Host-only CLI approval creation and polling are refused on a web connection.
+        assert!(refused(
+            exchange::<org_host_control::ops::CliApprovalCreate>(
+                &mut peer,
+                5,
+                &org_host_control::ops::CliApprovalCreateParams {},
+            ),
+            ErrorCode::NotAuthorized
+        ));
+        assert!(refused(
+            exchange::<org_host_control::ops::CliApprovalPoll>(
+                &mut peer,
+                6,
+                &org_host_control::ops::CliApprovalPollParams {
+                    approval_id: "0193a5c0-0000-7000-8000-000000000001".into(),
+                },
+            ),
+            ErrorCode::NotAuthorized
+        ));
         drop(web);
 
         let (host, peer) = std::os::unix::net::UnixStream::pair().unwrap();
@@ -1772,6 +1929,29 @@ pub(crate) mod tests {
                 "link": "A".repeat(43), "login": "ada", "password": "long enough password",
                 "client_address": "192.0.2.1", "cookie_digest": digest, "proof_digest": digest,
                 "origin": {"scheme": "https", "host": "org.example", "port": 443}}}),
+        )
+        .unwrap();
+        let response: org_proto::Response =
+            org_proto::frame::read_message(&mut peer).unwrap().unwrap();
+        assert!(matches!(
+            response.outcome,
+            org_proto::Outcome::Error(ref e) if e.code == ErrorCode::NotAuthorized
+        ));
+        org_proto::frame::write_message(
+            peer.get_mut(),
+            &serde_json::json!({
+                "id": 11,
+                "method": org_host_control::browser::BrowserCliApprovalDecide::METHOD,
+                "params": {
+                    "auth": {
+                        "cookie_digest": digest,
+                        "proof_digest": digest,
+                        "origin": {"scheme": "https", "host": "org.example", "port": 443}
+                    },
+                    "link": "A".repeat(43),
+                    "approve": true
+                }
+            }),
         )
         .unwrap();
         let response: org_proto::Response =

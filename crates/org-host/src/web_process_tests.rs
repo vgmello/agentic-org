@@ -44,6 +44,7 @@ use std::{
 };
 
 mod browser_sessions;
+mod cli_and_custody;
 mod organizations;
 mod recovery_custody;
 

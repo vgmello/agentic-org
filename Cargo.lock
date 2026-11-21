@@ -24,7 +24,9 @@ version = "0.0.0"
 dependencies = [
  "agentic-org",
  "libc",
+ "org-agent-cli",
  "org-client",
+ "org-command",
  "org-host",
  "org-host-control",
  "org-office-launch",
@@ -767,6 +769,7 @@ dependencies = [
  "org-command",
  "org-proto",
  "serde_json",
+ "sha2",
  "tempfile",
 ]
 
@@ -839,6 +842,8 @@ dependencies = [
  "flate2",
  "hmac",
  "libc",
+ "org-agent-cli",
+ "org-command",
  "org-host-control",
  "org-office-launch",
  "org-platform",

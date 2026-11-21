@@ -11,6 +11,7 @@ org-client = { path = "../org-client" }
 org-command = { path = "../org-command" }
 org-proto = { path = "../org-proto" }
 serde_json.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 org-command = { path = "../org-command", features = ["testkit"] }

@@ -1,10 +1,11 @@
-//! Library entry point for `agent-os` on top of `org-command` and `org-client`.
+//! Library entry point for `agent-os` and shared `org-command` execution for `agentic-org`.
 //!
 //! Keeps `apps/agent-os/src/main.rs` a thin composition root (`AGENTS.md` Rule 1,
 //! Non-Negotiable #15). Legacy `org-spool` and file-queue fallbacks are removed.
 
 #![deny(unsafe_code)]
 
+pub mod dispatch;
 pub mod keys;
 pub mod office;
 pub mod sources;
@@ -14,30 +15,29 @@ use std::io::{self, Write};
 
 use keys::UuidV7KeySource;
 use office::{Binding, BoundOffice};
-use org_command::Output;
+use org_command::{Office, Output};
 use sources::StdSources;
 
-/// Runs `agent-os` with the supplied command-line arguments and binding, returning the
-/// formatted stdout text and process exit code.
-pub fn execute(args: &[String], binding: Binding) -> Output {
+/// Runs the shared `org-command` table against any supplied [`Office`] implementation
+/// (either a bound agent socket or a grant-bound person host channel).
+pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Office) -> Output {
     if matches!(args, [flag] if flag == "--version" || flag == "-V") {
         return Output {
-            stdout: format!("agent-os {}\n", env!("CARGO_PKG_VERSION")),
+            stdout: format!("{program} {}\n", env!("CARGO_PKG_VERSION")),
             exit_code: 0,
         };
     }
     let table = table::table();
     let mut sources = StdSources;
     let mut keys = UuidV7KeySource;
+    org_command::run(&table, program, args, &mut sources, &mut keys, office)
+}
+
+/// Runs `agent-os` with the supplied command-line arguments and binding, returning the
+/// formatted stdout text and process exit code.
+pub fn execute(args: &[String], binding: Binding) -> Output {
     let mut office = BoundOffice::new(binding);
-    org_command::run(
-        &table,
-        "agent-os",
-        args,
-        &mut sources,
-        &mut keys,
-        &mut office,
-    )
+    execute_with_office("agent-os", args, &mut office)
 }
 
 /// Runs `agent-os` using `AGENT_OS_*` environment variables, writing the single envelope or
