@@ -764,7 +764,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 }
 
 /* ── v4 Home: Elevated Hierarchy, Relationship Grouping & Frosted Glass ── */
-.h4 {
+.h4, .hb {
   --h4-surface: rgba(13, 24, 42, .50);
   --h4-surface-hi: rgba(19, 34, 58, .62);
   --h4-well: rgba(8, 15, 28, .44);
@@ -923,7 +923,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   font-size: 0.75rem; line-height: 1rem; font-weight: 500; color: var(--h4-body);
 }
 .h4-office-chip:hover { background: var(--h4-surface-hi); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), inset 0 0 0 1px var(--h4-border-hi); color: var(--h4-ink); }
-.h4-live-dot { position: relative; width: 8px; height: 8px; border-radius: 999px; background: var(--h4-emerald); flex: none; }
+.h4-live-dot { position: relative; width: 8px; height: 8px; border-radius: 999px; background: #34D399; flex: none; }
 .h4-live-dot::after { content: ""; position: absolute; inset: -3px; border-radius: 999px; border: 1.5px solid rgba(52, 211, 153, .55); animation: h4-pulse 2.2s ease-out infinite; }
 @keyframes h4-pulse { 0% { transform: scale(.8); opacity: .9; } 70%, 100% { transform: scale(1.9); opacity: 0; } }
 
@@ -1178,9 +1178,9 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .h4-proj-prog-hd strong { color: var(--h4-ink); font-weight: 600; }
 .h4-bar { height: 6px; border-radius: 999px; background: rgba(148, 163, 184, .14); overflow: hidden; }
 .h4-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--indigo-400); }
-.h4-bar.ok > span { background: var(--h4-emerald); }
-.h4-bar.warn > span { background: var(--h4-amber); }
-.h4-bar.bad > span { background: var(--h4-rose); }
+.h4-bar.ok > span { background: #34D399; }
+.h4-bar.warn > span { background: #FBBF24; }
+.h4-bar.bad > span { background: #FB7185; }
 .h4-proj-stats { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 0.75rem; line-height: 1.125rem; color: var(--h4-muted); font-variant-numeric: tabular-nums; }
 .h4-proj-stats b { color: var(--h4-ink); font-weight: 600; }
 .h4-proj-stats .is-blocked { color: #FDA4AF; }
@@ -1278,6 +1278,267 @@ select.field, input.field, textarea {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), inset 0 0 0 1px rgba(255, 255, 255, .16);
 }
 select.field option { background: #0E1629; color: #F8FAFC; }
+
+/* ── v4 Executive Briefing + Spotlight Queue Home ─────────────────────── */
+.hb {
+  --hb-surface: rgba(13, 24, 42, .50);
+  --hb-surface-hi: rgba(19, 34, 58, .62);
+  --hb-well: rgba(8, 15, 28, .44);
+  --hb-border: rgba(186, 222, 255, .10);
+  --hb-border-hi: rgba(186, 222, 255, .20);
+  --hb-blur: blur(22px) saturate(160%);
+  --hb-shadow: inset 0 1px 0 rgba(186, 222, 255, .12), inset 0 0 0 1px var(--hb-border), 0 14px 36px -14px rgba(0, 0, 0, .55);
+  --hb-shadow-hi: inset 0 1px 0 rgba(186, 222, 255, .19), inset 0 0 0 1px var(--hb-border-hi), 0 18px 42px -14px rgba(0, 0, 0, .62);
+  --hb-ink: #F8FAFC;
+  --hb-body: #CBD5E1;
+  --hb-muted: #94A3B8;
+  --hb-dim: #74849B;
+  --hb-emerald: #34D399;
+  --hb-amber: #FBBF24;
+  --hb-rose: #FB7185;
+  padding: 28px var(--gutter) 48px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+/* Zone 1: Calm Executive Briefing Header */
+.hb-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.hb-brief { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.hb-eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 0.72rem; line-height: 1rem; font-weight: 650;
+  letter-spacing: .08em; text-transform: uppercase; color: #7C91AE;
+}
+.hb-title {
+  font-size: clamp(1.375rem, 2.2vw, 1.875rem);
+  line-height: 1.22; font-weight: 600; letter-spacing: -.03em; color: var(--hb-ink);
+}
+.hb-title em { font-style: normal; color: #FDE68A; }
+.hb-title em.calm { color: #7DD3FC; }
+.hb-title em.ok { color: #6EE7B7; }
+.hb-pills { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.hb-pill-link {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 12px; border-radius: 999px;
+  background: rgba(13, 24, 42, .44);
+  backdrop-filter: blur(16px) saturate(150%); -webkit-backdrop-filter: blur(16px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .10), inset 0 0 0 1px var(--hb-border);
+  font-size: 0.78125rem; font-weight: 500; color: var(--hb-body);
+  transition: background-color .15s ease, box-shadow .15s ease, color .15s ease;
+}
+.hb-pill-link:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 222, 255, .18), inset 0 0 0 1px var(--hb-border-hi); color: var(--hb-ink); }
+.hb-pill-link b { color: var(--hb-ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+
+/* Zone 2: Balanced 2-Column Hero Stage (Spotlight + Live AI Presence) */
+.hb-stage { display: grid; grid-template-columns: minmax(0, 1.62fr) minmax(320px, 0.92fr); gap: 20px; align-items: stretch; }
+
+/* Left: Focused Decision Spotlight Card */
+.hb-spot {
+  position: relative; display: flex; flex-direction: column; gap: 18px;
+  padding: 24px 26px 22px; border-radius: 18px;
+  background: var(--hb-surface);
+  backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
+  box-shadow: var(--hb-shadow);
+  min-height: 316px;
+  overflow: hidden;
+}
+.hb-spot::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, rgba(125, 211, 252, .7) 0%, rgba(56, 189, 248, .25) 55%, transparent 100%);
+}
+.hb-spot.is-urgent::before {
+  background: linear-gradient(90deg, #FBBF24 0%, rgba(251, 191, 36, .35) 55%, transparent 100%);
+}
+.hb-spot.is-done::before {
+  background: linear-gradient(90deg, #34D399 0%, rgba(52, 211, 153, .3) 55%, transparent 100%);
+}
+.hb-spot-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.hb-spot-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 11px; border-radius: 999px;
+  background: rgba(56, 189, 248, .12);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .26);
+  font-size: 0.75rem; line-height: 1rem; font-weight: 600; color: #BAE6FD;
+}
+.hb-spot-badge.urgent {
+  background: rgba(251, 191, 36, .14);
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, .36);
+  color: #FDE68A;
+}
+.hb-spot-nav { display: inline-flex; align-items: center; gap: 10px; }
+.hb-dots { display: inline-flex; align-items: center; gap: 5px; }
+.hb-dot-btn {
+  width: 8px; height: 8px; border-radius: 999px; padding: 0;
+  background: rgba(186, 222, 255, .20);
+  transition: width .2s cubic-bezier(.22, 1, .36, 1), background-color .16s ease;
+}
+.hb-dot-btn:hover { background: rgba(186, 222, 255, .45); }
+.hb-dot-btn.is-cur { width: 22px; background: #7DD3FC; }
+.hb-dot-btn.is-cur.is-urgent { background: #FBBF24; }
+.hb-dot-btn.is-cleared { background: rgba(52, 211, 153, .65); }
+.hb-step-ctr { font-size: 0.75rem; font-weight: 600; color: var(--hb-muted); font-variant-numeric: tabular-nums; }
+.hb-nav-arrows { display: inline-flex; align-items: center; gap: 4px; }
+.hb-arrow-btn {
+  width: 28px; height: 28px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(186, 222, 255, .06);
+  box-shadow: inset 0 0 0 1px var(--hb-border);
+  color: var(--hb-body);
+  transition: background-color .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.hb-arrow-btn:hover:not(:disabled) { background: rgba(186, 222, 255, .14); box-shadow: inset 0 0 0 1px var(--hb-border-hi); color: var(--hb-ink); }
+.hb-arrow-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+.hb-spot-main { display: flex; flex-direction: column; gap: 14px; flex: 1; }
+.hb-spot-who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.8125rem; color: var(--hb-muted); }
+.hb-spot-who .who { font-weight: 600; color: var(--hb-ink); }
+.hb-spot-who a:hover { color: var(--hb-ink); text-decoration: underline; }
+.hb-spot-title {
+  font-size: clamp(1.125rem, 1.6vw, 1.375rem);
+  line-height: 1.3; font-weight: 600; letter-spacing: -.02em; color: var(--hb-ink);
+  max-width: 48ch;
+}
+.hb-spot-rec {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 10px 14px; border-radius: 10px;
+  background: rgba(56, 189, 248, .08);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .16), inset 3px 0 0 rgba(125, 211, 252, .7);
+  font-size: 0.875rem; line-height: 1.5; color: #E2E8F0;
+}
+.hb-spot-rec .ic { color: #7DD3FC; margin-top: 2px; flex: none; }
+.hb-spot-ctx-row { display: flex; align-items: center; gap: 10px; }
+.hb-spot-foot {
+  margin-top: auto; padding-top: 16px;
+  border-top: 1px solid var(--hb-border);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.hb-spot-foot .actions { margin-top: 0; gap: 8px; align-items: center; }
+.hb-spot-foot .btn.outline { background: rgba(255,255,255,.04); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .24); }
+.hb-spot-foot .btn.outline:hover { background: rgba(255,255,255,.09); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .42); }
+.hb-spot-foot .btn.ghost { color: var(--hb-muted); padding: 0 8px; }
+.hb-spot-foot .btn.ghost:hover { color: var(--hb-ink); background: rgba(255,255,255,.06); }
+.hb-spot-foot .reply { flex: 1 1 100%; }
+.hb-skip-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 10px; border-radius: 8px;
+  font-size: 0.8125rem; font-weight: 500; color: var(--hb-muted);
+  transition: background-color .14s ease, color .14s ease;
+}
+.hb-skip-btn:hover { background: rgba(186, 222, 255, .08); color: var(--hb-ink); }
+
+.hb-cleared {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 10px; flex: 1; padding: 28px 16px;
+}
+.hb-cleared-ring {
+  width: 52px; height: 52px; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(52, 211, 153, .14); box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .36);
+  color: #6EE7B7;
+}
+.hb-cleared h2 { font-size: 1.125rem; font-weight: 600; color: var(--hb-ink); }
+.hb-cleared p { font-size: 0.875rem; color: var(--hb-muted); max-width: 38ch; }
+.hb-cleared-acts { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
+
+/* Right: Live AI Office Presence Tile (Neural Orb + Active Agent + Quiet Activity Drawer) */
+.hb-alive {
+  display: flex; flex-direction: column; justify-content: space-between; gap: 16px;
+  padding: 20px 22px 16px; border-radius: 18px;
+  background: radial-gradient(circle at 50% 24%, rgba(56, 189, 248, .13) 0%, transparent 62%), var(--hb-surface);
+  backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
+  box-shadow: var(--hb-shadow);
+  min-width: 0;
+}
+.hb-orb-row { display: flex; align-items: center; gap: 16px; }
+.hb-orb-wrap {
+  position: relative; width: 112px; height: 112px; flex: none;
+  border-radius: 999px;
+  background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, .16) 0%, rgba(14, 116, 144, .04) 58%, transparent 74%);
+}
+#home-orb-canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
+.hb-alive-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.hb-alive-state {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 0.9375rem; font-weight: 600; color: var(--hb-ink);
+}
+.hb-alive-sub { font-size: 0.8125rem; line-height: 1.4; color: var(--hb-muted); }
+
+.hb-now-card {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 13px; border-radius: 12px;
+  background: var(--hb-well);
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .08), inset 0 0 0 1px var(--hb-border);
+  transition: background-color .15s ease, box-shadow .15s ease;
+}
+.hb-now-card:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 222, 255, .15), inset 0 0 0 1px var(--hb-border-hi); }
+.hb-now-card .grow { min-width: 0; flex: 1; }
+.hb-now-card .nm { font-size: 0.875rem; font-weight: 600; color: var(--hb-ink); display: flex; align-items: baseline; gap: 6px; }
+.hb-now-card .rl { font-size: 0.75rem; font-weight: 400; color: var(--hb-muted); }
+.hb-now-card .st { font-size: 0.75rem; color: #7DD3FC; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb-now-card .chev { color: var(--hb-dim); flex: none; }
+
+.hb-act-foot { border-top: 1px solid var(--hb-border); padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.hb-act-toggle {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; margin: -4px -8px; border-radius: 8px; text-align: left;
+  font-size: 0.78125rem; color: var(--hb-muted);
+  transition: background-color .14s ease, color .14s ease;
+}
+.hb-act-toggle:hover { background: rgba(186, 222, 255, .07); color: var(--hb-ink); }
+.hb-act-toggle .lbl { font-weight: 600; color: var(--hb-body); flex: none; }
+.hb-act-toggle .prev { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb-act-toggle .h4-chev { flex: none; transition: transform .18s ease; }
+.hb-act-toggle[aria-expanded="true"] .h4-chev { transform: rotate(90deg); color: var(--hb-ink); }
+.hb-act-mini { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.hb-act-row { display: flex; align-items: baseline; gap: 8px; font-size: 0.78125rem; line-height: 1.4; color: var(--hb-body); }
+.hb-act-row b { color: var(--hb-ink); font-weight: 600; flex: none; }
+.hb-act-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--hb-muted); }
+.hb-act-row time { color: var(--hb-dim); font-size: 0.72rem; flex: none; }
+
+/* Zone 3: Clean Bento Portfolio Row */
+.hb-proj-sec { display: flex; flex-direction: column; gap: 14px; }
+.hb-proj-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.hb-proj-head-l { display: flex; align-items: baseline; gap: 10px; }
+.hb-proj-head h2 { font-size: 0.96875rem; font-weight: 600; letter-spacing: -.01em; color: var(--hb-ink); }
+.hb-proj-head span { font-size: 0.8125rem; color: var(--hb-muted); }
+.hb-bento { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.hb-card {
+  position: relative; display: flex; flex-direction: column; gap: 14px;
+  padding: 18px 20px; border-radius: 16px;
+  background: var(--hb-surface);
+  backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
+  box-shadow: var(--hb-shadow);
+  transition: transform .18s cubic-bezier(.22, 1, .36, 1), background-color .18s ease, box-shadow .18s ease;
+}
+.hb-card:hover { background: var(--hb-surface-hi); box-shadow: var(--hb-shadow-hi); transform: translateY(-2px); }
+.hb-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.hb-card-name { font-size: 0.96875rem; font-weight: 600; letter-spacing: -.01em; color: var(--hb-ink); }
+.hb-card-prog { display: flex; flex-direction: column; gap: 7px; }
+.hb-card-prog-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.78125rem; color: var(--hb-muted); font-variant-numeric: tabular-nums; }
+.hb-card-prog-row strong { font-size: 0.875rem; font-weight: 650; color: var(--hb-ink); }
+.hb-card-prog-row .blk { color: #FDA4AF; font-weight: 500; }
+.hb-card-foot {
+  margin-top: auto; padding-top: 12px; border-top: 1px solid var(--hb-border);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 0.75rem; color: var(--hb-muted);
+}
+.hb-card-lead { display: inline-flex; align-items: center; gap: 4px; }
+.hb-card-lead .ic { opacity: .5; transition: transform .16s ease, opacity .16s ease; }
+.hb-card:hover .hb-card-lead .ic { opacity: 1; transform: translateX(2px); color: #7DD3FC; }
+
+@media (max-width: 1120px) {
+  .hb-stage { grid-template-columns: 1fr; }
+  .hb-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .hb { padding: 20px var(--gutter) 40px; gap: 20px; }
+  .hb-bento { grid-template-columns: 1fr; }
+  .hb-spot { padding: 18px; min-height: 0; }
+  .hb-orb-row { gap: 12px; }
+  .hb-orb-wrap { width: 88px; height: 88px; }
+}
 
 /* Desktop Collapsible Sidebar (68px frosted icon rail) */
 @media (min-width: 960px) {
@@ -1695,7 +1956,7 @@ const PAST_SESSIONS = [
 /* ---------------------------------------------------------------- state */
 const S = { truth: "demo", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
   projLayout: "list", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
-  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false };
+  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0 };
 const NAV_COLLAPSE_STORE = "agentic-org.v4.navCollapsed";
 try { if (localStorage.getItem(NAV_COLLAPSE_STORE) === "1") S.navCollapsed = true; } catch (e) {}
 function applyNavCollapsed() {
@@ -2078,134 +2339,218 @@ function feedV4(items) {
     </li>`;
   }).join("")}</ul>`;
 }
+function mountHomeOrb() {
+  const canvas = document.getElementById("home-orb-canvas");
+  if (!canvas) return;
+  const v1 = S.truth === "v1";
+  const st = S.homeState;
+  const orb = new NeuralOrb(canvas);
+  orb.setState(v1 || st === "empty" ? "paused" : "working");
+  orb.setContext(v1 || st === "empty" ? 0.14 : 0.44, true);
+  orb.start();
+  if (!v1 && st !== "empty") orb.pulse(0.7);
+  requestAnimationFrame(() => orb.resize());
+  if ("ResizeObserver" in window && canvas.parentElement) {
+    const ro = new ResizeObserver(() => orb.resize());
+    ro.observe(canvas.parentElement);
+    orb._ro = ro;
+  }
+  activeOrb = orb;
+}
 function pageHome() {
   const st = S.homeState, v1 = S.truth === "v1";
   const open = st === "empty" ? [] : unhandled();
-  const cards = st === "empty" ? [] : IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
-  const urgentCards = cards.filter((i) => !!i.expires);
-  const inputCards = cards.filter((i) => !i.expires);
+  const rawQueue = st === "empty" ? [] : IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
+  const queue = [...rawQueue.filter((i) => !!i.expires), ...rawQueue.filter((i) => !i.expires)];
   const openUrgentCount = open.filter((i) => i.expires).length;
-  const remainingInInbox = Math.max(0, open.length - cards.filter((i) => !i.handled).length);
   const working = v1 || st === "empty" ? [] : memberIds().filter((k) => ["working", "withyou"].includes(presence(k)));
+  const agentsCount = memberIds().filter((k) => M[k].kind === "agent").length;
   const riskRank = { "Off track": 0, "At risk": 1, "On track": 2 };
   const projs = st === "empty" ? [] : Object.keys(P).filter((p) => !P[p].archived).sort((a, b) => (riskRank[P[a].health] ?? 9) - (riskRank[P[b].health] ?? 9));
   const needsAttnProjs = projs.filter((p) => P[p].health === "At risk" || P[p].health === "Off track").length;
-  const recentActs = st === "empty" ? [] : acts().slice(0, 6);
-  const body = (loadingLabel, fn) => st === "loading" ? skel(3, loadingLabel) : st === "error" ? "" : fn();
-  const nowOpen = !!S.v4Open["sec-now"];
-  const actOpen = !!S.v4Open["sec-act"];
+  const recentActs = st === "empty" ? [] : acts().slice(0, 4);
+  const actOpen = !!S.v4Open["hb-act"];
 
-  const pulseBar = st === "loading" ? skel(2, "Loading overview…") : st === "error" ? "" : `<div class="h4-pulse-bar" aria-label="Organization summary">
-    <a class="h4-stat-chip${open.length ? " is-warn" : ""}" href="#/inbox">
-      ${ic("bell", "ic14 c-amber")}<strong>${open.length}</strong><span>need you</span>${openUrgentCount ? `<span class="sep">·</span><span class="warn-txt">${openUrgentCount} time-sensitive</span>` : ""}
-    </a>
-    <a class="h4-stat-chip" href="#/projects">
-      ${ic("folder", "ic14 c-indigo")}<strong>${projs.length}</strong><span>active projects</span>${needsAttnProjs ? `<span class="sep">·</span><span>${needsAttnProjs} need attention</span>` : ""}
-    </a>
-    <a class="h4-stat-chip" href="#/teams/members">
-      ${v1 ? ic("signal", "ic14 muted") : `<span class="h4-live-dot" aria-hidden="true"></span>`}<strong>${v1 ? "—" : working.length}</strong><span>${v1 ? "live status off" : working.length ? `working · ${esc(M[working[0]].name)}` : "working"}</span>
-    </a>
-  </div>`;
+  // Keep spotlight index in bounds and prefer first unhandled item if current index is out of range
+  if (S.spotIdx >= queue.length) S.spotIdx = 0;
+  if (S.spotIdx < 0) S.spotIdx = 0;
+  const allQueueCleared = queue.length > 0 && queue.every((i) => i.handled);
+  const curItem = queue[S.spotIdx] || null;
+  const remainingInInbox = Math.max(0, open.length - queue.filter((i) => !i.handled).length);
 
-  const nowPreview = v1 ? "Live status unavailable in v1.0 today" : st === "empty" ? "No one working right now" : working.length ? `${working.length} active · ${esc(M[working[0]].name)} — ${esc(statusLine(working[0]))}` : "No one working right now";
-  const actPreview = st === "empty" || !recentActs.length ? "No recent activity yet" : `${recentActs.length} updates · Latest: ${esc(M[recentActs[0].who].name)} ${esc(recentActs[0].text)} (${esc(recentActs[0].time)})`;
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? "Good morning." : hour < 18 ? "Good afternoon." : "Good evening.";
+  const headline = st === "loading"
+    ? `${greet} Preparing your briefing…`
+    : st === "error"
+      ? `${greet} Reconnecting to HQ office.`
+      : openUrgentCount
+        ? `${greet} <em>${plural(openUrgentCount, "time-sensitive decision", "time-sensitive decisions")}</em> ${openUrgentCount === 1 ? "needs" : "need"} you.`
+        : open.length
+          ? `${greet} <em class="calm">${plural(open.length, "item", "items")}</em> waiting when you're ready.`
+          : `${greet} <em class="ok">All clear</em> across your organization.`;
 
-  return `<div class="h4">
-    <header class="h4-hero">
-      <div class="h4-head">
-        <div class="h4-head-left">
-          <h1 tabindex="-1">Home</h1>
-          <p class="h4-sub">${st === "loading" ? "Loading workspace…" : st === "error" ? "Reconnecting to HQ office…" : "Ordered by what needs your decision first."}</p>
+  const renderSpotlight = () => {
+    if (st === "loading") return `<div class="hb-spot">${skel(3, "Loading spotlight decision…")}</div>`;
+    if (st === "error") return `<div class="hb-spot"><div class="callout h4-callout" role="alert">${ic("warn", "ic20 c-amber")}<div><p>Couldn't reach the office. Your data is safe.</p><button class="btn outline sm" type="button" data-act="set" data-k="homeState" data-v="filled">${ic("refresh", "ic16")}Try again</button></div></div></div>`;
+    if (!queue.length || (allQueueCleared && !S.v4Open["spot-review"])) {
+      return `<section class="hb-spot is-done" aria-label="Decision spotlight">
+        <div class="hb-cleared">
+          <span class="hb-cleared-ring">${ic("check-circle", "ic20")}</span>
+          <h2>${allQueueCleared ? "Priority spotlight cleared" : "Nothing needs your decision"}</h2>
+          <p>${allQueueCleared
+            ? (open.length ? `You cleared all ${queue.length} spotlight items. ${plural(open.length, "more item", "more items")} still waiting in Inbox.` : "Everything waiting on you is handled. Your agents have what they need to keep moving.")
+            : "When an agent needs an approval, decision, or answer, it appears right here."}</p>
+          <div class="hb-cleared-acts">
+            ${open.length ? `<a class="btn primary sm h4-cta" href="#/inbox"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span>Open Inbox (${open.length})</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span>Continue in Inbox →</span></span></span></a>` : ""}
+            ${allQueueCleared ? `<button class="btn ghost sm" type="button" data-act="v4-acc" data-id="spot-review">Review handled</button>` : ""}
+          </div>
         </div>
-        <a class="h4-office-chip" href="#/settings/offices"><span class="h4-live-dot" aria-hidden="true"></span>HQ office · Online</a>
+      </section>`;
+    }
+    const it = curItem;
+    const isUrgent = !!(it.expires && !it.handled);
+    const k = KIND[it.kind] || { icon: "bell" };
+    const ctxKey = "spot-ctx-" + it.id;
+    const ctxOpen = !!S.v4Open[ctxKey];
+    const dots = queue.map((q, idx) => {
+      const cls = ["hb-dot-btn", idx === S.spotIdx ? "is-cur" : "", q.expires && !q.handled ? "is-urgent" : "", q.handled ? "is-cleared" : ""].filter(Boolean).join(" ");
+      return `<button type="button" class="${cls}" data-act="spot-go" data-v="${idx}" aria-label="Decision ${idx + 1} of ${queue.length}: ${esc(q.what)}" ${idx === S.spotIdx ? 'aria-current="true"' : ""}></button>`;
+    }).join("");
+    return `<section class="hb-spot${isUrgent ? " is-urgent" : ""}${it.handled ? " is-done" : ""}" aria-label="Decision spotlight">
+      <div class="hb-spot-bar">
+        <span class="hb-spot-badge${isUrgent ? " urgent" : ""}">${ic(isUrgent ? "clock" : k.icon, "ic14")}${it.handled ? "Handled" : isUrgent ? esc(it.expires) : esc(it.sub)}</span>
+        <div class="hb-spot-nav">
+          <div class="hb-dots" role="group" aria-label="Priority queue">${dots}</div>
+          <span class="hb-step-ctr">${S.spotIdx + 1} / ${queue.length}</span>
+          <div class="hb-nav-arrows">
+            <button type="button" class="hb-arrow-btn" data-act="spot-step" data-v="-1" aria-label="Previous decision" ${queue.length < 2 ? "disabled" : ""}>${ic("chev-left", "ic14")}</button>
+            <button type="button" class="hb-arrow-btn" data-act="spot-step" data-v="1" aria-label="Next decision" ${queue.length < 2 ? "disabled" : ""}>${ic("chev-right", "ic14")}</button>
+          </div>
+        </div>
       </div>
-      ${st === "error" ? `<div class="callout h4-callout" role="alert">${ic("warn", "ic20 c-amber")}<div><p>Couldn't reach the office. Your data is safe.</p><button class="btn outline sm" type="button" data-act="set" data-k="homeState" data-v="filled">${ic("refresh", "ic16")}Try again</button></div></div>` : ""}
-      ${pulseBar}
+
+      <div class="hb-spot-main">
+        <div class="hb-spot-who">
+          ${av(it.from, 24)}
+          <span class="who">${mlink(it.from)}</span>
+          <span>·</span>
+          <span>${esc(it.sub)}</span>
+          <span>·</span>
+          <span>${esc(it.time)}</span>
+          <span>·</span>
+          ${plink(it.proj)}
+          ${it.task ? `<span class="h4-task-chip">${esc(it.task)}</span>` : ""}
+        </div>
+
+        <h2 class="hb-spot-title">${esc(it.what)}</h2>
+
+        ${it.rec && !it.handled ? `<div class="hb-spot-rec">${ic("info", "ic16")}<span>${esc(it.rec)}</span></div>` : ""}
+
+        <div class="hb-spot-ctx-row">
+          <button class="h4-ctx-toggle" type="button" data-act="v4-acc" data-id="${ctxKey}" aria-expanded="${ctxOpen}" aria-controls="panel-${ctxKey}">
+            ${ic("chev-right", "ic14 h4-chev")}<span>${ctxOpen ? "Hide background context" : "Read background context"}</span>
+          </button>
+        </div>
+        ${ctxOpen ? `<div class="h4-ctx-body" id="panel-${ctxKey}">${esc(it.why)}</div>` : ""}
+      </div>
+
+      <div class="hb-spot-foot">
+        ${itemActionsV4(it)}
+        <div style="display:flex;align-items:center;gap:6px">
+          ${queue.length > 1 ? `<button type="button" class="hb-skip-btn" data-act="spot-step" data-v="1">Next${ic("chev-right", "ic14")}</button>` : ""}
+          ${remainingInInbox ? `<a class="hb-skip-btn" href="#/inbox">All ${open.length}${ic("chev-right", "ic14")}</a>` : ""}
+        </div>
+      </div>
+    </section>`;
+  };
+
+  const renderAliveTile = () => {
+    const standby = Math.max(0, agentsCount - working.length);
+    const activeLead = working.length ? working[0] : null;
+    const latestAct = recentActs[0];
+    return `<aside class="hb-alive" aria-label="Live organization presence">
+      <div class="hb-orb-row">
+        <div class="hb-orb-wrap"><canvas id="home-orb-canvas" role="img" aria-label="Live neural orb reflecting organization activity"></canvas></div>
+        <div class="hb-alive-copy">
+          <div class="hb-alive-state">${v1 || st === "empty" ? "" : `<span class="h4-live-dot" aria-hidden="true"></span>`}${v1 ? "HQ office online" : st === "empty" ? "Office standing by" : "Office alive"}</div>
+          <p class="hb-alive-sub">${v1 ? "Live agent telemetry arrives in the next release." : working.length ? `${plural(working.length, "agent", "agents")} working · ${standby} standing by` : `${agentsCount} agents ready for work`}</p>
+        </div>
+      </div>
+
+      ${v1 ? `<a class="hb-now-card" href="#/teams/members">${ic("user-group", "ic20 muted")}<div class="grow"><div class="nm">View team &amp; agents</div><div class="st">Open member directory</div></div>${ic("chev-right", "ic16 chev")}</a>`
+        : activeLead ? `<a class="hb-now-card" href="#/members/${activeLead}">${av(activeLead, 32, "tip")}<div class="grow"><div class="nm">${esc(M[activeLead].name)} <span class="rl">${esc(M[activeLead].role)}</span></div><div class="st">${statusLine(activeLead)}</div></div>${ic("chev-right", "ic16 chev")}</a>`
+        : `<a class="hb-now-card" href="#/teams/members">${ic("signal", "ic20 muted")}<div class="grow"><div class="nm">Quiet right now</div><div class="st">No active runs · View members</div></div>${ic("chev-right", "ic16 chev")}</a>`}
+
+      <div class="hb-act-foot">
+        <button class="hb-act-toggle" type="button" data-act="v4-acc" data-id="hb-act" aria-expanded="${actOpen}" aria-controls="panel-hb-act">
+          ${ic("chev-right", "ic14 h4-chev")}
+          <span class="lbl">Activity</span>
+          <span class="prev">${latestAct ? `${esc(M[latestAct.who].name)} ${esc(latestAct.text)} · ${esc(latestAct.time)}` : "No recent updates"}</span>
+        </button>
+        ${actOpen ? `<div class="hb-act-mini" id="panel-hb-act">
+          ${recentActs.length ? recentActs.map((a) => `<div class="hb-act-row"><b>${esc(M[a.who].name)}</b><span>${esc(a.text)}</span><time>${esc(a.time)}</time></div>`).join("") : `<p class="h4-rail-empty">No activity yet.</p>`}
+          <a class="link" style="font-size:0.75rem;margin-top:2px" href="#/activity">Open full activity log${ic("chev-right", "ic14")}</a>
+        </div>` : ""}
+      </div>
+    </aside>`;
+  };
+
+  const renderProjBento = (p) => {
+    const pr = P[p], ws = W.filter((w) => w.proj === p), total = ws.length, done = ws.filter((w) => !OPEN(w)).length;
+    const pct = total ? Math.round(done * 100 / total) : 0;
+    const blocked = ws.filter((w) => w.status === "Blocked").length;
+    const healthTone = pr.health === "On track" ? "ok" : pr.health === "At risk" ? "warn" : pr.health === "Off track" ? "bad" : "";
+    const healthBadge = pr.health === "At risk" ? pill("At risk", "amber", "warn") : projPill(p);
+    return `<a class="hb-card" href="#/projects/${p}">
+      <div class="hb-card-top">
+        <span class="hb-card-name">${esc(pr.name)}</span>
+        ${healthBadge}
+      </div>
+      <div class="hb-card-prog">
+        <div class="hb-card-prog-row">
+          <span>${done} of ${total} done${blocked ? ` · <span class="blk">${blocked} blocked</span>` : pr.due ? ` · Due ${esc(pr.due)}` : ""}</span>
+          <strong>${pct}%</strong>
+        </div>
+        <div class="h4-bar ${healthTone}" role="progressbar" aria-label="${esc(pr.name)} progress" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><span style="width:${pct}%"></span></div>
+      </div>
+      <div class="hb-card-foot">
+        ${avStack(projMembers(p), 4)}
+        <span class="hb-card-lead">${leadOf(p) ? esc(leadTxt(p)) : "Open project"}${ic("chev-right", "ic14")}</span>
+      </div>
+    </a>`;
+  };
+
+  return `<div class="hb">
+    <header class="hb-hero">
+      <div class="hb-brief">
+        <div class="hb-eyebrow"><span class="h4-live-dot" aria-hidden="true"></span><span>HQ Office · Online</span></div>
+        <h1 class="hb-title" tabindex="-1">${headline}</h1>
+      </div>
+      ${st !== "error" && st !== "loading" ? `<div class="hb-pills" aria-label="Quick overview">
+        <a class="hb-pill-link" href="#/inbox">${ic("inbox", "ic14 c-amber")}<b>${open.length}</b><span>in Inbox</span></a>
+        <a class="hb-pill-link" href="#/projects">${ic("folder", "ic14 c-indigo")}<b>${projs.length}</b><span>Projects</span></a>
+        <a class="hb-pill-link" href="#/teams/members">${v1 ? ic("user-group", "ic14 muted") : `<span class="h4-live-dot" aria-hidden="true"></span>`}<b>${v1 ? agentsCount : working.length}</b><span>${v1 ? "Agents" : "Active"}</span></a>
+      </div>` : ""}
     </header>
 
-    <div class="h4-flow">
-      <section class="h4-step" aria-labelledby="h-act-now">
-        <div class="h4-step-h">
-          <div class="h4-step-title">
-            <span class="h4-step-num urgent" aria-hidden="true">1</span>
-            <h2 id="h-act-now">Act now</h2>
-            <span class="h4-step-hint">${st === "error" || st === "loading" ? "" : urgentCards.length ? `Time-sensitive · ${urgentCards.length}` : "No expiring deadlines"}</span>
-          </div>
-          <a class="link" href="#/inbox">${st === "error" ? "Open Inbox" : `Open Inbox (${open.length})`}${ic("chev-right", "ic16")}</a>
-        </div>
-        ${body("Loading time-sensitive items…", () => urgentCards.length
-          ? `<div class="h4-urgent-grid">${urgentCards.map(needsCardV4).join("")}</div>`
-          : `<div class="h4-empty-box">${ic("check-circle", "ic48")}<h3>Nothing expiring right now</h3><p>Time-sensitive approvals and blockers appear here first.</p></div>`)}
-      </section>
-
-      <section class="h4-step" aria-labelledby="h-input">
-        <div class="h4-step-h">
-          <div class="h4-step-title">
-            <span class="h4-step-num" aria-hidden="true">2</span>
-            <h2 id="h-input">Awaiting your input</h2>
-            ${st !== "error" && st !== "loading" ? `<span class="h4-count">${inputCards.length}</span>` : ""}
-            <span class="h4-step-hint">Expand any item to review &amp; decide</span>
-          </div>
-        </div>
-        ${body("Loading queue…", () => inputCards.length
-          ? `<div class="h4-acc-list">${inputCards.map(inputAccordionV4).join("")}${remainingInInbox ? `<a class="h4-more-bar" href="#/inbox"><span>${plural(remainingInInbox, "more item", "more items")} waiting in Inbox</span><span class="link">Open Inbox${ic("chev-right", "ic16")}</span></a>` : ""}</div>`
-          : `<p class="h4-rail-empty">No other decisions waiting on you.</p>`)}
-      </section>
-
-      <section class="h4-step" aria-labelledby="h-proj">
-        <div class="h4-step-h">
-          <div class="h4-step-title">
-            <span class="h4-step-num" aria-hidden="true">3</span>
-            <h2 id="h-proj">Portfolio health</h2>
-            ${st !== "error" && st !== "loading" ? `<span class="h4-count">${projs.length}</span>` : ""}
-            <span class="h4-step-hint">Highest risk first</span>
-          </div>
-          <a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>
-        </div>
-        ${body("Loading projects…", () => projs.length
-          ? `<div class="h4-projs">${projs.map(projCardV4).join("")}</div>`
-          : `<div class="h4-empty-box">${ic("folder", "ic48")}<h3>No projects yet</h3><p>Projects group the work toward one goal.</p><button class="btn outline" type="button" data-act="proto" data-v="Create project">${ic("plus", "ic20")}Create project</button></div>`)}
-      </section>
-
-      <section class="h4-step" aria-labelledby="h-pulse">
-        <div class="h4-step-h">
-          <div class="h4-step-title">
-            <span class="h4-step-num" aria-hidden="true">4</span>
-            <h2 id="h-pulse">Organization pulse</h2>
-            <span class="h4-step-hint">Background activity · expand when needed</span>
-          </div>
-        </div>
-        ${st === "loading" ? skel(2, "Loading live pulse…") : st === "error" ? "" : `<div class="h4-pulse-accs">
-          <div class="h4-sec-acc">
-            <div class="h4-sec-acc-bar">
-              <button class="h4-sec-acc-btn" type="button" data-act="v4-acc" data-id="sec-now" aria-expanded="${nowOpen}" aria-controls="panel-sec-now">
-                ${ic("chev-right", "ic16 h4-chev")}
-                <span class="h4-sec-acc-label">${v1 ? ic("signal", "ic14 muted") : `<span class="h4-live-dot" aria-hidden="true"></span>`}Happening now</span>
-                <span class="h4-sec-acc-preview">${nowPreview}</span>
-              </button>
-              <a class="link" href="#/teams/members">Members${ic("chev-right", "ic16")}</a>
-            </div>
-            ${nowOpen ? `<div class="h4-sec-acc-body" id="panel-sec-now">
-              ${v1 ? `<p class="h4-rail-empty">Live status isn't available yet.</p>` : working.length ? `<ul class="h4-now-list" role="list">${working.map((id) => `<li class="h4-now-item linked">${av(id, 32, "tip")}<div class="h4-now-meta"><div class="h4-now-top"><a class="stretch h4-now-name" href="#/members/${id}">${esc(M[id].name)}</a><span class="h4-now-role">${esc(M[id].role)} · ${kindWord(id)}</span></div><p class="h4-now-status">${statusLine(id)}</p></div></li>`).join("")}</ul>` : `<p class="h4-rail-empty">No one is working right now.</p>`}
-            </div>` : ""}
-          </div>
-
-          <div class="h4-sec-acc">
-            <div class="h4-sec-acc-bar">
-              <button class="h4-sec-acc-btn" type="button" data-act="v4-acc" data-id="sec-act" aria-expanded="${actOpen}" aria-controls="panel-sec-act">
-                ${ic("chev-right", "ic16 h4-chev")}
-                <span class="h4-sec-acc-label">${ic("signal", "ic14 c-indigo")}Recent activity</span>
-                <span class="h4-sec-acc-preview">${actPreview}</span>
-              </button>
-              <a class="link" href="#/activity">View all${ic("chev-right", "ic16")}</a>
-            </div>
-            ${actOpen ? `<div class="h4-sec-acc-body" id="panel-sec-act">
-              ${st === "empty" ? `<p class="h4-rail-empty">No activity yet. Hires, work and decisions show up here.</p>` : feedV4(recentActs)}
-            </div>` : ""}
-          </div>
-        </div>`}
-      </section>
+    <div class="hb-stage">
+      ${renderSpotlight()}
+      ${renderAliveTile()}
     </div>
+
+    <section class="hb-proj-sec" aria-labelledby="hb-projs-h">
+      <div class="hb-proj-head">
+        <div class="hb-proj-head-l">
+          <h2 id="hb-projs-h">Projects</h2>
+          ${st !== "error" && st !== "loading" ? `<span>${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}</span>` : ""}
+        </div>
+        <a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>
+      </div>
+      ${st === "loading" ? skel(3, "Loading projects…") : st === "error" ? "" : projs.length
+        ? `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`
+        : `<div class="h4-empty-box">${ic("folder", "ic48")}<h3>No projects yet</h3><p>Projects group the work toward one goal.</p><button class="btn outline" type="button" data-act="proto" data-v="Create project">${ic("plus", "ic20")}Create project</button></div>`}
+    </section>
   </div>`;
 }
 
@@ -3735,6 +4080,7 @@ function render(focus = true) {
   main.innerHTML = html;
   const shell = document.getElementById("agent-shell");
   if (shell) mountAgentProfile(shell.dataset.agent, shell.dataset.tab);
+  else if (r0 === "home") mountHomeOrb();
   renderNav(r);
   renderBanner(r0);
   const titleBase = r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found");
@@ -3797,6 +4143,14 @@ function handle(id, outcome) {
   if (w && it.sets && it.sets[outcome]) w.status = it.sets[outcome];
   else if (w && w.status === "Scoped") w.status = /Approve/.test(outcome) ? "Approved" : "Declined";
   toast(`${outcome}. ${M[it.from].name} has been told.`, "check-circle");
+  if (route()[0] === "home") {
+    const rawQ = IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
+    const q = [...rawQ.filter((i) => !!i.expires), ...rawQ.filter((i) => !i.expires)];
+    const nextIdx = q.findIndex((x, idx) => idx > S.spotIdx && !x.handled);
+    const wrapIdx = q.findIndex((x) => !x.handled);
+    if (nextIdx >= 0) S.spotIdx = nextIdx;
+    else if (wrapIdx >= 0) S.spotIdx = wrapIdx;
+  }
   render(false);
   const tgt = document.getElementById("handled-" + id) || document.querySelector("#main h1");
   if (tgt) { if (!tgt.hasAttribute("tabindex")) tgt.setAttribute("tabindex", "-1"); tgt.focus(); }
@@ -3860,6 +4214,14 @@ document.addEventListener("click", (e) => {
     }
     case "run": S.openRuns[id] = !S.openRuns[id]; render(false); { const b = document.querySelector(`[data-act="run"][data-id="${id}"]`); if (b) b.focus(); } break;
     case "v4-acc": S.v4Open[id] = !S.v4Open[id]; render(false); { const b = document.querySelector(`[data-act="v4-acc"][data-id="${id}"]`); if (b) b.focus(); } break;
+    case "spot-step": {
+      const rawQ = IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
+      const n = rawQ.length || 1;
+      S.spotIdx = (S.spotIdx + Number(v || 1) + n) % n;
+      S.replying = null;
+      render(false);
+    } break;
+    case "spot-go": S.spotIdx = Number(v || 0); S.replying = null; render(false); break;
     case "nav-collapse": S.navCollapsed = !S.navCollapsed; try { localStorage.setItem(NAV_COLLAPSE_STORE, S.navCollapsed ? "1" : "0"); } catch (e) {} applyNavCollapsed(); break;
     case "fav-proj": {
       const idx = S.favProjs.indexOf(id);
