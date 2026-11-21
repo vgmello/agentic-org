@@ -2076,7 +2076,8 @@ a.hb-card-lead:hover { color: var(--hb-ink); }
 .hb-tseg.agents { background: linear-gradient(90deg, #38BDF8 0%, #7DD3FC 100%); }
 .hb-tseg.ci { background: linear-gradient(90deg, #10B981 0%, #34D399 100%); }
 .hb-tseg.humans { background: linear-gradient(90deg, #EAB308 0%, #F5C76B 100%); }
-.hb-tseg.queued { background: linear-gradient(90deg, #FB7185 0%, #FDA4AF 100%); box-shadow: inset 0 1px 0 rgba(255, 228, 230, .28); }
+.hb-tseg.queued { background: linear-gradient(90deg, #7C3AED 0%, #A78BFA 100%); box-shadow: inset 0 1px 0 rgba(221, 214, 254, .32); }
+.hb-tseg.queued.is-high { background: linear-gradient(90deg, #FB7185 0%, #FDA4AF 100%); box-shadow: inset 0 1px 0 rgba(255, 228, 230, .28); }
 .hb-time-legend { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 22px; }
 .hb-tleg {
   display: inline-flex; align-items: center; gap: 6px;
@@ -2088,13 +2089,15 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 .hb-tleg.agents .hb-tleg-dot { background: #38BDF8; }
 .hb-tleg.ci .hb-tleg-dot { background: #34D399; }
 .hb-tleg.humans .hb-tleg-dot { background: #F5C76B; }
-.hb-tleg.queued .hb-tleg-dot { background: #FB7185; }
+.hb-tleg.queued .hb-tleg-dot { background: #A78BFA; }
+.hb-tleg.queued.is-high .hb-tleg-dot { background: #FB7185; }
 .hb-tleg strong { font-size: 0.9375rem; font-weight: 650; font-variant-numeric: tabular-nums; }
 .hb-tleg .hrs { font-size: 0.75rem; color: var(--hb-dim); font-variant-numeric: tabular-nums; }
 .hb-tleg.agents strong { color: #7DD3FC; }
 .hb-tleg.ci strong { color: #6EE7B7; }
 .hb-tleg.humans strong { color: #F5C76B; }
-.hb-tleg.queued strong { color: #FDA4AF; }
+.hb-tleg.queued strong { color: #C4B5FD; }
+.hb-tleg.queued.is-high strong { color: #FDA4AF; }
 .hb-skel-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .hb-skel-card { padding: 18px; border-radius: 16px; background: var(--hb-surface); box-shadow: var(--hb-shadow); display: flex; flex-direction: column; gap: 12px; }
 .hb-time-foot {
@@ -3543,6 +3546,7 @@ function pageHome() {
       const ciPct = Math.round(ciH * 100 / totalHrs);
       const humanPct = Math.round(humanH * 100 / totalHrs);
       const queuedPct = Math.max(1, 100 - agentPct - ciPct - humanPct);
+      const queuedHighCls = queuedPct > 30 ? " is-high" : "";
       const constraint = queuedPct >= 40
         ? `${queuedPct}% of open task time is waiting for an agent. Reconnecting the Build box office and activating ${idleSpecsN} idle specialists will speed up delivery.`
         : humanPct >= 25
@@ -3557,13 +3561,13 @@ function pageHome() {
           <a class="hb-tseg agents" href="#/teams/members" style="width:${agentPct}%" aria-label="Agents working: ${agentH.toFixed(1)}h (${agentPct}%)" title="Agents working: ${agentH.toFixed(1)}h (${agentPct}%)"></a>
           <a class="hb-tseg ci" href="#/activity" style="width:${ciPct}%" aria-label="Automated checks: ${ciH.toFixed(1)}h (${ciPct}%)" title="Automated checks: ${ciH.toFixed(1)}h (${ciPct}%)"></a>
           <a class="hb-tseg humans" href="#/inbox" style="width:${humanPct}%" aria-label="Waiting on you: ${humanH.toFixed(1)}h (${humanPct}%)" title="Waiting on you: ${humanH.toFixed(1)}h (${humanPct}%)"></a>
-          <a class="hb-tseg queued" href="#/work" style="width:${queuedPct}%" aria-label="Waiting for an agent: ${queuedH.toFixed(1)}h (${queuedPct}%)" title="Waiting for an agent: ${queuedH.toFixed(1)}h (${queuedPct}%)"></a>
+          <a class="hb-tseg queued${queuedHighCls}" href="#/work" style="width:${queuedPct}%" aria-label="Waiting for an agent: ${queuedH.toFixed(1)}h (${queuedPct}%)" title="Waiting for an agent: ${queuedH.toFixed(1)}h (${queuedPct}%)"></a>
         </div>
         <div class="hb-time-legend">
           <a class="hb-tleg agents" href="#/teams/members"><span class="hb-tleg-dot" aria-hidden="true"></span><strong>${agentPct}%</strong><span class="hrs">${agentH.toFixed(1)}h</span><span>Agents working</span></a>
           <a class="hb-tleg ci" href="#/activity"><span class="hb-tleg-dot" aria-hidden="true"></span><strong>${ciPct}%</strong><span class="hrs">${ciH.toFixed(1)}h</span><span>Automated checks</span></a>
           <a class="hb-tleg humans" href="#/inbox"><span class="hb-tleg-dot" aria-hidden="true"></span><strong>${humanPct}%</strong><span class="hrs">${humanH.toFixed(1)}h</span><span>Waiting on you</span></a>
-          <a class="hb-tleg queued" href="#/work"><span class="hb-tleg-dot" aria-hidden="true"></span><strong>${queuedPct}%</strong><span class="hrs">${queuedH.toFixed(1)}h</span><span>Waiting for an agent</span></a>
+          <a class="hb-tleg queued${queuedHighCls}" href="#/work"><span class="hb-tleg-dot" aria-hidden="true"></span><strong>${queuedPct}%</strong><span class="hrs">${queuedH.toFixed(1)}h</span><span>Waiting for an agent</span></a>
         </div>
         <div class="hb-time-foot">
           <p class="hb-time-note">${esc(constraint)}</p>
