@@ -89,7 +89,6 @@
 	let filters = $state<QueueFilters>(defaultFilters());
 	let savedExplicit = $state(false);
 	let showOverride = $state<ShowView | null>(null);
-	let tablist = $state<HTMLDivElement | null>(null);
 
 	let captureOpen = $state(false);
 	let captureType = $state<TaskType>('task');
@@ -146,7 +145,7 @@
 		if (next === undefined) return;
 		event.preventDefault();
 		selectTab(tabs[next].id);
-		tablist
+		(event.currentTarget as HTMLElement | null)?.parentElement
 			?.querySelector<HTMLButtonElement>(`#${CSS.escape(`${uid}-tab-${tabs[next].id}`)}`)
 			?.focus();
 	}
@@ -284,7 +283,7 @@
 		<div class="flex min-w-0 flex-col gap-5 {gutters} py-6">
 			<!-- Top controls: Type tabs + Project actions / Show menu / Board-List toggle -->
 			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-2">
-				<div bind:this={tablist} role="tablist" aria-label="Work" class="flex flex-wrap gap-x-1">
+				<div role="tablist" aria-label="Work" class="flex flex-wrap gap-x-1">
 					{#each tabs as t, index (t.id)}
 						{@const selected = activeTab === t.id && (!isOrgScope || showMode === 'mine')}
 						<button
@@ -447,7 +446,7 @@
 							{/each}
 						</nav>
 
-						{#if !q.viewer.employee && (filters.saved === 'owned_by_my_team' || filters.saved === 'assigned_to_my_team' || filters.saved === 'assigned_to_me' || filters.saved === 'reported_by_me' || (isOrgScope && showMode === 'mine'))}
+						{#if !q.viewer.employee && (filters.saved === 'owned_by_my_team' || filters.saved === 'assigned_to_my_team' || filters.saved === 'assigned_to_me' || filters.saved === 'reported_by_me' || scopeMine)}
 							<p class="text-xs/5 text-fg-muted" data-testid="no-employee-note">
 								This account has no employee record, so "my" filters match nothing. Choose All or
 								filter by team or person.

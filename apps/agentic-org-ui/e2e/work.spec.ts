@@ -366,6 +366,9 @@ test('STATES & LAYOUT: unsupported (no Retry), error, empty, stale, not found, a
 	await expect(page.getByTestId('no-employee-note')).toBeVisible();
 	await expect(page.getByTestId('work-card')).toHaveCount(0);
 	await expect(page.getByTestId('work-row')).toHaveCount(0);
+	// Choosing All clears no-employee-note once widened past Mine scope.
+	await page.getByTestId('saved-filters').locator('[data-filter=all]').click();
+	await expect(page.getByTestId('no-employee-note')).toHaveCount(0);
 
 	// Unsupported private notes & unsupported cost block on /work/T-A40 -> no Retry button.
 	await visit(page, '/work/T-A40?mock=notes-unsupported,cost-unsupported');
@@ -407,4 +410,196 @@ test('STATES & LAYOUT: unsupported (no Retry), error, empty, stale, not found, a
 	await page.addStyleTag({ content: 'html { font-size: 200%; }' });
 	await expect(page.getByTestId('work-detail-header')).toBeVisible();
 	await noSidewaysScroll(page);
+});
+
+test('PRIVATE NOTES (TASK-67 / ADR-0031): per-agent grouped pane, visibility copy, read-only agent notes, own CRUD + conflict, stale/viewer/no-employee, 320px/200% zoom', async ({
+	page
+}) => {
+	await open(page, '/work/T-A40');
+
+	// Keyboard arrow-key navigation switches from Shared discussion tab to Private notes tab.
+	const sharedTab = page.getByRole('tab', { name: /^Shared discussion/ });
+	const privateTab = page.getByRole('tab', { name: 'Private notes' });
+	await sharedTab.focus();
+	await page.keyboard.press('ArrowRight');
+	await expect(privateTab).toBeFocused();
+	await expect(privateTab).toHaveAttribute('aria-selected', 'true');
+
+	const pane = page.getByTestId('private-notes-pane');
+	await expect(pane).toBeVisible();
+
+	// Plain-language visibility notice and zero internal jargon.
+	await expect(pane.getByTestId('private-notes-audience')).toContainText(
+		'Visible to people and the author; hidden from other agents'
+	);
+	const paneText = (await pane.textContent()) ?? '';
+	expect(paneText).not.toMatch(/ADR-0031|org-store|PN-0|task-notes\.db/i);
+
+	// Grouped by author: signed-in person (Alex Kim) first, then agents (Sam Okafor, Noor Haddad), then Avery Stone.
+	const groups = pane.getByTestId('private-note-author-group');
+	await expect(groups).toHaveCount(4);
+	await expect(groups.nth(0)).toHaveAttribute('data-author-id', 'you');
+	await expect(groups.nth(1)).toHaveAttribute('data-author-id', 'sam');
+	await expect(groups.nth(2)).toHaveAttribute('data-author-id', 'noor');
+	await expect(groups.nth(3)).toHaveAttribute('data-author-id', 'avery');
+
+	// Agent groups display Agent badge, Read-only badge, edited indicator, and ZERO write controls.
+	const samGroup = pane.locator('[data-testid=private-note-author-group][data-author-id=sam]');
+	await expect(samGroup.getByTestId('private-note-author-kind')).toHaveText('Agent');
+	await expect(samGroup.getByTestId('private-note-readonly-badge')).toContainText('Read-only');
+	await expect(samGroup.getByTestId('private-note')).toHaveCount(2);
+	await expect(samGroup.getByTestId('private-note-edited')).toContainText('Edited');
+	await expect(samGroup.getByRole('button', { name: /^Edit$/ })).toHaveCount(0);
+	await expect(samGroup.getByRole('button', { name: /^Delete$/ })).toHaveCount(0);
+	await expect(samGroup.getByRole('button', { name: /Publish/ })).toHaveCount(0);
+
+	const noorGroup = pane.locator('[data-testid=private-note-author-group][data-author-id=noor]');
+	await expect(noorGroup.getByTestId('private-note-author-kind')).toHaveText('Agent');
+	await expect(noorGroup.getByRole('button', { name: /^Edit$/ })).toHaveCount(0);
+	await expect(noorGroup.getByRole('button', { name: /^Delete$/ })).toHaveCount(0);
+	await expect(noorGroup.getByRole('button', { name: /Publish/ })).toHaveCount(0);
+
+	// Other person's group (Avery Stone) is also strictly read-only.
+	const averyGroup = pane.locator('[data-testid=private-note-author-group][data-author-id=avery]');
+	await expect(averyGroup.getByTestId('private-note-author-kind')).toHaveText('Person');
+	await expect(averyGroup.getByRole('button', { name: /^Edit$/ })).toHaveCount(0);
+	await expect(averyGroup.getByRole('button', { name: /^Delete$/ })).toHaveCount(0);
+	await expect(averyGroup.getByRole('button', { name: /Publish/ })).toHaveCount(0);
+
+	// Author filter pills isolate one agent's private notes cleanly, then restore All authors.
+	const filterBar = pane.getByTestId('private-notes-author-filter');
+	await filterBar.locator('[data-author-filter=sam]').click();
+	await expect(groups).toHaveCount(1);
+	await expect(groups.first()).toHaveAttribute('data-author-id', 'sam');
+	await filterBar.getByRole('button', { name: /All authors/ }).click();
+	await expect(groups).toHaveCount(4);
+
+	// Author group collapse & expand disclosure works accessibly (with distinct author-qualified name).
+	const samToggle = samGroup.getByRole('button', { name: /Sam Okafor: 2 notes/ });
+	await expect(samToggle).toHaveAttribute('aria-expanded', 'true');
+	await samToggle.click();
+	await expect(samToggle).toHaveAttribute('aria-expanded', 'false');
+	await expect(samGroup.getByTestId('private-note')).toHaveCount(0);
+	await samToggle.click();
+	await expect(samToggle).toHaveAttribute('aria-expanded', 'true');
+	await expect(samGroup.getByTestId('private-note')).toHaveCount(2);
+
+	// Human creates, edits, and deletes their own private note.
+	await pane.getByLabel(/Add a private note/).fill('Initial private check');
+	await pane.getByRole('button', { name: 'Save private note' }).click();
+	const createdNote = pane.getByTestId('private-note').filter({ hasText: 'Initial private check' });
+	await expect(createdNote).toBeVisible();
+	const createdNoteId = await createdNote.getAttribute('data-note-id');
+	expect(createdNoteId).toBeTruthy();
+	const createdNoteItem = pane.locator(`[data-note-id="${createdNoteId}"]`);
+
+	await createdNoteItem.getByRole('button', { name: 'Edit' }).click();
+	await createdNoteItem.getByLabel('Edit private note').fill('Updated private check after review');
+	await createdNoteItem.getByRole('button', { name: 'Save note' }).click();
+	await expect(createdNoteItem).toContainText('Updated private check after review');
+	await expect(createdNoteItem.getByTestId('private-note-edited')).toContainText('Edited');
+
+	await createdNoteItem.getByRole('button', { name: 'Delete' }).click();
+	const deleteDialog = page.getByRole('dialog', { name: 'Delete this private note?' });
+	await expect(deleteDialog).toBeVisible();
+	await deleteDialog.getByRole('button', { name: 'Delete note' }).click();
+	await expect(createdNoteItem).toHaveCount(0);
+
+	// Regression: deleting the last note under an active author filter resets filter to All authors
+	// so adding a new note for that author later stays on All authors instead of snapping back.
+	await filterBar.locator('[data-author-filter=you]').click();
+	await expect(groups).toHaveCount(1);
+	await expect(groups.first()).toHaveAttribute('data-author-id', 'you');
+	const seedOwnNote = pane.locator('[data-note-id="pn-40-1"]');
+	await seedOwnNote.getByRole('button', { name: 'Delete' }).click();
+	await expect(deleteDialog).toBeVisible();
+	await deleteDialog.getByRole('button', { name: 'Delete note' }).click();
+	await expect(groups).toHaveCount(3);
+	await expect(filterBar.getByRole('button', { name: /All authors/ })).toHaveAttribute(
+		'aria-pressed',
+		'true'
+	);
+	await pane.getByLabel(/Add a private note/).fill('Fresh note after filter reset');
+	await pane.getByRole('button', { name: 'Save private note' }).click();
+	await expect(groups).toHaveCount(4);
+	await expect(filterBar.getByRole('button', { name: /All authors/ })).toHaveAttribute(
+		'aria-pressed',
+		'true'
+	);
+
+	// Revision conflict recovery on edit preserves draft text and retries cleanly after reload.
+	await visit(page, '/work/T-A40?mock=notes-conflict');
+	await page.getByRole('tab', { name: 'Private notes' }).click();
+	const mySeedNote = page.locator('[data-note-id="pn-40-1"]');
+	await mySeedNote.getByRole('button', { name: 'Edit' }).click();
+	await mySeedNote
+		.getByLabel('Edit private note')
+		.fill('Double-check Stripe webhook retries + idempotency');
+	await mySeedNote.getByRole('button', { name: 'Save note' }).click();
+	await expect(mySeedNote.getByRole('alert')).toContainText('changed in another session');
+	await mySeedNote.getByRole('button', { name: 'Reload latest revision' }).click();
+	await expect(mySeedNote.getByRole('alert')).toHaveCount(0);
+	await expect(mySeedNote.getByLabel('Edit private note')).toHaveValue(
+		'Double-check Stripe webhook retries + idempotency'
+	);
+	await mySeedNote.getByRole('button', { name: 'Save note' }).click();
+	await expect(mySeedNote).toContainText('Double-check Stripe webhook retries + idempotency');
+
+	// Stale read-only mode hides composer and all edit/delete/publish buttons while keeping notes readable.
+	await visit(page, '/work/T-A40?mock=stale');
+	await page.getByRole('tab', { name: 'Private notes' }).click();
+	await expect(page.getByTestId('private-notes-stale-note')).toBeVisible();
+	await expect(page.getByTestId('private-note-composer')).toHaveCount(0);
+	await expect(
+		page.getByTestId('private-notes-pane').getByRole('button', { name: /^Edit$/ })
+	).toHaveCount(0);
+	await expect(
+		page.getByTestId('private-notes-pane').getByRole('button', { name: /^Delete$/ })
+	).toHaveCount(0);
+	await expect(
+		page.getByTestId('private-notes-pane').getByRole('button', { name: /Publish/ })
+	).toHaveCount(0);
+
+	// Viewer-only role & no-employee account hide composer and all write buttons while keeping notes readable.
+	for (const mode of ['viewer', 'no-employee']) {
+		await visit(page, `/work/T-A40?mock=${mode}`);
+		await page.getByRole('tab', { name: 'Private notes' }).click();
+		await expect(page.getByTestId('private-notes-readonly-reason')).toBeVisible();
+		await expect(page.getByTestId('private-note-composer')).toHaveCount(0);
+		await expect(
+			page.getByTestId('private-notes-pane').getByRole('button', { name: /^Edit$/ })
+		).toHaveCount(0);
+		await expect(
+			page.getByTestId('private-notes-pane').getByRole('button', { name: /^Delete$/ })
+		).toHaveCount(0);
+		await expect(
+			page.getByTestId('private-notes-pane').getByRole('button', { name: /Publish/ })
+		).toHaveCount(0);
+	}
+
+	// Unsupported (no Retry button) and Error (with Retry button) resource states.
+	await visit(page, '/work/T-A40?mock=notes-unsupported');
+	await page.getByRole('tab', { name: 'Private notes' }).click();
+	await expect(page.getByTestId('private-notes-unsupported')).toContainText(
+		'Not available in this version'
+	);
+	await expect(
+		page.getByTestId('private-notes-pane').getByRole('button', { name: /Retry/ })
+	).toHaveCount(0);
+
+	await visit(page, '/work/T-A40?mock=notes-fails');
+	await page.getByRole('tab', { name: 'Private notes' }).click();
+	await expect(page.getByTestId('private-notes-error')).toBeVisible();
+	await expect(
+		page.getByTestId('private-notes-pane').getByRole('button', { name: 'Retry' })
+	).toBeVisible();
+
+	// 320 px narrow viewport with 200% text scale while Private notes pane is open -> zero horizontal overflow.
+	await page.setViewportSize({ width: 320, height: 800 });
+	await visit(page, '/work/T-A40');
+	await page.addStyleTag({ content: 'html { font-size: 200%; }' });
+	await page.getByRole('tab', { name: 'Private notes' }).click();
+	await expect(page.getByTestId('private-notes-list')).toBeVisible();
+	await noSidewaysScroll(page);
+	await shot(page, 'work-private-notes-320-200pct');
 });

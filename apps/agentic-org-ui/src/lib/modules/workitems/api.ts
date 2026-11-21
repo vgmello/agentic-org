@@ -12,6 +12,7 @@ import type {
 	NewTask,
 	Priority,
 	PrivateNote,
+	PrivateNotesFeed,
 	Severity,
 	TaskCost,
 	TaskDetail,
@@ -99,18 +100,42 @@ export interface WorkItemsApi {
 
 	comment(organizationId: string, taskId: string, body: string): Promise<void>;
 
-	/** The private store, separate from the task (PN-01..06). Agents never read another author's notes. */
-	notes(organizationId: string, taskId: string): Promise<PrivateNote[]>;
-	addNote(organizationId: string, taskId: string, body: string): Promise<void>;
+	/**
+	 * Separate private-note service (`/api/v1/organizations/{org}/tasks/{task}/private-notes`, PN-01..06).
+	 * Returns all authors' private notes for a person who can read the task (other authors read-only),
+	 * or only the caller's own notes for an agent. Never mixed into shared history or task counts.
+	 */
+	notes(organizationId: string, taskId: string): Promise<PrivateNotesFeed>;
+	/** Creates a private note for the bound actor; `operationId` makes retries idempotent. */
+	addNote(
+		organizationId: string,
+		taskId: string,
+		change: { body: string; operationId: string }
+	): Promise<PrivateNote>;
+	/** Updates the author's own private note at `expectedRevision`; rejects stale revisions with `conflict`. */
 	editNote(
 		organizationId: string,
 		taskId: string,
 		noteId: string,
-		change: { body: string; expectedRevision: number }
+		change: { body: string; expectedRevision: number; operationId: string }
+	): Promise<PrivateNote>;
+	/** Deletes the author's own private note at `expectedRevision` (tombstoned in the private store). */
+	deleteNote(
+		organizationId: string,
+		taskId: string,
+		noteId: string,
+		change: { expectedRevision: number; operationId: string }
 	): Promise<void>;
-	deleteNote(organizationId: string, taskId: string, noteId: string): Promise<void>;
-	/** Publishes a copy as a new shared comment after the author confirmed it; the private original stays. */
-	publishNote(organizationId: string, taskId: string, noteId: string): Promise<void>;
+	/**
+	 * Publishes a copy of the author's note at `expectedRevision` as a new shared comment after
+	 * explicit audience confirmation; the private original stays private.
+	 */
+	publishNote(
+		organizationId: string,
+		taskId: string,
+		noteId: string,
+		change: { expectedRevision: number; operationId: string }
+	): Promise<void>;
 
 	markFixed(
 		organizationId: string,
