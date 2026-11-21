@@ -147,10 +147,9 @@ Project investment/token totals are derived from [usage records](10-usage-and-co
 Milestones and releases store no status of their own. Whether one is done is derived from task status ([document 03](03-features-and-work.md)):
 
 - A milestone is done when it has at least one task and every task assigned to it is finished.
-- A release that has milestones is done when every one of its milestones is done.
-- A release that has no milestones is done when its content manifest lists at least one task and every listed task is finished.
+- A release is done when it has at least one task across the deduplicated union of its milestone tasks and its explicit content manifest (`release_tasks`, matching `task_releases`), every such task is finished, and every milestone belonging to the release is done.
 
-A task is finished when its status is `done` or `cancelled`; a cancelled task counts as done. An empty milestone or release is not done, and a release with a milestone that has no tasks is not done either. A task that was deleted but is still listed in a release's manifest is ignored. The views `milestone_progress` and `release_progress` compute this and return task counts and finished counts for showing progress. The counts follow what completion follows: for a release with milestones they are the tasks of its milestones, and for a release without milestones they are its manifest tasks. Nothing is stored, so reopening a task makes its milestone and release not done again without any other write.
+A task is finished when its status is `done` or `cancelled`; a cancelled task counts as done. An empty milestone or release is not done, and a release with a milestone that has no tasks is not done either. A task that was deleted but is still listed in a release's manifest is ignored. The views `milestone_progress` and `release_progress` compute this and return task counts and finished counts for showing progress from the single deduplicated membership set (`task_releases`) so progress and release membership never disagree. Nothing is stored, so reopening a task makes its milestone and release not done again without any other write.
 
 ## Durable project files
 
@@ -411,36 +410,33 @@ LEFT JOIN tasks t ON t.organization_id = m.organization_id AND t.milestone_id = 
 GROUP BY m.organization_id, m.id;
 
 CREATE VIEW release_progress AS
+WITH release_member_tasks AS (
+  SELECT tr.organization_id, tr.release_id,
+    COUNT(t.id) AS task_count,
+    COALESCE(SUM(t.status IN ('done', 'cancelled')), 0) AS done_task_count
+  FROM task_releases tr
+  JOIN tasks t ON t.organization_id = tr.organization_id AND t.id = tr.task_id
+  GROUP BY tr.organization_id, tr.release_id
+),
+release_milestones AS (
+  SELECT organization_id, release_id,
+    COUNT(*) AS milestone_count,
+    MIN(is_done) AS all_milestones_done
+  FROM milestone_progress
+  GROUP BY organization_id, release_id
+)
 SELECT r.organization_id, r.id AS release_id,
-  (SELECT COUNT(*) FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id) AS milestone_count,
-  CASE
-    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
-      THEN (SELECT COALESCE(SUM(p.task_count), 0) FROM milestone_progress p
-            WHERE p.organization_id = r.organization_id AND p.release_id = r.id)
-    ELSE (SELECT COUNT(*) FROM release_tasks rt
-            JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-          WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
-  END AS task_count,
-  CASE
-    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
-      THEN (SELECT COALESCE(SUM(p.done_task_count), 0) FROM milestone_progress p
-            WHERE p.organization_id = r.organization_id AND p.release_id = r.id)
-    ELSE (SELECT COUNT(*) FROM release_tasks rt
-            JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-          WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status IN ('done', 'cancelled'))
-  END AS done_task_count,
-  CASE
-    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
-      THEN NOT EXISTS (SELECT 1 FROM milestone_progress p
-                       WHERE p.organization_id = r.organization_id AND p.release_id = r.id AND NOT p.is_done)
-    ELSE EXISTS (SELECT 1 FROM release_tasks rt
-                 JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-                 WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
-      AND NOT EXISTS (SELECT 1 FROM release_tasks rt
-                      JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-                      WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status NOT IN ('done', 'cancelled'))
-  END AS is_done
-FROM releases r;
+  COALESCE(rm.milestone_count, 0) AS milestone_count,
+  COALESCE(rt.task_count, 0) AS task_count,
+  COALESCE(rt.done_task_count, 0) AS done_task_count,
+  (
+    COALESCE(rt.task_count, 0) > 0
+    AND COALESCE(rt.task_count, 0) = COALESCE(rt.done_task_count, 0)
+    AND COALESCE(rm.all_milestones_done, 1) = 1
+  ) AS is_done
+FROM releases r
+LEFT JOIN release_milestones rm ON rm.organization_id = r.organization_id AND rm.release_id = r.id
+LEFT JOIN release_member_tasks rt ON rt.organization_id = r.organization_id AND rt.release_id = r.id;
 
 CREATE TABLE documents (
   organization_id TEXT NOT NULL REFERENCES organizations(id),

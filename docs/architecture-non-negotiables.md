@@ -68,7 +68,10 @@ These hold across every increment. Each names the document that owns its detail.
    lead's permission to hire, and each is given only by someone already above
    the holder. No other field on a record grants authority, and nobody grants any to
    themselves. Only someone who may hire can hire; there is no approval step. Any
-   active employee changes tasks.
+   active employee changes tasks. Work-instruction precedence (owner, then
+   `reports_to_employee_id` chain, then ancestor team leads) is defined in
+   [document 04](design/organization-data/04-agent-structure.md#who-an-agent-takes-instructions-from)
+   and never grants extra office call authority.
    ([ADR-0029](adr/0029-only-who-may-hire-hires.md),
    [ADR-0031](adr/0031-any-employee-changes-tasks.md))
 10. **Agents run headless, apart from the data.** The office starts each agent as a

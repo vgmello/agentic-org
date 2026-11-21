@@ -12,7 +12,7 @@ Usage for a task follows immutable/corrected task attribution in the ledger, acr
 
 ## Policies, periods and the one-time extension
 
-`budgets` fixes target, period kind and selected IANA timezone. Record its provenance as `time_zone_source: owner_account` (the time zone of the account of the organization owner, [document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)) with the protected host account reference in `time_zone_subject_ref`, or `hq` with a null reference. Never silently choose UTC when the selected owner/HQ zone is unknown; require it before creating periods. This snapshot keeps a period stable across office moves. A later owner-zone change requires an explicit boundary that keeps old period keys/bounds, not rewriting existing consumption. `budget_policy_versions` is append-only; `current_revision` selects the current policy. Changing only the comment or refreshing the same value must not re-arm controls. A genuinely changed limit/unit creates a new revision and re-arms the one-time extension, as the existing UX requires. It does not erase prior events, periods or spending. Clearing also creates a revision. Policy updates and current-revision changes commit together with actor-bound idempotent mutation receipts. Command checks enforce authorized actions and meaningful revisions; SQL does not authenticate actors. `changed_by_id` is the employee who made the change.
+`budgets` fixes target and period kind, and holds the current effective `time_zone`, `time_zone_source`, and `time_zone_subject_ref` matching `current_revision` in `budget_policy_versions`. Record its provenance as `time_zone_source: owner_account` (the time zone of the account of the organization owner, [document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)) with the protected host account reference in `time_zone_subject_ref`, or `hq` with a null reference. Never silently choose UTC when the selected owner/HQ zone is unknown; require it before creating periods. This snapshot keeps a period stable across office moves. A later owner-zone change records a new immutable revision in `budget_policy_versions` carrying the updated `time_zone`, `time_zone_source`, and `time_zone_subject_ref`, advances `budgets.current_revision` and `budgets.time_zone*` atomically, and establishes an explicit boundary for subsequent periods while keeping existing historical `budget_periods` keys and UTC bounds unchanged. Changing timezone in place without advancing `current_revision` is refused by SQL triggers. `budget_policy_versions` is append-only; `current_revision` selects the current policy. Changing only the comment or refreshing the same value must not re-arm controls. A genuinely changed limit/unit creates a new revision and re-arms the one-time extension, as the existing UX requires. It does not erase prior events, periods or spending. Clearing also creates a revision. Policy updates and current-revision changes commit together with actor-bound idempotent mutation receipts. Command checks enforce authorized actions and meaningful revisions; SQL does not authenticate actors. `changed_by_id` is the employee who made the change.
 
 Task/release periods have period_key `lifetime` and NULL bounds. Agent periods use calendar dates/months in the selected timezone (the owner account's IANA zone; HQ's zone while the account has none), with stored inclusive UTC starts_at and exclusive ends_at; use a timezone library, including DST. The key is local `YYYY-MM-DD` or `YYYY-MM`, not a rolling 24-hour/30-day duration. One row exists for each budget/period key. On value/unit changes within a period, point that period at the new policy revision, re-evaluate the same whole-period consumption in the selected unit and reset extension_used; never zero used_amount. Preserve previous snapshots in event payloads. New periods start with the current policy, no used extension and a new ledger evaluation. Never edit timezone/target/period-kind to shift spent work into a fresh period.
 
@@ -124,11 +124,15 @@ CREATE TABLE budget_policy_versions (
   state TEXT NOT NULL CHECK (state IN ('active','cleared')),
   unit TEXT NOT NULL CHECK (unit IN ('micro_usd','tokens')),
   limit_amount INTEGER CHECK (limit_amount>0),
+  time_zone TEXT NOT NULL DEFAULT 'UTC',
+  time_zone_source TEXT NOT NULL DEFAULT 'hq' CHECK (time_zone_source IN ('owner_account','hq')),
+  time_zone_subject_ref TEXT,
   changed_by_id TEXT NOT NULL,
   changed_at TEXT NOT NULL,
   reason TEXT,
   PRIMARY KEY (organization_id,budget_id,revision),
   CHECK ((state='active' AND limit_amount IS NOT NULL) OR (state='cleared' AND limit_amount IS NULL)),
+  CHECK ((time_zone_source='owner_account')=(time_zone_subject_ref IS NOT NULL)),
   FOREIGN KEY (organization_id,budget_id) REFERENCES budgets(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,changed_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -214,8 +218,10 @@ CREATE TABLE budget_holds (
 ) STRICT;
 CREATE TRIGGER budget_target_immutable BEFORE UPDATE ON budgets
 WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kind<>OLD.scope_kind OR NEW.task_id IS NOT OLD.task_id
- OR NEW.agent_id IS NOT OLD.agent_id OR NEW.release_id IS NOT OLD.release_id OR NEW.period_kind<>OLD.period_kind OR NEW.time_zone<>OLD.time_zone OR NEW.time_zone_source<>OLD.time_zone_source OR NEW.time_zone_subject_ref IS NOT OLD.time_zone_subject_ref
+ OR NEW.agent_id IS NOT OLD.agent_id OR NEW.release_id IS NOT OLD.release_id OR NEW.period_kind<>OLD.period_kind
  OR NEW.current_revision<OLD.current_revision
+ OR ((NEW.time_zone<>OLD.time_zone OR NEW.time_zone_source<>OLD.time_zone_source OR NEW.time_zone_subject_ref IS NOT OLD.time_zone_subject_ref)
+     AND NEW.current_revision<=OLD.current_revision)
 BEGIN SELECT RAISE(ABORT,'budget scope or revision changed unsafely'); END;
 CREATE TRIGGER budget_agent_insert BEFORE INSERT ON budgets
 WHEN NEW.agent_id IS NOT NULL AND EXISTS (SELECT 1 FROM employees WHERE organization_id=NEW.organization_id AND id=NEW.agent_id AND kind<>'agent')
@@ -288,6 +294,9 @@ erDiagram
         TEXT state "required"
         TEXT unit "required"
         INTEGER limit_amount "optional"
+        TEXT time_zone "required"
+        TEXT time_zone_source "required"
+        TEXT time_zone_subject_ref "optional"
         TEXT changed_by_id FK "required"
         TEXT changed_at "required"
         TEXT reason "optional"

@@ -235,12 +235,13 @@ organization Git, from copied organization projections, from every export and fr
 office's projection, which records only its hash. The office reads it from its file at
 opening and when the recovery package is read.
 
-**What leaves an office.** The replication outbox, Git publication and any export ship
-only file changes under `durable/state/`. A change under `durable/local/` or any other
-protected tree (`authority/`, `accounting/`, `messaging/`, `recovery/`, `budgets/`,
-`private/`) never leaves the office that wrote it, whichever entry it is in; the
-creation entry is read with its `local/` file left out. Replication (S1) inherits a
-test of this rule.
+**What leaves an office.** Storage trees under `<data-root>/<organization-id>/durable/` fall into three explicit movement classes:
+
+1. **Git-published & state outbox (`durable/state/`):** Shared organization, project, task, document, and feature state. Only `durable/state/` is published to organization Git or included in generic state exports; creation Entry 1 is read with its `local/` CA key file excluded.
+2. **Office-to-HQ / peer replicated over Organization-CA mTLS sync (never Git):** Protected operational streams replicated exclusively over authenticated office-to-office sync—`durable/messaging/` ([document 15](15-messaging-and-chat.md)), `durable/accounting/` ([document 10](10-usage-and-cost-accounting.md)), and selected `durable/authority/` coordination state ([documents 06, 11, 17](11-model-profiles-and-agent-execution.md)).
+3. **Strictly node-local (never leaves the writing office):** `durable/local/`, `durable/recovery/`, `durable/private/` (HQ-only private task notes), and `durable/budgets/` (HQ-owned protected budget policies/periods).
+
+Replication (S1) inherits a test verifying that neither Git publication nor state outbox export ever ships files outside `durable/state/`, and that strictly node-local trees never leave the writing office over any channel.
 
 **The CA key record's one form.** One JSON object, keys in this order, lowercase hex,
 no whitespace, and a final newline; a file in any other form is refused, so the exact

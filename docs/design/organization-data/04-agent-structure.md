@@ -105,8 +105,9 @@ Whoever signs in is a person (owner, 2026-11-17). An account is held by the host
 | Invite a person to sign in, issue a new link, remove access | The owner or the administrator |
 | Hand over ownership | The owner |
 | Hire an agent into a team | The owner, or the administrator acting in the organization, into any team; an employee whose `may_hire` is on, into the teams it leads and the teams under them ([below](#who-may-hire)) |
-| Turn an employee's `may_hire` on or off | The owner, or a person above that employee in the hierarchy |
-| Pause or resume an agent, or give it an instruction it must follow | The owner, or a person above the agent in the hierarchy |
+| Turn an employee's `may_hire` on or off | The owner, or a person who is an ancestor team lead above that employee |
+| Pause or resume an agent | The owner, or a person who is an ancestor team lead above the agent |
+| Give an agent a work instruction it must follow | Governed by the [instruction precedence rule](#who-an-agent-takes-instructions-from) (owner, then reporting line `reports_to_employee_id`, then ancestor team lead) |
 | See a project's costs; set or change a task budget in it | The owner, or the project's manager: the lead of the project's accountable team. "Project manager" in the cost and budget documents means that position, not an access role |
 
 ## The HR lead and how agents are onboarded
@@ -150,7 +151,18 @@ A hire request is written at HQ as `teams/<team-id>/.../hires/<request-id>.yaml`
 
 ## Who an agent takes instructions from
 
-An agent always replies to a person who messages it (owner, 2026-11-17). It follows instructions from whoever it reports to (owner, 2026-11-18): the employee named in its `reports_to_employee_id`, a person or an agent, who may be in its own team or in another. It also follows the employees that one reports to, up the reporting line, and the organization's owner. An agent with no one named reports to the lead of its home team, and that lead, when it is the agent itself, to the lead of the team above. A message from anyone else is a request: the agent answers it, and where it conflicts with an instruction from its reporting line, the reporting line wins. The rule is read from `reports_to_employee_id`, with `home_team_id`, `parent_team_id` and `lead_employee_id` for the default, and from who owns the organization; there is no other field or table for it, and it grants no authority at the office, which still authorizes every call.
+An agent always replies to a person who messages it (owner, 2026-11-17). Work-instruction precedence is separate from office-enforced structural management authority (such as moving teams, changing `may_hire`, or pausing an agent, which remain with the organization owner and ancestor team leads per [document 01](01-organization-structure.md#team-structure)).
+
+When an agent receives instructions about its work, precedence resolves in this exact order:
+
+| Priority | Source | Rule |
+| --- | --- | --- |
+| 1 | **Organization owner** | Always highest authority for both structural management and work instructions. |
+| 2 | **Reporting line (`reports_to_employee_id` chain)** | The employee named in `reports_to_employee_id` (a person or an agent, in the agent's own team or another team) and everyone up that reporting chain. If `reports_to_employee_id` is null, the agent reports to its home team lead (or to the parent team lead when the agent leads its own team). |
+| 3 | **Ancestor team-lead chain** | Leads of ancestor teams retain structural subtree management authority (document 01) and may issue team-level directives. Where a work instruction from an ancestor team lead conflicts with an explicit cross-team `reports_to_employee_id` chain, the reporting line wins for task execution while structural controls (pausing, reassignment, `may_hire`) remain with the ancestor team lead and owner. |
+| 4 | **Anyone else** | Treated as a request: the agent replies, and on conflict any higher-priority instruction above wins. |
+
+Work-instruction precedence is derived solely from `reports_to_employee_id`, `home_team_id`, `parent_team_id`, `lead_employee_id`, and host-held organization ownership. There is no separate authority field or table for it, and reporting-line precedence never bypasses office call authorization (Non-Negotiable #9).
 
 ## Durable identity files
 

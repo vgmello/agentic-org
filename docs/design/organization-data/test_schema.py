@@ -1229,6 +1229,21 @@ class GapPreservationTests(unittest.TestCase):
         self.db.commit()
         row = self.db.execute("SELECT task_count, is_done FROM release_progress WHERE release_id='empty'").fetchone()
         self.assertEqual(tuple(row), (0, 0))
+        # a release with milestones AND an explicit release_tasks entry counts both (deduplicated)
+        insert(self.db, "releases", **common, id="mixed", project_id="project", title="Mixed")
+        insert(self.db, "milestones", **common, id="m-mixed", project_id="project", release_id="mixed", title="MM")
+        seed_task(self.db, task="mixed-ms")
+        seed_task(self.db, task="mixed-rt")
+        self.db.execute("UPDATE tasks SET milestone_id='m-mixed', status='done' WHERE id='mixed-ms'")
+        insert(self.db, "release_tasks", organization_id="org", release_id="mixed", project_id="project", task_id="mixed-ms")
+        insert(self.db, "release_tasks", organization_id="org", release_id="mixed", project_id="project", task_id="mixed-rt")
+        self.db.commit()
+        row = self.db.execute("SELECT task_count, done_task_count, is_done FROM release_progress WHERE release_id='mixed'").fetchone()
+        self.assertEqual(tuple(row), (2, 1, 0))
+        self.db.execute("UPDATE tasks SET status='done' WHERE id='mixed-rt'")
+        self.db.commit()
+        row = self.db.execute("SELECT task_count, done_task_count, is_done FROM release_progress WHERE release_id='mixed'").fetchone()
+        self.assertEqual(tuple(row), (2, 2, 1))
 
     def test_task_details_preserve_structured_payload_and_reject_bad_json(self):
         insert(self.db,"task_details",organization_id="org",task_id="task",what_happened="Duplicate",expected="One",steps="Retry",environment="staging",
@@ -1448,6 +1463,34 @@ class BudgetSchemaTests(unittest.TestCase):
         self.db.execute("UPDATE budgets SET current_revision=2")
         self.db.commit()
         assert_refused(self, self.db, message, "UPDATE budgets SET current_revision=1")
+
+    def test_owner_timezone_change_advances_policy_revision_and_preserves_prior_periods(self):
+        self.budget("daily", "agent", "day")
+        insert(self.db, "budget_periods", organization_id="org", budget_id="daily", id="p-utc",
+               policy_revision=1, period_key="2026-11-15", starts_at="2026-11-15T00:00:00Z",
+               ends_at="2026-11-16T00:00:00Z", state="closed")
+        self.db.commit()
+        # Changing timezone with a new immutable policy revision succeeds while keeping p-utc intact.
+        insert(self.db, "budget_policy_versions", organization_id="org", budget_id="daily", revision=2,
+               state="active", unit="tokens", limit_amount=100, time_zone="America/New_York",
+               time_zone_source="owner_account", time_zone_subject_ref="owner-acct-1",
+               changed_by_id="reporter", changed_at="2026-11-16T00:00:00Z", reason="Owner moved timezone")
+        self.db.execute(
+            "UPDATE budgets SET current_revision=2, time_zone='America/New_York', "
+            "time_zone_source='owner_account', time_zone_subject_ref='owner-acct-1' WHERE id='daily'"
+        )
+        insert(self.db, "budget_periods", organization_id="org", budget_id="daily", id="p-ny",
+               policy_revision=2, period_key="2026-11-16", starts_at="2026-11-16T05:00:00Z",
+               ends_at="2026-11-17T05:00:00Z", state="open")
+        self.db.commit()
+        row = self.db.execute(
+            "SELECT current_revision, time_zone, time_zone_source FROM budgets WHERE id='daily'"
+        ).fetchone()
+        self.assertEqual(tuple(row), (2, "America/New_York", "owner_account"))
+        prior = self.db.execute(
+            "SELECT starts_at, ends_at FROM budget_periods WHERE id='p-utc'"
+        ).fetchone()
+        self.assertEqual(tuple(prior), ("2026-11-15T00:00:00Z", "2026-11-16T00:00:00Z"))
 
     def test_budget_history_is_never_deleted_and_events_never_change(self):
         self.budget();self.period()

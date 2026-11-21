@@ -2120,11 +2120,15 @@ CREATE TABLE budget_policy_versions (
   state TEXT NOT NULL CHECK (state IN ('active','cleared')),
   unit TEXT NOT NULL CHECK (unit IN ('micro_usd','tokens')),
   limit_amount INTEGER CHECK (limit_amount>0),
+  time_zone TEXT NOT NULL DEFAULT 'UTC',
+  time_zone_source TEXT NOT NULL DEFAULT 'hq' CHECK (time_zone_source IN ('owner_account','hq')),
+  time_zone_subject_ref TEXT,
   changed_by_id TEXT NOT NULL,
   changed_at TEXT NOT NULL,
   reason TEXT,
   PRIMARY KEY (organization_id,budget_id,revision),
   CHECK ((state='active' AND limit_amount IS NOT NULL) OR (state='cleared' AND limit_amount IS NULL)),
+  CHECK ((time_zone_source='owner_account')=(time_zone_subject_ref IS NOT NULL)),
   FOREIGN KEY (organization_id,budget_id) REFERENCES budgets(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,changed_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -2210,8 +2214,10 @@ CREATE TABLE budget_holds (
 ) STRICT;
 CREATE TRIGGER budget_target_immutable BEFORE UPDATE ON budgets
 WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kind<>OLD.scope_kind OR NEW.task_id IS NOT OLD.task_id
- OR NEW.agent_id IS NOT OLD.agent_id OR NEW.release_id IS NOT OLD.release_id OR NEW.period_kind<>OLD.period_kind OR NEW.time_zone<>OLD.time_zone OR NEW.time_zone_source<>OLD.time_zone_source OR NEW.time_zone_subject_ref IS NOT OLD.time_zone_subject_ref
+ OR NEW.agent_id IS NOT OLD.agent_id OR NEW.release_id IS NOT OLD.release_id OR NEW.period_kind<>OLD.period_kind
  OR NEW.current_revision<OLD.current_revision
+ OR ((NEW.time_zone<>OLD.time_zone OR NEW.time_zone_source<>OLD.time_zone_source OR NEW.time_zone_subject_ref IS NOT OLD.time_zone_subject_ref)
+     AND NEW.current_revision<=OLD.current_revision)
 BEGIN SELECT RAISE(ABORT,'budget scope or revision changed unsafely'); END;
 CREATE TRIGGER budget_agent_insert BEFORE INSERT ON budgets
 WHEN NEW.agent_id IS NOT NULL AND EXISTS (SELECT 1 FROM employees WHERE organization_id=NEW.organization_id AND id=NEW.agent_id AND kind<>'agent')
@@ -2261,36 +2267,33 @@ LEFT JOIN tasks t ON t.organization_id = m.organization_id AND t.milestone_id = 
 GROUP BY m.organization_id, m.id;
 
 CREATE VIEW release_progress AS
+WITH release_member_tasks AS (
+  SELECT tr.organization_id, tr.release_id,
+    COUNT(t.id) AS task_count,
+    COALESCE(SUM(t.status IN ('done', 'cancelled')), 0) AS done_task_count
+  FROM task_releases tr
+  JOIN tasks t ON t.organization_id = tr.organization_id AND t.id = tr.task_id
+  GROUP BY tr.organization_id, tr.release_id
+),
+release_milestones AS (
+  SELECT organization_id, release_id,
+    COUNT(*) AS milestone_count,
+    MIN(is_done) AS all_milestones_done
+  FROM milestone_progress
+  GROUP BY organization_id, release_id
+)
 SELECT r.organization_id, r.id AS release_id,
-  (SELECT COUNT(*) FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id) AS milestone_count,
-  CASE
-    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
-      THEN (SELECT COALESCE(SUM(p.task_count), 0) FROM milestone_progress p
-            WHERE p.organization_id = r.organization_id AND p.release_id = r.id)
-    ELSE (SELECT COUNT(*) FROM release_tasks rt
-            JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-          WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
-  END AS task_count,
-  CASE
-    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
-      THEN (SELECT COALESCE(SUM(p.done_task_count), 0) FROM milestone_progress p
-            WHERE p.organization_id = r.organization_id AND p.release_id = r.id)
-    ELSE (SELECT COUNT(*) FROM release_tasks rt
-            JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-          WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status IN ('done', 'cancelled'))
-  END AS done_task_count,
-  CASE
-    WHEN EXISTS (SELECT 1 FROM milestones m WHERE m.organization_id = r.organization_id AND m.release_id = r.id)
-      THEN NOT EXISTS (SELECT 1 FROM milestone_progress p
-                       WHERE p.organization_id = r.organization_id AND p.release_id = r.id AND NOT p.is_done)
-    ELSE EXISTS (SELECT 1 FROM release_tasks rt
-                 JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-                 WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id)
-      AND NOT EXISTS (SELECT 1 FROM release_tasks rt
-                      JOIN tasks t ON t.organization_id = rt.organization_id AND t.id = rt.task_id
-                      WHERE rt.organization_id = r.organization_id AND rt.release_id = r.id AND t.status NOT IN ('done', 'cancelled'))
-  END AS is_done
-FROM releases r;
+  COALESCE(rm.milestone_count, 0) AS milestone_count,
+  COALESCE(rt.task_count, 0) AS task_count,
+  COALESCE(rt.done_task_count, 0) AS done_task_count,
+  (
+    COALESCE(rt.task_count, 0) > 0
+    AND COALESCE(rt.task_count, 0) = COALESCE(rt.done_task_count, 0)
+    AND COALESCE(rm.all_milestones_done, 1) = 1
+  ) AS is_done
+FROM releases r
+LEFT JOIN release_milestones rm ON rm.organization_id = r.organization_id AND rm.release_id = r.id
+LEFT JOIN release_member_tasks rt ON rt.organization_id = r.organization_id AND rt.release_id = r.id;
 
 -- Document 18: development processes and project documentation
 CREATE TABLE development_processes (
