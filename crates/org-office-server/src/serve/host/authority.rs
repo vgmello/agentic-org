@@ -1,5 +1,5 @@
 //! Ordered, per-request authority checks. The worker supplies clock, MAC and live state.
-use super::super::{live_owner, Binding, Shared};
+use super::super::{live_owner, live_person, Binding, Shared};
 use crate::revocations::Revocations;
 use org_proto::{ErrorCode, Grant, OfficeInfo, Request};
 use std::sync::Mutex;
@@ -31,6 +31,13 @@ impl Checks for Live<'_> {
         };
         matches!(live_owner(self.shared, &binding), Ok(true)).then(|| id.to_owned())
     }
+    fn person(&self, id: &str) -> Option<String> {
+        let binding = Binding::Member {
+            id: id.to_owned(),
+            via_grant: true,
+        };
+        matches!(live_person(self.shared, &binding), Ok(true)).then(|| id.to_owned())
+    }
 }
 
 pub(super) trait Checks {
@@ -38,6 +45,37 @@ pub(super) trait Checks {
     fn now_ms(&self) -> Option<u64>;
     fn revoked(&self, session: &str) -> bool;
     fn owner(&self, member: &str) -> Option<String>;
+    fn person(&self, member: &str) -> Option<String> {
+        self.owner(member)
+    }
+}
+
+/// Organization structure mutations and the owner's inbox require the live organization owner
+/// (`doc-78` / `TASK-38`). Reads and member-scoped calls allow any active `Person` member.
+fn requires_owner(method: &str) -> bool {
+    matches!(
+        method,
+        "inbox.list"
+            | "team.create"
+            | "team.rename"
+            | "team.move"
+            | "team.set_lead"
+            | "team.delete"
+            | "team.set_title"
+            | "member.add_person"
+            | "member.update_person"
+            | "member.add_agent"
+            | "member.update_agent"
+            | "member.set_agent_status"
+            | "member.offboard"
+            | "member.remove"
+            | "member.set_reports_to"
+            | "member.move"
+            | "member.set_run_mode"
+            | "project.create"
+            | "project.add_team"
+            | "project.remove_team"
+    )
 }
 
 pub(super) fn authorize(
@@ -67,7 +105,13 @@ pub(super) fn authorize(
     if checks.revoked(&claims.session_id) {
         return Err(ErrorCode::NotAuthorized);
     }
-    checks.owner(&claims.member).ok_or(ErrorCode::NotAuthorized)
+    if requires_owner(&request.method) {
+        checks.owner(&claims.member).ok_or(ErrorCode::NotAuthorized)
+    } else {
+        checks
+            .person(&claims.member)
+            .ok_or(ErrorCode::NotAuthorized)
+    }
 }
 
 #[cfg(test)]

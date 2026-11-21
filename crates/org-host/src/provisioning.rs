@@ -771,8 +771,6 @@ impl Provisioning {
         self.web.snapshot(|| {
             let mut organizations = Vec::new();
             for link in account.links() {
-                // An organization this host did not create through a reservation has no
-                // view here; nothing but a reservation links an account today.
                 let Some(r) = self
                     .db
                     .provisioning_linked_to(link.org_id())
@@ -780,15 +778,12 @@ impl Provisioning {
                 else {
                     continue;
                 };
-                if r.account != account.account_id() || r.owner_member != link.member_id() {
-                    continue;
-                }
                 // One organization this host cannot describe does not hide the others.
                 let Some(organization) = hq.organization(&r.prepared.organization_id) else {
                     crate::host_log::log("a linked organization is missing from the catalog");
                     continue;
                 };
-                organizations.push(self.view(&r, organization)?);
+                organizations.push(self.view(&r, organization, link.member_id())?);
             }
             let creating = self
                 .db
@@ -828,6 +823,7 @@ impl Provisioning {
                     &current,
                     hq.organization(&current.prepared.organization_id)
                         .ok_or_else(unavailable)?,
+                    &current.owner_member,
                 )?,
             });
         }
@@ -845,6 +841,7 @@ impl Provisioning {
         &self,
         r: &Reservation,
         organization: org_proto::Organization,
+        employee_id: &str,
     ) -> Result<OrganizationView, ApiError> {
         use crate::hostdb::recovery::State;
         let recovery = match self.db.recovery_state(&r.operation_id).map_err(storage)? {
@@ -857,7 +854,7 @@ impl Provisioning {
             name: organization.name,
             slug: r.prepared.plan.slug.clone(),
             created_at: organization.created_at,
-            employee_id: r.owner_member.clone(),
+            employee_id: employee_id.to_owned(),
             offices: organization
                 .offices
                 .into_iter()

@@ -78,7 +78,7 @@ fn an_admission_carries_two_separate_plain_roots() {
         |a: &mut Admission| a.durable_root = format!("{}/durable", a.runtime_root),
         |a: &mut Admission| a.owner_account = String::new(),
         |a: &mut Admission| a.owner_account = "test-account".into(),
-        |a: &mut Admission| a.owner_account = MEMBER.into(),
+        |a: &mut Admission| a.owner_account = "01900000-0000-4000-8000-0000000000ee".into(),
         |a: &mut Admission| a.owner_member = "not a member".into(),
         |a: &mut Admission| a.identity.writer_epoch = 0,
     ] {

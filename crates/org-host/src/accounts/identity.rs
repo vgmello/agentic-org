@@ -20,13 +20,17 @@ impl LoginKey {
     }
 }
 
-/// A canonical account ULID, using the shared protocol's exact spelling policy.
+/// A canonical account ID: UUIDv7 for new accounts (`TASK-38` / A6), with backward
+/// compatibility for legacy 26-character Crockford ULIDs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AccountId(String);
 impl AccountId {
     pub(crate) fn parse(value: &str) -> Result<Self, InvalidIdentity> {
-        org_proto::ulid_time_ms(value).ok_or(InvalidIdentity)?;
-        Ok(Self(value.to_owned()))
+        if org_proto::is_uuid_v7(value) || org_proto::ulid_time_ms(value).is_some() {
+            Ok(Self(value.to_owned()))
+        } else {
+            Err(InvalidIdentity)
+        }
     }
     pub(crate) fn as_str(&self) -> &str {
         &self.0
@@ -60,6 +64,7 @@ mod tests {
             "00000000000000000000000000",
             "7ZZZZZZZZZZZZZZZZZZZZZZZZZ",
             "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1",
         ] {
             assert_eq!(AccountId::parse(good).unwrap().as_str(), good);
         }

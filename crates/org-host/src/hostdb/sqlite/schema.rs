@@ -1,7 +1,7 @@
 pub(super) const DDL: &str = r#"
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT, WITHOUT ROWID;
 CREATE TABLE accounts (
- account_id TEXT PRIMARY KEY CHECK (length(account_id) = 26),
+ account_id TEXT PRIMARY KEY CHECK (length(account_id) IN (26, 36)),
  login_key TEXT NOT NULL UNIQUE, login TEXT NOT NULL,
  password_phc TEXT NOT NULL, admin INTEGER NOT NULL CHECK (admin IN (0, 1)),
  created_at_ms INTEGER NOT NULL, password_changed_at_ms INTEGER NOT NULL,

@@ -1804,9 +1804,24 @@ pub(crate) fn this_instances_link<'a>(
     url: &'a str,
     origin: &org_host_control::listen::ListenOrigin,
 ) -> Result<&'a str, String> {
+    this_instances_link_at(url, origin, "/register#")
+}
+
+pub(crate) fn this_instances_reset_link<'a>(
+    url: &'a str,
+    origin: &org_host_control::listen::ListenOrigin,
+) -> Result<&'a str, String> {
+    this_instances_link_at(url, origin, "/set-password#")
+}
+
+fn this_instances_link_at<'a>(
+    url: &'a str,
+    origin: &org_host_control::listen::ListenOrigin,
+    path_prefix: &str,
+) -> Result<&'a str, String> {
     let token = url
         .strip_prefix(origin.as_str().trim_end_matches('/'))
-        .and_then(|rest| rest.strip_prefix("/register#"));
+        .and_then(|rest| rest.strip_prefix(path_prefix));
     match token {
         Some(token) if crate::links::Token::parse(token).is_some() => Ok(url),
         _ => Err(NOT_THIS_INSTANCES_LINK.into()),
@@ -1826,6 +1841,31 @@ fn show_link(
             say(
                 out,
                 "Open this link in a browser to create the administrator account.",
+            )?;
+            say(
+                out,
+                format!(
+                    "It works once and expires in 24 hours (at {}):",
+                    local_time(expires_at_ms)
+                ),
+            )?;
+            say(out, format!("  {url}"))?;
+            say(
+                out,
+                format!("If it expires or is lost, run: {}", reset_hint(name)),
+            )
+        }
+        AdminLinkResult::ResetPassword {
+            login,
+            url,
+            expires_at_ms,
+        } => {
+            let url = this_instances_reset_link(url.expose(), origin)?;
+            let safe_login = crate::host_log::untrusted(&login);
+            say(out, "")?;
+            say(
+                out,
+                format!("Open this link in a browser to set a new password for {safe_login}."),
             )?;
             say(
                 out,
@@ -2034,18 +2074,83 @@ fn running_with_administrator(shown: &str, origin: &str) -> String {
 /// user ([`as_account`]), so nothing in the instance's folders is made or changed by root,
 /// and then connects as root, which is what the service admits for this one call. Any other
 /// user acts only for itself.
+/// What `admin reset` answers on macOS when run over SSH (SIGN-30 / SIGN-34, spec §4a.2).
+pub(crate) const MACOS_SSH_RESET_REFUSED: &str =
+    "Resetting the administrator's password needs you at this Mac, to confirm it's you with Touch ID or the login password, and that can't be done over SSH. Run this command at the Mac itself or through Screen Sharing.";
+
+/// Pure SIGN-34 check: on macOS (not named-by-user-alone), SSH environment variables
+/// refuse `admin reset` before anything else (even before the terminal check or host call).
+pub(crate) fn ssh_reset_refusal(
+    named_by_user: bool,
+    ssh_env_present: bool,
+) -> Option<&'static str> {
+    if !named_by_user && ssh_env_present {
+        Some(MACOS_SSH_RESET_REFUSED)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod admin_reset_sign34_tests {
+    use super::*;
+    use org_host_control::listen::ListenOrigin;
+    use org_host_control::OneTimeLinkUrl;
+
+    #[test]
+    fn sign34_refuses_macos_ssh_before_terminal_and_allows_linux_ssh() {
+        let refused = ssh_reset_refusal(false, true).expect("macOS SSH must refuse");
+        assert_eq!(refused, MACOS_SSH_RESET_REFUSED);
+        assert!(refused.contains("needs you at this Mac"));
+        assert!(refused.contains("Screen Sharing"));
+        assert_eq!(ssh_reset_refusal(false, false), None);
+        assert_eq!(ssh_reset_refusal(true, true), None);
+    }
+
+    #[test]
+    fn show_link_formats_admin_reset_password_link() {
+        let origin = ListenOrigin::parse("http://127.0.0.1:7420").unwrap();
+        let token = "A".repeat(43);
+        let url =
+            OneTimeLinkUrl::new(format!("http://127.0.0.1:7420/set-password#{token}")).unwrap();
+        let mut out = Vec::new();
+        show_link(
+            &mut out,
+            AdminLinkResult::ResetPassword {
+                login: "Sage".into(),
+                url,
+                expires_at_ms: 1_800_000_000_000,
+            },
+            None,
+            &origin,
+        )
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("set a new password for Sage"), "{text}");
+        assert!(text.contains("/set-password#"), "{text}");
+    }
+}
+
+fn env_is_ssh() -> bool {
+    ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"]
+        .iter()
+        .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty()))
+}
+
 pub fn admin_reset(
     name: Option<&str>,
     user: Option<&str>,
     terminal: bool,
     out: &mut dyn Write,
 ) -> Result<(), String> {
+    let named_by_user = crate::human::host_is_named_by_user_alone();
+    // SIGN-34: SSH refusal on macOS is shown before anything else.
+    if let Some(refusal) = ssh_reset_refusal(named_by_user, env_is_ssh()) {
+        return Err(refusal.into());
+    }
     if !terminal {
-        // Spec §4a.4 copy. SIGN-34's SSH refusal ("shown before anything else") needs
-        // SSH-session detection, which is not built yet; it goes before this check.
         return Err(NOT_A_TERMINAL.into());
     }
-    let named_by_user = crate::human::host_is_named_by_user_alone();
     let acting_for = service_account(
         crate::home::euid(),
         named_by_user,
@@ -2184,11 +2289,12 @@ fn answer_reset(
     show_link(out, result, name, origin)
 }
 
-/// What `admin reset` refuses with when the instance has an administrator.
+/// What `admin reset` refuses with when an administrator was registered concurrently during the
+/// initial-registration-link confirmation dialog.
 pub(crate) fn administrator_present(name: Option<&str>, origin: &str) -> String {
     format!(
-        "instance {} has an administrator, so no registration link is issued: sign in at \
-         {origin}. Resetting a forgotten administrator password is not available yet",
+        "instance {} already has an administrator, so no registration link is issued: sign in at \
+         {origin}, or run `agentic-org admin reset` again to issue a password-reset link",
         name.unwrap_or("default")
     )
 }

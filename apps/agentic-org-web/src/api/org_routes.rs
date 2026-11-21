@@ -117,6 +117,46 @@ pub(super) fn route_organization(
             valid_org_id(office)?;
             Route::OfficeRestart(pair, org.to_owned(), (*office).to_owned())
         }
+        ["access"] if get => {
+            let pair = api.caller_auth(request)?;
+            valid_org_id(org)?;
+            Route::Account(super::account_routes::AccountRoute::OrgAccessList(
+                pair,
+                org.to_owned(),
+            ))
+        }
+        ["access", "invite"] if post => {
+            let pair = api.caller_auth(request)?;
+            valid_org_id(org)?;
+            Route::Account(super::account_routes::AccountRoute::OrgInvite(
+                pair,
+                org.to_owned(),
+            ))
+        }
+        ["access", "reset-link"] if post => {
+            let pair = api.caller_auth(request)?;
+            valid_org_id(org)?;
+            Route::Account(super::account_routes::AccountRoute::OrgResetLink(
+                pair,
+                org.to_owned(),
+            ))
+        }
+        ["access", "remove"] if post => {
+            let pair = api.caller_auth(request)?;
+            valid_org_id(org)?;
+            Route::Account(super::account_routes::AccountRoute::OrgRemoveAccess(
+                pair,
+                org.to_owned(),
+            ))
+        }
+        ["owner", "handover"] if post => {
+            let pair = api.caller_auth(request)?;
+            valid_org_id(org)?;
+            Route::Account(super::account_routes::AccountRoute::OrgOwnerHandover(
+                pair,
+                org.to_owned(),
+            ))
+        }
         ["teams"] if post => {
             let pair = api.caller_auth(request)?;
             valid_org_id(org)?;
@@ -133,6 +173,9 @@ pub(super) fn route_organization(
         ["snapshot"]
         | ["offices"]
         | ["offices", _, "restart"]
+        | ["access"]
+        | ["access", "invite" | "reset-link" | "remove"]
+        | ["owner", "handover"]
         | ["teams"]
         | ["teams", "create" | "rename" | "move" | "set-lead" | "delete" | "set-title"]
         | ["members", "add-person" | "update-person" | "remove" | "set-reports-to" | "move"] => {

@@ -10,7 +10,7 @@ use crate::links::{
 pub(super) const DDL: &str = r#"
 CREATE TABLE one_time_links (
  link_id TEXT PRIMARY KEY CHECK (length(link_id) = 36),
- kind TEXT NOT NULL CHECK (kind IN ('registration')),
+ kind TEXT NOT NULL CHECK (kind IN ('registration','set_password')),
  subject TEXT NOT NULL CHECK (length(subject) BETWEEN 1 AND 128),
  digest BLOB NOT NULL UNIQUE CHECK (length(digest) = 32),
  issued_at_ms INTEGER NOT NULL,
@@ -40,7 +40,7 @@ fn poisoned<T>(_: T) -> Error {
 }
 
 /// Cancels the pending link of the same kind and subject and inserts `link`, inside `tx`.
-fn replace(tx: &rusqlite::Transaction<'_>, link: &NewLink<'_>) -> Result<(), Error> {
+pub(super) fn replace(tx: &rusqlite::Transaction<'_>, link: &NewLink<'_>) -> Result<(), Error> {
     tx.execute(
         "UPDATE one_time_links SET state='cancelled', ended_at_ms=?3 WHERE kind=?1 AND subject=?2 AND state='pending'",
         (link.kind.as_str(), link.subject.as_str(), link.issued_at_ms),
@@ -61,23 +61,23 @@ fn replace(tx: &rusqlite::Transaction<'_>, link: &NewLink<'_>) -> Result<(), Err
     Ok(())
 }
 
-/// Marks the pending, unexpired link with `digest` used, inside `tx`. A
-/// refusal changes nothing; the caller commits or rolls back.
-pub(super) fn redeem_in(
+/// Marks the pending, unexpired link with `digest` used, inside `tx`, returning `(link_id, subject)`.
+/// A refusal changes nothing; the caller commits or rolls back.
+pub(super) fn redeem_in_with_subject(
     tx: &rusqlite::Transaction<'_>,
     kind: LinkKind,
     digest: LinkDigest,
     now_ms: i64,
-) -> Result<Result<String, Refused>, Error> {
-    let row: Option<(String, String, i64)> = tx
+) -> Result<Result<(String, String), Refused>, Error> {
+    let row: Option<(String, String, String, i64)> = tx
         .query_row(
-            "SELECT link_id,state,expires_at_ms FROM one_time_links WHERE kind=?1 AND digest=?2",
+            "SELECT link_id,subject,state,expires_at_ms FROM one_time_links WHERE kind=?1 AND digest=?2",
             (kind.as_str(), &digest.0[..]),
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .optional()
         .map_err(store)?;
-    let Some((link_id, state, expires_at_ms)) = row else {
+    let Some((link_id, subject, state, expires_at_ms)) = row else {
         return Ok(Err(Refused::Unknown));
     };
     if let Err(refused) = redeem_rule(&state, expires_at_ms, now_ms) {
@@ -94,10 +94,47 @@ pub(super) fn redeem_in(
     if changed != 1 {
         return Err(Error::Conflict);
     }
-    Ok(Ok(link_id))
+    Ok(Ok((link_id, subject)))
+}
+
+/// Marks the pending, unexpired link with `digest` used, inside `tx`. A
+/// refusal changes nothing; the caller commits or rolls back.
+pub(super) fn redeem_in(
+    tx: &rusqlite::Transaction<'_>,
+    kind: LinkKind,
+    digest: LinkDigest,
+    now_ms: i64,
+) -> Result<Result<String, Refused>, Error> {
+    Ok(redeem_in_with_subject(tx, kind, digest, now_ms)?.map(|(link_id, _)| link_id))
 }
 
 impl HostDb {
+    /// Non-consuming preview of a pending, unexpired link's subject.
+    pub(crate) fn peek_link_subject(
+        &self,
+        kind: LinkKind,
+        token: &crate::links::Token,
+        now_ms: i64,
+    ) -> Result<Result<String, Refused>, Error> {
+        let digest = LinkDigest::of(&self.instance_id, kind, token);
+        let db = self.connection.lock().map_err(poisoned)?;
+        let row: Option<(String, String, i64)> = db
+            .query_row(
+                "SELECT subject,state,expires_at_ms FROM one_time_links WHERE kind=?1 AND digest=?2",
+                (kind.as_str(), &digest.0[..]),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(store)?;
+        let Some((subject, state, expires_at_ms)) = row else {
+            return Ok(Err(Refused::Unknown));
+        };
+        if let Err(refused) = redeem_rule(&state, expires_at_ms, now_ms) {
+            return Ok(Err(refused));
+        }
+        Ok(Ok(subject))
+    }
+
     /// Issues a link that replaces the pending one only while no administrator exists. The
     /// check and the write share one IMMEDIATE transaction, so an administrator registered
     /// concurrently either precedes the check (nothing issued) or follows the link.

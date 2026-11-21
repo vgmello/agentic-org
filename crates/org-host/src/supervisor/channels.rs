@@ -149,6 +149,18 @@ impl Broker {
             .ok_or(crate::writer::AdmitError::Refused)?
             .admit(office)
     }
+    pub fn update_owner(
+        &self,
+        office: &str,
+        org_id: &str,
+        owner_account: &str,
+        owner_member: &str,
+    ) -> io::Result<()> {
+        self.writers
+            .as_ref()
+            .ok_or_else(|| io::Error::other("writer custody unavailable"))?
+            .update_owner(office, org_id, owner_account, owner_member)
+    }
     pub fn bind(&self) -> io::Result<Rendezvous> {
         let directory = self.runtime.join("r");
         match DirBuilder::new().mode(0o700).create(&directory) {

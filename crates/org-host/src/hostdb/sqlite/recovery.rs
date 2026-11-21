@@ -102,7 +102,7 @@ fn validate_acknowledgement(l: &Ledger) -> Result<(), Error> {
         || (!ack && (l.acknowledged_ms.is_some() || l.acknowledged_by.is_some()))
         || l.acknowledged_by
             .as_ref()
-            .is_some_and(|a| org_proto::ulid_time_ms(a).is_none())
+            .is_some_and(|a| crate::accounts::identity::AccountId::parse(a).is_err())
         || l.acknowledged_ms
             .zip(l.last_redelivered_ms.or(l.first_shown_ms))
             .is_some_and(|(a, b)| a < b)
@@ -155,7 +155,7 @@ fn validate_show_audit(rows: &mut rusqlite::Rows<'_>, l: &Ledger) -> Result<(), 
         let at: i64 = row.get(2)?;
         count = count.checked_add(1).ok_or(Error::Unsafe)?;
         if ordinal != count
-            || org_proto::ulid_time_ms(&account).is_none()
+            || crate::accounts::identity::AccountId::parse(&account).is_err()
             || at < 0
             || last.is_some_and(|prior| at < prior)
         {

@@ -2272,8 +2272,8 @@ fn a_reset_of_an_instance_with_an_administrator_says_where_to_sign_in() {
     .unwrap_err();
     assert_eq!(
         refused,
-        "instance lab has an administrator, so no registration link is issued: sign in at \
-         http://127.0.0.1:7420. Resetting a forgotten administrator password is not available yet"
+        "instance lab already has an administrator, so no registration link is issued: sign in at \
+         http://127.0.0.1:7420, or run `agentic-org admin reset` again to issue a password-reset link"
     );
     assert!(out.is_empty());
 }

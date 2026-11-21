@@ -34,18 +34,23 @@ const SUBJECT_MAX: usize = 128;
 /// kind never redeems another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LinkKind {
-    /// Creates an administrator while none exists (setup and `admin reset`).
+    /// Creates an administrator while none exists (setup and `admin reset`), or
+    /// invites a person to join an organization (`invite:<org_id>:<member_id>`).
     Registration,
+    /// Sets a new password for an existing account (`account:<account_id>`), from
+    /// `admin reset` or People › New sign-in link.
+    SetPassword,
 }
 impl LinkKind {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Registration => "registration",
+            Self::SetPassword => "set_password",
         }
     }
     pub(crate) fn ttl_ms(self) -> i64 {
         match self {
-            Self::Registration => REGISTRATION_TTL_MS,
+            Self::Registration | Self::SetPassword => REGISTRATION_TTL_MS,
         }
     }
 }

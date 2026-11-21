@@ -77,12 +77,31 @@ pub fn current() -> Result<bool, Refused> {
     native::current_context()
 }
 
+/// Why OS presence confirmation is being requested; selects the fixed OS dialog text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfirmReason {
+    /// Showing and recording an organization recovery code.
+    RecoveryCode,
+    /// Issuing a one-time password reset link for the existing administrator.
+    ResetAdminPassword,
+    /// Issuing a new administrator registration link while none exists.
+    CreateAdminRegistrationLink,
+}
+
 /// Ask the person at the machine to confirm one release. Blocks until the answer,
 /// until `cancelled` returns true, or until the adapter's deadline (macOS: 90
 /// seconds), whichever is first. `cancelled` is polled throughout; a confirmation
 /// that arrives after it turned true is not returned.
 pub fn confirm(cancelled: impl Fn() -> bool) -> Result<Confirmation, Unconfirmed> {
-    native::confirm_presence(cancelled)
+    native::confirm_presence(ConfirmReason::RecoveryCode, cancelled)
+}
+
+/// Ask the person at the machine to confirm a specific local administrative action.
+pub fn confirm_for(
+    reason: ConfirmReason,
+    cancelled: impl Fn() -> bool,
+) -> Result<Confirmation, Unconfirmed> {
+    native::confirm_presence(reason, cancelled)
 }
 
 /// What every refusing adapter in this capability answers.

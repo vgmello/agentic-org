@@ -296,8 +296,26 @@ fn live_owner_and_revocations_are_rechecked_per_request_and_poison_or_legacy_ref
     shared.ports.directory = directory.clone();
     let request = signed(&shared, "org.snapshot", json!({}));
     assert!(answer(&shared, &ctx, &request).get("result").is_some());
+    // A non-owner live person may read org.snapshot, but is refused on owner-only structure
+    // mutations, agent lifecycle mutations, and inbox.list.
+    {
+        let mut non_owner = canonical.clone();
+        non_owner.owner = false;
+        *directory.member.lock().unwrap() = Some(non_owner);
+        assert!(answer(&shared, &ctx, &request).get("result").is_some());
+        for method in [
+            "team.create",
+            "inbox.list",
+            "member.add_agent",
+            "member.update_agent",
+            "member.set_agent_status",
+            "member.offboard",
+        ] {
+            let req = signed(&shared, method, json!({}));
+            refused(answer(&shared, &ctx, &req), "not_authorized");
+        }
+    }
     for (kind, owner, id) in [
-        (MemberKind::Person, false, OWNER_ID),
         (MemberKind::Agent, true, OWNER_ID),
         (MemberKind::Unknown, true, OWNER_ID),
         (MemberKind::Person, true, "other"),

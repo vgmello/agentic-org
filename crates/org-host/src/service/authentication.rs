@@ -43,12 +43,14 @@ pub(crate) struct Authentication {
     hashing: AtomicUsize,
     sessions: Mutex<BTreeMap<[u8; 32], Session>>,
     web_channels: Mutex<BTreeMap<String, WebChannel>>,
+    touch_batcher: touch_batch::TouchBatcher,
 }
 
 /// Monotonic expiry also runs when no client makes another request. Removing a
 /// session drops its issued channel grants through the actual transfer service.
 pub(crate) struct Lifecycle {
     stop: Arc<std::sync::atomic::AtomicBool>,
+    authentication: Weak<Authentication>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Lifecycle {
@@ -56,6 +58,7 @@ impl Lifecycle {
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let weak = Arc::downgrade(authentication);
+        let for_drop = Arc::downgrade(authentication);
         let thread = std::thread::Builder::new()
             .name("org-session-lifecycle".into())
             .spawn(move || {
@@ -70,6 +73,7 @@ impl Lifecycle {
             })?;
         Ok(Self {
             stop,
+            authentication: for_drop,
             thread: Some(thread),
         })
     }
@@ -80,10 +84,14 @@ impl Lifecycle {
     /// is left to end on its own: a stopping host does not wait for it past its bound.
     pub(crate) fn join_by(mut self, until: std::time::Instant) -> bool {
         self.stop.store(true, Ordering::SeqCst);
-        self.thread.take().is_none_or(|thread| {
+        let joined = self.thread.take().is_none_or(|thread| {
             thread.thread().unpark();
             crate::sync::join_by(thread, until)
-        })
+        });
+        if let Some(auth) = self.authentication.upgrade() {
+            auth.flush_touches(true);
+        }
+        joined
     }
 }
 impl Drop for Lifecycle {
@@ -92,6 +100,9 @@ impl Drop for Lifecycle {
         if let Some(thread) = self.thread.take() {
             thread.thread().unpark();
             let _ = thread.join();
+        }
+        if let Some(auth) = self.authentication.upgrade() {
+            auth.flush_touches(true);
         }
     }
 }
@@ -297,6 +308,12 @@ impl Authentication {
         if let Ok(mut channels) = self.web_channels.lock() {
             channels.retain(|_, channel| channel.live());
         }
+        self.flush_touches(false);
+    }
+    pub(crate) fn flush_touches(&self, force: bool) {
+        if let Ok(ms) = wall_ms().and_then(|v| i64::try_from(v).map_err(|_| unavailable())) {
+            self.touch_batcher.flush(&self.db, ms, force);
+        }
     }
     pub(crate) fn revoke_browser_sessions(&self, ended: &[crate::sessions::Ended]) {
         if ended.is_empty() {
@@ -387,6 +404,7 @@ impl Authentication {
             hashing: AtomicUsize::new(0),
             sessions: Mutex::new(BTreeMap::new()),
             web_channels: Mutex::new(BTreeMap::new()),
+            touch_batcher: touch_batch::TouchBatcher::new(),
         })
     }
     pub(crate) fn verify(
@@ -750,5 +768,7 @@ pub(super) fn sign_grant(
 }
 
 mod browser;
+mod multi_person;
 #[cfg(test)]
 pub(crate) mod tests;
+mod touch_batch;

@@ -288,7 +288,6 @@ fn unsupported_api_routes_are_json_404() {
         (Method::GET, "/api/v1/capabilities"),
         (Method::GET, "/api/v1/instances"),
         (Method::GET, "/api/v1/tasks"),
-        (Method::POST, "/api/v1/links/set-password"),
     ] {
         let answer = send(&gateway, method, target, "{}", None, &[]);
         assert_eq!(answer.status, StatusCode::NOT_FOUND, "{target}");

@@ -82,6 +82,7 @@ fn read(db: &Connection, account_id: &AccountId) -> Result<Option<Account>, Erro
     Ok(Some(account))
 }
 
+pub(crate) mod multi_person;
 mod store;
 #[cfg(test)]
 mod tests;

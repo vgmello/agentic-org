@@ -7,6 +7,7 @@ pub(crate) mod authentication;
 mod cli_approvals;
 pub(crate) mod listener;
 mod local_access;
+mod multi_person;
 mod office_ops;
 pub(crate) mod organizations;
 use authentication::Authentication;
@@ -518,6 +519,8 @@ impl Service {
             local_access::handle_auth_enable(self, authentication, request, connection);
         } else if request.is::<BrowserTlsEnable>() {
             local_access::handle_tls_enable(self, authentication, request, connection);
+        } else if multi_person::dispatch(self, authentication, request, connection) {
+            return true;
         } else {
             browser_session_op(self, authentication, request, connection);
         }
@@ -858,7 +861,7 @@ fn is_browser_op(request: &Request) -> bool {
         BrowserAuthEnable::METHOD,
         BrowserTlsEnable::METHOD,
     ];
-    METHODS.contains(&request.method.as_str())
+    METHODS.contains(&request.method.as_str()) || multi_person::is_multi_person_op(request)
 }
 
 fn browser_session_op(
@@ -904,7 +907,7 @@ fn browser_session_op(
             })
     };
     finish_ended_browser_sessions(authentication, connection, ended);
-    if reply.is_ok() && was_authless {
+    if reply.is_ok() && was_authless && authentication.auth_enabled().is_ok_and(|e| e) {
         if let Some(provisioning) = &service.provisioning {
             if let Ok(data) = serde_json::to_value(AuthModeChanged { auth_enabled: true }) {
                 provisioning

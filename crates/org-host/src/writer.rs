@@ -488,6 +488,29 @@ impl Writers {
         self.install_marker(binding.office_id)?;
         Ok(admission)
     }
+    /// Updates an office's persisted writer admission owner after organization ownership handover
+    /// (`TASK-38` / `doc-78`), verifying the new owner against `HostDb::org_owners` before saving.
+    pub(crate) fn update_owner(
+        &self,
+        office: &str,
+        org_id: &str,
+        owner_account: &str,
+        owner_member: &str,
+    ) -> io::Result<()> {
+        let _gate = lock(&self.gate);
+        let Some(mut record) = self.load(office)? else {
+            return Err(refused());
+        };
+        if record.admission.identity.organization_id != org_id {
+            return Err(refused());
+        }
+        record.admission.owner_account = owner_account.to_owned();
+        record.admission.owner_member = owner_member.to_owned();
+        self.verify(&record, office)?;
+        self.save(office, &record)?;
+        Ok(())
+    }
+
     /// Whether `office` may start or be created: it has a valid record of this schema and
     /// its reservation marker. Every office needs both; the host never creates them here.
     /// Returns what the office's writer is bound to.
@@ -610,6 +633,8 @@ mod tests;
 #[cfg(test)]
 pub(crate) struct TestCustody {
     pub(crate) writers: Arc<Writers>,
+    pub(crate) db: Arc<crate::hostdb::HostDb>,
+    pub(crate) account: String,
     pub(crate) organization: String,
     pub(crate) member: String,
     /// While set, every read of the custody store fails with a transient I/O error.
@@ -690,7 +715,13 @@ impl TestCustody {
         let member = crate::ids::uuid_v7().unwrap();
         db.establish_organization_owner(&admin, &organization, &member)
             .unwrap();
-        let writers = Writers::open(custody, db, instance, &root.canonicalize().unwrap()).unwrap();
+        let writers = Writers::open(
+            custody,
+            Arc::clone(&db) as Arc<dyn crate::hostdb::HostStore>,
+            instance,
+            &root.canonicalize().unwrap(),
+        )
+        .unwrap();
         for office in offices {
             fs::create_dir_all(home.join("offices").join(office)).unwrap();
             writers
@@ -707,6 +738,8 @@ impl TestCustody {
         }
         Self {
             writers,
+            db,
+            account,
             organization,
             member,
             unreadable,

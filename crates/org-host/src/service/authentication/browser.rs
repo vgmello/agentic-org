@@ -27,10 +27,8 @@ use super::{
 };
 use crate::accounts::identity::{AccountId, LoginKey};
 use crate::accounts::rules::{check_new_password, PasswordRule, Username};
-use crate::accounts::store::{
-    AccountStore, Attempt, ClientAddress, NewAccount, Registration, ThrottleKey,
-};
-use crate::links::{LinkKind, OneTimeLinks};
+use crate::accounts::store::{AccountStore, Attempt, ClientAddress, NewAccount, ThrottleKey};
+use crate::links::LinkKind;
 use crate::service::listener::Connection;
 use crate::sessions::{
     Admission, BrowserSessions, Ended, NewSession, Origin, Scheme, SessionDigest, IDLE_MS,
@@ -40,22 +38,22 @@ use crate::sessions::{
 /// normalization or Argon2 work.
 pub(crate) const FIELD_MAX_BYTES: usize = 4096;
 
-fn not_found() -> ApiError {
+pub(super) fn not_found() -> ApiError {
     ApiError::new(ErrorCode::NotFound, "link not found")
 }
-fn origin(origin: &BrowserOrigin) -> Result<Origin, ApiError> {
+pub(super) fn origin(origin: &BrowserOrigin) -> Result<Origin, ApiError> {
     Scheme::parse(&origin.scheme)
         .and_then(|scheme| Origin::new(scheme, &origin.host, origin.port).ok())
         .ok_or_else(|| ApiError::new(ErrorCode::InvalidRequest, "invalid origin"))
 }
-fn digest(value: &Digest32) -> SessionDigest {
+pub(super) fn digest(value: &Digest32) -> SessionDigest {
     SessionDigest(value.0)
 }
-fn store_error<E>(_: E) -> ApiError {
+pub(super) fn store_error<E>(_: E) -> ApiError {
     unavailable()
 }
 /// `rate_limited` with the longest wait if any of `keys` is locked.
-fn unless_locked(
+pub(super) fn unless_locked(
     accounts: &dyn AccountStore,
     keys: &[ThrottleKey<'_>],
     now_ms: i64,
@@ -73,7 +71,7 @@ fn unless_locked(
     Ok(())
 }
 /// Records one failure on each of `keys`.
-fn failed(
+pub(super) fn failed(
     accounts: &dyn AccountStore,
     keys: &[ThrottleKey<'_>],
     now_ms: i64,
@@ -86,8 +84,23 @@ fn failed(
     Ok(())
 }
 
+fn validate_registration_inputs(
+    params: &LinkRegisterParams,
+) -> Result<(Username, Origin), ApiError> {
+    if params.login.len() > FIELD_MAX_BYTES {
+        return Err(ApiError::rule("login", "format"));
+    }
+    let username = Username::new(&params.login).map_err(|_| ApiError::rule("login", "format"))?;
+    check_new_password(params.password.expose()).map_err(|rule| match rule {
+        PasswordRule::TooShort => ApiError::rule("password", "too_short"),
+        PasswordRule::TooLong => ApiError::rule("password", "too_long"),
+    })?;
+    let origin = origin(&params.origin)?;
+    Ok((username, origin))
+}
+
 impl Authentication {
-    fn permit(&self) -> Result<HashPermit<'_>, ApiError> {
+    pub(super) fn permit(&self) -> Result<HashPermit<'_>, ApiError> {
         self.hashing
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
                 (n < MAX_HASHES).then_some(n + 1)
@@ -96,18 +109,16 @@ impl Authentication {
         Ok(HashPermit(&self.hashing))
     }
 
-    /// `link.register`: redeems the setup link and signs the new administrator in.
-    /// The per-address throttle is read first, and a link that would not redeem
-    /// is refused before any Argon2 work; every link refusal counts on the address.
+    /// `link.register`: redeems either the initial/reset administrator registration link OR an
+    /// organization person invitation link (`invite:<org_id>:<member_id>`) and signs the new
+    /// account in. The per-address throttle is read first, and a link that would not redeem is
+    /// refused before any Argon2 work; every link refusal counts on the address.
     pub(crate) fn register(
         &self,
         params: &LinkRegisterParams,
         now_ms: i64,
         ended: &mut Vec<Ended>,
     ) -> Result<BrowserSession, ApiError> {
-        if params.login.len() > FIELD_MAX_BYTES {
-            return Err(ApiError::rule("login", "format"));
-        }
         let accounts: &dyn AccountStore = &*self.db;
         let address = ClientAddress::of(params.client_address);
         let keys = [ThrottleKey::Address(&address)];
@@ -116,54 +127,23 @@ impl Authentication {
         let Some(token) = crate::links::Token::parse(params.link.expose()) else {
             return refuse();
         };
-        let username =
-            Username::new(&params.login).map_err(|_| ApiError::rule("login", "format"))?;
-        check_new_password(params.password.expose()).map_err(|rule| match rule {
-            PasswordRule::TooShort => ApiError::rule("password", "too_short"),
-            PasswordRule::TooLong => ApiError::rule("password", "too_long"),
-        })?;
-        let origin = origin(&params.origin)?;
-        let links: &dyn OneTimeLinks = &*self.db;
-        if links
-            .redeemable(LinkKind::Registration, &token, now_ms)
+        let (username, origin) = validate_registration_inputs(params)?;
+        let Ok(subject) = self
+            .db
+            .peek_link_subject(LinkKind::Registration, &token, now_ms)
             .map_err(store_error)?
-            .is_err()
-        {
+        else {
             return refuse();
-        }
+        };
         let verifier = {
             let _permit = self.permit()?;
             hash_password(&params.password)?
         };
-        let was_authless = self
-            .db
-            .local_authless_account()
-            .map_err(|_| unavailable())?
-            .is_some();
         let new = NewAccount::new(username, verifier).map_err(store_error)?;
-        match accounts
-            .register_administrator(&token, &new, now_ms)
-            .map_err(store_error)?
-        {
-            Registration::Registered { account_id } => {
-                if was_authless {
-                    ended.push(Ended {
-                        id: Self::LOCAL_AUTHLESS_SESSION_ID.to_owned(),
-                        account_id: account_id.as_str().to_owned(),
-                    });
-                }
-                self.start(
-                    &account_id,
-                    digest(&params.cookie_digest),
-                    digest(&params.proof_digest),
-                    origin,
-                    now_ms,
-                    ended,
-                )
-            }
-            Registration::Link(_) | Registration::AdministratorExists => refuse(),
-            Registration::LoginTaken => Err(ApiError::rule("login", "taken")),
+        if crate::hostdb::sqlite::accounts::multi_person::parse_invite_subject(&subject).is_some() {
+            return self.complete_invite_registration(&token, &new, params, origin, now_ms, ended);
         }
+        self.complete_admin_registration(&token, &new, params, origin, now_ms, ended)
     }
 
     /// `session.sign_in`: one identical refusal for an unknown login, a wrong
@@ -248,17 +228,28 @@ impl Authentication {
         let account = AccountId::parse(&record.account_id).map_err(|_| unavailable())?;
         match self.view(&record.id, &account, now_ms)? {
             Some(view) => {
-                sessions
-                    .touch(&[(record.id.as_str(), now_ms)], now_ms)
-                    .map_err(store_error)?;
+                // Flush synchronously when close to the 30-day idle boundary so a follow-up
+                // request or reap cannot observe stale `last_activity_ms` and falsely expire.
+                if now_ms.saturating_sub(record.last_activity_ms)
+                    >= IDLE_MS.saturating_sub(super::touch_batch::NEAR_EXPIRY_WINDOW_MS)
+                {
+                    let sessions: &dyn BrowserSessions = &*self.db;
+                    sessions
+                        .touch(&[(record.id.as_str(), now_ms)], now_ms)
+                        .map_err(store_error)?;
+                    self.touch_batcher.forget(&[record.id.as_str()]);
+                } else {
+                    self.touch_batcher.record(&self.db, &record.id, now_ms);
+                }
                 Ok(view)
             }
             None => {
-                ended.extend(
-                    sessions
-                        .end_account(account.as_str(), None)
-                        .map_err(store_error)?,
-                );
+                let removed = sessions
+                    .end_account(account.as_str(), None)
+                    .map_err(store_error)?;
+                let ids: Vec<&str> = removed.iter().map(|e| e.id.as_str()).collect();
+                self.touch_batcher.forget(&ids);
+                ended.extend(removed);
                 Err(denied())
             }
         }
@@ -288,7 +279,7 @@ impl Authentication {
     }
 
     /// Synthetic session ID used for HMAC grants in local-authless mode (valid 26-char ULID).
-    const LOCAL_AUTHLESS_SESSION_ID: &'static str = "01000000000000000000000000";
+    pub(super) const LOCAL_AUTHLESS_SESSION_ID: &'static str = "01000000000000000000000000";
 
     /// Verifies that `connection` is an admitted plain-HTTP web connection and returns the
     /// active local-authless owner account ID, failing closed with `not_authorized` otherwise.
@@ -413,6 +404,7 @@ impl Authentication {
 
     /// `session.end`: deletes one session. Ending an unknown session is not an error.
     pub(crate) fn end_browser(&self, session_id: &str) -> Result<Vec<Ended>, ApiError> {
+        self.touch_batcher.forget(&[session_id]);
         let sessions: &dyn BrowserSessions = &*self.db;
         Ok(sessions
             .end(session_id)
@@ -548,7 +540,7 @@ impl Authentication {
         )
     }
 
-    fn start(
+    pub(super) fn start(
         &self,
         account: &AccountId,
         cookie: SessionDigest,
@@ -557,6 +549,9 @@ impl Authentication {
         now_ms: i64,
         ended: &mut Vec<Ended>,
     ) -> Result<BrowserSession, ApiError> {
+        // Flush pending touches before `create` reaps expired sessions so an active session
+        // with a buffered touch cannot be reaped on stale `last_activity_ms`.
+        self.touch_batcher.flush(&self.db, now_ms, true);
         let new = NewSession::new(account.as_str(), cookie, proof, origin).map_err(store_error)?;
         let sessions: &dyn BrowserSessions = &*self.db;
         match sessions.create(&new, now_ms).map_err(store_error)? {

@@ -212,15 +212,58 @@ impl Office {
         roots: DataRoots,
         custody: Custody,
     ) -> Result<Office, OfficeError> {
-        Self::open_with(folder, key, instance, roots, custody, Options::production())
+        Self::open_with_owner(
+            folder,
+            key,
+            instance,
+            roots,
+            custody,
+            None,
+            Options::production(),
+        )
     }
 
+    /// Opens the finished HQ in `folder` with an explicit host-authoritative owner member ID
+    /// (supports organization ownership handover, `TASK-38` / `doc-78`, while keeping the
+    /// immutable `creation-intent.json` intact).
+    pub fn open_as_owner(
+        folder: impl Into<PathBuf>,
+        key: Option<Key>,
+        instance: &str,
+        roots: DataRoots,
+        custody: Custody,
+        active_owner: &str,
+    ) -> Result<Office, OfficeError> {
+        Self::open_with_owner(
+            folder,
+            key,
+            instance,
+            roots,
+            custody,
+            Some(active_owner),
+            Options::production(),
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn open_with(
         folder: impl Into<PathBuf>,
         key: Option<Key>,
         instance: &str,
         roots: DataRoots,
         custody: Custody,
+        options: Options,
+    ) -> Result<Office, OfficeError> {
+        Self::open_with_owner(folder, key, instance, roots, custody, None, options)
+    }
+
+    fn open_with_owner(
+        folder: impl Into<PathBuf>,
+        key: Option<Key>,
+        instance: &str,
+        roots: DataRoots,
+        custody: Custody,
+        active_owner: Option<&str>,
         options: Options,
     ) -> Result<Office, OfficeError> {
         if !org_proto::is_uuid_v7(instance) {
@@ -253,7 +296,11 @@ impl Office {
         if !org_proto::is_uuid_v7(&intent.owner) || !org_proto::is_uuid_v7(&intent.operation) {
             return Err(recovery());
         }
-        let owner = Id::parse(&intent.owner).map_err(|_| recovery())?;
+        let effective_owner = active_owner.unwrap_or(&intent.owner);
+        if !org_proto::is_valid_member_id(effective_owner) {
+            return Err(OfficeError::Invalid("active owner id is invalid"));
+        }
+        let owner = Id::parse(effective_owner).map_err(|_| recovery())?;
         let creation = Id::parse(&intent.operation).map_err(|_| recovery())?;
         let creation_command = intent.operation.clone();
 

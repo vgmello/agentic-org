@@ -54,6 +54,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod admin;
 pub mod browser;
+pub mod browser_accounts;
 pub mod journal;
 pub mod listen;
 pub mod ops;

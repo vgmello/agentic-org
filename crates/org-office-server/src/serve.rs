@@ -455,6 +455,16 @@ pub(crate) fn live_owner(shared: &Shared, binding: &Binding) -> Result<bool, Loo
     })
 }
 
+/// One live person-member check for multi-person host-channel reads and member actions (`TASK-38`).
+pub(crate) fn live_person(shared: &Shared, binding: &Binding) -> Result<bool, LookupError> {
+    let Binding::Member { id, .. } = binding else {
+        return Ok(false);
+    };
+    shared.ports.directory.resolve_member(id).map(|found| {
+        found.is_some_and(|(member, _)| member.id == *id && member.kind == MemberKind::Person)
+    })
+}
+
 /// Binds `path` (owner-only), replacing a stale socket file a crashed server left: the caller
 /// holds the office lock, so no other server of this office is alive.
 pub fn bind(path: &Path) -> std::io::Result<UnixListener> {

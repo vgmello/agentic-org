@@ -5,7 +5,7 @@ use std::os::unix::net::UnixStream;
 
 use org_platform::Refused;
 
-use super::{refusal, Confirmation, Unconfirmed};
+use super::{refusal, ConfirmReason, Confirmation, Unconfirmed};
 
 pub(super) fn local_peer(_peer: &UnixStream) -> Result<bool, Refused> {
     Err(refusal())
@@ -15,7 +15,10 @@ pub(super) fn current_context() -> Result<bool, Refused> {
     Err(refusal())
 }
 
-pub(super) fn confirm_presence(_cancelled: impl Fn() -> bool) -> Result<Confirmation, Unconfirmed> {
+pub(super) fn confirm_presence(
+    _reason: ConfirmReason,
+    _cancelled: impl Fn() -> bool,
+) -> Result<Confirmation, Unconfirmed> {
     Err(Unconfirmed::Refused(refusal()))
 }
 
@@ -39,7 +42,7 @@ mod tests {
     fn nothing_is_confirmed_and_the_caller_is_not_polled() {
         let polls = Cell::new(0);
         for answer in [false, true] {
-            let outcome = confirm_presence(|| {
+            let outcome = confirm_presence(ConfirmReason::RecoveryCode, || {
                 polls.set(polls.get() + 1);
                 answer
             });

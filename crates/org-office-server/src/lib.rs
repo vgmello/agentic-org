@@ -309,8 +309,16 @@ fn open_and_serve(mut control: Control, home: &Path, runtime: &Path, id: &str) -
         Ok(admitted) => admitted,
         Err(code) => return code,
     };
-    // The office checks the admission's organization and roots against its creation intent.
-    let opened = Office::open(folder, key, &instance, admitted.roots, admitted.custody);
+    // The office checks the admission's organization and roots against its creation intent,
+    // and binds the host-authoritative current organization owner (which may have been handed over).
+    let opened = Office::open_as_owner(
+        folder,
+        key,
+        &instance,
+        admitted.roots,
+        admitted.custody,
+        &admitted.admission.owner_member,
+    );
     let office = match opened {
         Ok(office) => office,
         Err(e) => return fail_with(&mut control, &e),

@@ -8,6 +8,7 @@
 //! session in memory for the connection generation that validated it. The
 //! browser's address comes from the accepted socket ([`PeerAddress`]), never a
 //! header. Nothing else forwards to the host or a local socket.
+mod account_routes;
 mod instance_routes;
 mod org_routes;
 
@@ -157,6 +158,7 @@ pub enum Route {
     EventsStream(CallerAuth),
     CliApprovalDecide(CallerAuth),
     Operation(CallerAuth, OperationId),
+    Account(account_routes::AccountRoute),
 }
 
 pub enum Call {
@@ -187,6 +189,7 @@ pub enum Call {
     EventsStream(CallerAuth, StreamRequest),
     CliApprovalDecide(CallerAuth, LinkToken, bool),
     Operation(CallerAuth, OperationId),
+    Account(account_routes::AccountCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -277,6 +280,13 @@ fn failure(failure: Failure) -> ApiReply {
                     (error.field, error.rule) = (Some(field), Some(rule));
                     (StatusCode::BAD_REQUEST, error)
                 }
+                (WebErrorCode::Conflict, _, _) => (
+                    StatusCode::CONFLICT,
+                    WebError::new(
+                        WebErrorCode::Conflict,
+                        "This action conflicts with the current account state.",
+                    ),
+                ),
                 (WebErrorCode::RateLimited, _, _) if host.retry_after_ms.is_some() => (
                     StatusCode::TOO_MANY_REQUESTS,
                     WebError::new(
@@ -735,6 +745,21 @@ impl ApiBackend for SessionApi {
             ["api", "v1", "access"] if get => Route::Access,
             ["api", "v1", "session", "sign-in"] if post => Route::SignIn(Self::peer(request)?),
             ["api", "v1", "links", "register"] if post => Route::Register(Self::peer(request)?),
+            ["api", "v1", "links", "inspect"] if post => {
+                Route::Account(account_routes::AccountRoute::LinkInspect)
+            }
+            ["api", "v1", "links", "register", "sign-in"] if post => Route::Account(
+                account_routes::AccountRoute::LinkRegisterAttach(Self::peer(request)?),
+            ),
+            ["api", "v1", "links", "set-password"] if post => Route::Account(
+                account_routes::AccountRoute::LinkSetPassword(Self::peer(request)?),
+            ),
+            ["api", "v1", "account", "password"] if post => Route::Account(
+                account_routes::AccountRoute::ChangePassword(self.caller_auth(request)?),
+            ),
+            ["api", "v1", "instance", "admin", "handover"] if post => Route::Account(
+                account_routes::AccountRoute::AdminHandover(self.caller_auth(request)?),
+            ),
             ["api", "v1", "instance", "auth", "enable"] if post => {
                 let pair = if self.is_auth_enabled() {
                     Some(self.pair(request)?)
@@ -789,6 +814,11 @@ impl ApiBackend for SessionApi {
             | ["api", "v1", "instance", "tls"]
             | ["api", "v1", "session", "sign-in"]
             | ["api", "v1", "links", "register"]
+            | ["api", "v1", "links", "inspect"]
+            | ["api", "v1", "links", "register", "sign-in"]
+            | ["api", "v1", "links", "set-password"]
+            | ["api", "v1", "account", "password"]
+            | ["api", "v1", "instance", "admin", "handover"]
             | ["api", "v1", "session"]
             | ["api", "v1", "session", "sign-out"]
             | ["api", "v1", "organizations"]
@@ -900,6 +930,7 @@ impl ApiBackend for SessionApi {
                 } = serde_json::from_slice(bytes).map_err(|_| invalid())?;
                 Call::Register(address, link, Credentials { login, password })
             }
+            Route::Account(route) => return account_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -994,6 +1025,7 @@ impl ApiBackend for SessionApi {
             Call::EnableTls(caller, input) => {
                 instance_routes::execute_tls_enable(self, caller, input)
             }
+            Call::Account(call) => account_routes::execute(self, call),
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))
@@ -1179,7 +1211,7 @@ impl ApiBackend for SessionApi {
                         },
                         self.caching(pair),
                     );
-                    if reply.is_ok() {
+                    if matches!(&reply, Ok(session) if session.admin) {
                         auth_flag.store(true, Ordering::Release);
                     }
                     reply

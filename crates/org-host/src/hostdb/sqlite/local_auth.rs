@@ -54,7 +54,7 @@ impl HostDb {
             return Ok(None);
         }
         let ts = now(&tx, now_ms)?;
-        let raw_id = crate::ids::generate().map_err(|_| Error::Unsafe)?;
+        let raw_id = crate::ids::uuid_v7().map_err(|_| Error::Unsafe)?;
         let id = AccountId::parse(&raw_id).map_err(|_| Error::Unsafe)?;
         let key = LoginKey::new(LOCAL_OWNER_LOGIN).map_err(|_| Error::Unsafe)?;
         tx.execute(
@@ -266,5 +266,26 @@ mod tests {
         assert!(matches!(reg, Registration::Registered { account_id } if account_id == id2));
         assert!(db2.auth_enabled().unwrap());
         assert!(db2.administrator_exists().unwrap());
+    }
+
+    #[test]
+    fn local_authless_refuses_invites_and_hides_pseudo_account_from_org_access() {
+        let (_dir, db) = fresh_db();
+        let local_id = db.init_local_authless_if_empty(10_000).unwrap().unwrap();
+        let org_id = crate::ids::uuid_v7().unwrap();
+        let owner_member = crate::ids::uuid_v7().unwrap();
+        let sam_member = crate::ids::uuid_v7().unwrap();
+        db.seed_owner_for_test(local_id.as_str(), &org_id, &owner_member)
+            .unwrap();
+
+        // Local authless pseudo-account must never appear as a password account in org access.
+        assert!(db.list_org_access(&org_id, 10_100).unwrap().is_empty());
+
+        // Issuing invites is refused while authentication is disabled.
+        assert_eq!(
+            db.issue_org_invite(&org_id, &sam_member, 10_200)
+                .unwrap_err(),
+            super::super::accounts::multi_person::InviteIssueError::AuthDisabled
+        );
     }
 }

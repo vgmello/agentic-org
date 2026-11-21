@@ -132,18 +132,38 @@ fn the_initial_link_is_bound_to_the_setup_operation() {
 }
 
 #[test]
-fn no_link_is_issued_while_an_administrator_exists() {
+fn reset_issues_password_link_while_initial_refuses_when_administrator_exists() {
+    use org_platform_host::presence::ConfirmReason;
     let (_home, admin) = admin();
     seed_administrator(&admin);
     assert!(matches!(
         admin.initial_link(OPERATION, 1).unwrap(),
         AdminLinkResult::AdministratorPresent
     ));
-    // X5 review, fourth round, P2-10: an answer the command can act on, not an error.
-    assert!(matches!(
-        admin.reset_with(true, || Ok(())).unwrap(),
-        AdminLinkResult::AdministratorPresent
-    ));
+    let mut seen_reason = None;
+    let res = admin
+        .reset_with(true, |reason| {
+            seen_reason = Some(reason);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(seen_reason, Some(ConfirmReason::ResetAdminPassword));
+    let AdminLinkResult::ResetPassword {
+        login,
+        url,
+        expires_at_ms,
+    } = res
+    else {
+        panic!("expected ResetPassword, got {res:?}");
+    };
+    assert_eq!(login, "Sage");
+    assert!(expires_at_ms > 0);
+    let token = url
+        .expose()
+        .strip_prefix("http://127.0.0.1:7420/set-password#")
+        .expect("set-password link on configured origin");
+    assert_eq!(token.len(), 43);
+    // Registration links remain untouched.
     assert_eq!(
         admin
             .db
@@ -158,14 +178,14 @@ fn reset_requires_local_presence_and_confirmation() {
     let (_home, admin) = admin();
     let mut asked = false;
     let error = admin
-        .reset_with(false, || {
+        .reset_with(false, |_| {
             asked = true;
             Ok(())
         })
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::NotAuthorized);
     assert!(!asked, "no dialog for a remote caller");
-    let error = admin.reset_with(true, || Err(())).unwrap_err();
+    let error = admin.reset_with(true, |_| Err(())).unwrap_err();
     assert_eq!(error.code, ErrorCode::NotAuthorized);
     assert_eq!(
         admin
@@ -181,8 +201,8 @@ fn reset_replaces_the_previous_link_and_only_the_newest_redeems() {
     let (_home, admin) = admin();
     let now = wall().unwrap();
     let (initial, _) = token(admin.initial_link(OPERATION, now).unwrap());
-    let (second, _) = token(admin.reset_with(true, || Ok(())).unwrap());
-    let (third, _) = token(admin.reset_with(true, || Ok(())).unwrap());
+    let (second, _) = token(admin.reset_with(true, |_| Ok(())).unwrap());
+    let (third, _) = token(admin.reset_with(true, |_| Ok(())).unwrap());
     let later = wall().unwrap() + 1;
     let consume = |t: &str| admin.db.consume(LinkKind::Registration, t, later).unwrap();
     assert_eq!(consume(&initial), Err(crate::links::Refused::Cancelled));
@@ -200,7 +220,7 @@ fn reset_replaces_the_previous_link_and_only_the_newest_redeems() {
 fn a_dialog_that_sees_a_new_administrator_issues_nothing() {
     let (_home, admin) = admin();
     let answer = admin
-        .reset_with(true, || {
+        .reset_with(true, |_| {
             seed_administrator(&admin);
             Ok(())
         })
@@ -218,14 +238,14 @@ fn a_dialog_that_sees_a_new_administrator_issues_nothing() {
 #[test]
 fn a_reset_refused_for_an_administrator_keeps_the_pending_link() {
     let (_home, admin) = admin();
-    let (_, _) = token(admin.reset_with(true, || Ok(())).unwrap());
+    let (_, _) = token(admin.reset_with(true, |_| Ok(())).unwrap());
     let before = admin
         .db
         .pending(LinkKind::Registration, &subject(), 1)
         .unwrap()
         .expect("pending link");
     let answer = admin
-        .reset_with(true, || {
+        .reset_with(true, |_| {
             seed_administrator(&admin);
             Ok(())
         })
@@ -331,7 +351,7 @@ fn where_a_peer_is_named_by_its_user_alone_only_root_resets_the_administrator() 
     seed_administrator(&refusing);
     assert!(matches!(
         refusing.reset(&root, received).unwrap(),
-        AdminLinkResult::AdministratorPresent
+        AdminLinkResult::ResetPassword { ref login, .. } if login == "Sage"
     ));
     // Bytes already waiting behind the request deny it, as for every caller.
     let (_home, fresh) = admin();

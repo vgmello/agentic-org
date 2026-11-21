@@ -341,6 +341,28 @@ impl Supervisor {
         }
     }
 
+    /// Updates an office's persisted writer owner binding.
+    pub(crate) fn update_owner(
+        &self,
+        office_id: &str,
+        org_id: &str,
+        owner_account: &str,
+        owner_member: &str,
+    ) -> io::Result<()> {
+        if let Some(spawner) = &self.spawner {
+            spawner.update_owner(office_id, org_id, owner_account, owner_member)?;
+        }
+        Ok(())
+    }
+
+    /// Gracefully reloads a supervised office worker without tripping crash backoff.
+    pub(crate) fn reload_office(&self, office_id: &str) {
+        let state = lock(&self.state);
+        if let Some(slot) = state.offices.get(office_id) {
+            let _ = slot.signals.send(Signal::Reload);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn kill_office_for_test(&self, office_id: &str) {
         let state = lock(&self.state);
@@ -450,7 +472,7 @@ impl Supervisor {
                     return DiscardOutcome::Stopped;
                 }
                 // Restarts are for an office's own supervision thread only.
-                Ok(Signal::Restart) => continue,
+                Ok(Signal::Restart | Signal::Reload) => continue,
                 Ok(Signal::Event { event, .. }) => match event {
                     ServerEvent::Discarded => DiscardOutcome::Discarded,
                     ServerEvent::Failed { code, message } => {
@@ -697,7 +719,7 @@ impl<'a> PendingCreate<'a> {
                     self.child.stop(deadline);
                     return CreateOutcome::Stopped;
                 }
-                Signal::Restart => {}
+                Signal::Restart | Signal::Reload => {}
                 Signal::Event {
                     event: ServerEvent::Created { office },
                     ..

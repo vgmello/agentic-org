@@ -36,13 +36,47 @@ fn op_methods() {
         (TlsFetch::METHOD, "tls.fetch"),
         (WebServing::METHOD, "web.serving"),
         (TlsSet::METHOD, "tls.set"),
-        (AccountSetPassword::METHOD, "account.set_password"),
-        (AccountResetPassword::METHOD, "account.reset_password"),
-        (AccountCreate::METHOD, "account.create"),
         (RecoveryRelease::METHOD, "recovery.release"),
         (RecoveryAcknowledge::METHOD, "recovery.acknowledge"),
         (Subscribe::METHOD, "subscribe"),
         (crate::browser::LinkRegister::METHOD, "link.register"),
+        (crate::browser_accounts::LinkInspect::METHOD, "link.inspect"),
+        (
+            crate::browser_accounts::LinkRegisterAttach::METHOD,
+            "link.register_attach",
+        ),
+        (
+            crate::browser_accounts::LinkSetPassword::METHOD,
+            "link.set_password",
+        ),
+        (
+            crate::browser_accounts::BrowserChangePassword::METHOD,
+            "browser.change_password",
+        ),
+        (
+            crate::browser_accounts::BrowserOrgAccessList::METHOD,
+            "browser.org_access_list",
+        ),
+        (
+            crate::browser_accounts::BrowserOrgInvite::METHOD,
+            "browser.org_invite",
+        ),
+        (
+            crate::browser_accounts::BrowserOrgPasswordResetLink::METHOD,
+            "browser.org_password_reset_link",
+        ),
+        (
+            crate::browser_accounts::BrowserOrgRemoveAccess::METHOD,
+            "browser.org_remove_access",
+        ),
+        (
+            crate::browser_accounts::BrowserOrgOwnerHandover::METHOD,
+            "browser.org_owner_handover",
+        ),
+        (
+            crate::browser_accounts::BrowserAdminHandover::METHOD,
+            "browser.admin_handover",
+        ),
         (crate::browser::SessionSignIn::METHOD, "session.sign_in"),
         (crate::browser::SessionValidate::METHOD, "session.validate"),
         (crate::browser::BrowserSessionEnd::METHOD, "session.end"),
@@ -282,7 +316,6 @@ fn fingerprint_hashes_match_independently_pinned_vectors() {
     for case in vectors["cases"].as_array().unwrap() {
         match case["method"].as_str().unwrap() {
             "office.restart" => check::<OfficeRestartParams>(case),
-            "account.create" => check::<AccountCreateParams>(case),
             _ => panic!("unhandled vector method"),
         }
     }
@@ -318,7 +351,6 @@ fn journal_vectors_replay_only_the_same_op_for_the_same_account() {
         let method = case["method"].as_str().unwrap();
         let fingerprint = |side: &Value| match method {
             "office.restart" => journaled::<OfficeRestartParams>(method, side),
-            "account.create" => journaled::<AccountCreateParams>(method, side),
             other => panic!("{other}"),
         };
         let (stored_id, stored) = fingerprint(&case["stored"]["params"]);
@@ -337,29 +369,7 @@ fn journal_vectors_replay_only_the_same_op_for_the_same_account() {
         );
         assert!(!text.contains("password"), "{name}: {text}");
         let same_account = case["stored"]["account"] == case["retry"]["account"];
-        // Only account.create carries a password, and its rows say whether it matches.
-        let verifier_matches = match case.get("password_verifier") {
-            None => {
-                assert_ne!(method, "account.create", "{name}: no password_verifier");
-                true
-            }
-            Some(v) => {
-                assert_eq!(method, "account.create", "{name}");
-                let want = v == "match";
-                assert!(want || v == "mismatch", "{name}: {v}");
-                // The password never reaches the fingerprint, so the verifier is what tells two
-                // passwords apart.
-                let same_password =
-                    case["stored"]["params"]["password"] == case["retry"]["params"]["password"];
-                assert_eq!(want, same_password, "{name}");
-                if !want {
-                    // Only the password differs, and the fingerprint doesn't see it.
-                    assert_eq!(stored, retry, "{name}");
-                }
-                want
-            }
-        };
-        let outcome = if stored == retry && same_account && verifier_matches {
+        let outcome = if stored == retry && same_account {
             "replay"
         } else {
             "operation_reused"
@@ -639,17 +649,14 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
 
 #[test]
 fn passwords_and_keys_stay_redacted() {
-    let params: AccountSetPasswordParams = serde_json::from_value(json!({
-        "session": "the-handle", "current": "old secret", "new": "new secret"
+    let set_pw: crate::browser_accounts::LinkSetPasswordParams = serde_json::from_value(json!({
+        "link": "secret-link-token", "password": "fresh secret", "client_address": "127.0.0.1"
     }))
     .unwrap();
-    let printed = format!("{params:?}");
-    for secret in ["the-handle", "old secret", "new secret"] {
+    let printed = format!("{set_pw:?}");
+    for secret in ["secret-link-token", "fresh secret"] {
         assert!(!printed.contains(secret), "{printed}");
     }
-    let reset: AccountResetPasswordParams =
-        serde_json::from_value(json!({"login": "ada", "new": "fresh"})).unwrap();
-    assert_eq!(reset.new.expose(), "fresh");
     let set: TlsSetParams = serde_json::from_value(json!({
         "session": "h", "operation_id": "01M72N8MG00000000000000H03", "cert": "c", "key": "k-secret"
     }))
@@ -660,21 +667,25 @@ fn passwords_and_keys_stay_redacted() {
 
 #[test]
 fn account_and_recovery_ops_have_their_wire_shapes() {
-    let create: AccountCreateParams = serde_json::from_value(json!({
-        "session": "h", "operation_id": "01M72N8MG00000000000000H04", "login": "sam",
-        "password": "pw-secret", "admin": false, "owner_of": "01M72N8MG00000000000000G01"
+    let reset: crate::admin::AdminLinkResult = serde_json::from_value(json!({
+        "outcome": "reset_password",
+        "login": "alex",
+        "url": "http://127.0.0.1:7420/set-password#secret-token",
+        "expires_at_ms": 1_800_000_000_000_i64
+    }))
+    .unwrap();
+    assert!(!format!("{reset:?}").contains("secret-token"));
+    let inspect: crate::browser_accounts::LinkInspectResult = serde_json::from_value(json!({
+        "kind": "organization_invite",
+        "org_id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1",
+        "org_name": "Lumen Labs",
+        "member_id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a2"
     }))
     .unwrap();
     assert_eq!(
-        create.owner_of.as_deref(),
-        Some("01M72N8MG00000000000000G01")
+        serde_json::to_value(&inspect).unwrap()["kind"],
+        "organization_invite"
     );
-    assert!(!format!("{create:?}").contains("pw-secret"));
-    let done: HostOpResult<AccountCreated> = serde_json::from_value(json!({
-        "status": "completed", "result": {"account": "01M72N8MG00000000000000A02"}
-    }))
-    .unwrap();
-    assert!(matches!(done, HostOpResult::Completed { .. }));
 
     let release: RecoveryReleaseParams =
         serde_json::from_value(json!({"session": "h", "org_id": "o"})).unwrap();

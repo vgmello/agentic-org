@@ -130,7 +130,7 @@ static void finish(AGRecoveryPresenceState *state, int result) {
         @catch (NSException *ignored) { (void)ignored; }
     }
 }
-void *ag_recovery_begin(void) {
+void *ag_recovery_begin_reason(int reason_code) {
     @autoreleasepool {
         AGRecoveryPresenceState *state = nil;
         @try {
@@ -143,14 +143,23 @@ void *ag_recovery_begin(void) {
         if (![state->context canEvaluatePolicy:LAPolicyDeviceOwnerAuthentication error:&error] || error) {
             finish(state, 2); return NULL;
         }
+        NSString *reason = @"Show the recovery code and record it as stored off this Mac.";
+        if (reason_code == 1) {
+            reason = @"Reset the administrator's password.";
+        } else if (reason_code == 2) {
+            reason = @"Create a new administrator registration link.";
+        }
         [state->context evaluatePolicy:LAPolicyDeviceOwnerAuthentication
-            localizedReason:@"Show the recovery code and record it as stored off this Mac."
+            localizedReason:reason
             reply:^(BOOL success, NSError *reply_error) {
                 @try { finish(state, success && !reply_error ? 1 : 2); }
                 @catch (NSException *exception) { (void)exception; finish(state, 2); }
             }];
         return (__bridge_retained void *)state;
     } @catch (NSException *exception) { (void)exception; finish(state, 2); return NULL; } }
+}
+void *ag_recovery_begin(void) {
+    return ag_recovery_begin_reason(0);
 }
 int ag_recovery_poll(void *handle) {
     @autoreleasepool { @try {
