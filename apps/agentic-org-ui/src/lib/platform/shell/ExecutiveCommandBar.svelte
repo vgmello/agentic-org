@@ -444,7 +444,6 @@
 		background: var(--exec-accent-soft);
 		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
 		color: var(--exec-accent-ink);
-		transition: background-color 0.14s ease, color 0.14s ease;
 	}
 	.exec-ai-btn:hover {
 		background: var(--exec-accent);

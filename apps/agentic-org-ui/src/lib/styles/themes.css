@@ -187,8 +187,8 @@ html[data-ui-theme='classic'] {
 	--exec-sky: #a3b3ff;
 	--exec-sky-bg: rgba(97, 95, 255, 0.14);
 	--exec-sky-ring: rgba(124, 134, 255, 0.3);
-	--exec-cta-bg: #615fff;
-	--exec-cta-fill: #7c86ff;
+	--exec-cta-bg: linear-gradient(135deg, #615fff 0%, #615fff 100%);
+	--exec-cta-fill: linear-gradient(135deg, #7c86ff 0%, #7c86ff 100%);
 	--exec-cta-glass-bg: rgba(97, 95, 255, 0.14);
 	--exec-cta-glass-ink: #e0e7ff;
 	--exec-avatar-bg: #1e2939;
@@ -263,7 +263,7 @@ html[data-ui-theme='classic'] .exec-canvas::before {
 	color: #ffffff;
 	background: var(--exec-cta-bg);
 	cursor: pointer;
-	transition: transform 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+	transition: transform 0.16s ease, box-shadow 0.16s ease;
 }
 
 .exec-cta .exec-cta-fill {
@@ -377,6 +377,6 @@ html[data-ui-theme='light'] .exec-legacy-compat .ring-white\/10 {
 html[data-ui-theme='light'] .exec-legacy-compat button.bg-indigo-500,
 html[data-ui-theme='light'] .exec-legacy-compat button.bg-primary,
 html[data-ui-theme='light'] .exec-legacy-compat a.bg-indigo-500,
-html[data-ui-theme='light'] .exec-legacy-compat .exec-cta {
+html[data-ui-theme='light'] .exec-legacy-compat .exec-cta:not(.exec-cta-glass) {
 	color: #ffffff;
 }
