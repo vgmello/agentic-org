@@ -81,10 +81,14 @@
 	let triageConflict = $state<AssignmentConflict | null>(null);
 
 	const missingAssignedTeam = $derived(
-		!!task.assignedTeam && !(choices?.teams ?? []).some((t) => t.id === task.assignedTeam!.id)
+		choices !== null &&
+			!!task.assignedTeam &&
+			!choices.teams.some((t) => t.id === task.assignedTeam!.id)
 	);
 	const missingAssignee = $derived(
-		!!task.assignee && !(choices?.employees ?? []).some((e) => e.id === task.assignee!.id)
+		choices !== null &&
+			!!task.assignee &&
+			!choices.employees.some((e) => e.id === task.assignee!.id)
 	);
 
 	async function saveTriage(expectedRevision: number) {
@@ -342,7 +346,9 @@
 					class="mt-1 {selectClass}"
 				>
 					<option value="">No assigned team</option>
-					{#if missingAssignedTeam && task.assignedTeam}
+					{#if choices === null && task.assignedTeam}
+						<option value={task.assignedTeam.id}>{task.assignedTeam.name}</option>
+					{:else if missingAssignedTeam && task.assignedTeam}
 						<option value={task.assignedTeam.id} disabled>
 							{task.assignedTeam.name} (archived)
 						</option>
@@ -364,7 +370,11 @@
 					class="mt-1 {selectClass}"
 				>
 					<option value="">Unassigned individual</option>
-					{#if missingAssignee && task.assignee}
+					{#if choices === null && task.assignee}
+						<option value={task.assignee.id}>
+							{task.assignee.name} ({task.assignee.kind}{task.assignee.former ? ' · former' : ''})
+						</option>
+					{:else if missingAssignee && task.assignee}
 						<option value={task.assignee.id} disabled>
 							{task.assignee.name} ({task.assignee.kind}{task.assignee.former ? ' · former' : ''})
 						</option>

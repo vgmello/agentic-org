@@ -576,6 +576,7 @@
 						{organizationId}
 						taskId={t.id}
 						comments={t.comments}
+						canComment={t.can.edit}
 						stale={isStale}
 						onsharedchanged={() => taskRead.reload()}
 					/>

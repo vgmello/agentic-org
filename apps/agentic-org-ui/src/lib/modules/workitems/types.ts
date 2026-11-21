@@ -154,15 +154,29 @@ export interface Comment {
 	body: string;
 }
 
-/** An author's private task note (PN-01..06). Never mixed into shared history or counts. */
+/** An author's private task note (PN-01..06, L8). Never mixed into shared history or counts. */
 export interface PrivateNote {
 	id: string;
 	author: EmployeeRef;
 	body: string;
-	at: string;
+	/** RFC 3339: immutable creation timestamp. */
+	createdAt: string;
+	/** RFC 3339: latest update timestamp (equals createdAt until edited). */
+	updatedAt: string;
+	/** Concurrency revision; starts at 1 and advances by 1 on each edit or deletion. */
 	revision: number;
-	/** The viewer wrote it: only the author edits, deletes or publishes. */
+	/** The signed-in viewer wrote this note: only the author edits, deletes or publishes. */
 	mine: boolean;
+}
+
+/** Private notes feed from the separate private-note service (`/api/v1/.../private-notes`). */
+export interface PrivateNotesFeed {
+	notes: PrivateNote[];
+	/**
+	 * True only when the signed-in viewer has an active employee record and permission to author
+	 * private notes on this task; false for viewer-only accounts or accounts without an employee record.
+	 */
+	canWrite: boolean;
 }
 
 /**

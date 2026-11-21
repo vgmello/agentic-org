@@ -218,7 +218,8 @@
 					"id": "pn-40-1",
 					"author": { "id": "you", "name": "Alex Kim", "kind": "person" },
 					"body": "Double-check Stripe webhook retries before releasing Beacon 0.2.",
-					"agoHours": 5,
+					"createdAgoHours": 5,
+					"updatedAgoHours": 5,
 					"revision": 1,
 					"mine": true
 				},
@@ -226,7 +227,35 @@
 					"id": "pn-40-2",
 					"author": { "id": "avery", "name": "Avery Stone", "kind": "person" },
 					"body": "Customer pilot starts Monday; prioritize mobile Safari testing.",
-					"agoHours": 18,
+					"createdAgoHours": 18,
+					"updatedAgoHours": 18,
+					"revision": 1,
+					"mine": false
+				},
+				{
+					"id": "pn-40-3",
+					"author": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"body": "Implementation plan:\n1. Extract idempotency key store behind a consumer trait.\n2. Keep payment authorization and basket persistence in separate transactions.\n3. Replay duplicate submits with the same operation ID.",
+					"createdAgoHours": 14,
+					"updatedAgoHours": 14,
+					"revision": 1,
+					"mine": false
+				},
+				{
+					"id": "pn-40-4",
+					"author": { "id": "sam", "name": "Sam Okafor", "kind": "agent" },
+					"body": "Test notes: duplicate submit replay passed on 20 concurrent requests; verifying timeout recovery when authorization succeeds after basket write.",
+					"createdAgoHours": 3,
+					"updatedAgoHours": 2,
+					"revision": 2,
+					"mine": false
+				},
+				{
+					"id": "pn-40-5",
+					"author": { "id": "noor", "name": "Noor Haddad", "kind": "agent" },
+					"body": "Layout check reasoning: checkout split keeps the footer DOM untouched, so the 320 px pay-button fix on T-A42 remains compatible.",
+					"createdAgoHours": 6,
+					"updatedAgoHours": 6,
 					"revision": 1,
 					"mine": false
 				}

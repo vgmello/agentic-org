@@ -3,7 +3,7 @@
 // Scenarios (`?mock=` on the URL, comma-separated):
 //   slow · fails · empty · unavailable · unsupported · stale · viewer · agent-pm · conflict
 //   budget-unknown · budget-stop-pending · budget-extended · create-unknown
-//   no-needs-me · no-employee · notes-unsupported · cost-unsupported
+//   no-needs-me · no-employee · notes-unsupported · notes-fails · notes-conflict · cost-unsupported
 import { orgApi } from '$lib/modules/organization/api';
 import { newId } from '$lib/modules/organization/commands';
 import { unavailableCall } from '$lib/platform/unavailable-api';
@@ -55,8 +55,10 @@ interface StoredTask {
 const stores = new Map<string, Map<string, StoredTask>>();
 const createdOps = new Map<string, { id: string; ref: string }>();
 const budgetOps = new Map<string, { state: 'applied' | 'not_applied'; reason?: string }>();
+const noteOps = new Map<string, PrivateNote | 'deleted' | 'published'>();
 let nextSeq = 60;
 let conflictedOnce = false;
+let noteConflictedOnce = false;
 let budgetUnknownOnce = false;
 let createUnknownOnce = false;
 
@@ -122,7 +124,8 @@ function buildSeedStore(): Map<string, StoredTask> {
 			id: n.id,
 			author: n.author as EmployeeRef,
 			body: n.body,
-			at: agoHours(n.agoHours),
+			createdAt: agoHours(n.createdAgoHours),
+			updatedAt: agoHours(n.updatedAgoHours),
 			revision: n.revision,
 			mine: n.mine
 		}));
@@ -900,48 +903,107 @@ export const workItemsApi: WorkItemsApi = {
 		await readGate();
 		if (on('notes-unsupported'))
 			throw fail('unsupported', "This version of the office doesn't support private task notes.");
+		if (on('notes-fails'))
+			throw fail('internal', "Couldn't reach the private notes store. Try again.");
 		const entry = findEntry(organizationId, taskId);
-		return structuredClone(entry.privateNotes);
+		const readOnlyViewer = on('viewer') || on('no-employee');
+		const notes = structuredClone(entry.privateNotes).map((n) => ({
+			...n,
+			mine: readOnlyViewer ? false : n.mine
+		}));
+		return {
+			notes,
+			canWrite: !readOnlyViewer && !on('stale')
+		};
 	},
 
-	async addNote(organizationId, taskId, body) {
+	async addNote(organizationId, taskId, change) {
+		const prior = noteOps.get(change.operationId);
+		if (prior && typeof prior === 'object') return structuredClone(prior);
 		await writeGate();
+		if (on('no-employee'))
+			throw fail('not_authorized', 'This account has no employee record to author private notes.');
 		const entry = findEntry(organizationId, taskId);
-		entry.privateNotes.push({
+		const at = nowIso();
+		const created: PrivateNote = {
 			id: newId(),
 			author: VIEWER_EMPLOYEE,
-			body,
-			at: nowIso(),
+			body: change.body,
+			createdAt: at,
+			updatedAt: at,
 			revision: 1,
 			mine: true
-		});
+		};
+		entry.privateNotes.push(created);
+		noteOps.set(change.operationId, structuredClone(created));
 		// Private notes never write to shared activity (PN-01..06).
+		return structuredClone(created);
 	},
 
 	async editNote(organizationId, taskId, noteId, change) {
+		const prior = noteOps.get(change.operationId);
+		if (prior && typeof prior === 'object') return structuredClone(prior);
 		await writeGate();
+		if (on('no-employee'))
+			throw fail('not_authorized', 'This account has no employee record to edit private notes.');
 		const entry = findEntry(organizationId, taskId);
 		const note = entry.privateNotes.find((n) => n.id === noteId);
 		if (!note || !note.mine) throw fail('not_authorized', 'Only the author can edit this note.');
+		if (on('notes-conflict') && !noteConflictedOnce) {
+			noteConflictedOnce = true;
+			note.revision += 1;
+			note.updatedAt = nowIso();
+			throw fail(
+				'conflict',
+				'This note changed in another session. Reload the latest revision to save your draft.'
+			);
+		}
+		if (change.expectedRevision !== note.revision) {
+			throw fail(
+				'conflict',
+				'This note changed in another session. Reload the latest revision to save your draft.'
+			);
+		}
 		note.body = change.body;
-		note.at = nowIso();
+		note.updatedAt = nowIso();
 		note.revision += 1;
+		noteOps.set(change.operationId, structuredClone(note));
+		return structuredClone(note);
 	},
 
-	async deleteNote(organizationId, taskId, noteId) {
+	async deleteNote(organizationId, taskId, noteId, change) {
+		if (noteOps.get(change.operationId) === 'deleted') return;
 		await writeGate();
+		if (on('no-employee'))
+			throw fail('not_authorized', 'This account has no employee record to delete private notes.');
 		const entry = findEntry(organizationId, taskId);
 		const idx = entry.privateNotes.findIndex((n) => n.id === noteId);
 		if (idx < 0 || !entry.privateNotes[idx].mine)
 			throw fail('not_authorized', 'Only the author can delete this note.');
+		if (change.expectedRevision !== entry.privateNotes[idx].revision) {
+			throw fail(
+				'conflict',
+				'This note changed in another session. Reload the latest revision before deleting.'
+			);
+		}
 		entry.privateNotes.splice(idx, 1);
+		noteOps.set(change.operationId, 'deleted');
 	},
 
-	async publishNote(organizationId, taskId, noteId) {
+	async publishNote(organizationId, taskId, noteId, change) {
+		if (noteOps.get(change.operationId) === 'published') return;
 		await writeGate();
+		if (on('no-employee'))
+			throw fail('not_authorized', 'This account has no employee record to publish private notes.');
 		const entry = findEntry(organizationId, taskId);
 		const note = entry.privateNotes.find((n) => n.id === noteId);
 		if (!note || !note.mine) throw fail('not_authorized', 'Only the author can publish this note.');
+		if (change.expectedRevision !== note.revision) {
+			throw fail(
+				'conflict',
+				'This note changed in another session. Reload the latest revision before publishing.'
+			);
+		}
 		// Private original stays private; copy enters shared comments.
 		entry.detail.comments.push({
 			id: newId(),
@@ -951,6 +1013,7 @@ export const workItemsApi: WorkItemsApi = {
 			body: note.body
 		});
 		pushEvent(entry, 'comment', 'published a shared comment');
+		noteOps.set(change.operationId, 'published');
 	},
 
 	async markFixed(organizationId, taskId, change) {
