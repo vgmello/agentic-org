@@ -106,6 +106,7 @@
 	let retryingCounts = $state(false);
 	let countRetryOpener: HTMLElement | null = null;
 	$effect(() => {
+		let active = true;
 		const pending = pendingCounts;
 		// The last answer stays only within one organization: a new one starts uncounted (no old agents under Unplaced).
 		if (organizationOfCounts !== orgId) {
@@ -114,7 +115,7 @@
 		}
 		// The last answer stays until the next arrives, so Retry (and its focus) isn't removed while it works.
 		pending.then((r) => {
-			if (pending !== pendingCounts) return;
+			if (!active || pending !== pendingCounts) return;
 			const opener = countRetryOpener;
 			countRetryOpener = null;
 			counts = r;
@@ -131,6 +132,9 @@
 					}
 				});
 		});
+		return () => {
+			active = false;
+		};
 	});
 	function retryCounts(event: MouseEvent) {
 		countRetryOpener = openerFrom(event);
@@ -508,7 +512,7 @@
 				agents={unplaced}
 				bleed={compactRow.bleed}
 				gutters={compactRow.gutters}
-				canplace={extra.state !== 'unavailable'}
+				canplace={extra.state !== 'unavailable' && extra.state !== 'unsupported'}
 				onplace={(agent, button) => (via(button), (placing = agent), (placeOpen = true))}
 				onoffboard={(agent, button) => (via(button), (offboarding = agent), (offboardOpen = true))}
 			/>

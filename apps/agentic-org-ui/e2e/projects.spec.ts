@@ -501,6 +501,11 @@ test('PROJ-Work: Tasks/Bugs tabs have aria-controls, arrow-key navigation, and w
 	await expect(panel).toHaveAttribute('aria-labelledby', tasksId!);
 
 	await tasksTab.focus();
+	await page.keyboard.press('Shift+ArrowRight');
+	await page.keyboard.press('Control+ArrowRight');
+	await expect(tasksTab).toBeFocused();
+	await expect(tasksTab).toHaveAttribute('aria-selected', 'true');
+
 	await page.keyboard.press('ArrowRight');
 	await expect(bugsTab).toBeFocused();
 	await expect(bugsTab).toHaveAttribute('aria-selected', 'true');

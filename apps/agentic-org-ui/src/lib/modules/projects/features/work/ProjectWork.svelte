@@ -21,6 +21,7 @@
 	let tablist = $state<HTMLDivElement | null>(null);
 
 	function handleTabKey(event: KeyboardEvent, index: number) {
+		if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
 		let next: number | undefined;
 		if (event.key === 'ArrowRight') next = (index + 1) % views.length;
 		else if (event.key === 'ArrowLeft') next = (index - 1 + views.length) % views.length;

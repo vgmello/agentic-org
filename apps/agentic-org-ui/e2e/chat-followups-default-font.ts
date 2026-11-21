@@ -52,7 +52,6 @@ test('BUG-119: rem-scaled shell gives kind metadata adequate room at real20px 96
 
 for (const width of [320, 640, 960, 1280])
 	for (const scale of [1, 2]) {
-		if (width === 960 && scale === 2) continue; // Ada01M77J22: header240/root40 is pinned under BUG119; existing standalone failure above remains.
 		test(`BUG-134 BUG-135 BUG-136: layout paths at real20px default ${width}/${scale * 100}`, async ({
 			page
 		}) => {

@@ -88,6 +88,7 @@
 	$effect(() => {
 		void innerHeight.current;
 		void innerWidth.current;
+		void rail;
 		void sublists;
 		void scroller;
 		untrack(() => void fit());
