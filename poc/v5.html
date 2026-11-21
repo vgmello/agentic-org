@@ -392,21 +392,6 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 
 /* Elegant Win-Sweep CTA in Home Briefing Header */
 .hb-quick-acts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.h4-cta.hb-cta-glass {
-  height: 36px; padding: 0 15px; border-radius: 10px;
-  background: rgba(56, 189, 248, .14);
-  backdrop-filter: blur(12px) saturate(145%); -webkit-backdrop-filter: blur(12px) saturate(145%);
-  box-shadow: inset 0 1px 0 rgba(186, 230, 253, .24), inset 0 0 0 1px rgba(125, 211, 252, .32), 0 8px 22px -10px rgba(0, 0, 0, .50);
-  color: #E0F2FE; font-size: 0.8125rem; font-weight: 600;
-}
-.h4-cta.hb-cta-glass .h4-cta-lbl.base .ic { color: #7DD3FC; }
-.h4-cta.hb-cta-glass:hover,
-.h4-cta.hb-cta-glass:focus-visible {
-  color: #FFFFFF;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .30), inset 0 0 0 1px rgba(52, 211, 153, .55), 0 10px 26px -6px rgba(16, 185, 129, .48);
-}
-.h4-cta.hb-cta-glass:hover .h4-cta-lbl.hover .ic,
-.h4-cta.hb-cta-glass:focus-visible .h4-cta-lbl.hover .ic { color: #FFFFFF; }
 .search {
   position: relative; display: grid; flex: 0 1 240px; width: 240px; max-width: 240px; height: 34px;
   border-radius: 999px;
@@ -1286,6 +1271,24 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .h4-cta[data-cta-tone="reply"] .h4-cta-fill {
   background: linear-gradient(135deg, #4338CA 0%, #4F46E5 55%, #0369A1 100%);
 }
+.h4-cta[data-cta-tone="ocean"] .h4-cta-fill {
+  background: linear-gradient(135deg, #0369A1 0%, #0284C7 55%, #0EA5E9 100%);
+}
+.h4-cta.hb-cta-glass {
+  height: 36px; padding: 0 15px; border-radius: 10px;
+  background: rgba(56, 189, 248, .13);
+  backdrop-filter: blur(12px) saturate(145%); -webkit-backdrop-filter: blur(12px) saturate(145%);
+  box-shadow: inset 0 1px 0 rgba(186, 230, 253, .22), inset 0 0 0 1px rgba(125, 211, 252, .30), 0 8px 22px -10px rgba(0, 0, 0, .50);
+  color: #E0F2FE; font-size: 0.8125rem; font-weight: 600;
+}
+.h4-cta.hb-cta-glass .h4-cta-lbl.base .ic { color: #7DD3FC; }
+.h4-cta.hb-cta-glass:hover,
+.h4-cta.hb-cta-glass:focus-visible {
+  color: #FFFFFF;
+  box-shadow: inset 0 1px 0 rgba(224, 242, 254, .34), inset 0 0 0 1px rgba(125, 211, 252, .58), 0 10px 26px -6px rgba(14, 165, 233, .46);
+}
+.h4-cta.hb-cta-glass:hover .h4-cta-lbl.hover .ic,
+.h4-cta.hb-cta-glass:focus-visible .h4-cta-lbl.hover .ic { color: #FFFFFF; }
 .h4-cta-sheen {
   position: absolute; top: -20%; bottom: -20%; left: 0; width: 42%; z-index: 1; pointer-events: none;
   background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, .28) 50%, transparent 100%);
@@ -3213,7 +3216,7 @@ function pageHome() {
         <h1 class="hb-title" tabindex="-1">${headline}</h1>
       </div>
       ${st !== "error" ? `<div class="hb-quick-acts" aria-label="Quick actions">
-        <button class="btn primary sm h4-cta hb-cta-glass" data-cta-tone="win" type="button" data-act="proto" data-v="New task">
+        <button class="btn sm h4-cta hb-cta-glass" data-cta-tone="ocean" type="button" data-act="proto" data-v="New task">
           <span class="h4-cta-fill" aria-hidden="true"></span>
           <span class="h4-cta-sheen" aria-hidden="true"></span>
           <span class="h4-cta-inner">
@@ -3241,7 +3244,7 @@ function pageHome() {
       </div>
       ${st === "loading" ? skel(3, "Loading projects…") : st === "error" ? "" : projs.length
         ? `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`
-        : `<div class="h4-empty-box"><div class="hb-cleared" style="padding:8px 0"><span class="hb-cleared-ring is-muted">${ic("folder", "ic20")}</span><h2>No projects yet</h2><p>Projects group the work toward one goal.</p><div class="hb-cleared-acts"><button class="btn primary sm h4-cta hb-cta-glass" data-cta-tone="win" type="button" data-act="proto" data-v="Create project"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>Create project</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("sparkle", "ic16")}</span><span>Start project</span></span></span></button></div></div></div>`}
+        : `<div class="h4-empty-box"><div class="hb-cleared" style="padding:8px 0"><span class="hb-cleared-ring is-muted">${ic("folder", "ic20")}</span><h2>No projects yet</h2><p>Projects group the work toward one goal.</p><div class="hb-cleared-acts"><button class="btn sm h4-cta hb-cta-glass" data-cta-tone="ocean" type="button" data-act="proto" data-v="Create project"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>Create project</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("sparkle", "ic16")}</span><span>Start project</span></span></span></button></div></div></div>`}
     </section>
 
     ${renderReleaseHorizon()}
