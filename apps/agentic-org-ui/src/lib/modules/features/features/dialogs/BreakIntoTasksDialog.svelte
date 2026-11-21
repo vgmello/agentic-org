@@ -5,6 +5,7 @@
   optional assigned team and individual assignee.
 -->
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
@@ -41,21 +42,22 @@
 	const uid = $props.id();
 
 	let busy = $state(false);
-	let nextDraftSeq = 1;
+	let error = $state<string | undefined>();
+	let extraSeq = 0;
 
-	function seedDrafts(): BreakIntoTaskDraft[] {
+	function seedDrafts(target: FeatureDetail): BreakIntoTaskDraft[] {
 		return [
 			{
-				id: `draft-${nextDraftSeq++}`,
-				title: `Implement core behaviour for ${feature.title}`,
+				id: 'draft-seed-1',
+				title: `Implement core behaviour for ${target.title}`,
 				description: '',
 				assignedTeamId: null,
 				assigneeId: null,
 				priority: 'normal'
 			},
 			{
-				id: `draft-${nextDraftSeq++}`,
-				title: `Verify acceptance criteria for ${featureRef(feature)}`,
+				id: 'draft-seed-2',
+				title: `Verify acceptance criteria for ${featureRef(target)}`,
 				description: '',
 				assignedTeamId: null,
 				assigneeId: null,
@@ -64,24 +66,17 @@
 		];
 	}
 
-	let drafts = $derived.by<BreakIntoTaskDraft[]>(() => {
-		const next = $state(open ? seedDrafts() : []);
-		return next;
-	});
-	let error = $derived<string | undefined>(open ? undefined : undefined);
+	let drafts = $state<BreakIntoTaskDraft[]>(untrack(() => seedDrafts(feature)));
 
 	function addDraft() {
-		drafts = [
-			...drafts,
-			{
-				id: `draft-${nextDraftSeq++}`,
-				title: '',
-				description: '',
-				assignedTeamId: null,
-				assigneeId: null,
-				priority: 'normal'
-			}
-		];
+		drafts.push({
+			id: `draft-extra-${++extraSeq}`,
+			title: '',
+			description: '',
+			assignedTeamId: null,
+			assigneeId: null,
+			priority: 'normal'
+		});
 	}
 
 	function removeDraft(id: string) {

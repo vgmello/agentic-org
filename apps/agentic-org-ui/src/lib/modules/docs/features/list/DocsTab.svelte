@@ -70,7 +70,7 @@
 	let statusFilter = $state<'all' | DocumentLifecycle>('all');
 	let ownerFilter = $state('');
 	let query = $state('');
-	let olderOpen = $state(false);
+	let olderOpen = $derived(statusFilter === 'deprecated');
 
 	// Section management dialogs (By section view)
 	let addSectionOpen = $state(false);
@@ -236,8 +236,18 @@
 	}
 
 	function docsInSection(sectionPath: string): ProjectDocumentRow[] {
-		return filteredDocs.filter((d) => d.sectionPath === sectionPath && d.status !== 'deprecated');
+		return filteredDocs.filter(
+			(d) =>
+				d.sectionPath === sectionPath &&
+				(statusFilter === 'deprecated' || d.status !== 'deprecated')
+		);
 	}
+
+	const unsectionedDeprecated = $derived(
+		statusFilter === 'deprecated'
+			? filteredDocs.filter((d) => d.status === 'deprecated' && !d.sectionPath)
+			: []
+	);
 </script>
 
 {#snippet docRow(doc: ProjectDocumentRow, showMove: boolean)}
@@ -351,14 +361,13 @@
 			>
 				<div class="flex flex-wrap items-center gap-3">
 					<div
-						role="tablist"
+						role="group"
 						aria-label="Documentation layout"
 						class="inline-flex rounded-md bg-surface-raised p-0.5 ring-1 ring-line"
 					>
 						<button
 							type="button"
-							role="tab"
-							aria-selected={viewMode === 'kind'}
+							aria-pressed={viewMode === 'kind'}
 							onclick={() => (viewMode = 'kind')}
 							class="rounded-sm px-3 py-1.5 text-xs/5 font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 {viewMode ===
 							'kind'
@@ -369,8 +378,7 @@
 						</button>
 						<button
 							type="button"
-							role="tab"
-							aria-selected={viewMode === 'section'}
+							aria-pressed={viewMode === 'section'}
 							onclick={() => (viewMode = 'section')}
 							class="rounded-sm px-3 py-1.5 text-xs/5 font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 {viewMode ===
 							'section'
@@ -752,6 +760,19 @@
 							{/if}
 						</section>
 					{/each}
+
+					{#if unsectionedDeprecated.length > 0}
+						<section class="py-5" data-testid="section-unsectioned-deprecated">
+							<h4 class="text-xs/5 font-semibold tracking-wide text-fg-muted uppercase {gutters}">
+								Other deprecated · {unsectionedDeprecated.length}
+							</h4>
+							<ul role="list" class="mt-2 divide-y divide-line-subtle">
+								{#each unsectionedDeprecated as doc (doc.id)}
+									{@render docRow(doc, false)}
+								{/each}
+							</ul>
+						</section>
+					{/if}
 				</div>
 			{/if}
 

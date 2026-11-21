@@ -48,9 +48,14 @@ test('DEC-1/2/6/8 & LMT-1: Project Docs tab groups by kind and by section, colla
 	await expect(olderToggle).toHaveAttribute('aria-expanded', 'true');
 	await expect(page.getByText('Legacy single-request checkout endpoint')).toBeVisible();
 
-	// Switch to By section view (documentation tree index.yaml)
-	await page.getByRole('tab', { name: 'By section' }).click();
+	// Status: Deprecated auto-expands Older in By kind and surfaces deprecated docs in By section
+	await page.getByLabel('Status').selectOption('deprecated');
+	await expect(olderToggle).toHaveAttribute('aria-expanded', 'true');
+	await expect(page.getByText('Legacy single-request checkout endpoint')).toBeVisible();
+	await page.getByRole('button', { name: 'By section', exact: true }).click();
 	await expect(page.getByTestId('docs-by-section')).toBeVisible();
+	await expect(page.getByText('Legacy single-request checkout endpoint')).toBeVisible();
+	await page.getByLabel('Status').selectOption('all');
 	await expect(page.getByText('docs/decisions')).toBeVisible();
 	await expect(page.getByTestId('doc-media-row')).toContainText('Two-tap checkout sequence');
 
@@ -68,14 +73,21 @@ test('DEC-1/2/6/8 & LMT-1: Project Docs tab groups by kind and by section, colla
 	await page.getByTestId('new-doc-trigger').click();
 	await page.getByRole('menuitem', { name: 'Decision', exact: true }).click();
 	await expect(page).toHaveURL(/\/projects\/beacon\/docs\/new\?kind=decision/);
+	// Validation errors surface visibly in Source mode too
+	await page.getByRole('button', { name: 'Source', exact: true }).click();
+	await page.getByRole('button', { name: 'Create document' }).click();
+	await expect(page.getByTestId('source-validation-errors')).toContainText(
+		'Enter a title for this document.'
+	);
+	await page.getByRole('button', { name: 'Details & body', exact: true }).click();
 	await page.getByLabel('Title').fill('Use structured retry headers');
 	await page.getByLabel('Display key (optional)').fill('ADR-0005');
 	// Switch to Source mode and verify synchronization (TPL-2)
-	await page.getByRole('tab', { name: 'Source' }).click();
+	await page.getByRole('button', { name: 'Source', exact: true }).click();
 	const sourceArea = page.getByLabel('Front matter and Markdown source');
 	await expect(sourceArea).toHaveValue(/title: Use structured retry headers/);
 	await expect(sourceArea).toHaveValue(/key: ADR-0005/);
-	await page.getByRole('tab', { name: 'Details & body' }).click();
+	await page.getByRole('button', { name: 'Details & body', exact: true }).click();
 	await page.getByRole('button', { name: 'Create document' }).click();
 	await expect(page).toHaveURL(/\/projects\/beacon\/docs\/[0-9A-Za-z-]+$/);
 	await expect(page.getByTestId('doc-header-card')).toContainText('Use structured retry headers');
@@ -123,10 +135,17 @@ test('DEC-2/6/7 & org-data 18: Document reader, Current decision edit guard, His
 	await expect(page.getByTestId('doc-header-card')).toContainText('v3');
 	await expect(page.getByTestId('doc-header-card')).not.toContainText('Unissued changes');
 
-	// Malformed metadata keeps body readable and offers Fix (DEC-7)
+	// Malformed metadata keeps body readable and offers Fix (DEC-7); saving from ?edit=details stays closed after reload settles
 	await visit(page, '/projects/atlas/docs/doc-atlas-bad-meta');
 	await expect(page.getByTestId('doc-detail-problem')).toContainText('owner_employee_id');
 	await expect(page.getByTestId('doc-body')).toContainText('Staging canary probes spiked');
+	await visit(page, '/projects/atlas/docs/doc-atlas-pdss?edit=details');
+	await expect(page.getByTestId('doc-editor')).toBeVisible();
+	await page.getByLabel('One-line summary').fill('Updated desired state summary');
+	await page.getByRole('button', { name: 'Save changes' }).click();
+	await expect(page).toHaveURL(/\/projects\/atlas\/docs\/doc-atlas-pdss$/);
+	await expect(page.getByTestId('doc-header-card')).toContainText('Updated desired state summary');
+	await expect(page.getByTestId('doc-editor')).toHaveCount(0);
 });
 
 test('FTR-6/8/10/11/12/13: Features tab, New feature, Break into tasks, Link task confirmation, and Retire', async ({
@@ -192,6 +211,16 @@ test('FTR-6/8/10/11/12/13: Features tab, New feature, Break into tasks, Link tas
 	await expect(page).toHaveURL(/\/projects\/beacon\/features\/[0-9A-Za-z-]+\?edit=1$/);
 	await expect(page.getByTestId('feature-header')).toContainText('Express gift checkout');
 	await page.getByRole('button', { name: 'Save definition' }).click();
+	// Save strips ?edit=1 and stays in reader view after featureRead.reload() settles (rev 2, no snap-back)
+	await expect(page).toHaveURL(/\/projects\/beacon\/features\/[0-9A-Za-z-]+$/);
+	await expect(page.getByTestId('feature-header')).toContainText('rev 2');
+	await expect(page.getByRole('button', { name: 'Save definition' })).toHaveCount(0);
+
+	// Unassigned Planned feature refuses moving to In progress and restores status select to planned
+	const statusSelect = page.getByLabel('Feature status');
+	await expect(statusSelect).toHaveValue('planned');
+	await statusSelect.selectOption('in_progress');
+	await expect(statusSelect).toHaveValue('planned');
 
 	// Retire the newly created feature with a reason (FTR-8)
 	await page.getByTestId('retire-feature-btn').click();
@@ -300,6 +329,6 @@ test('Step 6 states, keyboard focus, and 320 px / 200% zoom layout stay accessib
 	// Keyboard tabbing reaches interactive controls on Docs
 	await page.setViewportSize({ width: 1280, height: 800 });
 	await visit(page, '/projects/beacon/docs');
-	await page.getByRole('tab', { name: 'By section' }).focus();
-	await expect(page.getByRole('tab', { name: 'By section' })).toBeFocused();
+	await page.getByRole('button', { name: 'By section', exact: true }).focus();
+	await expect(page.getByRole('button', { name: 'By section', exact: true })).toBeFocused();
 });

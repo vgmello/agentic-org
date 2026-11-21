@@ -120,14 +120,13 @@
 		</div>
 
 		<div
-			role="tablist"
+			role="group"
 			aria-label="Search scope"
 			class="inline-flex rounded-md bg-surface-raised p-0.5 ring-1 ring-line"
 		>
 			<button
 				type="button"
-				role="tab"
-				aria-selected={modeParam === 'all'}
+				aria-pressed={modeParam === 'all'}
 				onclick={() => void runSearch(draftQuery || query, 'all')}
 				class="rounded-sm px-3 py-1.5 text-xs/5 font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 {modeParam ===
 				'all'
@@ -138,8 +137,7 @@
 			</button>
 			<button
 				type="button"
-				role="tab"
-				aria-selected={modeParam === 'knowledge'}
+				aria-pressed={modeParam === 'knowledge'}
 				onclick={() => void runSearch(draftQuery || query, 'knowledge')}
 				class="rounded-sm px-3 py-1.5 text-xs/5 font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 {modeParam ===
 				'knowledge'

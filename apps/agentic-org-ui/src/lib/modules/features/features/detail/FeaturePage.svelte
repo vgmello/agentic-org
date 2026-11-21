@@ -9,6 +9,7 @@
   releases backlinks, Cost & time (authorized or explicit unavailable), and Git revision history.
 -->
 <script lang="ts">
+	import { replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
@@ -40,6 +41,7 @@
 	import { pageTitle } from '$lib/nav';
 	import { toAppError } from '$lib/proto';
 	import { projectFrame } from '$lib/modules/projects';
+	import { DocDiffView } from '$lib/modules/docs';
 	import { featuresApi } from '../../api';
 	import {
 		FEATURE_STATUS_TONE,
@@ -72,10 +74,46 @@
 		| { found: true; feature: FeatureDetail; overview: ProjectFeaturesOverview }
 		| { found: false; message: string; overview: ProjectFeaturesOverview };
 
+	// Edit definition state: managed in $state so ?edit=1 is consumed once and never snaps back on reload
+	let editing = $state(false);
+	let editTitle = $state('');
+	let editSlug = $state('');
+	let editOwnerId = $state('');
+	let editBody = $state('');
+	let editBusy = $state(false);
+	let editError = $state<string | undefined>();
+	let conflictFeature = $state<FeatureDetail | null>(null);
+	let consumedInitialEditFor: string | null = null;
+
+	function clearEditQueryParam() {
+		if (!page.url.searchParams.has('edit')) return;
+		const kept = [...page.url.searchParams.entries()]
+			.filter(([k]) => k !== 'edit')
+			.map(([k, v]) =>
+				v ? `${encodeURIComponent(k)}=${encodeURIComponent(v)}` : encodeURIComponent(k)
+			);
+		const next = kept.length > 0 ? `${page.url.pathname}?${kept.join('&')}` : page.url.pathname;
+		replaceState(resolve(next as '/'), page.state);
+	}
+
 	async function loadFeature(): Promise<FeatureLookup> {
 		const overview = await featuresApi.list(frame.organizationId, frame.projectId);
 		try {
 			const feature = await featuresApi.get(frame.organizationId, frame.projectId, featureId);
+			const editable =
+				feature.canEdit &&
+				!feature.stale &&
+				!overview.stale &&
+				!frame.project.stale &&
+				!frame.project.archived;
+			if (
+				consumedInitialEditFor !== feature.id &&
+				editable &&
+				page.url.searchParams.get('edit') === '1'
+			) {
+				consumedInitialEditFor = feature.id;
+				beginEdit(feature);
+			}
 			return { found: true, feature, overview };
 		} catch (e) {
 			const err = toAppError(e);
@@ -93,16 +131,6 @@
 	const overview = $derived(lookup?.overview);
 	const stale = $derived(!!feat?.stale || !!overview?.stale || !!frame.project.stale);
 	const canEdit = $derived(!!feat?.canEdit && !stale && !frame.project.archived);
-
-	// Edit definition state (writable $derived so ?edit=1 opens editor cleanly without $effect)
-	let editing = $derived(!!feat && canEdit && page.url.searchParams.get('edit') === '1');
-	let editTitle = $derived(feat?.title ?? '');
-	let editSlug = $derived(feat?.localSlug ?? '');
-	let editOwnerId = $derived(feat?.owner?.id ?? '');
-	let editBody = $derived(feat?.bodyMarkdown ?? '');
-	let editBusy = $state(false);
-	let editError = $state<string | undefined>();
-	let conflictFeature = $state<FeatureDetail | null>(null);
 
 	// Status change state
 	let statusBusy = $state(false);
@@ -205,6 +233,7 @@
 			});
 			editing = false;
 			conflictFeature = null;
+			clearEditQueryParam();
 			toast.success(`Saved ${featureRef(feat)}.`);
 			await featureRead.reload();
 		} catch (e) {
@@ -220,10 +249,17 @@
 		}
 	}
 
-	async function changeStatus(nextStatus: Exclude<FeatureStatus, 'retired'>) {
-		if (!feat || statusBusy || nextStatus === feat.status) return;
-		const ownerId = feat.owner?.id ?? overview?.owners[0]?.id ?? null;
+	async function changeStatus(
+		nextStatus: Exclude<FeatureStatus, 'retired'>,
+		selectEl: HTMLSelectElement
+	) {
+		if (!feat || statusBusy || nextStatus === feat.status) {
+			if (feat) selectEl.value = feat.status;
+			return;
+		}
+		const ownerId = feat.owner?.id ?? null;
 		if ((nextStatus === 'in_progress' || nextStatus === 'live') && !ownerId) {
+			selectEl.value = feat.status;
 			toast.error('Assign an accountable owner before moving this feature to In progress or Live.');
 			return;
 		}
@@ -231,12 +267,13 @@
 		try {
 			await featuresApi.setStatus(frame.organizationId, frame.projectId, feat.id, {
 				status: nextStatus,
-				ownerId: feat.owner?.id ?? ownerId,
+				ownerId,
 				expectedRevision: feat.revision
 			});
 			toast.success(`${featureRef(feat)} marked ${FEATURE_STATUS_WORD[nextStatus]}.`);
 			await featureRead.reload();
 		} catch (e) {
+			selectEl.value = feat.status;
 			toast.error(toAppError(e).message);
 		} finally {
 			statusBusy = false;
@@ -388,13 +425,10 @@
 									aria-label="Feature status"
 									value={f.status}
 									disabled={statusBusy}
-									onchange={(e) =>
-										changeStatus(
-											(e.currentTarget as HTMLSelectElement).value as Exclude<
-												FeatureStatus,
-												'retired'
-											>
-										)}
+									onchange={(e) => {
+										const el = e.currentTarget as HTMLSelectElement;
+										void changeStatus(el.value as Exclude<FeatureStatus, 'retired'>, el);
+									}}
 									class="w-auto {selectClass}"
 								>
 									<option value="planned">Planned</option>
@@ -527,6 +561,11 @@
 											Changed to rev {conflictFeature.revision} while you were editing. Your draft is
 											kept below.
 										</p>
+										<DocDiffView
+											before={conflictFeature.bodyMarkdown}
+											after={editBody}
+											label="Latest saved (rev {conflictFeature.revision}) vs your draft"
+										/>
 										<div class="flex flex-wrap gap-2">
 											<Button
 												type="button"
@@ -630,6 +669,7 @@
 											editing = false;
 											conflictFeature = null;
 											editError = undefined;
+											clearEditQueryParam();
 										}}
 									>
 										Cancel
@@ -942,16 +982,18 @@
 				onretired={() => void featureRead.reload()}
 			/>
 
-			<BreakIntoTasksDialog
-				bind:open={breakOpen}
-				organizationId={frame.organizationId}
-				projectId={frame.projectId}
-				ownerTeamName={ov.ownerTeam.name}
-				feature={f}
-				owners={ov.owners}
-				teams={ov.teams}
-				oncreated={() => void featureRead.reload()}
-			/>
+			{#if breakOpen}
+				<BreakIntoTasksDialog
+					bind:open={breakOpen}
+					organizationId={frame.organizationId}
+					projectId={frame.projectId}
+					ownerTeamName={ov.ownerTeam.name}
+					feature={f}
+					owners={ov.owners}
+					teams={ov.teams}
+					oncreated={() => void featureRead.reload()}
+				/>
+			{/if}
 
 			<!-- Link a task dialog with cross-feature move confirmation (FTR-12) -->
 			<Dialog.Root bind:open={linkOpen}>

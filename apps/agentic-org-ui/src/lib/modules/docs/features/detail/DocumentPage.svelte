@@ -10,7 +10,7 @@
   - Issue version dialog for versioned kinds (records note and derived_from sources).
 -->
 <script lang="ts">
-	import { goto } from '$app/navigation';
+	import { goto, replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
@@ -54,6 +54,7 @@
 		docsHref,
 		draftFromDetail,
 		expectedSectionsFor,
+		headingSlug,
 		isTreeDocument,
 		kindTitle,
 		newDocHref,
@@ -66,6 +67,7 @@
 	import type {
 		DocField,
 		DocumentDraft,
+		DocumentScope,
 		ProjectDocsOverview,
 		ProjectDocumentDetail
 	} from '../../types';
@@ -83,39 +85,60 @@
 		| { found: true; doc: ProjectDocumentDetail; overview: ProjectDocsOverview }
 		| { found: false; message: string; overview: ProjectDocsOverview };
 
-	async function loadExisting(): Promise<DocLookup> {
-		const overview = await docsApi.list(frame.organizationId, frame.projectId);
-		try {
-			const doc = await docsApi.get(frame.organizationId, frame.projectId, docId!);
-			return { found: true, doc, overview };
-		} catch (e) {
-			const err = toAppError(e);
-			if (err.source === 'api' && err.code === 'not_found') {
-				return { found: false, message: err.message, overview };
-			}
-			throw e;
-		}
+	// Sub-mode for existing docs: read | edit | history (plain $state so ?edit=details is consumed once)
+	let activeView = $state<'read' | 'edit' | 'history'>('read');
+	let editMode = $state<'details' | 'source'>('details');
+
+	// Current decision edit warning dialog (DEC-6 / §4)
+	let decisionWarnOpen = $state(false);
+
+	// Issue version dialog (organization-data 18)
+	let issueOpen = $state(false);
+	let issueNote = $state('');
+	let issueDerivedIds = $state<string[]>([]);
+	let issueBusy = $state(false);
+	let issueError = $state<string | undefined>();
+
+	// Editor draft state (plain $state preserves deep proxy reactivity across reassignments)
+	let draft = $state<DocumentDraft | null>(null);
+	let sourceText = $state('');
+	let sourceError = $state<string | undefined>();
+	let fieldErrors = $state<Partial<Record<DocField, string>>>({});
+	let changeSummary = $state('');
+	let saveBusy = $state(false);
+	let saveError = $state<string | undefined>();
+	let conflictDoc = $state<ProjectDocumentDetail | null>(null);
+	let fileNameTouched = $state(false);
+	let consumedInitialEditFor: string | null = null;
+
+	const validationErrorList = $derived(
+		Object.values(fieldErrors).filter((msg): msg is string => Boolean(msg))
+	);
+
+	function serializeDraft(d: DocumentDraft, doc: ProjectDocumentDetail | undefined): string {
+		const metaId = doc?.id ?? 'pending-uuidv7';
+		const metaRev = doc?.revision ?? 1;
+		const path =
+			doc?.path ??
+			deriveCanonicalPath(frame.projectId, metaId, d.kind, d.scope, d.sectionPath, d.fileName);
+		return serializeDocumentSource(d, {
+			id: metaId,
+			revision: metaRev,
+			projectId: frame.projectId,
+			path
+		});
 	}
 
-	const existingRead = $derived(
-		docId !== null ? new Resource<DocLookup>(() => loadExisting()) : null
-	);
-	const overviewRead = $derived(
-		docId === null
-			? new Resource<ProjectDocsOverview>(() => docsApi.list(frame.organizationId, frame.projectId))
-			: null
-	);
-
-	const currentOverview = $derived(isNew ? overviewRead?.data : existingRead?.data?.overview);
-	const currentDoc = $derived(
-		!isNew && existingRead?.data?.found ? existingRead.data.doc : undefined
-	);
-	const stale = $derived(!!currentDoc?.stale || !!currentOverview?.stale || !!frame.project.stale);
-	const canEdit = $derived(
-		(isNew ? !!currentOverview?.canEdit : !!currentDoc?.canEdit) &&
-			!stale &&
-			!frame.project.archived
-	);
+	function clearEditQueryParam() {
+		if (!page.url.searchParams.has('edit')) return;
+		const kept = [...page.url.searchParams.entries()]
+			.filter(([k]) => k !== 'edit')
+			.map(([k, v]) =>
+				v ? `${encodeURIComponent(k)}=${encodeURIComponent(v)}` : encodeURIComponent(k)
+			);
+		const next = kept.length > 0 ? `${page.url.pathname}?${kept.join('&')}` : page.url.pathname;
+		replaceState(resolve(next as '/'), page.state);
+	}
 
 	function buildNewDraft(overview: ProjectDocsOverview): DocumentDraft {
 		const kind = page.url.searchParams.get('kind') ?? 'decision';
@@ -126,11 +149,31 @@
 		const superseded = supersedesId
 			? overview.documents.find((d) => d.id === supersedesId)
 			: undefined;
+		const featureParam = page.url.searchParams.get('feature');
+		const matchedFeatureScope = featureParam
+			? overview.documents.find(
+					(d) => d.scope.kind === 'feature' && d.scope.featureId === featureParam
+				)?.scope
+			: undefined;
+		const matchedLimitation = featureParam
+			? overview.knownLimitations.find((l) => l.featureId === featureParam)
+			: undefined;
+		const scope: DocumentScope = featureParam
+			? matchedFeatureScope?.kind === 'feature'
+				? matchedFeatureScope
+				: {
+						kind: 'feature',
+						featureId: featureParam,
+						ref: matchedLimitation?.featureRef ?? featureParam,
+						title: matchedLimitation?.featureTitle ?? featureParam
+					}
+			: { kind: 'project' };
 		const sectionParam =
 			page.url.searchParams.get('section') ??
 			defaultSectionForKind(kind) ??
 			overview.sections[0]?.path ??
 			'decisions';
+		const treeDoc = isTreeDocument(kind, scope);
 
 		let body = templateBodyFor(kind, templateVariant, overview.kinds);
 		let initialTitle = '';
@@ -147,72 +190,76 @@
 			summary: '',
 			status: 'draft',
 			ownerId: overview.owners[0]?.id ?? null,
-			sectionPath: kind === 'brief' ? null : sectionParam,
-			fileName: kind === 'brief' ? null : slugifyFileName(initialTitle || `new-${kind}`),
-			scope: { kind: 'project' },
+			sectionPath: treeDoc ? sectionParam : null,
+			fileName: treeDoc ? slugifyFileName(initialTitle || `new-${kind}`) : null,
+			scope,
 			bodyMarkdown: body,
 			supersedesId: supersedesId ?? null
 		};
 	}
 
-	// Sub-mode for existing docs: read | edit | history (writable $derived handles ?edit=details without $effect)
-	let activeView = $derived<'read' | 'edit' | 'history'>(
-		!isNew && !!currentDoc && canEdit && page.url.searchParams.get('edit') === 'details'
-			? 'edit'
-			: 'read'
+	async function loadNewOverview(): Promise<ProjectDocsOverview> {
+		const overview = await docsApi.list(frame.organizationId, frame.projectId);
+		const next = buildNewDraft(overview);
+		draft = next;
+		sourceText = serializeDraft(next, undefined);
+		sourceError = undefined;
+		fieldErrors = {};
+		saveError = undefined;
+		conflictDoc = null;
+		fileNameTouched = false;
+		editMode = 'details';
+		return overview;
+	}
+
+	async function loadExisting(): Promise<DocLookup> {
+		const overview = await docsApi.list(frame.organizationId, frame.projectId);
+		try {
+			const doc = await docsApi.get(frame.organizationId, frame.projectId, docId!);
+			const editable =
+				doc.canEdit &&
+				!doc.stale &&
+				!overview.stale &&
+				!frame.project.stale &&
+				!frame.project.archived;
+			if (
+				consumedInitialEditFor !== doc.id &&
+				editable &&
+				page.url.searchParams.get('edit') === 'details'
+			) {
+				consumedInitialEditFor = doc.id;
+				beginEdit(doc);
+			}
+			return { found: true, doc, overview };
+		} catch (e) {
+			const err = toAppError(e);
+			if (err.source === 'api' && err.code === 'not_found') {
+				return { found: false, message: err.message, overview };
+			}
+			throw e;
+		}
+	}
+
+	const existingRead = $derived(
+		docId !== null ? new Resource<DocLookup>(() => loadExisting()) : null
 	);
-	let editMode = $state<'details' | 'source'>('details');
-
-	// Current decision edit warning dialog (DEC-6 / §4)
-	let decisionWarnOpen = $state(false);
-
-	// Issue version dialog (organization-data 18)
-	let issueOpen = $state(false);
-	let issueNote = $state('');
-	let issueDerivedIds = $state<string[]>([]);
-	let issueBusy = $state(false);
-	let issueError = $state<string | undefined>();
-
-	// Editor draft state (writable $derived with $state proxy for bound fields, zero $effect)
-	let draft = $derived.by<DocumentDraft | null>(() => {
-		if (isNew && currentOverview) {
-			const next = $state(buildNewDraft(currentOverview));
-			return next;
-		}
-		if (!isNew && currentDoc) {
-			const next = $state(draftFromDetail(currentDoc));
-			return next;
-		}
-		return null;
+	const newSearchKey = $derived(isNew ? page.url.search : null);
+	const overviewRead = $derived.by(() => {
+		if (docId !== null) return null;
+		void newSearchKey;
+		return new Resource<ProjectDocsOverview>(() => loadNewOverview());
 	});
-	let sourceText = $derived.by(() => {
-		if (!draft) return '';
-		const metaId = currentDoc?.id ?? 'pending-uuidv7';
-		const metaRev = currentDoc?.revision ?? 1;
-		const path =
-			currentDoc?.path ??
-			deriveCanonicalPath(
-				frame.projectId,
-				metaId,
-				draft.kind,
-				draft.scope,
-				draft.sectionPath,
-				draft.fileName
-			);
-		return serializeDocumentSource(draft, {
-			id: metaId,
-			revision: metaRev,
-			projectId: frame.projectId,
-			path
-		});
-	});
-	let sourceError = $state<string | undefined>();
-	let fieldErrors = $state<Partial<Record<DocField, string>>>({});
-	let changeSummary = $state('');
-	let saveBusy = $state(false);
-	let saveError = $state<string | undefined>();
-	let conflictDoc = $state<ProjectDocumentDetail | null>(null);
-	let fileNameTouched = $state(false);
+
+	const currentOverview = $derived(isNew ? overviewRead?.data : existingRead?.data?.overview);
+	const currentDoc = $derived(
+		!isNew && existingRead?.data?.found ? existingRead.data.doc : undefined
+	);
+	const stale = $derived(!!currentDoc?.stale || !!currentOverview?.stale || !!frame.project.stale);
+	const canEdit = $derived(
+		(isNew ? !!currentOverview?.canEdit : !!currentDoc?.canEdit) &&
+			!stale &&
+			!frame.project.archived
+	);
 
 	const kindMeta = $derived.by(() => {
 		const k = draft?.kind ?? currentDoc?.kind ?? 'decision';
@@ -276,12 +323,7 @@
 	function beginEdit(doc: ProjectDocumentDetail) {
 		const next = draftFromDetail(doc);
 		draft = next;
-		sourceText = serializeDocumentSource(next, {
-			id: doc.id,
-			revision: doc.revision,
-			projectId: doc.projectId,
-			path: doc.path
-		});
+		sourceText = serializeDraft(next, doc);
 		sourceError = undefined;
 		fieldErrors = {};
 		saveError = undefined;
@@ -302,22 +344,7 @@
 	function switchEditMode(nextMode: 'details' | 'source') {
 		if (!draft || nextMode === editMode) return;
 		if (nextMode === 'source') {
-			const metaId = currentDoc?.id ?? 'pending-uuidv7';
-			const metaRev = currentDoc?.revision ?? 1;
-			const path = deriveCanonicalPath(
-				frame.projectId,
-				metaId,
-				draft.kind,
-				draft.scope,
-				draft.sectionPath,
-				draft.fileName
-			);
-			sourceText = serializeDocumentSource(draft, {
-				id: metaId,
-				revision: metaRev,
-				projectId: frame.projectId,
-				path
-			});
+			sourceText = serializeDraft(draft, currentDoc);
 			sourceError = undefined;
 			editMode = 'source';
 		} else {
@@ -371,6 +398,7 @@
 				});
 				conflictDoc = null;
 				activeView = 'read';
+				clearEditQueryParam();
 				toast.success(`Saved ${plainDraft.title.trim()}.`);
 				await existingRead?.reload();
 			}
@@ -458,14 +486,13 @@
 				</div>
 
 				<div
-					role="tablist"
+					role="group"
 					aria-label="Editor mode"
 					class="inline-flex rounded-md bg-surface-raised p-0.5 ring-1 ring-line"
 				>
 					<button
 						type="button"
-						role="tab"
-						aria-selected={editMode === 'details'}
+						aria-pressed={editMode === 'details'}
 						onclick={() => switchEditMode('details')}
 						class="rounded-sm px-3 py-1.5 text-xs/5 font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 {editMode ===
 						'details'
@@ -476,8 +503,7 @@
 					</button>
 					<button
 						type="button"
-						role="tab"
-						aria-selected={editMode === 'source'}
+						aria-pressed={editMode === 'source'}
 						onclick={() => switchEditMode('source')}
 						class="rounded-sm px-3 py-1.5 text-xs/5 font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 {editMode ===
 						'source'
@@ -556,6 +582,18 @@
 
 			{#if sourceError}
 				<p class={errorClass} role="alert" data-testid="source-error">{sourceError}</p>
+			{/if}
+
+			{#if editMode === 'source' && validationErrorList.length > 0}
+				<div
+					class="flex flex-col gap-1 rounded-lg bg-danger-emphasis/10 p-3 text-xs/5 text-danger-text ring-1 ring-danger-emphasis/20"
+					role="alert"
+					data-testid="source-validation-errors"
+				>
+					{#each validationErrorList as msg (msg)}
+						<p>{msg}</p>
+					{/each}
+				</div>
 			{/if}
 
 			{#if editMode === 'details'}
@@ -753,6 +791,9 @@
 							activeView = 'read';
 							conflictDoc = null;
 							saveError = undefined;
+							fieldErrors = {};
+							sourceError = undefined;
+							clearEditQueryParam();
 						} else {
 							void goto(resolve(docsHref(frame.projectId) as '/'));
 						}
@@ -885,6 +926,26 @@
 									<span class="[overflow-wrap:anywhere]">{doc.path}</span>
 									<span>ID: {doc.id}</span>
 								</div>
+
+								{#if doc.links.length > 0}
+									<div
+										class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs/5 text-fg-muted"
+										data-testid="doc-related-links"
+									>
+										<span class="font-medium text-fg-secondary">Related:</span>
+										{#each doc.links as item (item.id)}
+											<a
+												href={resolve(item.href as '/')}
+												class="text-link hover:underline [overflow-wrap:anywhere]"
+											>
+												{#if item.ref || item.key}
+													<span class="mr-1 font-mono">{item.ref ?? item.key}</span>
+												{/if}
+												{item.title}
+											</a>
+										{/each}
+									</div>
+								{/if}
 							</div>
 
 							<!-- Action buttons -->
@@ -1119,10 +1180,7 @@
 										<li class="text-xs/5">
 											{#if sec.present}
 												<a
-													href={`#doc-sec-${sec.heading
-														.toLowerCase()
-														.replace(/[^a-z0-9]+/g, '-')
-														.replace(/^-+|-+$/g, '')}`}
+													href={`#doc-sec-${headingSlug(sec.heading)}`}
 													class="block rounded-sm py-1 text-fg-secondary hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
 												>
 													{sec.heading}

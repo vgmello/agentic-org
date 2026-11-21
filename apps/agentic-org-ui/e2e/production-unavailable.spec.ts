@@ -152,6 +152,7 @@ test('Step 6 routes stay unavailable in the static production release with zero 
 	});
 	for (const [path, area] of [
 		['/projects/a-project/docs', 'Projects'],
+		['/projects/a-project/docs/new', 'Projects'],
 		['/projects/a-project/docs/doc-1', 'Projects'],
 		['/projects/a-project/features', 'Projects'],
 		['/projects/a-project/features/feat-1', 'Projects'],
