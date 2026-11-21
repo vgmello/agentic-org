@@ -1531,7 +1531,7 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 }
 
 /* Zone 1: Calm Executive Briefing Header */
-.hb-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.hb-hero { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 .hb-brief { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .hb-eyebrow {
   display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px;
@@ -3209,10 +3209,6 @@ function pageHome() {
   return `<div class="hb">
     <header class="hb-hero">
       <div class="hb-brief">
-        <div class="hb-eyebrow">
-          <span class="h4-live-dot${st === "error" ? " is-error" : ""}" aria-hidden="true"></span>
-          <span>${st === "error" ? "HQ Office · Unreachable" : "HQ Office · Online"}</span>
-        </div>
         <h1 class="hb-title" tabindex="-1">${headline}</h1>
       </div>
       ${st !== "error" ? `<div class="hb-quick-acts" aria-label="Quick actions">
