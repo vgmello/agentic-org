@@ -465,6 +465,7 @@
 			"specs": [
 				"navigation.spec.ts",
 				"shell-*.spec.ts",
+				"executive-ui.spec.ts",
 				"desktop-navigation-focus.spec.ts",
 				"look-primitives.spec.ts",
 				"focus-primitives.spec.ts",
@@ -473,6 +474,10 @@
 			],
 			"sources": [
 				"src/routes/(shell)/[section=section]/**",
+				"src/routes/(shell)/home/**",
+				"src/routes/(shell)/inbox/**",
+				"src/routes/(shell)/activity/**",
+				"src/routes/(shell)/settings/**",
 				"src/lib/components/testing/look-primitives.*",
 				"src/lib/components/testing/focus-primitives.*",
 				"e2e/focus-primitives.ts"
@@ -666,6 +671,8 @@
 			"src/lib/platform/auth/**",
 			"src/lib/platform/tooling/**",
 			"src/lib/platform/shell/**",
+			"src/lib/home/**",
+			"src/lib/styles/**",
 			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,OwnerBar,LiveBanner,Logo}.*",
 			"static/**",
 			"vite.config.ts",

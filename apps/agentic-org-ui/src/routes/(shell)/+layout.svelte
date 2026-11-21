@@ -1,7 +1,10 @@
 <script lang="ts">
 	import Sidebar from '$lib/components/Sidebar.svelte';
+	import ExecutiveCommandBar from '$lib/platform/shell/ExecutiveCommandBar.svelte';
+	import ExecutiveSidebar from '$lib/platform/shell/ExecutiveSidebar.svelte';
 	import MobileNavigation from '$lib/platform/shell/MobileNavigation.svelte';
 	import ShellTopbar from '$lib/platform/shell/ShellTopbar.svelte';
+	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import LiveBanner from '$lib/components/LiveBanner.svelte';
 	import { Toaster } from '$lib/components/ui/sonner';
 
@@ -9,9 +12,13 @@
 	import { goto, invalidate } from '$app/navigation';
 	import { selectDesktopSection } from '$lib/platform/shell/desktop-navigation';
 	import { navigating, page } from '$app/state';
+	import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
 	import { orgApi } from '$lib/org/api';
+	import { owner } from '$lib/org/model';
 	import { noteChanged } from '$lib/org/live';
 	import { liveState } from '$lib/org/live-state.svelte';
+	import { workApi } from '$lib/work';
+	import { needsYou } from '$lib/work/saved';
 	import { navFor } from '$lib/nav';
 	import { provideDraftStore } from '$lib/modules/messaging';
 
@@ -21,6 +28,24 @@
 	$effect.pre(() => chatDrafts.syncScope());
 	onDestroy(() => chatDrafts.dispose());
 	let desktopNavigation = $state<HTMLDivElement | null>(null);
+	let shellSnapshot = $state.raw<OrgSnapshot | undefined>();
+	let shellWork = $state.raw<WorkItemSummary[]>([]);
+	const shellOwnerId = $derived(shellSnapshot ? (owner(shellSnapshot)?.id ?? 'owner') : 'owner');
+	const shellNeedsYou = $derived(needsYou(shellWork, shellOwnerId));
+
+	$effect(() => {
+		const id = organizationId;
+		if (!uiPrefs.executiveUi) return;
+		let cancelled = false;
+		void Promise.allSettled([orgApi.view(id), workApi.snapshot(id)]).then(([orgRes, workRes]) => {
+			if (cancelled) return;
+			if (orgRes.status === 'fulfilled') shellSnapshot = orgRes.value.snapshot;
+			if (workRes.status === 'fulfilled') shellWork = workRes.value.items;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
 	function focusDesktopNavigation() {
 		desktopNavigation?.querySelector<HTMLElement>('a[aria-current="page"]')?.focus();
 	}
@@ -107,16 +132,57 @@
 </script>
 
 <!-- The app fills the window edge to edge. -->
-<div class="fixed inset-0 overflow-hidden bg-gray-800">
-	<div bind:this={desktopNavigation} class="fixed inset-y-0 z-50 hidden w-16 flex-col min-[640px]:flex min-[960px]:w-72">
-		<Sidebar connection={data.connection} onNavigate={(event, href) => selectDesktopSection(event, href, goto)} />
+{#if uiPrefs.executiveUi}
+	<div class="exec-canvas fixed inset-0 overflow-hidden">
+		<div
+			bind:this={desktopNavigation}
+			class={[
+				'fixed inset-y-0 z-40 hidden flex-col transition-[width] duration-200 min-[640px]:flex',
+				uiPrefs.navCollapsed ? 'w-[68px]' : 'w-[264px]'
+			]}
+		>
+			<ExecutiveSidebar
+				connection={data.connection}
+				needsYouCount={shellNeedsYou}
+				projects={shellSnapshot?.projects ?? []}
+				collapsed={uiPrefs.navCollapsed}
+				onToggleCollapse={() => uiPrefs.toggleNavCollapsed()}
+				onNavigate={(event, href) => selectDesktopSection(event, href, goto)}
+			/>
+		</div>
+		<main
+			aria-labelledby="shell-page-title"
+			class={[
+				'exec-legacy-compat relative z-10 h-full overflow-y-auto transition-[padding] duration-200',
+				uiPrefs.navCollapsed ? 'min-[640px]:pl-[68px]' : 'min-[640px]:pl-[264px]'
+			]}
+		>
+			<div class="flex items-center gap-2 px-4 min-[640px]:hidden">
+				<MobileNavigation connection={data.connection} onWiden={focusDesktopNavigation} />
+				<span id="shell-page-title" class="text-sm font-semibold">{navFor(page.url.pathname)?.name ?? 'Agentic Org'}</span>
+			</div>
+			<ExecutiveCommandBar
+				snapshot={shellSnapshot}
+				items={shellWork}
+				offices={data.connection.organization.offices}
+				ownerId={shellOwnerId}
+			/>
+			{#if showPaused}<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />{/if}
+			{@render children()}
+		</main>
 	</div>
-	<main aria-labelledby="shell-page-title" class="h-full overflow-y-auto min-[640px]:pl-16 min-[960px]:pl-72">
-		<ShellTopbar heading={navFor(page.url.pathname)?.name}>
-			<MobileNavigation connection={data.connection} onWiden={focusDesktopNavigation} />
-		</ShellTopbar>
-		{#if showPaused}<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />{/if}
-		{@render children()}
-	</main>
-</div>
+{:else}
+	<div class="exec-legacy-compat fixed inset-0 overflow-hidden bg-gray-800">
+		<div bind:this={desktopNavigation} class="fixed inset-y-0 z-50 hidden w-16 flex-col min-[640px]:flex min-[960px]:w-72">
+			<Sidebar connection={data.connection} onNavigate={(event, href) => selectDesktopSection(event, href, goto)} />
+		</div>
+		<main aria-labelledby="shell-page-title" class="h-full overflow-y-auto min-[640px]:pl-16 min-[960px]:pl-72">
+			<ShellTopbar heading={navFor(page.url.pathname)?.name}>
+				<MobileNavigation connection={data.connection} onWiden={focusDesktopNavigation} />
+			</ShellTopbar>
+			{#if showPaused}<LiveBanner loadedAt={liveState.loadedAt[organizationId]} {retrying} onretry={retry} />{/if}
+			{@render children()}
+		</main>
+	</div>
+{/if}
 <Toaster position="bottom-right" />

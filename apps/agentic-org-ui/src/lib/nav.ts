@@ -23,6 +23,12 @@ export const NAV: NavItem[] = [
 	{ name: 'Settings', href: '/settings', icon: 'settings' }
 ];
 
+const EXTRA_SECTIONS: NavItem[] = [
+	{ name: 'Home', href: '/home', icon: 'projects' },
+	{ name: 'Inbox', href: '/inbox', icon: 'tasks' }
+];
+
 /** The nav item whose section contains `pathname`. */
 export const navFor = (pathname: string): NavItem | undefined =>
-	NAV.find((item) => pathname === item.href || pathname.startsWith(item.href + '/'));
+	NAV.find((item) => pathname === item.href || pathname.startsWith(item.href + '/')) ??
+	EXTRA_SECTIONS.find((item) => pathname === item.href || pathname.startsWith(item.href + '/'));
