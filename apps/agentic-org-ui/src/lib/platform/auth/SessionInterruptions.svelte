@@ -26,8 +26,12 @@
 	 */
 	const current = $derived(appSession.state);
 	const login = $derived(current.kind === 'signed-in' ? current.session.account.login : '');
-	// The sign-in and registration pages are the alternative to the dialog, never under it.
-	const elsewhere = $derived(page.url.pathname === '/sign-in' || page.url.pathname === '/register');
+	// The sign-in, registration and CLI approval pages handle sign-in inline, never under a modal.
+	const elsewhere = $derived(
+		page.url.pathname === '/sign-in' ||
+			page.url.pathname === '/register' ||
+			page.url.pathname === '/cli-approve'
+	);
 	const ended = $derived(
 		!elsewhere && current.kind === 'signed-in' && current.reauth !== undefined
 	);

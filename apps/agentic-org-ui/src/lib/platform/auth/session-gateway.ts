@@ -1,12 +1,25 @@
-import type { createGatewayPublicHttp, createJsonHttp } from '../http/json-http';
+import { NotDispatchedError } from '../http/errors';
+import type {
+	createAuthlessJsonHttp,
+	createGatewayPublicHttp,
+	createJsonHttp
+} from '../http/json-http';
 import {
+	readAccess,
+	readCliApprovalDecide,
+	readCliApprovalDecision,
 	readEstablishedSession,
 	readResponse,
 	readSession,
+	readTlsEnableRequest,
+	readTlsEnableResult,
 	readVersion,
 	WireDecodeError,
+	type AccessView,
+	type CliApprovalDecision,
 	type GatewayError,
-	type Reader
+	type Reader,
+	type TlsEnableResult
 } from '../http/wire';
 
 /** HTTP failure metadata only: no server message or credential appears in an error. */
@@ -32,13 +45,15 @@ export class SessionRequestError extends Error {
 }
 export type SessionView = ReturnType<typeof readSession>;
 export type EstablishedSession = ReturnType<typeof readEstablishedSession>;
+export type { AccessView, CliApprovalDecision, TlsEnableResult };
 // readResponse validates an object; this projection discards additive response fields.
 const emptySessionResult: Reader<Record<string, never>> = () => ({});
 
 /** Fixed session operations over the shared bounded, same-origin HTTP boundary. */
 export function createSessionGateway(
 	publicHttp: ReturnType<typeof createGatewayPublicHttp>,
-	protectedHttp: ReturnType<typeof createJsonHttp>
+	protectedHttp: ReturnType<typeof createJsonHttp>,
+	authlessHttp?: ReturnType<typeof createAuthlessJsonHttp>
 ) {
 	async function result<T>(
 		request: Promise<{ status: number; body: unknown }>,
@@ -53,14 +68,60 @@ export function createSessionGateway(
 		if (response.status !== 200) throw new WireDecodeError();
 		return envelope.result;
 	}
+	const requireAuthless = () => {
+		if (!authlessHttp) throw new NotDispatchedError('Local authless transport unavailable');
+		return authlessHttp;
+	};
 	return Object.freeze({
 		version: (signal?: AbortSignal) => result(publicHttp.version(signal), readVersion),
+		access: (signal?: AbortSignal) => result(publicHttp.access(signal), readAccess),
 		signIn: (credentials: unknown, signal?: AbortSignal) =>
 			result(publicHttp.signIn(credentials, signal), readEstablishedSession),
 		register: (request: unknown, signal?: AbortSignal) =>
 			result(publicHttp.register(request, signal), readEstablishedSession),
+		enableAuth: (credentials: unknown, signal?: AbortSignal) =>
+			result(publicHttp.enableAuth(credentials, signal), readEstablishedSession),
 		get: (proof: string, signal?: AbortSignal) =>
 			result(protectedHttp({ method: 'GET', path: '/api/v1/session', proof, signal }), readSession),
+		getLocal: (signal?: AbortSignal) =>
+			result(requireAuthless()({ method: 'GET', path: '/api/v1/session', signal }), readSession),
+		enableTls: (request: unknown, proof?: string, signal?: AbortSignal) => {
+			let body;
+			try {
+				body = readTlsEnableRequest(request);
+			} catch {
+				return Promise.reject(new NotDispatchedError('Invalid TLS configuration request'));
+			}
+			const send =
+				proof !== undefined
+					? protectedHttp({ method: 'POST', path: '/api/v1/instance/tls', body, proof, signal })
+					: requireAuthless()({ method: 'POST', path: '/api/v1/instance/tls', body, signal });
+			return result(send, readTlsEnableResult);
+		},
+		decideCliApproval: (request: unknown, proof?: string, signal?: AbortSignal) => {
+			let body;
+			try {
+				body = readCliApprovalDecide(request);
+			} catch {
+				return Promise.reject(new NotDispatchedError('Invalid CLI approval request'));
+			}
+			const send =
+				proof !== undefined
+					? protectedHttp({
+							method: 'POST',
+							path: '/api/v1/cli-approvals/decide',
+							body,
+							proof,
+							signal
+						})
+					: requireAuthless()({
+							method: 'POST',
+							path: '/api/v1/cli-approvals/decide',
+							body,
+							signal
+						});
+			return result(send, readCliApprovalDecision);
+		},
 		refresh: (proof: string, signal?: AbortSignal) =>
 			result(
 				protectedHttp({ method: 'POST', path: '/api/v1/session/refresh', body: {}, proof, signal }),

@@ -51,6 +51,15 @@ function newCase() {
 		pair: undefined as SessionPair | undefined,
 		issued: [] as SessionPair[],
 		view: sessionView,
+		authEnabled: true,
+		listenScheme: 'http_loopback' as 'http_loopback' | 'http_published' | 'https',
+		hsts: 'off' as 'off' | 'on' | 'clear',
+		authEnableError: undefined as
+			{ status: number; code: string; field?: string; rule?: string } | undefined,
+		tlsScript: [] as ('ok' | 'invalid' | 'conflict' | 'forbidden')[],
+		tlsRequests: [] as Record<string, unknown>[],
+		cliApprovalLinks: new Set<string>(),
+		cliApprovalDecisions: [] as { link: string; approve: boolean }[],
 		refreshCount: 0,
 		gets: 0,
 		signOutFails: false,
@@ -88,7 +97,7 @@ async function body(req: IncomingMessage) {
 	let size = 0;
 	for await (const chunk of req) {
 		size += chunk.length;
-		if (size > 4096) throw new Error('Test request too large');
+		if (size > 256 * 1024) throw new Error('Test request too large');
 		chunks.push(Buffer.from(chunk));
 	}
 	return JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -190,6 +199,28 @@ export function sessionTestMiddleware() {
 						controlled.createScript = value.value;
 					else if (value.action === 'lookupScript' && Array.isArray(value.value))
 						controlled.lookupScript = value.value;
+					else if (value.action === 'authEnabled') {
+						controlled.authEnabled = value.value === true;
+						if (!controlled.authEnabled) {
+							controlled.view = {
+								...sessionView,
+								account: { id: 'local-owner-id', login: 'local' },
+								admin: true
+							};
+						}
+					} else if (
+						value.action === 'listenScheme' &&
+						['http_loopback', 'http_published', 'https'].includes(value.value)
+					)
+						controlled.listenScheme = value.value;
+					else if (value.action === 'hsts' && ['off', 'on', 'clear'].includes(value.value))
+						controlled.hsts = value.value;
+					else if (value.action === 'authEnableError')
+						controlled.authEnableError = value.value ?? undefined;
+					else if (value.action === 'tlsScript' && Array.isArray(value.value))
+						controlled.tlsScript = value.value;
+					else if (value.action === 'cliApprovalLinks' && Array.isArray(value.value))
+						controlled.cliApprovalLinks = new Set(value.value);
 					else {
 						json({}, 400);
 						return;
@@ -201,7 +232,12 @@ export function sessionTestMiddleware() {
 					requestHeaders: controlled.requestHeaders,
 					issued: controlled.issued,
 					creates: controlled.creates,
-					lookups: controlled.lookups
+					lookups: controlled.lookups,
+					authEnabled: controlled.authEnabled,
+					listenScheme: controlled.listenScheme,
+					hsts: controlled.hsts,
+					tlsRequests: controlled.tlsRequests,
+					cliApprovalDecisions: controlled.cliApprovalDecisions
 				});
 				return;
 			}
@@ -232,6 +268,10 @@ export function sessionTestMiddleware() {
 			}
 			if (
 				url.pathname !== '/api/v1/version' &&
+				url.pathname !== '/api/v1/access' &&
+				url.pathname !== '/api/v1/instance/auth/enable' &&
+				url.pathname !== '/api/v1/instance/tls' &&
+				url.pathname !== '/api/v1/cli-approvals/decide' &&
 				url.pathname !== '/api/v1/organizations' &&
 				url.pathname !== '/api/v1/instance' &&
 				!hostLookup.test(url.pathname) &&
@@ -246,6 +286,47 @@ export function sessionTestMiddleware() {
 				else json(invalidRequest, 400);
 				return;
 			}
+			if (url.pathname === '/api/v1/access') {
+				if (req.method === 'GET' && url.search === '')
+					respond({ auth_enabled: state.authEnabled, listen_scheme: state.listenScheme });
+				else json(invalidRequest, 400);
+				return;
+			}
+			if (url.pathname === '/api/v1/instance/auth/enable' && req.method === 'POST') {
+				const sent = await body(req);
+				if (state.authEnableError) {
+					const err = state.authEnableError;
+					state.authEnableError = undefined;
+					json({ error: { message: 'Refused.', ...err } }, err.status);
+					return;
+				}
+				if (state.authEnabled) {
+					const presented = presentedPair(req);
+					const authenticated =
+						presented !== undefined &&
+						state.pair !== undefined &&
+						presented.cookie === state.pair.cookie &&
+						presented.proof === state.pair.proof;
+					if (!authenticated) {
+						json({ error: { code: 'not_authorized', message: 'Sign in to continue.' } }, 401);
+						return;
+					}
+					json({ error: { code: 'conflict', message: 'Authentication is already enabled.' } }, 409);
+					return;
+				}
+				if (typeof sent?.login !== 'string' || typeof sent?.password !== 'string') {
+					json(invalidRequest, 400);
+					return;
+				}
+				state.authEnabled = true;
+				state.view = {
+					...sessionView,
+					account: { id: 'local-owner-id', login: sent.login },
+					admin: true
+				};
+				establish();
+				return;
+			}
 			if (url.pathname === '/api/v1/session/sign-in' && req.method === 'POST') {
 				const { login } = await body(req);
 				state.view =
@@ -253,7 +334,9 @@ export function sessionTestMiddleware() {
 						? { ...sessionView, account: { id: 'blair-id', login: 'Blair' } }
 						: login === 'admin'
 							? { ...sessionView, account: { id: 'admin-id', login: 'admin' }, admin: true }
-							: sessionView;
+							: state.view.admin && state.view.account.login === login
+								? state.view
+								: sessionView;
 				establish();
 				return;
 			}
@@ -272,12 +355,12 @@ export function sessionTestMiddleware() {
 			const ended = signOut ? { value: '', clear: true } : undefined;
 			// Cookie-only, proof-only, stale and mismatched pairs share the gateway's single denial shape.
 			const presented = presentedPair(req);
-			if (
-				!presented ||
-				!state.pair ||
-				presented.cookie !== state.pair.cookie ||
-				presented.proof !== state.pair.proof
-			) {
+			const validPair =
+				presented !== undefined &&
+				state.pair !== undefined &&
+				presented.cookie === state.pair.cookie &&
+				presented.proof === state.pair.proof;
+			if (signOut ? !validPair : state.authEnabled && !validPair) {
 				json(
 					{
 						error: {
@@ -289,6 +372,101 @@ export function sessionTestMiddleware() {
 					401,
 					ended
 				);
+				return;
+			}
+			if (url.pathname === '/api/v1/instance/tls' && req.method === 'POST') {
+				const sent = await body(req);
+				state.tlsRequests.push(sent);
+				if (!state.authEnabled) {
+					json(
+						{ error: { code: 'conflict', message: 'TLS configuration could not be updated.' } },
+						409
+					);
+					return;
+				}
+				if (!state.view.admin) {
+					json(
+						{
+							error: {
+								code: 'not_authorized',
+								message: 'Only the instance administrator can configure HTTPS.'
+							}
+						},
+						403
+					);
+					return;
+				}
+				const step = state.tlsScript.shift() ?? 'ok';
+				if (step === 'invalid') {
+					json(
+						{
+							error: {
+								code: 'invalid_request',
+								message: 'The TLS certificate or private key is invalid.'
+							}
+						},
+						400
+					);
+					return;
+				}
+				if (step === 'conflict') {
+					json(
+						{ error: { code: 'conflict', message: 'TLS configuration could not be updated.' } },
+						409
+					);
+					return;
+				}
+				if (step === 'forbidden') {
+					json(
+						{
+							error: {
+								code: 'not_authorized',
+								message: 'Only the instance administrator can configure HTTPS.'
+							}
+						},
+						403
+					);
+					return;
+				}
+				const hstsChanged = sent.hsts !== undefined && sent.hsts !== state.hsts;
+				if (sent.hsts === 'off' || sent.hsts === 'on' || sent.hsts === 'clear') {
+					state.hsts = sent.hsts;
+				}
+				const restart_required = state.listenScheme !== 'https' || hstsChanged;
+				const source = sent.mode === 'supplied' ? 'supplied' : 'made';
+				respond({
+					scheme: 'https',
+					origin: 'https://127.0.0.1:4173',
+					fingerprint:
+						source === 'made'
+							? 'sha256:selfsigned0123456789abcdef0123456789abcdef0123456789abcdef0123'
+							: 'sha256:supplied9876543210fedcba9876543210fedcba9876543210fedcba98765432',
+					source,
+					restart_required
+				});
+				return;
+			}
+			if (url.pathname === '/api/v1/cli-approvals/decide' && req.method === 'POST') {
+				const sent = await body(req);
+				if (typeof sent?.link !== 'string' || typeof sent?.approve !== 'boolean') {
+					json(invalidRequest, 400);
+					return;
+				}
+				if (!state.cliApprovalLinks.has(sent.link)) {
+					json(
+						{
+							error: {
+								code: 'not_found',
+								message: 'This link has expired or was already used.'
+							}
+						},
+						404
+					);
+					return;
+				}
+				state.cliApprovalLinks.delete(sent.link);
+				state.cliApprovalDecisions.push({ link: sent.link, approve: sent.approve });
+				respond({ status: sent.approve ? 'approved' : 'declined' });
 				return;
 			}
 			if (url.pathname === '/api/v1/session' && req.method === 'GET') {
@@ -330,7 +508,8 @@ export function sessionTestMiddleware() {
 						name: 'default',
 						server_version: '0.0.0-test',
 						web_status: 'ok',
-						listen_scheme: 'http_loopback',
+						listen_scheme: state.listenScheme,
+						...(state.authEnabled ? {} : { auth_enabled: false }),
 						server_time_ms: Date.now()
 					});
 				else json(invalidRequest, 400);

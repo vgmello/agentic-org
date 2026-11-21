@@ -226,6 +226,8 @@ function createBoundedJsonHttp(
 	};
 }
 
+export type AuthlessJsonHttpRequest = JsonRequest;
+
 /** Protected calls always require a proof, including calls to a public route through this API. */
 export function createJsonHttp(
 	options: JsonHttpOptions
@@ -233,11 +235,22 @@ export function createJsonHttp(
 	return createBoundedJsonHttp(options, true);
 }
 
+/**
+ * Same-origin bounded JSON transport without a proof header, used only when the local HQ
+ * instance reports `auth_enabled: false` via `GET /api/v1/access` (ADR-0034).
+ */
+export function createAuthlessJsonHttp(
+	options: JsonHttpOptions
+): (request: AuthlessJsonHttpRequest) => Promise<{ status: number; body: unknown }> {
+	return createBoundedJsonHttp(options, false);
+}
+
 /** The only public gateway operations; callers cannot choose an unauthenticated request target. */
 export function createGatewayPublicHttp(options: JsonHttpOptions) {
 	const send = createBoundedJsonHttp(options, false);
 	return Object.freeze({
 		version: (signal?: AbortSignal) => send({ path: '/api/v1/version', method: 'GET', signal }),
+		access: (signal?: AbortSignal) => send({ path: '/api/v1/access', method: 'GET', signal }),
 		async signIn(credentials: unknown, signal?: AbortSignal) {
 			let body;
 			try {
@@ -255,6 +268,15 @@ export function createGatewayPublicHttp(options: JsonHttpOptions) {
 				throw new NotDispatchedError('Invalid registration request');
 			}
 			return send({ path: '/api/v1/links/register', method: 'POST', body, signal });
+		},
+		async enableAuth(credentials: unknown, signal?: AbortSignal) {
+			let body;
+			try {
+				body = readSignIn(credentials);
+			} catch {
+				throw new NotDispatchedError('Invalid authentication enablement request');
+			}
+			return send({ path: '/api/v1/instance/auth/enable', method: 'POST', body, signal });
 		}
 	});
 }

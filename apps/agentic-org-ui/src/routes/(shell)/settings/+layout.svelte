@@ -15,6 +15,7 @@
 		{ label: 'Roles', href: '/settings/roles', match: 'prefix' },
 		{ label: 'Processes', href: '/settings/processes', match: 'prefix' },
 		{ label: 'Members and access', href: '/settings/access', match: 'prefix' },
+		{ label: 'Security & Access', href: '/settings/security', match: 'prefix' },
 		{ label: 'Costs', href: '/settings/costs', match: 'prefix' },
 		{ label: 'Updates', href: '/settings/updates', match: 'prefix' }
 	];

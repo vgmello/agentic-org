@@ -61,13 +61,18 @@ test(
 test('A3, A4: the session pages and Create organization are enabled in the release, and the other areas stay unavailable', async ({
 	page
 }) => {
-	// No gateway answers the static preview, so the instance URL, /welcome and /create open sign-in (SIGN-1, SIGN-7).
-	for (const path of ['/', '/welcome', '/sign-in', '/create']) {
+	// No gateway answers the static preview, so the instance URL, /welcome, /create and /security open sign-in (SIGN-1, SIGN-7).
+	for (const path of ['/', '/welcome', '/sign-in', '/create', '/security']) {
 		await visit(page, path);
 		await expect(page).toHaveURL(/\/sign-in(\?|$)/);
 		await expect(page.getByRole('heading', { level: 1, name: /^Sign in to HQ at / })).toBeVisible();
 		await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
 	}
+	await visit(page, '/cli-approve');
+	await expect(page.getByTestId('area-unavailable')).toHaveCount(0);
+	await expect(
+		page.getByRole('heading', { level: 1, name: 'This link has expired or was already used.' })
+	).toBeVisible();
 	await visit(page, '/org-chart');
 	await expect(page.getByTestId('area-unavailable')).toBeVisible();
 });

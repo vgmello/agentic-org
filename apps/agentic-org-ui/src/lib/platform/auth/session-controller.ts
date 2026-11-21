@@ -1,10 +1,13 @@
-import type { createJsonHttp } from '../http/json-http';
+import type { createAuthlessJsonHttp, createJsonHttp } from '../http/json-http';
 import { readJsonObject, readResponse, readSafeInteger, versionCompatible } from '../http/wire';
 import {
 	SessionRequestError,
+	type AccessView,
+	type CliApprovalDecision,
 	type EstablishedSession,
 	type SessionGateway,
-	type SessionView
+	type SessionView,
+	type TlsEnableResult
 } from './session-gateway';
 import { readSessionRecord, type SessionRecord, type SessionStore } from './session-record';
 
@@ -22,16 +25,31 @@ export type SessionState =
 			kind: 'signed-in';
 			session: SessionView;
 			reauth?: 'session_ended' | 'unknown';
+			/** Present only when local HQ serves plain HTTP without authentication (ADR-0034). */
+			authless?: true;
 	  };
+type ControllerGateway = Pick<
+	SessionGateway,
+	'version' | 'signIn' | 'register' | 'get' | 'refresh' | 'signOut'
+> &
+	Partial<
+		Pick<SessionGateway, 'access' | 'getLocal' | 'enableAuth' | 'enableTls' | 'decideCliApproval'>
+	>;
 type Options = {
 	store: SessionStore;
-	gateway: SessionGateway;
+	gateway: ControllerGateway;
 	http: ReturnType<typeof createJsonHttp>;
+	authlessHttp?: ReturnType<typeof createAuthlessJsonHttp>;
 	locks: Pick<LockManager, 'request'>;
 	channel: Pick<BroadcastChannel, 'postMessage' | 'addEventListener' | 'removeEventListener'>;
 	now: () => number;
 	changed: (state: SessionState) => void;
+	accessChanged?: (access: AccessView) => void;
 };
+const DEFAULT_ACCESS: AccessView = Object.freeze({
+	auth_enabled: true,
+	listen_scheme: 'unknown'
+});
 const sameAccount = (a: SessionRecord, b: SessionRecord) =>
 	a.instance_id === b.instance_id && a.account_id === b.account_id;
 const matches = (view: SessionView, record: SessionRecord) =>
@@ -49,13 +67,16 @@ export function createSessionController({
 	store,
 	gateway,
 	http,
+	authlessHttp,
 	locks,
 	channel,
 	now,
-	changed
+	changed,
+	accessChanged
 }: Options) {
 	let record: SessionRecord | undefined;
 	let state: SessionState = { kind: 'signed-out' };
+	let accessState: AccessView = DEFAULT_ACCESS;
 	let generation = 0;
 	let recovery = 0;
 	// Notifications share the latest negotiation; they never race past an unknown/rejected version.
@@ -72,6 +93,24 @@ export function createSessionController({
 	const publish = (next: SessionState) => {
 		state = Object.freeze(next);
 		if (!disposed) changed(state);
+	};
+	const publishAccess = (next: AccessView) => {
+		accessState = Object.freeze({ ...next });
+		if (!disposed) accessChanged?.(accessState);
+	};
+	const probeAccess = async (signal?: AbortSignal): Promise<AccessView> => {
+		if (!gateway.access) return DEFAULT_ACCESS;
+		try {
+			return await gateway.access(signal);
+		} catch (error) {
+			if (
+				error instanceof SessionRequestError &&
+				(error.status === 404 || error.status === 405 || error.status === 501)
+			) {
+				return DEFAULT_ACCESS;
+			}
+			throw error;
+		}
 	};
 	const active = (token: number) => !disposed && generation === token;
 	const ensureOpen = () => {
@@ -122,6 +161,9 @@ export function createSessionController({
 				recovery++;
 				if (record && !sameAccount(record, next)) generation++;
 				record = next;
+				if (!accessState.auth_enabled) {
+					publishAccess({ ...accessState, auth_enabled: true });
+				}
 				publish({ kind: 'signed-in', session: viewOf(session) });
 				notify(message);
 				return;
@@ -135,6 +177,27 @@ export function createSessionController({
 	const accountChanged = (stored: SessionRecord) =>
 		(record && !sameAccount(record, stored)) ||
 		(state.kind === 'signed-out' && state.reason === 'changed-account');
+	async function tryBootAuthless(
+		token: number,
+		attempt: number,
+		access: AccessView
+	): Promise<boolean> {
+		if (access.auth_enabled || !gateway.getLocal) return false;
+		try {
+			const session = await gateway.getLocal();
+			if (!recovering(token, attempt)) return true;
+			record = undefined;
+			publish({ kind: 'signed-in', session, authless: true });
+			return true;
+		} catch (error) {
+			if (!recovering(token, attempt)) return true;
+			if (error instanceof SessionRequestError && error.status === 401) {
+				publishAccess({ ...access, auth_enabled: true });
+				return false;
+			}
+			throw error;
+		}
+	}
 	async function boot() {
 		ensureOpen();
 		const token = generation,
@@ -148,6 +211,10 @@ export function createSessionController({
 			publish({ kind: 'update-required' });
 			return;
 		}
+		const access = await probeAccess();
+		if (!recovering(token, attempt)) return;
+		publishAccess(access);
+		if (await tryBootAuthless(token, attempt, access)) return;
 		const stored = await store.read();
 		if (!recovering(token, attempt)) return;
 		if (!stored) {
@@ -200,6 +267,9 @@ export function createSessionController({
 				return;
 			}
 			record = stored;
+			if (!accessState.auth_enabled) {
+				publishAccess({ ...accessState, auth_enabled: true });
+			}
 			publish({ kind: 'signed-in', session });
 		} catch (error) {
 			if (!recovering(token, attempt)) return;
@@ -223,7 +293,7 @@ export function createSessionController({
 		});
 	};
 	channel.addEventListener('message', received);
-	/** Sign-in and registration both create a pair under the cross-tab session lock. */
+	/** Sign-in, registration and opt-in auth enablement create a pair under the cross-tab session lock. */
 	async function establish(
 		call: (signal?: AbortSignal) => Promise<EstablishedSession>,
 		signal?: AbortSignal
@@ -248,6 +318,38 @@ export function createSessionController({
 			await publishEstablished(session, next, { kind: 'signed-in', account_id: next.account_id });
 		});
 	}
+	async function sendAuthless(
+		request: { path: string; signal?: AbortSignal } & (
+			{ method: 'GET' } | { method: 'POST'; body: unknown }
+		)
+	) {
+		if (accessState.auth_enabled || state.kind !== 'signed-in' || !authlessHttp) {
+			throw new Error('Sign in required');
+		}
+		const token = generation;
+		const current = () => {
+			if (!active(token)) throw new Error('Session changed');
+		};
+		const response = await authlessHttp(request);
+		current();
+		if (response.status !== 401) return response;
+		publishAccess({ ...accessState, auth_enabled: true });
+		const stored = await store.read();
+		current();
+		if (stored) {
+			record = stored;
+			const retried = await http({ ...request, proof: stored.proof });
+			current();
+			if (retried.status !== 401) {
+				void synchronize().catch(() => {
+					/* Keep retried response if background sync transiently fails. */
+				});
+				return retried;
+			}
+		}
+		ended('ended');
+		return response;
+	}
 	async function send(
 		request: { path: string; signal?: AbortSignal } & (
 			{ method: 'GET' } | { method: 'POST'; body: unknown }
@@ -255,7 +357,7 @@ export function createSessionController({
 	) {
 		ensureOpen();
 		const expected = record;
-		if (!expected) throw new Error('Sign in required');
+		if (!expected) return sendAuthless(request);
 		const token = generation;
 		const current = () => {
 			if (!active(token)) throw new Error('Session changed');
@@ -285,13 +387,113 @@ export function createSessionController({
 		reauth(reason);
 		return response;
 	}
+	async function callAuthless<T>(call: (proof: string | undefined) => Promise<T>): Promise<T> {
+		if (accessState.auth_enabled || state.kind !== 'signed-in') {
+			throw new Error('Sign in required');
+		}
+		try {
+			return await call(undefined);
+		} catch (error) {
+			if (error instanceof SessionRequestError && error.status === 401) {
+				publishAccess({ ...accessState, auth_enabled: true });
+				ended('ended');
+			}
+			throw error;
+		}
+	}
+	async function recoverUnauthorizedCall<T>(
+		expected: SessionRecord,
+		token: number,
+		caught: SessionRequestError,
+		call: (proof: string | undefined) => Promise<T>
+	): Promise<T> {
+		const stored = await store.read();
+		if (!active(token)) throw new Error('Session changed');
+		if (!stored || !sameAccount(expected, stored)) {
+			ended(stored ? 'changed-account' : 'ended', stored?.login);
+			throw new Error('Session changed');
+		}
+		if (stored.proof !== expected.proof) {
+			record = stored;
+			return call(stored.proof);
+		}
+		reauth(caught.sessionReason);
+		throw caught;
+	}
+	async function withCallerAuth<T>(call: (proof: string | undefined) => Promise<T>): Promise<T> {
+		ensureOpen();
+		const expected = record;
+		if (!expected) return callAuthless(call);
+		const token = generation;
+		let caught: unknown;
+		try {
+			return await call(expected.proof);
+		} catch (error) {
+			caught = error;
+		}
+		if (!active(token) || !(caught instanceof SessionRequestError) || caught.status !== 401) {
+			throw caught;
+		}
+		return recoverUnauthorizedCall(expected, token, caught, call);
+	}
+	async function recoverAuthEnabledRace() {
+		publishAccess({ ...accessState, auth_enabled: true });
+		if (record) return;
+		const stored = await store.read();
+		if (stored) {
+			await synchronize().catch(() => {
+				/* Keep recovered access flag if validation transiently fails. */
+			});
+			return;
+		}
+		ended('ended');
+	}
 	return Object.freeze({
 		boot,
+		access: () => accessState,
+		async refreshAccess(signal?: AbortSignal): Promise<AccessView> {
+			ensureOpen();
+			const next = await probeAccess(signal);
+			publishAccess(next);
+			return next;
+		},
 		signIn: (credentials: unknown, signal?: AbortSignal) =>
 			establish((signal) => gateway.signIn(credentials, signal), signal),
 		/** Redeems a registration link; the new account is signed in exactly as by sign-in. */
 		register: (request: unknown, signal?: AbortSignal) =>
 			establish((signal) => gateway.register(request, signal), signal),
+		/** Opt-in authentication enablement from local authless HTTP mode (ADR-0034). */
+		async enableAuth(credentials: unknown, signal?: AbortSignal) {
+			if (!gateway.enableAuth) throw new Error('Authentication enablement unavailable');
+			const enable = gateway.enableAuth;
+			try {
+				await establish((sig) => enable(credentials, sig), signal);
+			} catch (error) {
+				if (
+					error instanceof SessionRequestError &&
+					(error.status === 409 || error.status === 401)
+				) {
+					await recoverAuthEnabledRace();
+				}
+				throw error;
+			}
+		},
+		/** Opt-in HTTPS enablement or live TLS certificate rotation (ADR-0033 / TASK-62). */
+		async enableTls(request: unknown, signal?: AbortSignal): Promise<TlsEnableResult> {
+			if (!gateway.enableTls) throw new Error('TLS configuration unavailable');
+			const enable = gateway.enableTls;
+			const result = await withCallerAuth((proof) => enable(request, proof, signal));
+			if (!result.restart_required) {
+				publishAccess({ ...accessState, listen_scheme: result.scheme });
+			}
+			return result;
+		},
+		/** Approves or declines a pending CLI sign-in approval link (SIGN-40 / FC-173). */
+		async decideCliApproval(request: unknown, signal?: AbortSignal): Promise<CliApprovalDecision> {
+			if (!gateway.decideCliApproval) throw new Error('CLI approval unavailable');
+			const decide = gateway.decideCliApproval;
+			return withCallerAuth((proof) => decide(request, proof, signal));
+		},
 		async refresh(triggered_at_ms: number, signal?: AbortSignal) {
 			ensureOpen();
 			readSafeInteger(triggered_at_ms);

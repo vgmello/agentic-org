@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@lead'
 created_date: '2026-11-21T05:16:00Z'
-updated_date: '2026-11-21T11:11:00Z'
+updated_date: '2026-11-21T11:37:00Z'
 labels:
   - backend
   - ui
@@ -42,8 +42,8 @@ Authentication (accounts, passwords, registration links, sessions) and HTTPS rem
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 When HQ is local, the server serves the browser over plain HTTP by default with no HTTPS authorization prompt required.
-- [ ] #2 By default on local HQ, authentication is disabled and opening the app lands directly in the organization / onboarding wizard without requiring sign-in or a registration link.
-- [ ] #3 Users/teams can opt in to enable authentication (accounts/sign-in) and/or HTTPS from inside the app settings; once enabled, auth/HTTPS enforcement activates cleanly.
+- [x] #2 By default on local HQ, authentication is disabled and opening the app lands directly in the organization / onboarding wizard without requiring sign-in or a registration link.
+- [x] #3 Users/teams can opt in to enable authentication (accounts/sign-in) and/or HTTPS from inside the app settings; once enabled, auth/HTTPS enforcement activates cleanly.
 - [ ] #4 Onboarding wizard UI flow is coordinated with the UI stream (after TASK-65) and verified end-to-end against a real local HQ instance.
 <!-- AC:END -->
 
@@ -57,4 +57,6 @@ Authentication (accounts, passwords, registration links, sessions) and HTTPS rem
 
 <!-- SECTION:NOTES:BEGIN -->
 Backend complete (Pass 1 + Pass 2 + Final Rust review VERDICT: APPROVE): fresh local HTTP HQ starts authless (meta local_authless_account + !local-authless filtered centrally); GET /api/v1/access, POST /api/v1/instance/auth/enable (with LOCAL_AUTHLESS_SESSION_ID revocation & AUTH_MODE_CHANGED event, atomic ownership preservation), and 409 guard preventing authless HTTP->HTTPS lockout. Verified by real-process E2E tests. Remaining: UI direct onboarding wizard entry & Settings opt-in Auth/HTTPS controls (ACs #2-#4).
+
+UI authless boot via GET /api/v1/access + direct entry into /create (0 orgs) or /welcome (>0 orgs) with zero sign-in/HTTPS wall; opt-in POST /api/v1/instance/auth/enable & POST /api/v1/instance/tls in Security & Access (/security and /settings/security); /cli-approve (SIGN-40 / FC-173) fragment-stripped approval flow. Verified with Vitest (2486 passed), svelte-autofixer (0 issues), format/lint/check/build/e2e:verify, and Playwright (67 passed across chromium/production/webkit). Real-instance E2E (AC #4) remains for Lead merge verification.
 <!-- SECTION:NOTES:END -->
