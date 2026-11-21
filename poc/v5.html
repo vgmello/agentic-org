@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agency · IA v2 prototype</title>
+<title>Agentic Org</title>
 <style>
 :root {
   color-scheme: dark;
@@ -185,6 +185,9 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .foot .who { font-weight: 600; }
 .foot .office { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 20px; color: var(--gray-400); }
 .foot .office .ic14 { color: var(--green-400); }
+.foot .office-link.is-offline .office { color: #FDA4AF; }
+.foot .office-link.is-offline .office .ic14,
+.foot .office-link.is-offline .office-rail .obadge .ic { color: #FB7185; }
 .foot .acct .acct-chev { margin-left: auto; color: var(--gray-400); }
 .foot .office-rail { display: none; position: relative; }
 .foot .office-rail .obadge { position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; border-radius: 99px; background: #1b2533; display: inline-flex; align-items: center; justify-content: center; }
@@ -314,10 +317,12 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .cmdk-ask-go:hover { background: rgba(56, 189, 248, .36); color: #FFFFFF; }
 .cmdk-ask-go[hidden] { display: none; }
 .cmdk-esc {
-  padding: 3px 7px; border-radius: 6px;
-  background: rgba(186, 222, 255, .07); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .14);
-  font-family: inherit; font-size: 0.6875rem; font-weight: 600; color: #7C91AE;
+  padding: 3px 8px; border-radius: 6px; cursor: pointer;
+  background: rgba(186, 222, 255, .08); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .16);
+  font-family: inherit; font-size: 0.6875rem; font-weight: 600; color: #94A3B8;
+  transition: background-color .14s ease, color .14s ease, box-shadow .14s ease;
 }
+.cmdk-esc:hover { background: rgba(186, 222, 255, .16); color: #F8FAFC; box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .32); }
 .cmdk-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 3px; }
 .cmdk-ai-pane { display: flex; flex-direction: column; gap: 14px; padding: 8px; }
 .cmdk-ai-card {
@@ -969,7 +974,8 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .scrim { display: none; position: fixed; inset: 0; z-index: 45; background: rgb(16 24 40 / .8); }
 @media (prefers-reduced-motion: reduce) {
   .p-working::after, .skel-b, .skel-c, .c-dot, .c-caret-blink, .h4-live-dot::after, .h4-decision.win-burst { animation: none; }
-  .sidebar, .h4-kpi, .h4-decision, .h4-proj, .h4-now-item, .h4-cta, .h4-cta-fill, .h4-cta-sheen, .h4-cta-ico, .h4-cta-lbl { transition: none !important; }
+  .sidebar, .h4-kpi, .h4-decision, .h4-proj, .h4-now-item, .h4-cta, .h4-cta-fill, .h4-cta-sheen, .h4-cta-ico, .h4-cta-lbl,
+  .hb-pillar, .hb-card, .hb-spot, .hb-dot-btn, .hb-dot-btn::after, .hb-tseg, .cmdk-shell, .cmdk-opt { transition: none !important; }
 }
 
 /* ── v4 Home: Elevated Hierarchy, Relationship Grouping & Frosted Glass ── */
@@ -1132,7 +1138,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   font-size: 0.75rem; line-height: 1rem; font-weight: 500; color: var(--h4-body);
 }
 .h4-office-chip:hover { background: var(--h4-surface-hi); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), inset 0 0 0 1px var(--h4-border-hi); color: var(--h4-ink); }
-.h4-live-dot { position: relative; width: 8px; height: 8px; border-radius: 999px; background: #34D399; flex: none; }
+.h4-live-dot { position: relative; display: inline-block; width: 8px; height: 8px; border-radius: 999px; background: #34D399; flex: none; }
 .h4-live-dot::after { content: ""; position: absolute; inset: -3px; border-radius: 999px; border: 1.5px solid rgba(52, 211, 153, .55); animation: h4-pulse 2.2s ease-out infinite; }
 @keyframes h4-pulse { 0% { transform: scale(.8); opacity: .9; } 70%, 100% { transform: scale(1.9); opacity: 0; } }
 
@@ -1251,14 +1257,15 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .h4-d-foot .reply { flex: 1 1 100%; }
 
 /* Delight CTA: Liquid win-fill sweep + glass sheen + kinetic rolling text */
-.h4-cta {
+.h4-cta,
+.btn.primary.h4-cta {
   position: relative;
   overflow: hidden;
   isolation: isolate;
   padding: 0 14px;
-  background: #4F46E5;
+  background: linear-gradient(135deg, #0369A1 0%, #0284C7 100%);
   color: #FFFFFF;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 1px 3px rgba(0, 0, 0, .32);
+  box-shadow: inset 0 1px 0 rgba(224, 242, 254, .28), inset 0 0 0 1px rgba(125, 211, 252, .32), 0 2px 6px rgba(0, 0, 0, .34);
   transition: transform .2s cubic-bezier(.22, 1, .36, 1), box-shadow .24s ease;
 }
 .h4-cta-fill {
@@ -1269,7 +1276,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   transition: transform .32s cubic-bezier(.22, 1, .36, 1);
 }
 .h4-cta[data-cta-tone="reply"] .h4-cta-fill {
-  background: linear-gradient(135deg, #4338CA 0%, #4F46E5 55%, #0369A1 100%);
+  background: linear-gradient(135deg, #075985 0%, #0284C7 55%, #0EA5E9 100%);
 }
 .h4-cta[data-cta-tone="ocean"] .h4-cta-fill {
   background: linear-gradient(135deg, #0369A1 0%, #0284C7 55%, #0EA5E9 100%);
@@ -1320,14 +1327,16 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .h4-cta-lbl.hover { transform: translateY(125%); opacity: 0; }
 
 .h4-cta:hover,
-.h4-cta:focus-visible {
-  background: #4F46E5;
+.h4-cta:focus-visible,
+.btn.primary.h4-cta:hover,
+.btn.primary.h4-cta:focus-visible {
+  background: linear-gradient(135deg, #0369A1 0%, #0284C7 100%);
   transform: translateY(-1.5px);
   box-shadow: inset 0 1px 0 rgba(167, 243, 208, .42), 0 8px 22px -5px rgba(16, 185, 129, .55);
 }
 .h4-cta[data-cta-tone="reply"]:hover,
 .h4-cta[data-cta-tone="reply"]:focus-visible {
-  box-shadow: inset 0 1px 0 rgba(199, 210, 254, .42), 0 8px 22px -5px rgba(99, 102, 241, .58);
+  box-shadow: inset 0 1px 0 rgba(224, 242, 254, .42), 0 8px 22px -5px rgba(14, 165, 233, .52);
 }
 .h4-cta:hover .h4-cta-fill,
 .h4-cta:focus-visible .h4-cta-fill {
@@ -1517,9 +1526,9 @@ select.field option { background: #0E1629; color: #F8FAFC; }
   --hb-shadow: inset 0 1px 0 rgba(186, 222, 255, .12), inset 0 0 0 1px var(--hb-border), 0 14px 36px -14px rgba(0, 0, 0, .55);
   --hb-shadow-hi: inset 0 1px 0 rgba(186, 222, 255, .19), inset 0 0 0 1px var(--hb-border-hi), 0 18px 42px -14px rgba(0, 0, 0, .62);
   --hb-ink: #F8FAFC;
-  --hb-body: #CBD5E1;
-  --hb-muted: #94A3B8;
-  --hb-dim: #74849B;
+  --hb-body: #D6E1EE;
+  --hb-muted: #A3B5CC;
+  --hb-dim: #8599B2;
   --hb-emerald: #34D399;
   --hb-amber: #FBBF24;
   --hb-rose: #FB7185;
@@ -1641,6 +1650,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 
 /* Zone 2: Balanced 2-Column Hero Stage (Spotlight + Autonomous Catch-up & AI Ask) */
 .hb-stage { display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(350px, 1fr); gap: 20px; align-items: stretch; }
+.hb-stage.is-single { grid-template-columns: 1fr; }
 
 /* Left: Focused Decision Spotlight Card */
 .hb-spot {
@@ -1679,16 +1689,23 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   color: #FDE68A;
 }
 .hb-spot-nav { display: inline-flex; align-items: center; gap: 10px; }
-.hb-dots { display: inline-flex; align-items: center; gap: 5px; }
+.hb-dots { display: inline-flex; align-items: center; gap: 0; }
 .hb-dot-btn {
-  width: 8px; height: 8px; border-radius: 999px; padding: 0;
-  background: rgba(186, 222, 255, .20);
+  width: 24px; height: 24px; padding: 0; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent;
+  transition: width .2s cubic-bezier(.22, 1, .36, 1);
+}
+.hb-dot-btn::after {
+  content: ""; display: block; width: 8px; height: 8px; border-radius: 999px;
+  background: rgba(186, 222, 255, .24);
   transition: width .2s cubic-bezier(.22, 1, .36, 1), background-color .16s ease;
 }
-.hb-dot-btn:hover { background: rgba(186, 222, 255, .45); }
-.hb-dot-btn.is-cur { width: 22px; background: #7DD3FC; }
-.hb-dot-btn.is-cur.is-urgent { background: #FBBF24; }
-.hb-dot-btn.is-cleared { background: rgba(52, 211, 153, .65); }
+.hb-dot-btn:hover::after { background: rgba(186, 222, 255, .52); }
+.hb-dot-btn.is-cur { width: 32px; }
+.hb-dot-btn.is-cur::after { width: 22px; background: #7DD3FC; }
+.hb-dot-btn.is-cur.is-urgent::after { background: #FBBF24; }
+.hb-dot-btn.is-cleared::after { background: rgba(52, 211, 153, .70); }
 .hb-step-ctr { font-size: 0.75rem; font-weight: 600; color: var(--hb-muted); font-variant-numeric: tabular-nums; }
 .hb-nav-arrows { display: inline-flex; align-items: center; gap: 4px; }
 .hb-arrow-btn {
@@ -1948,7 +1965,7 @@ a.hb-card-lead:hover { color: var(--hb-ink); }
 .hb-tseg.agents { background: linear-gradient(90deg, #93C5FD 0%, #BAE6FD 100%); }
 .hb-tseg.ci { background: linear-gradient(90deg, #67E8F9 0%, #A5F3FC 100%); }
 .hb-tseg.humans { background: linear-gradient(90deg, #EAB308 0%, #F5C76B 100%); }
-.hb-tseg.queued { background: linear-gradient(90deg, #274066 0%, #375580 100%); }
+.hb-tseg.queued { background: linear-gradient(90deg, #4B6A94 0%, #6487B4 100%); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .20); }
 .hb-time-legend { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 22px; }
 .hb-tleg {
   display: inline-flex; align-items: baseline; gap: 6px;
@@ -1957,10 +1974,11 @@ a.hb-card-lead:hover { color: var(--hb-ink); }
 }
 a.hb-tleg:hover { color: var(--hb-ink); }
 .hb-tleg strong { font-size: 0.9375rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.hb-tleg .hrs { font-size: 0.75rem; color: var(--hb-dim); font-variant-numeric: tabular-nums; }
 .hb-tleg.agents strong { color: #BAE6FD; }
 .hb-tleg.ci strong { color: #67E8F9; }
 .hb-tleg.humans strong { color: #F5C76B; }
-.hb-tleg.queued strong { color: #94A3B8; }
+.hb-tleg.queued strong { color: #CBD5E1; }
 .hb-time-foot {
   display: flex; align-items: baseline; justify-content: space-between;
   gap: 8px 18px; flex-wrap: wrap;
@@ -1973,9 +1991,11 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 .hb-time-auto b { color: var(--hb-muted); font-weight: 600; }
 
 @media (max-width: 1120px) {
-  .hb-pillars { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hb-stage { grid-template-columns: 1fr; }
   .hb-bento, .hb-hor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 960px) {
+  .hb-pillars { grid-template-columns: 1fr; }
 }
 @media (max-width: 720px) {
   .hb { padding: 20px var(--gutter) 40px; gap: 20px; }
@@ -2127,12 +2147,12 @@ a.hb-tleg:hover { color: var(--hb-ink); }
       <div class="menu up" id="menu-acct" role="menu" hidden>
         <button role="menuitem" type="button" data-act="go" data-v="#/preferences"><svg class="ic ic20" aria-hidden="true"><use href="#i-adjustments"/></svg>Your preferences</button>
         <button role="menuitem" type="button" data-act="proto" data-v="Switch organization (goes to the welcome screen)"><svg class="ic ic20" aria-hidden="true"><use href="#i-arrows-updown"/></svg>Switch organization</button>
-        <button role="menuitem" type="button" data-act="proto" data-v="About Agency"><svg class="ic ic20" aria-hidden="true"><use href="#i-info"/></svg>About</button>
+        <button role="menuitem" type="button" data-act="proto" data-v="About Agentic Org"><svg class="ic ic20" aria-hidden="true"><use href="#i-info"/></svg>About</button>
       </div>
     </div>
-    <a class="office-link" href="#/settings/offices" style="padding-top:0" aria-label="This Mac, HQ office, online. Open Offices" title="This Mac · HQ office · Online">
-      <span class="office office-full"><svg class="ic ic14" aria-hidden="true"><use href="#i-check-circle"/></svg>This Mac · HQ office · Online</span>
-      <span class="office-rail" aria-hidden="true"><svg class="ic ic20"><use href="#i-office"/></svg><span class="obadge"><svg class="ic"><use href="#i-check-circle"/></svg></span></span>
+    <a class="office-link" id="office-link" href="#/settings/offices" style="padding-top:0" aria-label="This Mac, HQ office, online. Open Offices" title="This Mac · HQ office · Online">
+      <span class="office office-full" id="office-full"><svg class="ic ic14" aria-hidden="true"><use href="#i-check-circle"/></svg>This Mac · HQ office · Online</span>
+      <span class="office-rail" aria-hidden="true"><svg class="ic ic20"><use href="#i-office"/></svg><span class="obadge" id="office-rail-badge"><svg class="ic"><use href="#i-check-circle"/></svg></span></span>
     </a>
   </div>
 </aside>
@@ -2178,25 +2198,25 @@ a.hb-tleg:hover { color: var(--hb-ink); }
   <div class="cmdk-dialog" id="cmdk-dialog" role="dialog" aria-modal="true" aria-label="Command palette and Org AI">
     <div class="cmdk-tabs">
       <div class="cmdk-tab-grp" role="tablist" aria-label="Palette mode">
-        <button class="cmdk-tab" id="cmdk-tab-cmd" type="button" role="tab" aria-selected="true" data-act="cmdk-mode" data-v="cmd">
+        <button class="cmdk-tab" id="cmdk-tab-cmd" type="button" role="tab" aria-selected="true" aria-controls="cmdk-list" data-act="cmdk-mode" data-v="cmd">
           <svg class="ic ic14" aria-hidden="true"><use href="#i-search"/></svg><span>Search &amp; Commands</span>
         </button>
-        <button class="cmdk-tab" id="cmdk-tab-ai" type="button" role="tab" aria-selected="false" data-act="cmdk-mode" data-v="ai">
+        <button class="cmdk-tab" id="cmdk-tab-ai" type="button" role="tab" aria-selected="false" aria-controls="cmdk-list" data-act="cmdk-mode" data-v="ai">
           <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Ask Org AI</span>
         </button>
       </div>
-      <kbd class="cmdk-esc" aria-hidden="true">ESC</kbd>
+      <button type="button" class="cmdk-esc" data-act="cmdk-close" aria-label="Close command palette">ESC</button>
     </div>
     <div class="cmdk-in-row">
       <svg class="ic ic20" id="cmdk-in-ico" aria-hidden="true"><use href="#i-search"/></svg>
       <input id="cmdk-input" type="search" placeholder="Type a command, search anything, or ask a question…" autocomplete="off" aria-label="Search, run a command, or ask Org AI" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="cmdk-list">
       <button class="cmdk-ask-go" id="cmdk-ask-go" type="button" data-act="cmdk-ai-submit" hidden>Ask</button>
     </div>
-    <div class="cmdk-list" id="cmdk-list" role="listbox" aria-label="Commands, search results, and Org AI answers"></div>
+    <div class="cmdk-list" id="cmdk-list" role="listbox" aria-label="Commands and search results"></div>
     <div class="cmdk-foot" aria-hidden="true">
       <span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
       <span><kbd>↵</kbd> Run / Ask</span>
-      <span><kbd>Tab</kbd> Switch Search &amp; AI</span>
+      <span><kbd id="cmdk-switch-kbd">⌘/</kbd> Switch Search &amp; AI</span>
       <span><kbd>Esc</kbd> Close</span>
     </div>
   </div>
@@ -2209,7 +2229,7 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 const M = {
   you:   { name: "You", kind: "person", role: "Owner", owner: true, teams: [], mgr: null, live: "available", task: "", proj: null },
   maya:  { name: "Maya Chen", kind: "person", role: "Operations", teams: ["leadership"], mgr: "you", live: "offline", task: "", proj: null, last: "Signed out · last seen yesterday" },
-  ada:   { name: "ada", kind: "agent", tier: "lead", role: "Engineering Manager", teams: ["leadership"], mgr: "you", live: "working", task: "Re-sequence the nav slices for IA v2", proj: "agency-v1", goal: "Every BUG-70 slice re-planned against IA v2, with owners and order", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Always on", office: "hq", home: "projects/ac/agents/ac-staff-engineer-ada" } },
+  ada:   { name: "Ada", kind: "agent", tier: "lead", role: "Engineering Manager", teams: ["leadership"], mgr: "you", live: "working", task: "Re-sequence the nav slices for IA v2", proj: "agency-v1", goal: "Every BUG-70 slice re-planned against IA v2, with owners and order", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Always on", office: "hq", home: "projects/ac/agents/ac-staff-engineer-ada" } },
   rowan: { name: "Rowan", kind: "agent", tier: "lead", role: "Staff Engineer", teams: ["platform"], mgr: "ada", live: "working", task: "Custody lock fix ruling", proj: "office-federation", goal: "A written ruling on the custody lock with the tests that pin it", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-fullstack-engineer-rowan" } },
   eden:  { name: "Eden", kind: "agent", tier: "lead", role: "Product Designer", teams: ["product"], mgr: "you", live: "working", task: "Presence vocabulary across screens", proj: "look-feel", goal: "One presence set used in roster, chat, team and profile", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-product-designer-eden" } },
   emery: { name: "Emery", kind: "agent", tier: "lead", role: "Product Manager", teams: ["product"], mgr: "ada", live: "working", task: "Information architecture v2 prototype", proj: "look-feel", goal: "A clickable IA v2 prototype the owner can iterate on", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-product-manager-emery" } },
@@ -2229,10 +2249,10 @@ const TEAMS = {
   quality:    { name: "Quality", lead: "tomas", purpose: "Reviews every branch before it merges and keeps the bar high.", members: ["tomas", "noor"], channel: "agency-v1" }
 };
 const P = {
-  "agency-v1":         { name: "Agency v1.0", release: "v1.0", health: "At risk", upd: 12, lead: "ada", teams: ["leadership", "platform", "app", "quality"], goal: "Ship the first release of Agency: hire agents, chat, projects and work, on one office.", updated: "12m ago", channel: "agency-v1", due: "Dec 5", dueMonth: "Dec", dueDay: "05", pace: "+2d behind", paceTone: "warn", blocker: "Waiting on merge sign-off (T-121) + dev permission for Jules", unblockHref: "#/inbox/in1", horizonStatus: "2 gates open", horizonNote: "Merge + permission open", risk: "Two merges wait on review and the CSP gate is waiting on your permission." },
-  "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "Build box offline + waiting 6h on your custody lock choice", unblockHref: "#/inbox/in2", horizonStatus: "Behind (+5d)", horizonNote: "Lock choice & satellite wake fix", risk: "BUG-81 kept the Build box offline after the Mac wakes. Sage's fix waits on your verification, and snapshot sync (T-135) can't start until the box is back." },
-  "look-feel":         { name: "Look & feel refresh", release: "v1.1", health: "On track", upd: 60, lead: "eden", teams: ["product", "app"], goal: "One calm, consistent look across every screen, with icons and no emoji.", updated: "1h ago", channel: "design", due: "Nov 28", dueMonth: "Nov", dueDay: "28", pace: "On pace", paceTone: "ok", blocker: "", clearNote: "All checks clear · projected Nov 27 (1d early)", unblockHref: "#/inbox/in17", horizonStatus: "Ready for spec", horizonNote: "Checks passing · on pace", risk: "" },
-  "proto-agency":      { name: "Prototype agency", upd: 99999, lead: null, teams: ["product"], goal: "Explore the look of the app before v1.", updated: "Nov 2", channel: "design", archived: true }
+  "agency-v1":         { name: "Agentic Org v1.0", release: "v1.0", health: "At risk", upd: 12, lead: "ada", teams: ["leadership", "platform", "app", "quality"], goal: "Ship the first release of Agentic Org: hire agents, chat, projects and work, on one office.", updated: "12m ago", channel: "agency-v1", due: "Dec 5", dueMonth: "Dec", dueDay: "05", pace: "+2d behind", paceTone: "warn", blocker: "2 sign-offs waiting on you (release update + test access)", unblockHref: "#/inbox/in1", unblockLabel: "Review (2)", milestoneTitle: "v1.0 launch", horizonStatus: "2 left", horizonNote: "Release & access sign-off", risk: "Two updates wait on approval and local test access is waiting on your permission." },
+  "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "Build box offline + waiting 6h on your office lock choice", unblockHref: "#/inbox/in2", unblockLabel: "Decide", milestoneTitle: "Second-office sync", horizonStatus: "Behind (+5d)", horizonNote: "Lock choice & wake fix", risk: "The Build box stayed offline after sleep. Sage's fix waits on your verification, and sync can't resume until the office is back online." },
+  "look-feel":         { name: "Look & feel refresh", release: "v1.1", health: "On track", upd: 60, lead: "eden", teams: ["product", "app"], goal: "One calm, consistent look across every screen, with icons and no emoji.", updated: "1h ago", channel: "design", due: "Nov 28", dueMonth: "Nov", dueDay: "28", pace: "On pace", paceTone: "ok", blocker: "", clearNote: "All checks passing · projected Nov 27 (1d early)", unblockHref: "#/inbox/in17", milestoneTitle: "Workspace UI refresh", horizonStatus: "1d ahead", horizonNote: "Ready for plan sign-off", risk: "" },
+  "proto-agency":      { name: "Early UI prototype", upd: 99999, lead: null, teams: ["product"], goal: "Explore the look of the app before v1.", updated: "Nov 2", channel: "design", archived: true }
 };
 const HEALTH = { "On track": { tone: "green", icon: "check-circle" }, "At risk": { tone: "red", icon: "warn" }, "Off track": { tone: "red", icon: "x-circle" } };
 const W = [
@@ -2267,13 +2287,13 @@ const KIND = {
   problem:  { label: "Problem", plural: "Problems", icon: "warn", clears: "When it's resolved" }
 };
 const IN = [
-  { id: "in1", kind: "approval", sub: "Run approval", from: "ada", time: "12m", group: "Today", what: "Approve merging Kai's codec split into v1", why: "Tomas's review is READY on 0a520e5b. The full suite is green on the merge result. Risk tier A, so it needs your go.", rec: "ada recommends: approve. Tomas has no open findings.", proj: "agency-v1", task: "T-121", expires: "Expires in 4 hours (merge window closes)" },
-  { id: "in5", kind: "approval", sub: "Permission request", from: "jules", time: "3h", group: "Today", what: "Allow localhost:8443 for the dev profile", why: "T-124 (CSP gates) is blocked: the gateway test needs a local network permission only you can grant.", rec: "Jules recommends: allow it for the dev profile only.", proj: "agency-v1", task: "T-124", expires: "Expires tomorrow" },
-  { id: "in2", kind: "decision", sub: "Escalation", from: "sage", time: "25m", group: "Today", what: "Choose the custody lock fix: a lease, or a per-office lock", why: "T-118 is blocked until this is decided. The lease survives a crashed office; the per-office lock is a day faster to ship.", rec: "Sage recommends the lease. Rowan agrees.", proj: "office-federation", task: "T-118", opts: ["Use the lease", "Per-office lock"], expires: "" },
-  { id: "in16", kind: "approval", sub: "Org standard", from: "rowan", time: "45m", group: "Today", what: "Promote lease-based custody locks to an org-wide standard?", why: "Office federation proved the lease pattern handles offline office recovery cleanly. Promoting it makes it a default rule every future project inherits—cutting repeat architecture escalations.", rec: "Rowan & ada recommend: promote. Eliminates repeat lock questions across teams.", proj: "office-federation", task: "T-118", expires: "",
-    acts: [["Promote to org rule", "Promoted to org standard", "sparkle"], ["Keep project-only", "Kept project-only", "x"]], clears: "When you promote or keep it project-only" },
-  { id: "in17", kind: "approval", sub: "Spec sign-off", from: "emery", time: "1h", group: "Today", what: "Sign off Look & feel v1.1 spec to start engineering", why: "Approving this product spec unlocks 6 scoped engineering & QA tasks for the Nov 28 milestone, all within your existing monthly spend budget.", rec: "Emery & Eden recommend: approve. All design & policy checks passed.", proj: "look-feel", task: "T-131", expires: "",
-    acts: [["Approve & kick off", "Spec approved — build started", "check"], ["Request changes", "Changes requested", "pencil", "changes"]], clears: "When you approve or request changes" },
+  { id: "in1", kind: "approval", sub: "Release sign-off", from: "ada", time: "12m", group: "Today", what: "Approve publishing Kai's sync update to v1.0", why: "Technical details: codec split 0a520e5b passed all 412 automated checks and Tomas's review is READY. High-impact release tier requires your sign-off before publishing.", rec: "Ada recommends: approve. Tomas completed review with no open issues.", proj: "agency-v1", task: "T-121", expires: "Expires in 4 hours (release window)" },
+  { id: "in5", kind: "approval", sub: "Access request", from: "jules", time: "3h", group: "Today", what: "Allow local test access for Jules's security checks", why: "Technical details: T-124 needs permission to reach local port 8443 in the test environment only. Only the owner can grant local network permissions.", rec: "Jules recommends: allow for testing only.", proj: "agency-v1", task: "T-124", expires: "Expires tomorrow" },
+  { id: "in2", kind: "decision", sub: "Direction needed", from: "sage", time: "25m", group: "Today", what: "Choose how offices share file locks: timed lease or per-office lock", why: "Work on office sync (T-118) is paused until you pick. A timed lease recovers automatically if an office goes offline; a per-office lock is a day faster to finish.", rec: "Sage recommends the timed lease. Rowan agrees.", proj: "office-federation", task: "T-118", opts: ["Use timed lease", "Per-office lock"], expires: "" },
+  { id: "in16", kind: "approval", sub: "Company standard", from: "rowan", time: "45m", group: "Today", what: "Make timed office locks a company-wide standard?", why: "Office federation proved the timed lease pattern recovers cleanly when a second office goes offline. Adopting it company-wide means every new project inherits the rule automatically—avoiding repeat escalations.", rec: "Rowan & Ada recommend: adopt standard. Eliminates repeat lock questions across teams.", proj: "office-federation", task: "T-118", expires: "",
+    acts: [["Adopt company standard", "Adopted as company standard", "sparkle"], ["Keep project-only", "Kept project-only", "x"]], clears: "When you adopt or keep it project-only" },
+  { id: "in17", kind: "approval", sub: "Plan sign-off", from: "emery", time: "1h", group: "Today", what: "Approve Look & feel v1.1 plan to begin work", why: "Approving this product plan starts 6 scoped design and build tasks for the Nov 28 milestone, staying well inside your current monthly budget.", rec: "Emery & Eden recommend: approve. All design and budget checks passed.", proj: "look-feel", task: "T-131", expires: "",
+    acts: [["Approve & start work", "Plan approved — work started", "check"], ["Request changes", "Changes requested", "pencil", "changes"]], clears: "When you approve or request changes" },
   { id: "in3", kind: "question", sub: "Question", from: "eden", time: "1h", group: "Today", what: "Should the org chart show people and agents in one tree?", why: "Presence vocabulary (T-130). Splitting them makes reporting lines harder to follow; one tree needs the kind word on every node.", rec: "Eden recommends: one tree, with the kind word on each node.", proj: "look-feel", task: "T-130", expires: "" },
   { id: "in4", kind: "approval", sub: "Hire request", from: "ada", time: "2h", group: "Today", what: "Hire a QA engineer for the Quality team", why: "Tomas reviews every branch and UI validation queues behind him: 6 branches are waiting today.", rec: "ada recommends: one agent, Playwright focus, reports to Tomas.", proj: "agency-v1", task: "", expires: "" },
   { id: "in11", kind: "approval", sub: "Fix to verify", from: "sage", time: "3h", group: "Today", what: "Verify fix: BUG-81", why: "Sage fixed the satellite staying Offline after the Mac wakes. Tomas's review is READY and the wake test passes on a test satellite. Approving closes the bug; reopening sends it back to Sage.", rec: "Sage recommends: approve the fix.", proj: "office-federation", task: "BUG-81", expires: "",
@@ -2655,17 +2675,17 @@ function board(items, kind) {
 
 /* ---------------------------------------------------------------- pages */
 function hoverWinCopy(it, label) {
-  if (it.id === "in1") return "Merge to v1";
-  if (it.id === "in2" && /lease/i.test(label)) return "Lock in lease";
+  if (it.id === "in1") return "Approve & publish";
+  if (it.id === "in2" && /lease/i.test(label)) return "Confirm timed lease";
   if (it.id === "in3") return "Write reply";
-  if (it.id === "in4") return "Greenlight hire";
-  if (it.id === "in5") return "Grant access";
-  if (it.id === "in16") return "Make org standard";
-  if (it.id === "in17") return "Kick off build";
-  if (/^Approve fix/i.test(label)) return "Ship the fix";
-  if (/^Approve$/i.test(label)) return "Approve & go";
-  if (/^Accept$/i.test(label)) return "Take ownership";
-  if (/^Resume$/i.test(label)) return "Resume run";
+  if (it.id === "in4") return "Approve hire";
+  if (it.id === "in5") return "Grant test access";
+  if (it.id === "in16") return "Adopt company rule";
+  if (it.id === "in17") return "Approve & start";
+  if (/^Approve fix/i.test(label)) return "Approve fix";
+  if (/^Approve$/i.test(label)) return "Approve";
+  if (/^Accept$/i.test(label)) return "Accept task";
+  if (/^Resume$/i.test(label)) return "Resume work";
   if (/^Reply$/i.test(label)) return "Write reply";
   return `${label} →`;
 }
@@ -2815,49 +2835,49 @@ function answerOrgQuestion(rawQ) {
   if (/horizon|schedule|slip|pace|milestone|standard|promote|14 day|release/.test(t)) {
     return {
       q,
-      html: `Next 14 days: <strong>v0.9 Office federation (Nov 26)</strong> is <strong>+5d behind</strong> (Build box offline + <a href="#/inbox/in2">lock choice</a>); <strong>v1.1 Look &amp; feel (Nov 28)</strong> is <strong>on pace</strong> pending your <a href="#/inbox/in17">spec sign-off</a>; <strong>v1.0 Agency (Dec 5)</strong> is <strong>+2d behind</strong> on 2 gates. You also have a <a href="#/inbox/in16">lease standard promotion</a> ready to adopt org-wide.`
+      html: `Next 14 days: <strong>Second-office sync v0.9 (Nov 26)</strong> is <strong>+5d behind</strong> (Build box offline + <a href="#/inbox/in2">lock choice</a>); <strong>Refreshed workspace UI v1.1 (Nov 28)</strong> is <strong>1 day ahead</strong> pending your <a href="#/inbox/in17">plan sign-off</a>; <strong>Agentic Org v1.0 (Dec 5)</strong> is <strong>+2d behind</strong> on 2 approvals. You also have a <a href="#/inbox/in16">company standard proposal</a> ready to adopt.`
     };
   }
   if (/block|slow|v1|ship|merge/.test(t)) {
     return {
       q,
-      html: `<strong>2 tasks are blocked on you</strong> across active delivery: <a href="#/projects/office-federation/work">T-118</a> (custody lock ruling for <a href="#/members/sage">Sage</a>) and <a href="#/projects/agency-v1/work">T-124</a> (localhost:8443 dev permission for <a href="#/members/jules">Jules</a>). Meanwhile, <a href="#/members/kai">Kai</a>'s codec split <code>0a520e5b</code> passed 412 tests and awaits your <a href="#/inbox/in1">merge approval</a>.`
+      html: `<strong>2 tasks are waiting on you</strong> across active delivery: <a href="#/projects/office-federation/work">office lock choice</a> for <a href="#/members/sage">Sage</a> and <a href="#/projects/agency-v1/work">local test access</a> for <a href="#/members/jules">Jules</a>. Meanwhile, <a href="#/members/kai">Kai</a>'s sync update passed all automated checks and awaits your <a href="#/inbox/in1">release sign-off</a>.`
     };
   }
-  if (/cycle|first-pass|accept|rework|hitl|human|quality|autonom|metric|kpi/.test(t)) {
+  if (/cycle|first-pass|accept|rework|hitl|human|quality|autonom|metric|kpi|turnaround|revision/.test(t)) {
     return {
       q,
-      html: `Last 7 days delivery quality: <strong>Cycle time 18m</strong> (-14% faster), <strong>First-pass acceptance 84%</strong> (+6%), <strong>Rework rate 16%</strong> (3 of 19 tasks), and <strong>78% autonomous</strong> (22% needed human input). Spend sits at <strong>$142 / $210</strong>.`
+      html: `Last 7 days delivery quality: <strong>Avg. turnaround 18m</strong> (-14% faster), <strong>Approved first try 84%</strong> (+6%), <strong>Needed revision 16%</strong> (3 of 19 tasks), and <strong>78% autonomous</strong> (22% needed your input). Monthly spend sits at <strong>$142 / $210</strong>.`
     };
   }
-  if (/budget|spend|cost|\$|dollar|office|fleet|offline|jules|noor|health|pool|headroom|idle|spin/.test(t)) {
+  if (/budget|spend|cost|\$|dollar|office|fleet|offline|jules|noor|health|pool|headroom|idle|spin|capacity/.test(t)) {
     return {
       q,
-      html: `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per accepted task</strong> (-11%), with <strong>74% model pool headroom</strong>. <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Headcount: <strong>4 leads · 7 HR specialists (2 idle</strong>: <a href="#/members/avery">Avery</a> paused, <a href="#/members/noor">Noor</a> unplaced). Offices: HQ online, Build box offline.`
+      html: `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per completed task</strong> (-11%), with <strong>74% AI capacity free</strong>. <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Team: <strong>4 leads · 7 specialists (2 idle</strong>: <a href="#/members/avery">Avery</a> paused, <a href="#/members/noor">Noor</a> unplaced). Offices: HQ online, Build box offline.`
     };
   }
   if (/run|overnight|happen|catch|digest|summary|activity|away/.test(t)) {
     return {
       q,
-      html: `In the last 4 hours: <strong>${runs.length} autonomous runs</strong> executed. <a href="#/members/kai">Kai</a> finished codec split T-121 (412 passed) and <a href="#/members/tomas">Tomas</a> marked it READY; <a href="#/members/sage">Sage</a> paused T-118 waiting on your lock ruling; <a href="#/members/rowan">Rowan</a> had 1 crashed cert run on T-138. <a href="#/activity">Open activity log</a>.`
+      html: `In the last 4 hours: <strong>${runs.length} autonomous sessions</strong> completed. <a href="#/members/kai">Kai</a> finished the sync update (all checks passed) and <a href="#/members/tomas">Tomas</a> approved review; <a href="#/members/sage">Sage</a> paused waiting on your office lock choice; <a href="#/members/rowan">Rowan</a> proposed a new company lock standard. <a href="#/activity">Open activity log</a>.`
     };
   }
   if (/federation|sage|lock|satellite/.test(t)) {
     return {
       q,
-      html: `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box went offline after wake (BUG-81 fix is ready to <a href="#/inbox/in11">verify</a>), and <a href="#/members/sage">Sage</a> is waiting on your <a href="#/inbox/in2">custody lock decision</a> (Sage &amp; Rowan recommend the lease).`
+      html: `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box went offline after sleep (wake fix is ready to <a href="#/inbox/in11">verify</a>), and <a href="#/members/sage">Sage</a> is waiting on your <a href="#/inbox/in2">office lock choice</a> (Sage &amp; Rowan recommend the timed lease).`
     };
   }
   if (/need|urgent|priority|first|inbox|ada|hire/.test(t)) {
     const urg = open.filter((i) => i.expires);
     return {
       q,
-      html: `<strong>${open.length} items need you</strong> (${urg.length} time-sensitive). Start with <a href="#/inbox/in1">Kai's v1 merge approval</a> (closes in 4h) and <a href="#/inbox/in5">Jules's dev port permission</a> (expires tomorrow). <a href="#/members/ada">ada</a> also requested hiring a Playwright QA agent to clear Tomas's 6-branch queue.`
+      html: `<strong>${open.length} items need you</strong> (${urg.length} time-sensitive). Start with <a href="#/inbox/in1">Kai's v1.0 release sign-off</a> (closes in 4h) and <a href="#/inbox/in5">Jules's test access request</a> (expires tomorrow). <a href="#/members/ada">Ada</a> also requested hiring a QA specialist to speed up reviews.`
     };
   }
   return {
     q,
-    html: `Right now <strong>${open.length} decisions</strong> wait in <a href="#/inbox">Inbox</a>, <strong>${blocked.length} work items</strong> are blocked, <strong>1 of 2 offices</strong> is online, and <a href="#/members/kai">Kai</a> is active in a session with you. Try asking about <em>v1.0 blockers</em>, <em>overnight runs</em>, or <em>budget &amp; offices</em>.`
+    html: `Right now <strong>${open.length} decisions</strong> wait in <a href="#/inbox">Inbox</a>, <strong>${blocked.length} work items</strong> are waiting on you, <strong>1 of 2 offices</strong> is online, and <a href="#/members/kai">Kai</a> is working with you. Try asking about <em>v1.0 blockers</em>, <em>upcoming milestones</em>, or <em>budget &amp; capacity</em>.`
   };
 }
 function pageHome() {
@@ -2891,15 +2911,16 @@ function pageHome() {
           ? `${greet} <em class="calm">${plural(open.length, "item", "items")}</em> waiting when you're ready.`
           : `${greet} <em class="ok">All clear</em> across your organization.`;
 
+  const allAgents = Object.values(M).filter((m) => m.kind === "agent");
+  const leadsN = allAgents.filter((m) => m.tier === "lead").length;
+  const specsN = allAgents.filter((m) => m.tier === "specialist").length;
+  const idleSpecsN = allAgents.filter((m) => m.tier === "specialist" && (m.paused || (m.live === "asleep" && !m.proj))).length;
+  const liveWorkingAgents = st === "empty" ? [] : Object.keys(M).filter((k) => M[k].kind === "agent" && ["working", "withyou"].includes(M[k].live) && !M[k].paused);
+
   const renderMetrics = () => {
     if (st === "loading") return skel(3, "Loading executive overview…");
     if (st === "error") return "";
     const emptyMode = st === "empty";
-    const allAgents = Object.values(M).filter((m) => m.kind === "agent");
-    const leadsN = allAgents.filter((m) => m.tier === "lead").length;
-    const specsN = allAgents.filter((m) => m.tier === "specialist").length;
-    const idleSpecsN = allAgents.filter((m) => m.tier === "specialist" && (m.paused || (m.live === "asleep" && !m.proj))).length;
-    const activeAgentsN = allAgents.length - idleSpecsN;
     return `<section class="hb-pillars" aria-label="Executive overview: Financials, Team, and Projects">
       <article class="hb-pillar" aria-labelledby="hb-pil-fin">
         <div class="hb-pillar-hd">
@@ -2917,13 +2938,13 @@ function pageHome() {
           <div class="hb-pillar-bar" aria-hidden="true"><span class="seg-spend" style="width:${emptyMode ? 0 : 68}%"></span></div>
         </div>
         <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/activity" title="Average model spend per accepted task (last 7 days)">
+          <a class="hb-sub-item" href="#/activity" title="Average AI spend per completed task (last 7 days)">
             <span class="hb-sub-lbl">Cost per task</span>
             <span class="hb-sub-val">${emptyMode ? "—" : "$7.45"}${emptyMode ? "" : `<span class="hb-sub-meta ok">-11%</span>`}</span>
           </a>
-          <a class="hb-sub-item" href="#/settings" title="Remaining parallel rate-limit capacity across connected AI model pools">
-            <span class="hb-sub-lbl">Model pools</span>
-            <span class="hb-sub-val">${emptyMode ? "100%" : "74%"}${emptyMode ? `<span class="hb-sub-meta ok">Ready</span>` : `<span class="hb-sub-meta ok">headroom</span>`}</span>
+          <a class="hb-sub-item" href="#/settings" title="Remaining parallel capacity across your connected AI subscriptions">
+            <span class="hb-sub-lbl">AI capacity</span>
+            <span class="hb-sub-val">${emptyMode ? "100%" : "74%"}${emptyMode ? `<span class="hb-sub-meta ok">Ready</span>` : `<span class="hb-sub-meta ok">free</span>`}</span>
           </a>
         </div>
       </article>
@@ -2933,13 +2954,13 @@ function pageHome() {
           <a class="hb-pillar-name" id="hb-pil-team" href="#/teams/members">${ic("user-group", "ic14 c-indigo")}<span>Team</span></a>
           <span class="hb-pillar-pill ${emptyMode ? "ok" : "bad"}">${emptyMode ? "HQ online" : "1 office offline"}</span>
         </div>
-        <div class="hb-pillar-hero" title="Share of runs completed autonomously without pausing for human input">
+        <div class="hb-pillar-hero" title="Share of work completed autonomously without needing your input">
           <div class="hb-pillar-valrow">
             <div class="hb-pillar-primary">
               <span class="hb-pillar-num">${emptyMode ? "—" : "78%"}</span>
               <span class="hb-pillar-unit">autonomous</span>
             </div>
-            <span class="hb-pillar-right">${emptyMode ? "No runs yet" : "22% human input"}</span>
+            <span class="hb-pillar-right">${emptyMode ? "No activity yet" : "22% needed you"}</span>
           </div>
           <div class="hb-pillar-bar" aria-hidden="true">
             <span class="seg-auto" style="width:${emptyMode ? 0 : 78}%"></span>
@@ -2947,11 +2968,11 @@ function pageHome() {
           </div>
         </div>
         <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/teams/members" title="Permanent Seed Leads vs. elastic HR Specialists — inspect idle agents ready to pause or reassign">
-            <span class="hb-sub-lbl">${emptyMode ? "Active capacity" : `${leadsN} leads · ${specsN} specialists`}</span>
-            <span class="hb-sub-val">${emptyMode ? "0 agents" : `${activeAgentsN} active`}${emptyMode ? `<span class="hb-sub-meta">· 1 person</span>` : idleSpecsN ? `<span class="hb-sub-meta warn">${idleSpecsN} idle</span>` : `<span class="hb-sub-meta ok">0 idle</span>`}</span>
+          <a class="hb-sub-item" href="#/teams/members" title="Permanent team leads vs. specialists — inspect idle specialists ready to activate or pause">
+            <span class="hb-sub-lbl">${emptyMode ? "Team capacity" : `${leadsN} leads · ${specsN} specialists`}</span>
+            <span class="hb-sub-val">${emptyMode ? "0 agents" : `${liveWorkingAgents.length} active`}${emptyMode ? `<span class="hb-sub-meta">· 1 person</span>` : idleSpecsN ? `<span class="hb-sub-meta warn">${idleSpecsN} idle</span>` : `<span class="hb-sub-meta ok">0 idle</span>`}</span>
           </a>
-          <a class="hb-sub-item" href="#/settings/offices" title="Connected offices executing agent runs">
+          <a class="hb-sub-item" href="#/settings/offices" title="Connected offices running agent work">
             <span class="hb-sub-lbl">Offices</span>
             <span class="hb-sub-val">${emptyMode ? "1 / 1" : "1 / 2"}${emptyMode ? `<span class="hb-sub-meta ok">Online</span>` : `<span class="hb-sub-meta bad">Build box off</span>`}</span>
           </a>
@@ -2963,11 +2984,11 @@ function pageHome() {
           <a class="hb-pillar-name" id="hb-pil-proj" href="#/projects">${ic("folder", "ic14 c-green")}<span>Projects</span></a>
           <span class="hb-pillar-pill ${emptyMode ? "" : needsAttnProjs ? "warn" : "ok"}">${emptyMode ? "No projects" : needsAttnProjs ? `${needsAttnProjs} need attention` : `${projs.length} on track`}</span>
         </div>
-        <div class="hb-pillar-hero" title="Percentage of completed tasks accepted on the first pass without rework">
+        <div class="hb-pillar-hero" title="Percentage of completed tasks approved on the first try without revisions">
           <div class="hb-pillar-valrow">
             <div class="hb-pillar-primary">
               <span class="hb-pillar-num">${emptyMode ? "—" : "84%"}</span>
-              <span class="hb-pillar-unit">first-pass accepted</span>
+              <span class="hb-pillar-unit">approved first try</span>
             </div>
             <span class="hb-pillar-right ok">${emptyMode ? "" : "+6%"}</span>
           </div>
@@ -2977,12 +2998,12 @@ function pageHome() {
           </div>
         </div>
         <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/activity" title="Average time from task start to accepted completion (last 7 days)">
-            <span class="hb-sub-lbl">Cycle time</span>
+          <a class="hb-sub-item" href="#/activity" title="Average time from task start to approval (last 7 days)">
+            <span class="hb-sub-lbl">Avg. turnaround</span>
             <span class="hb-sub-val">${emptyMode ? "—" : "18m"}${emptyMode ? "" : `<span class="hb-sub-meta ok">-14%</span>`}</span>
           </a>
-          <a class="hb-sub-item" href="#/work" title="Percentage of completed tasks sent back for rework (3 of 19 tasks)">
-            <span class="hb-sub-lbl">Rework rate</span>
+          <a class="hb-sub-item" href="#/work" title="Percentage of completed tasks sent back for revisions (3 of 19 tasks)">
+            <span class="hb-sub-lbl">Needed revision</span>
             <span class="hb-sub-val">${emptyMode ? "—" : "16%"}${emptyMode ? "" : `<span class="hb-sub-meta ok">-3%</span>`}</span>
           </a>
         </div>
@@ -3013,15 +3034,20 @@ function pageHome() {
       </section>`;
     }
     if (!queue.length || (allQueueCleared && !S.v4Open["spot-review"])) {
-      return `<section class="hb-spot is-done" aria-label="Decision spotlight">
+      const isFreshEmpty = st === "empty";
+      return `<section class="hb-spot is-done" aria-label="${isFreshEmpty ? "Get started" : "Decision spotlight"}">
         <div class="hb-cleared">
-          <span class="hb-cleared-ring">${ic("check-circle", "ic20")}</span>
-          <h2>${allQueueCleared ? "Priority spotlight cleared" : "Nothing needs your decision"}</h2>
+          <span class="hb-cleared-ring">${ic(isFreshEmpty ? "sparkle" : "check-circle", "ic20")}</span>
+          <h2>${allQueueCleared ? "Priority spotlight cleared" : isFreshEmpty ? "Your organization is ready" : "Nothing needs your decision"}</h2>
           <p>${allQueueCleared
             ? (open.length ? `You cleared all ${queue.length} spotlight items. ${plural(open.length, "more item", "more items")} still waiting in Inbox.` : "Everything waiting on you is handled. Your agents have what they need to keep moving.")
-            : "When an agent needs an approval, decision, or answer, it appears right here."}</p>
+            : isFreshEmpty
+              ? "Start by creating your first project or hiring your first autonomous agent. Approvals, questions, and progress updates will show up right here."
+              : "When an agent needs an approval, decision, or answer, it appears right here."}</p>
           <div class="hb-cleared-acts">
-            ${open.length ? `<a class="btn primary sm h4-cta" href="#/inbox"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span>Open Inbox (${open.length})</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span>Continue in Inbox →</span></span></span></a>` : ""}
+            ${isFreshEmpty ? `<button class="btn sm h4-cta hb-cta-glass" data-cta-tone="ocean" type="button" data-act="proto" data-v="Create project"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>Create first project</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("sparkle", "ic16")}</span><span>Start project</span></span></span></button>
+            <button class="btn outline sm" type="button" data-act="proto" data-v="Hire an agent">${ic("user-plus", "ic16")}Hire first agent</button>` : ""}
+            ${!isFreshEmpty && open.length ? `<a class="btn primary sm h4-cta" href="#/inbox"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span>Open Inbox (${open.length})</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span>Continue in Inbox →</span></span></span></a>` : ""}
             ${allQueueCleared ? `<button class="btn ghost sm" type="button" data-act="v4-acc" data-id="spot-review">Review handled</button>` : ""}
           </div>
         </div>
@@ -3085,43 +3111,34 @@ function pageHome() {
   };
 
   const renderCatchupPanel = () => {
-    const activeLead = working.length ? working[0] : null;
-    const otherActive = Math.max(0, working.length - 1);
-    const emptyMode = st === "empty";
-    const errMode = st === "error";
+    if (st === "error" || st === "empty") return "";
+    const activeLead = liveWorkingAgents.includes("kai") ? "kai" : (liveWorkingAgents[0] || null);
+    const otherActive = Math.max(0, liveWorkingAgents.length - 1);
     return `<aside class="hb-catchup" aria-label="Autonomous catch-up">
       <div class="hb-cu-hd">
         <div class="hb-cu-title">${ic("sparkle", "ic16")}<span>Catch-up</span></div>
-        <span class="hb-cu-window">${errMode ? `<span class="h4-live-dot is-error" style="width:6px;height:6px" aria-hidden="true"></span>Offline` : `${emptyMode ? "Idle · " : `<span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>`}Last 4 hours`}</span>
+        <span class="hb-cu-window"><span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>Last 4 hours</span>
       </div>
 
-      ${st === "loading" ? skel(4, "Summarizing autonomous activity…") : errMode ? `<div class="hb-cleared" style="padding:24px 8px">
-        <span class="hb-cleared-ring is-error" style="width:44px;height:44px">${ic("warn", "ic18")}</span>
-        <h2 style="font-size:0.9375rem">Catch-up paused</h2>
-        <p style="font-size:0.8125rem">Live digest resumes automatically once HQ office reconnects.</p>
-      </div>` : emptyMode ? `<div class="hb-cleared" style="padding:24px 8px">
-        <span class="hb-cleared-ring is-muted" style="width:44px;height:44px">${ic("sparkle", "ic18")}</span>
-        <h2 style="font-size:0.9375rem">All quiet so far</h2>
-        <p style="font-size:0.8125rem">Autonomous updates and run summaries will show up here as your team works.</p>
-      </div>` : `<div class="hb-digest">
+      ${st === "loading" ? skel(4, "Summarizing recent activity…") : `<div class="hb-digest">
         <a class="hb-dig-item" href="#/inbox/in1">
           <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-          <div class="hb-dig-body"><b>Ready to ship</b> — Kai finished codec split T-121 (412 tests green) and Tomas approved review.</div>
+          <div class="hb-dig-body"><b>Ready to publish</b> — Kai finished the sync update (all checks passed) and Tomas approved review.</div>
           <span class="hb-dig-time">12m</span>
         </a>
         <a class="hb-dig-item" href="#/inbox/in2">
           <span class="hb-dig-ico">${ic("warn", "ic16 c-amber")}</span>
-          <div class="hb-dig-body"><b>Paused for your call</b> — Sage stopped on custody lock T-118 while waiting for your direction.</div>
+          <div class="hb-dig-body"><b>Paused for your call</b> — Sage stopped on the office sync fix while waiting for your lock choice.</div>
           <span class="hb-dig-time">26m</span>
         </a>
         <a class="hb-dig-item" href="#/inbox/in16">
           <span class="hb-dig-ico">${ic("sparkle", "ic16 c-indigo")}</span>
-          <div class="hb-dig-body"><b>New org standard candidate</b> — Rowan proposed promoting lease locks to a company-wide rule.</div>
+          <div class="hb-dig-body"><b>New company standard</b> — Rowan proposed adopting timed office locks across all future projects.</div>
           <span class="hb-dig-time">45m</span>
         </a>
-        ${activeLead ? `<a class="hb-dig-item" href="#/members/${activeLead}">
-          <span class="hb-dig-ico"><span class="h4-live-dot" style="margin-top:4px" aria-hidden="true"></span></span>
-          <div class="hb-dig-body"><b>${esc(M[activeLead].name)} is working now</b> — ${esc(statusLine(activeLead))}${otherActive ? ` · ${otherActive} other agents active` : ""}</div>
+        ${activeLead ? `<a class="hb-dig-item" href="#/teams/members">
+          <span class="hb-dig-ico"><span class="h4-live-dot" style="margin-top:4px;background:#34D399" aria-hidden="true"></span></span>
+          <div class="hb-dig-body"><b>${liveWorkingAgents.length} agents working now</b> — ${esc(M[activeLead].name)} is in a session with you${otherActive ? `, plus ${otherActive} others active` : ""}.</div>
           <span class="hb-dig-time">Live</span>
         </a>` : `<a class="hb-dig-item" href="#/settings/agents/jules">
           <span class="hb-dig-ico">${ic("bolt", "ic16 c-amber")}</span>
@@ -3130,9 +3147,9 @@ function pageHome() {
         </a>`}
       </div>`}
 
-      ${errMode ? "" : `<div class="hb-cu-foot">
+      <div class="hb-cu-foot">
         <a class="hb-cu-link" href="#/activity">Full activity log${ic("chev-right", "ic14")}</a>
-      </div>`}
+      </div>
     </aside>`;
   };
 
@@ -3158,7 +3175,7 @@ function pageHome() {
       </div>
       ${pr.blocker ? `<div class="hb-blocker ${pr.paceTone === "warn" ? "warn" : ""}">
         <span class="hb-blocker-txt">${ic("warn", "ic14 " + (pr.paceTone === "warn" ? "c-amber" : "c-red"))}<span>${esc(pr.blocker)}</span></span>
-        <a class="hb-unblock-btn" href="${pr.unblockHref || `#/projects/${p}`}">Unblock${ic("chev-right", "ic14")}</a>
+        <a class="hb-unblock-btn" href="${pr.unblockHref || `#/projects/${p}`}">${esc(pr.unblockLabel || "Unblock")}${ic("chev-right", "ic14")}</a>
       </div>` : `<div class="hb-blocker ok">
         <span class="hb-blocker-txt">${ic("check-circle", "ic14 c-green")}<span>${esc(pr.clearNote || "All checks passing · on schedule")}</span></span>
       </div>`}
@@ -3174,8 +3191,8 @@ function pageHome() {
     const upcoming = ["office-federation", "look-feel", "agency-v1"].filter((k) => P[k] && !P[k].archived);
     return `<section class="hb-horizon" aria-labelledby="hb-hor-h">
       <div class="hb-hor-hd">
-        <h2 class="hb-hor-title" id="hb-hor-h">Next 14 days · Release horizon</h2>
-        <span class="hb-hor-sub">Upcoming milestones by target ship date</span>
+        <h2 class="hb-hor-title" id="hb-hor-h">Upcoming milestones · Next 14 days</h2>
+        <span class="hb-hor-sub">Shippable deliverables ordered by target date</span>
       </div>
       <div class="hb-hor-grid">
         ${upcoming.map((k) => {
@@ -3185,7 +3202,7 @@ function pageHome() {
             <div class="hb-hor-l">
               <div class="hb-hor-date"><span>${esc(pr.dueMonth || "Soon")}</span><strong>${esc(pr.dueDay || "—")}</strong></div>
               <div class="hb-hor-info">
-                <span class="hb-hor-name">${esc(pr.name)}${pr.release ? `<code>${esc(pr.release)}</code>` : ""}</span>
+                <span class="hb-hor-name">${esc(pr.milestoneTitle || pr.name)}${pr.release ? `<code>${esc(pr.release)}</code>` : ""}</span>
                 <span class="hb-hor-note">${esc(pr.horizonNote || pr.goal)}</span>
               </div>
             </div>
@@ -3215,50 +3232,50 @@ function pageHome() {
 
     ${renderMetrics()}
 
-    <div class="hb-stage">
+    <div class="hb-stage${st === "error" || st === "empty" ? " is-single" : ""}">
       ${renderSpotlight()}
       ${renderCatchupPanel()}
     </div>
 
-    <section class="hb-proj-sec" aria-labelledby="hb-projs-h">
+    ${st === "error" || st === "empty" ? "" : `<section class="hb-proj-sec" aria-labelledby="hb-projs-h">
       <div class="hb-proj-head">
         <div class="hb-proj-head-l">
           <h2 id="hb-projs-h">Projects</h2>
-          ${st !== "error" && st !== "loading" ? `<span>${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}</span>` : ""}
+          ${st !== "loading" ? `<span>${projs.length} active${needsAttnProjs ? ` · ${needsAttnProjs} need attention` : ""}</span>` : ""}
         </div>
         <a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>
       </div>
-      ${st === "loading" ? skel(3, "Loading projects…") : st === "error" ? "" : projs.length
-        ? `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`
-        : `<div class="h4-empty-box"><div class="hb-cleared" style="padding:8px 0"><span class="hb-cleared-ring is-muted">${ic("folder", "ic20")}</span><h2>No projects yet</h2><p>Projects group the work toward one goal.</p><div class="hb-cleared-acts"><button class="btn sm h4-cta hb-cta-glass" data-cta-tone="ocean" type="button" data-act="proto" data-v="Create project"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>Create project</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("sparkle", "ic16")}</span><span>Start project</span></span></span></button></div></div></div>`}
-    </section>
+      ${st === "loading" ? skel(3, "Loading projects…") : `<div class="hb-bento">${projs.map(renderProjBento).join("")}</div>`}
+    </section>`}
 
     ${renderReleaseHorizon()}
 
-    ${st === "loading" ? skel(1, "Analyzing where task time goes…") : st === "error" ? "" : st === "empty" ? "" : (() => {
+    ${st === "loading" ? skel(1, "Analyzing where task time goes…") : st === "error" || st === "empty" ? "" : (() => {
+      const totalHrs = 54.6;
       const humanPct = Math.max(8, Math.min(28, Math.round(open.length * 1.35)));
       const agentPct = 26, ciPct = 5, queuedPct = Math.max(10, 100 - agentPct - ciPct - humanPct);
+      const fmtH = (p) => (totalHrs * p / 100).toFixed(1) + "h";
       const constraint = queuedPct >= 40
-        ? "Agents are the constraint right now. More agents or smaller tasks would shorten the release."
+        ? `${queuedPct}% of open task time is waiting for an agent. Reconnecting the Build box and activating ${idleSpecsN} idle specialists will speed up delivery.`
         : humanPct >= 25
-          ? "Human review is the main wait right now. Clearing the Spotlight queue will unblock downstream runs."
-          : "Work is flowing smoothly across agents, CI checks, and human decisions.";
+          ? "Your decisions are the main wait right now. Clearing the Spotlight queue will unblock downstream work."
+          : "Work is flowing smoothly across agents, automated checks, and your approvals.";
       return `<section class="hb-time" aria-labelledby="hb-time-h">
         <div class="hb-time-hd">
           <h2 class="hb-time-title" id="hb-time-h">Where task time goes</h2>
-          <span class="hb-time-unit">hours across all open tasks</span>
+          <span class="hb-time-unit">${totalHrs}h total across ${W.filter(OPEN).length} open tasks</span>
         </div>
-        <div class="hb-time-bar" role="img" aria-label="Task time breakdown: ${agentPct}% agents working, ${ciPct}% verifying in CI, ${humanPct}% waiting on humans, ${queuedPct}% queued for an agent">
-          <a class="hb-tseg agents" href="#/teams/members" style="width:${agentPct}%" title="Agents working: ${agentPct}% (~14.2h)"></a>
-          <a class="hb-tseg ci" href="#/activity" style="width:${ciPct}%" title="Verifying in CI: ${ciPct}% (~2.7h)"></a>
-          <a class="hb-tseg humans" href="#/inbox" style="width:${humanPct}%" title="Waiting on humans: ${humanPct}% (~10.4h)"></a>
-          <a class="hb-tseg queued" href="#/work" style="width:${queuedPct}%" title="Queued for an agent: ${queuedPct}% (~27.3h)"></a>
+        <div class="hb-time-bar" role="group" aria-label="Task time breakdown across open tasks">
+          <a class="hb-tseg agents" href="#/teams/members" style="width:${agentPct}%" aria-label="Agents working: ${fmtH(agentPct)} (${agentPct}%)" title="Agents working: ${fmtH(agentPct)} (${agentPct}%)"></a>
+          <a class="hb-tseg ci" href="#/activity" style="width:${ciPct}%" aria-label="Automated checks: ${fmtH(ciPct)} (${ciPct}%)" title="Automated checks: ${fmtH(ciPct)} (${ciPct}%)"></a>
+          <a class="hb-tseg humans" href="#/inbox" style="width:${humanPct}%" aria-label="Waiting on you: ${fmtH(humanPct)} (${humanPct}%)" title="Waiting on you: ${fmtH(humanPct)} (${humanPct}%)"></a>
+          <a class="hb-tseg queued" href="#/work" style="width:${queuedPct}%" aria-label="Waiting for an agent: ${fmtH(queuedPct)} (${queuedPct}%)" title="Waiting for an agent: ${fmtH(queuedPct)} (${queuedPct}%)"></a>
         </div>
         <div class="hb-time-legend">
-          <a class="hb-tleg agents" href="#/teams/members"><strong>${agentPct}%</strong><span>Agents working</span></a>
-          <a class="hb-tleg ci" href="#/activity"><strong>${ciPct}%</strong><span>Verifying in CI</span></a>
-          <a class="hb-tleg humans" href="#/inbox"><strong>${humanPct}%</strong><span>Waiting on humans</span></a>
-          <a class="hb-tleg queued" href="#/work"><strong>${queuedPct}%</strong><span>Queued for an agent</span></a>
+          <a class="hb-tleg agents" href="#/teams/members"><strong>${agentPct}%</strong><span class="hrs">${fmtH(agentPct)}</span><span>Agents working</span></a>
+          <a class="hb-tleg ci" href="#/activity"><strong>${ciPct}%</strong><span class="hrs">${fmtH(ciPct)}</span><span>Automated checks</span></a>
+          <a class="hb-tleg humans" href="#/inbox"><strong>${humanPct}%</strong><span class="hrs">${fmtH(humanPct)}</span><span>Waiting on you</span></a>
+          <a class="hb-tleg queued" href="#/work"><strong>${queuedPct}%</strong><span class="hrs">${fmtH(queuedPct)}</span><span>Waiting for an agent</span></a>
         </div>
         <div class="hb-time-foot">
           <p class="hb-time-note">${esc(constraint)}</p>
@@ -4645,12 +4662,26 @@ const NAV_CAP = 5;
 const TEAM_ICON = { leadership: "flag", product: "adjustments", platform: "terminal", app: "bolt", quality: "doc-check" };
 function renderNav(route) {
   const [r0, r1] = route;
-  const badge = unhandled().length;
+  const homeEmpty = r0 === "home" && S.homeState === "empty";
+  const homeError = r0 === "home" && S.homeState === "error";
+  const badge = homeEmpty ? 0 : unhandled().length;
   const item = (href, label, icon, cur, extra = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span>${extra}</a></li>`;
   const subIcon = (href, label, icon, cur, cls = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon, cls)}<span class="t">${esc(label)}</span></a></li>`;
   const more = (href, label) => `<li><a class="nav-item more" href="${href}"><span class="t">${esc(label)}</span></a></li>`;
-  const live = Object.keys(P).filter((p) => !P[p].archived).sort((a, b) => P[a].upd - P[b].upd);
-  const favs = S.favProjs.filter((p) => P[p] && !P[p].archived);
+  const live = homeEmpty ? [] : Object.keys(P).filter((p) => !P[p].archived).sort((a, b) => P[a].upd - P[b].upd);
+  const favs = homeEmpty ? [] : S.favProjs.filter((p) => P[p] && !P[p].archived);
+  const officeLink = document.getElementById("office-link");
+  const officeFull = document.getElementById("office-full");
+  const officeRailBadge = document.getElementById("office-rail-badge");
+  if (officeLink && officeFull && officeRailBadge) {
+    officeLink.classList.toggle("is-offline", homeError);
+    officeLink.setAttribute("aria-label", homeError ? "This Mac, HQ office, offline. Open Offices" : "This Mac, HQ office, online. Open Offices");
+    officeLink.title = homeError ? "This Mac · HQ office · Offline" : "This Mac · HQ office · Online";
+    officeFull.innerHTML = homeError
+      ? `${ic("offline", "ic14")}This Mac · HQ office · Offline`
+      : `${ic("check-circle", "ic14")}This Mac · HQ office · Online`;
+    officeRailBadge.innerHTML = ic(homeError ? "offline" : "check-circle");
+  }
   const teams = Object.keys(TEAMS);
   const inProj = r0 === "projects";
   const inTeamChild = r0 === "teams" && own(TEAMS, r1);
@@ -4775,7 +4806,7 @@ function render(focus = true) {
   renderNav(r);
   renderBanner(r0);
   const titleBase = r0 === "members" && own(M, r1) ? M[r1].name : (TITLES[r0] || "Not found");
-  document.title = titleBase + " · Agency IA v2 prototype";
+  document.title = titleBase + " · Agentic Org";
   const key = location.hash;
   if (focus && key !== S.lastRoute) {
     const keep = S.focusAfter && document.querySelector(S.focusAfter);
@@ -4800,13 +4831,15 @@ const isMacPlatform = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigat
 {
   const kbd = document.getElementById("cmdk-kbd");
   if (kbd) kbd.textContent = isMacPlatform ? "⌘K" : "Ctrl K";
+  const skbd = document.getElementById("cmdk-switch-kbd");
+  if (skbd) skbd.textContent = isMacPlatform ? "⌘/" : "Ctrl /";
 }
 const CMDK_AI_STARTERS = [
-  { q: "What needs me first?", sub: "Urgent approvals, merges & CEO gates" },
-  { q: "What's slowing v1.0?", sub: "Critical-path blockers & pending sign-offs" },
-  { q: "Next 14 days release schedule", sub: "Upcoming releases, pace & slippage" },
-  { q: "Budget, headroom & idle agents", sub: "Monthly spend, model pools & idle HR specialists" },
-  { q: "What happened in the last 4 hours?", sub: "Autonomous run digest & completions" }
+  { q: "What needs me first?", sub: "Urgent approvals & sign-offs" },
+  { q: "What's slowing v1.0?", sub: "Blockers & pending decisions" },
+  { q: "Next 14 days milestones", sub: "Upcoming deliverables & schedule pace" },
+  { q: "Budget, capacity & idle agents", sub: "Monthly spend, AI capacity & idle specialists" },
+  { q: "What happened in the last 4 hours?", sub: "Recent work digest & completions" }
 ];
 function cmdkCommands() {
   return [
@@ -4897,6 +4930,9 @@ function renderCmdk() {
 
   if (isAi) {
     CMDK.flat = [];
+    list.setAttribute("role", "tabpanel");
+    list.setAttribute("aria-labelledby", "cmdk-tab-ai");
+    list.removeAttribute("aria-label");
     const ansHtml = CMDK.aiAns ? `<div class="cmdk-ai-card" role="status" aria-live="polite">
       <div class="cmdk-ai-card-hd">
         <span>${ic("sparkle", "ic14")} Org AI · “${esc(CMDK.aiAns.q)}”</span>
@@ -4910,6 +4946,9 @@ function renderCmdk() {
     if (inp) inp.removeAttribute("aria-activedescendant");
     return;
   }
+  list.setAttribute("role", "listbox");
+  list.setAttribute("aria-label", "Commands and search results");
+  list.removeAttribute("aria-labelledby");
 
   const raw = CMDK.q.trim();
   const cmdOnly = raw.startsWith(">");
@@ -5164,6 +5203,7 @@ document.addEventListener("click", (e) => {
     case "sgo": goSearch(v); break;
     case "search-open": case "cmdk-open": openCmdk("", "cmd"); break;
     case "cmdk-open-ai": openCmdk("", "ai"); break;
+    case "cmdk-close": closeCmdk(true); break;
     case "cmdk-mode": setCmdkMode(v); break;
     case "cmdk-ai-ask": askInCmdk(v); break;
     case "cmdk-ai-submit": askInCmdk(CMDK.q); break;
@@ -5195,14 +5235,26 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (CMDK.open) {
-    if (e.key === "Tab") {
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key === "/") {
       e.preventDefault();
       setCmdkMode(CMDK.mode === "ai" ? "cmd" : "ai");
       return;
     }
+    if (e.key === "Escape") { e.preventDefault(); closeCmdk(true); return; }
+    if (e.key === "Tab") {
+      const dlg = document.getElementById("cmdk-dialog");
+      if (dlg) {
+        const focusable = [...dlg.querySelectorAll('button:not([hidden]):not([disabled]), input:not([disabled]), a[href]')];
+        if (focusable.length) {
+          const i = focusable.indexOf(document.activeElement);
+          if (e.shiftKey && i <= 0) { e.preventDefault(); focusable[focusable.length - 1].focus(); }
+          else if (!e.shiftKey && i === focusable.length - 1) { e.preventDefault(); focusable[0].focus(); }
+        }
+      }
+      return;
+    }
     if (CMDK.mode === "ai") {
-      if (e.key === "Enter") { e.preventDefault(); askInCmdk(CMDK.q); return; }
-      if (e.key === "Escape") { e.preventDefault(); closeCmdk(true); return; }
+      if (e.key === "Enter" && e.target.id === "cmdk-input") { e.preventDefault(); askInCmdk(CMDK.q); return; }
       return;
     }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -5212,8 +5264,7 @@ document.addEventListener("keydown", (e) => {
       renderCmdk();
       return;
     }
-    if (e.key === "Enter") { e.preventDefault(); runCmdkItem(CMDK.active); return; }
-    if (e.key === "Escape") { e.preventDefault(); closeCmdk(true); return; }
+    if (e.key === "Enter" && e.target.id === "cmdk-input") { e.preventDefault(); runCmdkItem(CMDK.active); return; }
     return;
   }
   const openMenu = e.target.closest && e.target.closest(".menu:not([hidden])");
