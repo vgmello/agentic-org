@@ -2438,7 +2438,7 @@ const PAST_SESSIONS = [
 ];
 
 /* ---------------------------------------------------------------- state */
-const S = { truth: "demo", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
+const S = { homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
   projLayout: "list", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
   taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null };
 const NAV_COLLAPSE_STORE = "agentic-org.v4.navCollapsed";
@@ -2495,7 +2495,6 @@ const PRES = {
 function presence(id) {
   const m = M[id]; if (!m || m.owner || m.kind === "person") return null;
   if (openFrom(id).length) return "needs";
-  if (S.truth === "v1") return m.paused ? "paused" : "unknown";
   if (m.live === "withyou") return "withyou";
   if (m.live === "working") return "working";
   if (m.paused) return "paused";
@@ -2528,7 +2527,7 @@ const leadOf = (p) => (P[p].lead && M[P[p].lead] ? M[P[p].lead].name : "");
 const leadTxt = (p) => (leadOf(p) ? "Lead " + leadOf(p) : "");
 const officeName = (o) => (OFFICES[o] ? OFFICES[o].name : "Not placed");
 const projMembers = (p) => [...new Set(P[p].teams.flatMap((t) => TEAMS[t].members))];
-const acts = () => (S.truth === "v1" ? A.filter((a) => a.type !== "run") : A);
+const acts = () => A;
 
 function statusLine(id) {
   const m = M[id], p = presence(id);
@@ -2881,12 +2880,12 @@ function answerOrgQuestion(rawQ) {
   };
 }
 function pageHome() {
-  const st = S.homeState, v1 = S.truth === "v1";
+  const st = S.homeState;
   const open = st === "empty" ? [] : unhandled();
   const rawQueue = st === "empty" ? [] : IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
   const queue = [...rawQueue.filter((i) => !!i.expires), ...rawQueue.filter((i) => !i.expires)];
   const openUrgentCount = open.filter((i) => i.expires).length;
-  const working = v1 || st === "empty" ? [] : memberIds().filter((k) => ["working", "withyou"].includes(presence(k)));
+  const working = st === "empty" ? [] : memberIds().filter((k) => ["working", "withyou"].includes(presence(k)));
   const blockedWork = st === "empty" ? [] : W.filter((w) => w.status === "Blocked");
   const riskRank = { "Off track": 0, "At risk": 1, "On track": 2 };
   const projs = st === "empty" ? [] : Object.keys(P).filter((p) => !P[p].archived).sort((a, b) => (riskRank[P[a].health] ?? 9) - (riskRank[P[b].health] ?? 9));
@@ -3112,7 +3111,7 @@ function pageHome() {
     return `<aside class="hb-catchup" aria-label="Autonomous catch-up">
       <div class="hb-cu-hd">
         <div class="hb-cu-title">${ic("sparkle", "ic16")}<span>Catch-up</span></div>
-        <span class="hb-cu-window">${errMode ? `<span class="h4-live-dot is-error" style="width:6px;height:6px" aria-hidden="true"></span>Offline` : `${emptyMode || v1 ? "Idle · " : `<span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>`}Last 4 hours`}</span>
+        <span class="hb-cu-window">${errMode ? `<span class="h4-live-dot is-error" style="width:6px;height:6px" aria-hidden="true"></span>Offline` : `${emptyMode ? "Idle · " : `<span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>`}Last 4 hours`}</span>
       </div>
 
       ${st === "loading" ? skel(4, "Summarizing autonomous activity…") : errMode ? `<div class="hb-cleared" style="padding:24px 8px">
@@ -3139,7 +3138,7 @@ function pageHome() {
           <div class="hb-dig-body"><b>New org standard candidate</b> — Rowan proposed promoting lease locks to a company-wide rule.</div>
           <span class="hb-dig-time">45m</span>
         </a>
-        ${!v1 && activeLead ? `<a class="hb-dig-item" href="#/members/${activeLead}">
+        ${activeLead ? `<a class="hb-dig-item" href="#/members/${activeLead}">
           <span class="hb-dig-ico"><span class="h4-live-dot" style="margin-top:4px" aria-hidden="true"></span></span>
           <div class="hb-dig-body"><b>${esc(M[activeLead].name)} is working now</b> — ${esc(statusLine(activeLead))}${otherActive ? ` · ${otherActive} other agents active` : ""}</div>
           <span class="hb-dig-time">Live</span>
@@ -3450,13 +3449,11 @@ function pageChat(id) {
 }
 
 function pageActivity() {
-  const v1 = S.truth === "v1";
-  if (v1 && S.actFilter === "run") S.actFilter = "all";
   const f = S.actFilter;
   const all = acts(), items = all.filter((a) => f === "all" || a.type === f);
-  const tabs = [["all", "All"], ["work", "Work"], ["conversation", "Conversations"], ["decision", "Decisions"], ...(v1 ? [] : [["run", "Runs"]]), ["org", "Org changes"]];
-  return hdr("Activity", `${all.length} events today and yesterday${v1 ? "" : " · " + all.filter((a) => a.type === "run").length + " runs"}`) +
-    btnTabs("actFilter", tabs, "Filter activity", "act-feed") + (v1 ? `<p class="desc">Runs appear here once the office reports them.</p>` : "") + `<div ${tabPanel("actFilter", "act-feed")}>${feed(items)}</div>`;
+  const tabs = [["all", "All"], ["work", "Work"], ["conversation", "Conversations"], ["decision", "Decisions"], ["run", "Runs"], ["org", "Org changes"]];
+  return hdr("Activity", `${all.length} events today and yesterday · ${all.filter((a) => a.type === "run").length} runs`) +
+    btnTabs("actFilter", tabs, "Filter activity", "act-feed") + `<div ${tabPanel("actFilter", "act-feed")}>${feed(items)}</div>`;
 }
 
 /* ---------------------------------------------------------------- teams */
@@ -3578,7 +3575,7 @@ function pageMember(id, tab) {
     if (tab === "overview") {
       const needs = openFrom(id);
       const sess = getConsoleSession(id);
-      const lastEntry = (avail.active || (S.truth !== "v1" && sess.entries.length)) ? sess.entries[sess.entries.length - 1] : null;
+      const lastEntry = (avail.active || sess.entries.length) ? sess.entries[sess.entries.length - 1] : null;
       const chs = Object.keys(CH).filter((k) => CH[k].msgs.some((x) => x.who === id || (x.thread || []).some((r) => r.who === id)));
       leftBody = `${needs.length ? `<section class="section" aria-labelledby="h-ag-needs"><div class="sec-h"><h2 id="h-ag-needs">${ic("bell", "ic20 c-amber")}Needs you</h2><a class="link" href="#/inbox">Open Inbox${ic("chev-right", "ic16")}</a></div><div class="cards">${needs.map(needsCard).join("")}</div></section>` : ""}
         <section class="section"><div class="sec-h"><h2>Working on</h2><a class="link" href="#/members/${id}/tasks">All tasks (${myW.length})${ic("chev-right", "ic16")}</a></div>
@@ -3590,7 +3587,7 @@ function pageMember(id, tab) {
             </div>
             <p class="muted" style="font-size:0.75rem;margin-bottom:6px">${esc(M[lastEntry.from] ? M[lastEntry.from].name : lastEntry.from)} · ${esc(lastEntry.time)} — “${esc(lastEntry.text)}”</p>
             <p style="color:var(--gray-300)">${esc(lastEntry.reply.split("\n")[0])}</p>
-          </div>` : (S.truth === "v1" ? `<p class="muted" style="font-size:0.8125rem;margin-top:12px">Live session output isn't available in v1.0 today.</p>` : "")}
+          </div>` : ""}
         </section>
         <section class="section compact"><div class="sec-h"><h2>Recent activity</h2><a class="link" href="#/members/${id}/sessions">Live stream${ic("chev-right", "ic16")}</a></div>${feed(myActs.slice(0, 4))}</section>
         <section class="section"><div class="sec-h"><h2>Setup &amp; channels</h2><a class="link" href="#/members/${id}/settings">Settings${ic("chev-right", "ic16")}</a></div>
@@ -3610,23 +3607,17 @@ function pageMember(id, tab) {
     } else if (tab === "sessions") {
       leftBody = `<div id="agent-sessions-root" data-agent="${id}"></div>`;
     } else if (tab === "journal") {
-      if (S.truth === "v1") leftBody = `<div class="section"><h2 class="sr-only">Daily journal</h2><div class="callout">${ic("info", "ic20")}<span>Not available yet: agent journals arrive in a later release.</span></div></div>`;
-      else {
-        const n = NOTES[id] || NOTES.default(id);
-        leftBody = `<div class="section"><h2 class="sr-only">Daily journal</h2><div class="callout" style="margin-bottom:20px">${ic("lock", "ic20")}<span>Read-only daily work log from <code>${esc(m.setup.home)}/journal/</code>. ${esc(m.name)} records progress at the end of each session.</span></div>
-          <div class="journal">${n.journal.map((j) => `<article><h2>${esc(j.d)}</h2><ul>${j.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></article>`).join("")}</div></div>`;
-      }
+      const n = NOTES[id] || NOTES.default(id);
+      leftBody = `<div class="section"><h2 class="sr-only">Daily journal</h2><div class="callout" style="margin-bottom:20px">${ic("lock", "ic20")}<span>Read-only daily work log from <code>${esc(m.setup.home)}/journal/</code>. ${esc(m.name)} records progress at the end of each session.</span></div>
+        <div class="journal">${n.journal.map((j) => `<article><h2>${esc(j.d)}</h2><ul>${j.items.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></article>`).join("")}</div></div>`;
     } else if (tab === "memory") {
-      if (S.truth === "v1") leftBody = `<div class="section"><h2 class="sr-only">Durable memory</h2><div class="callout">${ic("info", "ic20")}<span>Not available yet: durable memory arrives in a later release.</span></div></div>`;
-      else {
-        const n = NOTES[id] || NOTES.default(id);
-        const mem = Array.isArray(n.memory) ? { decisions: n.memory, context: [] } : n.memory;
-        leftBody = `<div class="section"><h2 class="sr-only">Durable memory</h2><div class="callout" style="margin-bottom:20px">${ic("lock", "ic20")}<span>Read-only durable memory from <code>${esc(m.setup.home)}/memory/MEMORY.md</code>. Loaded at the start of every session.</span></div>
-          <div class="journal">
-            <article><h2>Decisions &amp; conventions</h2><ul>${mem.decisions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></article>
-            ${mem.context && mem.context.length ? `<article><h2>Project &amp; operational context</h2><ul>${mem.context.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></article>` : ""}
-          </div></div>`;
-      }
+      const n = NOTES[id] || NOTES.default(id);
+      const mem = Array.isArray(n.memory) ? { decisions: n.memory, context: [] } : n.memory;
+      leftBody = `<div class="section"><h2 class="sr-only">Durable memory</h2><div class="callout" style="margin-bottom:20px">${ic("lock", "ic20")}<span>Read-only durable memory from <code>${esc(m.setup.home)}/memory/MEMORY.md</code>. Loaded at the start of every session.</span></div>
+        <div class="journal">
+          <article><h2>Decisions &amp; conventions</h2><ul>${mem.decisions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></article>
+          ${mem.context && mem.context.length ? `<article><h2>Project &amp; operational context</h2><ul>${mem.context.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></article>` : ""}
+        </div></div>`;
     } else if (tab === "knowledge") {
       const docs = KNOWLEDGE[id] || KNOWLEDGE.default(id);
       leftBody = `<div class="section" style="padding-bottom:16px"><h2 class="sr-only">Knowledge documents</h2><div class="callout">${ic("folder", "ic20")}<span>Reference material in <code>${esc(m.setup.home)}/knowledge/</code> and shared project briefs. Select an item to inspect its contents.</span></div></div>
@@ -4027,7 +4018,6 @@ class NeuralOrb {
 function agentSessionAvailability(aid) {
   const m = M[aid];
   if (!m) return { active: false, state: "unavailable", title: "Unknown agent", reason: "Agent record not found." };
-  if (S.truth === "v1") return { active: false, state: "unavailable", title: "Live sessions unavailable", reason: "Live agent console and session streaming arrive in a later release." };
   if (m.offboarded) return { active: false, state: "paused", title: "Offboarded", reason: "This agent has been offboarded. Journals, memory, and records remain read-only." };
   if (!m.setup || !m.setup.office) return { active: false, state: "unplaced", title: "Not placed in an office", reason: "Assign an office in Settings before starting a session." };
   const office = OFFICES[m.setup.office];
@@ -4302,13 +4292,10 @@ function agentRailHtml(aid, tab) {
   const m = M[aid];
   const sess = getConsoleSession(aid);
   const avail = agentSessionAvailability(aid);
-  const v1 = S.truth === "v1";
-  const st = v1
-    ? { state: "unavailable", detail: "live telemetry in next release" }
-    : (sess.busy ? sess.status : (!avail.active ? { state: avail.state, detail: avail.title.toLowerCase() } : sess.status));
-  const curNow = (!v1 && avail.active) ? sess.current : null;
-  const pct = v1 ? 0 : Math.round(sess.ratio * 100);
-  const usedVal = v1 ? 0 : sess.used;
+  const st = sess.busy ? sess.status : (!avail.active ? { state: avail.state, detail: avail.title.toLowerCase() } : sess.status);
+  const curNow = avail.active ? sess.current : null;
+  const pct = Math.round(sess.ratio * 100);
+  const usedVal = sess.used;
   const canCompact = avail.active && !sess.busy;
   const canStop = avail.active && (sess.busy || !!sess.current);
   return `<aside class="agent-rail" aria-label="Agent orb and context">
@@ -4348,7 +4335,7 @@ function agentRailHtml(aid, tab) {
         <span class="c-ctx-big" id="c-ctx-pct">${pct}%</span>
         <span class="muted mono" id="c-ctx-tok">${fmtTok(usedVal)} / ${fmtTok(sess.limit)}</span>
       </div>
-      <div class="c-meter" id="c-meter" data-warn="${!v1 && sess.ratio >= 0.75}">
+      <div class="c-meter" id="c-meter" data-warn="${sess.ratio >= 0.75}">
         <div class="c-meter-fill" id="c-meter-fill" style="width:${pct}%"></div>
         <span class="c-meter-mark" style="left:95%" title="Auto-compact at 95%"></span>
       </div>
@@ -4369,7 +4356,6 @@ function mountAgentProfile(aid, tab) {
   const m = M[aid];
   const sess = getConsoleSession(aid);
   const avail = agentSessionAvailability(aid);
-  const v1 = S.truth === "v1";
   activeSession = sess;
 
   // Mount Sessions tab markup if active
@@ -4379,9 +4365,7 @@ function mountAgentProfile(aid, tab) {
     const statusNotice = !avail.active
       ? `<div class="callout" id="c-unavail-callout" role="status">${ic(avail.state === "paused" ? "pause" : (avail.state === "unplaced" || avail.state === "offline") ? "warn" : "info", "ic20")}<div><p style="font-weight:600;color:#fff">${esc(avail.title)}</p><p style="font-size:0.8125rem">${esc(avail.reason)}</p></div></div>`
       : "";
-    const recentHtml = v1
-      ? `<p class="empty-row" style="padding:20px 0">Recent session history arrives in a later release.</p>`
-      : `<ul class="rows" role="list" style="margin:0 calc(var(--gutter) * -1)">
+    const recentHtml = `<ul class="rows" role="list" style="margin:0 calc(var(--gutter) * -1)">
           ${PAST_SESSIONS.map((ps) => `<li>${ic("terminal", "ic20 chev")}<div class="grow">
             <p class="rt"><span class="mono">${esc(ps.id)}</span><span>${esc(ps.label)}</span>${(ps.active && avail.active) ? pill("Active", "green", "bolt") : ""}</p>
             <p class="rowline">${esc(ps.summary)}</p>
@@ -4455,7 +4439,7 @@ function mountAgentProfile(aid, tab) {
 
   const orb = new NeuralOrb(canvas);
   orb.setState(avail.active ? (sess.busy ? sess.status.state : sess.status.state) : "paused");
-  orb.setContext(v1 ? 0 : sess.ratio, true);
+  orb.setContext(sess.ratio, true);
   orb.start();
   if (avail.active) orb.pulse(0.7);
   requestAnimationFrame(() => orb.resize());
@@ -4470,8 +4454,8 @@ function mountAgentProfile(aid, tab) {
   const renderChart = () => {
     const chartEl = document.getElementById("c-chart-svg");
     if (!chartEl) return;
-    if (v1 || !sess.history.length) {
-      chartEl.innerHTML = `<div style="height:78px;display:flex;align-items:center;justify-content:center;color:var(--gray-400);font-size:0.75rem">${v1 ? "Not tracked in v1.0 today" : "No session context yet"}</div>`;
+    if (!sess.history.length) {
+      chartEl.innerHTML = `<div style="height:78px;display:flex;align-items:center;justify-content:center;color:var(--gray-400);font-size:0.75rem">No session context yet</div>`;
       return;
     }
     const samples = sess.history;
@@ -4497,10 +4481,7 @@ function mountAgentProfile(aid, tab) {
     const tel = document.getElementById("c-telemetry");
     if (!tel) return;
     const curAvail = agentSessionAvailability(aid);
-    const isV1 = S.truth === "v1";
-    const curState = isV1
-      ? { state: "unavailable", detail: "live telemetry in next release" }
-      : (sess.busy ? sess.status : (!curAvail.active ? { state: curAvail.state, detail: curAvail.title.toLowerCase() } : sess.status));
+    const curState = sess.busy ? sess.status : (!curAvail.active ? { state: curAvail.state, detail: curAvail.title.toLowerCase() } : sess.status);
     tel.dataset.cstate = curState.state;
     document.getElementById("c-state-txt").textContent = curState.state;
     document.getElementById("c-detail-txt").textContent = curState.detail;
@@ -4508,7 +4489,7 @@ function mountAgentProfile(aid, tab) {
     const nowKind = document.getElementById("c-now-kind");
     const nowTitle = document.getElementById("c-now-title");
     const nowSub = document.getElementById("c-now-sub");
-    const curNow = (!isV1 && curAvail.active) ? sess.current : null;
+    const curNow = curAvail.active ? sess.current : null;
     nowKind.hidden = !curNow;
     if (curNow) {
       nowKind.textContent = curNow.kind;
@@ -4532,35 +4513,32 @@ function mountAgentProfile(aid, tab) {
     }
 
     const qList = document.getElementById("c-queue-list");
-    const qItems = isV1 ? [] : sess.queue;
+    const qItems = sess.queue;
     qList.innerHTML = qItems.length
       ? qItems.slice(0, 3).map((q) => `<li><span class="c-queue-who">${esc(M[q.from] ? M[q.from].name : q.from)}</span><span class="c-queue-tx">${esc(q.text)}</span></li>`).join("")
       : `<li class="muted">Nothing waiting</li>`;
 
-    const pct = isV1 ? 0 : Math.round(sess.ratio * 100);
-    const usedVal = isV1 ? 0 : sess.used;
+    const pct = Math.round(sess.ratio * 100);
+    const usedVal = sess.used;
     document.getElementById("c-ctx-pct").textContent = pct + "%";
     document.getElementById("c-ctx-tok").textContent = `${fmtTok(usedVal)} / ${fmtTok(sess.limit)}`;
     const meter = document.getElementById("c-meter");
-    meter.dataset.warn = String(!isV1 && sess.ratio >= 0.75);
+    meter.dataset.warn = String(sess.ratio >= 0.75);
     document.getElementById("c-meter-fill").style.width = pct + "%";
     renderChart();
 
     const bd = [
-      ["System & tools", isV1 ? 0 : sess.parts.system],
-      ["Summary", isV1 ? 0 : sess.parts.summary],
-      ["Conversation", isV1 ? 0 : sess.parts.conversation],
-      ["Tool results", isV1 ? 0 : sess.parts.tools]
+      ["System & tools", sess.parts.system],
+      ["Summary", sess.parts.summary],
+      ["Conversation", sess.parts.conversation],
+      ["Tool results", sess.parts.tools]
     ];
     document.getElementById("c-breakdown").innerHTML = bd.map(([lbl, val]) => `<div class="c-bd-row"><span class="muted">${lbl}</span><div class="c-bd-bar"><i style="width:${Math.round((val / sess.limit) * 100)}%"></i></div><span class="tnum" style="text-align:right;color:var(--gray-300)">${fmtTok(val)}</span></div>`).join("");
-    document.getElementById("c-stats").textContent = isV1
-      ? "Live session telemetry unavailable in v1.0 today"
-      : `${sess.stats.requests} requests · ${sess.stats.toolCalls} tool calls · ${plural(sess.stats.compactions, "compaction", "compactions")}`;
+    document.getElementById("c-stats").textContent = `${sess.stats.requests} requests · ${sess.stats.toolCalls} tool calls · ${plural(sess.stats.compactions, "compaction", "compactions")}`;
 
     const feedList = document.getElementById("c-feed-list");
     if (feedList) {
-      const feedEntries = isV1 ? [] : sess.entries;
-      const visible = feedEntries.filter((en) => {
+      const visible = sess.entries.filter((en) => {
         if (S.consoleView === "chat") return en.from === "you";
         if (S.consoleScope === "others") return en.from !== "you";
         return true;
@@ -4575,12 +4553,12 @@ function mountAgentProfile(aid, tab) {
           ${stepsHtml}
           <div class="c-reply">${esc(en.reply)}${en.streaming ? '<span class="c-caret-blink"></span>' : ""}</div>
         </article>`;
-      }).join("") : `<p class="empty-row">${isV1 ? "No live session events in v1.0 today." : "No messages yet in this view."}</p>`;
+      }).join("") : `<p class="empty-row">No messages yet in this view.</p>`;
     }
 
     const shellBody = document.getElementById("c-shell-body");
     if (shellBody) {
-      const lines = isV1 ? [{ cls: "c-shell-c", txt: "# live shell unavailable in v1.0 today" }] : sess.shellLines;
+      const lines = sess.shellLines;
       shellBody.innerHTML = lines.map((l) => {
         if (l.cls === "c-shell-cmd") {
           return `<div class="c-shell-cmd" data-status="${l.running ? "running" : "done"}"><span class="c-shell-prompt">$ </span>${esc(l.txt)}</div>`;
@@ -4772,8 +4750,7 @@ let fitRaf = 0;
 window.addEventListener("resize", () => { cancelAnimationFrame(fitRaf); fitRaf = requestAnimationFrame(fitNav); });
 function renderBanner(r0) {
   const el = document.getElementById("banner-ctl"); if (!el) return;
-  el.innerHTML = seg("truth", [["demo", "Full demo"], ["v1", "v1.0 today"]], "Data") +
-    (r0 === "home" ? seg("homeState", [["filled", "Filled"], ["empty", "Empty"], ["loading", "Loading"], ["error", "Error"]], "Home sections") : "");
+  el.innerHTML = r0 === "home" ? seg("homeState", [["filled", "Filled"], ["empty", "Empty"], ["loading", "Loading"], ["error", "Error"]], "Home sections") : "";
 }
 
 /* ---------------------------------------------------------------- router */
