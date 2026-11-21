@@ -12,7 +12,7 @@ Usage for a task follows immutable/corrected task attribution in the ledger, acr
 
 ## Policies, periods and the one-time extension
 
-`budgets` fixes target and period kind, and holds the current effective `time_zone`, `time_zone_source`, and `time_zone_subject_ref` matching `current_revision` in `budget_policy_versions`. Record its provenance as `time_zone_source: owner_account` (the time zone of the account of the organization owner, [document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)) with the protected host account reference in `time_zone_subject_ref`, or `hq` with a null reference. Never silently choose UTC when the selected owner/HQ zone is unknown; require it before creating periods. This snapshot keeps a period stable across office moves. A later owner-zone change records a new immutable revision in `budget_policy_versions` carrying the updated `time_zone`, `time_zone_source`, and `time_zone_subject_ref`, advances `budgets.current_revision` and `budgets.time_zone*` atomically, and establishes an explicit boundary for subsequent periods while keeping existing historical `budget_periods` keys and UTC bounds unchanged. Changing timezone in place without advancing `current_revision` is refused by SQL triggers. `budget_policy_versions` is append-only; `current_revision` selects the current policy. Changing only the comment or refreshing the same value must not re-arm controls. A genuinely changed limit/unit creates a new revision and re-arms the one-time extension, as the existing UX requires. It does not erase prior events, periods or spending. Clearing also creates a revision. Policy updates and current-revision changes commit together with actor-bound idempotent mutation receipts. Command checks enforce authorized actions and meaningful revisions; SQL does not authenticate actors. `changed_by_id` is the employee who made the change.
+`budgets` fixes target and period kind, and holds the current effective `time_zone`, `time_zone_source`, and `time_zone_subject_ref` matching `current_revision` in `budget_policy_versions`. Record its provenance as `time_zone_source: owner_person` (the time zone derived from the organization owner's person record, [document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)) with the owner's org-scoped `employees.id` in `time_zone_subject_ref` (never a host account ID, preserving the host/organization boundary), or `hq` with a null reference. Never silently choose UTC when the selected owner/HQ zone is unknown; require it before creating periods. This snapshot keeps a period stable across office moves. A later owner-zone change records a new immutable revision in `budget_policy_versions` carrying the updated `time_zone`, `time_zone_source`, and `time_zone_subject_ref`, advances `budgets.current_revision` and `budgets.time_zone*` atomically, and establishes an explicit boundary for subsequent periods while keeping existing historical `budget_periods` keys and UTC bounds unchanged. Changing timezone in place without advancing `current_revision` is refused by SQL triggers. `budget_policy_versions` is append-only; `current_revision` selects the current policy. Changing only the comment or refreshing the same value must not re-arm controls. A genuinely changed limit/unit creates a new revision and re-arms the one-time extension, as the existing UX requires. It does not erase prior events, periods or spending. Clearing also creates a revision. Policy updates and current-revision changes commit together with actor-bound idempotent mutation receipts. Command checks enforce authorized actions and meaningful revisions; SQL does not authenticate actors. `changed_by_id` is the employee who made the change.
 
 Task/release periods have period_key `lifetime` and NULL bounds. Agent periods use calendar dates/months in the selected timezone (the owner account's IANA zone; HQ's zone while the account has none), with stored inclusive UTC starts_at and exclusive ends_at; use a timezone library, including DST. The key is local `YYYY-MM-DD` or `YYYY-MM`, not a rolling 24-hour/30-day duration. One row exists for each budget/period key. On value/unit changes within a period, point that period at the new policy revision, re-evaluate the same whole-period consumption in the selected unit and reset extension_used; never zero used_amount. Preserve previous snapshots in event payloads. New periods start with the current policy, no used extension and a new ledger evaluation. Never edit timezone/target/period-kind to shift spent work into a fresh period.
 
@@ -102,10 +102,10 @@ CREATE TABLE budgets (
   release_id TEXT,
   period_kind TEXT NOT NULL CHECK (period_kind IN ('lifetime','day','month')),
   time_zone TEXT NOT NULL,
-  time_zone_source TEXT NOT NULL CHECK (time_zone_source IN ('owner_account','hq')),
+  time_zone_source TEXT NOT NULL CHECK (time_zone_source IN ('owner_person','hq')),
   time_zone_subject_ref TEXT,
   created_at TEXT NOT NULL,
-  CHECK ((time_zone_source='owner_account')=(time_zone_subject_ref IS NOT NULL)),
+  CHECK ((time_zone_source='owner_person')=(time_zone_subject_ref IS NOT NULL)),
   PRIMARY KEY (organization_id,id),
   CHECK ((scope_kind='task' AND task_id IS NOT NULL AND agent_id IS NULL AND release_id IS NULL AND period_kind='lifetime')
     OR (scope_kind='agent' AND task_id IS NULL AND agent_id IS NOT NULL AND release_id IS NULL AND period_kind IN ('day','month'))
@@ -113,6 +113,7 @@ CREATE TABLE budgets (
   FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,agent_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,release_id) REFERENCES releases(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,time_zone_subject_ref) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,id,current_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE UNIQUE INDEX budget_task_identity ON budgets(organization_id,task_id) WHERE scope_kind='task';
@@ -126,15 +127,16 @@ CREATE TABLE budget_policy_versions (
   unit TEXT NOT NULL CHECK (unit IN ('micro_usd','tokens')),
   limit_amount INTEGER CHECK (limit_amount>0),
   time_zone TEXT NOT NULL DEFAULT 'UTC',
-  time_zone_source TEXT NOT NULL DEFAULT 'hq' CHECK (time_zone_source IN ('owner_account','hq')),
+  time_zone_source TEXT NOT NULL DEFAULT 'hq' CHECK (time_zone_source IN ('owner_person','hq')),
   time_zone_subject_ref TEXT,
   changed_by_id TEXT NOT NULL,
   changed_at TEXT NOT NULL,
   reason TEXT,
   PRIMARY KEY (organization_id,budget_id,revision),
   CHECK ((state='active' AND limit_amount IS NOT NULL) OR (state='cleared' AND limit_amount IS NULL)),
-  CHECK ((time_zone_source='owner_account')=(time_zone_subject_ref IS NOT NULL)),
+  CHECK ((time_zone_source='owner_person')=(time_zone_subject_ref IS NOT NULL)),
   FOREIGN KEY (organization_id,budget_id) REFERENCES budgets(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,time_zone_subject_ref) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,changed_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE TABLE budget_periods (

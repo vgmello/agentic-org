@@ -455,25 +455,16 @@ WHEN NEW.organization_id<>OLD.organization_id OR NEW.command_id<>OLD.command_id 
  OR NEW.actor_kind<>OLD.actor_kind OR NEW.actor_id IS NOT OLD.actor_id OR NEW.command_kind<>OLD.command_kind OR NEW.request_sha256<>OLD.request_sha256
  OR (OLD.state IN ('completed','rejected','abandoned') AND (NEW.state<>OLD.state OR NEW.result_ref IS NOT OLD.result_ref))
 BEGIN SELECT RAISE(ABORT,'receipt identity or terminal outcome changed'); END;
-CREATE TRIGGER receipt_no_replace BEFORE INSERT ON mutation_receipts
-WHEN EXISTS (SELECT 1 FROM mutation_receipts WHERE organization_id=NEW.organization_id AND command_id=NEW.command_id)
-BEGIN SELECT RAISE(ABORT,'receipt command already registered'); END;
 CREATE TRIGGER origin_stream_no_regression BEFORE UPDATE ON office_origin_streams
 WHEN NEW.organization_id<>OLD.organization_id OR NEW.office_id<>OLD.office_id OR NEW.stream_kind<>OLD.stream_kind OR NEW.incarnation<>OLD.incarnation
  OR NEW.high_water_sequence<OLD.high_water_sequence OR (NEW.high_water_sequence=OLD.high_water_sequence AND NEW.head_sha256 IS NOT OLD.head_sha256)
  OR (OLD.state='sealed' AND (NEW.state<>OLD.state OR NEW.high_water_sequence<>OLD.high_water_sequence))
 BEGIN SELECT RAISE(ABORT,'origin stream regressed or forked'); END;
-CREATE TRIGGER origin_stream_no_replace BEFORE INSERT ON office_origin_streams
-WHEN EXISTS (SELECT 1 FROM office_origin_streams WHERE organization_id=NEW.organization_id AND office_id=NEW.office_id AND stream_kind=NEW.stream_kind AND incarnation=NEW.incarnation)
-BEGIN SELECT RAISE(ABORT,'origin identity already registered'); END;
 CREATE TRIGGER checkpoint_no_regression BEFORE UPDATE ON office_recovery_checkpoints
 WHEN NEW.organization_id<>OLD.organization_id OR NEW.office_id<>OLD.office_id OR NEW.highest_seen_epoch<OLD.highest_seen_epoch
  OR NEW.authority_epoch<OLD.authority_epoch OR (NEW.authority_epoch=OLD.authority_epoch AND NEW.applied_sequence<OLD.applied_sequence)
  OR (NEW.authority_epoch=OLD.authority_epoch AND NEW.applied_sequence=OLD.applied_sequence AND NEW.digest_sha256<>OLD.digest_sha256)
 BEGIN SELECT RAISE(ABORT,'recovery checkpoint regressed or forked'); END;
-CREATE TRIGGER checkpoint_no_replace BEFORE INSERT ON office_recovery_checkpoints
-WHEN EXISTS (SELECT 1 FROM office_recovery_checkpoints WHERE organization_id=NEW.organization_id AND office_id=NEW.office_id)
-BEGIN SELECT RAISE(ABORT,'checkpoint identity already registered'); END;
 CREATE TRIGGER receipt_no_delete BEFORE DELETE ON mutation_receipts
 BEGIN SELECT RAISE(ABORT,'receipt retention requires reviewed expiry/archive procedure'); END;
 CREATE TRIGGER origin_stream_no_delete BEFORE DELETE ON office_origin_streams

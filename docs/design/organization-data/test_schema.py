@@ -1310,12 +1310,15 @@ class GapPreservationTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             insert(self.db, "office_origin_streams", **stream, stream_kind="chat")
         self.db.rollback()
-        for table, message in (("mutation_receipts", "receipt command already registered"),
-                               ("office_origin_streams", "origin identity already registered"),
-                               ("office_recovery_checkpoints", "checkpoint identity already registered")):
-            for verb in ("INSERT", "INSERT OR REPLACE"):
-                with self.subTest(table=table, verb=verb):
-                    assert_refused(self, self.db, message, f"{verb} INTO {table} SELECT * FROM {table}")
+        for table, delete_msg in (
+            ("mutation_receipts", "receipt retention requires reviewed expiry/archive procedure"),
+            ("office_origin_streams", "origin watermark must be retained"),
+            ("office_recovery_checkpoints", "authority checkpoint must be retained"),
+        ):
+            with self.subTest(table=table, verb="INSERT"):
+                assert_refused(self, self.db, "UNIQUE constraint failed", f"INSERT INTO {table} SELECT * FROM {table}")
+            with self.subTest(table=table, verb="INSERT OR REPLACE"):
+                assert_refused(self, self.db, delete_msg, f"INSERT OR REPLACE INTO {table} SELECT * FROM {table}")
         assert_refused(self, self.db, "origin watermark must be retained", "DELETE FROM office_origin_streams")
         assert_refused(self, self.db, "authority checkpoint must be retained", "DELETE FROM office_recovery_checkpoints")
         # A checkpoint only moves forward and never forks at the same position.
@@ -1462,7 +1465,7 @@ class BudgetSchemaTests(unittest.TestCase):
         seed_task(self.db, task="second")
         self.budget()
         message = "budget scope or revision changed unsafely"
-        for change in ("task_id='second'", "time_zone='Europe/Paris'", "time_zone_source='owner_account',time_zone_subject_ref='owner'"):
+        for change in ("task_id='second'", "time_zone='Europe/Paris'", "time_zone_source='owner_person',time_zone_subject_ref='reporter'"):
             with self.subTest(change=change):
                 assert_refused(self, self.db, message, f"UPDATE budgets SET {change}")
         insert(self.db,"budget_policy_versions",organization_id="org",budget_id="budget",revision=2,state="active",unit="tokens",limit_amount=200,
@@ -1480,11 +1483,11 @@ class BudgetSchemaTests(unittest.TestCase):
         # Changing timezone with a new immutable policy revision succeeds while keeping p-utc intact.
         insert(self.db, "budget_policy_versions", organization_id="org", budget_id="daily", revision=2,
                state="active", unit="tokens", limit_amount=100, time_zone="America/New_York",
-               time_zone_source="owner_account", time_zone_subject_ref="owner-acct-1",
+               time_zone_source="owner_person", time_zone_subject_ref="reporter",
                changed_by_id="reporter", changed_at="2026-11-16T00:00:00Z", reason="Owner moved timezone")
         self.db.execute(
             "UPDATE budgets SET current_revision=2, time_zone='America/New_York', "
-            "time_zone_source='owner_account', time_zone_subject_ref='owner-acct-1' WHERE id='daily'"
+            "time_zone_source='owner_person', time_zone_subject_ref='reporter' WHERE id='daily'"
         )
         insert(self.db, "budget_periods", organization_id="org", budget_id="daily", id="p-ny",
                policy_revision=2, period_key="2026-11-16", starts_at="2026-11-16T05:00:00Z",
@@ -1493,11 +1496,29 @@ class BudgetSchemaTests(unittest.TestCase):
         row = self.db.execute(
             "SELECT current_revision, time_zone, time_zone_source FROM budgets WHERE id='daily'"
         ).fetchone()
-        self.assertEqual(tuple(row), (2, "America/New_York", "owner_account"))
+        self.assertEqual(tuple(row), (2, "America/New_York", "owner_person"))
         prior = self.db.execute(
             "SELECT starts_at, ends_at FROM budget_periods WHERE id='p-utc'"
         ).fetchone()
         self.assertEqual(tuple(prior), ("2026-11-15T00:00:00Z", "2026-11-16T00:00:00Z"))
+        # Host account IDs (outside org employees) are rejected by FK (L-02).
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "budget_policy_versions", organization_id="org", budget_id="daily", revision=3,
+                   state="active", unit="tokens", limit_amount=100, time_zone="Europe/London",
+                   time_zone_source="owner_person", time_zone_subject_ref="host-account-outside-org",
+                   changed_by_id="reporter", changed_at="2026-11-17T00:00:00Z")
+            self.db.commit()
+        self.db.rollback()
+        # org_epoch = 0 on messages is rejected (L-02).
+        insert(self.db, "conversations", organization_id="org", id="c-epoch", kind="dm", created_at="2026-11-15T00:00:00Z")
+        self.db.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "messages", organization_id="org", id="m-epoch-0", conversation_id="c-epoch",
+                   sender_kind="employee", sender_employee_id="reporter", sender_office_id="numbering-a",
+                   sender_display_name="Reporter", kind="message", priority="normal", body_markdown="hi",
+                   created_at="2026-11-15T00:00:00Z", origin_office_id="numbering-a", origin_incarnation="i",
+                   origin_sequence=1, org_epoch=0, org_sequence=1, content_sha256="a"*64)
+        self.db.rollback()
 
     def test_budget_history_is_never_deleted_and_events_never_change(self):
         self.budget();self.period()

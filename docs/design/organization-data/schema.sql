@@ -1948,7 +1948,7 @@ CREATE TABLE messages (
   origin_office_id TEXT NOT NULL,
   origin_incarnation TEXT NOT NULL,
   origin_sequence INTEGER NOT NULL CHECK (origin_sequence>0),
-  org_epoch INTEGER NOT NULL CHECK (org_epoch>=0),
+  org_epoch INTEGER NOT NULL CHECK (org_epoch>0),
   org_sequence INTEGER NOT NULL CHECK (org_sequence>=0),
   content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
   PRIMARY KEY (organization_id,id),
@@ -1985,7 +1985,7 @@ CREATE TABLE message_recipient_states (
   owner_office_id TEXT NOT NULL,
   origin_incarnation TEXT NOT NULL,
   origin_sequence INTEGER NOT NULL CHECK (origin_sequence>0),
-  org_epoch INTEGER NOT NULL CHECK (org_epoch>=0),
+  org_epoch INTEGER NOT NULL CHECK (org_epoch>0),
   org_sequence INTEGER NOT NULL CHECK (org_sequence>=0),
   PRIMARY KEY (organization_id,message_id,employee_id),
   FOREIGN KEY (organization_id,message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED,
@@ -2130,25 +2130,16 @@ WHEN NEW.organization_id<>OLD.organization_id OR NEW.command_id<>OLD.command_id 
  OR NEW.actor_kind<>OLD.actor_kind OR NEW.actor_id IS NOT OLD.actor_id OR NEW.command_kind<>OLD.command_kind OR NEW.request_sha256<>OLD.request_sha256
  OR (OLD.state IN ('completed','rejected','abandoned') AND (NEW.state<>OLD.state OR NEW.result_ref IS NOT OLD.result_ref))
 BEGIN SELECT RAISE(ABORT,'receipt identity or terminal outcome changed'); END;
-CREATE TRIGGER receipt_no_replace BEFORE INSERT ON mutation_receipts
-WHEN EXISTS (SELECT 1 FROM mutation_receipts WHERE organization_id=NEW.organization_id AND command_id=NEW.command_id)
-BEGIN SELECT RAISE(ABORT,'receipt command already registered'); END;
 CREATE TRIGGER origin_stream_no_regression BEFORE UPDATE ON office_origin_streams
 WHEN NEW.organization_id<>OLD.organization_id OR NEW.office_id<>OLD.office_id OR NEW.stream_kind<>OLD.stream_kind OR NEW.incarnation<>OLD.incarnation
  OR NEW.high_water_sequence<OLD.high_water_sequence OR (NEW.high_water_sequence=OLD.high_water_sequence AND NEW.head_sha256 IS NOT OLD.head_sha256)
  OR (OLD.state='sealed' AND (NEW.state<>OLD.state OR NEW.high_water_sequence<>OLD.high_water_sequence))
 BEGIN SELECT RAISE(ABORT,'origin stream regressed or forked'); END;
-CREATE TRIGGER origin_stream_no_replace BEFORE INSERT ON office_origin_streams
-WHEN EXISTS (SELECT 1 FROM office_origin_streams WHERE organization_id=NEW.organization_id AND office_id=NEW.office_id AND stream_kind=NEW.stream_kind AND incarnation=NEW.incarnation)
-BEGIN SELECT RAISE(ABORT,'origin identity already registered'); END;
 CREATE TRIGGER checkpoint_no_regression BEFORE UPDATE ON office_recovery_checkpoints
 WHEN NEW.organization_id<>OLD.organization_id OR NEW.office_id<>OLD.office_id OR NEW.highest_seen_epoch<OLD.highest_seen_epoch
  OR NEW.authority_epoch<OLD.authority_epoch OR (NEW.authority_epoch=OLD.authority_epoch AND NEW.applied_sequence<OLD.applied_sequence)
  OR (NEW.authority_epoch=OLD.authority_epoch AND NEW.applied_sequence=OLD.applied_sequence AND NEW.digest_sha256<>OLD.digest_sha256)
 BEGIN SELECT RAISE(ABORT,'recovery checkpoint regressed or forked'); END;
-CREATE TRIGGER checkpoint_no_replace BEFORE INSERT ON office_recovery_checkpoints
-WHEN EXISTS (SELECT 1 FROM office_recovery_checkpoints WHERE organization_id=NEW.organization_id AND office_id=NEW.office_id)
-BEGIN SELECT RAISE(ABORT,'checkpoint identity already registered'); END;
 CREATE TRIGGER receipt_no_delete BEFORE DELETE ON mutation_receipts
 BEGIN SELECT RAISE(ABORT,'receipt retention requires reviewed expiry/archive procedure'); END;
 CREATE TRIGGER origin_stream_no_delete BEFORE DELETE ON office_origin_streams
@@ -2168,10 +2159,10 @@ CREATE TABLE budgets (
   release_id TEXT,
   period_kind TEXT NOT NULL CHECK (period_kind IN ('lifetime','day','month')),
   time_zone TEXT NOT NULL,
-  time_zone_source TEXT NOT NULL CHECK (time_zone_source IN ('owner_account','hq')),
+  time_zone_source TEXT NOT NULL CHECK (time_zone_source IN ('owner_person','hq')),
   time_zone_subject_ref TEXT,
   created_at TEXT NOT NULL,
-  CHECK ((time_zone_source='owner_account')=(time_zone_subject_ref IS NOT NULL)),
+  CHECK ((time_zone_source='owner_person')=(time_zone_subject_ref IS NOT NULL)),
   PRIMARY KEY (organization_id,id),
   CHECK ((scope_kind='task' AND task_id IS NOT NULL AND agent_id IS NULL AND release_id IS NULL AND period_kind='lifetime')
     OR (scope_kind='agent' AND task_id IS NULL AND agent_id IS NOT NULL AND release_id IS NULL AND period_kind IN ('day','month'))
@@ -2179,6 +2170,7 @@ CREATE TABLE budgets (
   FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,agent_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,release_id) REFERENCES releases(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,time_zone_subject_ref) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,id,current_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE UNIQUE INDEX budget_task_identity ON budgets(organization_id,task_id) WHERE scope_kind='task';
@@ -2192,15 +2184,16 @@ CREATE TABLE budget_policy_versions (
   unit TEXT NOT NULL CHECK (unit IN ('micro_usd','tokens')),
   limit_amount INTEGER CHECK (limit_amount>0),
   time_zone TEXT NOT NULL DEFAULT 'UTC',
-  time_zone_source TEXT NOT NULL DEFAULT 'hq' CHECK (time_zone_source IN ('owner_account','hq')),
+  time_zone_source TEXT NOT NULL DEFAULT 'hq' CHECK (time_zone_source IN ('owner_person','hq')),
   time_zone_subject_ref TEXT,
   changed_by_id TEXT NOT NULL,
   changed_at TEXT NOT NULL,
   reason TEXT,
   PRIMARY KEY (organization_id,budget_id,revision),
   CHECK ((state='active' AND limit_amount IS NOT NULL) OR (state='cleared' AND limit_amount IS NULL)),
-  CHECK ((time_zone_source='owner_account')=(time_zone_subject_ref IS NOT NULL)),
+  CHECK ((time_zone_source='owner_person')=(time_zone_subject_ref IS NOT NULL)),
   FOREIGN KEY (organization_id,budget_id) REFERENCES budgets(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,time_zone_subject_ref) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,changed_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE TABLE budget_periods (

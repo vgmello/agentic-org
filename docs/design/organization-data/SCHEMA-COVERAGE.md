@@ -151,6 +151,13 @@ In addition to the verbatim `schema.sql` contract tables above, `crates/org-offi
 
 These four tables are engine-private adapter state ([ADR-0018](../../adr/0018-storage-engine-independence.md)), never part of the portable domain contract or organization Git.
 
+### Engine portability and trigger classification (ADR-0018)
+
+To preserve storage-engine replaceability (SQLite today, PostgreSQL in future under [ADR-0018](../../adr/0018-storage-engine-independence.md)) and minimize SQLite projection write overhead:
+
+- **Declarative portable SQL layer (kept in DDL on every engine):** `PRIMARY KEY`, `FOREIGN KEY`, `UNIQUE`, partial unique indexes, and scalar `CHECK` constraints (portable across SQLite and PostgreSQL, with SQLite `GLOB` patterns translating directly to PostgreSQL `~` regex checks).
+- **Single-writer / projector layer (enforced in Rust domain/projector code, mirrored in SQLite draft triggers only as executable spec guards):** recursive graph cycle checks (`teams`, `employees`, `features`, `deployments`, `links`), append-only immutability/monotonicity guards (`task_events`, `usage_records`, `mutation_receipts`, `budgets`, `document_versions`), and cross-table project-scoping guards. Redundant `BEFORE INSERT` duplicate-key triggers (`receipt_no_replace`, `origin_stream_no_replace`, `checkpoint_no_replace`) have been removed because declarative `PRIMARY KEY` plus `BEFORE DELETE` guards (with `recursive_triggers = ON`) already enforce both `INSERT` and `INSERT OR REPLACE`. A future PostgreSQL adapter enforces these invariants in the shared Rust single-writer/projector rather than porting SQLite triggers verbatim.
+
 ## Relationships and enforcement
 
 | Invariant | Enforcement / boundary |
