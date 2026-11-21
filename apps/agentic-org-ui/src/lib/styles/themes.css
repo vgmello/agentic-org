@@ -90,70 +90,70 @@ html[data-ui-theme='ocean'] {
 	--exec-avatar-ring: #0a1424;
 }
 
-/* ── Theme 2: Architectural Daylight Light ────────────────────────────── */
+/* ── Theme 2: Frosted Ocean Light ─────────────────────────────────────── */
 html[data-ui-theme='light'] {
 	color-scheme: light;
-	--background: #f5f6f8;
-	--foreground: #111827;
-	--card: #ffffff;
-	--card-foreground: #111827;
-	--popover: #ffffff;
-	--popover-foreground: #111827;
+	--background: #e9f1fa;
+	--foreground: #0b172a;
+	--card: #f8fbff;
+	--card-foreground: #0b172a;
+	--popover: #f8fbff;
+	--popover-foreground: #0b172a;
 	--primary: #0284c7;
 	--primary-foreground: #ffffff;
-	--secondary: #f3f4f6;
-	--secondary-foreground: #111827;
-	--muted: #f3f4f6;
-	--muted-foreground: #4b5563;
-	--accent: #eef2f6;
-	--accent-foreground: #111827;
+	--secondary: #eaf2fa;
+	--secondary-foreground: #0b172a;
+	--muted: #eaf2fa;
+	--muted-foreground: #425a75;
+	--accent: rgba(2, 132, 199, 0.12);
+	--accent-foreground: #0b172a;
 	--destructive: #e11d48;
-	--border: #e5e7eb;
-	--input: #d1d5db;
+	--border: rgba(14, 65, 118, 0.12);
+	--input: rgba(14, 65, 118, 0.16);
 	--ring: #0284c7;
-	--exec-bg: #f5f6f8;
-	--exec-sidebar-bg: #ffffff;
-	--exec-surface: #ffffff;
-	--exec-surface-hi: #ffffff;
-	--exec-well: #f9fafb;
-	--exec-border: #e5e7eb;
-	--exec-border-hi: #cbd5e1;
-	--exec-blur: none;
+	--exec-bg: #e9f1fa;
+	--exec-sidebar-bg: rgba(244, 249, 255, 0.58);
+	--exec-surface: rgba(255, 255, 255, 0.44);
+	--exec-surface-hi: rgba(255, 255, 255, 0.6);
+	--exec-well: rgba(240, 247, 254, 0.46);
+	--exec-border: rgba(14, 65, 118, 0.12);
+	--exec-border-hi: rgba(14, 116, 180, 0.24);
+	--exec-blur: blur(0.9px) saturate(155%);
 	--exec-shadow:
-		inset 0 0 0 1px #e5e7eb, 0 1px 2px rgba(15, 23, 42, 0.04),
-		0 4px 12px -4px rgba(15, 23, 42, 0.05);
+		inset 0 1px 0 rgba(255, 255, 255, 0.92), inset 0 0 0 1px var(--exec-border),
+		0 14px 36px -14px rgba(15, 45, 82, 0.16);
 	--exec-shadow-hi:
-		inset 0 0 0 1px #cbd5e1, 0 2px 4px rgba(15, 23, 42, 0.05),
-		0 8px 20px -8px rgba(15, 23, 42, 0.09);
-	--exec-ink: #111827;
-	--exec-body: #374151;
-	--exec-muted: #4b5563;
-	--exec-dim: #6b7280;
+		inset 0 1px 0 rgba(255, 255, 255, 0.98), inset 0 0 0 1px var(--exec-border-hi),
+		0 18px 42px -14px rgba(15, 45, 82, 0.22);
+	--exec-ink: #0b172a;
+	--exec-body: #1e324b;
+	--exec-muted: #425a75;
+	--exec-dim: #5b738f;
 	--exec-accent: #0284c7;
 	--exec-accent-hi: #0369a1;
 	--exec-accent-ink: #0369a1;
-	--exec-accent-soft: #eef2f6;
-	--exec-accent-ring: #d1d5db;
+	--exec-accent-soft: rgba(2, 132, 199, 0.12);
+	--exec-accent-ring: rgba(2, 132, 199, 0.28);
 	--exec-ok: #047857;
-	--exec-ok-bg: #ecfdf5;
-	--exec-ok-ring: #a7f3d0;
+	--exec-ok-bg: rgba(236, 253, 245, 0.8);
+	--exec-ok-ring: rgba(16, 185, 129, 0.32);
 	--exec-warn: #92400e;
-	--exec-warn-bg: #fffbeb;
-	--exec-warn-ring: #fde68a;
+	--exec-warn-bg: rgba(255, 251, 235, 0.82);
+	--exec-warn-ring: rgba(245, 158, 11, 0.34);
 	--exec-bad: #be123c;
-	--exec-bad-bg: #fff1f2;
-	--exec-bad-ring: #fecdd3;
+	--exec-bad-bg: rgba(255, 241, 242, 0.8);
+	--exec-bad-ring: rgba(244, 63, 94, 0.3);
 	--exec-sky: #0369a1;
-	--exec-sky-bg: #f0f9ff;
-	--exec-sky-ring: #bae6fd;
+	--exec-sky-bg: rgba(240, 249, 255, 0.8);
+	--exec-sky-ring: rgba(14, 165, 233, 0.3);
 	--exec-purple: #6d28d9;
-	--exec-bar-track: #e5e7eb;
+	--exec-bar-track: rgba(14, 65, 118, 0.12);
 	--exec-cta-bg: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
 	--exec-cta-fill: linear-gradient(135deg, #0369a1 0%, #0284c7 55%, #0ea5e9 100%);
-	--exec-cta-glass-bg: #ffffff;
-	--exec-cta-glass-ink: #111827;
-	--exec-avatar-bg: #eef2f6;
-	--exec-avatar-ring: #ffffff;
+	--exec-cta-glass-bg: rgba(2, 132, 199, 0.1);
+	--exec-cta-glass-ink: #0369a1;
+	--exec-avatar-bg: rgba(226, 238, 250, 0.86);
+	--exec-avatar-ring: rgba(255, 255, 255, 0.88);
 }
 
 /* ── Theme 3: Classic (v0 Slate + Indigo, flat professional, zero shadows) */
@@ -221,7 +221,22 @@ html[data-ui-theme='light'] .exec-canvas::before {
 	inset: 0;
 	z-index: 0;
 	pointer-events: none;
-	background: radial-gradient(rgba(17, 24, 39, 0.045) 1px, transparent 1px) 0 0 / 24px 24px, #f5f6f8;
+	background:
+		radial-gradient(rgba(15, 45, 82, 0.16) 1px, transparent 1px) 0 0 / 28px 28px,
+		radial-gradient(ellipse 68% 58% at 84% 14%, rgba(56, 189, 248, 0.3) 0%, rgba(14, 165, 233, 0.12) 42%, transparent 72%),
+		radial-gradient(ellipse 64% 56% at 16% 18%, rgba(59, 130, 246, 0.22) 0%, rgba(37, 99, 235, 0.08) 44%, transparent 74%),
+		radial-gradient(ellipse 58% 52% at 54% 88%, rgba(14, 165, 233, 0.22) 0%, rgba(6, 182, 212, 0.08) 46%, transparent 74%),
+		linear-gradient(160deg, #e8f1fa 0%, #f1f6fc 50%, #e6eff9 100%);
+}
+
+html[data-ui-theme='light'] .exec-canvas::after {
+	content: '';
+	position: fixed;
+	inset: 0 0 auto 0;
+	height: 220px;
+	z-index: 0;
+	pointer-events: none;
+	background: linear-gradient(180deg, rgba(56, 189, 248, 0.12) 0%, transparent 100%);
 }
 
 html[data-ui-theme='classic'] .exec-canvas::before {
@@ -326,7 +341,7 @@ html[data-ui-theme='classic'] .exec-cta .exec-cta-sheen {
  * /offices, /org-chart, /agents, /chat, /processes) when Light theme is active.
  */
 html[data-ui-theme='light'] {
-	background: #f4f7fb;
+	background: #e9f1fa;
 }
 
 html[data-ui-theme='light'] .exec-legacy-compat .text-white {
