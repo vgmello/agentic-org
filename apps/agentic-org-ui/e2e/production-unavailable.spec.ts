@@ -143,6 +143,33 @@ for (const [path, area] of [['/agents', 'Teams']] as const) {
 	});
 }
 
+test('Step 6 routes stay unavailable in the static production release with zero API requests and no Retry button', async ({
+	page
+}) => {
+	const apiRequests: string[] = [];
+	page.on('request', (request) => {
+		if (new URL(request.url()).pathname.startsWith('/api/')) apiRequests.push(request.url());
+	});
+	for (const [path, area] of [
+		['/projects/a-project/docs', 'Projects'],
+		['/projects/a-project/docs/new', 'Projects'],
+		['/projects/a-project/docs/doc-1', 'Projects'],
+		['/projects/a-project/features', 'Projects'],
+		['/projects/a-project/features/feat-1', 'Projects'],
+		['/projects/a-project/releases', 'Projects'],
+		['/projects/a-project/releases/rel-1', 'Projects'],
+		['/search?q=Why+is+SQLite+used', undefined]
+	] as const) {
+		await visit(page, path);
+		await expect(page.getByTestId('area-unavailable')).toBeVisible();
+		await expect(
+			page.getByRole('heading', { level: 1, name: heading(area), exact: true })
+		).toBeVisible();
+		await expect(page.getByRole('button')).toHaveCount(0);
+	}
+	expect(apiRequests).toEqual([]);
+});
+
 test('BUG-53: the unavailable header home link has the design-system keyboard focus ring', async ({
 	page
 }) => {

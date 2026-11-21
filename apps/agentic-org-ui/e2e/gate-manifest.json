@@ -29,6 +29,10 @@
 			"why": "rewritten for the new Projects screens; not yet run on WebKit (BUG-169b)"
 		},
 		{
+			"spec": "docs-features-releases.spec.ts",
+			"why": "new Step 6 spec; not yet run on WebKit (BUG-169b)"
+		},
+		{
 			"spec": "costs.spec.ts",
 			"why": "new spec; not yet run on WebKit (BUG-169b)"
 		},
@@ -467,6 +471,7 @@
 		"projects-work": {
 			"specs": [
 				"projects.spec.ts",
+				"docs-features-releases.spec.ts",
 				"work.spec.ts",
 				"tasks.spec.ts",
 				"dialog-block-title.spec.ts",

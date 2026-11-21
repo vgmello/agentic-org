@@ -54,9 +54,9 @@ export interface ServedTabs {
 export const SERVED: ServedTabs = {
 	work: true,
 	processTabs: false,
-	features: false,
-	releases: false,
-	docs: false,
+	features: true,
+	releases: true,
+	docs: true,
 	settings: true
 };
 

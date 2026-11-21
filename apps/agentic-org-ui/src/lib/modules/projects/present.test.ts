@@ -86,6 +86,9 @@ describe('projectTabs (PKG-15)', () => {
 		expect(labels(tabs)).toEqual([
 			'Overview',
 			'Work',
+			'Features',
+			'Releases',
+			'Docs',
 			'Team',
 			'Activity',
 			'Conversations',

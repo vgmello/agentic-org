@@ -2,6 +2,7 @@
 // from here, never from its folders.
 export { projectsApi, type ProjectsApi } from './api';
 export { PROJECTS_URL, newProjectUrl, projectHref } from './present';
+export { projectFrame, type ProjectFrameContext } from './features/frame/context';
 export { default as ProjectsList } from './features/list/ProjectsList.svelte';
 export { default as ProjectFrame } from './features/frame/ProjectFrame.svelte';
 export { default as ProjectOverview } from './features/overview/ProjectOverview.svelte';

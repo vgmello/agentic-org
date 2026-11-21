@@ -164,8 +164,20 @@
 				<div class="flex items-baseline justify-between gap-3 py-2">
 					<dt class="text-xs/5 text-fg-muted">Feature</dt>
 					<dd class="text-right text-fg-secondary">
-						<span class="font-mono text-xs/5 text-fg-muted">{task.feature.ref}</span>
-						{task.feature.title}
+						{#if task.project}
+							<a
+								href={resolve(
+									`/projects/${encodeURIComponent(task.project.id)}/features/${encodeURIComponent(task.feature.id)}` as '/'
+								)}
+								class="text-sm/6 font-medium text-link hover:underline"
+							>
+								<span class="font-mono text-xs/5">{task.feature.ref}</span>
+								{task.feature.title}
+							</a>
+						{:else}
+							<span class="font-mono text-xs/5 text-fg-muted">{task.feature.ref}</span>
+							{task.feature.title}
+						{/if}
 					</dd>
 				</div>
 			{/if}
