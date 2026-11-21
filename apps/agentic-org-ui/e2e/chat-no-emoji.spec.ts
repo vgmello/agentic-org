@@ -170,7 +170,7 @@ for (const width of [320, 640, 960, 1280])
 					'micro:megaphone'
 				);
 				await page.evaluate(async () => {
-					const path = '/src/lib/modules/messaging/legacy-api.ts';
+					const path = '/e2e/fakes/modules/messaging.ts';
 					const { chatApi } = await import(path);
 					const command = chatApi.command.bind(chatApi);
 					window.noEmojiReactions = [];

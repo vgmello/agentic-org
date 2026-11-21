@@ -568,7 +568,7 @@
 		},
 		{
 			"from": "src/lib/platform/shell/NewMenu.svelte",
-			"to": "src/lib/{components/{NewRequestDialog,AddPersonSheet}.svelte,modules/employees/index.ts,modules/messaging/{index,model,legacy-api}.ts}",
+			"to": "src/lib/{components/{NewRequestDialog,AddPersonSheet}.svelte,modules/employees/index.ts,modules/messaging/{index,model,api}.ts}",
 			"why": "The top-bar New menu opens the existing creation flows (request, message, hire, add a person) without owning them; their categories keep their specs, and the shell journeys open the menu."
 		},
 		{
@@ -642,6 +642,16 @@
 			"why": "The processes mock stands in for the module's api.ts by name under dev:mock (README-screens \"Mock data\") and so implements its interface and types; e2e/fakes is shared, so a change to it runs the full suite anyway."
 		},
 		{
+			"from": "e2e/fakes/modules/copilot.ts",
+			"to": "src/lib/modules/copilot/{api,mock}.ts",
+			"why": "The dev-mock fake stands in for the copilot module's api.ts by name under dev:mock and composes its scripted mock; the fake is never part of a production build."
+		},
+		{
+			"from": "e2e/fakes/modules/messaging.ts",
+			"to": "src/lib/modules/messaging/{api,mock}.ts",
+			"why": "The dev-mock fake stands in for the messaging module's api.ts by name under dev:mock and composes its in-memory mock; the fake is never part of a production build."
+		},
+		{
 			"from": "e2e/processes{,-bugs}.spec.ts",
 			"to": "src/routes/(shell)/settings/+page.svelte",
 			"why": "The route scanner reads only the first path segment, so /settings/processes/** (owned by processes) is seen as the General settings page; the processes specs never open General itself."
@@ -690,7 +700,7 @@
 			"src/lib/nav.ts",
 			"src/lib/format.ts",
 			"src/lib/proto*.ts",
-			"src/lib/org/{actions,api,commands,http-api,live,live-state.svelte,load,model,reducer,sample,session}.ts",
+			"src/lib/org/{actions,api,commands,http-api,live,live-state.svelte,load,mock,model,reducer,sample,session}.ts",
 			"src/lib/platform/{feature-factory,unavailable-api}.ts",
 			"src/lib/platform/http/**",
 			"src/lib/platform/auth/**",

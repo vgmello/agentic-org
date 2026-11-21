@@ -265,7 +265,7 @@ test('CHAT-11 BUG-58: stopped-office member mute controls are disabled and guard
 	await open(page, '?chat=offline');
 	await go(page, 'general');
 	await page.evaluate(async () => {
-		const path = '/src/lib/modules/messaging/legacy-api.ts';
+		const path = '/e2e/fakes/modules/messaging.ts';
 		const { chatApi } = await import(path);
 		const command = chatApi.command.bind(chatApi);
 		(window as unknown as { chatMutations: string[] }).chatMutations = [];
@@ -346,7 +346,7 @@ for (const kind of ['channel', 'dm'] as const) {
 		await expect(page).toHaveURL(/c=c-release-v1/);
 		await page.evaluate(
 			async (method) => {
-				const path = '/src/lib/modules/messaging/legacy-api.ts';
+				const path = '/e2e/fakes/modules/messaging.ts';
 				const { chatApi } = await import(path);
 				const command = chatApi.command.bind(chatApi);
 				let started!: () => void;
