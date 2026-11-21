@@ -10,8 +10,8 @@ status: accepted
 # ADR-0012 · Bounded office channel ownership and closure (CH-LIFE-1)
 
 Status: accepted. Implementation pending. Completes the protected sessions of
-[ADR-0006](0006-selected-task-acceptance.md) and the public recovery read of
-[ADR-0011](0011-protected-recovery-delivery.md) without changing their authority,
+[ADR-0006](decision-6%20-%20ADR-0006-Task-changes-are-accepted-through-one-recoverable-office-journal.md) and the public recovery read of
+[ADR-0011](decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md) without changing their authority,
 custody or revocation rules.
 
 ## Requirements

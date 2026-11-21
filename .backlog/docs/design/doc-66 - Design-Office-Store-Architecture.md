@@ -15,10 +15,10 @@ tags:
 # Office store
 
 How an office stores, acknowledges, reads and rebuilds the organization's data. It
-applies the [data contract](organization-data/README.md) and the decision records it
-names; [ADR-0021](../adr/0021-office-store-architecture.md) records the choices made
+applies the [data contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md) and the decision records it
+names; [ADR-0021](../../decisions/decision-21%20-%20ADR-0021-The-office-store-one-journal-of-file-changes-a-projection-rebuilt-from-files.md) records the choices made
 here. The increments that build it are B1a to B1c in the
-[implementation plan](../implementation-plan.md#b1a--the-store-core-on-the-organization-family).
+[implementation plan](../doc-5%20-%20v1-Implementation-Plan.md#b1a--the-store-core-on-the-organization-family).
 
 ## 1. The shape in one page
 
@@ -32,7 +32,7 @@ An office stores three kinds of thing.
 
 **The commit point is the journal entry.** An operation is accepted when its entry is
 appended to the journal segment. What "acknowledged" then means depends on the class
-the operation declares ([ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md)):
+the operation declares ([ADR-0014](../../decisions/decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md)):
 
 - **Committed.** The entry is appended (it survives the office process dying) and the
   projection that contains it is committed (it is readable). It can be lost only if the
@@ -358,7 +358,7 @@ writer takes the mark, runs `decide`, applies the result to the projection as st
 a batch does, then undoes to the mark and answers. Nothing is framed, appended,
 recorded as a receipt or published, and every number and position the decision took is
 returned by the undo. It skips the receipt lookup of step 1 and takes no operation ID.
-It is the `--dry-run` of the [agent command line](agent-os-command-line.md) (section
+It is the `--dry-run` of the [agent command line](doc-28%20-%20Design-agent-os-Command-Line.md) (section
 2.6), and the store gains its entry point with the first writing command (B2).
 
 **How a family declares its classes:** one enum of its operations with one exhaustive
@@ -501,7 +501,7 @@ durable change before it uses numbers past it) and jump to the mark after an unc
 stop, which the store reports at open.
 
 **The entry.** Raw bytes, hashed as stored (`raw-bytes/1` in the
-[hash codec registry](organization-data/08-record-contracts.md#hash-codec-registry)):
+[hash codec registry](../organization-data/doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md#hash-codec-registry)):
 
 ```text
 entry   = length:u32 ‖ header ‖ payloads ‖ sha256(header ‖ payloads)
@@ -760,7 +760,7 @@ participant file for that recipient commits. Nothing polls the database.
 
 ADR-0014 sets the budget end to end in `agent-os` session mode on the reference Mac: a
 read or a send at a median of 1 ms and a 95th percentile of 2 ms. The
-[non-negotiables](../architecture-non-negotiables.md) ask single-digit milliseconds for
+[non-negotiables](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md) ask single-digit milliseconds for
 creating and updating a task. Process start and the socket take most of the 1 ms; the
 store's share must stay in tens of microseconds.
 
@@ -822,7 +822,7 @@ twice its recorded value.
 The engine only holds the projection. The journal and the files, which carry every
 guarantee, do not depend on it, so a second engine changes neither.
 
-| Criterion ([ADR-0018](../adr/0018-storage-engine-independence.md)) | How it is met |
+| Criterion ([ADR-0018](../../decisions/decision-18%20-%20ADR-0018-The-storage-engine-is-replaceable-PostgreSQL-must-be-possible.md)) | How it is met |
 | --- | --- |
 | ENG-1 SQL only in adapters | The office's SQL and `rusqlite` types live only in `org-office/src/store/sqlite/`; the host's in `org-host/src/hostdb/`. Checked as below |
 | ENG-2 one seam, second implementation | `open_store` is the one place an engine is chosen. `MemoryEngine` (in `org-store`'s testkit) is selectable there under the `testkit` feature, and the office's own tests compose the office on it |

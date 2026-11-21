@@ -28,7 +28,7 @@ overridable: false
 > Active and current. Aligned with `architecture-non-negotiables` and `doc-1` (Vision). Legacy relative links will be updated in `TASK-32`.
 
 How engineers and their agents make decisions while building Agentic Org. The rules
-are those of [architecture non-negotiables](../architecture-non-negotiables.md),
+are those of [architecture non-negotiables](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md),
 "Who decides what"; this page restates them as a procedure. If the two ever differ,
 the non-negotiables page wins.
 
@@ -39,7 +39,7 @@ in two ways: internal structure, algorithms, names, file formats inside the cont
 intent, the order of work, what to delete, how to test.
 
 When two documents disagree, follow the
-[documentation authority map](../design/documentation-authority.md). If that does not
+[documentation authority map](../design/doc-62%20-%20Design-Documentation-Authority-Map.md). If that does not
 settle it, take the reading that fits the non-negotiables and their aims best.
 
 When unsure, you may ask a fresh subagent for an independent view: give it the
@@ -50,8 +50,8 @@ question and the facts, not your conclusion. You still own the decision.
 - Change the document that owns the topic so that it states the decision. Replace the
   old text; do not leave it beside the new.
 - For a decision about architecture, add a short decision record in
-  [`docs/adr/`](../adr/): the decision, why, and what you rejected.
-- Update the [feature checklist](../FEATURES.md) row.
+  [`.backlog/decisions/`](../../decisions): the decision, why, and what you rejected.
+- Update the [feature checklist](../doc-3%20-%20Feature-Checklist.md) row.
 
 ## 3. A non-negotiable does not vary
 

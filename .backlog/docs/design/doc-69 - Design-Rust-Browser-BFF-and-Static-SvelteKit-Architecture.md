@@ -15,7 +15,7 @@ tags:
 
 # Rust browser BFF and static SvelteKit architecture
 
-`agentic-org-web` is the browser BFF. `agentic-org-office` is the office worker. `agentic-org serve` runs the host, which starts both. The privilege boundaries between the three are those of the [host boundary design](office-host-boundary.md).
+`agentic-org-web` is the browser BFF. `agentic-org-office` is the office worker. `agentic-org serve` runs the host, which starts both. The privilege boundaries between the three are those of the [host boundary design](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md).
 
 The architecture uses a static SvelteKit browser application with a Rust browser API/BFF. Reusable Rust application and domain modules support the browser BFF and future integration API adapters. Browser APIs come first; integration APIs are a later extension.
 
@@ -38,7 +38,7 @@ A module does not need an HTTP endpoint now to be reusable later. Export only th
 
 Use `@sveltejs/adapter-static` with a navigation fallback (`index.html`), `ssr = false`, and `prerender = false` for the authenticated browser SPA. The build produces HTML, JavaScript, CSS, and other assets; agentic-org-web serves those files and the browser APIs from the same origin. API, asset, and event failures must retain their own responses instead of receiving the SPA fallback.
 
-The static build does not freeze application data. Browser JavaScript fetches current data from the Rust BFF and consumes the live-event stream of the [web API](web-api-v1.md). SvelteKit provides browser routing and route loading without a SvelteKit server process. Request-time server routes, server load functions, and SvelteKit server actions are not part of this deployment profile.
+The static build does not freeze application data. Browser JavaScript fetches current data from the Rust BFF and consumes the live-event stream of the [web API](doc-71%20-%20Design-Web-HTTP-API-v1.md). SvelteKit provides browser routing and route loading without a SvelteKit server process. Request-time server routes, server load functions, and SvelteKit server actions are not part of this deployment profile.
 
 The topology works for both local and remote HQ hosting. A local installation serves the browser from the local web. A remote installation runs the web process and backend on the remote host, with only the browser required on the user's computer. No SvelteKit runtime SSR requirement is introduced.
 
@@ -54,9 +54,9 @@ Keep preloaded operations safe to run speculatively: reads must not perform comm
 
 Browser-oriented HTTP contracts are adapters over reusable capabilities of the domain modules; integration adapters are separate callers of the same capabilities.
 
-- [Product structure and module ownership](project-structure.md)
-- [Standalone deployment and HTTP contract](standalone-server.md#5-http-and-browser-contract)
-- [Web API contract](web-api-v1.md)
+- [Product structure and module ownership](doc-68%20-%20Design-v1-Project-Structure.md)
+- [Standalone deployment and HTTP contract](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#5-http-and-browser-contract)
+- [Web API contract](doc-71%20-%20Design-Web-HTTP-API-v1.md)
 - [SvelteKit single-page application deployment](https://svelte.dev/docs/kit/single-page-apps)
 - [SvelteKit preloading](https://svelte.dev/docs/kit/link-options#data-sveltekit-preload-data)
 - [SvelteKit browser and server load functions](https://svelte.dev/docs/kit/load#Universal-vs-server)

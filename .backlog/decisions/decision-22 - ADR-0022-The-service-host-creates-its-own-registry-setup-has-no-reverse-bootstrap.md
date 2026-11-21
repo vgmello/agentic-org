@@ -15,7 +15,7 @@ Status: **accepted** (A2 decision D1). Implemented on macOS: the registry is cre
 with no account by `serve --name` at first start, the reverse-bootstrap wire is
 removed, and setup asks for its link with `admin.link.initial`. Uninstall clearing
 the `host-registry.created` marker is FC-022. The
-[standalone design](../design/standalone-server.md#setup-executable-and-release-store)
+[standalone design](../docs/design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#setup-executable-and-release-store)
 follows it.
 
 ## Context

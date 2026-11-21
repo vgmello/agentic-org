@@ -11,7 +11,7 @@ status: implemented
 
 Status: accepted; **implemented** in `crates/org-platform-host/src/confinement/` and
 composed by `apps/agentic-org-web`. This is the macOS implementation of the
-confinement contract of [ADR-0017](0017-linux-and-container-hosting.md); the Linux
+confinement contract of [ADR-0017](decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md); the Linux
 implementation (Landlock and seccomp) is a separate v1 adapter in the same module.
 "Web" means the `agentic-org-web` process.
 
@@ -20,14 +20,14 @@ implementation (Landlock and seccomp) is a separate v1 adapter in the same modul
 The host verifies the suspended web image. The web process then confines itself,
 and only then connects to the launch rendezvous and reports ready for secrets (the
 Linux adapter connects first and confines before reading or reporting; see the
-[Linux host design](../design/linux-host.md#33-confinement-of-the-web-process)), so before any secret
+[Linux host design](../docs/design/doc-64%20-%20Design-Linux-and-Container-Hosting.md#33-confinement-of-the-web-process)), so before any secret
 handoff and before any untrusted browser input. A platform without a working
 adapter refuses to start the web process; it never runs unconfined.
 
 ## Mechanism
 
 1. The sandbox primitives live in `org_platform::confinement`, the macOS adapter of
-   the confinement contract of [ADR-0017](0017-linux-and-container-hosting.md)
+   the confinement contract of [ADR-0017](decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md)
    (moved there from `org-socket` in increment X1c). That crate depends on the C
    library only, plus the system's `libsandbox`, and adds no external dependency. The
    web process keeps `forbid(unsafe_code)`; it composes this adapter and turns

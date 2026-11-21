@@ -13,13 +13,13 @@ status: accepted
 
 Status: **decided by the owner 2026-11-18** (decisions 1, 5 and 8). Implementation
 pending. Decisions 2 to 4, 6, 7 and 9 to 12 are its design. It extends
-[ADR-0023](0023-an-agents-ask-starts-a-turn.md),
-[ADR-0028](0028-an-agent-is-always-available.md),
-[ADR-0020](0020-required-asks-suspend-and-resume.md) and
-[ADR-0025](0025-agents-start-sub-agents.md). The
-[session design](../design/agent-sessions.md), the
-[supervision design](../design/employee-supervision.md) and
-[agent execution](../design/organization-data/11-model-profiles-and-agent-execution.md)
+[ADR-0023](decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md),
+[ADR-0028](decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md),
+[ADR-0020](decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md) and
+[ADR-0025](decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md). The
+[session design](../docs/design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md), the
+[supervision design](../docs/design/doc-33%20-%20Design-Employee-Supervision.md) and
+[agent execution](../docs/organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md)
 follow it.
 
 The owner's words: "Agents should be almost live all the time if they have work to do.
@@ -74,7 +74,7 @@ told:
    offboarded, its pending start is discarded and each sender is told.
 4. **Ending a turn means "nothing more I can do now".** The office does not start an
    agent again only because it has open tasks. It starts it when something new
-   waits for it. The [agent instructions](../design/agent-instructions.md) tell an
+   waits for it. The [agent instructions](../docs/design/doc-27%20-%20Design-Agent-Instructions-Assembly.md) tell an
    agent not to end its turn while it has work it can do.
 5. **There is no organization-wide limit on starts** (owner). The hourly limit of
    ADR-0023 decision 5 stays, for one agent, as the guard against two agents starting

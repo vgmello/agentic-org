@@ -69,7 +69,7 @@ fresh review, merged with `--no-ff`. At most two are built at once, on disjoint 
    out of `src`).
 8. Steps 4 to 8 in table order, two at a time where modules are disjoint.
 9. Step 9.
-- Each builder followed [the builder brief](v1-ui-builder-brief.md): file ownership, the
+- Each builder followed [the builder brief](doc-18%20-%20v1-UI-Builder-Brief-Historical.md): file ownership, the
   mock rules, the checks and the report format. The assignment for each step is its table
   below plus the specs named in the inventory of `docs/specs/`.
 - Known loose ends from step 1: the navigation's Inbox count is loaded once and does not
@@ -82,7 +82,7 @@ fresh review, merged with `--no-ff`. At most two are built at once, on disjoint 
 
 - **Code layout stays as it is.** Routes are thin entry points in `src/routes`. Each domain
   lives in `src/lib/modules/<module>` with its types, state and `features/<feature>/`
-  folders ([project structure](../design/project-structure.md) section 4). Shared visual
+  folders ([project structure](../design/doc-68%20-%20Design-v1-Project-Structure.md) section 4). Shared visual
   primitives live in `src/lib/components/ui`.
 - **Mock data is JSON, and stays out of production builds.** Each module has an `api.ts`
   that declares the calls a screen needs; its production export refuses every call, as

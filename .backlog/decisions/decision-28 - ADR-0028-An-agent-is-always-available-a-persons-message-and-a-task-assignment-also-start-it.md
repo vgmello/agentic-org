@@ -15,9 +15,9 @@ Status: **decided by the owner 2026-11-18**. "Anything can start an agent. If th
 is mentioned, if the agent has a task assigned to it: agents are like a person. The
 fact that they go idle is an internal system thing. They should be always active from
 whoever is calling them." Implementation pending. It extends
-[ADR-0023](0023-an-agents-ask-starts-a-turn.md), which lets one agent start another,
+[ADR-0023](decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md), which lets one agent start another,
 and changes nothing else in it.
-[ADR-0030](0030-an-agent-works-while-it-has-work.md) adds that a start which cannot
+[ADR-0030](decision-30%20-%20ADR-0030-An-agent-works-while-it-has-work-continues-after-a-restart-and-a-stalled-turn-is-stopped.md) adds that a start which cannot
 happen at once is kept and tried again, that an interrupted turn continues after a
 restart, and that a stalled turn is stopped.
 
@@ -43,7 +43,7 @@ agent, should see that and act on it.
    instruction is the assignment.
 3. **What is not addressed to the agent still starts nothing:** an announcement,
    `@here`, an ordinary post or an undirected question in a channel
-   ([ADR-0024](0024-a-channel-question-is-watched-for-its-answer.md) says what reaches an
+   ([ADR-0024](decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md) says what reaches an
    agent's inbox at all).
 4. **Everything else is ADR-0023's.** The recipient has no open turn and is not paused,
    suspended or offboarded; a busy recipient gets it at its next turn boundary and is
@@ -60,13 +60,13 @@ agent, should see that and act on it.
    agent, available, working, paused or unable to run. An agent uses it as a person
    would: if the recipient is there, ask and wait; if not, and the answer is not
    blocking, send and continue; if it is blocking, mark the ask required
-   ([ADR-0020](0020-required-asks-suspend-and-resume.md)). This is part of the built-in
-   [agent instructions](../design/agent-instructions.md), because how agents interact
+   ([ADR-0020](decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md)). This is part of the built-in
+   [agent instructions](../docs/design/doc-27%20-%20Design-Agent-Instructions-Assembly.md), because how agents interact
    is the organization's to define, and a development process may adjust it for its
    project.
 7. **What started a turn is recorded** on the turn: the kind (run, message, mention,
    ask, assignment, answer, recovery), who did it and the message or task it came from
-   ([document 11](../design/organization-data/11-model-profiles-and-agent-execution.md)).
+   ([document 11](../docs/organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md)).
 
 ## Rejected
 
@@ -89,9 +89,9 @@ agent, should see that and act on it.
 ## Consequences
 
 - With ADR-0023, a development process runs without a person at each handoff
-  ([ADR-0026](0026-development-processes-are-content.md)).
+  ([ADR-0026](decision-26%20-%20ADR-0026-A-development-process-is-content-the-product-runs-no-methodology.md)).
 - Spend follows from agents' own decisions and from every message a person sends to
-  an agent. Budgets ([document 17](../design/organization-data/17-budgets-and-controls.md))
+  an agent. Budgets ([document 17](../docs/organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md))
   and the hourly limit are the bounds.
 - Presence means something for agents too, and it is deliberately not the state of a
   process.

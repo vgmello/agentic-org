@@ -17,10 +17,10 @@ tags:
 
 How the host (`crates/org-host`, run by `agentic-org serve`) creates, starts,
 supervises and stops each office worker (`agentic-org-office`), and what crosses the
-boundary between them. The [standalone design](standalone-server.md) places both in
-the instance; the [data contract](organization-data/README.md) owns what the office
+boundary between them. The [standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) places both in
+the instance; the [data contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md) owns what the office
 stores. Platform-specific parts are the adapters of
-[ADR-0017](../adr/0017-linux-and-container-hosting.md): process admission, the
+[ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md): process admission, the
 credential provider, confinement and the service lifecycle each have a macOS and a
 Linux implementation.
 
@@ -29,14 +29,14 @@ Linux implementation.
 | The host | The office worker |
 | --- | --- |
 | The instance and host locks, the office catalog, accounts and sessions | Its office lock and every domain rule |
-| One office secrets key per office, in its credential provider ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)) | Its private keys, wrapped with that key |
-| Starting, admitting, supervising and stopping workers and the web process | Its data under the [storage tree](organization-data/README.md#shared-storage-contract), its local socket and its agents |
+| One office secrets key per office, in its credential provider ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)) | Its private keys, wrapped with that key |
+| Starting, admitting, supervising and stopping workers and the web process | Its data under the [storage tree](../organization-data/doc-72%20-%20Organization-Data-—-README.md#shared-storage-contract), its local socket and its agents |
 | Grants that carry a person's principal to an office | Verifying those grants and authorizing every call |
 | Typed instance administration (create organization, add office, restart) | Answering the host's events over the launch connection |
 
 A person's request reaches the office with that person's principal and a grant from the
-host, which the office verifies ([ADR-0006](../adr/0006-selected-task-acceptance.md),
-[ADR-0012](../adr/0012-office-channel-lifecycle.md)). There is no application token.
+host, which the office verifies ([ADR-0006](../../decisions/decision-6%20-%20ADR-0006-Task-changes-are-accepted-through-one-recoverable-office-journal.md),
+[ADR-0012](../../decisions/decision-12%20-%20ADR-0012-Bounded-office-channel-ownership-and-closure-CH-LIFE-1.md)). There is no application token.
 Creating an organization needs the signed-in server administrator; setup creates
 none. An organization owner or an office certificate cannot create another
 organization. A browser request never selects a raw local method or a storage
@@ -134,7 +134,7 @@ uses the same steps with its own identifier, image and listener handoff (see "Th
    process-admission adapter. On macOS the child is spawned **suspended**. On Linux
    it is started from a sealed, execute-only copy of the pinned image whose digest the
    host has already checked, so there is nothing to suspend
-   ([Linux host design](linux-host.md#31-process-admission)).
+   ([Linux host design](doc-64%20-%20Design-Linux-and-Container-Hosting.md#31-process-admission)).
 2. The adapter checks that the child is the intended program. On macOS: the child's
    audit token, its code object, the identifier `com.vgmello.agentic-org.office` with
    the compiled Developer ID team, the hardened runtime and none of the refused
@@ -170,11 +170,11 @@ a JSON header of at most 1024 bytes and zero or one descriptor. Web channels arr
 accepts at most eight channels, at most seven of them from the web process, so one
 stays free for a local caller. Session revocation arrives as a `Revoked` record. Package
 export for recovery uses a separate `recovery_public_read` record with one connected
-descriptor and a one-shot 16 KiB public exchange ([ADR-0011](../adr/0011-protected-recovery-delivery.md)).
+descriptor and a one-shot 16 KiB public exchange ([ADR-0011](../../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md)).
 
 The host also allocates the office's temp handle and passes it over the rendezvous, and
 tells the worker when the instance's layout changes so that it refreshes agents'
-sandbox policies ([agent sessions](agent-sessions.md#managed-state)).
+sandbox policies ([agent sessions](doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md#managed-state)).
 
 ### HQ creation context
 
@@ -205,7 +205,7 @@ organization Git content and is never replicated or exported; the protected jour
 holds it, wrapped, until the entry's segment is released. An interrupted preparation
 resumes only the identical intent and verifies retained material instead of generating
 it again; foreign data, missing committed material or changed input stay intact and
-need recovery ([ADR-0007](../adr/0007-hq-creation-escrow.md)). A file the office did
+need recovery ([ADR-0007](../../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md)). A file the office did
 not write where creation writes stops it and names the path.
 
 `created` is reported only after the entry's files are written and `office.json` last
@@ -248,10 +248,10 @@ confinement. The host spawns it with `POSIX_SPAWN_CLOEXEC_DEFAULT`, keeping only
 three pipes, and the child checks that exactly descriptors 0 to 2 remain; anything
 else makes it exit before readiness. It connects only to its exact
 rendezvous, and reads nothing from it and reports nothing until confinement holds:
-on macOS it confines itself first ([ADR-0008](../adr/0008-gateway-macos-sandbox.md));
+on macOS it confines itself first ([ADR-0008](../../decisions/decision-8%20-%20ADR-0008-macOS-confinement-of-the-web-process-GW-SBX-MAC-1.md));
 on Linux it connects first, because the seccomp filter then forbids any new
 connection, and applies Landlock and seccomp before reading
-([Linux host design](linux-host.md#33-confinement-of-the-web-process)). It accepts no descriptors in the
+([Linux host design](doc-64%20-%20Design-Linux-and-Container-Hosting.md#33-confinement-of-the-web-process)). It accepts no descriptors in the
 header; the next marker carries the transfer socket and then the listener, each checked
 for socket type and close-on-exec before `fds.received`. The same connection then
 carries host control; neither `host.sock` nor an office path is a fallback. `tls.fetch`
@@ -262,7 +262,7 @@ On macOS the web process is admitted as `com.vgmello.agentic-org.web`, with
 the compiled team, hardened runtime, no debug or injection entitlements and no Keychain
 access group. The host rechecks the reader's audit token, image and kernel sandbox
 before sending either descriptor. Browser sessions are stored at the host and survive a
-control EOF ([ADR-0013](../adr/0013-stored-browser-sessions.md)); native sessions end
+control EOF ([ADR-0013](../../decisions/decision-13%20-%20ADR-0013-Browser-sessions-are-stored-at-the-host-and-survive-restarts.md)); native sessions end
 with their connection.
 
 The instance configuration has an optional `browser` listener snapshot, written by
@@ -341,7 +341,7 @@ restarted.
   child's stdin and its rendezvous connection (the worker stops on the rendezvous
   closing), wait until 1.5 s after the stop was asked for (`Timings::shutdown_grace`, on
   every system), then SIGKILL what is left, and reap. The whole stop ends within 2.5 s
-  of the signal ([Linux host design](linux-host.md#34-service-lifecycle)).
+  of the signal ([Linux host design](doc-64%20-%20Design-Linux-and-Container-Hosting.md#34-service-lifecycle)).
 - **Create:** under the catalog mutex only, check the name and its uniqueness among the
   instance's organizations (ignoring case, counting creates in flight), make the IDs,
   reserve the name and release the mutex. Outside it: create the office secrets key and
@@ -442,7 +442,7 @@ it restarts the worker; it never races a live worker over its agents.
   `rusqlite`'s `bundled` feature, protected by owner-only file permissions; there is no
   SQLCipher dependency, database key or initialization fence (ADR-0016). The office's
   sources are files and its acceptance journal under `<instance-root>/<org-id>/durable/`
-  ([office store](office-store.md)); the projection is rebuilt from them when deleted.
+  ([office store](doc-66%20-%20Design-Office-Store-Architecture.md)); the projection is rebuilt from them when deleted.
   Only `crates/org-host` and `crates/org-office` depend on `rusqlite`, and in
   `org-office` only `src/store/sqlite/` names it
   (`crates/org-office/tests/engine_boundary.rs`).
@@ -467,8 +467,8 @@ it restarts the worker; it never races a live worker over its agents.
 | A3 | Seven web channels per office | Done: `MAX_WEB_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
 | A1 | No database key; the office secrets key instead | The office's projection is plain SQLite and opens without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). The host keeps the keys behind its `OfficeSecretsKeys` contract (§5), a view over the platform's credential store; a system without a credential store refuses every call. |
-| X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Since X2 to X4 (2026-11-18): workers start on macOS and GNU/Linux (`org_platform_host::admission`); host secrets use the Keychain on macOS and a checked, owner-only directory on Linux (`org_platform_host::credentials`); the web process confines itself with Seatbelt on macOS and a seccomp filter on Linux. Service registration on Linux and the container are X5, integrated into `v1` on 2026-11-19 (FC-164). |
-| B1b | The office on its store, under host writer custody | The office runs on the store of [office store](office-store.md) section 11: HQ creation is the first entry of its acceptance journal, with the organization's files, the escrow package and the wrapped CA key record; the projection under `runtime/<office-id>/` is rebuilt when deleted (real host: `web_process_tests::organizations::actual_office_runtime_deleted_while_stopped_is_rebuilt_and_the_organization_stays_listed`, ignored). The host keeps writer custody per office and starts no office without it. `org.snapshot`, `who`, `inbox.list`, `msg.bind`'s lookup and `team.create` answer from the store; every other call the old tables served answers `unsupported` (work B4; operation lookup and other organization commands B2; messaging, status lines and `subscribe` B6). |
+| X1a to X6 | macOS and Linux, including a container ([Linux host design](doc-64%20-%20Design-Linux-and-Container-Hosting.md)) | Since X2 to X4 (2026-11-18): workers start on macOS and GNU/Linux (`org_platform_host::admission`); host secrets use the Keychain on macOS and a checked, owner-only directory on Linux (`org_platform_host::credentials`); the web process confines itself with Seatbelt on macOS and a seccomp filter on Linux. Service registration on Linux and the container are X5, integrated into `v1` on 2026-11-19 (FC-164). |
+| B1b | The office on its store, under host writer custody | The office runs on the store of [office store](doc-66%20-%20Design-Office-Store-Architecture.md) section 11: HQ creation is the first entry of its acceptance journal, with the organization's files, the escrow package and the wrapped CA key record; the projection under `runtime/<office-id>/` is rebuilt when deleted (real host: `web_process_tests::organizations::actual_office_runtime_deleted_while_stopped_is_rebuilt_and_the_organization_stays_listed`, ignored). The host keeps writer custody per office and starts no office without it. `org.snapshot`, `who`, `inbox.list`, `msg.bind`'s lookup and `team.create` answer from the store; every other call the old tables served answers `unsupported` (work B4; operation lookup and other organization commands B2; messaging, status lines and `subscribe` B6). |
 
 `organization.create` is the only create: served on the admitted web connection,
 authorized by the browser pair digests and the origin, administrator required, and
@@ -481,7 +481,7 @@ anything is read), the host's writer-custody marker `selected-writer.required`
 (installed before a create), the creation intent `hq-creation.v1.json` (frozen first)
 and `office.json` (written last: the office is finished). It holds no database and no
 workspace. The organization's data is the
-[storage tree](organization-data/README.md#shared-storage-contract) under the data roots
+[storage tree](../organization-data/doc-72%20-%20Organization-Data-—-README.md#shared-storage-contract) under the data roots
 `<instance-root>/<org-id>/durable` (the acceptance journal and the organization's
 files) and `<instance-root>/<org-id>/runtime` (the projection, which can be deleted and
 rebuilt). An office folder made by the old databases (`org.db`, `office.db`) is refused,

@@ -28,10 +28,10 @@ overridable: true
 > Active and current. Aligned with `AGENTS.md` Rule 2 (`origin/v1` base, `--no-ff` merge into `v1`, never push `main`, post-merge cleanup). Legacy relative links will be updated in `TASK-32`.
 
 Two engineers build v1, each with a lead agent. A lead takes an increment from the
-[implementation plan](../implementation-plan.md) and owns it end to end: UI, backend,
+[implementation plan](../doc-5%20-%20v1-Implementation-Plan.md) and owns it end to end: UI, backend,
 database, shared contracts, documentation and integration. This page is how that work
-reaches the shared branch. [AGENTS.md](../../AGENTS.md) and the
-[kit workflow](../../.agent-kit/WORKFLOW.md) apply alongside it. No pull request and
+reaches the shared branch. [AGENTS.md](../../../AGENTS.md) and the
+[kit workflow](../../../.agent-kit/WORKFLOW.md) apply alongside it. No pull request and
 no outside reviewer is required.
 
 ## 1. Branch and plan
@@ -60,7 +60,7 @@ no outside reviewer is required.
   - Documentation or workflow only: the relevant kit and catalog checks, and a review
     of the changed instructions.
 - Tests use temporary directories, never a real organization's data.
-- Update the [feature checklist](../FEATURES.md) row with evidence.
+- Update the [feature checklist](../doc-3%20-%20Feature-Checklist.md) row with evidence.
 
 ## 3. Review locally
 

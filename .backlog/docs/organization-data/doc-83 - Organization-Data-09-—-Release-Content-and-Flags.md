@@ -13,7 +13,7 @@ tags:
 
 # Release content, changelogs and feature flags
 
-Status: **selected** data contract, revision 2.7. This document owns release membership and flag data; [project documents](02-project-structure.md) owns document records and [deployment records](07-release-deployments.md) owns actual attempts. These are durable knowledge/configuration contracts, not a flag evaluator, deployment executor or build-artifact model.
+Status: **selected** data contract, revision 2.7. This document owns release membership and flag data; [project documents](doc-76%20-%20Organization-Data-02-—-Project-Structure.md) owns document records and [deployment records](doc-81%20-%20Organization-Data-07-—-Release-Deployments.md) owns actual attempts. These are durable knowledge/configuration contracts, not a flag evaluator, deployment executor or build-artifact model.
 
 ## Product release knowledge and technical deployment knowledge
 
@@ -168,7 +168,7 @@ Only record confirmed applications. A failed attempt may have a partial applied 
 | `release_flag_settings` | Release flag-settings file `settings[]`; `value`/`rollout_rules` map to `value_json`/`rollout_rules_json`. |
 | `deployment_flag_settings` | Deployment `flag_settings[]`; inherited project/deployment IDs, typed value/rules JSON and `applied_at`. |
 
-JSON projections preserve booleans, numbers, strings, nulls and structured values without converting them to display text. Serialize object keys lexically; no credentials belong in flag files. Association arrays inherit their release/deployment's revision and attribution metadata. Definition ownership, attribution, lifecycle and typed relationships follow [record contracts](08-record-contracts.md).
+JSON projections preserve booleans, numbers, strings, nulls and structured values without converting them to display text. Serialize object keys lexically; no credentials belong in flag files. Association arrays inherit their release/deployment's revision and attribution metadata. Definition ownership, attribution, lifecycle and typed relationships follow [record contracts](doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md).
 
 ## Relationships
 

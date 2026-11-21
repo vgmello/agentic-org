@@ -29,28 +29,28 @@ builds_on: [our-org-in-the-app, costs-and-insights-ux]
 # Spec · How agents run: explicit turns, supervision and recovery (UX)
 
 The data contract owns the records:
-[organization-data 04](../design/organization-data/04-agent-structure.md),
-[11](../design/organization-data/11-model-profiles-and-agent-execution.md),
-[14](../design/organization-data/14-model-providers-and-connection-pools.md),
-[16](../design/organization-data/16-recovery-and-office-continuity.md) and
-[17](../design/organization-data/17-budgets-and-controls.md). The
-[session design](../design/agent-sessions.md) owns how a run goes. Cost visibility
-follows [COST](costs-and-insights-ux.md) and document 17.
+[organization-data 04](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md),
+[11](../organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md),
+[14](../organization-data/doc-89%20-%20Organization-Data-14-—-Model-Providers-and-Connection-Pools.md),
+[16](../organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md) and
+[17](../organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md). The
+[session design](../design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md) owns how a run goes. Cost visibility
+follows [COST](doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md) and document 17.
 
 ## The request (the user, 2026-11-08)
 
 > Agents aren't always live. HR (or an agent in another project, like an SDM) doesn't need to be always live. It's a **stateful** agent that's almost **serverless**: it only runs when it's called, or on a long interval, like every 30 minutes: it comes up, checks its status, does its work and goes down again, unless it's called. We can also have **ephemeral** agents for other things. We need to support those kinds of agents.
 
 v1 runs agents by explicit turns, and suspends and resumes an agent waiting on a
-required answer ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)). One
+required answer ([ADR-0020](../../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md)). One
 thing besides a person's Run starts a turn for an idle agent: being addressed by another
 agent (an ask, a hand-off or a mention by name), or receiving an answer to a question it
-asked ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)).
+asked ([ADR-0023](../../decisions/decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md)).
 Automatic run modes (On call, Scheduled, Always on) and one-off agents are
 [not in v1](#5-not-in-v1) for ordinary agents. The built-in HR lead is never kept
 running: it runs only when called (a message to it, an `@hr` mention or a hire
 request starts one turn), and it stops when the turn ends
-([our organization in the app](our-org-in-the-app.md) §2a).
+([our organization in the app](doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md) §2a).
 
 ## 0. Decisions
 
@@ -93,7 +93,7 @@ unsupported policy, coordinator outage and an exhausted pool. Known amounts are
 shown with incomplete usage marked as such.
 
 **Cost amounts** on turns (Activity rows, the Runs tab, RUN-5) show only to the
-owner and to the project manager for their projects ([cost visibility](costs-and-insights-ux.md),
+owner and to the project manager for their projects ([cost visibility](doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md),
 criterion COST-7, document 17). Others see the same rows without the amount. For a project
 manager, a turn's amount is the part of its usage records attributed to their
 projects (`costs-and-insights-ux.md` decision 4), labelled "in your projects" when
@@ -127,7 +127,7 @@ to `effective_permission_mode`, the fixed denies, and mandatory escalation denia
 to a sandboxed workspace with interactive approval routing (`safe_ask` → `Ask`, alongside
 `read_only` → `Plan`, `workspace_edits` → `AcceptEdits`, and `autonomous_sandboxed` →
 `AcceptEdits` + named workspace-scoped sandboxed command allow rules;
-[ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)).
+[ADR-0032](../../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md)).
 The product never exposes a bypass / unrestricted skip-permissions switch, preserving
 the `org-agent-runtime` no-bypass invariant.
 A per-agent sandbox on/off switch in Advanced settings, on by default, is planned
@@ -149,14 +149,14 @@ browser terminal for agent sessions.
 | Budget limit known reached | Stop pending until the current turn completes or the worker acknowledges; only then held. Release caps only warn. |
 | Usage partial or unavailable | Totals marked incomplete; unknown usage is never zero or guaranteed capacity. Unknown usage alone warns rather than blocks. |
 | Cache or office loss | Protected receipts, usage, budget, extensions and execution authority are restored, then processes reconciled. Git alone cannot prove continuity. |
-| Agent suspended on a required ask | Presence reads "Waiting for an answer from <person or agent>" with the time since; it holds no turn, permit or subscription slot. The answer resumes it in the same session; a refused start check keeps it suspended with the reason ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)). |
+| Agent suspended on a required ask | Presence reads "Waiting for an answer from <person or agent>" with the time since; it holds no turn, permit or subscription slot. The answer resumes it in the same session; a refused start check keeps it suspended with the reason ([ADR-0020](../../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md)). |
 | Run fails to start (runtime missing, signed out, trust) | The turn shows **Failed** with the reason and a fix. For the HR lead, hiring doesn't wait: its chip says **Can't start**, and Hire works without it, with the manual form (`our-org-in-the-app.md` §2a, HRL-6). |
 
 ## 4. UX acceptance criteria (RUN)
 
 - RUN-1 · Not in v1: an automatic run mode (Always on, On call, Scheduled) chosen at hire.
 - RUN-2 · Not in v1: Asleep and Offline presence derived from a run mode.
-- RUN-3 · A turn starts from an explicit Run, from the answer to a required ask, from an ask, a hand-off or a mention by name sent by another agent to an idle agent, or from an answer to a question the agent itself asked (ADR-0023, WAKE-1 to WAKE-7; ADR-0024), or from a reactive completion wake (`background_wake`) of the agent's own active background task or sub-agent ([ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6). By [ADR-0028](../adr/0028-an-agent-is-always-available.md) a direct message or a mention from a person, and a task assigned to the agent, start a turn the same way (AVAIL-1 to AVAIL-6). An announcement, `@here`, and an ordinary post or an undirected question in a channel start nothing. An agent that is not working shows as Available, whether or not its process is running.
+- RUN-3 · A turn starts from an explicit Run, from the answer to a required ask, from an ask, a hand-off or a mention by name sent by another agent to an idle agent, or from an answer to a question the agent itself asked (ADR-0023, WAKE-1 to WAKE-7; ADR-0024), or from a reactive completion wake (`background_wake`) of the agent's own active background task or sub-agent ([ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md) decision 6). By [ADR-0028](../../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md) a direct message or a mention from a person, and a task assigned to the agent, start a turn the same way (AVAIL-1 to AVAIL-6). An announcement, `@here`, and an ordinary post or an undirected question in a channel start nothing. An agent that is not working shows as Available, whether or not its process is running.
 - RUN-4 · A second Run is Busy while the original turn is open; no second process or implicit queue is created.
 - RUN-5 · Turn history shows the logical turn, its actual routed attempts, durations, permitted amounts and completeness, and the concrete outcome; process reuse never merges attempt attribution.
 - RUN-6 · Not in v1: idle sleep and a maximum busy time per run.
@@ -181,7 +181,7 @@ browser terminal for agent sessions.
 - **One-off agents:** a run of a role, not an employee, started from a job and shown
   on it as "Reviewer (one-off run)".
 - **Memory forks** inside an employee's run. Sub-agents inside a turn are in v1
-  ([ADR-0025](../adr/0025-agents-start-sub-agents.md)).
+  ([ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md)).
 - **A model policy per slot** (main session, helpers, hard problems, reviews) with
   Organization → Role → Agent inheritance. Until then an agent's model is the one in
   its execution configuration; an unavailable model launches nothing and is never

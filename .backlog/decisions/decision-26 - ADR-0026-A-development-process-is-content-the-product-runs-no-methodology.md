@@ -10,14 +10,14 @@ status: accepted
 # ADR-0026 · A development process is content; the product runs no methodology
 
 Status: **decided by the lead 2026-11-18** to place the owner's
-[REQ-06](../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) and
-[REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md) in the
+[REQ-06](../docs/specs/doc-57%20-%20REQ-06-Desired-State-Specification-DSS-and-Factory-Reconciliation.md) and
+[REQ-07](../docs/specs/doc-58%20-%20REQ-07-Composable-Process-Packages-and-Team-Blueprints.md) in the
 selected architecture, and updated the same day with the owner's answers: a
 development process is a primitive separate from organization processes, it declares
 the project's tabs, it can be imported as a file, only someone who may hire can hire
-([ADR-0029](0029-only-who-may-hire-hires.md), which replaced the approval of
-[ADR-0027](0027-a-lead-approves-a-hire.md)) and agents start other agents
-([ADR-0028](0028-an-agent-is-always-available.md)). Implementation pending.
+([ADR-0029](decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md), which replaced the approval of
+[ADR-0027](decision-27%20-%20ADR-0027-A-lead-with-hiring-power-approves-a-hire.md)) and agents start other agents
+([ADR-0028](decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md)). Implementation pending.
 The requirement calls it a process package; the product calls it a development
 process.
 
@@ -32,11 +32,11 @@ must not hardcode a methodology or its trigger logic.
 Three rules already in force constrain how:
 
 - The product has no process execution engine and blocks nothing for breaking a
-  process ([process design](../design/processes.md), decision 7).
+  process ([process design](../docs/design/doc-34%20-%20Design-Organization-Processes-and-Standards.md), decision 7).
 - An agent reaches the product only through `agent-os`, never through files of the
-  organization ([non-negotiables](../architecture-non-negotiables.md) 7 and 10).
+  organization ([non-negotiables](../docs/doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md) 7 and 10).
 - A turn starts only from an explicit instruction, the answer to a required ask, or a
-  recovery ([agent sessions](../design/agent-sessions.md)).
+  recovery ([agent sessions](../docs/design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md)).
 
 ## Options considered
 
@@ -67,7 +67,7 @@ Three rules already in force constrain how:
    project; a non-overridable document is always followed.
 4. **A development process gives no right to hire and starts no agent.** A development process can tell a lead
    when to hire. Who may hire is decided by the lead appointment and the
-   permission to hire ([ADR-0029](0029-only-who-may-hire-hires.md)), never by a development process.
+   permission to hire ([ADR-0029](decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)), never by a development process.
 5. **A project's own documents live in one tree, `projects/<project-id>/docs/`, with
    one index, `index.yaml`.** The development process declares the starting sections. The office
    writes the index in the same accepted change as every write to the tree, from what
@@ -92,11 +92,11 @@ Three rules already in force constrain how:
 ## Acceptance criteria
 
 The criteria are PKG-1 to PKG-14 in the
-[development process design](../design/development-processes.md#11-acceptance-criteria), DSS-1
+[development process design](../docs/design/doc-32%20-%20Design-Development-Processes-Process-Packages.md#11-acceptance-criteria), DSS-1
 to DSS-11 in the
-[desired state design](../design/desired-state-specifications.md#7-acceptance-criteria)
+[desired state design](../docs/design/doc-31%20-%20Design-Desired-State-Specifications-DSS.md#7-acceptance-criteria)
 and PPD-1 to PPD-10 in
-[document 18](../design/organization-data/18-development-processes-and-project-documentation.md#acceptance-criteria).
+[document 18](../docs/organization-data/doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md#acceptance-criteria).
 PKG-1 is the test of this record: a second built-in development process is added with content only.
 
 ## Consequences
@@ -105,7 +105,7 @@ PKG-1 is the test of this record: a second built-in development process is added
   on proves unreliable, declared handoffs run by the office are the next step, and
   they would need a new decision record because they are option 1 in small.
 - Agents hand work to each other: an ask or an assignment starts the next agent
-  ([ADR-0028](0028-an-agent-is-always-available.md)). That is a rule about
+  ([ADR-0028](decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md)). That is a rule about
   turns, not about development processes, and no process can change it.
 - The product gains general parts that other development processes can use: the documentation tree
   and index, issued versions, code links and tasks that realize a version.

@@ -12,8 +12,8 @@ status: accepted
 Status: **accepted by the owner 2026-11-17**: "we will need to
 support PostgreSQL; we need to be able to abstract what we need there." Implementation
 pending. No PostgreSQL adapter is built now. Builds on
-[ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) and
-[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) decision 8.
+[ADR-0002](decision-2%20-%20ADR-0002-Storage-SQLite-with-one-batching-writer-per-database.md) and
+[ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) decision 8.
 
 ## Context
 

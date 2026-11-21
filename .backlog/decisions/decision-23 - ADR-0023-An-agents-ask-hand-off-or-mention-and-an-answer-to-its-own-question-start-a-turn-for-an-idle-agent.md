@@ -13,23 +13,23 @@ status: accepted
 
 Status: **accepted by the owner** (decision 1, 2026-11-18). Implementation pending.
 Decisions 2 to 9 are its design. The
-[run modes spec](../specs/agent-run-modes-ux.md), the
-[session design](../design/agent-sessions.md) and the
-[agent command line](../design/agent-os-command-line.md) follow it. The increment is C8
-in the [implementation plan](../implementation-plan.md).
-[ADR-0028](0028-an-agent-is-always-available.md) extends it: a direct message, a
+[run modes spec](../docs/specs/doc-50%20-%20Spec-Agent-Run-Modes-and-Availability-UX.md), the
+[session design](../docs/design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md) and the
+[agent command line](../docs/design/doc-28%20-%20Design-agent-os-Command-Line.md) follow it. The increment is C8
+in the [implementation plan](../docs/doc-5%20-%20v1-Implementation-Plan.md).
+[ADR-0028](decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md) extends it: a direct message, a
 mention and a task assignment also start an idle agent, under the same rules.
-[ADR-0030](0030-an-agent-works-while-it-has-work.md) adds what happens to a start that
+[ADR-0030](decision-30%20-%20ADR-0030-An-agent-works-while-it-has-work-continues-after-a-restart-and-a-stalled-turn-is-stopped.md) adds what happens to a start that
 cannot happen at once: it is kept and tried again, never dropped.
 
 ## Context
 
 An agent ran only when a person gave it an instruction, or when the answer to its own
-required ask arrived ([ADR-0020](0020-required-asks-suspend-and-resume.md)). A message
+required ask arrived ([ADR-0020](decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md)). A message
 to an idle agent waited for that agent's next turn. So a question from one agent to
 another went unanswered until a person happened to start the second agent, and an
 agent could not hand work to a colleague. The owner's requirement for the command line
-([REQ-08](../specs/req-08-agent-os-cli-and-kernel-primitives.md)) assumes agents consult
+([REQ-08](../docs/specs/doc-59%20-%20REQ-08-agent-os-CLI-and-Kernel-Primitives.md)) assumes agents consult
 each other.
 
 The built-in HR lead already works the other way: it runs when it is called and stops
@@ -47,7 +47,7 @@ when the turn ends.
    - An answer to a question the recipient itself asked, whoever answers: a reply in
      the question's thread, or a message written by a person that the channel's watcher
      is confident responds to it
-     ([ADR-0024](0024-a-channel-question-is-watched-for-its-answer.md) decision 12). The turn
+     ([ADR-0024](decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md) decision 12). The turn
      continues the asker's session.
 
    Under this record nothing else does: not an announcement, not `@here`, not an
@@ -86,11 +86,11 @@ when the turn ends.
 
 This record is about what one agent starts for another, and about answers. What a
 person's message, a person's mention and a task assignment start is decided by
-[ADR-0028](0028-an-agent-is-always-available.md): they start an idle agent too. A
+[ADR-0028](decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md): they start an idle agent too. A
 person can also still start a turn with Run.
 
 The built-in HR lead is unchanged: it runs when it is called, by a person or by an
-agent, as the [run modes spec](../specs/agent-run-modes-ux.md) says.
+agent, as the [run modes spec](../docs/specs/doc-50%20-%20Spec-Agent-Run-Modes-and-Availability-UX.md) says.
 
 ## Acceptance criteria
 

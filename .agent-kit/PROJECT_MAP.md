@@ -3,10 +3,10 @@
 Navigation hints, checked against the source on 2026-11-17. Source and the owning
 documents decide behavior; recheck before relying on a detail.
 
-- Start with [AGENTS.md](../AGENTS.md), [START-HERE](../docs/START-HERE.md), the
-  [implementation plan](../docs/implementation-plan.md),
-  [architecture rules](../docs/architecture-rules.md) and the
-  [documentation authority map](../docs/design/documentation-authority.md).
+- Start with [AGENTS.md](../AGENTS.md), [START-HERE](../.backlog/docs/doc-2%20-%20Start-Here.md), the
+  [implementation plan](../.backlog/docs/doc-5%20-%20v1-Implementation-Plan.md),
+  [architecture rules](../.backlog/docs/doc-8%20-%20Architecture-Rules.md) and the
+  [documentation authority map](../.backlog/docs/design/doc-62%20-%20Design-Documentation-Authority-Map.md).
 - `Cargo.toml` has 24 workspace members; `rust-toolchain.toml` pins Rust 1.99.1.
   `apps/agentic-org` composes `crates/org-host` (`serve`); `apps/agentic-org-office`
   is the office worker; `apps/agentic-org-web` serves the browser application and
@@ -25,7 +25,7 @@ documents decide behavior; recheck before relying on a detail.
 - `.github/workflows/ci.yml` runs Rust on macOS and Linux, the UI, dependency, secret
   and browser/CSP checks. `.agent-kit/verification.json` is a fast gate, not the full
   merge gate.
-- What each executable does today: [executable migration](../docs/design/executable-migration.md).
+- What each executable does today: [executable migration](../.backlog/docs/design/doc-63%20-%20Design-Executables-and-Entry-Points.md).
 - [Tooling capsule](maps/tooling.md), [active decisions](DECISIONS.md),
   [skill catalog](skill-catalog.json), [current task](tasks/v1-state.md).
 

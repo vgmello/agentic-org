@@ -12,11 +12,11 @@ status: accepted
 # ADR-0020 · An ask waits with a timeout; a required ask suspends the agent until it is answered
 
 Status: **accepted by the owner**. Implementation pending. Decisions 1 to 8 are the
-owner's rule for [REQ-04](../specs/req-04-channel-messaging-and-question-components.md);
+owner's rule for [REQ-04](../docs/specs/doc-55%20-%20REQ-04-Channel-Messaging-and-Question-Components.md);
 decisions 9 to 14 are its design, and decisions 15 to 17 were added on 2026-11-18
-after the design review. [ADR-0003](0003-agent-messaging-office-first.md)
-decision 9, [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) decision 9,
-the [session design](../design/agent-sessions.md) and the [chat spec](../specs/chat-ux.md)
+after the design review. [ADR-0003](decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md)
+decision 9, [ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) decision 9,
+the [session design](../docs/design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md) and the [chat spec](../docs/specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md)
 follow it.
 
 ## Context
@@ -95,7 +95,7 @@ The lead's design for the rule:
     continue with it; the card then shows that nobody answered and what the agent
     continued with. A person's later answer still arrives as a message. An ask may carry
     several questions, answered together
-    ([messaging](../design/organization-data/15-messaging-and-chat.md)); each question
+    ([messaging](../docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md)); each question
     has its own default, and the timeout result carries the default of each question
     that has one.
 15. **One call never holds the agent for the whole wait.** A vendor's shell tool stops
@@ -127,7 +127,7 @@ The lead's design for the rule:
 - One held call on an agent's connection is capped at 60 seconds, and one command
   holds its caller for at most the short hold of decision 15. The wait spans as many
   commands as it needs, and the office keeps one timer for the whole wait.
-- An ask addressed to an agent starts it, as anything addressed to it does ([ADR-0028](0028-an-agent-is-always-available.md)), and the answer to a required ask is one of the things that may start a turn (session
+- An ask addressed to an agent starts it, as anything addressed to it does ([ADR-0028](decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md)), and the answer to a required ask is one of the things that may start a turn (session
   design).
 
 ## Acceptance criteria

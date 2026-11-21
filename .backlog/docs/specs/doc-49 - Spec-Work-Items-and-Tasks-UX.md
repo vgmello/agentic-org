@@ -31,7 +31,7 @@ builds_on: [offices-and-teams-ux]
 
 # Spec · Typed tasks, bugs and project docs (UX)
 
-[Organization-data 02](../design/organization-data/02-project-structure.md), [03](../design/organization-data/03-features-and-work.md), [05](../design/organization-data/05-operational-data.md), [06](../design/organization-data/06-identity-and-numbering.md), [08](../design/organization-data/08-record-contracts.md) and [12](../design/organization-data/12-task-assignment-and-history.md) own the fields, sources and assignment and history semantics. The [task ports](../design/tasks-projects-docs.md#32-the-ports-org-work-defines) describe the domain interface. This spec owns what people see.
+[Organization-data 02](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md), [03](../organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md), [05](../organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md), [06](../organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md), [08](../organization-data/doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md) and [12](../organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md) own the fields, sources and assignment and history semantics. The [task ports](../design/doc-37%20-%20Design-Tasks-Projects-and-Documents.md#32-the-ports-org-work-defines) describe the domain interface. This spec owns what people see.
 
 A task's status is one of `todo`, `in_progress`, `blocked`, `cancelled` and `done`, shown as To do, In progress, Blocked, Cancelled and Done. A bug's fix-and-verify cycle and a request's scoping are built on these five statuses with history events and task details; no task type has statuses of its own.
 
@@ -45,7 +45,7 @@ A task's status is one of `todo`, `in_progress`, `blocked`, `cancelled` and `don
 6. **Reporter is immutable.** Show original admitted creator separately from current assignment, latest updater and recorded fix/closure actor. Missing historical provenance stays unknown.
 7. **Bug presentation is first class.** Reporting, triage and reproduction, duplicate and closure evidence are kept in task details. Nothing but a title, a description and valid accountability is needed to capture a bug.
 8. **Knowledge lives in organization Git.** Projects have docs even with no code repository. A feature's definition is its feature.md; supporting docs require explicit project and optional same-project feature/release/deployment scope.
-9. **History is durable.** Any active employee, person or agent, creates, edits, assigns and moves tasks at its own discretion, with no separate task capability, and every change is tracked ([ADR-0031](../adr/0031-any-employee-changes-tasks.md)). Every accepted task revision, including shared metadata, has an immutable event; accepted snapshot/history/receipt must recover together. Work assignment does not transfer write authority to an office.
+9. **History is durable.** Any active employee, person or agent, creates, edits, assigns and moves tasks at its own discretion, with no separate task capability, and every change is tracked ([ADR-0031](../../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md)). Every accepted task revision, including shared metadata, has an immutable event; accepted snapshot/history/receipt must recover together. Work assignment does not transfer write authority to an office.
 10. **Private task notes are a separate required capability.** Only the author edits or deletes a note. The author reads it, and so does any person who can read the task; another agent never does, in any answer, search, feed, notification, summary, export or in the context the office gives it. A person's note is hidden from agents the same way. Separate durable storage, no shared count or existence metadata. Existing note comments remain shared.
 11. **No implied execution engine.** Assignment does not start a session or grant access. Handoff preserves worktrees. Budget controls, provider routing and execution placement have their own contracts.
 12. **Accessible alternatives are required.** Every drag has menu/keyboard paths; statuses/severity/priority always have words; conflicts preserve unsaved content.
@@ -88,7 +88,7 @@ Use **Accountable team**, **Assigned team** and **Assignee** together where need
 
 ### 2.1 Severity and status tokens
 
-Follow the [shared shell standards](app-shell-ux.md#6a-shared-visual-and-interaction-rules):
+Follow the [shared shell standards](doc-39%20-%20Spec-App-Shell-and-Navigation-UX.md#6a-shared-visual-and-interaction-rules):
 one work-status pill per row, with severity and priority as separate meta text.
 Use Heroicons as the screen is restyled, not a mixed icon family.
 
@@ -124,7 +124,7 @@ another record.
 
 ## 3. Flow 1 · Project page
 
-Projects → Reservations **P-8**, with a Projects back link. Header: **Accountable team: Payments**; **Contributors: Platform**; real done/total counts; New task and Report bug. The tabs are **Overview | Work | Docs | Team | Activity | Conversations** in every project, Overview by default, with the tabs the project's development process declares between Work and Docs ([development processes](../design/development-processes.md#4-the-projects-tabs)). Work filters shared typed tasks by type. Backlog joins after Work when it is built; Insights is last when it is built. Releases and Features are tabs a development process declares; a project with none has both. Settings appears when its own experience is served.
+Projects → Reservations **P-8**, with a Projects back link. Header: **Accountable team: Payments**; **Contributors: Platform**; real done/total counts; New task and Report bug. The tabs are **Overview | Work | Docs | Team | Activity | Conversations** in every project, Overview by default, with the tabs the project's development process declares between Work and Docs ([development processes](../design/doc-32%20-%20Design-Development-Processes-Process-Packages.md#4-the-projects-tabs)). Work filters shared typed tasks by type. Backlog joins after Work when it is built; Insights is last when it is built. Releases and Features are tabs a development process declares; a project with none has both. Settings appears when its own experience is served.
 
 Overview shows the living Brief, real open/blocked counts and the five latest activity entries. Work shows the project's typed tasks with one status signal; Team shows accountable/contributing teams and then member rows, with only supported authorized association edits. Activity uses full references: “Ana assigned T-A42 to Platform · Ana.” Conversations shows permitted project-linked threads. Empty feeds say **No activity yet** or **No conversations yet**. Projectless work appears in Work/team backlogs rather than an artificial project.
 
@@ -144,7 +144,7 @@ kept. A severity suggestion says **Suggested by the copilot** or remains a
 nonselected hint; it never silently becomes a deliberate severity choice.
 Editing one field clears only its marker. A new attempt or Dismiss clears that
 panel's stale error while preserving typed text, Undo draft and the ordinary
-manual Report bug confirmation. See the existing [copilot contract](../design/smart-features.md#2-bugfrom_sentence-implemented-library-entry-version-2).
+manual Report bug confirmation. See the existing [copilot contract](../design/doc-36%20-%20Design-Smart-Features-Not-in-v1.md#2-bugfrom_sentence-implemented-library-entry-version-2).
 
 After three title characters show up to three similar open bug-typed tasks in the selected scope. “This is the same bug” adds the report as an explicitly shared comment on the chosen existing record; it preserves that record's reporter and creates no second task. Clearly label suggestions from other projects or teams with where they belong. No match does not block reporting.
 
@@ -182,7 +182,7 @@ Create fix task opens capture with the bug context, a valid accountable team and
 
 A bug is closed like any task, as Done or Cancelled, with its resolution and `closed_reason` kept in task details: Duplicate needs a resolvable original and no self-link (`details.duplicate_of_task_id`); Won't fix and Can't reproduce need a reason; reopening needs a note. Status events keep actors, times and reasons. Task deletion keeps tombstone identity, history and the reference; no reference is reused.
 
-**Fix and verify.** **Mark as fixed** asks what fixed it (a linked fix task, commit or a note) and records a fixed event with actor and time in the bug's history; the bug moves to Done only through the ordinary status change. The original reporter, or the suggested verifier (`details.suggested_verifier_id`, a suggestion, not a grant), is asked to verify: **Fixed** records a verification event; **Still happens** requires a note, records the verification event, moves the bug back to To do or In progress and increments `reopen_count`. The acting verifier is shown separately from the reporter, and the current assignee is never labelled as the historical fixer ([document 12](../design/organization-data/12-task-assignment-and-history.md#reporter-and-resolution-actors)). Linked fix tasks (`fixes` links) show their progress as evidence; their completion never changes the bug by itself. A Critical bug is raised in the owner's Needs you until it is assigned or closed.
+**Fix and verify.** **Mark as fixed** asks what fixed it (a linked fix task, commit or a note) and records a fixed event with actor and time in the bug's history; the bug moves to Done only through the ordinary status change. The original reporter, or the suggested verifier (`details.suggested_verifier_id`, a suggestion, not a grant), is asked to verify: **Fixed** records a verification event; **Still happens** requires a note, records the verification event, moves the bug back to To do or In progress and increments `reopen_count`. The acting verifier is shown separately from the reporter, and the current assignee is never labelled as the historical fixer ([document 12](../organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md#reporter-and-resolution-actors)). Linked fix tasks (`fixes` links) show their progress as evidence; their completion never changes the bug by itself. A Critical bug is raised in the owner's Needs you until it is assigned or closed.
 
 ## 8. Areas (withdrawn)
 
@@ -204,7 +204,7 @@ The required flag and the linked task are data only; they enact no completion ga
 
 ### 9.2 Time on a task or bug
 
-Time views use the [shared duration definitions](costs-and-insights-ux.md#shared-duration-definitions) and identify endpoints and evidence coverage. Started is the first evidenced In progress entry; a verified direct To do → Done records start/completion together and has zero cycle time. Reopen preserves first Started. Lead/cycle end at last completion or now while open, exclude intervening Done/Cancelled spans and say “so far” while open. For example, start day 0, complete day 2, reopen day 9 and complete day 10 gives three days of cycle time.
+Time views use the [shared duration definitions](doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md#shared-duration-definitions) and identify endpoints and evidence coverage. Started is the first evidenced In progress entry; a verified direct To do → Done records start/completion together and has zero cycle time. Reopen preserves first Started. Lead/cycle end at last completion or now while open, exclude intervening Done/Cancelled spans and say “so far” while open. For example, start day 0, complete day 2, reopen day 9 and complete day 10 gives three days of cycle time.
 
 Sum status intervals from actual recorded transitions; “Picked up by” requires an evidenced In progress transition after that assignment. Current assignment never proves historical work. A history baseline leaves earlier start/time unavailable, never zero. Waiting comes from saved spans independently of status; overlaps count once. Closing work cannot silently discard an unresolved question/span. Use the shared duration formatter and explicit units even for zero.
 
@@ -412,7 +412,7 @@ Criteria marked "Not in v1" belong to §16.
 - **Automatic propagation** from fix tasks to the bug they fix.
 - **Advanced checklists:** completion gates with Mark done anyway, promotion of a step to a task, named templates and steps derived from processes.
 - **Undo**, automatic feature and decision propagation, scheduling and memory.
-- **Attachments on a task.** Chat attachments are v1 ([chat UX](chat-ux.md)).
+- **Attachments on a task.** Chat attachments are v1 ([chat UX](doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md)).
 - **Following:** per-reader unseen tracking distinct from Inbox, with follow reasons, never revealing private notes.
 - **Requested-by:** a verified link from a directly addressed message, distinct from the reporter.
 - **Review** of a task by a named reviewer, with no self-approval.

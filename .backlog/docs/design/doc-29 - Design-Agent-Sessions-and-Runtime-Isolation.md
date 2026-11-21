@@ -21,25 +21,25 @@ tags:
 # Design: agent sessions
 
 How the office runs an agent's vendor tool, keeps it isolated, and lets people work
-with it. [Execution](organization-data/11-model-profiles-and-agent-execution.md) owns
+with it. [Execution](../organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) owns
 the turn, attempt, process, permit and placement contract;
-[employees](organization-data/04-agent-structure.md),
-[connections and pools](organization-data/14-model-providers-and-connection-pools.md),
-[recovery](organization-data/16-recovery-and-office-continuity.md) and
-[budgets](organization-data/17-budgets-and-controls.md) own their data. Supervision
-of the control loop is in [employee supervision](employee-supervision.md); the Git
-paths and their deny rules are in the [Git design](projects-git-github.md). Vendor
-tool research is in [agent runtimes control](../research/agent-runtimes-control.md).
+[employees](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md),
+[connections and pools](../organization-data/doc-89%20-%20Organization-Data-14-—-Model-Providers-and-Connection-Pools.md),
+[recovery](../organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md) and
+[budgets](../organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md) own their data. Supervision
+of the control loop is in [employee supervision](doc-33%20-%20Design-Employee-Supervision.md); the Git
+paths and their deny rules are in the [Git design](doc-35%20-%20Design-Projects-Git-and-GitHub.md). Vendor
+tool research is in [agent runtimes control](../research/doc-23%20-%20Research-Controlling-Agent-Runtimes-Claude-Code-Codex-Antigravity.md).
 
 The decisions this design applies:
 
 - Agents run headless; people talk to them through chat; there is no terminal in
-  the browser ([ADR-0004](../adr/0004-headless-agent-sessions.md)).
+  the browser ([ADR-0004](../../decisions/decision-4%20-%20ADR-0004-Agent-sessions-run-headless-people-interact-through-chat.md)).
 - Each agent has a private home and runs in an isolation mode, `same-user` or
-  `dedicated-user` ([ADR-0015](../adr/0015-agent-isolation-modes.md)).
+  `dedicated-user` ([ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md)).
 - A message never interrupts a busy turn; an agent that cannot continue without an
-  answer is suspended and resumed ([ADR-0003](../adr/0003-agent-messaging-office-first.md),
-  [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)).
+  answer is suspended and resumed ([ADR-0003](../../decisions/decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md),
+  [ADR-0020](../../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md)).
 
 ## Decisions
 
@@ -101,7 +101,7 @@ The decisions this design applies:
    team in `profile.md`; only an agent has `execution.md`, selecting one pool and one
    model. Placement changes independently of identity, with fencing. Task workspaces
    live under `runtime/<office-id>/teams/…/agents/<employee-id>/` as the
-   [storage contract](organization-data/README.md#shared-storage-contract) shows, one
+   [storage contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md#shared-storage-contract) shows, one
    per task and repository. A session's working directory is an approved workspace
    reference, never caller input. One open turn and one main process exist per agent.
    Handoff, process exit and the end of a turn are not task closure: worktrees and
@@ -151,14 +151,14 @@ The decisions this design applies:
      - `AGENT_OS_ORG`, `AGENT_OS_OFFICE`, `AGENT_OS_AGENT_ID`, `AGENT_OS_SESSION_ID` and,
        when the run has them, `AGENT_OS_PROJECT` and `AGENT_OS_TASK`: context for the
        agent's own scripts. They are never identity: the office takes who is calling
-       from the binding ([agent command line](agent-os-command-line.md), section 2.8).
+       from the binding ([agent command line](doc-28%20-%20Design-agent-os-Command-Line.md), section 2.8).
      - Git: `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`, and through
        `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` the commit identity, an
        empty `credential.helper`, `core.hooksPath=/dev/null`, `core.fsmonitor=false`,
        `gc.auto=0` and `maintenance.auto=false`.
      - `GH_CONFIG_DIR=<TMPDIR>/gh/`, an empty folder, so `gh` sees no login. Agents hold
        no GitHub or Git credential; they publish only through `agent-os repo push`
-       ([Git design](projects-git-github.md)).
+       ([Git design](doc-35%20-%20Design-Projects-Git-and-GitHub.md)).
      - Office-set runtime switches such as `DISABLE_AUTOUPDATER=1`.
 
      Everything else is dropped, including `SSH_AUTH_SOCK`, `GH_TOKEN`, other `GIT_*`
@@ -213,15 +213,15 @@ The decisions this design applies:
      `Grep`, `Bash` (sandboxed), the tool that starts a sub-agent, and the tools of the
      connectors the office granted this agent, nothing else. A sub-agent is part of
      the turn and has the parent's sandbox, tools and policy, never more
-     ([ADR-0025](../adr/0025-agents-start-sub-agents.md)). No product command is an MCP tool, and milestones one
+     ([ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md)). No product command is an MCP tool, and milestones one
      and two grant no connector, so the MCP configuration is empty
-     ([agent command line](agent-os-command-line.md), section 2.10). Claude's
+     ([agent command line](doc-28%20-%20Design-agent-os-Command-Line.md), section 2.10). Claude's
      other tools act outside the office or the sandbox (cross-session messaging,
      scheduling and remote triggers, worktrees, web access). The adapter passes the
      built-in names as `--tools`, the whole list as the inline agent's `tools`, and
      every other known risky tool in `--disallowedTools`.
      `ToolSearch` is disallowed and `ENABLE_TOOL_SEARCH=false`, so a granted
-     connector's tools are never deferred. Per [ADR-0025](../adr/0025-agents-start-sub-agents.md)
+     connector's tools are never deferred. Per [ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md)
      decision 6 (amended 2026-11-19), background commands and background sub-agents
      stay **enabled** in persistent `stream-json` sessions so an agent remains
      conversational while background work completes; the adapter never disables
@@ -256,7 +256,7 @@ The decisions this design applies:
      `cancelled`, and so is one pending when its process ends. A turn's end does not
      cancel a pending request: the adapter does not track background activity, and a
      background command or sub-agent may still be waiting on it
-     ([ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6), so it stays
+     ([ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md) decision 6), so it stays
      answerable until the runtime withdraws it, the process ends or it expires. At startup,
      pending approvals of dead sessions become `expired`. Answering any of these returns
      `not_found`.
@@ -280,13 +280,13 @@ The decisions this design applies:
    - **The fixed denies override every allow rule.** If a runtime's approval bridge
      does not work, actions needing approval are denied and the run ends `blocked`.
 8. **Instructions are composed by the office** from the product's built-in
-   [agent instructions](agent-instructions.md), which come first and are the same for
+   [agent instructions](doc-27%20-%20Design-Agent-Instructions-Assembly.md), which come first and are the same for
    every agent, the employee's identity and role
    (`profile.md`), its prompt and tools (`execution.md`), the turn's explicit
    objective, the effective organization processes and standards
-   ([process design](processes.md#32-delivery-to-sessions-proc-7)), the project's development process
+   ([process design](doc-34%20-%20Design-Organization-Processes-and-Standards.md#32-delivery-to-sessions-proc-7)), the project's development process
    with the skills for the agent's role, as a section of its own
-   ([development process design](development-processes.md#6-how-skills-reach-an-agent)),
+   ([development process design](doc-32%20-%20Design-Development-Processes-Process-Packages.md#6-how-skills-reach-an-agent)),
    built-in `agent-os` help, and the project's instruction files read with the office's hardened Git from
    each association's `integration_branch` in a verified cache. Nothing an agent
    writes in its worktree changes what the office tells the next session. Instruction
@@ -383,16 +383,16 @@ such if shown.
 
 A turn starts only from an explicit instruction, the answer to a required ask, being
 addressed by another agent or receiving an answer to its own question while idle
-([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), a direct message or a
+([ADR-0023](../../decisions/decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md)), a direct message or a
 mention from a person or a task assigned to the agent
-([ADR-0028](../adr/0028-an-agent-is-always-available.md)), a reactive completion wake
+([ADR-0028](../../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md)), a reactive completion wake
 from the agent's own active background task or background sub-agent
-(`background_wake`, [ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6), or
+(`background_wake`, [ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md) decision 6), or
 a recovery. Other
 messages and schedules never create model work by themselves.
 A second open turn returns `BUSY`. An agent ends a turn with one line saying what it
 did; the office keeps it as the turn's outcome summary, shown in the turn's history and
-sent to no one ([agent instructions](agent-instructions.md)).
+sent to no one ([agent instructions](doc-27%20-%20Design-Agent-Instructions-Assembly.md)).
 
 1. **Admit.** Authenticate the caller and scope, validate placement and configuration
    revisions, persist the immutable input and the actor-bound operation receipt before
@@ -415,7 +415,7 @@ sent to no one ([agent instructions](agent-instructions.md)).
    evidence. The office reconciles what it can know itself (its processes, and the
    receipts of product changes) and never asks a model to do that for it.
    - **After a restart the turn continues by itself**
-     ([ADR-0030](../adr/0030-an-agent-works-while-it-has-work.md) decisions 8 and 9).
+     ([ADR-0030](../../decisions/decision-30%20-%20ADR-0030-An-agent-works-while-it-has-work-continues-after-a-restart-and-a-stalled-turn-is-stopped.md) decisions 8 and 9).
      Once the run's processes are proved gone, the office resumes the vendor session
      in the same turn, after the normal permit and budget checks, and tells the
      agent that it was interrupted, which tool call was running, and which
@@ -454,7 +454,7 @@ incomplete and warns. Release caps never stop turns.
 
 ### Pause, suspension and offboarding
 
-Pause, holds and offline offices follow [employee supervision](employee-supervision.md#2-pause-holds-and-offline-offices).
+Pause, holds and offline offices follow [employee supervision](doc-33%20-%20Design-Employee-Supervision.md#2-pause-holds-and-offline-offices).
 `StopAgent` stops the agent's active and idle processes and creates no future start.
 It is not Pause: the `agent.stop` call is Pause, which records a held manual pause and
 then runs `StopAgent`.
@@ -481,7 +481,7 @@ When an agent is offboarded or removed:
 ## Taking over
 
 Take-over is paused (owner decision 2026-11-20) and moved to late v1, built only if
-needed ([FC-151](../FEATURES.md)); this design is kept for then. Until it is built,
+needed ([FC-151](../doc-3%20-%20Feature-Checklist.md)); this design is kept for then. Until it is built,
 `held` and **With you** do not occur. There is no terminal in the browser. A person at the office's machine takes an agent
 over with an `agentic-org` command (ADR-0004 decision 4):
 
@@ -498,7 +498,7 @@ over with an `agentic-org` command (ADR-0004 decision 4):
 
 The office owns no terminal and carries no terminal data. The agent's presence shows
 **With you** meanwhile, and other control calls get `held`. The browser shows the
-session read-only ([REQ-05](../specs/req-05-virtual-console-conversation-log-viewer.md)).
+session read-only ([REQ-05](../specs/doc-56%20-%20REQ-05-Virtual-Console-and-Conversation-Log-Viewer.md)).
 A person in Codex's interactive tool can change its sandbox or approval policy from
 inside, and a person in Claude's can switch to `acceptEdits`; the office pins both
 again on hand-back, and the command warns about this when it starts.
@@ -537,7 +537,7 @@ again on hand-back, and the command warns about this when it starts.
   recipient, under an hourly limit (ADR-0023); so do a direct message or a mention
   from a person and a task assigned to the agent (ADR-0028). What is delivered to an
   agent at all is only what is addressed to it
-  ([ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md)).
+  ([ADR-0024](../../decisions/decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md)).
 - **Presence:** `busy`, `idle`, `needs_you`, `with_you`, `waiting` (on a required
   answer, naming whom), `asleep` and `offline`. An agent holding an `agent-os` wait
   counts as idle. Presence is not stored durably.
@@ -551,7 +551,7 @@ The mark is recorded before spawn and the boot and start identity before input.
 Incomplete ownership and the captured descendant inventory are kept until cleanup is
 verified; deadlines, PID or group numbers, a vanished cache or a successful push never
 prove an exit. The ownership and recovery policy is the one implemented in
-[`org-supervise`](../../crates/org-supervise/README.md): checkpoint before signal,
+[`org-supervise`](../../../crates/org-supervise/README.md): checkpoint before signal,
 exact identity checks, bounded scans and its documented containment limits. A failed
 cleanup keeps the slot. The host never races the office over a live agent; on a move
 to another office, HQ needs verified cleanup of the old process or an explicit machine
@@ -589,7 +589,7 @@ the product says so.
   - writes to `.claude/**`, `.agents/**`, `.codex/**` and `.gemini/**` in the workspace;
   - writes to any `.git` entry inside the workspace (so a home or workspace cannot be
     a repository root, and an agent cannot set up submodules);
-  - the repository cache paths the [Git design](projects-git-github.md#sandbox-and-deny-rules-for-the-selected-paths)
+  - the repository cache paths the [Git design](doc-35%20-%20Design-Projects-Git-and-GitHub.md#sandbox-and-deny-rules-for-the-selected-paths)
     lists;
   - every path in the managed-state table below;
   - writes to programs that run outside any sandbox: `~/.local/bin/**`, every
@@ -766,6 +766,6 @@ and probes. It has no `isolation_mode` yet, and it still has a one-off session
 kind, which is not part of v1. `crates/org-supervise` implements piped
 spawn, identity ordering, stop and reap and the recovery API. `crates/org-agent-runtime-claude`
 implements the Claude Code adapter as an internal foundation with no production caller
-yet ([FC-101](../FEATURES.md)); the other vendors' protocol fixtures are research
+yet ([FC-101](../doc-3%20-%20Feature-Checklist.md)); the other vendors' protocol fixtures are research
 evidence. Nothing launches an agent
 (implementation plan C1, C3).

@@ -5,7 +5,7 @@ date: '2026-11-21T00:45:00Z'
 status: implemented
 ---
 
-> **Review note (2026-11-21):** **Implemented** (A1.1–A1.7: SQLCipher removed, plain bundled SQLite, `org_pki::wrap` active). **Open security/boundary audit items:** isolating private DMs and owner-only budgets from plaintext `office.db` and removing the wrapped Org CA key from acceptance journal Entry 1 (`TASK-10`); verifying provider OAuth env scrubbing, separating CA/token wrapping keys, and stopping private chat copies into `turn/input.json` (`TASK-11`); fixing fail-open `owner_only()` and macOS `-25308` leaks (`TASK-13`). Note ADR-0007/0011 recovery flows cited in Decision 3 / ENC-5 are deferred to v2 (`TASK-72`).
+> **Review note (2026-11-21):** **Implemented** (A1.1–A1.7: SQLCipher removed, plain bundled SQLite, `org_pki::wrap` active; `TASK-10` completed isolating `messaging.db` and `budgets.db` from shared `office.db` and moving the wrapped Org CA key out of acceptance journal Entry 1 into `durable/local/offices/<office-id>/security/ca-key.v1.json`; `TASK-11` completed separating Org CA and provider-credential wrapping keys via HKDF-SHA256 `KeyClass::ProviderCredential`, verifying CLI env scrubbing/FD delivery, and eliminating private chat copies in `turn/input.json`; `TASK-13` completed fixing fail-open `owner_only()` and macOS `-25308` leaks). Note ADR-0007/0011 recovery flows cited in Decision 3 / ENC-5 are deferred to v2 (`TASK-72`).
 
 # ADR-0016 · No application-level encryption of organization data
 
@@ -15,10 +15,10 @@ are plain bundled SQLite and the workspace no longer builds SQLCipher, the CA pr
 stored wrapped, the replication snapshot is a plain file checked by its SHA-256 digest, and the
 one launch contract carries the office secrets key. The owner chose the key storage of decision 3 on 2026-11-17
 (option 2 in the options table below). Supersedes the SQLCipher requirement of
-[ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md) decision 1 and narrows the
+[ADR-0002](decision-2%20-%20ADR-0002-Storage-SQLite-with-one-batching-writer-per-database.md) decision 1 and narrows the
 key custody of its decision 2 to wrapping an office's private keys. ADR-0002's choice of SQLite, its single writer
 and WAL stand, and its durability rule stands as amended by
-[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md).
+[ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md).
 
 ## Context
 
@@ -28,7 +28,7 @@ and WAL stand, and its durability rule stands as amended by
   stolen or switched off. File permissions stop other OS users. Application-level
   encryption stops a program that can open the file but does not hold the key.
 - The third exists here mainly because agents run as the same OS user as the data.
-  [ADR-0015](0015-agent-isolation-modes.md) addresses that directly.
+  [ADR-0015](decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) addresses that directly.
 - Its cost is high: generated keys per office, a signed host with a key-store
   entitlement, key passing in the launch protocol, a `key_missing` failure with no
   recovery, an undecided Linux key store, and about 46 source files that handle the
@@ -67,17 +67,22 @@ and WAL stand, and its durability rule stands as amended by
      the version, then the purpose, organization ID and office ID, each prefixed with
      its one-byte length. `org-pki` takes raw bytes; the office store keeps the record
      as opaque bytes, and the worker application composes the two.
-   - **Provider credentials wrapped by the office worker (2026-11-19, [ADR-0032](0032-browser-driven-cli-signin-and-remote-token-distribution.md)):**
+   - **Provider credentials wrapped by the office worker (2026-11-19, updated 2026-11-21 for TASK-11, [ADR-0032](decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md)):**
      when the office worker (`agentic-org-office`) stores wrapped vendor sign-in
      credentials under `durable/local/offices/<office-id>/auth/<connection-id>/`, it
-     uses the same AES-256-GCM record format under the office secrets key with a
-     **separate** authenticated-data domain string, `agentic-org/provider-credential/v1`,
-     binding `(version, purpose, organization_id, office_id, connection_id)`. Separating
-     the domain ensures a wrapped provider credential can never be unwrapped as an office
-     private key or replayed across offices or connections.
+     MUST use a **cryptographically distinct wrapping key** derived via HKDF-SHA256
+     (`org_pki::wrap::derive_wrapping_key(office_secrets_key, KeyClass::ProviderCredential)`,
+     separate from `KeyClass::OfficePrivateKey` used for Org CA/TLS keys) and the
+     dedicated authenticated-data domain `agentic-org/provider-credential/v1`,
+     binding `(version, "provider-credential", organization_id, office_id, connection_id)`.
+     Separating both the wrapping key and the AAD domain ensures Org CA keys and
+     provider OAuth tokens share neither key material nor ciphertext domain.
    - The host never receives the wrapped keys, so the rules of ADR-0007 and ADR-0011
-     stand. The HQ-creation commit stays one record in one transaction; only how the
-     private key bytes are protected inside that record changes.
+     stand. The wrapped Org CA key is written atomically to local security storage
+     (`durable/local/offices/<office-id>/security/ca-key.v1.json`, `0700` dir / `0600` file)
+     strictly **outside** `durable/recovery/` acceptance journal segments (`TASK-10` / H-06),
+     so CA key ciphertext never enters recovery journals, Git, or state exports; Entry 1 of
+     the journal commits only public `durable/state/` records (including `ca-escrow.v1.bin`).
    - If the office secrets key is missing, the office still opens and serves its data.
      Only functions that need a private key are unavailable (the worker reports the CA
      as unavailable; an HQ creation retry without the key is recovery-required), and each key is
@@ -105,9 +110,20 @@ and WAL stand, and its durability rule stands as amended by
    protection of `same-user` mode for data; private keys stay wrapped in both modes.
 6. **Backups.** A copy of the data folder is readable. Backup guidance must say to
    encrypt backups at their destination.
-7. **Private notes.** Who may read a note (its author and people, never another agent, [ADR-0031](0031-any-employee-changes-tasks.md)) is enforced by the service, as before. A
-   person with file access to the machine can read the file; this was also true of
-   anyone able to obtain the database key.
+7. **Isolated sensitive SQLite projections (updated 2026-11-21 for `TASK-10` / H-05).**
+   Shared plaintext `runtime/<office-id>/office.db` holds only shared organization/work/execution
+   projections. Sensitive operational data is isolated into dedicated `0700`/`0600` SQLite
+   databases with explicit access-checked service boundaries:
+   - `runtime/<office-id>/private/task-notes.db` (`private-notes-schema.sql`) — private task notes
+     readable only by their author and humans, never another agent ([ADR-0031](decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md)).
+   - `runtime/<office-id>/protected/messaging.db` (`messaging-schema.sql`) — conversations,
+     private DMs, recipient states, read markers, reactions, and attachment metadata
+     ([document 15](../docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md)).
+   - `runtime/<office-id>/protected/budgets.db` (`budgets-schema.sql`) — owner-only agent/task/release
+     budget policies, spend evaluations, notices, and holds
+     ([document 17](../docs/organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md)).
+   Service-layer authorization enforces actor visibility on every read and write. A person with
+   host file access can read local files; this was also true of anyone able to obtain a database key.
 8. **Linux.** A Linux host needs a credential provider for one small key per office
    and for the host's own secrets. It no longer needs one to open data.
 

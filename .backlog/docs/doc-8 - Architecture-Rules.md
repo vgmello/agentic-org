@@ -30,7 +30,7 @@ These rules apply whenever creating, modifying, moving, or refactoring modules, 
 
 These rules are architectural guardrails, not absolute enforcement gates. Use judgment, explain significant trade-offs, and do not block implementation solely because a numeric threshold is exceeded.
 
-Apply these rules using native .NET/C#, Rust, or TypeScript/Svelte constructs. Agentic Org's Rust/static-SvelteKit profile, target names, folder layout, shared-code examples, and reorganization sequence are in [project structure](design/project-structure.md), under [ADR-0005](adr/0005-standalone-server-v1.md).
+Apply these rules using native .NET/C#, Rust, or TypeScript/Svelte constructs. Agentic Org's Rust/static-SvelteKit profile, target names, folder layout, shared-code examples, and reorganization sequence are in [project structure](design/doc-68%20-%20Design-v1-Project-Structure.md), under [ADR-0005](../decisions/decision-5%20-%20ADR-0005-Standalone-server-HQ-web-application-and-named-instances.md).
 
 ---
 
@@ -75,7 +75,7 @@ Prefer `application -> domain module -> feature/use case` for business behavior.
 
 # Independent Delivery and Dependency Boundaries
 
-The [independent delivery and dependency rules](independent-delivery.md) are a
+The [independent delivery and dependency rules](doc-6%20-%20Independent-Delivery-and-Dependency-Boundaries.md) are a
 required part of this architecture. Apply them when scoping, implementing,
 delegating and reviewing increments. They define usable acceptance/merge units,
 stable prerequisite contracts, early production-path verification and escalation
@@ -208,7 +208,7 @@ When modifying a high-Ca component:
 - Evaluate the blast radius before making the change.
 - Prefer additive changes over breaking changes.
 - Avoid leaking implementation details into its public contract.
-- Change a breaking contract and every consumer in the same change. Until the owner declares v1 shipped, keep no compatibility layer for the old form ([non-negotiable 14](architecture-non-negotiables.md)).
+- Change a breaking contract and every consumer in the same change. Until the owner declares v1 shipped, keep no compatibility layer for the old form ([non-negotiable 14](doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md)).
 - Explicitly identify downstream consumers when making a breaking change.
 - Be especially cautious about adding volatile responsibilities to highly depended-upon components.
 
@@ -466,7 +466,7 @@ another storage engine (ADR-0018) or another deployment form.
 
 - Define the contract the consumer needs, owned by the consumer. The exception is an
   operating-system capability shared by several executables: its contract and
-  adapters live together in `org-platform` ([ADR-0017](adr/0017-linux-and-container-hosting.md)
+  adapters live together in `org-platform` ([ADR-0017](../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md)
   decision 6), and each consumer keeps its policy.
 - Put the current implementation (for example the macOS adapter) behind it.
 - Every operating system other than the implemented ones gets an adapter that exists and fails closed with a clear,

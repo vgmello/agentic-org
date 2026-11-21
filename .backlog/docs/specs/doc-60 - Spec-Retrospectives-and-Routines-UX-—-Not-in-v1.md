@@ -38,17 +38,17 @@ plan so that v1 does not build something that conflicts with it.
 ## What v1 must not contradict
 
 - A retro's write-up is a `kind: report` supporting document in organization Git
-  ([project documents](../design/organization-data/02-project-structure.md)): stable
+  ([project documents](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md)): stable
   UUIDv7 ID, schema and revision, title, project, status `draft | current | deprecated`,
   owner and attribution, in the project's documentation tree under `docs/reports/` (or the
   feature's `reports/` folder for a single-feature report). It is not a new entity,
   kind or counter.
 - Action items that are work are ordinary typed tasks
-  ([document 03](../design/organization-data/03-features-and-work.md)) with an
+  ([document 03](../organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md)) with an
   accountable team, project, immutable creator and history.
 - A feature's `delivered_at` fact and `live` status do not trigger anything.
 - Shared files and agent-visible evidence carry no cost amounts or budget figures
-  ([document 17](../design/organization-data/17-budgets-and-controls.md)); private task
+  ([document 17](../organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md)); private task
   notes never become retro evidence.
 
 ## The plan: routines

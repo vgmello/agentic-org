@@ -14,9 +14,9 @@ status: accepted
 Status: **accepted by the owner 2026-11-17** during the architecture review (conflict
 plan entry F-03). Implementation pending; decision 7 names a spike that must pass
 before `dedicated-user` becomes the default. Amends the isolation statements in
-[standalone-server.md](../design/standalone-server.md) section 3,
-[agent-sessions.md](../design/agent-sessions.md) and the driver contract of
-[execution](../design/organization-data/11-model-profiles-and-agent-execution.md)
+[standalone-server.md](../docs/design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) section 3,
+[agent-sessions.md](../docs/design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md) and the driver contract of
+[execution](../docs/organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md)
 section 8.
 
 ## Context
@@ -25,7 +25,7 @@ section 8.
   design says sharing an OS user is not an isolation boundary between instances and
   that stronger isolation needs separate users or containers. The Git design lists
   running agents as a separate macOS user as v2
-  ([projects-git-github.md](../design/projects-git-github.md)).
+  ([projects-git-github.md](../docs/design/doc-35%20-%20Design-Projects-Git-and-GitHub.md)).
 - Protection today is the vendor runtime's own sandbox for the commands it runs, plus
   the office's permission policy and fixed denies. The vendor program itself is not
   confined.
@@ -97,7 +97,7 @@ section 8.
     the one subtree under `durable/` that the agent account owns; its parent
     directories can be traversed and not listed.
 11. **The sign-in comes from the subscription pool.** For each launch the pool
-    ([document 14](../design/organization-data/14-model-providers-and-connection-pools.md))
+    ([document 14](../docs/organization-data/doc-89%20-%20Organization-Data-14-—-Model-Providers-and-Connection-Pools.md))
     selects a connection. The source of truth for a sign-in stays in the office's
     binding, `auth/<connection-id>/`, which the agent account cannot read. At launch the
     office places a copy of that sign-in in the agent's private home for the run, and
@@ -116,17 +116,17 @@ section 8.
     for the configuration folder, and on macOS where the Keychain entry is looked up)
     is the first item of the spike in decision 7.
 
-    *C1 spike addendum (2026-11-19, [c1-sign-in-spike.md](../research/c1-sign-in-spike.md)):*
+    *C1 spike addendum (2026-11-19, [c1-sign-in-spike.md](../docs/research/doc-25%20-%20Research-C1-Sign-In-Private-Home-and-Sub-Agent-Isolation-Spike.md)):*
     (a) On macOS, overriding `HOME` into the agent's private home breaks macOS Keychain
     lookup for Claude; supplying a 1-year `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`)
     avoids Keychain completely and lets both `HOME` and `CLAUDE_CONFIG_DIR` point into the
     private home on macOS (headless Linux behavior remains unverified until a Linux run).
     (b) Codex OAuth refresh tokens are single-use rotating tokens, so copying one
     `auth.json` across concurrent agents or offices risks `refresh_token_already_used`
-    revocations; [ADR-0032](0032-browser-driven-cli-signin-and-remote-token-distribution.md)
+    revocations; [ADR-0032](decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md)
     makes HQ-centralized single-lock refresh via `codex app-server` `chatgptAuthTokens`
     the default for multi-office Codex pools (explicitly recorded as an exception to
-    "Works alone" in [architecture-non-negotiables.md](../architecture-non-negotiables.md);
+    "Works alone" in [architecture-non-negotiables.md](../docs/doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md);
     synthetic protocol probe verified zero `auth.json` written to disk on Codex `0.169.0`;
     live model turn and vendor-supported refresh path remain required before shipping),
     with independent per-office `codex login --device-auth` available for extended offline
@@ -154,7 +154,7 @@ section 8.
     reserved for later); the accepted text is left as it was. Its design is still
     proposed, not yet accepted as a full decision. How it sits inside dedicated
     accounts, and the extensions that add allowances to its profiles, are proposed in
-    [accounts, sandbox and extensions](../design/accounts-sandbox-and-extensions.md). The office puts its
+    [accounts, sandbox and extensions](../docs/design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md). The office puts its
     own OS sandbox around the whole agent process, for every kind of agent: Seatbelt on
     macOS; on Linux a spike decides between Landlock, the mount-namespace root above,
     and bubblewrap (installable). Profiles depend on the kind of agent: a standard

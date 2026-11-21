@@ -11,10 +11,10 @@ status: accepted
 
 Status: **accepted by the owner** (decisions 1 and 2, 2026-11-18). Implementation
 pending. Decisions 3 to 11 are its design. The
-[session design](../design/agent-sessions.md), the
-[run modes spec](../specs/agent-run-modes-ux.md), the
-[supervision design](../design/employee-supervision.md) and the
-[agent instructions](../design/agent-instructions.md) follow it. It is built with C3.
+[session design](../docs/design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md), the
+[run modes spec](../docs/specs/doc-50%20-%20Spec-Agent-Run-Modes-and-Availability-UX.md), the
+[supervision design](../docs/design/doc-33%20-%20Design-Employee-Supervision.md) and the
+[agent instructions](../docs/design/doc-27%20-%20Design-Agent-Instructions-Assembly.md) follow it. It is built with C3.
 
 ## Context
 
@@ -50,7 +50,7 @@ The design:
 5. **Its commands are the employee's.** `agent-os` run by a sub-agent binds with the
    run's binding, because the sub-agent descends from the process the office started.
    What it does is recorded under the employee
-   ([chat spec](../specs/chat-ux.md): "anything an agent's own subprocesses post is
+   ([chat spec](../docs/specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md): "anything an agent's own subprocesses post is
    attributed to that agent").
 6. **Background tasks and sub-agents stay enabled across turns while the session is active (owner clarification 2026-11-19).**
    Inside a persistent headless session (`stream-json` / `app-server` with `stdin` kept open), an agent may start long-running background commands or background sub-agents and remain available to receive and answer new messages while they run. When a background task or sub-agent finishes, the runtime's completion notification (e.g., Claude's `system/task_notification`) wakes the session for a reactive follow-up turn (`started_by_kind = 'background_wake'`) whose usage and actions are attributed to the same employee and run. The office tracks active background work and **stops and reaps all remaining background tasks and sub-agents on Pause, Stop, Offboard, or stall timeout**, recording what was stopped.
@@ -59,12 +59,12 @@ The design:
 8. **Its model is the agent's model.** A sub-agent runs on the model of the agent's
    execution configuration. A cheaper model for helpers is the model policy for each
    slot, which stays a later feature (FC-105). Until then the cheap path for reading a
-   channel is `channel summarize` ([ADR-0024](0024-a-channel-question-is-watched-for-its-answer.md)).
+   channel is `channel summarize` ([ADR-0024](decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md)).
 9. **The office writes the sub-agent's definition.** Where a runtime takes sub-agent
    definitions, the office supplies one general-purpose definition, written before
    every start like its other runtime files: a short built-in text that says it works
    for the main session and reports to it, and the organization's must-follow
-   documents ([processes design](../design/processes.md), section 3.2). An agent
+   documents ([processes design](../docs/design/doc-34%20-%20Design-Organization-Processes-and-Standards.md), section 3.2). An agent
    cannot add or change a definition.
 10. **What each adapter must show.** For each vendor tool, the sign-in spike (C1) also
     records how sub-agents are started under the isolation switches, that they inherit

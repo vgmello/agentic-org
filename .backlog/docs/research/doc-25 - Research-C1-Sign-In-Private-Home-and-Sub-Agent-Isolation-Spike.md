@@ -17,14 +17,14 @@ tags:
 
 Status: **recorded 2026-11-19** (revised 2026-11-19 after review; **macOS 27.2.1 arm64 only**; Claude Code **2.1.311**; OpenAI Codex CLI **0.169.0**; **Linux unverified** pending a Linux run).
 Satisfies the C1 sign-in and sub-agent isolation record in the
-[implementation plan](../implementation-plan.md#c1--the-sign-in-spike), informs
-[ADR-0015](../adr/0015-agent-isolation-modes.md) decisions 7, 10 and 11,
-[ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 10, and motivates
-[ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md).
+[implementation plan](../doc-5%20-%20v1-Implementation-Plan.md#c1--the-sign-in-spike), informs
+[ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) decisions 7, 10 and 11,
+[ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md) decision 10, and motivates
+[ADR-0032](../../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md).
 
-Companion POC code and automated tests: [`pocs/console-attach/`](../../pocs/console-attach/README.md).
-Earlier standalone Claude and Codex protocol spikes: [`spikes/claude/README.md`](../../spikes/claude/README.md),
-[`spikes/codex/README.md`](../../spikes/codex/README.md).
+Companion POC code and automated tests: [`pocs/console-attach/`](../../../pocs/console-attach/README.md).
+Earlier standalone Claude and Codex protocol spikes: [`spikes/claude/README.md`](../../../spikes/claude/README.md),
+[`spikes/codex/README.md`](../../../spikes/codex/README.md).
 
 ## 1. Summary & first adapter choice
 
@@ -32,7 +32,7 @@ Earlier standalone Claude and Codex protocol spikes: [`spikes/claude/README.md`]
   - Portable 1-year `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`) avoids macOS Keychain and `HOME` conflicts (Linux runtime behavior remains unverified until exercised on Linux).
   - Private home (`CLAUDE_CONFIG_DIR`), `--resume`, approval bridge (`--permission-prompt-tool stdio`), persistent background tasks + concurrent follow-up messaging, and sub-agent isolation were exercised on macOS `27.2.1` (see evidence classification in §2 and §3).
 - **Second adapter:** **`org-agent-runtime-codex`** (Codex CLI `0.169.0`, `codex app-server` over stdio).
-  - Multi-office Codex pools default to HQ-centralized single-lock refresh (`chatgptAuthTokens`, recorded exception to "Works alone" in [architecture-non-negotiables.md](../architecture-non-negotiables.md) and [ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md) decision 6), with per-office `codex login --device-auth` available for extended offline operation.
+  - Multi-office Codex pools default to HQ-centralized single-lock refresh (`chatgptAuthTokens`, recorded exception to "Works alone" in [architecture-non-negotiables.md](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md) and [ADR-0032](../../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md) decision 6), with per-office `codex login --device-auth` available for extended offline operation.
   - A **synthetic-token protocol probe** against Codex `0.169.0` confirmed `codex app-server` accepts `account/login/start` (`type: "chatgptAuthTokens"`) with **zero `auth.json` written to disk** and emits `account/chatgptAuthTokens/refresh` on an unauthorized token. A live model turn with real tokens and a vendor-supported refresh path outside the Codex CLI remain **unverified** and are required before shipping HQ-centralized refresh (see §2.2).
 - **Still pending before `dedicated-user` becomes the macOS default (ADR-0015 decision 7 / ISO-6):** running both vendors + an Xcode build under a second macOS OS account. `same-user` remains the default in C3 until that macOS dedicated-account check passes.
 - **Linux status:** all runs in this record were executed on macOS `27.2.1` arm64. Headless Linux credential storage (such as `<CLAUDE_CONFIG_DIR>/.credentials.json` `0600`) and Linux private-home isolation are **unverified** here and must be run on Linux before claiming Linux support.

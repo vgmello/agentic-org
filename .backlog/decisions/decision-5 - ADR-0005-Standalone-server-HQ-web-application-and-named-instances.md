@@ -9,9 +9,9 @@ status: accepted
 
 # ADR-0005 · Standalone server, HQ web application and named instances
 
-Status: accepted. Builds on [ADR-0001](0001-app-is-a-client-office-is-a-server.md)
-and [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md). Platforms are macOS
-and Linux, including a container ([ADR-0017](0017-linux-and-container-hosting.md)).
+Status: accepted. Builds on [ADR-0001](decision-1%20-%20ADR-0001-The-app-is-a-client-offices-serve-organization-data.md)
+and [ADR-0002](decision-2%20-%20ADR-0002-Storage-SQLite-with-one-batching-writer-per-database.md). Platforms are macOS
+and Linux, including a container ([ADR-0017](decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md)).
 
 ## Context
 
@@ -74,17 +74,17 @@ browser; there is no native application.
    HQ's UI or an HQ-issued command. Offline setup uses
    `setup --bundle <path> --offline`. A repeated setup resumes or reuses existing
    state; it does not convert office roles or upgrade implicitly. The
-   [standalone design](../design/standalone-server.md) and the
-   [installation UX](../specs/server-installation-and-access-ux.md) define the
-   exact behaviour. [Executable migration](../design/executable-migration.md)
+   [standalone design](../docs/design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) and the
+   [installation UX](../docs/specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) define the
+   exact behaviour. [Executable migration](../docs/design/doc-63%20-%20Design-Executables-and-Entry-Points.md)
    records which entry points exist today.
 9. **Code is organized** as domain modules containing vertical slices, as specified
-   in [project structure](../design/project-structure.md) and the
-   [architecture rules](../architecture-rules.md).
+   in [project structure](../docs/design/doc-68%20-%20Design-v1-Project-Structure.md) and the
+   [architecture rules](../docs/doc-8%20-%20Architecture-Rules.md).
 
 Entity, storage and recovery contracts are owned by
-[organization-data](../design/organization-data/README.md). The
-[creation flow](../design/create-organization.md) provisions the required
+[organization-data](../docs/organization-data/doc-72%20-%20Organization-Data-—-README.md). The
+[creation flow](../docs/design/doc-30%20-%20Design-Create-Organization.md) provisions the required
 organization and repository fields and a valid home team before admitting
 employees; a built-in HR agent is not exempt from the employee constraints.
 
@@ -97,17 +97,17 @@ employees; a built-in HR agent is not exempt from the employee constraints.
   origin-scoped proof on every protected operation, stream and refresh; a cookie
   alone is not enough, because browsers do not isolate cookies by port. Browser
   tabs share one authenticated streaming fetch or use bounded short polling.
-  Sessions are stored at the host ([ADR-0013](0013-stored-browser-sessions.md)).
+  Sessions are stored at the host ([ADR-0013](decision-13%20-%20ADR-0013-Browser-sessions-are-stored-at-the-host-and-survive-restarts.md)).
 - The local `org-proto` API, HTTP `/api/v1`, the launch contract and the sync
   contract are independent contracts that change in place until v1 ships. Managed
   launch paths come only from instance, office and member identity.
 - Pause commits durably at HQ while a disconnected office's stop is pending; an
   already-forwarded uncertain outcome stays Pending confirmation by operation ID.
-- Only someone who may hire into the team starts a hire, and the hirer's confirmation precedes provisioning; there is no approval ([ADR-0029](0029-only-who-may-hire-hires.md)).
+- Only someone who may hire into the team starts a hire, and the hirer's confirmation precedes provisioning; there is no approval ([ADR-0029](decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)).
 - Creation includes CA escrow, recovery-code provisioning and protected delivery
-  ([ADR-0007](0007-hq-creation-escrow.md), [ADR-0011](0011-protected-recovery-delivery.md)).
+  ([ADR-0007](decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md), [ADR-0011](decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md)).
   Manual recovery after losing HQ is REC-1 in the
-  [installation UX](../specs/server-installation-and-access-ux.md).
+  [installation UX](../docs/specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md).
 
 ## Consequences
 
@@ -118,8 +118,8 @@ continues. Named instances share installed release payloads, with a per-instance
 version pin. Repository transport for cross-office coding is a separate
 dependency.
 
-The [UX requirements](../specs/server-installation-and-access-ux.md) and the
-[implementation design](../design/standalone-server.md) define the scope and evidence.
+The [UX requirements](../docs/specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) and the
+[implementation design](../docs/design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) define the scope and evidence.
 
 ## Not in v1
 

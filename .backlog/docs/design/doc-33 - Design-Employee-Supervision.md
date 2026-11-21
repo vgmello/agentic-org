@@ -18,13 +18,13 @@ tags:
 
 # Design: employee supervision
 
-How an office runs and supervises its agents. [Document 04](organization-data/04-agent-structure.md)
-owns employees; [11](organization-data/11-model-profiles-and-agent-execution.md) and
-[14](organization-data/14-model-providers-and-connection-pools.md) own execution,
-profiles and pools; [16](organization-data/16-recovery-and-office-continuity.md) owns
-recovery evidence and [17](organization-data/17-budgets-and-controls.md) budgets. How
-a session is driven is in [agent sessions](agent-sessions.md). The screens and the
-EMP criteria are in the [employee supervision UX](../specs/employee-supervision-ux.md).
+How an office runs and supervises its agents. [Document 04](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md)
+owns employees; [11](../organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) and
+[14](../organization-data/doc-89%20-%20Organization-Data-14-—-Model-Providers-and-Connection-Pools.md) own execution,
+profiles and pools; [16](../organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md) owns
+recovery evidence and [17](../organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md) budgets. How
+a session is driven is in [agent sessions](doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md). The screens and the
+EMP criteria are in the [employee supervision UX](../specs/doc-53%20-%20Spec-Employee-Supervision-and-Approvals-UX.md).
 
 Browser controls arrive as authenticated operations at HQ and are routed to the
 office where the agent is placed. That office runs the supervisor, keeps the durable
@@ -53,9 +53,9 @@ satellite completed an operation.
    with the same launch digest. An unknown cleanup keeps the slot.
 4. **Work starts for a stated reason.** A turn starts from an explicit instruction,
    from something addressed to the agent (a direct message, a mention, an ask or a
-   task assigned to it, [ADR-0028](../adr/0028-an-agent-is-always-available.md)),
+   task assigned to it, [ADR-0028](../../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md)),
    the answer to a required ask
-   ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)), or a recovery the
+   ([ADR-0020](../../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md)), or a recovery the
    office performs. The office does not choose work, queue messages into
    a busy turn, remind goals, extract memory or spawn specialists.
 5. **Mechanism grants no authority.** Generated instructions are projections of the
@@ -68,7 +68,7 @@ satellite completed an operation.
    It follows instructions from whoever it reports to, a person or an agent, in its
    team or another, then up the reporting line to the owner; with no one named it
    reports to the lead of its home team
-   ([document 04](organization-data/04-agent-structure.md#who-an-agent-takes-instructions-from)).
+   ([document 04](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md#who-an-agent-takes-instructions-from)).
    A message from someone who is not in that line, including one who reports to it, is a request: the agent answers it and
    may act on it, but where it conflicts with what its own chain asked, its chain
    wins, and between two people in its chain, the one higher up wins. The office
@@ -119,7 +119,7 @@ The control path:
    replacement. A crash never runs a tool call again. It does continue the turn:
    once the run's processes are proved gone, the office resumes the same session and
    tells the agent what was interrupted, and the agent decides what to repeat
-   ([ADR-0030](../adr/0030-an-agent-works-while-it-has-work.md)). A person recovers a
+   ([ADR-0030](../../decisions/decision-30%20-%20ADR-0030-An-agent-works-while-it-has-work-continues-after-a-restart-and-a-stalled-turn-is-stopped.md)). A person recovers a
    turn only when the office cannot do that.
 6. A turn with no activity for the stall time is stopped with its sub-agents and
    recorded as stalled; the agent goes idle (ADR-0030 decisions 10 to 12).
@@ -156,7 +156,7 @@ retry with the same ID resolves it (EMP-3).
 ## 3. An agent waiting for a required answer
 
 A required ask that times out suspends the agent
-([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)). The office tells the
+([ADR-0020](../../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md)). The office tells the
 agent, gives it the grace period to end its turn, stops its process and any process
 it started that is still running, and records the suspension durably. A suspended
 agent holds no turn, permit or subscription slot. The answer resumes the same session
@@ -165,7 +165,7 @@ the reason shown and the start is retried.
 
 ## 4. Processes, standards and tool help
 
-The [process design](processes.md#32-delivery-to-sessions-proc-7) owns what the agent
+The [process design](doc-34%20-%20Design-Organization-Processes-and-Standards.md#32-delivery-to-sessions-proc-7) owns what the agent
 receives: non-overridable documents in full in a must-follow section, overridable
 guidance as summaries with retrieval, and standards fetched when a process or task
 calls for them. Help for `agent-os` is built-in guidance, given separately from
@@ -176,7 +176,7 @@ process text. No process edit invents commands or changes tool permissions.
 Goals and goal reminders, automatic scheduling, generated native agent definitions
 and private specialists, delegation chosen by a process, and memory checkpoints are not
 part of v1. Starting a sub-agent or background task inside the vendor tool is
-([ADR-0025](../adr/0025-agents-start-sub-agents.md)): it runs in the parent's sandbox
+([ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md)): it runs in the parent's sandbox
 and under the office's rules, may stay active across turns inside the live session so
 the agent remains conversational while background work completes (decision 6), is
 stopped and reaped on Pause, Stop, Offboard or stall timeout (`SUB-5`), and is granted

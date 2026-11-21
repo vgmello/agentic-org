@@ -21,14 +21,14 @@ tags:
 # Design: typed tasks, features, projects and project documents
 
 How tasks, features, projects and their documents behave. The records are owned by
-the data contract: [projects](organization-data/02-project-structure.md),
-[tasks and features](organization-data/03-features-and-work.md),
-[operational data](organization-data/05-operational-data.md),
-[identity and numbering](organization-data/06-identity-and-numbering.md),
-[record contracts](organization-data/08-record-contracts.md) and
-[assignment and history](organization-data/12-task-assignment-and-history.md). The
-screens are in the [work items UX](../specs/work-items-ux.md) and the
-[feature requests UX](../specs/feature-requests-ux.md). The library is `org-work`.
+the data contract: [projects](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md),
+[tasks and features](../organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md),
+[operational data](../organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md),
+[identity and numbering](../organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md),
+[record contracts](../organization-data/doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md) and
+[assignment and history](../organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md). The
+screens are in the [work items UX](../specs/doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md) and the
+[feature requests UX](../specs/doc-42%20-%20Spec-Feature-Requests-and-Intake-UX.md). The library is `org-work`.
 
 ## In one paragraph
 
@@ -53,7 +53,7 @@ from all of these.
    from an employee's home team.
 3. **Identity is stable.** IDs are UUIDv7. A task reference is minted by the creating
    office and is unique in the organization on its own, for example `T-B37`
-   ([ADR-0019](../adr/0019-office-coded-task-numbers.md)). Type changes and assignment
+   ([ADR-0019](../../decisions/decision-19%20-%20ADR-0019-Task-numbers-are-minted-by-the-creating-office.md)). Type changes and assignment
    never renumber a task.
 4. **Sources are durable.** Task files and published task events are organization Git
    content; acknowledged unpublished changes are in a durable journal. The database is
@@ -65,12 +65,12 @@ from all of these.
    feature, release or deployment of the same project. `feature.md` is not duplicated
    as a supporting document. Project-wide documents live in one tree per project
    with one index, and a task may name the issued document versions it realizes
-   ([development process design](development-processes.md#8-the-project-documentation-tree),
-   [document 18](organization-data/18-development-processes-and-project-documentation.md)).
+   ([development process design](doc-32%20-%20Design-Development-Processes-Process-Packages.md#8-the-project-documentation-tree),
+   [document 18](../organization-data/doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md)).
 7. **Privacy is separate.** Shared comments stay shared. A private task note is edited
    and deleted only by its author. It is read by its author and by any person who can
    read the task, and never by another agent
-   ([ADR-0031](../adr/0031-any-employee-changes-tasks.md)). Notes are kept outside
+   ([ADR-0031](../../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md)). Notes are kept outside
    organization Git, shared history, shared search and shared feeds.
 8. **No workflow engines in v1.** Areas, Undo, advanced checklist engines, automatic
    feature, bug or request transitions and process execution are not part of v1.
@@ -319,7 +319,7 @@ Markdown is rendered safely, and an oversized input gets an explicit size error.
 Any active employee of the organization, person or agent, creates, edits, assigns
 and moves tasks, at its own discretion; there is no separate task capability, and
 being assigned, leading a team or belonging to a project is not required
-([ADR-0031](../adr/0031-any-employee-changes-tasks.md)). The office still checks every
+([ADR-0031](../../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md)). The office still checks every
 call: the caller is an active employee bound as itself, and the change is valid for
 the task. A paused, offboarded or deactivated employee is refused. Deleting a task,
 changing a project's or a team's settings, and budgets keep their own rules.
@@ -340,7 +340,7 @@ cannot reuse that operation ID.
 
 The office acknowledges only once the task snapshot, its events and the idempotency
 result are one recoverable operation, committed in the class
-[ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) assigns
+[ADR-0014](../../decisions/decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) assigns
 (creation and comments committed, status and assignment durable). Concurrent writes
 to a task wait for or conflict at its single accepting writer. A new task starts with
 `created` at revision 1; unknown future change tags stay readable as unknown.
@@ -400,10 +400,10 @@ outside domain policy.
 
 ### 3.2 The ports `org-work` defines
 
-The ports are in [`crates/org-work/src/ports.rs`](../../crates/org-work/src/ports.rs),
-the stored model in [`model.rs`](../../crates/org-work/src/model.rs), the task handlers
-in [`tasks.rs`](../../crates/org-work/src/tasks.rs) and the wire types in
-[`org-proto/src/work.rs`](../../crates/org-proto/src/work.rs). They implement an older
+The ports are in [`crates/org-work/src/ports.rs`](../../../crates/org-work/src/ports.rs),
+the stored model in [`model.rs`](../../../crates/org-work/src/model.rs), the task handlers
+in [`tasks.rs`](../../../crates/org-work/src/tasks.rs) and the wire types in
+[`org-proto/src/work.rs`](../../../crates/org-proto/src/work.rs). They implement an older
 model and change as follows:
 
 | Code today | Target |
@@ -424,29 +424,29 @@ written for the target model.
 
 ### 3.3 Tables
 
-The draft DDL is [schema.sql](organization-data/schema.sql): tasks, `task_details`,
+The draft DDL is [schema.sql](../../../docs/design/organization-data/schema.sql): tasks, `task_details`,
 `task_repositories`, features and feature slugs, projects with their repositories and
 contributing teams, documents, shared operations, links and relationships, record
 references and tombstones, `task_events`, office codes and task counters, and
 HQ-allocated counters. Private notes use the separate
-[private-notes-schema.sql](organization-data/private-notes-schema.sql), never combined
+[private-notes-schema.sql](../../../docs/design/organization-data/private-notes-schema.sql), never combined
 with the shared projection. A note's author comes from authentication.
 
 ### 3.4 Request fingerprints and admission
 
 A command receipt's digest is **SHA-256(method UTF-8 + NUL + bound actor ID UTF-8 +
-NUL + canonical typed-params UTF-8)** ([`hash.rs`](../../crates/org-work/src/hash.rs)).
+NUL + canonical typed-params UTF-8)** ([`hash.rs`](../../../crates/org-work/src/hash.rs)).
 Params are decoded to their Rust type and re-encoded before hashing, so ignored
 unknown fields cannot change the fingerprint. Canonical JSON sorts object keys by
 UTF-8 bytes, keeps array order, uses compact separators and the `serde_json` scalar
 encoding. The test vectors are in
-[`proto-fingerprints.json`](../../crates/org-proto/test-vectors/v2/proto-fingerprints.json).
+[`proto-fingerprints.json`](../../../crates/org-proto/test-vectors/v2/proto-fingerprints.json).
 
 The actor of a call is the authenticated principal of a person's request or the
 binding of an agent's run; no parameter chooses it, and an agent acts only while
 active or paused. The receipt is looked up before age and state are checked: the same
 ID and hash replays, changed params are refused. In the code today
-[`engine.rs`](../../crates/org-work/src/engine.rs) lets any connection bound with the
+[`engine.rs`](../../../crates/org-work/src/engine.rs) lets any connection bound with the
 application token act as the owner or as any person, and treats the owner as a flag on
 a member; both go with the token (implementation plan A1) and the owner flag (B2). An operation ID is admitted for 29 days,
 up to five minutes in the future, and its receipt kept 30 days from its encoded time.
@@ -461,7 +461,7 @@ contiguous and the final snapshot or tombstone agrees.
 
 One accepting service at HQ owns private notes, in a plain SQLite database at
 `<data-root>/<organization-id>/durable/private/task-notes.db`, protected by file
-permissions ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)). Other
+permissions ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)). Other
 offices call it as the bound author; nothing replicates it and it never enters Git. If
 HQ is unavailable, private edits cannot be acknowledged. Another host accepts writes
 only after fencing.
@@ -496,7 +496,7 @@ physical erasure. These rules implement PN-01 to PN-06 of document 05.
 
 The wire contract for tasks is `org_proto::work`, changed in place to the model above
 (implementation plan B4); the browser routes are in the
-[web API](web-api-v1.md#tasks). Conventions that hold:
+[web API](doc-71%20-%20Design-Web-HTTP-API-v1.md#tasks). Conventions that hold:
 
 - Calls go to the caller's own office on a bound connection.
 - Every write carries an operation ID and returns its outcome; a lost response is
@@ -528,7 +528,7 @@ reflects only implemented commands.
 
 ## 6. Time figures
 
-The [shared duration definitions](../specs/costs-and-insights-ux.md#shared-duration-definitions)
+The [shared duration definitions](../specs/doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md#shared-duration-definitions)
 apply. With complete evidence, Started is the first In progress, kept across a reopen;
 a direct To do → Done records both at once with zero cycle time. Lead time runs from
 creation; cycle time from first Started to last completion (or now while open),
@@ -614,4 +614,4 @@ ULID identity; `crates/org-proto/src/work.rs` carries that wire contract. The
 `selected_codec`, `selected_assignment` and `selected_history` modules and the office's
 acceptance journal (`crates/org-office/src/store/acceptance`) implement the target
 assignment and history. Private notes are not implemented. All of this is replaced by
-increment B4 of the [implementation plan](../implementation-plan.md).
+increment B4 of the [implementation plan](../doc-5%20-%20v1-Implementation-Plan.md).

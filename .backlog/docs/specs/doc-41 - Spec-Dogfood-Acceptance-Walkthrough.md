@@ -36,7 +36,7 @@ scheduling and memory are not in v1 and are not checked.
 
 ## Which sections apply when
 
-The run grows with the [implementation plan](../implementation-plan.md)'s milestones.
+The run grows with the [implementation plan](../doc-5%20-%20v1-Implementation-Plan.md)'s milestones.
 
 | Milestone | What is run | Sections |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ Before running, the release must implement browser authentication, HQ APIs, offi
 enrollment and sync, instance lifecycle and the host's credential custody on both
 platforms. Missing capabilities are **blocked**, not passed through mocks or marked
 ready because assets loaded.
-See [SRV criteria](server-installation-and-access-ux.md#6-acceptance-criteria).
+See [SRV criteria](doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md#6-acceptance-criteria).
 
 For every row record its result (§7), timestamp, exact release and evidence.
 Retain failure diagnostics with credentials redacted. A docs review is not evidence
@@ -90,7 +90,7 @@ merge, reproduction steps, expected behavior and requirement, actual behavior,
 and evidence paths. Recompute summary counts from the raw results. A clean
 screenshot or a passing criterion does not by itself establish product fit.
 
-Walk the owner jobs in [the shell requirements](app-shell-ux.md) end to end as
+Walk the owner jobs in [the shell requirements](doc-39%20-%20Spec-App-Shell-and-Navigation-UX.md) end to end as
 far as the delivered capabilities allow: identify what needs a decision, respond,
 assign or capture work, see who owns it, and inspect its result. Check that names,
 navigation, counts and resolution agree across screens, and that operational
@@ -254,7 +254,7 @@ escrow material, not recovery after losing HQ (REC-1).
 Verify SRV-22: retained browser code/package uses `apps/agentic-org-ui` / `agentic-org-ui`, and
 worker source/package/executable use apps/agentic-org-office / agentic-org-office. Verify agentic-org-web and agent-os helper names and agentic-org serve host composition.
 Check workspace, imports, test helpers, release/signing resolution and ownership
-references against the [project structure](../design/project-structure.md). Verify
+references against the [project structure](../design/doc-68%20-%20Design-v1-Project-Structure.md). Verify
 domain/feature moves preserve private SQL, transactions, public boundaries and
 licensed UI containment before treating the reorganization as complete.
 

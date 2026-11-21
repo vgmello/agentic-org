@@ -10,15 +10,15 @@ status: accepted
 # ADR-0006 · Task changes are accepted through one recoverable office journal
 
 Status: accepted. Implementation pending. The data contract owns the record shapes:
-[document 03](../design/organization-data/03-features-and-work.md) the task file,
-[document 05](../design/organization-data/05-operational-data.md#task-event-codec) the
-event codec and resource profile, [document 12](../design/organization-data/12-task-assignment-and-history.md)
-assignment, and [document 16](../design/organization-data/16-recovery-and-office-continuity.md)
-the office's acceptance journal. The [office store design](../design/office-store.md)
-and [ADR-0021](0021-office-store-architecture.md) own how the journal is written. This record owns how a task change travels from a
+[document 03](../docs/organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md) the task file,
+[document 05](../docs/organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#task-event-codec) the
+event codec and resource profile, [document 12](../docs/organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md)
+assignment, and [document 16](../docs/organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md)
+the office's acceptance journal. The [office store design](../docs/design/doc-66%20-%20Design-Office-Store-Architecture.md)
+and [ADR-0021](decision-21%20-%20ADR-0021-The-office-store-one-journal-of-file-changes-a-projection-rebuilt-from-files.md) own how the journal is written. This record owns how a task change travels from a
 person or agent to a durable, recoverable outcome, using assignment as the first
 complete path. How fast each operation is acknowledged is owned by
-[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md).
+[ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md).
 
 ## Decision and delivery boundary
 
@@ -56,7 +56,7 @@ metadata, never task-controlled actor fields.
 
 The HTTP surface has an explicit assignment endpoint, task and history reads,
 authorized target choices and receipt lookup, documented in the
-[web API](../design/web-api-v1.md). It is not a generic native-command tunnel. The
+[web API](../docs/design/doc-71%20-%20Design-Web-HTTP-API-v1.md). It is not a generic native-command tunnel. The
 same operation ID travels through browser, web, native command and receipt.
 
 Two transport rules apply:
@@ -85,7 +85,7 @@ revision and snapshot without changing either assignment field.
 
 Browser credentials end at the web process and the host's authentication boundary.
 Each person's request reaches the office with that person's principal and a
-host-issued grant ([ADR-0012](0012-office-channel-lifecycle.md)). An agent binding
+host-issued grant ([ADR-0012](decision-12%20-%20ADR-0012-Bounded-office-channel-ownership-and-closure-CH-LIFE-1.md)). An agent binding
 is never used as human authorization. The web process holds no office keys and no
 host authority.
 
@@ -96,7 +96,7 @@ its injected employee identity. An employee is never manufactured from an owner
 name, a profile field or a browser body.
 
 Any active employee of the organization, person or agent, may change tasks
-([ADR-0031](0031-any-employee-changes-tasks.md), owner, 2026-11-18); there is no
+([ADR-0031](decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md), owner, 2026-11-18); there is no
 separate task capability, and being assigned a task, leading a team or belonging to
 a project is not required.
 Each request checks channel binding, grant scope and expiry, session revocation and
@@ -244,7 +244,7 @@ The assignment command fingerprint is computed over the validated typed command,
 never over the incoming JSON text: equivalent string escapes give the same
 fingerprint, and fractional or exponent spellings of a revision are invalid.
 
-Resource limits are the `selected-task-resources/1` profile, defined across [document 03](../design/organization-data/03-features-and-work.md) (task snapshots), [document 05](../design/organization-data/05-operational-data.md) (events and public blobs) and [document 16](../design/organization-data/16-recovery-and-office-continuity.md) (journal entries). Native
+Resource limits are the `selected-task-resources/1` profile, defined across [document 03](../docs/organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md) (task snapshots), [document 05](../docs/organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md) (events and public blobs) and [document 16](../docs/organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md) (journal entries). Native
 `MAX_FRAME_BYTES` and HTTP `MAX_BUSINESS_BODY_BYTES` stay at 1 MiB; large history
 reads and content use byte-bounded pages and authenticated content-reference
 chunks of at most 256 KiB raw bytes per request or response.
@@ -335,7 +335,7 @@ without removing the durable-commit obligation.
   scope or fingerprint can neither replay nor inspect it. Revoked, expired and
   wrong-channel grants and paused, offboarded or deactivated employees are denied
   (any active employee may change tasks per
-  [ADR-0031](0031-any-employee-changes-tasks.md)).
+  [ADR-0031](decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md)).
 - Failures injected around the journal append, the group flush, the SQL commit,
   file materialization, read publication and response recover the same accepted
   outcome after reopening, from organization data plus the retained journal and

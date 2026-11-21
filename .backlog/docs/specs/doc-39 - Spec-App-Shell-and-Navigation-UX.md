@@ -70,7 +70,7 @@ Event lists show relative time within 24 hours and absolute time thereafter. Hea
 Retain temporal instants exactly and apply each instant's DST offset; compute elapsed duration from instants, never by subtracting local clock readings. Changing a display preference never changes retained budget period keys and bounds or old daily-summary snapshots. Travel prompts, zones in the people and agent directory, and the private away digest are not in v1.
 
 - AC-IA20-1: New York 2026-03-08 01:30 UTC−5 to 03:30 UTC−4 is one hour elapsed; two viewers render the same retained instant in their saved zones without changing it.
-- AC-IA20-2: invalid detection shows unsaved UTC while [budget controls](../design/organization-data/17-budgets-and-controls.md) still refuse budget creation without a known selected owner/HQ zone. Preference changes leave retained period keys/bounds and summary snapshots intact; no employee time zone appears.
+- AC-IA20-2: invalid detection shows unsaved UTC while [budget controls](../organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md) still refuse budget creation without a known selected owner/HQ zone. Preference changes leave retained period keys/bounds and summary snapshots intact; no employee time zone appears.
 
 ### 0.2 Search and creation
 

@@ -13,7 +13,7 @@ Status: **accepted by the owner 2026-11-17**.
 This number was reserved for an unmerged draft, "session panel embedded terminal", which
 proposed running Claude with `--bg` and attaching to it. That draft was replaced before
 it merged; this ADR records the decision that replaced it, which until now lived only in
-[agent-sessions.md](../design/agent-sessions.md) decision 1. Implementation pending.
+[agent-sessions.md](../docs/design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md) decision 1. Implementation pending.
 
 ## Decision
 
@@ -26,7 +26,7 @@ it merged; this ADR records the decision that replaced it, which until now lived
 3. **There is no terminal in the browser.** The browser shows a session as a read-only
    view of what the agent did. It never attaches to an agent's process, never forwards
    keystrokes, and never carries terminal frames.
-   *Narrow exception (2026-11-19, [ADR-0032](0032-browser-driven-cli-signin-and-remote-token-distribution.md)):*
+   *Narrow exception (2026-11-19, [ADR-0032](decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md)):*
    during one-time provider connection enrollment, the office worker (`agentic-org-office`)
    may run a bounded, short-lived local PTY helper strictly to drive a vendor's sign-in CLI
    (`claude setup-token`, `claude auth login --claudeai`, or `codex login --device-auth`).
@@ -44,11 +44,11 @@ it merged; this ADR records the decision that replaced it, which until now lived
    browser in v1.
 5. **The session view and the question components are specified by two owner
    requirements,** received 2026-11-17:
-   [REQ-05](../specs/req-05-virtual-console-conversation-log-viewer.md), a console that
+   [REQ-05](../docs/specs/doc-56%20-%20REQ-05-Virtual-Console-and-Conversation-Log-Viewer.md), a console that
    is decoupled from the agent's process and is built by parsing the agent tool's
    conversation files (Claude and Codex formats), with toggles for tool calls and for
    file-based visualizations; and
-   [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), structured
+   [REQ-04](../docs/specs/doc-55%20-%20REQ-04-Channel-Messaging-and-Question-Components.md), structured
    questions from an agent to a person in the person's channel, rendered as choice,
    yes/no or free-text components. They replace the app-attached terminal section of
    the session design.
@@ -57,4 +57,4 @@ it merged; this ADR records the decision that replaced it, which until now lived
 
 - No browser-to-process channel exists, which removes a large attack surface.
 - A person cannot steer a running agent from the browser except by message. Delivery
-  never interrupts a busy turn ([chat UX](../specs/chat-ux.md#42-system-notices-and-delivery)).
+  never interrupts a busy turn ([chat UX](../docs/specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md#42-system-notices-and-delivery)).

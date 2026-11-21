@@ -27,10 +27,10 @@ This page lists the 136 tests that branch wrote whose names appear nowhere on v1
 plus the 12 steps of its one browser journey test. The code does not compile on v1,
 so only the cases are carried over. The requirement documents, the data
 contract and the ADRs decide what applies. Check each case against them first, in
-particular [ADR-0031](../adr/0031-any-employee-changes-tasks.md) (any employee changes
+particular [ADR-0031](../../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md) (any employee changes
 tasks, so there is no task capability to grant),
-[ADR-0019](../adr/0019-office-coded-task-numbers.md) (office-coded task numbers) and
-[assignment and history](../design/organization-data/12-task-assignment-and-history.md).
+[ADR-0019](../../decisions/decision-19%20-%20ADR-0019-Task-numbers-are-minted-by-the-creating-office.md) (office-coded task numbers) and
+[assignment and history](../organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md).
 
 The wire vectors that the `org-proto` tests read are in
 `crates/org-proto/test-vectors/v2/selected-tasks-v1.json` on the tag; v1 has no copy.
@@ -54,9 +54,9 @@ by a test with another name.
 
 | Section | Entries | Use on v1 |
 |---|---|---|
-| [Task work](#task-work) | 35 | Candidate cases for [B4](../implementation-plan.md#b4--typed-tasks) |
-| [Browser and web](#browser-and-web) | 28 | Candidate cases for [B5](../implementation-plan.md#b5--tasks-in-agent-os-and-in-the-browser) |
-| [Task adoption and legacy import](#task-adoption-and-legacy-import) | 43 | Withdrawn by [ADR-0010](../adr/0010-legacy-task-adoption.md); only the invariants may be reused |
+| [Task work](#task-work) | 35 | Candidate cases for [B4](../doc-5%20-%20v1-Implementation-Plan.md#b4--typed-tasks) |
+| [Browser and web](#browser-and-web) | 28 | Candidate cases for [B5](../doc-5%20-%20v1-Implementation-Plan.md#b5--tasks-in-agent-os-and-in-the-browser) |
+| [Task adoption and legacy import](#task-adoption-and-legacy-import) | 43 | Withdrawn by [ADR-0010](../../decisions/decision-10%20-%20ADR-0010-Legacy-task-adoption-LEGACY-ADOPT-1.md); only the invariants may be reused |
 | [Designs v1 replaced](#designs-v1-replaced) | 37 | Check that v1's replacement covers the case; otherwise drop |
 | [Other](#other) | 5 | Check against the current v1 code |
 
@@ -64,7 +64,7 @@ by a test with another name.
 
 Office service, wire types and the assignment fingerprint. The branch's model needed a
 capability grant to change tasks; cases about grants or authority follow that model,
-which [ADR-0031](../adr/0031-any-employee-changes-tasks.md) removed.
+which [ADR-0031](../../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md) removed.
 
 | Case | Test on the branch | File on the branch |
 |---|---|---|
@@ -109,7 +109,7 @@ which [ADR-0031](../adr/0031-any-employee-changes-tasks.md) removed.
 The task assignment sheet, its gateway client and history, the web process's task
 routes, and the steps of the end-to-end journey test. Cases about owners, grants or
 authority follow the branch's capability model, which
-[ADR-0031](../adr/0031-any-employee-changes-tasks.md) removed. Under ADR-0031, any
+[ADR-0031](../../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md) removed. Under ADR-0031, any
 active employee creates, edits, assigns and moves tasks, and the office refuses a
 paused, offboarded or deactivated employee (decision 2; tested by TASKAUTH-3).
 
@@ -151,7 +151,7 @@ replaced; check them against `apps/agentic-org-web/src/session/` as for
 ## Task adoption and legacy import
 
 Staging, adoption, directory import and legacy import of task files.
-[ADR-0010](../adr/0010-legacy-task-adoption.md) was withdrawn on 2026-11-17: nothing
+[ADR-0010](../../decisions/decision-10%20-%20ADR-0010-Legacy-task-adoption-LEGACY-ADOPT-1.md) was withdrawn on 2026-11-17: nothing
 was deployed, so there is no legacy data to adopt. These cases do not apply as written.
 Their invariants (exact bytes kept, durability across a reopen, a retry keeps its
 identity, private content never published) may be reused in other cases.

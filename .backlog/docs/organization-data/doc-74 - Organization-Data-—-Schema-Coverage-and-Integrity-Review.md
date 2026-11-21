@@ -13,12 +13,12 @@ tags:
 
 # Schema coverage and integrity review
 
-The primary design documents define four SQL artifacts so sensitive operational projections are isolated from shared plaintext `office.db` ([ADR-0016](../../adr/0016-no-application-level-data-encryption.md), `TASK-10`):
+The primary design documents define four SQL artifacts so sensitive operational projections are isolated from shared plaintext `office.db` ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md), `TASK-10`):
 
-- Load [`schema.sql`](schema.sql) once into the shared office projection (`runtime/<office-id>/office.db`): **76 tables and 12 views**.
-- Load [`private-notes-schema.sql`](private-notes-schema.sql) into the separate durable private-notes database (`runtime/<office-id>/private/task-notes.db`): **4 tables**.
-- Load [`messaging-schema.sql`](messaging-schema.sql) into the separate access-controlled messaging database (`runtime/<office-id>/protected/messaging.db`): **8 messaging tables + 5 identity mirror tables** (`messaging_organizations`, `messaging_teams`, `messaging_projects`, `messaging_employees`, `messaging_offices`).
-- Load [`budgets-schema.sql`](budgets-schema.sql) into the separate access-controlled budgets database (`runtime/<office-id>/protected/budgets.db`): **6 budget tables + 4 identity mirror tables** (`budget_organizations`, `budget_tasks`, `budget_employees`, `budget_releases`).
+- Load [`schema.sql`](../../../docs/design/organization-data/schema.sql) once into the shared office projection (`runtime/<office-id>/office.db`): **76 tables and 12 views**.
+- Load [`private-notes-schema.sql`](../../../docs/design/organization-data/private-notes-schema.sql) into the separate durable private-notes database (`runtime/<office-id>/private/task-notes.db`): **4 tables**.
+- Load [`messaging-schema.sql`](../../../docs/design/organization-data/messaging-schema.sql) into the separate access-controlled messaging database (`runtime/<office-id>/protected/messaging.db`): **8 messaging tables + 5 identity mirror tables** (`messaging_organizations`, `messaging_teams`, `messaging_projects`, `messaging_employees`, `messaging_offices`).
+- Load [`budgets-schema.sql`](../../../docs/design/organization-data/budgets-schema.sql) into the separate access-controlled budgets database (`runtime/<office-id>/protected/budgets.db`): **6 budget tables + 4 identity mirror tables** (`budget_organizations`, `budget_tasks`, `budget_employees`, `budget_releases`).
 
 These are draft definitions, not application migrations.
 
@@ -26,26 +26,26 @@ These are draft definitions, not application migrations.
 
 | Source | SQL artifact | Tables and views |
 | --- | --- | --- |
-| [01](01-organization-structure.md) | [schema.sql](schema.sql) | `organizations`, `repositories`, `roles`, `teams`, `offices`, `structure_documents`, `local_repository_locations`, `repository_caches` |
-| [02](02-project-structure.md) | [schema.sql](schema.sql) | `projects`, `project_contributing_teams`, `project_repositories`, `releases`, `release_repository_commits`, `milestones`, `documents`, `milestone_progress`, `release_progress` |
-| [03](03-features-and-work.md) | [schema.sql](schema.sql) | `features`, `tasks`, `task_repositories`, `record_refs`, `tombstones`, `feature_slugs` |
-| [04](04-agent-structure.md) | [schema.sql](schema.sql) | `employees`, `agent_placements`, `task_workspaces`, `hire_requests` |
-| [05](05-operational-data.md) | [schema.sql](schema.sql) | `comments`, `checklist_steps`, `watchers`, `owner_questions`, `waiting_spans`, `task_events` |
-| [06](06-identity-and-numbering.md) | [schema.sql](schema.sql) | `reference_counters`, `reference_allocations`, `office_codes`, `office_task_counters` |
-| [07](07-release-deployments.md) | [schema.sql](schema.sql) | `deployments`, `deployment_repository_commits` |
-| [08](08-record-contracts.md) | [schema.sql](schema.sql) | `links`, `entity_relationships` |
-| [09](09-release-content-and-flags.md) | [schema.sql](schema.sql) | `release_features`, `release_tasks`, `feature_flags`, `release_flag_settings`, `deployment_flag_settings` |
-| [10](10-usage-and-cost-accounting.md) | [schema.sql](schema.sql) | `model_prices`, `usage_records`, `usage_stream_checkpoints`, `usage_stream_coverage`, `effective_usage_records`, `usage_task_totals`, `usage_agent_totals`, `usage_project_totals` |
-| [11](11-model-profiles-and-agent-execution.md) | [schema.sql](schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `model_profile_model_union` |
-| [12](12-task-assignment-and-history.md) | Task semantics | Uses `tasks` from 03 and `task_events` from 05; no additional tables |
-| [05: private operational data](05-operational-data.md#private-notes-attached-to-tasks) | [private-notes-schema.sql](private-notes-schema.sql) | `private_note_authors`, `private_note_tasks`, `private_task_notes`, `private_note_command_receipts` |
-| [15](15-messaging-and-chat.md) | [messaging-schema.sql](messaging-schema.sql) | `messaging_organizations`, `messaging_teams`, `messaging_projects`, `messaging_employees`, `messaging_offices`, `conversations`, `conversation_memberships`, `messages`, `message_recipient_states`, `conversation_preferences`, `conversation_read_markers`, `message_attachments`, `message_reactions` |
-| [03: task details](03-features-and-work.md#detailed-task-payload-and-feature-lifecycle) | [schema.sql](schema.sql) | `task_details` |
-| [16](16-recovery-and-office-continuity.md) | [schema.sql](schema.sql) | `mutation_receipts`, `office_origin_streams`, `office_recovery_checkpoints`, `recovery_snapshot_transfers`, `process_cleanup_records` |
-| [17](17-budgets-and-controls.md) | [budgets-schema.sql](budgets-schema.sql) | `budget_organizations`, `budget_tasks`, `budget_employees`, `budget_releases`, `budgets`, `budget_policy_versions`, `budget_periods`, `budget_events`, `budget_notices`, `budget_holds` |
-| [18](18-development-processes-and-project-documentation.md) | [schema.sql](schema.sql) | `development_processes`, `development_process_roles`, `development_process_skills`, `development_process_skill_roles`, `development_process_kinds`, `development_process_folders`, `development_process_tabs`, `documentation_sections`, `documentation_media`, `document_versions`, `document_version_sources`, `document_code_links`, `task_document_versions`, `document_version_progress`, `task_releases`; adds `projects.development_process_id` and `documents.summary`, `path`, `version`, `issued_revision` to document 02's tables |
+| [01](doc-75%20-%20Organization-Data-01-—-Organization-Structure.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `organizations`, `repositories`, `roles`, `teams`, `offices`, `structure_documents`, `local_repository_locations`, `repository_caches` |
+| [02](doc-76%20-%20Organization-Data-02-—-Project-Structure.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `projects`, `project_contributing_teams`, `project_repositories`, `releases`, `release_repository_commits`, `milestones`, `documents`, `milestone_progress`, `release_progress` |
+| [03](doc-77%20-%20Organization-Data-03-—-Features-and-Work.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `features`, `tasks`, `task_repositories`, `record_refs`, `tombstones`, `feature_slugs` |
+| [04](doc-78%20-%20Organization-Data-04-—-Agent-Structure.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `employees`, `agent_placements`, `task_workspaces`, `hire_requests` |
+| [05](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `comments`, `checklist_steps`, `watchers`, `owner_questions`, `waiting_spans`, `task_events` |
+| [06](doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `reference_counters`, `reference_allocations`, `office_codes`, `office_task_counters` |
+| [07](doc-81%20-%20Organization-Data-07-—-Release-Deployments.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `deployments`, `deployment_repository_commits` |
+| [08](doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `links`, `entity_relationships` |
+| [09](doc-83%20-%20Organization-Data-09-—-Release-Content-and-Flags.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `release_features`, `release_tasks`, `feature_flags`, `release_flag_settings`, `deployment_flag_settings` |
+| [10](doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `model_prices`, `usage_records`, `usage_stream_checkpoints`, `usage_stream_coverage`, `effective_usage_records`, `usage_task_totals`, `usage_agent_totals`, `usage_project_totals` |
+| [11](doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `model_profile_model_union` |
+| [12](doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md) | Task semantics | Uses `tasks` from 03 and `task_events` from 05; no additional tables |
+| [05: private operational data](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#private-notes-attached-to-tasks) | [private-notes-schema.sql](../../../docs/design/organization-data/private-notes-schema.sql) | `private_note_authors`, `private_note_tasks`, `private_task_notes`, `private_note_command_receipts` |
+| [15](doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md) | [messaging-schema.sql](../../../docs/design/organization-data/messaging-schema.sql) | `messaging_organizations`, `messaging_teams`, `messaging_projects`, `messaging_employees`, `messaging_offices`, `conversations`, `conversation_memberships`, `messages`, `message_recipient_states`, `conversation_preferences`, `conversation_read_markers`, `message_attachments`, `message_reactions` |
+| [03: task details](doc-77%20-%20Organization-Data-03-—-Features-and-Work.md#detailed-task-payload-and-feature-lifecycle) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `task_details` |
+| [16](doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `mutation_receipts`, `office_origin_streams`, `office_recovery_checkpoints`, `recovery_snapshot_transfers`, `process_cleanup_records` |
+| [17](doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md) | [budgets-schema.sql](../../../docs/design/organization-data/budgets-schema.sql) | `budget_organizations`, `budget_tasks`, `budget_employees`, `budget_releases`, `budgets`, `budget_policy_versions`, `budget_periods`, `budget_events`, `budget_notices`, `budget_holds` |
+| [18](doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `development_processes`, `development_process_roles`, `development_process_skills`, `development_process_skill_roles`, `development_process_kinds`, `development_process_folders`, `development_process_tabs`, `documentation_sections`, `documentation_media`, `document_versions`, `document_version_sources`, `document_code_links`, `task_document_versions`, `document_version_progress`, `task_releases`; adds `projects.development_process_id` and `documents.summary`, `path`, `version`, `issued_revision` to document 02's tables |
 
-[Document 14](14-model-providers-and-connection-pools.md) presents the provider/pool subset of document 11 in the common data-structure format: seven existing tables and `model_profile_model_union`. Its field diagrams and SQL subset are checked against `schema.sql`; it adds no tables.
+[Document 14](doc-89%20-%20Organization-Data-14-—-Model-Providers-and-Connection-Pools.md) presents the provider/pool subset of document 11 in the common data-structure format: seven existing tables and `model_profile_model_union`. Its field diagrams and SQL subset are checked against `schema.sql`; it adds no tables.
 
 Document 04 owns `agent_placements`, including `placement_generation`; document 11 defines the execution relationships and fencing constraints against that same consolidated schema. No private-note body, author association, receipt or note count belongs in the shared database.
 
@@ -169,11 +169,11 @@ In addition to the verbatim `schema.sql` contract tables above, `crates/org-offi
 - `store_sources` — tracked durable source files and digests for rebuild verification.
 - `store_receipts` — adapter-level idempotency receipt projection keyed by operation ID.
 
-These four tables are engine-private adapter state ([ADR-0018](../../adr/0018-storage-engine-independence.md)), never part of the portable domain contract or organization Git.
+These four tables are engine-private adapter state ([ADR-0018](../../decisions/decision-18%20-%20ADR-0018-The-storage-engine-is-replaceable-PostgreSQL-must-be-possible.md)), never part of the portable domain contract or organization Git.
 
 ### Engine portability and trigger classification (ADR-0018)
 
-To preserve storage-engine replaceability (SQLite today, PostgreSQL in future under [ADR-0018](../../adr/0018-storage-engine-independence.md)) and minimize SQLite projection write overhead:
+To preserve storage-engine replaceability (SQLite today, PostgreSQL in future under [ADR-0018](../../decisions/decision-18%20-%20ADR-0018-The-storage-engine-is-replaceable-PostgreSQL-must-be-possible.md)) and minimize SQLite projection write overhead:
 
 - **Declarative portable SQL layer (kept in DDL on every engine):** `PRIMARY KEY`, `FOREIGN KEY`, `UNIQUE`, partial unique indexes, and scalar `CHECK` constraints (portable across SQLite and PostgreSQL, with SQLite `GLOB` patterns translating directly to PostgreSQL `~` regex checks).
 - **Single-writer / projector layer (enforced in Rust domain/projector code, mirrored in SQLite draft triggers only as executable spec guards):** recursive graph cycle checks (`teams`, `employees`, `features`, `deployments`, `links`), append-only immutability/monotonicity guards (`task_events`, `usage_records`, `mutation_receipts`, `budgets`, `document_versions`), and cross-table project-scoping guards. Redundant `BEFORE INSERT` duplicate-key triggers (`receipt_no_replace`, `origin_stream_no_replace`, `checkpoint_no_replace`) have been removed because declarative `PRIMARY KEY` plus `BEFORE DELETE` guards (with `recursive_triggers = ON`) already enforce both `INSERT` and `INSERT OR REPLACE`. A future PostgreSQL adapter enforces these invariants in the shared Rust single-writer/projector rather than porting SQLite triggers verbatim.

@@ -21,16 +21,16 @@ How a project is given a way of building software without the product knowing an
 methodology: a development process, the roles it starts a project with, the tabs it
 gives the project, how its guidance reaches each agent, how agents hire when it says
 it is time, and where a project's documents live. It implements the owner's
-[REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md). The
+[REQ-07](../specs/doc-58%20-%20REQ-07-Composable-Process-Packages-and-Team-Blueprints.md). The
 records are owned by
-[document 18](organization-data/18-development-processes-and-project-documentation.md);
-[projects](organization-data/02-project-structure.md),
-[roles](organization-data/01-organization-structure.md) and
-[employees](organization-data/04-agent-structure.md) own what it builds on. The
+[document 18](../organization-data/doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md);
+[projects](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md),
+[roles](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md) and
+[employees](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md) own what it builds on. The
 decision and what was rejected are in
-[ADR-0026](../adr/0026-development-processes-are-content.md). The first one, for
+[ADR-0026](../../decisions/decision-26%20-%20ADR-0026-A-development-process-is-content-the-product-runs-no-methodology.md). The first one, for
 desired state specifications, is in the
-[desired state design](desired-state-specifications.md).
+[desired state design](doc-31%20-%20Design-Desired-State-Specifications-DSS.md).
 
 ## Three things, kept apart
 
@@ -39,7 +39,7 @@ make the difference plain wherever they appear.
 
 | | What it says | Examples | Belongs to |
 | --- | --- | --- | --- |
-| **Organization process** | How the organization handles something, whatever is being built | The PCI process, the PII process, "before you commit, run these checks", how agents ask and escalate | The organization, a team or a project, inherited downward ([process design](processes.md)) |
+| **Organization process** | How the organization handles something, whatever is being built | The PCI process, the PII process, "before you commit, run these checks", how agents ask and escalate | The organization, a team or a project, inherited downward ([process design](doc-34%20-%20Design-Organization-Processes-and-Standards.md)) |
 | **Standard** | What the organization uses and how it builds and runs things | Which technologies and tools, the deployment pattern, how we deploy | The same levels and inheritance as an organization process; it is the organization's |
 | **Development process** | How a project builds software: which roles start it, what each role does, which documents it produces, which tabs the project has | Desired state specification (DSS), feature delivery | A project follows at most one. The owner's name for the kind is an agentic software development process (ASDP). This design is about these |
 
@@ -89,8 +89,8 @@ team marked not overridable is always followed.
    it.
 8. **Hiring stays the product's.** Someone who may hire starts a hire; HR drafts it;
    the hirer confirms it; product code provisions it
-   ([document 04](organization-data/04-agent-structure.md#who-may-hire),
-   [ADR-0029](../adr/0029-only-who-may-hire-hires.md)). A lead hires only with the
+   ([document 04](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md#who-may-hire),
+   [ADR-0029](../../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)). A lead hires only with the
    Allow hiring permission, into the teams it leads and the teams under them. Anyone
    else is refused and asks its lead. There is no approval. A development process
    decides when a lead hires and for which role; it gives no one the right to hire.
@@ -113,7 +113,7 @@ team marked not overridable is always followed.
     agents and people for.
 14. **Agents hand work to each other as people do.** An agent is always available:
     a message, a mention, an ask or a task addressed to it starts it
-    ([ADR-0028](../adr/0028-an-agent-is-always-available.md)).
+    ([ADR-0028](../../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md)).
 15. **Changing a project's development process removes nothing.**
 
 ## 1. Where each thing lives
@@ -132,7 +132,7 @@ team marked not overridable is always followed.
 ## 2. The development process
 
 The manifest, the role, skill and template files, and their rules are in
-[document 18](organization-data/18-development-processes-and-project-documentation.md#development-processes).
+[document 18](../organization-data/doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md#development-processes).
 In short:
 
 ```text
@@ -156,7 +156,7 @@ development-processes/<process-id>/
   between organizations.
 - **Validation at every write.** The manifest, role, skill, tab and stage fields are a
   closed list
-  ([document 18](organization-data/18-development-processes-and-project-documentation.md#durable-process-files));
+  ([document 18](../organization-data/doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md#durable-process-files));
   any other field is refused, naming it, so that a process cannot smuggle a setting.
   A skill names only roles of its own process. A kind is not named like a built-in
   kind. Folder paths and tab keys are valid and do not repeat. A `current` process
@@ -165,7 +165,7 @@ development-processes/<process-id>/
   be deprecated: its projects keep working and a notice on each says so.
 - **Built in.** Built-in development processes are part of the product and change
   with it. They cannot be edited; a copy can. The two are `dss`
-  ([desired state design](desired-state-specifications.md)) and `feature-delivery`
+  ([desired state design](doc-31%20-%20Design-Desired-State-Specifications-DSS.md)) and `feature-delivery`
   (section 5).
 - **Adjusting one project.** There is no per-project override of a skill. A project
   that needs a different skill follows a copy of the process with that skill changed.
@@ -205,7 +205,7 @@ choice itself.
 - A seed role is **filled** when an active employee whose home team is the project's
   owning team, or a team beneath it, has that role. The roster is derived; nothing
   stores it.
-- **Hire** opens the [hire flow](../specs/our-org-in-the-app.md) with the role and the
+- **Hire** opens the [hire flow](../specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md) with the role and the
   project's team preset. Who may hire, confirming and provisioning are unchanged.
 - **Assign…** lists active employees who have the role, or lets a person give the role
   to one; either way the employee is moved to the project's team by the ordinary move.
@@ -216,7 +216,7 @@ choice itself.
 - **Who leads.** A project always has a team, and the team has one lead, appointed by
   the owner like any team lead: a person, or one of the seed agents. An agent follows
   instructions from the leads above it and treats anyone else's as a request
-  ([document 04](organization-data/04-agent-structure.md#who-an-agent-takes-instructions-from)),
+  ([document 04](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md#who-an-agent-takes-instructions-from)),
   so with two seed leads the one that is not the team's lead directs by request.
 
 **Changing it.** The new process's missing roles and sections are added as above. No
@@ -244,7 +244,7 @@ Work and Docs. Each names one of the product's generic views and says what it sh
 | --- | --- | --- |
 | `documents` | The documents, diagrams and images of one section of the tree, with status, version, unissued changes and progress. **New** starts a document there | `section` (one of the process's folders), optional `kinds` |
 | `work` | The project's tasks of the given types, as a list or as a board with one column per status. A board may have a lane per release and one for tasks in no release, such as keep-the-lights-on work, because a task need not be in a release. **New** creates a task of the first type | `types` (task types; a process may use its own, such as `story`), `layout: list \| board`, `lanes: none \| release` |
-| `features` | The feature map of the [features UX](../specs/features-ux.md). Listing this view is how a process says it uses features | Nothing |
+| `features` | The feature map of the [features UX](../specs/doc-43%20-%20Spec-Features-Milestones-and-Releases-UX.md). Listing this view is how a process says it uses features | Nothing |
 | `releases` | The project's releases with their milestones and progress. Listing this view is how a process says it uses releases | Nothing |
 
 ```yaml
@@ -300,7 +300,7 @@ A project with no development process gets Features and Releases in step 2, as t
 | Releases and milestones | Uses them: a change is planned into a release, milestones when useful | Uses them: features ship in releases |
 
 `feature-delivery` covers capturing and scoping a request
-([request UX](../specs/feature-requests-ux.md)), writing a feature definition, breaking
+([request UX](../specs/doc-42%20-%20Spec-Feature-Requests-and-Intake-UX.md)), writing a feature definition, breaking
 a feature into tasks, planning a release and staffing. Its skills are written when it
 is built. Iterations, boards and the other habits of an agile team are skills, stages
 and tabs of such a process, not parts of the product. Both are content only, which is
@@ -312,7 +312,7 @@ An agent working in a project that follows a development process has two separat
 sections in its instructions:
 
 1. **Organization processes and standards,** resolved and delivered as the
-   [process design](processes.md#3-resolution-and-delivery) says. Unchanged.
+   [process design](doc-34%20-%20Design-Organization-Processes-and-Standards.md#3-resolution-and-delivery) says. Unchanged.
 2. **The project's development process:** its name and summary, its stages, the
    agent's role in it, and for each of the agent's skills the title and the
    when-to-use line. The body of a skill is retrieved with
@@ -328,7 +328,7 @@ sections in its instructions:
   left out are named with how to retrieve them. A skill body is never cut.
 - **Fresh contexts** get the section again, like the organization's processes.
 - **Not the vendor tool's skills.** An agent's runtime loads no skill folder of its own
-  ([agent sessions](agent-sessions.md), Claude's isolation switches). The office
+  ([agent sessions](doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md), Claude's isolation switches). The office
   composes the section for every runtime the same way.
 - **Work without a project** has no development process section.
 - **`agent-os dev-process inspect`** prints the project's process, its stages and the
@@ -348,9 +348,9 @@ The lead then uses the product's hiring, as any employee that may hire does:
    every required field given, the call is its own confirmation. With words only,
    HR drafts the proposal and the lead confirms it; when HR cannot run, the command
    says so and asks for the fields
-   ([hire flow](../specs/our-org-in-the-app.md), APPR-8).
+   ([hire flow](../specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md), APPR-8).
 3. **Who may hire.** There is no approval
-   ([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). A lead whose Allow hiring
+   ([ADR-0029](../../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)). A lead whose Allow hiring
    permission is off for the project's team is refused with "You don't have access
    to hire. Ask your team lead." It asks its own lead in a message, and that lead
    hires if it may. The owner may always hire.
@@ -365,7 +365,7 @@ A lead may hire for a role the process does not define; HR drafts it like any hi
 
 The files, the index format, issued versions, code links and the read and write rule
 are in
-[document 18](organization-data/18-development-processes-and-project-documentation.md#project-documentation-tree).
+[document 18](../organization-data/doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md#project-documentation-tree).
 What the design adds is how they are used.
 
 - **Finding.** `agent-os doc index` returns the project's index: one office-local read,
@@ -391,7 +391,7 @@ What the design adds is how they are used.
   `other_project` and the name of that project's lead. The agent asks, with a directed
   ask, and the other project's agent answers from its own index.
 - **Limits.** A document is at most 512 KiB, so that a write fits one frame
-  ([task design](tasks-projects-docs.md#4-the-contract)); a read pages with an offset.
+  ([task design](doc-37%20-%20Design-Tasks-Projects-and-Documents.md#4-the-contract)); a read pages with an offset.
   A media file is at most 5 MiB. One larger than 512 KiB is first uploaded in numbered
   parts to the office's temporary area (`doc.upload`), and the write that stores it
   names the upload and its SHA-256. Nothing enters the tree before that write is
@@ -399,7 +399,7 @@ What the design adds is how they are used.
 - **Offices.** A project's tree has one writing office at a time, handed over like a
   task's writer. An agent in that office is acknowledged locally. From another office
   a read is local and a write waits for the writer, as a cross-office edit of a task
-  does ([document 18](organization-data/18-development-processes-and-project-documentation.md#the-index)).
+  does ([document 18](../organization-data/doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md#the-index)).
 - **The browser.** The Docs tab shows the whole tree from the index. A process's
   `documents` tabs show one section each. People create, edit, move and issue from
   either with the same rules.
@@ -407,7 +407,7 @@ What the design adds is how they are used.
 ## 9. The contract
 
 Calls go to the caller's own office on a bound connection; every write carries an
-operation ID and an expected revision ([task design](tasks-projects-docs.md#4-the-contract)).
+operation ID and an expected revision ([task design](doc-37%20-%20Design-Tasks-Projects-and-Documents.md#4-the-contract)).
 
 | Call | Params | Result | Errors |
 | --- | --- | --- | --- |
@@ -432,9 +432,9 @@ operation ID and an expected revision ([task design](tasks-projects-docs.md#4-th
 `copy`, `import` and `project.set_development_process` are people's calls; the others
 are open to agents within the rules above. The calls for issuing, differences, code
 links and realizing tasks are in the
-[desired state design](desired-state-specifications.md#6-the-contract). A hire request
-([hire flow](../specs/our-org-in-the-app.md), APPR-8) may name a role key and gains
-nothing else. The browser routes are added to the [web API](web-api-v1.md) with each
+[desired state design](doc-31%20-%20Design-Desired-State-Specifications-DSS.md#6-the-contract). A hire request
+([hire flow](../specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md), APPR-8) may name a role key and gains
+nothing else. The browser routes are added to the [web API](doc-71%20-%20Design-Web-HTTP-API-v1.md) with each
 increment.
 
 ## 10. Where the code lives
@@ -467,7 +467,7 @@ office.
 | PKG-7 | An agent's instructions carry the development process as its own section, separate from organization processes: the skills for its role and the ones for everyone, with retrievable bodies; another role's skills are not in it. |
 | PKG-8 | No skill appears in `process list`, `process inspect --why` or the Processes page, and no organization, team or project process document replaces or is replaced by a skill. |
 | PKG-9 | With a skill and a non-overridable organization standard that disagree, the standard is delivered in full as must-follow and the development process section says it is always followed. A skill that adjusts overridable organization guidance is delivered as written. |
-| PKG-10 | A lead agent's `hr hire` for a role of the process hires into the project's team when the lead has Allow hiring for that team, and is refused with `not_authorized` when it does not ([ADR-0029](../adr/0029-only-who-may-hire-hires.md) HIRE-1 to HIRE-4); the new agent's first instructions carry its role's skills. |
+| PKG-10 | A lead agent's `hr hire` for a role of the process hires into the project's team when the lead has Allow hiring for that team, and is refused with `not_authorized` when it does not ([ADR-0029](../../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md) HIRE-1 to HIRE-4); the new agent's first instructions carry its role's skills. |
 | PKG-11 | `doc index` returns the whole index in one call while it is at most 256 KiB, and the section list with each section readable by path beyond that. After any accepted write it lists exactly what the tree holds. |
 | PKG-12 | An agent of another project is refused `doc index`, `doc ls`, `doc inspect` and every write, with `other_project` and the lead to ask; a person is not. |
 | PKG-13 | Changing a project's development process removes no file, section, document or role; the tabs follow the new process at once; the next start of each agent delivers its skills. |
@@ -492,7 +492,7 @@ office.
 ## 13. Delivery order
 
 Each step is usable on its own. Increments are in the
-[implementation plan](../implementation-plan.md) (L11 to L14).
+[implementation plan](../doc-5%20-%20v1-Implementation-Plan.md) (L11 to L14).
 
 1. **The tree and the index** for every project, with `agent-os doc` and the Docs tab
    (FC-180). It needs no development process.
@@ -503,7 +503,7 @@ Each step is usable on its own. Increments are in the
 3. **Hiring from a skill:** `role inspect` and the role on `hr hire` (FC-178). Needs
    the hire flow (C2).
 4. **Issued versions, code links and realizing tasks** (FC-181, FC-182), then **the
-   DSS process** (FC-183) ([desired state design](desired-state-specifications.md))
+   DSS process** (FC-183) ([desired state design](doc-31%20-%20Design-Desired-State-Specifications-DSS.md))
    and **feature delivery** (FC-185).
 
 ## What the code does today

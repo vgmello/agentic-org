@@ -29,7 +29,7 @@ builds_on: [work-items-ux, decisions-and-tech-debt-ux, agent-run-modes-ux]
 
 # Spec · Capture requests and route them to whoever should scope them (UX)
 
-[Organization-data 03](../design/organization-data/03-features-and-work.md), [05](../design/organization-data/05-operational-data.md), [06](../design/organization-data/06-identity-and-numbering.md), [08](../design/organization-data/08-record-contracts.md) and [12](../design/organization-data/12-task-assignment-and-history.md) own the typed task, durable metadata, references, provenance and assignment. This spec describes capture and queue presentation. The [task ports](../design/tasks-projects-docs.md#32-the-ports-org-work-defines) describe the domain interface.
+[Organization-data 03](../organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md), [05](../organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md), [06](../organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md), [08](../organization-data/doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md) and [12](../organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md) own the typed task, durable metadata, references, provenance and assignment. This spec describes capture and queue presentation. The [task ports](../design/doc-37%20-%20Design-Tasks-Projects-and-Documents.md#32-the-ports-org-work-defines) describe the domain interface.
 
 ## The request (the user, 2026-11-08)
 
@@ -80,7 +80,7 @@ Submit uses a stable creation ID and a durable operation identity. Success means
 - **Similar requests:** up to two accessible request-typed tasks matching title or body in permitted scopes show their references, for example "Looks like T-A9". **Add to…** appends an explicitly shared comment and keeps the existing reporter. Private notes, protected chat and private metadata never appear in suggestions. Where search covers titles only, the dialog says so.
 - **Attachments:** hidden until attachment storage exists. Pasted text is accepted; an image-only paste reports that images are unsupported.
 - **Unreachable service:** text stays in the open page, visibly Unsaved, with Copy draft and Retry. Nothing promises to keep it after the browser closes. An accepted task is different from a draft.
-- **Numbering:** any office creates tasks and numbers them itself ([ADR-0019](../adr/0019-office-coded-task-numbers.md)). Creating a project is an HQ operation.
+- **Numbering:** any office creates tasks and numbers them itself ([ADR-0019](../../decisions/decision-19%20-%20ADR-0019-Task-numbers-are-minted-by-the-creating-office.md)). Creating a project is an HQ operation.
 
 ## 2. Flow 2 · The queue (Work › Requests)
 
@@ -165,4 +165,4 @@ RQS IDs are criterion identities; requests themselves use T- references.
 
 - Request-specific statuses; a request uses the five task statuses.
 - Waking an agent when a request is routed to it.
-- Attachments on a request. Chat attachments are v1 ([chat UX](chat-ux.md)).
+- Attachments on a request. Chat attachments are v1 ([chat UX](doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md)).

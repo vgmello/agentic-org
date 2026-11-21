@@ -13,7 +13,7 @@ tags:
 
 # Release deployment records
 
-Status: **selected** data contract, revision 2.7. This document owns deployment history associated with [project releases](02-project-structure.md). It records attempts and outcomes; build artifacts, deployment execution and pipeline integration are not included.
+Status: **selected** data contract, revision 2.7. This document owns deployment history associated with [project releases](doc-76%20-%20Organization-Data-02-—-Project-Structure.md). It records attempts and outcomes; build artifacts, deployment execution and pipeline integration are not included.
 
 ## Relationships
 
@@ -57,7 +57,7 @@ erDiagram
     }
 ```
 
-A release has zero or many deployment records. Each record belongs to exactly one release and its project, one named `environment` such as staging or production, and one `target` such as primary or eu-west. A retry is a new record with a new stable ID. Each attempt can own one technical changelog and other supporting documents, distinct from the release's product changelog. See [release content and flags](09-release-content-and-flags.md). Deployments need no additional readable-number counter; use the release reference, environment and time in the UI.
+A release has zero or many deployment records. Each record belongs to exactly one release and its project, one named `environment` such as staging or production, and one `target` such as primary or eu-west. A retry is a new record with a new stable ID. Each attempt can own one technical changelog and other supporting documents, distinct from the release's product changelog. See [release content and flags](doc-83%20-%20Organization-Data-09-—-Release-Content-and-Flags.md). Deployments need no additional readable-number counter; use the release reference, environment and time in the UI.
 
 Each record captures `operation: deploy | rollback`, `status: queued | running | succeeded | failed | cancelled`, actual start/end timestamps when known, an optional external job URL, common creator/update attribution, and a Markdown outcome. These are data values, not a process engine. Optional `baseline_deployment_id` identifies a recorded baseline in the same project/environment/target for the technical delta; null records an unknown baseline. A rollback is a new attempt against the release being restored, with `rollback_of_id` pointing to the attempt being undone in the same project/environment/target. Preserve all earlier attempts; never rewrite a prior successful deployment into a rollback.
 
@@ -107,7 +107,7 @@ Reservations release R-3 deployed to production/primary. Validation passed.
 
 These records remain in organization Git after tasks close and runtime caches are deleted. Store metadata and links rather than raw execution logs or credentials. HQ's release-creation restriction does not mean that an office executing a deployment must be HQ: approved execution/integration may report attempts from other offices. No deployment command or authorization policy is implemented by this draft.
 
-Deployment `flag_settings[]` captures confirmed applied flag values/rules, separately from release intent. Technical changelogs record environment changes, migrations, applied flags, validation and rollback details; product-facing release changes stay in the release changelog. The full flag/schema contract is in [document 09](09-release-content-and-flags.md).
+Deployment `flag_settings[]` captures confirmed applied flag values/rules, separately from release intent. Technical changelogs record environment changes, migrations, applied flags, validation and rollback details; product-facing release changes stay in the release changelog. The full flag/schema contract is in [document 09](doc-83%20-%20Organization-Data-09-—-Release-Content-and-Flags.md).
 
 ## File to SQL mapping
 

@@ -13,7 +13,7 @@ tags:
 
 # Organization structure
 
-Status: **selected** data contract, revision 2.9. See the [shared identity/storage contract](README.md), [project structure](02-project-structure.md) and [employee identity boundary](04-agent-structure.md).
+Status: **selected** data contract, revision 2.9. See the [shared identity/storage contract](doc-72%20-%20Organization-Data-—-README.md), [project structure](doc-76%20-%20Organization-Data-02-—-Project-Structure.md) and [employee identity boundary](doc-78%20-%20Organization-Data-04-—-Agent-Structure.md).
 
 ## Relationships
 
@@ -135,17 +135,17 @@ erDiagram
 
 ## Creating an organization
 
-Setup creates no account, organization or office. The server's administrator, registered through setup's one-time link ([what the host owns](STATUS.md#outside-this-set-what-the-host-owns)), creates the organization and becomes its owner ([document 04](04-agent-structure.md#accounts-people-and-the-organization-owner)). The request names the organization, its slug, the remote organization repository and the state branch. It asks for no team.
+Setup creates no account, organization or office. The server's administrator, registered through setup's one-time link ([what the host owns](doc-73%20-%20Organization-Data-—-Status-Changelog-and-Host-Owned-Records.md#outside-this-set-what-the-host-owns)), creates the organization and becomes its owner ([document 04](doc-78%20-%20Organization-Data-04-—-Agent-Structure.md#accounts-people-and-the-organization-owner)). The request names the organization, its slug, the remote organization repository and the state branch. It asks for no team.
 
-Creation is one accepted transaction, the first of the organization's acceptance journal ([document 16](16-recovery-and-office-continuity.md#how-the-directory-begins)). It writes:
+Creation is one accepted transaction, the first of the organization's acceptance journal ([document 16](doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md#how-the-directory-begins)). It writes:
 
 1. the organization;
 2. its HQ office;
 3. one team with no parent, named after the organization;
 4. the creator's person record in that team, appointed its lead, and tied by the host to the creator's account;
-5. the built-in HR lead in that team ([document 04](04-agent-structure.md#the-hr-lead-and-how-agents-are-onboarded)).
+5. the built-in HR lead in that team ([document 04](doc-78%20-%20Organization-Data-04-—-Agent-Structure.md#the-hr-lead-and-how-agents-are-onboarded)).
 
-Every record it writes is attributed to that person. A project's team is created with the project ([document 02](02-project-structure.md#creating-a-project)).
+Every record it writes is attributed to that person. A project's team is created with the project ([document 02](doc-76%20-%20Organization-Data-02-—-Project-Structure.md#creating-a-project)).
 
 ## Team structure
 
@@ -186,24 +186,24 @@ An employee has exactly one home team. Each team may have direct people, direct 
 └── tombstones/<kind>/<id>.yaml
 ```
 
-`team.yaml` explicitly stores `parent_team_id`; null identifies a root team. The employee profile explicitly stores `home_team_id`. Folders must match those fields. Moves update both the fields and their paths while preserving IDs. There is no top-level members folder. Teams have `status: active | archived`; archiving preserves their IDs and the records that refer to them. Common creator/update attribution follows [record contracts](08-record-contracts.md).
+`team.yaml` explicitly stores `parent_team_id`; null identifies a root team. The employee profile explicitly stores `home_team_id`. Folders must match those fields. Moves update both the fields and their paths while preserving IDs. There is no top-level members folder. Teams have `status: active | archived`; archiving preserves their IDs and the records that refer to them. Common creator/update attribution follows [record contracts](doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md).
 
-[Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns the connection/profile definitions in this same organization repository. Shared definitions contain references and policy, while office-local auth bindings/credentials stay outside Git.
+[Model profiles and agent execution](doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) owns the connection/profile definitions in this same organization repository. Shared definitions contain references and policy, while office-local auth bindings/credentials stay outside Git.
 
 An office file stores its stable ID, slug, name, revision and `role: hq` or `satellite`. The schema allows one HQ per organization and any number of satellites. Endpoint selection, enrollment, current connectivity and credentials belong to local configuration/operations, not the team hierarchy. Office definitions survive runtime deletion; the current agent placement can be rebuilt separately.
 
 ### The HQ's CA records
 
 `security/ca-escrow.v1.bin` contains only the exact versioned encrypted public
-package from [ADR-0007](../../adr/0007-hq-creation-escrow.md); it belongs to the
+package from [ADR-0007](../../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md); it belongs to the
 organization and is published to Git verbatim. The usable CA key is the HQ's local
 record `durable/local/offices/<office-id>/security/ca-key.v1.json`, wrapped by the
-host-held office secrets key ([ADR-0016](../../adr/0016-no-application-level-data-encryption.md))
+host-held office secrets key ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md))
 and never organization Git content. Only `security/ca-escrow.v1.bin` is committed
 in Entry 1 of the acceptance journal; `ca-key.v1.json` is written atomically to
 local security storage outside `durable/recovery/` segments (`TASK-10`). Their exact
 form, what may leave an office and the opening checks are in
-[document 16](16-recovery-and-office-continuity.md#the-hqs-ca-records).
+[document 16](doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md#the-hqs-ca-records).
 
 ## Repository types
 
@@ -229,7 +229,7 @@ repositories:
     remote_url: null
 ```
 
-`organization.yaml.organization_repository_id` must identify a `kind: remote` registration. `state_branch` selects its organization-data publication branch. Organization registrations do not contain project integration branches; those belong to [project/repository associations](02-project-structure.md).
+`organization.yaml.organization_repository_id` must identify a `kind: remote` registration. `state_branch` selects its organization-data publication branch. Organization registrations do not contain project integration branches; those belong to [project/repository associations](doc-76%20-%20Organization-Data-02-—-Project-Structure.md).
 
 A local-only code registration has no remote URL. Its machine-specific `origin_path` is in `durable/local/offices/<office-id>/repositories/<repository-id>.yaml`, outside Git. Its live cache stays under runtime. Preserve its history and edits in durable local checkpoints before deleting that runtime; a remote organization repository does not back up local-only code. Moving that code to another office needs an explicit bundle/import or a remote, never an assumed fetch URL.
 
@@ -267,7 +267,7 @@ Every grouping in those examples is a team. Repeated display names such as Engin
 
 ## File to SQL mapping
 
-Common fields and organization scoping follow [shared contracts](README.md).
+Common fields and organization scoping follow [shared contracts](doc-72%20-%20Organization-Data-—-README.md).
 
 | Table | Durable source |
 | --- | --- |
@@ -276,7 +276,7 @@ Common fields and organization scoping follow [shared contracts](README.md).
 | `roles` | Front matter and body of `roles/<id>.md`. |
 | `teams` | Same-named fields in `team.yaml`, including `number`, `status` and common attribution, nullable `parent_team_id` and `lead_employee_id`; `key` is derived as `TEAM-<number>`. |
 | `offices` | Same-named keys in `offices/<id>.yaml`; durable organization structure. |
-| `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, `owner_employee_id`, `status: draft | current | deprecated`, common attribution, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content. Which documents apply to a piece of work is the v1 resolution rule in the [processes design](../processes.md), decision 4 (organization, then the accountable team's chain, then the project; `overridable: false` cannot be replaced below). No enforcement engine is specified. |
+| `structure_documents` | Process/standard front matter: `id`, `key`, `schema_version`, `revision`, `kind`, `title`, `owner_employee_id`, `status: draft | current | deprecated`, common attribution, optional `team_id` or `project_id`, `overridable` (default true), and Markdown body. Both scope IDs null means organization scope. This stores content. Which documents apply to a piece of work is the v1 resolution rule in the [processes design](../design/doc-34%20-%20Design-Organization-Processes-and-Standards.md), decision 4 (organization, then the accountable team's chain, then the project; `overridable: false` cannot be replaced below). No enforcement engine is specified. |
 | `local_repository_locations` | Local durable office/repository binding file: `office_id`, `repository_id`, `origin_path`; never organization Git content. |
 | `repository_caches` | Runtime-only `office_id`, `repository_id`, `bare_path`; not authored in durable organization files. |
 
@@ -470,6 +470,6 @@ CREATE TABLE repository_caches (
 ) STRICT;
 ```
 
-[Messaging and chat](15-messaging-and-chat.md) defines employee participation and conversation data independently of team membership and office placement.
+[Messaging and chat](doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md) defines employee participation and conversation data independently of team membership and office placement.
 
-[Recovery and office continuity](16-recovery-and-office-continuity.md) defines durable receipt/checkpoint/cleanup evidence separately from disposable office projections.
+[Recovery and office continuity](doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md) defines durable receipt/checkpoint/cleanup evidence separately from disposable office projections.

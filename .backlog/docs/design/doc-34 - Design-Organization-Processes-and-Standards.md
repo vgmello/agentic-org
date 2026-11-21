@@ -19,11 +19,11 @@ tags:
 
 How an organization writes down how its agents work, how those documents are
 inherited, and what an agent receives. The records are owned by
-[organization structure](organization-data/01-organization-structure.md),
-[project structure](organization-data/02-project-structure.md),
-[identity](organization-data/06-identity-and-numbering.md) and
-[record contracts](organization-data/08-record-contracts.md). The screens are in the
-[processes UX](../specs/processes-ux.md).
+[organization structure](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md),
+[project structure](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md),
+[identity](../organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md) and
+[record contracts](../organization-data/doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md). The screens are in the
+[processes UX](../specs/doc-54%20-%20Spec-Organization-Processes-and-Standards-UX.md).
 
 The owner's definitions (2026-11-18), which the product keeps visibly apart:
 
@@ -34,7 +34,7 @@ The owner's definitions (2026-11-18), which the product keeps visibly apart:
 
 Both are the organization's, both use the envelope and inheritance below, and this
 design is the specification for both. A project's
-[development process](development-processes.md) is a different primitive (owner,
+[development process](doc-32%20-%20Design-Development-Processes-Process-Packages.md) is a different primitive (owner,
 2026-11-18): it says how a project builds software, with roles, stages, skills,
 document kinds and tabs. The two are stored, edited and delivered separately, and
 neither inherits from or replaces the other (decision 9).
@@ -81,9 +81,9 @@ neither inherits from or replaces the other (decision 9).
    - **How to use the tools.** Guidance for the product's own commands ships with
      the product as built-in skills, not as organization documents. An agent reads
      them with `agent-os skill list` and `skill read`. None of it is served as an
-     MCP tool ([agent command line](agent-os-command-line.md), section 2.10). How
+     MCP tool ([agent command line](doc-28%20-%20Design-agent-os-Command-Line.md), section 2.10). How
      an agent is to behave in the product is one built-in text, the
-     [agent instructions](agent-instructions.md), which every agent receives first.
+     [agent instructions](doc-27%20-%20Design-Agent-Instructions-Assembly.md), which every agent receives first.
    - **Field name.** The record field is `overridable`, default `true`.
 5. **Code branch bases.** Every project-repository association has a required
    `integration_branch`. A task targets zero or more repositories, so branch, base
@@ -101,7 +101,7 @@ neither inherits from or replaces the other (decision 9).
    the project's owning team, or a team beneath it, may create and change process and
    standard documents at that project's scope, so that decisions taken while building
    become standards
-   ([desired state design](desired-state-specifications.md#4-standards-as-a-byproduct)).
+   ([desired state design](doc-31%20-%20Design-Desired-State-Specifications-DSS.md#4-standards-as-a-byproduct)).
    It adds documents with new keys and changes the project's own. It cannot replace a
    document inherited from the organization or a team, cannot mark a document not
    overridable, and cannot write at team or organization scope. Those stay with
@@ -218,7 +218,7 @@ set with a warning.
 ### 3.2 Delivery to sessions (PROC-7)
 
 `org_process::render` builds the processes section of the agent's instructions
-([agent sessions](agent-sessions.md)):
+([agent sessions](doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md)):
 
 - every non-overridable document, in full, in the must-follow section of decision 4;
 - for overridable documents, each one's title, place (organization, or the team's or
@@ -293,7 +293,7 @@ The office writes it in the same transaction as the change that causes it.
   closure enters cleanup.
 
 Cleanup after closure (merged and archive tags, the compare-and-swap delete, local
-removal) is specified in the [Git design](projects-git-github.md). Records that are
+removal) is specified in the [Git design](doc-35%20-%20Design-Projects-Git-and-GitHub.md). Records that are
 open more than a day appear to the project's leads.
 
 ## 5. Changing processes
@@ -330,7 +330,7 @@ section 5:
 
 `for` is `current` (default), `project { project_id }` or `task { task_id }`. The
 `agent-os` commands `process list` and `process inspect` (with `--why`) call the reads, for
-processes and standards alike ([agent command line](agent-os-command-line.md), section
+processes and standards alike ([agent command line](doc-28%20-%20Design-agent-os-Command-Line.md), section
 3.5); `process create` and `process update` call the write for a project of the
 agent's own team (decision 8). The
 local API version is 1 and these calls change in place until v1 ships.

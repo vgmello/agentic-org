@@ -13,7 +13,7 @@ tags:
 
 # Agents and employees
 
-Status: **selected** data contract, revision 2.15. This document fixes employee identity relationships, how an account relates to a person, and how agents come to exist. [Model profiles and agent execution](11-model-profiles-and-agent-execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling are separate work.
+Status: **selected** data contract, revision 2.15. This document fixes employee identity relationships, how an account relates to a person, and how agents come to exist. [Model profiles and agent execution](doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) owns execution configuration, routing/lifecycle behavior and durable placement/fencing authority in the same integrated schema. Memory consolidation and scheduling are separate work.
 
 ## Confirmed relationships
 
@@ -91,15 +91,15 @@ erDiagram
     }
 ```
 
-Employees are agents or people, with one `status` field (below) and common creator/update attribution. Inactive profiles keep their handles and stable IDs so that past records still resolve; new active task assignment or ownership must resolve to an active employee. [Record contracts](08-record-contracts.md) specifies lifecycle and attribution. Each has exactly one home team. A team can contain both kinds directly while owning child teams. Leadership is an explicit team appointment; ordinary members gain no managerial authority simply by being in an ancestor team. Explicit direct reporting references do not remove ancestor-lead management authority.
+Employees are agents or people, with one `status` field (below) and common creator/update attribution. Inactive profiles keep their handles and stable IDs so that past records still resolve; new active task assignment or ownership must resolve to an active employee. [Record contracts](doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md) specifies lifecycle and attribution. Each has exactly one home team. A team can contain both kinds directly while owning child teams. Leadership is an explicit team appointment; ordinary members gain no managerial authority simply by being in an ancestor team. Explicit direct reporting references do not remove ancestor-lead management authority.
 
 Office placement is separate from home-team membership. An agent can move between offices without changing its home team or stable identity. People have profiles and reporting relationships but no agent execution process or worktree. The table is a placement projection; reconstruction requires the durable authority generation and verified cleanup/fencing before any replacement starts. Cache reconstruction alone cannot recreate launch authority.
 
-Agent token/cost totals are derived from [usage records](10-usage-and-cost-accounting.md) for that actual consumer, including task work and overhead across projects. The ledger references stable employee identity, not a live process; actual route/attempt context is supplied by document 11, while accounting remains the ledger authority.
+Agent token/cost totals are derived from [usage records](doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md) for that actual consumer, including task work and overhead across projects. The ledger references stable employee identity, not a live process; actual route/attempt context is supplied by document 11, while accounting remains the ledger authority.
 
 ## Accounts, people and the organization owner
 
-Whoever signs in is a person (owner, 2026-11-17). An account is held by the host, not by this set ([what the host owns](STATUS.md#outside-this-set-what-the-host-owns)).
+Whoever signs in is a person (owner, 2026-11-17). An account is held by the host, not by this set ([what the host owns](doc-73%20-%20Organization-Data-—-Status-Changelog-and-Host-Owned-Records.md#outside-this-set-what-the-host-owns)).
 
 - In each organization an account can open, the account is tied to exactly one employee whose `kind` is `person`. A person can open several organizations; it is then tied to one person record in each, because a person record belongs to one organization.
 - A person record does not need an account. An account is never tied to an agent.
@@ -107,7 +107,7 @@ Whoever signs in is a person (owner, 2026-11-17). An account is held by the host
 - The link between an account and its person record is host data. No employee field names an account, and the link grants no authority by itself: what the account may do is decided at the host and checked by the office on every call.
 - What an account does in an organization is recorded under its person record: the actor is kind `employee` with that person's ID. No record names an account or "the owner" as the one who did something.
 
-**The organization owner** is the person whose account currently holds ownership: the creator, until they hand ownership to another person who has an account. An organization has exactly one owner. Ownership is a permission of that account at the host; there is no owner field on an employee, and no record field grants authority. Where a record *addresses* the owner rather than recording what someone did (a watcher, a waiting span or a budget notice of kind `owner`, an owner question, a budget's `owner_person` time zone), `owner` means the person whose account owns the organization at the time the record is read ([document 05](05-operational-data.md#relationships)).
+**The organization owner** is the person whose account currently holds ownership: the creator, until they hand ownership to another person who has an account. An organization has exactly one owner. Ownership is a permission of that account at the host; there is no owner field on an employee, and no record field grants authority. Where a record *addresses* the owner rather than recording what someone did (a watcher, a waiting span or a budget notice of kind `owner`, an owner question, a budget's `owner_person` time zone), `owner` means the person whose account owns the organization at the time the record is read ([document 05](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#relationships)).
 
 **Who may change what.** There are no access roles. A person is whatever place the owner gives them in the hierarchy, and any person can read the organization, work on tasks and talk to any person or agent. The rights that are not everyone's are these, and each is checked by the office from the caller's principal and host grant, never from a record field:
 
@@ -125,13 +125,13 @@ Whoever signs in is a person (owner, 2026-11-17). An account is held by the host
 
 ## The HR lead and how agents are onboarded
 
-Every organization has exactly one built-in **HR lead** (the employee whose `builtin_key` is `hr`; the schema allows one for an organization and never with `may_hire`), created with the organization ([document 01](01-organization-structure.md#creating-an-organization)) as an employee of kind `agent` in the organization's top-level team. It appears and is addressed as an agent: it has a handle, it can be messaged and assigned work, and its turns are recorded like any agent's. It is part of the product: its instructions and the code it calls ship with the product. It is not kept running; the office starts it only when it is called, as for any agent turn (document 11).
+Every organization has exactly one built-in **HR lead** (the employee whose `builtin_key` is `hr`; the schema allows one for an organization and never with `may_hire`), created with the organization ([document 01](doc-75%20-%20Organization-Data-01-—-Organization-Structure.md#creating-an-organization)) as an employee of kind `agent` in the organization's top-level team. It appears and is addressed as an agent: it has a handle, it can be messaged and assigned work, and its turns are recorded like any agent's. It is part of the product: its instructions and the code it calls ship with the product. It is not kept running; the office starts it only when it is called, as for any agent turn (document 11).
 
-An agent comes to exist in an organization only through the HR hire flow, started by someone who may hire ([below](#who-may-hire)). HR drafts a hire proposal, or the hirer fills in the fields; the hirer sees exactly what will be created and confirms it; then product code, not the model, creates the employee record, its private home and its execution configuration. Before the hirer confirms, no employee, home or execution binding exists. There is no other way to add an agent: no command, import or file creates one outside this flow. People are added directly, not through HR. The proposal and the hire flow are specified in [our organization in the app](../../specs/our-org-in-the-app.md). A hire is a record of its own, `hire_requests` ([below](#hire-requests)), so that it survives a restart while it is drafted or provisioned, and says afterwards who hired.
+An agent comes to exist in an organization only through the HR hire flow, started by someone who may hire ([below](#who-may-hire)). HR drafts a hire proposal, or the hirer fills in the fields; the hirer sees exactly what will be created and confirms it; then product code, not the model, creates the employee record, its private home and its execution configuration. Before the hirer confirms, no employee, home or execution binding exists. There is no other way to add an agent: no command, import or file creates one outside this flow. People are added directly, not through HR. The proposal and the hire flow are specified in [our organization in the app](../specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md). A hire is a record of its own, `hire_requests` ([below](#hire-requests)), so that it survives a restart while it is drafted or provisioned, and says afterwards who hired.
 
 ### Who may hire
 
-There is no approval of a hire (owner, 2026-11-18, [ADR-0029](../../adr/0029-only-who-may-hire-hires.md)). Only someone who may hire into a team can start a hire into it:
+There is no approval of a hire (owner, 2026-11-18, [ADR-0029](../../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)). Only someone who may hire into a team can start a hire into it:
 
 - The organization's owner, and the server's administrator acting in the organization, into any team. Neither needs the permission.
 - An employee, person or agent, whose `may_hire` is on, into the teams it leads and the teams under them. `may_hire` is shown as **Allow hiring**.
@@ -140,9 +140,9 @@ Everyone else is refused. `agent-os hr hire`, the app's Hire, and any direct mes
 
 The permission is given lead by lead, not by position. In a director team with engineering teams under it, the lead of an engineering team can have it off while the lead of the director team has it on: the engineering lead then asks the director team's lead, who hires into the engineering team. Hiring is into a team and needs no project.
 
-`may_hire` is a field of an employee's profile, for a person or an agent. A person's record is created with it on and an agent's with it off. Only the owner, or a person above the employee in the hierarchy, changes it; the change is attributed and kept in history like any profile change, and nobody sets their own. It has no effect on an employee who leads no team, and the built-in HR lead never has it. An agent that has it hires without a person. HR still drafts the proposal and product code still provisions. Every team has a member limit, `max_members`, 6 unless a person changes it ([document 01](01-organization-structure.md)); a hire into a full team is refused with the limit named.
+`may_hire` is a field of an employee's profile, for a person or an agent. A person's record is created with it on and an agent's with it off. Only the owner, or a person above the employee in the hierarchy, changes it; the change is attributed and kept in history like any profile change, and nobody sets their own. It has no effect on an employee who leads no team, and the built-in HR lead never has it. An agent that has it hires without a person. HR still drafts the proposal and product code still provisions. Every team has a member limit, `max_members`, 6 unless a person changes it ([document 01](doc-75%20-%20Organization-Data-01-—-Organization-Structure.md)); a hire into a full team is refused with the limit named.
 
-With the team lead appointment, this is one of the two records that carry authority. Both are given only by someone already above the holder, and the office checks them on every call ([non-negotiables](../../architecture-non-negotiables.md), rule 9).
+With the team lead appointment, this is one of the two records that carry authority. Both are given only by someone already above the holder, and the office checks them on every call ([non-negotiables](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md), rule 9).
 
 ### Hire requests
 
@@ -164,7 +164,7 @@ A hire request is written at HQ as `teams/<team-id>/.../hires/<request-id>.yaml`
 
 ## Who an agent takes instructions from
 
-An agent always replies to a person who messages it (owner, 2026-11-17). Work-instruction precedence is separate from office-enforced structural management authority (such as moving teams, changing `may_hire`, or pausing an agent, which remain with the organization owner and ancestor team leads per [document 01](01-organization-structure.md#team-structure)).
+An agent always replies to a person who messages it (owner, 2026-11-17). Work-instruction precedence is separate from office-enforced structural management authority (such as moving teams, changing `may_hire`, or pausing an agent, which remain with the organization owner and ancestor team leads per [document 01](doc-75%20-%20Organization-Data-01-—-Organization-Structure.md#team-structure)).
 
 When an agent receives instructions about its work, precedence resolves in this exact order:
 
@@ -205,7 +205,7 @@ reports_to_employee_id: null
 Reservations team employee identity. Execution configuration is stored separately in execution.md, as defined in document 11.
 ```
 
-Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. `here` is not allowed as a handle, because `@here` addresses a channel's members ([ADR-0024](../../adr/0024-a-channel-question-is-watched-for-its-answer.md) decision 7). Handles are readable identity references; stable IDs remain the foreign keys. Employee identity does not embed a model or credentials. An agent requires the separate execution.md profile/model/tool configuration to become runnable; people have no execution configuration. Memory and proactive scheduling are outside this specification.
+Agents and people share an organization-wide unique `handle`, stored without `@` and displayed as `@ana`. `here` is not allowed as a handle, because `@here` addresses a channel's members ([ADR-0024](../../decisions/decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md) decision 7). Handles are readable identity references; stable IDs remain the foreign keys. Employee identity does not embed a model or credentials. An agent requires the separate execution.md profile/model/tool configuration to become runnable; people have no execution configuration. Memory and proactive scheduling are outside this specification.
 
 ## Runtime location
 
@@ -232,7 +232,7 @@ The runtime team tree is the local office's projection of the organization-wide 
 
 ### Execution and remaining boundaries
 
-[Document 11](11-model-profiles-and-agent-execution.md) specifies the agent's model profile, target model, prompt/tools configuration, local credential bindings, supervision and turn/attempt lifecycle. This document owns employee, home-team, reporting and placement; there is no separate agent identity. Private memory and proactive scheduling are separate work. [Task assignment](12-task-assignment-and-history.md) owns assignment/reporter semantics; [operational data](05-operational-data.md) owns task events/history and private notes. Execution owns processes.
+[Document 11](doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) specifies the agent's model profile, target model, prompt/tools configuration, local credential bindings, supervision and turn/attempt lifecycle. This document owns employee, home-team, reporting and placement; there is no separate agent identity. Private memory and proactive scheduling are separate work. [Task assignment](doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md) owns assignment/reporter semantics; [operational data](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md) owns task events/history and private notes. Execution owns processes.
 
 ## SQLite tables
 
@@ -347,7 +347,7 @@ Direct reporting must be acyclic within an organization, independently of the te
 
 The same-named scalar fields below live in `profile.md` front matter and project into `employees`: `contact`, `title`, `focus`, `role_text`, `title_in_team`, `offboarded_at`, and `may_hire` ([above](#who-may-hire); a person's record is written with it true, an agent's with it false). Nullable text remains NULL if not known.
 
-**Employee state is one field.** `status` is a closed list: `active`, `paused`, `inactive`. `paused` applies to agents only: the agent keeps its employment, handle and history and is not started. `inactive` is a person who has left or an agent that has been offboarded; `offboarded_at` may be set only then, and the profile keeps its handle. There is no second state field. Whether an agent may run is one rule: its status is `active`, it has an enabled execution configuration ([document 11](11-model-profiles-and-agent-execution.md)), and no unreleased budget hold applies ([document 17](17-budgets-and-controls.md)). Holds stay separate records because they belong to a budget and a period, not to the employee.
+**Employee state is one field.** `status` is a closed list: `active`, `paused`, `inactive`. `paused` applies to agents only: the agent keeps its employment, handle and history and is not started. `inactive` is a person who has left or an agent that has been offboarded; `offboarded_at` may be set only then, and the profile keeps its handle. There is no second state field. Whether an agent may run is one rule: its status is `active`, it has an enabled execution configuration ([document 11](doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md)), and no unreleased budget hold applies ([document 17](doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md)). Holds stay separate records because they belong to a budget and a period, not to the employee.
 
 `role_text` is a free descriptive role, independent of the normalized `role_id`; a role ID is never invented from that text. `title_in_team` describes the home-team appointment, not a second membership. There is no owner field on an employee ([above](#accounts-people-and-the-organization-owner)). Team leadership is a separate appointment.
 
@@ -362,8 +362,8 @@ title_in_team: "Lead"
 status: paused
 ```
 
-[Messaging and chat](15-messaging-and-chat.md) defines employee participation and conversation data independently of team membership and office placement.
+[Messaging and chat](doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md) defines employee participation and conversation data independently of team membership and office placement.
 
-[Recovery and office continuity](16-recovery-and-office-continuity.md) defines durable receipt/checkpoint/cleanup evidence separately from disposable office projections.
+[Recovery and office continuity](doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md) defines durable receipt/checkpoint/cleanup evidence separately from disposable office projections.
 
-[Budgets and controls](17-budgets-and-controls.md) defines the budget data model. Policy, extension and hold records survive office cache loss.
+[Budgets and controls](doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md) defines the budget data model. Policy, extension and hold records survive office cache loss.

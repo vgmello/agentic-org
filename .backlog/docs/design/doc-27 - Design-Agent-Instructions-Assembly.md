@@ -26,16 +26,16 @@ It is a first version, written before any agent has run in the product and revie
 once against the contracts. Section 7 says how it is tested and changed once agents
 run.
 
-It applies the [agent command line](agent-os-command-line.md),
-[ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) (asks),
-[ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md) (what starts a turn),
-[ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) (the inbox and
-channels), [ADR-0025](../adr/0025-agents-start-sub-agents.md) (sub-agents),
-[ADR-0029](../adr/0029-only-who-may-hire-hires.md) (who may hire),
-[ADR-0028](../adr/0028-an-agent-is-always-available.md) (agents are always available),
-[development processes](development-processes.md#6-how-skills-reach-an-agent), [who an agent takes instructions from](organization-data/04-agent-structure.md#who-an-agent-takes-instructions-from),
-the [chat spec](../specs/chat-ux.md) section 5, the [session design](agent-sessions.md)
-decision 8 and the [processes design](processes.md) decision 4. Where this text and one
+It applies the [agent command line](doc-28%20-%20Design-agent-os-Command-Line.md),
+[ADR-0020](../../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md) (asks),
+[ADR-0023](../../decisions/decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md) (what starts a turn),
+[ADR-0024](../../decisions/decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md) (the inbox and
+channels), [ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md) (sub-agents),
+[ADR-0029](../../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md) (who may hire),
+[ADR-0028](../../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md) (agents are always available),
+[development processes](doc-32%20-%20Design-Development-Processes-Process-Packages.md#6-how-skills-reach-an-agent), [who an agent takes instructions from](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md#who-an-agent-takes-instructions-from),
+the [chat spec](../specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md) section 5, the [session design](doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md)
+decision 8 and the [processes design](doc-34%20-%20Design-Organization-Processes-and-Standards.md) decision 4. Where this text and one
 of those disagree, that document is right and this text is corrected.
 
 ## 1. Where it sits
@@ -49,8 +49,8 @@ so that a runtime that caches the start of a prompt can reuse it:
 | --- | --- | --- | --- |
 | 1 | **The built-in agent instructions** (this document) | The product | With a release |
 | 2 | The command catalogue: one line for each command the build has | Generated from the command table | With a release |
-| 3 | The processes section: the organization's must-follow documents in full, then summaries of the others that apply ([processes design](processes.md), section 3.2) | The organization | When one is edited |
-| 4 | The project's development process, when the project follows one: its summary, its stages, the agent's role in it, and the title and when-to-use line of each skill for that role ([development processes](development-processes.md#6-how-skills-reach-an-agent)) | The organization, or the product for a built-in one | When it is edited |
+| 3 | The processes section: the organization's must-follow documents in full, then summaries of the others that apply ([processes design](doc-34%20-%20Design-Organization-Processes-and-Standards.md), section 3.2) | The organization | When one is edited |
+| 4 | The project's development process, when the project follows one: its summary, its stages, the agent's role in it, and the title and when-to-use line of each skill for that role ([development processes](doc-32%20-%20Design-Development-Processes-Process-Packages.md#6-how-skills-reach-an-agent)) | The organization, or the product for a built-in one | When it is edited |
 | 5 | Who the agent is: name, handle, role, team, the leads above it | The organization, through HR | Rarely |
 | 6 | The agent's own prompt from its execution configuration | The organization | Rarely |
 | 7 | The project's instruction files | The project's repository | With the code |
@@ -64,11 +64,11 @@ outranks everything else, then the organization's other processes, then this tex
 The agent's own prompt and the project's files rank below the organization's processes,
 and neither changes whom the agent takes instructions from. This text is the default
 way of working: an organization changes it by writing a process, not by editing it
-([processes UX](../specs/processes-ux.md), PROC-27). A development process's skills may
+([processes UX](../specs/doc-54%20-%20Spec-Organization-Processes-and-Standards-UX.md), PROC-27). A development process's skills may
 adjust, for their project, the organization's overridable guidance and how this text
 tells agents to interact; they never override a must-follow document and grant nothing
-([ADR-0026](../adr/0026-development-processes-are-content.md) decision 3,
-[ADR-0028](../adr/0028-an-agent-is-always-available.md) decision 6).
+([ADR-0026](../../decisions/decision-26%20-%20ADR-0026-A-development-process-is-content-the-product-runs-no-methodology.md) decision 3,
+[ADR-0028](../../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md) decision 6).
 
 ## 2. How it is written
 
@@ -312,7 +312,7 @@ that it is read as content and never as the office's own instruction.
 | An ask from a person or an agent, or an ask delivered at a turn boundary | Who asks; whether it is required; each question with its ID, its type, its options with their IDs and its default; the exact `msg reply` call that answers it |
 | A hand-off, or a mention from an agent | Who sent it, where, and the message; the task it links to; for a hand-off, the `msg accept` call |
 | A response to the agent's own question | The question's ID and its text, in case the context was reset; who responded and the message; whether it came from the thread or was matched by the channel watcher |
-| A required answer has arrived, and the agent is resumed | The question and the answer; what the office stopped while the agent was away ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) decision 10); the agent's other required asks that are still open (decision 12) |
+| A required answer has arrived, and the agent is resumed | The question and the answer; what the office stopped while the agent was away ([ADR-0020](../../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md) decision 10); the agent's other required asks that are still open (decision 12) |
 | A recovery after the office or the agent's process stopped | That the previous turn was cut short and why; the task; that the agent should check what was already done before repeating anything |
 
 After the cause, the input holds:
@@ -331,7 +331,7 @@ decisions 5 and 16), and the text tells the agent what to do with it.
 
 - **After a restart or a stalled turn** the input says that the agent was interrupted
   or that its last turn stalled, when, and which tool call or sub-agent was running
-  ([ADR-0030](../adr/0030-an-agent-works-while-it-has-work.md)).
+  ([ADR-0030](../../decisions/decision-30%20-%20ADR-0030-An-agent-works-while-it-has-work-continues-after-a-restart-and-a-stalled-turn-is-stopped.md)).
 - **Several waiting items** arrive as one input that lists them (ADR-0030 decision 3).
 
 ## 6. Skills, read on demand
