@@ -226,18 +226,11 @@ is written nowhere. The delivery code stays in protected host custody until
 acknowledged. The public package alone supplies no account, epoch or writer
 authority.
 
-Both files are written by the organization's creation, the first entry of its
-acceptance journal ([document 16](#how-the-directory-begins)),
-so the escrow package and the wrapped key are committed together or not at all. The
-protected journal under `durable/recovery/` therefore holds the wrapped key until that
-entry's segment is released. Nothing else does: the key record is excluded from
-organization Git, from copied organization projections, from every export and from the
-office's projection, which records only its hash. The office reads it from its file at
-opening and when the recovery package is read.
+Only the public escrow package (`state/security/ca-escrow.v1.bin`) is committed inside Entry 1 of the acceptance journal ([document 16](#how-the-directory-begins)), bound by the creation operation's fingerprint over `(organization_id, office_id, operation_id, public_key, package_sha256)`. The wrapped Org CA key (`durable/local/offices/<office-id>/security/ca-key.v1.json`) is written atomically and exclusively to local security storage (`0700` directory, `0600` file) **outside** `durable/recovery/` acceptance journal segments (`TASK-10` / H-06). As a result, **no CA private-key ciphertext ever enters `durable/recovery/` segments**, organization Git, state exports, or `office.db`, and Entry 1 carries purely public `durable/state/` files with no special-case outbox exclusion needed. If creation crashes after committing Entry 1 and before writing `ca-key.v1.json`, `office.json` is not yet written, and retrying creation recovers the exact CA signing key from `state/security/ca-escrow.v1.bin` + the pending recovery code and completes the local `ca-key.v1.json` write before finalizing `office.json`. The office reads `ca-key.v1.json` directly from its local security path at opening and when the recovery package is read.
 
 **What leaves an office.** Storage trees under `<data-root>/<organization-id>/durable/` fall into three explicit movement classes:
 
-1. **Git-published & state outbox (`durable/state/`):** Shared organization, project, task, document, and feature state. Only `durable/state/` is published to organization Git or included in generic state exports; creation Entry 1 is read with its `local/` CA key file excluded.
+1. **Git-published & state outbox (`durable/state/`):** Shared organization, project, task, document, and feature state (including public `state/security/ca-escrow.v1.bin`). Only `durable/state/` is published to organization Git or included in generic state exports.
 2. **Office-to-HQ / peer replicated over Organization-CA mTLS sync (never Git):** Protected operational streams replicated exclusively over authenticated office-to-office sync—`durable/messaging/` ([document 15](15-messaging-and-chat.md)), `durable/accounting/` ([document 10](10-usage-and-cost-accounting.md)), and selected `durable/authority/` coordination state ([documents 06, 11, 17](11-model-profiles-and-agent-execution.md)).
 3. **Strictly node-local (never leaves the writing office):** `durable/local/`, `durable/recovery/`, `durable/private/` (HQ-only private task notes), and `durable/budgets/` (HQ-owned protected budget policies/periods).
 

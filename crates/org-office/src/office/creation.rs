@@ -15,9 +15,11 @@
 //! from there and never makes a second organization or a second CA. Nothing under the data
 //! roots is ever removed.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use org_store::{journal_dir, AnchorFacts, Files, Id, Opening, Outcome, StoreError};
+use org_store::{
+    journal_dir, AnchorFacts, Files, Id, OfficeIdentity, Opening, Outcome, StoreError,
+};
 
 use super::{
     check_roots,
@@ -35,13 +37,16 @@ use crate::{
     key::Key,
     model::{NewOffice, OfficeInfo, OfficeRole},
     office_file,
-    office_local::{read_ca, CaMaterial},
+    office_local::{
+        promote_staged_ca_key, read_ca, records::CaKey, remove_staged_ca_key, stage_ca_key,
+        write_ca_key, CaMaterial,
+    },
     organization::{
         features::{CreateOrganization, Creator},
         operation_id, records,
     },
     private_fs::{private_dir, tighten_dir},
-    store::open::{open_store, CreateOrganizationOp, OfficeStanding},
+    store::open::{open_store, CreateOrganizationOp, OfficeStanding, OfficeStore},
 };
 
 /// The prefix of a publication's temporary files (`org_store::publish_one`).
@@ -207,45 +212,15 @@ impl Office {
         }
         let store = open_store(&config).map_err(storage)?;
 
-        // The CA an earlier attempt committed: never generated again.
         let here = custody.identity.clone();
-        let files = Files::open(&roots.durable).map_err(OfficeError::storage)?;
-        let prior = read_ca(&files, &here.office_id).map_err(|_| recovery())?;
-        if let Some(records) = &prior {
-            records
-                .check(&here.organization_id, &here.office_id, &creation)
-                .map_err(|_| recovery())?;
-        }
-        let standing = OfficeStanding {
-            office: here.office_id.clone(),
-        };
-        let (standing, _) = store.read(standing).map_err(storage)?;
-        if prior.is_none() && standing.organization.is_some() {
-            return Err(recovery());
-        }
-        let prior = match prior {
-            Some(records) => {
-                let key = records.key;
-                let record = LocalRecord::new(
-                    key.organization_id.to_string(),
-                    key.operation_id.to_string(),
-                    key.public_key,
-                    records.package,
-                    key.wrapped_ca_key,
-                )?;
-                Some(record)
-            }
-            None => None,
-        };
-        let frozen = material(prior)?;
-        if frozen.organization_id != info.org_id || frozen.operation_id != creation.as_str() {
-            return Err(recovery());
-        }
-        let ca = CaMaterial {
-            public_key: frozen.public_key,
-            package: frozen.package.clone(),
-            wrapped_ca_key: frozen.wrapped_ca_key().to_vec(),
-        };
+        let (ca, ca_key_record) = prepare_ca_for_creation(
+            &roots.durable,
+            &here,
+            &creation,
+            &info.org_id,
+            &store,
+            material,
+        )?;
         let reply = store.run(CreateOrganizationOp {
             operation_id: creation.clone(),
             here: here.clone(),
@@ -255,11 +230,19 @@ impl Office {
         match reply {
             Ok(reply) if reply.outcome == Outcome::Completed => {}
             // Refused, or the operation ID holds another creation: never a second one.
-            Ok(_) | Err(StoreError::Invalid(_) | StoreError::Conflict) => return Err(recovery()),
+            Ok(_) | Err(StoreError::Invalid(_) | StoreError::Conflict) => {
+                let _ = remove_staged_ca_key(&roots.durable, &here.office_id);
+                return Err(recovery());
+            }
             Err(error) => return Err(storage(error)),
         }
         // H1: nobody is told the office exists before its files do.
         store.sync().map_err(storage)?;
+        // Promote the staged CA key into its permanent local security path outside
+        // `durable/recovery/`, and remove the staging file before final checks.
+        write_ca_key(&roots.durable, &here.office_id, &ca_key_record)
+            .map_err(OfficeError::storage)?;
+        remove_staged_ca_key(&roots.durable, &here.office_id).map_err(OfficeError::storage)?;
         #[cfg(test)]
         if let Some(spoil) = &options.before_final_checks {
             spoil();
@@ -285,6 +268,71 @@ impl Office {
             .map_err(OfficeError::storage)?;
         Ok(office)
     }
+}
+
+/// Reconciles any staged/committed CA records from an earlier attempt, obtains or
+/// validates the CA material through `material`, and stages `ca-key.v1.staging` in local
+/// security storage outside `durable/recovery/` before Entry 1 commits (TASK-10 / H-06).
+fn prepare_ca_for_creation(
+    durable_root: &Path,
+    here: &OfficeIdentity,
+    creation: &Id,
+    org_id: &str,
+    store: &OfficeStore,
+    material: impl FnOnce(Option<LocalRecord>) -> Result<LocalRecord, OfficeError>,
+) -> Result<(CaMaterial, CaKey), OfficeError> {
+    let files = Files::open(durable_root).map_err(OfficeError::storage)?;
+    promote_staged_ca_key(
+        durable_root,
+        &files,
+        &here.organization_id,
+        &here.office_id,
+        creation,
+    )
+    .map_err(|_| recovery())?;
+    let prior = read_ca(&files, &here.office_id).map_err(|_| recovery())?;
+    if let Some(records) = &prior {
+        records
+            .check(&here.organization_id, &here.office_id, creation)
+            .map_err(|_| recovery())?;
+    }
+    let standing = OfficeStanding {
+        office: here.office_id.clone(),
+    };
+    let (standing, _) = store.read(standing).map_err(storage)?;
+    if prior.is_none() && standing.organization.is_some() {
+        return Err(recovery());
+    }
+    let has_committed_ca = prior.is_some();
+    let prior = match prior {
+        Some(records) => {
+            let key = records.key;
+            Some(LocalRecord::new(
+                key.organization_id.to_string(),
+                key.operation_id.to_string(),
+                key.public_key,
+                records.package,
+                key.wrapped_ca_key,
+            )?)
+        }
+        None => None,
+    };
+    let frozen = material(prior)?;
+    if frozen.organization_id != org_id || frozen.operation_id != creation.as_str() {
+        return Err(recovery());
+    }
+    let ca = CaMaterial {
+        public_key: frozen.public_key,
+        package: frozen.package.clone(),
+        wrapped_ca_key: frozen.wrapped_ca_key().to_vec(),
+    };
+    let ca_key_record = ca.record(here, creation);
+    ca_key_record.check().map_err(|_| recovery())?;
+    if !has_committed_ca {
+        stage_ca_key(durable_root, &here.office_id, &ca_key_record)
+            .map_err(OfficeError::storage)?;
+    }
+    Ok((ca, ca_key_record))
 }
 
 /// Refuses a folder in which an office, this build's or an older one's, has begun: the

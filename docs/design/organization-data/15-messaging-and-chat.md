@@ -10,7 +10,7 @@ Stable IDs follow document 06. There are no readable number counters. The first 
 
 ## Storage and durability
 
-Messages, DM/channel memberships, preferences and bodies are protected operational data, **not shared organization Git content**. The consolidated SQL is a query projection of the protected source files below, not a claim that anyone with organization Git access may read all conversations. Enforce actor/conversation visibility on every read, search, attachment access and write. Owner reading authority follows the explicitly authorized chat policy; no field on an employee record is an authentication grant. Private task notes remain in their separate database and are never included in chat automatically.
+Messages, DM/channel memberships, preferences and bodies are protected operational data, **not shared organization Git content**, and their SQL projection lives in a **separate access-controlled database** (`runtime/<office-id>/protected/messaging.db`, defined by [`messaging-schema.sql`](messaging-schema.sql)) rather than inside the shared plaintext `office.db` projection (matching `private/task-notes.db`, [ADR-0016](../../adr/0016-no-application-level-data-encryption.md), `TASK-10`). Enforce actor/conversation visibility on every read, search, attachment access and write. Owner reading authority follows the explicitly authorized chat policy; no field on an employee record is an authentication grant. Private task notes remain in their separate database (`private/task-notes.db`) and are never included in chat automatically.
 
 Use `durable/messaging/` under the one selected [storage root](README.md#shared-storage-contract), outside disposable office state, with private filesystem permissions and authorized backups. Under [ADR-0016](../../adr/0016-no-application-level-data-encryption.md) the application does not encrypt it. The root is configured and never derived from client IDs without validating paths. Agent office movement does not move conversation ownership. Losing only office caches must not lose acknowledged unresolved asks, pending handoffs or undelivered messages. Losing both the durable source and its backups can lose chat; organization Git alone cannot restore it. No new replication/recovery algorithm or purge policy is selected here.
 
@@ -37,7 +37,7 @@ They have no projection table yet; the increment named adds one where it needs t
 │       ├── answers/<message-id>.json        # this employee's answer to an ask or card
 │       └── reactions/<message-id>.json      # this employee's reactions to one message
 └── attachments/<sha256>                      # immutable protected content
-<data-root>/<organization-id>/runtime/<office-id>/ # indexed projections, unread/thread indexes
+<data-root>/<organization-id>/runtime/<office-id>/protected/messaging.db  # isolated 0700/0600 messaging projection (never in office.db)
 ```
 
 Each JSON source envelope has `schema_version: 1`, stable IDs, a positive `revision`, and the same-named table fields below. Every file has exactly one writing office. A conversation file embeds `memberships[]` and `pins[]`. A message file embeds `attachments[]` and is written once by the origin office; it never changes after the send. **Who writes a conversation file.** A DM or group DM is created by the sender's office together with its first message, so starting a conversation never waits for HQ. Channels, automatic team and project conversations, and every later membership change go through the organization authority, which is the file's writer from that point; the hand-off is ordered by organization position, as for a re-placed agent. **Answering an ask or a card.** The answer is the answering employee's own record, `answers/<message-id>.json`, committed in that employee's office and acknowledged at once in the committed class; the answerer never waits for another office. It is relayed to the ask's origin office, which records the single close outcome (first close wins, whether an answer or the asker's withdrawal) once in `messages/<message-id>.close.json`. If the origin office is unreachable the answer stays queued for relay; if that office was removed, HQ records the close, as it owns state for recipients with no office. A pin is conversation-wide and belongs to the conversation file; a fold is decided once at send. Everything that belongs to one employee is in that employee's `participants/<employee-id>/` folder and is written only by the office that owns that employee's state under [the routing rules](#runtime-ownership-and-routing): preferences and read markers in `state.json`, per-message recipient states appended into bounded `received/segments/<first-seq>.jsonl` logs and periodically compacted into `received/snapshot.json` (avoiding one-file-per-message inode bloat on active channels; see [document 16 compaction windows](16-recovery-and-office-continuity.md#retention-compaction-and-archival-windows)), answers in `answers/`, and reactions in `reactions/`. Other offices receive these files through synchronization and never edit them. Revisions belong to the containing file. Every change is one entry of the writing office's acceptance journal ([document 16](16-recovery-and-office-continuity.md)); the whole file is then saved atomically under its single writer. Under [ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) a committed-class send or state change is acknowledged once its entry is appended, and a durable-class one once the journal flush covers its entry; in both classes the file is written after that flush ([office store design](../office-store.md)). Expected-revision checks prevent state/reaction changes from overwriting each other. Attachments must be durably stored and hash-verified before their references are acknowledged. The new `content_sha256` hashes the canonical JSON (UTF-8; unified codec `canonical-json/2` in the [hash codec registry](08-record-contracts.md#hash-codec-registry)) of immutable message columns: organization_id, id, conversation_id, sender_kind, sender_employee_id, sender_office_id, sender_display_name, kind, priority, subject, body_markdown, metadata_json parsed as an object, thread_root_id, reply_to_message_id, also_in_channel, created_at, expires_at, ttl_ms, origin_office_id, origin_incarnation, origin_sequence, org_epoch and org_sequence. Include nullable keys as null. The message file holds the card as it was sent and nothing that changes afterwards, so the hash covers the whole parsed metadata. Answers, acceptance, the close outcome, pins, recipient state and reactions live in the other files named above and are excluded; validate their envelope revision independently. No credentials or arbitrary local attachment paths enter metadata. Validators enforce formats, byte limits and nested schemas; SQL does not replace those checks.
@@ -61,7 +61,7 @@ Each JSON source envelope has `schema_version: 1`, stable IDs, a positive `revis
 | Delivery never interrupts | Urgency controls order and badges. It never cuts a busy turn short ([chat UX §4.2](../../specs/chat-ux.md#42-system-notices-and-delivery)). | Chat UX §4.2; ADR-0003 decision 10 |
 | Conversation ownership | Conversations belong to the organization, not to an office. Membership changes are authorized through the [organization authority](README.md#organization-authority). Re-placing an agent does not move conversation ownership. | This document, storage and durability |
 
-In the code today these rules run against tables in the office database (`msg_headers`, `msg_bodies`, `msg_state` and their indexes). In the selected design those tables are projections in `runtime/<office-id>/office.db` of the files in `durable/messaging/`; the ordering, deduplication, ownership and deadline rules are the same.
+In the selected design those tables are projections in the isolated access-controlled database `runtime/<office-id>/protected/messaging.db` ([`messaging-schema.sql`](messaging-schema.sql), never loaded into shared `office.db`) built from the files in `durable/messaging/`; the ordering, deduplication, ownership and deadline rules are the same.
 
 Three consequences remain open and must be settled before the target adapter is built:
 
@@ -119,11 +119,34 @@ Illustrative IDs follow the stable-ID contract in real records. An employee in t
 
 ## Tables and enforcement
 
-All tables below are included in the consolidated `schema.sql`. Full field diagrams follow the relationships. SQL enforces organization-scoped foreign keys, origin uniqueness and per-recipient keys. Active membership, actor grants, root cycles, card shapes, immutable-content/revision validation and file durability are command requirements.
+All tables below are defined in the separate [`messaging-schema.sql`](messaging-schema.sql) artifact loaded exclusively into `runtime/<office-id>/protected/messaging.db` (never into shared `office.db`). Read-only identity mirror tables (`messaging_organizations`, `messaging_teams`, `messaging_projects`, `messaging_employees`, `messaging_offices`) keep organization-scoped foreign-key integrity inside the isolated database without sharing tables with `office.db`. Active membership, actor grants, root cycles, card shapes, immutable-content/revision validation and file durability are command requirements.
 
 ```sql
+CREATE TABLE messaging_organizations (
+  id TEXT PRIMARY KEY
+) STRICT;
+CREATE TABLE messaging_teams (
+  organization_id TEXT NOT NULL REFERENCES messaging_organizations(id),
+  id TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id)
+) STRICT;
+CREATE TABLE messaging_projects (
+  organization_id TEXT NOT NULL REFERENCES messaging_organizations(id),
+  id TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id)
+) STRICT;
+CREATE TABLE messaging_employees (
+  organization_id TEXT NOT NULL REFERENCES messaging_organizations(id),
+  id TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id)
+) STRICT;
+CREATE TABLE messaging_offices (
+  organization_id TEXT NOT NULL REFERENCES messaging_organizations(id),
+  id TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id)
+) STRICT;
 CREATE TABLE conversations (
-  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  organization_id TEXT NOT NULL REFERENCES messaging_organizations(id),
   id TEXT NOT NULL,
   schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version=1),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>=1),
@@ -139,8 +162,8 @@ CREATE TABLE conversations (
     ((auto_scope='organization' AND team_id IS NULL AND project_id IS NULL)
     OR (auto_scope='team' AND team_id IS NOT NULL AND project_id IS NULL)
     OR (auto_scope='project' AND project_id IS NOT NULL AND team_id IS NULL)))),
-  FOREIGN KEY (organization_id,team_id) REFERENCES teams(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,project_id) REFERENCES projects(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY (organization_id,team_id) REFERENCES messaging_teams(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,project_id) REFERENCES messaging_projects(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE UNIQUE INDEX conversation_auto_org ON conversations(organization_id) WHERE auto_scope='organization';
 CREATE UNIQUE INDEX conversation_auto_team ON conversations(organization_id,team_id) WHERE auto_scope='team';
@@ -153,8 +176,9 @@ CREATE TABLE conversation_memberships (
   left_at TEXT,
   PRIMARY KEY (organization_id,conversation_id,employee_id),
   FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY (organization_id,employee_id) REFERENCES messaging_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+CREATE INDEX conversation_memberships_by_employee ON conversation_memberships(organization_id, employee_id);
 CREATE TABLE messages (
   organization_id TEXT NOT NULL,
   id TEXT NOT NULL,
@@ -186,13 +210,15 @@ CREATE TABLE messages (
   CHECK ((sender_kind='employee' AND sender_employee_id IS NOT NULL AND sender_office_id IS NULL)
     OR (sender_kind='office' AND sender_employee_id IS NULL AND sender_office_id IS NOT NULL)),
   FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,sender_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,sender_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,origin_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,sender_employee_id) REFERENCES messaging_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,sender_office_id) REFERENCES messaging_offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,origin_office_id) REFERENCES messaging_offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,thread_root_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,reply_to_message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE INDEX message_conversation_time ON messages(organization_id,conversation_id,created_at,id);
+CREATE INDEX messages_by_thread ON messages(organization_id, thread_root_id, created_at);
+CREATE INDEX messages_by_sender ON messages(organization_id, sender_employee_id);
 CREATE TABLE message_recipient_states (
   organization_id TEXT NOT NULL,
   message_id TEXT NOT NULL,
@@ -219,7 +245,7 @@ CREATE TABLE message_recipient_states (
   PRIMARY KEY (organization_id,message_id,employee_id),
   FOREIGN KEY (organization_id,message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,conversation_id,employee_id) REFERENCES conversation_memberships(organization_id,conversation_id,employee_id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,owner_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY (organization_id,owner_office_id) REFERENCES messaging_offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE INDEX message_recipient_inbox ON message_recipient_states(organization_id,employee_id,state,snoozed_until);
 CREATE TABLE conversation_preferences (
@@ -230,8 +256,8 @@ CREATE TABLE conversation_preferences (
   mute_mode TEXT NOT NULL DEFAULT 'none' CHECK (mute_mode IN ('none','muted','digest')),
   PRIMARY KEY (organization_id,conversation_id,viewer_employee_id,muted_employee_id),
   FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,viewer_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,muted_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY (organization_id,viewer_employee_id) REFERENCES messaging_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,muted_employee_id) REFERENCES messaging_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE TABLE conversation_read_markers (
   organization_id TEXT NOT NULL,
@@ -241,7 +267,7 @@ CREATE TABLE conversation_read_markers (
   last_read_message_id TEXT,
   PRIMARY KEY (organization_id,conversation_id,viewer_employee_id),
   FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,viewer_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,viewer_employee_id) REFERENCES messaging_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,last_read_message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE TABLE message_attachments (
@@ -263,8 +289,9 @@ CREATE TABLE message_reactions (
   created_at TEXT NOT NULL,
   PRIMARY KEY (organization_id,message_id,employee_id,reaction),
   FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY (organization_id,employee_id) REFERENCES messaging_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+CREATE INDEX message_reactions_by_employee ON message_reactions(organization_id, employee_id);
 ```
 
 ```mermaid

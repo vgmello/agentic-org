@@ -1,6 +1,13 @@
 # Schema coverage and integrity review
 
-The primary design documents define two SQL artifacts. Load `schema.sql` once into the shared office projection, including model profiles and execution. Load `private-notes-schema.sql` into a separate durable private database. The shared side has 90 tables and 12 views; the private side has 4 tables. These are draft definitions, not application migrations.
+The primary design documents define four SQL artifacts so sensitive operational projections are isolated from shared plaintext `office.db` ([ADR-0016](../../adr/0016-no-application-level-data-encryption.md), `TASK-10`):
+
+- Load [`schema.sql`](schema.sql) once into the shared office projection (`runtime/<office-id>/office.db`): **76 tables and 12 views**.
+- Load [`private-notes-schema.sql`](private-notes-schema.sql) into the separate durable private-notes database (`runtime/<office-id>/private/task-notes.db`): **4 tables**.
+- Load [`messaging-schema.sql`](messaging-schema.sql) into the separate access-controlled messaging database (`runtime/<office-id>/protected/messaging.db`): **8 messaging tables + 5 identity mirror tables** (`messaging_organizations`, `messaging_teams`, `messaging_projects`, `messaging_employees`, `messaging_offices`).
+- Load [`budgets-schema.sql`](budgets-schema.sql) into the separate access-controlled budgets database (`runtime/<office-id>/protected/budgets.db`): **6 budget tables + 4 identity mirror tables** (`budget_organizations`, `budget_tasks`, `budget_employees`, `budget_releases`).
+
+These are draft definitions, not application migrations.
 
 ## Record inventory
 
@@ -19,10 +26,10 @@ The primary design documents define two SQL artifacts. Load `schema.sql` once in
 | [11](11-model-profiles-and-agent-execution.md) | [schema.sql](schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `model_profile_model_union` |
 | [12](12-task-assignment-and-history.md) | Task semantics | Uses `tasks` from 03 and `task_events` from 05; no additional tables |
 | [05: private operational data](05-operational-data.md#private-notes-attached-to-tasks) | [private-notes-schema.sql](private-notes-schema.sql) | `private_note_authors`, `private_note_tasks`, `private_task_notes`, `private_note_command_receipts` |
-| [15](15-messaging-and-chat.md) | [schema.sql](schema.sql) | `conversations`, `conversation_memberships`, `messages`, `message_recipient_states`, `conversation_preferences`, `conversation_read_markers`, `message_attachments`, `message_reactions` |
+| [15](15-messaging-and-chat.md) | [messaging-schema.sql](messaging-schema.sql) | `messaging_organizations`, `messaging_teams`, `messaging_projects`, `messaging_employees`, `messaging_offices`, `conversations`, `conversation_memberships`, `messages`, `message_recipient_states`, `conversation_preferences`, `conversation_read_markers`, `message_attachments`, `message_reactions` |
 | [03: task details](03-features-and-work.md#detailed-task-payload-and-feature-lifecycle) | [schema.sql](schema.sql) | `task_details` |
 | [16](16-recovery-and-office-continuity.md) | [schema.sql](schema.sql) | `mutation_receipts`, `office_origin_streams`, `office_recovery_checkpoints`, `recovery_snapshot_transfers`, `process_cleanup_records` |
-| [17](17-budgets-and-controls.md) | [schema.sql](schema.sql) | `budgets`, `budget_policy_versions`, `budget_periods`, `budget_events`, `budget_notices`, `budget_holds` |
+| [17](17-budgets-and-controls.md) | [budgets-schema.sql](budgets-schema.sql) | `budget_organizations`, `budget_tasks`, `budget_employees`, `budget_releases`, `budgets`, `budget_policy_versions`, `budget_periods`, `budget_events`, `budget_notices`, `budget_holds` |
 | [18](18-development-processes-and-project-documentation.md) | [schema.sql](schema.sql) | `development_processes`, `development_process_roles`, `development_process_skills`, `development_process_skill_roles`, `development_process_kinds`, `development_process_folders`, `development_process_tabs`, `documentation_sections`, `documentation_media`, `document_versions`, `document_version_sources`, `document_code_links`, `task_document_versions`, `document_version_progress`, `task_releases`; adds `projects.development_process_id` and `documents.summary`, `path`, `version`, `issued_revision` to document 02's tables |
 
 [Document 14](14-model-providers-and-connection-pools.md) presents the provider/pool subset of document 11 in the common data-structure format: seven existing tables and `model_profile_model_union`. Its field diagrams and SQL subset are checked against `schema.sql`; it adds no tables.
@@ -33,7 +40,7 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code loads this table with these columns and actively reads/writes it through its domain port), **DDL loaded only** (created verbatim from `schema.sql` by `crates/org-office/src/store/sqlite/schema.rs`, with no domain projector or read/write port yet), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (not loaded in the runtime schema and no code).
 
-As of 2026-11-21 (`B1b` and `B2.1` landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all 90 shared tables and 12 views plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **80 tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), and the 4 `private-notes-schema.sql` tables remain **Absent**.
+As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all **76 shared tables and 12 views** plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **66 shared tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), while the isolated databases (`private-notes-schema.sql` 4 tables, `messaging-schema.sql` 8 domain + 5 mirror tables, `budgets-schema.sql` 6 domain + 4 mirror tables) remain **Absent** from runtime code until their increments (`B6`, `L3`, `L8`) open their dedicated protected databases.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |
@@ -42,20 +49,20 @@ As of 2026-11-21 (`B1b` and `B2.1` landed; legacy `org.db` v3 and `office.db` v8
 | `agent_execution_turns` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `agent_placements` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `agent_process_instances` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `budget_events` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `budget_holds` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `budget_notices` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `budget_periods` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `budget_policy_versions` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `budgets` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `budget_events` | table | Absent | Isolated in `protected/budgets.db` (`budgets-schema.sql`); no projector yet |
+| `budget_holds` | table | Absent | Isolated in `protected/budgets.db` (`budgets-schema.sql`); no projector yet |
+| `budget_notices` | table | Absent | Isolated in `protected/budgets.db` (`budgets-schema.sql`); no projector yet |
+| `budget_periods` | table | Absent | Isolated in `protected/budgets.db` (`budgets-schema.sql`); no projector yet |
+| `budget_policy_versions` | table | Absent | Isolated in `protected/budgets.db` (`budgets-schema.sql`); no projector yet |
+| `budgets` | table | Absent | Isolated in `protected/budgets.db` (`budgets-schema.sql`); no projector yet |
 | `checklist_steps` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `comments` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `connection_quota_state` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `connection_turn_permits` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `conversation_memberships` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `conversation_preferences` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `conversation_read_markers` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `conversations` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `msg_threads` deleted) |
+| `conversation_memberships` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet |
+| `conversation_preferences` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet |
+| `conversation_read_markers` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet |
+| `conversations` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet (legacy `msg_threads` deleted) |
 | `deployment_flag_settings` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `deployment_repository_commits` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `deployments` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
@@ -71,10 +78,10 @@ As of 2026-11-21 (`B1b` and `B2.1` landed; legacy `org.db` v3 and `office.db` v8
 | `features` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `links` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `local_repository_locations` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `message_attachments` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `message_reactions` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `message_recipient_states` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `msg_state`/`msg_unread` deleted) |
-| `messages` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `msg_headers`/`msg_bodies` deleted) |
+| `message_attachments` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet |
+| `message_reactions` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet |
+| `message_recipient_states` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet (legacy `msg_state`/`msg_unread` deleted) |
+| `messages` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet (legacy `msg_headers`/`msg_bodies` deleted) |
 | `milestones` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `model_prices` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `model_profile_connections` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |

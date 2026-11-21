@@ -5,7 +5,7 @@ use org_store::{Actor, Id, OfficeIdentity, Reply, Store, StoreError};
 
 use super::{OfficeEngine, ReadOp, StoreOp};
 use crate::{
-    office_local::{self, CaMaterial},
+    office_local::CaMaterial,
     organization::{
         features::{
             create_organization, AddPerson, ArchiveTeam, CreateOrganization, CreateTeam,
@@ -52,13 +52,12 @@ impl StoreOp for CreateOrganizationOp {
             return Err(StoreError::invalid(why));
         }
         let operation = key.bind(command.operation(operation_id));
-        let key_path = office_local::records::ca_key_path(&here.office_id);
-        let key = office_local::records::encode_ca_key(&key);
+        // TASK-10 (H-06): Entry 1 commits only public state/ records (including the public
+        // escrow package). The wrapped Org CA private key record (`ca-key.v1.json`) is
+        // written strictly to local security storage outside `durable/recovery/` segments.
         store.submit(Some(operation), false, move |uow| {
             let change = create_organization::decide(uow, &here, &command)?;
-            Ok(change
-                .create(records::ca_escrow_path(), ca.package.clone())
-                .create(key_path.clone(), key.clone()))
+            Ok(change.create(records::ca_escrow_path(), ca.package.clone()))
         })
     }
 }

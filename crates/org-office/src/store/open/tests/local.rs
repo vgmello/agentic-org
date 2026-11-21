@@ -67,8 +67,9 @@ fn runtime_folder(place: &Place) -> PathBuf {
     place.runtime().join(identity().office_id.as_str())
 }
 
-/// STORE-6 for the CA records: the escrow package and the CA key record are written in
-/// the creation's one entry, with their exact bytes, beside the golden state files.
+/// STORE-6 + TASK-10 (H-06) for the CA records: Entry 1 commits only the public state
+/// files and escrow package (never the wrapped CA key), while `write_ca_key` writes
+/// `ca-key.v1.json` atomically to local security storage outside `durable/recovery/`.
 #[test]
 fn creation_writes_both_ca_records_in_its_one_entry_with_their_exact_bytes() {
     for engine in ENGINES {
@@ -77,7 +78,7 @@ fn creation_writes_both_ca_records_in_its_one_entry_with_their_exact_bytes() {
         let created = create_organization(&store, 1).unwrap();
         assert_eq!(created.outcome, Outcome::Completed, "{engine:?}");
         store.sync().unwrap();
-        // One entry holds everything the creation wrote.
+        // One entry holds everything the creation wrote to state/.
         assert_eq!(store.status().flushed, 1, "{engine:?}");
 
         let material = ca_material(&identity().organization_id, CA);
@@ -87,6 +88,15 @@ fn creation_writes_both_ca_records_in_its_one_entry_with_their_exact_bytes() {
             .map(|(path, bytes)| (format!("state/{path}"), bytes))
             .collect();
         assert_eq!(state, creation_state(&material.package), "{engine:?}");
+        // Entry 1 never writes ca-key.v1.json into local/ or durable/recovery/.
+        assert!(
+            tree(&local_folder(&place)).is_empty(),
+            "{engine:?}: Entry 1 must not write ca-key.v1.json via journal"
+        );
+        // Local security storage write (done by `Office::provision_with` outside the journal).
+        let record = material.record(&identity(), &id(1));
+        crate::office_local::write_ca_key(&place.durable(), &identity().office_id, &record)
+            .unwrap();
         let local = tree(&local_folder(&place));
         let key = String::from_utf8(local["security/ca-key.v1.json"].clone()).unwrap();
         assert_eq!(key, golden_ca_key(&material.package), "{engine:?}");
@@ -169,8 +179,9 @@ fn ca_material_that_breaks_a_rule_is_refused_and_records_nothing() {
     }
 }
 
-/// M6: the wrapped CA key is in the journal and its own record only. No published file
-/// and no projection holds it in either form.
+/// M6 + TASK-10 (H-06): the wrapped CA key is ONLY in its own local security record.
+/// No published state file, no projection, and no acceptance journal segment under
+/// `durable/recovery/` holds it in either raw or hex form.
 #[test]
 fn the_wrapped_ca_key_is_in_no_state_file_and_no_projection() {
     for engine in ENGINES {
@@ -179,7 +190,11 @@ fn the_wrapped_ca_key_is_in_no_state_file_and_no_projection() {
         create_organization(&store, 1).unwrap();
         create_team(&store, 2, 0x21).unwrap();
         store.sync().unwrap();
-        let wrapped = ca_material(&identity().organization_id, CA).wrapped_ca_key;
+        let material = ca_material(&identity().organization_id, CA);
+        let record = material.record(&identity(), &id(1));
+        crate::office_local::write_ca_key(&place.durable(), &identity().office_id, &record)
+            .unwrap();
+        let wrapped = material.wrapped_ca_key;
         let hex: String = wrapped.iter().map(|b| format!("{b:02x}")).collect();
         let holds = |bytes: &[u8]| {
             let raw = bytes
@@ -192,6 +207,9 @@ fn the_wrapped_ca_key_is_in_no_state_file_and_no_projection() {
         store.close().unwrap();
         for (path, bytes) in tree(&place.durable().join("state")) {
             assert!(!holds(&bytes), "{engine:?}: state/{path}");
+        }
+        for (path, bytes) in tree(&place.durable().join("recovery")) {
+            assert!(!holds(&bytes), "{engine:?}: recovery/{path}");
         }
         for (path, bytes) in tree(&place.runtime()) {
             assert!(!holds(&bytes), "{engine:?}: runtime/{path}");
@@ -241,6 +259,10 @@ fn an_unowned_file_in_the_offices_local_folder_fails_the_rebuild_and_is_named() 
         let store = place.create(engine);
         create_organization(&store, 1).unwrap();
         store.close().unwrap();
+        let material = ca_material(&identity().organization_id, CA);
+        let record = material.record(&identity(), &id(1));
+        crate::office_local::write_ca_key(&place.durable(), &identity().office_id, &record)
+            .unwrap();
         let stray = local_folder(&place).join("security/ca-key.v2.json");
         std::fs::write(&stray, b"{}\n").unwrap();
         if engine == EngineChoice::Sqlite {

@@ -50,7 +50,7 @@ Hard limits are operational controls, not a promise of exact provider spend: rep
 ├── events/<event-id>.json        # immutable actor-bound decisions/evaluation snapshots
 ├── notices/<notice-id>.json      # durable notification/outcome state
 └── holds/<period-id>/<revision>-<stage>.json
-<data-root>/<organization-id>/runtime/<office-id>/ # access-controlled SQL/rollups; not sole source
+<data-root>/<organization-id>/runtime/<office-id>/protected/budgets.db  # isolated 0700/0600 budget projection (never in office.db)
 ```
 
 `budget.md` holds ONLY immutable target metadata (`schema_version`, `organization_id`, `id`, `scope_kind`, nullable `task_id`/`agent_id`/`release_id`, `period_kind`, `created_at`, optional Markdown body) and the `current_revision` pointer—it does **not** duplicate `state`, `unit`, `limit_amount`, or `time_zone*` fields. `versions/<revision>.yaml` is the **single authoritative source** for every policy field (`organization_id`, `budget_id`, `revision`, `state`, `unit`, `limit_amount`, `time_zone`, `time_zone_source`, `time_zone_subject_ref`, `changed_by_id`, `changed_at`, `reason`), eliminating dual-file policy drift; the projector populates `budgets.time_zone*` from the version row named by `current_revision`. Preserve task/release identities as archived records when budget history references them; deletion must archive, not cascade away budget history. Closed historical `budget_periods` and `budget_events` follow the archival window in [document 16](16-recovery-and-office-continuity.md#retention-compaction-and-archival-windows).
@@ -87,11 +87,35 @@ The referenced employee is an agent in the restaurant Reservations team or the a
 
 ## SQL and relationships
 
-Tables are included in consolidated schema.sql. SQL enforces scope/uniqueness, organization references and retained immutable policies/events. Calendar boundaries, effective totals, permissions, notice kind versus scope, threshold/stage transitions and actor-bound idempotent state changes require the budget command validator. A SQL draft is not an implemented budget service.
+Tables are defined in the separate [`budgets-schema.sql`](budgets-schema.sql) artifact loaded exclusively into `runtime/<office-id>/protected/budgets.db` (never into shared plaintext `office.db`, matching `private/task-notes.db`, [ADR-0016](../../adr/0016-no-application-level-data-encryption.md), `TASK-10`). Read-only identity mirror tables (`budget_organizations`, `budget_tasks`, `budget_employees`, `budget_releases`) preserve organization-scoped foreign keys and agent-only/tombstone invariants inside the isolated database without exposing owner-only limits or spend in `office.db`. Calendar boundaries, effective totals, permissions, notice kind versus scope, threshold/stage transitions and actor-bound idempotent state changes require the budget command validator. A SQL draft is not an implemented budget service.
 
 ```sql
+CREATE TABLE budget_organizations (
+  id TEXT PRIMARY KEY
+) STRICT;
+CREATE TABLE budget_tasks (
+  organization_id TEXT NOT NULL REFERENCES budget_organizations(id),
+  kind TEXT NOT NULL DEFAULT 'task' CHECK (kind='task'),
+  id TEXT NOT NULL,
+  is_deleted INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0,1)),
+  PRIMARY KEY (organization_id, kind, id)
+) STRICT;
+CREATE TRIGGER budget_tasks_no_undelete BEFORE UPDATE ON budget_tasks
+WHEN OLD.is_deleted = 1 AND NEW.is_deleted = 0
+BEGIN SELECT RAISE(ABORT, 'deleted budget task mirror cannot be undeleted'); END;
+CREATE TABLE budget_employees (
+  organization_id TEXT NOT NULL REFERENCES budget_organizations(id),
+  id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('person','agent')),
+  PRIMARY KEY (organization_id, id)
+) STRICT;
+CREATE TABLE budget_releases (
+  organization_id TEXT NOT NULL REFERENCES budget_organizations(id),
+  id TEXT NOT NULL,
+  PRIMARY KEY (organization_id, id)
+) STRICT;
 CREATE TABLE budgets (
-  organization_id TEXT NOT NULL REFERENCES organizations(id),
+  organization_id TEXT NOT NULL REFERENCES budget_organizations(id),
   id TEXT NOT NULL,
   schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version=1),
   current_revision INTEGER NOT NULL CHECK (current_revision>0),
@@ -110,10 +134,10 @@ CREATE TABLE budgets (
   CHECK ((scope_kind='task' AND task_id IS NOT NULL AND agent_id IS NULL AND release_id IS NULL AND period_kind='lifetime')
     OR (scope_kind='agent' AND task_id IS NULL AND agent_id IS NOT NULL AND release_id IS NULL AND period_kind IN ('day','month'))
     OR (scope_kind='release' AND task_id IS NULL AND agent_id IS NULL AND release_id IS NOT NULL AND period_kind='lifetime')),
-  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,agent_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,release_id) REFERENCES releases(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,time_zone_subject_ref) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES budget_tasks(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,agent_id) REFERENCES budget_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,release_id) REFERENCES budget_releases(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,time_zone_subject_ref) REFERENCES budget_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,id,current_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE UNIQUE INDEX budget_task_identity ON budgets(organization_id,task_id) WHERE scope_kind='task';
@@ -136,8 +160,8 @@ CREATE TABLE budget_policy_versions (
   CHECK ((state='active' AND limit_amount IS NOT NULL) OR (state='cleared' AND limit_amount IS NULL)),
   CHECK ((time_zone_source='owner_person')=(time_zone_subject_ref IS NOT NULL)),
   FOREIGN KEY (organization_id,budget_id) REFERENCES budgets(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,time_zone_subject_ref) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,changed_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY (organization_id,time_zone_subject_ref) REFERENCES budget_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,changed_by_id) REFERENCES budget_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE TABLE budget_periods (
   organization_id TEXT NOT NULL,
@@ -180,7 +204,7 @@ CREATE TABLE budget_events (
   CHECK ((actor_kind='employee')=(actor_id IS NOT NULL)),
   FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,actor_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY (organization_id,actor_id) REFERENCES budget_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE TABLE budget_notices (
   organization_id TEXT NOT NULL,
@@ -203,7 +227,7 @@ CREATE TABLE budget_notices (
   CHECK (threshold=100 OR stage='base'),
   FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,recipient_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY (organization_id,recipient_id) REFERENCES budget_employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 CREATE TABLE budget_holds (
   organization_id TEXT NOT NULL,
@@ -219,6 +243,7 @@ CREATE TABLE budget_holds (
   FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
+CREATE INDEX active_budget_holds ON budget_holds(organization_id, budget_id, state) WHERE state <> 'released';
 CREATE TRIGGER budget_target_immutable BEFORE UPDATE ON budgets
 WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kind<>OLD.scope_kind OR NEW.task_id IS NOT OLD.task_id OR NEW.task_kind<>OLD.task_kind
  OR NEW.agent_id IS NOT OLD.agent_id OR NEW.release_id IS NOT OLD.release_id OR NEW.period_kind<>OLD.period_kind
@@ -227,12 +252,12 @@ WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kin
      AND NEW.current_revision<=OLD.current_revision)
 BEGIN SELECT RAISE(ABORT,'budget scope or revision changed unsafely'); END;
 CREATE TRIGGER budget_agent_insert BEFORE INSERT ON budgets
-WHEN NEW.agent_id IS NOT NULL AND EXISTS (SELECT 1 FROM employees WHERE organization_id=NEW.organization_id AND id=NEW.agent_id AND kind<>'agent')
+WHEN NEW.agent_id IS NOT NULL AND EXISTS (SELECT 1 FROM budget_employees WHERE organization_id=NEW.organization_id AND id=NEW.agent_id AND kind<>'agent')
 BEGIN SELECT RAISE(ABORT,'agent budget requires an agent'); END;
-CREATE TRIGGER employee_budget_kind_update BEFORE UPDATE OF kind ON employees
+CREATE TRIGGER employee_budget_kind_update BEFORE UPDATE OF kind ON budget_employees
 WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND agent_id=NEW.id)
 BEGIN SELECT RAISE(ABORT,'budgeted employee must remain an agent'); END;
-CREATE TRIGGER employee_budget_kind_insert BEFORE INSERT ON employees
+CREATE TRIGGER employee_budget_kind_insert BEFORE INSERT ON budget_employees
 WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND agent_id=NEW.id)
 BEGIN SELECT RAISE(ABORT,'budgeted employee must be an agent'); END;
 CREATE TRIGGER budgets_no_delete BEFORE DELETE ON budgets

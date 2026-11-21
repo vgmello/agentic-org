@@ -90,7 +90,28 @@ fn the_file_is_plain_sqlite_that_any_connection_reads_without_a_key() {
             |row| row.get(0),
         )
         .unwrap();
-    assert!(tables > 90, "{tables}");
+    assert!(tables >= 80, "{tables}");
+    // TASK-10 (H-05): sensitive messaging and budget tables are isolated out of shared office.db.
+    for isolated in [
+        "conversations",
+        "messages",
+        "message_recipient_states",
+        "budgets",
+        "budget_policy_versions",
+        "budget_holds",
+    ] {
+        let count: i64 = plain
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+                [isolated],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "isolated table {isolated} must not be in office.db"
+        );
+    }
     let stored: String = plain
         .query_row("SELECT digest FROM store_schema", [], |row| row.get(0))
         .unwrap();

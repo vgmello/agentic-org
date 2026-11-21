@@ -1893,149 +1893,9 @@ CREATE TABLE task_details (
   FOREIGN KEY (organization_id,suggested_verifier_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
-CREATE TABLE conversations (
-  organization_id TEXT NOT NULL REFERENCES organizations(id),
-  id TEXT NOT NULL,
-  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version=1),
-  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>=1),
-  kind TEXT NOT NULL CHECK (kind IN ('dm','group_dm','channel')),
-  name TEXT,
-  auto_scope TEXT CHECK (auto_scope IN ('organization','team','project')),
-  team_id TEXT,
-  project_id TEXT,
-  archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0,1)),
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (organization_id,id),
-  CHECK (auto_scope IS NULL OR (kind='channel' AND
-    ((auto_scope='organization' AND team_id IS NULL AND project_id IS NULL)
-    OR (auto_scope='team' AND team_id IS NOT NULL AND project_id IS NULL)
-    OR (auto_scope='project' AND project_id IS NOT NULL AND team_id IS NULL)))),
-  FOREIGN KEY (organization_id,team_id) REFERENCES teams(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,project_id) REFERENCES projects(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE UNIQUE INDEX conversation_auto_org ON conversations(organization_id) WHERE auto_scope='organization';
-CREATE UNIQUE INDEX conversation_auto_team ON conversations(organization_id,team_id) WHERE auto_scope='team';
-CREATE UNIQUE INDEX conversation_auto_project ON conversations(organization_id,project_id) WHERE auto_scope='project';
-CREATE TABLE conversation_memberships (
-  organization_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  employee_id TEXT NOT NULL,
-  joined_at TEXT NOT NULL,
-  left_at TEXT,
-  PRIMARY KEY (organization_id,conversation_id,employee_id),
-  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE messages (
-  organization_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  sender_kind TEXT NOT NULL CHECK (sender_kind IN ('employee','office')),
-  sender_employee_id TEXT,
-  sender_office_id TEXT,
-  sender_display_name TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('normal','high','urgent')),
-  subject TEXT,
-  body_markdown TEXT NOT NULL,
-  metadata_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(metadata_json) AND json_type(metadata_json)='object'),
-  thread_root_id TEXT,
-  reply_to_message_id TEXT,
-  also_in_channel INTEGER NOT NULL DEFAULT 0 CHECK (also_in_channel IN (0,1)),
-  created_at TEXT NOT NULL,
-  expires_at TEXT,
-  ttl_ms INTEGER CHECK (ttl_ms>=0),
-  origin_office_id TEXT NOT NULL,
-  origin_incarnation TEXT NOT NULL,
-  origin_sequence INTEGER NOT NULL CHECK (origin_sequence>0),
-  org_epoch INTEGER NOT NULL CHECK (org_epoch>0),
-  org_sequence INTEGER NOT NULL CHECK (org_sequence>=0),
-  content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
-  PRIMARY KEY (organization_id,id),
-  UNIQUE (organization_id,id,conversation_id),
-  UNIQUE (organization_id,origin_office_id,origin_incarnation,origin_sequence),
-  CHECK ((sender_kind='employee' AND sender_employee_id IS NOT NULL AND sender_office_id IS NULL)
-    OR (sender_kind='office' AND sender_employee_id IS NULL AND sender_office_id IS NOT NULL)),
-  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,sender_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,sender_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,origin_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,thread_root_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,reply_to_message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE INDEX message_conversation_time ON messages(organization_id,conversation_id,created_at,id);
-CREATE TABLE message_recipient_states (
-  organization_id TEXT NOT NULL,
-  message_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  employee_id TEXT NOT NULL,
-  recipient_display_name TEXT,
-  state TEXT NOT NULL CHECK (state IN ('unread','snoozed','read','done','expired','dead_letter')),
-  triage_generation INTEGER NOT NULL DEFAULT 0 CHECK (triage_generation>=0),
-  snoozed_until TEXT,
-  snooze_after_task INTEGER NOT NULL DEFAULT 0 CHECK (snooze_after_task IN (0,1)),
-  snooze_note TEXT,
-  triaged_at TEXT,
-  read_at TEXT,
-  updated_at TEXT NOT NULL,
-  reason TEXT,
-  delivered_because TEXT NOT NULL DEFAULT 'addressed' CHECK (delivered_because IN ('addressed','mention','thread_reply','answer_candidate')),
-  related_message_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(related_message_ids_json) AND json_type(related_message_ids_json)='array'),
-  expired_waiting_person INTEGER NOT NULL DEFAULT 0 CHECK (expired_waiting_person IN (0,1)),
-  owner_office_id TEXT NOT NULL,
-  origin_incarnation TEXT NOT NULL,
-  origin_sequence INTEGER NOT NULL CHECK (origin_sequence>0),
-  org_epoch INTEGER NOT NULL CHECK (org_epoch>0),
-  org_sequence INTEGER NOT NULL CHECK (org_sequence>=0),
-  PRIMARY KEY (organization_id,message_id,employee_id),
-  FOREIGN KEY (organization_id,message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,conversation_id,employee_id) REFERENCES conversation_memberships(organization_id,conversation_id,employee_id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,owner_office_id) REFERENCES offices(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE INDEX message_recipient_inbox ON message_recipient_states(organization_id,employee_id,state,snoozed_until);
-CREATE TABLE conversation_preferences (
-  organization_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  viewer_employee_id TEXT NOT NULL,
-  muted_employee_id TEXT NOT NULL,
-  mute_mode TEXT NOT NULL DEFAULT 'none' CHECK (mute_mode IN ('none','muted','digest')),
-  PRIMARY KEY (organization_id,conversation_id,viewer_employee_id,muted_employee_id),
-  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,viewer_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,muted_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE conversation_read_markers (
-  organization_id TEXT NOT NULL,
-  conversation_id TEXT NOT NULL,
-  viewer_employee_id TEXT NOT NULL,
-  read_at TEXT,
-  last_read_message_id TEXT,
-  PRIMARY KEY (organization_id,conversation_id,viewer_employee_id),
-  FOREIGN KEY (organization_id,conversation_id) REFERENCES conversations(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,viewer_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,last_read_message_id,conversation_id) REFERENCES messages(organization_id,id,conversation_id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE message_attachments (
-  organization_id TEXT NOT NULL,
-  message_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  content_ref TEXT NOT NULL,
-  media_type TEXT NOT NULL,
-  byte_count INTEGER NOT NULL CHECK (byte_count>=0),
-  content_sha256 TEXT NOT NULL CHECK (length(content_sha256)=64 AND content_sha256 NOT GLOB '*[^0-9a-f]*'),
-  PRIMARY KEY (organization_id,message_id,id),
-  FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE message_reactions (
-  organization_id TEXT NOT NULL,
-  message_id TEXT NOT NULL,
-  employee_id TEXT NOT NULL,
-  reaction TEXT NOT NULL CHECK (reaction IN ('seen','looking')),
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (organization_id,message_id,employee_id,reaction),
-  FOREIGN KEY (organization_id,message_id) REFERENCES messages(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
+-- Protected messaging tables (conversations, messages, recipient states, preferences,
+-- read markers, attachments, reactions) live exclusively in messaging-schema.sql
+-- (runtime/<office-id>/protected/messaging.db), never in shared office.db (TASK-10 / H-05).
 
 CREATE TABLE mutation_receipts (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
@@ -2147,179 +2007,9 @@ BEGIN SELECT RAISE(ABORT,'origin watermark must be retained'); END;
 CREATE TRIGGER checkpoint_no_delete BEFORE DELETE ON office_recovery_checkpoints
 BEGIN SELECT RAISE(ABORT,'authority checkpoint must be retained'); END;
 
-CREATE TABLE budgets (
-  organization_id TEXT NOT NULL REFERENCES organizations(id),
-  id TEXT NOT NULL,
-  schema_version INTEGER NOT NULL DEFAULT 1 CHECK (schema_version=1),
-  current_revision INTEGER NOT NULL CHECK (current_revision>0),
-  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('task','agent','release')),
-  task_id TEXT,
-  task_kind TEXT NOT NULL DEFAULT 'task' CHECK (task_kind='task'),
-  agent_id TEXT,
-  release_id TEXT,
-  period_kind TEXT NOT NULL CHECK (period_kind IN ('lifetime','day','month')),
-  time_zone TEXT NOT NULL,
-  time_zone_source TEXT NOT NULL CHECK (time_zone_source IN ('owner_person','hq')),
-  time_zone_subject_ref TEXT,
-  created_at TEXT NOT NULL,
-  CHECK ((time_zone_source='owner_person')=(time_zone_subject_ref IS NOT NULL)),
-  PRIMARY KEY (organization_id,id),
-  CHECK ((scope_kind='task' AND task_id IS NOT NULL AND agent_id IS NULL AND release_id IS NULL AND period_kind='lifetime')
-    OR (scope_kind='agent' AND task_id IS NULL AND agent_id IS NOT NULL AND release_id IS NULL AND period_kind IN ('day','month'))
-    OR (scope_kind='release' AND task_id IS NULL AND agent_id IS NULL AND release_id IS NOT NULL AND period_kind='lifetime')),
-  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,agent_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,release_id) REFERENCES releases(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,time_zone_subject_ref) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,id,current_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE UNIQUE INDEX budget_task_identity ON budgets(organization_id,task_id) WHERE scope_kind='task';
-CREATE UNIQUE INDEX budget_agent_identity ON budgets(organization_id,agent_id,period_kind) WHERE scope_kind='agent';
-CREATE UNIQUE INDEX budget_release_identity ON budgets(organization_id,release_id) WHERE scope_kind='release';
-CREATE TABLE budget_policy_versions (
-  organization_id TEXT NOT NULL,
-  budget_id TEXT NOT NULL,
-  revision INTEGER NOT NULL CHECK (revision>0),
-  state TEXT NOT NULL CHECK (state IN ('active','cleared')),
-  unit TEXT NOT NULL CHECK (unit IN ('micro_usd','tokens')),
-  limit_amount INTEGER CHECK (limit_amount>0),
-  time_zone TEXT NOT NULL DEFAULT 'UTC',
-  time_zone_source TEXT NOT NULL DEFAULT 'hq' CHECK (time_zone_source IN ('owner_person','hq')),
-  time_zone_subject_ref TEXT,
-  changed_by_id TEXT NOT NULL,
-  changed_at TEXT NOT NULL,
-  reason TEXT,
-  PRIMARY KEY (organization_id,budget_id,revision),
-  CHECK ((state='active' AND limit_amount IS NOT NULL) OR (state='cleared' AND limit_amount IS NULL)),
-  CHECK ((time_zone_source='owner_person')=(time_zone_subject_ref IS NOT NULL)),
-  FOREIGN KEY (organization_id,budget_id) REFERENCES budgets(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,time_zone_subject_ref) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,changed_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE budget_periods (
-  organization_id TEXT NOT NULL,
-  budget_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  policy_revision INTEGER NOT NULL,
-  period_key TEXT NOT NULL,
-  starts_at TEXT,
-  ends_at TEXT,
-  used_amount INTEGER NOT NULL DEFAULT 0 CHECK (used_amount>=0),
-  usage_status TEXT NOT NULL DEFAULT 'unavailable' CHECK (usage_status IN ('complete','partial','unavailable')),
-  includes_estimates INTEGER NOT NULL DEFAULT 0 CHECK (includes_estimates IN (0,1)),
-  includes_api_equivalent INTEGER NOT NULL DEFAULT 0 CHECK (includes_api_equivalent IN (0,1)),
-  unpriced_records INTEGER NOT NULL DEFAULT 0 CHECK (unpriced_records>=0),
-  incomplete_records INTEGER NOT NULL DEFAULT 0 CHECK (incomplete_records>=0),
-  extension_used INTEGER NOT NULL DEFAULT 0 CHECK (extension_used IN (0,1)),
-  kept_paused INTEGER NOT NULL DEFAULT 0 CHECK (kept_paused IN (0,1)),
-  state TEXT NOT NULL CHECK (state IN ('open','closed')),
-  evaluated_at TEXT,
-  ledger_checkpoint_ref TEXT,
-  PRIMARY KEY (organization_id,id),
-  UNIQUE (organization_id,budget_id,id),
-  UNIQUE (organization_id,budget_id,period_key),
-  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE budget_events (
-  organization_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  budget_id TEXT NOT NULL,
-  period_id TEXT NOT NULL,
-  operation_id TEXT NOT NULL,
-  kind TEXT NOT NULL CHECK (kind IN ('evaluated','warning','reached','extended','policy_changed','cleared','stop_requested','hold_released','period_reset')),
-  policy_revision INTEGER NOT NULL,
-  actor_kind TEXT NOT NULL CHECK (actor_kind IN ('employee','system')),
-  actor_id TEXT,
-  occurred_at TEXT NOT NULL,
-  payload_json TEXT NOT NULL CHECK (json_valid(payload_json) AND json_type(payload_json)='object'),
-  PRIMARY KEY (organization_id,id),
-  UNIQUE (organization_id,budget_id,operation_id),
-  CHECK ((actor_kind='employee')=(actor_id IS NOT NULL)),
-  FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,actor_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE budget_notices (
-  organization_id TEXT NOT NULL,
-  id TEXT NOT NULL,
-  budget_id TEXT NOT NULL,
-  period_id TEXT NOT NULL,
-  policy_revision INTEGER NOT NULL,
-  stage TEXT NOT NULL CHECK (stage IN ('base','extended')),
-  threshold INTEGER NOT NULL CHECK (threshold IN (80,100)),
-  recipient_kind TEXT NOT NULL CHECK (recipient_kind IN ('employee','owner')),
-  recipient_id TEXT,
-  kind TEXT NOT NULL CHECK (kind IN ('neutral','budget_reached')),
-  delivery_state TEXT NOT NULL CHECK (delivery_state IN ('pending','delivered','resolved')),
-  created_at TEXT NOT NULL,
-  resolved_at TEXT,
-  PRIMARY KEY (organization_id,id),
-  UNIQUE (organization_id,budget_id,period_id,policy_revision,stage,threshold),
-  CHECK ((recipient_kind='employee')=(recipient_id IS NOT NULL)),
-  CHECK (threshold=100 OR kind='neutral'),
-  CHECK (threshold=100 OR stage='base'),
-  FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,recipient_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TABLE budget_holds (
-  organization_id TEXT NOT NULL,
-  budget_id TEXT NOT NULL,
-  period_id TEXT NOT NULL,
-  policy_revision INTEGER NOT NULL,
-  stage TEXT NOT NULL CHECK (stage IN ('base','extended')),
-  state TEXT NOT NULL CHECK (state IN ('stop_pending','held','released')),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  release_reason TEXT,
-  PRIMARY KEY (organization_id,budget_id,period_id,policy_revision,stage),
-  FOREIGN KEY (organization_id,budget_id,period_id) REFERENCES budget_periods(organization_id,budget_id,id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (organization_id,budget_id,policy_revision) REFERENCES budget_policy_versions(organization_id,budget_id,revision) DEFERRABLE INITIALLY DEFERRED
-) STRICT;
-CREATE TRIGGER budget_target_immutable BEFORE UPDATE ON budgets
-WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.scope_kind<>OLD.scope_kind OR NEW.task_id IS NOT OLD.task_id OR NEW.task_kind<>OLD.task_kind
- OR NEW.agent_id IS NOT OLD.agent_id OR NEW.release_id IS NOT OLD.release_id OR NEW.period_kind<>OLD.period_kind
- OR NEW.current_revision<OLD.current_revision
- OR ((NEW.time_zone<>OLD.time_zone OR NEW.time_zone_source<>OLD.time_zone_source OR NEW.time_zone_subject_ref IS NOT OLD.time_zone_subject_ref)
-     AND NEW.current_revision<=OLD.current_revision)
-BEGIN SELECT RAISE(ABORT,'budget scope or revision changed unsafely'); END;
-CREATE TRIGGER budget_agent_insert BEFORE INSERT ON budgets
-WHEN NEW.agent_id IS NOT NULL AND EXISTS (SELECT 1 FROM employees WHERE organization_id=NEW.organization_id AND id=NEW.agent_id AND kind<>'agent')
-BEGIN SELECT RAISE(ABORT,'agent budget requires an agent'); END;
-CREATE TRIGGER employee_budget_kind_update BEFORE UPDATE OF kind ON employees
-WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND agent_id=NEW.id)
-BEGIN SELECT RAISE(ABORT,'budgeted employee must remain an agent'); END;
-CREATE TRIGGER employee_budget_kind_insert BEFORE INSERT ON employees
-WHEN NEW.kind<>'agent' AND EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND agent_id=NEW.id)
-BEGIN SELECT RAISE(ABORT,'budgeted employee must be an agent'); END;
-CREATE TRIGGER budgets_no_delete BEFORE DELETE ON budgets
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-CREATE TRIGGER budget_policy_versions_no_update BEFORE UPDATE ON budget_policy_versions
-BEGIN SELECT RAISE(ABORT,'budget history is immutable'); END;
-CREATE TRIGGER budget_policy_versions_no_delete BEFORE DELETE ON budget_policy_versions
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-CREATE TRIGGER budget_periods_no_delete BEFORE DELETE ON budget_periods
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-CREATE TRIGGER budget_events_no_update BEFORE UPDATE ON budget_events
-BEGIN SELECT RAISE(ABORT,'budget history is immutable'); END;
-CREATE TRIGGER budget_events_no_delete BEFORE DELETE ON budget_events
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-CREATE TRIGGER budget_notices_no_delete BEFORE DELETE ON budget_notices
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-CREATE TRIGGER budget_holds_no_delete BEFORE DELETE ON budget_holds
-BEGIN SELECT RAISE(ABORT,'budget identity/history must be retained'); END;
-
-CREATE TRIGGER budget_period_identity_update BEFORE UPDATE ON budget_periods
-WHEN NEW.organization_id<>OLD.organization_id OR NEW.id<>OLD.id OR NEW.budget_id<>OLD.budget_id OR NEW.period_key<>OLD.period_key
- OR NEW.starts_at IS NOT OLD.starts_at OR NEW.ends_at IS NOT OLD.ends_at
- OR NEW.policy_revision<OLD.policy_revision OR (NEW.policy_revision=OLD.policy_revision AND NEW.extension_used<OLD.extension_used)
-BEGIN SELECT RAISE(ABORT,'budget period identity/extension regressed'); END;
-CREATE TRIGGER budget_release_no_hold BEFORE INSERT ON budget_holds
-WHEN EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND id=NEW.budget_id AND scope_kind='release')
-BEGIN SELECT RAISE(ABORT,'release caps do not stop work'); END;
-CREATE TRIGGER budget_release_no_hold_update BEFORE UPDATE ON budget_holds
-WHEN EXISTS (SELECT 1 FROM budgets WHERE organization_id=NEW.organization_id AND id=NEW.budget_id AND scope_kind='release')
-BEGIN SELECT RAISE(ABORT,'release caps do not stop work'); END;
+-- Protected budget tables (budgets, policy versions, periods, events, notices, holds)
+-- live exclusively in budgets-schema.sql (runtime/<office-id>/protected/budgets.db),
+-- never in shared office.db (TASK-10 / H-05).
 
 CREATE VIEW milestone_progress AS
 SELECT m.organization_id, m.id AS milestone_id, m.release_id,
@@ -2771,21 +2461,16 @@ CREATE INDEX task_document_versions_by_document ON task_document_versions(organi
 CREATE INDEX document_code_links_by_document ON document_code_links(organization_id, document_id);
 CREATE INDEX document_version_sources_by_source ON document_version_sources(organization_id, source_document_id, source_version, document_id, version);
 CREATE INDEX hire_requests_by_team_state ON hire_requests(organization_id, home_team_id, state);
-CREATE INDEX messages_by_thread ON messages(organization_id, thread_root_id, created_at);
 CREATE INDEX usage_by_release_time ON usage_records(organization_id, release_id, occurred_at);
-CREATE INDEX active_budget_holds ON budget_holds(organization_id, budget_id, state) WHERE state <> 'released';
 
 -- High-fanout foreign-key indexes targeting employees, tasks, and documents.
 CREATE INDEX employees_by_reports_to ON employees(organization_id, reports_to_employee_id);
 CREATE INDEX teams_by_lead ON teams(organization_id, lead_employee_id);
 CREATE INDEX agent_placements_by_office ON agent_placements(organization_id, office_id);
-CREATE INDEX conversation_memberships_by_employee ON conversation_memberships(organization_id, employee_id);
 CREATE INDEX comments_by_author ON comments(organization_id, author_id);
 CREATE INDEX task_events_by_actor ON task_events(organization_id, actor_id);
 CREATE INDEX hire_requests_by_requester ON hire_requests(organization_id, requested_by_employee_id);
 CREATE INDEX agent_execution_turns_by_employee_time ON agent_execution_turns(organization_id, employee_id, created_at);
-CREATE INDEX messages_by_sender ON messages(organization_id, sender_employee_id);
-CREATE INDEX message_reactions_by_employee ON message_reactions(organization_id, employee_id);
 CREATE INDEX task_workspaces_by_task ON task_workspaces(organization_id, task_id);
 CREATE INDEX task_repositories_by_repo ON task_repositories(organization_id, repository_id);
 CREATE INDEX checklist_steps_by_linked_task ON checklist_steps(organization_id, linked_task_id);

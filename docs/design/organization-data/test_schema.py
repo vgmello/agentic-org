@@ -37,11 +37,31 @@ def insert(connection, table, **fields):
     )
 
 
-def database():
+def database(schema_file="schema.sql"):
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
-    connection.executescript((ROOT / "schema.sql").read_text())
+    connection.executescript((ROOT / schema_file).read_text())
     return connection
+
+
+def seed_messaging_mirrors(connection, organization="org"):
+    insert(connection, "messaging_organizations", id=organization)
+    for team in ("payments", "platform", "consulting"):
+        insert(connection, "messaging_teams", organization_id=organization, id=team)
+    insert(connection, "messaging_projects", organization_id=organization, id="project")
+    for employee in ("reporter", "ana"):
+        insert(connection, "messaging_employees", organization_id=organization, id=employee)
+    for office in ("numbering-a", "numbering-b", "hq"):
+        insert(connection, "messaging_offices", organization_id=organization, id=office)
+    connection.commit()
+
+
+def seed_budget_mirrors(connection, organization="org"):
+    insert(connection, "budget_organizations", id=organization)
+    insert(connection, "budget_tasks", organization_id=organization, kind="task", id="task", is_deleted=0)
+    insert(connection, "budget_employees", organization_id=organization, id="reporter", kind="person")
+    insert(connection, "budget_employees", organization_id=organization, id="ana", kind="agent")
+    connection.commit()
 
 
 def seed_provider_connection(connection, identity="subscription-1", connection_id="connection-1",
@@ -132,13 +152,6 @@ class DraftSchemaTests(unittest.TestCase):
         seed_task(self.db)
 
     def test_consolidated_tables_and_views_match_structural_documents(self):
-        sections = []
-        for path in sorted(ROOT.glob("[0-9][0-9]-*.md")):
-            sections.extend(re.findall(r"```sql\n(.*?)\n```", path.read_text(), re.S))
-        documented = sqlite3.connect(":memory:")
-        self.addCleanup(documented.close)
-        documented.executescript("\n".join(sections))
-
         def definitions(connection):
             return {
                 (kind, name): re.sub(r"\s+", "", sql).lower()
@@ -147,7 +160,33 @@ class DraftSchemaTests(unittest.TestCase):
                 )
             }
 
+        shared_sections = []
+        isolated_docs = {
+            "15-messaging-and-chat.md": "messaging-schema.sql",
+            "17-budgets-and-controls.md": "budgets-schema.sql",
+        }
+        for path in sorted(ROOT.glob("[0-9][0-9]-*.md")):
+            sql_blocks = re.findall(r"```sql\n(.*?)\n```", path.read_text(), re.S)
+            if path.name in isolated_docs:
+                doc_conn = sqlite3.connect(":memory:")
+                self.addCleanup(doc_conn.close)
+                doc_conn.executescript("\n".join(sql_blocks))
+                schema_conn = database(isolated_docs[path.name])
+                self.addCleanup(schema_conn.close)
+                with self.subTest(document=path.name, schema=isolated_docs[path.name]):
+                    self.assertEqual(definitions(doc_conn), definitions(schema_conn))
+            else:
+                shared_sections.extend(sql_blocks)
+
+        documented = sqlite3.connect(":memory:")
+        self.addCleanup(documented.close)
+        documented.executescript("\n".join(shared_sections))
         self.assertEqual(definitions(documented), definitions(self.db))
+
+        # TASK-10 (H-05): sensitive messaging and budget tables are absent from shared schema.sql.
+        shared_names = {name for (_, name) in definitions(self.db)}
+        for forbidden in ("conversations", "messages", "message_recipient_states", "budgets", "budget_policy_versions", "budget_holds"):
+            self.assertNotIn(forbidden, shared_names)
 
     def test_integrated_execution_schema_and_all_views_resolve(self):
         views = self.db.execute("SELECT name FROM sqlite_schema WHERE type='view'").fetchall()
@@ -156,14 +195,24 @@ class DraftSchemaTests(unittest.TestCase):
         self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
 
     def test_diagram_columns_match_their_owning_database(self):
-        private = sqlite3.connect(":memory:")
+        private = database("private-notes-schema.sql")
         self.addCleanup(private.close)
-        private.executescript((ROOT / "private-notes-schema.sql").read_text())
+        messaging = database("messaging-schema.sql")
+        self.addCleanup(messaging.close)
+        budgets = database("budgets-schema.sql")
+        self.addCleanup(budgets.close)
         for path in ROOT.glob("[0-9][0-9]-*.md"):
             for diagram in re.findall(r"```mermaid\n(.*?)\n```", path.read_text(), re.S):
                 for table, body in re.findall(r"^    (\w+) \{\n(.*?)^    \}", diagram, re.M | re.S):
                     columns = re.findall(r"^        \w+ (\w+)", body, re.M)
-                    owner = private if table.startswith("private_") else self.db
+                    if table.startswith("private_"):
+                        owner = private
+                    elif path.name == "15-messaging-and-chat.md":
+                        owner = messaging
+                    elif path.name == "17-budgets-and-controls.md":
+                        owner = budgets
+                    else:
+                        owner = self.db
                     actual = [row[1] for row in owner.execute(f"PRAGMA table_xinfo({table})")]
                     with self.subTest(document=path.name, table=table):
                         self.assertEqual(columns, actual)
@@ -736,11 +785,14 @@ class IntegrityAuditTests(unittest.TestCase):
         self.db.rollback()
 
     def test_coverage_lists_every_table_and_view(self):
-        private = sqlite3.connect(":memory:")
+        private = database("private-notes-schema.sql")
         self.addCleanup(private.close)
-        private.executescript((ROOT / "private-notes-schema.sql").read_text())
+        messaging = database("messaging-schema.sql")
+        self.addCleanup(messaging.close)
+        budgets = database("budgets-schema.sql")
+        self.addCleanup(budgets.close)
         coverage = (ROOT / "SCHEMA-COVERAGE.md").read_text()
-        for db in (self.db, private):
+        for db in (self.db, private, messaging, budgets):
             for (name,) in db.execute("SELECT name FROM sqlite_schema WHERE type IN ('table','view')"):
                 self.assertIn(f"`{name}`", coverage)
 
@@ -957,14 +1009,19 @@ class ActorAndAddresseeTests(unittest.TestCase):
 
     def test_no_actor_column_accepts_owner(self):
         found = []
-        for table, sql in self.db.execute("SELECT name, sql FROM sqlite_schema WHERE type='table'"):
-            for column, values in ACTOR_COLUMN.findall(sql):
-                found.append((table, column))
-                with self.subTest(table=table, column=column):
-                    self.assertNotIn("'owner'", values)
+        budgets_db = database("budgets-schema.sql")
+        self.addCleanup(budgets_db.close)
+        messaging_db = database("messaging-schema.sql")
+        self.addCleanup(messaging_db.close)
+        for conn in (self.db, budgets_db, messaging_db):
+            for table, sql in conn.execute("SELECT name, sql FROM sqlite_schema WHERE type='table'"):
+                for column, values in ACTOR_COLUMN.findall(sql):
+                    found.append((table, column))
+                    with self.subTest(table=table, column=column):
+                        self.assertNotIn("'owner'", values)
         self.assertGreaterEqual(len(found), 30)
         self.assertNotIn("changed_by_kind",
-                         [row[1] for row in self.db.execute("PRAGMA table_xinfo(budget_policy_versions)")])
+                         [row[1] for row in budgets_db.execute("PRAGMA table_xinfo(budget_policy_versions)")])
         self.assertNotIn("author_kind", [row[1] for row in self.db.execute("PRAGMA table_xinfo(comments)")])
 
     def test_an_owner_actor_is_refused(self):
@@ -1043,47 +1100,51 @@ class GapPreservationTests(unittest.TestCase):
         seed_organization(self.db)
         seed_task(self.db)
         insert(self.db, "offices", organization_id="org", id="hq", slug="hq", schema_version=1, revision=1, name="HQ", role="hq")
-        for conversation in ("dm", "other"):
-            insert(self.db, "conversations", organization_id="org", id=conversation, kind="dm", created_at="2026-11-15T12:00:00Z")
-            for employee in ("ana", "reporter"):
-                insert(self.db, "conversation_memberships", organization_id="org", conversation_id=conversation,
-                       employee_id=employee, joined_at="2026-11-15T12:00:00Z")
         self.db.commit()
+        self.msg_db = database("messaging-schema.sql")
+        self.addCleanup(self.msg_db.close)
+        seed_messaging_mirrors(self.msg_db)
+        for conversation in ("dm", "other"):
+            insert(self.msg_db, "conversations", organization_id="org", id=conversation, kind="dm", created_at="2026-11-15T12:00:00Z")
+            for employee in ("ana", "reporter"):
+                insert(self.msg_db, "conversation_memberships", organization_id="org", conversation_id=conversation,
+                       employee_id=employee, joined_at="2026-11-15T12:00:00Z")
+        self.msg_db.commit()
 
     def message(self, identity="message", conversation="dm", sequence=1, **overrides):
         fields=dict(organization_id="org", id=identity, conversation_id=conversation, sender_kind="employee",
                     sender_employee_id="ana", sender_display_name="Ana", kind="request", body_markdown="Review?",
                     created_at="2026-11-15T12:00:00Z", origin_office_id="hq", origin_incarnation="incarnation",
                     origin_sequence=sequence, org_epoch=1, org_sequence=1, content_sha256="a"*64)
-        insert(self.db,"messages",**(fields | overrides))
+        insert(self.msg_db,"messages",**(fields | overrides))
 
     def test_reply_cannot_cross_conversation_and_origin_cannot_duplicate(self):
-        self.message(); self.db.commit()
+        self.message(); self.msg_db.commit()
         self.message("cross", "other", 2, reply_to_message_id="message")
-        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
-        self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError): self.msg_db.commit()
+        self.msg_db.rollback()
         with self.assertRaises(sqlite3.IntegrityError): self.message("duplicate")
-        self.db.rollback()
+        self.msg_db.rollback()
         self.message("reply", sequence=2, reply_to_message_id="message")
-        self.db.commit()
+        self.msg_db.commit()
 
     def test_read_markers_are_conversation_scoped_and_mutes_are_independent(self):
-        self.message(); self.db.commit()
-        insert(self.db,"conversation_read_markers", organization_id="org",conversation_id="other",viewer_employee_id="reporter",last_read_message_id="message")
-        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
-        self.db.rollback()
-        insert(self.db,"conversation_read_markers", organization_id="org",conversation_id="dm",viewer_employee_id="reporter",last_read_message_id="message")
-        insert(self.db,"conversation_preferences", organization_id="org",conversation_id="dm",viewer_employee_id="reporter",muted_employee_id="ana",mute_mode="digest")
-        self.db.commit()
+        self.message(); self.msg_db.commit()
+        insert(self.msg_db,"conversation_read_markers", organization_id="org",conversation_id="other",viewer_employee_id="reporter",last_read_message_id="message")
+        with self.assertRaises(sqlite3.IntegrityError): self.msg_db.commit()
+        self.msg_db.rollback()
+        insert(self.msg_db,"conversation_read_markers", organization_id="org",conversation_id="dm",viewer_employee_id="reporter",last_read_message_id="message")
+        insert(self.msg_db,"conversation_preferences", organization_id="org",conversation_id="dm",viewer_employee_id="reporter",muted_employee_id="ana",mute_mode="digest")
+        self.msg_db.commit()
 
     def test_recipient_requires_membership_in_the_message_conversation(self):
-        self.message(); self.db.commit()
-        self.db.execute("DELETE FROM conversation_memberships WHERE conversation_id='dm' AND employee_id='reporter'")
-        self.db.commit()
-        insert(self.db,"message_recipient_states",organization_id="org",message_id="message",conversation_id="dm",employee_id="reporter",
+        self.message(); self.msg_db.commit()
+        self.msg_db.execute("DELETE FROM conversation_memberships WHERE conversation_id='dm' AND employee_id='reporter'")
+        self.msg_db.commit()
+        insert(self.msg_db,"message_recipient_states",organization_id="org",message_id="message",conversation_id="dm",employee_id="reporter",
                state="snoozed",updated_at="2026-11-15T12:00:00Z",owner_office_id="hq",origin_incarnation="i",origin_sequence=1,org_epoch=1,org_sequence=1)
-        with self.assertRaises(sqlite3.IntegrityError): self.db.commit()
-        self.db.rollback()
+        with self.assertRaises(sqlite3.IntegrityError): self.msg_db.commit()
+        self.msg_db.rollback()
 
     def test_employee_status_is_one_enum_and_only_agents_pause(self):
         with self.assertRaises(sqlite3.IntegrityError):
@@ -1331,17 +1392,17 @@ class GapPreservationTests(unittest.TestCase):
 
     def test_one_automatic_channel_per_organization_team_and_project(self):
         def channel(identity, scope, **target):
-            insert(self.db, "conversations", organization_id="org", id=identity, kind="channel", auto_scope=scope,
+            insert(self.msg_db, "conversations", organization_id="org", id=identity, kind="channel", auto_scope=scope,
                    created_at="2026-11-15T12:00:00Z", **target)
         channel("everyone", "organization")
         channel("payments", "team", team_id="payments")
         channel("platform", "team", team_id="platform")
         channel("project", "project", project_id="project")
-        self.db.commit()
+        self.msg_db.commit()
         for identity, scope, target in (("everyone-2", "organization", {}), ("payments-2", "team", {"team_id": "payments"}),
                                         ("project-2", "project", {"project_id": "project"})):
             with self.subTest(scope=scope):
-                assert_refused(self, self.db, "UNIQUE constraint failed: conversations",
+                assert_refused(self, self.msg_db, "UNIQUE constraint failed: conversations",
                                lambda: channel(identity, scope, **target))
 
     def test_an_organization_has_one_hq(self):
@@ -1425,10 +1486,13 @@ class GapPreservationTests(unittest.TestCase):
 
 class BudgetSchemaTests(unittest.TestCase):
     def setUp(self):
-        self.db=database()
+        self.db = database("budgets-schema.sql")
         self.addCleanup(self.db.close)
-        seed_organization(self.db)
-        seed_task(self.db)
+        seed_budget_mirrors(self.db)
+
+    def seed_budget_task(self, task="second"):
+        insert(self.db, "budget_tasks", organization_id="org", kind="task", id=task, is_deleted=0)
+        self.db.commit()
 
     def budget(self, identity="budget", scope="task", period="lifetime", commit=True, **overrides):
         target={"task":"task_id", "agent":"agent_id", "release":"release_id"}[scope]
@@ -1449,12 +1513,12 @@ class BudgetSchemaTests(unittest.TestCase):
                created_at="2026-11-15T00:00:00Z",updated_at="2026-11-15T00:00:00Z")
 
     def release(self):
-        insert(self.db,"releases",organization_id="org",id="release",schema_version=1,revision=1,project_id="project",title="Release")
+        insert(self.db,"budget_releases",organization_id="org",id="release")
         self.db.commit()
 
     def test_one_budget_per_task_and_per_release(self):
         self.release()
-        seed_task(self.db, task="second")
+        self.seed_budget_task("second")
         self.budget()
         self.budget("second", task_id="second")
         self.budget("cap", scope="release")
@@ -1462,7 +1526,7 @@ class BudgetSchemaTests(unittest.TestCase):
         assert_refused(self, self.db, "UNIQUE constraint failed: budgets", lambda: self.budget("cap-again", scope="release"))
 
     def test_a_budget_keeps_its_scope_and_never_lowers_its_revision(self):
-        seed_task(self.db, task="second")
+        self.seed_budget_task("second")
         self.budget()
         message = "budget scope or revision changed unsafely"
         for change in ("task_id='second'", "time_zone='Europe/Paris'", "time_zone_source='owner_person',time_zone_subject_ref='reporter'"):
@@ -1509,16 +1573,19 @@ class BudgetSchemaTests(unittest.TestCase):
                    changed_by_id="reporter", changed_at="2026-11-17T00:00:00Z")
             self.db.commit()
         self.db.rollback()
-        # org_epoch = 0 on messages is rejected (L-02).
-        insert(self.db, "conversations", organization_id="org", id="c-epoch", kind="dm", created_at="2026-11-15T00:00:00Z")
-        self.db.commit()
+        # org_epoch = 0 on messages is rejected (L-02) in isolated messaging-schema.sql.
+        msg_db = database("messaging-schema.sql")
+        self.addCleanup(msg_db.close)
+        seed_messaging_mirrors(msg_db)
+        insert(msg_db, "conversations", organization_id="org", id="c-epoch", kind="dm", created_at="2026-11-15T00:00:00Z")
+        msg_db.commit()
         with self.assertRaises(sqlite3.IntegrityError):
-            insert(self.db, "messages", organization_id="org", id="m-epoch-0", conversation_id="c-epoch",
+            insert(msg_db, "messages", organization_id="org", id="m-epoch-0", conversation_id="c-epoch",
                    sender_kind="employee", sender_employee_id="reporter", sender_office_id="numbering-a",
                    sender_display_name="Reporter", kind="message", priority="normal", body_markdown="hi",
                    created_at="2026-11-15T00:00:00Z", origin_office_id="numbering-a", origin_incarnation="i",
                    origin_sequence=1, org_epoch=0, org_sequence=1, content_sha256="a"*64)
-        self.db.rollback()
+        msg_db.rollback()
 
     def test_budget_history_is_never_deleted_and_events_never_change(self):
         self.budget();self.period()
@@ -1548,15 +1615,14 @@ class BudgetSchemaTests(unittest.TestCase):
 
     def test_an_agent_budget_keeps_its_employee_an_agent(self):
         self.budget("daily","agent","day")
-        assert_refused(self, self.db, "budgeted employee must remain an agent", "UPDATE employees SET kind='person' WHERE id='ana'")
-        employee = dict(organization_id="org", id="newcomer", handle="newcomer", schema_version=1, revision=1,
-                        name="Newcomer", home_team_id="payments")
-        # A budget may be written before its employee in one transaction; the employee must be an agent.
+        assert_refused(self, self.db, "budgeted employee must remain an agent", "UPDATE budget_employees SET kind='person' WHERE id='ana'")
+        employee = dict(organization_id="org", id="newcomer")
+        # A budget may be written before its employee mirror in one transaction; the employee must be an agent.
         self.budget("early","agent","day",commit=False,agent_id="newcomer")
         assert_refused(self, self.db, "budgeted employee must be an agent",
-                       lambda: insert(self.db, "employees", **employee, kind="person"))
+                       lambda: insert(self.db, "budget_employees", **employee, kind="person"))
         self.budget("early","agent","day",commit=False,agent_id="newcomer")
-        insert(self.db, "employees", **employee, kind="agent")
+        insert(self.db, "budget_employees", **employee, kind="agent")
         self.db.commit()
 
     def test_an_early_warning_is_only_for_the_base_limit(self):
@@ -1617,8 +1683,7 @@ class BudgetSchemaTests(unittest.TestCase):
         self.db.rollback()
 
     def test_release_cap_cannot_acquire_a_stop_hold(self):
-        insert(self.db,"releases",organization_id="org",id="release",schema_version=1,revision=1,project_id="project",title="Release",version_label="1.0")
-        self.db.commit()
+        self.release()
         self.budget(scope="release");self.period()
         with self.assertRaises(sqlite3.IntegrityError):
             insert(self.db,"budget_holds",organization_id="org",budget_id="budget",period_id="period",policy_revision=1,stage="base",state="held",
@@ -2023,32 +2088,38 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
 
         # Hot-path shared indexes (TASK-6 / H-13, H-10).
         indexed_queries = [
-            ("tasks_by_feature",
+            (self.db, "tasks_by_feature",
              "SELECT id FROM tasks WHERE organization_id=? AND feature_id=?", ("org", "f1")),
-            ("task_document_versions_by_document",
+            (self.db, "task_document_versions_by_document",
              "SELECT task_id FROM task_document_versions WHERE organization_id=? AND document_id=? AND version=?",
              ("org", "doc", 1)),
-            ("document_code_links_by_document",
+            (self.db, "document_code_links_by_document",
              "SELECT id FROM document_code_links WHERE organization_id=? AND document_id=?", ("org", "doc")),
-            ("document_version_sources_by_source",
+            (self.db, "document_version_sources_by_source",
              "SELECT document_id FROM document_version_sources WHERE organization_id=? AND source_document_id=? AND source_version=?",
              ("org", "src", 1)),
-            ("hire_requests_by_team_state",
+            (self.db, "hire_requests_by_team_state",
              "SELECT id FROM hire_requests WHERE organization_id=? AND home_team_id=? AND state=?",
              ("org", "payments", "hiring")),
-            ("messages_by_thread",
-             "SELECT id FROM messages WHERE organization_id=? AND thread_root_id=? ORDER BY created_at",
-             ("org", "root")),
-            ("usage_by_release_time",
+            (self.db, "usage_by_release_time",
              "SELECT id FROM usage_records WHERE organization_id=? AND release_id=? ORDER BY occurred_at",
              ("org", "rel")),
-            ("active_budget_holds",
+        ]
+        msg_db = database("messaging-schema.sql")
+        self.addCleanup(msg_db.close)
+        bud_db = database("budgets-schema.sql")
+        self.addCleanup(bud_db.close)
+        indexed_queries.extend([
+            (msg_db, "messages_by_thread",
+             "SELECT id FROM messages WHERE organization_id=? AND thread_root_id=? ORDER BY created_at",
+             ("org", "root")),
+            (bud_db, "active_budget_holds",
              "SELECT budget_id FROM budget_holds WHERE organization_id=? AND budget_id=? AND state <> 'released'",
              ("org", "b1")),
-        ]
-        for expected_index, sql, params in indexed_queries:
+        ])
+        for conn, expected_index, sql, params in indexed_queries:
             with self.subTest(index=expected_index):
-                joined = "\n".join(plan_lines(self.db, sql, params))
+                joined = "\n".join(plan_lines(conn, sql, params))
                 self.assertIn(expected_index, joined)
 
         # ADR-0031 person read on private_task_notes uses private_notes_by_task.
@@ -2080,22 +2151,30 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         self.assertLessEqual(milestone_evals, 1, "\n".join(release_plan))
 
     def test_task_7_integrity_holes_closed(self):
-        # H-08: budgeted task can be tombstoned cleanly while budget remains intact via record_refs.
+        # H-08: budgeted task can be tombstoned cleanly while budget remains intact in isolated budgets.db via budget_tasks mirror.
         seed_task(self.db, task="budgeted-task")
-        insert(self.db, "budgets", organization_id="org", id="b-task", current_revision=1,
+        bud_db = database("budgets-schema.sql")
+        self.addCleanup(bud_db.close)
+        seed_budget_mirrors(bud_db)
+        insert(bud_db, "budget_tasks", organization_id="org", kind="task", id="budgeted-task", is_deleted=0)
+        insert(bud_db, "budgets", organization_id="org", id="b-task", current_revision=1,
                scope_kind="task", task_id="budgeted-task", period_kind="lifetime",
                time_zone="UTC", time_zone_source="hq", created_at="2026-11-21T00:00:00Z")
-        insert(self.db, "budget_policy_versions", organization_id="org", budget_id="b-task",
+        insert(bud_db, "budget_policy_versions", organization_id="org", budget_id="b-task",
                revision=1, state="active", unit="tokens", limit_amount=1000,
                changed_by_id="reporter", changed_at="2026-11-21T00:00:00Z")
-        self.db.commit()
+        bud_db.commit()
+        bud_db.execute("UPDATE budget_tasks SET is_deleted=1 WHERE id='budgeted-task'")
+        bud_db.commit()
+        assert_refused(self, bud_db, "deleted budget task mirror cannot be undeleted",
+                       "UPDATE budget_tasks SET is_deleted=0 WHERE id='budgeted-task'")
         insert(self.db, "tombstones", organization_id="org", kind="task", id="budgeted-task",
                schema_version=1, revision=1, project_id="project", office_code="A", number=99,
                terminal_state="done")
         self.db.execute("UPDATE record_refs SET is_deleted=1 WHERE kind='task' AND id='budgeted-task'")
         self.db.execute("DELETE FROM tasks WHERE id='budgeted-task'")
         self.db.commit()
-        self.assertEqual(self.db.execute("SELECT task_id FROM budgets WHERE id='b-task'").fetchone()[0], "budgeted-task")
+        self.assertEqual(bud_db.execute("SELECT task_id FROM budgets WHERE id='b-task'").fetchone()[0], "budgeted-task")
         self.assertEqual(self.db.execute("SELECT office_code FROM tombstones WHERE id='budgeted-task'").fetchone()[0], "A")
 
         # H-11: cross-project affects_feature_id refused on deferred insert, task_details.task_id update,

@@ -590,8 +590,9 @@ fn fatal_reports_a_flush_error() {
     }
 }
 
-/// ENC-5 in process: neither the projection nor any file under `state/` or `runtime/`
-/// holds the wrapped CA key, raw or in hex.
+/// ENC-5 + TASK-10 (H-06) in process: neither the projection nor any file under `state/`,
+/// `runtime/`, or `durable/recovery/` (acceptance journal segments & receipts) holds the
+/// wrapped CA key, raw or in hex.
 #[test]
 fn the_projection_holds_no_form_of_the_ca_key() {
     for engine in ENGINES {
@@ -608,7 +609,11 @@ fn the_projection_holds_no_form_of_the_ca_key() {
         assert!(!holds(office.dump().join("\n").as_bytes()), "{engine:?}");
         office.close().unwrap();
         let runtime = tree(&site.roots.runtime);
-        for (path, bytes) in runtime.into_iter().chain(tree(&site.durable("state"))) {
+        for (path, bytes) in runtime
+            .into_iter()
+            .chain(tree(&site.durable("state")))
+            .chain(tree(&site.durable("recovery")))
+        {
             assert!(!holds(&bytes), "{engine:?}: {path}");
         }
     }

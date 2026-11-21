@@ -69,8 +69,11 @@ and WAL stand, and its durability rule stands as amended by
      Separating both the wrapping key and the AAD domain ensures Org CA keys and
      provider OAuth tokens share neither key material nor ciphertext domain.
    - The host never receives the wrapped keys, so the rules of ADR-0007 and ADR-0011
-     stand. The HQ-creation commit stays one record in one transaction; only how the
-     private key bytes are protected inside that record changes.
+     stand. The wrapped Org CA key is written atomically to local security storage
+     (`durable/local/offices/<office-id>/security/ca-key.v1.json`, `0700` dir / `0600` file)
+     strictly **outside** `durable/recovery/` acceptance journal segments (`TASK-10` / H-06),
+     so CA key ciphertext never enters recovery journals, Git, or state exports; Entry 1 of
+     the journal commits only public `durable/state/` records (including `ca-escrow.v1.bin`).
    - If the office secrets key is missing, the office still opens and serves its data.
      Only functions that need a private key are unavailable (the worker reports the CA
      as unavailable; an HQ creation retry without the key is recovery-required), and each key is
@@ -98,9 +101,20 @@ and WAL stand, and its durability rule stands as amended by
    protection of `same-user` mode for data; private keys stay wrapped in both modes.
 6. **Backups.** A copy of the data folder is readable. Backup guidance must say to
    encrypt backups at their destination.
-7. **Private notes.** Who may read a note (its author and people, never another agent, [ADR-0031](0031-any-employee-changes-tasks.md)) is enforced by the service, as before. A
-   person with file access to the machine can read the file; this was also true of
-   anyone able to obtain the database key.
+7. **Isolated sensitive SQLite projections (updated 2026-11-21 for `TASK-10` / H-05).**
+   Shared plaintext `runtime/<office-id>/office.db` holds only shared organization/work/execution
+   projections. Sensitive operational data is isolated into dedicated `0700`/`0600` SQLite
+   databases with explicit access-checked service boundaries:
+   - `runtime/<office-id>/private/task-notes.db` (`private-notes-schema.sql`) — private task notes
+     readable only by their author and humans, never another agent ([ADR-0031](0031-any-employee-changes-tasks.md)).
+   - `runtime/<office-id>/protected/messaging.db` (`messaging-schema.sql`) — conversations,
+     private DMs, recipient states, read markers, reactions, and attachment metadata
+     ([document 15](../design/organization-data/15-messaging-and-chat.md)).
+   - `runtime/<office-id>/protected/budgets.db` (`budgets-schema.sql`) — owner-only agent/task/release
+     budget policies, spend evaluations, notices, and holds
+     ([document 17](../design/organization-data/17-budgets-and-controls.md)).
+   Service-layer authorization enforces actor visibility on every read and write. A person with
+   host file access can read local files; this was also true of anyone able to obtain a database key.
 8. **Linux.** A Linux host needs a credential provider for one small key per office
    and for the host's own secrets. It no longer needs one to open data.
 
