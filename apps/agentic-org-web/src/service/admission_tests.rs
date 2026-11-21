@@ -79,12 +79,7 @@ fn request(method: Method, target: &str, hosts: &[&str], origins: &[&str]) -> Re
     builder.body(UnreadBody).unwrap()
 }
 
-async fn error(
-    response: Response<Full<Bytes>>,
-    status: StatusCode,
-    code: &str,
-    head: bool,
-) -> Value {
+async fn error(response: Response<WebBody>, status: StatusCode, code: &str, head: bool) -> Value {
     assert_eq!(response.status(), status);
     for (name, value) in [
         ("content-type", "application/json; charset=utf-8"),

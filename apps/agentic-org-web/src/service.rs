@@ -4,10 +4,10 @@ use std::convert::Infallible;
 use std::future::Future;
 use std::io;
 use std::net::TcpListener;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use http_body_util::Full;
 use hyper::body::{Body, Bytes, Incoming};
 use hyper::header::{HeaderName, HeaderValue, ALLOW};
 use hyper::http::request::Parts;
@@ -25,12 +25,31 @@ use crate::body::{
 };
 use crate::ingress::{ApiRefusal, RequestAdmission};
 use crate::path::RequestPath;
+use crate::sse::WebBody;
 use crate::static_ui::response;
 use crate::transport::{try_run_http, HttpLimits, ListenMode};
 use crate::{Hsts, StaticUi};
 
 #[cfg(test)]
 mod admission_tests;
+
+/// Either a fixed JSON API reply or an async streaming HTTP response (SSE).
+pub enum WebReply {
+    Json(ApiReply),
+    Stream(Response<WebBody>),
+}
+
+/// Optional async dispatch result: `Async` runs directly on Tokio (bypassing the
+/// bounded host `BlockingPool`), while `Sync` hands the call back to `BlockingPool`.
+pub enum AsyncDispatch<C> {
+    Async {
+        future: Pin<Box<dyn Future<Output = WebReply> + Send>>,
+        /// Streaming responses (SSE) manage their own lifetime via heartbeats and
+        /// session-ended events rather than `backend_timeout`.
+        streaming: bool,
+    },
+    Sync(C),
+}
 
 /// Routing and preparation perform no native I/O. Routing must authorize before
 /// returning a business route. Every body arrives in a zeroizing buffer
@@ -45,6 +64,11 @@ pub trait ApiBackend: Send + Sync + 'static {
         route: Self::Route,
         body: BusinessBody,
     ) -> Result<PreparedCall<Self::Call>, ApiReply>;
+    /// Optional async execution path for multiplexed office RPCs and SSE streams
+    /// that run directly on Tokio without occupying the host `BlockingPool`.
+    fn dispatch_async(self: Arc<Self>, call: Self::Call) -> AsyncDispatch<Self::Call> {
+        AsyncDispatch::Sync(call)
+    }
     /// Runs on a dedicated worker and must use finite native deadlines.
     fn execute(&self, call: Self::Call) -> ApiReply;
 }
@@ -79,7 +103,7 @@ impl ApiReply {
         )
     }
 
-    fn into_http(self, head: bool) -> Response<Full<Bytes>> {
+    fn into_http(self, head: bool) -> Response<WebBody> {
         let mut response = response(
             self.status,
             self.body,
@@ -90,7 +114,7 @@ impl ApiReply {
         for (name, value) in self.headers {
             response.headers_mut().append(name, value);
         }
-        response
+        response.map(WebBody::from)
     }
 
     fn refusal(refusal: ApiRefusal) -> Self {
@@ -266,7 +290,7 @@ impl<B: ApiBackend> Gateway<B> {
         })
     }
 
-    pub(crate) async fn respond<T>(&self, request: Request<T>) -> Response<Full<Bytes>>
+    pub(crate) async fn respond<T>(&self, request: Request<T>) -> Response<WebBody>
     where
         T: Body<Data = Bytes>,
         T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -299,7 +323,10 @@ impl<B: ApiBackend> Gateway<B> {
                 Ok(path) if path.is_api() => match self.admission.check_api(&parts) {
                     Err(refusal) => ApiReply::refusal(refusal).into_http(head),
                     Ok(()) if matches!(path.segments(), [api, version, ..] if api == "api" && version == "v1") => {
-                        self.api_response(&parts, path, body).await.into_http(head)
+                        match self.api_response(&parts, path, body).await {
+                            WebReply::Json(reply) => reply.into_http(head),
+                            WebReply::Stream(stream) => stream,
+                        }
                     }
                     Ok(()) => ApiReply::error(
                         StatusCode::NOT_FOUND,
@@ -308,7 +335,10 @@ impl<B: ApiBackend> Gateway<B> {
                     )
                     .into_http(head),
                 },
-                Ok(path) => self.ui.serve_static(&parts.method, &parts.headers, &path),
+                Ok(path) => self
+                    .ui
+                    .serve_static(&parts.method, &parts.headers, &path)
+                    .map(WebBody::from),
             }
         };
         self.ui.finish_response(&parts.headers, &mut response);
@@ -332,21 +362,21 @@ impl<B: ApiBackend> Gateway<B> {
         response
     }
 
-    async fn api_response<T>(&self, parts: &Parts, path: RequestPath, body: T) -> ApiReply
+    async fn api_response<T>(&self, parts: &Parts, path: RequestPath, body: T) -> WebReply
     where
         T: Body<Data = Bytes>,
         T::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
     {
         let route = match self.backend.route(parts, &path) {
             Ok(route) => route,
-            Err(reply) => return reply,
+            Err(reply) => return WebReply::Json(reply),
         };
         let body = match read_business_body(body, self.limits.body_bytes, self.limits.body_timeout)
             .await
         {
             Ok(body) => body,
             Err(error) => {
-                return match error {
+                return WebReply::Json(match error {
                     BodyError::TooLarge => ApiReply::error(
                         StatusCode::PAYLOAD_TOO_LARGE,
                         GatewayErrorCode::TooLarge,
@@ -367,28 +397,43 @@ impl<B: ApiBackend> Gateway<B> {
                         GatewayErrorCode::Unavailable,
                         "Service unavailable.",
                     ),
-                }
+                });
             }
         };
         let bytes = body.as_bytes().len();
         let prepared = match self.backend.prepare(route, body) {
             Ok(prepared) => prepared,
-            Err(reply) => return reply,
+            Err(reply) => return WebReply::Json(reply),
         };
         let backend = Arc::clone(&self.backend);
-        let call = prepared.call;
+        let call = match backend.dispatch_async(prepared.call) {
+            AsyncDispatch::Async { future, streaming } => {
+                return if streaming {
+                    future.await
+                } else {
+                    match tokio::time::timeout(self.limits.backend_timeout, future).await {
+                        Ok(reply) => reply,
+                        Err(_) => WebReply::Json(prepared.kind.unknown()),
+                    }
+                };
+            }
+            AsyncDispatch::Sync(call) => call,
+        };
+        let backend = Arc::clone(&self.backend);
         let ticket = match self
             .workers
             .submit(bytes.max(prepared.input_bytes), move || {
                 backend.execute(call)
             }) {
             Ok(ticket) => ticket,
-            Err(_) => return prepared.kind.unavailable(),
+            Err(_) => return WebReply::Json(prepared.kind.unavailable()),
         };
-        match tokio::time::timeout(self.limits.backend_timeout, ticket.wait()).await {
-            Ok(Ok(reply)) => reply,
-            _ => prepared.kind.unknown(),
-        }
+        WebReply::Json(
+            match tokio::time::timeout(self.limits.backend_timeout, ticket.wait()).await {
+                Ok(Ok(reply)) => reply,
+                _ => prepared.kind.unknown(),
+            },
+        )
     }
 }
 

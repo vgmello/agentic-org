@@ -35,6 +35,7 @@ mod release;
 mod secret_json;
 pub mod service;
 pub mod session;
+pub mod sse;
 mod static_ui;
 pub mod tls;
 pub mod transport;

@@ -13,8 +13,9 @@ use crate::{
     host::{Failure, HostControl},
     office::{OfficeBridge, OfficeFailure},
     path::RequestPath,
-    service::{ApiBackend, ApiReply, PreparedCall},
+    service::{ApiBackend, ApiReply, AsyncDispatch, PreparedCall, WebReply},
     session::{rfc3339_millis, BrowserPair, CookieName, PresentedPair, SessionCache},
+    sse::{self, EventHub, HubEvent},
     transport::PeerAddress,
 };
 use hyper::{header::SET_COOKIE, http::request::Parts, Method, StatusCode};
@@ -25,6 +26,7 @@ use org_host_control::{
         SessionValidate, SessionValidateParams,
     },
     listen::ListenOrigin,
+    ops::RecoveryState as HostRecoveryState,
     organization::{self as host_org, BrowserAuth},
     GatewayState, HostOpResult, LinkToken, Password,
 };
@@ -37,12 +39,13 @@ use org_proto::gateway::{
     },
     AccountView, CreateState, GatewayError, GatewayErrorCode, GatewayStatus, ListenScheme,
     LookupQuery, Milliseconds, MutationOutcome, OfficeView, OperationId, OperationKind,
-    OperationLookup, OrganizationLink, ReadResponse, ResumeCursor, Scope, SessionEstablished,
-    SessionProof, SessionView, SnapshotResponse, Version,
+    OperationLookup, OrganizationLink, ReadResponse, RecoveryState, ResumeCursor, Scope,
+    SessionEstablished, SessionProof, SessionView, SnapshotResponse, StreamRequest, Version,
 };
 use org_proto::selected_bootstrap::PlanV1;
 use serde::Deserialize;
 use std::{
+    collections::BTreeSet,
     net::IpAddr,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -52,6 +55,7 @@ use std::{
 pub struct SessionApi {
     host: Arc<HostControl>,
     offices: OfficeBridge,
+    hub: EventHub,
     cache: Arc<SessionCache>,
     cookie: CookieName,
     origin: BrowserOrigin,
@@ -68,9 +72,19 @@ impl SessionApi {
         origin: &ListenOrigin,
         mode: org_host_control::listen::ListenMode,
     ) -> Self {
+        Self::with_hub(host, cache, origin, mode, EventHub::default())
+    }
+
+    pub fn with_hub(
+        host: Arc<HostControl>,
+        cache: Arc<SessionCache>,
+        origin: &ListenOrigin,
+        mode: org_host_control::listen::ListenMode,
+        hub: EventHub,
+    ) -> Self {
         use org_host_control::listen::ListenMode;
         let scheme = origin.scheme().as_str();
-        let offices = OfficeBridge::new(Arc::clone(&host));
+        let offices = OfficeBridge::new(Arc::clone(&host), hub.clone());
         Self {
             listen_scheme: match mode {
                 ListenMode::Https => ListenScheme::Https,
@@ -85,6 +99,7 @@ impl SessionApi {
             },
             host,
             offices,
+            hub,
             cache,
         }
     }
@@ -101,6 +116,7 @@ pub enum Route {
     CreateOrganization(PresentedPair),
     OrgSnapshot(PresentedPair, String),
     CreateTeam(PresentedPair, String),
+    EventsStream(PresentedPair),
     Operation(PresentedPair, OperationId),
 }
 
@@ -115,6 +131,7 @@ pub enum Call {
     CreateOrganization(PresentedPair, OperationId, PlanV1),
     OrgSnapshot(PresentedPair, String),
     CreateTeam(PresentedPair, String, OrgMutation),
+    EventsStream(PresentedPair, StreamRequest),
     Operation(PresentedPair, OperationId),
 }
 
@@ -251,6 +268,15 @@ fn organization_error(host: GatewayError) -> GatewayError {
     error
 }
 
+fn recovery_state(state: HostRecoveryState) -> Result<RecoveryState, Failure> {
+    match state {
+        HostRecoveryState::Pending => Ok(RecoveryState::Pending),
+        HostRecoveryState::Delivered => Ok(RecoveryState::Delivered),
+        HostRecoveryState::Acknowledged => Ok(RecoveryState::Acknowledged),
+        _ => Err(Failure::Unavailable),
+    }
+}
+
 /// The public organization view of the host's: no private endpoint, no recovery code.
 fn organization_view(
     host: host_org::OrganizationView,
@@ -262,9 +288,7 @@ fn organization_view(
         created_at: host.created_at,
         employee_id: host.employee_id,
         offices: host.offices.into_iter().map(OfficeView::from).collect(),
-        recovery: serde_json::to_value(host.recovery)
-            .and_then(serde_json::from_value)
-            .map_err(|_| Failure::Unavailable)?,
+        recovery: recovery_state(host.recovery)?,
     })
 }
 
@@ -488,12 +512,42 @@ impl SessionApi {
         reply.with_header(SET_COOKIE, self.cookie.clear())
     }
 
+    /// Async validation for non-blocking office RPCs and SSE streams.
+    async fn validate_async(&self, pair: PresentedPair) -> Result<BrowserSession, Failure> {
+        let generation = self.host.generation();
+        if let Some(session) = self.cache.lookup(
+            &pair.cookie_digest,
+            &pair.proof_digest,
+            generation,
+            now_ms(),
+        ) {
+            return Ok(session);
+        }
+        self.host
+            .request_then_async::<SessionValidate>(
+                &SessionValidateParams {
+                    cookie_digest: pair.cookie_digest,
+                    proof_digest: pair.proof_digest,
+                    origin: self.origin.clone(),
+                },
+                Some(Box::new(self.caching(&pair))),
+            )
+            .await
+    }
+
     /// Resolves the HQ office of `org_id` from live host authority (never cached).
-    fn resolve_hq_office(&self, pair: PresentedPair, org_id: &str) -> Result<String, Failure> {
-        self.validate(pair)?;
-        let list = self.host.request::<host_org::List>(&host_org::ListParams {
-            auth: self.auth(&pair),
-        })?;
+    async fn resolve_hq_office(
+        &self,
+        pair: PresentedPair,
+        org_id: &str,
+    ) -> Result<String, Failure> {
+        self.validate_async(pair).await?;
+        let list = self
+            .host
+            .request_async::<host_org::List>(&host_org::ListParams {
+                auth: self.auth(&pair),
+            })
+            .await?;
         let org = list
             .organizations
             .into_iter()
@@ -507,19 +561,23 @@ impl SessionApi {
             .ok_or(Failure::Unavailable)
     }
 
-    fn execute_org_snapshot(&self, pair: PresentedPair, org_id: &str) -> ApiReply {
-        let office_id = match self.resolve_hq_office(pair, org_id) {
+    async fn execute_org_snapshot(&self, pair: PresentedPair, org_id: &str) -> ApiReply {
+        let office_id = match self.resolve_hq_office(pair, org_id).await {
             Ok(id) => id,
             Err(Failure::Refused(_)) => return unavailable(),
             Err(error) => return failure(error),
         };
-        let snapshot = match self.offices.org_snapshot(&self.auth(&pair), &office_id) {
+        let snapshot = match self
+            .offices
+            .org_snapshot(&self.auth(&pair), &office_id)
+            .await
+        {
             Ok(snapshot) => snapshot,
             Err(OfficeFailure::BeforeDispatch(error)) => return failure(error),
             Err(OfficeFailure::Refused(error))
                 if error.code == org_proto::ErrorCode::NotAuthorized =>
             {
-                return self.recheck_session_on_refusal(pair, false, None);
+                return self.recheck_session_on_refusal(pair, false, None).await;
             }
             Err(OfficeFailure::Refused(error)) if error.code == org_proto::ErrorCode::NotFound => {
                 return not_found();
@@ -539,14 +597,14 @@ impl SessionApi {
         }
     }
 
-    fn execute_org_mutation(
+    async fn execute_org_mutation(
         &self,
         pair: PresentedPair,
         org_id: &str,
         command: OrgMutation,
     ) -> ApiReply {
         let op_id = command.operation_id().clone();
-        let office_id = match self.resolve_hq_office(pair, org_id) {
+        let office_id = match self.resolve_hq_office(pair, org_id).await {
             Ok(id) => id,
             Err(Failure::Denied) => return signed_out(),
             Err(Failure::NotFound) => return not_found(),
@@ -566,6 +624,7 @@ impl SessionApi {
         let reply = match self
             .offices
             .org_mutation(&self.auth(&pair), &office_id, &command)
+            .await
         {
             Ok(reply) => reply,
             Err(OfficeFailure::BeforeDispatch(Failure::Denied)) => return signed_out(),
@@ -584,30 +643,75 @@ impl SessionApi {
             }
         };
         match classify_org_reply(op_id.clone(), reply.as_ref()) {
-            OrgReplyClassification::Outcome { outcome, .. } => mutation(outcome, false),
+            OrgReplyClassification::Outcome { outcome, .. } => {
+                if matches!(outcome, MutationOutcome::Completed { .. }) {
+                    self.hub.publish(HubEvent::OrganizationChanged {
+                        org_id: org_id.to_owned(),
+                        cursor: format!("org:{org_id}:{}", op_id.as_str()),
+                        event: command.operation().name().to_owned(),
+                        data: serde_json::json!({ "operation_id": op_id.as_str() }),
+                    });
+                }
+                mutation(outcome, false)
+            }
             OrgReplyClassification::NeedsAuthorizationRecheck => {
                 self.recheck_session_on_refusal(pair, true, Some(op_id))
+                    .await
             }
         }
+    }
+
+    async fn execute_events_stream(&self, pair: PresentedPair, request: StreamRequest) -> WebReply {
+        let session = match self.validate_async(pair).await {
+            Ok(session) => session,
+            Err(error) => return WebReply::Json(failure(error)),
+        };
+        let list = match self
+            .host
+            .request_async::<host_org::List>(&host_org::ListParams {
+                auth: self.auth(&pair),
+            })
+            .await
+        {
+            Ok(list) => list,
+            Err(error) => return WebReply::Json(failure(error)),
+        };
+        let linked: BTreeSet<String> = list.organizations.into_iter().map(|o| o.id).collect();
+        if !sse::authorize_subscriptions(&request, self.host.instance(), &linked) {
+            return WebReply::Json(ApiReply::error(
+                StatusCode::FORBIDDEN,
+                GatewayErrorCode::NotAuthorized,
+                "Subscription scope is not authorized.",
+            ));
+        }
+        WebReply::Stream(sse::open_stream(
+            &self.hub,
+            self.host.instance().to_owned(),
+            session.session_id,
+            request,
+        ))
     }
 
     /// Re-validates the browser session directly with the host (bypassing cache) when
     /// an office refuses with `not_authorized`, distinguishing a dead session (401) from
     /// an organization-level permission refusal (403).
-    fn recheck_session_on_refusal(
+    async fn recheck_session_on_refusal(
         &self,
         pair: PresentedPair,
         is_mutation: bool,
         op_id: Option<OperationId>,
     ) -> ApiReply {
-        let live = self.host.request_then::<SessionValidate>(
-            &SessionValidateParams {
-                cookie_digest: pair.cookie_digest,
-                proof_digest: pair.proof_digest,
-                origin: self.origin.clone(),
-            },
-            self.caching(&pair),
-        );
+        let live = self
+            .host
+            .request_then_async::<SessionValidate>(
+                &SessionValidateParams {
+                    cookie_digest: pair.cookie_digest,
+                    proof_digest: pair.proof_digest,
+                    origin: self.origin.clone(),
+                },
+                Some(Box::new(self.caching(&pair))),
+            )
+            .await;
         match live {
             Err(Failure::Denied) => signed_out(),
             Err(error) => failure(error),
@@ -663,6 +767,7 @@ impl ApiBackend for SessionApi {
                 }
                 Route::CreateTeam(self.pair(request)?, (*org).to_owned())
             }
+            ["api", "v1", "events", "stream"] if post => Route::EventsStream(self.pair(request)?),
             ["api", "v1", "operations", "host", id]
                 if matches!(request.method, Method::GET | Method::HEAD) =>
             {
@@ -681,6 +786,7 @@ impl ApiBackend for SessionApi {
             | ["api", "v1", "organizations"]
             | ["api", "v1", "organizations", _, "snapshot"]
             | ["api", "v1", "organizations", _, "teams"]
+            | ["api", "v1", "events", "stream"]
             | ["api", "v1", "operations", "host", _] => return Err(invalid()),
             _ => return Err(not_found()),
         })
@@ -707,6 +813,14 @@ impl ApiBackend for SessionApi {
                     id,
                     bytes.len(),
                 ));
+            }
+            Route::EventsStream(pair) => {
+                let request: StreamRequest =
+                    gateway::decode_request(bytes).map_err(|_| invalid())?;
+                if request.subscriptions.is_empty() || request.subscriptions.len() > 32 {
+                    return Err(invalid());
+                }
+                Call::EventsStream(pair, request)
             }
             Route::Instance(pair) => empty().map(|()| Call::Instance(pair))?,
             Route::Operation(pair, id) => empty().map(|()| Call::Operation(pair, id))?,
@@ -756,6 +870,27 @@ impl ApiBackend for SessionApi {
             }
         };
         Ok(PreparedCall::read(call, bytes.len()))
+    }
+    fn dispatch_async(self: Arc<Self>, call: Call) -> AsyncDispatch<Call> {
+        match call {
+            Call::OrgSnapshot(pair, org_id) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(self.execute_org_snapshot(pair, &org_id).await)
+                }),
+                streaming: false,
+            },
+            Call::CreateTeam(pair, org_id, command) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(self.execute_org_mutation(pair, &org_id, command).await)
+                }),
+                streaming: false,
+            },
+            Call::EventsStream(pair, request) => AsyncDispatch::Async {
+                future: Box::pin(async move { self.execute_events_stream(pair, request).await }),
+                streaming: true,
+            },
+            other => AsyncDispatch::Sync(other),
+        }
     }
     fn execute(&self, call: Call) -> ApiReply {
         match call {
@@ -812,21 +947,18 @@ impl ApiBackend for SessionApi {
                 }
             }
             Call::CreateOrganization(pair, id, plan) => {
-                let session = match self.validate(pair) {
-                    Ok(session) => session,
-                    Err(e) => return failure(e),
-                };
-                // The host decides again; this spares it a call it would refuse.
-                let reply = if session.admin {
-                    self.host
-                        .request::<host_org::Create>(&host_org::CreateParams {
-                            auth: self.auth(&pair),
-                            operation_id: id.as_str().to_owned(),
-                            plan,
-                        })
-                } else {
-                    Err(Failure::Denied)
-                };
+                if let Err(e) = self.validate(pair) {
+                    return failure(e);
+                }
+                // Let the host decide administrator authority authoritatively (L-05: no
+                // duplicated BFF admin short-circuit).
+                let reply = self
+                    .host
+                    .request::<host_org::Create>(&host_org::CreateParams {
+                        auth: self.auth(&pair),
+                        operation_id: id.as_str().to_owned(),
+                        plan,
+                    });
                 // The host answers `expired` only for an id it has never seen (one it
                 // knows answers its stored state at any age), so no create has this id:
                 // a plain error, never an outcome of the operation.
@@ -847,9 +979,8 @@ impl ApiBackend for SessionApi {
                     true,
                 )
             }
-            Call::OrgSnapshot(pair, org_id) => self.execute_org_snapshot(pair, &org_id),
-            Call::CreateTeam(pair, org_id, command) => {
-                self.execute_org_mutation(pair, &org_id, command)
+            Call::OrgSnapshot(_, _) | Call::CreateTeam(_, _, _) | Call::EventsStream(_, _) => {
+                unreachable!("office RPCs and SSE streams dispatch asynchronously")
             }
             Call::Operation(pair, id) => {
                 let reply = self.validate(pair).and_then(|_| {

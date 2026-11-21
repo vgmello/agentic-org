@@ -4,6 +4,7 @@ use crate::{
     host::{EventSink, HostControl},
     service::{self, ApiLimits, GatewayConfig},
     session::SessionCache,
+    sse::EventHub,
     tls::TlsCertificates,
     transport::{HttpLimits, ListenMode},
     Hsts,
@@ -478,17 +479,21 @@ pub fn serve(assets: &Path) -> io::Result<()> {
     // The cache exists before the connection so the reader can apply every
     // `session.ended` event, in arrival order, from the first frame on.
     let cache = Arc::new(SessionCache::default());
+    let hub = EventHub::default();
     let generation = Arc::new(OnceLock::new());
     let (renewed, renewals) = mpsc::channel();
+    let events_hub = hub.clone();
+    let session_sink = session_events(Arc::clone(&cache), Arc::clone(&generation));
+    let combined_sink: EventSink = Arc::new(move |name: &str, data: &serde_json::Value| {
+        session_sink(name, data);
+        events_hub.observe_host_event(name, data);
+    });
     let host = HostControl::from_handoff(
         control,
         transfer,
         line.instance_id,
         Arc::new(|| fatal()),
-        with_renewals(
-            session_events(Arc::clone(&cache), Arc::clone(&generation)),
-            renewed,
-        ),
+        with_renewals(combined_sink, renewed),
     )?;
     let _ = generation.set(host.generation());
     let fetched = host.fetch_listener().map_err(|_| failure())?;
@@ -541,7 +546,8 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         config,
         files,
         move || {
-            let backend = SessionApi::new(Arc::clone(&host), cache, &browser_origin, scheme);
+            let backend =
+                SessionApi::with_hub(Arc::clone(&host), cache, &browser_origin, scheme, hub);
             Ok((backend, host_lost(host)))
         },
         serving,

@@ -1065,20 +1065,24 @@ fn a_create_whose_new_id_is_too_old_is_a_plain_410_and_never_an_outcome() {
 }
 
 #[test]
-fn an_account_that_is_not_the_administrator_is_403_with_no_create_call() {
-    let (gateway, calls) = gateway(organization_script(|method, _| {
-        matches!(method, "session.sign_in" | "session.validate").then(|| {
+fn an_account_that_is_not_the_administrator_is_403_from_host_authority() {
+    let (gateway, calls) = gateway(organization_script(|method, _| match method {
+        "session.sign_in" | "session.validate" => {
             let mut session = record(1);
             session["admin"] = json!(false);
-            vec![json!({"result": session})]
-        })
+            Some(vec![json!({"result": session})])
+        }
+        "organization.create" => Some(vec![json!({
+            "error": {"code": "not_authorized", "message": "administrator required"}
+        })]),
+        _ => None,
     }));
     let pair = sign_in(&gateway).pair();
     let reply = create(&gateway, &pair, &create_body(OPERATION, remote()));
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
     assert_eq!(reply.body["outcome"], "rejected");
     assert_eq!(reply.body["error"]["code"], "not_authorized");
-    assert!(!calls.methods().contains(&"organization.create".to_owned()));
+    assert!(calls.methods().contains(&"organization.create".to_owned()));
 }
 
 /// A `session.validate` answer the host wrote before `account.changed` is applied before

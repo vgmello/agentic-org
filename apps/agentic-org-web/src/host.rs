@@ -62,6 +62,8 @@ pub enum Failure {
 pub type EventSink = Arc<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
 /// Runs on the reader thread with a call's successful reply bytes and id.
 type Hook = Box<dyn FnOnce(u64, &[u8]) + Send>;
+/// Typed reply hook passed to async host calls.
+pub type ReplyHook<T> = Box<dyn FnOnce(&Result<T, Failure>) + Send>;
 /// Each admitted connection gets a new generation; a cache entry is valid only
 /// for the generation whose reader inserted it.
 static GENERATIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -90,10 +92,26 @@ impl Reply {
         Ok(())
     }
 }
+enum Answer {
+    Sync(SyncSender<Result<Reply, Failure>>),
+    Async(tokio::sync::oneshot::Sender<Result<Reply, Failure>>),
+}
+impl Answer {
+    fn send(self, result: Result<Reply, Failure>) {
+        match self {
+            Self::Sync(tx) => {
+                let _ = tx.send(result);
+            }
+            Self::Async(tx) => {
+                let _ = tx.send(result);
+            }
+        }
+    }
+}
 struct Job {
     line: Zeroizing<Vec<u8>>,
     until: Instant,
-    answer: SyncSender<Result<Reply, Failure>>,
+    answer: Answer,
     id: u64,
     hook: Option<Hook>,
     /// Claimed once, by the actor taking the job or by the caller abandoning
@@ -244,13 +262,31 @@ impl HostControl {
         let receiver = StreamReceiver::new(socket.try_clone()?);
         let (jobs, pending) = mpsc::sync_channel::<Job>(32);
         let live = Arc::new(AtomicBool::new(true));
-        let alive = Arc::clone(&live);
-        let actor_fatal = Arc::clone(&fatal);
+        let (active_tx, active_rx) = mpsc::sync_channel::<ActiveCall>(1);
+        let (reply_tx, reply_rx) = mpsc::sync_channel::<Result<Reply, Failure>>(1);
+        let reader_live = Arc::clone(&live);
+        let reader_fatal = Arc::clone(&fatal);
+        let reader_shutdown = socket.try_clone()?;
         thread::Builder::new()
-            .name("web-host-control".into())
+            .name("web-host-reader".into())
             .spawn(move || {
-                actor(writer, receiver, pending, &alive, &*actor_fatal, &*events);
-                alive.store(false, Ordering::SeqCst);
+                reader_loop(
+                    receiver,
+                    active_rx,
+                    reply_tx,
+                    &reader_live,
+                    &*reader_fatal,
+                    &*events,
+                );
+                reader_live.store(false, Ordering::SeqCst);
+                let _ = reader_shutdown.shutdown(Shutdown::Both);
+            })?;
+        let writer_live = Arc::clone(&live);
+        thread::Builder::new()
+            .name("web-host-writer".into())
+            .spawn(move || {
+                writer_loop(writer, pending, active_tx, reply_rx, &writer_live);
+                writer_live.store(false, Ordering::SeqCst);
             })?;
         let control = Arc::new(Self {
             instance,
@@ -282,6 +318,85 @@ impl HostControl {
     /// A host call; `C` must be an op the host serves on the web connection.
     pub fn request<C: Call>(&self, params: &C::Params) -> Result<C::Result, Failure> {
         self.call::<C>(params)
+    }
+    /// Non-blocking async host call that awaits the control reader's oneshot directly
+    /// on Tokio without occupying any `BlockingPool` worker.
+    pub async fn request_async<C: Call>(&self, params: &C::Params) -> Result<C::Result, Failure>
+    where
+        C::Result: 'static,
+    {
+        self.request_then_async::<C>(params, None).await
+    }
+    /// Async version of [`request_then`](Self::request_then).
+    pub async fn request_then_async<C: Call>(
+        &self,
+        params: &C::Params,
+        hook: Option<ReplyHook<C::Result>>,
+    ) -> Result<C::Result, Failure>
+    where
+        C::Result: 'static,
+    {
+        #[derive(Serialize)]
+        struct Request<'a, T> {
+            id: u64,
+            method: &'static str,
+            params: &'a T,
+        }
+        if !self.live() {
+            return Err(Failure::Unavailable);
+        }
+        let id = self
+            .next
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < (1 << 53) - 1).then_some(n + 1)
+            })
+            .map_err(|_| Failure::Unavailable)?;
+        let until = Instant::now() + DEADLINE;
+        let (answer, receiver) = tokio::sync::oneshot::channel();
+        let claimed = Arc::new(AtomicBool::new(false));
+        let hook: Option<Hook> = hook.map(|f| {
+            Box::new(move |reply_id: u64, bytes: &[u8]| {
+                f(&decode::<C::Result>(bytes, reply_id, &|| {}));
+            }) as Hook
+        });
+        self.jobs
+            .try_send(Job {
+                line: encode(&Request {
+                    id,
+                    method: C::METHOD,
+                    params,
+                })?,
+                until,
+                answer: Answer::Async(answer),
+                id,
+                hook,
+                claimed: Arc::clone(&claimed),
+            })
+            .map_err(|_| Failure::Unavailable)?;
+        let wait = until.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(wait, receiver).await {
+            Ok(Ok(reply)) => decode(&reply?.bytes, id, &|| self.close()),
+            Ok(Err(_)) => Err(Failure::Unavailable),
+            Err(_) => {
+                if !claimed.swap(true, Ordering::SeqCst) {
+                    return Err(Failure::Unavailable);
+                }
+                self.close();
+                Err(Failure::Unavailable)
+            }
+        }
+    }
+    /// Async wrapper for [`open_office_channel`](Self::open_office_channel) used by the
+    /// async multiplexed office bridge when establishing a new channel.
+    pub async fn open_office_channel_async(
+        self: &Arc<Self>,
+        auth: BrowserAuth,
+        office_id: String,
+    ) -> Result<(String, UnixStream), Failure> {
+        let host = Arc::clone(self);
+        tokio::task::spawn_blocking(move || host.open_office_channel(auth, &office_id))
+            .await
+            .map_err(|_| Failure::Unavailable)?
     }
     /// Like [`request`](Self::request), and `hook` runs on the reader thread
     /// with the decoded reply before the next host frame is applied. It does
@@ -398,7 +513,7 @@ impl HostControl {
                     params,
                 })?,
                 until,
-                answer,
+                answer: Answer::Sync(answer),
                 id,
                 hook,
                 claimed: Arc::clone(&claimed),
@@ -476,65 +591,105 @@ fn event(bytes: &[u8]) -> Option<(String, serde_json::Value)> {
     let frame: Frame = serde_json::from_slice(bytes).ok()?;
     Some((frame.event, frame.data))
 }
-fn actor(
-    mut writer: UnixStream,
+struct ActiveCall {
+    id: u64,
+    hook: Option<Hook>,
+}
+
+/// Dedicated event-driven host reader thread: blocks natively on `poll_readable`
+/// (zero 100 ms idle job-polling loop), applies host events in arrival order as
+/// soon as they arrive, runs each reply hook on this thread before reading the next
+/// frame, and delivers replies to the writer thread.
+fn reader_loop(
     mut receiver: StreamReceiver,
-    pending: mpsc::Receiver<Job>,
+    active: mpsc::Receiver<ActiveCall>,
+    replies: SyncSender<Result<Reply, Failure>>,
     live: &AtomicBool,
     fatal: &dyn Fn(),
     events: &dyn Fn(&str, &serde_json::Value),
 ) {
+    let mut in_flight: Option<ActiveCall> = None;
     while live.load(Ordering::SeqCst) {
-        let job = match pending.recv_timeout(Duration::from_millis(100)) {
-            Ok(job) => job,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Readable while idle: a host event is applied now; EOF or
-                // any other frame ends this connection.
-                let ready = receiver.fd().is_none_or(|fd| {
-                    org_socket::poll_readable(fd.as_raw_fd(), Duration::ZERO).unwrap_or(true)
-                });
-                if !ready {
-                    continue;
-                }
-                match read_frame(&mut receiver, Instant::now() + DEADLINE, fatal)
-                    .ok()
-                    .and_then(|frame| event(&frame.bytes))
-                {
-                    Some((name, data)) => {
-                        events(&name, &data);
-                        continue;
-                    }
-                    None => break,
-                }
-            }
+        let Some(fd) = receiver.fd() else {
+            break;
         };
+        match org_socket::poll_readable(fd.as_raw_fd(), Duration::from_secs(1)) {
+            Ok(false) => continue,
+            Ok(true) => {}
+            Err(_) => break,
+        }
+        let Ok(frame) = read_frame(&mut receiver, Instant::now() + DEADLINE, fatal) else {
+            break;
+        };
+        if let Some((name, data)) = event(&frame.bytes) {
+            events(&name, &data);
+            continue;
+        }
+        // Writer registers `ActiveCall` before writing the request, so any reply
+        // frame has its call waiting on `active`.
+        if in_flight.is_none() {
+            in_flight = active.try_recv().ok();
+        }
+        let Some(call) = in_flight.take() else {
+            break;
+        };
+        if let Some(hook) = call.hook {
+            hook(call.id, &frame.bytes);
+        }
+        if replies.send(Ok(frame)).is_err() {
+            break;
+        }
+    }
+    let _ = replies.try_send(Err(Failure::Unavailable));
+}
+
+/// Dedicated event-driven host writer thread: blocks natively on `pending.recv()`
+/// with zero idle polling, writes one request at a time, and pairs it with the
+/// reader thread's reply within the job's deadline.
+fn writer_loop(
+    mut writer: UnixStream,
+    pending: mpsc::Receiver<Job>,
+    active: SyncSender<ActiveCall>,
+    replies: mpsc::Receiver<Result<Reply, Failure>>,
+    live: &AtomicBool,
+) {
+    while live.load(Ordering::SeqCst) {
+        let Ok(job) = pending.recv() else {
+            break;
+        };
+        if !live.load(Ordering::SeqCst) {
+            job.answer.send(Err(Failure::Unavailable));
+            break;
+        }
         // Expired or nearly expired jobs stay unclaimed and unwritten: a caller
         // resuming its timeout handler must not mistake them for in-flight I/O.
         if job.until.saturating_duration_since(Instant::now()) < MIN_WRITE_BUDGET
             || job.claimed.swap(true, Ordering::SeqCst)
         {
-            let _ = job.answer.send(Err(Failure::Unavailable));
+            job.answer.send(Err(Failure::Unavailable));
             continue;
         }
-        let result = (|| {
-            writer
-                .write_all(&job.line)
-                .map_err(|_| Failure::Unavailable)?;
-            loop {
-                let frame = read_frame(&mut receiver, job.until, fatal)?;
-                // Events written before this reply are applied first, in order.
-                match event(&frame.bytes) {
-                    Some((name, data)) => events(&name, &data),
-                    None => return Ok(frame),
-                }
-            }
-        })();
-        let failed = result.is_err();
-        if let (Ok(reply), Some(hook)) = (&result, job.hook) {
-            hook(job.id, &reply.bytes);
+        if active
+            .send(ActiveCall {
+                id: job.id,
+                hook: job.hook,
+            })
+            .is_err()
+        {
+            job.answer.send(Err(Failure::Unavailable));
+            break;
         }
-        let _ = job.answer.send(result);
+        let result = if writer.write_all(&job.line).is_err() {
+            Err(Failure::Unavailable)
+        } else {
+            let wait = job.until.saturating_duration_since(Instant::now());
+            match replies.recv_timeout(wait) {
+                Ok(reply) => reply,
+                Err(_) => Err(Failure::Unavailable),
+            }
+        };
+        let failed = result.is_err();
+        job.answer.send(result);
         if failed {
             break;
         }
