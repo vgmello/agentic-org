@@ -71,7 +71,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .skip:focus { top: 12px; }
 
 /* Shell */
-.sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 50; display: flex; flex-direction: column; gap: 14px; overflow: hidden; background: rgba(255, 255, 255, .025); backdrop-filter: blur(12px) saturate(135%); -webkit-backdrop-filter: blur(12px) saturate(135%); box-shadow: inset -1px 0 0 rgba(255, 255, 255, .10); padding: 0 18px; transition: width .22s cubic-bezier(.22, 1, .36, 1), padding .22s cubic-bezier(.22, 1, .36, 1); }
+.sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 50; display: flex; flex-direction: column; gap: 14px; overflow: hidden; background: rgba(9, 17, 30, .58); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); box-shadow: inset -1px 0 0 rgba(186, 222, 255, .10); padding: 0 18px; transition: width .22s cubic-bezier(.22, 1, .36, 1), padding .22s cubic-bezier(.22, 1, .36, 1); }
 .content { position: relative; z-index: 1; height: 100%; overflow-y: auto; padding-left: 264px; display: flex; flex-direction: column; background: transparent; transition: padding-left .22s cubic-bezier(.22, 1, .36, 1); }
 .content > main { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 .sidebar-hd { display: flex; align-items: center; gap: 6px; min-height: 56px; flex: none; padding-top: 6px; }
@@ -1517,14 +1517,14 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 
 /* ── v4 Executive Briefing + Spotlight Queue Home ─────────────────────── */
 .hb {
-  --hb-surface: rgba(255, 255, 255, .042);
-  --hb-surface-hi: rgba(255, 255, 255, .072);
-  --hb-well: rgba(255, 255, 255, .038);
-  --hb-border: rgba(255, 255, 255, .125);
-  --hb-border-hi: rgba(255, 255, 255, .23);
-  --hb-blur: blur(8px) saturate(135%);
-  --hb-shadow: inset 0 1px 0 rgba(255, 255, 255, .09), inset 0 0 0 1px var(--hb-border);
-  --hb-shadow-hi: inset 0 1px 0 rgba(255, 255, 255, .15), inset 0 0 0 1px var(--hb-border-hi);
+  --hb-surface: rgba(255, 255, 255, .052);
+  --hb-surface-hi: rgba(255, 255, 255, .085);
+  --hb-well: rgba(255, 255, 255, .042);
+  --hb-border: rgba(255, 255, 255, .14);
+  --hb-border-hi: rgba(255, 255, 255, .25);
+  --hb-blur: blur(14px) saturate(150%);
+  --hb-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), inset 0 0 0 1px var(--hb-border), 0 12px 32px -14px rgba(0, 0, 0, .42);
+  --hb-shadow-hi: inset 0 1px 0 rgba(255, 255, 255, .24), inset 0 0 0 1px var(--hb-border-hi), 0 16px 38px -14px rgba(0, 0, 0, .50);
   --hb-ink: #F8FAFC;
   --hb-body: #CBD5E1;
   --hb-muted: #94A3B8;
