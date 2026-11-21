@@ -17,14 +17,14 @@ use super::{
         AddPerson, ArchiveTeam, Changed, CreateTeam, DeactivatePerson, Edit, MovePerson, MoveTeam,
         OrgRejection, RejectCode, TeamCreated, UpdatePerson, UpdateTeam, NOT_AUTHORIZED,
     },
-    operation_id, records, snapshot,
+    records, snapshot,
 };
 use crate::rules::OrgCommand;
 
 /// A validated wire command mapped onto one organization-family feature.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct StructureRequest<C> {
-    /// The store operation: the wire `command_id` mapped by [`operation_id::from_wire_ulid`].
+    /// The store operation: the native UUIDv7 wire `command_id`.
     pub operation_id: Id,
     pub by: Actor,
     pub command: C,
@@ -65,8 +65,7 @@ fn require_id(text: &str, field: &str) -> Result<Id, ApiError> {
 }
 
 fn parse_header(member: &str, command_id: &str) -> Result<(Id, Actor), ApiError> {
-    let op_id = operation_id::from_wire_ulid(command_id)
-        .map_err(|_| invalid("command_id is not a ULID in its canonical form"))?;
+    let op_id = require_id(command_id, "command_id")?;
     let Some(by) = stable_id(member) else {
         return Err(refused(ErrorCode::NotAuthorized, NOT_AUTHORIZED));
     };
@@ -467,7 +466,7 @@ mod tests {
 
     fn params() -> TeamCreateParams {
         TeamCreateParams {
-            command_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            command_id: id(0x01).to_string(),
             team_id: id(0x21).to_string(),
             name: "Core".into(),
             owner_team_id: Some(id(0x11).to_string()),
@@ -485,7 +484,7 @@ mod tests {
     fn the_request_is_the_mapped_operation_the_member_and_the_command() {
         let request = team_create_request(id(0x12).as_str(), &params()).unwrap();
         let expected = TeamCreateRequest {
-            operation_id: operation_id::from_wire_ulid("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap(),
+            operation_id: id(0x01),
             by: Actor::Employee(id(0x12)),
             command: CreateTeam {
                 id: id(0x21),
@@ -627,7 +626,7 @@ mod tests {
     #[test]
     fn parse_command_validates_all_wired_operations_and_defers_default_home_team_read() {
         let actor = id(0x12).to_string();
-        let cmd_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV".to_string();
+        let cmd_id = id(0x01).to_string();
         let no_read = || -> Result<Option<Id>, StoreError> {
             panic!("default_home_team should not be queried")
         };

@@ -73,7 +73,7 @@ impl RuntimeRelease {
     pub fn office_program(&self) -> PathBuf {
         self.path("agentic-org-office")
     }
-    pub fn gateway_program(&self) -> PathBuf {
+    pub fn web_program(&self) -> PathBuf {
         self.path("agentic-org-web")
     }
     pub fn cli_program(&self) -> PathBuf {

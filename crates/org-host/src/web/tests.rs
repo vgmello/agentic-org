@@ -88,7 +88,7 @@ fn refused_web_start_never_becomes_ready() {
             instance: "instance".into(),
             runtime: dir.path().to_owned(),
             listen: loopback_on(free_port()),
-            check: ServerCheck::gateway_for_build(false, None).unwrap(),
+            check: ServerCheck::web_for_build(false, None).unwrap(),
             critical_paths: vec![],
             release: None,
             tls: None,
@@ -134,7 +134,7 @@ fn an_admission_refusal_inside_start_keeps_its_cause() {
         instance: "instance".into(),
         runtime: dir.path().to_owned(),
         listen: loopback_on(free_port()),
-        check: ServerCheck::gateway_for_build(false, None).unwrap(),
+        check: ServerCheck::web_for_build(false, None).unwrap(),
         critical_paths: vec![],
         release: None,
         tls: None,
@@ -490,7 +490,7 @@ fn handoff_sends_exactly_the_transfer_end_then_the_listener() {
 
     // Exactly two descriptors ride the marker; any other count is refused.
     let (marker, fds) = receiver
-        .receive_byte(GATEWAY_HANDOFF_FDS.len(), &SPAWN_LOCK)
+        .receive_byte(WEB_HANDOFF_FDS.len(), &SPAWN_LOCK)
         .unwrap();
     assert_eq!(marker, org_host_control::ops::HOST_SOCK_MARKER);
     let [first, second]: [OwnedFd; 2] = fds.try_into().unwrap();
@@ -1213,7 +1213,7 @@ fn the_supervisor_refuses_an_https_listener_without_a_stored_pair() {
             instance: "instance".into(),
             runtime: dir.path().to_owned(),
             listen: https,
-            check: ServerCheck::gateway_for_build(true, None).unwrap(),
+            check: ServerCheck::web_for_build(true, None).unwrap(),
             critical_paths: vec![],
             release: None,
             tls: None,
@@ -1316,7 +1316,7 @@ fn startable(dir: &Path) -> Configuration {
         instance: "instance".into(),
         runtime: dir.to_owned(),
         listen: loopback_on(free_port()),
-        check: ServerCheck::gateway_for_build(true, None).unwrap(),
+        check: ServerCheck::web_for_build(true, None).unwrap(),
         critical_paths: vec![],
         release: None,
         tls: None,
@@ -1842,7 +1842,7 @@ fn pin(cdhash: [u8; 20]) -> crate::server_check::Pin {
 fn a_release_build_web_admission_pins_the_selected_image_and_binds_its_release() {
     const TEAM: &str = "AB12CD34EF";
     let hash = pin([7u8; 20]);
-    let web = ServerCheck::gateway_for_build(false, Some(TEAM)).unwrap();
+    let web = ServerCheck::web_for_build(false, Some(TEAM)).unwrap();
     match image_identity() {
         ImageIdentity::CodeSignature => assert!(matches!(web, ServerCheck::Gateway(_))),
         // The team names nothing where the bytes are checked.
@@ -2594,7 +2594,7 @@ fn real_web() -> RealWeb {
             instance,
             runtime: root.join("runtime"),
             listen: loopback_on(free_port()),
-            check: ServerCheck::gateway_for_build(true, None).unwrap(),
+            check: ServerCheck::web_for_build(true, None).unwrap(),
             critical_paths: vec![root.join("critical")],
             release: None,
             tls: None,

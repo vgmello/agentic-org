@@ -263,7 +263,7 @@ pub struct WebConfig {
     pub api: ApiLimits,
 }
 
-pub(crate) struct Gateway<B> {
+pub(crate) struct WebService<B> {
     ui: StaticUi,
     admission: RequestAdmission,
     backend: Arc<B>,
@@ -271,7 +271,7 @@ pub(crate) struct Gateway<B> {
     limits: ApiLimits,
 }
 
-impl<B: ApiBackend> Gateway<B> {
+impl<B: ApiBackend> WebService<B> {
     pub(crate) fn new(
         ui: StaticUi,
         backend: B,
@@ -459,7 +459,7 @@ impl ApiBackend for UnavailableApi {
 
 /// Production callers supply the verified host listener. Backend and workers are
 /// constructed only inside the runtime, after transport validates that listener.
-pub fn run_gateway<B, S>(
+pub fn run_web<B, S>(
     listener: TcpListener,
     config: WebConfig,
     files: BuildFiles,
@@ -472,7 +472,7 @@ where
     run_web_reporting(listener, config, files, initialize, || Ok(()))
 }
 
-/// [`run_gateway`], calling `serving` once after the runtime, listener
+/// [`run_web`], calling `serving` once after the runtime, listener
 /// registration, backend and web process service are initialized and before the
 /// first accept. Its error stops the web process before it serves any request.
 pub fn run_web_reporting<B, S>(
@@ -496,7 +496,7 @@ where
             let (backend, shutdown) = initialize()?;
             let admission = RequestAdmission::new(config.origin.clone());
             let ui = StaticUi::new(files, config.origin, config.hsts);
-            let service = Arc::new(Gateway::new(ui, backend, config.api, admission)?);
+            let service = Arc::new(WebService::new(ui, backend, config.api, admission)?);
             serving()?;
             let handler = move |request: Request<Incoming>| {
                 let service = Arc::clone(&service);

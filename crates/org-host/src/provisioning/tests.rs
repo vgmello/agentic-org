@@ -26,7 +26,7 @@ struct Params {
 }
 fn params() -> Params {
     Params {
-        operation_id: crate::ids::generate().unwrap(),
+        operation_id: crate::ids::uuid_v7().unwrap(),
         plan: plan(),
     }
 }
@@ -226,7 +226,7 @@ fn a_reserved_create_killed_before_its_intent_survives_a_host_restart_and_comple
     let p = params();
     let actor = account(&db);
     let fp = fp(&p);
-    let wall = org_proto::ulid_time_ms(&p.operation_id).unwrap() as i64;
+    let wall = org_proto::uuid_v7_time_ms(&p.operation_id).unwrap() as i64;
 
     // The first host: its worker takes the create, custody included, and is killed.
     let hanging = short_path.join("hanging");
@@ -418,7 +418,7 @@ fn custody_snapshot(custody: &dyn HostSecrets) -> Vec<(Name, Vec<u8>)> {
 fn pending_registry_init(instance: &str) -> crate::hostdb::HostDbInit {
     crate::hostdb::HostDbInit {
         instance_id: instance.into(),
-        clock_high_ms: org_proto::ulid_time_ms(&crate::ids::generate().unwrap()).unwrap() as i64,
+        clock_high_ms: org_proto::uuid_v7_time_ms(&crate::ids::uuid_v7().unwrap()).unwrap() as i64,
     }
 }
 fn seed_owner(db: &HostDb) {
@@ -563,7 +563,7 @@ fn pending_provisioning_retry_refuses_lost_writer_with_or_without_marker_and_dev
         let actor = account(&db);
         assert!(!creates(&controller, &actor, &p));
         let fp = fp(&p);
-        let wall = org_proto::ulid_time_ms(&p.operation_id).unwrap() as i64;
+        let wall = org_proto::uuid_v7_time_ms(&p.operation_id).unwrap() as i64;
         let reservation = db
             .provisioning(&actor, &p.operation_id, &fp, wall)
             .unwrap()
@@ -666,7 +666,7 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
         db.reserve_provisioning(&actor, &r).unwrap().prepared,
         r.prepared
     );
-    let wall = org_proto::ulid_time_ms(&r.operation_id).unwrap() as i64;
+    let wall = org_proto::uuid_v7_time_ms(&r.operation_id).unwrap() as i64;
     assert!(matches!(
         db.provisioning(&actor, &r.operation_id, &[0; 32], wall),
         Err(crate::hostdb::Error::OperationReused)
@@ -681,7 +681,7 @@ fn selected_reservation_checks_account_fingerprint_age_and_live_admin() {
     );
     // Only an id the host has never seen is too old (this one was made 31 days before
     // the host's clock) or too far ahead of it.
-    let unseen = crate::ids::generate().unwrap();
+    let unseen = crate::ids::uuid_v7().unwrap();
     assert!(matches!(
         db.provisioning(&actor, &unseen, &fp, old),
         Err(crate::hostdb::Error::Expired)

@@ -585,7 +585,7 @@ fn a_supplied_pair_is_imported_and_never_made_again() {
     assert_eq!(tls.status(later), org_proto::web::TlsStatus::Missing);
     // The administrator's replacement is served.
     let (cert, key) = pair_for(&["org.example"], later - DAY, later + 90 * DAY);
-    let id = crate::ids::generate().unwrap();
+    let id = crate::ids::uuid_v7().unwrap();
     let (answer, renew) = tls
         .set(&set_params(&id, &cert, &key), "account", later)
         .unwrap();
@@ -657,7 +657,7 @@ fn tls_set_is_journaled_checked_and_installs_a_supplied_pair() {
     };
 
     // Unparseable: refused at the fingerprint, nothing stored, even under the same ID twice.
-    let id = crate::ids::generate().unwrap();
+    let id = crate::ids::uuid_v7().unwrap();
     for _ in 0..2 {
         let (answer, renew) = tls
             .set(&set_params(&id, "x", &key), "account", now)
@@ -710,7 +710,7 @@ fn tls_set_is_journaled_checked_and_installs_a_supplied_pair() {
         .unwrap_err();
     assert_eq!(reused.code, org_proto::ErrorCode::OperationReused);
     // A key that is not the certificate's: stored and replayed; nothing installed.
-    let mismatch = crate::ids::generate().unwrap();
+    let mismatch = crate::ids::uuid_v7().unwrap();
     for _ in 0..2 {
         let (answer, renew) = tls
             .set(&set_params(&mismatch, &cert, &other_key), "account", now)
@@ -820,7 +820,7 @@ fn only_the_instances_own_pair_is_renewed_while_running() {
         [format!("tls.{}", hex(&renewed.pair_fp))]
     );
     let (cert, key) = pair_for(&["org.example"], now - DAY, now + 10 * DAY);
-    let id = crate::ids::generate().unwrap();
+    let id = crate::ids::uuid_v7().unwrap();
     tls.set(&set_params(&id, &cert, &key), "account", now)
         .unwrap();
     let supplied = f.stored();

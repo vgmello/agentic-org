@@ -1,13 +1,14 @@
 //! Bound office transport implementing `org_command::Office` over `org-client`.
 
 use std::env;
+use std::fmt;
 use std::path::PathBuf;
 
 use org_client::{Client, ClientError};
 use org_command::{Answer, Office, Refusal, Request};
 use org_proto::directory::{DirectoryCard, Who, WhoParams};
 use org_proto::msg::{MsgBind, MsgBindParams};
-use org_proto::org::{OrgSnapshot, OrgSnapshotCall, Team};
+use org_proto::org::{MemberKind, OrgSnapshot, OrgSnapshotCall, Team};
 use org_proto::{Empty, ErrorCode};
 use serde_json::{json, Value};
 
@@ -19,11 +20,24 @@ pub const SESSION_TOKEN_ENV: &str = "AGENT_OS_SESSION_TOKEN";
 pub const AGENT_ID_ENV: &str = "AGENT_OS_AGENT_ID";
 
 /// Run binding configuration supplied to `agent-os` by its office.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct Binding {
     pub socket: Option<PathBuf>,
     pub session_token: Option<String>,
     pub agent_id: Option<String>,
+}
+
+impl fmt::Debug for Binding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Binding")
+            .field("socket", &self.socket)
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("agent_id", &self.agent_id)
+            .finish()
+    }
 }
 
 impl Binding {
@@ -59,6 +73,9 @@ impl BoundOffice {
 
     fn client(&mut self) -> Result<&mut Client, Refusal> {
         if self.client.is_none() {
+            // Fail closed unless both socket path and session token are injected by the office.
+            // Note: `MsgBindParams` does not yet carry a wire token field; wire session-token
+            // verification lands with the agent session-binding slice (TASK-35 / B6).
             let (Some(socket), Some(_token)) = (&self.binding.socket, &self.binding.session_token)
             else {
                 return Err(Refusal::new(
@@ -90,14 +107,26 @@ impl Office for BoundOffice {
                 Ok(Answer::completed(snapshot_value(&snapshot)))
             }
             ("team", "list") => {
+                let offset = parse_cursor(request.cursor.as_deref())?;
                 let snapshot = client
                     .call::<OrgSnapshotCall>(&Empty {})
                     .map_err(map_client_error)?;
                 let mut teams: Vec<&Team> = snapshot.teams.iter().collect();
                 teams.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+                let total = teams.len();
                 let limit = request.limit.unwrap_or(org_command::DEFAULT_LIMIT) as usize;
-                let items: Vec<Value> = teams.into_iter().take(limit).map(team_value).collect();
-                Ok(Answer::completed(Value::Array(items)))
+                let items: Vec<Value> = teams
+                    .into_iter()
+                    .skip(offset)
+                    .take(limit)
+                    .map(team_value)
+                    .collect();
+                let next = offset.saturating_add(items.len());
+                let mut answer = Answer::completed(Value::Array(items));
+                if next < total {
+                    answer.next_cursor = Some(next.to_string());
+                }
+                Ok(answer)
             }
             ("team", "inspect") => {
                 let target = request
@@ -129,7 +158,7 @@ impl Office for BoundOffice {
                 obj.insert("members".into(), Value::Array(members));
                 Ok(Answer::completed(Value::Object(obj)))
             }
-            ("person" | "agent", "inspect") => {
+            (resource @ ("person" | "agent"), "inspect") => {
                 let member = request
                     .input
                     .get("member")
@@ -147,10 +176,11 @@ impl Office for BoundOffice {
                         ..WhoParams::default()
                     })
                     .map_err(map_client_error)?;
-                let Some(card) = who.members.first() else {
+                let expected = expected_kind(resource);
+                let Some(card) = who.members.iter().find(|c| c.kind == expected) else {
                     return Err(Refusal::new(
                         ErrorCode::NotFound,
-                        "No active employee matches that reference.",
+                        format!("No active {resource} matches that reference."),
                         "Run `agent-os org inspect` to see active members.",
                     ));
                 };
@@ -297,6 +327,27 @@ fn map_client_error(error: ClientError) -> Refusal {
     }
 }
 
+fn expected_kind(resource: &str) -> MemberKind {
+    match resource {
+        "person" => MemberKind::Person,
+        "agent" => MemberKind::Agent,
+        _ => unreachable!(),
+    }
+}
+
+fn parse_cursor(cursor: Option<&str>) -> Result<usize, Refusal> {
+    let Some(raw) = cursor else {
+        return Ok(0);
+    };
+    raw.parse::<usize>().map_err(|_| {
+        Refusal::new(
+            ErrorCode::InvalidRequest,
+            "Invalid pagination cursor.",
+            "Pass the next_cursor returned by the previous list call.",
+        )
+    })
+}
+
 fn hint_for(code: ErrorCode) -> &'static str {
     match code {
         ErrorCode::NotAuthorized | ErrorCode::NotBound => {
@@ -307,5 +358,42 @@ fn hint_for(code: ErrorCode) -> &'static str {
         ErrorCode::Unsupported => "This office build does not serve that command yet.",
         ErrorCode::Unavailable | ErrorCode::NotReady => "Wait briefly and retry the command.",
         _ => "Check the flags with --help and retry.",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_debug_redacts_session_token() {
+        let binding = Binding {
+            socket: Some(PathBuf::from("/tmp/office.sock")),
+            session_token: Some("super-secret-session-token".into()),
+            agent_id: Some("0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1".into()),
+        };
+        let rendered = format!("{binding:?}");
+        assert!(
+            !rendered.contains("super-secret-session-token"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+    }
+
+    #[test]
+    fn parse_cursor_accepts_non_negative_offsets_and_rejects_garbage() {
+        assert_eq!(parse_cursor(None).unwrap(), 0);
+        assert_eq!(parse_cursor(Some("0")).unwrap(), 0);
+        assert_eq!(parse_cursor(Some("25")).unwrap(), 25);
+        assert_eq!(
+            parse_cursor(Some("not-a-number")).unwrap_err().code,
+            ErrorCode::InvalidRequest
+        );
+    }
+
+    #[test]
+    fn expected_kind_matches_resource_name() {
+        assert_eq!(expected_kind("person"), MemberKind::Person);
+        assert_eq!(expected_kind("agent"), MemberKind::Agent);
     }
 }

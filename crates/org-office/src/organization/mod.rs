@@ -4,7 +4,6 @@
 pub mod directory;
 pub mod features;
 mod names;
-pub mod operation_id;
 pub mod ports;
 pub mod projector;
 pub mod records;

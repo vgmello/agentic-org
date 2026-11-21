@@ -68,8 +68,8 @@ pub fn input_refusal(field: CredentialField, rule: CredentialRule) -> WebError {
     error
 }
 
-/// A host operation id is a canonical ULID the browser minted. Anything else is refused
-/// before any host call.
+/// A host operation id is a canonical lowercase UUIDv7 the browser minted. Anything else is
+/// refused before any host call.
 pub fn host_operation_id(raw: &str) -> Result<OperationId, WebError> {
     OperationId::parse(raw.to_owned())
         .map_err(|_| input_refusal(CredentialField::OperationId, CredentialRule::Format))

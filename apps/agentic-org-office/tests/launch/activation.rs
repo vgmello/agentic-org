@@ -10,7 +10,7 @@ use std::os::unix::net::{UnixDatagram, UnixListener};
 
 pub(super) const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 /// The creation's launch operation, a ULID as the host makes it.
-const OPERATION: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+const OPERATION: &str = "019a9999-0000-7000-8000-000000000006";
 
 /// The organization the host prepared: this file's office, organization and owner.
 fn plan() -> org_proto::selected_bootstrap::PreparedV1 {
@@ -476,7 +476,7 @@ fn hq_creation_of_an_existing_office_by_another_operation_is_refused_and_changes
     // The same operation id resumes its own creation (ADR-0011). Another operation is another
     // request than the frozen intent, so it is refused, not a new office.
     let code = refused_create(&world, |create| {
-        create.hq_creation.operation_id = "01ARZ3NDEKTSV4RRFFQ79G5FAY".into();
+        create.hq_creation.operation_id = "019a9999-0000-7000-8000-000000000007".into();
     });
     assert_eq!(code, "already_exists");
     assert_eq!(stored_bytes(&world), before);

@@ -88,7 +88,7 @@
 
 mod identity;
 pub mod selected_bootstrap;
-pub use identity::is_uuid_v7;
+pub use identity::{is_uuid_v7, uuid_v7_time_ms};
 pub mod directory;
 pub mod frame;
 pub mod inbox;

@@ -213,7 +213,7 @@ pub(crate) mod journal {
     }
 
     pub(in crate::hostdb) fn id_time(id: &str) -> Result<i64, Error> {
-        org_proto::ulid_time_ms(id)
+        org_proto::uuid_v7_time_ms(id)
             .and_then(|n| i64::try_from(n).ok())
             .ok_or(Error::InvalidId)
     }

@@ -179,7 +179,7 @@ impl HqCreationV1 {
         if !self.bootstrap.valid()
             || self.version != Self::VERSION
             || self.escrow_profile != 1
-            || org_proto::ulid_time_ms(&self.operation_id).is_none()
+            || !org_proto::is_uuid_v7(&self.operation_id)
         {
             return Err("unsupported HQ creation context");
         }

@@ -12,7 +12,7 @@ const TOP_TEAM: &str = "019a8928-1337-7456-8456-0123456789ae";
 
 fn team_create(n: u64) -> OrgCommand {
     OrgCommand::TeamCreate(TeamCreateParams {
-        command_id: format!("01HZY8M6V2Q3D4E5F{n:07}00"),
+        command_id: format!("019a0000-0000-7000-8000-{n:012x}"),
         team_id: format!("01900000-0000-7000-8000-{n:012x}"),
         name: format!("Team {n}"),
         owner_team_id: Some(TOP_TEAM.into()),

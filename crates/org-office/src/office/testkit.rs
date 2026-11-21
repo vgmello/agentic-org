@@ -18,12 +18,12 @@ use crate::{
     key::Key,
     model::{NewOffice, OfficeRole},
     office_local::testkit::ca_material,
-    organization::{operation_id, testkit::creation_command, testkit::CREATION_AT},
+    organization::{testkit::creation_command, testkit::CREATION_AT},
     store::open::EngineChoice,
 };
 
-/// The creation request's ULID, as the launch binding carries it.
-pub(crate) const OPERATION: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+/// The creation request's canonical UUIDv7 operation ID.
+pub(crate) const OPERATION: &str = "01563e3a-b5d3-7d67-9931-87bee64c0af5";
 /// The CA material's seed.
 pub(crate) const CA_SEED: u8 = 1;
 
@@ -83,10 +83,9 @@ pub(crate) fn request() -> (NewOffice, Binding) {
 pub(crate) fn record(seed: u8) -> Result<LocalRecord, OfficeError> {
     let here = identity();
     let material = ca_material(&here.organization_id, seed);
-    let operation = operation_id::from_wire_ulid(OPERATION).expect("a ULID");
     LocalRecord::new(
         here.organization_id.to_string(),
-        operation.to_string(),
+        OPERATION.into(),
         material.public_key,
         material.package,
         material.wrapped_ca_key,

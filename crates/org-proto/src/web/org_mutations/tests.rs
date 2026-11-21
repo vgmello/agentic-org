@@ -215,7 +215,7 @@ fn validated_mutation_debug_elides_business_values() {
         org_id: "ORG".into(),
     };
     let body = json!({
-        "operation_id":"01M72N8MG00000000000000006",
+        "operation_id":"01a1c554-5200-7000-8000-000000000006",
         "scope":scope,
         "params":{"member_id":"member", "name":"PRIVATE_PERSON", "contact":"PRIVATE_CONTACT"},
     });

@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     assets::BuildFiles,
     ingress::RequestAdmission,
-    service::{ApiLimits, Gateway},
+    service::{ApiLimits, WebService},
     session::cookie::PROOF_HEADER,
     Hsts, StaticUi,
 };
@@ -92,7 +92,7 @@ fn default_script() -> Arc<Script> {
     })
 }
 
-fn gateway(script: Arc<Script>) -> (Gateway<SessionApi>, Calls) {
+fn gateway(script: Arc<Script>) -> (WebService<SessionApi>, Calls) {
     gateway_in(script, org_host_control::listen::ListenMode::HttpLoopback)
 }
 
@@ -100,7 +100,7 @@ fn gateway(script: Arc<Script>) -> (Gateway<SessionApi>, Calls) {
 fn gateway_in(
     script: Arc<Script>,
     mode: org_host_control::listen::ListenMode,
-) -> (Gateway<SessionApi>, Calls) {
+) -> (WebService<SessionApi>, Calls) {
     let (web, peer) = UnixStream::pair().unwrap();
     let calls = Calls::default();
     let seen = calls.clone();
@@ -147,7 +147,7 @@ fn gateway_in(
     let files =
         BuildFiles::from_files([("index.html".into(), b"<script>0</script>".to_vec())]).unwrap();
     let api = SessionApi::new(host, cache, &origin, mode);
-    let gateway = Gateway::new(
+    let gateway = WebService::new(
         StaticUi::new(files, origin.clone(), Hsts::Off),
         api,
         ApiLimits::default(),
@@ -180,7 +180,7 @@ impl Answer {
 }
 
 fn send(
-    gateway: &Gateway<SessionApi>,
+    gateway: &WebService<SessionApi>,
     method: Method,
     target: &str,
     body: &str,
@@ -228,7 +228,7 @@ fn send(
     }
 }
 
-fn sign_in(gateway: &Gateway<SessionApi>) -> Answer {
+fn sign_in(gateway: &WebService<SessionApi>) -> Answer {
     send(
         gateway,
         Method::POST,
@@ -836,7 +836,7 @@ fn the_web_process_sends_only_browser_session_ops() {
     }
 }
 
-const OPERATION: &str = "01M72N8MG00000000000000006";
+const OPERATION: &str = "01a1c554-5200-7000-8000-000000000006";
 const ORG: &str = "0193a5c0-0000-7000-8000-000000000001";
 
 fn create_body(operation: &str, repository: Value) -> String {
@@ -868,7 +868,7 @@ fn organization_script(
     let base = default_script();
     Arc::new(move |method, params| answers(method, params).unwrap_or_else(|| base(method, params)))
 }
-fn create(gateway: &Gateway<SessionApi>, pair: &Pair, body: &str) -> Answer {
+fn create(gateway: &WebService<SessionApi>, pair: &Pair, body: &str) -> Answer {
     send(
         gateway,
         Method::POST,
@@ -930,7 +930,7 @@ fn a_create_that_breaks_a_rule_is_400_with_its_field_before_any_host_call() {
     let before = calls.methods();
     for (body, field, rule) in [
         (
-            create_body("0193a5c0-0000-7000-8000-000000000007", remote()),
+            create_body("01M72N8MG00000000000000007", remote()),
             "operation_id",
             "format",
         ),
@@ -1158,7 +1158,7 @@ fn the_list_is_the_hosts_answer_and_account_changed_drops_the_cached_session() {
             .filter(|m| *m == "session.validate")
             .count()
     };
-    let session = |gateway: &Gateway<SessionApi>| {
+    let session = |gateway: &WebService<SessionApi>| {
         send(
             gateway,
             Method::GET,
@@ -1198,9 +1198,9 @@ fn a_host_operation_lookup_checks_its_id_and_scope_before_asking_the_host() {
         (method == "operation.lookup").then(|| {
             if params["operation_id"] == OPERATION {
                 vec![json!({"result": {"status": "accepted"}})]
-            } else if params["operation_id"] == "01M72N8MG00000000000000008" {
+            } else if params["operation_id"] == "01a1c554-5200-7000-8000-000000000008" {
                 vec![json!({"result": {"status": "completed", "result": host_organization()}})]
-            } else if params["operation_id"] == "01M72N8MG00000000000000009" {
+            } else if params["operation_id"] == "01a1c554-5200-7000-8000-000000000009" {
                 vec![json!({"error": {"code": "expired", "message": "host words"}})]
             } else {
                 vec![json!({"error": {"code": "not_found", "message": "no"}})]
@@ -1235,7 +1235,7 @@ fn a_host_operation_lookup_checks_its_id_and_scope_before_asking_the_host() {
         assert_eq!(get(&target).status, StatusCode::BAD_REQUEST, "{target}");
     }
     let unshaped = get(&format!(
-        "/api/v1/operations/host/{ORG}?instance_id={INSTANCE}"
+        "/api/v1/operations/host/01M72N8MG00000000000000006?instance_id={INSTANCE}"
     ));
     assert_eq!(unshaped.status, StatusCode::BAD_REQUEST);
     assert_eq!(unshaped.body["error"]["field"], "operation_id");
@@ -1247,13 +1247,13 @@ fn a_host_operation_lookup_checks_its_id_and_scope_before_asking_the_host() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(calls.methods(), before, "none of them reached the host");
-    let other = "01M72N8MG00000000000000007";
+    let other = "01a1c554-5200-7000-8000-000000000007";
     let missing = get(&format!(
         "/api/v1/operations/host/{other}?instance_id={INSTANCE}"
     ));
     assert_eq!(missing.status, StatusCode::NOT_FOUND);
     let linked = get(&format!(
-        "/api/v1/operations/host/01M72N8MG00000000000000008?instance_id={INSTANCE}"
+        "/api/v1/operations/host/01a1c554-5200-7000-8000-000000000008?instance_id={INSTANCE}"
     ));
     assert_eq!(linked.status, StatusCode::OK);
     assert_eq!(linked.body["result"]["state"], "linked");
@@ -1261,7 +1261,7 @@ fn a_host_operation_lookup_checks_its_id_and_scope_before_asking_the_host() {
     assert_eq!(linked.body["result"]["result"]["slug"], "acme");
     // A refused lookup is an error, never a `rejected` create.
     let expired = get(&format!(
-        "/api/v1/operations/host/01M72N8MG00000000000000009?instance_id={INSTANCE}"
+        "/api/v1/operations/host/01a1c554-5200-7000-8000-000000000009?instance_id={INSTANCE}"
     ));
     assert_eq!(expired.status, StatusCode::GONE);
     assert_eq!(expired.body["error"]["code"], "expired");

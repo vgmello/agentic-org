@@ -224,7 +224,10 @@ fn retained_opaque_recovery_custody_refuses_create_before_any_cleanup() {
                 format!("tls.{}", "cd".repeat(32)),
                 b"unrelated TLS key".to_vec(),
             ),
-            ("recovery.Abc123".to_owned(), payload.to_vec()),
+            (
+                "recovery.0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0".to_owned(),
+                payload.to_vec(),
+            ),
         ] {
             secrets
                 .put(&Name::parse(&name).unwrap(), &Value::new(bytes).unwrap())
@@ -576,7 +579,7 @@ fn schema_checks_foreign_keys_update_delete_conflict_rollback_and_reopen() {
     {
         let mut c = db.connection.lock().unwrap();
         let insert = "INSERT INTO op_journal VALUES (?1,?2,?3,'actor',?4,?5,?6)";
-        let id = "01J00000000000000000000003";
+        let id = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e3";
         for (kind, state, result, allowed) in [
             ("account.create", "completed", Some("{}"), true),
             ("account.create", "rejected", Some("{}"), true),
@@ -602,12 +605,12 @@ fn schema_checks_foreign_keys_update_delete_conflict_rollback_and_reopen() {
             );
         }
         for (id_len, fp_len, expiry, allowed) in [
-            (25, 32, 0, false),
-            (26, 31, 0, false),
-            (26, 33, 0, false),
-            (27, 32, 0, false),
-            (26, 32, -1, false),
-            (26, 32, 0, true),
+            (35, 32, 0, false),
+            (36, 31, 0, false),
+            (36, 33, 0, false),
+            (37, 32, 0, false),
+            (36, 32, -1, false),
+            (36, 32, 0, true),
         ] {
             let tx = c
                 .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -686,7 +689,7 @@ fn schema_checks_foreign_keys_update_delete_conflict_rollback_and_reopen() {
             let tx = c
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .unwrap();
-            let second = "01J00000000000000000000004";
+            let second = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e4";
             tx.execute(
                 insert,
                 (
@@ -1777,7 +1780,7 @@ fn journal_states_form_a_closed_enum_with_kind_and_result_constraints() {
                 let outcome = tx.execute(
                     "INSERT INTO op_journal VALUES (?1,?2,?3,'actor',?4,?5,0)",
                     (
-                        "01J00000000000000000000003",
+                        "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e3",
                         kind,
                         &[1u8; 32][..],
                         state,

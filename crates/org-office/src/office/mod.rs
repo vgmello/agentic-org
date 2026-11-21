@@ -46,7 +46,7 @@ use crate::{
     model::OfficeInfo,
     office_file,
     office_local::{read_ca, CaRecords},
-    organization::{directory, operation_id, wire},
+    organization::{directory, wire},
     rules::OrgCommand,
     store::open::{
         open_store, AddPersonOp, ArchiveTeamOp, CreateTeamOp, DeactivatePersonOp,
@@ -128,8 +128,7 @@ pub struct Office {
     owner: Id,
     /// The store operation that created the organization.
     creation: Id,
-    /// The creation request's command ID as the host sent it (the wire's ULID), which
-    /// `creation` is mapped from.
+    /// The creation request's canonical lowercase UUIDv7 command ID as the host sent it.
     creation_command: String,
     secrets_key: Option<Key>,
     // The store closes before the lock is released: fields drop in order.
@@ -242,8 +241,11 @@ impl Office {
                 "the office was created with other roots or another identity",
             ));
         }
+        if !org_proto::is_uuid_v7(&intent.owner) || !org_proto::is_uuid_v7(&intent.operation) {
+            return Err(recovery());
+        }
         let owner = Id::parse(&intent.owner).map_err(|_| recovery())?;
-        let creation = operation_id::from_wire_ulid(&intent.operation).map_err(|_| recovery())?;
+        let creation = Id::parse(&intent.operation).map_err(|_| recovery())?;
         let creation_command = intent.operation.clone();
 
         let store = open_store(&options.config(&roots, &custody)).map_err(storage)?;
@@ -435,10 +437,8 @@ impl Office {
         .map(Some)
     }
 
-    /// The command ID of the request that created this HQ, exactly as the host sent it (the
-    /// wire's ULID, kept in the creation intent). The records name the store operation it
-    /// maps to, which drops the ULID's low 6 random bits: a caller that must bind the very
-    /// request compares with this.
+    /// The canonical lowercase UUIDv7 command ID of the request that created this HQ,
+    /// kept in the creation intent and matching the store operation ID.
     pub fn creation_command_id(&self) -> &str {
         &self.creation_command
     }

@@ -205,7 +205,7 @@ pub struct Capabilities {
 /// ```compile_fail
 /// use org_proto::web::{CancelResult, CancelState, OperationId};
 /// let _ = CancelResult {
-///     operation_id: OperationId::parse("01M72N8MG00000000000000006".into()).unwrap(),
+///     operation_id: OperationId::parse("01a1c554-5200-7000-8000-000000000006".into()).unwrap(),
 ///     state: CancelState::InProgress,
 /// };
 /// ```

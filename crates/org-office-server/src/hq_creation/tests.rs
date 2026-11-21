@@ -3,14 +3,13 @@
 //! made, sealed and wrapped here.
 use super::*;
 use crate::test_support::{test_admission, FakeWriter};
-use org_office::organization_family::operation_id::from_wire_ulid;
 use std::path::PathBuf;
 
 pub(crate) const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
 pub(crate) const ORG: &str = "019a8928-1337-7123-8123-0123456789ab";
 pub(crate) const OFFICE: &str = "019a8928-1337-7456-8456-0123456789ac";
 pub(crate) const OWNER: &str = "01900000-0000-7000-8000-0000000000ee";
-const OPERATION: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const OPERATION: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607199";
 
 /// One HQ's places: its folder, its data roots and the host's custody of its writer.
 pub(crate) struct World {
@@ -121,14 +120,13 @@ fn actual_ca_creation_reopens_retries_exactly_and_starts_without_pending_code() 
     let record = office.hq_creation_record().unwrap().unwrap();
     let package = record.package.clone();
     let public = record.public_key;
-    // The CA records name the store operation the wire's ULID maps to (M7).
-    let mapped = from_wire_ulid(OPERATION).unwrap().to_string();
-    assert_eq!(record.operation_id, mapped);
+    // The CA records name the native UUIDv7 creation operation ID directly.
+    assert_eq!(record.operation_id, OPERATION);
     assert!(org_proto::is_uuid_v7(&record.operation_id));
     let copied = office.hq_creation_public_record().unwrap().unwrap();
     assert_eq!(copied.package, package);
     assert_eq!(copied.public_key, public);
-    assert_eq!(copied.operation_id, mapped);
+    assert_eq!(copied.operation_id, OPERATION);
     assert_eq!(
         std::fs::read(world.roots.durable.join("state/security/ca-escrow.v1.bin")).unwrap(),
         package

@@ -1,6 +1,6 @@
 //! The host's op journal (X-02 §6.3): what makes two requests "the same op".
 //!
-//! Every journaled op names an `operation_id` (a ULID, with the org-command age and skew rules)
+//! Every journaled op names an `operation_id` (a canonical lowercase UUIDv7, with the org-command age and skew rules)
 //! and keeps its result for 30 days. Its fingerprint is SHA-256 over the method and the params
 //! **without `session` and `operation_id`**, so a retry after a new sign-in is the same op. The
 //! principal is compared by account:

@@ -31,8 +31,8 @@ const MEMBER_ACC_ID: &str = "01J0000000000000000000000B";
 const ORG_ID: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c0";
 const OFFICE_ID: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c1";
 const MEMBER_ID: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071c2";
-const OP_ID: &str = "01J00000000000000000000010";
-const OP_ID_2: &str = "01J00000000000000000000011";
+const OP_ID: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607110";
+const OP_ID_2: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607111";
 const PHC: &str = "$argon2id$v=19$m=65536,t=3,p=1$MDEyMzQ1Njc4OWFiY2RlZg$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 struct Harness<'a> {
@@ -43,7 +43,7 @@ struct Harness<'a> {
 
 fn each(case: impl Fn(Harness<'_>)) {
     let verifier = Verifier::new(PHC.into()).unwrap();
-    let now = org_proto::ulid_time_ms(OP_ID).unwrap() as i64;
+    let now = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
 
     let home = tempfile::tempdir().unwrap();
     std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
@@ -164,7 +164,7 @@ fn instance_verification_and_organization_ownership_conformance() {
 #[test]
 fn credentials_lookup_and_admin_guarded_links_conformance() {
     each(|h| {
-        let now = org_proto::ulid_time_ms(OP_ID).unwrap() as i64;
+        let now = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
         let subject = Subject::new("administrator").unwrap();
         // While no administrator exists, link issuance succeeds.
         let issued = h
@@ -207,7 +207,7 @@ fn credentials_lookup_and_admin_guarded_links_conformance() {
 #[test]
 fn login_lockout_backoff_and_pruning_conformance() {
     each(|h| {
-        let base = org_proto::ulid_time_ms(OP_ID).unwrap();
+        let base = org_proto::uuid_v7_time_ms(OP_ID).unwrap();
         let initial = h.store.login_lockout(Socket::Local, "alice", base).unwrap();
         assert!(!initial.is_locked());
         assert_eq!(initial.retry_after_ms(), 0);
@@ -255,7 +255,7 @@ fn login_lockout_backoff_and_pruning_conformance() {
 #[test]
 fn provisioning_lifecycle_conformance() {
     each(|h| {
-        let now = org_proto::ulid_time_ms(OP_ID).unwrap() as i64;
+        let now = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
         (h.seed)(ADMIN_ID, "Owner", true);
         let admin_id = AccountId::parse(ADMIN_ID).unwrap();
         let admin = h.store.account_authority(&admin_id).unwrap().unwrap();
@@ -322,7 +322,7 @@ fn provisioning_lifecycle_conformance() {
 #[test]
 fn web_tls_pair_and_journal_replay_conformance() {
     each(|h| {
-        let now = org_proto::ulid_time_ms(OP_ID).unwrap() as i64;
+        let now = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
         assert_eq!(h.store.web_tls_pair(), Ok(None));
 
         let made = StoredPair {
@@ -448,7 +448,7 @@ fn sample_public_record(r: &Reservation) -> PublicRecord {
 #[test]
 fn recovery_ledger_and_reconciliation_conformance() {
     each(|h| {
-        let now = org_proto::ulid_time_ms(OP_ID).unwrap() as i64;
+        let now = org_proto::uuid_v7_time_ms(OP_ID).unwrap() as i64;
         (h.seed)(ADMIN_ID, "Owner", true);
         let admin_id = AccountId::parse(ADMIN_ID).unwrap();
         let admin = h.store.account_authority(&admin_id).unwrap().unwrap();

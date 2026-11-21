@@ -4,7 +4,6 @@
 //! office secrets key (ADR-0016 decision 3, ENC-5).
 use org_office::{
     hq_creation::{Binding, LocalRecord},
-    organization_family::operation_id::from_wire_ulid,
     Custody, DataRoots, Key, NewOffice, Office, OfficeError,
 };
 use org_proto::RecoveryCode;
@@ -41,8 +40,8 @@ fn unwrap_ca(
 /// Creates the HQ on its store, or retries its creation, under the host's writer custody
 /// and in the organization's data roots. Without the office secrets key the CA key can be
 /// neither wrapped nor recovered from the retained record: recovery-required, nothing
-/// touched (ADR-0016 decision 3). The CA records name the store operation the wire's ULID
-/// maps to (`from_wire_ulid`), never the ULID itself.
+/// touched (ADR-0016 decision 3). The CA records name the native UUIDv7 store operation
+/// directly from the host's request.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare(
     folder: &Path,
@@ -56,9 +55,10 @@ pub(crate) fn prepare(
     let Some(key) = key else {
         return Err(invalid());
     };
-    let operation = from_wire_ulid(&binding.operation_id)
-        .map_err(|_| invalid())?
-        .to_string();
+    if !org_proto::is_uuid_v7(&binding.operation_id) {
+        return Err(invalid());
+    }
+    let operation = binding.operation_id.clone();
     let code = org_pki::Code::parse(recovery.expose()).map_err(|_| invalid())?;
     // The original wrapper and parsed KDF bytes both drop before serving.
     drop(recovery);

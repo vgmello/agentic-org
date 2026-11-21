@@ -13,7 +13,7 @@ use org_host_control::{
     ops::{TlsFetchResult, HOST_SOCK_MARKER},
     web::{
         LandlockEnforcement, LandlockStatus, WebFd, WebFirstLine, WebHandoff, WebReadyForSecrets,
-        GATEWAY_HANDOFF_FDS,
+        WEB_HANDOFF_FDS,
     },
 };
 use org_platform::confinement::{self, Enforcement};
@@ -193,15 +193,15 @@ fn byte(
     }
 }
 /// Decodes the descriptors exactly as the host sends them: the marker byte
-/// carries [`GATEWAY_HANDOFF_FDS`] in order, [Transfer, Listener], and nothing
+/// carries [`WEB_HANDOFF_FDS`] in order, [Transfer, Listener], and nothing
 /// else. Each descriptor's socket type is checked before any ACK is sent.
 fn descriptors(marker: u8, fds: Vec<OwnedFd>) -> io::Result<(UnixDatagram, TcpListener)> {
-    if marker != HOST_SOCK_MARKER || fds.len() != GATEWAY_HANDOFF_FDS.len() {
+    if marker != HOST_SOCK_MARKER || fds.len() != WEB_HANDOFF_FDS.len() {
         return Err(failure());
     }
     let mut transfer = None;
     let mut listener = None;
-    for (kind, fd) in GATEWAY_HANDOFF_FDS.into_iter().zip(fds) {
+    for (kind, fd) in WEB_HANDOFF_FDS.into_iter().zip(fds) {
         match kind {
             WebFd::Transfer => transfer = Some(rights::unix_datagram(fd)?),
             WebFd::Listener => listener = Some(rights::tcp_listener(fd)?),
@@ -241,7 +241,7 @@ fn handoff(
         header.push(value);
     }
     let _: WebHandoff = serde_json::from_slice(&header).map_err(|_| failure())?;
-    let (marker, fds) = byte(&mut receiver, GATEWAY_HANDOFF_FDS.len(), until, &fence)?;
+    let (marker, fds) = byte(&mut receiver, WEB_HANDOFF_FDS.len(), until, &fence)?;
     let (transfer, listener) = descriptors(marker, fds)?;
     // Type checks precede ACK, and sole receiver has consumed exactly through
     // the marker. Its duplicate is dropped before the actor becomes the reader.

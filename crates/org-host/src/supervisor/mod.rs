@@ -1425,7 +1425,7 @@ pub(crate) mod tests {
             owner_member_id: custody.member.clone(),
             hq_creation: org_office_launch::HqCreationV1 {
                 version: org_office_launch::HqCreationV1::VERSION,
-                operation_id: crate::ids::generate().unwrap(),
+                operation_id: crate::ids::uuid_v7().unwrap(),
                 escrow_profile: 1,
                 bootstrap: Box::new(prepared),
             },

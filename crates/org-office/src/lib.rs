@@ -31,9 +31,9 @@ pub mod organization_family {
     pub use crate::organization::records;
     #[cfg(any(test, feature = "testkit"))]
     pub use crate::organization::testkit;
-    /// The native protocol's side: wire command IDs as store operation IDs, `org.snapshot`
-    /// from the records, and `team.create` onto the family and back.
-    pub use crate::organization::{operation_id, snapshot, wire};
+    /// The native protocol's side: `org.snapshot` from the records and organization commands
+    /// mapped onto the family and back.
+    pub use crate::organization::{snapshot, wire};
 }
 mod error;
 mod key;

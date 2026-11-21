@@ -53,12 +53,12 @@ impl ApiBackend for ProofBackend {
     }
 }
 
-fn service() -> (Gateway<ProofBackend>, Arc<AtomicUsize>) {
+fn service() -> (WebService<ProofBackend>, Arc<AtomicUsize>) {
     let origin = ListenOrigin::parse(ORIGIN_TEXT).unwrap();
     let files =
         BuildFiles::from_files([("index.html".into(), b"<script>0</script>".to_vec())]).unwrap();
     let routed = Arc::new(AtomicUsize::new(0));
-    let gateway = Gateway::new(
+    let gateway = WebService::new(
         StaticUi::new(files, origin.clone(), Hsts::Off),
         ProofBackend(Arc::clone(&routed)),
         ApiLimits::default(),

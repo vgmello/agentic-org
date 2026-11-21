@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use agentic_org_web::assets::BuildFiles;
-use agentic_org_web::service::{run_gateway, ApiLimits, UnavailableApi, WebConfig};
+use agentic_org_web::service::{run_web, ApiLimits, UnavailableApi, WebConfig};
 use agentic_org_web::transport::{HttpLimits, ListenMode};
 use agentic_org_web::Hsts;
 use org_host_control::listen::ListenOrigin;
@@ -32,7 +32,7 @@ fn run() -> io::Result<()> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))?;
     let origin = ListenOrigin::parse(&format!("http://{}", listener.local_addr()?))
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
-    run_gateway(
+    run_web(
         listener,
         WebConfig {
             mode: ListenMode::HttpLoopback,

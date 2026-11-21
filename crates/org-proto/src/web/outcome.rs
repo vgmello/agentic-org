@@ -37,9 +37,9 @@ pub struct OperationId(String);
 
 impl OperationId {
     pub fn parse(id: String) -> Result<Self, &'static str> {
-        crate::ulid_time_ms(&id)
-            .map(|_| Self(id))
-            .ok_or("operation_id must be a canonical ULID")
+        crate::is_uuid_v7(&id)
+            .then_some(Self(id))
+            .ok_or("operation_id must be a canonical lowercase UUIDv7")
     }
 
     pub fn as_str(&self) -> &str {

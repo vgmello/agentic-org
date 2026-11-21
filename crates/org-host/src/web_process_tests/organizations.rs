@@ -85,7 +85,7 @@ impl Browser {
     }
     /// Posts a create and follows it on the lookup route to its organization view.
     fn create(&self, name: &str, slug: &str) -> (String, Value) {
-        let operation = crate::ids::generate().unwrap();
+        let operation = crate::ids::uuid_v7().unwrap();
         let posted = self.post("/api/v1/organizations", &self.body(&operation, name, slug));
         assert!(
             matches!(
@@ -536,7 +536,7 @@ fn actual_host_stopped_in_the_middle_of_a_create_finishes_it_at_its_next_start_w
         .provisioning_for_test()
         .expect("a registered host creates organizations")
         .hold_drives();
-    let operation = crate::ids::generate().unwrap();
+    let operation = crate::ids::uuid_v7().unwrap();
     let posted = browser.post(
         "/api/v1/organizations",
         &browser.body(&operation, "Example", "example"),
@@ -603,7 +603,7 @@ fn actual_host_stop_leaves_no_create_worker_that_ignores_its_closed_stdin() {
     let worker = base.join("bin/agentic-org-office");
     fs::remove_file(&worker).unwrap();
     crate::supervisor::tests::write_create_server(&worker, &pid_file, true);
-    let operation = crate::ids::generate().unwrap();
+    let operation = crate::ids::uuid_v7().unwrap();
     let posted = browser.post(
         "/api/v1/organizations",
         &browser.body(&operation, "Example", "example"),
@@ -639,7 +639,7 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
     } = launch(Seed::Administrator);
     wait_serving(&host, address);
     let browser = Browser::sign_in(&host, address);
-    let operation = crate::ids::generate().unwrap();
+    let operation = crate::ids::uuid_v7().unwrap();
     let body = browser.body(&operation, "Example", "example");
     let before = host.service.organization_ops();
 
@@ -706,7 +706,7 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
     let ops_before = host.service.browser_ops();
     let instance = browser.instance.as_str();
     let other_instance = "0193a5c0-0000-7000-8000-000000000009";
-    let uuid_operation = "0193a5c0-0000-7000-8000-000000000001";
+    let ulid_operation = "01M72N8MG00000000000000001";
     for (body, field, rule, what) in [
         (
             create_body(
@@ -718,19 +718,19 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
             ),
             Some("operation_id"),
             Some("format"),
-            "an operation id that is no ULID",
+            "an operation id that is no UUIDv7",
         ),
         (
             create_body(
                 instance,
-                uuid_operation,
+                ulid_operation,
                 "Example",
                 "example",
                 remote("example"),
             ),
             Some("operation_id"),
             Some("format"),
-            "a UUID operation id",
+            "a ULID operation id",
         ),
         (
             create_body(
@@ -826,7 +826,7 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
     assert_eq!(file_url.body["error"]["rule"], "remote_required");
     // The lookup route decides its id and scope the same way.
     for target in [
-        format!("/api/v1/operations/host/{uuid_operation}?instance_id={instance}"),
+        format!("/api/v1/operations/host/{ulid_operation}?instance_id={instance}"),
         format!("/api/v1/operations/host/{operation}?instance_id={other_instance}"),
         format!("/api/v1/operations/host/{operation}"),
     ] {
@@ -870,7 +870,7 @@ fn actual_listener_serves_two_organizations_and_a_refused_create_reaches_no_host
 
     // A duplicate name (any letter case) or slug is named, and stores nothing.
     for (name, slug, field) in [("EXAMPLE", "third", "name"), ("Third", "example", "slug")] {
-        let duplicate = crate::ids::generate().unwrap();
+        let duplicate = crate::ids::uuid_v7().unwrap();
         let reply = browser.post(
             "/api/v1/organizations",
             &browser.body(&duplicate, name, slug),
@@ -1124,7 +1124,7 @@ fn actual_browser_reads_live_org_snapshot_and_creates_team_surviving_projection_
     assert_eq!(missing.status, 404, "{}", missing.body);
 
     let child_team_id = "0193a5c0-0000-7000-8000-000000000042";
-    let op_id = crate::ids::generate().unwrap();
+    let op_id = crate::ids::uuid_v7().unwrap();
     let bad_scope = json!({
         "operation_id": op_id,
         "scope": { "kind": "organization", "instance_id": browser.instance, "org_id": unknown_org },

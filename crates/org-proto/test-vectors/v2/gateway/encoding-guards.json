@@ -4,9 +4,11 @@
     {
       "name": "unresolved client lookup cannot be emitted as a stored outcome",
       "reader": "Rust",
-      "operation_id": "01M72N8MG00000000000000006",
+      "operation_id": "01a1c554-5200-7000-8000-000000000006",
       "kind": "org",
-      "expect": { "encode_valid": false }
+      "expect": {
+        "encode_valid": false
+      }
     }
   ]
 }

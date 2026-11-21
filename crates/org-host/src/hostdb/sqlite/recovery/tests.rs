@@ -25,7 +25,7 @@ fn fixture() -> Fixture {
     let id =
         crate::accounts::identity::AccountId::parse(credentials.account().account_id()).unwrap();
     let account = db.account_authority(&id).unwrap().unwrap();
-    let op = crate::ids::generate().unwrap();
+    let op = crate::ids::uuid_v7().unwrap();
     let owner_member = crate::ids::uuid_v7().unwrap();
     let r = provisioning::Reservation {
         operation_id: op.clone(),
@@ -145,7 +145,7 @@ fn unlinked_reservation_reopen_requires_original_recovery_custody() {
             "mismatched" => {
                 let mut value: serde_json::Value =
                     serde_json::from_slice(stored.load(&name).unwrap().unwrap().expose()).unwrap();
-                value["reservation"]["operation_id"] = crate::ids::generate().unwrap().into();
+                value["reservation"]["operation_id"] = crate::ids::uuid_v7().unwrap().into();
                 stored
                     .put(
                         &name,
@@ -408,7 +408,7 @@ fn malformed_pending_code_and_duplicate_completed_organization_fail_closed() {
     f.custody.put(&name,&Value::new(serde_json::to_vec(&serde_json::json!({"version":1,"reservation":f.r,"code":"not-a-recovery-code"})).unwrap()).unwrap()).unwrap();
     assert!(crate::provisioning::pending_recovery(&*f.custody, &r).is_err());
     let db = f.db.connection.lock().unwrap();
-    let second = crate::ids::generate().unwrap();
+    let second = crate::ids::uuid_v7().unwrap();
     db.execute("INSERT INTO selected_provisioning SELECT ?1,account,fingerprint,'different-name','different-slug',prepared,owner_member,?2,key_fingerprint,linked,expires_at_ms FROM selected_provisioning WHERE operation_id=?3",params![second,format!("recovery.{second}"),r.operation_id]).unwrap();
     drop(db);
     assert!(f.db.recovery_source(&r.prepared.organization_id).is_err());

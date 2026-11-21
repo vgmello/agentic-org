@@ -481,10 +481,9 @@ fn the_snapshot_of_the_golden_creation() {
 
 // ---- team.create through the native protocol's mapping ----
 
-/// A canonical ULID numbered `n`: its six dropped bits are zero, so each `n` is one
-/// store operation.
+/// A canonical lowercase UUIDv7 command ID numbered `n`.
 fn command_id(n: u64) -> String {
-    format!("01ARZ3NDEK{n:014}00")
+    id(0x1000 + n).to_string()
 }
 
 fn params(command: u64, team: u64, parent: Option<u64>) -> TeamCreateParams {
@@ -625,8 +624,8 @@ fn team_create_answers_committed_and_a_retry_gets_the_same_answer() {
             code(wire_create(&store, &creator, &other)),
             ErrorCode::InvalidRequest
         );
-        // The receipt is the mapped UUIDv7, and the snapshot shows the team.
-        let mapped = crate::organization::operation_id::from_wire_ulid(&command_id(1)).unwrap();
+        // The receipt uses the native UUIDv7 command ID directly, and the snapshot shows the team.
+        let mapped = command_id(1);
         store.sync().unwrap();
         let receipts = tree(&place.durable().join("recovery/commands"));
         let names: Vec<&String> = receipts.keys().collect();

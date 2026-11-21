@@ -162,7 +162,7 @@ impl HostDb {
             // organization exists or is still being created. Only an id it has never
             // seen can be too old.
         } else {
-            let time = org_proto::ulid_time_ms(operation).ok_or(Error::InvalidId)? as i64;
+            let time = org_proto::uuid_v7_time_ms(operation).ok_or(Error::InvalidId)? as i64;
             if time < now.saturating_sub(29 * 86_400_000) {
                 return Err(Error::Expired);
             }
@@ -188,7 +188,7 @@ impl HostDb {
         {
             return Err(Error::Unsafe);
         }
-        let time = org_proto::ulid_time_ms(&frozen.operation_id).ok_or(Error::InvalidId)? as i64;
+        let time = org_proto::uuid_v7_time_ms(&frozen.operation_id).ok_or(Error::InvalidId)? as i64;
         let mut db = self.connection.lock().map_err(|_| Error::Unsafe)?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         administrator(&tx, account.account_id())?;

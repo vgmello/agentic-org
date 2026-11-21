@@ -568,7 +568,7 @@ fn create_hq_within(host: &Host, address: SocketAddr, wait: Duration) -> Created
     );
     let headers = browser_sessions::pair(&signed_in, "sign-in").headers();
     let instance = host.instance.as_ref().unwrap().id().to_owned();
-    let operation_id = crate::ids::generate().unwrap();
+    let operation_id = crate::ids::uuid_v7().unwrap();
     let body = create_body(
         &instance,
         &operation_id,
@@ -760,7 +760,7 @@ fn create_hq_beside(host: &Host, address: SocketAddr, serving: bool) {
         .as_ref()
         .expect("a registered host creates organizations");
     let account = creating.account_for_test("Owner");
-    let operation_id = crate::ids::generate().unwrap();
+    let operation_id = crate::ids::uuid_v7().unwrap();
     let plan = PlanV1 {
         version: 1,
         name: "Example".into(),
@@ -1197,7 +1197,7 @@ fn a_host_stops_within_its_bound_while_its_web_start_and_a_create_wait() {
     };
     let fingerprint: [u8; 32] =
         <sha2::Sha256 as sha2::Digest>::digest(serde_json::to_vec(&plan).unwrap()).into();
-    let operation_id = crate::ids::generate().unwrap();
+    let operation_id = crate::ids::uuid_v7().unwrap();
     assert!(matches!(
         creating.create(&account, &operation_id, &plan, fingerprint),
         Ok(org_host_control::HostOpResult::Accepted)

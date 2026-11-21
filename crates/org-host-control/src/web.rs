@@ -223,7 +223,7 @@ pub enum WebFd {
 pub struct WebHandoff;
 
 /// The descriptors a [`WebHandoff`] names, in order.
-pub const GATEWAY_HANDOFF_FDS: [WebFd; 2] = [WebFd::Transfer, WebFd::Listener];
+pub const WEB_HANDOFF_FDS: [WebFd; 2] = [WebFd::Transfer, WebFd::Listener];
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -236,7 +236,7 @@ impl Serialize for WebHandoff {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         HandoffWire {
             v: API_VERSION,
-            fds: GATEWAY_HANDOFF_FDS.to_vec(),
+            fds: WEB_HANDOFF_FDS.to_vec(),
         }
         .serialize(s)
     }
@@ -246,7 +246,7 @@ impl<'de> Deserialize<'de> for WebHandoff {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let wire = HandoffWire::deserialize(d)?;
         check_version::<D>(wire.v)?;
-        if wire.fds != GATEWAY_HANDOFF_FDS {
+        if wire.fds != WEB_HANDOFF_FDS {
             return Err(serde::de::Error::custom(
                 "the gateway handoff must name the transfer socket, then the listener",
             ));

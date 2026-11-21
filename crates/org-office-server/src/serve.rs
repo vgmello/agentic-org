@@ -1050,7 +1050,7 @@ fn answer(request: &Request, shared: &Shared, binding: &mut Binding) -> Response
     }
     if request.is::<org_proto::OperationGet>() {
         let params = match request.params::<org_proto::OperationGet>() {
-            Ok(params) if org_proto::ulid_time_ms(&params.id).is_some() => params,
+            Ok(params) if org_proto::is_uuid_v7(&params.id) => params,
             _ => {
                 return Response::error(
                     request.id,
@@ -2097,7 +2097,7 @@ mod tests {
             1,
             &org_proto::OperationGetParams {
                 kind: org_proto::OperationKind::Org,
-                id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+                id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0".into(),
             },
         )
         .unwrap();
@@ -2124,8 +2124,9 @@ mod tests {
             launch_key(),
         );
         for params in [
-            json!({"kind":"unknown","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+            json!({"kind":"unknown","id":"0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0"}),
             json!({"kind":"org","id":"bad"}),
+            json!({"kind":"org","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
             json!({"kind":"work","id":"bad"}),
             json!({"kind":"org"}),
             json!({"kind":"org","id":7}),
@@ -2134,7 +2135,7 @@ mod tests {
                 1,
                 &org_proto::OperationGetParams {
                     kind: org_proto::OperationKind::Org,
-                    id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+                    id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0".into(),
                 },
             )
             .unwrap();
@@ -2152,7 +2153,7 @@ mod tests {
                 1,
                 &org_proto::OperationGetParams {
                     kind,
-                    id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+                    id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0".into(),
                 },
             )
             .unwrap();
@@ -2166,7 +2167,7 @@ mod tests {
             1,
             &org_proto::OperationGetParams {
                 kind: org_proto::OperationKind::Org,
-                id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+                id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0".into(),
             },
         )
         .unwrap();
@@ -2291,7 +2292,7 @@ mod tests {
                 1,
                 &org_proto::OperationGetParams {
                     kind: org_proto::OperationKind::Org,
-                    id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+                    id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0".into(),
                 },
             )
             .unwrap();

@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
+updated_date: '2026-11-21T03:50:00Z'
 labels:
   - backend
   - rust
@@ -45,3 +46,9 @@ Build unified typed tasks (task, bug, request) on org-store, deleting separate l
 - [ ] #3 agent-os and agentic-org task create|list|inspect|update|transition|assign|comment|watch and checklist commands pass K1 contract tests (CLI-15).
 - [ ] #4 Browser work board, list, detail, bug, and request flows sync live without reload against a real instance (TSK, BUG, CHK, WORK criteria).
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Prerequisite from TASK-15 (UUIDv7 wire cutover): org-proto::web::CommandEnvelope now emits canonical lowercase UUIDv7 for OperationKind::Work (change_id), while legacy crates/org-work/src/engine.rs still checks ulid_time_ms(change_id). When wiring B4/B5 tasks onto org-store, validate work change_id via org_proto::uuid_v7_time_ms.
+<!-- SECTION:NOTES:END -->

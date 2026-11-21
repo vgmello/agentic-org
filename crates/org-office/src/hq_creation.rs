@@ -2,8 +2,8 @@
 //! leaves. Private CA bytes never leave the office-local records.
 use crate::OfficeError;
 
-/// What the host asked a creation for: its operation (the wire's ULID), the owner, and the
-/// prepared organization.
+/// What the host asked a creation for: its operation (canonical lowercase UUIDv7), the owner,
+/// and the prepared organization.
 #[derive(Clone)]
 pub struct Binding {
     pub operation_id: String,
@@ -37,8 +37,7 @@ impl LocalRecord {
     /// before handing frozen bytes to storage. The domain owns only persistence.
     ///
     /// `operation_id` is the store operation that creates the organization, as it is on
-    /// disk: a UUIDv7 in lowercase text. The creation request's ULID maps to it through
-    /// `organization::operation_id::from_wire_ulid`.
+    /// disk and on the wire: a canonical lowercase UUIDv7.
     pub fn new(
         organization_id: String,
         operation_id: String,

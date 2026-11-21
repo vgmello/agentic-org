@@ -9,9 +9,7 @@ use std::time::Duration;
 use agentic_org_web::assets::BuildFiles;
 use agentic_org_web::body::BusinessBody;
 use agentic_org_web::path::RequestPath;
-use agentic_org_web::service::{
-    run_gateway, ApiBackend, ApiLimits, ApiReply, PreparedCall, WebConfig,
-};
+use agentic_org_web::service::{run_web, ApiBackend, ApiLimits, ApiReply, PreparedCall, WebConfig};
 use agentic_org_web::transport::{HttpLimits, ListenMode};
 use agentic_org_web::Hsts;
 use hyper::http::request::Parts;
@@ -22,7 +20,7 @@ use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
 const GUARD: Duration = Duration::from_secs(10);
-const OPERATION: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const OPERATION: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0";
 const CSP: &str =
     "default-src 'none'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'";
 
@@ -156,7 +154,7 @@ impl Running {
         let (ready, initialized) = mpsc::channel();
         let (done, completed) = mpsc::channel();
         let thread = thread::spawn(move || {
-            let result = run_gateway(
+            let result = run_web(
                 listener,
                 WebConfig {
                     mode,
@@ -430,7 +428,7 @@ fn invalid_api_limits_fail_before_application_initialization() {
         ListenOrigin::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     let files =
         BuildFiles::from_files([("index.html".into(), b"<script>0</script>".to_vec())]).unwrap();
-    let error = run_gateway::<UnavailableApi, std::future::Ready<()>>(
+    let error = run_web::<UnavailableApi, std::future::Ready<()>>(
         listener,
         WebConfig {
             mode: ListenMode::HttpLoopback,

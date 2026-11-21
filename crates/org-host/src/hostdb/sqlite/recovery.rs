@@ -405,7 +405,7 @@ impl HostDb {
             let Some(op) = op else {
                 break;
             };
-            if org_proto::ulid_time_ms(&op).is_none() {
+            if org_proto::uuid_v7_time_ms(&op).is_none() {
                 return Err(Error::Unsafe);
             }
             previous = op.clone();

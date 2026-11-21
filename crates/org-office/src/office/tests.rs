@@ -159,12 +159,12 @@ fn names(folder: &Path) -> Vec<String> {
 }
 
 fn creation_id() -> Id {
-    operation_id::from_wire_ulid(OPERATION).unwrap()
+    Id::parse(OPERATION).unwrap()
 }
 
 fn team_create(n: u64, team: &str, parent: &str) -> OrgCommand {
     OrgCommand::TeamCreate(TeamCreateParams {
-        command_id: format!("01HZY8M6V2Q3D4E5F{n:07}00"),
+        command_id: format!("019a0000-0000-7000-8000-{n:012x}"),
         team_id: team.into(),
         name: format!("Team {n}"),
         owner_team_id: Some(parent.into()),
@@ -501,7 +501,7 @@ fn the_intent_binds_the_request_the_roots_and_the_identity() {
         .close()
         .unwrap();
     let (new, mut binding) = testkit::request();
-    binding.operation_id = "01HZY8M6V2Q3D4E5F6G7H8J9K0".into();
+    binding.operation_id = "019a0000-0000-7000-8000-000000009999".into();
     let other = Office::provision_with(
         site.folder.clone(),
         &new,
@@ -630,7 +630,7 @@ fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_
         TeamSetLeadParams, TeamSetTitleParams,
     };
     const PERSON_A: &str = "019a0000-0000-7000-8000-0000000000a1";
-    let cmd = |n: u32| format!("01HZY8M6V2Q3D4E5F{n:07}00");
+    let cmd = |n: u32| format!("019a0000-0000-7000-8000-{n:012x}");
     let office = Office::for_test(TestOffice::default());
     // 1. Create two teams under TOP_TEAM.
     let created = office
@@ -1039,10 +1039,9 @@ fn a_second_opening_waits_for_the_lock_and_gives_up() {
     site.open(EngineChoice::Memory).unwrap().close().unwrap();
 }
 
-/// The creation's operation on disk is the UUIDv7 the request's ULID maps to, and a
-/// record that names the ULID itself is refused.
+/// The creation's operation on disk is the native UUIDv7, and a legacy ULID record is refused.
 #[test]
-fn the_creation_operation_on_disk_is_the_mapped_uuidv7() {
+fn the_creation_operation_on_disk_is_the_native_uuidv7() {
     let site = Site::new();
     let office = site.provision(EngineChoice::Memory).unwrap();
     let record = office.hq_creation_record().unwrap().unwrap();
@@ -1050,7 +1049,7 @@ fn the_creation_operation_on_disk_is_the_mapped_uuidv7() {
     assert!(org_proto::is_uuid_v7(&record.operation_id));
     let ulid = LocalRecord::new(
         identity().organization_id.to_string(),
-        OPERATION.into(),
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
         record.public_key,
         record.package.clone(),
         record.wrapped_ca_key().to_vec(),
@@ -1386,8 +1385,8 @@ fn a_loose_office_folder_is_tightened_by_creation() {
     assert_eq!(mode & 0o777, 0o700);
 }
 
-/// The office keeps the creation's command ID as the host sent it, at creation and after
-/// a reopening: the records hold only the store operation it maps to.
+/// The office keeps the creation's native UUIDv7 command ID at creation and after reopening,
+/// matching the on-disk record without lossy conversion.
 #[test]
 fn the_office_keeps_the_creations_command_id_as_sent() {
     let site = Site::new();
@@ -1396,7 +1395,7 @@ fn the_office_keeps_the_creations_command_id_as_sent() {
     office.close().unwrap();
     let office = site.open(EngineChoice::Memory).unwrap();
     assert_eq!(office.creation_command_id(), OPERATION);
-    assert_ne!(
+    assert_eq!(
         office.hq_creation_record().unwrap().unwrap().operation_id,
         OPERATION
     );

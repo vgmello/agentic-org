@@ -35,7 +35,7 @@ fn first(path: &Path, op: FirstLine) -> HostFirstLine {
             owner_member_id: OWNER.into(),
             hq_creation: org_office_launch::HqCreationV1 {
                 version: org_office_launch::HqCreationV1::VERSION,
-                operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+                operation_id: "019a9999-0000-7000-8000-000000000006".into(),
                 escrow_profile: 1,
                 bootstrap: Box::new(org_proto::selected_bootstrap::PreparedV1 {
                     plan: org_proto::selected_bootstrap::PlanV1 {

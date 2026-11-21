@@ -13,7 +13,7 @@
       "operation": "team.create",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/create",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -28,7 +28,7 @@
       "native": {
         "method": "team.create",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "team_id": "01M72N8MG00000000000000007",
           "name": "Platform",
           "owner_team_id": "01M72N8MG00000000000000008"
@@ -41,7 +41,7 @@
       "operation": "team.rename",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/rename",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -56,7 +56,7 @@
       "native": {
         "method": "team.rename",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "team_id": "01M72N8MG00000000000000007",
           "expected_version": 3,
           "name": "Infrastructure"
@@ -69,7 +69,7 @@
       "operation": "team.move",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/move",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -84,7 +84,7 @@
       "native": {
         "method": "team.move",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "team_id": "01M72N8MG00000000000000007",
           "expected_version": 3,
           "owner_team_id": "01M72N8MG00000000000000008"
@@ -97,7 +97,7 @@
       "operation": "team.set_lead",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/set-lead",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -112,7 +112,7 @@
       "native": {
         "method": "team.set_lead",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "team_id": "01M72N8MG00000000000000007",
           "expected_version": 3,
           "lead_member_id": "01M72N8MG00000000000000009"
@@ -125,7 +125,7 @@
       "operation": "team.delete",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/delete",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -139,7 +139,7 @@
       "native": {
         "method": "team.delete",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "team_id": "01M72N8MG00000000000000007",
           "expected_version": 3
         }
@@ -151,7 +151,7 @@
       "operation": "team.set_title",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/teams/set-title",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -166,7 +166,7 @@
       "native": {
         "method": "team.set_title",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "membership_id": "01M72N8MG0000000000000000A",
           "expected_version": 3,
           "title_in_team": "Technical lead"
@@ -179,7 +179,7 @@
       "operation": "member.move",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/move",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -196,7 +196,7 @@
       "native": {
         "method": "member.move",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "membership_id": "01M72N8MG0000000000000000A",
           "expected_version": 3,
           "new_membership_id": "01M72N8MG0000000000000000B",
@@ -211,7 +211,7 @@
       "operation": "member.add_person",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/add-person",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -228,7 +228,7 @@
       "native": {
         "method": "member.add_person",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "member_id": "01M72N8MG00000000000000009",
           "name": "Pat",
           "contact": "pat@example.test",
@@ -243,7 +243,7 @@
       "operation": "member.update_person",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/update-person",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -260,7 +260,7 @@
       "native": {
         "method": "member.update_person",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "member_id": "01M72N8MG00000000000000009",
           "expected_version": 3,
           "name": "Pat New",
@@ -274,7 +274,7 @@
       "operation": "member.remove",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/remove",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -288,7 +288,7 @@
       "native": {
         "method": "member.remove",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "member_id": "01M72N8MG00000000000000009",
           "expected_version": 3
         }
@@ -300,7 +300,7 @@
       "operation": "member.set_reports_to",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/set-reports-to",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -315,7 +315,7 @@
       "native": {
         "method": "member.set_reports_to",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "member_id": "01M72N8MG00000000000000009",
           "expected_version": 3,
           "reports_to_member_id": "01M72N8MG0000000000000000E"
@@ -328,7 +328,7 @@
       "operation": "project.add_team",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/projects/add-team",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -343,7 +343,7 @@
       "native": {
         "method": "project.add_team",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "project_team_id": "01M72N8MG0000000000000000D",
           "project_id": "01M72N8MG0000000000000000C",
           "team_id": "01M72N8MG00000000000000007"
@@ -356,7 +356,7 @@
       "operation": "project.remove_team",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/projects/remove-team",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -371,7 +371,7 @@
       "native": {
         "method": "project.remove_team",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "project_team_id": "01M72N8MG0000000000000000D",
           "expected_version": 3,
           "areas_to_team_id": "01M72N8MG0000000000000000F"
@@ -384,7 +384,7 @@
       "operation": "member.update_person",
       "path": "/api/v1/organizations/01M72N8MG00000000000000003/members/update-person",
       "envelope": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "scope": {
           "kind": "organization",
           "instance_id": "01M72N8MG00000000000000001",
@@ -400,7 +400,7 @@
       "native": {
         "method": "member.update_person",
         "params": {
-          "command_id": "01M72N8MG00000000000000006",
+          "command_id": "01a1c554-5200-7000-8000-000000000006",
           "member_id": "01M72N8MG00000000000000009",
           "expected_version": 3,
           "name": "Pat New",

@@ -91,7 +91,7 @@ fn verified_owner_dispatches_snapshot_who_operation_inbox_and_all_current_writes
         ("who", json!({})),
         (
             "operation.get",
-            json!({"kind":"org","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+            json!({"kind":"org","id":"0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0"}),
         ),
         ("inbox.list", json!({"state":"open"})),
     ] {

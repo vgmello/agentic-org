@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
+updated_date: '2026-11-21T03:50:00Z'
 labels:
   - backend
   - rust
@@ -42,3 +43,9 @@ Build the messaging family on org-store (DM, group DM, channel, per-employee rea
 - [ ] #3 Live subscribe and /events deliver org.changed, message.received (header only), member.presence_changed, and inbox.changed with restart/resume semantics.
 - [ ] #4 CHAT send/read/channel criteria and LNX-1 agent-os send/read pass and FEATURES rows are updated.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Prerequisite from TASK-15 (UUIDv7 wire cutover): org-proto::web::CommandEnvelope now emits canonical lowercase UUIDv7 for OperationKind::Msg (id), while legacy crates/org-mailbox/src/mailbox.rs still checks ulid_time_ms(&params.id). When wiring B6 messaging onto org-store, validate msg.send id via org_proto::uuid_v7_time_ms.
+<!-- SECTION:NOTES:END -->

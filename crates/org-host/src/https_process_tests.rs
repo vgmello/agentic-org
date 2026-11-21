@@ -341,7 +341,7 @@ fn a_real_host_serves_the_browser_over_tls_with_its_own_certificate_and_a_suppli
         3,
         &TlsSetParams {
             session,
-            operation_id: crate::ids::generate().unwrap(),
+            operation_id: crate::ids::uuid_v7().unwrap(),
             cert: cert.clone(),
             key: TlsPrivateKey::new(key).unwrap(),
         },

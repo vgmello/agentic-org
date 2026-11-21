@@ -18,7 +18,7 @@ CREATE TABLE login_lockout (
  last_failure_ms INTEGER NOT NULL, PRIMARY KEY (socket, login_key)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE op_journal (
- operation_id TEXT PRIMARY KEY CHECK (length(operation_id) = 26),
+ operation_id TEXT PRIMARY KEY CHECK (length(operation_id) = 36),
  kind TEXT NOT NULL,
  fingerprint BLOB NOT NULL CHECK (length(fingerprint) = 32),
  account TEXT NOT NULL,

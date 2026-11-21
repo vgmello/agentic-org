@@ -32,7 +32,7 @@ fn create() -> CreateLine {
         owner_member_id: OWNER.into(),
         hq_creation: HqCreationV1 {
             version: HqCreationV1::VERSION,
-            operation_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+            operation_id: "019a9999-0000-7000-8000-000000000006".into(),
             escrow_profile: 1,
             bootstrap: Box::new(PreparedV1 {
                 plan: PlanV1 {

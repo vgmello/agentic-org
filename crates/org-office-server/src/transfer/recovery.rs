@@ -1,5 +1,4 @@
 //! Public record source is intentionally separate from local CA/key APIs.
-use org_office::organization_family::operation_id::from_wire_ulid;
 use org_office_launch::recovery as wire;
 use sha2::{Digest, Sha256};
 use std::{
@@ -30,12 +29,9 @@ pub(super) fn serve(
         .hq_creation_public_record()
         .map_err(|_| wire::invalid())?
         .ok_or_else(wire::invalid)?;
-    // The records name the store operation the wire's ULID maps to; the wire keeps the
-    // ULID it was asked with (M7). The mapping drops the ULID's low 6 random bits, so the
-    // request must name the creation's own command ID, and its mapping the records'.
-    let mapped = from_wire_ulid(&request.operation_id).map_err(|_| wire::invalid())?;
-    if request.operation_id != office.creation_command_id()
-        || public.operation_id != mapped.as_str()
+    if !org_proto::is_uuid_v7(&request.operation_id)
+        || request.operation_id != office.creation_command_id()
+        || public.operation_id != request.operation_id
         || public.organization_id != request.organization_id
     {
         return Err(wire::invalid());
@@ -79,8 +75,8 @@ mod tests {
         Ok(record)
     }
 
-    /// The recovery-public read returns the HQ's escrow package, bound to the request as the
-    /// host made it (the wire's ULID), though the records name the mapped store operation.
+    /// The recovery-public read returns the HQ's escrow package, bound to the request's
+    /// canonical lowercase UUIDv7 operation ID.
     #[test]
     fn the_recovery_public_read_returns_the_escrow_bound_to_the_wire_request() {
         let world = World::new();
@@ -93,29 +89,22 @@ mod tests {
             std::fs::read(world.roots.durable.join("state/security/ca-escrow.v1.bin")).unwrap()
         );
         assert_eq!(record.package_sha256, wire::hex(&Sha256::digest(&package)));
-        // Another operation is not this HQ's creation. (The mapping keeps 74 of the ULID's 80
-        // random bits, so this one differs above the dropped low 6.)
-        assert!(ask(&office, "01ARZ3NDEKTSV4RRFFQ79G5FAW").is_err());
+        // Another UUIDv7 operation is not this HQ's creation.
+        assert!(ask(&office, "0190a5d2-7c3e-7a01-8b2c-3d4e5f607198").is_err());
     }
 
-    /// A ULID that differs from the creation's only in the low 6 random bits maps to the
-    /// same store operation, yet it is not the request that created this HQ: refused.
+    /// A UUIDv7 differing in even its final hex digit is a distinct operation and is refused.
     #[test]
-    fn a_ulid_differing_only_in_its_dropped_bits_is_refused() {
+    fn a_uuidv7_differing_in_any_bit_is_refused() {
         let world = World::new();
         let office = world.prepare(Some(key()), code()).unwrap();
         let operation = crate::hq_creation::tests::binding().operation_id;
         assert_eq!(office.creation_command_id(), operation);
-        // The last Crockford character carries the low 5 bits; the one before it, the 6th.
         let mut near = operation.clone();
         let last = near.pop().unwrap();
         near.push(if last == '0' { '1' } else { '0' });
         assert_ne!(near, operation);
-        assert_eq!(
-            from_wire_ulid(&near).unwrap(),
-            from_wire_ulid(&operation).unwrap(),
-            "the two ULIDs map to one store operation"
-        );
+        assert!(org_proto::is_uuid_v7(&near));
         assert!(ask(&office, &near).is_err());
         ask(&office, &operation).unwrap();
     }

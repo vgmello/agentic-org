@@ -171,8 +171,7 @@ impl Service {
         if !request.is::<TlsSet>() {
             return false;
         }
-        let (None, Some(authentication)) = (connection.gateway_listen(), &self.authentication)
-        else {
+        let (None, Some(authentication)) = (connection.web_listen(), &self.authentication) else {
             connection.send_response(not_authorized(request.id));
             return true;
         };
@@ -219,7 +218,7 @@ impl Service {
             connection.send_response(params_dont_fit(request.id));
             return;
         }
-        let Some(snapshot) = connection.gateway_listen() else {
+        let Some(snapshot) = connection.web_listen() else {
             connection.send_response(Response::error(
                 request.id,
                 ApiError::new(
@@ -376,7 +375,7 @@ impl Service {
         }
         true
     }
-    pub(crate) fn with_gateway_state(mut self, state: Arc<std::sync::Mutex<WebState>>) -> Self {
+    pub(crate) fn with_web_state(mut self, state: Arc<std::sync::Mutex<WebState>>) -> Self {
         self.gateway = state;
         self
     }
@@ -415,7 +414,7 @@ impl Service {
     /// connection's one ordered writer, after the record's delete.
     fn browser_op(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::browser::{BrowserOpenChannel, BrowserSessionGrant, InstanceView};
-        if !is_browser_op(request) || connection.gateway_listen().is_none() {
+        if !is_browser_op(request) || connection.web_listen().is_none() {
             return false;
         }
         #[cfg(test)]
@@ -761,7 +760,7 @@ fn web_reports_serving(request: &Request, connection: &Arc<Connection>) {
     use crate::service::listener::ServingReport;
     use org_host_control::ops::WebServing;
     let refused = |code, message| Response::error(request.id, ApiError::new(code, message));
-    if connection.gateway_listen().is_none() {
+    if connection.web_listen().is_none() {
         connection.send_response(refused(
             ErrorCode::NotAuthorized,
             "private gateway connection required",
@@ -867,13 +866,13 @@ impl Handler for Service {
         }
         if let Some(reply) = organizations::dispatch(
             &request,
-            connection.gateway_listen().is_some(),
+            connection.web_listen().is_some(),
             self.authentication.as_deref(),
             self.provisioning.as_ref(),
             &mut |name, data| connection.send_event(name, data),
         ) {
             #[cfg(test)]
-            if connection.gateway_listen().is_some() {
+            if connection.web_listen().is_some() {
                 self.organization_ops
                     .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             }
@@ -914,7 +913,7 @@ impl Handler for Service {
                 // The hello answer is queued under the same lock that adds the connection,
                 // so no event is written ahead of it.
                 if let (true, Some(provisioning)) = (
-                    connection.gateway_listen().is_some(),
+                    connection.web_listen().is_some(),
                     self.provisioning.as_ref(),
                 ) {
                     let subscriber: Arc<dyn crate::broadcast::Subscriber> = connection.clone();
@@ -1813,7 +1812,7 @@ pub(crate) mod tests {
             crate::web_tls::tests::pair_for(&["127.0.0.1"], now - 60, now + 30 * 86_400);
         let params = |session: SessionHandle| TlsSetParams {
             session,
-            operation_id: crate::ids::generate().unwrap(),
+            operation_id: crate::ids::uuid_v7().unwrap(),
             cert: cert.clone(),
             key: TlsPrivateKey::new(key.clone()).unwrap(),
         };

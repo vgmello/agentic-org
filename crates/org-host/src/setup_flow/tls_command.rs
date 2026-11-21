@@ -110,7 +110,7 @@ pub(crate) fn set(
     // return early.
     let key =
         TlsPrivateKey::new(checked.key().to_owned()).map_err(|_| "the TLS key cannot be sent")?;
-    let operation_id = crate::ids::generate().map_err(|_| "no operation ID could be generated")?;
+    let operation_id = crate::ids::uuid_v7().map_err(|_| "no operation ID could be generated")?;
     // Before a password is asked for: it is sent only to a host this command identified. A
     // host it may not send one to is refused in its own words; only a failure to reach the
     // service says that the service is not running.

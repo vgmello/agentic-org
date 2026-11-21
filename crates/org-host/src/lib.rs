@@ -906,7 +906,7 @@ impl Host {
             .with_provisioning(provisioning)
             .with_recovery(recovery)
             .with_web_tls(web_tls.clone())
-            .with_gateway_state(Arc::clone(&gateway_state)),
+            .with_web_state(Arc::clone(&gateway_state)),
         );
         let tls_renewal = match web_tls {
             Some(tls) => {

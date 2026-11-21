@@ -984,7 +984,7 @@ impl HostStore for MemoryHostStore {
                 return Err(Error::OperationReused);
             }
         } else {
-            let time = org_proto::ulid_time_ms(operation).ok_or(Error::InvalidId)? as i64;
+            let time = org_proto::uuid_v7_time_ms(operation).ok_or(Error::InvalidId)? as i64;
             if time < now.saturating_sub(29 * DAY) {
                 return Err(Error::Expired);
             }
@@ -1010,7 +1010,8 @@ impl HostStore for MemoryHostStore {
         {
             return Err(Error::Unsafe);
         }
-        let _time = org_proto::ulid_time_ms(&frozen.operation_id).ok_or(Error::InvalidId)? as i64;
+        let _time =
+            org_proto::uuid_v7_time_ms(&frozen.operation_id).ok_or(Error::InvalidId)? as i64;
         let mut s = self.inner.lock().map_err(|_| Error::Unsafe)?;
         if !s.is_live_admin(account.account_id()) {
             return Err(Error::NotAdministrator);
@@ -1282,7 +1283,7 @@ impl HostStore for MemoryHostStore {
             s.provisioning.keys().cloned().collect()
         };
         for op in ops {
-            if org_proto::ulid_time_ms(&op).is_none() {
+            if org_proto::uuid_v7_time_ms(&op).is_none() {
                 return Err(Error::Unsafe);
             }
             let (r, l) = {

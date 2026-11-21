@@ -78,7 +78,7 @@ impl Name {
             })
             || name
                 .strip_prefix("recovery.")
-                .is_some_and(org_office_launch::is_plain_id);
+                .is_some_and(org_proto::is_uuid_v7);
         valid
             .then(|| Self(name.to_owned()))
             .ok_or(Error::InvalidName)

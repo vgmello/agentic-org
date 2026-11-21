@@ -289,7 +289,7 @@ impl Writers {
         let a = &record.admission;
         let (durable, runtime) = self.data_roots(&a.identity.organization_id)?;
         if record.schema_version != SCHEMA_VERSION
-            || org_proto::ulid_time_ms(&record.operation_id).is_none()
+            || !org_proto::is_uuid_v7(&record.operation_id)
             || !a.check()
             || record.root != self.root
             || a.identity.instance_id != self.instance
@@ -398,8 +398,7 @@ impl Writers {
         let _gate = lock(&self.gate);
         self.root.verify()?;
         let (durable, runtime) = self.data_roots(binding.organization_id)?;
-        if org_proto::ulid_time_ms(operation).is_none() || !org_proto::is_uuid_v7(binding.office_id)
-        {
+        if !org_proto::is_uuid_v7(operation) || !org_proto::is_uuid_v7(binding.office_id) {
             return Err(refused());
         }
         if let Some(record) = self.load(binding.office_id)? {
@@ -677,7 +676,7 @@ impl TestCustody {
             fs::create_dir_all(home.join("offices").join(office)).unwrap();
             writers
                 .reserve(
-                    &crate::ids::generate().unwrap(),
+                    &crate::ids::uuid_v7().unwrap(),
                     &Binding {
                         organization_id: &organization,
                         office_id: office,

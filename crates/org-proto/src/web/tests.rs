@@ -212,7 +212,7 @@ fn typed_core_commands_and_cancellation_do_not_accept_another_operation_identity
     assert!(parse::<CommandEnvelope<Named>>(&invalid).is_err());
     // The envelope has three keys. Any other top-level key is refused, not ignored.
     let mut extra = request.clone();
-    extra["command_id"] = json!("01M72N8MG00000000000000006");
+    extra["command_id"] = json!("01a1c554-5200-7000-8000-000000000006");
     assert!(parse::<CommandEnvelope<Named>>(&extra).is_err());
     assert!(parse::<CommandEnvelope<Value>>(&extra).is_err());
 }
@@ -341,7 +341,7 @@ fn shared_session_shapes_keep_proof_out_of_reads_and_preserve_server_clock() {
         clock["expected_offset_ms"].as_u64().unwrap()
     );
     assert_eq!(
-        crate::ulid_time_ms(clock["operation_id"].as_str().unwrap()),
+        crate::uuid_v7_time_ms(clock["operation_id"].as_str().unwrap()),
         Some(server)
     );
     assert_eq!(vectors["clock_cases"].as_array().unwrap().len(), 2);
@@ -351,11 +351,11 @@ fn shared_session_shapes_keep_proof_out_of_reads_and_preserve_server_clock() {
         let offset = case["expected_offset_ms"].as_i64().unwrap();
         assert_eq!(local + offset, server);
         assert_eq!(
-            crate::ulid_time_ms(case["corrected_operation_id"].as_str().unwrap()),
+            crate::uuid_v7_time_ms(case["corrected_operation_id"].as_str().unwrap()),
             Some(server as u64)
         );
         assert_eq!(
-            crate::ulid_time_ms(case["raw_local_operation_id"].as_str().unwrap()),
+            crate::uuid_v7_time_ms(case["raw_local_operation_id"].as_str().unwrap()),
             Some(local as u64)
         );
         let refusal: WebError = parse(&case["raw_local_refusal"]).unwrap();

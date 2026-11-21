@@ -2,37 +2,30 @@
 
 use std::fs::File;
 use std::io::Read;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use org_command::KeySource;
-
-static FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Generates canonical lowercase RFC 9562 UUIDv7 strings.
 #[derive(Debug, Default)]
 pub struct UuidV7KeySource;
 
-fn random_bytes(out: &mut [u8; 10]) {
-    if let Ok(mut f) = File::open("/dev/urandom") {
-        if f.read_exact(out).is_ok() {
-            return;
-        }
-    }
-    let seq = FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed);
-    out[..8].copy_from_slice(&seq.to_be_bytes());
-    out[8] = 0xa5;
-    out[9] = 0x5a;
-}
-
-/// Formats a canonical lowercase RFC 9562 UUIDv7 string.
-pub fn new_uuid_v7() -> String {
+/// Formats a canonical lowercase RFC 9562 UUIDv7 string, returning `None` if the
+/// system clock or OS entropy source cannot produce a valid key (fail-closed).
+pub fn try_new_uuid_v7() -> Option<String> {
     let ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+        .ok()?
+        .as_millis();
+    if ms > 0xffff_ffff_ffff {
+        return None;
+    }
+    let ms = ms as u64;
     let mut rand = [0u8; 10];
-    random_bytes(&mut rand);
+    File::open("/dev/urandom")
+        .ok()?
+        .read_exact(&mut rand)
+        .ok()?;
     let mut bytes = [0u8; 16];
     bytes[0] = ((ms >> 40) & 0xff) as u8;
     bytes[1] = ((ms >> 32) & 0xff) as u8;
@@ -44,7 +37,7 @@ pub fn new_uuid_v7() -> String {
     bytes[7] = rand[1];
     bytes[8] = 0x80 | (rand[2] & 0x3f);
     bytes[9..16].copy_from_slice(&rand[3..10]);
-    format!(
+    Some(format!(
         "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
         bytes[0],
         bytes[1],
@@ -62,12 +55,13 @@ pub fn new_uuid_v7() -> String {
         bytes[13],
         bytes[14],
         bytes[15],
-    )
+    ))
 }
 
 impl KeySource for UuidV7KeySource {
     fn new_key(&mut self) -> String {
-        new_uuid_v7()
+        // Returning an empty string causes `org-command` to fail closed with `ErrorCode::Unavailable`.
+        try_new_uuid_v7().unwrap_or_default()
     }
 }
 

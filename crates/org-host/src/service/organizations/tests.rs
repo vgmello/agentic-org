@@ -343,7 +343,7 @@ fn plan(name: &str, slug: &str) -> PlanV1 {
     }
 }
 fn op() -> String {
-    crate::ids::generate().unwrap()
+    crate::ids::uuid_v7().unwrap()
 }
 fn code(result: Result<impl std::fmt::Debug, ApiError>) -> ErrorCode {
     result.expect_err("a refusal").code

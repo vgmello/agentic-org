@@ -100,11 +100,11 @@ fn operation_lookup_refuses_agents_and_anonymous_without_calling_owner_port_in_b
                         Some(ErrorCode::InvalidRequest),
                     ),
                     (
-                        json!({"kind":"work","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+                        json!({"kind":"work","id":"0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0"}),
                         Some(ErrorCode::Unavailable),
                     ),
                     (
-                        json!({"kind":"org","id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}),
+                        json!({"kind":"org","id":"0190a5d2-7c3e-7a01-8b2c-3d4e5f6071e0"}),
                         None,
                     ),
                 ] {

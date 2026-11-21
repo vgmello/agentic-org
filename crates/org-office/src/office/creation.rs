@@ -43,7 +43,7 @@ use crate::{
     },
     organization::{
         features::{CreateOrganization, Creator},
-        operation_id, records,
+        records,
     },
     private_fs::{private_dir, tighten_dir},
     store::open::{open_store, CreateOrganizationOp, OfficeStanding, OfficeStore},
@@ -56,8 +56,8 @@ const TEMPORARY: &str = ".store-tmp-";
 const CREATION_ENTRIES: [&str; 2] = [intent::FILE, office_file::FILE_NAME];
 
 /// The request, checked as a whole: the binding's bootstrap names this office and
-/// organization, its creator is the owner, every ID is a UUIDv7 but the operation, which
-/// is the wire's ULID, and the custody is this office's.
+/// organization, its creator is the owner, every ID (including the operation) is a
+/// canonical lowercase UUIDv7, and the custody is this office's.
 fn intent_of(
     new: &NewOffice,
     binding: &Binding,
@@ -72,7 +72,7 @@ fn intent_of(
     let ok = prepared.valid()
         && prepared.creator.employee_id == binding.owner_member_id
         && uuid(&binding.owner_member_id)
-        && operation_id::from_wire_ulid(&binding.operation_id).is_ok()
+        && uuid(&binding.operation_id)
         && new.role == OfficeRole::Hq
         && uuid(&new.office_id)
         && uuid(&new.org_id)
@@ -198,7 +198,7 @@ impl Office {
         if office_file::read(&folder)?.is_some_and(|done| done != info) {
             return Err(recovery());
         }
-        let creation = operation_id::from_wire_ulid(&intent.operation).map_err(|_| recovery())?;
+        let creation = Id::parse(&intent.operation).map_err(|_| recovery())?;
         let creation_command = intent.operation.clone();
         let owner = Id::parse(&intent.owner).map_err(|_| recovery())?;
 

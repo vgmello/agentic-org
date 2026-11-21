@@ -4,7 +4,7 @@
     {
       "name": "durable acceptance is pending",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "accepted"
       },
       "authenticated": true,
@@ -13,7 +13,7 @@
         "variant": "accepted",
         "http_status": 202,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "accepted"
         },
         "final": false
@@ -22,7 +22,7 @@
     {
       "name": "completed carries the committed result",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "completed",
         "result": {}
       },
@@ -32,7 +32,7 @@
         "variant": "completed",
         "http_status": 200,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "completed",
           "result": {}
         },
@@ -42,7 +42,7 @@
     {
       "name": "confirmed refusal: conflict",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "conflict",
@@ -55,7 +55,7 @@
         "variant": "rejected",
         "http_status": 409,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "conflict",
@@ -68,7 +68,7 @@
     {
       "name": "confirmed refusal: operation_reused",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "operation_reused",
@@ -81,7 +81,7 @@
         "variant": "rejected",
         "http_status": 409,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "operation_reused",
@@ -94,7 +94,7 @@
     {
       "name": "confirmed refusal: snapshot_required",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "snapshot_required",
@@ -107,7 +107,7 @@
         "variant": "rejected",
         "http_status": 409,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "snapshot_required",
@@ -120,7 +120,7 @@
     {
       "name": "confirmed refusal: clock_skew",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "clock_skew",
@@ -133,7 +133,7 @@
         "variant": "rejected",
         "http_status": 400,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "clock_skew",
@@ -146,7 +146,7 @@
     {
       "name": "confirmed refusal: unknown_recipient",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "unknown_recipient",
@@ -159,7 +159,7 @@
         "variant": "rejected",
         "http_status": 400,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "unknown_recipient",
@@ -172,7 +172,7 @@
     {
       "name": "confirmed refusal: expired",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "expired",
@@ -185,7 +185,7 @@
         "variant": "rejected",
         "http_status": 410,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "expired",
@@ -198,7 +198,7 @@
     {
       "name": "confirmed refusal: unsupported_version",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "unsupported_version",
@@ -211,7 +211,7 @@
         "variant": "rejected",
         "http_status": 426,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "unsupported_version",
@@ -224,7 +224,7 @@
     {
       "name": "confirmed refusal: too_large",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "too_large",
@@ -237,7 +237,7 @@
         "variant": "rejected",
         "http_status": 413,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "too_large",
@@ -250,7 +250,7 @@
     {
       "name": "confirmed refusal: unavailable",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "unavailable",
@@ -263,7 +263,7 @@
         "variant": "rejected",
         "http_status": 503,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "unavailable",
@@ -276,7 +276,7 @@
     {
       "name": "confirmed refusal: not_ready",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "not_ready",
@@ -289,7 +289,7 @@
         "variant": "rejected",
         "http_status": 503,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "not_ready",
@@ -302,7 +302,7 @@
     {
       "name": "confirmed refusal: storage_error",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "storage_error",
@@ -315,7 +315,7 @@
         "variant": "rejected",
         "http_status": 503,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "storage_error",
@@ -328,7 +328,7 @@
     {
       "name": "confirmed refusal: timeout",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "timeout",
@@ -341,7 +341,7 @@
         "variant": "rejected",
         "http_status": 503,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "timeout",
@@ -354,7 +354,7 @@
     {
       "name": "rate limit is pre-dispatch with retry delay",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "rate_limited",
@@ -368,7 +368,7 @@
         "variant": "rejected",
         "http_status": 429,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "rate_limited",
@@ -382,7 +382,7 @@
     {
       "name": "missing proof or cookie-only refusal",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "not_authorized",
@@ -396,7 +396,7 @@
         "variant": "rejected",
         "http_status": 401,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "not_authorized",
@@ -410,7 +410,7 @@
     {
       "name": "visible resource write denied",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "not_authorized",
@@ -423,7 +423,7 @@
         "variant": "rejected",
         "http_status": 403,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "not_authorized",
@@ -436,7 +436,7 @@
     {
       "name": "possible dispatch timeout stays unknown",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "unknown"
       },
       "authenticated": true,
@@ -445,7 +445,7 @@
         "variant": "unknown",
         "http_status": 504,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "unknown"
         },
         "final": false
@@ -454,7 +454,7 @@
     {
       "name": "unknown domain code stays unresolved",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "unknown",
@@ -467,7 +467,7 @@
         "variant": "unknown",
         "http_status": 504,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "unknown"
         },
         "final": false
@@ -476,7 +476,7 @@
     {
       "name": "unrecognized refusal code stays rejected and final",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "future_code",
@@ -489,7 +489,7 @@
         "variant": "rejected",
         "http_status": null,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "future_code",
@@ -502,7 +502,7 @@
     {
       "name": "future outcome is explicitly unsupported",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "future_outcome",
         "result": {
           "future": true
@@ -514,7 +514,7 @@
         "variant": "unsupported",
         "http_status": null,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "unsupported"
         },
         "final": true
@@ -523,7 +523,7 @@
     {
       "name": "accepted cannot carry result",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "accepted",
         "result": {}
       },
@@ -535,7 +535,7 @@
     {
       "name": "accepted cannot carry even null error",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "accepted",
         "error": null
       },
@@ -547,7 +547,7 @@
     {
       "name": "completed needs result",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "completed"
       },
       "authenticated": true,
@@ -558,7 +558,7 @@
     {
       "name": "completed cannot carry both payloads",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "completed",
         "result": {},
         "error": null
@@ -571,7 +571,7 @@
     {
       "name": "completed result must be object",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "completed",
         "result": []
       },
@@ -583,7 +583,7 @@
     {
       "name": "completed null is no object",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "completed",
         "result": null
       },
@@ -595,7 +595,7 @@
     {
       "name": "rejected needs error",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected"
       },
       "authenticated": true,
@@ -606,7 +606,7 @@
     {
       "name": "rejected error must be object",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": []
       },
@@ -618,7 +618,7 @@
     {
       "name": "unknown has no success payload",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "unknown",
         "result": {}
       },
@@ -660,7 +660,7 @@
     {
       "name": "rate limit needs a retry delay",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "rate_limited",
@@ -678,7 +678,7 @@
         "message": "Do not forward binding detail."
       },
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "unavailable",
@@ -691,7 +691,7 @@
         "variant": "rejected",
         "http_status": 503,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "unavailable",
@@ -710,7 +710,7 @@
         "rule": "too_short"
       },
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "invalid_request",
@@ -725,7 +725,7 @@
         "variant": "rejected",
         "http_status": 400,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "invalid_request",
@@ -745,7 +745,7 @@
         "retry_after_ms": 30000
       },
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "rate_limited",
@@ -759,7 +759,7 @@
         "variant": "rejected",
         "http_status": 429,
         "normalized": {
-          "operation_id": "01M72N8MG00000000000000006",
+          "operation_id": "01a1c554-5200-7000-8000-000000000006",
           "outcome": "rejected",
           "error": {
             "code": "rate_limited",
@@ -773,7 +773,7 @@
     {
       "name": "field without rule is invalid",
       "wire": {
-        "operation_id": "01M72N8MG00000000000000006",
+        "operation_id": "01a1c554-5200-7000-8000-000000000006",
         "outcome": "rejected",
         "error": {
           "code": "invalid_request",

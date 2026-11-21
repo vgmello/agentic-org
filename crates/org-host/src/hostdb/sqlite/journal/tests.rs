@@ -17,13 +17,20 @@ pub(super) fn after_begin() {
 
 const NOW: i64 = 1_800_000_000_000;
 fn id(at: i64, sequence: u64) -> String {
-    let mut n = ((at as u128) << 80) | u128::from(sequence);
-    let mut out = [b'0'; 26];
-    for c in out.iter_mut().rev() {
-        *c = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ"[(n & 31) as usize];
-        n >>= 5;
-    }
-    String::from_utf8(out.to_vec()).unwrap()
+    let ms = u64::try_from(at).unwrap();
+    let rand_a = ((sequence >> 62) & 0x0fff) as u16;
+    let rand_b = sequence & ((1u64 << 62) - 1);
+    let hi = (ms << 16) | (0x7 << 12) | u64::from(rand_a);
+    let lo = (0b10u64 << 62) | rand_b;
+    let hex = format!("{hi:016x}{lo:016x}");
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
 }
 fn attempt(id: &str) -> Attempt<'_> {
     Attempt {
@@ -224,9 +231,10 @@ fn unknown_id_format_age_and_skew_boundaries_leave_no_row() {
     }
     for bad in [
         "",
-        "01aaaaaaaaaaaaaaaaaaaaaaaa",
-        "8ZZZZZZZZZZZZZZZZZZZZZZZZZ",
-        "01IIIIIIIIIIIIIIIIIIIIIIII",
+        "01M72N8MG00000000000000006",
+        "0190A5D2-7C3E-7A01-8B2C-3D4E5F6071E0",
+        "0190a5d2-7c3e-4a01-8b2c-3d4e5f6071e0",
+        "0190a5d2-7c3e-7a01-cb2c-3d4e5f6071e0",
     ] {
         assert!(matches!(
             db.lookup(&attempt(bad), NOW),

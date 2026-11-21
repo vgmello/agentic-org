@@ -9,7 +9,7 @@ use crate::{
 };
 use org_host_control::{
     listen::{ListenConfig, ListenMode},
-    web::{WebFd, WebFirstLine, WebHandoff, WebReadyForSecrets, GATEWAY_HANDOFF_FDS},
+    web::{WebFd, WebFirstLine, WebHandoff, WebReadyForSecrets, WEB_HANDOFF_FDS},
     WebState,
 };
 use org_platform_host::admission::{Admission, Child, ChildEnv, ImageRefusal, SpawnRefused};
@@ -552,7 +552,7 @@ pub(crate) fn admission<E>(
     team_id: Option<&str>,
     release: Option<SelectedRelease<E>>,
 ) -> (ServerCheck, Option<org_host_control::web::WebRelease>) {
-    let check = ServerCheck::gateway_for_build(debug, team_id)
+    let check = ServerCheck::web_for_build(debug, team_id)
         .unwrap_or(ServerCheck::WebRefused("malformed app team id"));
     match release {
         None => (check, None),
@@ -1254,14 +1254,14 @@ fn transfer_pair() -> io::Result<(UnixDatagram, UnixDatagram)> {
 }
 
 /// One [`WebHandoff`] line, then one `sendmsg` with the host.sock marker and
-/// exactly [`GATEWAY_HANDOFF_FDS`] in order: the transfer end, then the listener.
+/// exactly [`WEB_HANDOFF_FDS`] in order: the transfer end, then the listener.
 fn send_handoff(
     stream: &mut UnixStream,
     child: &UnixDatagram,
     listener: &TcpListener,
     until: Instant,
 ) -> io::Result<()> {
-    let fds = GATEWAY_HANDOFF_FDS.map(|fd| match fd {
+    let fds = WEB_HANDOFF_FDS.map(|fd| match fd {
         WebFd::Transfer => child.as_fd(),
         WebFd::Listener => listener.as_fd(),
     });
