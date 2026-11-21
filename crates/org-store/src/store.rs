@@ -318,6 +318,9 @@ pub struct Status {
     /// The ordinal of the flushed head the host last confirmed.
     pub confirmed: u64,
     pub materialized: u64,
+    /// Non-fatal persistent engine upkeep warning (for example repeated SQLite WAL checkpoint
+    /// failures), cleared once upkeep succeeds again.
+    pub upkeep_warning: Option<String>,
 }
 
 pub struct Store<E: Engine> {
@@ -563,14 +566,14 @@ impl<E: Engine> Store<E> {
     }
 
     pub fn status(&self) -> Status {
-        status(&self.core.flow())
+        status(&self.core.flow(), self.core.engine.as_ref())
     }
 
     /// Waits until the store's status satisfies `ready`.
     pub fn wait_for(&self, ready: impl Fn(&Status) -> bool) -> Status {
         let mut flow = self.core.flow();
         loop {
-            let now = status(&flow);
+            let now = status(&flow, self.core.engine.as_ref());
             if ready(&now) {
                 return now;
             }
@@ -622,7 +625,7 @@ impl<E: Engine> Store<E> {
     }
 }
 
-fn status(flow: &Flow) -> Status {
+fn status<E: Engine>(flow: &Flow, engine: &E) -> Status {
     Status {
         stopped: flow.fatal.clone(),
         holding_back: flow.holding_back,
@@ -631,6 +634,7 @@ fn status(flow: &Flow) -> Status {
         flushed: flow.flushed,
         confirmed: flow.confirmed.as_ref().map_or(0, |head| head.ordinal),
         materialized: flow.materialized,
+        upkeep_warning: engine.upkeep_error().map(|error| error.to_string()),
     }
 }
 

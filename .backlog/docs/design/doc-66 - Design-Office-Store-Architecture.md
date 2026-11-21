@@ -3,7 +3,7 @@ id: doc-66
 title: 'Design: Office Store Architecture'
 type: guide
 created_date: '2026-11-21T00:48:00Z'
-updated_date: '2026-11-21T00:48:00Z'
+updated_date: '2026-11-21T18:54:00Z'
 tags:
   - design
   - storage
@@ -1040,3 +1040,17 @@ Each needs a decision during B1; the recommendation is what this design assumes.
    "not clean". It holds the journal incarnation and head ordinal; a marker that is torn,
    in another form or for another incarnation or head counts as not clean.
    `Office::stopped_cleanly` reports it for B4.
+
+## B1c measurements, checkpoint health, and receipt retention (`TASK-33`)
+
+Measured on Apple M2 (`macos/aarch64`, macOS 27.2.1, `cargo run --release -p org-office --features testkit --example store_latency -- --iterations 500 --durable-iterations 40 --check-regression`, `flush_interval = 50 ms`, `EngineChoice::Sqlite`):
+
+| Operation | Samples | p50 (ms) | p95 (ms) | p99 (ms) | max (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Snapshot read (`DirectorySnapshot`) | 500 | 0.077 | 0.080 | 0.085 | 2.840 |
+| Committed write (`Ack::Committed`) | 500 | 0.128 | 3.666 | 4.417 | 4.615 |
+| Durable org write (`CreateTeamOp`) | 40 | 65.114 | 69.773 | 985.096 | 1560.734 |
+
+- **Flush interval fixed at `50 ms`:** committed-class writes achieve `0.128 ms` median (~500x faster than full `F_FULLFSYNC` durable writes at `65.114 ms`), and continuous committed load passes the `ACK-5` bounded flush-interval check while writes keep arriving. CI runs `store_latency --check-regression` on both `macos-15` and `ubuntu-26.04` (Linux CI numbers are recorded in the CI step summary on push to `v1`). Note: `ADR-0014` (`decision-14`) stays unmodified directly because Backlog.md decision bodies are CLI-managed; reference numbers are tracked here and in `FC-160`/`TASK-33`.
+- **SQLite WAL checkpoint failure surfacing:** `SqliteEngine` tracks consecutive failed or reader-blocked (`busy != 0 && checkpointed < log`) passive WAL checkpoints under a single `CheckpointHealth` mutex; reaching 3 consecutive failures logs and surfaces a non-fatal `Engine::upkeep_error()` via `Status::upkeep_warning`, clearing automatically on the next successful checkpoint.
+- **Receipt retention and pruning bounds:** `org_store::ReceiptRetentionPolicy` defines the default retention bounds (`DEFAULT_RECEIPT_RETENTION_DAYS = 30`, `DEFAULT_MAX_RETAINED_RECEIPTS = 50_000`) and deterministic oldest-first selector `prunable_ids`. Automated receipt-file pruning execution remains deferred (`ReceiptProjector::apply` still refuses receipt deletion until compaction wiring lands).

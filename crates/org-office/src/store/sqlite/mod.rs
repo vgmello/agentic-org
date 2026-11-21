@@ -239,6 +239,16 @@ struct Readers {
     ended: Condvar,
 }
 
+/// Consecutive failed or reader-blocked background WAL checkpoints before surfacing a persistent
+/// upkeep warning through [`Engine::upkeep_error`] (`TASK-33` / B1c).
+const CHECKPOINT_FAILURE_THRESHOLD: u32 = 3;
+
+#[derive(Default)]
+struct CheckpointHealth {
+    consecutive_failures: u32,
+    last_error: Option<String>,
+}
+
 /// The projection in one SQLite file.
 pub(crate) struct SqliteEngine {
     path: PathBuf,
@@ -250,6 +260,8 @@ pub(crate) struct SqliteEngine {
     /// The connection [`SqliteEngine::checkpoint`] uses: its own, so a checkpoint never
     /// waits for, or holds, the writer's (plan revision 2, F12).
     checkpointer: Mutex<Option<Connection>>,
+    /// Atomic consecutive checkpoint failure/block count paired with its latest diagnostic.
+    checkpoint_health: Mutex<CheckpointHealth>,
 }
 
 /// The writer's open transaction. Dropped without `commit`, it rolls back.
@@ -301,6 +313,7 @@ impl SqliteEngine {
             writer: Arc::new(Mutex::new(Some(writer))),
             readers: Arc::default(),
             checkpointer: Mutex::new(None),
+            checkpoint_health: Mutex::new(CheckpointHealth::default()),
         })
     }
 
@@ -330,6 +343,20 @@ impl SqliteEngine {
     /// without waiting for any of them. For the flusher, after it has materialized files,
     /// and for the orderly close.
     pub fn checkpoint(&self) -> Result<(), EngineError> {
+        match self.run_passive_checkpoint() {
+            Ok(_) => {
+                self.record_checkpoint_ok();
+                Ok(())
+            }
+            Err(error) => {
+                self.record_checkpoint_failure(error.message.clone());
+                Err(error)
+            }
+        }
+    }
+
+    /// Runs `PRAGMA wal_checkpoint(PASSIVE)` and returns `(busy, log_frames, checkpointed_frames)`.
+    fn run_passive_checkpoint(&self) -> Result<(i64, i64, i64), EngineError> {
         let mut slot = lock(&self.checkpointer);
         let db = match slot.take() {
             Some(db) => db,
@@ -340,9 +367,33 @@ impl SqliteEngine {
                 db
             }
         };
-        let done = db.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+        let done = db.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        });
         *slot = Some(db);
         done.map_err(|error| refused("checkpointing", error))
+    }
+
+    fn record_checkpoint_ok(&self) {
+        let mut health = lock(&self.checkpoint_health);
+        health.consecutive_failures = 0;
+        health.last_error = None;
+    }
+
+    fn record_checkpoint_failure(&self, detail: String) -> u32 {
+        let mut health = lock(&self.checkpoint_health);
+        health.consecutive_failures = health.consecutive_failures.saturating_add(1);
+        health.last_error = Some(detail);
+        health.consecutive_failures
+    }
+
+    #[cfg(test)]
+    pub(crate) fn checkpoint_failures(&self) -> u32 {
+        lock(&self.checkpoint_health).consecutive_failures
     }
 
     fn transaction(&self, db: Connection, home: Home) -> Result<SqliteTx, EngineError> {
@@ -483,10 +534,45 @@ impl Engine for SqliteEngine {
     /// Folds the log into the file after every round of the flusher, so the log does not
     /// grow for as long as the store runs: once it is all folded in and no read is on
     /// it, the writer's next transaction starts it from its beginning. A long read only
-    /// delays that. A checkpoint that fails leaves the log for the next round; the
-    /// orderly close reports its own.
+    /// delays that. Repeated checkpoint failures or reader-blocked WAL folding
+    /// (`busy != 0 || (log > 0 && checkpointed < log)`) are logged and surfaced via
+    /// [`Engine::upkeep_error`] rather than silently dropped (`TASK-33` / B1c).
     fn after_round(&self) {
-        let _ = self.checkpoint();
+        let failure = match self.run_passive_checkpoint() {
+            Ok((busy, log, checkpointed)) if busy != 0 || (log > 0 && checkpointed < log) => {
+                Some(format!(
+                    "WAL checkpoint incomplete (busy={busy}, {checkpointed}/{log} frames folded)"
+                ))
+            }
+            Ok(_) => {
+                self.record_checkpoint_ok();
+                None
+            }
+            Err(error) => Some(error.message),
+        };
+        if let Some(detail) = failure {
+            let count = self.record_checkpoint_failure(detail.clone());
+            if count == 1 || count == CHECKPOINT_FAILURE_THRESHOLD || count.is_multiple_of(10) {
+                eprintln!(
+                    "agentic-org-office: sqlite WAL checkpoint warning ({count} consecutive): {detail}"
+                );
+            }
+        }
+    }
+
+    fn upkeep_error(&self) -> Option<EngineError> {
+        let health = lock(&self.checkpoint_health);
+        if health.consecutive_failures < CHECKPOINT_FAILURE_THRESHOLD {
+            return None;
+        }
+        let detail = health
+            .last_error
+            .as_deref()
+            .unwrap_or("unknown checkpoint error");
+        Some(EngineError::new(format!(
+            "sqlite WAL checkpoint failed {} consecutive times: {detail}",
+            health.consecutive_failures
+        )))
     }
 
     fn replace(

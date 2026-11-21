@@ -457,3 +457,41 @@ fn a_projection_that_cannot_be_opened_is_an_error_and_is_not_deleted() {
     );
     assert_eq!(sources(&engine), 1);
 }
+
+#[test]
+fn persistent_checkpoint_failures_surface_upkeep_error_and_clear_on_recovery() {
+    let (path, _dir) = place();
+    let engine = SqliteEngine::open(&path).unwrap();
+    commit(&engine, 1);
+    engine.after_round();
+    assert_eq!(engine.checkpoint_failures(), 0);
+    assert!(engine.upkeep_error().is_none());
+
+    // Hold a real SQLite read snapshot while committing new WAL frames across 3 flusher rounds:
+    // `PRAGMA wal_checkpoint(PASSIVE)` genuinely reports `busy=1, checkpointed < log`.
+    let held_reader = engine.snapshot().unwrap();
+    commit(&engine, 2);
+    engine.after_round();
+    assert_eq!(engine.checkpoint_failures(), 1);
+    assert!(engine.upkeep_error().is_none());
+
+    commit(&engine, 3);
+    engine.after_round();
+    assert_eq!(engine.checkpoint_failures(), 2);
+    assert!(engine.upkeep_error().is_none());
+
+    commit(&engine, 4);
+    engine.after_round();
+    assert_eq!(engine.checkpoint_failures(), 3);
+    let warning = engine
+        .upkeep_error()
+        .expect("3 consecutive blocked WAL checkpoints must surface upkeep_error");
+    assert!(warning.message.contains("3 consecutive"));
+    assert!(warning.message.contains("WAL checkpoint incomplete"));
+
+    // Dropping the long reader lets the next real checkpoint fold the WAL and clear upkeep_error.
+    drop(held_reader);
+    engine.after_round();
+    assert_eq!(engine.checkpoint_failures(), 0);
+    assert!(engine.upkeep_error().is_none());
+}

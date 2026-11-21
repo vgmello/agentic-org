@@ -14,6 +14,59 @@ use crate::{
 pub const RECEIPTS: &str = "recovery/commands";
 const FORMAT: &str = "command-receipt/1";
 
+/// Default receipt retention window: 30 days (`TASK-33` / B1c).
+/// Receipts within this window are retained for idempotent retry replay unless the hard count cap
+/// is exceeded.
+pub const DEFAULT_RECEIPT_RETENTION_DAYS: u64 = 30;
+/// Default hard upper bound on retained command receipts per office (`TASK-33` / B1c).
+pub const DEFAULT_MAX_RETAINED_RECEIPTS: usize = 50_000;
+
+/// Retention and pruning bounds for command receipts (`recovery/commands/<operation-id>.json`).
+///
+/// Pruning rules:
+/// 1. Any receipt older than `max_age_ms` relative to `now` is eligible for pruning.
+/// 2. If more than `max_entries` receipts remain, the oldest receipts beyond `max_entries`
+///    (ordered by `(at, id)`) are also selected for pruning.
+/// 3. Receipts within both bounds are always preserved so client retries receive the original reply.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ReceiptRetentionPolicy {
+    pub max_age_ms: u64,
+    pub max_entries: usize,
+}
+
+impl Default for ReceiptRetentionPolicy {
+    fn default() -> Self {
+        Self {
+            max_age_ms: DEFAULT_RECEIPT_RETENTION_DAYS * 24 * 60 * 60 * 1_000,
+            max_entries: DEFAULT_MAX_RETAINED_RECEIPTS,
+        }
+    }
+}
+
+impl ReceiptRetentionPolicy {
+    /// Returns the operation IDs eligible for pruning at `now`, ordered oldest-first.
+    pub fn prunable_ids(&self, receipts: &[(&Id, Timestamp)], now: Timestamp) -> Vec<Id> {
+        let cutoff = now.0.saturating_sub(self.max_age_ms);
+        let mut expired = Vec::new();
+        let mut active = Vec::new();
+        for &(id, at) in receipts {
+            if at.0 < cutoff {
+                expired.push((at.0, id.clone()));
+            } else {
+                active.push((at.0, id.clone()));
+            }
+        }
+        expired.sort();
+        active.sort();
+        let mut prunable: Vec<Id> = expired.into_iter().map(|(_, id)| id).collect();
+        if active.len() > self.max_entries {
+            let excess = active.len() - self.max_entries;
+            prunable.extend(active.into_iter().take(excess).map(|(_, id)| id));
+        }
+        prunable
+    }
+}
+
 pub fn receipt_path(id: &Id) -> DurablePath {
     DurablePath::parse(&format!("{RECEIPTS}/{id}.json")).expect("an ID is one safe component")
 }
@@ -226,5 +279,70 @@ mod tests {
             let path = DurablePath::parse(path).unwrap();
             assert_eq!(ReceiptProjector::owns_path(&path), owned, "{path}");
         }
+    }
+
+    #[test]
+    fn receipt_retention_policy_prunes_expired_and_excess_entries_oldest_first() {
+        let policy = ReceiptRetentionPolicy {
+            max_age_ms: 1_000,
+            max_entries: 2,
+        };
+        let now = Timestamp(10_000);
+        let r_old = id(1);
+        let r_keep_1 = id(2);
+        let r_keep_2 = id(3);
+        let r_keep_3 = id(4);
+        let entries = [
+            (&r_old, Timestamp(8_500)),    // expired (< 9_000)
+            (&r_keep_1, Timestamp(9_100)), // active, oldest beyond max_entries=2
+            (&r_keep_2, Timestamp(9_500)), // retained
+            (&r_keep_3, Timestamp(9_900)), // retained
+        ];
+        assert_eq!(policy.prunable_ids(&entries, now), vec![r_old, r_keep_1]);
+
+        let default_policy = ReceiptRetentionPolicy::default();
+        assert_eq!(default_policy.max_entries, DEFAULT_MAX_RETAINED_RECEIPTS);
+        assert!(default_policy.max_age_ms >= 30 * 24 * 3_600 * 1_000);
+
+        // Boundary cases: exact cutoff kept unless over cap, underflow safe, unsorted + ties, cap=0.
+        let r_at_cutoff = id(10);
+        let r_tie_b = id(12);
+        let r_tie_a = id(11);
+        let unsorted = [
+            (&r_tie_b, Timestamp(9_500)),
+            (&r_at_cutoff, Timestamp(9_000)), // exact cutoff (10_000 - 1_000): active, not expired
+            (&r_tie_a, Timestamp(9_500)),
+        ];
+        // max_entries=2: keeps r_tie_a & r_tie_b, prunes oldest active r_at_cutoff.
+        assert_eq!(
+            policy.prunable_ids(&unsorted, now),
+            vec![r_at_cutoff.clone()]
+        );
+        // max_entries=1: keeps r_tie_b (newest by (at, id)), prunes r_at_cutoff then r_tie_a.
+        let cap1 = ReceiptRetentionPolicy {
+            max_age_ms: 1_000,
+            max_entries: 1,
+        };
+        assert_eq!(
+            cap1.prunable_ids(&unsorted, now),
+            vec![r_at_cutoff.clone(), r_tie_a.clone()]
+        );
+        // max_entries=0: prunes all in (at, id) order.
+        let cap0 = ReceiptRetentionPolicy {
+            max_age_ms: 1_000,
+            max_entries: 0,
+        };
+        assert_eq!(
+            cap0.prunable_ids(&unsorted, now),
+            vec![r_at_cutoff, r_tie_a, r_tie_b.clone()]
+        );
+        // Underflow: now < max_age_ms saturates cutoff to 0 without panicking.
+        let underflow = ReceiptRetentionPolicy {
+            max_age_ms: 50_000,
+            max_entries: 10,
+        };
+        assert!(underflow
+            .prunable_ids(&[(&r_tie_b, Timestamp(1))], Timestamp(5))
+            .is_empty());
     }
 }

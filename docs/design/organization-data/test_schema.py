@@ -2441,6 +2441,56 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         self.db.commit()
         self.refused(lambda: insert(self.db, "development_process_roles", organization_id="org", process_id="pos-test", key="r2", position=0, name="R2"))
 
+    def test_eng4_contracts_state_guarantees_without_sqlite_statements(self):
+        """ADR-0018 ENG-4: Documents 06 and 11 and numbering/journal ADRs state guarantees without SQLite statements."""
+        decisions_root = ROOT.parents[2] / ".backlog" / "decisions"
+        targets = [org_data_doc(6), org_data_doc(11)]
+        for prefix in ("decision-6 ", "decision-19 ", "decision-21 "):
+            matches = sorted(decisions_root.glob(f"{prefix}*.md"))
+            self.assertEqual(len(matches), 1, f"expected 1 ADR matching {prefix}")
+            targets.append(matches[0])
+        for path in targets:
+            text = path.read_text(encoding="utf-8")
+            prose = re.sub(r"```sql\n.*?\n```", "", text, flags=re.S)
+            with self.subTest(document=path.name):
+                self.assertNotRegex(prose, r"\bBEGIN\s+IMMEDIATE\b",
+                                    f"{path.name} prose must not prescribe SQLite BEGIN IMMEDIATE (ENG-4)")
+                self.assertNotRegex(prose, r"\bPRAGMA\s+\w+",
+                                    f"{path.name} prose must not prescribe SQLite PRAGMA statements (ENG-4)")
+        # ADR-0014 Decision 8 defines the engine-neutral acknowledgement class contract.
+        adr14 = sorted(decisions_root.glob("decision-14 *.md"))
+        self.assertEqual(len(adr14), 1)
+        adr14_text = adr14[0].read_text(encoding="utf-8")
+        self.assertNotRegex(adr14_text, r"\bBEGIN\s+IMMEDIATE\b")
+        self.assertNotRegex(adr14_text, r"\bPRAGMA\s+\w+")
+
+    def test_eng5_schema_coverage_lists_all_triggers_and_generated_columns(self):
+        """ADR-0018 ENG-5: Schema coverage (doc-74) lists every trigger and generated column via live SQLite catalog."""
+        coverage = schema_coverage_doc().read_text(encoding="utf-8")
+        for sql_file in sorted(ROOT.glob("*.sql")):
+            conn = database(sql_file.name)
+            self.addCleanup(conn.close)
+            triggers = [
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_schema WHERE type = 'trigger' ORDER BY name")
+            ]
+            for trg in triggers:
+                with self.subTest(schema=sql_file.name, trigger=trg):
+                    self.assertIn(f"`{trg}`", coverage,
+                                  f"ENG-5: trigger `{trg}` from {sql_file.name} missing in doc-74 schema coverage")
+            tables = [
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")
+            ]
+            for tbl in tables:
+                for col in conn.execute(f'PRAGMA table_xinfo("{tbl}")'):
+                    # hidden=2 (VIRTUAL generated) or hidden=3 (STORED generated)
+                    if col[6] in (2, 3):
+                        col_ref = f"`{tbl}.{col[1]}`"
+                        with self.subTest(schema=sql_file.name, generated=col_ref):
+                            self.assertIn(col_ref, coverage,
+                                          f"ENG-5: generated column {col_ref} from {sql_file.name} missing in doc-74 schema coverage")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -3,7 +3,7 @@ id: doc-74
 title: Organization Data — Schema Coverage and Integrity Review
 type: specification
 created_date: '2026-11-21T01:30:00Z'
-updated_date: '2026-11-21T01:30:00Z'
+updated_date: '2026-11-21T18:37:00Z'
 tags:
   - organization-data
   - contract
@@ -177,6 +177,23 @@ To preserve storage-engine replaceability (SQLite today, PostgreSQL in future un
 
 - **Declarative portable SQL layer (kept in DDL on every engine):** `PRIMARY KEY`, `FOREIGN KEY`, `UNIQUE`, partial unique indexes, and scalar `CHECK` constraints (portable across SQLite and PostgreSQL, with SQLite `GLOB` patterns translating directly to PostgreSQL `~` regex checks).
 - **Single-writer / projector layer (enforced in Rust domain/projector code, mirrored in SQLite draft triggers only as executable spec guards):** recursive graph cycle checks (`teams`, `employees`, `features`, `deployments`, `links`), append-only immutability/monotonicity guards (`task_events`, `usage_records`, `mutation_receipts`, `budgets`, `document_versions`), and cross-table project-scoping guards. Redundant `BEFORE INSERT` duplicate-key triggers (`receipt_no_replace`, `origin_stream_no_replace`, `checkpoint_no_replace`) have been removed because declarative `PRIMARY KEY` plus `BEFORE DELETE` guards (with `recursive_triggers = ON`) already enforce both `INSERT` and `INSERT OR REPLACE`. A future PostgreSQL adapter enforces these invariants in the shared Rust single-writer/projector rather than porting SQLite triggers verbatim.
+
+### Generated columns and trigger inventory (ADR-0018 ENG-5)
+
+Every SQLite-specific generated column and trigger across the contract schemas is enumerated below so another storage engine (such as PostgreSQL) can enforce the exact same invariants in its own dialect or in the shared Rust projector/single-writer layer (`test_schema.py::test_eng5_schema_coverage_lists_all_triggers_and_generated_columns`).
+
+| Generated column | Schema file | Portable expression |
+| --- | --- | --- |
+| `teams.key` | `schema.sql` | `CASE WHEN number IS NOT NULL THEN 'TEAM-' || number END` |
+| `projects.key` | `schema.sql` | `CASE WHEN number IS NOT NULL THEN 'P-' || number END` |
+| `releases.key` | `schema.sql` | `CASE WHEN number IS NOT NULL THEN 'R-' || number END` |
+| `milestones.key` | `schema.sql` | `CASE WHEN number IS NOT NULL THEN 'M-' || number END` |
+| `features.key` | `schema.sql` | `CASE WHEN number IS NOT NULL THEN 'F-' || number END` |
+| `tasks.key` | `schema.sql` | `'T-' || office_code || number` |
+
+- **`budgets-schema.sql` (16 triggers):** `budget_tasks_no_undelete`, `budget_target_immutable`, `budget_agent_insert`, `employee_budget_kind_update`, `employee_budget_kind_insert`, `budgets_no_delete`, `budget_policy_versions_no_update`, `budget_policy_versions_no_delete`, `budget_periods_no_delete`, `budget_events_no_update`, `budget_events_no_delete`, `budget_notices_no_delete`, `budget_holds_no_delete`, `budget_period_identity_update`, `budget_release_no_hold`, `budget_release_no_hold_update`
+- **`private-notes-schema.sql` (10 triggers):** `private_note_tasks_no_undelete`, `private_notes_no_replace`, `private_notes_initial_state`, `private_notes_update_contract`, `private_notes_keep_tombstone`, `private_receipts_no_replace`, `private_receipt_matches_author`, `private_receipts_no_delete`, `private_receipts_finish_once`, `private_note_pending_publication`
+- **`schema.sql` (86 triggers):** `task_events_no_replace`, `task_events_no_update`, `task_events_no_delete`, `organization_repository_must_be_remote_insert`, `organization_repository_must_be_remote_update`, `organization_remote_reference_insert`, `organization_remote_reference_update`, `teams_no_cycle_insert`, `teams_no_cycle_update`, `links_no_dependency_cycle_insert`, `links_no_dependency_cycle_update`, `release_flag_settings_value_type_insert`, `release_flag_settings_value_type_update`, `deployment_flag_settings_value_type_insert`, `deployment_flag_settings_value_type_update`, `used_flag_identity_immutable`, `usage_records_immutable_update`, `usage_records_immutable_delete`, `used_model_price_immutable_update`, `usage_actor_must_be_agent`, `usage_correction_parent_exists`, `attribution_correction_preserves_facts`, `usage_checkpoint_monotonic`, `usage_checkpoint_no_delete`, `used_model_price_no_delete`, `used_flag_no_delete`, `inserted_flag_checks_existing_settings`, `employees_no_reporting_cycle_insert`, `employees_no_reporting_cycle_update`, `employee_usage_kind_insert`, `employee_usage_kind_update`, `registered_subscription_cannot_be_replaced`, `registered_subscription_cannot_be_displaced`, `registered_subscription_identity_is_immutable`, `placement_generation_must_advance`, `agent_config_requires_agent`, `agent_config_update_requires_agent`, `employee_kind_never_changes`, `receipt_identity_immutable`, `origin_stream_no_regression`, `checkpoint_no_regression`, `receipt_no_delete`, `origin_stream_no_delete`, `checkpoint_no_delete`, `document_versions_no_replace`, `document_versions_are_written_once`, `document_versions_are_kept`, `document_version_sources_are_written_once`, `document_version_sources_are_kept`, `task_affects_feature_same_project_insert`, `task_affects_feature_same_project_update`, `task_insert_keeps_affected_feature`, `feature_insert_keeps_affected_task`, `feature_project_keeps_affected_task`, `cleanup_record_same_office_insert`, `cleanup_record_same_office_update`, `placement_requires_agent_insert`, `placement_requires_agent_update`, `task_project_keeps_affected_feature`, `document_versions_match_document_project`, `document_project_keeps_versions`, `document_version_sources_same_project`, `task_document_versions_same_project_insert`, `task_document_versions_same_project_update`, `task_insert_keeps_document_versions`, `task_project_keeps_document_versions`, `release_tasks_same_project_insert`, `release_tasks_same_project_update`, `task_insert_keeps_release_tasks`, `task_project_keeps_release_tasks`, `comments_reject_deleted_task`, `checklist_steps_reject_deleted_task`, `watchers_reject_deleted_task`, `owner_questions_reject_deleted_task`, `waiting_spans_reject_deleted_task`, `feature_replacement_no_cycle_insert`, `feature_replacement_no_cycle_update`, `deployment_rollback_no_cycle_insert`, `deployment_rollback_no_cycle_update`, `hire_request_employee_is_agent_insert`, `hire_request_employee_is_agent_update`, `hire_request_terminal_immutable`, `office_codes_immutable`, `office_codes_no_delete`, `reference_counters_monotonic`, `office_task_counters_monotonic`
 
 ## Relationships and enforcement
 
