@@ -693,19 +693,135 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   --h4-amber: #FBBF24;
   --h4-emerald: #34D399;
   --h4-rose: #FB7185;
-  padding: 28px var(--gutter) 56px;
-  max-width: 1380px;
+  padding: 24px var(--gutter) 56px;
+  max-width: 1080px;
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 26px;
 }
 
-/* Header + Executive Summary Strip */
-.h4-hero { display: flex; flex-direction: column; gap: 18px; }
-.h4-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+/* Header + Compact Single-Row Pulse Strip */
+.h4-hero { display: flex; flex-direction: column; gap: 14px; }
+.h4-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.h4-head-left { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .h4-head h1 { font-size: 1.5rem; line-height: 1.2; font-weight: 600; letter-spacing: -.025em; color: var(--h4-ink); }
-.h4-sub { margin-top: 4px; font-size: 0.875rem; line-height: 1.45; color: var(--h4-muted); }
+.h4-sub { font-size: 0.84375rem; line-height: 1.4; color: var(--h4-muted); }
+
+/* Compact Frosted Overview Chips (Step 0: 2-second orientation) */
+.h4-pulse-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.h4-stat-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 13px; border-radius: 10px;
+  background: var(--h4-surface);
+  backdrop-filter: blur(18px) saturate(150%); -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .12), inset 0 0 0 1px var(--h4-border);
+  font-size: 0.8125rem; line-height: 1.25rem; color: var(--h4-body);
+  transition: background-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.h4-stat-chip:hover { background: var(--h4-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 222, 255, .20), inset 0 0 0 1px var(--h4-border-hi); color: var(--h4-ink); transform: translateY(-1px); }
+.h4-stat-chip.is-warn { background: linear-gradient(135deg, rgba(251, 191, 36, .12) 0%, rgba(13, 24, 42, .52) 68%); box-shadow: inset 0 1px 0 rgba(253, 230, 138, .22), inset 0 0 0 1px rgba(251, 191, 36, .30); }
+.h4-stat-chip strong { color: var(--h4-ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+.h4-stat-chip .sep { color: var(--h4-dim); }
+.h4-stat-chip .warn-txt { color: #FDE68A; font-weight: 500; }
+
+/* Order-of-Operations Section Steps */
+.h4-flow { display: flex; flex-direction: column; gap: 26px; }
+.h4-step { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.h4-step-h { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.h4-step-title { display: inline-flex; align-items: center; gap: 10px; }
+.h4-step-num {
+  width: 22px; height: 22px; border-radius: 999px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(186, 222, 255, .10); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .20);
+  font-size: 0.72rem; font-weight: 700; color: var(--h4-body); font-variant-numeric: tabular-nums;
+}
+.h4-step-num.urgent { background: rgba(251, 191, 36, .16); box-shadow: inset 0 0 0 1px rgba(251, 191, 36, .38); color: #FDE68A; }
+.h4-step-title h2 { font-size: 0.96875rem; line-height: 1.4rem; font-weight: 600; letter-spacing: -.01em; color: var(--h4-ink); }
+.h4-step-hint { font-size: 0.78125rem; color: var(--h4-muted); }
+
+/* Inline Context Accordion inside Step 1 Urgent Cards */
+.h4-ctx-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 8px; margin-left: -8px; border-radius: 6px;
+  font-size: 0.78125rem; font-weight: 500; color: var(--h4-muted);
+  transition: color .14s ease, background-color .14s ease;
+}
+.h4-ctx-toggle:hover { color: var(--h4-ink); background: rgba(255, 255, 255, .06); }
+.h4-ctx-toggle .h4-chev { transition: transform .18s ease; }
+.h4-ctx-toggle[aria-expanded="true"] .h4-chev { transform: rotate(90deg); }
+.h4-ctx-body {
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--h4-well);
+  box-shadow: inset 0 0 0 1px var(--h4-border);
+  font-size: 0.8125rem; line-height: 1.55; color: var(--h4-body);
+}
+
+/* Step 2: Folded Accordion Rows for Non-Urgent Input */
+.h4-acc-list { display: flex; flex-direction: column; gap: 8px; }
+.h4-acc-item {
+  position: relative; border-radius: 12px; overflow: hidden;
+  background: var(--h4-surface);
+  backdrop-filter: var(--h4-glass-blur); -webkit-backdrop-filter: var(--h4-glass-blur);
+  box-shadow: var(--h4-glass-shadow);
+  transition: background-color .15s ease, box-shadow .15s ease;
+}
+.h4-acc-item:hover { background: var(--h4-surface-hi); box-shadow: var(--h4-glass-shadow-hi); }
+.h4-acc-item.done { opacity: .72; background: var(--h4-well); }
+.h4-acc-trigger {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; text-align: left;
+  transition: background-color .14s ease;
+}
+.h4-acc-trigger:focus-visible { outline: 2px solid var(--indigo-400); outline-offset: -2px; border-radius: 12px; }
+.h4-acc-trigger .h4-chev { color: var(--h4-muted); flex: none; transition: transform .18s ease, color .14s ease; }
+.h4-acc-trigger[aria-expanded="true"] .h4-chev { transform: rotate(90deg); color: var(--h4-ink); }
+.h4-acc-title { font-size: 0.875rem; font-weight: 600; color: var(--h4-ink); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h4-acc-meta { display: inline-flex; align-items: center; gap: 8px; flex: none; font-size: 0.75rem; color: var(--h4-muted); }
+.h4-acc-body {
+  padding: 0 16px 14px 42px;
+  display: flex; flex-direction: column; gap: 12px;
+  border-top: 1px solid rgba(186, 222, 255, .07);
+  padding-top: 12px;
+}
+
+/* Step 3: Compact Project Card with Folded Details Accordion */
+.h4-proj-acc-btn {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 10px; border-radius: 8px;
+  background: var(--h4-well); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .08);
+  font-size: 0.75rem; font-weight: 500; color: var(--h4-muted);
+  transition: color .14s ease, background-color .14s ease;
+}
+.h4-proj-acc-btn:hover { color: var(--h4-ink); background: rgba(186, 222, 255, .08); }
+.h4-proj-acc-btn .h4-chev { transition: transform .18s ease; }
+.h4-proj-acc-btn[aria-expanded="true"] .h4-chev { transform: rotate(90deg); }
+.h4-proj-details { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
+.h4-proj-goal { font-size: 0.78125rem; line-height: 1.45; color: var(--h4-body); }
+
+/* Step 4: Collapsible Organization Pulse Accordions */
+.h4-pulse-accs { display: flex; flex-direction: column; gap: 10px; }
+.h4-sec-acc {
+  border-radius: 12px; overflow: hidden;
+  background: var(--h4-surface);
+  backdrop-filter: var(--h4-glass-blur); -webkit-backdrop-filter: var(--h4-glass-blur);
+  box-shadow: var(--h4-glass-shadow);
+}
+.h4-sec-acc-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 2px 14px 2px 4px;
+}
+.h4-sec-acc-btn {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px;
+  padding: 11px 12px; text-align: left; border-radius: 10px;
+}
+.h4-sec-acc-btn:hover { background: rgba(255, 255, 255, .04); }
+.h4-sec-acc-btn:focus-visible { outline: 2px solid var(--indigo-400); outline-offset: -2px; }
+.h4-sec-acc-btn .h4-chev { color: var(--h4-muted); flex: none; transition: transform .18s ease; }
+.h4-sec-acc-btn[aria-expanded="true"] .h4-chev { transform: rotate(90deg); color: var(--h4-ink); }
+.h4-sec-acc-label { display: inline-flex; align-items: center; gap: 8px; font-size: 0.875rem; font-weight: 600; color: var(--h4-ink); flex: none; }
+.h4-sec-acc-preview { font-size: 0.8125rem; color: var(--h4-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.h4-sec-acc-body { padding: 12px 16px 14px; border-top: 1px solid var(--h4-border); }
 .h4-office-chip {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 6px 12px; border-radius: 999px;
@@ -946,7 +1062,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .h4-more-bar:hover { background: var(--h4-surface-hi); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 0 0 1px var(--h4-border-hi); color: var(--h4-ink); }
 
 /* Projects Portfolio Grid */
-.h4-projs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.h4-projs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
 .h4-proj {
   position: relative; display: flex; flex-direction: column; gap: 14px;
   padding: 16px; border-radius: 14px;
@@ -1082,6 +1198,10 @@ select.field option { background: #0E1629; color: #F8FAFC; }
   .h4 { padding: 20px var(--gutter) 40px; gap: 22px; }
   .h4-d-foot { flex-direction: column; align-items: stretch; }
   .h4-d-foot .actions { width: 100%; }
+  .h4-acc-trigger { flex-wrap: wrap; }
+  .h4-acc-title { white-space: normal; }
+  .h4-acc-body { padding-left: 16px; }
+  .h4-sec-acc-preview { display: none; }
 }
 </style>
 </head>
@@ -1438,7 +1558,7 @@ const PAST_SESSIONS = [
 /* ---------------------------------------------------------------- state */
 const S = { truth: "demo", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
   projLayout: "list", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
-  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {} };
+  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: {} };
 const SR = { q: "", open: false, active: 0, flat: [] };
 const KEYS_STORE = "agentic-org.singleKeyShortcuts";
 function readSingleKey() { try { return localStorage.getItem(KEYS_STORE) !== "0"; } catch (e) { return true; } }
@@ -1712,6 +1832,8 @@ function needsCardV4(it) {
   const isWinBurst = !!it.justHandled;
   if (it.justHandled) it.justHandled = false;
   const k = KIND[it.kind] || { icon: "bell" };
+  const ctxKey = "ctx-" + it.id;
+  const ctxOpen = !!S.v4Open[ctxKey];
   return `<article class="h4-decision${isUrgent ? " urgent" : ""}${it.handled ? " done" : ""}${isWinBurst ? " win-burst" : ""}" aria-label="${esc(it.sub)} from ${esc(M[it.from].name)}">
     <div class="h4-d-top">
       <div class="h4-d-who">${av(it.from, 24)}<span class="who-name">${mlink(it.from)}</span><span class="h4-kind-tag">${ic(k.icon, "ic14")}${esc(it.sub)}</span><span class="h4-d-time">${esc(it.time)}</span></div>
@@ -1719,13 +1841,45 @@ function needsCardV4(it) {
     </div>
     <div class="h4-d-body">
       <h3>${esc(it.what)}</h3>
-      <p class="h4-d-why">${esc(it.why)}</p>
     </div>
     ${it.rec && !it.handled ? `<div class="h4-rec">${ic("info", "ic16")}<span>${esc(it.rec)}</span></div>` : ""}
+    ${ctxOpen ? `<div class="h4-ctx-body" id="panel-${ctxKey}">${esc(it.why)}</div>` : ""}
     <div class="h4-d-foot">
-      <div class="h4-origin">${plink(it.proj)}${it.task ? `<span class="h4-task-chip">${esc(it.task)}</span>` : ""}</div>
+      <div class="h4-origin">
+        <button class="h4-ctx-toggle" type="button" data-act="v4-acc" data-id="${ctxKey}" aria-expanded="${ctxOpen}" aria-controls="panel-${ctxKey}">${ic("chev-right", "ic14 h4-chev")}<span>${ctxOpen ? "Hide context" : "Why & context"}</span></button>
+        <span class="muted">·</span>
+        ${plink(it.proj)}${it.task ? `<span class="h4-task-chip">${esc(it.task)}</span>` : ""}
+      </div>
       ${itemActionsV4(it)}
     </div>
+  </article>`;
+}
+function inputAccordionV4(it) {
+  const isWinBurst = !!it.justHandled;
+  if (it.justHandled) it.justHandled = false;
+  const k = KIND[it.kind] || { icon: "bell" };
+  const key = "in-" + it.id;
+  const open = !!(S.v4Open[key] || S.replying === it.id || it.handledNow);
+  return `<article class="h4-acc-item${it.handled ? " done" : ""}${isWinBurst ? " win-burst" : ""}" aria-label="${esc(it.sub)} from ${esc(M[it.from].name)}">
+    <button class="h4-acc-trigger" type="button" data-act="v4-acc" data-id="${key}" aria-expanded="${open}" aria-controls="panel-${key}">
+      ${ic("chev-right", "ic16 h4-chev")}
+      ${av(it.from, 24)}
+      <span class="h4-acc-title">${esc(it.what)}</span>
+      <span class="h4-acc-meta">
+        <span class="h4-kind-tag">${ic(k.icon, "ic14")}${esc(it.sub)}</span>
+        <span class="hide-sm">${esc(P[it.proj].name)}</span>
+        <span class="h4-d-time">${esc(it.time)}</span>
+        ${it.handled ? pill("Handled", "gray", "check-circle") : ""}
+      </span>
+    </button>
+    ${open ? `<div class="h4-acc-body" id="panel-${key}">
+      <p class="h4-d-why">${esc(it.why)}</p>
+      ${it.rec && !it.handled ? `<div class="h4-rec">${ic("info", "ic16")}<span>${esc(it.rec)}</span></div>` : ""}
+      <div class="h4-d-foot">
+        <div class="h4-origin">${mlink(it.from)}<span class="muted">·</span>${plink(it.proj)}${it.task ? `<span class="h4-task-chip">${esc(it.task)}</span>` : ""}</div>
+        ${itemActionsV4(it)}
+      </div>
+    </div>` : ""}
   </article>`;
 }
 function projCardV4(p) {
@@ -1734,21 +1888,30 @@ function projCardV4(p) {
   const openN = ws.filter(OPEN).length, blocked = ws.filter((w) => w.status === "Blocked").length;
   const healthTone = pr.health === "On track" ? "ok" : pr.health === "At risk" ? "warn" : pr.health === "Off track" ? "bad" : "";
   const healthBadge = pr.health === "At risk" ? pill("At risk", "amber", "warn") : projPill(p);
-  return `<article class="h4-proj linked">
+  const key = "proj-" + p;
+  const open = !!S.v4Open[key];
+  return `<article class="h4-proj">
     <div class="h4-proj-top">
-      <div class="h4-proj-id"><span class="h4-proj-mark" aria-hidden="true">${esc(pr.name[0])}</span><h3 class="h4-proj-name"><a class="stretch" href="#/projects/${p}">${esc(pr.name)}</a></h3></div>
+      <div class="h4-proj-id"><span class="h4-proj-mark" aria-hidden="true">${esc(pr.name[0])}</span><h3 class="h4-proj-name"><a href="#/projects/${p}">${esc(pr.name)}</a></h3></div>
       ${healthBadge}
     </div>
     <div class="h4-proj-prog">
-      <div class="h4-proj-prog-hd"><span>${done} of ${total} done</span><strong>${pct}%</strong></div>
+      <div class="h4-proj-prog-hd"><span>${done} of ${total} done${blocked ? ` · <span class="is-blocked">${blocked} blocked</span>` : ""}</span><strong>${pct}%</strong></div>
       <div class="h4-bar ${healthTone}" role="progressbar" aria-label="${esc(pr.name)} progress" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}" aria-valuetext="${done} of ${total} work items done"><span style="width:${pct}%"></span></div>
     </div>
-    <div class="h4-proj-stats">
-      <span><b>${openN}</b> open</span>
-      <span${blocked ? ' class="is-blocked"' : ""}><b>${blocked}</b> blocked</span>
-      ${pr.due ? `<span>Due ${esc(pr.due)}</span>` : ""}
-    </div>
-    <div class="h4-proj-foot">${avStack(projMembers(p), 4)}${leadOf(p) ? `<span>${esc(leadTxt(p))}</span>` : ""}</div>
+    <button class="h4-proj-acc-btn" type="button" data-act="v4-acc" data-id="${key}" aria-expanded="${open}" aria-controls="panel-${key}">
+      <span>${open ? "Hide details" : `Details · ${openN} open${pr.due ? " · Due " + esc(pr.due) : ""}`}</span>
+      ${ic("chev-right", "ic14 h4-chev")}
+    </button>
+    ${open ? `<div class="h4-proj-details" id="panel-${key}">
+      <p class="h4-proj-goal">${esc(pr.risk || pr.goal)}</p>
+      <div class="h4-proj-stats">
+        <span><b>${openN}</b> open</span>
+        <span${blocked ? ' class="is-blocked"' : ""}><b>${blocked}</b> blocked</span>
+        ${pr.due ? `<span>Due ${esc(pr.due)}</span>` : ""}
+      </div>
+      <div class="h4-proj-foot">${avStack(projMembers(p), 4)}${leadOf(p) ? `<span>${esc(leadTxt(p))}</span>` : ""}</div>
+    </div>` : ""}
   </article>`;
 }
 function feedV4(items) {
@@ -1776,103 +1939,125 @@ function pageHome() {
   const openUrgentCount = open.filter((i) => i.expires).length;
   const remainingInInbox = Math.max(0, open.length - cards.filter((i) => !i.handled).length);
   const working = v1 || st === "empty" ? [] : memberIds().filter((k) => ["working", "withyou"].includes(presence(k)));
-  const projs = st === "empty" ? [] : Object.keys(P).filter((p) => !P[p].archived);
-  const onTrackN = projs.filter((p) => P[p].health === "On track").length;
-  const atRiskN = projs.filter((p) => P[p].health === "At risk").length;
-  const offTrackN = projs.filter((p) => P[p].health === "Off track").length;
+  const riskRank = { "Off track": 0, "At risk": 1, "On track": 2 };
+  const projs = st === "empty" ? [] : Object.keys(P).filter((p) => !P[p].archived).sort((a, b) => (riskRank[P[a].health] ?? 9) - (riskRank[P[b].health] ?? 9));
+  const needsAttnProjs = projs.filter((p) => P[p].health === "At risk" || P[p].health === "Off track").length;
+  const recentActs = st === "empty" ? [] : acts().slice(0, 6);
   const body = (loadingLabel, fn) => st === "loading" ? skel(3, loadingLabel) : st === "error" ? "" : fn();
+  const nowOpen = !!S.v4Open["sec-now"];
+  const actOpen = !!S.v4Open["sec-act"];
 
-  const kpiStrip = st === "loading" ? skel(3, "Loading overview…") : st === "error" ? "" : `<div class="h4-kpis" aria-label="Organization summary">
-    <a class="h4-kpi${open.length ? " is-warn" : ""}" href="#/inbox">
-      <div class="h4-kpi-top"><span>Needs your decision</span>${ic("bell", "ic16 c-amber")}</div>
-      <div class="h4-kpi-val"><span class="h4-kpi-num">${open.length}</span>${openUrgentCount ? `<span class="h4-kpi-tag">${openUrgentCount} time-sensitive</span>` : ""}</div>
-      <div class="h4-kpi-foot">${open.length ? `<span>${cards.filter((i) => !i.handled).length} prioritized below${remainingInInbox ? ` · ${remainingInInbox} more in Inbox` : ""}</span>` : `<span class="h4-dot-lbl"><span class="h4-dot ok"></span>All caught up</span>`}</div>
+  const pulseBar = st === "loading" ? skel(2, "Loading overview…") : st === "error" ? "" : `<div class="h4-pulse-bar" aria-label="Organization summary">
+    <a class="h4-stat-chip${open.length ? " is-warn" : ""}" href="#/inbox">
+      ${ic("bell", "ic14 c-amber")}<strong>${open.length}</strong><span>need you</span>${openUrgentCount ? `<span class="sep">·</span><span class="warn-txt">${openUrgentCount} time-sensitive</span>` : ""}
     </a>
-    <a class="h4-kpi" href="#/projects">
-      <div class="h4-kpi-top"><span>Active projects</span>${ic("folder", "ic16 c-indigo")}</div>
-      <div class="h4-kpi-val"><span class="h4-kpi-num">${projs.length}</span></div>
-      <div class="h4-kpi-foot">${projs.length ? [
-        onTrackN ? `<span class="h4-dot-lbl"><span class="h4-dot ok"></span>${onTrackN} on track</span>` : "",
-        atRiskN ? `<span class="h4-dot-lbl"><span class="h4-dot warn"></span>${atRiskN} at risk</span>` : "",
-        offTrackN ? `<span class="h4-dot-lbl"><span class="h4-dot bad"></span>${offTrackN} off track</span>` : ""
-      ].filter(Boolean).join("") : `<span>No active projects</span>`}</div>
+    <a class="h4-stat-chip" href="#/projects">
+      ${ic("folder", "ic14 c-indigo")}<strong>${projs.length}</strong><span>active projects</span>${needsAttnProjs ? `<span class="sep">·</span><span>${needsAttnProjs} need attention</span>` : ""}
     </a>
-    <a class="h4-kpi" href="#/teams/members">
-      <div class="h4-kpi-top"><span>Live right now</span>${v1 ? ic("signal", "ic16 muted") : `<span class="h4-live-dot" aria-hidden="true"></span>`}</div>
-      <div class="h4-kpi-val"><span class="h4-kpi-num">${v1 ? "—" : working.length}</span></div>
-      <div class="h4-kpi-foot">${v1 ? `<span>Live status unavailable in v1.0 today</span>` : working.length ? `<span>${esc(M[working[0]].name)} · ${esc(statusLine(working[0]))}</span>` : `<span>No active runs right now</span>`}</div>
+    <a class="h4-stat-chip" href="#/teams/members">
+      ${v1 ? ic("signal", "ic14 muted") : `<span class="h4-live-dot" aria-hidden="true"></span>`}<strong>${v1 ? "—" : working.length}</strong><span>${v1 ? "live status off" : working.length ? `working · ${esc(M[working[0]].name)}` : "working"}</span>
     </a>
   </div>`;
 
-  const decisionList = () => {
-    if (!cards.length) {
-      return `<div class="h4-empty-box">${ic("check-circle", "ic48")}<h3>Nothing needs you</h3><p>When a member asks, needs an approval or is blocked on you, it shows up here and in the Inbox.</p></div>`;
-    }
-    const groups = [];
-    if (urgentCards.length) {
-      groups.push(`<div class="h4-group"><div class="h4-group-h urgent">${ic("clock", "ic14")}<span>Time-sensitive · ${urgentCards.length}</span><span class="h4-group-rule"></span></div><div class="h4-stack">${urgentCards.map(needsCardV4).join("")}</div></div>`);
-    }
-    if (inputCards.length) {
-      groups.push(`<div class="h4-group">${urgentCards.length ? `<div class="h4-group-h"><span>Awaiting your input · ${inputCards.length}</span><span class="h4-group-rule"></span></div>` : ""}<div class="h4-stack">${inputCards.map(needsCardV4).join("")}</div></div>`);
-    }
-    const more = remainingInInbox ? `<a class="h4-more-bar" href="#/inbox"><span>${plural(remainingInInbox, "more item", "more items")} waiting in Inbox</span><span class="link">Open Inbox${ic("chev-right", "ic16")}</span></a>` : "";
-    return `<div class="h4-groups">${groups.join("")}${more}</div>`;
-  };
+  const nowPreview = v1 ? "Live status unavailable in v1.0 today" : st === "empty" ? "No one working right now" : working.length ? `${working.length} active · ${esc(M[working[0]].name)} — ${esc(statusLine(working[0]))}` : "No one working right now";
+  const actPreview = st === "empty" || !recentActs.length ? "No recent activity yet" : `${recentActs.length} updates · Latest: ${esc(M[recentActs[0].who].name)} ${esc(recentActs[0].text)} (${esc(recentActs[0].time)})`;
 
   return `<div class="h4">
     <header class="h4-hero">
       <div class="h4-head">
-        <div>
+        <div class="h4-head-left">
           <h1 tabindex="-1">Home</h1>
-          <p class="h4-sub">${st === "loading" ? "Loading your workspace…" : st === "error" ? "Reconnecting to HQ office…" : "Prioritized decisions, portfolio health, and live organization pulse."}</p>
+          <p class="h4-sub">${st === "loading" ? "Loading workspace…" : st === "error" ? "Reconnecting to HQ office…" : "Ordered by what needs your decision first."}</p>
         </div>
         <a class="h4-office-chip" href="#/settings/offices"><span class="h4-live-dot" aria-hidden="true"></span>HQ office · Online</a>
       </div>
       ${st === "error" ? `<div class="callout h4-callout" role="alert">${ic("warn", "ic20 c-amber")}<div><p>Couldn't reach the office. Your data is safe.</p><button class="btn outline sm" type="button" data-act="set" data-k="homeState" data-v="filled">${ic("refresh", "ic16")}Try again</button></div></div>` : ""}
-      ${kpiStrip}
+      ${pulseBar}
     </header>
 
-    <div class="h4-grid">
-      <div class="h4-main">
-        <section class="h4-sec" aria-labelledby="h-needs">
-          <div class="h4-sec-h">
-            <div class="h4-sec-title">${ic("bell", "ic20 c-amber")}<h2 id="h-needs">Needs you</h2>${st !== "error" && st !== "loading" ? `<span class="h4-count${open.length ? " warn" : ""}">${open.length}</span>` : ""}</div>
-            <a class="link" href="#/inbox">${st === "error" ? "Open Inbox" : `Open Inbox (${open.length})`}${ic("chev-right", "ic16")}</a>
+    <div class="h4-flow">
+      <section class="h4-step" aria-labelledby="h-act-now">
+        <div class="h4-step-h">
+          <div class="h4-step-title">
+            <span class="h4-step-num urgent" aria-hidden="true">1</span>
+            <h2 id="h-act-now">Act now</h2>
+            <span class="h4-step-hint">${st === "error" || st === "loading" ? "" : urgentCards.length ? `Time-sensitive · ${urgentCards.length}` : "No expiring deadlines"}</span>
           </div>
-          ${body("Loading what needs you…", decisionList)}
-        </section>
-      </div>
+          <a class="link" href="#/inbox">${st === "error" ? "Open Inbox" : `Open Inbox (${open.length})`}${ic("chev-right", "ic16")}</a>
+        </div>
+        ${body("Loading time-sensitive items…", () => urgentCards.length
+          ? `<div class="h4-stack">${urgentCards.map(needsCardV4).join("")}</div>`
+          : `<div class="h4-empty-box">${ic("check-circle", "ic48")}<h3>Nothing expiring right now</h3><p>Time-sensitive approvals and blockers appear here first.</p></div>`)}
+      </section>
 
-      <aside class="h4-rail" aria-label="Live organization pulse">
-        <section class="h4-panel" aria-labelledby="h-now">
-          <div class="h4-panel-h">
-            <h2 id="h-now">${v1 ? "" : `<span class="h4-live-dot" aria-hidden="true"></span>`}Happening now</h2>
-            <a class="link" href="#/teams/members">Members${ic("chev-right", "ic16")}</a>
+      <section class="h4-step" aria-labelledby="h-input">
+        <div class="h4-step-h">
+          <div class="h4-step-title">
+            <span class="h4-step-num" aria-hidden="true">2</span>
+            <h2 id="h-input">Awaiting your input</h2>
+            ${st !== "error" && st !== "loading" ? `<span class="h4-count">${inputCards.length}</span>` : ""}
+            <span class="h4-step-hint">Expand any item to review &amp; decide</span>
           </div>
-          <div class="h4-panel-body">
-            ${v1 && st !== "loading" && st !== "error" ? `<p class="h4-rail-empty">Live status isn't available yet.</p>` : body("Loading who is working…", () => working.length ? `<ul class="h4-now-list" role="list">${working.map((id) => `<li class="h4-now-item linked">${av(id, 32, "tip")}<div class="h4-now-meta"><div class="h4-now-top"><a class="stretch h4-now-name" href="#/members/${id}">${esc(M[id].name)}</a><span class="h4-now-role">${esc(M[id].role)} · ${kindWord(id)}</span></div><p class="h4-now-status">${statusLine(id)}</p></div></li>`).join("")}</ul>` : `<p class="h4-rail-empty">No one is working right now.</p>`)}
-          </div>
-        </section>
+        </div>
+        ${body("Loading queue…", () => inputCards.length
+          ? `<div class="h4-acc-list">${inputCards.map(inputAccordionV4).join("")}${remainingInInbox ? `<a class="h4-more-bar" href="#/inbox"><span>${plural(remainingInInbox, "more item", "more items")} waiting in Inbox</span><span class="link">Open Inbox${ic("chev-right", "ic16")}</span></a>` : ""}</div>`
+          : `<p class="h4-rail-empty">No other decisions waiting on you.</p>`)}
+      </section>
 
-        <section class="h4-panel" aria-labelledby="h-act">
-          <div class="h4-panel-h">
-            <h2 id="h-act">Recent activity</h2>
-            <a class="link" href="#/activity">View all${ic("chev-right", "ic16")}</a>
+      <section class="h4-step" aria-labelledby="h-proj">
+        <div class="h4-step-h">
+          <div class="h4-step-title">
+            <span class="h4-step-num" aria-hidden="true">3</span>
+            <h2 id="h-proj">Portfolio health</h2>
+            ${st !== "error" && st !== "loading" ? `<span class="h4-count">${projs.length}</span>` : ""}
+            <span class="h4-step-hint">Highest risk first</span>
           </div>
-          <div class="h4-panel-body">
-            ${body("Loading activity…", () => st === "empty" ? `<p class="h4-rail-empty">No activity yet. Hires, work and decisions show up here.</p>` : feedV4(acts().slice(0, 6)))}
+          <a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>
+        </div>
+        ${body("Loading projects…", () => projs.length
+          ? `<div class="h4-projs">${projs.map(projCardV4).join("")}</div>`
+          : `<div class="h4-empty-box">${ic("folder", "ic48")}<h3>No projects yet</h3><p>Projects group the work toward one goal.</p><button class="btn outline" type="button" data-act="proto" data-v="Create project">${ic("plus", "ic20")}Create project</button></div>`)}
+      </section>
+
+      <section class="h4-step" aria-labelledby="h-pulse">
+        <div class="h4-step-h">
+          <div class="h4-step-title">
+            <span class="h4-step-num" aria-hidden="true">4</span>
+            <h2 id="h-pulse">Organization pulse</h2>
+            <span class="h4-step-hint">Background activity · expand when needed</span>
           </div>
-        </section>
-      </aside>
+        </div>
+        ${st === "loading" ? skel(2, "Loading live pulse…") : st === "error" ? "" : `<div class="h4-pulse-accs">
+          <div class="h4-sec-acc">
+            <div class="h4-sec-acc-bar">
+              <button class="h4-sec-acc-btn" type="button" data-act="v4-acc" data-id="sec-now" aria-expanded="${nowOpen}" aria-controls="panel-sec-now">
+                ${ic("chev-right", "ic16 h4-chev")}
+                <span class="h4-sec-acc-label">${v1 ? ic("signal", "ic14 muted") : `<span class="h4-live-dot" aria-hidden="true"></span>`}Happening now</span>
+                <span class="h4-sec-acc-preview">${nowPreview}</span>
+              </button>
+              <a class="link" href="#/teams/members">Members${ic("chev-right", "ic16")}</a>
+            </div>
+            ${nowOpen ? `<div class="h4-sec-acc-body" id="panel-sec-now">
+              ${v1 ? `<p class="h4-rail-empty">Live status isn't available yet.</p>` : working.length ? `<ul class="h4-now-list" role="list">${working.map((id) => `<li class="h4-now-item linked">${av(id, 32, "tip")}<div class="h4-now-meta"><div class="h4-now-top"><a class="stretch h4-now-name" href="#/members/${id}">${esc(M[id].name)}</a><span class="h4-now-role">${esc(M[id].role)} · ${kindWord(id)}</span></div><p class="h4-now-status">${statusLine(id)}</p></div></li>`).join("")}</ul>` : `<p class="h4-rail-empty">No one is working right now.</p>`}
+            </div>` : ""}
+          </div>
+
+          <div class="h4-sec-acc">
+            <div class="h4-sec-acc-bar">
+              <button class="h4-sec-acc-btn" type="button" data-act="v4-acc" data-id="sec-act" aria-expanded="${actOpen}" aria-controls="panel-sec-act">
+                ${ic("chev-right", "ic16 h4-chev")}
+                <span class="h4-sec-acc-label">${ic("signal", "ic14 c-indigo")}Recent activity</span>
+                <span class="h4-sec-acc-preview">${actPreview}</span>
+              </button>
+              <a class="link" href="#/activity">View all${ic("chev-right", "ic16")}</a>
+            </div>
+            ${actOpen ? `<div class="h4-sec-acc-body" id="panel-sec-act">
+              ${st === "empty" ? `<p class="h4-rail-empty">No activity yet. Hires, work and decisions show up here.</p>` : feedV4(recentActs)}
+            </div>` : ""}
+          </div>
+        </div>`}
+      </section>
     </div>
-
-    <section class="h4-sec" aria-labelledby="h-proj">
-      <div class="h4-sec-h">
-        <div class="h4-sec-title"><h2 id="h-proj">Projects</h2>${st !== "error" && st !== "loading" ? `<span class="h4-count">${projs.length}</span>` : ""}</div>
-        <a class="link" href="#/projects">All projects${ic("chev-right", "ic16")}</a>
-      </div>
-      ${body("Loading projects…", () => projs.length ? `<div class="h4-projs">${projs.map(projCardV4).join("")}</div>` : `<div class="h4-empty-box">${ic("folder", "ic48")}<h3>No projects yet</h3><p>Projects group the work toward one goal.</p><button class="btn outline" type="button" data-act="proto" data-v="Create project">${ic("plus", "ic20")}Create project</button></div>`)}
-    </section>
   </div>`;
 }
 
@@ -3476,6 +3661,7 @@ document.addEventListener("click", (e) => {
       if (again) again.focus(); break;
     }
     case "run": S.openRuns[id] = !S.openRuns[id]; render(false); { const b = document.querySelector(`[data-act="run"][data-id="${id}"]`); if (b) b.focus(); } break;
+    case "v4-acc": S.v4Open[id] = !S.v4Open[id]; render(false); { const b = document.querySelector(`[data-act="v4-acc"][data-id="${id}"]`); if (b) b.focus(); } break;
     case "thread": S.thread = S.thread === id ? null : id; render(false); break;
     case "thread-close": S.thread = null; render(false); break;
     case "answer": {
