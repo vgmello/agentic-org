@@ -170,13 +170,16 @@
 		openRecords(`Usage records: ${row.taskRef}`, { kind: 'task', taskRef: row.taskRef }, from);
 	}
 
+	const actionsLocked = $derived(!!actionBusy || checkingAction || !!unknownAction);
+
 	function openBudgetDialog(
 		kind: 'daily' | 'monthly',
 		existing: BudgetPeriodState | undefined,
 		from: HTMLElement
 	) {
+		if (actionsLocked) return;
 		opener = from;
-		actionError = undefined;
+		if (!unknownAction) actionError = undefined;
 		budgetDialog?.start(kind, existing);
 	}
 
@@ -267,7 +270,6 @@
 		{#if budget}
 			<BudgetBar {budget} {kind} zone={bZone} />
 			{#if canManage}
-				{@const actionsLocked = !!actionBusy || checkingAction || !!unknownAction}
 				<div class="flex flex-wrap items-center gap-2 pt-1">
 					<Button
 						type="button"
@@ -332,6 +334,7 @@
 						variant="outline"
 						size="sm"
 						class={mobileButton}
+						disabled={actionsLocked}
 						onclick={(e) => openBudgetDialog(kind, undefined, e.currentTarget)}
 						>Set {kind} budget…</Button
 					>
@@ -511,13 +514,16 @@
 					</p>
 				{/if}
 
-				{#if actionError}
+				{#if actionError || unknownAction}
 					<div
 						class="mt-3 flex flex-wrap items-center gap-3 rounded-md bg-danger-emphasis/10 px-3 py-2 text-xs/5 text-danger-text ring-1 ring-danger-emphasis/20"
 						role="alert"
 						data-testid="budget-action-outcome"
 					>
-						<p class="min-w-0 flex-1">{actionError}</p>
+						<p class="min-w-0 flex-1">
+							{actionError ||
+								'Change not confirmed. The connection dropped before HQ answered. Check status before trying again.'}
+						</p>
 						{#if unknownAction}
 							<Button
 								type="button"

@@ -103,6 +103,7 @@ const mutableBudgets: Record<string, { daily?: StoredBudget; monthly?: StoredBud
 	);
 const budgetOperations = new Map<string, { applied: true; message: string }>();
 let budgetUnknownOnce = false;
+let budgetActionUnknownOnce = false;
 
 const projectMeta = projectsData.projects as Record<
 	string,
@@ -1178,8 +1179,8 @@ export const costsApi: CostsApi = {
 			message = 'Agent will remain paused until the period resets.';
 		}
 		budgetOperations.set(action.operationId, { applied: true, message });
-		if (on('action-unknown') && !budgetUnknownOnce) {
-			budgetUnknownOnce = true;
+		if (on('action-unknown') && !budgetActionUnknownOnce) {
+			budgetActionUnknownOnce = true;
 			throw Object.assign(new Error('The connection to HQ dropped before it answered.'), {
 				source: 'app',
 				code: OUTCOME_UNKNOWN,

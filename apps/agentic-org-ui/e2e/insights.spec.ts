@@ -276,13 +276,22 @@ test('COST-7 & BUD-1..4: Member profile Cost tab shows spend, owner budgets, PM 
 	await expect(kaiMonthly.getByRole('button', { name: 'Allow 20% more once' })).toHaveCount(0);
 	await expect(kaiMonthly.getByRole('button', { name: 'Raise budget…' })).toBeVisible();
 
-	// 4. Owner viewing Mira (stop_pending) + neutral budget reset notice + Keep paused + Allow 20% more once
-	await visit(page, '/members/mira/cost?mock=budget-reset');
+	// 4. Owner viewing Mira (stop_pending) + neutral budget reset notice + action-unknown reconciliation + Allow 20% more once
+	await visit(page, '/members/mira/cost?mock=budget-reset,action-unknown');
 	await expect(page.getByTestId('budget-reset-note')).toContainText('Budget reset');
 	const miraDaily = page.locator('[data-member-budget="daily"]');
+	const miraMonthly = page.locator('[data-member-budget="monthly"]');
 	await expect(miraDaily).toContainText('Stopping · Budget reached');
 	await miraDaily.getByRole('button', { name: 'Keep paused until reset' }).click();
+	// Unknown outcome locks all budget buttons (including sibling Set monthly budget…) and exposes Check status
+	const outcome = page.getByTestId('budget-action-outcome');
+	await expect(outcome).toContainText('Change not confirmed');
+	await expect(miraDaily.getByRole('button', { name: 'Clear budget' })).toBeDisabled();
+	await expect(miraMonthly.getByRole('button', { name: 'Set monthly budget…' })).toBeDisabled();
+	await outcome.getByRole('button', { name: 'Check status' }).click();
+	await expect(outcome).toHaveCount(0);
 	await expect(miraDaily).toContainText('Paused · Budget reached');
+	await expect(miraMonthly.getByRole('button', { name: 'Set monthly budget…' })).toBeEnabled();
 	await miraDaily.getByRole('button', { name: 'Allow 20% more once' }).click();
 	await expect(miraDaily).toContainText('limit $6.00 + $1.20 = $7.20');
 	await expect(miraDaily.getByRole('button', { name: 'Allow 20% more once' })).toHaveCount(0);

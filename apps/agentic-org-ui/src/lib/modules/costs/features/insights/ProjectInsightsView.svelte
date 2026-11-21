@@ -140,7 +140,7 @@
 	</div>
 {:else if insightsRes.state === 'unsupported'}
 	<div class="py-6 {gutters}" data-testid="resource-unsupported">
-		<h4 class="text-sm/6 font-semibold text-fg">Not available in this version</h4>
+		<h3 class="text-sm/6 font-semibold text-fg">Not available in this version</h3>
 		<p class="mt-1 max-w-xl text-sm/6 text-fg-muted [overflow-wrap:anywhere]">
 			{insightsRes.message || "This version of the office doesn't support project insights."}
 		</p>
@@ -157,7 +157,7 @@
 {:else if scopedData && !scopedData.allowed}
 	<div class="py-6 {gutters}" data-testid="project-insights-not-authorized">
 		<EmptyState
-			level={4}
+			level={3}
 			title="You don't see costs here"
 			description={scopedData.reason || "Only the owner and this project's manager see its costs."}
 		/>
