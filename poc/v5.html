@@ -1664,7 +1664,7 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
   padding-top: 11px; border-top: 1px solid rgba(186, 222, 255, .09);
 }
-.hb-pillar-sub.is-team { grid-template-columns: 1.65fr 1fr; gap: 10px; }
+.hb-pillar-sub.is-team { grid-template-columns: minmax(0, 1.24fr) minmax(0, 1fr); gap: 10px; }
 .hb-sub-item {
   display: flex; flex-direction: column; gap: 2px; min-width: 0;
   border-radius: 8px; padding: 2px 4px; margin: -2px -4px;
@@ -1677,6 +1677,10 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   font-size: 0.9375rem; line-height: 1.25; font-weight: 650; color: var(--hb-ink);
   font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.hb-sub-val.is-offices { gap: 5px; font-size: 0.875rem; }
+.hb-sub-ok { color: #6EE7B7; }
+.hb-sub-bad { color: #FDA4AF; }
+.hb-sub-sep { color: var(--hb-dim); font-weight: 500; }
 .hb-sub-meta { font-size: 0.71875rem; font-weight: 600; color: var(--hb-muted); }
 .hb-sub-meta.ok { color: #6EE7B7; }
 .hb-sub-meta.warn { color: #FDE68A; }
@@ -3090,6 +3094,10 @@ function pageHome() {
     if (st === "loading") return skelCards(3, "Loading executive overview…");
     if (st === "error") return "";
     const emptyMode = st === "empty";
+    const officeList = Object.values(OFFICES);
+    const onlineOfficesN = emptyMode ? 1 : officeList.filter((o) => o.status === "Online").length;
+    const offlineOfficesN = emptyMode ? 0 : officeList.filter((o) => o.status !== "Online").length;
+    const offlineOfficeNames = officeList.filter((o) => o.status !== "Online").map((o) => o.name).join(", ");
     return `<section class="hb-pillars" aria-label="Executive overview: Financials, Team, and Delivery">
       <article class="hb-pillar" aria-labelledby="hb-pil-fin">
         <div class="hb-pillar-hd">
@@ -3121,7 +3129,7 @@ function pageHome() {
       <article class="hb-pillar" aria-labelledby="hb-pil-team">
         <div class="hb-pillar-hd">
           <a class="hb-pillar-name" id="hb-pil-team" href="#/teams/members">${ic("user-group", "ic14 c-indigo")}<span>Team</span></a>
-          <a class="hb-pillar-pill ${emptyMode ? "ok" : "bad"}" href="#/settings/offices">${emptyMode ? "HQ online" : "Build box offline"}</a>
+          <a class="hb-pillar-pill ${offlineOfficesN ? "bad" : "ok"}" href="#/settings/offices" title="${offlineOfficesN ? `Offline: ${esc(offlineOfficeNames)}` : "All connected offices are online"}">${offlineOfficesN ? `${plural(offlineOfficesN, "office", "offices")} offline` : (emptyMode ? "HQ online" : "All offices online")}</a>
         </div>
         <a class="hb-pillar-hero" href="#/teams/members" title="Share of work completed autonomously without needing your input (last 7 days)">
           <div class="hb-pillar-valrow">
@@ -3137,13 +3145,13 @@ function pageHome() {
           </div>
         </a>
         <div class="hb-pillar-sub is-team">
-          <a class="hb-sub-item" href="#/teams/members" title="All ${allAgents.length} agents: ${liveWorkingAgents.length} active, ${idleSpecsN} idle (Jules at budget cap, Avery paused, Noor unplaced), ${offlineSpecsN} waiting on offline Build box (Quinn)">
+          <a class="hb-sub-item" href="#/teams/members" title="All ${allAgents.length} agents: ${liveWorkingAgents.length} active, ${idleSpecsN} idle (Jules at budget cap, Avery paused, Noor unplaced), ${offlineSpecsN} waiting on an offline office (Quinn)">
             <span class="hb-sub-lbl">${emptyMode ? "Team capacity" : `${leadsN} leads · ${specsN} specialists`}</span>
             <span class="hb-sub-val">${emptyMode ? "0 agents" : `${liveWorkingAgents.length} active`}${emptyMode ? `<span class="hb-sub-meta">· 1 person</span>` : `<span class="hb-sub-meta warn">· ${idleSpecsN} idle</span>${offlineSpecsN ? `<span class="hb-sub-meta bad">· ${offlineSpecsN} off</span>` : ""}`}</span>
           </a>
-          <a class="hb-sub-item" href="#/settings/offices" title="Connected offices running agent work (HQ online, Build box offline)">
+          <a class="hb-sub-item" href="#/settings/offices" title="${offlineOfficesN ? `${onlineOfficesN} online · ${offlineOfficesN} offline (${esc(offlineOfficeNames)})` : `${plural(onlineOfficesN, "office", "offices")} online`}">
             <span class="hb-sub-lbl">Offices</span>
-            <span class="hb-sub-val">${emptyMode ? "1 of 1" : "1 of 2"}${emptyMode ? `<span class="hb-sub-meta ok">online</span>` : `<span class="hb-sub-meta">online</span>`}</span>
+            <span class="hb-sub-val is-offices"><span class="hb-sub-ok">${onlineOfficesN} online</span>${offlineOfficesN ? `<span class="hb-sub-sep" aria-hidden="true">·</span><span class="hb-sub-bad">${offlineOfficesN} offline</span>` : ""}</span>
           </a>
         </div>
       </article>
