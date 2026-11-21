@@ -1080,49 +1080,100 @@ WHERE NOT EXISTS (SELECT 1 FROM usage_records replacement
   WHERE replacement.organization_id = u.organization_id AND replacement.supersedes_id = u.id);
 
 CREATE VIEW usage_task_totals AS
-SELECT organization_id, task_id, COUNT(*) AS usage_count,
-       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
-       SUM(reasoning_tokens) AS reasoning_tokens,
-       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
-         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
-       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
-       SUM(cost_micro_usd) AS known_cost_micro_usd,
-       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
-       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
-       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
-FROM effective_usage_records e WHERE task_id IS NOT NULL
-GROUP BY organization_id, task_id;
+WITH org_incomplete_streams AS (
+  SELECT organization_id, COUNT(*) AS ledger_incomplete_streams
+  FROM usage_stream_coverage
+  WHERE coverage_complete = 0
+  GROUP BY organization_id
+),
+task_totals AS (
+  SELECT organization_id, task_id, COUNT(*) AS usage_count,
+         SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+         SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+         SUM(reasoning_tokens) AS reasoning_tokens,
+         SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+           ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+         SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+         SUM(cost_micro_usd) AS known_cost_micro_usd,
+         SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+         SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records
+  FROM effective_usage_records
+  WHERE task_id IS NOT NULL
+  GROUP BY organization_id, task_id
+)
+SELECT t.organization_id, t.task_id, t.usage_count,
+       t.input_tokens, t.output_tokens,
+       t.cache_read_tokens, t.cache_write_tokens,
+       t.reasoning_tokens, t.known_tokens,
+       t.token_incomplete_records, t.known_cost_micro_usd,
+       t.cost_incomplete_records, t.unpriced_records,
+       COALESCE(s.ledger_incomplete_streams, 0) AS ledger_incomplete_streams
+FROM task_totals t
+LEFT JOIN org_incomplete_streams s ON s.organization_id = t.organization_id;
 
 CREATE VIEW usage_agent_totals AS
-SELECT organization_id, employee_id, COUNT(*) AS usage_count,
-       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
-       SUM(reasoning_tokens) AS reasoning_tokens,
-       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
-         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
-       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
-       SUM(cost_micro_usd) AS known_cost_micro_usd,
-       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
-       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
-       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
-FROM effective_usage_records e WHERE employee_id IS NOT NULL
-GROUP BY organization_id, employee_id;
+WITH org_incomplete_streams AS (
+  SELECT organization_id, COUNT(*) AS ledger_incomplete_streams
+  FROM usage_stream_coverage
+  WHERE coverage_complete = 0
+  GROUP BY organization_id
+),
+agent_totals AS (
+  SELECT organization_id, employee_id, COUNT(*) AS usage_count,
+         SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+         SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+         SUM(reasoning_tokens) AS reasoning_tokens,
+         SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+           ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+         SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+         SUM(cost_micro_usd) AS known_cost_micro_usd,
+         SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+         SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records
+  FROM effective_usage_records
+  WHERE employee_id IS NOT NULL
+  GROUP BY organization_id, employee_id
+)
+SELECT a.organization_id, a.employee_id, a.usage_count,
+       a.input_tokens, a.output_tokens,
+       a.cache_read_tokens, a.cache_write_tokens,
+       a.reasoning_tokens, a.known_tokens,
+       a.token_incomplete_records, a.known_cost_micro_usd,
+       a.cost_incomplete_records, a.unpriced_records,
+       COALESCE(s.ledger_incomplete_streams, 0) AS ledger_incomplete_streams
+FROM agent_totals a
+LEFT JOIN org_incomplete_streams s ON s.organization_id = a.organization_id;
 
 CREATE VIEW usage_project_totals AS
-SELECT organization_id, project_id, COUNT(*) AS usage_count,
-       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
-       SUM(reasoning_tokens) AS reasoning_tokens,
-       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
-         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
-       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
-       SUM(cost_micro_usd) AS known_cost_micro_usd,
-       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
-       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
-       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
-FROM effective_usage_records e WHERE project_id IS NOT NULL
-GROUP BY organization_id, project_id;
+WITH org_incomplete_streams AS (
+  SELECT organization_id, COUNT(*) AS ledger_incomplete_streams
+  FROM usage_stream_coverage
+  WHERE coverage_complete = 0
+  GROUP BY organization_id
+),
+project_totals AS (
+  SELECT organization_id, project_id, COUNT(*) AS usage_count,
+         SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+         SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+         SUM(reasoning_tokens) AS reasoning_tokens,
+         SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+           ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+         SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+         SUM(cost_micro_usd) AS known_cost_micro_usd,
+         SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+         SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records
+  FROM effective_usage_records
+  WHERE project_id IS NOT NULL
+  GROUP BY organization_id, project_id
+)
+SELECT p.organization_id, p.project_id, p.usage_count,
+       p.input_tokens, p.output_tokens,
+       p.cache_read_tokens, p.cache_write_tokens,
+       p.reasoning_tokens, p.known_tokens,
+       p.token_incomplete_records, p.known_cost_micro_usd,
+       p.cost_incomplete_records, p.unpriced_records,
+       COALESCE(s.ledger_incomplete_streams, 0) AS ledger_incomplete_streams
+FROM project_totals p
+LEFT JOIN org_incomplete_streams s ON s.organization_id = p.organization_id;
 
 CREATE TABLE task_events (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
@@ -2592,3 +2643,31 @@ CREATE TRIGGER task_project_keeps_affected_feature BEFORE UPDATE OF project_id O
 BEGIN SELECT RAISE(ABORT,'affected feature belongs to another project') WHERE EXISTS (
  SELECT 1 FROM task_details d JOIN features f ON f.organization_id=d.organization_id AND f.id=d.affects_feature_id
  WHERE d.organization_id=NEW.organization_id AND d.task_id=NEW.id AND NEW.project_id IS NOT f.project_id); END;
+
+-- Targeted hot-path composite indexes and high-fanout FK indexes (TASK-6: H-10, H-13).
+CREATE INDEX tasks_by_feature ON tasks(organization_id, feature_id);
+CREATE INDEX task_document_versions_by_document ON task_document_versions(organization_id, document_id, version, task_id);
+CREATE INDEX document_code_links_by_document ON document_code_links(organization_id, document_id);
+CREATE INDEX document_version_sources_by_source ON document_version_sources(organization_id, source_document_id, source_version, document_id, version);
+CREATE INDEX hire_requests_by_team_state ON hire_requests(organization_id, home_team_id, state);
+CREATE INDEX messages_by_thread ON messages(organization_id, thread_root_id, created_at);
+CREATE INDEX usage_by_release_time ON usage_records(organization_id, release_id, occurred_at);
+CREATE INDEX active_budget_holds ON budget_holds(organization_id, budget_id, state) WHERE state <> 'released';
+
+-- High-fanout foreign-key indexes targeting employees, tasks, and documents.
+CREATE INDEX employees_by_reports_to ON employees(organization_id, reports_to_employee_id);
+CREATE INDEX teams_by_lead ON teams(organization_id, lead_employee_id);
+CREATE INDEX agent_placements_by_office ON agent_placements(organization_id, office_id);
+CREATE INDEX conversation_memberships_by_employee ON conversation_memberships(organization_id, employee_id);
+CREATE INDEX comments_by_author ON comments(organization_id, author_id);
+CREATE INDEX task_events_by_actor ON task_events(organization_id, actor_id);
+CREATE INDEX hire_requests_by_requester ON hire_requests(organization_id, requested_by_employee_id);
+CREATE INDEX agent_execution_turns_by_employee_time ON agent_execution_turns(organization_id, employee_id, created_at);
+CREATE INDEX messages_by_sender ON messages(organization_id, sender_employee_id);
+CREATE INDEX message_reactions_by_employee ON message_reactions(organization_id, employee_id);
+CREATE INDEX task_workspaces_by_task ON task_workspaces(organization_id, task_id);
+CREATE INDEX task_repositories_by_repo ON task_repositories(organization_id, repository_id);
+CREATE INDEX checklist_steps_by_linked_task ON checklist_steps(organization_id, linked_task_id);
+CREATE INDEX agent_execution_turns_by_task ON agent_execution_turns(organization_id, task_id);
+CREATE INDEX task_details_by_affects_feature ON task_details(organization_id, affects_feature_id);
+CREATE INDEX documents_by_project_path ON documents(organization_id, project_id, path);

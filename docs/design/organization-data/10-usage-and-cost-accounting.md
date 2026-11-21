@@ -395,49 +395,100 @@ WHERE NOT EXISTS (SELECT 1 FROM usage_records replacement
   WHERE replacement.organization_id = u.organization_id AND replacement.supersedes_id = u.id);
 
 CREATE VIEW usage_task_totals AS
-SELECT organization_id, task_id, COUNT(*) AS usage_count,
-       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
-       SUM(reasoning_tokens) AS reasoning_tokens,
-       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
-         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
-       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
-       SUM(cost_micro_usd) AS known_cost_micro_usd,
-       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
-       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
-       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
-FROM effective_usage_records e WHERE task_id IS NOT NULL
-GROUP BY organization_id, task_id;
+WITH org_incomplete_streams AS (
+  SELECT organization_id, COUNT(*) AS ledger_incomplete_streams
+  FROM usage_stream_coverage
+  WHERE coverage_complete = 0
+  GROUP BY organization_id
+),
+task_totals AS (
+  SELECT organization_id, task_id, COUNT(*) AS usage_count,
+         SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+         SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+         SUM(reasoning_tokens) AS reasoning_tokens,
+         SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+           ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+         SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+         SUM(cost_micro_usd) AS known_cost_micro_usd,
+         SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+         SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records
+  FROM effective_usage_records
+  WHERE task_id IS NOT NULL
+  GROUP BY organization_id, task_id
+)
+SELECT t.organization_id, t.task_id, t.usage_count,
+       t.input_tokens, t.output_tokens,
+       t.cache_read_tokens, t.cache_write_tokens,
+       t.reasoning_tokens, t.known_tokens,
+       t.token_incomplete_records, t.known_cost_micro_usd,
+       t.cost_incomplete_records, t.unpriced_records,
+       COALESCE(s.ledger_incomplete_streams, 0) AS ledger_incomplete_streams
+FROM task_totals t
+LEFT JOIN org_incomplete_streams s ON s.organization_id = t.organization_id;
 
 CREATE VIEW usage_agent_totals AS
-SELECT organization_id, employee_id, COUNT(*) AS usage_count,
-       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
-       SUM(reasoning_tokens) AS reasoning_tokens,
-       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
-         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
-       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
-       SUM(cost_micro_usd) AS known_cost_micro_usd,
-       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
-       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
-       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
-FROM effective_usage_records e WHERE employee_id IS NOT NULL
-GROUP BY organization_id, employee_id;
+WITH org_incomplete_streams AS (
+  SELECT organization_id, COUNT(*) AS ledger_incomplete_streams
+  FROM usage_stream_coverage
+  WHERE coverage_complete = 0
+  GROUP BY organization_id
+),
+agent_totals AS (
+  SELECT organization_id, employee_id, COUNT(*) AS usage_count,
+         SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+         SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+         SUM(reasoning_tokens) AS reasoning_tokens,
+         SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+           ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+         SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+         SUM(cost_micro_usd) AS known_cost_micro_usd,
+         SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+         SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records
+  FROM effective_usage_records
+  WHERE employee_id IS NOT NULL
+  GROUP BY organization_id, employee_id
+)
+SELECT a.organization_id, a.employee_id, a.usage_count,
+       a.input_tokens, a.output_tokens,
+       a.cache_read_tokens, a.cache_write_tokens,
+       a.reasoning_tokens, a.known_tokens,
+       a.token_incomplete_records, a.known_cost_micro_usd,
+       a.cost_incomplete_records, a.unpriced_records,
+       COALESCE(s.ledger_incomplete_streams, 0) AS ledger_incomplete_streams
+FROM agent_totals a
+LEFT JOIN org_incomplete_streams s ON s.organization_id = a.organization_id;
 
 CREATE VIEW usage_project_totals AS
-SELECT organization_id, project_id, COUNT(*) AS usage_count,
-       SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-       SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
-       SUM(reasoning_tokens) AS reasoning_tokens,
-       SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
-         ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
-       SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
-       SUM(cost_micro_usd) AS known_cost_micro_usd,
-       SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
-       SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records,
-       (SELECT COUNT(*) FROM usage_stream_coverage c WHERE c.organization_id=e.organization_id AND c.coverage_complete=0) AS ledger_incomplete_streams
-FROM effective_usage_records e WHERE project_id IS NOT NULL
-GROUP BY organization_id, project_id;
+WITH org_incomplete_streams AS (
+  SELECT organization_id, COUNT(*) AS ledger_incomplete_streams
+  FROM usage_stream_coverage
+  WHERE coverage_complete = 0
+  GROUP BY organization_id
+),
+project_totals AS (
+  SELECT organization_id, project_id, COUNT(*) AS usage_count,
+         SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
+         SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_write_tokens) AS cache_write_tokens,
+         SUM(reasoning_tokens) AS reasoning_tokens,
+         SUM(CASE WHEN input_tokens IS NULL AND output_tokens IS NULL AND cache_read_tokens IS NULL AND cache_write_tokens IS NULL THEN NULL
+           ELSE COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) END) AS known_tokens,
+         SUM(CASE WHEN token_status <> 'complete' THEN 1 ELSE 0 END) AS token_incomplete_records,
+         SUM(cost_micro_usd) AS known_cost_micro_usd,
+         SUM(CASE WHEN cost_status <> 'complete' THEN 1 ELSE 0 END) AS cost_incomplete_records,
+         SUM(CASE WHEN cost_micro_usd IS NULL THEN 1 ELSE 0 END) AS unpriced_records
+  FROM effective_usage_records
+  WHERE project_id IS NOT NULL
+  GROUP BY organization_id, project_id
+)
+SELECT p.organization_id, p.project_id, p.usage_count,
+       p.input_tokens, p.output_tokens,
+       p.cache_read_tokens, p.cache_write_tokens,
+       p.reasoning_tokens, p.known_tokens,
+       p.token_incomplete_records, p.known_cost_micro_usd,
+       p.cost_incomplete_records, p.unpriced_records,
+       COALESCE(s.ledger_incomplete_streams, 0) AS ledger_incomplete_streams
+FROM project_totals p
+LEFT JOIN org_incomplete_streams s ON s.organization_id = p.organization_id;
 ```
 
 The consolidated schema protects usage records, referenced price versions and stream checkpoints against SQL replacement as well as direct mutation. Every write connection enables recursive triggers. Checkpoint stream identity is immutable, and historical agent consumers cannot be retyped as people. Per-record half-up quantization can differ from rounding a combined token total; totals sum the stored event amounts and must not be described as partition-independent billing.

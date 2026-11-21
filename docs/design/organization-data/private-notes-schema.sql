@@ -38,6 +38,10 @@ CREATE INDEX private_notes_by_author_task
   ON private_task_notes(organization_id, author_id, task_id, updated_at)
   WHERE deleted_at IS NULL;
 
+CREATE INDEX private_notes_by_task
+  ON private_task_notes(organization_id, task_id, updated_at)
+  WHERE deleted_at IS NULL;
+
 CREATE TRIGGER private_notes_no_replace BEFORE INSERT ON private_task_notes
 WHEN EXISTS (SELECT 1 FROM private_task_notes n WHERE n.organization_id=NEW.organization_id AND n.id=NEW.id)
 BEGIN SELECT RAISE(ABORT, 'private note identity already exists'); END;
@@ -76,6 +80,9 @@ CREATE TABLE private_note_command_receipts (
 
 CREATE UNIQUE INDEX one_pending_private_publication
   ON private_note_command_receipts(organization_id,note_id) WHERE state='pending';
+
+CREATE INDEX private_receipts_by_note
+  ON private_note_command_receipts(organization_id, note_id);
 
 CREATE TRIGGER private_receipt_matches_author BEFORE INSERT ON private_note_command_receipts
 WHEN NOT EXISTS (SELECT 1 FROM private_task_notes n WHERE n.organization_id=NEW.organization_id

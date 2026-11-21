@@ -1980,6 +1980,68 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
             values.update(fields)
             self.refused(lambda: insert(self.db, "documentation_media", **values))
 
+    def test_hot_path_indexes_and_non_quadratic_views(self):
+        def plan_lines(conn, sql, params=()):
+            return [row[3] for row in conn.execute(f"EXPLAIN QUERY PLAN {sql}", params).fetchall()]
+
+        # Hot-path shared indexes (TASK-6 / H-13, H-10).
+        indexed_queries = [
+            ("tasks_by_feature",
+             "SELECT id FROM tasks WHERE organization_id=? AND feature_id=?", ("org", "f1")),
+            ("task_document_versions_by_document",
+             "SELECT task_id FROM task_document_versions WHERE organization_id=? AND document_id=? AND version=?",
+             ("org", "doc", 1)),
+            ("document_code_links_by_document",
+             "SELECT id FROM document_code_links WHERE organization_id=? AND document_id=?", ("org", "doc")),
+            ("document_version_sources_by_source",
+             "SELECT document_id FROM document_version_sources WHERE organization_id=? AND source_document_id=? AND source_version=?",
+             ("org", "src", 1)),
+            ("hire_requests_by_team_state",
+             "SELECT id FROM hire_requests WHERE organization_id=? AND home_team_id=? AND state=?",
+             ("org", "payments", "hiring")),
+            ("messages_by_thread",
+             "SELECT id FROM messages WHERE organization_id=? AND thread_root_id=? ORDER BY created_at",
+             ("org", "root")),
+            ("usage_by_release_time",
+             "SELECT id FROM usage_records WHERE organization_id=? AND release_id=? ORDER BY occurred_at",
+             ("org", "rel")),
+            ("active_budget_holds",
+             "SELECT budget_id FROM budget_holds WHERE organization_id=? AND budget_id=? AND state <> 'released'",
+             ("org", "b1")),
+        ]
+        for expected_index, sql, params in indexed_queries:
+            with self.subTest(index=expected_index):
+                joined = "\n".join(plan_lines(self.db, sql, params))
+                self.assertIn(expected_index, joined)
+
+        # ADR-0031 person read on private_task_notes uses private_notes_by_task.
+        private = sqlite3.connect(":memory:")
+        self.addCleanup(private.close)
+        private.executescript((ROOT / "private-notes-schema.sql").read_text())
+        private_plan = "\n".join(plan_lines(
+            private,
+            "SELECT id, author_id, body_markdown FROM private_task_notes "
+            "WHERE organization_id=? AND task_id=? AND deleted_at IS NULL ORDER BY updated_at",
+            ("org", "task"),
+        ))
+        self.assertIn("private_notes_by_task", private_plan)
+
+        # usage_*_totals views must materialize org_incomplete_streams once (never correlated per group).
+        for view in ("usage_task_totals", "usage_agent_totals", "usage_project_totals"):
+            with self.subTest(view=view):
+                lines = plan_lines(self.db, f"SELECT * FROM {view} WHERE organization_id=?", ("org",))
+                joined = "\n".join(lines)
+                self.assertIn("MATERIALIZE org_incomplete_streams", joined)
+                self.assertEqual(sum(1 for l in lines if "CO-ROUTINE usage_stream_coverage" in l), 1, joined)
+                # Ensure usage_stream_coverage is NOT evaluated inside a correlated subquery.
+                idx_cov = next(i for i, l in enumerate(lines) if "MATERIALIZE org_incomplete_streams" in l)
+                self.assertNotIn("CORRELATED", lines[idx_cov - 1] if idx_cov > 0 else "")
+
+        # release_progress must evaluate milestone_progress at most once (no 3x co-routine scan).
+        release_plan = plan_lines(self.db, "SELECT * FROM release_progress WHERE organization_id=?", ("org",))
+        milestone_evals = sum(1 for line in release_plan if "CO-ROUTINE milestone_progress" in line)
+        self.assertLessEqual(milestone_evals, 1, "\n".join(release_plan))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
