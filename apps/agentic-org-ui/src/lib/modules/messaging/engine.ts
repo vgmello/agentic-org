@@ -14,8 +14,12 @@ import {
 	type ChatRefusal,
 	type ChatState,
 	type Conversation,
-	type MuteMode
+	type MuteMode,
+	type QuestionAnswer
 } from './types';
+import { answerText, optionsOf, questionsOf, SYSTEM_NO_REPLY, validQuestions } from './questions';
+
+export { answerText, optionsOf, questionsOf, SYSTEM_NO_REPLY };
 
 /** A member as chat needs to know them. */
 export interface ChatMember {
@@ -232,7 +236,8 @@ export const feedFor = (state: ChatState, ctx: ChatContext, viewer: string): Cha
 		return !!c && canRead(ctx, viewer, c);
 	});
 
-const label = (c: Conversation) => (c.kind === 'channel' ? `#${c.name}` : 'this conversation');
+export const label = (c: Conversation) =>
+	c.kind === 'channel' ? `#${c.name}` : 'this conversation';
 
 // ---- applying a call -------------------------------------------------------------------------------
 
@@ -262,116 +267,164 @@ export function applyChat(
 	const actor = memberOf(ctx, ctx.actor);
 	if (!actor || actor.former)
 		return refuse('not_authorized', 'Only a current member can use chat.');
-	// A bridge has its own binding, not a person's grant: it can post as a mapped person, never as the owner (decision 11), and it
-	// does three things only: post, react and answer, in the channels chosen for it.
-	if (ctx.surface === 'bridge') {
-		if (ctx.actor === ctx.owner)
-			return refuse('not_authorized', 'A bridge never acts as the owner.');
-		if (actor.kind !== 'person')
-			return refuse('not_authorized', 'A bridge acts only as a mapped person, never as an agent.');
-		if (!ctx.bridge?.people.some((p) => p.member_id === ctx.actor))
-			return refuse('not_authorized', 'That person is not mapped to this bridge.');
-		if (!['msg.send', 'chat.react', 'chat.answer'].includes(call.method))
-			return refuse('not_authorized', 'A bridge cannot do this.');
-	}
+	enforceBridgePolicy(call, ctx, actor);
 	const s = structuredClone(state);
-	let accepted: ChatAccepted = {};
-	switch (call.method) {
-		case 'msg.send':
-			accepted = send(s, call, ctx, actor);
-			break;
-		case 'chat.answer':
-			accepted = answer(s, call, ctx);
-			break;
-		case 'chat.accept_handoff': {
-			const m = s.messages.find((x) => x.id === call.message_id && x.kind === 'handoff');
-			if (!m) return refuse('not_found', 'There is no such hand-off.');
-			if (m.accepted_by)
-				return refuse(
-					'already_exists',
-					`Already accepted by ${memberOf(ctx, m.accepted_by)?.name ?? 'someone'}.`
-				);
-			// Only its recipient accepts it (the owner when it is handed to the owner); the owner reading as the owner only replies.
-			if (ctx.actor !== m.addressed_to)
-				return refuse('not_authorized', 'Only the person it is handed to can accept it.');
-			const home = s.conversations.find((x) => x.id === m.conversation_id)!;
-			if (m.addressed_to === ctx.owner && !(ctx.actor === ctx.owner && ctx.surface === 'app'))
-				return refuse(
-					'not_authorized',
-					'Open Agentic Org to accept a hand-off addressed to the owner.'
-				);
-			mustBeIn(ctx, home);
-			m.accepted_by = ctx.actor;
-			m.accepted_at = ctx.now;
-			accepted = { id: m.id };
-			break;
-		}
-		case 'chat.react': {
-			const m = s.messages.find((x) => x.id === call.message_id);
-			const c = m && s.conversations.find((x) => x.id === m.conversation_id);
-			if (!m || !c) return refuse('not_found', 'There is no such message.');
-			if (!canRead(ctx, ctx.actor, c))
-				return refuse(
-					'not_in_conversation',
-					`You can react in ${label(c)} only while you are a member of it.`
-				);
-			mustBeIn(ctx, c);
-			if (!REACTIONS.some((r) => r.id === call.reaction))
-				return refuse('invalid_request', 'Unknown reaction.');
-			const who = new Set(m.reactions?.[call.reaction] ?? []);
-			if (who.has(ctx.actor)) who.delete(ctx.actor);
-			else who.add(ctx.actor);
-			m.reactions = { ...m.reactions, [call.reaction]: [...who] };
-			accepted = { id: m.id };
-			break;
-		}
-		case 'chat.mute': {
-			ownerOnly(ctx);
-			const c = s.conversations.find((x) => x.id === call.conversation_id);
-			if (!c) return refuse('not_found', 'There is no such conversation.');
-			if (!isAgent(ctx, call.member_id) || !isMember(c, call.member_id))
-				return refuse('not_in_conversation', 'Only an agent that is a member can be muted here.');
-			if (!(['none', 'muted', 'digest'] as MuteMode[]).includes(call.mode))
-				return refuse('invalid_request', 'Unknown mute setting.');
-			s.mutes = s.mutes.filter(
-				(x) => !(x.conversation_id === call.conversation_id && x.member_id === call.member_id)
-			);
-			if (call.mode !== 'none')
-				s.mutes.push({
-					conversation_id: call.conversation_id,
-					member_id: call.member_id,
-					mode: call.mode
-				});
-			break;
-		}
-		case 'chat.mark_read': {
-			ownerOnly(ctx);
-			if (!s.conversations.some((x) => x.id === call.conversation_id))
-				return refuse('not_found', 'There is no such conversation.');
-			s.read_at[call.conversation_id] = ctx.now;
-			break;
-		}
-		case 'chat.pin': {
-			const m = s.messages.find((x) => x.id === call.message_id);
-			const c = m && s.conversations.find((x) => x.id === m.conversation_id);
-			if (!m || !c) return refuse('not_found', 'There is no such message.');
-			if (ctx.surface !== 'app') return refuse('not_authorized', 'Pinning is done in the app.');
-			if (!canRead(ctx, ctx.actor, c))
-				return refuse('not_in_conversation', 'Pin only in a conversation you are in.');
-			m.pinned = m.pinned ? undefined : true;
-			break;
-		}
-		case 'dm.open':
-			accepted = openDm(s, call.members, ctx);
-			break;
-		default:
-			accepted = channelCall(s, call, ctx);
-	}
+	const accepted = dispatchChatCall(s, call, ctx, actor);
 	s.applied[call.change_id] = accepted;
 	const keys = Object.keys(s.applied);
 	if (keys.length > APPLIED_KEPT)
 		for (const k of keys.slice(0, keys.length - APPLIED_KEPT)) delete s.applied[k];
 	return { state: s, accepted };
+}
+
+function enforceBridgePolicy(call: ChatCall, ctx: ChatContext, actor: ChatMember) {
+	// A bridge has its own binding, not a person's grant: it can post as a mapped person, never as the owner (decision 11), and it
+	// does three things only: post, react and answer, in the channels chosen for it.
+	if (ctx.surface !== 'bridge') return;
+	if (ctx.actor === ctx.owner) return refuse('not_authorized', 'A bridge never acts as the owner.');
+	if (actor.kind !== 'person')
+		return refuse('not_authorized', 'A bridge acts only as a mapped person, never as an agent.');
+	if (!ctx.bridge?.people.some((p) => p.member_id === ctx.actor))
+		return refuse('not_authorized', 'That person is not mapped to this bridge.');
+	if (!['msg.send', 'chat.react', 'chat.answer'].includes(call.method))
+		return refuse('not_authorized', 'A bridge cannot do this.');
+}
+
+function dispatchChatCall(
+	s: ChatState,
+	call: ChatCall,
+	ctx: ChatContext,
+	actor: ChatMember
+): ChatAccepted {
+	switch (call.method) {
+		case 'msg.send':
+			return send(s, call, ctx, actor);
+		case 'chat.answer':
+			return answer(s, call, ctx);
+		case 'chat.withdraw':
+			return withdrawAsk(s, call, ctx);
+		case 'chat.hand_back':
+			return handBackHandoff(s, call, ctx);
+		case 'channel.join':
+		case 'channel.request_invitation':
+			return channelDirectoryCall(s, call, ctx);
+		case 'chat.accept_handoff':
+			return acceptHandoff(s, call, ctx);
+		case 'chat.react':
+			return toggleReaction(s, call, ctx);
+		case 'chat.mute':
+			return setMute(s, call, ctx);
+		case 'chat.mark_read':
+			return markRead(s, call, ctx);
+		case 'chat.pin':
+			return togglePin(s, call, ctx);
+		case 'dm.open':
+			return openDm(s, call.members, ctx);
+		default:
+			return channelCall(s, call, ctx);
+	}
+}
+
+function acceptHandoff(
+	s: ChatState,
+	call: Extract<ChatCall, { method: 'chat.accept_handoff' }>,
+	ctx: ChatContext
+): ChatAccepted {
+	const m = s.messages.find((x) => x.id === call.message_id && x.kind === 'handoff');
+	if (!m) return refuse('not_found', 'There is no such hand-off.');
+	if (m.accepted_by)
+		return refuse(
+			'already_exists',
+			`Already accepted by ${memberOf(ctx, m.accepted_by)?.name ?? 'someone'}.`
+		);
+	if (m.handed_back) return refuse('already_exists', 'Already handed back');
+	// Only its recipient accepts it (the owner when it is handed to the owner); the owner reading as the owner only replies.
+	if (ctx.actor !== m.addressed_to)
+		return refuse('not_authorized', 'Only the person it is handed to can accept it.');
+	const home = s.conversations.find((x) => x.id === m.conversation_id)!;
+	if (m.addressed_to === ctx.owner && !(ctx.actor === ctx.owner && ctx.surface === 'app'))
+		return refuse(
+			'not_authorized',
+			'Open Agentic Org to accept a hand-off addressed to the owner.'
+		);
+	mustBeIn(ctx, home);
+	m.accepted_by = ctx.actor;
+	m.accepted_at = ctx.now;
+	return { id: m.id };
+}
+
+function toggleReaction(
+	s: ChatState,
+	call: Extract<ChatCall, { method: 'chat.react' }>,
+	ctx: ChatContext
+): ChatAccepted {
+	const m = s.messages.find((x) => x.id === call.message_id);
+	const c = m && s.conversations.find((x) => x.id === m.conversation_id);
+	if (!m || !c) return refuse('not_found', 'There is no such message.');
+	if (!canRead(ctx, ctx.actor, c))
+		return refuse(
+			'not_in_conversation',
+			`You can react in ${label(c)} only while you are a member of it.`
+		);
+	mustBeIn(ctx, c);
+	if (!REACTIONS.some((r) => r.id === call.reaction))
+		return refuse('invalid_request', 'Unknown reaction.');
+	const who = new Set(m.reactions?.[call.reaction] ?? []);
+	if (who.has(ctx.actor)) who.delete(ctx.actor);
+	else who.add(ctx.actor);
+	m.reactions = { ...m.reactions, [call.reaction]: [...who] };
+	return { id: m.id };
+}
+
+function setMute(
+	s: ChatState,
+	call: Extract<ChatCall, { method: 'chat.mute' }>,
+	ctx: ChatContext
+): ChatAccepted {
+	ownerOnly(ctx);
+	const c = s.conversations.find((x) => x.id === call.conversation_id);
+	if (!c) return refuse('not_found', 'There is no such conversation.');
+	if (!isAgent(ctx, call.member_id) || !isMember(c, call.member_id))
+		return refuse('not_in_conversation', 'Only an agent that is a member can be muted here.');
+	if (!(['none', 'muted', 'digest'] as MuteMode[]).includes(call.mode))
+		return refuse('invalid_request', 'Unknown mute setting.');
+	s.mutes = s.mutes.filter(
+		(x) => !(x.conversation_id === call.conversation_id && x.member_id === call.member_id)
+	);
+	if (call.mode !== 'none')
+		s.mutes.push({
+			conversation_id: call.conversation_id,
+			member_id: call.member_id,
+			mode: call.mode
+		});
+	return {};
+}
+
+function markRead(
+	s: ChatState,
+	call: Extract<ChatCall, { method: 'chat.mark_read' }>,
+	ctx: ChatContext
+): ChatAccepted {
+	ownerOnly(ctx);
+	if (!s.conversations.some((x) => x.id === call.conversation_id))
+		return refuse('not_found', 'There is no such conversation.');
+	s.read_at[call.conversation_id] = ctx.now;
+	return {};
+}
+
+function togglePin(
+	s: ChatState,
+	call: Extract<ChatCall, { method: 'chat.pin' }>,
+	ctx: ChatContext
+): ChatAccepted {
+	const m = s.messages.find((x) => x.id === call.message_id);
+	const c = m && s.conversations.find((x) => x.id === m.conversation_id);
+	if (!m || !c) return refuse('not_found', 'There is no such message.');
+	if (ctx.surface !== 'app') return refuse('not_authorized', 'Pinning is done in the app.');
+	if (!canRead(ctx, ctx.actor, c))
+		return refuse('not_in_conversation', 'Pin only in a conversation you are in.');
+	m.pinned = m.pinned ? undefined : true;
+	return {};
 }
 
 /** Answering or accepting happens where you are: a member (the owner in the app excepted), and a bridge only in its channels. */
@@ -403,7 +456,8 @@ function send(
 		return refuse('not_authorized', 'A bridge reaches only the channels chosen for it.');
 	if (!c) return refuse('not_found', 'There is no such conversation.');
 	if (c.archived) return refuse('conversation_archived', `${label(c)} is archived.`);
-	if (!canRead(ctx, ctx.actor, c))
+	// Reading as the owner gives no right to post (chat-ux decision 5): posting needs membership.
+	if (!canRead(ctx, ctx.actor, c) || !isMember(c, ctx.actor))
 		return refuse(
 			'not_in_conversation',
 			`You can post in ${label(c)} only while you are a member of it.`
@@ -469,6 +523,8 @@ function send(
 		const found = s.messages.find((m) => m.id === root && m.conversation_id === c.id);
 		if (!found) return refuse('not_found', 'There is no such thread.');
 		root = found.thread_root_id ?? found.id;
+		if (s.messages.find((m) => m.id === root)?.from === OFFICE)
+			return refuse('invalid_request', SYSTEM_NO_REPLY);
 	}
 	if (call.also_in_channel && root === undefined)
 		return refuse('invalid_request', 'Only a thread reply can also be sent to the channel.');
@@ -501,35 +557,7 @@ function send(
 		m.addressed_to = to;
 	}
 	if (call.kind === 'request') {
-		if (call.approval) {
-			if (m.addressed_to !== ctx.owner)
-				return refuse('invalid_request', 'An approval is asked of the owner.');
-			m.approval = true;
-			m.options = APPROVAL_OPTIONS;
-		} else if (call.options?.length) {
-			if (call.options.length > CHAT_LIMITS.askOptionsMax)
-				return refuse(
-					'invalid_request',
-					`An ask has at most ${CHAT_LIMITS.askOptionsMax} options.`
-				);
-			const ids = new Set(call.options.map((o) => o.id));
-			if (ids.size !== call.options.length || call.options.some((o) => !o.id || !o.label.trim()))
-				return refuse('invalid_request', 'Each option needs its own id and a label.');
-			m.options = call.options.map((o) => ({ id: o.id, label: o.label.trim() }));
-		}
-		if (call.default_option !== undefined || call.default_at !== undefined) {
-			if (
-				call.default_option === undefined ||
-				call.default_at === undefined ||
-				Number.isNaN(ms(call.default_at))
-			)
-				return refuse('invalid_request', 'A default needs the option and the time it applies.');
-			if (!m.options?.some((o) => o.id === call.default_option) || m.approval)
-				return refuse('invalid_request', 'The default must be one of the options.');
-			m.default_option = call.default_option;
-			m.default_at = call.default_at;
-		}
-		if (call.blocks) m.blocks = call.blocks.slice(0, 80);
+		applyRequestFields(m, call, ctx);
 	}
 	if (call.kind === 'announcement') {
 		if (!call.reason || !(ANNOUNCEMENT_REASONS as readonly string[]).includes(call.reason))
@@ -588,6 +616,179 @@ function send(
 	};
 }
 
+function applyRequestChoices(
+	m: ChatMessage,
+	call: Extract<ChatCall, { method: 'msg.send' }>,
+	ctx: ChatContext
+) {
+	if (call.approval) {
+		if (m.addressed_to !== ctx.owner)
+			return refuse('invalid_request', 'An approval is asked of the owner.');
+		m.approval = true;
+		m.options = APPROVAL_OPTIONS;
+		return;
+	}
+	if (call.questions?.length) {
+		m.questions = validQuestions(call.questions);
+		const first = m.questions.length === 1 ? m.questions[0] : undefined;
+		if (first?.question_type === 'choice' && !first.allow_multiple) m.options = first.options;
+		return;
+	}
+	if (call.options?.length) m.options = validateAskOptions(call.options);
+}
+
+function validateAskOptions(options: AskOption[]): AskOption[] {
+	if (options.length > CHAT_LIMITS.askOptionsMax)
+		return refuse('invalid_request', `An ask has at most ${CHAT_LIMITS.askOptionsMax} options.`);
+	const ids = new Set(options.map((o) => o.id));
+	if (ids.size !== options.length || options.some((o) => !o.id || !o.label.trim()))
+		return refuse('invalid_request', 'Each option needs its own id and a label.');
+	return options.map((o) => ({
+		id: o.id,
+		label: o.label.trim(),
+		...(o.description?.trim() ? { description: o.description.trim() } : {})
+	}));
+}
+
+function applyRequestFields(
+	m: ChatMessage,
+	call: Extract<ChatCall, { method: 'msg.send' }>,
+	ctx: ChatContext
+) {
+	applyRequestChoices(m, call, ctx);
+	if (call.required) {
+		if (call.default_at !== undefined)
+			return refuse(
+				'invalid_request',
+				'A required ask has no deadline: a default never answers it.'
+			);
+		m.required = true;
+	}
+	if (call.wait_until !== undefined) {
+		if (Number.isNaN(ms(call.wait_until)))
+			return refuse('invalid_request', 'The end of the wait is not a time.');
+		m.wait_until = call.wait_until;
+	}
+	applyRequestDefault(m, call);
+	if (call.blocks) m.blocks = call.blocks.slice(0, 80);
+}
+
+function applyQuestionDefault(m: ChatMessage, defaultAt: string) {
+	if (Number.isNaN(ms(defaultAt)))
+		return refuse('invalid_request', 'A default needs the time it applies.');
+	if (!m.questions?.some((q) => q.default_option))
+		return refuse('invalid_request', 'A deadline needs a default on at least one question.');
+	m.default_at = defaultAt;
+	const single = m.questions.length === 1 ? m.questions[0].default_option : undefined;
+	if (single && m.options) m.default_option = single;
+}
+
+function applyRequestDefault(m: ChatMessage, call: Extract<ChatCall, { method: 'msg.send' }>) {
+	if (call.default_at !== undefined && m.questions) {
+		applyQuestionDefault(m, call.default_at);
+		return;
+	}
+	if (call.default_option === undefined && call.default_at === undefined) return;
+	const missingPair = call.default_option === undefined || call.default_at === undefined;
+	if (missingPair || Number.isNaN(ms(call.default_at!)))
+		return refuse('invalid_request', 'A default needs the option and the time it applies.');
+	if (!m.options?.some((o) => o.id === call.default_option) || m.approval)
+		return refuse('invalid_request', 'The default must be one of the options.');
+	m.default_option = call.default_option;
+	m.default_at = call.default_at;
+}
+
+function closedRefusal(ask: ChatMessage, ctx: ChatContext): never | undefined {
+	if (ask.withdrawn)
+		return refuse(
+			'already_exists',
+			`Withdrawn by ${ask.withdrawn.by === OFFICE ? 'System' : (memberOf(ctx, ask.withdrawn.by)?.name ?? 'someone')}`
+		);
+	if (ask.answer)
+		return refuse(
+			'already_exists',
+			ask.answer.by === 'default'
+				? 'Already answered: default applied'
+				: `Already answered by ${memberOf(ctx, ask.answer.by)?.name ?? 'someone'}`
+		);
+	return undefined;
+}
+
+function withdrawAsk(
+	s: ChatState,
+	call: Extract<ChatCall, { method: 'chat.withdraw' }>,
+	ctx: ChatContext
+): ChatAccepted {
+	const ask = s.messages.find((m) => m.id === call.ask_id && m.kind === 'request');
+	if (!ask) return refuse('not_found', 'There is no such ask.');
+	if (ask.from !== ctx.actor)
+		return refuse('not_authorized', 'Only the one who asked can withdraw it.');
+	if (ask.withdrawn) return refuse('already_exists', 'Already withdrawn');
+	closedRefusal(ask, ctx);
+	const reason = call.reason?.trim() || undefined;
+	ask.withdrawn = { by: ctx.actor, at: ctx.now, ...(reason ? { reason } : {}) };
+	return { id: ask.id };
+}
+
+function handBackHandoff(
+	s: ChatState,
+	call: Extract<ChatCall, { method: 'chat.hand_back' }>,
+	ctx: ChatContext
+): ChatAccepted {
+	const m = s.messages.find((x) => x.id === call.message_id && x.kind === 'handoff');
+	if (!m) return refuse('not_found', 'There is no such hand-off.');
+	if (m.accepted_by)
+		return refuse(
+			'already_exists',
+			`Already accepted by ${memberOf(ctx, m.accepted_by)?.name ?? 'someone'}`
+		);
+	if (m.handed_back) return refuse('already_exists', 'Already handed back');
+	if (ctx.actor !== m.addressed_to)
+		return refuse('not_authorized', 'Only the one it is handed to can hand it back.');
+	const home = s.conversations.find((x) => x.id === m.conversation_id)!;
+	mustBeIn(ctx, home);
+	const reason = call.reason.trim();
+	if (!reason) return refuse('invalid_request', 'Say why you hand it back.');
+	m.handed_back = { by: ctx.actor, at: ctx.now, reason };
+	const reply: ChatMessage = {
+		id: newIdOf(s, ctx, 'm'),
+		conversation_id: home.id,
+		from: ctx.actor,
+		kind: 'reply',
+		body: `Handed back: ${reason}`,
+		created_at: ctx.now
+	};
+	if (home.kind !== 'dm') reply.thread_root_id = m.thread_root_id ?? m.id;
+	s.messages.push(reply);
+	return { id: m.id };
+}
+
+function channelDirectoryCall(
+	s: ChatState,
+	call: Extract<ChatCall, { method: 'channel.join' | 'channel.request_invitation' }>,
+	ctx: ChatContext
+): ChatAccepted {
+	const c = s.conversations.find((x) => x.id === call.id && x.kind === 'channel' && !x.archived);
+	if (!c || (c.access === 'restricted' && !isMember(c, ctx.actor)))
+		return refuse('not_found', 'There is no such channel.');
+	if (isMember(c, ctx.actor)) return refuse('already_exists', `You're already in #${c.name}.`);
+	if (c.auto)
+		return refuse(
+			'invalid_request',
+			`#${c.name} follows the organization: its members change with the ${c.auto.type === 'general' ? 'organization' : c.auto.type}.`
+		);
+	if (call.method === 'channel.join') {
+		if ((c.access ?? 'open') !== 'open')
+			return refuse('not_authorized', `#${c.name} is joined by invitation.`);
+		c.members.push(ctx.actor);
+		c.invite_requests = c.invite_requests?.filter((id) => id !== ctx.actor);
+	} else {
+		if (c.access !== 'invite') return refuse('invalid_request', `#${c.name} is open: join it.`);
+		c.invite_requests = unique([...(c.invite_requests ?? []), ctx.actor]);
+	}
+	return { id: c.id, conversation_id: c.id };
+}
+
 function answer(
 	s: ChatState,
 	call: Extract<ChatCall, { method: 'chat.answer' }>,
@@ -596,12 +797,7 @@ function answer(
 	const ask = s.messages.find((m) => m.id === call.ask_id && m.kind === 'request');
 	const c = ask && s.conversations.find((x) => x.id === ask.conversation_id);
 	if (!ask || !c) return refuse('not_found', 'There is no such ask.');
-	if (ask.answer)
-		return refuse(
-			'already_exists',
-			`Already answered by ${ask.answer.by === 'default' ? 'its default' : (memberOf(ctx, ask.answer.by)?.name ?? 'someone')}.`
-		);
-	// Asks addressed to the owner, and every approval, are answered only in the app, never through a bridge (CHAT-17, decision 11).
+	closedRefusal(ask, ctx);
 	if (
 		(ask.addressed_to === ctx.owner || ask.approval) &&
 		!(ctx.actor === ctx.owner && ctx.surface === 'app')
@@ -610,9 +806,10 @@ function answer(
 			'not_authorized',
 			'Open Agentic Org to answer this: asks to the owner and approvals are answered only in the app.'
 		);
-	if (ctx.actor !== ctx.owner && ctx.actor !== ask.addressed_to)
+	if (ctx.actor !== ask.addressed_to)
 		return refuse('not_authorized', 'Only the person it is asked of can answer it.');
 	mustBeIn(ctx, c);
+	if (call.answers) return answerForm(s, ask, c, call.answers, ctx);
 	const text = call.text?.trim() || undefined;
 	if (text && bytes(text) > CHAT_LIMITS.bodyMax)
 		return refuse('invalid_request', 'That reply is too long.');
@@ -629,7 +826,6 @@ function answer(
 		...(option ? { option_id: option.id } : {}),
 		...(text ? { text } : {})
 	};
-	// The answer goes back to the agent as the reply (`msg.reply`), under the ask.
 	const said = ask.approval
 		? option?.id === 'approve'
 			? 'Approved'
@@ -641,6 +837,76 @@ function answer(
 		from: ctx.actor,
 		kind: 'reply',
 		body: said,
+		created_at: ctx.now
+	};
+	if (c.kind !== 'dm') reply.thread_root_id = ask.thread_root_id ?? ask.id;
+	s.messages.push(reply);
+	return { id: ask.id, conversation_id: c.id };
+}
+
+function normalizeQuestionAnswer(
+	a: QuestionAnswer,
+	questions: ReturnType<typeof questionsOf>,
+	validIds: string
+): QuestionAnswer | undefined {
+	const q = questions.find((x) => x.id === a.question_id);
+	if (!q)
+		return refuse(
+			'invalid_request',
+			`There is no question ${a.question_id}. The questions are ${validIds}.`
+		);
+	const ids = [...new Set(a.option_ids ?? [])];
+	const text = a.text?.trim() || undefined;
+	const invalidChoice =
+		q.question_type === 'free_text'
+			? ids.length > 0
+			: ids.some((id) => !optionsOf(q).some((o) => o.id === id));
+	if (invalidChoice) return refuse('invalid_request', `That answer doesn't fit question ${q.id}.`);
+	if (ids.length > 1 && !q.allow_multiple)
+		return refuse('invalid_request', `Question ${q.id} takes one answer.`);
+	if (!ids.length && !text) return undefined;
+	return {
+		question_id: q.id,
+		...(ids.length ? { option_ids: ids } : {}),
+		...(text ? { text } : {})
+	};
+}
+
+function answerForm(
+	s: ChatState,
+	ask: ChatMessage,
+	c: Conversation,
+	given: QuestionAnswer[],
+	ctx: ChatContext
+): ChatAccepted {
+	const questions = questionsOf(ask);
+	const validIds = questions.map((q) => q.id).join(', ');
+	const answers: QuestionAnswer[] = [];
+	for (const a of given) {
+		const normalized = normalizeQuestionAnswer(a, questions, validIds);
+		if (normalized) answers.push(normalized);
+	}
+	const missing = questions.filter(
+		(q) => !q.optional && !answers.some((a) => a.question_id === q.id)
+	);
+	if (missing.length)
+		return refuse('invalid_request', `Answer ${missing.map((q) => q.id).join(', ')} first.`);
+	ask.answer = { by: ctx.actor, at: ctx.now, answers };
+	const body = questions
+		.map(
+			(q) =>
+				`${q.prompt}: ${answerText(
+					q,
+					answers.find((a) => a.question_id === q.id)
+				)}`
+		)
+		.join('\n');
+	const reply: ChatMessage = {
+		id: newIdOf(s, ctx, 'm'),
+		conversation_id: c.id,
+		from: ctx.actor,
+		kind: 'reply',
+		body,
 		created_at: ctx.now
 	};
 	if (c.kind !== 'dm') reply.thread_root_id = ask.thread_root_id ?? ask.id;
@@ -729,42 +995,64 @@ function channelCall(
 
 // ---- time ------------------------------------------------------------------------------------------
 
+function isDefaultDue(m: ChatMessage, nowMs: number): boolean {
+	if (m.kind !== 'request' || m.answer || m.withdrawn || m.required) return false;
+	const hasDefault = Boolean(m.default_option || m.questions?.some((q) => q.default_option));
+	return hasDefault && Boolean(m.default_at) && ms(m.default_at!) <= nowMs;
+}
+
+function defaultLabelOf(m: ChatMessage, defaults: QuestionAnswer[]): string {
+	if (m.default_option) {
+		return (
+			m.options?.find((o) => o.id === m.default_option)?.label.replace(/…$/, '') ?? m.default_option
+		);
+	}
+	return questionsOf(m)
+		.map((q) =>
+			answerText(
+				q,
+				defaults.find((d) => d.question_id === q.id)
+			)
+		)
+		.join('; ');
+}
+
+function applyDueDefault(s: ChatState, askId: string) {
+	const m = s.messages.find((x) => x.id === askId)!;
+	const c = s.conversations.find((x) => x.id === m.conversation_id);
+	const defaults = questionsOf(m)
+		.filter((q) => q.default_option)
+		.map((q) => ({ question_id: q.id, option_ids: [q.default_option!] }));
+	m.answer = {
+		by: 'default',
+		at: m.default_at!,
+		...(m.default_option ? { option_id: m.default_option } : { answers: defaults })
+	};
+	s.seq += 1;
+	const reply: ChatMessage = {
+		id: `m-d${s.seq}`,
+		conversation_id: m.conversation_id,
+		from: OFFICE,
+		kind: 'reply',
+		body: `No answer by the deadline: the default applies (${defaultLabelOf(m, defaults)}).`,
+		created_at: m.default_at!
+	};
+	if (c && c.kind !== 'dm') reply.thread_root_id = m.thread_root_id ?? m.id;
+	s.messages.push(reply);
+}
+
 /**
  * Apply the default of every ask whose deadline has passed (CHAT-6): the ask is answered by `default` and the card says so.
  * The office does this itself; the app only shows it.
  */
 export function tick(state: ChatState, now: string): ChatState {
-	const due = state.messages.filter(
-		(m) =>
-			m.kind === 'request' &&
-			!m.answer &&
-			m.default_option &&
-			m.default_at &&
-			ms(m.default_at) <= ms(now)
-	);
-	const stale = state.typing.some((t) => ms(t.until) <= ms(now));
+	// A required ask is never closed by a default; a withdrawn one is closed already.
+	const nowMs = ms(now);
+	const due = state.messages.filter((m) => isDefaultDue(m, nowMs));
+	const stale = state.typing.some((t) => ms(t.until) <= nowMs);
 	if (!due.length && !stale) return state;
 	const s = structuredClone(state);
-	for (const ask of due) {
-		const m = s.messages.find((x) => x.id === ask.id)!;
-		const c = s.conversations.find((x) => x.id === m.conversation_id);
-		m.answer = { by: 'default', at: m.default_at!, option_id: m.default_option };
-		// The default goes back to the agent like any answer (`msg.reply`), from the office, under the ask.
-		s.seq += 1;
-		const label =
-			m.options?.find((o) => o.id === m.default_option)?.label.replace(/…$/, '') ??
-			m.default_option;
-		const reply: ChatMessage = {
-			id: `m-d${s.seq}`,
-			conversation_id: m.conversation_id,
-			from: OFFICE,
-			kind: 'reply',
-			body: `No answer by the deadline: the default applies (${label}).`,
-			created_at: m.default_at!
-		};
-		if (c && c.kind !== 'dm') reply.thread_root_id = m.thread_root_id ?? m.id;
-		s.messages.push(reply);
-	}
-	s.typing = s.typing.filter((t) => ms(t.until) > ms(now));
+	for (const ask of due) applyDueDefault(s, ask.id);
+	s.typing = s.typing.filter((t) => ms(t.until) > nowMs);
 	return s;
 }

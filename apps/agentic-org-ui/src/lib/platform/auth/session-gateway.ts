@@ -48,7 +48,13 @@ export type EstablishedSession = ReturnType<typeof readEstablishedSession>;
 export type { AccessView, CliApprovalDecision, TlsEnableResult };
 export type LinkInspection =
 	| { kind: 'administrator_registration' }
-	| { kind: 'organization_invite'; org_id: string; org_name: string; member_id: string }
+	| {
+			kind: 'organization_invite';
+			org_id: string;
+			org_name: string;
+			member_id: string;
+			member_name?: string;
+	  }
 	| { kind: 'set_password'; login: string };
 
 const readLinkInspection: Reader<LinkInspection> = (value) => {
@@ -65,7 +71,8 @@ const readLinkInspection: Reader<LinkInspection> = (value) => {
 			kind: 'organization_invite',
 			org_id: v.org_id,
 			org_name: v.org_name,
-			member_id: v.member_id
+			member_id: v.member_id,
+			...(typeof v.member_name === 'string' && v.member_name ? { member_name: v.member_name } : {})
 		};
 	}
 	if (v.kind === 'set_password' && typeof v.login === 'string') {
@@ -183,7 +190,34 @@ export function createSessionGateway(
 					signal
 				}),
 				emptySessionResult
-			)
+			),
+		changePassword: (
+			request: { current_password: string; new_password: string },
+			proof: string,
+			signal?: AbortSignal
+		) => {
+			if (
+				typeof request.current_password !== 'string' ||
+				!request.current_password ||
+				typeof request.new_password !== 'string' ||
+				!request.new_password
+			) {
+				return Promise.reject(new NotDispatchedError('Invalid password change request'));
+			}
+			return result(
+				protectedHttp({
+					method: 'POST',
+					path: '/api/v1/account/password',
+					body: {
+						current_password: request.current_password,
+						new_password: request.new_password
+					},
+					proof,
+					signal
+				}),
+				emptySessionResult
+			);
+		}
 	});
 }
 export type SessionGateway = ReturnType<typeof createSessionGateway>;

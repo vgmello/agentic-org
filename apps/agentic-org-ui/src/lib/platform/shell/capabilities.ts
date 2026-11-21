@@ -15,6 +15,7 @@ const EXACT_ENABLED_PAGES: ReadonlySet<string> = new Set([
 	'/welcome',
 	'/create',
 	'/security',
+	'/approve',
 	'/cli-approve',
 	'/settings/offices',
 	'/offices',

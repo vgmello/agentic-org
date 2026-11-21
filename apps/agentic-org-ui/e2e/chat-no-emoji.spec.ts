@@ -78,7 +78,7 @@ async function open(page: Page) {
 	await enterMockedOrganization(page);
 	await expect(page).toHaveURL(/\/teams\/members$/);
 	await visit(page, '/chat');
-	await expect(page.getByTestId('conversation-title')).toHaveText('Needs you');
+	await expect(page.getByTestId('conversation-title')).toHaveText('#general');
 }
 async function conversations(page: Page) {
 	const nav = page.getByRole('navigation', { name: 'Chat', exact: true });
@@ -112,8 +112,12 @@ for (const width of [320, 640, 960, 1280])
 				const nav = await conversations(page);
 				await noEmoji(nav);
 				await navigationFits(nav);
+				await expect(nav.getByTestId('inbox-link').locator('svg')).toHaveCount(1);
+				await expect(nav.getByTestId('inbox-link').locator('svg')).toHaveAttribute(
+					'aria-hidden',
+					'true'
+				);
 				for (const [id, name] of [
-					['needs-you-link', 'outline:bell'],
 					['mentions-link', 'outline:at-symbol'],
 					['threads-link', 'outline:chat-bubble-left-right']
 				] as const) {
@@ -125,7 +129,7 @@ for (const width of [320, 640, 960, 1280])
 				await iconIs(nav.locator('[data-conversation="c-general"] svg'), 'outline:hashtag', true);
 				await iconIs(nav.locator('[data-conversation="c-group"] svg'), 'outline:user-group', true);
 				await shot(page, `no-emoji-nav-${width}-${scale}`, { context: nav });
-				await nav.getByTestId('needs-you-link').click();
+				await nav.locator('[data-conversation="c-project-atlas"]').click();
 				await noEmoji(page.getByTestId('ask-card').first());
 				await iconIs(
 					page

@@ -50,15 +50,12 @@ test('CHAT-5/6 BUG-41: stopped office keeps asks and approvals read-only everywh
 }) => {
 	await open(page, '?chat=offline');
 	await expect(page.getByTestId('office-down')).toBeVisible();
-	for (const card of await page.getByTestId('ask-card').all()) {
-		await expect(card.getByRole('button')).toHaveCount(0);
-		await expect(card).toContainText("The office isn't running. Restart it from Offices.");
-	}
-	await shot(page, 'chat-offline-needs-you');
 	await go(page, 'atlas');
 	const asks = page.getByTestId('ask-card');
 	await expect(asks.first()).toBeVisible();
-	for (const card of await asks.all()) await expect(card.getByRole('button')).toHaveCount(0);
+	for (const card of await asks.all()) {
+		for (const button of await card.getByRole('button').all()) await expect(button).toBeDisabled();
+	}
 	await shot(page, 'chat-offline-conversation');
 });
 
@@ -89,6 +86,7 @@ test('CHAT-7/8 BUG-42: incoming conversation and thread replies are in polite me
 for (const action of ['option', 'reply', 'reject'] as const) {
 	test(`CHAT-5 BUG-43: keyboard focus remains useful after ${action}`, async ({ page }) => {
 		await open(page);
+		await go(page, 'atlas');
 		const card = page
 			.getByTestId('ask-card')
 			.filter({ hasText: action === 'reject' ? 'Publish the 0.2' : 'Block bug reports' });
@@ -102,21 +100,9 @@ for (const action of ['option', 'reply', 'reject'] as const) {
 		});
 		await button.focus();
 		await button.press('Enter');
-		await expect(card).toHaveCount(0);
-		await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY');
-		const focused = page.locator(':focus');
-		await expect(page.getByTestId('needs-you-list')).toContainText('asks you');
-		await expect(focused).toHaveRole('button');
+		await expect(card.getByTestId('answered')).toBeVisible();
+		await expect(card).toBeFocused();
 		await shot(page, `chat-focus-${action}`);
-		// Answer the final card: focus lands on the empty result rather than the document.
-		const remaining = page.getByTestId('ask-card');
-		const answer = remaining.getByRole('button', {
-			name: action === 'reject' ? 'Yes, block' : 'Approve',
-			exact: true
-		});
-		await answer.focus();
-		await answer.press('Enter');
-		await expect(page.getByTestId('nothing-needs-you')).toBeFocused();
 	});
 }
 
@@ -125,6 +111,8 @@ test('CHAT-14 BUG-43: keyboard Retry focuses the delivered message', async ({ pa
 	await go(page, 'general');
 	await page.getByTestId('composer').fill('Retry focus target');
 	await page.getByTestId('composer').press('Control+Enter');
+	await expect(page.getByTestId('not-confirmed')).toBeVisible();
+	await page.getByRole('button', { name: 'Check status', exact: true }).click();
 	const retry = page.getByRole('button', { name: 'Retry', exact: true });
 	await expect(retry).toBeVisible();
 	await retry.focus();
@@ -216,7 +204,11 @@ test('CHAT-8 BUG-45: failed thread replies have inline Retry and Dismiss, preser
 	await thread.getByLabel('Also send to #release-v1').check();
 	await composer.press('Control+Enter');
 	const failed = thread.getByTestId('message').filter({ hasText: 'Keep this failed thread reply' });
-	await expect(failed.getByTestId('not-delivered')).toContainText("The office didn't answer.");
+	await expect(failed.getByTestId('not-confirmed')).toBeVisible();
+	await failed.getByRole('button', { name: 'Check status', exact: true }).click();
+	await expect(failed.getByTestId('not-delivered')).toContainText(
+		'the office has no record of it. Retry sends it once.'
+	);
 	await shot(page, 'chat-thread-delivery-failed');
 	await failed.getByRole('button', { name: 'Retry', exact: true }).click();
 	await expect(thread.getByTestId('not-delivered')).toHaveCount(0);
@@ -235,6 +227,8 @@ test('CHAT-8 BUG-45: failed thread replies have inline Retry and Dismiss, preser
 	const dismissed = thread
 		.getByTestId('message')
 		.filter({ hasText: 'Dismiss this thread failure' });
+	await expect(dismissed.getByTestId('not-confirmed')).toBeVisible();
+	await dismissed.getByRole('button', { name: 'Check status', exact: true }).click();
 	await expect(dismissed.getByTestId('not-delivered')).toBeVisible();
 	await dismissed.getByRole('button', { name: 'Dismiss', exact: true }).click();
 	await expect(dismissed).toHaveCount(0);
@@ -337,6 +331,7 @@ for (const movedOn of [false, true]) {
 		page
 	}) => {
 		await open(page);
+		await go(page, 'atlas');
 		await page.evaluate(async () => {
 			const path = '/e2e/fakes/modules/messaging.ts';
 			const { chatApi } = await import(path);
@@ -378,7 +373,7 @@ for (const movedOn of [false, true]) {
 		await shot(page, movedOn ? 'chat-answer-refused-moved-focus' : 'chat-answer-refused-focus');
 		await answer.focus();
 		await answer.press('Enter');
-		await expect(card).toHaveCount(0);
+		await expect(card.getByTestId('answered')).toBeVisible();
 	});
 }
 

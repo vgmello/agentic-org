@@ -2,7 +2,7 @@
 import { sampleOrg } from '$lib/modules/organization/sample';
 import { applyChat, type ChatContext } from './engine';
 import { chatContext } from './model';
-import { sampleChat } from './sample';
+import { sampleChat } from '../../../../e2e/fakes/modules/chat-sample';
 import type { ChatAccepted, ChatCall, ChatMessage, ChatState } from './types';
 
 export const NOW = '2026-11-08T12:00:00.000Z';

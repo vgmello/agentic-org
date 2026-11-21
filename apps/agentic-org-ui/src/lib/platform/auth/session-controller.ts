@@ -43,6 +43,7 @@ type ControllerGateway = Pick<
 			| 'registerSignIn'
 			| 'inspectLink'
 			| 'setPassword'
+			| 'changePassword'
 		>
 	>;
 type Options = {
@@ -522,6 +523,18 @@ export function createSessionController({
 			if (!gateway.decideCliApproval) throw new Error('CLI approval unavailable');
 			const decide = gateway.decideCliApproval;
 			return withCallerAuth((proof) => decide(request, proof, signal));
+		},
+		/** Changes the signed-in account's password; ends every other session (§4a.2). */
+		async changePassword(
+			request: { current_password: string; new_password: string },
+			signal?: AbortSignal
+		): Promise<void> {
+			if (!gateway.changePassword) throw new Error('Password change unavailable');
+			const change = gateway.changePassword;
+			await withCallerAuth((proof) => {
+				if (proof === undefined) throw new Error('Sign in required');
+				return change(request, proof, signal);
+			});
 		},
 		async refresh(triggered_at_ms: number, signal?: AbortSignal) {
 			ensureOpen();

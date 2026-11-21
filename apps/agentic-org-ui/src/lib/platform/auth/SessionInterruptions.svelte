@@ -30,6 +30,8 @@
 	const elsewhere = $derived(
 		page.url.pathname === '/sign-in' ||
 			page.url.pathname === '/register' ||
+			page.url.pathname === '/set-password' ||
+			page.url.pathname === '/approve' ||
 			page.url.pathname === '/cli-approve'
 	);
 	const ended = $derived(

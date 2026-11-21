@@ -32,6 +32,30 @@ export const HQ_ERROR_COPY =
 	"HQ couldn't sign you in because of a problem on the HQ machine. Try again. If it keeps happening, run agentic-org doctor --name <instance> there.";
 export const OUT_OF_DATE_COPY = 'This page is out of date. Reload to get the current version.';
 export const LINK_USED_COPY = 'This link has expired or was already used.';
+export const CURRENT_PASSWORD_WRONG_COPY = "That isn't your current password.";
+export const PASSWORD_CHANGED_COPY = "Password changed. You're signed out everywhere else.";
+export const PASSWORD_SET_NOTE = 'Password set. Sign in with the new password.';
+
+export type ChangePasswordFailure =
+	| { kind: 'current_password'; message: string }
+	| { kind: 'new_password'; message: string }
+	| { kind: 'general'; message: string; reload?: true };
+
+/** Maps password-change failures to exact §4a.2 copy without exposing raw server strings. */
+export function describeChangePasswordFailure(
+	error: unknown,
+	nowMs: number
+): ChangePasswordFailure {
+	if (error instanceof SessionRequestError && error.status === 403) {
+		return { kind: 'current_password', message: CURRENT_PASSWORD_WRONG_COPY };
+	}
+	const described = describeCredentialFailure(error, nowMs, 'register');
+	if (described.kind === 'field') return { kind: 'new_password', message: described.message };
+	if (described.kind === 'out_of_date') {
+		return { kind: 'general', message: described.message, reload: true };
+	}
+	return { kind: 'general', message: described.message };
+}
 
 /** Whole minutes, rounded up, "1 minute" when one is left (§4a.3). */
 export function rateLimitCopy(remainingMs: number | undefined): string {

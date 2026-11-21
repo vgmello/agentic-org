@@ -11,6 +11,7 @@ describe('production shell capabilities', () => {
 			'/welcome',
 			'/create',
 			'/security',
+			'/approve',
 			'/cli-approve',
 			'/settings/offices',
 			'/offices',
@@ -36,6 +37,7 @@ describe('production shell capabilities', () => {
 		for (const path of [
 			'/create/x',
 			'/security/x',
+			'/approve/x',
 			'/cli-approve/x',
 			'/home',
 			'/work',

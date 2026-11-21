@@ -101,7 +101,7 @@ describe('CHAT-1 · the sidebar', () => {
 			'Sam Okafor': 'working',
 			'Inês Duarte': 'asleep',
 			'Pax Moreau': 'paused',
-			'Avery Stone': 'online'
+			'Avery Stone': undefined
 		});
 		expect(bar.dms.find((d) => d.conversation.kind === 'group_dm')?.title).toBe(
 			'Sam Okafor, Noor Haddad'
@@ -125,12 +125,12 @@ describe('CHAT-1 · the sidebar', () => {
 });
 
 describe("CHAT-3 · DMs show each member's status", () => {
-	it('CHAT-3 · an unplaced presence reads Offline for an agent and Online for a person', () => {
+	it('CHAT-3 · an unplaced presence reads Offline for an agent and none for a person', () => {
 		const s = fresh();
 		const row = (id: string) =>
 			sidebar({ ...s, presence: {} }, ctx).dms.find((d) => d.conversation.id === id)!;
 		expect(row('c-dm-sam').presence).toBe('offline');
-		expect(row('c-dm-avery').presence).toBe('online');
+		expect(row('c-dm-avery').presence).toBeUndefined();
 	});
 });
 
@@ -202,15 +202,19 @@ describe('CHAT-6 · an ask with a default shows its deadline', () => {
 });
 
 describe('CHAT-7 · the composer says when a message wakes an agent', () => {
-	it('CHAT-7 · an asleep agent: "Inês Duarte is asleep. Your message will wake it."', () => {
+	it('CHAT-7 · an available agent needs no wake note, and reading as the owner is read-only', () => {
 		const s = fresh();
 		const c = composerState(s, ctx, conv(s, 'c-dm-ines'), true);
 		expect(c).toEqual({
 			canWrite: true,
-			note: 'Inês Duarte is asleep. Your message will wake it.',
-			wakes: ['ines']
+			wakes: []
 		});
 		expect(composerState(s, ctx, conv(s, 'c-dm-sam'), true)).toEqual({ canWrite: true, wakes: [] });
+		expect(composerState(s, ctx, conv(s, 'c-dm-sam-noor'), true)).toEqual({
+			canWrite: false,
+			note: 'Reading as the owner. To weigh in, message Sam Okafor.',
+			wakes: []
+		});
 	});
 	it('CHAT-7 · a paused agent says it will not read the message', () => {
 		const s = fresh();
@@ -402,16 +406,12 @@ describe("CHAT-18 · hand-off states and a person's status as a word", () => {
 			'Accepted by Noor Haddad'
 		);
 	});
-	it('CHAT-18 · a DM with a person shows Online or Offline as a word, an agent its own word', () => {
+	it('CHAT-18 · a DM with an agent shows its presence word while a person has no speculative presence', () => {
 		const dms = sidebar(fresh(), ctx).dms;
-		const word = (id: string) =>
-			PRESENCE_WORD[dms.find((d) => d.conversation.id === id)!.presence!];
-		expect(word('c-dm-avery')).toBe('Online');
-		expect(word('c-dm-sam')).toBe('Working');
-		const gone = sidebar({ ...fresh(), presence: { avery: 'offline' } }, ctx).dms.find(
-			(d) => d.conversation.id === 'c-dm-avery'
-		)!;
-		expect(PRESENCE_WORD[gone.presence!]).toBe('Offline');
+		const row = (id: string) => dms.find((d) => d.conversation.id === id)!;
+		expect(row('c-dm-avery').presence).toBeUndefined();
+		expect(PRESENCE_WORD[row('c-dm-sam').presence!]).toBe('Working');
+		expect(PRESENCE_WORD[row('c-dm-ines').presence!]).toBe('Available');
 	});
 });
 

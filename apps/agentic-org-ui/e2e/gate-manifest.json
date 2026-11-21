@@ -421,6 +421,7 @@
 			"specs": ["chat.spec.ts", "chat-*.spec.ts", "chat-followups-default-font.ts"],
 			"sources": [
 				"src/routes/(shell)/chat/**",
+				"src/lib/modules/chat/**",
 				"src/lib/modules/messaging/**",
 				"e2e/fixtures/heroicons-*.json",
 				"e2e/chat-followups.ts",
@@ -514,7 +515,8 @@
 				"session-foundation.spec.ts",
 				"accessibility.spec.ts",
 				"organizations.spec.ts",
-				"local-access-and-tls.spec.ts"
+				"local-access-and-tls.spec.ts",
+				"access-flows.spec.ts"
 			],
 			"sources": [
 				"src/routes/(onboarding)/**",
@@ -652,9 +654,9 @@
 			"why": "The dev-mock fake stands in for the copilot module's api.ts by name under dev:mock and composes its scripted mock; the fake is never part of a production build."
 		},
 		{
-			"from": "e2e/fakes/modules/messaging.ts",
-			"to": "src/lib/modules/messaging/{api,mock}.ts",
-			"why": "The dev-mock fake stands in for the messaging module's api.ts by name under dev:mock and composes its in-memory mock; the fake is never part of a production build."
+			"from": "e2e/fakes/modules/{chat,chat-sample,messaging}.ts",
+			"to": "src/lib/modules/messaging/{api,engine,model,types}.ts",
+			"why": "The dev-mock fakes stand in for the chat and messaging modules' api.ts by name under dev:mock and compose the in-memory chat engine and sample fixture; fakes are never part of a production build."
 		},
 		{
 			"from": "e2e/processes{,-bugs}.spec.ts",
@@ -662,9 +664,9 @@
 			"why": "The route scanner reads only the first path segment, so /settings/processes/** (owned by processes) is seen as the General settings page; the processes specs never open General itself."
 		},
 		{
-			"from": "e2e/local-access-and-tls.spec.ts",
+			"from": "e2e/{local-access-and-tls,access-flows}.spec.ts",
 			"to": "src/routes/(shell)/settings/+page.svelte",
-			"why": "The route scanner reads only the first path segment, so /settings/security (which composes the shared InstanceSecurityPanel) is seen as the General settings page; this spec never opens General itself."
+			"why": "The route scanner reads only the first path segment, so /settings/security (which composes the shared InstanceSecurityPanel) is seen as the General settings page; these specs never open General itself."
 		},
 		{
 			"from": "e2e/insights.spec.ts",

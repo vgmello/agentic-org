@@ -15,7 +15,10 @@ const memorySeed: Plugin = {
 	name: 'memory-test-seed',
 	enforce: 'pre',
 	resolveId(source, importer) {
-		if (source === './sample' && importer?.split('?')[0].endsWith('/modules/messaging/mock.ts'))
+		if (
+			source === './chat-sample' &&
+			importer?.split('?')[0].endsWith('/e2e/fakes/modules/chat.ts')
+		)
 			return seed;
 	}
 };

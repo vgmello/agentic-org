@@ -24,6 +24,7 @@
 	let inspecting = $state(true);
 	let linkPresent = $state(true);
 	let inviteOrgName = $state<string>();
+	let inviteMemberName = $state<string>();
 	let mode = $state<'create' | 'sign-in'>('create');
 	let login = $state('');
 	let password = $state('');
@@ -39,7 +40,10 @@
 	async function inspectCurrentLink(token: string) {
 		try {
 			const info = await appSession.controller().inspectLink({ link: token, kind: 'registration' });
-			if (info.kind === 'organization_invite') inviteOrgName = info.org_name;
+			if (info.kind === 'organization_invite') {
+				inviteOrgName = info.org_name;
+				inviteMemberName = info.member_name;
+			}
 		} catch (error) {
 			if (error instanceof SessionRequestError && (error.status === 404 || error.status === 410)) {
 				secret = undefined;
@@ -105,6 +109,11 @@
 			return;
 		}
 		failure = result;
+		if (result.kind === 'mismatch') {
+			password = '';
+			await tick();
+			passwordInput?.focus();
+		}
 	}
 
 	async function submit(event: SubmitEvent) {
@@ -153,33 +162,16 @@
 {:else}
 	{#if inviteOrgName}
 		<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">
-			Join {inviteOrgName} on HQ at {address}
+			{mode === 'create'
+				? `Create your account on HQ at ${address}`
+				: `Sign in to join ${inviteOrgName}`}
 		</h1>
 		<p class="mt-2 text-sm/6 text-fg-muted">
-			{mode === 'create'
-				? 'Create an account to sign in, or attach an account you already have on this instance.'
-				: 'Sign in with your existing account on this instance to accept this invitation.'}
+			You're invited to <span class="font-semibold text-fg">{inviteOrgName}</span>{inviteMemberName
+				? ' as '
+				: ''}{#if inviteMemberName}<span class="font-semibold text-fg">{inviteMemberName}</span
+				>{/if}.
 		</p>
-		<div class="mt-4 flex gap-x-2" role="group" aria-label="Invitation method">
-			<button
-				type="button"
-				disabled={busy}
-				onclick={() => switchMode('create')}
-				class="rounded-md px-3 py-1.5 text-sm/6 font-semibold {mode === 'create'
-					? 'bg-primary text-on-emphasis'
-					: 'bg-surface-raised text-fg outline-1 -outline-offset-1 outline-line hover:bg-surface-overlay'}"
-				>Create new account</button
-			>
-			<button
-				type="button"
-				disabled={busy}
-				onclick={() => switchMode('sign-in')}
-				class="rounded-md px-3 py-1.5 text-sm/6 font-semibold {mode === 'sign-in'
-					? 'bg-primary text-on-emphasis'
-					: 'bg-surface-raised text-fg outline-1 -outline-offset-1 outline-line hover:bg-surface-overlay'}"
-				>Use existing account</button
-			>
-		</div>
 	{:else}
 		<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">
 			Create your account on HQ at {address}
@@ -268,4 +260,33 @@
 					: 'Create account'}</button
 		>
 	</form>
+
+	{#if inviteOrgName}
+		<p class="mt-6 text-sm/6 text-fg-muted">
+			{#if mode === 'create'}
+				Already have an account on this HQ?
+				<button
+					type="button"
+					disabled={busy}
+					onclick={() => {
+						switchMode('sign-in');
+						void tick().then(() => loginInput?.focus());
+					}}
+					class="font-semibold text-link underline hover:text-brand-text">Sign in instead</button
+				>
+			{:else}
+				Need a new account on this HQ?
+				<button
+					type="button"
+					disabled={busy}
+					onclick={() => {
+						switchMode('create');
+						void tick().then(() => loginInput?.focus());
+					}}
+					class="font-semibold text-link underline hover:text-brand-text"
+					>Create an account instead</button
+				>
+			{/if}
+		</p>
+	{/if}
 {/if}

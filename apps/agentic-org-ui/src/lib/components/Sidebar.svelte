@@ -14,6 +14,7 @@
 	import { Tooltip, mergeProps } from 'bits-ui';
 	import type { Connection } from '$lib/proto';
 	import type { ShellNavigation } from '$lib/modules/shell/types';
+	import OrganizationSwitcher from '$lib/platform/shell/OrganizationSwitcher.svelte';
 	import ShellAccountMenu from '$lib/platform/shell/ShellAccountMenu.svelte';
 	import Logo from './Logo.svelte';
 	import { icons } from './icons';
@@ -143,9 +144,9 @@
 		bind:this={root}
 		class="@container flex min-h-0 min-w-0 grow flex-col bg-shade/10 ring-1 ring-line-subtle"
 	>
-		<!-- Application identity: the logo and organization lead Home. -->
+		<!-- Application identity: the logo and organization lead Home; switcher opens organizations. -->
 		<div
-			class="flex h-16 shrink-0 items-center px-4 {responsive
+			class="flex h-16 shrink-0 items-center justify-between gap-1 px-4 {responsive
 				? '@max-[10rem]:justify-center @max-[10rem]:px-2'
 				: ''}"
 		>
@@ -159,8 +160,8 @@
 							type={undefined}
 							href={resolve('/home')}
 							aria-label={homeLabel}
-							class="flex min-h-11 min-w-0 items-center gap-x-3 rounded-md px-2 hover:bg-surface-raised {focusRing} {responsive
-								? '@max-[10rem]:size-12 @max-[10rem]:justify-center @max-[10rem]:px-0'
+							class="flex min-h-11 min-w-0 flex-1 items-center gap-x-3 rounded-md px-2 hover:bg-surface-raised {focusRing} {responsive
+								? '@max-[10rem]:size-12 @max-[10rem]:flex-none @max-[10rem]:justify-center @max-[10rem]:px-0'
 								: ''}"
 						>
 							<Logo class="size-8 shrink-0" />
@@ -183,6 +184,11 @@
 					></Tooltip.Portal
 				>
 			</Tooltip.Root>
+			{#if !rail}
+				<div class={responsive ? '@max-[10rem]:hidden' : ''}>
+					<OrganizationSwitcher {connection} />
+				</div>
+			{/if}
 		</div>
 
 		<nav

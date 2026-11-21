@@ -215,8 +215,13 @@ for (const [path, heading, state] of [
 				const composer = page.getByTestId('composer').first();
 				await composer.fill('Header failure fixture');
 				await composer.press('Control+Enter');
+				await expect(page.getByTestId('not-confirmed')).toContainText('Delivery not confirmed');
+				await page
+					.getByTestId('not-confirmed')
+					.getByRole('button', { name: 'Check status' })
+					.click();
 				await expect(page.getByTestId('not-delivered')).toContainText(
-					"Not delivered: The office didn't answer."
+					'Not delivered: the office has no record of it. Retry sends it once.'
 				);
 			}
 			await expectHeaderFits(page, heading, 320, 1);
