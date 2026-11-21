@@ -204,14 +204,14 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   display: inline-flex; align-items: center;
   width: min(640px, 100%); height: 46px; padding: 5px 6px 5px 6px;
   border-radius: 14px;
-  background: rgba(11, 22, 40, .28);
-  backdrop-filter: blur(4px) saturate(145%); -webkit-backdrop-filter: blur(4px) saturate(145%);
-  box-shadow: inset 0 1px 0 rgba(186, 226, 255, .24), inset 0 0 0 1px rgba(186, 226, 255, .16), 0 10px 28px -10px rgba(2, 8, 22, .52), 0 0 20px -8px rgba(125, 211, 252, .10);
+  background: linear-gradient(160deg, rgba(186, 226, 255, .075) 0%, rgba(11, 22, 40, .18) 60%, rgba(6, 14, 28, .24) 100%);
+  backdrop-filter: blur(1.2px) saturate(150%); -webkit-backdrop-filter: blur(1.2px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgba(210, 238, 255, .26), inset 0 0 0 1px rgba(186, 226, 255, .17), 0 10px 28px -10px rgba(2, 8, 22, .52), 0 0 22px -8px rgba(125, 211, 252, .12);
   transition: background-color .18s ease, box-shadow .18s ease, transform .18s ease;
 }
 .cmdk-shell:hover {
-  background: rgba(15, 30, 54, .38);
-  box-shadow: inset 0 1px 0 rgba(210, 236, 255, .32), inset 0 0 0 1px rgba(125, 211, 252, .30), 0 14px 32px -10px rgba(2, 8, 22, .62), 0 0 24px -6px rgba(125, 211, 252, .16);
+  background: linear-gradient(160deg, rgba(186, 226, 255, .11) 0%, rgba(15, 30, 54, .26) 60%, rgba(8, 18, 36, .32) 100%);
+  box-shadow: inset 0 1px 0 rgba(224, 244, 255, .34), inset 0 0 0 1px rgba(125, 211, 252, .32), 0 14px 32px -10px rgba(2, 8, 22, .62), 0 0 26px -6px rgba(125, 211, 252, .18);
   transform: translateY(-0.5px);
 }
 .cmdk-trigger {
@@ -1517,14 +1517,14 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 
 /* ── v4 Executive Briefing + Spotlight Queue Home ─────────────────────── */
 .hb {
-  --hb-surface: rgba(11, 22, 40, .24);
-  --hb-surface-hi: rgba(16, 31, 55, .34);
-  --hb-well: rgba(8, 16, 30, .22);
-  --hb-border: rgba(186, 226, 255, .14);
-  --hb-border-hi: rgba(186, 226, 255, .26);
-  --hb-blur: blur(3px) saturate(140%);
-  --hb-shadow: inset 0 1px 0 rgba(196, 232, 255, .22), inset 0 0 0 1px var(--hb-border), 0 12px 30px -12px rgba(2, 8, 22, .52), 0 0 22px -8px rgba(125, 211, 252, .09);
-  --hb-shadow-hi: inset 0 1px 0 rgba(215, 240, 255, .30), inset 0 0 0 1px var(--hb-border-hi), 0 16px 36px -12px rgba(2, 8, 22, .62), 0 0 26px -6px rgba(125, 211, 252, .15);
+  --hb-surface: linear-gradient(155deg, rgba(186, 226, 255, .07) 0%, rgba(11, 22, 40, .14) 55%, rgba(6, 14, 28, .20) 100%);
+  --hb-surface-hi: linear-gradient(155deg, rgba(196, 232, 255, .10) 0%, rgba(16, 31, 55, .22) 55%, rgba(9, 19, 36, .28) 100%);
+  --hb-well: rgba(8, 16, 30, .16);
+  --hb-border: rgba(186, 226, 255, .15);
+  --hb-border-hi: rgba(186, 226, 255, .28);
+  --hb-blur: blur(0.9px) saturate(145%);
+  --hb-shadow: inset 0 1px 0 rgba(210, 238, 255, .24), inset 0 0 0 1px var(--hb-border), 0 12px 30px -12px rgba(2, 8, 22, .50), 0 0 24px -8px rgba(125, 211, 252, .11);
+  --hb-shadow-hi: inset 0 1px 0 rgba(224, 244, 255, .34), inset 0 0 0 1px var(--hb-border-hi), 0 16px 36px -12px rgba(2, 8, 22, .60), 0 0 28px -6px rgba(125, 211, 252, .17);
   --hb-ink: #F8FAFC;
   --hb-body: #CBD5E1;
   --hb-muted: #94A3B8;
