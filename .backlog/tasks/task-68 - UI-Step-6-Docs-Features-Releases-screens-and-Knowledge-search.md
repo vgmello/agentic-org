@@ -1,11 +1,11 @@
 ---
 id: TASK-68
 title: 'UI Step 6: Docs, Features, Releases screens, and Knowledge search'
-status: In Progress
+status: Done
 assignee:
   - '@ui-subagent'
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-21T10:11:00Z'
+updated_date: '2026-11-21T11:14:00Z'
 labels:
   - ui
   - docs
@@ -51,3 +51,9 @@ Implement Step 6 of v1-ui-screens.md: project Docs tab by kind/section with read
 <!-- SECTION:NOTES:BEGIN -->
 Implemented UI Step 6 on branch feat/task-68-ui-step6-docs-features-releases: src/lib/modules/{docs,features,releases,search} with unavailableCall production adapters and e2e/fakes/ mocks; routes /projects/[id]/docs(/new,/[docId]), /projects/[id]/features(/[featureId]), /projects/[id]/releases(/[releaseId]), and /search ('Why is...' knowledge search). Verified: svelte-autofixer 5.57.3 (0 issues/suggestions across all 23 Svelte files), format:check, eslint, svelte-check (0 errors/warnings), vitest (156 files), vite build (productionImportGuard), test:e2e:verify (57/60 journeys), Playwright chromium + production specs (docs-features-releases 6/6, projects 18/18, production-unavailable 7/7). Left In Progress for lead review & merge.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Delivered UI Step 6 (Docs, Features, Releases, Knowledge search) strictly inside apps/agentic-org-ui. Passed Pass 1 fresh UI review (79395e3e -> 5 blocking findings fixed by original author at 26d2385b) and Pass 2 separate fresh final UI review (be531baf: VERDICT APPROVE). Verified svelte-autofixer (0 issues), format:check, eslint (--max-warnings=0), svelte-check, 156/156 vitest, build, test:e2e:verify, and 31/31 Playwright tests including production-unavailable checks.
+<!-- SECTION:FINAL_SUMMARY:END -->
