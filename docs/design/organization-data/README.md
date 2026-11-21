@@ -1,6 +1,6 @@
 # Organization design document set
 
-Status: **selected** data contract for v1, set revision 2.23 (2026-11-20). It specifies the data relationships and storage, including task assignment and activity history. The code moves to this model one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
+Status: **selected** data contract for v1, set revision 2.24 (2026-11-21). It specifies the data relationships and storage, including task assignment and activity history. The code moves to this model one record family at a time; this document set does not itself change the code. See [Status and changelog](#status-and-changelog).
 
 This set owns the **data relationships, fields and canonical sources**. Where the code or another design differs, the code or that design changes. The [documentation authority map](../documentation-authority.md) links each owning contract and distinguishes implementation status and deferred scope.
 
@@ -26,7 +26,14 @@ This set owns the **data relationships, fields and canonical sources**. Where th
 | [Budgets and controls](17-budgets-and-controls.md) | Task, agent and release policies, periods, threshold notices, extensions and holds | Budget service, automatic pausing or distributed admission implementation |
 | [Development processes and project documentation](18-development-processes-and-project-documentation.md) | Development processes and a project's choice of one; the project documentation tree and index; issued versions, code links, realizing tasks | An engine or triggers |
 
-Each numbered document owns its relationships, field sources, examples and table DDL. [schema.sql](schema.sql) combines the primary documents, including model profiles/execution and task assignment/history, into one shared draft containing 91 tables and 12 views plus indexes/triggers. Document 14 describes the provider and pool records and links to document 11 for their SQL. Load it once; no separately applied execution extension remains. Document 05 defines [private-notes-schema.sql](private-notes-schema.sql) for a separate durable private database with 4 tables; never combine it with the shared projection. [Schema coverage](SCHEMA-COVERAGE.md) maps records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers` as the scripts do. Cross-document foreign keys are intentional. A diagram's unexpanded entities refer to their owning document.
+Each numbered document owns its relationships, field sources, examples and table DDL. The contract defines four SQL artifacts so sensitive operational projections stay isolated from shared plaintext `office.db` ([ADR-0016](../../adr/0016-no-application-level-data-encryption.md)):
+
+- [schema.sql](schema.sql) — shared office projection (`runtime/<office-id>/office.db`): **76 tables and 12 views** plus indexes/triggers (including model profiles/execution and task assignment/history).
+- [private-notes-schema.sql](private-notes-schema.sql) — separate durable private-notes database (`runtime/<office-id>/private/task-notes.db`, document 05): **4 tables**.
+- [messaging-schema.sql](messaging-schema.sql) — separate access-controlled messaging database (`runtime/<office-id>/protected/messaging.db`, document 15): **8 messaging tables + 5 identity mirror tables**.
+- [budgets-schema.sql](budgets-schema.sql) — separate access-controlled budgets database (`runtime/<office-id>/protected/budgets.db`, document 17): **6 budget tables + 4 identity mirror tables**.
+
+Document 14 describes the provider and pool records and links to document 11 for their SQL. Never combine the private or protected schemas with the shared `office.db` projection. [Schema coverage](SCHEMA-COVERAGE.md) maps records and enforcement boundaries. Every write connection must enable `foreign_keys` and `recursive_triggers` as the scripts do. Cross-document foreign keys are intentional. A diagram's unexpanded entities refer to their owning document.
 
 ## Shared identity contract
 
@@ -75,7 +82,10 @@ The organization repository must be remote. Its tracked content is mirrored as o
 │   │                                #   agents/<employee-id>/home/, each agent's private home (ADR-0015)
 │   └── checkpoints/                 # Local-only/unpushed code recovery bundles and edits
 └── runtime/<office-id>/             # Caches. Rebuildable; read document 16 before deleting.
-    ├── office.db                    # Projection + explicitly transient state
+    ├── office.db                    # Shared projection + explicitly transient state (schema.sql)
+    ├── private/task-notes.db        # Isolated 0700/0600 private task-notes projection (05)
+    ├── protected/messaging.db       # Isolated 0700/0600 messaging/DM projection (15)
+    ├── protected/budgets.db         # Isolated 0700/0600 budget-control projection (17)
     ├── repositories/                # One bare clone per repository used by this office
     └── teams/<team-id>/.../agents/<employee-id>/
         ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/

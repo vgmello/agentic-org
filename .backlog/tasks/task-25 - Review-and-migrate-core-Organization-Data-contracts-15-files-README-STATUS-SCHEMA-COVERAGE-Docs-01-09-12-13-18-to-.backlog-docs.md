@@ -3,9 +3,10 @@ id: TASK-25
 title: >-
   Review and migrate core Organization Data contracts (15 files: README, STATUS,
   SCHEMA-COVERAGE, Docs 01-09, 12, 13, 18) to .backlog/docs/
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-20T23:24:00Z'
+updated_date: '2026-11-21T01:30:00Z'
 labels:
   - docs
   - data-model
@@ -47,7 +48,13 @@ Files in scope (15):
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All 15 core organization-data Markdown contracts are individually reviewed against current SQL and resolved P0/P2 doc-sync fixes.
-- [ ] #2 All 15 documents are migrated into .backlog/docs/organization-data/ via `backlog doc create` with document type specification/readme and preserved cross-references.
-- [ ] #3 No contradictions or stale coverage metrics are carried into the migrated Backlog docs.
+- [x] #1 All 15 core organization-data Markdown contracts are individually reviewed against current SQL and resolved P0/P2 doc-sync fixes.
+- [x] #2 All 15 documents are migrated into .backlog/docs/organization-data/ via `backlog doc create` with document type specification/readme and preserved cross-references.
+- [x] #3 No contradictions or stale coverage metrics are carried into the migrated Backlog docs.
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Reviewed all 15 core organization-data contracts against current SQL and resolved TASK-2..19 fixes (caught and fixed stale 91-table count in README.md, stale CA-key Entry 1 note in Doc 01, and added set rev 2.24 in STATUS.md) and migrated all 15 into .backlog/docs/organization-data/ via backlog doc create.
+<!-- SECTION:FINAL_SUMMARY:END -->

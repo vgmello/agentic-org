@@ -3,9 +3,10 @@ id: TASK-26
 title: >-
   Review and migrate runtime/ops Organization Data contracts (Docs 10, 11,
   14-17) and handle executable schema assets (9 files)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-11-20T23:24:00Z'
+updated_date: '2026-11-21T01:30:00Z'
 labels:
   - docs
   - data-model
@@ -45,7 +46,13 @@ Files in scope (9):
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All 6 runtime/ops Markdown contracts (Docs 10, 11, 14, 15, 16, 17) are individually reviewed and migrated into .backlog/docs/organization-data/ via `backlog doc create`.
-- [ ] #2 Executable schema assets (schema.sql, private-notes-schema.sql, test_schema.py) are either moved with updated Rust include_str! / CI paths or explicitly retained at a documented code-owned path referenced from .backlog/docs/.
-- [ ] #3 cargo test -p org-office and test_schema.py pass after any path changes.
+- [x] #1 All 6 runtime/ops Markdown contracts (Docs 10, 11, 14, 15, 16, 17) are individually reviewed and migrated into .backlog/docs/organization-data/ via `backlog doc create`.
+- [x] #2 Executable schema assets (schema.sql, private-notes-schema.sql, test_schema.py) are either moved with updated Rust include_str! / CI paths or explicitly retained at a documented code-owned path referenced from .backlog/docs/.
+- [x] #3 cargo test -p org-office and test_schema.py pass after any path changes.
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Reviewed and migrated all 6 runtime/ops organization-data contracts (Docs 10, 11, 14-17) into .backlog/docs/organization-data/ via backlog doc create, documented the 5 code-owned executable schema/test assets (schema.sql, private-notes-schema.sql, messaging-schema.sql, budgets-schema.sql, test_schema.py) in an index doc referencing crates/org-office include_str!, and verified 116/116 test_schema.py pass.
+<!-- SECTION:FINAL_SUMMARY:END -->

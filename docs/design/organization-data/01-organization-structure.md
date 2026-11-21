@@ -186,8 +186,10 @@ package from [ADR-0007](../../adr/0007-hq-creation-escrow.md); it belongs to the
 organization and is published to Git verbatim. The usable CA key is the HQ's local
 record `durable/local/offices/<office-id>/security/ca-key.v1.json`, wrapped by the
 host-held office secrets key ([ADR-0016](../../adr/0016-no-application-level-data-encryption.md))
-and never organization Git content. Both are written by the creation's journal entry;
-their exact form, what may leave an office and the opening checks are in
+and never organization Git content. Only `security/ca-escrow.v1.bin` is committed
+in Entry 1 of the acceptance journal; `ca-key.v1.json` is written atomically to
+local security storage outside `durable/recovery/` segments (`TASK-10`). Their exact
+form, what may leave an office and the opening checks are in
 [document 16](16-recovery-and-office-continuity.md#the-hqs-ca-records).
 
 ## Repository types
