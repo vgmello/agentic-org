@@ -195,53 +195,99 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .bctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .ver-ctl { display: inline-flex; align-items: center; gap: 6px; }
 .ver-select { font-size: 0.8125rem; font-weight: 600; padding: 0 20px 0 8px; cursor: pointer; }
-.topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: center; gap: 12px; height: 48px; padding: 0 var(--gutter); border-bottom: 1px solid rgba(186, 222, 255, .08); background: transparent; flex-shrink: 0; }
-.topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: rgba(9, 17, 31, .46); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); }
+.topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: center; gap: 12px; height: 52px; padding: 0 var(--gutter); border-bottom: 1px solid rgba(186, 222, 255, .08); background: transparent; flex-shrink: 0; }
+.topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: rgba(9, 17, 31, .48); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); }
 .topbar .menu-btn { position: absolute; left: 12px; }
 
-/* VS Code-style Centered Command Trigger & Frosted Command Palette */
+/* Unified Command & Org AI Bar (VS Code + Executive AI Trigger) */
+.cmdk-shell {
+  display: inline-flex; align-items: center;
+  width: min(560px, 100%); height: 36px; padding: 3px;
+  border-radius: 11px;
+  background: rgba(12, 23, 41, .56);
+  backdrop-filter: blur(16px) saturate(155%); -webkit-backdrop-filter: blur(16px) saturate(155%);
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .12), inset 0 0 0 1px rgba(186, 222, 255, .15), 0 4px 18px rgba(0, 0, 0, .24);
+  transition: background-color .16s ease, box-shadow .16s ease;
+}
+.cmdk-shell:hover {
+  background: rgba(16, 30, 52, .72);
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .20), inset 0 0 0 1px rgba(125, 211, 252, .32), 0 6px 22px rgba(2, 6, 23, .34);
+}
 .cmdk-trigger {
-  display: inline-flex; align-items: center; gap: 10px;
-  width: min(440px, 100%); height: 32px; padding: 0 10px 0 12px;
-  border-radius: 9px;
-  background: rgba(13, 24, 42, .42);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .09), inset 0 0 0 1px rgba(186, 222, 255, .12);
+  flex: 1; min-width: 0; height: 100%;
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 0 10px 0 10px; border-radius: 8px;
   color: #8BA1BE; font-size: 0.8125rem;
-  transition: background-color .16s ease, box-shadow .16s ease, color .16s ease;
+  transition: color .14s ease, background-color .14s ease;
 }
-.cmdk-trigger:hover {
-  background: rgba(19, 34, 58, .58);
-  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .16), inset 0 0 0 1px rgba(125, 211, 252, .28);
-  color: #E2E8F0;
-}
-.cmdk-trigger .ic { color: #7C91AE; flex: none; }
+.cmdk-trigger:hover { color: #E2E8F0; background: rgba(186, 222, 255, .05); }
+.cmdk-trigger .ic { color: #7C91AE; flex: none; transition: color .14s ease; }
 .cmdk-trigger:hover .ic { color: #7DD3FC; }
 .cmdk-ph { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cmdk-trigger kbd {
   padding: 1px 6px; border-radius: 5px;
   background: rgba(186, 222, 255, .07);
   box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .14);
-  font-family: inherit; font-size: 0.7rem; font-weight: 600; line-height: 1.125rem; color: #94A3B8;
+  font-family: inherit; font-size: 0.6875rem; font-weight: 600; line-height: 1.125rem; color: #94A3B8;
   flex: none;
+}
+.cmdk-sep { width: 1px; height: 18px; background: rgba(186, 222, 255, .12); margin: 0 4px; flex: none; }
+.cmdk-ai-btn {
+  height: 28px; padding: 0 11px; border-radius: 8px; flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: linear-gradient(135deg, rgba(56, 189, 248, .18) 0%, rgba(14, 165, 233, .12) 100%);
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .20), inset 0 0 0 1px rgba(125, 211, 252, .28);
+  color: #BAE6FD; font-size: 0.78125rem; font-weight: 600; letter-spacing: -.005em;
+  transition: background-color .15s ease, box-shadow .15s ease, color .15s ease;
+}
+.cmdk-ai-btn .ic { color: #7DD3FC; flex: none; }
+.cmdk-ai-btn:hover {
+  background: linear-gradient(135deg, rgba(56, 189, 248, .30) 0%, rgba(14, 165, 233, .22) 100%);
+  box-shadow: inset 0 1px 0 rgba(224, 242, 254, .30), inset 0 0 0 1px rgba(125, 211, 252, .50);
+  color: #FFFFFF;
 }
 
 .cmdk-backdrop {
   position: fixed; inset: 0; z-index: 140;
   display: flex; align-items: flex-start; justify-content: center;
-  padding: 11vh 16px 24px;
-  background: rgba(4, 8, 18, .56);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  padding: 10vh 16px 24px;
+  background: rgba(4, 8, 18, .58);
+  backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
 }
 .cmdk-backdrop[hidden] { display: none !important; }
 .cmdk-dialog {
-  width: min(580px, 100%); max-height: 74vh;
+  width: min(620px, 100%); max-height: 76vh;
   display: flex; flex-direction: column; overflow: hidden;
   border-radius: 16px;
-  background: rgba(11, 20, 38, .86);
-  backdrop-filter: blur(30px) saturate(180%); -webkit-backdrop-filter: blur(30px) saturate(180%);
-  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .18), inset 0 0 0 1px rgba(186, 222, 255, .14), 0 28px 70px rgba(0, 0, 0, .68);
+  background: rgba(11, 20, 38, .88);
+  backdrop-filter: blur(32px) saturate(185%); -webkit-backdrop-filter: blur(32px) saturate(185%);
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .20), inset 0 0 0 1px rgba(186, 222, 255, .15), 0 30px 76px rgba(0, 0, 0, .70);
 }
+.cmdk-tabs {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid rgba(186, 222, 255, .08);
+  background: rgba(8, 15, 28, .40);
+}
+.cmdk-tab-grp {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px; border-radius: 9px;
+  background: rgba(186, 222, 255, .05);
+  box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .09);
+}
+.cmdk-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 7px;
+  font-size: 0.75rem; font-weight: 600; color: #8BA1BE;
+  transition: background-color .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.cmdk-tab:hover { color: #E2E8F0; }
+.cmdk-tab[aria-selected="true"] {
+  background: rgba(56, 189, 248, .18);
+  color: #F8FAFC;
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .30);
+}
+.cmdk-tab[aria-selected="true"] .ic { color: #7DD3FC; }
 .cmdk-in-row {
   display: flex; align-items: center; gap: 10px;
   padding: 13px 16px;
@@ -255,12 +301,56 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .cmdk-in-row input::placeholder { color: #7C91AE; }
 .cmdk-in-row input:focus-visible { outline: none; }
 .cmdk-in-row input::-webkit-search-cancel-button { display: none; }
+.cmdk-ask-go {
+  height: 28px; padding: 0 11px; border-radius: 7px; flex: none;
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(56, 189, 248, .22); color: #E0F2FE;
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .38);
+  font-size: 0.78125rem; font-weight: 600;
+  transition: background-color .14s ease, color .14s ease;
+}
+.cmdk-ask-go:hover { background: rgba(56, 189, 248, .34); color: #FFFFFF; }
+.cmdk-ask-go[hidden] { display: none; }
 .cmdk-esc {
   padding: 2px 6px; border-radius: 5px;
   background: rgba(186, 222, 255, .07); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .14);
   font-family: inherit; font-size: 0.6875rem; font-weight: 600; color: #7C91AE;
 }
 .cmdk-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 2px; }
+.cmdk-ai-pane { display: flex; flex-direction: column; gap: 12px; padding: 6px; }
+.cmdk-ai-card {
+  padding: 14px 16px; border-radius: 12px;
+  background: rgba(56, 189, 248, .09);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .24), inset 3px 0 0 #38BDF8;
+  display: flex; flex-direction: column; gap: 8px;
+  font-size: 0.875rem; line-height: 1.55; color: #E2E8F0;
+}
+.cmdk-ai-card-hd {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 0.75rem; font-weight: 600; color: #7DD3FC;
+}
+.cmdk-ai-card-hd button {
+  font-size: 0.72rem; color: #94A3B8; padding: 2px 7px; border-radius: 5px;
+}
+.cmdk-ai-card-hd button:hover { color: #F8FAFC; background: rgba(255, 255, 255, .08); }
+.cmdk-ai-card a { color: #7DD3FC; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
+.cmdk-ai-card a:hover { color: #BAE6FD; }
+.cmdk-ai-card code { font-size: 0.78rem; padding: 1px 5px; border-radius: 4px; background: rgba(8, 15, 28, .65); color: #BAE6FD; }
+.cmdk-ai-chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 2px 4px 4px; }
+.cmdk-ai-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 11px; border-radius: 999px;
+  background: rgba(186, 222, 255, .06);
+  box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .13);
+  font-size: 0.78125rem; font-weight: 500; color: #CBD5E1;
+  transition: background-color .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.cmdk-ai-chip:hover {
+  background: rgba(56, 189, 248, .15);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .34);
+  color: #FFFFFF;
+}
+.cmdk-ai-chip .ic { color: #7DD3FC; }
 .cmdk-grp { padding: 8px 10px 4px; font-size: 0.6875rem; font-weight: 650; letter-spacing: .07em; text-transform: uppercase; color: #74849B; }
 .cmdk-grp:first-child { padding-top: 4px; }
 .cmdk-opt {
@@ -285,7 +375,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 }
 .cmdk-empty { padding: 24px 16px; text-align: center; font-size: 0.84375rem; color: #7C91AE; }
 .cmdk-foot {
-  display: flex; align-items: center; gap: 16px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px;
   padding: 9px 16px;
   border-top: 1px solid rgba(186, 222, 255, .09);
   background: rgba(7, 13, 25, .55);
@@ -869,7 +959,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   body.drawer .scrim { display: block; }
   .content { padding-left: 0; }
   .topbar { height: 52px; padding: 0 16px 0 60px; }
-  .cmdk-trigger { width: 100%; }
+  .cmdk-shell { width: 100%; }
   .cmdk-trigger kbd { display: none; }
   .btn.menu-btn { display: inline-flex; }
   .search { display: none; }
@@ -1713,60 +1803,29 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 .hb-dig-item b { color: var(--hb-ink); font-weight: 600; }
 .hb-dig-item .muted { color: var(--hb-muted); }
 
-/* Interactive Org AI Ask Box */
-.hb-ask-wrap {
-  margin-top: auto; padding-top: 14px;
+/* Spacious Catch-up Digest Footer & Timestamps */
+.hb-dig-body { flex: 1; min-width: 0; }
+.hb-dig-time { font-size: 0.7rem; font-weight: 500; color: var(--hb-dim); white-space: nowrap; flex: none; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.hb-cu-foot {
+  margin-top: auto; padding-top: 12px;
   border-top: 1px solid var(--hb-border);
-  display: flex; flex-direction: column; gap: 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
 }
-.hb-ask-form {
-  display: flex; align-items: center; gap: 6px;
-  padding: 4px 4px 4px 12px; border-radius: 12px;
-  background: rgba(8, 15, 28, .62);
-  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .08), inset 0 0 0 1px rgba(125, 211, 252, .22);
-  transition: box-shadow .16s ease, background-color .16s ease;
+.hb-cu-link {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.78125rem; font-weight: 500; color: var(--hb-muted);
+  transition: color .14s ease;
 }
-.hb-ask-form:focus-within {
-  background: rgba(10, 19, 36, .82);
-  box-shadow: inset 0 0 0 1.5px rgba(125, 211, 252, .58), 0 0 0 3px rgba(56, 189, 248, .12);
-}
-.hb-ask-form .ic { color: #7DD3FC; flex: none; }
-.hb-ask-form input {
-  flex: 1; min-width: 0; border: 0; background: transparent;
-  color: var(--hb-ink); font: inherit; font-size: 0.8125rem; padding: 6px 4px;
-}
-.hb-ask-form input::placeholder { color: #7C91AE; }
-.hb-ask-form input:focus-visible { outline: none; }
-.hb-ask-send {
-  height: 30px; padding: 0 11px; border-radius: 8px; flex: none;
+.hb-cu-link:hover { color: var(--hb-ink); }
+.hb-cu-ask {
   display: inline-flex; align-items: center; gap: 5px;
-  background: rgba(56, 189, 248, .18); color: #E0F2FE;
-  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .34);
-  font-size: 0.78125rem; font-weight: 600;
-  transition: background-color .14s ease, color .14s ease;
-}
-.hb-ask-send:hover { background: rgba(56, 189, 248, .30); color: #FFFFFF; }
-.hb-ask-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.hb-ask-chip {
-  padding: 4px 9px; border-radius: 999px;
-  background: rgba(186, 222, 255, .06);
-  box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .11);
-  font-size: 0.72rem; font-weight: 500; color: var(--hb-muted);
+  padding: 4px 9px; border-radius: 7px;
+  background: rgba(56, 189, 248, .10);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .22);
+  font-size: 0.75rem; font-weight: 600; color: #BAE6FD;
   transition: background-color .14s ease, color .14s ease, box-shadow .14s ease;
 }
-.hb-ask-chip:hover { background: rgba(56, 189, 248, .14); box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .30); color: var(--hb-ink); }
-.hb-ai-reply {
-  padding: 11px 13px; border-radius: 10px;
-  background: rgba(56, 189, 248, .08);
-  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .22), inset 3px 0 0 #38BDF8;
-  display: flex; flex-direction: column; gap: 6px;
-  font-size: 0.8125rem; line-height: 1.48; color: #E2E8F0;
-}
-.hb-ai-reply-hd { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.72rem; font-weight: 600; color: #7DD3FC; }
-.hb-ai-reply-hd button { font-size: 0.72rem; color: var(--hb-muted); padding: 1px 5px; border-radius: 4px; }
-.hb-ai-reply-hd button:hover { color: var(--hb-ink); background: rgba(255, 255, 255, .08); }
-.hb-ai-reply a { color: #7DD3FC; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
-.hb-ai-reply a:hover { color: #BAE6FD; }
+.hb-cu-ask:hover { background: rgba(56, 189, 248, .20); box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .42); color: #FFFFFF; }
 
 /* Zone 3: Clean Bento Portfolio Row */
 .hb-proj-sec { display: flex; flex-direction: column; gap: 14px; }
@@ -2114,27 +2173,46 @@ a.hb-tleg:hover { color: var(--hb-ink); }
   </div>
   <header class="topbar">
     <button class="btn ghost icon menu-btn" type="button" data-act="drawer" aria-label="Open navigation" aria-controls="sidebar"><svg class="ic ic20" aria-hidden="true"><use href="#i-menu"/></svg></button>
-    <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
-      <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
-      <span class="cmdk-ph">Search or run a command…</span>
-      <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
-    </button>
+    <div class="cmdk-shell">
+      <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
+        <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
+        <span class="cmdk-ph">Search, run a command, or ask Org AI…</span>
+        <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
+      </button>
+      <span class="cmdk-sep" aria-hidden="true"></span>
+      <button class="cmdk-ai-btn" id="cmdk-ai-trigger" type="button" data-act="cmdk-open-ai" aria-haspopup="dialog" aria-controls="cmdk-dialog">
+        <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg>
+        <span>Ask AI</span>
+      </button>
+    </div>
   </header>
   <main id="main" tabindex="-1"></main>
 </div>
 
 <div id="overlay-root"></div>
 <div class="cmdk-backdrop" id="cmdk-root" hidden>
-  <div class="cmdk-dialog" id="cmdk-dialog" role="dialog" aria-modal="true" aria-label="Command palette">
-    <div class="cmdk-in-row">
-      <svg class="ic ic20" aria-hidden="true"><use href="#i-search"/></svg>
-      <input id="cmdk-input" type="search" placeholder="Type a command or search projects, work, members…" autocomplete="off" aria-label="Search or run a command" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="cmdk-list">
+  <div class="cmdk-dialog" id="cmdk-dialog" role="dialog" aria-modal="true" aria-label="Command palette and Org AI">
+    <div class="cmdk-tabs">
+      <div class="cmdk-tab-grp" role="tablist" aria-label="Palette mode">
+        <button class="cmdk-tab" id="cmdk-tab-cmd" type="button" role="tab" aria-selected="true" data-act="cmdk-mode" data-v="cmd">
+          <svg class="ic ic14" aria-hidden="true"><use href="#i-search"/></svg><span>Search &amp; Commands</span>
+        </button>
+        <button class="cmdk-tab" id="cmdk-tab-ai" type="button" role="tab" aria-selected="false" data-act="cmdk-mode" data-v="ai">
+          <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Ask Org AI</span>
+        </button>
+      </div>
       <kbd class="cmdk-esc" aria-hidden="true">ESC</kbd>
     </div>
-    <div class="cmdk-list" id="cmdk-list" role="listbox" aria-label="Commands and search results"></div>
+    <div class="cmdk-in-row">
+      <svg class="ic ic20" id="cmdk-in-ico" aria-hidden="true"><use href="#i-search"/></svg>
+      <input id="cmdk-input" type="search" placeholder="Type a command, search anything, or ask a question…" autocomplete="off" aria-label="Search, run a command, or ask Org AI" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="cmdk-list">
+      <button class="cmdk-ask-go" id="cmdk-ask-go" type="button" data-act="cmdk-ai-submit" hidden>Ask</button>
+    </div>
+    <div class="cmdk-list" id="cmdk-list" role="listbox" aria-label="Commands, search results, and Org AI answers"></div>
     <div class="cmdk-foot" aria-hidden="true">
       <span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
-      <span><kbd>↵</kbd> Run</span>
+      <span><kbd>↵</kbd> Run / Ask</span>
+      <span><kbd>Tab</kbd> Switch Search &amp; AI</span>
       <span><kbd>Esc</kbd> Close</span>
     </div>
   </div>
@@ -2751,7 +2829,13 @@ function answerOrgQuestion(rawQ) {
   const blocked = W.filter((w) => w.status === "Blocked");
   const runs = A.filter((a) => a.type === "run");
   if (!q) return null;
-  if (/block|v1|ship|merge|release/.test(t)) {
+  if (/horizon|schedule|slip|pace|milestone|standard|promote|14 day|release/.test(t)) {
+    return {
+      q,
+      html: `Next 14 days: <strong>v0.9 Office federation (Nov 26)</strong> is <strong>+5d behind</strong> (Build box offline + <a href="#/inbox/in2">lock choice</a>); <strong>v1.1 Look &amp; feel (Nov 28)</strong> is <strong>on pace</strong> pending your <a href="#/inbox/in17">spec sign-off</a>; <strong>v1.0 Agency (Dec 5)</strong> is <strong>+2d behind</strong> on 2 gates. You also have a <a href="#/inbox/in16">lease standard promotion</a> ready to adopt org-wide.`
+    };
+  }
+  if (/block|slow|v1|ship|merge/.test(t)) {
     return {
       q,
       html: `<strong>2 tasks are blocked on you</strong> across active delivery: <a href="#/projects/office-federation/work">T-118</a> (custody lock ruling for <a href="#/members/sage">Sage</a>) and <a href="#/projects/agency-v1/work">T-124</a> (localhost:8443 dev permission for <a href="#/members/jules">Jules</a>). Meanwhile, <a href="#/members/kai">Kai</a>'s codec split <code>0a520e5b</code> passed 412 tests and awaits your <a href="#/inbox/in1">merge approval</a>.`
@@ -2760,19 +2844,13 @@ function answerOrgQuestion(rawQ) {
   if (/cycle|first-pass|accept|rework|hitl|human|quality|autonom|metric|kpi/.test(t)) {
     return {
       q,
-      html: `Last 7 days delivery quality: <strong>Cycle time 18m</strong> (-14% faster), <strong>First-pass acceptance 84%</strong> (+6%), <strong>Rework rate 16%</strong> (3 of 19 tasks), and <strong>HITL rate 22%</strong> (78% completed autonomously without human intervention). Spend sits at <strong>$142 / $210</strong>.`
+      html: `Last 7 days delivery quality: <strong>Cycle time 18m</strong> (-14% faster), <strong>First-pass acceptance 84%</strong> (+6%), <strong>Rework rate 16%</strong> (3 of 19 tasks), and <strong>78% autonomous</strong> (22% needed human input). Spend sits at <strong>$142 / $210</strong>.`
     };
   }
   if (/budget|spend|cost|\$|dollar|office|fleet|offline|jules|noor|health|pool|headroom|idle|spin/.test(t)) {
     return {
       q,
       html: `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per accepted task</strong> (-11%), with <strong>74% model pool headroom</strong>. <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Headcount: <strong>4 leads · 7 HR specialists (2 idle</strong>: <a href="#/members/avery">Avery</a> paused, <a href="#/members/noor">Noor</a> unplaced). Offices: HQ online, Build box offline.`
-    };
-  }
-  if (/release|horizon|schedule|slip|pace|milestone|standard|promote/.test(t)) {
-    return {
-      q,
-      html: `Next 14 days: <strong>v0.9 Office federation (Nov 26)</strong> is <strong>+5d behind</strong> (Build box offline + <a href="#/inbox/in2">lock choice</a>); <strong>v1.1 Look &amp; feel (Nov 28)</strong> is <strong>on pace</strong> pending your <a href="#/inbox/in17">spec sign-off</a>; <strong>v1.0 Agency (Dec 5)</strong> is <strong>+2d behind</strong> on 2 gates. You also have a <a href="#/inbox/in16">lease standard promotion</a> ready to adopt org-wide.`
     };
   }
   if (/run|overnight|happen|catch|digest|summary|activity|away/.test(t)) {
@@ -3025,56 +3103,53 @@ function pageHome() {
 
   const renderCatchupPanel = () => {
     const activeLead = working.length ? working[0] : null;
+    const otherActive = Math.max(0, working.length - 1);
     const emptyMode = st === "empty";
     const errMode = st === "error";
-    return `<aside class="hb-catchup" aria-label="Autonomous catch-up and AI briefing">
+    return `<aside class="hb-catchup" aria-label="Autonomous catch-up">
       <div class="hb-cu-hd">
         <div class="hb-cu-title">${ic("sparkle", "ic16")}<span>Catch-up</span></div>
         <span class="hb-cu-window">${errMode ? `<span class="h4-live-dot is-error" style="width:6px;height:6px" aria-hidden="true"></span>Offline` : `${emptyMode || v1 ? "Idle · " : `<span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>`}Last 4 hours`}</span>
       </div>
 
-      ${st === "loading" ? skel(3, "Summarizing autonomous activity…") : errMode ? `<div class="hb-cleared" style="padding:18px 8px">
+      ${st === "loading" ? skel(4, "Summarizing autonomous activity…") : errMode ? `<div class="hb-cleared" style="padding:24px 8px">
         <span class="hb-cleared-ring is-error" style="width:44px;height:44px">${ic("warn", "ic18")}</span>
         <h2 style="font-size:0.9375rem">Catch-up paused</h2>
-        <p style="font-size:0.8125rem">Live digest and Org AI resume automatically once HQ office reconnects.</p>
-      </div>` : emptyMode ? `<div class="hb-cleared" style="padding:18px 8px">
+        <p style="font-size:0.8125rem">Live digest resumes automatically once HQ office reconnects.</p>
+      </div>` : emptyMode ? `<div class="hb-cleared" style="padding:24px 8px">
         <span class="hb-cleared-ring is-muted" style="width:44px;height:44px">${ic("sparkle", "ic18")}</span>
         <h2 style="font-size:0.9375rem">All quiet so far</h2>
-        <p style="font-size:0.8125rem">Autonomous updates and run summaries will show up here as work happens.</p>
+        <p style="font-size:0.8125rem">Autonomous updates and run summaries will show up here as your team works.</p>
       </div>` : `<div class="hb-digest">
-        <a class="hb-dig-item" href="#/activity">
+        <a class="hb-dig-item" href="#/inbox/in1">
           <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-          <div><b>Ready to ship</b> — Kai finished the codec split (all checks passed) and Tomas approved the review.</div>
+          <div class="hb-dig-body"><b>Ready to ship</b> — Kai finished codec split T-121 (412 tests green) and Tomas approved review.</div>
+          <span class="hb-dig-time">12m</span>
         </a>
         <a class="hb-dig-item" href="#/inbox/in2">
           <span class="hb-dig-ico">${ic("warn", "ic16 c-amber")}</span>
-          <div><b>Paused for your call</b> — Sage stopped on the custody lock fix while waiting for your direction.</div>
+          <div class="hb-dig-body"><b>Paused for your call</b> — Sage stopped on custody lock T-118 while waiting for your direction.</div>
+          <span class="hb-dig-time">26m</span>
+        </a>
+        <a class="hb-dig-item" href="#/inbox/in16">
+          <span class="hb-dig-ico">${ic("sparkle", "ic16 c-indigo")}</span>
+          <div class="hb-dig-body"><b>New org standard candidate</b> — Rowan proposed promoting lease locks to a company-wide rule.</div>
+          <span class="hb-dig-time">45m</span>
         </a>
         ${!v1 && activeLead ? `<a class="hb-dig-item" href="#/members/${activeLead}">
-          <span class="hb-dig-ico"><span class="h4-live-dot" style="margin-top:3px" aria-hidden="true"></span></span>
-          <div><b>${esc(M[activeLead].name)} is working now</b> — ${esc(statusLine(activeLead))} <span class="muted">· Open ›</span></div>
+          <span class="hb-dig-ico"><span class="h4-live-dot" style="margin-top:4px" aria-hidden="true"></span></span>
+          <div class="hb-dig-body"><b>${esc(M[activeLead].name)} is working now</b> — ${esc(statusLine(activeLead))}${otherActive ? ` · ${otherActive} other agents active` : ""}</div>
+          <span class="hb-dig-time">Live</span>
         </a>` : `<a class="hb-dig-item" href="#/settings/agents/jules">
           <span class="hb-dig-ico">${ic("bolt", "ic16 c-amber")}</span>
-          <div><b>Budget reached</b> — Jules hit its monthly spend limit; new work waits until Dec 1.</div>
+          <div class="hb-dig-body"><b>Budget reached</b> — Jules hit its monthly spend limit; new work waits until Dec 1.</div>
+          <span class="hb-dig-time">3h</span>
         </a>`}
       </div>`}
 
-      ${errMode ? "" : `<div class="hb-ask-wrap">
-        ${S.askAns ? `<div class="hb-ai-reply" id="hb-ai-reply" role="status" aria-live="polite">
-          <div class="hb-ai-reply-hd"><span>${ic("sparkle", "ic14")} Org AI · “${esc(S.askAns.q)}”</span><button type="button" data-act="hb-ask-clear" aria-label="Clear answer">Clear</button></div>
-          <div>${S.askAns.html}</div>
-        </div>` : ""}
-        <form class="hb-ask-form" id="hb-ask-form">
-          ${ic("sparkle", "ic16")}
-          <label class="sr-only" for="hb-ask-input">Ask your organization AI</label>
-          <input id="hb-ask-input" type="text" value="${esc(S.askQ)}" placeholder="Ask anything — what's blocked, who's busy, or budget…" autocomplete="off">
-          <button class="hb-ask-send" type="submit">Ask</button>
-        </form>
-        <div class="hb-ask-chips" aria-label="Suggested questions">
-          <button type="button" class="hb-ask-chip" data-act="hb-ask-chip" data-v="What needs me first?">What needs me first?</button>
-          <button type="button" class="hb-ask-chip" data-act="hb-ask-chip" data-v="What's blocking v1.0?">What's slowing v1.0?</button>
-          <button type="button" class="hb-ask-chip" data-act="hb-ask-chip" data-v="Budget & offices status">Budget &amp; team</button>
-        </div>
+      ${errMode ? "" : `<div class="hb-cu-foot">
+        <a class="hb-cu-link" href="#/activity">Full activity log${ic("chev-right", "ic14")}</a>
+        <button class="hb-cu-ask" type="button" data-act="cmdk-open-ai">${ic("sparkle", "ic14")}<span>Ask Org AI</span></button>
       </div>`}
     </aside>`;
   };
@@ -4757,21 +4832,29 @@ function searchResults(q, max = 5) {
     ["Members", memberIds().filter((k) => has(M[k].name) || has(M[k].role)).slice(0, max).map((k) => ({ href: "#/members/" + k, label: M[k].name, sub: M[k].role + " · " + kindWord(k), av: k }))]
   ].filter((g) => g[1].length);
 }
-const CMDK = { open: false, q: "", active: 0, flat: [], returnTo: null };
+const CMDK = { open: false, mode: "cmd", q: "", active: 0, flat: [], aiAns: null, returnTo: null };
 const isMacPlatform = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent || "");
 {
   const kbd = document.getElementById("cmdk-kbd");
   if (kbd) kbd.textContent = isMacPlatform ? "⌘K" : "Ctrl K";
 }
+const CMDK_AI_STARTERS = [
+  { q: "What needs me first?", sub: "Urgent approvals, merges & CEO gates" },
+  { q: "What's slowing v1.0?", sub: "Critical-path blockers & pending sign-offs" },
+  { q: "Next 14 days release schedule", sub: "Upcoming releases, pace & slippage" },
+  { q: "Budget, headroom & idle agents", sub: "Monthly spend, model pools & idle HR specialists" },
+  { q: "What happened in the last 4 hours?", sub: "Autonomous run digest & completions" }
+];
 function cmdkCommands() {
   return [
-    { group: "Actions", label: "New project", sub: "Create a project to group work", icon: "folder", tag: "Command", run: () => toast("New project (prototype action)") },
-    { group: "Actions", label: "New work item", sub: "Create a task, bug, or request", icon: "clipboard", tag: "Command", run: () => toast("New work item (prototype action)") },
+    { group: "Actions", label: "New task", sub: "Create a work item, bug, or request", icon: "plus", tag: "Command", run: () => toast("New task (prototype action)") },
+    { group: "Actions", label: "New project", sub: "Start a project wizard to group work", icon: "folder", tag: "Wizard", run: () => toast("New project wizard (prototype action)") },
+    { group: "Actions", label: "Hire an agent", sub: "Describe role, review suggestion, hire", icon: "sparkle", tag: "Wizard", run: () => toast("Hire an agent wizard (Describe, Suggestion, Review, Hiring)") },
     { group: "Actions", label: "New message", sub: "Start a conversation in Chat", icon: "chat", tag: "Command", run: () => toast("New message (prototype action)") },
-    { group: "Actions", label: "Hire an agent", sub: "Describe role, review suggestion, hire", icon: "sparkle", tag: "Command", run: () => toast("Hire an agent (Describe, Suggestion, Review, Hiring)") },
     { group: "Actions", label: "Add a person", sub: "Invite a teammate to this organization", icon: "user-plus", tag: "Command", run: () => toast("Add a person (prototype action)") },
-    { group: "Ask Org AI", label: "Ask: What's slowing v1.0?", sub: "Summarize active blockers and merges", icon: "sparkle", tag: "AI", run: () => runOrgAiCmd("What's blocking v1.0?") },
-    { group: "Ask Org AI", label: "Ask: Budget & offices status", sub: "Check monthly spend cap and office health", icon: "sparkle", tag: "AI", run: () => runOrgAiCmd("Budget & offices status") },
+    { group: "Ask Org AI", label: "Ask: What's slowing v1.0?", sub: "Summarize active blockers and merges", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("What's blocking v1.0?") },
+    { group: "Ask Org AI", label: "Ask: Budget, headroom & idle agents", sub: "Check spend cap, model pools & idle specialists", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Budget, headroom & idle agents") },
+    { group: "Ask Org AI", label: "Ask: Next 14 days release schedule", sub: "Review upcoming milestones and slippage", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Next 14 days release schedule") },
     { group: "Navigate", label: "Go to Home", sub: "Executive briefing & decision spotlight", icon: "home", href: "#/home" },
     { group: "Navigate", label: "Go to Inbox", sub: `${unhandled().length} waiting on you`, icon: "inbox", href: "#/inbox" },
     { group: "Navigate", label: "Go to Projects", sub: "Portfolio health & progress", icon: "folder", href: "#/projects" },
@@ -4783,15 +4866,27 @@ function cmdkCommands() {
     { group: "Workspace", label: "Toggle sidebar", sub: "Collapse or expand navigation rail", icon: "sidebar", tag: "View", run: () => { S.navCollapsed = !S.navCollapsed; try { localStorage.setItem(NAV_COLLAPSE_STORE, S.navCollapsed ? "1" : "0"); } catch (e) {} applyNavCollapsed(); } }
   ];
 }
-function runOrgAiCmd(q) {
-  S.askQ = "";
-  S.askAns = answerOrgQuestion(q);
-  if (route()[0] !== "home") location.hash = "#/home";
-  else render(false);
+function askInCmdk(rawQ) {
+  const q = String(rawQ || "").trim();
+  if (!q) return;
+  CMDK.mode = "ai";
+  CMDK.aiAns = answerOrgQuestion(q);
+  CMDK.q = "";
+  const inp = document.getElementById("cmdk-input");
+  if (inp) { inp.value = ""; inp.focus(); }
+  renderCmdk();
 }
-function openCmdk(prefill = "") {
+function setCmdkMode(mode) {
+  CMDK.mode = mode === "ai" ? "ai" : "cmd";
+  CMDK.active = 0;
+  renderCmdk();
+  const inp = document.getElementById("cmdk-input");
+  if (inp) inp.focus();
+}
+function openCmdk(prefill = "", mode = "cmd") {
   CMDK.returnTo = document.activeElement;
   CMDK.open = true;
+  CMDK.mode = mode === "ai" ? "ai" : "cmd";
   CMDK.q = prefill;
   CMDK.active = 0;
   closeMenus();
@@ -4820,7 +4915,39 @@ function closeCmdk(restoreFocus = true) {
 function renderCmdk() {
   const list = document.getElementById("cmdk-list");
   const inp = document.getElementById("cmdk-input");
+  const tabCmd = document.getElementById("cmdk-tab-cmd");
+  const tabAi = document.getElementById("cmdk-tab-ai");
+  const inIco = document.getElementById("cmdk-in-ico");
+  const askGo = document.getElementById("cmdk-ask-go");
   if (!list || !CMDK.open) return;
+
+  const isAi = CMDK.mode === "ai";
+  if (tabCmd) tabCmd.setAttribute("aria-selected", String(!isAi));
+  if (tabAi) tabAi.setAttribute("aria-selected", String(isAi));
+  if (inIco) inIco.innerHTML = `<use href="#i-${isAi ? "sparkle" : "search"}"/>`;
+  if (askGo) askGo.hidden = !isAi;
+  if (inp) {
+    inp.placeholder = isAi
+      ? "Ask Org AI — what's blocked, release pace, budget, or idle agents…"
+      : "Type a command, search anything, or ask a question…";
+  }
+
+  if (isAi) {
+    CMDK.flat = [];
+    const ansHtml = CMDK.aiAns ? `<div class="cmdk-ai-card" role="status" aria-live="polite">
+      <div class="cmdk-ai-card-hd">
+        <span>${ic("sparkle", "ic14")} Org AI · “${esc(CMDK.aiAns.q)}”</span>
+        <button type="button" data-act="cmdk-ai-clear">Clear</button>
+      </div>
+      <div>${CMDK.aiAns.html}</div>
+    </div>` : "";
+    const chipsHtml = `<div class="cmdk-grp">${CMDK.aiAns ? "Ask a follow-up" : "Suggested executive questions"}</div>
+      <div class="cmdk-ai-chips">${CMDK_AI_STARTERS.map((s) => `<button type="button" class="cmdk-ai-chip" data-act="cmdk-ai-ask" data-v="${esc(s.q)}">${ic("sparkle", "ic14")}<span>${esc(s.q)}</span></button>`).join("")}</div>`;
+    list.innerHTML = `<div class="cmdk-ai-pane">${ansHtml}${chipsHtml}</div>`;
+    if (inp) inp.removeAttribute("aria-activedescendant");
+    return;
+  }
+
   const raw = CMDK.q.trim();
   const cmdOnly = raw.startsWith(">");
   const q = (cmdOnly ? raw.slice(1) : raw).trim().toLowerCase();
@@ -4839,7 +4966,7 @@ function renderCmdk() {
       if (inboxHits.length) groups.push(["Needs you", inboxHits]);
       searchResults(q, 4).forEach(([g, items]) => groups.push([g, items]));
       groups.push(["Ask Org AI", [
-        { label: `Ask Org AI: “${raw}”`, sub: "Get an instant answer from workspace state", icon: "sparkle", tag: "AI", run: () => runOrgAiCmd(raw) },
+        { label: `Ask Org AI: “${raw}”`, sub: "Get an instant answer right here from live org state", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk(raw) },
         { label: `See all search results for “${raw}”`, sub: "Open full search page", icon: "search", href: "#/search?q=" + encodeURIComponent(raw) }
       ]]);
     }
@@ -4866,7 +4993,7 @@ function renderCmdk() {
 function runCmdkItem(idx) {
   const it = CMDK.flat[idx];
   if (!it) return;
-  closeCmdk(false);
+  if (!it.keepOpen) closeCmdk(false);
   if (it.run) it.run();
   else if (it.href) {
     if (location.hash === it.href) render(true);
@@ -5072,7 +5199,12 @@ document.addEventListener("click", (e) => {
     case "team-add-save": { const sel = document.getElementById("add-team"); const tk = sel && sel.value; sheetReturn = null; closeSheet(); if (tk && TEAMS[tk] && !P[id].teams.includes(tk)) { P[id].teams.push(tk); render(false); toast(`${TEAMS[tk].name} added to ${P[id].name}.`, "check-circle"); } { const b = document.getElementById("team-add") || document.querySelector(".tchip:last-of-type .rm"); if (b) b.focus(); } break; }
     case "search-close": closeCmdk(true); break;
     case "sgo": goSearch(v); break;
-    case "search-open": case "cmdk-open": openCmdk(); break;
+    case "search-open": case "cmdk-open": openCmdk("", "cmd"); break;
+    case "cmdk-open-ai": openCmdk("", "ai"); break;
+    case "cmdk-mode": setCmdkMode(v); break;
+    case "cmdk-ai-ask": askInCmdk(v); break;
+    case "cmdk-ai-submit": askInCmdk(CMDK.q); break;
+    case "cmdk-ai-clear": CMDK.aiAns = null; renderCmdk(); { const i = document.getElementById("cmdk-input"); if (i) i.focus(); } break;
     case "cmdk-run": runCmdkItem(Number(v)); break;
     case "banner-close": document.getElementById("banner").remove(); { const c = document.getElementById("cmdk-trigger"); if (c) c.focus(); } break;
     case "changes": openChanges(t); break;
@@ -5083,6 +5215,7 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("click", (e) => {
   if (e.target && e.target.id === "cmdk-root") { closeCmdk(true); return; }
+  if (CMDK.open && e.target.closest && e.target.closest('.cmdk-ai-card a[href^="#/"]')) { closeCmdk(false); }
 });
 document.addEventListener("input", (e) => {
   if (e.target.id === "cmdk-input") { CMDK.q = e.target.value; CMDK.active = 0; renderCmdk(); }
@@ -5100,6 +5233,16 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (CMDK.open) {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      setCmdkMode(CMDK.mode === "ai" ? "cmd" : "ai");
+      return;
+    }
+    if (CMDK.mode === "ai") {
+      if (e.key === "Enter") { e.preventDefault(); askInCmdk(CMDK.q); return; }
+      if (e.key === "Escape") { e.preventDefault(); closeCmdk(true); return; }
+      return;
+    }
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const n = CMDK.flat.length || 1;
