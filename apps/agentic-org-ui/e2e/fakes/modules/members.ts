@@ -531,7 +531,10 @@ async function profileOf(organizationId: string, memberId: string): Promise<Memb
 	const offices = await officesFor(organizationId);
 	const viewer = viewerId();
 	const ownerId = ownerIdOf(s);
-	const isOwner = viewer === ownerId;
+	const modeFlags = (scenario() ?? '').split(',');
+	const isOwner =
+		viewer === ownerId && !modeFlags.includes('viewer') && !modeFlags.includes('manager');
+	const costVisible = isOwner || modeFlags.includes('manager');
 	const leads = s.teams.filter((t) => t.lead_member_id === memberId).map((t) => teamRef(s, t.id)!);
 	// Only the owner, or a person above this employee, changes Allow hiring; nobody changes their own (§7.1).
 	const above = (() => {
@@ -587,7 +590,7 @@ async function profileOf(organizationId: string, memberId: string): Promise<Memb
 			m.kind === 'person' && !row.canSignIn && state.access.get(memberId)?.invitedUntil
 				? { expiresAt: state.access.get(memberId)!.invitedUntil! }
 				: undefined,
-		viewer: { isSelf: self, isOwnerOrAdmin: isOwner, costVisible: isOwner }
+		viewer: { isSelf: self, isOwnerOrAdmin: isOwner, costVisible }
 	} satisfies MemberProfile;
 }
 

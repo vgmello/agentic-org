@@ -137,6 +137,7 @@ test(
 			'Team',
 			'Activity',
 			'Conversations',
+			'Insights',
 			'Settings'
 		]);
 		await expect(tabs(page).first()).toHaveAttribute('aria-current', 'page');

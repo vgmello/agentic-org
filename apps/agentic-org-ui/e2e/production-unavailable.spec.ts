@@ -175,6 +175,9 @@ test('Step 6 routes stay unavailable in the static production release with zero 
 		['/projects/a-project/features/feat-1', 'Projects'],
 		['/projects/a-project/releases', 'Projects'],
 		['/projects/a-project/releases/rel-1', 'Projects'],
+		['/projects/a-project/insights', 'Projects'],
+		['/insights', undefined],
+		['/members/sam/cost', 'Teams'],
 		['/search?q=Why+is+SQLite+used', undefined]
 	] as const) {
 		await visit(page, path);

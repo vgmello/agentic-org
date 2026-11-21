@@ -22,7 +22,7 @@
 	import { costsApi } from '../../api';
 	import { formatCount } from '../../money';
 	import { periodLabel } from '../../present';
-	import type { PeriodRequest, RecordsTarget, UsageRecord } from '../../types';
+	import type { PeriodRequest, RecordsTarget, UsageRecord, UsageRecordPage } from '../../types';
 	import UsageRecordRow from './UsageRecordRow.svelte';
 
 	let {
@@ -39,6 +39,9 @@
 	let open = $state(false);
 	let target = $state<RecordsTarget>({ key: { all: true }, label: '' });
 	let period = $state<PeriodRequest>({ kind: 'this_month', timeZone: 'UTC' });
+	let customTitle = $state<string | undefined>();
+	let customSubtitle = $state<string | undefined>();
+	let customFetcher: ((cursor?: string) => Promise<UsageRecordPage>) | undefined;
 	let phase = $state<'loading' | 'ready' | 'error'>('loading');
 	let records = $state.raw<UsageRecord[]>([]);
 	let total = $state(0);
@@ -50,10 +53,32 @@
 	const listId = $props.id();
 
 	export function show(next: RecordsTarget, nextPeriod: PeriodRequest) {
+		customTitle = undefined;
+		customSubtitle = undefined;
+		customFetcher = undefined;
 		target = next;
 		period = nextPeriod;
 		open = true;
 		void load();
+	}
+
+	/** Opens the sheet with a scoped fetcher (project insights, member cost, or task drill-down). */
+	export function showCustom(
+		nextTitle: string,
+		nextSubtitle: string,
+		fetchPage: (cursor?: string) => Promise<UsageRecordPage>
+	) {
+		customTitle = nextTitle;
+		customSubtitle = nextSubtitle;
+		customFetcher = fetchPage;
+		open = true;
+		void load();
+	}
+
+	function readPage(nextCursor?: string): Promise<UsageRecordPage> {
+		return customFetcher
+			? customFetcher(nextCursor)
+			: costsApi.records(organizationId, period, target.key, nextCursor);
 	}
 
 	async function load() {
@@ -63,7 +88,7 @@
 		cursor = undefined;
 		more = 'idle';
 		try {
-			const page = await costsApi.records(organizationId, period, target.key);
+			const page = await readPage();
 			if (mine !== run) return;
 			records = page.records;
 			total = page.total;
@@ -82,7 +107,7 @@
 		const first = records.length;
 		more = 'loading';
 		try {
-			const page = await costsApi.records(organizationId, period, target.key, cursor);
+			const page = await readPage(cursor);
 			if (mine !== run) return;
 			records = [...records, ...page.records];
 			cursor = page.nextCursor;
@@ -98,7 +123,10 @@
 	}
 
 	const title = $derived(
-		'all' in target.key ? 'All usage records' : `Usage records: ${target.label}`
+		customTitle ?? ('all' in target.key ? 'All usage records' : `Usage records: ${target.label}`)
+	);
+	const subtitleBase = $derived(
+		customSubtitle ?? `${periodLabel(period.kind)} · effective records, newest first`
 	);
 </script>
 
@@ -111,7 +139,7 @@
 		<SheetHeader class="border-b border-line pr-14">
 			<SheetTitle class="text-base/7 font-semibold">{title}</SheetTitle>
 			<SheetDescription class="text-sm/6">
-				{periodLabel(period.kind)} · effective records, newest first{phase === 'ready'
+				{subtitleBase}{phase === 'ready'
 					? ` · ${formatCount(total)} ${total === 1 ? 'record' : 'records'}`
 					: ''}
 			</SheetDescription>

@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+	budgetInputValue,
+	extendedBudgetLimit,
 	formatBudgetAmount,
 	formatCost,
 	formatCount,
 	formatRate,
 	formatTokens,
 	formatUsd,
+	parseBudgetTokens,
+	parseBudgetUsd,
 	parseRate,
 	rateInput
 } from './money';
@@ -78,5 +82,28 @@ describe('tokens', () => {
 	it('says the budget unit', () => {
 		expect(formatBudgetAmount('usd', 20_000_000)).toBe('$20.00');
 		expect(formatBudgetAmount('tokens', 25_000_000)).toBe('25 M tokens');
+	});
+});
+
+describe('budget parsing and 20% extension (BUD-1, BUD-3)', () => {
+	it('parses exact micro-USD and token limits and rejects zero/negative/blank', () => {
+		expect(parseBudgetUsd('10')).toEqual({ ok: true, value: 10_000_000 });
+		expect(parseBudgetUsd('$12.50')).toEqual({ ok: true, value: 12_500_000 });
+		expect(parseBudgetUsd('')).toEqual({ ok: false, error: 'Enter a budget amount.' });
+		expect(parseBudgetUsd('0')).toEqual({ ok: false, error: 'Enter an amount greater than zero.' });
+		expect(parseBudgetUsd('-5').ok).toBe(false);
+
+		expect(parseBudgetTokens('25,000,000')).toEqual({ ok: true, value: 25_000_000 });
+		expect(parseBudgetTokens('')).toEqual({ ok: false, error: 'Enter a token limit.' });
+		expect(parseBudgetTokens('0').ok).toBe(false);
+		expect(parseBudgetTokens('1.5').ok).toBe(false);
+	});
+
+	it('formats editable inputs and computes L + floor(L/5)', () => {
+		expect(budgetInputValue('usd', 9_000_000)).toBe('9');
+		expect(budgetInputValue('usd', 12_500_000)).toBe('12.5');
+		expect(budgetInputValue('tokens', 25_000_000)).toBe('25000000');
+		expect(extendedBudgetLimit(20_000_000)).toBe(24_000_000);
+		expect(extendedBudgetLimit(7)).toBe(8);
 	});
 });

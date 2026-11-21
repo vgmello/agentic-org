@@ -19,9 +19,22 @@ import type {
 	BreakdownRow,
 	BudgetPeriodState,
 	BudgetUnit,
+	InsightBreakdownRow,
+	InsightNotice,
+	MemberCostOverview,
+	MemberProjectSpendRow,
+	MemberRecordsFilter,
+	MemberTaskSpendRow,
+	OrgInsightProjectRow,
+	OrganizationInsights,
 	PeriodRequest,
 	PriceVersion,
+	ProjectBreakdownKey,
+	ProjectInsights,
+	ReleaseCapRow,
 	ResolvedPeriod,
+	SpeedKindRow,
+	TrendBucket,
 	UsageRecord,
 	UsageTotals
 } from '../../../src/lib/modules/costs/types';
@@ -29,6 +42,8 @@ import { mockMode } from '../mock-mode';
 import usage from '../data/costs/usage.json' with { type: 'json' };
 import priceData from '../data/costs/prices.json' with { type: 'json' };
 import budgetData from '../data/costs/budgets.json' with { type: 'json' };
+import projectsData from '../data/projects/projects.json' with { type: 'json' };
+import releasesData from '../data/releases/releases.json' with { type: 'json' };
 
 type StoredRecord = {
 	id: string;
@@ -82,6 +97,34 @@ let prices: StoredPrice[] = (structuredClone(priceData) as StoredPrice[]).map((p
 );
 const operations = new Map<string, PriceVersion>();
 let unknownOnce = false;
+const mutableBudgets: Record<string, { daily?: StoredBudget; monthly?: StoredBudget }> =
+	structuredClone(
+		budgetData.budgets as Record<string, { daily?: StoredBudget; monthly?: StoredBudget }>
+	);
+const budgetOperations = new Map<string, { applied: true; message: string }>();
+let budgetUnknownOnce = false;
+
+const projectMeta = projectsData.projects as Record<
+	string,
+	{
+		number: number;
+		slug: string;
+		tasks: { todo: number; inProgress: number; blocked: number; done: number; cancelled: number };
+	}
+>;
+const releaseMeta = releasesData.projects as Record<
+	string,
+	{
+		releases: {
+			id: string;
+			number: number;
+			versionLabel?: string;
+			title: string;
+			status: string;
+			updatedAt?: string;
+		}[];
+	}
+>;
 
 const on = (name: string) => mockMode().split(',').includes(name);
 const fail = (code: string, message: string, extra: Record<string, unknown> = {}) =>
@@ -90,7 +133,7 @@ const fail = (code: string, message: string, extra: Record<string, unknown> = {}
 async function read() {
 	await new Promise((r) => setTimeout(r, on('slow') ? 2500 : 200));
 	if (on('unavailable')) await unavailableCall();
-	if (on('fails'))
+	if (on('fails') || on('costs-fail'))
 		throw fail('internal', "HQ didn't answer. Check that the office is running, then try again.");
 }
 function ownerOnly() {
@@ -620,10 +663,7 @@ export const costsApi: CostsApi = {
 		ownerOnly();
 		const n = await names(organizationId);
 		const zone = on('no-zone') ? null : budgetData.zone.name;
-		const stored = budgetData.budgets as Record<
-			string,
-			{ daily?: StoredBudget; monthly?: StoredBudget }
-		>;
+		const stored = mutableBudgets;
 		const agents: AgentBudget[] = n.agents
 			.map((m) => {
 				const mine = effective.filter(
@@ -632,28 +672,7 @@ export const costsApi: CostsApi = {
 				const unmeasured = mine.some((r) => r.runtime === 'antigravity');
 				const b = stored[m.id];
 				if (!zone || !b || on('empty')) return { memberId: m.id, name: m.name };
-				const local = localParts(NOW, zone);
-				const nextDay = new Date(Date.UTC(local.y, local.m - 1, local.d + 1));
-				const day = {
-					key: `${local.y}-${String(local.m).padStart(2, '0')}-${String(local.d).padStart(2, '0')}`,
-					startsAt: dayStart(local.y, local.m, local.d, zone),
-					endsAt: dayStart(
-						nextDay.getUTCFullYear(),
-						nextDay.getUTCMonth() + 1,
-						nextDay.getUTCDate(),
-						zone
-					)
-				};
-				const month = {
-					key: `${local.y}-${String(local.m).padStart(2, '0')}`,
-					startsAt: dayStart(local.y, local.m, 1, zone),
-					endsAt: dayStart(
-						local.m === 12 ? local.y + 1 : local.y,
-						local.m === 12 ? 1 : local.m + 1,
-						1,
-						zone
-					)
-				};
+				const { day, month } = budgetWindows(zone);
 				return {
 					memberId: m.id,
 					name: m.name,
@@ -666,5 +685,975 @@ export const costsApi: CostsApi = {
 			zone: { name: zone, source: budgetData.zone.source as 'owner_account' | 'hq' },
 			agents
 		});
+	},
+
+	async projectInsights(organizationId, projectId, request) {
+		await read();
+		if (on('viewer'))
+			throw fail('not_authorized', "Only the owner and this project's manager see its costs.");
+		const { snapshot } = await orgApi.view(organizationId);
+		const managedIds = managedProjectIds(snapshot);
+		const managed = on('manager');
+		if (managed && !managedIds.has(projectId))
+			throw fail('not_authorized', "Only the owner and this project's manager see its costs.");
+		const proj = (snapshot.projects ?? []).find((p) => p.id === projectId);
+		if (!proj) throw fail('not_found', 'Project not found.');
+		const { period, previous } = resolvePeriod(request);
+		const n = await names(organizationId);
+		const allMine = on('empty')
+			? []
+			: effective.filter((r) => r.attribution.projectId === projectId);
+		const records = allMine.filter((r) => within(r, period));
+		const prevTotals = previous ? totalsOf(allMine.filter((r) => within(r, previous))) : undefined;
+		const meta = projectMeta[projectId];
+		const oldest = allMine.reduce<string | null>(
+			(acc, r) => (!acc || r.occurredAt < acc ? r.occurredAt : acc),
+			null
+		);
+		const periodDone = countWorkDone(records, meta?.tasks.done ?? 0, period.kind);
+		const cancelledRecords = records.filter((r) => isCancelledTask(r));
+		const cancelledTotals = totalsOf(cancelledRecords);
+		const trend = buildTrend(records, period);
+		const breakdowns = buildProjectBreakdowns(records, n);
+		const insights = buildProjectInsightsNotices(projectId, proj.name, records, breakdowns);
+		const releaseCaps = buildReleaseCaps(projectId, allMine);
+		const speed = buildSpeedRows(records);
+		return structuredClone({
+			project: {
+				id: proj.id,
+				name: proj.name,
+				number: meta?.number ?? 1,
+				slug: meta?.slug ?? proj.id
+			},
+			period,
+			...(previous && prevTotals
+				? { previous: { period: previous, knownCostMicroUsd: prevTotals.knownCostMicroUsd } }
+				: {}),
+			investment: {
+				toDate: totalsOf(allMine),
+				sinceAt: oldest,
+				tasksDone: meta?.tasks.done ?? periodDone.tasksDone,
+				bugsDone: projectId === 'beacon' ? 4 : projectId === 'atlas' ? 5 : 1
+			},
+			totals: totalsOf(records),
+			work: {
+				tasksDone: periodDone.tasksDone,
+				bugsDone: periodDone.bugsDone,
+				requestsScoped: projectId === 'beacon' ? 3 : projectId === 'atlas' ? 2 : 0,
+				waitingOnYouSeconds: records.length
+					? projectId === 'beacon'
+						? 19 * 3600
+						: 11 * 3600
+					: null,
+				cancelledCostMicroUsd: cancelledRecords.length ? cancelledTotals.knownCostMicroUsd : null,
+				cancelledRecords: cancelledRecords.length
+			},
+			trend,
+			insights,
+			breakdowns,
+			releaseCaps,
+			speed,
+			coverage: {
+				checkpointAt: usage.checkpointAt,
+				gaps: period.toNow && !on('empty') ? usage.gaps : []
+			},
+			viewer: { scope: managed ? ('managed' as const) : ('organization' as const), canExport: true }
+		} satisfies ProjectInsights);
+	},
+
+	async projectRecords(organizationId, projectId, request, key, cursor) {
+		await read();
+		if (on('viewer'))
+			throw fail('not_authorized', "Only the owner and this project's manager see its costs.");
+		if (on('records-fail'))
+			throw fail('internal', "HQ didn't answer. Check that the office is running, then try again.");
+		const { snapshot } = await orgApi.view(organizationId);
+		if (on('manager') && !managedProjectIds(snapshot).has(projectId))
+			throw fail('not_authorized', "Only the owner and this project's manager see its costs.");
+		const { period } = resolvePeriod(request);
+		const n = await names(organizationId);
+		const list = (on('empty') ? [] : effective)
+			.filter(
+				(r) =>
+					r.attribution.projectId === projectId && within(r, period) && matchesProjectKey(r, key)
+			)
+			.toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+		const offset = Number(cursor ?? 0);
+		const page = list.slice(offset, offset + PAGE).map((r) => toRecord(r, n));
+		return structuredClone({
+			records: page,
+			total: list.length,
+			...(offset + PAGE < list.length ? { nextCursor: String(offset + PAGE) } : {})
+		});
+	},
+
+	async organizationInsights(organizationId, request) {
+		await read();
+		if (on('viewer'))
+			throw fail(
+				'not_authorized',
+				'Only the owner and project managers see organization insights.'
+			);
+		const { snapshot } = await orgApi.view(organizationId);
+		const managed = on('manager');
+		const allowedIds = managedProjectIds(snapshot);
+		const { period, previous } = resolvePeriod(request);
+		const thisMonth = resolvePeriod({ kind: 'this_month', timeZone: request.timeZone }).period;
+		const lastMonth = resolvePeriod({ kind: 'last_month', timeZone: request.timeZone }).period;
+		const n = await names(organizationId);
+		const visibleAll = (on('empty') ? [] : effective).filter((r) =>
+			managed ? !!(r.attribution.projectId && allowedIds.has(r.attribution.projectId)) : true
+		);
+		const periodRecords = visibleAll.filter((r) => within(r, period));
+		const prevTotals = previous
+			? totalsOf(visibleAll.filter((r) => within(r, previous)))
+			: undefined;
+		const visibleProjects = (snapshot.projects ?? []).filter(
+			(p) => !managed || allowedIds.has(p.id)
+		);
+		const ownerTeamName = (projectId: string) => {
+			const teamId = (snapshot.project_teams ?? []).find(
+				(l) => l.project_id === projectId
+			)?.team_id;
+			return teamId ? n.team.get(teamId) : undefined;
+		};
+		const projects: OrgInsightProjectRow[] = visibleProjects.map((p) => {
+			const mine = visibleAll.filter((r) => r.attribution.projectId === p.id);
+			const mThis = totalsOf(mine.filter((r) => within(r, thisMonth)));
+			const mLast = totalsOf(mine.filter((r) => within(r, lastMonth)));
+			const pPeriod = totalsOf(mine.filter((r) => within(r, period)));
+			const meta = projectMeta[p.id];
+			const changePercent =
+				mThis.knownCostMicroUsd !== null &&
+				mLast.knownCostMicroUsd !== null &&
+				mLast.knownCostMicroUsd > 0
+					? Math.round(
+							((mThis.knownCostMicroUsd - mLast.knownCostMicroUsd) * 100) / mLast.knownCostMicroUsd
+						)
+					: null;
+			const done = countWorkDone(
+				mine.filter((r) => within(r, period)),
+				meta?.tasks.done ?? 0,
+				period.kind
+			);
+			const itemsDone = done.tasksDone + done.bugsDone;
+			return {
+				projectId: p.id,
+				projectNumber: meta?.number ?? 1,
+				name: p.name,
+				accountableTeam: ownerTeamName(p.id),
+				toDate: totalsOf(mine),
+				thisMonth: mThis,
+				lastMonth: mLast,
+				periodTotals: pPeriod,
+				changePercent,
+				itemsDone,
+				medianLeadSeconds: itemsDone >= 5 ? (p.id === 'atlas' ? 138_240 : 95_040) : null,
+				sampleCount: itemsDone
+			};
+		});
+		const notOnTask = managed
+			? undefined
+			: totalsOf(periodRecords.filter((r) => !r.attribution.projectId));
+		const totalTotals = totalsOf(periodRecords);
+		const cancelled = periodRecords.filter((r) => isCancelledTask(r));
+		const insights = buildOrgInsightsNotices(projects, totalTotals);
+		return structuredClone({
+			period,
+			...(previous && prevTotals
+				? { previous: { period: previous, knownCostMicroUsd: prevTotals.knownCostMicroUsd } }
+				: {}),
+			totals: totalTotals,
+			work: {
+				tasksDone: projects.reduce((acc, p) => acc + Math.max(0, p.itemsDone - 1), 0),
+				bugsDone: projects.reduce((acc, p) => acc + (p.itemsDone > 0 ? 1 : 0), 0),
+				requestsScoped: periodRecords.length ? 4 : 0,
+				waitingOnYouSeconds: periodRecords.length ? 30 * 3600 : null,
+				cancelledCostMicroUsd: cancelled.length ? totalsOf(cancelled).knownCostMicroUsd : null,
+				cancelledRecords: cancelled.length
+			},
+			trend: buildTrend(periodRecords, period),
+			insights,
+			projects,
+			...(notOnTask && notOnTask.records > 0 ? { notOnTask } : {}),
+			coverage: {
+				checkpointAt: usage.checkpointAt,
+				gaps: period.toNow && !on('empty') ? usage.gaps : []
+			},
+			viewer: { scope: managed ? ('managed' as const) : ('organization' as const), canExport: true }
+		} satisfies OrganizationInsights);
+	},
+
+	async exportRecords(organizationId, scope, request) {
+		await read();
+		if (on('viewer'))
+			throw fail('not_authorized', 'You are not authorized to export cost records.');
+		const { snapshot } = await orgApi.view(organizationId);
+		const managed = on('manager');
+		const allowedIds = managedProjectIds(snapshot);
+		if (scope.kind === 'project' && managed && !allowedIds.has(scope.projectId))
+			throw fail(
+				'not_authorized',
+				"Only the owner and this project's manager may export its costs."
+			);
+		const { period } = resolvePeriod(request);
+		const n = await names(organizationId);
+		const list = (on('empty') ? [] : effective)
+			.filter((r) => {
+				if (!within(r, period)) return false;
+				if (scope.kind === 'project') return r.attribution.projectId === scope.projectId;
+				if (managed) return !!(r.attribution.projectId && allowedIds.has(r.attribution.projectId));
+				return true;
+			})
+			.toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt))
+			.map((r) => toRecord(r, n));
+		return structuredClone({
+			period,
+			records: list,
+			coverage: {
+				checkpointAt: usage.checkpointAt,
+				gaps: period.toNow && !on('empty') ? usage.gaps : []
+			}
+		});
+	},
+
+	async memberCost(organizationId, memberId, request) {
+		await read();
+		if (on('viewer'))
+			throw fail(
+				'not_authorized',
+				'Only the owner, and project managers for their projects, see costs.'
+			);
+		const { snapshot } = await orgApi.view(organizationId);
+		const managed = on('manager');
+		const allowedIds = managedProjectIds(snapshot);
+		const n = await names(organizationId);
+		const zone = request.timeZone;
+		const allAgent = (on('empty') ? [] : effective).filter((r) => {
+			if (r.consumer.kind !== 'agent' || r.consumer.memberId !== memberId) return false;
+			if (managed) return !!(r.attribution.projectId && allowedIds.has(r.attribution.projectId));
+			return true;
+		});
+		const todayP = resolveTodayPeriod(zone);
+		const weekP = resolvePeriod({ kind: 'this_week', timeZone: zone }).period;
+		const monthP = resolvePeriod({ kind: 'this_month', timeZone: zone }).period;
+		const lastMonthP = resolvePeriod({ kind: 'last_month', timeZone: zone }).period;
+
+		// By project (this month + all time? Spec §1: spend by project (with Not on a task) and top tasks by cost)
+		// Compute over this month if any records exist, else all recorded (actually consistent across all records in this month, or all-time? Wait: use allAgent in this_month if any, or allAgent? Let's use allAgent in this_month + fall back? No, consistent ledger: use thisMonth for byProject/topTasks or all-time? Wait: let's check: Kai/Sam/Mira/Noor all have records in this_month!).
+		// Using allAgent across all periods ensures "top tasks" and "by project" never silently hide recent work while periods show today/thisWeek/thisMonth/lastMonth. Even better: filter by thisMonth? Wait: let's check how many records each agent has in thisMonth vs allTime!
+		const projectGroups = new Map<string, StoredRecord[]>();
+		const orgOverhead: StoredRecord[] = [];
+		for (const r of allAgent) {
+			if (!r.attribution.projectId) {
+				orgOverhead.push(r);
+			} else {
+				const key =
+					r.attribution.basis === 'project_overhead'
+						? `${r.attribution.projectId}:not-on-task`
+						: r.attribution.projectId;
+				projectGroups.set(key, [...(projectGroups.get(key) ?? []), r]);
+			}
+		}
+		const byProject: MemberProjectSpendRow[] = [...projectGroups.entries()]
+			.map(([key, list]) => {
+				const isOverhead = key.endsWith(':not-on-task');
+				const pid = isOverhead ? key.slice(0, -':not-on-task'.length) : key;
+				const pname = n.project.get(pid) ?? pid;
+				return {
+					id: `member-project:${key}`,
+					projectId: pid,
+					label: isOverhead ? `${pname} · Not on a task` : pname,
+					...(n.project.has(pid) ? {} : { archived: true }),
+					...(isOverhead ? { notOnTask: true } : {}),
+					totals: totalsOf(list)
+				};
+			})
+			.toSorted(
+				(a, b) =>
+					Number(!!a.notOnTask) - Number(!!b.notOnTask) ||
+					(b.totals.knownCostMicroUsd ?? -1) - (a.totals.knownCostMicroUsd ?? -1) ||
+					a.label.localeCompare(b.label)
+			);
+		if (!managed && orgOverhead.length > 0) {
+			byProject.push({
+				id: 'member-project:org-not-on-task',
+				label: 'Not on a task (organization)',
+				notOnTask: true,
+				totals: totalsOf(orgOverhead)
+			});
+		}
+
+		const taskGroups = new Map<string, StoredRecord[]>();
+		for (const r of allAgent) {
+			if (!r.attribution.taskRef) continue;
+			taskGroups.set(r.attribution.taskRef, [...(taskGroups.get(r.attribution.taskRef) ?? []), r]);
+		}
+		const topTasks: MemberTaskSpendRow[] = [...taskGroups.entries()]
+			.map(([ref, list]) => {
+				const sample = list[0];
+				return {
+					taskRef: ref,
+					title: sample.attribution.taskTitle ?? ref,
+					...(sample.attribution.projectId
+						? {
+								projectId: sample.attribution.projectId,
+								projectName:
+									n.project.get(sample.attribution.projectId) ?? sample.attribution.projectId
+							}
+						: {}),
+					totals: totalsOf(list)
+				};
+			})
+			.toSorted(
+				(a, b) =>
+					(b.totals.knownCostMicroUsd ?? -1) - (a.totals.knownCostMicroUsd ?? -1) ||
+					a.taskRef.localeCompare(b.taskRef)
+			)
+			.slice(0, 10);
+
+		let budgets: MemberCostOverview['budgets'];
+		if (!managed) {
+			const bZone = on('no-zone') ? null : budgetData.zone.name;
+			const fullAgentRecords = on('empty')
+				? []
+				: effective.filter((r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId);
+			const unmeasured = fullAgentRecords.some((r) => r.runtime === 'antigravity');
+			const b = mutableBudgets[memberId];
+			if (bZone && b && !on('empty')) {
+				const { day, month } = budgetWindows(bZone);
+				budgets = {
+					zone: { name: bZone, source: budgetData.zone.source as 'owner_account' | 'hq' },
+					...(b.daily ? { daily: budgetState(b.daily, fullAgentRecords, day, unmeasured) } : {}),
+					...(b.monthly
+						? { monthly: budgetState(b.monthly, fullAgentRecords, month, unmeasured) }
+						: {}),
+					canManage: true,
+					...(on('budget-reset')
+						? {
+								resetNote:
+									'Budget reset: the previous daily period closed and its budget hold was released.'
+							}
+						: {})
+				};
+			} else {
+				budgets = {
+					zone: { name: bZone, source: budgetData.zone.source as 'owner_account' | 'hq' },
+					canManage: true
+				};
+			}
+		}
+
+		return structuredClone({
+			memberId,
+			scope: managed ? ('managed' as const) : ('organization' as const),
+			timeZone: zone,
+			periods: {
+				today: totalsOf(allAgent.filter((r) => within(r, todayP))),
+				thisWeek: totalsOf(allAgent.filter((r) => within(r, weekP))),
+				thisMonth: totalsOf(allAgent.filter((r) => within(r, monthP))),
+				lastMonth: totalsOf(allAgent.filter((r) => within(r, lastMonthP)))
+			},
+			byProject,
+			topTasks,
+			...(budgets ? { budgets } : {}),
+			coverage: {
+				checkpointAt: usage.checkpointAt,
+				gaps: on('empty') ? [] : usage.gaps
+			}
+		} satisfies MemberCostOverview);
+	},
+
+	async memberRecords(organizationId, memberId, request, cursor) {
+		await read();
+		if (on('viewer'))
+			throw fail(
+				'not_authorized',
+				'Only the owner, and project managers for their projects, see costs.'
+			);
+		if (on('records-fail'))
+			throw fail('internal', "HQ didn't answer. Check that the office is running, then try again.");
+		const { snapshot } = await orgApi.view(organizationId);
+		const managed = on('manager');
+		const allowedIds = managedProjectIds(snapshot);
+		const n = await names(organizationId);
+		const list = (on('empty') ? [] : effective)
+			.filter((r) => {
+				if (r.consumer.kind !== 'agent' || r.consumer.memberId !== memberId) return false;
+				if (managed && (!r.attribution.projectId || !allowedIds.has(r.attribution.projectId)))
+					return false;
+				return matchesMemberFilter(r, request.filter, request.timeZone);
+			})
+			.toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+		const offset = Number(cursor ?? 0);
+		const page = list.slice(offset, offset + PAGE).map((r) => toRecord(r, n));
+		return structuredClone({
+			records: page,
+			total: list.length,
+			...(offset + PAGE < list.length ? { nextCursor: String(offset + PAGE) } : {})
+		});
+	},
+
+	async setAgentBudget(_organizationId, memberId, draft) {
+		await new Promise((r) => setTimeout(r, on('slow') ? 2000 : 250));
+		if (on('unavailable')) await unavailableCall();
+		if (on('viewer') || on('manager'))
+			throw fail('not_authorized', 'Only the organization owner can change agent budgets.');
+		if (on('save-fails'))
+			throw fail('storage_error', "HQ couldn't write the budget policy. Nothing changed.");
+		if (draft.limit <= 0 || !Number.isSafeInteger(draft.limit))
+			throw fail('invalid_request', 'Enter a positive budget limit.', { field: 'limit' });
+		const zone = on('no-zone') ? null : budgetData.zone.name;
+		if (!zone)
+			throw fail('invalid_request', "Agent budgets can't run without a known budget time zone.");
+		const entry = (mutableBudgets[memberId] ??= {});
+		const mine = effective.filter(
+			(r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId
+		);
+		const unmeasured = mine.some((r) => r.runtime === 'antigravity');
+		const { day, month } = budgetWindows(zone);
+		const window = draft.periodKind === 'daily' ? day : month;
+		const nextStored: StoredBudget = { unit: draft.unit, limit: draft.limit };
+		const preview = budgetState(nextStored, mine, window, unmeasured);
+		if (preview.spent >= preview.limit) nextStored.hold = 'stop_pending';
+		entry[draft.periodKind] = nextStored;
+		budgetOperations.set(draft.operationId, { applied: true, message: 'Budget saved.' });
+		if (on('save-unknown') && !budgetUnknownOnce) {
+			budgetUnknownOnce = true;
+			throw Object.assign(new Error('The connection to HQ dropped before it answered.'), {
+				source: 'app',
+				code: OUTCOME_UNKNOWN,
+				message: 'The connection to HQ dropped before it answered.'
+			});
+		}
+		return structuredClone(budgetState(nextStored, mine, window, unmeasured));
+	},
+
+	async agentBudgetAction(_organizationId, memberId, action) {
+		await new Promise((r) => setTimeout(r, on('slow') ? 2000 : 250));
+		if (on('unavailable')) await unavailableCall();
+		if (on('viewer') || on('manager'))
+			throw fail('not_authorized', 'Only the organization owner can manage agent budgets.');
+		if (on('save-fails'))
+			throw fail('storage_error', "HQ couldn't record the budget change. Nothing changed.");
+		const replay = budgetOperations.get(action.operationId);
+		if (replay) return { message: replay.message };
+		const entry = mutableBudgets[memberId];
+		const current = entry?.[action.periodKind];
+		if (!current) throw fail('not_found', 'No budget is set for this period.');
+		let message = 'Budget updated.';
+		if (action.action === 'clear') {
+			delete entry[action.periodKind];
+			message = `${action.periodKind === 'daily' ? 'Daily' : 'Monthly'} budget cleared.`;
+		} else if (action.action === 'allow_once') {
+			if (current.extended)
+				throw fail('invalid_request', 'This budget already used its one 20% extension.');
+			const zone = budgetData.zone.name;
+			const mine = effective.filter(
+				(r) => r.consumer.kind === 'agent' && r.consumer.memberId === memberId
+			);
+			const { day, month } = budgetWindows(zone);
+			const stateNow = budgetState(
+				current,
+				mine,
+				action.periodKind === 'daily' ? day : month,
+				false
+			);
+			if (stateNow.spent < stateNow.limit)
+				throw fail(
+					'invalid_request',
+					'Allow 20% once is available only when the budget is reached.'
+				);
+			const inc = Math.floor(current.limit / 5);
+			if (inc <= 0 || current.limit + inc <= stateNow.spent)
+				throw fail(
+					'invalid_request',
+					'Adding 20% would not exceed current spend. Raise the budget instead.'
+				);
+			current.extended = true;
+			delete current.hold;
+			message = 'Allowed 20% more once for this period.';
+		} else if (action.action === 'keep_paused') {
+			current.hold = 'held';
+			message = 'Agent will remain paused until the period resets.';
+		}
+		budgetOperations.set(action.operationId, { applied: true, message });
+		return { message };
+	},
+
+	async agentBudgetOperation(_organizationId, operationId) {
+		await new Promise((r) => setTimeout(r, 200));
+		if (on('unavailable')) await unavailableCall();
+		return budgetOperations.has(operationId)
+			? { state: 'applied' }
+			: { state: 'not_applied', reason: 'HQ has no record of this budget change.' };
 	}
 };
+
+// ---- Step 7 Insights & Member Cost Helpers ------------------------------------------------------------------------
+
+function managedProjectIds(snapshot: Awaited<ReturnType<typeof orgApi.view>>['snapshot']) {
+	const above = (teamId: string | undefined): string[] => {
+		const team = snapshot.teams.find((t) => t.id === teamId);
+		return team ? [team.id, ...above(team.owner_team_id)] : [];
+	};
+	const owner = (projectId: string) =>
+		(snapshot.project_teams ?? []).find((l) => l.project_id === projectId)?.team_id;
+	return new Set(
+		(snapshot.projects ?? []).filter((p) => above(owner(p.id)).includes('web')).map((p) => p.id)
+	);
+}
+
+function budgetWindows(zone: string) {
+	const local = localParts(NOW, zone);
+	const nextDay = new Date(Date.UTC(local.y, local.m - 1, local.d + 1));
+	const day = {
+		key: `${local.y}-${String(local.m).padStart(2, '0')}-${String(local.d).padStart(2, '0')}`,
+		startsAt: dayStart(local.y, local.m, local.d, zone),
+		endsAt: dayStart(
+			nextDay.getUTCFullYear(),
+			nextDay.getUTCMonth() + 1,
+			nextDay.getUTCDate(),
+			zone
+		)
+	};
+	const month = {
+		key: `${local.y}-${String(local.m).padStart(2, '0')}`,
+		startsAt: dayStart(local.y, local.m, 1, zone),
+		endsAt: dayStart(
+			local.m === 12 ? local.y + 1 : local.y,
+			local.m === 12 ? 1 : local.m + 1,
+			1,
+			zone
+		)
+	};
+	return { day, month };
+}
+
+function resolveTodayPeriod(zone: string): ResolvedPeriod {
+	const local = localParts(NOW, zone);
+	const start = dayStart(local.y, local.m, local.d, zone);
+	return {
+		kind: 'custom',
+		startsAt: start.toISOString(),
+		endsAt: NOW.toISOString(),
+		timeZone: zone,
+		toNow: true
+	};
+}
+
+function isCancelledTask(r: StoredRecord): boolean {
+	return r.attribution.taskRef === 'T-21' || r.attribution.taskRef === 'T-40';
+}
+
+function taskTypeOf(r: StoredRecord): string {
+	if (!r.attribution.taskRef) return 'not_on_task';
+	const title = (r.attribution.taskTitle ?? '').toLowerCase();
+	if (title.includes('fix') || title.includes('bug') || title.includes('error')) return 'bug';
+	if (title.includes('redesign') || title.includes('request')) return 'request';
+	return 'task';
+}
+
+const TASK_TYPE_LABELS: Record<string, string> = {
+	task: 'Task',
+	bug: 'Bug',
+	request: 'Request',
+	not_on_task: 'Not on a task'
+};
+
+function countWorkDone(records: StoredRecord[], projectDone: number, kind: PeriodRequest['kind']) {
+	const distinctTasks = new Set(records.map((r) => r.attribution.taskRef).filter(Boolean));
+	if (records.length === 0) return { tasksDone: 0, bugsDone: 0 };
+	const base = kind === 'all_time' ? Math.max(projectDone, distinctTasks.size) : distinctTasks.size;
+	const bugsDone = Math.max(1, Math.floor(base / 3));
+	const tasksDone = Math.max(1, base - bugsDone);
+	return { tasksDone, bugsDone };
+}
+
+function matchesProjectKey(r: StoredRecord, key: ProjectBreakdownKey): boolean {
+	if ('all' in key) return true;
+	switch (key.dimension) {
+		case 'team':
+			return 'notOnTask' in key
+				? r.attribution.basis === 'project_overhead' || !r.attribution.taskRef
+				: r.attribution.teamId === key.teamId && !!r.attribution.taskRef;
+		case 'consumer':
+			return 'oneOff' in key
+				? r.consumer.kind === 'one_off'
+				: r.consumer.kind === 'agent' && r.consumer.memberId === key.memberId;
+		case 'model':
+			return r.provider === key.provider && r.model === key.model;
+		case 'task_type':
+			return taskTypeOf(r) === key.taskType;
+		case 'work_type':
+			return key.workType === 'not_recorded' ? r.workType === null : r.workType === key.workType;
+	}
+}
+
+function matchesMemberFilter(r: StoredRecord, filter: MemberRecordsFilter, zone: string): boolean {
+	switch (filter.kind) {
+		case 'all':
+			return true;
+		case 'period': {
+			const p =
+				filter.period === 'today'
+					? resolveTodayPeriod(zone)
+					: resolvePeriod({ kind: filter.period, timeZone: zone }).period;
+			return within(r, p);
+		}
+		case 'project':
+			return (
+				r.attribution.projectId === filter.projectId &&
+				(filter.notOnTask
+					? r.attribution.basis === 'project_overhead'
+					: r.attribution.basis !== 'project_overhead')
+			);
+		case 'org_not_on_task':
+			return !r.attribution.projectId;
+		case 'task':
+			return r.attribution.taskRef === filter.taskRef;
+	}
+}
+
+function buildTrend(records: StoredRecord[], period: ResolvedPeriod): TrendBucket[] {
+	if (records.length === 0) return [];
+	const zone = period.timeZone;
+	const endDate = new Date(period.endsAt);
+	const earliest = records.reduce(
+		(acc, r) => (r.occurredAt < acc ? r.occurredAt : acc),
+		records[0].occurredAt
+	);
+	const startDate = period.startsAt ? new Date(period.startsAt) : new Date(earliest);
+	const spanDays = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86_400_000));
+	const useWeeks = spanDays > 31;
+	const fmtShort = new Intl.DateTimeFormat('en-GB', {
+		day: 'numeric',
+		month: 'short',
+		timeZone: zone
+	});
+
+	const buckets: TrendBucket[] = [];
+	let cursor = new Date(startDate);
+	let safety = 0;
+	while (cursor < endDate && safety < 60) {
+		safety++;
+		const p = localParts(cursor, zone);
+		let next: Date;
+		if (useWeeks) {
+			const back = WEEKDAYS.indexOf(p.weekday);
+			const nextMon = new Date(Date.UTC(p.y, p.m - 1, p.d - back + 7));
+			next = dayStart(
+				nextMon.getUTCFullYear(),
+				nextMon.getUTCMonth() + 1,
+				nextMon.getUTCDate(),
+				zone
+			);
+		} else {
+			const nextDay = new Date(Date.UTC(p.y, p.m - 1, p.d + 1));
+			next = dayStart(
+				nextDay.getUTCFullYear(),
+				nextDay.getUTCMonth() + 1,
+				nextDay.getUTCDate(),
+				zone
+			);
+		}
+		const bucketEnd = next > endDate ? endDate : next;
+		const startsAt = cursor.toISOString();
+		const endsAt = bucketEnd.toISOString();
+		const inBucket = records.filter((r) => r.occurredAt >= startsAt && r.occurredAt < endsAt);
+		const partial =
+			(safety === 1 && useWeeks && WEEKDAYS.indexOf(p.weekday) > 0) ||
+			(bucketEnd.getTime() === endDate.getTime() && period.toNow);
+		buckets.push({
+			key: startsAt.slice(0, 10),
+			label: useWeeks ? `Wk ${fmtShort.format(cursor)}` : fmtShort.format(cursor),
+			startsAt,
+			endsAt,
+			...(partial ? { partial: true } : {}),
+			totals: totalsOf(inBucket)
+		});
+		cursor = bucketEnd;
+	}
+	return buckets;
+}
+
+function buildProjectBreakdowns(
+	records: StoredRecord[],
+	n: Awaited<ReturnType<typeof names>>
+): ProjectInsights['breakdowns'] {
+	const makeRows = <K extends string>(
+		list: StoredRecord[],
+		keyOf: (r: StoredRecord) => K,
+		build: (
+			key: K,
+			items: StoredRecord[]
+		) => Omit<
+			InsightBreakdownRow,
+			| 'totals'
+			| 'itemsDone'
+			| 'costPerTaskMicroUsd'
+			| 'medianLeadSeconds'
+			| 'medianCycleSeconds'
+			| 'sampleCount'
+		> & { overhead?: boolean }
+	): InsightBreakdownRow[] => {
+		const groups = new Map<K, StoredRecord[]>();
+		for (const r of list) groups.set(keyOf(r), [...(groups.get(keyOf(r)) ?? []), r]);
+		return [...groups.entries()].map(([k, items]) => {
+			const base = build(k, items);
+			const t = totalsOf(items);
+			const taskSet = new Set(items.map((r) => r.attribution.taskRef).filter(Boolean));
+			const itemsDone = base.overhead ? null : taskSet.size;
+			const costPerTaskMicroUsd =
+				itemsDone && itemsDone > 0 && t.knownCostMicroUsd !== null
+					? Math.round(t.knownCostMicroUsd / itemsDone)
+					: null;
+			const sampleCount = itemsDone ?? 0;
+			const medianLeadSeconds = sampleCount >= 5 ? 95_040 + (k.length % 4) * 18_000 : null;
+			const medianCycleSeconds = sampleCount >= 5 ? 43_200 + (k.length % 3) * 10_800 : null;
+			return {
+				...base,
+				totals: t,
+				itemsDone,
+				costPerTaskMicroUsd,
+				medianLeadSeconds,
+				medianCycleSeconds,
+				sampleCount
+			};
+		});
+	};
+
+	const byTeam = makeRows(
+		records,
+		(r) =>
+			r.attribution.basis === 'project_overhead' || !r.attribution.taskRef
+				? ':not-on-task'
+				: (r.attribution.teamId ?? ':not-on-task'),
+		(k) =>
+			k === ':not-on-task'
+				? {
+						id: 'team:not-on-task',
+						key: { dimension: 'team', notOnTask: true },
+						label: 'Not on a task',
+						overhead: true
+					}
+				: {
+						id: `team:${k}`,
+						key: { dimension: 'team', teamId: k },
+						label: n.team.get(k) ?? k,
+						teamId: k
+					}
+	);
+
+	const byConsumer = makeRows(
+		records,
+		(r) => (r.consumer.kind === 'agent' ? r.consumer.memberId : ':one-off'),
+		(k) =>
+			k === ':one-off'
+				? {
+						id: 'consumer:one-off',
+						key: { dimension: 'consumer', oneOff: true },
+						label: 'One-off model calls (drafting)'
+					}
+				: {
+						id: `consumer:${k}`,
+						key: { dimension: 'consumer', memberId: k },
+						label: n.member.get(k) ?? k,
+						memberId: k
+					}
+	);
+
+	const byModel = makeRows(
+		records,
+		(r) => `${r.provider ?? 'unknown'}/${r.model ?? 'unknown'}`,
+		(k, items) => ({
+			id: `model:${k}`,
+			key: { dimension: 'model', provider: items[0].provider, model: items[0].model },
+			label: items[0].model ?? 'Unknown model',
+			subtitle: items[0].provider ?? undefined
+		})
+	);
+
+	const byTaskType = makeRows(
+		records,
+		(r) => taskTypeOf(r),
+		(k) => ({
+			id: `task-type:${k}`,
+			key: { dimension: 'task_type', taskType: k },
+			label: TASK_TYPE_LABELS[k] ?? k,
+			...(k === 'not_on_task' ? { overhead: true } : {})
+		})
+	);
+
+	const WORK_LABELS = { build: 'Build', run: 'Run', not_recorded: 'Not recorded' } as const;
+	const byWorkType = makeRows(
+		records,
+		(r) => r.workType ?? 'not_recorded',
+		(k) => ({
+			id: `work-type:${k}`,
+			key: { dimension: 'work_type', workType: k },
+			label: WORK_LABELS[k]
+		})
+	);
+
+	return { byTeam, byConsumer, byModel, byTaskType, byWorkType };
+}
+
+function buildProjectInsightsNotices(
+	projectId: string,
+	projectName: string,
+	records: StoredRecord[],
+	breakdowns: ProjectInsights['breakdowns']
+): InsightNotice[] {
+	if (records.length === 0) return [];
+	const notices: InsightNotice[] = [];
+	const taskTotals = new Map<string, { title: string; cost: number }>();
+	for (const r of records) {
+		if (!r.attribution.taskRef || r.costMicroUsd === null) continue;
+		const cur = taskTotals.get(r.attribution.taskRef) ?? {
+			title: r.attribution.taskTitle ?? r.attribution.taskRef,
+			cost: 0
+		};
+		cur.cost += r.costMicroUsd;
+		taskTotals.set(r.attribution.taskRef, cur);
+	}
+	const sortedTasks = [...taskTotals.entries()].toSorted((a, b) => b[1].cost - a[1].cost);
+	if (sortedTasks.length >= 2) {
+		const [topRef, top] = sortedTasks[0];
+		const costs = sortedTasks.map(([, v]) => v.cost).toSorted((a, b) => a - b);
+		const median = costs[Math.floor(costs.length / 2)];
+		if (median > 0 && top.cost >= median * 2) {
+			const mult = (top.cost / median).toFixed(1).replace(/\.0$/, '');
+			notices.push({
+				id: `outlier-${topRef}`,
+				kind: 'outlier',
+				tone: 'owner',
+				text: `${topRef} "${top.title}" cost ${mult}× the median item in ${projectName} (≈ $${(top.cost / 1_000_000).toFixed(2)} vs ≈ $${(median / 1_000_000).toFixed(2)})`,
+				actionLabel: 'Open',
+				href: `/work/${encodeURIComponent(topRef)}`,
+				limitation: `Based on ${sortedTasks.length} tasks with known cost in this period.`
+			});
+		}
+	}
+	notices.push({
+		id: `waiting-${projectId}`,
+		kind: 'waiting',
+		tone: 'neutral',
+		text: `Agents waited ${projectId === 'beacon' ? '19 h' : '11 h'} for your answers in this period.`,
+		actionLabel: 'See questions',
+		href: '/inbox?tab=questions',
+		limitation: 'Counts recorded owner questions and approvals; working time is not tracked yet.'
+	});
+	const totalKnown = totalsOf(records).knownCostMicroUsd ?? 0;
+	const topTeam = breakdowns.byTeam
+		.filter((r) => !r.overhead && r.totals.knownCostMicroUsd !== null)
+		.toSorted((a, b) => (b.totals.knownCostMicroUsd ?? 0) - (a.totals.knownCostMicroUsd ?? 0))[0];
+	if (topTeam && totalKnown > 0) {
+		const share = Math.round(((topTeam.totals.knownCostMicroUsd ?? 0) * 100) / totalKnown);
+		if (share >= 40) {
+			notices.push({
+				id: `concentration-${topTeam.id}`,
+				kind: 'concentration',
+				tone: 'neutral',
+				text: `${topTeam.label} accounts for ${share}% of ${projectName}'s known cost in this period.`,
+				actionLabel: 'View team',
+				href: topTeam.teamId
+					? `/teams/${encodeURIComponent(topTeam.teamId)}`
+					: `/projects/${encodeURIComponent(projectId)}/team`,
+				limitation: 'Share of known dollars only; unpriced and unknown records are excluded.'
+			});
+		}
+	}
+	return notices;
+}
+
+function buildOrgInsightsNotices(
+	projects: OrgInsightProjectRow[],
+	totals: UsageTotals
+): InsightNotice[] {
+	if (totals.records === 0) return [];
+	const notices: InsightNotice[] = [];
+	const totalKnown = totals.knownCostMicroUsd ?? 0;
+	const top = projects
+		.filter((p) => p.periodTotals.knownCostMicroUsd !== null)
+		.toSorted(
+			(a, b) => (b.periodTotals.knownCostMicroUsd ?? 0) - (a.periodTotals.knownCostMicroUsd ?? 0)
+		)[0];
+	if (top && totalKnown > 0) {
+		const share = Math.round(((top.periodTotals.knownCostMicroUsd ?? 0) * 100) / totalKnown);
+		if (share >= 40) {
+			notices.push({
+				id: `org-concentration-${top.projectId}`,
+				kind: 'concentration',
+				tone: 'neutral',
+				text: `${top.name} has ${share}% of known cost in this period.`,
+				actionLabel: 'Open insights',
+				href: `/projects/${encodeURIComponent(top.projectId)}/insights`,
+				limitation: 'Share of known cost across visible projects.'
+			});
+		}
+	}
+	notices.push({
+		id: 'org-waiting',
+		kind: 'waiting',
+		tone: 'owner',
+		text: 'Agents waited 30 h for your answers in this period.',
+		actionLabel: 'See questions',
+		href: '/inbox?tab=questions',
+		limitation: 'Union of recorded owner waits; working time is not tracked yet.'
+	});
+	return notices;
+}
+
+function buildReleaseCaps(projectId: string, projectRecords: StoredRecord[]): ReleaseCapRow[] {
+	const entry = releaseMeta[projectId];
+	if (!entry || entry.releases.length === 0) return [];
+	const totalKnown = totalsOf(projectRecords).knownCostMicroUsd ?? 0;
+	const complete = totalsOf(projectRecords).costIncompleteRecords === 0;
+	return entry.releases.map((rel, i) => {
+		const spent = i === 0 ? Math.round(totalKnown * 0.65) : Math.round(totalKnown * 0.35);
+		const capLimit = i === 0 ? 50_000_000 : 120_000_000;
+		const isReleased = rel.status === 'released';
+		return {
+			releaseId: rel.id,
+			number: rel.number,
+			title: rel.title,
+			...(rel.versionLabel ? { versionLabel: rel.versionLabel } : {}),
+			unit: 'usd',
+			capLimit,
+			spent,
+			complete,
+			...(isReleased
+				? {
+						releasedAt: rel.updatedAt ?? '2026-11-14T11:15:00Z',
+						spentAtRelease: Math.max(0, spent - 1_400_000)
+					}
+				: {})
+		};
+	});
+}
+
+function buildSpeedRows(records: StoredRecord[]): SpeedKindRow[] {
+	if (records.length === 0) return [];
+	const byKind = new Map<string, Set<string>>();
+	for (const r of records) {
+		if (!r.attribution.taskRef) continue;
+		const k = taskTypeOf(r);
+		const set = byKind.get(k) ?? new Set<string>();
+		set.add(r.attribution.taskRef);
+		byKind.set(k, set);
+	}
+	return (['task', 'bug', 'request'] as const)
+		.filter((k) => (byKind.get(k)?.size ?? 0) > 0)
+		.map((k) => {
+			const count = byKind.get(k)!.size;
+			return {
+				kind: k,
+				label: TASK_TYPE_LABELS[k],
+				sampleCount: count,
+				medianLeadSeconds: count >= 5 ? (k === 'task' ? 138_240 : 64_800) : null,
+				medianCycleSeconds: count >= 5 ? (k === 'task' ? 68_400 : 28_800) : null,
+				medianWaitingSeconds: count >= 5 ? 10_800 : null
+			};
+		});
+}

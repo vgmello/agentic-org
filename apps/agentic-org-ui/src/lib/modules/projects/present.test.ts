@@ -22,6 +22,7 @@ const ALL: ServedTabs = {
 	features: true,
 	releases: true,
 	docs: true,
+	insights: true,
 	settings: true
 };
 const noFeatures = { planned: 0, inProgress: 0, live: 0 };
@@ -45,6 +46,7 @@ describe('projectTabs (PKG-15)', () => {
 			'Team',
 			'Activity',
 			'Conversations',
+			'Insights',
 			'Settings'
 		]);
 	});
@@ -72,6 +74,7 @@ describe('projectTabs (PKG-15)', () => {
 			'Team',
 			'Activity',
 			'Conversations',
+			'Insights',
 			'Settings'
 		]);
 	});
@@ -92,6 +95,7 @@ describe('projectTabs (PKG-15)', () => {
 			'Team',
 			'Activity',
 			'Conversations',
+			'Insights',
 			'Settings'
 		]);
 	});

@@ -1,14 +1,24 @@
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type {
+	AgentBudgetAction,
+	AgentBudgetDraft,
+	AgentBudgetOperationOutcome,
 	AgentBudgets,
 	BreakdownKey,
+	BudgetPeriodState,
+	MemberCostOverview,
+	MemberRecordsFilter,
 	OperationOutcome,
 	OrganizationCost,
+	OrganizationInsights,
 	PeriodRequest,
 	PriceDraft,
 	PriceVersion,
 	PricesOverview,
+	ProjectBreakdownKey,
+	ProjectInsights,
 	ProjectInvestment,
+	UsageExportResult,
 	UsageRecordPage
 } from './types';
 
@@ -17,7 +27,8 @@ import type {
  * and scoped authorization as every other cost reader; amounts are refused with `not_authorized` to anyone the spec
  * does not show them to. Refusals reject with an AppError; a refusal about one Add a rate field also carries `field`
  * (a `PriceField`). A write whose outcome is unknown (the connection dropped after sending) rejects with the code
- * `OUTCOME_UNKNOWN` (./outcome.ts) and is reconciled with `priceOperation` before anything is repeated.
+ * `OUTCOME_UNKNOWN` (./outcome.ts) and is reconciled with `priceOperation` / `agentBudgetOperation` before anything
+ * is repeated.
  */
 export interface CostsApi {
 	/** Every price version, with whether the viewer may add one. Readable by anyone signed in: rates are not spend. */
@@ -47,6 +58,61 @@ export interface CostsApi {
 	): Promise<ProjectInvestment>;
 	/** Every agent's daily and monthly budget in the budget zone (owner only). */
 	agentBudgets(organizationId: string): Promise<AgentBudgets>;
+	/** Project › Insights for a period (owner or authorized project manager; others get `not_authorized`). */
+	projectInsights(
+		organizationId: string,
+		projectId: string,
+		period: PeriodRequest
+	): Promise<ProjectInsights>;
+	/** Effective usage records behind a Project › Insights breakdown row, newest first, paginated. */
+	projectRecords(
+		organizationId: string,
+		projectId: string,
+		period: PeriodRequest,
+		key: ProjectBreakdownKey,
+		cursor?: string
+	): Promise<UsageRecordPage>;
+	/** Organization Insights `/insights` for a period (owner sees all; PM sees managed projects; others `not_authorized`). */
+	organizationInsights(
+		organizationId: string,
+		period: PeriodRequest
+	): Promise<OrganizationInsights>;
+	/** Scoped effective usage records for safe CSV export (obeys the same viewer scope as the screen). */
+	exportRecords(
+		organizationId: string,
+		scope: { kind: 'organization' } | { kind: 'project'; projectId: string },
+		period: PeriodRequest
+	): Promise<UsageExportResult>;
+	/** Agent profile › Cost tab (owner sees full + budgets; PM sees own projects labelled "in your projects", no budgets). */
+	memberCost(
+		organizationId: string,
+		memberId: string,
+		request: { timeZone: string }
+	): Promise<MemberCostOverview>;
+	/** Effective usage records behind a Member profile › Cost figure, newest first, paginated. */
+	memberRecords(
+		organizationId: string,
+		memberId: string,
+		request: { timeZone: string; filter: MemberRecordsFilter },
+		cursor?: string
+	): Promise<UsageRecordPage>;
+	/** Set or change an agent's daily or monthly calendar budget (owner only; idempotent on `operationId`). */
+	setAgentBudget(
+		organizationId: string,
+		memberId: string,
+		draft: AgentBudgetDraft
+	): Promise<BudgetPeriodState>;
+	/** Clear, allow 20% more once, or keep paused until reset on an agent budget (owner only). */
+	agentBudgetAction(
+		organizationId: string,
+		memberId: string,
+		action: AgentBudgetAction
+	): Promise<{ message: string }>;
+	/** Reconcile an agent budget write whose outcome was unknown. */
+	agentBudgetOperation(
+		organizationId: string,
+		operationId: string
+	): Promise<AgentBudgetOperationOutcome>;
 }
 
 // The web API does not serve costs yet: every call refuses, and the page says so.
@@ -58,5 +124,14 @@ export const costsApi: CostsApi = {
 	organizationCost: unavailableCall,
 	records: unavailableCall,
 	projectInvestment: unavailableCall,
-	agentBudgets: unavailableCall
+	agentBudgets: unavailableCall,
+	projectInsights: unavailableCall,
+	projectRecords: unavailableCall,
+	organizationInsights: unavailableCall,
+	exportRecords: unavailableCall,
+	memberCost: unavailableCall,
+	memberRecords: unavailableCall,
+	setAgentBudget: unavailableCall,
+	agentBudgetAction: unavailableCall,
+	agentBudgetOperation: unavailableCall
 };
