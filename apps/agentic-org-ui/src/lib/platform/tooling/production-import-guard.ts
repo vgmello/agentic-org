@@ -1,7 +1,8 @@
 import type { Plugin } from 'vite';
 
 /** In-memory browser reducers/engines that belong strictly in dev/test fakes. */
-const mockEngines = /\/(?:org\/reducer|work\/engine|processes\/world)\.[cm]?[jt]s$/;
+const mockEngines =
+	/\/(?:(?:modules\/)?(?:org|organization)\/reducer|(?:modules\/)?work\/engine|(?:modules\/)?processes\/world)\.[cm]?[jt]s$/;
 const fixtureModule =
 	/\/(?:__mocks__|mocks?|fakes?|samples?|fixtures?|testkit|testing)(?:[A-Z./-]|$)/;
 const testModule = /\.(?:test|spec)\.(?:[cm]?[jt]sx?|svelte(?:\.[jt]s)?)$/;

@@ -1,8 +1,8 @@
-export type { OrgApi } from '../../src/lib/org/api';
-export type { MockStorage } from '../../src/lib/org/mock';
-export { createMockOrg } from '../../src/lib/org/mock';
-import { createMockOrg } from '../../src/lib/org/mock';
-import { officeApi } from '$lib/office/api';
+export type { OrgApi } from '../../src/lib/modules/organization/api';
+export type { MockStorage } from '../../src/lib/modules/organization/mock';
+export { createMockOrg } from '../../src/lib/modules/organization/mock';
+import { createMockOrg } from '../../src/lib/modules/organization/mock';
+import { officeApi } from '$lib/modules/offices/office-api';
 
 let failedOnce = false;
 const scenario = () => new URLSearchParams(location.search).get('org');

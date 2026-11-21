@@ -7,7 +7,7 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/modules/offices/office-api';
 	import { trimWhiteSpace, validateName } from '$lib/name';
 	import { Button } from '$lib/components/ui/button';
 	import {

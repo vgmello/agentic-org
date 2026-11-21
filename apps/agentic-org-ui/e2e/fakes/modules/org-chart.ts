@@ -7,8 +7,8 @@
 // Change manager is saved, so it is refused with the latest lines. `?mock=drop`: HQ answers the first read, then
 // refuses a Change manager and every later read, as if it went away while a dialog was open. `?mock=solo` leaves the
 // owner nobody with an account to hand over to; `?mock=hr` adds the built-in HR lead.
-import { orgApi } from '$lib/org/api';
-import { officeApi } from '$lib/office/api';
+import { orgApi } from '$lib/modules/organization/api';
+import { officeApi } from '$lib/modules/offices/office-api';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgChartApi } from '../../../src/lib/modules/org-chart/api';
 import type { ChartEmployee } from '../../../src/lib/modules/org-chart/types';

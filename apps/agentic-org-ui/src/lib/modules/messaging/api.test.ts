@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { OrgApi } from '$lib/org/api';
-import { emptyOrg, sampleOrg } from '$lib/org/sample';
+import type { OrgApi } from '$lib/modules/organization/api';
+import { emptyOrg, sampleOrg } from '$lib/modules/organization/sample';
 import { createMockChat } from './mock';
 import { minutesAfter, NOW } from './testkit';
 import type { ChatCall } from './types';

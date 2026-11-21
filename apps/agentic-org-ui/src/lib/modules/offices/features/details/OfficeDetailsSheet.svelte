@@ -12,7 +12,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { toast } from 'svelte-sonner';
 	import pkg from '../../../../../../package.json';
-	import { officeApi, toAppError } from '$lib/office/api';
+	import { officeApi, toAppError } from '$lib/modules/offices/office-api';
 	import OfficeRepairLocation from './OfficeRepairLocation.svelte';
 	import {
 		agentsIn,
@@ -24,7 +24,7 @@
 		secondaryText,
 		statusInfo,
 		type DisplayStatus
-	} from '$lib/offices/model';
+	} from '$lib/modules/offices/model';
 	import type { OfficeInfo, OrgSnapshot } from '$lib/proto';
 	import { agoText } from '../../time';
 	import { syncText } from '../../layer';

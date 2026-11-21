@@ -4,8 +4,8 @@
   task board and bug list that v1's project page served, as its Tasks and Bugs tabs, so the release keeps them.
 -->
 <script lang="ts">
-	import BugsPanel from '$lib/components/BugsPanel.svelte';
-	import TasksBoard from '$lib/components/TasksBoard.svelte';
+	import BugsPanel from '$lib/modules/work/features/bugs/BugsPanel.svelte';
+	import TasksBoard from '$lib/modules/work/features/tasks/TasksBoard.svelte';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { projectFrame } from '../frame/context';
 

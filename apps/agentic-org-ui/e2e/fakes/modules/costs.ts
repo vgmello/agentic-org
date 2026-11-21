@@ -8,7 +8,7 @@
 //   manager (a project manager: the lead of Web, who sees only the investment of Web's projects)
 //   no-zone (the budget zone isn't known) · save-fails (adding a rate fails, verified) · save-unknown (the first add's
 //   outcome is unknown; it was in fact applied) · records-fail (the records sheet fails to load)
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 import { offsetMinutes } from '$lib/modules/preferences/time';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { CostsApi } from '../../../src/lib/modules/costs/api';

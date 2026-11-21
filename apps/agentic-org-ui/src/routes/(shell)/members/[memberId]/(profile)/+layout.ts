@@ -1,4 +1,4 @@
-import { loadOrgView } from '$lib/org/load';
+import { loadOrgView } from '$lib/modules/organization/load';
 
 // The organization's structure, for the shared Edit, Move home team and Offboard dialogs on the profile.
 export async function load({ depends, parent }) {

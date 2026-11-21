@@ -1,5 +1,5 @@
 // Mock for src/lib/modules/search/api.ts: every match, from the org mock and the shell's work items.
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 import type { SearchPageApi } from '../../../src/lib/modules/search/api';
 import type { SearchHit } from '../../../src/lib/modules/shell/types';
 import { mockLatency, mockMode } from '../mock-mode';

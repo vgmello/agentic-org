@@ -17,8 +17,8 @@
 		DialogHeader,
 		DialogTitle
 	} from '$lib/components/ui/dialog';
-	import { toAppError } from '$lib/office/api';
-	import { teamOptions } from '$lib/org/team-edit';
+	import { toAppError } from '$lib/modules/offices/office-api';
+	import { teamOptions } from '$lib/modules/organization/team-edit';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { membersApi } from '../../api';
 	import { moveBlock, movePreview } from './move';
@@ -37,7 +37,7 @@
 		member: { id: string; name: string };
 		/** The current home team. */
 		fromTeamId: string;
-		/** The team tree and memberships, for the choices and what blocks one. */
+		/** The team tree and members, for the choices and what blocks one. */
 		snapshot: OrgSnapshot;
 		onCloseAutoFocus?: (event: Event) => void;
 		/** Moved, or HQ refused (`stale`): the profile reloads either way. */

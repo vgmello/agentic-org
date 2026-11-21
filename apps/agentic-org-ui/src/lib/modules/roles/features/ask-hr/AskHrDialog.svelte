@@ -17,7 +17,7 @@
 		DialogTitle
 	} from '$lib/components/ui/dialog';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/modules/offices/office-api';
 	import { registerModalBack } from '$lib/platform/shell/modal-back';
 	import { rolesApi } from '../../api';
 	import type { RoleDraft } from '../../types';

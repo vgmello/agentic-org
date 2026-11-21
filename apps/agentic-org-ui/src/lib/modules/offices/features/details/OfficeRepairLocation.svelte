@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { OfficeInfo } from '$lib/proto';
-	import { isHere } from '$lib/offices/model';
+	import { isHere } from '$lib/modules/offices/model';
 
 	let { office }: { office: Pick<OfficeInfo, 'host' | 'endpoint'> } = $props();
 </script>

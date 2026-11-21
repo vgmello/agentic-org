@@ -11,7 +11,7 @@
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import { mobileButton } from '$lib/components/classes';
 	import { Button } from '$lib/components/ui/button';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/modules/offices/office-api';
 	import { employeesApi } from '../../api';
 	import {
 		HIRE_REQUESTS_URL,

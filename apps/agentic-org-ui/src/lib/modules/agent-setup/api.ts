@@ -5,7 +5,7 @@ import type { AgentSetupDetail, AgentSetupList, ExecutionEdit, RoleEdit } from '
  * What Organization settings › Agent setup reads and changes. Errors are `AppError`s: `not_found` from `agent` when
  * the member is gone or isn't an agent; `conflict` from the saves when the revision moved (the error carries the
  * newer setup as `latest`); `not_authorized` for a viewer who may not change agent setup. Pause, Resume and
- * Offboard are the organization's own member commands (`$lib/org/actions`), not calls here.
+ * Offboard are the organization's own member commands (`$lib/modules/organization/actions`), not calls here.
  */
 export interface AgentSetupApi {
 	/** Every current agent (active and paused), with its configuration, placement and readiness. */

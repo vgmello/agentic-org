@@ -22,11 +22,11 @@
 	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/office/api';
-	import { updateAgent, updatePerson } from '$lib/org/actions';
-	import { messagingNameError } from '$lib/org/agents';
-	import { checkPersonName } from '$lib/org/people-edit';
-	import type { OrgSession } from '$lib/org/session';
+	import { toAppError } from '$lib/modules/offices/office-api';
+	import { updateAgent, updatePerson } from '$lib/modules/organization/actions';
+	import { messagingNameError } from '$lib/modules/organization/agents';
+	import { checkPersonName } from '$lib/modules/organization/people-edit';
+	import type { OrgSession } from '$lib/modules/organization/session';
 	import type { Member, OrgSnapshot } from '$lib/proto';
 	import {
 		agentIdentityChange,

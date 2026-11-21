@@ -1,6 +1,6 @@
 // A team's page (offices-and-teams-ux §7.2) as pure functions: its tabs and which one a URL shows, the
 // members shown above the tabs, the header's words, and the read that tells "not found" apart from a failure.
-import { toAppError } from '$lib/office/api';
+import { toAppError } from '$lib/modules/offices/office-api';
 import type { TeamDetail, TeamMember } from './types';
 
 /** The tabs, in order. Work is the default and lives at the team's own URL (§7.2; processes-ux "Where"). */

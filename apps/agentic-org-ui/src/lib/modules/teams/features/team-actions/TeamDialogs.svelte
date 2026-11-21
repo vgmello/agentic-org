@@ -8,13 +8,13 @@
 -->
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import NewTeamSheet from '$lib/components/NewTeamSheet.svelte';
-	import MoveTeamDialog from '$lib/components/MoveTeamDialog.svelte';
-	import RenameTeamDialog from '$lib/components/RenameTeamDialog.svelte';
+	import NewTeamSheet from '$lib/modules/organization/features/teams/NewTeamSheet.svelte';
+	import MoveTeamDialog from '$lib/modules/organization/features/teams/MoveTeamDialog.svelte';
+	import RenameTeamDialog from '$lib/modules/organization/features/teams/RenameTeamDialog.svelte';
 	import { membersApi } from '$lib/modules/members';
-	import { toAppError } from '$lib/office/api';
-	import type { OrgSession } from '$lib/org/session';
-	import { deleteSummary } from '$lib/org/team-edit';
+	import { toAppError } from '$lib/modules/offices/office-api';
+	import type { OrgSession } from '$lib/modules/organization/session';
+	import { deleteSummary } from '$lib/modules/organization/team-edit';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { teamsApi } from '../../api';
 	import { teamBlockers, type BlockerCheck, type TeamRemoval } from '../../blockers';

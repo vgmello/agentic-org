@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { copilotApi, copilotFeatures } from '$lib/modules/copilot/api';
 import { chatApi, sender as chatSender } from '$lib/modules/messaging/api';
-import { officeApi, toAppError } from '$lib/office/api';
-import { orgApi } from '$lib/org/api';
-import { sender, workApi } from '$lib/work';
+import { officeApi, toAppError } from '$lib/modules/offices/office-api';
+import { orgApi } from '$lib/modules/organization/api';
+import { sender, workApi } from '$lib/modules/work';
 
 describe('production APIs before concrete gateway adapters exist', () => {
 	it('refuses office reads and writes rather than creating sample connections or starting services', async () => {

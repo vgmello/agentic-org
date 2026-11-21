@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/modules/offices/office-api';
 	import { validateName } from '$lib/name';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';

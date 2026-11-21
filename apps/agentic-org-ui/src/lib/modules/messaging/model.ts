@@ -1,7 +1,7 @@
 // What Chat shows and decides, as pure functions over a `ChatState` (docs/specs/chat-ux.md; CHAT-1..17).
 import type { OrgSnapshot } from '$lib/proto';
-import { isFormer } from '$lib/org/model';
-import { span } from '$lib/work/time';
+import { isFormer } from '$lib/modules/organization/model';
+import { span } from '$lib/modules/work/time';
 import {
 	canRead,
 	isMember,
@@ -66,7 +66,7 @@ export function chatContext(
 		teams: s.teams.map((t) => ({
 			id: t.id,
 			name: t.name,
-			member_ids: s.memberships.filter((m) => m.team_id === t.id).map((m) => m.member_id)
+			member_ids: s.members.filter((m) => !m.owner && m.home_team_id === t.id).map((m) => m.id)
 		})),
 		projects: (s.projects ?? []).map((p) => ({
 			id: p.id,

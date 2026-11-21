@@ -12,7 +12,7 @@
 	import { Resource } from '$lib/components/resource.svelte';
 	import { pageTitle } from '$lib/nav';
 	import { resolve } from '$app/paths';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/modules/offices/office-api';
 	import { membersApi } from '../../api';
 	import { tokens, whenText } from '../../present';
 	import {

@@ -148,13 +148,17 @@ describe('resolved production imports', () => {
 	});
 
 	it.each([
-		'src/lib/org/reducer.ts',
-		'src/lib/work/engine.ts',
+		'src/lib/modules/organization/reducer.ts',
+		'src/lib/modules/work/engine.ts',
 		'src/lib/modules/processes/world.ts'
 	])('TASK-12: rejects in-memory mock reducers and engines at %s', async (path) => {
 		await expect(fixture('error', true, path)).rejects.toThrow(path);
 	});
-	it.each(['src/lib/org/api.ts', 'src/lib/work/api.ts', 'src/lib/modules/messaging/api.ts'])(
+	it.each([
+		'src/lib/modules/organization/api.ts',
+		'src/lib/modules/work/api.ts',
+		'src/lib/modules/messaging/api.ts'
+	])(
 		'TASK-12: allows clean production adapter modules at %s once fakes are retired',
 		async (path) => {
 			expect((await fixture('error', true, path)).join('\n')).not.toContain(

@@ -2,11 +2,18 @@
 	import { untrack } from 'svelte';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import { Button } from '$lib/components/ui/button';
-	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
-	import { toAppError } from '$lib/office/api';
-	import { offboardAgent } from '$lib/org/actions';
-	import { offboardSummary } from '$lib/org/agents';
-	import type { OrgSession } from '$lib/org/session';
+	import {
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogFooter,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
+	import { toAppError } from '$lib/modules/offices/office-api';
+	import { offboardAgent } from '$lib/modules/organization/actions';
+	import { offboardSummary } from '$lib/modules/organization/agents';
+	import type { OrgSession } from '$lib/modules/organization/session';
 	import type { Member, OrgSnapshot } from '$lib/proto';
 
 	let {
@@ -43,7 +50,8 @@
 	$effect(() => {
 		const latest = agent;
 		untrack(() => {
-			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version) shown = latest;
+			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version)
+				shown = latest;
 		});
 	});
 
@@ -57,7 +65,10 @@
 		} catch (e) {
 			const failure = toAppError(e);
 			// Already changed elsewhere (spec §9): refresh, and nothing is applied twice.
-			error = failure.code === 'conflict' || failure.code === 'invalid_request' ? `${shown.name} changed at HQ while you were looking. Here's the latest.` : failure.message;
+			error =
+				failure.code === 'conflict' || failure.code === 'invalid_request'
+					? `${shown.name} changed at HQ while you were looking. Here's the latest.`
+					: failure.message;
 			ondone({ stale: true });
 		} finally {
 			busy = false;
@@ -68,16 +79,30 @@
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
 	<DialogContent>
 		<DialogHeader>
-			<div class="mb-2 flex size-12 items-center justify-center rounded-full bg-danger-emphasis/15 text-danger"><LogOut class="size-6" aria-hidden="true" /></div>
+			<div
+				class="mb-2 flex size-12 items-center justify-center rounded-full bg-danger-emphasis/15 text-danger"
+			>
+				<LogOut class="size-6" aria-hidden="true" />
+			</div>
 			<DialogTitle text={`Offboard ${shown?.name ?? ''}?`} />
 			<DialogDescription class="space-y-1 [overflow-wrap:anywhere]">
 				{#each lines as line (line)}<span class="block">{line}</span>{/each}
 			</DialogDescription>
-			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">
+					{error}
+				</p>{/if}
 		</DialogHeader>
 		<DialogFooter>
-			<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
-			<Button type="button" variant="destructive" disabled={busy} onclick={confirm} class="[overflow-wrap:anywhere]">Offboard {shown?.name}</Button>
+			<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}
+				>Cancel</Button
+			>
+			<Button
+				type="button"
+				variant="destructive"
+				disabled={busy}
+				onclick={confirm}
+				class="[overflow-wrap:anywhere]">Offboard {shown?.name}</Button
+			>
 		</DialogFooter>
 	</DialogContent>
 </Dialog>

@@ -1,13 +1,20 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '$lib/components/ui/dialog';
+	import {
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogFooter,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
-	import { toAppError } from '$lib/office/api';
-	import { updateAgent, type AgentChange } from '$lib/org/actions';
-	import { messagingNameError, runtimeLabel } from '$lib/org/agents';
-	import type { OrgSession } from '$lib/org/session';
+	import { toAppError } from '$lib/modules/offices/office-api';
+	import { updateAgent, type AgentChange } from '$lib/modules/organization/actions';
+	import { messagingNameError, runtimeLabel } from '$lib/modules/organization/agents';
+	import type { OrgSession } from '$lib/modules/organization/session';
 	import type { AgentRuntime, Member, OrgSnapshot } from '$lib/proto';
 
 	let {
@@ -50,7 +57,12 @@
 				role = a.role;
 				title = a.title;
 				focus = a.focus ?? '';
-				runtime = typeof a.runtime === 'object' ? 'other' : (RUNTIMES as readonly string[]).includes(a.runtime) ? a.runtime : 'unknown'; // an unreadable runtime stays unset until the owner picks one
+				runtime =
+					typeof a.runtime === 'object'
+						? 'other'
+						: (RUNTIMES as readonly string[]).includes(a.runtime)
+							? a.runtime
+							: 'unknown'; // an unreadable runtime stays unset until the owner picks one
 				otherRuntime = typeof a.runtime === 'object' ? a.runtime.other : '';
 				model = a.model ?? '';
 				home = a.home ?? '';
@@ -60,16 +72,28 @@
 		}
 	});
 
-	const handleError = $derived(shown && handle !== shown.agent?.messaging_name ? messagingNameError(snapshot, handle, shown.id) : undefined);
-	const runtimeValue = $derived<AgentRuntime>(runtime === 'other' ? { other: otherRuntime.trim() } : (runtime as AgentRuntime));
-	const missing = $derived(name.trim() === '' || role.trim() === '' || title.trim() === '' || (runtime === 'other' && otherRuntime.trim() === ''));
+	const handleError = $derived(
+		shown && handle !== shown.agent?.messaging_name
+			? messagingNameError(snapshot, handle, shown.id)
+			: undefined
+	);
+	const runtimeValue = $derived<AgentRuntime>(
+		runtime === 'other' ? { other: otherRuntime.trim() } : (runtime as AgentRuntime)
+	);
+	const missing = $derived(
+		name.trim() === '' ||
+			role.trim() === '' ||
+			title.trim() === '' ||
+			(runtime === 'other' && otherRuntime.trim() === '')
+	);
 
 	// After a stale edit (HQ changed the agent meanwhile) the page reloads: take the latest as the baseline and the
 	// version to send, but leave anything the owner typed alone, so "Here's the latest" is true and a retry can work.
 	$effect(() => {
 		const latest = agent;
 		untrack(() => {
-			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version) shown = latest;
+			if (open && shown && latest && latest.id === shown.id && latest.version !== shown.version)
+				shown = latest;
 		});
 	});
 
@@ -82,7 +106,8 @@
 		if (role.trim() !== a.role) change.role = role;
 		if (title.trim() !== a.title) change.title = title;
 		if (focus.trim() !== (a.focus ?? '')) change.focus = focus;
-		if (runtime !== 'unknown' && JSON.stringify(runtimeValue) !== JSON.stringify(a.runtime)) change.runtime = runtimeValue;
+		if (runtime !== 'unknown' && JSON.stringify(runtimeValue) !== JSON.stringify(a.runtime))
+			change.runtime = runtimeValue;
 		if (model.trim() !== (a.model ?? '')) change.model = model;
 		if (home.trim() !== (a.home ?? '')) change.home = home.trim();
 		if (handle !== a.messaging_name) change.messagingName = handle;
@@ -129,41 +154,90 @@
 				</div>
 			</div>
 			<div class="space-y-2">
-				<Label for="agent-focus">Focus <span class="font-normal text-fg-muted">(clear it to remove)</span></Label>
+				<Label for="agent-focus"
+					>Focus <span class="font-normal text-fg-muted">(clear it to remove)</span></Label
+				>
 				<Input id="agent-focus" bind:value={focus} disabled={busy} autocomplete="off" />
 			</div>
 			<div class="grid gap-4 sm:grid-cols-2">
 				<div class="space-y-2">
 					<Label for="agent-runtime">Runs on</Label>
-					<select id="agent-runtime" bind:value={runtime} disabled={busy} class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus">
-						{#if runtime === 'unknown'}<option value="unknown">Runtime not set: choose one</option>{/if}
+					<select
+						id="agent-runtime"
+						bind:value={runtime}
+						disabled={busy}
+						class="w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus"
+					>
+						{#if runtime === 'unknown'}<option value="unknown">Runtime not set: choose one</option
+							>{/if}
 						{#each RUNTIMES as r (r)}<option value={r}>{runtimeLabel(r)}</option>{/each}
 						<option value="other">Another runtime…</option>
 					</select>
-					{#if runtime === 'other'}<Input aria-label="Runtime name" bind:value={otherRuntime} disabled={busy} autocomplete="off" placeholder="Its name" />{/if}
+					{#if runtime === 'other'}<Input
+							aria-label="Runtime name"
+							bind:value={otherRuntime}
+							disabled={busy}
+							autocomplete="off"
+							placeholder="Its name"
+						/>{/if}
 				</div>
 				<div class="space-y-2">
-					<Label for="agent-model">Model <span class="font-normal text-fg-muted">(optional)</span></Label>
+					<Label for="agent-model"
+						>Model <span class="font-normal text-fg-muted">(optional)</span></Label
+					>
 					<Input id="agent-model" bind:value={model} disabled={busy} autocomplete="off" />
 				</div>
 			</div>
 			<div class="space-y-2">
-				<Label for="agent-home">Home folder <span class="font-normal text-fg-muted">(optional, an absolute path on this Mac)</span></Label>
-				<Input id="agent-home" bind:value={home} disabled={busy} autocomplete="off" class="font-mono" />
+				<Label for="agent-home"
+					>Home folder <span class="font-normal text-fg-muted"
+						>(optional, an absolute path on this Mac)</span
+					></Label
+				>
+				<Input
+					id="agent-home"
+					bind:value={home}
+					disabled={busy}
+					autocomplete="off"
+					class="font-mono"
+				/>
 			</div>
 			<div class="space-y-2">
 				<Label for="agent-handle">Messaging name</Label>
-				<Input id="agent-handle" bind:value={handle} disabled={busy} autocomplete="off" class="font-mono" aria-invalid={handleError ? true : undefined} aria-describedby={handleError ? 'agent-handle-error' : undefined} />
-				{#if handleError}<p id="agent-handle-error" class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{handleError}</p>
+				<Input
+					id="agent-handle"
+					bind:value={handle}
+					disabled={busy}
+					autocomplete="off"
+					class="font-mono"
+					aria-invalid={handleError ? true : undefined}
+					aria-describedby={handleError ? 'agent-handle-error' : undefined}
+				/>
+				{#if handleError}<p
+						id="agent-handle-error"
+						class="text-sm/6 text-danger [overflow-wrap:anywhere]"
+						role="alert"
+					>
+						{handleError}
+					</p>
 				{:else if shown?.agent && handle !== shown.agent.messaging_name && handle !== ''}
-					<p class="text-sm/6 text-warning-text-strong [overflow-wrap:anywhere]" data-testid="handle-change-warning">
-						Others reach {shown.name} as <code class="font-mono">{shown.agent.messaging_name}</code> today. After saving they must use <code class="font-mono">{handle}</code>, and <code class="font-mono">{shown.agent.messaging_name}</code> stays reserved.
+					<p
+						class="text-sm/6 text-warning-text-strong [overflow-wrap:anywhere]"
+						data-testid="handle-change-warning"
+					>
+						Others reach {shown.name} as <code class="font-mono">{shown.agent.messaging_name}</code>
+						today. After saving they must use <code class="font-mono">{handle}</code>, and
+						<code class="font-mono">{shown.agent.messaging_name}</code> stays reserved.
 					</p>
 				{/if}
 			</div>
-			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+			{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">
+					{error}
+				</p>{/if}
 			<DialogFooter>
-				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}>Cancel</Button>
+				<Button type="button" variant="outline" disabled={busy} onclick={() => (open = false)}
+					>Cancel</Button
+				>
 				<Button type="submit" disabled={busy || !!handleError || missing}>Save</Button>
 			</DialogFooter>
 		</form>

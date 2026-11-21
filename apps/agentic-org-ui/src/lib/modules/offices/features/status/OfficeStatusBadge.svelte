@@ -7,7 +7,7 @@
 	import Mail from '@lucide/svelte/icons/mail';
 	import WifiOff from '@lucide/svelte/icons/wifi-off';
 	import StatusPill from '$lib/components/StatusPill.svelte';
-	import { statusIcon, statusInfo, type DisplayStatus } from '$lib/offices/model';
+	import { statusIcon, statusInfo, type DisplayStatus } from '$lib/modules/offices/model';
 
 	let { status }: { status: DisplayStatus | undefined } = $props();
 	const info = $derived(statusInfo(status));

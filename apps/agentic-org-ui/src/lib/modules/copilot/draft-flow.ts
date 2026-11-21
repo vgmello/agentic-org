@@ -1,4 +1,4 @@
-import { toAppError } from '$lib/office/api';
+import { toAppError } from '$lib/modules/offices/office-api';
 import type { AppError } from '$lib/proto';
 import type { CopilotApi } from './api';
 import type { ContextItem, DraftResponse, FeatureId, FeatureShapes } from './types';

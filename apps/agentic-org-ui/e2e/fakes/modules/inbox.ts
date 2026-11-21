@@ -2,7 +2,7 @@
 // from now; people, teams and projects come from the org mock so IDs match the other pages. Actions change the
 // list in memory. `?mock=more` adds four more open items, `?mock=empty` empties the Inbox, `?mock=error` fails
 // the load and `?mock=live` resolves one item "in another client" a few seconds in.
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 import type { InboxApi } from '../../../src/lib/modules/inbox/api';
 import type { InboxItem } from '../../../src/lib/modules/inbox/types';
 import { mockLatency, mockMode } from '../mock-mode';

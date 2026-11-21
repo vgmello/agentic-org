@@ -1,5 +1,5 @@
 // One agent's setup read, with not found as a state of its own (no Retry): any other failure stays an error.
-import { toAppError } from '$lib/office/api';
+import { toAppError } from '$lib/proto';
 import type { AgentSetupDetail } from '../../types';
 
 export type AgentLookup =

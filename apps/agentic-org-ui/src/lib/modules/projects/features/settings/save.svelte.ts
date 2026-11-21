@@ -1,7 +1,7 @@
 // One Settings section's save (app-shell-ux §6a, offices-and-teams §7.10): busy while HQ answers; a refusal is kept
 // with the field it names; a revision conflict re-reads the project, keeps what was typed and says so. Success is
 // reported only after HQ accepted the change and the project was read again.
-import { toAppError } from '$lib/office/api';
+import { toAppError } from '$lib/modules/offices/office-api';
 import { conflictText } from '../../present';
 import type { ProjectField } from '../../types';
 

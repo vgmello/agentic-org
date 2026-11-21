@@ -1,6 +1,6 @@
 import { isHttpError } from '@sveltejs/kit';
 import { describe, expect, it } from 'vitest';
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { loadDirectory } from './load';
 

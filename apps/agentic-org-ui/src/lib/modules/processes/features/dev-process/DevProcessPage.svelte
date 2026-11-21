@@ -22,7 +22,7 @@
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { accountZone } from '$lib/modules/preferences';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/modules/offices/office-api';
 	import { pageTitle } from '$lib/nav';
 	import { processesApi } from '../../api';
 	import StaleNotice from '../../components/StaleNotice.svelte';

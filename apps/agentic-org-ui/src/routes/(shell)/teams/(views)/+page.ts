@@ -1,4 +1,4 @@
-import { loadOrgView } from '$lib/org/load';
+import { loadOrgView } from '$lib/modules/organization/load';
 
 export async function load({ depends, parent }) {
 	depends('app:org');
