@@ -27,6 +27,7 @@ pub mod body;
 mod csp;
 pub mod host;
 mod ingress;
+pub mod office;
 mod origin;
 pub mod path;
 pub mod process;

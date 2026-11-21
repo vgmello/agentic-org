@@ -3,9 +3,11 @@ id: TASK-5
 title: >-
   Own and build the browser-to-office bridge (B2 Q8) and deliver the first
   unmocked vertical slice
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lead'
 created_date: '2026-11-20T23:24:00Z'
+updated_date: '2026-11-21T01:32:00Z'
 labels:
   - architecture
   - bff
@@ -39,3 +41,13 @@ Audit finding C-10: Zero browser requests currently reach an office because the 
 - [ ] #3 End-to-end automated integration/browser verification proves live data round-trips and survives office restart/rebuild.
 - [ ] #4 docs/FEATURES.md and docs/workstreams/{backend,ui}.md are updated with verified evidence.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Add browser-authenticated office channel & grant host-control ops (browser.open_channel, browser.grant) in crates/org-host-control and crates/org-host (admitted web connection only, BrowserAuth validation, zero DB/office-key exposure to web).
+2. Implement OfficeBridge in apps/agentic-org-web receiving office channel FDs over the existing transfer UnixDatagram socket, obtaining scoped HMAC Grants per browser session, and forwarding typed org.snapshot and team.create calls to live agentic-org-office.
+3. Serve GET /api/v1/organizations/{org}/snapshot and POST /api/v1/organizations/{org}/teams in apps/agentic-org-web/src/api.rs with strict DTO validation and reply classification.
+4. Wire apps/agentic-org-ui production orgApi (view + team.create) to live /api/v1/organizations/{org}/snapshot and /api/v1/organizations/{org}/teams with zero mock fallbacks.
+5. Add real-process end-to-end integration test in crates/org-host/src/web_process_tests/ proving browser -> web -> host -> office live org snapshot + team.create mutation survives office restart and runtime/office.db deletion/rebuild, plus UI tests/build.
+<!-- SECTION:PLAN:END -->

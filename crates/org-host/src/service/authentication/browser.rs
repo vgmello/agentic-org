@@ -7,22 +7,29 @@
 //! is appended to the caller's `ended` list, also on a refusal, and the caller pushes `session.ended` after the delete on the
 //! same ordered connection writer.
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::Duration;
 
 use argon2::password_hash::{PasswordHash, PasswordVerifier};
 use org_host_control::browser::{
-    BrowserAccount, BrowserOrigin, BrowserSession, Digest32, LinkRegisterParams,
-    SessionSignInParams, SessionValidateParams,
+    BrowserAccount, BrowserOpenChannelParams, BrowserOrigin, BrowserSession,
+    BrowserSessionGrantParams, Digest32, LinkRegisterParams, SessionSignInParams,
+    SessionValidateParams,
 };
 use org_host_control::ops::LinkedOrg;
 use org_proto::{ApiError, ErrorCode};
 
-use super::{argon, denied, hash_password, unavailable, Authentication, HashPermit, MAX_HASHES};
+use super::{
+    argon, denied, hash_password, sign_grant, unavailable, Authentication, GrantInput, HashPermit,
+    WebChannel, MAX_HASHES,
+};
 use crate::accounts::identity::{AccountId, LoginKey};
 use crate::accounts::rules::{check_new_password, PasswordRule, Username};
 use crate::accounts::store::{
     AccountStore, Attempt, ClientAddress, NewAccount, Registration, ThrottleKey,
 };
 use crate::links::{LinkKind, OneTimeLinks};
+use crate::service::listener::Connection;
 use crate::sessions::{
     Admission, BrowserSessions, Ended, NewSession, Origin, Scheme, SessionDigest, IDLE_MS,
 };
@@ -265,6 +272,134 @@ impl Authentication {
             .map_err(store_error)?
             .into_iter()
             .collect())
+    }
+
+    /// `browser.open_channel`: opens a Web channel to an office linked to the browser
+    /// session's account and binds the channel slot to the admitted web connection.
+    pub(crate) fn open_browser_channel(
+        &self,
+        connection: &Connection,
+        params: &BrowserOpenChannelParams,
+        endpoint: Arc<crate::supervisor::channels::Endpoint>,
+        organization: &str,
+        now_ms: i64,
+        ended: &mut Vec<Ended>,
+    ) -> Result<
+        (
+            String,
+            std::os::unix::net::UnixStream,
+            crate::supervisor::channels::ChannelSlot,
+        ),
+        ApiError,
+    > {
+        let validate = SessionValidateParams {
+            cookie_digest: params.auth.cookie_digest,
+            proof_digest: params.auth.proof_digest,
+            origin: params.auth.origin.clone(),
+        };
+        let account = self.browser_account(&validate, now_ms, ended)?;
+        if !account
+            .links()
+            .iter()
+            .any(|link| link.org_id() == organization)
+        {
+            return Err(denied());
+        }
+        let (id, socket, slot) = endpoint
+            .open(org_office_launch::ChannelKind::Web)
+            .map_err(|_| unavailable())?;
+        // Recheck session authority after worker handoff so a concurrent sign-out cannot
+        // install a channel.
+        let account = self.browser_account(&validate, now_ms, ended)?;
+        if !account
+            .links()
+            .iter()
+            .any(|link| link.org_id() == organization)
+        {
+            return Err(denied());
+        }
+        let alive = connection.liveness();
+        if alive
+            .upgrade()
+            .is_none_or(|closed| closed.load(Ordering::SeqCst))
+            || !slot.is_live()
+        {
+            return Err(unavailable());
+        }
+        let mut channels = self.web_channels.lock().map_err(|_| unavailable())?;
+        channels.retain(|_, channel| channel.live());
+        if channels.len() >= 64 {
+            return Err(unavailable());
+        }
+        channels.insert(
+            id.clone(),
+            WebChannel {
+                endpoint: Arc::downgrade(&endpoint),
+                organization: organization.into(),
+                connection: alive,
+                _slot: slot.clone(),
+            },
+        );
+        Ok((id, socket, slot))
+    }
+
+    /// `browser.grant`: mints a short-lived HMAC-signed office grant for the live browser
+    /// session over an already-acknowledged Web channel on this connection.
+    pub(crate) fn grant_browser(
+        &self,
+        connection: &Connection,
+        params: &BrowserSessionGrantParams,
+        now_ms: i64,
+        ended: &mut Vec<Ended>,
+    ) -> Result<org_host_control::ops::SessionGrantResult, ApiError> {
+        if !connection.channel_received(&params.channel_id) {
+            return Err(denied());
+        }
+        let validate = SessionValidateParams {
+            cookie_digest: params.auth.cookie_digest,
+            proof_digest: params.auth.proof_digest,
+            origin: params.auth.origin.clone(),
+        };
+        let session = self.validate_browser(&validate, now_ms, ended)?;
+        let account_id = AccountId::parse(&session.account.id).map_err(|_| unavailable())?;
+        let account = self
+            .db
+            .account_authority(&account_id)
+            .map_err(|_| unavailable())?
+            .filter(|a| a.revoked_at_ms().is_none())
+            .ok_or_else(denied)?;
+        let (endpoint, organization) = {
+            let channels = self.web_channels.lock().map_err(|_| unavailable())?;
+            let bound = channels.get(&params.channel_id).ok_or_else(denied)?;
+            if !bound.connection.ptr_eq(&connection.liveness()) || !bound._slot.is_live() {
+                return Err(denied());
+            }
+            let endpoint = bound.endpoint.upgrade().ok_or_else(unavailable)?;
+            if endpoint.office != params.office_id || !endpoint.is_live() {
+                return Err(denied());
+            }
+            (endpoint, bound.organization.clone())
+        };
+        let link = account
+            .links()
+            .iter()
+            .find(|link| link.org_id() == organization)
+            .ok_or_else(denied)?;
+        let now_u64 = u64::try_from(now_ms).map_err(|_| unavailable())?;
+        let remaining_ms = session.idle_expires_at_ms.saturating_sub(now_u64);
+        let ttl = Duration::from_millis(remaining_ms).min(Duration::from_secs(300));
+        sign_grant(
+            &endpoint,
+            GrantInput {
+                account: account.account_id(),
+                member: link.member_id(),
+                org_id: &organization,
+                office_id: &params.office_id,
+                channel_id: &params.channel_id,
+                session_id: &session.session_id,
+                ttl,
+            },
+        )
     }
 
     fn start(

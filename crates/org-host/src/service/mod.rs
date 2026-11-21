@@ -411,20 +411,12 @@ impl Service {
     pub(crate) fn recovery_for_test(&self) -> Arc<crate::recovery::Recovery> {
         Arc::clone(self.recovery.as_ref().expect("selected test host"))
     }
-    /// Browser-session ops (A3 B4), only on the admitted web process's control
+    /// Browser-session ops (A3 B4, B2 Q8), only on the admitted web process's control
     /// connection. Each `session.ended` push is written before the reply on the
     /// connection's one ordered writer, after the record's delete.
     fn browser_op(&self, request: &Request, connection: &Arc<Connection>) -> bool {
-        use org_host_control::browser::{
-            BrowserSessionEnd, InstanceView, LinkRegister, SessionEnded, SessionSignIn,
-            SessionValidate, SESSION_ENDED,
-        };
-        let browser = request.is::<LinkRegister>()
-            || request.is::<SessionSignIn>()
-            || request.is::<SessionValidate>()
-            || request.is::<BrowserSessionEnd>()
-            || request.is::<InstanceView>();
-        if !browser || connection.gateway_listen().is_none() {
+        use org_host_control::browser::{BrowserOpenChannel, BrowserSessionGrant, InstanceView};
+        if !is_browser_op(request) || connection.gateway_listen().is_none() {
             return false;
         }
         #[cfg(test)]
@@ -445,51 +437,89 @@ impl Service {
             connection.send_response(not_authorized(request.id));
             return true;
         };
-        let invalid =
-            |_| ApiError::new(ErrorCode::InvalidRequest, "invalid browser session request");
-        let mut ended = Vec::new();
-        let now = authentication::wall_ms().and_then(|ms| {
-            i64::try_from(ms)
-                .map_err(|_| ApiError::new(ErrorCode::Unavailable, "clock unavailable"))
-        });
-        let reply = if request.is::<LinkRegister>() {
-            now.and_then(|now| {
-                let p = request.params::<LinkRegister>().map_err(invalid)?;
-                authentication.register(&p, now, &mut ended)
-            })
-            .map(|r| ok::<LinkRegister>(request.id, &r))
-        } else if request.is::<SessionSignIn>() {
-            now.and_then(|now| {
-                let p = request.params::<SessionSignIn>().map_err(invalid)?;
-                authentication.sign_in_browser(&p, now, &mut ended)
-            })
-            .map(|r| ok::<SessionSignIn>(request.id, &r))
-        } else if request.is::<SessionValidate>() {
-            now.and_then(|now| {
-                let p = request.params::<SessionValidate>().map_err(invalid)?;
-                authentication.validate_browser(&p, now, &mut ended)
-            })
-            .map(|r| ok::<SessionValidate>(request.id, &r))
+        if request.is::<BrowserOpenChannel>() {
+            self.open_browser_channel(authentication, request, connection);
+        } else if request.is::<BrowserSessionGrant>() {
+            self.grant_browser_channel(authentication, request, connection);
         } else {
-            request
-                .params::<BrowserSessionEnd>()
-                .map_err(invalid)
-                .and_then(|p| authentication.end_browser(&p.session_id))
-                .map(|e| {
-                    ended.extend(e);
-                    ok::<BrowserSessionEnd>(request.id, &org_proto::Empty {})
-                })
-        };
-        for session in ended {
-            let event = SessionEnded {
-                session_id: session.id,
-            };
-            if let Ok(data) = serde_json::to_value(&event) {
-                connection.send_event(SESSION_ENDED, data);
-            }
+            browser_session_op(authentication, request, connection);
         }
-        connection.send_response(reply.unwrap_or_else(|e| Response::error(request.id, e)));
         true
+    }
+    fn open_browser_channel(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::browser::{BrowserOpenChannel, SessionValidateParams};
+        let mut ended = Vec::new();
+        let result = browser_now_ms().and_then(|now| {
+            let p = request
+                .params::<BrowserOpenChannel>()
+                .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid channel request"))?;
+            let account = authentication.browser_account(
+                &SessionValidateParams {
+                    cookie_digest: p.auth.cookie_digest,
+                    proof_digest: p.auth.proof_digest,
+                    origin: p.auth.origin.clone(),
+                },
+                now,
+                &mut ended,
+            )?;
+            let office = self
+                .offices
+                .offices()
+                .into_iter()
+                .find(|o| o.id == p.office_id)
+                .filter(|o| {
+                    account
+                        .links()
+                        .iter()
+                        .any(|l| l.org_id() == o.organization_id)
+                })
+                .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "office not found"))?;
+            let endpoint = self.offices.endpoint(&p.office_id).ok_or_else(|| {
+                ApiError::new(ErrorCode::Unavailable, "office channel unavailable")
+            })?;
+            authentication
+                .open_browser_channel(
+                    connection,
+                    &p,
+                    endpoint,
+                    &office.organization_id,
+                    now,
+                    &mut ended,
+                )
+                .map(|(id, socket, witness)| (id, socket, witness, p.office_id))
+        });
+        finish_ended_browser_sessions(authentication, connection, ended);
+        match result {
+            Ok((id, socket, witness, office)) => {
+                deliver_channel(connection, request.id, id, socket, &office, witness);
+            }
+            Err(error) => connection.send_response(Response::error(request.id, error)),
+        }
+    }
+    fn grant_browser_channel(
+        &self,
+        authentication: &Authentication,
+        request: &Request,
+        connection: &Arc<Connection>,
+    ) {
+        use org_host_control::browser::BrowserSessionGrant;
+        let mut ended = Vec::new();
+        let result = browser_now_ms().and_then(|now| {
+            let p = request
+                .params::<BrowserSessionGrant>()
+                .map_err(|_| ApiError::new(ErrorCode::InvalidRequest, "invalid grant request"))?;
+            authentication.grant_browser(connection, &p, now, &mut ended)
+        });
+        finish_ended_browser_sessions(authentication, connection, ended);
+        match result {
+            Ok(result) => secret_response(connection, request.id, &result),
+            Err(error) => connection.send_response(Response::error(request.id, error)),
+        }
     }
     fn authenticate(&self, request: &Request, connection: &Arc<Connection>) -> bool {
         use org_host_control::ops::{
@@ -619,6 +649,82 @@ impl Service {
                 deliver_channel(connection, request.id, id, socket, &office, witness);
             }
             Err(error) => connection.send_response(Response::error(request.id, error)),
+        }
+    }
+}
+
+fn is_browser_op(request: &Request) -> bool {
+    use org_host_control::browser::{
+        BrowserOpenChannel, BrowserSessionEnd, BrowserSessionGrant, InstanceView, LinkRegister,
+        SessionSignIn, SessionValidate,
+    };
+    request.is::<LinkRegister>()
+        || request.is::<SessionSignIn>()
+        || request.is::<SessionValidate>()
+        || request.is::<BrowserSessionEnd>()
+        || request.is::<InstanceView>()
+        || request.is::<BrowserOpenChannel>()
+        || request.is::<BrowserSessionGrant>()
+}
+
+fn browser_session_op(authentication: &Authentication, request: &Request, connection: &Connection) {
+    use org_host_control::browser::{
+        BrowserSessionEnd, LinkRegister, SessionSignIn, SessionValidate,
+    };
+    let invalid = |_| ApiError::new(ErrorCode::InvalidRequest, "invalid browser session request");
+    let mut ended = Vec::new();
+    let now = browser_now_ms();
+    let reply = if request.is::<LinkRegister>() {
+        now.and_then(|now| {
+            let p = request.params::<LinkRegister>().map_err(invalid)?;
+            authentication.register(&p, now, &mut ended)
+        })
+        .map(|r| ok::<LinkRegister>(request.id, &r))
+    } else if request.is::<SessionSignIn>() {
+        now.and_then(|now| {
+            let p = request.params::<SessionSignIn>().map_err(invalid)?;
+            authentication.sign_in_browser(&p, now, &mut ended)
+        })
+        .map(|r| ok::<SessionSignIn>(request.id, &r))
+    } else if request.is::<SessionValidate>() {
+        now.and_then(|now| {
+            let p = request.params::<SessionValidate>().map_err(invalid)?;
+            authentication.validate_browser(&p, now, &mut ended)
+        })
+        .map(|r| ok::<SessionValidate>(request.id, &r))
+    } else {
+        request
+            .params::<BrowserSessionEnd>()
+            .map_err(invalid)
+            .and_then(|p| authentication.end_browser(&p.session_id))
+            .map(|e| {
+                ended.extend(e);
+                ok::<BrowserSessionEnd>(request.id, &org_proto::Empty {})
+            })
+    };
+    finish_ended_browser_sessions(authentication, connection, ended);
+    connection.send_response(reply.unwrap_or_else(|e| Response::error(request.id, e)));
+}
+
+fn browser_now_ms() -> Result<i64, ApiError> {
+    authentication::wall_ms().and_then(|ms| {
+        i64::try_from(ms).map_err(|_| ApiError::new(ErrorCode::Unavailable, "clock unavailable"))
+    })
+}
+
+fn finish_ended_browser_sessions(
+    authentication: &Authentication,
+    connection: &Connection,
+    ended: Vec<crate::sessions::Ended>,
+) {
+    use org_host_control::browser::{SessionEnded, SESSION_ENDED};
+    authentication.revoke_browser_sessions(&ended);
+    for session in ended {
+        let event = SessionEnded {
+            session_id: session.id,
+        };
+        if let Ok(data) = serde_json::to_value(&event) {
+            connection.send_event(SESSION_ENDED, data);
         }
     }
 }

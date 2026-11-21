@@ -69,6 +69,7 @@ fn answer(
             now,
             &mut ended,
         );
+        authentication.revoke_browser_sessions(&ended);
         for session in ended {
             let event = SessionEnded {
                 session_id: session.id,

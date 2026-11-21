@@ -1,24 +1,30 @@
 //! One bounded actor owns the already-admitted private host connection. The
-//! web process transfer descriptor from the reviewed handoff is held for the
-//! connection's lifetime; the web process opens no office channel on it and
-//! sends no office channel request. No host.sock/path fallback, office key or
-//! registry access.
+//! web process transfer descriptor from the reviewed handoff receives
+//! host-opened Web office channels (`browser.open_channel` + `fds.received`).
+//! No host.sock/path fallback, office key or registry access.
 //!
 //! The actor is the connection's one ordered reader (A3 B5): host replies and
 //! host events (`session.ended`) are applied in arrival order on its thread,
 //! also while idle. A call may carry a hook that runs on that thread with its
 //! reply before the next frame is read, so a cache insert from a validate reply
 //! is always followed by any `session.ended` the host wrote after it.
-use org_host_control::ops;
+use org_host_control::{
+    browser::{BrowserOpenChannel, BrowserOpenChannelParams},
+    ops,
+    organization::BrowserAuth,
+};
+use org_office_launch::{
+    decode_transfer_record, ChannelKind, TransferRecord, TRANSFER_HEADER_MAX_BYTES,
+};
 use org_proto::Call;
-use org_socket::rights::{ReceiveError, StreamReceiver};
+use org_socket::rights::{DatagramReceiver, ReceiveError, StreamReceiver};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     io::{self, Write},
     net::Shutdown,
     os::{
         fd::{AsRawFd, OwnedFd},
-        unix::net::{UnixDatagram, UnixStream},
+        unix::net::UnixStream,
     },
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -101,8 +107,8 @@ pub struct HostControl {
     socket: UnixStream,
     jobs: SyncSender<Job>,
     next: std::sync::atomic::AtomicU64,
-    // Kept open so the host's transfer end stays valid; never read by this process.
-    _transfer: UnixDatagram,
+    transfer: Mutex<DatagramReceiver>,
+    fatal: Arc<dyn Fn() + Send + Sync>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -175,6 +181,43 @@ fn readable(fd: std::os::fd::BorrowedFd<'_>, until: Instant) -> Result<(), Failu
         Err(Failure::Unavailable)
     }
 }
+fn receive_office_channel(
+    receiver: &mut DatagramReceiver,
+    expected_office: &str,
+    expected_channel: &str,
+    until: Instant,
+    fatal: &dyn Fn(),
+) -> Result<UnixStream, Failure> {
+    let mut payload = [0u8; TRANSFER_HEADER_MAX_BYTES];
+    let received = loop {
+        match receiver.receive(&mut payload, 1, &SPAWN_FENCE) {
+            Ok(received) => break received,
+            Err(ReceiveError::WouldBlock) => {
+                let fd = receiver.fd().ok_or(Failure::Unavailable)?;
+                readable(fd, until)?;
+            }
+            Err(error) => return Err(receive_error(error, fatal)),
+        }
+    };
+    let mut descriptors = received.descriptors;
+    if descriptors.len() != 1 {
+        return Err(Failure::Unavailable);
+    }
+    let fd = descriptors.pop().ok_or(Failure::Unavailable)?;
+    let record =
+        decode_transfer_record(&payload[..received.bytes]).map_err(|_| Failure::Unavailable)?;
+    match record {
+        TransferRecord::Channel {
+            kind: ChannelKind::Web,
+            office_id,
+            channel_id,
+        } if office_id == expected_office && channel_id == expected_channel => {
+            org_socket::rights::connected_unix_stream(fd).map_err(|_| Failure::Unavailable)
+        }
+        _ => Err(Failure::Unavailable),
+    }
+}
+
 fn receive_error(error: ReceiveError, fatal: &dyn Fn()) -> Failure {
     if matches!(&error,ReceiveError::Fatal(e) if e.kind()!=io::ErrorKind::UnexpectedEof) {
         fatal();
@@ -194,6 +237,7 @@ impl HostControl {
     ) -> io::Result<Arc<Self>> {
         let socket = org_socket::rights::connected_unix_stream(control)?;
         let transfer = org_socket::rights::unix_datagram(transfer)?;
+        transfer.set_nonblocking(true)?;
         socket.set_nonblocking(false)?;
         socket.set_write_timeout(Some(DEADLINE))?;
         let writer = socket.try_clone()?;
@@ -201,10 +245,11 @@ impl HostControl {
         let (jobs, pending) = mpsc::sync_channel::<Job>(32);
         let live = Arc::new(AtomicBool::new(true));
         let alive = Arc::clone(&live);
+        let actor_fatal = Arc::clone(&fatal);
         thread::Builder::new()
             .name("web-host-control".into())
             .spawn(move || {
-                actor(writer, receiver, pending, &alive, &*fatal, &*events);
+                actor(writer, receiver, pending, &alive, &*actor_fatal, &*events);
                 alive.store(false, Ordering::SeqCst);
             })?;
         let control = Arc::new(Self {
@@ -214,7 +259,8 @@ impl HostControl {
             socket,
             jobs,
             next: std::sync::atomic::AtomicU64::new(1),
-            _transfer: transfer,
+            transfer: Mutex::new(DatagramReceiver::new(transfer)),
+            fatal,
         });
         let hello = control
             .call::<org_host_control::Hello>(&Default::default())
@@ -257,6 +303,42 @@ impl HostControl {
     pub fn report_serving(&self) -> Result<(), Failure> {
         self.call::<ops::WebServing>(&Default::default())
             .map(|_| ())
+    }
+    /// Opens an authenticated Web channel to `office_id` through the host,
+    /// receives the descriptor on the transfer socket, validates its header and
+    /// socket type, and acknowledges receipt with `fds.received`.
+    pub fn open_office_channel(
+        &self,
+        auth: BrowserAuth,
+        office_id: &str,
+    ) -> Result<(String, UnixStream), Failure> {
+        // One open in flight at a time so each transfer datagram matches its reply
+        // and `fds.received` unblocks the host writer immediately.
+        let mut transfer = self.transfer.lock().map_err(|_| Failure::Unavailable)?;
+        let opened = self.request::<BrowserOpenChannel>(&BrowserOpenChannelParams {
+            auth,
+            office_id: office_id.to_owned(),
+        })?;
+        let until = Instant::now() + DEADLINE;
+        let stream = match receive_office_channel(
+            &mut transfer,
+            office_id,
+            &opened.channel_id,
+            until,
+            &*self.fatal,
+        ) {
+            Ok(stream) => stream,
+            Err(error) => {
+                // Host write_loop is awaiting `fds.received`; closing ends the
+                // connection cleanly rather than leaving it desynchronized.
+                self.close();
+                return Err(error);
+            }
+        };
+        self.request::<ops::FdsReceived>(&ops::FdsReceivedParams {
+            of: opened.channel_id.clone(),
+        })?;
+        Ok((opened.channel_id, stream))
     }
     pub fn live(&self) -> bool {
         self.live.load(Ordering::SeqCst)

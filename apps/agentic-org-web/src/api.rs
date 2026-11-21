@@ -11,6 +11,7 @@
 use crate::{
     body::BusinessBody,
     host::{Failure, HostControl},
+    office::{OfficeBridge, OfficeFailure},
     path::RequestPath,
     service::{ApiBackend, ApiReply, PreparedCall},
     session::{rfc3339_millis, BrowserPair, CookieName, PresentedPair, SessionCache},
@@ -29,14 +30,15 @@ use org_host_control::{
 };
 use org_proto::gateway::{
     self as gateway,
+    org_mutations::{classify_org_reply, OrgMutation, OrgOperation, OrgReplyClassification},
     organizations::{
         self, CreatingOrganization, SelectedCreateRequest, SelectedOrganizationList,
         SelectedOrganizationView,
     },
     AccountView, CreateState, GatewayError, GatewayErrorCode, GatewayStatus, ListenScheme,
     LookupQuery, Milliseconds, MutationOutcome, OfficeView, OperationId, OperationKind,
-    OperationLookup, OrganizationLink, ReadResponse, Scope, SessionEstablished, SessionProof,
-    SessionView, Version,
+    OperationLookup, OrganizationLink, ReadResponse, ResumeCursor, Scope, SessionEstablished,
+    SessionProof, SessionView, SnapshotResponse, Version,
 };
 use org_proto::selected_bootstrap::PlanV1;
 use serde::Deserialize;
@@ -49,6 +51,7 @@ use std::{
 /// The session routes over the web process's admitted host connection.
 pub struct SessionApi {
     host: Arc<HostControl>,
+    offices: OfficeBridge,
     cache: Arc<SessionCache>,
     cookie: CookieName,
     origin: BrowserOrigin,
@@ -67,6 +70,7 @@ impl SessionApi {
     ) -> Self {
         use org_host_control::listen::ListenMode;
         let scheme = origin.scheme().as_str();
+        let offices = OfficeBridge::new(Arc::clone(&host));
         Self {
             listen_scheme: match mode {
                 ListenMode::Https => ListenScheme::Https,
@@ -80,6 +84,7 @@ impl SessionApi {
                 port: origin.port(),
             },
             host,
+            offices,
             cache,
         }
     }
@@ -94,6 +99,8 @@ pub enum Route {
     Instance(PresentedPair),
     Organizations(PresentedPair),
     CreateOrganization(PresentedPair),
+    OrgSnapshot(PresentedPair, String),
+    CreateTeam(PresentedPair, String),
     Operation(PresentedPair, OperationId),
 }
 
@@ -106,6 +113,8 @@ pub enum Call {
     Instance(PresentedPair),
     Organizations(PresentedPair),
     CreateOrganization(PresentedPair, OperationId, PlanV1),
+    OrgSnapshot(PresentedPair, String),
+    CreateTeam(PresentedPair, String, OrgMutation),
     Operation(PresentedPair, OperationId),
 }
 
@@ -299,9 +308,9 @@ fn create_outcome(
 }
 
 /// A mutation outcome with its HTTP class (202, 200, the refusal's class, 504 unknown).
-fn mutation(outcome: MutationOutcome<SelectedOrganizationView>) -> ApiReply {
+fn mutation<T: serde::Serialize>(outcome: MutationOutcome<T>, accepted_allowed: bool) -> ApiReply {
     let status = outcome
-        .http_status(true)
+        .http_status(accepted_allowed)
         .and_then(|status| StatusCode::from_u16(status).ok())
         .unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
     match serde_json::to_value(&outcome) {
@@ -478,6 +487,147 @@ impl SessionApi {
     fn clear(&self, reply: ApiReply) -> ApiReply {
         reply.with_header(SET_COOKIE, self.cookie.clear())
     }
+
+    /// Resolves the HQ office of `org_id` from live host authority (never cached).
+    fn resolve_hq_office(&self, pair: PresentedPair, org_id: &str) -> Result<String, Failure> {
+        self.validate(pair)?;
+        let list = self.host.request::<host_org::List>(&host_org::ListParams {
+            auth: self.auth(&pair),
+        })?;
+        let org = list
+            .organizations
+            .into_iter()
+            .find(|org| org.id == org_id)
+            .ok_or(Failure::NotFound)?;
+        org.offices
+            .iter()
+            .find(|office| office.role == org_proto::OfficeRole::Hq)
+            .or_else(|| org.offices.first())
+            .map(|office| office.id.clone())
+            .ok_or(Failure::Unavailable)
+    }
+
+    fn execute_org_snapshot(&self, pair: PresentedPair, org_id: &str) -> ApiReply {
+        let office_id = match self.resolve_hq_office(pair, org_id) {
+            Ok(id) => id,
+            Err(Failure::Refused(_)) => return unavailable(),
+            Err(error) => return failure(error),
+        };
+        let snapshot = match self.offices.org_snapshot(&self.auth(&pair), &office_id) {
+            Ok(snapshot) => snapshot,
+            Err(OfficeFailure::BeforeDispatch(error)) => return failure(error),
+            Err(OfficeFailure::Refused(error))
+                if error.code == org_proto::ErrorCode::NotAuthorized =>
+            {
+                return self.recheck_session_on_refusal(pair, false, None);
+            }
+            Err(OfficeFailure::Refused(error)) if error.code == org_proto::ErrorCode::NotFound => {
+                return not_found();
+            }
+            Err(OfficeFailure::Refused(_) | OfficeFailure::Transport) => return unavailable(),
+        };
+        let cursor = format!(
+            "org:{}:{}:{}",
+            org_id, snapshot.position.epoch, snapshot.position.seq
+        );
+        match ResumeCursor::parse(cursor) {
+            Ok(resume_cursor) => result(SnapshotResponse {
+                snapshot,
+                resume_cursor,
+            }),
+            Err(_) => unavailable(),
+        }
+    }
+
+    fn execute_org_mutation(
+        &self,
+        pair: PresentedPair,
+        org_id: &str,
+        command: OrgMutation,
+    ) -> ApiReply {
+        let op_id = command.operation_id().clone();
+        let office_id = match self.resolve_hq_office(pair, org_id) {
+            Ok(id) => id,
+            Err(Failure::Denied) => return signed_out(),
+            Err(Failure::NotFound) => return not_found(),
+            Err(_) => {
+                return mutation(
+                    MutationOutcome::<org_proto::Empty>::Rejected {
+                        operation_id: op_id,
+                        error: GatewayError::new(
+                            GatewayErrorCode::Unavailable,
+                            "Service unavailable.",
+                        ),
+                    },
+                    false,
+                );
+            }
+        };
+        let reply = match self
+            .offices
+            .org_mutation(&self.auth(&pair), &office_id, &command)
+        {
+            Ok(reply) => reply,
+            Err(OfficeFailure::BeforeDispatch(Failure::Denied)) => return signed_out(),
+            Err(OfficeFailure::BeforeDispatch(Failure::NotFound)) => return not_found(),
+            Err(_) => {
+                return mutation(
+                    MutationOutcome::<org_proto::Empty>::Rejected {
+                        operation_id: op_id,
+                        error: GatewayError::new(
+                            GatewayErrorCode::Unavailable,
+                            "Service unavailable.",
+                        ),
+                    },
+                    false,
+                );
+            }
+        };
+        match classify_org_reply(op_id.clone(), reply.as_ref()) {
+            OrgReplyClassification::Outcome { outcome, .. } => mutation(outcome, false),
+            OrgReplyClassification::NeedsAuthorizationRecheck => {
+                self.recheck_session_on_refusal(pair, true, Some(op_id))
+            }
+        }
+    }
+
+    /// Re-validates the browser session directly with the host (bypassing cache) when
+    /// an office refuses with `not_authorized`, distinguishing a dead session (401) from
+    /// an organization-level permission refusal (403).
+    fn recheck_session_on_refusal(
+        &self,
+        pair: PresentedPair,
+        is_mutation: bool,
+        op_id: Option<OperationId>,
+    ) -> ApiReply {
+        let live = self.host.request_then::<SessionValidate>(
+            &SessionValidateParams {
+                cookie_digest: pair.cookie_digest,
+                proof_digest: pair.proof_digest,
+                origin: self.origin.clone(),
+            },
+            self.caching(&pair),
+        );
+        match live {
+            Err(Failure::Denied) => signed_out(),
+            Err(error) => failure(error),
+            Ok(_) if is_mutation => mutation(
+                MutationOutcome::<org_proto::Empty>::Rejected {
+                    operation_id: op_id.expect("mutation has operation id"),
+                    error: GatewayError::new(
+                        GatewayErrorCode::NotAuthorized,
+                        "You are not authorized to perform this action.",
+                    ),
+                },
+                false,
+            ),
+            Ok(_) => ApiReply::error(
+                StatusCode::FORBIDDEN,
+                GatewayErrorCode::NotAuthorized,
+                "You are not authorized to view this organization.",
+            ),
+        }
+    }
 }
 
 impl ApiBackend for SessionApi {
@@ -501,6 +651,18 @@ impl ApiBackend for SessionApi {
             ["api", "v1", "organizations"] if post => {
                 Route::CreateOrganization(self.pair(request)?)
             }
+            ["api", "v1", "organizations", org, "snapshot"] if get => {
+                if !org_office_launch::is_storage_id(org) {
+                    return Err(invalid());
+                }
+                Route::OrgSnapshot(self.pair(request)?, (*org).to_owned())
+            }
+            ["api", "v1", "organizations", org, "teams"] if post => {
+                if !org_office_launch::is_storage_id(org) {
+                    return Err(invalid());
+                }
+                Route::CreateTeam(self.pair(request)?, (*org).to_owned())
+            }
             ["api", "v1", "operations", "host", id]
                 if matches!(request.method, Method::GET | Method::HEAD) =>
             {
@@ -517,6 +679,8 @@ impl ApiBackend for SessionApi {
             | ["api", "v1", "session"]
             | ["api", "v1", "session", "sign-out"]
             | ["api", "v1", "organizations"]
+            | ["api", "v1", "organizations", _, "snapshot"]
+            | ["api", "v1", "organizations", _, "teams"]
             | ["api", "v1", "operations", "host", _] => return Err(invalid()),
             _ => return Err(not_found()),
         })
@@ -528,6 +692,22 @@ impl ApiBackend for SessionApi {
             Route::Version => empty().map(|()| Call::Version)?,
             Route::Session(pair) => empty().map(|()| Call::Session(pair))?,
             Route::Organizations(pair) => empty().map(|()| Call::Organizations(pair))?,
+            Route::OrgSnapshot(pair, org) => empty().map(|()| Call::OrgSnapshot(pair, org))?,
+            Route::CreateTeam(pair, org) => {
+                let scope = Scope::Organization {
+                    instance_id: self.host.instance().to_owned(),
+                    org_id: org.clone(),
+                };
+                let command = OrgOperation::TeamCreate
+                    .decode(bytes, &scope)
+                    .map_err(bad_input)?;
+                let id = command.operation_id().clone();
+                return Ok(PreparedCall::mutation(
+                    Call::CreateTeam(pair, org, command),
+                    id,
+                    bytes.len(),
+                ));
+            }
             Route::Instance(pair) => empty().map(|()| Call::Instance(pair))?,
             Route::Operation(pair, id) => empty().map(|()| Call::Operation(pair, id))?,
             Route::CreateOrganization(pair) => {
@@ -664,7 +844,12 @@ impl ApiBackend for SessionApi {
                 mutation(
                     create_outcome(&id, reply)
                         .unwrap_or(MutationOutcome::Unknown { operation_id: id }),
+                    true,
                 )
+            }
+            Call::OrgSnapshot(pair, org_id) => self.execute_org_snapshot(pair, &org_id),
+            Call::CreateTeam(pair, org_id, command) => {
+                self.execute_org_mutation(pair, &org_id, command)
             }
             Call::Operation(pair, id) => {
                 let reply = self.validate(pair).and_then(|_| {

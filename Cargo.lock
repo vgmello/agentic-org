@@ -76,6 +76,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "org-host-control",
+ "org-office-launch",
  "org-platform",
  "org-proto",
  "org-release",

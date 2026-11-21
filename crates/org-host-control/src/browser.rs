@@ -13,7 +13,8 @@ use std::net::IpAddr;
 use org_proto::{Call, Empty};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::ops::LinkedOrg;
+use crate::ops::{LinkedOrg, OfficeOpenChannelResult, SessionGrantResult};
+use crate::organization::BrowserAuth;
 use crate::status::{Administrator, GatewayState, InstanceMode};
 use crate::{LinkToken, Password};
 
@@ -185,9 +186,85 @@ impl Call for InstanceView {
     type Result = InstanceViewResult;
 }
 
+/// `browser.open_channel`: open an authenticated Web office channel on the admitted web
+/// process's control connection. The descriptor travels on the web process's transfer
+/// datagram socket (`TransferRecord::Channel { kind: Web, .. }`) and must be acknowledged
+/// with `fds.received` before any grant is requested on it.
+pub struct BrowserOpenChannel;
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserOpenChannelParams {
+    pub auth: BrowserAuth,
+    pub office_id: String,
+}
+impl Call for BrowserOpenChannel {
+    const METHOD: &'static str = "browser.open_channel";
+    type Params = BrowserOpenChannelParams;
+    type Result = OfficeOpenChannelResult;
+}
+
+/// `browser.grant`: mint a short-lived HMAC-signed office grant for a live browser session
+/// over an already-acknowledged Web channel on this connection.
+pub struct BrowserSessionGrant;
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserSessionGrantParams {
+    pub auth: BrowserAuth,
+    pub office_id: String,
+    pub channel_id: String,
+}
+impl Call for BrowserSessionGrant {
+    const METHOD: &'static str = "browser.grant";
+    type Params = BrowserSessionGrantParams;
+    type Result = SessionGrantResult;
+}
+
 /// Host→web event: the session no longer exists; drop it from every cache.
 pub const SESSION_ENDED: &str = "session.ended";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionEnded {
     pub session_id: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_channel_and_grant_wire_shapes_refuse_unknown_fields() {
+        let auth = BrowserAuth {
+            cookie_digest: Digest32([0x11; 32]),
+            proof_digest: Digest32([0x22; 32]),
+            origin: BrowserOrigin {
+                scheme: "http".into(),
+                host: "127.0.0.1".into(),
+                port: 8080,
+            },
+        };
+        let open = BrowserOpenChannelParams {
+            auth: auth.clone(),
+            office_id: "0193a5c0-0000-7000-8000-000000000001".into(),
+        };
+        let wire = serde_json::to_value(&open).unwrap();
+        let decoded: BrowserOpenChannelParams = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(decoded.office_id, open.office_id);
+        let mut extra = wire;
+        extra["extra"] = true.into();
+        assert!(serde_json::from_value::<BrowserOpenChannelParams>(extra).is_err());
+
+        let grant = BrowserSessionGrantParams {
+            auth,
+            office_id: "0193a5c0-0000-7000-8000-000000000001".into(),
+            channel_id: "ch-1".into(),
+        };
+        let wire = serde_json::to_value(&grant).unwrap();
+        let decoded: BrowserSessionGrantParams = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(decoded.channel_id, "ch-1");
+        let mut extra = wire;
+        extra["session"] = "handle".into();
+        assert!(serde_json::from_value::<BrowserSessionGrantParams>(extra).is_err());
+
+        assert_eq!(BrowserOpenChannel::METHOD, "browser.open_channel");
+        assert_eq!(BrowserSessionGrant::METHOD, "browser.grant");
+    }
 }

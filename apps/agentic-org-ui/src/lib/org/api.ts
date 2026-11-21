@@ -1,9 +1,18 @@
-import type { ApiErrorCode, AppError, CommandAccepted, OrgFeedNotice, OrgSnapshot, OrgView } from '$lib/proto';
+import type {
+	ApiErrorCode,
+	AppError,
+	CommandAccepted,
+	OrgFeedNotice,
+	OrgSnapshot,
+	OrgView
+} from '$lib/proto';
 import { ready, type OrgCommand, type OrgCommandInput } from './commands';
 import { normalizeKinds } from './model';
 import { applyCommand, badId } from './reducer';
 import { emptyOrg, sampleOrg } from './sample';
+import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { createHttpOrgApi } from './http-api';
 
 /** What the org chart needs from an office: `org.snapshot`, and the commands that change the structure. */
 export interface OrgApi {
@@ -43,23 +52,58 @@ interface Stored {
 const isStored = (x: unknown): x is Stored => {
 	const s = (x as Stored | null)?.snapshot;
 	const order = (x as Stored | null)?.order;
-	return (order === undefined || (Array.isArray(order) && order.every((id) => typeof id === 'string'))) && !!s && Array.isArray(s.teams) && Array.isArray(s.members) && Array.isArray(s.memberships) && !!s.position && typeof (x as Stored).answers === 'object' && (x as Stored).answers !== null;
+	return (
+		(order === undefined ||
+			(Array.isArray(order) && order.every((id) => typeof id === 'string'))) &&
+		!!s &&
+		Array.isArray(s.teams) &&
+		Array.isArray(s.members) &&
+		Array.isArray(s.memberships) &&
+		!!s.position &&
+		typeof (x as Stored).answers === 'object' &&
+		(x as Stored).answers !== null
+	);
 };
 const isAnswer = (x: unknown): x is Answer => {
 	const a = x as Answer | null;
-	return !!a && typeof a.command === 'string' && !!a.result && typeof a.result === 'object' && ('accepted' in a.result || 'error' in a.result);
+	return (
+		!!a &&
+		typeof a.command === 'string' &&
+		!!a.result &&
+		typeof a.result === 'object' &&
+		('accepted' in a.result || 'error' in a.result)
+	);
 };
 
 /** A snapshot saved before projects had areas gets each project's General area (the browser mock's old storage). */
 function withGeneralAreas(s: OrgSnapshot): OrgSnapshot {
 	const areas = s.areas ?? [];
-	const missing = (s.projects ?? []).filter((p) => !areas.some((a) => a.project_id === p.id && a.general));
+	const missing = (s.projects ?? []).filter(
+		(p) => !areas.some((a) => a.project_id === p.id && a.general)
+	);
 	if (missing.length === 0) return s;
 	const owner = (id: string) => (s.project_teams ?? []).find((l) => l.project_id === id)?.team_id;
-	return { ...s, areas: [...areas, ...missing.map((p) => ({ id: `${p.id}-general`, project_id: p.id, name: 'General', general: true, version: 1, ...(owner(p.id) ? { team_id: owner(p.id) } : {}) }))] };
+	return {
+		...s,
+		areas: [
+			...areas,
+			...missing.map((p) => ({
+				id: `${p.id}-general`,
+				project_id: p.id,
+				name: 'General',
+				general: true,
+				version: 1,
+				...(owner(p.id) ? { team_id: owner(p.id) } : {})
+			}))
+		]
+	};
 }
 
-const refusal = (code: ApiErrorCode, message: string): AppError => ({ source: 'api', code, message });
+const refusal = (code: ApiErrorCode, message: string): AppError => ({
+	source: 'api',
+	code,
+	message
+});
 
 /** As in the Rust mock HQ: only recent answers are kept, and a command can't be bigger than a command. */
 const ANSWERS_KEPT = 1000;
@@ -95,13 +139,23 @@ export function createMockOrg(
 		fails = (): boolean => false,
 		delayMs = (): number => 0,
 		storage = globalThis.localStorage as MockStorage | undefined
-	}: { empty?: () => boolean; fails?: () => boolean; delayMs?: () => number; storage?: MockStorage } = {}
+	}: {
+		empty?: () => boolean;
+		fails?: () => boolean;
+		delayMs?: () => number;
+		storage?: MockStorage;
+	} = {}
 ): OrgApi {
 	const memory = new Map<string, string>();
-	const inMemory: MockStorage = { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => void memory.set(k, v) };
+	const inMemory: MockStorage = {
+		getItem: (k) => memory.get(k) ?? null,
+		setItem: (k, v) => void memory.set(k, v)
+	};
 	const keyFor = (organizationId: string) => `agentic-org.mock.org.${organizationId}`;
 
-	async function load(organizationId: string): Promise<{ key: string; store: MockStorage; state: Stored }> {
+	async function load(
+		organizationId: string
+	): Promise<{ key: string; store: MockStorage; state: Stored }> {
 		// Asked even for an empty organization: one that isn't here is not_found either way.
 		const office = await hqOfficeId(organizationId);
 		const isEmpty = empty();
@@ -109,11 +163,16 @@ export function createMockOrg(
 		const store = isEmpty || !storage ? inMemory : storage;
 		try {
 			const parsed: unknown = JSON.parse(store.getItem(key) ?? 'null');
-			if (isStored(parsed)) return { key, store, state: { ...parsed, snapshot: withGeneralAreas(parsed.snapshot) } };
+			if (isStored(parsed))
+				return { key, store, state: { ...parsed, snapshot: withGeneralAreas(parsed.snapshot) } };
 		} catch {
 			// unreadable: start from the sample
 		}
-		return { key, store, state: { snapshot: isEmpty ? emptyOrg() : sampleOrg(office), answers: {}, order: [] } };
+		return {
+			key,
+			store,
+			state: { snapshot: isEmpty ? emptyOrg() : sampleOrg(office), answers: {}, order: [] }
+		};
 	}
 
 	// Commands are answered one at a time, as HQ does, so two sent together can't overwrite each other.
@@ -123,17 +182,32 @@ export function createMockOrg(
 	// A test makes the next command of these methods fail once (the office went away): `window.__mockOrgFailNext('team.set_lead')`.
 	const failNext = new Set<string>();
 
-	async function run(organizationId: string, input: OrgCommandInput | OrgCommand): Promise<CommandAccepted> {
+	async function run(
+		organizationId: string,
+		input: OrgCommandInput | OrgCommand
+	): Promise<CommandAccepted> {
 		const command = ready(input);
-		if (failNext.delete(command.method)) throw { source: 'api', code: 'unavailable', message: 'The office went away.' } satisfies AppError;
+		if (failNext.delete(command.method))
+			throw {
+				source: 'api',
+				code: 'unavailable',
+				message: 'The office went away.'
+			} satisfies AppError;
 		const id = command.params.command_id;
 		const print = fingerprint(command);
 		const { key, store, state } = await load(organizationId); // not_found first, as in the Rust mock
 		// A request that can't be read as a command is refused and never remembered.
 		if (!print || badId(id)) throw refusal('invalid_request', "That request isn't valid.");
-		const earlier = Object.hasOwn(state.answers, id) && isAnswer(state.answers[id]) ? state.answers[id] : undefined;
+		const earlier =
+			Object.hasOwn(state.answers, id) && isAnswer(state.answers[id])
+				? state.answers[id]
+				: undefined;
 		if (earlier) {
-			if (earlier.command !== print) throw refusal('invalid_request', 'That command id was already used for a different command.');
+			if (earlier.command !== print)
+				throw refusal(
+					'invalid_request',
+					'That command id was already used for a different command.'
+				);
 			if ('error' in earlier.result) throw earlier.result.error;
 			return earlier.result.accepted;
 		}
@@ -141,7 +215,10 @@ export function createMockOrg(
 		let snapshot = state.snapshot;
 		try {
 			// HQ's clock, and the offices that exist (the mock organization has its HQ office).
-			snapshot = applyCommand(state.snapshot, command, { now: new Date().toISOString(), offices: [await hqOfficeId(organizationId)] }); // throws HQ's error
+			snapshot = applyCommand(state.snapshot, command, {
+				now: new Date().toISOString(),
+				offices: [await hqOfficeId(organizationId)]
+			}); // throws HQ's error
 			result = { accepted: { status: 'committed', position: snapshot.position } };
 		} catch (e) {
 			if (!(e && typeof e === 'object' && 'code' in e && 'source' in e)) throw e;
@@ -154,11 +231,17 @@ export function createMockOrg(
 		try {
 			store.setItem(key, JSON.stringify({ snapshot, answers, order } satisfies Stored));
 		} catch {
-			throw { source: 'app', code: 'internal', message: "The change couldn't be saved in this browser." } satisfies AppError;
+			throw {
+				source: 'app',
+				code: 'internal',
+				message: "The change couldn't be saved in this browser."
+			} satisfies AppError;
 		}
 		if ('error' in result) throw result.error;
 		const { position } = result.accepted;
-		if (position) for (const listener of listeners) listener({ kind: 'changed', organization_id: organizationId, position });
+		if (position)
+			for (const listener of listeners)
+				listener({ kind: 'changed', organization_id: organizationId, position });
 		return result.accepted;
 	}
 
@@ -167,7 +250,10 @@ export function createMockOrg(
 		async view(organizationId) {
 			if (delayMs() > 0) await new Promise((resolve) => setTimeout(resolve, delayMs()));
 			if (fails()) throw refusal('storage_error', "The office couldn't read its storage.");
-			return { snapshot: normalizeKinds((await load(organizationId)).state.snapshot), sample: true };
+			return {
+				snapshot: normalizeKinds((await load(organizationId)).state.snapshot),
+				sample: true
+			};
 		},
 		command(organizationId, input) {
 			const answer = queue.then(() => run(organizationId, input));
@@ -190,7 +276,11 @@ export function createMockOrg(
 		}
 	};
 	if (typeof window !== 'undefined') {
-		const hooks = window as unknown as { __mockOrgChange: OrgApi['command']; __mockOrgLive: (organizationId: string, live: boolean) => void; __mockOrgFailNext: (method: string) => void };
+		const hooks = window as unknown as {
+			__mockOrgChange: OrgApi['command'];
+			__mockOrgLive: (organizationId: string, live: boolean) => void;
+			__mockOrgFailNext: (method: string) => void;
+		};
 		hooks.__mockOrgFailNext = (method) => void failNext.add(method);
 		hooks.__mockOrgChange = api.command;
 		// A test makes the live feed drop (or come back): `window.__mockOrgLive(organizationId, false)`.
@@ -202,10 +292,27 @@ export function createMockOrg(
 	return api;
 }
 
-/** Production never falls back to a browser reducer when the gateway is absent. */
-export const orgApi: OrgApi = Object.freeze({
-	view: unavailableCall,
-	command: unavailableCall,
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+const gatewayOrgApi = createHttpOrgApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	instanceId: () => signedInSession()?.instance_id
+});
+
+/**
+ * Production organization API backed by the browser gateway (`/api/v1/organizations/{org}/...`).
+ * Fails closed when no signed-in gateway session exists and never falls back to a browser reducer.
+ */
+export const orgApi: OrgApi = Object.freeze<OrgApi>({
+	view: (organizationId: string) =>
+		signedInSession() ? gatewayOrgApi.view(organizationId) : unavailableCall(),
+	command: (organizationId: string, input: OrgCommandInput | OrgCommand) =>
+		signedInSession() ? gatewayOrgApi.command(organizationId, input) : unavailableCall(),
 	onFeed: unavailableCall,
 	retryFeed: unavailableCall,
 	feedLive: unavailableCall

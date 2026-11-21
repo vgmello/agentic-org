@@ -1075,3 +1075,132 @@ fn actual_recovery_code_is_released_once_natively_and_no_credential_reaches_http
     );
     assert!(contains(&fs::read(&key_file).unwrap(), &encodings(&key)[1]));
 }
+
+/// B2 Q8 production-path proof: a signed-in browser reads a live organization snapshot and
+/// creates a team through `agentic-org-web` -> `org-host` (`browser.open_channel` +
+/// `browser.grant`) -> `agentic-org-office` (`org-store`), surviving office restart and
+/// full deletion of `runtime/<office>/office.db`, with auth fail-closed on sign-out.
+#[test]
+#[ignore = "root runs with ORG_TEST_OFFICE_BIN and ORG_TEST_WEB_BIN; actual web/worker listeners require permitted local bind"]
+fn actual_browser_reads_live_org_snapshot_and_creates_team_surviving_projection_rebuild() {
+    let Launched {
+        temp: _temp,
+        address,
+        host,
+        base,
+        ..
+    } = launch(Seed::Administrator);
+    wait_serving(&host, address);
+    let browser = Browser::sign_in(&host, address);
+    let (_, view) = browser.create("Example", "example");
+    let (organization, office, creator) = checked(&view, "Example", "example");
+    wait_offices_active(&host, 1);
+
+    // 1. Live snapshot via browser-to-office Web channel.
+    let snap_path = format!("/api/v1/organizations/{organization}/snapshot");
+    let teams_path = format!("/api/v1/organizations/{organization}/teams");
+    let snap = browser.get(&snap_path);
+    assert_eq!(snap.status, 200, "{}", snap.body);
+    let snapshot = &snap.body["result"]["snapshot"];
+    assert_eq!(snapshot["position"]["seq"], 1, "{snapshot}");
+    let teams = snapshot["teams"].as_array().expect("teams");
+    assert_eq!(teams.len(), 1, "{snapshot}");
+    let root_team_id = text(&teams[0]["id"]).to_owned();
+    assert!(is_uuid_v7(&root_team_id), "root team id {root_team_id}");
+    assert_eq!(teams[0]["lead_member_id"], creator.as_str(), "{snapshot}");
+    assert!(
+        snap.body["result"]["resume_cursor"]
+            .as_str()
+            .is_some_and(|c| !c.is_empty()),
+        "{}",
+        snap.body
+    );
+
+    // 2. Fail-closed checks: unauthenticated -> 401; unlinked org -> 404; bad scope -> 400.
+    let unauth = http(address, "GET", &snap_path, "", "");
+    assert_eq!(unauth.status, 401, "{}", unauth.body);
+    let unknown_org = "0193a5c0-0000-7000-8000-000000000099";
+    let missing = browser.get(&format!("/api/v1/organizations/{unknown_org}/snapshot"));
+    assert_eq!(missing.status, 404, "{}", missing.body);
+
+    let child_team_id = "0193a5c0-0000-7000-8000-000000000042";
+    let op_id = crate::ids::generate().unwrap();
+    let bad_scope = json!({
+        "operation_id": op_id,
+        "scope": { "kind": "organization", "instance_id": browser.instance, "org_id": unknown_org },
+        "params": { "team_id": child_team_id, "name": "Platform", "owner_team_id": root_team_id }
+    });
+    let refused = browser.post(&teams_path, &bad_scope.to_string());
+    assert_eq!(refused.status, 400, "{}", refused.body);
+
+    // 3. Create a child team end-to-end through the Web channel and verify idempotent replay.
+    let create_team = json!({
+        "operation_id": op_id,
+        "scope": { "kind": "organization", "instance_id": browser.instance, "org_id": organization },
+        "params": { "team_id": child_team_id, "name": "Platform", "owner_team_id": root_team_id }
+    });
+    let created = browser.post(&teams_path, &create_team.to_string());
+    assert_eq!(created.status, 200, "{}", created.body);
+    assert_eq!(created.body["outcome"], "completed", "{}", created.body);
+    assert_eq!(created.body["operation_id"], op_id.as_str());
+
+    let replay = browser.post(&teams_path, &create_team.to_string());
+    assert_eq!(replay.status, 200, "{}", replay.body);
+    assert_eq!(replay.body["outcome"], "completed", "{}", replay.body);
+
+    let snap2 = browser.get(&snap_path);
+    assert_eq!(snap2.status, 200, "{}", snap2.body);
+    assert_eq!(snap2.body["result"]["snapshot"]["position"]["seq"], 2);
+    let teams2 = snap2.body["result"]["snapshot"]["teams"]
+        .as_array()
+        .expect("teams");
+    assert_eq!(teams2.len(), 2, "{}", snap2.body);
+    assert!(
+        teams2
+            .iter()
+            .any(|t| t["id"] == child_team_id && t["name"] == "Platform"),
+        "{}",
+        snap2.body
+    );
+
+    // 4. Stop host, delete `runtime/<office>/office.db`, restart host: projection rebuilds
+    // from durable files and the browser reads the committed child team over a fresh channel.
+    stop(host, &base);
+    let database = Path::new(&organization)
+        .join("runtime")
+        .join(&office)
+        .join("office.db");
+    let projection = all_files(&base)
+        .into_iter()
+        .find(|p| p.ends_with(&database))
+        .unwrap_or_else(|| panic!("no {database:?} under {base:?}"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    fs::remove_dir_all(&projection).unwrap();
+    assert!(!projection.exists());
+
+    let host = restart(&base, address);
+    wait_offices_active(&host, 1);
+    assert!(projection.join("office.db").is_file());
+    let after = browser.get(&snap_path);
+    assert_eq!(after.status, 200, "{}", after.body);
+    assert_eq!(after.body["result"]["snapshot"]["position"]["seq"], 2);
+    let teams_after = after.body["result"]["snapshot"]["teams"]
+        .as_array()
+        .expect("teams");
+    assert!(
+        teams_after
+            .iter()
+            .any(|t| t["id"] == child_team_id && t["name"] == "Platform"),
+        "{}",
+        after.body
+    );
+
+    // 5. Sign out revokes the browser session; subsequent snapshot calls fail closed with 401.
+    let signed_out = browser.post("/api/v1/session/sign-out", "{}");
+    assert_eq!(signed_out.status, 200, "{}", signed_out.body);
+    let after_logout = browser.get(&snap_path);
+    assert_eq!(after_logout.status, 401, "{}", after_logout.body);
+    stop(host, &base);
+}
