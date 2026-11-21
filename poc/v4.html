@@ -71,38 +71,76 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .skip:focus { top: 12px; }
 
 /* Shell */
-.sidebar { position: fixed; inset: 0 auto 0 0; width: 288px; z-index: 50; display: flex; flex-direction: column; gap: 20px; overflow: hidden; background: rgba(9, 17, 30, .58); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); box-shadow: inset -1px 0 0 rgba(186, 222, 255, .10); padding: 0 24px; }
-.content { position: relative; z-index: 1; height: 100%; overflow-y: auto; padding-left: 288px; display: flex; flex-direction: column; background: transparent; }
+.sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 50; display: flex; flex-direction: column; gap: 16px; overflow: hidden; background: rgba(9, 17, 30, .58); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); box-shadow: inset -1px 0 0 rgba(186, 222, 255, .10); padding: 0 18px; }
+.content { position: relative; z-index: 1; height: 100%; overflow-y: auto; padding-left: 264px; display: flex; flex-direction: column; background: transparent; }
 .content > main { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 .logo { display: flex; align-items: center; gap: 12px; height: 64px; flex: none; margin: 0 -8px; padding: 0 8px; border-radius: var(--radius-md); width: calc(100% + 16px); text-align: left; }
 .logo:hover { background: var(--hover); }
 .logo .name { font-size: 16px; line-height: 28px; font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .logo:focus-visible { outline-offset: -2px; }
-.nav { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 20px; }
-.nav > ul.nav-scroll { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 28px; overflow-x: hidden; overflow-y: auto; margin: 0 -8px; padding: 0 8px 4px; }
+.nav { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 16px; }
+.nav > ul.nav-scroll { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 20px; overflow-x: hidden; overflow-y: auto; margin: 0 -6px; padding: 0 6px 8px; }
 .nav > ul.nav-pinned { flex: none; padding-bottom: 4px; }
 .nav.fold-teams .subwrap[data-fold="teams"], .nav.fold-projects .subwrap[data-fold="projects"] { display: none; }
 .sidebar.tight { gap: 8px; }
 .sidebar.tight .nav { gap: 8px; }
 .sidebar.tight .nav > ul.nav-scroll { gap: 12px; }
-.nav-label { font-size: 12px; line-height: 24px; font-weight: 600; color: var(--gray-400); }
-.nav-list { margin: 8px -8px 0; display: flex; flex-direction: column; gap: 4px; }
+.nav-label {
+  padding: 0 8px;
+  font-size: 0.6875rem; line-height: 1.125rem; font-weight: 650;
+  letter-spacing: .07em; text-transform: uppercase;
+  color: #74849B;
+}
+.nav-list { margin: 6px 0 0; display: flex; flex-direction: column; gap: 2px; }
 .nav-list.top { margin-top: 0; }
-.nav-item { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: var(--radius-md); font-weight: 600; color: var(--gray-400); }
-.nav-item:hover { background: var(--hover); color: #fff; }
-.nav-item[aria-current="page"], .nav-item.cur { background: var(--hover); color: #fff; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: 8px;
+  font-size: 0.875rem; line-height: 1.35rem; font-weight: 500;
+  color: #94A3B8;
+  transition: background-color .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.nav-item .ic { width: 18px; height: 18px; color: #7C91AE; flex: none; transition: color .14s ease; }
+.nav-item:hover { background: rgba(186, 222, 255, .07); color: #F8FAFC; }
+.nav-item:hover .ic { color: #CBD5E1; }
+.nav-item[aria-current="page"], .nav-item.cur {
+  background: rgba(56, 189, 248, .12); color: #F8FAFC; font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(186, 222, 255, .14), inset 0 0 0 1px rgba(125, 211, 252, .22);
+}
+.nav-item[aria-current="page"] .ic, .nav-item.cur .ic { color: #7DD3FC; }
 .nav-item:focus-visible { outline-offset: -2px; }
-.nav-sub { margin: 4px 0 0 0; display: flex; flex-direction: column; gap: 2px; }
-.nav-sub .nav-item { padding: 6px 8px 6px 44px; font-weight: 500; gap: 10px; }
-.nav-sub .nav-item.more { font-size: 13px; }
-.nav-sublabel { padding: 6px 8px 0 44px; font-size: 12px; line-height: 20px; font-weight: 600; color: var(--gray-400); }
-.chip-i { display: inline-flex; width: 22px; height: 22px; flex: none; align-items: center; justify-content: center; border-radius: var(--radius-lg); border: 1px solid var(--line2); background: var(--hover); font-size: 10px; font-weight: 600; color: var(--gray-400); margin-left: -32px; }
+
+/* Foldable nav group row (link + subtle expand chevron) */
+.nav-row { display: flex; align-items: center; gap: 2px; }
+.nav-row .nav-item { flex: 1; min-width: 0; }
+.nav-fold-btn {
+  width: 28px; height: 28px; border-radius: 6px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #64748B; transition: background-color .14s ease, color .14s ease;
+}
+.nav-fold-btn:hover { background: rgba(186, 222, 255, .08); color: #E2E8F0; }
+.nav-fold-btn .ic { width: 14px; height: 14px; transition: transform .18s ease; }
+.nav-fold-btn[aria-expanded="true"] .ic { transform: rotate(90deg); color: #CBD5E1; }
+
+.nav-sub {
+  margin: 3px 0 4px 18px; padding-left: 10px;
+  border-left: 1px solid rgba(186, 222, 255, .10);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.nav-sub .nav-item { padding: 5px 8px; font-size: 0.8125rem; font-weight: 500; gap: 8px; }
+.nav-sub .nav-item .ic { width: 15px; height: 15px; }
+.nav-sub .nav-item .ic.tone-ok { color: #34D399; }
+.nav-sub .nav-item .ic.tone-warn { color: #FBBF24; }
+.nav-sub .nav-item .ic.tone-bad { color: #FB7185; }
+.nav-sub .nav-item.more { font-size: 12px; color: #74849B; }
+.nav-sublabel { padding: 4px 8px 2px; font-size: 11px; line-height: 16px; font-weight: 600; color: #64748B; }
+.chip-i { display: inline-flex; width: 20px; height: 20px; flex: none; align-items: center; justify-content: center; border-radius: 6px; border: 1px solid var(--line2); background: var(--hover); font-size: 10px; font-weight: 600; color: var(--gray-400); }
 .nav-item:hover .chip-i, .nav-item[aria-current="page"] .chip-i { color: #fff; border-color: rgb(255 255 255 / .2); }
 .nav-sub .nav-item span.t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.badge { margin-left: auto; border-radius: 999px; background: var(--amber-300); color: var(--gray-950); font-size: 12px; line-height: 16px; font-weight: 600; padding: 0 6px; }
-.foot { flex: none; margin: 0 -24px; border-top: 1px solid var(--line); }
+.badge { margin-left: auto; border-radius: 999px; background: var(--amber-300); color: var(--gray-950); font-size: 11px; line-height: 16px; font-weight: 700; padding: 0 6px; font-variant-numeric: tabular-nums; }
+.foot { flex: none; margin: 0 -18px; border-top: 1px solid rgba(186, 222, 255, .09); }
 .foot .menu-wrap { display: block; }
-.foot a, .foot .acct { display: flex; width: 100%; align-items: center; gap: 16px; padding: 12px 24px; text-align: left; }
+.foot a, .foot .acct { display: flex; width: 100%; align-items: center; gap: 12px; padding: 11px 18px; text-align: left; }
 .foot a:hover, .foot .acct:hover { background: var(--hover); }
 .foot a:focus-visible, .foot .acct:focus-visible { outline-offset: -2px; }
 .menu.up { top: auto; bottom: calc(100% + 6px); left: 16px; right: auto; }
@@ -119,18 +157,30 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .bctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .ver-ctl { display: inline-flex; align-items: center; gap: 6px; }
 .ver-select { font-size: 0.8125rem; font-weight: 600; padding: 0 20px 0 8px; cursor: pointer; }
-.topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 24px; height: 64px; padding: 0 var(--gutter); border-bottom: 1px solid rgba(186, 222, 255, .10); background: transparent; flex-shrink: 0; }
-.topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: rgba(9, 17, 31, .52); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); }
-.search { position: relative; display: grid; flex: 1; max-width: 576px; height: 36px; border-radius: var(--radius-md); background: rgba(15, 23, 42, .46); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), inset 0 0 0 1px rgba(255, 255, 255, .14); }
-.search:focus-within { box-shadow: inset 0 0 0 2px var(--indigo-400); }
+.topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 var(--gutter); border-bottom: 1px solid rgba(186, 222, 255, .09); background: transparent; flex-shrink: 0; }
+.topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: rgba(9, 17, 31, .48); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); }
+.search {
+  position: relative; display: grid; flex: 0 1 240px; width: 240px; max-width: 240px; height: 34px;
+  border-radius: 999px;
+  background: rgba(13, 24, 42, .38);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .10);
+  transition: width .24s cubic-bezier(.22, 1, .36, 1), max-width .24s cubic-bezier(.22, 1, .36, 1), flex-basis .24s cubic-bezier(.22, 1, .36, 1), background-color .18s ease, box-shadow .18s ease;
+}
+.search:hover { background: rgba(17, 31, 54, .50); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .18); }
+.search:focus-within {
+  flex-basis: 360px; width: 360px; max-width: 360px;
+  background: rgba(15, 28, 48, .72);
+  box-shadow: inset 0 0 0 1.5px rgba(125, 211, 252, .55), 0 4px 20px -4px rgba(0, 0, 0, .4);
+}
 .search > * { grid-area: 1 / 1; }
-.search input { width: 100%; background: transparent; border: 0; color: #fff; padding: 0 40px 0 36px; font: inherit; font-size: 0.875rem; }
-.search input::placeholder { color: var(--gray-400); }
+.search input { width: 100%; background: transparent; border: 0; color: #F8FAFC; padding: 0 36px 0 34px; font: inherit; font-size: 0.8125rem; }
+.search input::placeholder { color: #7C91AE; }
 .search input:focus-visible { outline: none; }
 .search input::-webkit-search-cancel-button { display: none; }
-.search > .ic20 { margin-left: 10px; align-self: center; color: var(--gray-400); pointer-events: none; }
-.search kbd { justify-self: end; align-self: center; margin-right: 10px; border: 1px solid var(--line2); border-radius: 3px; padding: 0 4px; font-family: inherit; font-size: 12px; line-height: 18px; color: var(--gray-400); }
-.sres { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 70; max-height: 440px; overflow-y: auto; background: rgba(12, 19, 38, .76); backdrop-filter: blur(28px) saturate(180%); -webkit-backdrop-filter: blur(28px) saturate(180%); border-radius: 10px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .15), inset 0 0 0 1px rgba(255, 255, 255, .12), 0 18px 48px rgba(0, 0, 0, .58); padding: 6px 0; }
+.search > .ic20 { width: 16px; height: 16px; margin-left: 12px; align-self: center; color: #7C91AE; pointer-events: none; }
+.search kbd { justify-self: end; align-self: center; margin-right: 10px; border: 1px solid rgba(186, 222, 255, .14); border-radius: 5px; padding: 0 5px; font-family: inherit; font-size: 11px; line-height: 17px; color: #7C91AE; background: rgba(255, 255, 255, .03); }
+.sres { position: absolute; top: calc(100% + 8px); right: 0; left: auto; min-width: 360px; z-index: 70; max-height: 440px; overflow-y: auto; background: rgba(12, 19, 38, .78); backdrop-filter: blur(28px) saturate(180%); -webkit-backdrop-filter: blur(28px) saturate(180%); border-radius: 12px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .15), inset 0 0 0 1px rgba(255, 255, 255, .12), 0 18px 48px rgba(0, 0, 0, .58); padding: 6px 0; }
 .sres[hidden] { display: none; }
 .sg { padding: 6px 12px 2px; font-size: 12px; line-height: 20px; font-weight: 600; color: var(--gray-400); }
 .sopt { display: flex; align-items: center; gap: 10px; padding: 6px 12px; cursor: pointer; }
@@ -617,7 +667,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   .content { padding-left: 64px; }
   .logo { justify-content: center; margin: 8px auto 0; width: 48px; height: 48px; padding: 0; }
   .logo .name { display: none; }
-  .nav-label, .subwrap { display: none; }
+  .nav-label, .subwrap, .nav-fold-btn { display: none; }
   .foot { margin: 0 -8px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; }
   .foot .menu-wrap { display: block; }
   .foot .acct { width: 48px; height: 48px; padding: 0; justify-content: center; gap: 0; border-radius: var(--radius-md); }
@@ -641,7 +691,8 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   .topbar { height: 56px; gap: 8px; }
   .btn.menu-btn, .btn.search-btn { display: inline-flex; }
   .search { display: none; }
-  body.searching .search { display: grid; grid-template-columns: 1fr auto; position: absolute; inset: 0; height: 100%; max-width: none; border-radius: 0; z-index: 10; background: var(--gray-800); }
+  body.searching .search { display: grid; grid-template-columns: 1fr auto; position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; border-radius: 0; z-index: 10; background: #091324; }
+  body.searching .sres { left: 0; right: 0; min-width: 0; }
   body.searching .search > .ic20, body.searching .search input { grid-column: 1; }
   .search kbd { display: none; }
   body.searching .search .sclose { display: inline-flex; grid-column: 2; align-self: center; width: 44px; height: 44px; margin-right: 4px; }
@@ -1317,16 +1368,16 @@ select.field option { background: #0E1629; color: #F8FAFC; }
   </div>
   <header class="topbar">
     <button class="btn ghost icon menu-btn" type="button" data-act="drawer" aria-label="Open navigation" aria-controls="sidebar"><svg class="ic ic20" aria-hidden="true"><use href="#i-menu"/></svg></button>
+    <div class="spacer"></div>
     <form class="search" role="search" id="search">
       <svg class="ic ic20" aria-hidden="true"><use href="#i-search"/></svg>
-      <input id="q" type="search" placeholder="Search projects, work, members…" aria-label="Search projects, work and members" aria-keyshortcuts="/" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="sres">
+      <input id="q" type="search" placeholder="Search…" aria-label="Search projects, work and members" aria-keyshortcuts="/" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="sres">
       <kbd aria-hidden="true">/</kbd>
       <button class="btn ghost sclose" type="button" data-act="search-close" aria-label="Close search" title="Close search"><svg class="ic ic20" aria-hidden="true"><use href="#i-x"/></svg></button>
       <div class="sres" id="sres" role="listbox" aria-label="Search results" hidden></div>
     </form>
     <p class="sr-only" id="sres-live" role="status" aria-live="polite"></p>
     <button class="btn ghost icon search-btn" id="search-btn" type="button" data-act="search-open" aria-label="Search" title="Search"><svg class="ic ic20" aria-hidden="true"><use href="#i-search"/></svg></button>
-    <div class="spacer"></div>
     <div class="menu-wrap">
       <button class="btn outline new-btn" id="new-btn" type="button" data-act="menu" data-id="new" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-new" aria-label="New" title="New · N">
         <svg class="ic ic20" aria-hidden="true"><use href="#i-plus"/></svg><span class="new-lbl">New</span><svg class="ic ic16 new-chev" aria-hidden="true"><use href="#i-chev-down"/></svg>
@@ -3459,27 +3510,65 @@ function mountAgentProfile(aid, tab) {
 
 /* ---------------------------------------------------------------- sidebar */
 const NAV_CAP = 5;
+const TEAM_ICON = { leadership: "flag", product: "adjustments", platform: "terminal", app: "bolt", quality: "doc-check" };
 function renderNav(route) {
   const [r0, r1] = route;
   const badge = unhandled().length;
   const item = (href, label, icon, cur, extra = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span>${extra}</a></li>`;
-  const sub = (href, label, cur) => `<li><a class="nav-item" href="${href}" ${cur ? 'aria-current="page"' : ""}><span class="chip-i" aria-hidden="true">${esc(label[0])}</span><span class="t">${esc(label)}</span></a></li>`;
+  const subIcon = (href, label, icon, cur, cls = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon, cls)}<span class="t">${esc(label)}</span></a></li>`;
   const more = (href, label) => `<li><a class="nav-item more" href="${href}"><span class="t">${esc(label)}</span></a></li>`;
   const live = Object.keys(P).filter((p) => !P[p].archived).sort((a, b) => P[a].upd - P[b].upd);
   const teams = Object.keys(TEAMS);
+  const inProjChild = r0 === "projects" && !!r1;
+  const inTeamChild = r0 === "teams" && own(TEAMS, r1);
   const inTeams = r0 === "teams" || r0 === "members";
+  const projOpen = S.v4Open["nav-proj"] ?? inProjChild;
+  const teamsOpen = S.v4Open["nav-teams"] ?? inTeamChild;
+  const projIcon = (p) => {
+    const h = P[p].health;
+    if (h === "On track") return ["check-circle", "tone-ok"];
+    if (h === "At risk") return ["warn", "tone-warn"];
+    if (h === "Off track") return ["x-circle", "tone-bad"];
+    return ["folder", ""];
+  };
   const nav = document.getElementById("nav"); if (!nav) return;
   nav.innerHTML = `<ul class="nav-scroll" role="list">
-    <li><ul class="nav-list top" role="list">${item("#/home", "Home", "home", r0 === "home")}
-      ${item("#/inbox", "Inbox", "inbox", r0 === "inbox", badge ? `<span class="badge" aria-hidden="true">${badge}</span><span class="sr-only">, ${badge} waiting on you</span>` : "")}</ul></li>
-    <li><ul class="nav-list top" role="list">
-      ${item("#/projects", "Projects", "folder", r0 === "projects" && !r1)}
-      <li class="subwrap" data-fold="projects"><p class="nav-sublabel" id="nl-recent">Recent</p><ul class="nav-sub" role="list" aria-labelledby="nl-recent">${live.slice(0, NAV_CAP).map((p) => sub("#/projects/" + p, P[p].name, r0 === "projects" && r1 === p)).join("")}${live.length > NAV_CAP ? more("#/projects", "View all projects") : ""}</ul></li>
-      ${item("#/work", "Work", "clipboard", r0 === "work")}${item("#/chat", "Chat", "chat", r0 === "chat")}${item("#/activity", "Activity", "signal", r0 === "activity")}</ul></li>
-    <li><div class="nav-label">Organization</div><ul class="nav-list" role="list">
-      ${item("#/teams", "Teams", "user-group", inTeams && !(r0 === "teams" && own(TEAMS, r1)))}
-      <li class="subwrap" data-fold="teams"><ul class="nav-sub" role="list" aria-label="Teams">${teams.slice(0, NAV_CAP).map((t) => sub("#/teams/" + t, TEAMS[t].name, r0 === "teams" && r1 === t)).join("")}${teams.length > NAV_CAP ? more("#/teams", "View all teams") : ""}</ul></li></ul></li></ul>
-    <ul class="nav-list nav-pinned" role="list">${item("#/settings", "Organization settings", "cog", r0 === "settings")}</ul>`;
+    <li>
+      <div class="nav-label">Focus</div>
+      <ul class="nav-list" role="list">
+        ${item("#/home", "Home", "home", r0 === "home")}
+        ${item("#/inbox", "Inbox", "inbox", r0 === "inbox", badge ? `<span class="badge" aria-hidden="true">${badge}</span><span class="sr-only">, ${badge} waiting on you</span>` : "")}
+      </ul>
+    </li>
+    <li>
+      <div class="nav-label">Workspace</div>
+      <ul class="nav-list" role="list">
+        <li>
+          <div class="nav-row">
+            <a class="nav-item${!projOpen && inProjChild ? " cur" : ""}" href="#/projects" title="Projects" ${r0 === "projects" && !r1 ? 'aria-current="page"' : ""}>${ic("folder")}<span class="lbl">Projects</span></a>
+            <button class="nav-fold-btn" type="button" data-act="v4-acc" data-id="nav-proj" aria-expanded="${!!projOpen}" aria-controls="nav-sub-proj" aria-label="${projOpen ? "Collapse" : "Expand"} projects">${ic("chev-right")}</button>
+          </div>
+          ${projOpen ? `<div class="subwrap" id="nav-sub-proj" data-fold="projects"><ul class="nav-sub" role="list" aria-label="Recent projects">${live.slice(0, NAV_CAP).map((p) => { const [ico, cls] = projIcon(p); return subIcon("#/projects/" + p, P[p].name, ico, r0 === "projects" && r1 === p, cls); }).join("")}${live.length > NAV_CAP ? more("#/projects", "View all projects") : ""}</ul></div>` : ""}
+        </li>
+        ${item("#/work", "Work", "clipboard", r0 === "work")}
+        ${item("#/chat", "Chat", "chat", r0 === "chat")}
+        ${item("#/activity", "Activity", "signal", r0 === "activity")}
+      </ul>
+    </li>
+    <li>
+      <div class="nav-label">Organization</div>
+      <ul class="nav-list" role="list">
+        <li>
+          <div class="nav-row">
+            <a class="nav-item${!teamsOpen && inTeamChild ? " cur" : ""}" href="#/teams" title="Teams" ${inTeams && !inTeamChild ? 'aria-current="page"' : ""}>${ic("user-group")}<span class="lbl">Teams</span></a>
+            <button class="nav-fold-btn" type="button" data-act="v4-acc" data-id="nav-teams" aria-expanded="${!!teamsOpen}" aria-controls="nav-sub-teams" aria-label="${teamsOpen ? "Collapse" : "Expand"} teams">${ic("chev-right")}</button>
+          </div>
+          ${teamsOpen ? `<div class="subwrap" id="nav-sub-teams" data-fold="teams"><ul class="nav-sub" role="list" aria-label="Teams">${teams.slice(0, NAV_CAP).map((t) => subIcon("#/teams/" + t, TEAMS[t].name, TEAM_ICON[t] || "user-group", r0 === "teams" && r1 === t)).join("")}${teams.length > NAV_CAP ? more("#/teams", "View all teams") : ""}</ul></div>` : ""}
+        </li>
+        ${item("#/settings", "Settings", "cog", r0 === "settings")}
+      </ul>
+    </li>
+  </ul>`;
   fitNav();
 }
 function fitNav() {
