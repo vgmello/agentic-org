@@ -3,10 +3,10 @@ id: TASK-40
 title: >-
   U1: Connect Offices, Teams, People, and Projects browser screens to live
   /api/v1 APIs
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-21T14:57:00Z'
+updated_date: '2026-11-21T16:08:00Z'
 labels:
   - ui
   - bff
@@ -34,9 +34,9 @@ Replace mock/unavailable production adapters for Offices, Teams, Members, Org Ch
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Offices, Teams index/page, Members directory, Org Chart, and Projects screens run against live /api/v1 endpoints with zero mock fallbacks.
-- [ ] #2 TEAM, PEOPLE, and REPORT criteria not requiring an agent runtime pass in real-instance Playwright tests.
-- [ ] #3 FEATURES rows FC-003, FC-019, FC-025..027, FC-030, FC-032, and FC-038 are updated.
+- [x] #1 Offices, Teams index/page, Members directory, Org Chart, and Projects screens run against live /api/v1 endpoints with zero mock fallbacks.
+- [x] #2 TEAM, PEOPLE, and REPORT criteria not requiring an agent runtime pass in real-instance Playwright tests.
+- [x] #3 FEATURES rows FC-003, FC-019, FC-025..027, FC-030, FC-032, and FC-038 are updated.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,3 +50,9 @@ Replace mock/unavailable production adapters for Offices, Teams, Members, Org Ch
 <!-- SECTION:NOTES:BEGIN -->
 Wired live /api/v1 HTTP production adapters (zero mock fallbacks) for Offices (offices/http-api.ts + office-api.ts), Organization project-team mutations (organization/http-api.ts + UUIDv7 newStableId), Teams (teams/http-api.ts + api.ts), Members & Access actions (members/http-api.ts + api.ts + ProfileFrame Remove person), Org Chart (org-chart/http-api.ts + api.ts), Projects (projects/http-api.ts + api.ts), Access overview (access/http-api.ts + api.ts), Shell navigation/search (shell/http-api.ts + api.ts), and A6 /register invite attach + /set-password. Enabled U1 live routes in platform/shell/capabilities.ts while keeping unbuilt routes unavailable with zero network requests. Verified check, lint, format:check, 164 unit test files, production build + check:build-assets, production-unavailable (7/7), and real-instance Playwright suite (6/6 including new e2e-real/org-screens.spec.ts).
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Completed TASK-40 (U1) and merged to v1: wired live /api/v1 production adapters with zero mock fallbacks across Offices, Teams, People/Members, Org Chart, Projects, Access, Shell, and A6 /register + /set-password flows; passed two-pass fresh independent UI review (Pass 1 9/9 fixed -> Pass 2 APPROVE), 164/164 UI unit test files, production build & asset guard, 7/7 production-unavailable specs, and 6/6 integrated real-instance Playwright E2E specs on v1 tip; updated doc-3 rows FC-003, FC-019, FC-025..027, FC-030, FC-032, FC-038.
+<!-- SECTION:FINAL_SUMMARY:END -->
