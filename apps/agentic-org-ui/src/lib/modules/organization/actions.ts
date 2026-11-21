@@ -345,7 +345,11 @@ export async function updatePerson(
 }
 
 /** Remove someone from the organization (never the owner; an agent leaves through the HR flow). */
-export async function removePerson(api: OrgSession, memberId: string): Promise<void> {
+export async function removePerson(
+	api: OrgSession,
+	memberId: string,
+	seenVersion?: number
+): Promise<void> {
 	const m = (await api.snapshot()).members.find((x) => x.id === memberId);
 	if (!m)
 		throw {
@@ -355,7 +359,7 @@ export async function removePerson(api: OrgSession, memberId: string): Promise<v
 		} satisfies AppError;
 	await api.command({
 		method: 'member.remove',
-		params: { member_id: memberId, expected_version: m.version }
+		params: { member_id: memberId, expected_version: seenVersion ?? m.version }
 	});
 }
 

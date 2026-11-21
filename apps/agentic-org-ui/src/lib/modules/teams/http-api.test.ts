@@ -143,6 +143,15 @@ describe('createHttpTeamsApi', () => {
 		await expect(
 			api.addPerson(ORG, { name: 'Ada Two', handle: 'ada', homeTeamId: ENG })
 		).rejects.toMatchObject({ code: 'already_exists', field: 'handle' });
+
+		command.mockRejectedValueOnce({
+			source: 'api',
+			code: 'invalid_name',
+			message: 'Handle may contain only lowercase letters, digits and hyphens.'
+		});
+		await expect(
+			api.addPerson(ORG, { name: 'Ada Bad', handle: 'BAD!', homeTeamId: ENG })
+		).rejects.toMatchObject({ code: 'invalid_name', field: 'handle' });
 	});
 
 	it('deletes a team using its current snapshot version', async () => {

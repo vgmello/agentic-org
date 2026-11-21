@@ -131,4 +131,69 @@ describe('createHttpOfficeApi', () => {
 			message: 'Already starting.'
 		});
 	});
+
+	it('probes GET /api/v1/instance in ping() and ensureRunning() and fails on degraded or transport errors', async () => {
+		const read = vi
+			.fn()
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: {
+						instance_id: INSTANCE,
+						name: 'hq-mac',
+						server_version: '0.2.3',
+						web_status: 'ok',
+						listen_scheme: 'http_loopback',
+						server_time_ms: 1_800_000_000_000
+					}
+				}
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: {
+						instance_id: INSTANCE,
+						name: 'hq-mac',
+						server_version: '0.2.3',
+						web_status: 'degraded',
+						listen_scheme: 'http_loopback',
+						server_time_ms: 1_800_000_000_000
+					}
+				}
+			})
+			.mockResolvedValueOnce({
+				status: 503,
+				body: { error: { code: 'unavailable', message: 'Host offline.' } }
+			})
+			.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+		const api = createHttpOfficeApi({
+			http: { read, submit: vi.fn() },
+			instanceId: () => INSTANCE,
+			getSelectedOrganizationId: () => ORG_A,
+			selectOrganization: () => {}
+		});
+
+		const hello = await api.ping();
+		expect(read).toHaveBeenCalledWith('/api/v1/instance');
+		expect(hello).toEqual({
+			api_version: 1,
+			server_version: '0.2.3',
+			host: 'hq-mac',
+			capabilities: ['office.status_changed', 'office.restart']
+		});
+
+		await expect(api.ensureRunning()).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
+		await expect(api.ping()).rejects.toEqual({
+			source: 'api',
+			code: 'unavailable',
+			message: 'Host offline.'
+		});
+		await expect(api.ping()).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
+	});
 });

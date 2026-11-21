@@ -289,7 +289,12 @@ export function createGatewayPublicHttp(options: JsonHttpOptions) {
 			) {
 				throw new NotDispatchedError('Invalid link inspection request');
 			}
-			return send({ path: '/api/v1/links/inspect', method: 'POST', body: request, signal });
+			return send({
+				path: '/api/v1/links/inspect',
+				method: 'POST',
+				body: { link: request.link, kind: request.kind },
+				signal
+			});
 		},
 		async setPassword(request: { link: string; password: string }, signal?: AbortSignal) {
 			if (
@@ -299,7 +304,12 @@ export function createGatewayPublicHttp(options: JsonHttpOptions) {
 			) {
 				throw new NotDispatchedError('Invalid set-password request');
 			}
-			return send({ path: '/api/v1/links/set-password', method: 'POST', body: request, signal });
+			return send({
+				path: '/api/v1/links/set-password',
+				method: 'POST',
+				body: { link: request.link, password: request.password },
+				signal
+			});
 		},
 		async enableAuth(credentials: unknown, signal?: AbortSignal) {
 			let body;

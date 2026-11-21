@@ -245,14 +245,15 @@ export function createHttpProjectsApi({
 		if (draft.owner.kind === 'existing') {
 			return { ...base, owner_team_id: draft.owner.teamId };
 		}
+		entry.createTeamId ??= newEntityId();
 		return {
 			...base,
-			create_team_id: entry.createTeamId ?? newEntityId(),
+			create_team_id: entry.createTeamId,
 			...(draft.owner.parentTeamId ? { parent_team_id: draft.owner.parentTeamId } : {})
 		};
 	}
 
-	function assertCreateCompleted(reply: GatewayReply): void {
+	function assertCreateCompleted(reply: GatewayReply, draftOperationId: string): void {
 		const root =
 			reply.body && typeof reply.body === 'object'
 				? (reply.body as Record<string, unknown>)
@@ -264,6 +265,7 @@ export function createHttpProjectsApi({
 				message: 'The outcome of this request is not confirmed yet.'
 			};
 		}
+		pendingCreates.delete(draftOperationId);
 		if (reply.status === 200 && root?.outcome === 'completed') return;
 		const err = readGatewayAppError(
 			reply.body,
@@ -304,7 +306,7 @@ export function createHttpProjectsApi({
 				message: 'The outcome of this request is not confirmed yet.'
 			};
 		}
-		assertCreateCompleted(reply);
+		assertCreateCompleted(reply, draft.operationId);
 		const created = await readProject(organizationId, entry.projectId);
 		return { projectId: created.id, number: created.number };
 	}
@@ -333,12 +335,14 @@ export function createHttpProjectsApi({
 		}
 		if (reply.status === 404) return { state: 'pending' };
 		const result = unwrapGatewayResult(reply, 'Could not check the create request.');
-		const status = result.status;
-		if (status === 'completed' && entry) {
+		const outcome = result.outcome;
+		if (outcome === 'completed' && entry) {
+			pendingCreates.delete(operationId);
 			const record = await readProject(organizationId, entry.projectId);
 			return { state: 'applied', projectId: record.id, number: record.number };
 		}
-		if (status === 'rejected') {
+		if (outcome === 'rejected') {
+			pendingCreates.delete(operationId);
 			const err = result.error as { message?: unknown } | undefined;
 			return {
 				state: 'not_applied',

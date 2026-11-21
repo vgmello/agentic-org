@@ -296,7 +296,7 @@
 	async function remove() {
 		const p = profile.data;
 		if (!p) return;
-		await removePerson(session, p.id).catch((e) => refreshOnConflict(e, p.name));
+		await removePerson(session, p.id, shown.version).catch((e) => refreshOnConflict(e, p.name));
 		toast.success(`Removed ${p.name}. The record and handle stay.`);
 		reloadOnClose = true;
 	}

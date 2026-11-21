@@ -92,15 +92,38 @@ function toConnection(org: Organization): Connection {
 	};
 }
 
-const GATEWAY_HELLO: HelloResult = Object.freeze({
-	api_version: 1,
-	server_version: '0.1.0',
-	host: 'This server',
-	capabilities: ['office.status_changed', 'office.restart']
-});
+const GATEWAY_CAPABILITIES = ['office.status_changed', 'office.restart'];
 
 const defaultNewId = () =>
 	formatUuidV7(Date.now(), globalThis.crypto.getRandomValues(new Uint8Array(10)));
+
+function parseInstanceHello(body: unknown): HelloResult {
+	const envelope = readResponse(body, readJsonObject);
+	if ('error' in envelope) {
+		throw readGatewayError(body, 'unavailable', 'The host could not be reached.');
+	}
+	const result = envelope.result;
+	if (result.web_status !== 'ok') {
+		throw {
+			source: 'api',
+			code: 'unavailable',
+			message: 'The host is degraded.'
+		} satisfies AppError;
+	}
+	if (typeof result.server_version !== 'string' || typeof result.name !== 'string') {
+		throw {
+			source: 'api',
+			code: 'unavailable',
+			message: 'The host status response could not be read.'
+		} satisfies AppError;
+	}
+	return {
+		api_version: 1,
+		server_version: result.server_version,
+		host: result.name,
+		capabilities: GATEWAY_CAPABILITIES
+	};
+}
 
 /**
  * Production HTTP adapter for office/organization host gateway routes (`/api/v1/organizations`
@@ -219,10 +242,40 @@ export function createHttpOfficeApi({
 		);
 	}
 
+	async function ping(): Promise<HelloResult> {
+		let reply: Reply;
+		try {
+			reply = await http.read('/api/v1/instance');
+		} catch {
+			throw {
+				source: 'api',
+				code: 'unavailable',
+				message: 'The host could not be reached.'
+			} satisfies AppError;
+		}
+		if (reply.status !== 200) {
+			throw readGatewayError(
+				reply.body,
+				statusFallback(reply.status),
+				'The host could not be reached.'
+			);
+		}
+		try {
+			return parseInstanceHello(reply.body);
+		} catch (e) {
+			if (e && typeof e === 'object' && 'source' in e) throw e;
+			throw {
+				source: 'api',
+				code: 'unavailable',
+				message: 'The host status response could not be read.'
+			} satisfies AppError;
+		}
+	}
+
 	return Object.freeze({
 		connections,
-		ensureRunning: async () => GATEWAY_HELLO,
-		ping: async () => GATEWAY_HELLO,
+		ensureRunning: ping,
+		ping,
 		peekOrganizations: fetchOrganizations,
 		listOrganizations: fetchOrganizations,
 		async openOrganization(id: string): Promise<Connection> {

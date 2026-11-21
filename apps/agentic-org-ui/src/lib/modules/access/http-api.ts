@@ -142,7 +142,7 @@ export function createHttpAccessApi({
 					...(org?.employee_id ? { memberId: org.employee_id } : {}),
 					isOwner,
 					isAdministrator,
-					canManage: accessData.canManage || isOwner || isAdministrator
+					canManage: accessData.canManage
 				}
 			};
 		}

@@ -310,7 +310,10 @@ export function createHttpMembersApi({
 				{ to_member_id: toMemberId, password },
 				'Could not hand over ownership.'
 			);
-			if (reply.status === 200) return;
+			if (reply.status === 200) {
+				unwrapGatewayResult(reply, 'Could not hand over ownership.');
+				return;
+			}
 			const err = readGatewayAppError(
 				reply.body,
 				gatewayStatusCode(reply.status),

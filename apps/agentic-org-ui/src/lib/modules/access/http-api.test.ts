@@ -96,4 +96,39 @@ describe('createHttpAccessApi', () => {
 		});
 		expect(overview.viewer.canManage).toBe(true);
 	});
+
+	it('keeps viewer.canManage false when GET /access returns 403', async () => {
+		const read = vi.fn(async (path: string) => {
+			if (path.endsWith('/access')) {
+				return { status: 403, body: { error: { code: 'not_authorized', message: 'Forbidden.' } } };
+			}
+			return {
+				status: 200,
+				body: {
+					result: {
+						organizations: [
+							{
+								id: ORG,
+								slug: 'acme',
+								name: 'Acme',
+								created_at: '2026-11-20T00:00:00Z',
+								employee_id: OWNER,
+								recovery: 'acknowledged',
+								offices: []
+							}
+						],
+						creating: []
+					}
+				}
+			};
+		});
+		const api = createHttpAccessApi({
+			http: { read, submit: vi.fn() },
+			orgApi: { view: vi.fn().mockResolvedValue({ snapshot: SNAPSHOT, sample: false }) },
+			session: () => ({ accountAdmin: true, login: 'alex' })
+		});
+
+		const overview = await api.overview(ORG);
+		expect(overview.viewer.canManage).toBe(false);
+	});
 });

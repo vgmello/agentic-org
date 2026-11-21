@@ -158,7 +158,8 @@ export function createHttpTeamsApi({
 			const failure = toAppError(e);
 			if (
 				failure.code === 'already_exists' ||
-				(failure.code === 'invalid_request' && /handle/i.test(failure.message))
+				((failure.code === 'invalid_request' || failure.code === 'invalid_name') &&
+					/handle/i.test(failure.message))
 			) {
 				throw { ...failure, field: 'handle' };
 			}

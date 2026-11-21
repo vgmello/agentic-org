@@ -13,10 +13,15 @@
 	import { checkRegistration, checkSignIn } from '$lib/platform/auth/credential-rules';
 	import { takeLinkSecret } from '$lib/platform/auth/link-fragment';
 	import PasswordField from '$lib/platform/auth/PasswordField.svelte';
+	import { SessionRequestError } from '$lib/platform/auth/session-gateway';
+
+	type PageFailure = CredentialFailure | { kind: 'conflict'; message: string };
+	const LINK_CONFLICT_COPY = 'This account is already linked to someone in this organization.';
 
 	// Held in this closure only after mount: never in reactive state, storage, a request or a log.
 	// The address bar and history entry lose the fragment before any request (takeLinkSecret).
 	let secret: string | undefined;
+	let inspecting = $state(true);
 	let linkPresent = $state(true);
 	let inviteOrgName = $state<string>();
 	let mode = $state<'create' | 'sign-in'>('create');
@@ -25,27 +30,29 @@
 	let again = $state('');
 	let loginError = $state<string>();
 	let passwordError = $state<string>();
-	let failure = $state<CredentialFailure>();
+	let failure = $state<PageFailure>();
 	let busy = $state(false);
 	let loginInput = $state<HTMLInputElement | null>(null);
 	let passwordInput = $state<HTMLInputElement | null>(null);
 	const address = $derived(page.url.host);
 
+	async function inspectCurrentLink(token: string) {
+		try {
+			const info = await appSession.controller().inspectLink({ link: token, kind: 'registration' });
+			if (info.kind === 'organization_invite') inviteOrgName = info.org_name;
+		} catch (error) {
+			if (error instanceof SessionRequestError && (error.status === 404 || error.status === 410)) {
+				secret = undefined;
+				linkPresent = false;
+			}
+		}
+	}
+
 	onMount(async () => {
 		secret = takeLinkSecret(location, history);
 		linkPresent = secret !== undefined;
-		if (secret) {
-			try {
-				const info = await appSession
-					.controller()
-					.inspectLink({ link: secret, kind: 'registration' });
-				if (info.kind === 'organization_invite') {
-					inviteOrgName = info.org_name;
-				}
-			} catch {
-				// Leave the form visible so submitting reports the gateway's exact link refusal.
-			}
-		}
+		if (secret) await inspectCurrentLink(secret);
+		inspecting = false;
 		await tick();
 		loginInput?.focus();
 	});
@@ -73,6 +80,17 @@
 	}
 
 	async function handleSubmitError(error: unknown, isAttach: boolean) {
+		if (error instanceof SessionRequestError) {
+			if (error.status === 404 || error.status === 410) {
+				secret = undefined;
+				linkPresent = false;
+				return;
+			}
+			if (error.status === 409) {
+				failure = { kind: 'conflict', message: LINK_CONFLICT_COPY };
+				return;
+			}
+		}
 		const result = describeCredentialFailure(error, Date.now(), isAttach ? 'sign-in' : 'register');
 		if (result.kind === 'field') {
 			if (result.field === 'login') loginError = result.message;
@@ -116,7 +134,9 @@
 	<title>{inviteOrgName ? `Join ${inviteOrgName}` : 'Create your account'} · Agentic Org</title>
 </svelte:head>
 
-{#if !linkPresent}
+{#if inspecting}
+	<p class="text-sm/6 text-fg-muted" role="status">Checking link…</p>
+{:else if !linkPresent}
 	<h1 class="text-2xl/9 font-semibold tracking-tight text-fg">{LINK_USED_COPY}</h1>
 	<p class="mt-4 text-sm/6 text-fg-secondary">
 		For the administrator: on the HQ machine, run <code class="text-fg-bright"
@@ -181,7 +201,7 @@
 						class="mt-2 font-semibold underline"
 						onclick={() => location.reload()}>Reload</button
 					>
-				{:else}
+				{:else if failure.kind !== 'conflict'}
 					<button type="submit" form="register-form" class="mt-2 font-semibold underline"
 						>Try again</button
 					>

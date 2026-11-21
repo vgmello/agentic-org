@@ -10,6 +10,7 @@ const CONTRIB_TEAM = '0193a5c0-0000-7000-8000-000000000004';
 const PROJ = '0193a5c0-0000-7000-8000-000000000005';
 const NEW_TEAM = '0193a5c0-0000-7000-8000-000000000006';
 const OP = '01a1c554-5200-7000-8000-000000000007';
+const OP_2 = '01a1c554-5200-7000-8000-000000000008';
 
 const SNAPSHOT: OrgSnapshot = {
 	position: { epoch: 1, seq: 1 },
@@ -123,12 +124,24 @@ describe('createHttpProjectsApi', () => {
 		});
 	});
 
-	it('returns OUTCOME_UNKNOWN on 504 create and resolves createOperation via /api/v1/operations/org', async () => {
-		const ids = [PROJ];
-		const submit = vi.fn().mockResolvedValue({ status: 504, body: { outcome: 'unknown' } });
+	it('resolves createOperation via OperationLookup outcome (accepted, completed, rejected) and reuses create_team_id on retry', async () => {
+		const ids = [PROJ, NEW_TEAM, '0193a5c0-0000-7000-8000-000000000009'];
+		const ops = [OP, OP_2];
+		const submit = vi
+			.fn()
+			.mockResolvedValueOnce({ status: 504, body: { outcome: 'unknown' } })
+			.mockResolvedValueOnce({ status: 504, body: { outcome: 'unknown' } })
+			.mockResolvedValueOnce({ status: 504, body: { outcome: 'unknown' } });
 		const read = vi
 			.fn()
-			.mockResolvedValueOnce({ status: 200, body: { result: { status: 'completed' } } })
+			.mockResolvedValueOnce({
+				status: 200,
+				body: { result: { kind: 'org', operation_id: OP, outcome: 'accepted' } }
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				body: { result: { kind: 'org', operation_id: OP, outcome: 'completed', result: {} } }
+			})
 			.mockResolvedValueOnce({
 				status: 200,
 				body: {
@@ -138,10 +151,21 @@ describe('createHttpProjectsApi', () => {
 						key: 'P-4',
 						slug: 'billing',
 						name: 'Billing',
-						owner_team_id: ROOT_TEAM,
+						owner_team_id: NEW_TEAM,
 						contributing_team_ids: [],
 						archived: false,
 						revision: 1
+					}
+				}
+			})
+			.mockResolvedValueOnce({
+				status: 200,
+				body: {
+					result: {
+						kind: 'org',
+						operation_id: OP_2,
+						outcome: 'rejected',
+						error: { code: 'already_exists', message: 'Slug already taken.' }
 					}
 				}
 			});
@@ -152,21 +176,41 @@ describe('createHttpProjectsApi', () => {
 				command: vi.fn()
 			},
 			instanceId: () => INSTANCE,
-			newId: () => OP,
+			newId: () => ops.shift()!,
 			newEntityId: () => ids.shift()!
+		});
+
+		const draft = {
+			operationId: 'ulid-op-1',
+			name: 'Billing',
+			slug: 'billing',
+			owner: { kind: 'new' as const, parentTeamId: ROOT_TEAM },
+			developmentProcessId: null
+		};
+		await expect(api.create(ORG, draft)).rejects.toMatchObject({ code: OUTCOME_UNKNOWN });
+		// Retry under the same operationId reuses operation_id, project_id, and create_team_id.
+		await expect(api.create(ORG, draft)).rejects.toMatchObject({ code: OUTCOME_UNKNOWN });
+		expect(submit.mock.calls[0]).toEqual(submit.mock.calls[1]);
+
+		expect(await api.createOperation(ORG, 'ulid-op-1')).toEqual({ state: 'pending' });
+		expect(await api.createOperation(ORG, 'ulid-op-1')).toEqual({
+			state: 'applied',
+			projectId: PROJ,
+			number: 4
 		});
 
 		await expect(
 			api.create(ORG, {
-				operationId: 'ulid-op-1',
-				name: 'Billing',
+				operationId: 'ulid-op-2',
+				name: 'Billing Two',
 				slug: 'billing',
 				owner: { kind: 'existing', teamId: ROOT_TEAM },
 				developmentProcessId: null
 			})
 		).rejects.toMatchObject({ code: OUTCOME_UNKNOWN });
-
-		const resolved = await api.createOperation(ORG, 'ulid-op-1');
-		expect(resolved).toEqual({ state: 'applied', projectId: PROJ, number: 4 });
+		expect(await api.createOperation(ORG, 'ulid-op-2')).toEqual({
+			state: 'not_applied',
+			reason: 'Slug already taken.'
+		});
 	});
 });
