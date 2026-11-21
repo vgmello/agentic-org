@@ -661,7 +661,8 @@ fn build_env_add(ctx: &LaunchContext) -> Vec<(EnvName, String)> {
             EnvName::try_from("ENABLE_TOOL_SEARCH").expect("static env name is valid"),
             "false".to_owned(),
         ),
-        // Scrub Claude credentials from tool subprocesses (verified present in Claude 2.1.311; S4).
+        // Scrub Claude credentials from tool subprocesses (empirically verified in Claude 2.1.311
+        // scrub list `lts` + `U7r`; defense-in-depth alongside CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR).
         (
             EnvName::try_from("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
                 .expect("static env name is valid"),
@@ -678,17 +679,24 @@ fn build_env_add(ctx: &LaunchContext) -> Vec<(EnvName, String)> {
 }
 
 pub(crate) fn auth_env_names() -> Vec<EnvName> {
-    ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
-        .into_iter()
-        .map(|name| EnvName::try_from(name).expect("static auth env name is valid"))
-        .collect()
+    [
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+    ]
+    .into_iter()
+    .map(|name| EnvName::try_from(name).expect("static auth env name is valid"))
+    .collect()
 }
 
 fn secret_env_names() -> Vec<EnvName> {
     [
         "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
         "CLAUDE_CODE_MESSAGING_TOKEN",
         "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
     ]
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static secret env name is valid"))

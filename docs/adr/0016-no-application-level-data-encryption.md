@@ -58,14 +58,16 @@ and WAL stand, and its durability rule stands as amended by
      the version, then the purpose, organization ID and office ID, each prefixed with
      its one-byte length. `org-pki` takes raw bytes; the office store keeps the record
      as opaque bytes, and the worker application composes the two.
-   - **Provider credentials wrapped by the office worker (2026-11-19, [ADR-0032](0032-browser-driven-cli-signin-and-remote-token-distribution.md)):**
+   - **Provider credentials wrapped by the office worker (2026-11-19, updated 2026-11-21 for TASK-11, [ADR-0032](0032-browser-driven-cli-signin-and-remote-token-distribution.md)):**
      when the office worker (`agentic-org-office`) stores wrapped vendor sign-in
      credentials under `durable/local/offices/<office-id>/auth/<connection-id>/`, it
-     uses the same AES-256-GCM record format under the office secrets key with a
-     **separate** authenticated-data domain string, `agentic-org/provider-credential/v1`,
-     binding `(version, purpose, organization_id, office_id, connection_id)`. Separating
-     the domain ensures a wrapped provider credential can never be unwrapped as an office
-     private key or replayed across offices or connections.
+     MUST use a **cryptographically distinct wrapping key** derived via HKDF-SHA256
+     (`org_pki::wrap::derive_wrapping_key(office_secrets_key, KeyClass::ProviderCredential)`,
+     separate from `KeyClass::OfficePrivateKey` used for Org CA/TLS keys) and the
+     dedicated authenticated-data domain `agentic-org/provider-credential/v1`,
+     binding `(version, "provider-credential", organization_id, office_id, connection_id)`.
+     Separating both the wrapping key and the AAD domain ensures Org CA keys and
+     provider OAuth tokens share neither key material nor ciphertext domain.
    - The host never receives the wrapped keys, so the rules of ADR-0007 and ADR-0011
      stand. The HQ-creation commit stays one record in one transaction; only how the
      private key bytes are protected inside that record changes.
