@@ -1451,10 +1451,14 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 .hb-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
 .hb-brief { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .hb-eyebrow {
-  display: inline-flex; align-items: center; gap: 8px;
+  display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px;
   font-size: 0.72rem; line-height: 1rem; font-weight: 650;
-  letter-spacing: .08em; text-transform: uppercase; color: #7C91AE;
+  letter-spacing: .07em; text-transform: uppercase; color: #7C91AE;
 }
+.hb-eyebrow-meta { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; letter-spacing: .03em; text-transform: none; color: #74849B; }
+.hb-eyebrow-meta a { color: #8BA1BE; transition: color .14s ease; }
+.hb-eyebrow-meta a:hover { color: #E2E8F0; }
+.hb-eyebrow-meta .warn-dot { color: #FDA4AF; }
 .hb-title {
   font-size: clamp(1.375rem, 2.2vw, 1.875rem);
   line-height: 1.22; font-weight: 600; letter-spacing: -.03em; color: var(--hb-ink);
@@ -1475,8 +1479,8 @@ select.field option { background: #0E1629; color: #F8FAFC; }
 .hb-pill-link:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 222, 255, .18), inset 0 0 0 1px var(--hb-border-hi); color: var(--hb-ink); }
 .hb-pill-link b { color: var(--hb-ink); font-weight: 650; font-variant-numeric: tabular-nums; }
 
-/* Zone 1b: 4-Up Mission-Control Vital Sign Metrics (always visible, even when Inbox = 0) */
-.hb-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+/* Zone 1b: 5-Up Decision-Driving Metrics (single crisp row) */
+.hb-metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
 .hb-metric {
   display: flex; flex-direction: column; gap: 6px;
   padding: 13px 15px; border-radius: 14px;
@@ -1807,19 +1811,16 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 .hb-tleg.queued strong { color: #94A3B8; }
 .hb-time-note { font-size: 0.8125rem; line-height: 1.45; color: var(--hb-muted); }
 
+@media (max-width: 1240px) {
+  .hb-metrics { grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); }
+}
 @media (max-width: 1120px) {
-  .hb-metrics, .hb-kpi-ribbon { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .hb-kpi-cell { border-bottom: 1px solid rgba(186, 222, 255, .08); }
-  .hb-kpi-cell:nth-child(2n) { border-right: 0; }
-  .hb-kpi-cell:nth-last-child(-n+2) { border-bottom: 0; }
   .hb-stage { grid-template-columns: 1fr; }
   .hb-bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
   .hb { padding: 20px var(--gutter) 40px; gap: 20px; }
-  .hb-metrics, .hb-kpi-ribbon, .hb-bento { grid-template-columns: 1fr; }
-  .hb-kpi-cell { border-right: 0; border-bottom: 1px solid rgba(186, 222, 255, .08); }
-  .hb-kpi-cell:last-child { border-bottom: 0; }
+  .hb-metrics, .hb-bento { grid-template-columns: 1fr; }
   .hb-spot { padding: 18px; min-height: 0; }
 }
 
@@ -2701,53 +2702,37 @@ function pageHome() {
           : `${greet} <em class="ok">All clear</em> across your organization.`;
 
   const renderMetrics = () => {
-    if (st === "loading") return skel(4, "Loading organization vital signs…");
+    if (st === "loading") return skel(5, "Loading decision metrics…");
     if (st === "error") return "";
     const emptyMode = st === "empty";
-    return `<div class="hb-metrics-wrap">
-      <section class="hb-metrics" aria-label="Organization vital signs">
-        <a class="hb-metric" href="#/activity">
-          <div class="hb-metric-top"><span>Completed (24h)</span>${ic("check-circle", "ic14 c-green")}</div>
-          <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "0" : "6"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">on pace</span>`}</div>
-          <div class="hb-metric-sub">${emptyMode ? "No finished work yet" : v1 ? "8 autonomous runs · 1 issue" : `${working.length} active now · 1 needs check`}</div>
-        </a>
-        <a class="hb-metric" href="#/work">
-          <div class="hb-metric-top"><span>Needs attention</span>${ic("warn", "ic14 c-amber")}</div>
-          <div class="hb-metric-val"><span class="hb-metric-num">${blockedWork.length}</span>${blockedWork.length ? `<span class="hb-metric-delta warn">blocked</span>` : `<span class="hb-metric-delta">clear</span>`}</div>
-          <div class="hb-metric-sub">${blockedWork.length ? `${plural(blockedWork.length, "task", "tasks")} paused · ${open.length} in Inbox` : "All work flowing smoothly"}</div>
-        </a>
-        <a class="hb-metric" href="#/settings/offices">
-          <div class="hb-metric-top"><span>Team &amp; offices</span>${ic("office", "ic14 c-indigo")}</div>
-          <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "1 / 1" : "1 / 2"}</span>${emptyMode ? `<span class="hb-metric-delta">all online</span>` : `<span class="hb-metric-delta bad">1 offline</span>`}</div>
-          <div class="hb-metric-sub">${emptyMode ? "HQ online · ready" : "HQ live · Build box offline"}</div>
-        </a>
-        <a class="hb-metric" href="#/settings/agents/jules">
-          <div class="hb-metric-top"><span>Monthly spend</span>${ic("bolt", "ic14 c-amber")}</div>
-          <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-metric-cap">${emptyMode ? "/ $210" : "/ $210 · 68%"}</span></div>
-          <div class="hb-mini-bar" aria-hidden="true"><span style="width:${emptyMode ? 0 : 68}%"></span></div>
-          <div class="hb-metric-sub">${emptyMode ? "No spend recorded yet" : "Jules at cap · ~$6.80/day"}</div>
-        </a>
-      </section>
-
-      <section class="hb-kpi-ribbon" aria-label="Delivery and autonomy metrics">
-        <div class="hb-kpi-cell" title="Average time from task start to accepted completion (last 7 days)">
-          <span class="hb-kpi-lbl">Cycle time</span>
-          <span class="hb-kpi-r"><strong>${emptyMode ? "—" : "18m"}</strong>${emptyMode ? "" : `<span class="d">-14%</span>`}</span>
-        </div>
-        <div class="hb-kpi-cell" title="Percentage of tasks accepted on the first pass without rework">
-          <span class="hb-kpi-lbl">First-pass acceptance</span>
-          <span class="hb-kpi-r"><strong>${emptyMode ? "—" : "84%"}</strong>${emptyMode ? "" : `<span class="d">+6%</span>`}</span>
-        </div>
-        <div class="hb-kpi-cell" title="Percentage of completed tasks sent back for rework or changes">
-          <span class="hb-kpi-lbl">Rework rate</span>
-          <span class="hb-kpi-r"><strong>${emptyMode ? "—" : "16%"}</strong>${emptyMode ? "" : `<span class="d">-3%</span>`}</span>
-        </div>
-        <div class="hb-kpi-cell" title="Human-in-the-Loop rate: percentage of autonomous runs that paused for human input">
-          <span class="hb-kpi-lbl">HITL rate</span>
-          <span class="hb-kpi-r"><strong>${emptyMode ? "—" : "22%"}</strong>${emptyMode ? "" : `<span class="d neutral">78% auto</span>`}</span>
-        </div>
-      </section>
-    </div>`;
+    return `<section class="hb-metrics" aria-label="Decision metrics">
+      <a class="hb-metric" href="#/work">
+        <div class="hb-metric-top"><span>Needs attention</span>${ic("warn", "ic14 c-amber")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${blockedWork.length}</span>${blockedWork.length ? `<span class="hb-metric-delta warn">blocked</span>` : `<span class="hb-metric-delta">clear</span>`}</div>
+        <div class="hb-metric-sub">${blockedWork.length ? `${plural(blockedWork.length, "task", "tasks")} paused · ${open.length} in Inbox` : "All work flowing smoothly"}</div>
+      </a>
+      <a class="hb-metric" href="#/settings/agents/jules">
+        <div class="hb-metric-top"><span>Monthly spend</span>${ic("bolt", "ic14 c-amber")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-metric-cap">${emptyMode ? "/ $210" : "/ $210 · 68%"}</span></div>
+        <div class="hb-mini-bar" aria-hidden="true"><span style="width:${emptyMode ? 0 : 68}%"></span></div>
+        <div class="hb-metric-sub">${emptyMode ? "No spend recorded yet" : "Jules at cap · ~$6.80/day"}</div>
+      </a>
+      <a class="hb-metric" href="#/activity" title="Average time from task start to accepted completion (last 7 days)">
+        <div class="hb-metric-top"><span>Cycle time</span>${ic("clock", "ic14 c-indigo")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "—" : "18m"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">-14%</span>`}</div>
+        <div class="hb-metric-sub">${emptyMode ? "No completed tasks yet" : "Avg start to accepted"}</div>
+      </a>
+      <a class="hb-metric" href="#/work" title="Percentage of tasks accepted on the first pass without rework">
+        <div class="hb-metric-top"><span>First-pass accepted</span>${ic("check-circle", "ic14 c-green")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "—" : "84%"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">+6%</span>`}</div>
+        <div class="hb-metric-sub">${emptyMode ? "Awaiting first review" : "16 of 19 tasks · 7d"}</div>
+      </a>
+      <a class="hb-metric" href="#/work" title="Percentage of completed tasks sent back for rework or changes">
+        <div class="hb-metric-top"><span>Rework rate</span>${ic("refresh", "ic14 c-indigo")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "—" : "16%"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">-3%</span>`}</div>
+        <div class="hb-metric-sub">${emptyMode ? "No rework recorded" : "3 of 19 tasks · 7d"}</div>
+      </a>
+    </section>`;
   };
 
   const renderSpotlight = () => {
@@ -2928,7 +2913,11 @@ function pageHome() {
   return `<div class="hb">
     <header class="hb-hero">
       <div class="hb-brief">
-        <div class="hb-eyebrow"><span class="h4-live-dot${st === "error" ? " is-error" : ""}" aria-hidden="true"></span><span>${st === "error" ? "HQ Office · Unreachable" : "HQ Office · Online"}</span></div>
+        <div class="hb-eyebrow">
+          <span class="h4-live-dot${st === "error" ? " is-error" : ""}" aria-hidden="true"></span>
+          <span>${st === "error" ? "HQ Office · Unreachable" : "HQ Office · Online"}</span>
+          ${st !== "error" && st !== "loading" ? `<span class="hb-eyebrow-meta"><span>·</span><a href="#/settings/offices">${st === "empty" ? "1 / 1 office" : `1 / 2 offices <span class="warn-dot">(Build box offline)</span>`}</a><span>·</span><span title="Human-in-the-Loop rate: percentage of runs that paused for human input">HITL ${st === "empty" ? "—" : "22%"}</span></span>` : ""}
+        </div>
         <h1 class="hb-title" tabindex="-1">${headline}</h1>
       </div>
       ${st !== "error" ? `<div class="hb-quick-acts" aria-label="Quick actions">
