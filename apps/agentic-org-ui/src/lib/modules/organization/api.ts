@@ -30,7 +30,8 @@ const gatewayOrgApi = createHttpOrgApi({
 		read: (path, signal) => appSession.controller().read(path, signal),
 		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
 	},
-	instanceId: () => signedInSession()?.instance_id
+	instanceId: () => signedInSession()?.instance_id,
+	newId: () => appSession.newOperationId()
 });
 
 /**

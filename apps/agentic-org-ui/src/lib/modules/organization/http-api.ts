@@ -55,24 +55,165 @@ function isSnapshot(value: unknown): value is OrgSnapshot {
 	);
 }
 
-function prepareOrgCommand(input: OrgCommandInput | OrgCommand): OrgCommand {
+function prepareOrgCommand(input: OrgCommandInput | OrgCommand, newId: () => string): OrgCommand {
 	const explicitId = 'command_id' in input.params ? input.params.command_id : undefined;
-	const operationId =
-		explicitId !== undefined
-			? readOperationId(explicitId)
-			: formatUuidV7(Date.now(), globalThis.crypto.getRandomValues(new Uint8Array(10)));
+	let operationId: string;
+	if (explicitId !== undefined) {
+		try {
+			operationId = readOperationId(explicitId);
+		} catch {
+			throw {
+				source: 'api',
+				code: 'invalid_request',
+				message: 'Operation ID must be a canonical lowercase UUIDv7.'
+			} satisfies AppError;
+		}
+	} else {
+		operationId = readOperationId(newId());
+	}
 	return ready({
 		...input,
 		params: { ...input.params, command_id: operationId }
 	} as OrgCommand);
 }
 
+const SUPPORTED_METHODS: ReadonlySet<string> = new Set([
+	'team.create',
+	'team.rename',
+	'team.move',
+	'team.set_lead',
+	'team.delete',
+	'team.set_title',
+	'member.add_person',
+	'member.update_person',
+	'member.remove',
+	'member.set_reports_to',
+	'member.move'
+]);
+
+/** Closed table mapping implemented B2 organization commands to `/api/v1/organizations/{org}/{route}`. */
+function mapOrgMutation(
+	command: OrgCommand
+): { route: string; params: Record<string, unknown> } | undefined {
+	switch (command.method) {
+		case 'team.create': {
+			const { team_id, name, owner_team_id } = command.params;
+			return {
+				route: 'teams/create',
+				params: { team_id, name, ...(owner_team_id !== undefined ? { owner_team_id } : {}) }
+			};
+		}
+		case 'team.rename': {
+			const { team_id, expected_version, name } = command.params;
+			return { route: 'teams/rename', params: { team_id, expected_version, name } };
+		}
+		case 'team.move': {
+			const { team_id, expected_version, owner_team_id } = command.params;
+			return {
+				route: 'teams/move',
+				params: {
+					team_id,
+					expected_version,
+					...(owner_team_id !== undefined ? { owner_team_id } : {})
+				}
+			};
+		}
+		case 'team.set_lead': {
+			const { team_id, expected_version, lead_member_id } = command.params;
+			return {
+				route: 'teams/set-lead',
+				params: {
+					team_id,
+					expected_version,
+					...(lead_member_id !== undefined ? { lead_member_id } : {})
+				}
+			};
+		}
+		case 'team.delete': {
+			const { team_id, expected_version } = command.params;
+			return { route: 'teams/delete', params: { team_id, expected_version } };
+		}
+		case 'team.set_title': {
+			const { membership_id, expected_version, title_in_team } = command.params;
+			return {
+				route: 'teams/set-title',
+				params: {
+					membership_id,
+					expected_version,
+					...(title_in_team !== undefined ? { title_in_team } : {})
+				}
+			};
+		}
+		case 'member.add_person': {
+			const { member_id, name, contact, handle, home_team_id } = command.params;
+			return {
+				route: 'members/add-person',
+				params: {
+					member_id,
+					name,
+					...(contact !== undefined ? { contact } : {}),
+					...(handle !== undefined ? { handle } : {}),
+					...(home_team_id !== undefined ? { home_team_id } : {})
+				}
+			};
+		}
+		case 'member.update_person': {
+			const { member_id, expected_version, name, contact, clear_contact } = command.params;
+			return {
+				route: 'members/update-person',
+				params: {
+					member_id,
+					expected_version,
+					...(name !== undefined ? { name } : {}),
+					...(contact !== undefined ? { contact } : {}),
+					...(clear_contact ? { clear_contact } : {})
+				}
+			};
+		}
+		case 'member.remove': {
+			const { member_id, expected_version } = command.params;
+			return { route: 'members/remove', params: { member_id, expected_version } };
+		}
+		case 'member.set_reports_to': {
+			const { member_id, expected_version, reports_to_member_id } = command.params;
+			return {
+				route: 'members/set-reports-to',
+				params: {
+					member_id,
+					expected_version,
+					...(reports_to_member_id !== undefined ? { reports_to_member_id } : {})
+				}
+			};
+		}
+		case 'member.move': {
+			const { membership_id, expected_version, new_membership_id, to_team_id, title_in_team } =
+				command.params;
+			return {
+				route: 'members/move',
+				params: {
+					membership_id,
+					expected_version,
+					new_membership_id,
+					to_team_id,
+					...(title_in_team !== undefined ? { title_in_team } : {})
+				}
+			};
+		}
+		default:
+			return undefined;
+	}
+}
+
 function commandFailureFallback(status: number): ApiErrorCode {
-	if (status === 401) return 'not_authorized';
+	if (status === 401 || status === 403) return 'not_authorized';
 	if (status === 404) return 'not_found';
 	if (status === 409) return 'conflict';
+	if (status === 410) return 'expired';
 	return 'unavailable';
 }
+
+const defaultNewId = () =>
+	formatUuidV7(Date.now(), globalThis.crypto.getRandomValues(new Uint8Array(10)));
 
 /**
  * Production HTTP adapter for the organization gateway routes (`/api/v1/organizations/{org}/...`).
@@ -80,10 +221,12 @@ function commandFailureFallback(status: number): ApiErrorCode {
  */
 export function createHttpOrgApi({
 	http,
-	instanceId
+	instanceId,
+	newId = defaultNewId
 }: {
 	http: OrgHttpTransport;
 	instanceId: () => string | undefined;
+	newId?: () => string;
 }): OrgApi {
 	return Object.freeze({
 		async view(organizationId: string) {
@@ -101,7 +244,7 @@ export function createHttpOrgApi({
 			}
 			if (reply.status !== 200) {
 				const fallback: ApiErrorCode =
-					reply.status === 401
+					reply.status === 401 || reply.status === 403
 						? 'not_authorized'
 						: reply.status === 404
 							? 'not_found'
@@ -124,8 +267,16 @@ export function createHttpOrgApi({
 			organizationId: string,
 			input: OrgCommandInput | OrgCommand
 		): Promise<CommandAccepted> {
-			const command = prepareOrgCommand(input);
-			if (command.method !== 'team.create') {
+			if (!SUPPORTED_METHODS.has(input.method)) {
+				throw {
+					source: 'api',
+					code: 'unsupported',
+					message: 'This action is not available over the browser gateway yet.'
+				} satisfies AppError;
+			}
+			const command = prepareOrgCommand(input, newId);
+			const mapped = mapOrgMutation(command);
+			if (!mapped) {
 				throw {
 					source: 'api',
 					code: 'unsupported',
@@ -140,20 +291,15 @@ export function createHttpOrgApi({
 					message: 'Sign in to continue.'
 				} satisfies AppError;
 			}
-			const { command_id, team_id, name, owner_team_id } = command.params;
 			const body = {
-				operation_id: command_id,
+				operation_id: command.params.command_id,
 				scope: { kind: 'organization', instance_id: instance, org_id: organizationId },
-				params: {
-					team_id,
-					name,
-					...(owner_team_id !== undefined ? { owner_team_id } : {})
-				}
+				params: mapped.params
 			};
 			let reply: Reply;
 			try {
 				reply = await http.submit(
-					`/api/v1/organizations/${encodeURIComponent(organizationId)}/teams`,
+					`/api/v1/organizations/${encodeURIComponent(organizationId)}/${mapped.route}`,
 					body
 				);
 			} catch {

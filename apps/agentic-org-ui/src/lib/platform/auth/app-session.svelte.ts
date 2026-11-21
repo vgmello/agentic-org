@@ -1,3 +1,4 @@
+import { createOperationClock, formatUuidV7 } from '../http/clock';
 import { createGatewayPublicHttp, createJsonHttp } from '../http/json-http';
 import { createSessionController, type SessionState } from './session-controller';
 import { createSessionGateway } from './session-gateway';
@@ -20,6 +21,7 @@ function compose() {
 	let state = $state<AppSessionState>({ kind: 'loading' });
 	let controller: Controller | undefined;
 	let booted: Promise<void> | undefined;
+	let operationClock: ReturnType<typeof createOperationClock> | undefined;
 	function get(): Controller {
 		if (controller) return controller;
 		const options = { origin: location.origin, ...LIMITS };
@@ -33,6 +35,13 @@ function compose() {
 			now: () => Date.now(),
 			changed: (next) => {
 				state = next;
+				if (next.kind === 'signed-in' && typeof next.session.server_time_ms === 'number') {
+					const clock = createOperationClock();
+					clock.synchronize(next.session.server_time_ms);
+					operationClock = clock;
+				} else {
+					operationClock = undefined;
+				}
 			}
 		});
 		return controller;
@@ -42,6 +51,11 @@ function compose() {
 			return state;
 		},
 		controller: get,
+		/** Mints a canonical lowercase UUIDv7 calibrated immediately on sign-in/refresh. */
+		newOperationId(): string {
+			if (operationClock) return operationClock.newId();
+			return formatUuidV7(Date.now(), globalThis.crypto.getRandomValues(new Uint8Array(10)));
+		},
 		/** Boots once per page load; later callers share the result. A failed boot can be retried. */
 		boot(retry = false): Promise<void> {
 			if (!booted || retry) {

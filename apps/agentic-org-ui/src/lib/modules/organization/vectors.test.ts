@@ -7,8 +7,6 @@ import { applyCommand, type Ctx } from './reducer';
 import { sampleOrg } from './sample';
 
 // Shared cases against the canonical single-home-team organization contract.
-// Retired multi-membership vectors (`team.add_member`, `team.remove_member`, `ms-*` membership IDs)
-// remain only in the legacy fixture file and are explicitly excluded here.
 type Step = { method: string; params: Record<string, unknown> };
 type Case = {
 	name: string;
@@ -23,21 +21,7 @@ type Case = {
 		lacks?: string[];
 	}[];
 };
-const RETIRED_METHODS = new Set(['team.add_member', 'team.remove_member']);
-const RETIRED_MULTI_TEAM_CASES = new Set([
-	'area.set_team: a lead who is in the new team stays',
-	'project.remove_team: a lead who is in the team taking over keeps leading'
-]);
-const usesRetiredMembership = (c: Case): boolean => {
-	if (RETIRED_MULTI_TEAM_CASES.has(c.name)) return true;
-	const steps = [...(c.setup ?? []), c.command];
-	return steps.some(
-		(s) =>
-			RETIRED_METHODS.has(s.method) ||
-			(typeof s.params.membership_id === 'string' && s.params.membership_id.startsWith('ms-'))
-	);
-};
-const activeCases = (vectors.cases as Case[]).filter((c) => !usesRetiredMembership(c));
+const cases = vectors.cases as Case[];
 
 // The clock and the one office the shared cases use (the Rust runner uses the same).
 const ctx: Ctx = { now: '2026-11-08T12:00:00.000Z', offices: ['office-1'] };
@@ -51,9 +35,8 @@ const cmd = (step: Step, n: number): OrgCommand =>
 	}) as OrgCommand;
 
 describe('shared organization command cases', () => {
-	it('runs every non-retired shared organization scenario', () => {
-		expect(vectors.cases).toHaveLength(252);
-		expect(activeCases).toHaveLength(227);
+	it('runs every canonical single-home-team organization scenario', () => {
+		expect(cases).toHaveLength(227);
 	});
 	it('projects the shared seed without legacy memberships', () => {
 		const sample = sampleOrg('office-1');
@@ -65,7 +48,7 @@ describe('shared organization command cases', () => {
 		expect(sample.members.map((m) => m.id)).toEqual(seed.members.map((m) => m.id));
 		expect(sample).not.toHaveProperty('memberships');
 	});
-	it.each(activeCases)('$name', ({ setup, command, expect: outcome, after }) => {
+	it.each(cases)('$name', ({ setup, command, expect: outcome, after }) => {
 		let s = sampleOrg('office-1');
 		(setup ?? []).forEach((step, i) => (s = applyCommand(s, cmd(step, i), ctx)));
 		if (outcome === 'ok') {

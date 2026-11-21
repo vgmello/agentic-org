@@ -106,6 +106,7 @@ export const API_ERROR_CODES = [
 	'snapshot_required',
 	'expired',
 	'clock_skew',
+	'operation_reused',
 	'unknown_recipient',
 	'not_authorized',
 	'unavailable',
@@ -269,8 +270,8 @@ export interface OrgView {
 	sample: boolean;
 }
 
-/** What happened to an organization command: committed by HQ, or queued while HQ is unreachable. */
-export type CommandStatus = 'committed' | 'queued' | 'unknown';
+/** What happened to an organization command: committed by HQ, checked in dry-run, or queued while HQ is unreachable. */
+export type CommandStatus = 'committed' | 'checked' | 'queued' | 'unknown';
 
 /** The answer to every organization command (an error means HQ rejected it). */
 export interface CommandAccepted {
