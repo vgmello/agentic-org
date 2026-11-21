@@ -26,6 +26,9 @@ pub(super) const DATAGRAM_PEER_FULL: i32 = libc::ENOBUFS;
 /// and also to find nothing to read.
 pub(super) const DATAGRAM_PEER_CLOSE_MAY_RESET: bool = true;
 
+/// Closing a Unix stream peer with unread buffered bytes yields EOF on macOS.
+pub(super) const STREAM_PEER_CLOSE_WITH_UNREAD_RESETS: bool = false;
+
 pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
     let (mut uid, mut gid) = (0, 0);
     // SAFETY: both out-pointers are live and writable for the getpeereid call.

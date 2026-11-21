@@ -25,6 +25,9 @@ pub(super) const DATAGRAM_PEER_FULL: i32 = libc::EAGAIN;
 /// No claim beyond POSIX: a receive finds nothing to read.
 pub(super) const DATAGRAM_PEER_CLOSE_MAY_RESET: bool = false;
 
+/// No claim beyond POSIX: closing a stream peer yields EOF.
+pub(super) const STREAM_PEER_CLOSE_WITH_UNREAD_RESETS: bool = false;
+
 pub(super) fn peer_uid(_fd: RawFd) -> io::Result<u32> {
     Err(Refused::unsupported("socket").into())
 }

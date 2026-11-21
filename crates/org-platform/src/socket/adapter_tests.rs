@@ -11,7 +11,7 @@ use std::process::Command;
 use super::testing::{bind_path, seqpacket_pair, CONNECTED_STREAM_CAN_LISTEN, SEQPACKET};
 use super::{
     send_flags, DATAGRAM_PEER_CLOSE_MAY_RESET, DATAGRAM_PEER_FULL, PEER_CLOSED_IS_EINVAL,
-    SEND_SUPPRESSES_SIGPIPE,
+    SEND_SUPPRESSES_SIGPIPE, STREAM_PEER_CLOSE_WITH_UNREAD_RESETS,
 };
 
 #[test]
@@ -157,5 +157,27 @@ fn the_send_flags_suppress_sigpipe_exactly_where_the_fact_says() {
         assert!(String::from_utf8_lossy(&output.stdout).contains("survived the send"));
     } else {
         assert_eq!(output.status.signal(), Some(libc::SIGPIPE), "{output:?}");
+    }
+}
+
+/// Closing a Unix stream peer with unread bytes in its receive buffer causes `ECONNRESET`
+/// on the remaining side exactly where `STREAM_PEER_CLOSE_WITH_UNREAD_RESETS` says, and
+/// plain EOF otherwise.
+#[test]
+fn stream_peer_close_with_unread_bytes_matches_the_fact() {
+    use std::io::Read;
+    let (peer, mut local) = UnixStream::pair().unwrap();
+    local.write_all(b"unread").unwrap();
+    drop(peer);
+    let mut byte = [0u8; 1];
+    let result = local.read(&mut byte);
+    if STREAM_PEER_CLOSE_WITH_UNREAD_RESETS {
+        let error = result.expect_err("expected ECONNRESET on peer close with unread bytes");
+        assert_eq!(error.raw_os_error(), Some(libc::ECONNRESET), "{error:?}");
+    } else {
+        assert_eq!(
+            result.expect("expected EOF on peer close with unread bytes"),
+            0
+        );
     }
 }

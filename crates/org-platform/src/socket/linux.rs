@@ -31,6 +31,9 @@ pub(super) const DATAGRAM_PEER_FULL: i32 = libc::EAGAIN;
 /// A receive after the datagram peer closed only finds nothing to read.
 pub(super) const DATAGRAM_PEER_CLOSE_MAY_RESET: bool = false;
 
+/// Closing a Unix stream peer with unread buffered bytes resets the connection on Linux.
+pub(super) const STREAM_PEER_CLOSE_WITH_UNREAD_RESETS: bool = true;
+
 pub(super) fn peer_uid(fd: RawFd) -> io::Result<u32> {
     // SAFETY: every bit pattern is valid for ucred's integer fields.
     let mut cred: libc::ucred = unsafe { std::mem::zeroed() };

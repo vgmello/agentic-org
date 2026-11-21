@@ -411,22 +411,28 @@ fn handoff_fault_child() {
             "poison_fence" => {
                 // Configure the host and receive Ready before poisoning. No header byte is
                 // sent until the shared fence is poisoned, irrespective of worker scheduling.
-                #[cfg(target_os = "macos")]
-                let _ = std::panic::catch_unwind(|| {
-                    let _guard = fence.lock().unwrap();
-                    panic!("synthetic poisoned receive/spawn fence");
-                });
+                if org_platform::socket::RECEIVED_CLOSE_ON_EXEC
+                    == org_platform::socket::ReceivedCloseOnExec::UnderTheFence
+                {
+                    let _ = std::panic::catch_unwind(|| {
+                        let _guard = fence.lock().unwrap();
+                        panic!("synthetic poisoned receive/spawn fence");
+                    });
+                }
                 let _ = stream.write_all(&header);
                 let _ = try_send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd()]);
             }
             "poison_fence_marker" => {
                 stream.write_all(&header).unwrap();
                 header_consumed.recv_timeout(WAIT).unwrap();
-                #[cfg(target_os = "macos")]
-                let _ = std::panic::catch_unwind(|| {
-                    let _guard = fence.lock().unwrap();
-                    panic!("poison original caller fence only after complete header");
-                });
+                if org_platform::socket::RECEIVED_CLOSE_ON_EXEC
+                    == org_platform::socket::ReceivedCloseOnExec::UnderTheFence
+                {
+                    let _ = std::panic::catch_unwind(|| {
+                        let _guard = fence.lock().unwrap();
+                        panic!("poison original caller fence only after complete header");
+                    });
+                }
                 send_fds(&stream, org_office_launch::FD_MARKER, &[fd.as_raw_fd()]);
                 resume.send(()).unwrap();
             }
@@ -555,11 +561,13 @@ fn handoff_fault_child() {
 
 #[test]
 fn malformed_headers_and_descriptor_faults_end_startup_without_events() {
-    for case in [
-        #[cfg(target_os = "macos")]
-        "poison_fence",
-        #[cfg(target_os = "macos")]
-        "poison_fence_marker",
+    let mut cases = Vec::new();
+    if org_platform::socket::RECEIVED_CLOSE_ON_EXEC
+        == org_platform::socket::ReceivedCloseOnExec::UnderTheFence
+    {
+        cases.extend(["poison_fence", "poison_fence_marker"]);
+    }
+    cases.extend([
         "early_fd",
         "ctrunc_header",
         "eof_header",
@@ -575,7 +583,8 @@ fn malformed_headers_and_descriptor_faults_end_startup_without_events() {
         "extra_fds",
         "ctrunc",
         "wrong_marker",
-    ] {
+    ]);
+    for case in cases {
         let mut child = crate::transfer::tests::spawn_process(
             std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -866,7 +875,8 @@ fn lifetime_probe_child() {
         stream.read_exact(&mut byte).unwrap();
         assert_eq!(byte, [b'X']);
     } else if case == "poison" {
-        #[cfg(target_os = "macos")]
+        if org_platform::socket::RECEIVED_CLOSE_ON_EXEC
+            == org_platform::socket::ReceivedCloseOnExec::UnderTheFence
         {
             let original = Arc::clone(&fence);
             assert!(std::thread::spawn(move || {
@@ -878,9 +888,9 @@ fn lifetime_probe_child() {
             peer.shutdown(std::net::Shutdown::Write).unwrap();
             let _ = lifetime.read(&mut [0]);
             // A replacement fence would accept EOF and incorrectly reach exit0 below.
+        } else {
+            panic!("poisoned receive/spawn fence only applies under ReceivedCloseOnExec::UnderTheFence");
         }
-        #[cfg(not(target_os = "macos"))]
-        panic!("poisoned receive/spawn fence is a macOS-only probe");
     } else {
         assert_eq!(case, "drop");
         drop(control);
@@ -892,12 +902,13 @@ fn lifetime_probe_child() {
 
 #[test]
 fn lifetime_empty_reads_and_control_drop_wake_the_reader() {
-    for case in [
-        ("empty", 0),
-        ("drop", 0),
-        #[cfg(target_os = "macos")]
-        ("poison", 1),
-    ] {
+    let mut cases = vec![("empty", 0), ("drop", 0)];
+    if org_platform::socket::RECEIVED_CLOSE_ON_EXEC
+        == org_platform::socket::ReceivedCloseOnExec::UnderTheFence
+    {
+        cases.push(("poison", 1));
+    }
+    for case in cases {
         let mut child = crate::transfer::tests::spawn_process(
             std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
@@ -1002,7 +1013,7 @@ fn real_rendezvous_eof_and_unread_peer_close_have_measured_platform_outcomes() {
                 Ok(_) => panic!("peer close produced unexpected data"),
             }
         };
-        let reset = unread && cfg!(target_os = "linux");
+        let reset = unread && org_platform::socket::STREAM_PEER_CLOSE_WITH_UNREAD_RESETS;
         let expected = if reset {
             io::ErrorKind::ConnectionReset
         } else {
