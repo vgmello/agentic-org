@@ -1802,7 +1802,7 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 .hb-cu-foot {
   margin-top: auto; padding-top: 12px;
   border-top: 1px solid var(--hb-border);
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
 }
 .hb-cu-link {
   display: inline-flex; align-items: center; gap: 4px;
@@ -1810,15 +1810,6 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
   transition: color .14s ease;
 }
 .hb-cu-link:hover { color: var(--hb-ink); }
-.hb-cu-ask {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 9px; border-radius: 7px;
-  background: rgba(56, 189, 248, .10);
-  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .22);
-  font-size: 0.75rem; font-weight: 600; color: #BAE6FD;
-  transition: background-color .14s ease, color .14s ease, box-shadow .14s ease;
-}
-.hb-cu-ask:hover { background: rgba(56, 189, 248, .20); box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .42); color: #FFFFFF; }
 
 /* Zone 3: Clean Bento Portfolio Row */
 .hb-proj-sec { display: flex; flex-direction: column; gap: 14px; }
@@ -3141,7 +3132,6 @@ function pageHome() {
 
       ${errMode ? "" : `<div class="hb-cu-foot">
         <a class="hb-cu-link" href="#/activity">Full activity log${ic("chev-right", "ic14")}</a>
-        <button class="hb-cu-ask" type="button" data-act="cmdk-open-ai">${ic("sparkle", "ic14")}<span>Ask Org AI</span></button>
       </div>`}
     </aside>`;
   };
