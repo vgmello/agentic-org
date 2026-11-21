@@ -72,7 +72,7 @@ test('Executive UI v2 feature flag, 3 themes (Ocean/Light/Classic), Home, Inbox,
 	await expect(dialog).toBeVisible();
 	await dialog.getByRole('button', { name: 'Team & office status' }).click();
 	await expect(dialog).toContainText('agents active');
-	await page.keyboard.press('Escape');
+	await dialog.getByRole('button', { name: 'ESC' }).click();
 	await expect(dialog).toBeHidden();
 
 	// Navigate to Inbox & Activity
