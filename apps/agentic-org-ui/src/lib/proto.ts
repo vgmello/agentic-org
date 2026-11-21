@@ -223,15 +223,6 @@ export interface Member {
 	version: number;
 }
 
-/** A member in a team. A member can be in any number of teams. */
-export interface Membership {
-	id: string;
-	team_id: string;
-	member_id: string;
-	title_in_team?: string;
-	version: number;
-}
-
 /** A team working on a project. Usually one per project; several teams can share one. */
 export interface ProjectTeam {
 	id: string;
@@ -293,11 +284,23 @@ export interface OrgSnapshot {
 	position: Position;
 	teams: Team[];
 	members: Member[];
-	memberships: Membership[];
 	projects?: ProjectSummary[];
 	project_teams?: ProjectTeam[];
 	/** Every project's areas, deleted ones (tombstones) included. */
 	areas?: Area[];
+}
+
+/** Normalize anything thrown by a call into an `AppError`. */
+export function toAppError(e: unknown): AppError {
+	if (e && typeof e === 'object' && 'source' in e && 'code' in e && 'message' in e) {
+		const error = e as AppError;
+		// A newer office may send a code this build doesn't know: treat it as `unknown`.
+		if (error.source === 'api' && !API_ERROR_CODES.includes(error.code as ApiErrorCode))
+			// `message` is spelled out: on an Error it is not enumerable, so the spread alone would drop it.
+			return { ...error, message: error.message, code: 'unknown' };
+		return error;
+	}
+	return { source: 'app', code: 'internal', message: e instanceof Error ? e.message : String(e) };
 }
 
 export * from './proto-work';

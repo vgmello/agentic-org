@@ -1,7 +1,7 @@
 // Edit from the profile changes who an employee is, never how it runs (our-org-in-the-app §5, PROF-4): name, role,
 // title, focus and handle for an agent; name and contact for a person. Runtime, model and the managed home are
 // execution settings with their own revision, changed in Agent setup.
-import type { AgentChange } from '$lib/org/actions';
+import type { AgentChange } from '$lib/modules/organization/actions';
 import type { Member } from '$lib/proto';
 
 export interface AgentIdentityForm {

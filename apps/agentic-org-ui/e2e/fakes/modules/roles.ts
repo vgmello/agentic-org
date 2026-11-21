@@ -5,8 +5,8 @@
 //   slow · fails (reads fail) · empty · unavailable · stale (organization data unreachable: the last copy)
 //   viewer (no edit rights) · hr-off (the HR lead can't run) · conflict (someone saves first, once)
 //   invalid (one role file's key is not recognized) · save-fails (writes fail)
-import { orgApi } from '$lib/org/api';
-import { newId } from '$lib/org/commands';
+import { orgApi } from '$lib/modules/organization/api';
+import { newId } from '$lib/modules/organization/commands';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { RolesApi } from '../../../src/lib/modules/roles/api';
 import { HR_CANT_RUN } from '../../../src/lib/modules/roles/present';

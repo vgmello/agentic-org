@@ -14,7 +14,7 @@
 		rowLabel,
 		secondaryText,
 		type DisplayStatus
-	} from '$lib/offices/model';
+	} from '$lib/modules/offices/model';
 	import type { OfficeInfo } from '$lib/proto';
 	import OfficeRepairLocation from '../details/OfficeRepairLocation.svelte';
 	import OfficeStatusBadge from '../status/OfficeStatusBadge.svelte';

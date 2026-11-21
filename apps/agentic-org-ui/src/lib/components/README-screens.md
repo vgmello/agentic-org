@@ -31,7 +31,7 @@ import items from '../data/inbox/items.json' with { type: 'json' };
 export const inboxApi: InboxApi = { list: async () => structuredClone(items) as InboxItem[] };
 ```
 
-Data from the org snapshot (members, teams, projects): import `orgApi` from `$lib/org/api` in the fake, as
+Data from the org snapshot (members, teams, projects): import `orgApi` from `$lib/modules/organization/api` in the fake, as
 `e2e/fakes/modules/shell.ts` does, so IDs match the existing pages. Navigation count and lists come from
 `shellApi.navigation()` (`$lib/modules/shell/api`); Home's "Open Inbox (N)" reads `inboxOpen` from it too.
 

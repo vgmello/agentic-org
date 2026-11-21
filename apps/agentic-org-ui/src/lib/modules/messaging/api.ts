@@ -1,4 +1,4 @@
-import { newId } from '$lib/org/commands';
+import { newId } from '$lib/modules/organization/commands';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { ChatAccepted, ChatCall, ChatSnapshot } from './types';
 

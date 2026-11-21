@@ -3,21 +3,27 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
-	import { owner } from '$lib/org/model';
-	import BugSheet from '$lib/components/BugSheet.svelte';
-	import NewRequestDialog from '$lib/components/NewRequestDialog.svelte';
-	import RequestSheet from '$lib/components/RequestSheet.svelte';
-	import RequestsPanel from '$lib/components/RequestsPanel.svelte';
-	import TaskSheet from '$lib/components/TaskSheet.svelte';
+	import { owner } from '$lib/modules/organization/model';
+	import BugSheet from '$lib/modules/work/features/bugs/BugSheet.svelte';
+	import NewRequestDialog from '$lib/modules/work/features/requests/NewRequestDialog.svelte';
+	import RequestSheet from '$lib/modules/work/features/requests/RequestSheet.svelte';
+	import RequestsPanel from '$lib/modules/work/features/requests/RequestsPanel.svelte';
+	import TaskSheet from '$lib/modules/work/features/tasks/TaskSheet.svelte';
 	import { Badge } from '$lib/components/ui/badge';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import type { WorkItemSummary } from '$lib/proto';
-	import { sender, workApi } from '$lib/work';
-	import { requestsNeedingYou } from '$lib/work/requests-view';
-	import { BUG_STATUS_LABEL, bugRef, severityWord } from '$lib/work/bugs';
-	import { nameOf } from '$lib/work/people';
-	import { countOf, defaultFilter, needsYou, savedFilters, type WorkTab } from '$lib/work/saved';
-	import { priorityWord, STATUS_LABEL, taskRef } from '$lib/work/tasks';
+	import { sender, workApi } from '$lib/modules/work';
+	import { requestsNeedingYou } from '$lib/modules/work/requests-view';
+	import { BUG_STATUS_LABEL, bugRef, severityWord } from '$lib/modules/work/bugs';
+	import { nameOf } from '$lib/modules/work/people';
+	import {
+		countOf,
+		defaultFilter,
+		needsYou,
+		savedFilters,
+		type WorkTab
+	} from '$lib/modules/work/saved';
+	import { priorityWord, STATUS_LABEL, taskRef } from '$lib/modules/work/tasks';
 
 	/** Work across every project (work-items-ux §11): Tasks and Bugs with saved filters; "me" is the owner. */
 	let { data } = $props();
@@ -26,9 +32,12 @@
 	const me = $derived(owner(snapshot)?.id ?? 'owner');
 	const send = $derived(sender(organizationId));
 	/** The open requests that read like these words, from the office (offered while typing). */
-	const find = (text: string) => workApi.similar(organizationId, { text, limit: 2 }).then((r) => r.items);
-	const projectKey = (id: string | undefined) => (snapshot.projects ?? []).find((p) => p.id === id)?.key || undefined;
-	const projectName = (id: string | undefined) => (snapshot.projects ?? []).find((p) => p.id === id)?.name ?? 'No project';
+	const find = (text: string) =>
+		workApi.similar(organizationId, { text, limit: 2 }).then((r) => r.items);
+	const projectKey = (id: string | undefined) =>
+		(snapshot.projects ?? []).find((p) => p.id === id)?.key || undefined;
+	const projectName = (id: string | undefined) =>
+		(snapshot.projects ?? []).find((p) => p.id === id)?.name ?? 'No project';
 
 	let items = $state<WorkItemSummary[] | undefined>();
 	let loadError = $state<string | undefined>();
@@ -77,7 +86,11 @@
 		// Only the link's own parameter goes; the rest of the address stays as it was.
 		const rest = new URLSearchParams(page.url.searchParams);
 		rest.delete('request');
-		void goto(`${page.url.pathname}${rest.toString() ? `?${rest}` : ''}`, { replaceState: true, noScroll: true, keepFocus: true });
+		void goto(`${page.url.pathname}${rest.toString() ? `?${rest}` : ''}`, {
+			replaceState: true,
+			noScroll: true,
+			keepFocus: true
+		});
 	});
 
 	// Work opens on the tab it was left on (per organization), as the queue's filters are remembered.
@@ -85,7 +98,8 @@
 	function rememberedTab(): WorkTab {
 		try {
 			const saved = localStorage.getItem(TAB_KEY(organizationId));
-			if (saved === 'tasks' || saved === 'bugs' || (saved === 'requests' && workApi.requests)) return saved;
+			if (saved === 'tasks' || saved === 'bugs' || (saved === 'requests' && workApi.requests))
+				return saved;
 		} catch {
 			// unreadable storage: open on Tasks
 		}
@@ -103,12 +117,27 @@
 	}
 
 	const filters = $derived(savedFilters(tab, me));
-	const active = $derived(filters.find((f) => f.id === filterId) ?? filters[filters.length - 1] ?? { id: '', label: '', test: () => false });
-	const shown = $derived((items ?? []).filter(active.test).sort((a, b) => projectName(a.project_id).localeCompare(projectName(b.project_id)) || (a.number ?? 0) - (b.number ?? 0)));
+	const active = $derived(
+		filters.find((f) => f.id === filterId) ??
+			filters[filters.length - 1] ?? { id: '', label: '', test: () => false }
+	);
+	const shown = $derived(
+		(items ?? [])
+			.filter(active.test)
+			.sort(
+				(a, b) =>
+					projectName(a.project_id).localeCompare(projectName(b.project_id)) ||
+					(a.number ?? 0) - (b.number ?? 0)
+			)
+	);
 	const waiting = $derived(needsYou(items ?? [], me));
 	const requestsWaiting = $derived(requestsNeedingYou(items ?? []));
-	const bugsOf = (projectId: string | undefined) => (items ?? []).filter((i) => i.kind === 'bug' && i.project_id === projectId);
-	const areasOf = (projectId: string | undefined) => (snapshot.areas ?? []).filter((a) => a.project_id === projectId && !a.deleted).map((a) => ({ id: a.id, name: a.name, general: a.general }));
+	const bugsOf = (projectId: string | undefined) =>
+		(items ?? []).filter((i) => i.kind === 'bug' && i.project_id === projectId);
+	const areasOf = (projectId: string | undefined) =>
+		(snapshot.areas ?? [])
+			.filter((a) => a.project_id === projectId && !a.deleted)
+			.map((a) => ({ id: a.id, name: a.name, general: a.general }));
 	const bugProject = $derived((items ?? []).find((i) => i.id === bugId)?.project_id);
 </script>
 
@@ -116,53 +145,148 @@
 
 <div class="space-y-5 px-4 py-6 sm:px-8">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<p class="text-sm/6 text-fg-muted">{tab === 'requests' ? 'Requests across every project.' : 'Tasks and bugs across every project.'} <Badge variant="secondary">Sample data</Badge></p>
-		<p class="text-sm/6 {waiting > 0 ? 'font-semibold text-warning-text-strong' : 'text-fg-muted'}" data-testid="needs-you">{waiting === 0 ? 'Nothing needs you.' : `${waiting} ${waiting === 1 ? 'item needs' : 'items need'} you`}</p>
+		<p class="text-sm/6 text-fg-muted">
+			{tab === 'requests'
+				? 'Requests across every project.'
+				: 'Tasks and bugs across every project.'}
+			<Badge variant="secondary">Sample data</Badge>
+		</p>
+		<p
+			class="text-sm/6 {waiting > 0 ? 'font-semibold text-warning-text-strong' : 'text-fg-muted'}"
+			data-testid="needs-you"
+		>
+			{waiting === 0
+				? 'Nothing needs you.'
+				: `${waiting} ${waiting === 1 ? 'item needs' : 'items need'} you`}
+		</p>
 	</div>
 
 	<div role="tablist" aria-label="Work" class="flex flex-wrap gap-x-1 border-b border-line">
 		{#each [['tasks', 'Tasks'], ['bugs', 'Bugs']] as const as [id, name] (id)}
-			<button type="button" role="tab" aria-selected={tab === id} onclick={() => pick(id)} class="min-h-11 px-3 py-2 text-sm/6 sm:min-h-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {tab === id ? 'border-b-2 border-brand font-semibold text-fg' : 'text-fg-secondary hover:text-fg'}">{name}</button>
+			<button
+				type="button"
+				role="tab"
+				aria-selected={tab === id}
+				onclick={() => pick(id)}
+				class="min-h-11 px-3 py-2 text-sm/6 sm:min-h-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {tab ===
+				id
+					? 'border-b-2 border-brand font-semibold text-fg'
+					: 'text-fg-secondary hover:text-fg'}">{name}</button
+			>
 		{/each}
 		{#each ['Debt'] as name (name)}
-			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="inline-flex min-h-11 cursor-not-allowed items-center px-3 py-2 text-sm/6 text-fg-subtle sm:min-h-0">{name}</span>
+			<span
+				role="tab"
+				aria-selected="false"
+				aria-disabled="true"
+				title="Available in a later release"
+				class="inline-flex min-h-11 cursor-not-allowed items-center px-3 py-2 text-sm/6 text-fg-subtle sm:min-h-0"
+				>{name}</span
+			>
 		{/each}
 		{#if requestsOn}
-			<button type="button" role="tab" aria-selected={tab === 'requests'} onclick={() => pick('requests')} class="min-h-11 px-3 py-2 text-sm/6 sm:min-h-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {tab === 'requests' ? 'border-b-2 border-brand font-semibold text-fg' : 'text-fg-secondary hover:text-fg'}">Requests{#if requestsWaiting > 0}<span class="ml-1.5 rounded-full bg-warning-emphasis/20 px-1.5 text-xs/5 text-warning-text-strong" data-testid="requests-badge">{requestsWaiting}</span>{/if}</button>
+			<button
+				type="button"
+				role="tab"
+				aria-selected={tab === 'requests'}
+				onclick={() => pick('requests')}
+				class="min-h-11 px-3 py-2 text-sm/6 sm:min-h-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus {tab ===
+				'requests'
+					? 'border-b-2 border-brand font-semibold text-fg'
+					: 'text-fg-secondary hover:text-fg'}"
+				>Requests{#if requestsWaiting > 0}<span
+						class="ml-1.5 rounded-full bg-warning-emphasis/20 px-1.5 text-xs/5 text-warning-text-strong"
+						data-testid="requests-badge">{requestsWaiting}</span
+					>{/if}</button
+			>
 		{/if}
 		{#if !requestsOn}
-			<span role="tab" aria-selected="false" aria-disabled="true" title="Available in a later release" class="inline-flex min-h-11 cursor-not-allowed items-center px-3 py-2 text-sm/6 text-fg-subtle sm:min-h-0">Requests</span>
+			<span
+				role="tab"
+				aria-selected="false"
+				aria-disabled="true"
+				title="Available in a later release"
+				class="inline-flex min-h-11 cursor-not-allowed items-center px-3 py-2 text-sm/6 text-fg-subtle sm:min-h-0"
+				>Requests</span
+			>
 		{/if}
 	</div>
 
 	{#if loadError}
-		<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-danger-text" role="alert">{tab === 'requests' ? "Can't load requests." : loadError} <button class="underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus" onclick={load}>{tab === 'requests' ? 'Retry' : 'Try again'}</button></p>
+		<p
+			class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-danger-text"
+			role="alert"
+		>
+			{tab === 'requests' ? "Can't load requests." : loadError}
+			<button
+				class="underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+				onclick={load}>{tab === 'requests' ? 'Retry' : 'Try again'}</button
+			>
+		</p>
 	{:else if items === undefined}
 		{#if tab === 'requests'}
-			<ul class="divide-y divide-line-subtle rounded-xl bg-surface-raised" aria-busy="true" aria-label="Loading requests" data-testid="requests-loading">
-				{#each [0, 1, 2] as n (n)}<li class="flex items-center gap-x-3 px-4 py-3"><span class="h-4 w-14 animate-pulse rounded bg-surface-overlay"></span><span class="h-4 flex-1 animate-pulse rounded bg-surface-overlay"></span><span class="h-4 w-24 animate-pulse rounded bg-surface-overlay"></span></li>{/each}
+			<ul
+				class="divide-y divide-line-subtle rounded-xl bg-surface-raised"
+				aria-busy="true"
+				aria-label="Loading requests"
+				data-testid="requests-loading"
+			>
+				{#each [0, 1, 2] as n (n)}<li class="flex items-center gap-x-3 px-4 py-3">
+						<span class="h-4 w-14 animate-pulse rounded bg-surface-overlay"></span><span
+							class="h-4 flex-1 animate-pulse rounded bg-surface-overlay"
+						></span><span class="h-4 w-24 animate-pulse rounded bg-surface-overlay"></span>
+					</li>{/each}
 			</ul>
 		{:else}
 			<p class="text-sm/6 text-fg-muted">Loading work…</p>
 		{/if}
 	{:else if tab === 'requests'}
-		{#key organizationId}<RequestsPanel items={items} {snapshot} {me} {now} {organizationId} onopen={(id, start) => ((requestId = id), (requestStart = start), (requestOpen = true))} onnew={() => (newRequestOpen = true)} />{/key}
+		{#key organizationId}<RequestsPanel
+				{items}
+				{snapshot}
+				{me}
+				{now}
+				{organizationId}
+				onopen={(id, start) => ((requestId = id), (requestStart = start), (requestOpen = true))}
+				onnew={() => (newRequestOpen = true)}
+			/>{/key}
 	{:else if (snapshot.projects ?? []).length === 0}
-		<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-secondary" data-testid="no-projects">No projects yet. Work items live in projects.</p>
+		<p
+			class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-secondary"
+			data-testid="no-projects"
+		>
+			No projects yet. Work items live in projects.
+		</p>
 	{:else}
 		<div class="grid gap-5 md:grid-cols-[14rem_1fr]">
 			<nav aria-label="Saved filters" class="space-y-1">
 				{#each filters as f (f.id)}
-					<button type="button" aria-pressed={active.id === f.id} data-filter={f.id} onclick={() => ((chosen = true), (filterId = f.id))} class="flex w-full items-center justify-between rounded-md px-3 py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:outline-focus {active.id === f.id ? 'bg-surface-overlay font-semibold text-fg' : 'text-fg-secondary hover:bg-surface-raised'}">
+					<button
+						type="button"
+						aria-pressed={active.id === f.id}
+						data-filter={f.id}
+						onclick={() => ((chosen = true), (filterId = f.id))}
+						class="flex w-full items-center justify-between rounded-md px-3 py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:outline-focus {active.id ===
+						f.id
+							? 'bg-surface-overlay font-semibold text-fg'
+							: 'text-fg-secondary hover:bg-surface-raised'}"
+					>
 						<span>{f.label}</span><span class="text-fg-muted">{countOf(items, f)}</span>
 					</button>
 				{/each}
 			</nav>
 
 			{#if shown.length === 0}
-				<p class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-muted" data-testid="no-match">Nothing here.</p>
+				<p
+					class="rounded-xl bg-surface-raised px-6 py-8 text-center text-sm/6 text-fg-muted"
+					data-testid="no-match"
+				>
+					Nothing here.
+				</p>
 			{:else}
-				<div class="overflow-x-auto rounded-xl bg-surface-raised outline-1 -outline-offset-1 outline-line">
+				<div
+					class="overflow-x-auto rounded-xl bg-surface-raised outline-1 -outline-offset-1 outline-line"
+				>
 					<table class="w-full text-left text-sm/6" data-testid="work-list">
 						<caption class="sr-only">{active.label}</caption>
 						<thead class="text-xs/5 text-fg-muted">
@@ -170,7 +294,9 @@
 								<th scope="col" class="px-4 py-2 font-medium">Item</th>
 								<th scope="col" class="px-4 py-2 font-medium">Title</th>
 								<th scope="col" class="px-4 py-2 font-medium">Project</th>
-								<th scope="col" class="px-4 py-2 font-medium">{tab === 'tasks' ? 'Priority' : 'Severity'}</th>
+								<th scope="col" class="px-4 py-2 font-medium"
+									>{tab === 'tasks' ? 'Priority' : 'Severity'}</th
+								>
 								<th scope="col" class="px-4 py-2 font-medium">Status</th>
 								<th scope="col" class="px-4 py-2 font-medium">Assignee</th>
 							</tr>
@@ -178,11 +304,34 @@
 						<tbody class="divide-y divide-line-subtle text-fg-body">
 							{#each shown as item (item.id)}
 								<tr data-testid="work-row" data-item={item.id}>
-									<td class="px-4 py-2 text-fg-muted">{item.kind === 'bug' ? bugRef(item, projectKey(item.project_id)) : taskRef(item, projectKey(item.project_id))}</td>
-									<th scope="row" class="px-4 py-2 font-normal"><button type="button" class="text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-focus [overflow-wrap:anywhere]" onclick={() => (item.kind === 'bug' ? ((bugId = item.id), (bugOpen = true)) : ((taskId = item.id), (taskOpen = true)))}>{item.title}</button></th>
-									<td class="px-4 py-2" data-testid="work-project">{projectName(item.project_id)}</td>
-									<td class="px-4 py-2">{item.kind === 'bug' ? severityWord(item.severity) : (priorityWord(item.priority) ?? '')}</td>
-									<td class="px-4 py-2">{item.kind === 'bug' ? (BUG_STATUS_LABEL[item.status] ?? item.status) : (STATUS_LABEL[item.status as 'todo'] ?? item.status)}</td>
+									<td class="px-4 py-2 text-fg-muted"
+										>{item.kind === 'bug'
+											? bugRef(item, projectKey(item.project_id))
+											: taskRef(item, projectKey(item.project_id))}</td
+									>
+									<th scope="row" class="px-4 py-2 font-normal"
+										><button
+											type="button"
+											class="text-left font-semibold text-fg hover:underline focus-visible:outline-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
+											onclick={() =>
+												item.kind === 'bug'
+													? ((bugId = item.id), (bugOpen = true))
+													: ((taskId = item.id), (taskOpen = true))}>{item.title}</button
+										></th
+									>
+									<td class="px-4 py-2" data-testid="work-project"
+										>{projectName(item.project_id)}</td
+									>
+									<td class="px-4 py-2"
+										>{item.kind === 'bug'
+											? severityWord(item.severity)
+											: (priorityWord(item.priority) ?? '')}</td
+									>
+									<td class="px-4 py-2"
+										>{item.kind === 'bug'
+											? (BUG_STATUS_LABEL[item.status] ?? item.status)
+											: (STATUS_LABEL[item.status as 'todo'] ?? item.status)}</td
+									>
 									<td class="px-4 py-2 text-fg-muted">{nameOf(snapshot, item.assignee_id)}</td>
 								</tr>
 							{/each}
@@ -194,7 +343,44 @@
 	{/if}
 </div>
 
-<NewRequestDialog bind:open={newRequestOpen} {snapshot} {find} {send} ondone={({ ref, sentTo }) => (toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`), void load())} onadded={(ref) => (toast.success(`Added to ${ref}.`), void load())} />
-<RequestSheet bind:open={requestOpen} {organizationId} {requestId} start={requestStart} {snapshot} {me} items={items ?? []} {send} onchanged={(message) => (message && toast.success(message), void load())} />
-<TaskSheet bind:open={taskOpen} {organizationId} {taskId} {snapshot} {send} onchanged={() => void load()} />
-<BugSheet bind:open={bugOpen} {organizationId} {bugId} {snapshot} areas={areasOf(bugProject)} bugs={bugsOf(bugProject)} items={items ?? []} {send} onchanged={() => void load()} />
+<NewRequestDialog
+	bind:open={newRequestOpen}
+	{snapshot}
+	{find}
+	{send}
+	ondone={({ ref, sentTo }) => (
+		toast.success(sentTo ? `${ref} sent to ${sentTo}.` : `${ref} saved.`),
+		void load()
+	)}
+	onadded={(ref) => (toast.success(`Added to ${ref}.`), void load())}
+/>
+<RequestSheet
+	bind:open={requestOpen}
+	{organizationId}
+	{requestId}
+	start={requestStart}
+	{snapshot}
+	{me}
+	items={items ?? []}
+	{send}
+	onchanged={(message) => (message && toast.success(message), void load())}
+/>
+<TaskSheet
+	bind:open={taskOpen}
+	{organizationId}
+	{taskId}
+	{snapshot}
+	{send}
+	onchanged={() => void load()}
+/>
+<BugSheet
+	bind:open={bugOpen}
+	{organizationId}
+	{bugId}
+	{snapshot}
+	areas={areasOf(bugProject)}
+	bugs={bugsOf(bugProject)}
+	items={items ?? []}
+	{send}
+	onchanged={() => void load()}
+/>

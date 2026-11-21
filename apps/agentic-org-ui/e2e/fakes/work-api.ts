@@ -1,8 +1,8 @@
-export { workSender } from '../../src/lib/work/index';
-export type { WorkDraft } from '../../src/lib/work/index';
-import { workSender } from '../../src/lib/work/index';
-import { createMockWork } from '../../src/lib/work/mock';
-import { orgApi } from '$lib/org/api';
+export { workSender } from '../../src/lib/modules/work/index';
+export type { WorkDraft } from '../../src/lib/modules/work/index';
+import { workSender } from '../../src/lib/modules/work/index';
+import { createMockWork } from '../../src/lib/modules/work/mock';
+import { orgApi } from '$lib/modules/organization/api';
 
 export const workApi = createMockWork(orgApi);
 export const sender = workSender(workApi);

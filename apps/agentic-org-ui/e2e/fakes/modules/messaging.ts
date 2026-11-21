@@ -4,7 +4,7 @@ export {
 	type ChatScenario,
 	type MockChatOptions
 } from '../../../src/lib/modules/messaging/mock';
-import { orgApi } from '$lib/org/api';
+import { orgApi } from '$lib/modules/organization/api';
 import { chatSender } from '../../../src/lib/modules/messaging/api';
 import { createMockChat } from '../../../src/lib/modules/messaging/mock';
 

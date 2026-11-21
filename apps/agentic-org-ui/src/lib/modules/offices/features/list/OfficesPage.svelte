@@ -19,10 +19,16 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { OffboardAgentDialog } from '$lib/modules/employees';
-	import { toAppError } from '$lib/office/api';
-	import { agentsIn, isHq, orderOffices, statusInfo, unplacedAgents } from '$lib/offices/model';
-	import { orgApi } from '$lib/org/api';
-	import { sessionFor } from '$lib/org/session';
+	import { toAppError } from '$lib/proto';
+	import {
+		agentsIn,
+		isHq,
+		orderOffices,
+		statusInfo,
+		unplacedAgents
+	} from '$lib/modules/offices/model';
+	import { orgApi } from '$lib/modules/organization/api';
+	import { sessionFor } from '$lib/modules/organization/session';
 	import type { Connection, Member, OfficeInfo } from '$lib/proto';
 	import { officesApi } from '../../api';
 	import { layerOffices, satelliteWhere } from '../../layer';
@@ -639,7 +645,7 @@
 <OffboardAgentDialog
 	bind:open={offboardOpen}
 	agent={offboarding}
-	snapshot={snapshot ?? { position: { epoch: 0, seq: 0 }, teams: [], members: [], memberships: [] }}
+	snapshot={snapshot ?? { position: { epoch: 0, seq: 0 }, teams: [], members: [] }}
 	{session}
 	ondone={async (result) => {
 		if ('name' in result) toast.success(`${result.name} was offboarded.`);

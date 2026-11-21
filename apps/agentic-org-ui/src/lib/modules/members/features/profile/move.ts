@@ -21,13 +21,13 @@ export function movePreview(
  * team the employee is already in (HQ refuses moving someone into a team they belong to).
  */
 export function moveBlock(
-	s: Pick<OrgSnapshot, 'memberships'>,
+	s: Pick<OrgSnapshot, 'members'>,
 	member: { id: string; name: string },
 	fromId: string,
 	teamId: string
 ): string | undefined {
 	if (teamId === fromId) return 'Current home team';
-	if (s.memberships.some((m) => m.member_id === member.id && m.team_id === teamId))
+	if (s.members.some((m) => m.id === member.id && m.home_team_id === teamId))
 		return `${member.name} is already in this team`;
 	return undefined;
 }

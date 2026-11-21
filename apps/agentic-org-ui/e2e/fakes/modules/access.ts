@@ -7,7 +7,7 @@
 //   slow · fails (reads fail) · empty (no people) · unavailable · viewer (no manage rights)
 //   invited (Leo Brandt has an open invitation) · deactivated (Hana Weiss is deactivated)
 //   refuse (the sign-in actions are refused) · gone (the next action on Leo finds him gone: he leaves the list)
-import { officeApi } from '$lib/office/api';
+import { officeApi } from '$lib/modules/offices/office-api';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { AccessApi } from '../../../src/lib/modules/access/api';
 import type { AccessOverview, AccessPerson } from '../../../src/lib/modules/access/types';

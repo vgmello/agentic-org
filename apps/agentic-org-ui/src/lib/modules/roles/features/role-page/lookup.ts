@@ -1,5 +1,5 @@
 // A role's page reads one role: a missing role is a page state (Role not found), not a failure to retry.
-import { toAppError } from '$lib/office/api';
+import { toAppError } from '$lib/proto';
 import type { RoleDetail } from '../../types';
 
 export type RoleLookup = { found: true; detail: RoleDetail } | { found: false; message: string };

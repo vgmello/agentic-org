@@ -11,20 +11,20 @@
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import MiniIcon from '$lib/components/MiniIcon.svelte';
-	import NewRequestDialog from '$lib/components/NewRequestDialog.svelte';
-	import AddPersonSheet from '$lib/components/AddPersonSheet.svelte';
+	import NewRequestDialog from '$lib/modules/work/features/requests/NewRequestDialog.svelte';
+	import AddPersonSheet from '$lib/modules/organization/features/add-person/AddPersonSheet.svelte';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { hireUrl } from '$lib/modules/employees';
 	import { newProjectUrl } from '$lib/modules/projects';
 	import { focusDestinationHeading } from './focus-destination';
 	import { NewMessageDialog } from '$lib/modules/messaging';
 	import { chatMembers } from '$lib/modules/messaging/model';
-	import { toAppError } from '$lib/office/api';
-	import { orgApi } from '$lib/org/api';
-	import { withoutFormer } from '$lib/org/model';
-	import { sessionFor } from '$lib/org/session';
+	import { toAppError } from '$lib/proto';
+	import { orgApi } from '$lib/modules/organization/api';
+	import { withoutFormer } from '$lib/modules/organization/model';
+	import { sessionFor } from '$lib/modules/organization/session';
 	import type { Connection, OrgSnapshot } from '$lib/proto';
-	import { sender as workSender, workApi } from '$lib/work';
+	import { sender as workSender, workApi } from '$lib/modules/work';
 
 	let { connection, shortcutHint = false }: { connection: Connection; shortcutHint?: boolean } =
 		$props();

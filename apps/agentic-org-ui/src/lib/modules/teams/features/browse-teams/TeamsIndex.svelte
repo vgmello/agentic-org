@@ -14,8 +14,8 @@
 	import StatusPill from '$lib/components/StatusPill.svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { HIRE_REQUESTS_URL, hireUrl } from '$lib/modules/employees';
-	import { orgApi } from '$lib/org/api';
-	import { sessionFor } from '$lib/org/session';
+	import { orgApi } from '$lib/modules/organization/api';
+	import { sessionFor } from '$lib/modules/organization/session';
 	import { focusDestinationHeading } from '$lib/platform/shell/focus-destination';
 	import type { OrgSnapshot } from '$lib/proto';
 	import Loaded from '$lib/components/Loaded.svelte';

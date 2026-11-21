@@ -39,7 +39,7 @@ describe('CHAT-2 · automatic channels and channels people add', () => {
 	it('CHAT-2 · members follow the team or project, and a team that is gone archives its channel', () => {
 		const s = fresh();
 		expect([...channelNamed(s, 'web').members].sort()).toEqual(['mira', 'noor', 'you']);
-		expect([...channelNamed(s, 'atlas').members].sort()).toEqual(['kai', 'mira', 'you']);
+		expect([...channelNamed(s, 'atlas').members].sort()).toEqual(['kai', 'you']);
 		const ctx = ctxAs();
 		const moved = syncAuto(s, {
 			...ctx,

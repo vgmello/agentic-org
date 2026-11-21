@@ -1,6 +1,6 @@
 // One read of a place for the Processes views: a place that isn't here (`not_found`) is a state of its own rather
 // than an error with Retry.
-import { toAppError } from '$lib/office/api';
+import { toAppError } from '$lib/proto';
 import { processesApi } from '../../api';
 import type { Place, PlaceView } from '../../types';
 

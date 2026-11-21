@@ -1,4 +1,4 @@
-import type { OrgApi } from '$lib/org/api';
+import type { OrgApi } from '$lib/modules/organization/api';
 import type { ChatApi } from './api';
 import { applyChat, emptyChat, syncAuto, tick } from './engine';
 import { chatContext } from './model';

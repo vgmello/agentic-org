@@ -20,7 +20,7 @@
 	import { gutters, mobileButton } from '$lib/components/classes';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Button } from '$lib/components/ui/button';
-	import { toAppError } from '$lib/office/api';
+	import { toAppError } from '$lib/proto';
 	import { employeesApi } from '../../api';
 	import { HIRE_REQUESTS_URL, REFUSED, cleanProposal, hireUrlWith } from '../../hire';
 	import type { HireRequest } from '../../types';

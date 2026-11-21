@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { loadConnections } from '$lib/office/load';
+import { loadConnections } from '$lib/modules/offices/load';
 
 // The shell needs a remembered connection; without one, start from the welcome screen.
 export async function load({ depends }) {

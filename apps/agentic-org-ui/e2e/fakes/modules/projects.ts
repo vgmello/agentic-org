@@ -8,8 +8,8 @@
 //   slow · fails (reads fail) · empty (no projects) · unavailable · viewer (no create or edit rights)
 //   stale (HQ unreachable: the last copy, changes refused) · conflict (the first save meets a newer revision)
 //   save-fails (writes fail) · create-unknown (the first New project is applied, but its answer is lost)
-import { orgApi } from '$lib/org/api';
-import { newId } from '$lib/org/commands';
+import { orgApi } from '$lib/modules/organization/api';
+import { newId } from '$lib/modules/organization/commands';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { OrgSnapshot } from '$lib/proto';
 import type { ProjectsApi } from '../../../src/lib/modules/projects/api';

@@ -33,11 +33,11 @@
 	} from '$lib/components/ui/dropdown-menu';
 	import { pageTitle } from '$lib/nav';
 	import { cn } from '$lib/utils';
-	import { toAppError } from '$lib/office/api';
-	import { offboardAgent, setAgentStatus } from '$lib/org/actions';
-	import { offboardSummary } from '$lib/org/agents';
-	import { orgApi } from '$lib/org/api';
-	import { sessionFor } from '$lib/org/session';
+	import { toAppError } from '$lib/proto';
+	import { offboardAgent, setAgentStatus } from '$lib/modules/organization/actions';
+	import { offboardSummary } from '$lib/modules/organization/agents';
+	import { orgApi } from '$lib/modules/organization/api';
+	import { sessionFor } from '$lib/modules/organization/session';
 	import type { OrgSnapshot } from '$lib/proto';
 	import { agentSetupApi } from '../../api';
 	import HealthBadge from '../../components/HealthBadge.svelte';

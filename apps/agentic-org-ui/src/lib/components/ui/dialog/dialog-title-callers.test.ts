@@ -16,15 +16,35 @@ function nodes(value: unknown): Node[] {
 // These are compatibility expressions, not native coverage of absent caller models.
 // Parse the checked-in caller so removing its ?? '' fails the absent-value case.
 const cases: [string, number, string, string, boolean?][] = [
-	['components/MoveTeamDialog.svelte', 0, 'Move Name to…', 'Move  to…'],
-	['components/NewRequestDialog.svelte', 0, 'New request', 'New request'],
-	['components/NewTaskDialog.svelte', 0, 'New task', 'New task'],
-	['components/ProjectTeamDialog.svelte', 0, 'Add a project to Team', 'Add a project to '],
-	['components/ProjectTeamDialog.svelte', 1, 'Assign a team to Project', 'Assign a team to '],
-	['components/RemoveProjectDialog.svelte', 0, 'Remove Project from Team?', 'Remove  from ?'],
-	['components/RenameTeamDialog.svelte', 0, 'Rename Title', 'Rename Title'],
-	['components/ReportBugDialog.svelte', 0, 'Report a bug', 'Report a bug'],
-	['components/TasksBoard.svelte', 0, 'Block T-1', 'Block T-1'],
+	['modules/organization/features/teams/MoveTeamDialog.svelte', 0, 'Move Name to…', 'Move  to…'],
+	['modules/work/features/requests/NewRequestDialog.svelte', 0, 'New request', 'New request'],
+	['modules/work/features/tasks/NewTaskDialog.svelte', 0, 'New task', 'New task'],
+	[
+		'modules/organization/features/project-teams/ProjectTeamDialog.svelte',
+		0,
+		'Add a project to Team',
+		'Add a project to '
+	],
+	[
+		'modules/organization/features/project-teams/ProjectTeamDialog.svelte',
+		1,
+		'Assign a team to Project',
+		'Assign a team to '
+	],
+	[
+		'modules/organization/features/project-teams/RemoveProjectDialog.svelte',
+		0,
+		'Remove Project from Team?',
+		'Remove  from ?'
+	],
+	[
+		'modules/organization/features/teams/RenameTeamDialog.svelte',
+		0,
+		'Rename Title',
+		'Rename Title'
+	],
+	['modules/work/features/bugs/ReportBugDialog.svelte', 0, 'Report a bug', 'Report a bug'],
+	['modules/work/features/tasks/TasksBoard.svelte', 0, 'Block T-1', 'Block T-1'],
 	[
 		'modules/employees/features/configure-run/HowItRunsDialog.svelte',
 		0,

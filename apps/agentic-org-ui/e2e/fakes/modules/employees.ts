@@ -8,9 +8,9 @@
 //   ?hr=not_running|cant_start|stalls|stops|late     the HR lead can't run, never answers, stops once, or answers
 //                                                    3.5 s after "still starting" shows
 //   ?mock=slow|fails|empty                           loading, error and empty states (access and the list)
-import { addAgent } from '$lib/org/actions';
-import { orgApi } from '$lib/org/api';
-import { sessionFor } from '$lib/org/session';
+import { addAgent } from '$lib/modules/organization/actions';
+import { orgApi } from '$lib/modules/organization/api';
+import { sessionFor } from '$lib/modules/organization/session';
 import type { OrgSnapshot } from '$lib/proto';
 import type { EmployeesApi } from '../../../src/lib/modules/employees/api';
 import type {
