@@ -2,7 +2,7 @@
 // reports every failure instead of stopping at the first (TEAM-5, TEAM-6, TEAM-7). Pure of the UI.
 import { toAppError } from '$lib/proto';
 import type { AgentRuntime, AppError, OrgSnapshot, RunMode, Schedule, Team } from '$lib/proto';
-import { newId } from './commands';
+import { newStableId } from './commands';
 import { membersOfTeam } from './model';
 import type { OrgSession } from './session';
 
@@ -42,7 +42,7 @@ export async function createTeam(
 	input: NewTeamInput,
 	nameOf: (id: string) => string = (id) => id
 ): Promise<NewTeamResult> {
-	const teamId = newId();
+	const teamId = newStableId();
 	const created = await attempt(`Create ${input.name}`, () =>
 		api.command({
 			method: 'team.create',
@@ -67,7 +67,7 @@ export async function createTeam(
 				params: {
 					membership_id: m.id,
 					expected_version: m.version,
-					new_membership_id: newId(),
+					new_membership_id: newStableId(),
 					to_team_id: teamId
 				}
 			});
@@ -194,7 +194,7 @@ export function moveTargets(s: OrgSnapshot, team: Team): Team[] {
 export const addProjectTeam = (api: OrgSession, projectId: string, teamId: string) =>
 	api.command({
 		method: 'project.add_team',
-		params: { project_team_id: newId(), project_id: projectId, team_id: teamId }
+		params: { project_team_id: newStableId(), project_id: projectId, team_id: teamId }
 	});
 
 /**
@@ -262,7 +262,7 @@ export async function addPerson(
 	input: NewPersonInput,
 	teamName: (id: string) => string = (id) => id
 ): Promise<NewPersonResult> {
-	const memberId = newId();
+	const memberId = newStableId();
 	const homeTeamId = input.teamIds[0];
 	const created = await attempt(`Add ${input.name}`, () =>
 		api.command({
@@ -292,7 +292,7 @@ export async function addPerson(
 					params: {
 						membership_id: me.id,
 						expected_version: me.version,
-						new_membership_id: newId(),
+						new_membership_id: newStableId(),
 						to_team_id: teamId
 					}
 				});
@@ -345,7 +345,11 @@ export async function updatePerson(
 }
 
 /** Remove someone from the organization (never the owner; an agent leaves through the HR flow). */
-export async function removePerson(api: OrgSession, memberId: string): Promise<void> {
+export async function removePerson(
+	api: OrgSession,
+	memberId: string,
+	seenVersion?: number
+): Promise<void> {
 	const m = (await api.snapshot()).members.find((x) => x.id === memberId);
 	if (!m)
 		throw {
@@ -355,7 +359,7 @@ export async function removePerson(api: OrgSession, memberId: string): Promise<v
 		} satisfies AppError;
 	await api.command({
 		method: 'member.remove',
-		params: { member_id: memberId, expected_version: m.version }
+		params: { member_id: memberId, expected_version: seenVersion ?? m.version }
 	});
 }
 
@@ -441,7 +445,7 @@ export async function addAgent(
 	input: NewAgentInput,
 	teamName: (id: string) => string = (id) => id
 ): Promise<NewAgentResult> {
-	const memberId = newId();
+	const memberId = newStableId();
 	const created = await attempt(`Add ${input.name}`, () =>
 		api.command({
 			method: 'member.add_agent',
@@ -480,7 +484,7 @@ export async function addAgent(
 					params: {
 						membership_id: me.id,
 						expected_version: me.version,
-						new_membership_id: newId(),
+						new_membership_id: newStableId(),
 						to_team_id: teamId
 					}
 				});
@@ -634,7 +638,7 @@ export async function moveMemberToTeam(
 		params: {
 			membership_id: current.id,
 			expected_version: current.version,
-			new_membership_id: newId(),
+			new_membership_id: newStableId(),
 			to_team_id: toTeamId
 		}
 	});
@@ -656,7 +660,7 @@ export async function moveMemberToTeam(
 				params: {
 					membership_id: now.id,
 					expected_version: now.version,
-					new_membership_id: newId(),
+					new_membership_id: newStableId(),
 					to_team_id: fromTeamId
 				}
 			});

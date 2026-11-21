@@ -1,5 +1,8 @@
-import type { Connection, HelloResult, Organization, StatusUpdate } from '$lib/proto';
+import type { AppError, Connection, HelloResult, Organization, StatusUpdate } from '$lib/proto';
+import { appSession } from '$lib/platform/auth/app-session.svelte';
+import { selection } from '$lib/platform/organizations/selection';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { createHttpOfficeApi } from './http-api';
 
 /** Browser office capability. Concrete gateway adapters replace the unavailable default. */
 export interface OfficeApi {
@@ -23,15 +26,64 @@ export interface OfficeApi {
 	onOfficeStatus(listener: (update: StatusUpdate) => void): Promise<() => void>;
 }
 
-/** No service startup, desktop token or browser mock is selected by a production import. */
+function signedInSession() {
+	return appSession.state.kind === 'signed-in' ? appSession.state.session : undefined;
+}
+
+function selectionOwner() {
+	const session = signedInSession();
+	return session ? { instanceId: session.instance_id, accountId: session.account.id } : undefined;
+}
+
+const gatewayOfficeApi = createHttpOfficeApi({
+	http: {
+		read: (path, signal) => appSession.controller().read(path, signal),
+		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
+	},
+	instanceId: () => signedInSession()?.instance_id,
+	newId: () => appSession.newOperationId(),
+	getSelectedOrganizationId: () => {
+		const owner = selectionOwner();
+		return owner ? selection.current(owner) : undefined;
+	},
+	selectOrganization: (id) => {
+		const owner = selectionOwner();
+		if (owner) selection.select(owner, id);
+	}
+});
+
+async function browserConnections(): Promise<Connection[]> {
+	if (typeof window === 'undefined' || typeof indexedDB === 'undefined') return unavailableCall();
+	if (appSession.state.kind === 'loading') {
+		await appSession.boot();
+	}
+	if (!signedInSession()) {
+		throw {
+			source: 'api',
+			code: 'not_authorized',
+			message: 'Sign in to continue.'
+		} satisfies AppError;
+	}
+	return gatewayOfficeApi.connections();
+}
+
+/**
+ * Production office API backed by `/api/v1/organizations` and office restart routes.
+ * Fails closed when no signed-in gateway session exists and never imports mocks.
+ */
 export const officeApi: OfficeApi = Object.freeze({
-	connections: unavailableCall,
-	ensureRunning: unavailableCall,
-	ping: unavailableCall,
-	peekOrganizations: unavailableCall,
-	restartOffice: unavailableCall,
+	connections: browserConnections,
+	ensureRunning: () => (signedInSession() ? gatewayOfficeApi.ensureRunning() : unavailableCall()),
+	ping: () => (signedInSession() ? gatewayOfficeApi.ping() : unavailableCall()),
+	peekOrganizations: () =>
+		signedInSession() ? gatewayOfficeApi.peekOrganizations() : unavailableCall(),
+	restartOffice: (officeId: string) =>
+		signedInSession() ? gatewayOfficeApi.restartOffice(officeId) : unavailableCall(),
 	createOrganization: unavailableCall,
-	listOrganizations: unavailableCall,
-	openOrganization: unavailableCall,
-	onOfficeStatus: unavailableCall
+	listOrganizations: () =>
+		signedInSession() ? gatewayOfficeApi.listOrganizations() : unavailableCall(),
+	openOrganization: (id: string) =>
+		signedInSession() ? gatewayOfficeApi.openOrganization(id) : unavailableCall(),
+	onOfficeStatus: (listener: (update: StatusUpdate) => void) =>
+		signedInSession() ? gatewayOfficeApi.onOfficeStatus(listener) : unavailableCall()
 });

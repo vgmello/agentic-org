@@ -2,25 +2,66 @@ import { describe, expect, it } from 'vitest';
 import { areaCapability } from './capabilities';
 
 describe('production shell capabilities', () => {
-	it('enables the session pages, Create organization, security settings and CLI approval, and nothing beneath them', () => {
+	it('enables session, onboarding, security, and live U1 org/office/project routes', () => {
 		for (const path of [
 			'/',
 			'/sign-in',
 			'/register',
+			'/set-password',
 			'/welcome',
 			'/create',
 			'/security',
-			'/cli-approve'
+			'/cli-approve',
+			'/settings/offices',
+			'/offices',
+			'/settings/access',
+			'/teams',
+			'/teams/members',
+			'/agents',
+			'/teams/org-chart',
+			'/org-chart',
+			'/teams/0193a5c0-0000-7000-8000-000000000001',
+			'/teams/0193a5c0-0000-7000-8000-000000000001/projects',
+			'/members/0193a5c0-0000-7000-8000-000000000002',
+			'/members/0193a5c0-0000-7000-8000-000000000002/role',
+			'/projects',
+			'/projects/0193a5c0-0000-7000-8000-000000000003',
+			'/projects/0193a5c0-0000-7000-8000-000000000003/team',
+			'/projects/0193a5c0-0000-7000-8000-000000000003/settings'
 		])
-			expect(areaCapability(path)).toEqual({ available: true });
-		expect(areaCapability('/create/x')).toMatchObject({ available: false });
-		expect(areaCapability('/security/x')).toMatchObject({ available: false });
-		expect(areaCapability('/cli-approve/x')).toMatchObject({ available: false });
+			expect(areaCapability(path), path).toEqual({ available: true });
 	});
-	it('keeps future product routes unavailable until an adapter is explicitly composed', () => {
-		expect(areaCapability('/future-product-area')).toMatchObject({
-			available: false,
-			reason: 'unavailable'
-		});
+
+	it('keeps unbuilt areas and subroutes unavailable until their adapters land', () => {
+		for (const path of [
+			'/create/x',
+			'/security/x',
+			'/cli-approve/x',
+			'/home',
+			'/work',
+			'/chat',
+			'/activity',
+			'/settings',
+			'/settings/costs',
+			'/settings/agents',
+			'/settings/processes',
+			'/teams/hire',
+			'/teams/hires',
+			'/teams/t1/processes',
+			'/members/m1/runs',
+			'/members/m1/cost',
+			'/projects/p1/docs',
+			'/projects/p1/features',
+			'/projects/p1/releases',
+			'/projects/p1/work',
+			'/search',
+			'/processes',
+			'/sessions',
+			'/future-product-area'
+		])
+			expect(areaCapability(path), path).toMatchObject({
+				available: false,
+				reason: 'unavailable'
+			});
 	});
 });

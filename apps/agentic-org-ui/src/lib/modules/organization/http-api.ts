@@ -88,7 +88,9 @@ const SUPPORTED_METHODS: ReadonlySet<string> = new Set([
 	'member.update_person',
 	'member.remove',
 	'member.set_reports_to',
-	'member.move'
+	'member.move',
+	'project.add_team',
+	'project.remove_team'
 ]);
 
 /** Closed table mapping implemented B2 organization commands to `/api/v1/organizations/{org}/{route}`. */
@@ -196,6 +198,24 @@ function mapOrgMutation(
 					new_membership_id,
 					to_team_id,
 					...(title_in_team !== undefined ? { title_in_team } : {})
+				}
+			};
+		}
+		case 'project.add_team': {
+			const { project_team_id, project_id, team_id } = command.params;
+			return {
+				route: 'projects/add-team',
+				params: { project_team_id, project_id, team_id }
+			};
+		}
+		case 'project.remove_team': {
+			const { project_team_id, expected_version, areas_to_team_id } = command.params;
+			return {
+				route: 'projects/remove-team',
+				params: {
+					project_team_id,
+					expected_version,
+					...(areas_to_team_id !== undefined ? { areas_to_team_id } : {})
 				}
 			};
 		}

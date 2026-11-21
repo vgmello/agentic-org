@@ -11,6 +11,7 @@ export async function loadConnections() {
 		return await officeApi.connections();
 	} catch (e) {
 		const failure = toAppError(e);
+		if (failure.code === 'not_authorized') throw failure;
 		error(failure.code === 'unavailable' ? 503 : 500, failure.message);
 	}
 }

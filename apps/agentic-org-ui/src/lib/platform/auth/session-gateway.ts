@@ -46,6 +46,44 @@ export class SessionRequestError extends Error {
 export type SessionView = ReturnType<typeof readSession>;
 export type EstablishedSession = ReturnType<typeof readEstablishedSession>;
 export type { AccessView, CliApprovalDecision, TlsEnableResult };
+export type LinkInspection =
+	| { kind: 'administrator_registration' }
+	| { kind: 'organization_invite'; org_id: string; org_name: string; member_id: string }
+	| { kind: 'set_password'; login: string };
+
+const readLinkInspection: Reader<LinkInspection> = (value) => {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) throw new WireDecodeError();
+	const v = value as Record<string, unknown>;
+	if (v.kind === 'administrator_registration') return { kind: 'administrator_registration' };
+	if (
+		v.kind === 'organization_invite' &&
+		typeof v.org_id === 'string' &&
+		typeof v.org_name === 'string' &&
+		typeof v.member_id === 'string'
+	) {
+		return {
+			kind: 'organization_invite',
+			org_id: v.org_id,
+			org_name: v.org_name,
+			member_id: v.member_id
+		};
+	}
+	if (v.kind === 'set_password' && typeof v.login === 'string') {
+		return { kind: 'set_password', login: v.login };
+	}
+	throw new WireDecodeError();
+};
+
+const readSetPasswordResult: Reader<{ login: string }> = (value) => {
+	if (
+		!value ||
+		typeof value !== 'object' ||
+		typeof (value as { login?: unknown }).login !== 'string'
+	)
+		throw new WireDecodeError();
+	return { login: (value as { login: string }).login };
+};
+
 // readResponse validates an object; this projection discards additive response fields.
 const emptySessionResult: Reader<Record<string, never>> = () => ({});
 
@@ -79,6 +117,14 @@ export function createSessionGateway(
 			result(publicHttp.signIn(credentials, signal), readEstablishedSession),
 		register: (request: unknown, signal?: AbortSignal) =>
 			result(publicHttp.register(request, signal), readEstablishedSession),
+		registerSignIn: (request: unknown, signal?: AbortSignal) =>
+			result(publicHttp.registerSignIn(request, signal), readEstablishedSession),
+		inspectLink: (
+			request: { link: string; kind: 'registration' | 'set_password' },
+			signal?: AbortSignal
+		) => result(publicHttp.inspectLink(request, signal), readLinkInspection),
+		setPassword: (request: { link: string; password: string }, signal?: AbortSignal) =>
+			result(publicHttp.setPassword(request, signal), readSetPasswordResult),
 		enableAuth: (credentials: unknown, signal?: AbortSignal) =>
 			result(publicHttp.enableAuth(credentials, signal), readEstablishedSession),
 		get: (proof: string, signal?: AbortSignal) =>

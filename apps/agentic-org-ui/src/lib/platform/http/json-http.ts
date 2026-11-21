@@ -269,6 +269,48 @@ export function createGatewayPublicHttp(options: JsonHttpOptions) {
 			}
 			return send({ path: '/api/v1/links/register', method: 'POST', body, signal });
 		},
+		async registerSignIn(request: unknown, signal?: AbortSignal) {
+			let body;
+			try {
+				body = readRegister(request);
+			} catch {
+				throw new NotDispatchedError('Invalid invite sign-in request');
+			}
+			return send({ path: '/api/v1/links/register/sign-in', method: 'POST', body, signal });
+		},
+		async inspectLink(
+			request: { link: string; kind: 'registration' | 'set_password' },
+			signal?: AbortSignal
+		) {
+			if (
+				typeof request.link !== 'string' ||
+				!request.link ||
+				(request.kind !== 'registration' && request.kind !== 'set_password')
+			) {
+				throw new NotDispatchedError('Invalid link inspection request');
+			}
+			return send({
+				path: '/api/v1/links/inspect',
+				method: 'POST',
+				body: { link: request.link, kind: request.kind },
+				signal
+			});
+		},
+		async setPassword(request: { link: string; password: string }, signal?: AbortSignal) {
+			if (
+				typeof request.link !== 'string' ||
+				!request.link ||
+				typeof request.password !== 'string'
+			) {
+				throw new NotDispatchedError('Invalid set-password request');
+			}
+			return send({
+				path: '/api/v1/links/set-password',
+				method: 'POST',
+				body: { link: request.link, password: request.password },
+				signal
+			});
+		},
 		async enableAuth(credentials: unknown, signal?: AbortSignal) {
 			let body;
 			try {

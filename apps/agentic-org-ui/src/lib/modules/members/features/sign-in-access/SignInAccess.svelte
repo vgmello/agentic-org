@@ -26,11 +26,19 @@
 
 	const canManage = $derived(profile.viewer.isOwnerOrAdmin && profile.status !== 'inactive');
 
+	const inviteExpiry = $derived(
+		profile.invitePending?.expiresAt && !Number.isNaN(Date.parse(profile.invitePending.expiresAt))
+			? expiryUntil(profile.invitePending.expiresAt)
+			: undefined
+	);
+
 	const status = $derived(
 		profile.canSignIn
 			? 'Can sign in'
 			: profile.invitePending
-				? `No account yet. Invited: the link works until ${expiryUntil(profile.invitePending.expiresAt)}.`
+				? inviteExpiry
+					? `No account yet. Invited: the link works until ${inviteExpiry}.`
+					: 'No account yet. Invitation pending.'
 				: 'No account yet'
 	);
 </script>

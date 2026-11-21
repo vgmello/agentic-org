@@ -173,6 +173,22 @@ describe('createHttpOrgApi', () => {
 					to_team_id: PARENT,
 					title_in_team: 'Lead'
 				}
+			},
+			{
+				input: {
+					method: 'project.add_team',
+					params: { project_team_id: TEAM, project_id: PARENT, team_id: TEAM }
+				},
+				route: 'projects/add-team',
+				params: { project_team_id: TEAM, project_id: PARENT, team_id: TEAM }
+			},
+			{
+				input: {
+					method: 'project.remove_team',
+					params: { project_team_id: `${PARENT}:${TEAM}`, expected_version: 2 }
+				},
+				route: 'projects/remove-team',
+				params: { project_team_id: `${PARENT}:${TEAM}`, expected_version: 2 }
 			}
 		];
 
@@ -298,8 +314,8 @@ describe('createHttpOrgApi', () => {
 		});
 		await expect(
 			api.command(ORG, {
-				method: 'project.add_team',
-				params: { command_id: OP, project_team_id: TEAM, project_id: PARENT, team_id: TEAM }
+				method: 'member.offboard',
+				params: { command_id: OP, member_id: MEMBER, expected_version: 1 }
 			})
 		).rejects.toMatchObject({ source: 'api', code: 'unsupported' });
 	});
@@ -339,12 +355,11 @@ describe('createHttpOrgApi', () => {
 		newId.mockClear();
 		await expect(
 			api.command(ORG, {
-				method: 'project.add_team',
+				method: 'member.offboard',
 				params: {
 					command_id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
-					project_team_id: TEAM,
-					project_id: PARENT,
-					team_id: TEAM
+					member_id: MEMBER,
+					expected_version: 1
 				}
 			})
 		).rejects.toMatchObject({ source: 'api', code: 'unsupported' });
