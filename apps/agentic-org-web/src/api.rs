@@ -9,6 +9,7 @@
 //! browser's address comes from the accepted socket ([`PeerAddress`]), never a
 //! header. Nothing else forwards to the host or a local socket.
 mod account_routes;
+mod chat_routes;
 mod hiring_routes;
 mod instance_routes;
 mod open_routes;
@@ -165,6 +166,7 @@ pub enum Route {
     OpenOrg(open_routes::OpenRoute),
     Hiring(hiring_routes::HiringRoute),
     Sessions(session_routes::SessionRoute),
+    Chat(chat_routes::ChatRoute),
 }
 
 pub enum Call {
@@ -199,6 +201,7 @@ pub enum Call {
     OpenOrg(open_routes::OpenCall),
     Hiring(hiring_routes::HiringCall),
     Sessions(session_routes::SessionCall),
+    Chat(chat_routes::ChatCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -723,6 +726,19 @@ impl SessionApi {
             Ok(list) => list,
             Err(error) => return WebReply::Json(failure(error)),
         };
+        let hq_by_org: std::collections::BTreeMap<String, String> = list
+            .organizations
+            .iter()
+            .filter_map(|org| {
+                let office_id = org
+                    .offices
+                    .iter()
+                    .find(|o| o.role == org_proto::OfficeRole::Hq)
+                    .or_else(|| org.offices.first())
+                    .map(|o| o.id.clone())?;
+                Some((org.id.clone(), office_id))
+            })
+            .collect();
         let linked: BTreeSet<String> = list.organizations.into_iter().map(|o| o.id).collect();
         if !sse::authorize_subscriptions(&request, self.host.instance(), &linked) {
             return WebReply::Json(ApiReply::error(
@@ -731,13 +747,49 @@ impl SessionApi {
                 "Subscription scope is not authorized.",
             ));
         }
-        WebReply::Stream(sse::open_stream(
+        let targets = collect_poll_targets(&request, &hq_by_org, self.auth(&caller));
+        WebReply::Stream(sse::open_stream_with_offices(
             &self.hub,
             self.host.instance().to_owned(),
             session.session_id,
             request,
+            Some(self.offices.clone()),
+            targets,
         ))
     }
+}
+
+fn collect_poll_targets(
+    request: &StreamRequest,
+    hq_by_org: &std::collections::BTreeMap<String, String>,
+    auth: BrowserAuth,
+) -> Vec<sse::OfficePollTarget> {
+    let mut by_org: std::collections::BTreeMap<String, Option<u64>> =
+        std::collections::BTreeMap::new();
+    for sub in &request.subscriptions {
+        if let Scope::Organization { org_id, .. } = &sub.scope {
+            let parsed = sub
+                .cursor
+                .as_ref()
+                .and_then(|c| sse::parse_org_cursor_seq(c, org_id));
+            let entry = by_org.entry(org_id.clone()).or_insert(None);
+            if entry.is_none() && parsed.is_some() {
+                *entry = parsed;
+            }
+        }
+    }
+    by_org
+        .into_iter()
+        .filter_map(|(org_id, initial_org_seq)| {
+            let office_id = hq_by_org.get(&org_id)?.clone();
+            Some(sse::OfficePollTarget {
+                org_id,
+                office_id,
+                auth: auth.clone(),
+                initial_org_seq,
+            })
+        })
+        .collect()
 }
 
 impl ApiBackend for SessionApi {
@@ -943,6 +995,7 @@ impl ApiBackend for SessionApi {
             Route::OpenOrg(route) => return open_routes::prepare(route, bytes),
             Route::Hiring(route) => return hiring_routes::prepare(route, bytes),
             Route::Sessions(route) => return session_routes::prepare(route, bytes),
+            Route::Chat(route) => return chat_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -1036,6 +1089,12 @@ impl ApiBackend for SessionApi {
                 }),
                 streaming: false,
             },
+            Call::Chat(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(chat_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
         }
     }
@@ -1053,6 +1112,7 @@ impl ApiBackend for SessionApi {
             Call::OpenOrg(call) => open_routes::execute(self, call),
             Call::Hiring(_) => unreachable!("Call::Hiring is dispatched asynchronously"),
             Call::Sessions(_) => unreachable!("Call::Sessions is dispatched asynchronously"),
+            Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))

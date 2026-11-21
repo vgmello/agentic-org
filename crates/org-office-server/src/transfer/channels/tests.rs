@@ -134,6 +134,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             feed: Some(Box::new(DarkFeed)),
             live,
             mailbox: Some(mailbox),
+            chat: None,
             directory,
         },
         crate::test_support::grant_key(),

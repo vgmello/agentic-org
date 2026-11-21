@@ -121,6 +121,9 @@ pub(super) fn route_organization(
     {
         return routed;
     }
+    if let Some(routed) = super::chat_routes::try_route(api, request, org, tail, get, post, query) {
+        return routed;
+    }
     Ok(match tail {
         ["snapshot"] if get => {
             let pair = api.caller_auth(request)?;

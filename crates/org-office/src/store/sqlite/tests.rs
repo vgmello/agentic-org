@@ -329,13 +329,17 @@ fn a_replacement_with_a_dangling_reference_is_refused_by_row_and_the_projection_
         Some(cursor(9))
     );
     assert_eq!(sources(&engine), 0);
-    // One database file and its log's two: nothing of the build or the old log is left.
+    // One database file, its WAL pair, and the isolated `protected/` folder for `messaging.db`:
+    // nothing of the build staging or old log is left.
     let mut names: Vec<_> = fs::read_dir(dir.path())
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
-    assert_eq!(names, ["office.db", "office.db-shm", "office.db-wal"]);
+    assert_eq!(
+        names,
+        ["office.db", "office.db-shm", "office.db-wal", "protected"]
+    );
     commit(&engine, 10);
     drop(engine);
     let engine = SqliteEngine::open(&dir.path().canonicalize().unwrap().join("office.db"));

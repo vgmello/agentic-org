@@ -127,11 +127,12 @@ impl MultiplexedChannel {
 }
 
 /// Manages async multiplexed host-opened Web channels to offices.
+#[derive(Clone)]
 pub struct OfficeBridge {
     host: Arc<HostControl>,
     channels: Arc<Mutex<BTreeMap<String, Arc<MultiplexedChannel>>>>,
     hub: EventHub,
-    next_id: AtomicU64,
+    next_id: Arc<AtomicU64>,
 }
 
 impl OfficeBridge {
@@ -140,7 +141,7 @@ impl OfficeBridge {
             host,
             channels: Arc::new(Mutex::new(BTreeMap::new())),
             hub,
-            next_id: AtomicU64::new(2),
+            next_id: Arc::new(AtomicU64::new(2)),
         }
     }
 

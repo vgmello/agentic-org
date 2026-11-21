@@ -181,8 +181,8 @@ fn inbox_real_hq_registration_is_owner_only_read_only_and_changes_epoch_on_resta
     let mut first = live(&world);
     let client = Client::connect(socket(&world)).unwrap();
     assert!(client.hello().unwrap().supports("inbox.list"));
-    // Hints travel only on `subscribe`, which this office does not serve yet (B6).
-    assert!(!client.hello().unwrap().supports("inbox.changed"));
+    // B6 wires `subscribe` and live `inbox.changed` hints on HQ offices.
+    assert!(client.hello().unwrap().supports("inbox.changed"));
     let params = InboxListParams {
         state: InboxState::Open,
         kinds: None,
@@ -527,32 +527,35 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
         expected_version: 1,
     };
 
-    // `subscribe` on the office socket.
+    // `subscribe` on the office socket is served by B6 and refuses unbound callers.
     let subscribe = org_proto::SubscribeParams {
         from_position: None,
         from_work_position: None,
     };
-    let unsupported = |error: org_client::ClientError| api_code(error) == ErrorCode::Unsupported;
     let unbound = Client::connect(socket(&world)).unwrap();
-    assert!(unsupported(
-        unbound
-            .call::<org_proto::Subscribe>(&subscribe)
-            .unwrap_err()
-    ));
+    assert_eq!(
+        api_code(
+            unbound
+                .call::<org_proto::Subscribe>(&subscribe)
+                .unwrap_err()
+        ),
+        ErrorCode::NotAuthorized
+    );
 
-    // The owner, through its grant on a host channel.
+    // The owner, through its grant on a host channel: messaging is now served by B6.
     let owner_unsupported = |error: ApiError| error.code == ErrorCode::Unsupported;
-    assert!(owner_unsupported(
-        owner.call::<MsgSend>(&message(11, "owner")).unwrap_err()
-    ));
-    assert!(owner_unsupported(
-        owner.call::<MsgInbox>(&inbox).unwrap_err()
-    ));
-    assert!(owner_unsupported(
-        owner
-            .call::<MsgRead>(&MsgReadParams { id: None })
-            .unwrap_err()
-    ));
+    let sent = owner.call::<MsgSend>(&message(11, "owner")).unwrap();
+    let listed = owner.call::<MsgInbox>(&inbox).unwrap();
+    assert!(listed.headers.iter().any(|h| h.id == sent.id));
+    let read = owner
+        .call::<MsgRead>(&MsgReadParams {
+            id: Some(sent.id.clone()),
+        })
+        .unwrap();
+    assert_eq!(
+        read.message.as_ref().map(|m| m.header.id.as_str()),
+        Some(sent.id.as_str())
+    );
     // A person never waits on the office: refused at once, not held for 30 s.
     let started = std::time::Instant::now();
     owner.call::<MsgWait>(&wait).unwrap_err();

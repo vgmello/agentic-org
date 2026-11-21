@@ -2,11 +2,17 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[allow(dead_code)]
 pub(crate) fn now_rfc3339() -> String {
     format_epoch_ms(now_ms())
 }
 
+pub(crate) fn format_rfc3339_ms(ms: u64) -> String {
+    format_epoch_ms(ms)
+}
+
 /// Unix milliseconds now.
+#[allow(dead_code)]
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

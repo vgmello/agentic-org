@@ -126,6 +126,9 @@ pub type AgentLifecycleHookFn = Box<dyn Fn(&str, &str) + Send + Sync>;
 pub type HrMessageGuardFn =
     Box<dyn Fn(&str, &str) -> Result<Result<(), ApiError>, String> + Send + Sync>;
 
+/// Dispatches B6 `dm.open`, `chat.*`, and `msg.accept` RPCs.
+pub type ChatFn = Box<dyn Fn(Option<&str>, bool, &Request) -> Option<Response> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
@@ -152,6 +155,8 @@ pub struct OfficePorts {
     /// this office does not serve them yet (they answer `unsupported`); `msg.bind` still binds
     /// through `directory`.
     pub mailbox: Option<Arc<Mailbox>>,
+    /// B6 chat/channel/DM/accept/events-poll dispatcher.
+    pub chat: Option<ChatFn>,
     /// Who a `msg.bind` names.
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
@@ -436,6 +441,21 @@ impl Shared {
             Ok(false) => {}
             Err(_) => eprintln!("agentic-org-office: inbox disabled (authority read unavailable)"),
         }
+    }
+
+    /// Test helper to invoke `serve::answer` directly with an explicit binding.
+    #[cfg(test)]
+    pub(crate) fn answer_for_test(
+        &self,
+        request: &Request,
+        member: &str,
+        via_grant: bool,
+    ) -> Response {
+        let mut binding = Binding::Member {
+            id: member.to_owned(),
+            via_grant,
+        };
+        answer(request, self, &mut binding)
     }
 
     pub(crate) fn enable_inbox_hints(&mut self) -> Result<(), String> {
@@ -776,6 +796,28 @@ fn serve_connection_with_poll(
 /// [`Binding::Anonymous`]; the tests of the follow engine start a grant-bound subscriber here,
 /// because no frame on the office socket binds one (the grant-bound `subscribe` on a host channel
 /// arrives with A3's `/events`).
+#[cfg(test)]
+pub(crate) fn serve_grant_bound_stream_for_test(
+    stream: UnixStream,
+    shared: &Shared,
+    conn: u64,
+    stopping: &std::sync::atomic::AtomicBool,
+    member: &str,
+) {
+    serve_connection_as(
+        stream,
+        shared,
+        conn,
+        stopping,
+        org_socket::READ_TICK,
+        org_socket::poll_readable,
+        Binding::Member {
+            id: member.to_owned(),
+            via_grant: true,
+        },
+    );
+}
+
 fn serve_connection_as(
     stream: UnixStream,
     shared: &Shared,
@@ -1460,6 +1502,13 @@ fn sessions_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option
 }
 
 fn answer_message(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if crate::chat_calls::is_chat_method(request) {
+        return Some(match &shared.ports.chat {
+            Some(chat) => chat(binding.member(), binding.via_grant(), request)
+                .unwrap_or_else(|| msg_calls::unsupported(request.id)),
+            None => msg_calls::unsupported(request.id),
+        });
+    }
     if request.is::<org_proto::msg::MsgSend>() {
         if let (Some(guard), Some(member)) = (&shared.ports.hr_message_guard, binding.member()) {
             if let Ok(params) = request.params::<org_proto::msg::MsgSend>() {
@@ -1471,7 +1520,17 @@ fn answer_message(request: &Request, shared: &Shared, binding: &Binding) -> Opti
             }
         }
     }
-    msg_calls::answer(request, shared.ports.mailbox.as_deref(), binding.member())
+    let is_owner = binding.via_grant()
+        && match live_owner(shared, binding) {
+            Ok(is_owner) => is_owner,
+            Err(_) => return Some(internal(request.id)),
+        };
+    msg_calls::answer(
+        request,
+        shared.ports.mailbox.as_deref(),
+        binding.member(),
+        is_owner,
+    )
 }
 
 fn hiring_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
@@ -2706,6 +2765,7 @@ mod tests {
             feed: Some(Box::new(Arc::new(FakeFeed::default()))),
             live: Arc::new(LiveEvents::new(Box::new(|| {}))),
             mailbox: Some(mailbox),
+            chat: None,
             directory,
         }
     }
@@ -3169,6 +3229,7 @@ mod tests {
                 feed: Some(Box::new(Arc::new(FakeFeed::default()))),
                 live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                 mailbox: Some(mailbox),
+                chat: None,
                 directory,
             },
             launch_key(),
@@ -3646,6 +3707,7 @@ mod tests {
                     feed: Some(Box::new(Arc::clone(&feed))),
                     live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                     mailbox: Some(mailbox),
+                    chat: None,
                     directory,
                 },
                 launch_key(),
@@ -4148,6 +4210,7 @@ mod tests {
                 feed: Some(Box::new(Arc::new(FakeFeed::default()))),
                 live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                 mailbox: Some(mailbox),
+                chat: None,
                 directory,
             },
             launch_key(),

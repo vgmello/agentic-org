@@ -20,6 +20,7 @@ mod creation;
 mod folder;
 mod hiring;
 mod intent;
+mod messaging;
 #[cfg(any(test, feature = "testkit"))]
 mod testkit;
 #[cfg(test)]
@@ -141,6 +142,8 @@ pub struct Office {
     clock: Arc<dyn Clock>,
     /// Monotonic high-water mark of `clock` (ms), so wall-clock rollbacks never reopen expired windows.
     clock_high_ms: AtomicU64,
+    /// In-memory runtime presence and self-reported status lines (`status.set`, `who`).
+    runtime: crate::messaging::runtime::OfficeRuntime,
     // The store closes before the lock is released: fields drop in order.
     store: OfficeStore,
     _lock: File,
@@ -318,6 +321,7 @@ impl Office {
             secrets_key: key,
             clock: options.clock,
             clock_high_ms,
+            runtime: crate::messaging::runtime::OfficeRuntime::new(),
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]
@@ -389,21 +393,20 @@ impl Office {
         Ok(self.store.read(read).map_err(storage)?.0)
     }
 
-    /// `who`: the directory cards matching `params`. Nothing is live here: everyone reads
-    /// as offline, with no status line, until status lines return (B6). `Err(ApiError)`
-    /// inside the `Ok` is the caller's mistake; the outer error is the storage's.
+    /// `who`: the directory cards matching `params`, including live runtime presence and
+    /// unexpired self-reported status lines (`status.set`).
     pub fn who(&self, params: &WhoParams) -> Result<Result<WhoResult, ApiError>, OfficeError> {
         let snapshot = self.org_snapshot()?;
         let office = directory::ThisOffice {
             id: &self.info.office_id,
             name: &self.info.office_name,
         };
-        let now = time::now_rfc3339();
+        let now = time::format_rfc3339_ms(self.monotonic_now_ms());
         Ok(directory::who(
             &snapshot,
             office,
             &now,
-            &directory::NothingLive,
+            &self.runtime,
             params,
         ))
     }

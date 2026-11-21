@@ -315,6 +315,7 @@ impl Office {
             secrets_key: key,
             clock: options.clock,
             clock_high_ms,
+            runtime: crate::messaging::runtime::OfficeRuntime::new(),
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]

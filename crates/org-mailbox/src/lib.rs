@@ -9,6 +9,7 @@ mod ids;
 mod mailbox;
 mod model;
 mod ports;
+mod queries;
 mod snoozes;
 mod time;
 mod waiters;

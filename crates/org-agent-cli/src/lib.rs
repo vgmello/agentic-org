@@ -5,10 +5,13 @@
 
 #![deny(unsafe_code)]
 
+pub mod attach;
 pub mod dispatch;
 pub mod hiring_dispatch;
 pub mod hiring_table;
 pub mod keys;
+pub mod msg_dispatch;
+pub mod msg_table;
 pub mod office;
 pub mod session_dispatch;
 pub mod session_table;
@@ -65,7 +68,32 @@ pub fn execute(args: &[String], binding: Binding) -> Output {
 /// Runs `agent-os` using `AGENT_OS_*` environment variables, writing the single envelope or
 /// help output to stdout and returning the exit code.
 pub fn run(args: &[String]) -> u8 {
+    if matches!(args, [a, b, ..] if a == "session" && b == "attach") {
+        return run_session_attach(args, Binding::from_env());
+    }
     let output = execute(args, Binding::from_env());
     let _ = io::stdout().write_all(output.stdout.as_bytes());
     output.exit_code
+}
+
+fn run_session_attach(args: &[String], binding: Binding) -> u8 {
+    if matches!(args, [_, _, flag] if flag == "--help" || flag == "-h") {
+        let help = "Usage: agent-os session attach\n\
+            Binds once to the office socket and executes one JSON command per line of stdin:\n  \
+            {\"command\":\"msg inbox\",\"input\":{},\"options\":{\"limit\":5}}\n";
+        let _ = io::stdout().write_all(help.as_bytes());
+        return 0;
+    }
+    let mut office = BoundOffice::new(binding);
+    if let Err(refusal) = office.ensure_connected() {
+        let line = attach::error_envelope(refusal.code, &refusal.message);
+        let _ = writeln!(io::stdout(), "{line}");
+        return 2;
+    }
+    attach::run_attach_loop(
+        "agent-os",
+        io::stdin().lock(),
+        io::stdout().lock(),
+        &mut office,
+    )
 }

@@ -12,6 +12,7 @@
 //! - Adding a family: one bound on [`OfficeEngine`] and one projector in `open_on`.
 //! - Adding an engine: one arm of [`EngineChoice`] and of [`OfficeStore`].
 
+pub(crate) mod messaging_ops;
 mod operations;
 #[cfg(test)]
 mod tests;
@@ -27,6 +28,13 @@ use org_store::{
     Status, Store, StoreError, StoreParts, WriterAuthority,
 };
 
+pub use messaging_ops::{
+    ChannelCreateOp, ChannelMembershipOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead,
+    ChatMuteOp, ChatReactOp, ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, DmOpenOp,
+    FindReplyForAskRead, GetMailboxMessageRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead,
+    ListConversationsRead, ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxUpdateStateOp,
+    MsgAcceptOp, OrgChangesAfterRead, PeekUnreadRead,
+};
 pub use operations::{
     AddPersonOp, AddProjectTeamOp, AgentExecutionById, ArchiveTeamOp, CheckHrMessageAccess,
     CheckOp, CreateOrganizationOp, CreateProjectOp, CreateTeamOp, DeactivatePersonOp,
@@ -39,12 +47,13 @@ pub use operations::{
 
 use super::sqlite::SqliteEngine;
 use crate::{
+    messaging::{
+        ports::{MessagingEngine, MessagingRead},
+        projector::MessagingFiles,
+    },
     office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
     organization::projector::OrganizationFiles,
-    projects::{
-        ports::{ProjectsEngine, ProjectsRead},
-        projector::ProjectFiles,
-    },
+    projects::projector::ProjectFiles,
 };
 
 /// The file of an office's projection, under `<runtime-root>/<office-id>/`.
@@ -137,9 +146,9 @@ impl StoreConfig {
 }
 
 /// An engine every family of the office runs on. It grows by one bound per family.
-pub trait OfficeEngine: ProjectsEngine {}
+pub trait OfficeEngine: MessagingEngine {}
 
-impl<E: ProjectsEngine> OfficeEngine for E {}
+impl<E: MessagingEngine> OfficeEngine for E {}
 
 /// One operation on the store, whichever engine holds the projection.
 pub trait StoreOp {
@@ -150,7 +159,7 @@ pub trait StoreOp {
 /// One read of a consistent snapshot, whichever engine holds the projection.
 pub trait ReadOp {
     type Out;
-    fn read<S: ProjectsRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
+    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
 }
 
 /// A store and the engine under it.
@@ -214,9 +223,11 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let organization = here.organization_id.clone();
     let files: Arc<dyn Projector<E>> = Arc::new(OrganizationFiles::new(organization.clone()));
     let projects: Arc<dyn Projector<E>> = Arc::new(ProjectFiles::new(organization.clone()));
+    let messaging: Arc<dyn Projector<E>> = Arc::new(MessagingFiles::new(organization.clone()));
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
     #[cfg_attr(not(any(test, feature = "testkit")), allow(unused_mut))]
-    let mut projectors: Vec<Arc<dyn Projector<E>>> = vec![files, projects, Arc::new(local)];
+    let mut projectors: Vec<Arc<dyn Projector<E>>> =
+        vec![files, projects, messaging, Arc::new(local)];
     #[cfg(any(test, feature = "testkit"))]
     if let Some(probe) = &config.testing.probe {
         projectors.push(probe.projector());
@@ -464,6 +475,7 @@ pub(crate) fn validate_imported_files(
     };
     use crate::organization::ports::OrganizationRead;
     use crate::organization::records::{EmployeeKind, EmployeeStatus, OfficeRole, TeamStatus};
+    use crate::projects::ports::ProjectsRead;
     use org_store::Engine;
 
     let dir = PrivateTempDir::create("org-validate")?;

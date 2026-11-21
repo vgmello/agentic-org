@@ -10,7 +10,7 @@ use org_proto::msg::{
     KIND_DELIVERY_FAILED, KIND_REQUEST, MAX_BODY_BYTES, MAX_HANDLE_BYTES, MAX_ID_BYTES,
     MAX_META_BYTES, MAX_NOTE_BYTES, MAX_PAGE_LIMIT, MAX_SUBJECT_BYTES, MAX_WAIT_MS, OFFICE_SENDER,
 };
-use org_proto::{ulid_time_ms, AgentStatus, Member, MemberKind, Position};
+use org_proto::{ulid_time_ms, uuid_v7_time_ms, AgentStatus, Member, MemberKind, Position};
 
 use crate::ids::{delivery_failed_fallback_id, delivery_failed_id};
 use crate::snoozes::SnoozeTimers;
@@ -46,14 +46,14 @@ pub struct OfficeIdentity {
 /// the caller boundary. Database calls never run while a registry lock (waiters, snoozes) is
 /// held; only `triage_writes` is held across one.
 pub struct Mailbox {
-    store: Arc<dyn MessageStore + Send + Sync>,
+    pub(crate) store: Arc<dyn MessageStore + Send + Sync>,
     /// `None` for a Mailbox made with [`Mailbox::new`]: triage calls are `unavailable`.
     triage: Option<Arc<dyn TriageStore + Send + Sync>>,
-    directory: Arc<dyn MemberDirectory + Send + Sync>,
+    pub(crate) directory: Arc<dyn MemberDirectory + Send + Sync>,
     office: OfficeIdentity,
     clock: Arc<dyn Clock>,
     events: Arc<dyn MessageEvents>,
-    waiters: WaiterRegistry,
+    pub(crate) waiters: WaiterRegistry,
     /// Never locked across a store call.
     snoozes: Mutex<SnoozeTimers>,
     /// Held across a local triage write (`update_state_local`) and the snooze timer update
@@ -115,7 +115,7 @@ impl Mailbox {
     ) -> Result<SendResult, MailboxError> {
         let (sender, _) = self.bound_member(bound_member_id)?;
         size(&params.id, MAX_ID_BYTES)?;
-        if ulid_time_ms(&params.id).is_none() {
+        if uuid_v7_time_ms(&params.id).is_none() && ulid_time_ms(&params.id).is_none() {
             return Err(MailboxError::InvalidRequest);
         }
         size(&params.kind, MAX_ID_BYTES)?;
@@ -970,11 +970,11 @@ impl Mailbox {
             }));
     }
 
-    fn now_utc(&self) -> Result<String, MailboxError> {
+    pub(crate) fn now_utc(&self) -> Result<String, MailboxError> {
         format_utc(self.clock.now_ms()).ok_or(MailboxError::StorageError)
     }
 
-    fn bound_member(&self, id: &str) -> Result<(Member, Position), MailboxError> {
+    pub(crate) fn bound_member(&self, id: &str) -> Result<(Member, Position), MailboxError> {
         let resolved = self
             .directory
             .resolve_member(id)?
@@ -1046,7 +1046,7 @@ fn can_message(member: &Member) -> bool {
 
 /// msg.rs Addressing: check the wire size, trim leading and trailing ASCII whitespace
 /// only, and refuse the reserved `office`. `None` when nothing is left (names no member).
-fn address(reference: &str) -> Result<Option<&str>, MailboxError> {
+pub(crate) fn address(reference: &str) -> Result<Option<&str>, MailboxError> {
     size(reference, MAX_HANDLE_BYTES)?;
     let trimmed = reference.trim_ascii();
     if trimmed.eq_ignore_ascii_case(OFFICE_SENDER) {
@@ -1055,7 +1055,7 @@ fn address(reference: &str) -> Result<Option<&str>, MailboxError> {
     Ok((!trimmed.is_empty()).then_some(trimmed))
 }
 
-fn size(value: &str, limit: usize) -> Result<(), MailboxError> {
+pub(crate) fn size(value: &str, limit: usize) -> Result<(), MailboxError> {
     if json_string_len(value) > limit {
         Err(MailboxError::TooLarge)
     } else {
@@ -1063,7 +1063,7 @@ fn size(value: &str, limit: usize) -> Result<(), MailboxError> {
     }
 }
 
-fn optional_size(value: Option<&str>, limit: usize) -> Result<(), MailboxError> {
+pub(crate) fn optional_size(value: Option<&str>, limit: usize) -> Result<(), MailboxError> {
     value.map(|value| size(value, limit)).unwrap_or(Ok(()))
 }
 

@@ -17,6 +17,7 @@
 #![deny(unsafe_code)]
 
 mod bounded;
+mod chat_calls;
 mod directory;
 pub mod fdswap;
 mod follow;
@@ -25,7 +26,9 @@ mod hq_creation;
 pub mod inbox;
 mod launch;
 mod live;
+mod mailbox_store;
 mod msg_calls;
+mod org_feed;
 mod revocations;
 mod serve;
 mod signals;
@@ -551,9 +554,12 @@ fn serve_office(
     // Stop signals are handled only from here: before this the default disposition applies, so a
     // server waiting for its first line or for the office lock can still be terminated.
     signals::install();
-    // Nothing publishes live events while messaging, status lines and `subscribe` are not
-    // served (B6): the ports keep an empty source.
-    let live = Arc::new(live::LiveEvents::new(Box::new(|| {})));
+    let wake = Arc::new(org_feed::FeedWake::new());
+    let live_wake = Arc::clone(&wake);
+    let live = Arc::new(live::LiveEvents::for_owner(
+        Box::new(move || live_wake.notify()),
+        office.owner_member_id().to_owned(),
+    ));
     let inbox = match inbox::Hq::for_office(Arc::clone(&office)) {
         Ok(inbox) => inbox,
         Err(error) => {
@@ -568,7 +574,12 @@ fn serve_office(
         }
     };
     let session_manager = start_session_manager(Arc::clone(&office), &socket);
-    let ports = build_office_ports(Arc::clone(&office), Arc::clone(&session_manager), live);
+    let ports = build_office_ports(
+        Arc::clone(&office),
+        Arc::clone(&session_manager),
+        live,
+        wake,
+    );
     let mut shared = serve::Shared::new(&info, &socket, ports, auth);
     // The organization's directory generation: the member watcher looks again when it moves.
     // A read that fails gives a value no generation has, so the next good read differs.
@@ -777,12 +788,114 @@ fn start_session_manager(
     session_manager
 }
 
+struct MessagingPorts {
+    directory: Arc<dyn org_mailbox::MemberDirectory + Send + Sync>,
+    mailbox: Arc<org_mailbox::Mailbox>,
+    chat: serve::ChatFn,
+    feed: Box<dyn follow::OrgFeed>,
+}
+
+fn build_messaging_ports(
+    office: &Arc<Office>,
+    live: &Arc<live::LiveEvents>,
+    wake: &Arc<org_feed::FeedWake>,
+) -> MessagingPorts {
+    let directory: Arc<dyn org_mailbox::MemberDirectory + Send + Sync> =
+        Arc::new(directory::OfficeDirectory::of(Arc::clone(office)));
+    let make_id = || org_mailbox::OfficeIdentity {
+        office_id: office.info().office_id.clone(),
+        incarnation: office.journal_incarnation().to_owned(),
+        is_hq: matches!(office.is_hq(), Ok(true)),
+    };
+    let store = Arc::new(mailbox_store::OfficeMailboxStore::new(Arc::clone(office)));
+    let mailbox = match org_mailbox::Mailbox::with_triage(
+        Arc::clone(&store) as Arc<dyn org_mailbox::MessageStore + Send + Sync>,
+        store as Arc<dyn org_mailbox::TriageStore + Send + Sync>,
+        Arc::clone(&directory),
+        make_id(),
+        Arc::new(org_mailbox::SystemClock),
+        Arc::clone(live) as Arc<dyn org_mailbox::MessageEvents>,
+    ) {
+        Ok(mb) => Arc::new(mb),
+        Err(error) => {
+            eprintln!("agentic-org-office: snooze timer seed failed: {error}");
+            Arc::new(org_mailbox::Mailbox::new(
+                Arc::new(mailbox_store::OfficeMailboxStore::new(Arc::clone(office))),
+                Arc::clone(&directory),
+                make_id(),
+                Arc::new(org_mailbox::SystemClock),
+                Arc::clone(live) as Arc<dyn org_mailbox::MessageEvents>,
+            ))
+        }
+    };
+    let chat_svc = Arc::new(chat_calls::ChatService::new(
+        Arc::clone(office),
+        Arc::clone(live),
+        Arc::clone(&mailbox),
+    ));
+    let chat: serve::ChatFn =
+        Box::new(move |member, via_grant, request| chat_svc.dispatch(member, via_grant, request));
+    let feed: Box<dyn follow::OrgFeed> = Box::new(org_feed::OfficeOrgFeed::new(
+        Arc::clone(office),
+        Arc::clone(wake),
+    ));
+    MessagingPorts {
+        directory,
+        mailbox,
+        chat,
+        feed,
+    }
+}
+
+struct SessionHooks {
+    sessions: serve::SessionsFn,
+    run_binding_verify: serve::RunBindingVerifyFn,
+    run_binding_active: serve::RunBindingActiveFn,
+    record_agent_command: serve::RecordCommandFn,
+    on_agent_stop: serve::AgentLifecycleHookFn,
+}
+
+fn build_session_hooks(session_manager: &Arc<org_office_sessions::SessionManager>) -> SessionHooks {
+    SessionHooks {
+        sessions: {
+            let sessions = Arc::clone(session_manager);
+            Box::new(move |member, request| sessions.dispatch_rpc(member, request))
+        },
+        run_binding_verify: {
+            let sessions = Arc::clone(session_manager);
+            Box::new(move |member_id, token, peer_pid| {
+                sessions
+                    .bindings()
+                    .verify_peer(member_id, token, peer_pid)
+                    .is_ok()
+            })
+        },
+        run_binding_active: {
+            let sessions = Arc::clone(session_manager);
+            Box::new(move |member_id| sessions.bindings().has_active(member_id))
+        },
+        record_agent_command: {
+            let sessions = Arc::clone(session_manager);
+            Box::new(move |member_id, method| sessions.record_accepted_command(member_id, method))
+        },
+        on_agent_stop: {
+            let sessions = Arc::clone(session_manager);
+            Box::new(move |employee_id, reason| {
+                let _ = sessions.stop_session(employee_id, reason);
+            })
+        },
+    }
+}
+
 /// Composes the office RPC ports passed to `serve::Shared`.
 fn build_office_ports(
     office: Arc<Office>,
     session_manager: Arc<org_office_sessions::SessionManager>,
     live: Arc<live::LiveEvents>,
+    wake: Arc<org_feed::FeedWake>,
 ) -> serve::OfficePorts {
+    let messaging = build_messaging_ports(&office, &live, &wake);
+    let session_hooks = build_session_hooks(&session_manager);
     serve::OfficePorts {
         work: Box::new(|_, _| Ok(Err(unsupported("work", "B4")))),
         operation_get: {
@@ -816,43 +929,23 @@ fn build_office_ports(
         },
         hiring: {
             let office = Arc::clone(&office);
+            let wake = Arc::clone(&wake);
             Some(Box::new(move |member, request| {
-                office.dispatch_hiring_rpc(member, request)
+                let response = office.dispatch_hiring_rpc(member, request);
+                if matches!(
+                    response.as_ref().map(|r| &r.outcome),
+                    Some(org_proto::Outcome::Result(_))
+                ) {
+                    wake.notify();
+                }
+                response
             }))
         },
-        sessions: {
-            let sessions = Arc::clone(&session_manager);
-            Some(Box::new(move |member, request| {
-                sessions.dispatch_rpc(member, request)
-            }))
-        },
-        run_binding_verify: {
-            let sessions = Arc::clone(&session_manager);
-            Some(Box::new(move |member_id, token, peer_pid| {
-                sessions
-                    .bindings()
-                    .verify_peer(member_id, token, peer_pid)
-                    .is_ok()
-            }))
-        },
-        run_binding_active: {
-            let sessions = Arc::clone(&session_manager);
-            Some(Box::new(move |member_id| {
-                sessions.bindings().has_active(member_id)
-            }))
-        },
-        record_agent_command: {
-            let sessions = Arc::clone(&session_manager);
-            Some(Box::new(move |member_id, method| {
-                sessions.record_accepted_command(member_id, method);
-            }))
-        },
-        on_agent_stop: {
-            let sessions = Arc::clone(&session_manager);
-            Some(Box::new(move |employee_id, reason| {
-                let _ = sessions.stop_session(employee_id, reason);
-            }))
-        },
+        sessions: Some(session_hooks.sessions),
+        run_binding_verify: Some(session_hooks.run_binding_verify),
+        run_binding_active: Some(session_hooks.run_binding_active),
+        record_agent_command: Some(session_hooks.record_agent_command),
+        on_agent_stop: Some(session_hooks.on_agent_stop),
         hr_message_guard: {
             let office = Arc::clone(&office);
             Some(Box::new(move |sender, target| {
@@ -865,18 +958,36 @@ fn build_office_ports(
             let office = Arc::clone(&office);
             Box::new(move |params| office.who(params).map_err(|e| logged("who", &e)))
         },
-        status: Box::new(|_, _| Ok(Err(unsupported("status lines", "B6")))),
+        status: {
+            let office = Arc::clone(&office);
+            let live = Arc::clone(&live);
+            Box::new(
+                move |member, params| match office.set_status(member, params) {
+                    Ok((result, changed)) => {
+                        live.publish_presence(changed);
+                        Ok(Ok(result))
+                    }
+                    Err(refusal) => Ok(Err(refusal)),
+                },
+            )
+        },
         live,
-        feed: None,
-        mailbox: None,
-        directory: Arc::new(directory::OfficeDirectory::of(Arc::clone(&office))),
+        feed: Some(messaging.feed),
+        mailbox: Some(messaging.mailbox),
+        chat: Some(messaging.chat),
+        directory: messaging.directory,
         submit: {
             let office = Arc::clone(&office);
+            let wake = Arc::clone(&wake);
             Box::new(move |member, command, dry_run| {
                 let answer = if dry_run {
                     office.check_org(member, command)
                 } else {
-                    office.submit_org(member, command)
+                    let res = office.submit_org(member, command);
+                    if matches!(res, Ok(Ok(_))) {
+                        wake.notify();
+                    }
+                    res
                 };
                 answer.map_err(|e| logged("command", &e))
             })

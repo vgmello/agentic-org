@@ -4,13 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use syn::visit::Visit;
 
 // X-02 rev15 §4.4 names these explicitly; they do not have Rust Call types yet.
-const UNTYPED: &[&str] = &[
-    "chat.read_as_owner",
-    "chat.mute",
-    "chat.mark_read",
-    "chat.pin",
-    "dm.open",
-];
+const UNTYPED: &[&str] = &["chat.read_as_owner", "chat.pin"];
 
 fn test_only(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| {

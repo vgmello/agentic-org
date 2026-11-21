@@ -7,7 +7,10 @@
 use std::time::{Duration, Instant};
 
 use org_mailbox::{Cancellation, Mailbox, MailboxError};
-use org_proto::msg::{MsgInbox, MsgRead, MsgSend, MsgWait, MsgWaitParams, MAX_WAIT_MS};
+use org_proto::msg::{
+    MsgDefer, MsgDone, MsgGet, MsgInbox, MsgList, MsgRead, MsgReply, MsgSend, MsgWait,
+    MsgWaitParams, MAX_WAIT_MS,
+};
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
 /// Answers `request` if it is one of the calls answered at once (not `msg.wait`, which is held).
@@ -18,26 +21,66 @@ pub(crate) fn answer(
     request: &Request,
     mailbox: Option<&Mailbox>,
     member: Option<&str>,
+    is_owner: bool,
 ) -> Option<Response> {
+    if !is_mailbox_call(request) {
+        return None;
+    }
     let Some(mailbox) = mailbox else {
-        let messaging =
-            request.is::<MsgSend>() || request.is::<MsgInbox>() || request.is::<MsgRead>();
-        return messaging.then(|| unsupported(request.id));
+        return Some(unsupported(request.id));
     };
+    dispatch_send_or_read(request, mailbox, member, is_owner)
+        .or_else(|| dispatch_triage(request, mailbox, member))
+}
+
+fn is_mailbox_call(request: &Request) -> bool {
+    request.is::<MsgSend>()
+        || request.is::<MsgReply>()
+        || request.is::<MsgInbox>()
+        || request.is::<MsgRead>()
+        || request.is::<MsgList>()
+        || request.is::<MsgGet>()
+        || request.is::<MsgDone>()
+        || request.is::<MsgDefer>()
+}
+
+fn dispatch_send_or_read(
+    request: &Request,
+    mailbox: &Mailbox,
+    member: Option<&str>,
+    is_owner: bool,
+) -> Option<Response> {
     if request.is::<MsgSend>() {
-        return Some(run::<MsgSend>(request, member, |member, params| {
-            mailbox.send(member, params)
-        }));
+        return Some(run::<MsgSend>(request, member, |m, p| mailbox.send(m, p)));
+    }
+    if request.is::<MsgReply>() {
+        return Some(run::<MsgReply>(request, member, |m, p| mailbox.reply(m, p)));
     }
     if request.is::<MsgInbox>() {
-        return Some(run::<MsgInbox>(request, member, |member, params| {
-            mailbox.inbox(member, params)
-        }));
+        return Some(run::<MsgInbox>(request, member, |m, p| mailbox.inbox(m, p)));
     }
     if request.is::<MsgRead>() {
-        return Some(run::<MsgRead>(request, member, |member, params| {
-            mailbox.read(member, params)
+        return Some(run::<MsgRead>(request, member, |m, p| mailbox.read(m, p)));
+    }
+    if request.is::<MsgList>() {
+        return Some(run::<MsgList>(request, member, |m, p| {
+            mailbox.list(m, is_owner, p)
         }));
+    }
+    if request.is::<MsgGet>() {
+        return Some(run::<MsgGet>(request, member, |m, p| {
+            mailbox.get(m, is_owner, p)
+        }));
+    }
+    None
+}
+
+fn dispatch_triage(request: &Request, mailbox: &Mailbox, member: Option<&str>) -> Option<Response> {
+    if request.is::<MsgDone>() {
+        return Some(run::<MsgDone>(request, member, |m, p| mailbox.done(m, p)));
+    }
+    if request.is::<MsgDefer>() {
+        return Some(run::<MsgDefer>(request, member, |m, p| mailbox.defer(m, p)));
     }
     None
 }

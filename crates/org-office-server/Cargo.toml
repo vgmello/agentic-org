@@ -31,6 +31,7 @@ hmac.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+org-agent-cli = { path = "../org-agent-cli" }
 org-sync = { path = "../org-sync" }
 org-office = { path = "../org-office", features = ["testkit"] }
 org-mailbox = { path = "../org-mailbox", features = ["testkit"] }

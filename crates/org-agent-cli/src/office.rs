@@ -164,6 +164,11 @@ impl BoundOffice {
         Ok(client)
     }
 
+    /// Eagerly connects and binds to the office socket once (used by `session attach`).
+    pub fn ensure_connected(&mut self) -> Result<(), Refusal> {
+        self.client().map(|_| ())
+    }
+
     fn client(&mut self) -> Result<&mut Client, Refusal> {
         if self.client.is_none() {
             let client = self.connect_client()?;

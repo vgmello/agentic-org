@@ -182,15 +182,9 @@ fn host_policy_is_closed_and_preserves_unknown_method_for_unserved_allowed_famil
     }
     for method in [
         "msg.ask",
-        "msg.reply",
-        "msg.defer",
-        "msg.done",
         "msg.notify",
-        "msg.get",
-        "msg.list",
         "msg.threads",
         "msg.human_needs_you",
-        "dm.open",
         "work.list",
     ] {
         let response = answer(&shared, &ctx, &signed(&shared, method, json!({})));

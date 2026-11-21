@@ -19,10 +19,12 @@ use crate::organization::{
     records::{Employee, Organization, Team, TeamAllocation, TeamCounter},
     testkit::{creation_command, OrganizationScript, Step, CREATION_AT},
 };
+use crate::projects::ports::ProjectsRead;
 
 mod ack;
 mod crashes;
 mod local;
+mod messaging;
 
 pub(super) const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
 

@@ -1,0 +1,892 @@
+//! Engine-independent B6 messaging conformance suite (`TASK-45` AC #1, `doc-90`, `WATCH-1/2/9`).
+//!
+//! Runs identically on both [`EngineChoice::Sqlite`] (backed by isolated `protected/messaging.db`)
+//! and [`EngineChoice::Memory`].
+
+use org_proto::chat::{
+    ChatChannelCreateParams, ChatChannelMembershipParams, ChatChannelsParams,
+    ChatConversationsParams, ChatInboxParams, ChatMarkReadParams, ChatMessagesParams,
+    ChatMuteParams, ChatReactParams, ChatSendParams, ConversationKind, DeliveredBecause,
+    DmOpenParams, MsgAcceptParams, MuteMode, ReactionKind,
+};
+use org_proto::msg::{MessageLifecycleState, Meta};
+use org_proto::ErrorCode;
+
+use super::*;
+
+fn seed_org_with_two_people(place: &Place, engine: EngineChoice) -> (OfficeStore, Id, Id) {
+    let store = place.create(engine);
+    let here = identity();
+    let cmd = creation_command();
+    let owner = cmd.creator.employee_id.clone();
+    let top_team = cmd.team_id.clone();
+    let create = CreateOrganizationOp {
+        operation_id: id(1),
+        here: here.clone(),
+        command: cmd,
+        ca: ca_material(&here.organization_id, 1),
+    };
+    assert_eq!(store.run(create).unwrap().outcome, Outcome::Completed);
+
+    let ada = id(200);
+    let add_ada = AddPersonOp {
+        operation_id: id(2),
+        here: here.clone(),
+        owner: owner.clone(),
+        by: Actor::Employee(owner.clone()),
+        command: crate::organization::features::AddPerson::new(ada.clone(), "ada", "Ada", top_team),
+    };
+    assert_eq!(store.run(add_ada).unwrap().outcome, Outcome::Completed);
+    (store, owner, ada)
+}
+
+#[test]
+fn engine_independent_messaging_conversations_channels_mentions_reactions_and_rebuild() {
+    for engine in ENGINES {
+        let place = Place::new();
+        let (store, owner, ada) = seed_org_with_two_people(&place, engine);
+        let here = identity();
+        let now = "2026-11-21T12:00:00.000Z".to_owned();
+
+        // 1. Auto-channels (#general and root team channel) appear without manual creation.
+        let (channels, _) = store
+            .read(ListChannelsRead {
+                viewer: owner.clone(),
+                owner: owner.clone(),
+                params: ChatChannelsParams::default(),
+                now_utc: now.clone(),
+            })
+            .unwrap();
+        assert!(
+            channels
+                .channels
+                .iter()
+                .any(|c| c.name.as_deref() == Some("general")),
+            "{engine:?}: missing #general"
+        );
+
+        // 2. Manual channel create, join, leave; auto-channel cannot be manually left.
+        let created_ch = store
+            .run(ChannelCreateOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: ChatChannelCreateParams {
+                    id: None,
+                    name: "backend-ops".into(),
+                    members: vec![],
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(created_ch.channel.name.as_deref(), Some("backend-ops"));
+
+        let joined = store
+            .run(ChannelMembershipOp {
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatChannelMembershipParams {
+                    channel: "#backend-ops".into(),
+                },
+                join: true,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        assert!(joined.joined);
+        assert!(joined.channel.is_member);
+
+        let auto_leave_err = store
+            .run(ChannelMembershipOp {
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatChannelMembershipParams {
+                    channel: "#general".into(),
+                },
+                join: false,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(auto_leave_err.code, ErrorCode::InvalidRequest);
+
+        // 3. WATCH-1: channel message without @mention creates NO inbox entry for Ada.
+        let m1_id = id(301).as_str().to_owned();
+        let sent_unmentioned = store
+            .run(ChatSendOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: ChatSendParams {
+                    id: m1_id.clone(),
+                    to: "#backend-ops".into(),
+                    kind: "msg".into(),
+                    priority: None,
+                    subject: Some("Status".into()),
+                    body: "Routine update, `@ada` in code and @here do not mention.".into(),
+                    meta: Meta::new(),
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+                org_seq: 2,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        assert!(sent_unmentioned.result.mentions.is_empty());
+        let (ada_inbox_0, _) = store
+            .read(ChatInboxRead {
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatInboxParams::default(),
+            })
+            .unwrap();
+        assert!(
+            ada_inbox_0.unwrap().items.is_empty(),
+            "{engine:?}: WATCH-1 violated — unmentioned channel post reached inbox"
+        );
+
+        // 4. WATCH-2 & WATCH-9: @ada reaches Ada's inbox with delivered_because=mention,
+        //    while @nobody is returned in unmatched_mentions.
+        let m2_id = id(302).as_str().to_owned();
+        let sent_mentioned = store
+            .run(ChatSendOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: ChatSendParams {
+                    id: m2_id.clone(),
+                    to: "#backend-ops".into(),
+                    kind: "msg".into(),
+                    priority: None,
+                    subject: Some("Review".into()),
+                    body: "Please check this @ada. Also cc @nobody.".into(),
+                    meta: Meta::new(),
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+                org_seq: 2,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(sent_mentioned.result.mentions.len(), 1);
+        assert_eq!(sent_mentioned.result.mentions[0].employee_id, ada.as_str());
+        assert_eq!(sent_mentioned.result.unmatched_mentions, vec!["nobody"]);
+
+        let (ada_inbox_1, _) = store
+            .read(ChatInboxRead {
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatInboxParams {
+                    because: Some(DeliveredBecause::Mention),
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        let items = ada_inbox_1.unwrap().items;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, m2_id);
+        assert_eq!(items[0].delivered_because, DeliveredBecause::Mention);
+
+        // 5. Thread reply reaches the thread starter with delivered_because=thread_reply.
+        let m3_id = id(303).as_str().to_owned();
+        let _reply = store
+            .run(ChatSendOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatSendParams {
+                    id: m3_id.clone(),
+                    to: "#backend-ops".into(),
+                    kind: "reply".into(),
+                    priority: None,
+                    subject: None,
+                    body: "Looks good!".into(),
+                    meta: Meta::new(),
+                    reply_to: Some(m2_id.clone()),
+                    also_in_channel: false,
+                    reason: None,
+                },
+                org_seq: 2,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        let (owner_inbox, _) = store
+            .read(ChatInboxRead {
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: ChatInboxParams {
+                    because: Some(DeliveredBecause::ThreadReply),
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        assert_eq!(owner_inbox.unwrap().items[0].id, m3_id);
+
+        // 6. DM open + reuse + handoff send & msg.accept + reactions + read marker + mute.
+        let dm1 = store
+            .run(DmOpenOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: DmOpenParams {
+                    participants: vec!["ada".into()],
+                    name: None,
+                    conversation_id: None,
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        assert!(dm1.created);
+        assert_eq!(dm1.conversation.kind, ConversationKind::Dm);
+        let dm2 = store
+            .run(DmOpenOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: DmOpenParams {
+                    participants: vec!["owner".into()],
+                    name: None,
+                    conversation_id: None,
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        assert!(!dm2.created);
+        assert_eq!(dm2.conversation.id, dm1.conversation.id);
+
+        let handoff_id = id(304).as_str().to_owned();
+        let _handoff = store
+            .run(ChatSendOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: ChatSendParams {
+                    id: handoff_id.clone(),
+                    to: "ada".into(),
+                    kind: "handoff".into(),
+                    priority: None,
+                    subject: Some("Deploy".into()),
+                    body: "Please take over release".into(),
+                    meta: Meta::new(),
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+                org_seq: 2,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+
+        let accepted = store
+            .run(MsgAcceptOp {
+                here: here.clone(),
+                caller: ada.clone(),
+                params: MsgAcceptParams {
+                    id: handoff_id.clone(),
+                    reason: Some("Taking over now".into()),
+                },
+                org_seq: 2,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(accepted.accepted_by, ada.as_str());
+
+        let reacted = store
+            .run(ChatReactOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatReactParams {
+                    message_id: handoff_id.clone(),
+                    reaction: ReactionKind::Looking,
+                    remove: false,
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        assert!(reacted.present);
+
+        let _marked = store
+            .run(ChatMarkReadOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatMarkReadParams {
+                    conversation_id: dm1.conversation.id.clone(),
+                    last_read_message_id: Some(handoff_id.clone()),
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+
+        let _muted = store
+            .run(ChatMuteOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatMuteParams {
+                    conversation_id: dm1.conversation.id.clone(),
+                    muted_employee_id: owner.as_str().to_owned(),
+                    mute_mode: MuteMode::Muted,
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+
+        let (msgs, _) = store
+            .read(ChatMessagesRead {
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatMessagesParams {
+                    conversation: Some(dm1.conversation.id.clone()),
+                    ..Default::default()
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap();
+        let msgs = msgs.unwrap();
+        assert_eq!(msgs.messages.len(), 1);
+        assert_eq!(msgs.messages[0].reactions.len(), 1);
+        assert_eq!(
+            msgs.messages[0].acceptance.as_ref().unwrap().accepted_by,
+            ada.as_str()
+        );
+
+        // 7. Close, delete runtime/<office-id>/ (both office.db and protected/messaging.db),
+        //    reopen, and verify full messaging projection rebuilds identically.
+        let before_dump = store.dump();
+        store.close().unwrap();
+
+        if engine == EngineChoice::Sqlite {
+            let office_db = place.config(engine, Opening::Existing).projection_path();
+            let protected_db = office_db
+                .parent()
+                .unwrap()
+                .join("protected")
+                .join("messaging.db");
+            assert!(
+                protected_db.exists(),
+                "isolated protected/messaging.db must exist separately from office.db"
+            );
+            std::fs::remove_dir_all(office_db.parent().unwrap()).unwrap();
+        }
+
+        let reopened = place.reopen(engine);
+        let after_dump = reopened.dump();
+        assert_eq!(
+            before_dump, after_dump,
+            "{engine:?}: deleting runtime folder must rebuild identical messaging projection"
+        );
+        let (rebuilt_convs, _) = reopened
+            .read(ListConversationsRead {
+                viewer: ada.clone(),
+                owner: owner.clone(),
+                params: ChatConversationsParams::default(),
+                now_utc: now.clone(),
+            })
+            .unwrap();
+        assert!(rebuilt_convs
+            .conversations
+            .iter()
+            .any(|c| c.id == dm1.conversation.id
+                && c.last_read_message_id.as_deref() == Some(handoff_id.as_str())));
+
+        // Verify recipient state preserved as Read after handoff accept + rebuild
+        let (ada_all, _) = reopened
+            .read(ChatInboxRead {
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatInboxParams {
+                    include_all: true,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        let handoff_row = ada_all
+            .unwrap()
+            .items
+            .into_iter()
+            .find(|i| i.id == handoff_id)
+            .expect("handoff row rebuilt");
+        assert_eq!(handoff_row.state, MessageLifecycleState::Read);
+        reopened.close().unwrap();
+    }
+}
+
+#[test]
+fn messaging_pass1_security_mentions_reactions_snooze_and_org_changes_regressions() {
+    for engine in ENGINES {
+        let place = Place::new();
+        let (store, owner, ada) = seed_org_with_two_people(&place, engine);
+        let here = identity();
+        let now = "2026-11-21T12:00:00.000Z".to_owned();
+        let top_team = creation_command().team_id;
+
+        // Add a second non-owner person (`bob`) and discover the seeded HR agent.
+        let bob = id(201);
+        assert_eq!(
+            store
+                .run(AddPersonOp {
+                    operation_id: id(3),
+                    here: here.clone(),
+                    owner: owner.clone(),
+                    by: Actor::Employee(owner.clone()),
+                    command: crate::organization::features::AddPerson::new(
+                        bob.clone(),
+                        "bob",
+                        "Bob",
+                        top_team.clone(),
+                    ),
+                })
+                .unwrap()
+                .outcome,
+            Outcome::Completed
+        );
+        let (snap, _) = store
+            .read(DirectorySnapshot {
+                owner: owner.clone(),
+            })
+            .unwrap();
+        let hr_id = Id::parse(
+            &snap
+                .members
+                .iter()
+                .find(|m| m.handle.as_deref() == Some("hr"))
+                .expect("seeded hr")
+                .id,
+        )
+        .unwrap();
+
+        // Finding #2: non-hiring person (`ada`) cannot bypass HR access via dm.open,
+        // chat.send by DM conversation_id, or channel @hr mention.
+        let dm_hr_err = store
+            .run(DmOpenOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: DmOpenParams {
+                    participants: vec!["hr".into()],
+                    name: None,
+                    conversation_id: None,
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(dm_hr_err.code, ErrorCode::NotAuthorized, "{engine:?}");
+
+        let owner_hr_dm = store
+            .run(DmOpenOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: DmOpenParams {
+                    participants: vec![hr_id.as_str().to_owned()],
+                    name: None,
+                    conversation_id: None,
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        let chan_hr_err = store
+            .run(ChatSendOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatSendParams {
+                    id: id(401).as_str().to_owned(),
+                    to: "#general".into(),
+                    kind: "msg".into(),
+                    priority: None,
+                    subject: None,
+                    body: "Hey @hr hire someone".into(),
+                    meta: Meta::new(),
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+                org_seq: 3,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(chan_hr_err.code, ErrorCode::NotAuthorized, "{engine:?}");
+
+        // Finding #3: non-member (`bob`) cannot react, mark_read, or mute on owner<->ada DM.
+        let dm = store
+            .run(DmOpenOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: DmOpenParams {
+                    participants: vec!["ada".into()],
+                    name: None,
+                    conversation_id: None,
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        let dm_msg_id = id(402).as_str().to_owned();
+        let sent_dm = store
+            .run(ChatSendOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: ChatSendParams {
+                    id: dm_msg_id.clone(),
+                    to: dm.conversation.id.clone(),
+                    kind: "msg".into(),
+                    priority: None,
+                    subject: None,
+                    body: "Hello @adam and ``@ada`` (not mentions), real @ada!".into(),
+                    meta: Meta::new(),
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+                org_seq: 3,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        // Finding #4: @adam is unmatched (no prefix match to ada), ``@ada`` ignored in code span.
+        assert_eq!(sent_dm.result.mentions.len(), 1, "{engine:?}");
+        assert_eq!(sent_dm.result.mentions[0].handle, "ada");
+        assert_eq!(sent_dm.result.unmatched_mentions, vec!["adam"]);
+
+        assert_eq!(
+            store
+                .run(ChatReactOp {
+                    here: here.clone(),
+                    owner: owner.clone(),
+                    caller: bob.clone(),
+                    params: ChatReactParams {
+                        message_id: dm_msg_id.clone(),
+                        reaction: ReactionKind::Looking,
+                        remove: false,
+                    },
+                    now_utc: now.clone(),
+                })
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+        assert_eq!(
+            store
+                .run(ChatMarkReadOp {
+                    here: here.clone(),
+                    owner: owner.clone(),
+                    caller: bob.clone(),
+                    params: ChatMarkReadParams {
+                        conversation_id: dm.conversation.id.clone(),
+                        last_read_message_id: Some(dm_msg_id.clone()),
+                    },
+                    now_utc: now.clone(),
+                })
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+        assert_eq!(
+            store
+                .run(ChatMuteOp {
+                    here: here.clone(),
+                    owner: owner.clone(),
+                    caller: bob.clone(),
+                    params: ChatMuteParams {
+                        conversation_id: dm.conversation.id.clone(),
+                        muted_employee_id: owner.as_str().to_owned(),
+                        mute_mode: MuteMode::Muted,
+                    },
+                    now_utc: now.clone(),
+                })
+                .unwrap()
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+
+        // Finding #5: react -> remove -> re-react succeeds (no AlreadyExists on put vs create).
+        for remove in [false, true, false] {
+            let r = store
+                .run(ChatReactOp {
+                    here: here.clone(),
+                    owner: owner.clone(),
+                    caller: ada.clone(),
+                    params: ChatReactParams {
+                        message_id: dm_msg_id.clone(),
+                        reaction: ReactionKind::Looking,
+                        remove,
+                    },
+                    now_utc: now.clone(),
+                })
+                .unwrap()
+                .unwrap();
+            assert_eq!(r.present, !remove);
+        }
+
+        // Finding #6: two due snoozes in the same conversation wake cleanly in one commit.
+        let dm_msg_2 = id(403).as_str().to_owned();
+        let _ = store
+            .run(ChatSendOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: ChatSendParams {
+                    id: dm_msg_2.clone(),
+                    to: dm.conversation.id.clone(),
+                    kind: "msg".into(),
+                    priority: None,
+                    subject: None,
+                    body: "Second DM".into(),
+                    meta: Meta::new(),
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+                org_seq: 3,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+        for mid in [&dm_msg_id, &dm_msg_2] {
+            let _ = store
+                .run(MailboxUpdateStateOp {
+                    here: here.clone(),
+                    input: crate::store::open::messaging_ops::LocalTransitionInput {
+                        id: mid.clone(),
+                        to_member_id: ada.clone(),
+                        state: MessageLifecycleState::Snoozed,
+                        snoozed_until: Some("2026-11-21T12:05:00.000Z".into()),
+                        snooze_after_task: false,
+                        reason: None,
+                        now_utc: now.clone(),
+                        owner_office_id: here.office_id.clone(),
+                        origin_incarnation: here.journal_incarnation.to_string(),
+                        org_position: org_proto::org::Position { epoch: 1, seq: 3 },
+                        expired_waiting_person: false,
+                    },
+                })
+                .unwrap()
+                .unwrap();
+        }
+        let woken = store
+            .run(MailboxCheckNotifyOp {
+                here: here.clone(),
+                to_member_id: ada.clone(),
+                after_task: false,
+                urgent_only: false,
+                sweep_before_utc: "2026-11-21T12:00:00.000Z".into(),
+                now_utc: "2026-11-21T12:10:00.000Z".into(),
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            woken.len(),
+            2,
+            "{engine:?}: both snoozed messages must wake"
+        );
+
+        // Finding #8: OrgChangesAfterRead returns real MemberUpserted (never Unknown/stub).
+        let (org_changes, _) = store
+            .read(OrgChangesAfterRead {
+                owner: owner.clone(),
+                after_seq: 1,
+                limit: 100,
+            })
+            .unwrap();
+        assert!(!org_changes.is_empty(), "{engine:?}");
+        for ev in &org_changes {
+            assert!(
+                !ev.changes
+                    .iter()
+                    .any(|c| matches!(c, org_proto::org::OrgChange::Unknown)),
+                "OrgChangesAfterRead must not emit Unknown: {ev:?}"
+            );
+        }
+        assert!(
+            org_changes.iter().any(|ev| ev.changes.iter().any(|c| matches!(
+                c,
+                org_proto::org::OrgChange::MemberUpserted { member } if member.id == bob.as_str() && member.name == "Bob"
+            ))),
+            "expected populated MemberUpserted for Bob: {org_changes:?}"
+        );
+        let _ = owner_hr_dm;
+        store.close().unwrap();
+    }
+}
+
+#[test]
+fn messaging_pass2_dm_hijack_and_handoff_hr_guard_regressions() {
+    for engine in ENGINES {
+        let place = Place::new();
+        let (store, owner, ada) = seed_org_with_two_people(&place, engine);
+        let here = identity();
+        let now = "2026-11-21T12:00:00.000Z".to_owned();
+        let top_team = creation_command().team_id;
+        let bob = id(202);
+        assert_eq!(
+            store
+                .run(AddPersonOp {
+                    operation_id: id(4),
+                    here: here.clone(),
+                    owner: owner.clone(),
+                    by: Actor::Employee(owner.clone()),
+                    command: crate::organization::features::AddPerson::new(
+                        bob.clone(),
+                        "bob",
+                        "Bob",
+                        top_team,
+                    ),
+                })
+                .unwrap()
+                .outcome,
+            Outcome::Completed
+        );
+        let (snap, _) = store
+            .read(DirectorySnapshot {
+                owner: owner.clone(),
+            })
+            .unwrap();
+        let hr_id = Id::parse(
+            &snap
+                .members
+                .iter()
+                .find(|m| m.handle.as_deref() == Some("hr"))
+                .unwrap()
+                .id,
+        )
+        .unwrap();
+
+        let dm = store
+            .run(DmOpenOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: owner.clone(),
+                params: DmOpenParams {
+                    participants: vec!["ada".into()],
+                    name: None,
+                    conversation_id: None,
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap();
+
+        // Non-member dm.open with colliding conversation_id (existing DM or virtual #general)
+        // is refused with AlreadyExists and never overwrites conversation.json.
+        let hijack_dm_err = store
+            .run(DmOpenOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: bob.clone(),
+                params: DmOpenParams {
+                    participants: vec!["ada".into()],
+                    name: None,
+                    conversation_id: Some(dm.conversation.id.clone()),
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(hijack_dm_err.code, ErrorCode::AlreadyExists, "{engine:?}");
+
+        let (chs, _) = store
+            .read(ListChannelsRead {
+                viewer: bob.clone(),
+                owner: owner.clone(),
+                params: ChatChannelsParams::default(),
+                now_utc: now.clone(),
+            })
+            .unwrap();
+        let general_id = chs
+            .channels
+            .iter()
+            .find(|c| c.name.as_deref() == Some("general"))
+            .unwrap()
+            .id
+            .clone();
+        let hijack_ch_err = store
+            .run(DmOpenOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: bob.clone(),
+                params: DmOpenParams {
+                    participants: vec!["ada".into()],
+                    name: None,
+                    conversation_id: Some(general_id.clone()),
+                },
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(hijack_ch_err.code, ErrorCode::AlreadyExists, "{engine:?}");
+
+        // Channel create with explicit id colliding with #general or existing DM is refused AlreadyExists.
+        for colliding_id in [general_id, dm.conversation.id.clone()] {
+            let err = store
+                .run(ChannelCreateOp {
+                    here: here.clone(),
+                    owner: owner.clone(),
+                    caller: bob.clone(),
+                    params: ChatChannelCreateParams {
+                        id: Some(colliding_id),
+                        name: "hijack-attempt".into(),
+                        members: Vec::new(),
+                    },
+                    now_utc: now.clone(),
+                })
+                .unwrap()
+                .unwrap_err();
+            assert_eq!(err.code, ErrorCode::AlreadyExists, "{engine:?}");
+        }
+
+        // Channel handoff with meta.card.addressed_to = hr_id cannot bypass HIRE-2.
+        let mut handoff_meta = Meta::new();
+        handoff_meta.insert(
+            "card".into(),
+            serde_json::json!({ "addressed_to": hr_id.as_str() }),
+        );
+        let handoff_hr_err = store
+            .run(ChatSendOp {
+                here: here.clone(),
+                owner: owner.clone(),
+                caller: ada.clone(),
+                params: ChatSendParams {
+                    id: id(404).as_str().to_owned(),
+                    to: "#general".into(),
+                    kind: "handoff".into(),
+                    priority: None,
+                    subject: Some("Bypass attempt".into()),
+                    body: "No mention in body".into(),
+                    meta: handoff_meta,
+                    reply_to: None,
+                    also_in_channel: false,
+                    reason: None,
+                },
+                org_seq: 3,
+                now_utc: now.clone(),
+            })
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(handoff_hr_err.code, ErrorCode::NotAuthorized, "{engine:?}");
+        store.close().unwrap();
+    }
+}

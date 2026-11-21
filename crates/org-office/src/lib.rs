@@ -37,6 +37,7 @@ pub mod organization_family {
 }
 mod error;
 mod key;
+pub mod messaging;
 mod model;
 mod office;
 mod office_file;
@@ -48,6 +49,10 @@ mod private_fs;
 pub mod projects;
 pub mod rules;
 mod store;
+pub use store::open::messaging_ops::{
+    LocalTransitionInput, MailboxCommitInput, MailboxCommitOut, MailboxStored, NotifyCandidateOut,
+    PeekUnreadOut,
+};
 #[cfg(any(test, feature = "testkit"))]
 pub use store::open::Testing;
 /// Opening an office's store on the engine its configuration names, and the operations

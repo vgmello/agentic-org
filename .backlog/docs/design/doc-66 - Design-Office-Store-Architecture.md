@@ -3,7 +3,7 @@ id: doc-66
 title: 'Design: Office Store Architecture'
 type: guide
 created_date: '2026-11-21T00:48:00Z'
-updated_date: '2026-11-21T18:54:00Z'
+updated_date: '2026-11-21T20:21:00Z'
 tags:
   - design
   - storage
@@ -1054,3 +1054,10 @@ Measured on Apple M2 (`macos/aarch64`, macOS 27.2.1, `cargo run --release -p org
 - **Flush interval fixed at `50 ms`:** committed-class writes achieve `0.128 ms` median (~500x faster than full `F_FULLFSYNC` durable writes at `65.114 ms`), and continuous committed load passes the `ACK-5` bounded flush-interval check while writes keep arriving. CI runs `store_latency --check-regression` on both `macos-15` and `ubuntu-26.04` (Linux CI numbers are recorded in the CI step summary on push to `v1`). Note: `ADR-0014` (`decision-14`) stays unmodified directly because Backlog.md decision bodies are CLI-managed; reference numbers are tracked here and in `FC-160`/`TASK-33`.
 - **SQLite WAL checkpoint failure surfacing:** `SqliteEngine` tracks consecutive failed or reader-blocked (`busy != 0 && checkpointed < log`) passive WAL checkpoints under a single `CheckpointHealth` mutex; reaching 3 consecutive failures logs and surfaces a non-fatal `Engine::upkeep_error()` via `Status::upkeep_warning`, clearing automatically on the next successful checkpoint.
 - **Receipt retention and pruning bounds:** `org_store::ReceiptRetentionPolicy` defines the default retention bounds (`DEFAULT_RECEIPT_RETENTION_DAYS = 30`, `DEFAULT_MAX_RETAINED_RECEIPTS = 50_000`) and deterministic oldest-first selector `prunable_ids`. Automated receipt-file pruning execution remains deferred (`ReceiptProjector::apply` still refuses receipt deletion until compaction wiring lands).
+
+## B6 messaging and `agent-os session attach` `ACK-1` measurements (`TASK-45`)
+
+Measured on Apple M2 (`macos/aarch64`, `EngineChoice::Sqlite`, isolated `0700`/`0600` `runtime/<office-id>/protected/messaging.db`, `org_office_server::chat_calls::tests::b6_agent_os_commands_session_attach_and_ack1_latency_over_real_office`):
+
+- **Persistent `agent-os session attach` (`CLI-13`, `ACK-1`):** 30 alternating `msg send` (`Ack::Committed`) + `msg inbox` calls over one bound Unix socket connection completed in **74.42 ms total (avg 2.48 ms/cmd)** in debug build — well under the `ADR-0014` `50 ms` common-command budget.
+- **Messaging isolation (`TASK-10` / H-05, `doc-90`):** all messaging tables live exclusively in `runtime/<office-id>/protected/messaging.db` (`docs/design/organization-data/messaging-schema.sql`); zero messaging tables enter `office.db`, and deleting `runtime/<office-id>/` rebuilds both databases cleanly from `durable/messaging/` and `durable/state/`.

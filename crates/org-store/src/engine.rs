@@ -76,6 +76,12 @@ pub trait CoreRead {
     /// Every source at or under `prefix`, in byte order of path.
     fn sources_under(&self, prefix: &DurablePath) -> Result<Vec<DurablePath>, EngineError>;
     fn receipt(&self, id: &Id) -> Result<Option<Receipt>, EngineError>;
+
+    /// Lists all stored receipts whose `kind` starts with `prefix`, ordered by ascending
+    /// `(ordinal, operation_id)`. Used by `OrgFeed` to replay committed changes after restart.
+    fn list_receipts_by_prefix(&self, _prefix: &str) -> Result<Vec<Receipt>, EngineError> {
+        Ok(Vec::new())
+    }
 }
 
 pub trait CorePort: CoreRead {

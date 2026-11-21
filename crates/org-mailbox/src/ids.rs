@@ -4,7 +4,7 @@
 use sha2::{Digest, Sha256};
 
 use org_proto::msg::MessageHeader;
-use org_proto::ulid_time_ms;
+use org_proto::{ulid_time_ms, uuid_v7_time_ms};
 
 use crate::parse_utc;
 
@@ -41,6 +41,7 @@ pub(crate) fn delivery_failed_id(original: &MessageHeader, incarnation: &str) ->
         .expires_at
         .as_deref()
         .and_then(parse_utc)
+        .or_else(|| uuid_v7_time_ms(&original.id))
         .or_else(|| ulid_time_ms(&original.id))
         .unwrap_or(0);
     let digest = Sha256::new()

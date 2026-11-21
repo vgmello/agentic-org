@@ -56,11 +56,23 @@ pub(crate) struct LiveEvents {
     presence: Mutex<Presence>,
     wake: Box<dyn Fn() + Send + Sync>,
     mailbox_changes: AtomicU64,
+    owner_member_id: Option<String>,
 }
 
 impl LiveEvents {
     /// `wake` is called after every publish, outside the locks.
+    #[cfg(test)]
     pub(crate) fn new(wake: Box<dyn Fn() + Send + Sync>) -> Self {
+        Self::with_owner(wake, None)
+    }
+
+    /// Creates a live event bus scoped so `inbox.changed` mailbox recount triggers only
+    /// advance when `owner_member_id`'s own mailbox changes (`doc-5` B6).
+    pub(crate) fn for_owner(wake: Box<dyn Fn() + Send + Sync>, owner_member_id: String) -> Self {
+        Self::with_owner(wake, Some(owner_member_id))
+    }
+
+    fn with_owner(wake: Box<dyn Fn() + Send + Sync>, owner_member_id: Option<String>) -> Self {
         Self {
             ring: Mutex::new(Ring {
                 next: 1,
@@ -72,11 +84,18 @@ impl LiveEvents {
             }),
             wake,
             mailbox_changes: AtomicU64::new(0),
+            owner_member_id,
         }
     }
 
     pub(crate) fn mailbox_head(&self) -> u64 {
         self.mailbox_changes.load(Ordering::Acquire)
+    }
+
+    /// Marks one committed change relevant to the owner's mailbox so `inbox::Hint` recounts.
+    pub(crate) fn record_mailbox_change(&self) {
+        self.mailbox_changes.fetch_add(1, Ordering::Release);
+        (self.wake)();
     }
 
     pub(crate) fn publish_live(&self, event: Live) {
@@ -92,10 +111,7 @@ impl LiveEvents {
         (self.wake)();
     }
 
-    /// A member's presence changed. Only the latest per member is kept. Status lines publish
-    /// it; until B6 rebuilds them on the office store nothing in the server does, and only the
-    /// serve-layer tests of the presence push call this.
-    #[cfg(test)]
+    /// A member's presence changed. Only the latest per member is kept.
     pub(crate) fn publish_presence(&self, data: MemberPresenceChangedData) {
         {
             let mut presence = self.presence.lock().unwrap_or_else(|p| p.into_inner());
@@ -170,7 +186,14 @@ pub(crate) struct Head {
 impl MessageEvents for LiveEvents {
     fn publish(&self, event: MessageEvent) {
         // DeliveryFailed is an additional notification for the same Received commit.
-        if !matches!(&event, MessageEvent::DeliveryFailed(_)) {
+        // Only owner-addressed mailbox changes trigger `inbox.changed` recount (`doc-5` B6).
+        let owner_relevant = match (&event, self.owner_member_id.as_deref()) {
+            (MessageEvent::DeliveryFailed(_), _) => false,
+            (_, None) => true,
+            (MessageEvent::Received(data), Some(owner)) => data.header.to_member_id == owner,
+            (MessageEvent::StateChanged(data), Some(owner)) => data.to_member_id == owner,
+        };
+        if owner_relevant {
             self.mailbox_changes.fetch_add(1, Ordering::Release);
         }
         match event {

@@ -524,12 +524,13 @@ pub const COMMANDS: &[Command] = &[
     },
 ];
 
-/// Builds and validates the shared organization/project/HR/session command table.
+/// Builds and validates the shared organization/project/HR/session/messaging command table.
 pub fn table() -> CommandTable {
     CommandTable::new(&[
         COMMANDS,
         crate::hiring_table::HIRING_COMMANDS,
         crate::session_table::SESSION_COMMANDS,
+        crate::msg_table::MSG_COMMANDS,
     ])
     .expect("agent-os command table is valid")
 }
