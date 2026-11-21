@@ -71,13 +71,21 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .skip:focus { top: 12px; }
 
 /* Shell */
-.sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 50; display: flex; flex-direction: column; gap: 16px; overflow: hidden; background: rgba(9, 17, 30, .58); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); box-shadow: inset -1px 0 0 rgba(186, 222, 255, .10); padding: 0 18px; }
-.content { position: relative; z-index: 1; height: 100%; overflow-y: auto; padding-left: 264px; display: flex; flex-direction: column; background: transparent; }
+.sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 50; display: flex; flex-direction: column; gap: 14px; overflow: hidden; background: rgba(9, 17, 30, .58); backdrop-filter: blur(24px) saturate(155%); -webkit-backdrop-filter: blur(24px) saturate(155%); box-shadow: inset -1px 0 0 rgba(186, 222, 255, .10); padding: 0 18px; transition: width .22s cubic-bezier(.22, 1, .36, 1), padding .22s cubic-bezier(.22, 1, .36, 1); }
+.content { position: relative; z-index: 1; height: 100%; overflow-y: auto; padding-left: 264px; display: flex; flex-direction: column; background: transparent; transition: padding-left .22s cubic-bezier(.22, 1, .36, 1); }
 .content > main { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
-.logo { display: flex; align-items: center; gap: 12px; height: 64px; flex: none; margin: 0 -8px; padding: 0 8px; border-radius: var(--radius-md); width: calc(100% + 16px); text-align: left; }
-.logo:hover { background: var(--hover); }
-.logo .name { font-size: 16px; line-height: 28px; font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-hd { display: flex; align-items: center; gap: 6px; min-height: 56px; flex: none; padding-top: 6px; }
+.logo { display: flex; align-items: center; gap: 11px; height: 44px; flex: 1; min-width: 0; margin: 0 0 0 -6px; padding: 0 6px; border-radius: 8px; text-align: left; }
+.logo:hover { background: rgba(186, 222, 255, .07); }
+.logo .name { font-size: 15px; line-height: 24px; font-weight: 600; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .logo:focus-visible { outline-offset: -2px; }
+.nav-collapse-btn {
+  width: 30px; height: 30px; border-radius: 7px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #7C91AE; transition: background-color .14s ease, color .14s ease;
+}
+.nav-collapse-btn:hover { background: rgba(186, 222, 255, .08); color: #F8FAFC; }
+.nav-collapse-btn .ic { width: 18px; height: 18px; }
 .nav { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 16px; }
 .nav > ul.nav-scroll { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 20px; overflow-x: hidden; overflow-y: auto; margin: 0 -6px; padding: 0 6px 8px; }
 .nav > ul.nav-pinned { flex: none; padding-bottom: 4px; }
@@ -91,6 +99,36 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   letter-spacing: .07em; text-transform: uppercase;
   color: #74849B;
 }
+.nav-group-hd {
+  display: flex; align-items: center; justify-content: space-between; gap: 4px;
+  padding: 0 2px 0 8px;
+}
+.nav-group-title {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: 0.6875rem; line-height: 1.125rem; font-weight: 650;
+  letter-spacing: .07em; text-transform: uppercase;
+  color: #74849B;
+}
+.nav-group-title .ic { width: 12px; height: 12px; color: #FBBF24; }
+.nav-group-acts { display: inline-flex; align-items: center; gap: 2px; }
+.nav-group-all { font-size: 0.6875rem; font-weight: 500; color: #7C91AE; padding: 2px 6px; border-radius: 5px; }
+.nav-group-all:hover { color: #F8FAFC; background: rgba(186, 222, 255, .08); }
+.nav-fav-row { display: flex; align-items: center; gap: 2px; }
+.nav-fav-row .nav-item { flex: 1; min-width: 0; }
+.nav-fav-row .nav-item .ic.tone-ok { color: #34D399; }
+.nav-fav-row .nav-item .ic.tone-warn { color: #FBBF24; }
+.nav-fav-row .nav-item .ic.tone-bad { color: #FB7185; }
+.fav-star-btn {
+  width: 24px; height: 24px; border-radius: 6px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: rgba(251, 191, 36, .65); opacity: 0;
+  transition: opacity .14s ease, color .14s ease, background-color .14s ease;
+}
+.nav-fav-row:hover .fav-star-btn, .fav-star-btn:focus-visible { opacity: 1; }
+.fav-star-btn:hover { color: #FDE68A; background: rgba(251, 191, 36, .12); }
+.fav-star-btn .ic { width: 13px; height: 13px; fill: currentColor; }
+.nav-rail-only { display: none; }
+.nav-fav-empty { padding: 4px 10px; font-size: 0.75rem; color: #64748B; }
 .nav-list { margin: 6px 0 0; display: flex; flex-direction: column; gap: 2px; }
 .nav-list.top { margin-top: 0; }
 .nav-item {
@@ -1241,6 +1279,44 @@ select.field, input.field, textarea {
 }
 select.field option { background: #0E1629; color: #F8FAFC; }
 
+/* Desktop Collapsible Sidebar (68px frosted icon rail) */
+@media (min-width: 960px) {
+  body.nav-collapsed .sidebar { width: 68px; padding: 0 10px; gap: 10px; overflow: visible; }
+  body.nav-collapsed .content { padding-left: 68px; }
+  body.nav-collapsed .sidebar-hd { flex-direction: column; gap: 6px; padding-top: 10px; }
+  body.nav-collapsed .logo { width: 44px; height: 44px; margin: 0; padding: 0; justify-content: center; flex: none; }
+  body.nav-collapsed .logo .name { display: none; }
+  body.nav-collapsed .nav-collapse-btn { width: 44px; height: 32px; background: rgba(186, 222, 255, .05); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .09); }
+  body.nav-collapsed .nav-label,
+  body.nav-collapsed .nav-group-hd,
+  body.nav-collapsed .subwrap,
+  body.nav-collapsed .nav-fold-btn,
+  body.nav-collapsed .nav-fav-list { display: none; }
+  body.nav-collapsed .nav-rail-only { display: block; }
+  body.nav-collapsed .nav > ul.nav-scroll { gap: 10px; margin: 0; padding: 0 0 8px; }
+  body.nav-collapsed .nav-list { margin: 0; align-items: center; gap: 4px; }
+  body.nav-collapsed .nav-row { justify-content: center; }
+  body.nav-collapsed .nav-item { position: relative; width: 44px; height: 44px; justify-content: center; padding: 0; }
+  body.nav-collapsed .nav-item .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  body.nav-collapsed .nav-item .badge { position: absolute; top: 3px; right: 2px; font-size: 10px; padding: 0 4px; line-height: 14px; }
+  body.nav-collapsed .foot { margin: 0 -10px; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; }
+  body.nav-collapsed .foot .acct { width: 44px; height: 44px; padding: 0; justify-content: center; gap: 0; border-radius: 8px; }
+  body.nav-collapsed .foot .acct .acct-txt,
+  body.nav-collapsed .foot .acct .acct-chev,
+  body.nav-collapsed .foot .office-full { display: none; }
+  body.nav-collapsed .foot a.office-link { width: 44px; height: 44px; padding: 0; justify-content: center; border-radius: 8px; }
+  body.nav-collapsed .foot .office-rail { display: inline-flex; color: #94A3B8; }
+  body.nav-collapsed .foot a.office-link:hover .office-rail { color: #F8FAFC; }
+  body.nav-collapsed .menu.up { left: 4px; min-width: 220px; }
+}
+@media (min-width: 640px) and (max-width: 959px) {
+  .nav-collapse-btn, .nav-group-hd, .nav-fav-list { display: none; }
+  .nav-rail-only { display: block; }
+}
+@media (max-width: 639px) {
+  .nav-collapse-btn { display: none; }
+}
+
 @media (max-width: 1180px) {
   .h4-grid, .h4-urgent-grid, .h4-pulse-accs { grid-template-columns: 1fr; }
   .h4-rail { position: static; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
@@ -1318,15 +1394,22 @@ select.field option { background: #0E1629; color: #F8FAFC; }
   <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z"/></symbol>
   <symbol id="i-doc-check" viewBox="0 0 24 24"><path d="M10.125 2.25h-4.5c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125v-9M10.125 2.25h.375a9 9 0 0 1 9 9v.375M10.125 2.25A3.375 3.375 0 0 1 13.5 5.625v1.5c0 .621.504 1.125 1.125 1.125h1.5a3.375 3.375 0 0 1 3.375 3.375M9 15l2.25 2.25L15 12"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><path d="M3.75 5.25A2.25 2.25 0 0 1 6 3h12a2.25 2.25 0 0 1 2.25 2.25v13.5A2.25 2.25 0 0 1 18 21H6a2.25 2.25 0 0 1-2.25-2.25V5.25ZM9 3v18"/></symbol>
 </svg>
 
 <a class="skip" href="#main" data-act="skip">Skip to content</a>
 
 <aside class="sidebar" id="sidebar" aria-label="Sidebar">
-  <a class="logo" href="#/home" aria-label="Agentic Org home" title="Agentic Org home">
-    <svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="8" fill="#615fff"/><path d="M10 22 16 9l6 13M12.5 17h7" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <span class="name" title="Agentic Org">Agentic Org</span>
-  </a>
+  <div class="sidebar-hd">
+    <a class="logo" href="#/home" aria-label="Agentic Org home" title="Agentic Org home">
+      <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="8" fill="#615fff"/><path d="M10 22 16 9l6 13M12.5 17h7" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="name" title="Agentic Org">Agentic Org</span>
+    </a>
+    <button class="nav-collapse-btn" id="nav-collapse-btn" type="button" data-act="nav-collapse" aria-label="Collapse sidebar" title="Collapse sidebar" aria-pressed="false">
+      <svg class="ic" aria-hidden="true"><use href="#i-sidebar"/></svg>
+    </button>
+  </div>
   <nav class="nav" aria-label="Main" id="nav"></nav>
   <div class="foot">
     <div class="menu-wrap">
@@ -1612,7 +1695,18 @@ const PAST_SESSIONS = [
 /* ---------------------------------------------------------------- state */
 const S = { truth: "demo", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
   projLayout: "list", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
-  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: {} };
+  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false };
+const NAV_COLLAPSE_STORE = "agentic-org.v4.navCollapsed";
+try { if (localStorage.getItem(NAV_COLLAPSE_STORE) === "1") S.navCollapsed = true; } catch (e) {}
+function applyNavCollapsed() {
+  document.body.classList.toggle("nav-collapsed", !!S.navCollapsed);
+  const b = document.getElementById("nav-collapse-btn");
+  if (b) {
+    b.setAttribute("aria-pressed", String(!!S.navCollapsed));
+    b.setAttribute("aria-label", S.navCollapsed ? "Expand sidebar" : "Collapse sidebar");
+    b.title = S.navCollapsed ? "Expand sidebar" : "Collapse sidebar";
+  }
+}
 const SR = { q: "", open: false, active: 0, flat: [] };
 const KEYS_STORE = "agentic-org.singleKeyShortcuts";
 function readSingleKey() { try { return localStorage.getItem(KEYS_STORE) !== "0"; } catch (e) { return true; } }
@@ -3518,11 +3612,12 @@ function renderNav(route) {
   const subIcon = (href, label, icon, cur, cls = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon, cls)}<span class="t">${esc(label)}</span></a></li>`;
   const more = (href, label) => `<li><a class="nav-item more" href="${href}"><span class="t">${esc(label)}</span></a></li>`;
   const live = Object.keys(P).filter((p) => !P[p].archived).sort((a, b) => P[a].upd - P[b].upd);
+  const favs = S.favProjs.filter((p) => P[p] && !P[p].archived);
   const teams = Object.keys(TEAMS);
-  const inProjChild = r0 === "projects" && !!r1;
+  const inProj = r0 === "projects";
   const inTeamChild = r0 === "teams" && own(TEAMS, r1);
   const inTeams = r0 === "teams" || r0 === "members";
-  const projOpen = S.v4Open["nav-proj"] ?? inProjChild;
+  const favsOpen = S.v4Open["nav-favs"] !== false;
   const teamsOpen = S.v4Open["nav-teams"] ?? inTeamChild;
   const projIcon = (p) => {
     const h = P[p].health;
@@ -3543,17 +3638,28 @@ function renderNav(route) {
     <li>
       <div class="nav-label">Workspace</div>
       <ul class="nav-list" role="list">
-        <li>
-          <div class="nav-row">
-            <a class="nav-item${!projOpen && inProjChild ? " cur" : ""}" href="#/projects" title="Projects" ${r0 === "projects" && !r1 ? 'aria-current="page"' : ""}>${ic("folder")}<span class="lbl">Projects</span></a>
-            <button class="nav-fold-btn" type="button" data-act="v4-acc" data-id="nav-proj" aria-expanded="${!!projOpen}" aria-controls="nav-sub-proj" aria-label="${projOpen ? "Collapse" : "Expand"} projects">${ic("chev-right")}</button>
-          </div>
-          ${projOpen ? `<div class="subwrap" id="nav-sub-proj" data-fold="projects"><ul class="nav-sub" role="list" aria-label="Recent projects">${live.slice(0, NAV_CAP).map((p) => { const [ico, cls] = projIcon(p); return subIcon("#/projects/" + p, P[p].name, ico, r0 === "projects" && r1 === p, cls); }).join("")}${live.length > NAV_CAP ? more("#/projects", "View all projects") : ""}</ul></div>` : ""}
-        </li>
+        <li class="nav-rail-only"><a class="nav-item${inProj ? " cur" : ""}" href="#/projects" title="Projects" ${inProj && !r1 ? 'aria-current="page"' : ""}>${ic("folder")}<span class="lbl">Projects</span></a></li>
         ${item("#/work", "Work", "clipboard", r0 === "work")}
         ${item("#/chat", "Chat", "chat", r0 === "chat")}
         ${item("#/activity", "Activity", "signal", r0 === "activity")}
       </ul>
+    </li>
+    <li class="nav-fav-list">
+      <div class="nav-group-hd">
+        <span class="nav-group-title">${ic("star")}<span>Favorite projects</span></span>
+        <button class="nav-fold-btn" type="button" data-act="v4-acc" data-id="nav-favs" aria-expanded="${favsOpen}" aria-controls="nav-sub-favs" aria-label="${favsOpen ? "Collapse" : "Expand"} favorite projects">${ic("chev-right")}</button>
+      </div>
+      ${favsOpen ? `<ul class="nav-list" id="nav-sub-favs" role="list" aria-label="Favorite projects">
+        ${favs.length ? favs.map((p) => {
+          const [ico, cls] = projIcon(p);
+          const cur = r0 === "projects" && r1 === p;
+          return `<li class="nav-fav-row">
+            <a class="nav-item" href="#/projects/${p}" title="${esc(P[p].name)} · ${esc(P[p].health || "")}" ${cur ? 'aria-current="page"' : ""}>${ic(ico, cls)}<span class="lbl">${esc(P[p].name)}</span></a>
+            <button class="fav-star-btn" type="button" data-act="fav-proj" data-id="${p}" aria-label="Remove ${esc(P[p].name)} from favorites" title="Unpin from favorites">${ic("star")}</button>
+          </li>`;
+        }).join("") : `<li class="nav-fav-empty">No favorite projects yet.</li>`}
+        ${item("#/projects", "All projects", "folder", r0 === "projects" && !r1)}
+      </ul>` : ""}
     </li>
     <li>
       <div class="nav-label">Organization</div>
@@ -3754,6 +3860,13 @@ document.addEventListener("click", (e) => {
     }
     case "run": S.openRuns[id] = !S.openRuns[id]; render(false); { const b = document.querySelector(`[data-act="run"][data-id="${id}"]`); if (b) b.focus(); } break;
     case "v4-acc": S.v4Open[id] = !S.v4Open[id]; render(false); { const b = document.querySelector(`[data-act="v4-acc"][data-id="${id}"]`); if (b) b.focus(); } break;
+    case "nav-collapse": S.navCollapsed = !S.navCollapsed; try { localStorage.setItem(NAV_COLLAPSE_STORE, S.navCollapsed ? "1" : "0"); } catch (e) {} applyNavCollapsed(); break;
+    case "fav-proj": {
+      const idx = S.favProjs.indexOf(id);
+      if (idx >= 0) { S.favProjs.splice(idx, 1); toast(`Removed ${P[id].name} from favorites.`); }
+      else { S.favProjs.push(id); toast(`Added ${P[id].name} to favorites.`); }
+      render(false);
+    } break;
     case "thread": S.thread = S.thread === id ? null : id; render(false); break;
     case "thread-close": S.thread = null; render(false); break;
     case "answer": {
@@ -3987,6 +4100,7 @@ if (verSel) {
   window.addEventListener("pageshow", () => { verSel.value = verSel.dataset.cur; });
 }
 
+applyNavCollapsed();
 if (!location.hash) {
   try { history.replaceState(null, "", "#/home"); } catch (e) {}
 }
