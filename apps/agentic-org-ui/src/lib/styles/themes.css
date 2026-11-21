@@ -235,7 +235,6 @@ html[data-ui-theme='classic'] .exec-canvas::before {
 	-webkit-backdrop-filter: var(--exec-blur);
 	box-shadow: var(--exec-shadow);
 	border-radius: 16px;
-	transition: background-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
 }
 
 .exec-card:hover {

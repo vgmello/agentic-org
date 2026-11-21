@@ -365,7 +365,6 @@
 		font-size: 0.875rem;
 		font-weight: 500;
 		color: var(--exec-muted);
-		transition: background-color 0.14s ease, color 0.14s ease;
 	}
 	.exec-nav-item:hover {
 		background: var(--exec-accent-soft);
@@ -400,7 +399,6 @@
 	}
 	.exec-theme-pill {
 		color: var(--exec-muted);
-		transition: background-color 0.14s ease, color 0.14s ease;
 	}
 	.exec-theme-pill:hover {
 		color: var(--exec-ink);

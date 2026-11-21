@@ -26,10 +26,12 @@ test('Executive UI v2 feature flag, 3 themes (Ocean/Light/Classic), Home, Inbox,
 		await page.screenshot({ path: `${captureDir}/prod-settings-ocean.png` });
 	}
 
-	// Open Executive Home
+	// Open Executive Home and wait for live KPIs to load
 	await page.getByRole('button', { name: 'Open Executive Home' }).click();
 	await expect(page).toHaveURL(/\/home$/);
 	await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+	await expect(page.getByText('Work & Flow')).toBeVisible();
+	await expect(page.getByText('Catch-up')).toBeVisible();
 
 	// Verify Projects is the last item under Workspace in the Executive Sidebar
 	const navLinks = await page
