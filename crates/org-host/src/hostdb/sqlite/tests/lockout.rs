@@ -368,7 +368,7 @@ fn audit_lines_contain_only_the_pinned_hash_never_the_login() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "hostdb::tests::lockout::audit_lines_contain_only_the_pinned_hash_never_the_login",
+            "hostdb::sqlite::tests::lockout::audit_lines_contain_only_the_pinned_hash_never_the_login",
             "--nocapture",
         ])
         .env("SAGE_LOCKOUT_AUDIT_CHILD", "1")

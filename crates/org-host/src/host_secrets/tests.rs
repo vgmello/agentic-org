@@ -1215,7 +1215,8 @@ fn the_platforms_kinds_keep_this_views_names() {
         ),
         (Kind::InUse, Error::InUse),
         (Kind::CaseAlias, Error::CaseAlias),
-        (Kind::Os(-25308), Error::Os(-25308)),
+        (Kind::InteractionNotAllowed, Error::InteractionNotAllowed),
+        (Kind::Os(-50), Error::Os(-50)),
         (
             Kind::Io(std::io::ErrorKind::NotFound),
             Error::Io(std::io::ErrorKind::NotFound),

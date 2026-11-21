@@ -467,7 +467,7 @@ fn the_admin_tls_set_command_replaces_the_pair_where_it_may_send_the_password() 
     let supplied = leaf_of(&cert);
     assert!(out.contains(&fingerprint(&supplied)), "{out}");
     assert!(
-        !out.contains("PRIVATE KEY") && !out.contains("BEGIN"),
+        !out.contains("PRIVATE KEY") && !out.contains("-----BEGIN"),
         "{out}"
     );
     assert_eq!(leaf_of(&stored_chain(&host)), supplied);

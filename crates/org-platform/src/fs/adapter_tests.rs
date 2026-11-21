@@ -11,7 +11,7 @@ use std::path::Path;
 use super::testing::full_sync_counts;
 use super::{
     check_instance_root, device_and_inode, full_sync, rename_noreplace, rename_noreplace_at,
-    require_disk, set_errno,
+    require_disk, set_errno, set_owner_only_dir,
 };
 
 fn c_path(path: &Path) -> CString {
@@ -157,4 +157,16 @@ fn a_directory_on_disk_passes_the_disk_check() {
     let directory = tempfile::tempdir_in(&base).unwrap();
     let path = directory.path().canonicalize().unwrap();
     require_disk(&File::open(&path).unwrap(), &path).unwrap();
+}
+
+#[test]
+fn owner_only_dir_tightens_mode_to_0700() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let child = directory.path().join("private");
+    fs::create_dir(&child).unwrap();
+    fs::set_permissions(&child, fs::Permissions::from_mode(0o755)).unwrap();
+    set_owner_only_dir(&child).unwrap();
+    let mode = fs::symlink_metadata(&child).unwrap().mode() & 0o7777;
+    assert_eq!(mode, 0o700);
 }

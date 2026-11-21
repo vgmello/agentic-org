@@ -506,7 +506,6 @@ pub(crate) mod tests {
         assert!(serde_json::from_value::<SpecPath>(serde_json::json!(1)).is_err());
     }
 
-    #[cfg(unix)]
     #[test]
     fn spec_path_rejects_non_utf8() {
         use std::ffi::OsStr;

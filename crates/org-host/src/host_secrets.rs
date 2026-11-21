@@ -145,6 +145,7 @@ pub(crate) enum Error {
     Unsafe,
     InUse,
     CaseAlias,
+    InteractionNotAllowed,
     Os(i32),
     Io(io::ErrorKind),
 }
@@ -165,6 +166,7 @@ impl From<CredentialError> for Error {
             CredentialError::Unsafe | CredentialError::Exists => Self::Unsafe,
             CredentialError::InUse => Self::InUse,
             CredentialError::CaseAlias => Self::CaseAlias,
+            CredentialError::InteractionNotAllowed => Self::InteractionNotAllowed,
             CredentialError::Os(status) => Self::Os(status),
             CredentialError::Io(kind) => Self::Io(kind),
             CredentialError::Refused(_) => Self::Io(io::ErrorKind::Unsupported),

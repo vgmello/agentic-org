@@ -220,7 +220,7 @@ impl OneTimeLinks for HostDb {
 
 #[cfg(test)]
 mod tests {
-    use crate::hostdb::tests::fixture;
+    use crate::hostdb::sqlite::tests::fixture;
     use crate::links::{Error, LinkKind, OneTimeLinks, StoreFault, Subject};
 
     const NOW: i64 = 1_800_000_000_000;

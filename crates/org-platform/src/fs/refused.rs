@@ -61,6 +61,10 @@ pub(super) fn require_disk(_dir: &File, _path: &Path) -> Result<(), FilesystemRe
     Err(FilesystemRefusal::Unsupported(refusal()))
 }
 
+pub(super) fn set_owner_only_dir(_path: &Path) -> io::Result<()> {
+    refused()
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs::{self, File};
@@ -122,5 +126,7 @@ mod tests {
             unsupported(super::check_instance_root(&directory, Path::new("/"), root));
         }
         unsupported(super::require_disk(&directory, Path::new("/")));
+        let dir = tempfile::tempdir().unwrap();
+        assert_refused(super::set_owner_only_dir(dir.path()));
     }
 }

@@ -514,14 +514,7 @@ fn linked_on_disk(base: &Path, operation: &str) -> bool {
         .into_iter()
         .find(|p| p.file_name().unwrap() == "host-registry.db")
         .expect("the host registry");
-    rusqlite::Connection::open(registry)
-        .unwrap()
-        .query_row(
-            "SELECT linked FROM selected_provisioning WHERE operation_id=?1",
-            [operation],
-            |r| r.get(0),
-        )
-        .expect("the reservation")
+    crate::hostdb::sqlite::provisioning_linked_on_disk_for_test(&registry, operation)
 }
 
 #[test]

@@ -602,11 +602,7 @@ fn parses_version_and_auth_probes_and_prepares_via_org_supervise() {
 
     let probe_tmp = real.join("probe-tmp");
     std::fs::create_dir_all(&probe_tmp).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&probe_tmp, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    org_platform::fs::set_owner_only_dir(&probe_tmp).unwrap();
 
     let mut probe_ctx = ProbeContext::new(PathBuf::from("/bin/cat"));
     probe_ctx.config_dir = Some(sp(cfg.to_str().unwrap()));

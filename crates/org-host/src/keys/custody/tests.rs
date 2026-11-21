@@ -308,8 +308,12 @@ fn the_platforms_kinds_keep_their_meaning_and_show_no_path() {
         KeyStoreError::NotPlainId
     ));
     assert!(matches!(
-        KeyStoreError::from(Kind::Os(-25308)),
-        KeyStoreError::Os(-25308)
+        KeyStoreError::from(Kind::InteractionNotAllowed),
+        KeyStoreError::InteractionNotAllowed
+    ));
+    assert!(matches!(
+        KeyStoreError::from(Kind::Os(-50)),
+        KeyStoreError::Os(-50)
     ));
     // A Keychain reply without data was `errSecParam`, and is not a missing key.
     assert!(matches!(

@@ -1,0 +1,112 @@
+// Each function holds one violation of the engine boundary. The guard in
+// `tests/engine_boundary.rs` checks that every function here is reported.
+// This file is not compiled; it is read as text by the guard.
+
+fn use_of_the_engine() {
+    use rusqlite::Connection;
+}
+
+fn use_of_the_engine_in_a_group() {
+    use rusqlite::{ErrorCode, Connection};
+}
+
+fn use_of_the_engine_alone() {
+    use rusqlite;
+}
+
+fn use_of_the_engine_renamed() {
+    use rusqlite as engine;
+}
+
+fn absolute_path_through_the_engine() {
+    let _ = ::rusqlite::Connection::open_in_memory();
+}
+
+fn type_through_the_engine(_code: rusqlite::ErrorCode) {}
+
+fn the_engine_in_a_macro() {
+    let _ = format!("{:?}", rusqlite::version());
+}
+
+fn extern_crate_of_the_engine() {
+    extern crate rusqlite;
+}
+
+fn select() {
+    let _ = "SELECT account_id FROM accounts WHERE login_key = ?1";
+}
+
+fn select_in_lower_case() {
+    let _ = "select account_id from accounts where login_key = ?1";
+}
+
+fn select_star() {
+    let _ = "select * from accounts";
+}
+
+fn insert() {
+    let _ = "INSERT INTO accounts VALUES (?1)";
+}
+
+fn insert_or_replace() {
+    let _ = "INSERT OR REPLACE INTO meta VALUES (?1, ?2)";
+}
+
+fn replace_into() {
+    let _ = "REPLACE INTO meta VALUES (?1, ?2)";
+}
+
+fn update() {
+    let _ = "UPDATE selected_provisioning SET linked = 1 WHERE operation_id = ?1";
+}
+
+fn delete() {
+    let _ = "delete from login_lockout where login_key = ?1";
+}
+
+fn create_table() {
+    let _ = "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY)";
+}
+
+fn create_unique_index() {
+    let _ = "CREATE UNIQUE INDEX links_pending ON one_time_links (kind, subject)";
+}
+
+fn drop_table() {
+    let _ = "DROP TABLE web_tls_pair";
+}
+
+fn alter_table() {
+    let _ = "ALTER TABLE accounts ADD COLUMN note TEXT";
+}
+
+fn pragma() {
+    let _ = "PRAGMA journal_mode = WAL";
+}
+
+fn begin_immediate() {
+    let _ = "BEGIN IMMEDIATE";
+}
+
+fn commit() {
+    let _ = "COMMIT";
+}
+
+fn attach() {
+    let _ = "ATTACH DATABASE 'other.db' AS other";
+}
+
+fn savepoint() {
+    let _ = "SAVEPOINT before_write";
+}
+
+fn sql_in_a_format_macro() {
+    let _ = format!("SELECT {} FROM accounts", "account_id");
+}
+
+fn an_sql_file_included() {
+    let _ = include_str!("../schema.sql");
+}
+
+#[some_attribute(query = "INSERT INTO meta (key) VALUES (?1)")]
+fn sql_in_an_attribute() {}

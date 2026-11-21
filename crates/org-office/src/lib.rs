@@ -54,11 +54,9 @@ pub use store::open::Testing;
 pub use store::open::{
     open_store, AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
     DirectoryGeneration, DirectorySnapshot, EngineChoice, MovePersonOp, MoveTeamOp, OfficeEngine,
-    OfficeStanding, OfficeStore, Opened, ReadOp, Standing, StoreConfig, StoreOp, StructureOp,
+    OfficeStanding, OfficeStore, ReadOp, Standing, StoreConfig, StoreOp, StructureOp,
     UpdatePersonOp, UpdateTeamOp,
 };
-/// The SQLite engine of the office store: the projection as one plain database file.
-pub use store::sqlite::{SqliteEngine, SqliteSnapshot, SqliteTx};
 mod time;
 
 pub use error::{NameError, OfficeError};

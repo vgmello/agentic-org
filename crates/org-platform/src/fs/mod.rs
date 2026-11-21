@@ -184,3 +184,10 @@ pub fn check_instance_root(dir: &File, path: &Path, root: bool) -> Result<(), Fi
 pub fn require_disk(dir: &File, path: &Path) -> Result<(), FilesystemRefusal> {
     native::require_disk(dir, path)
 }
+
+/// Restrict an existing directory at `path` so only its owner can read, write, or enter it
+/// (mode `0700` on macOS and GNU/Linux). Every unsupported target fails closed with the
+/// `fs` refusal rather than silently leaving directory permissions unhardened.
+pub fn set_owner_only_dir(path: &Path) -> io::Result<()> {
+    native::set_owner_only_dir(path)
+}

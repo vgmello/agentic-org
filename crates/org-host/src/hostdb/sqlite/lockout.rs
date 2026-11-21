@@ -1,47 +1,9 @@
 //! Persistent login throttling. Callers normalize/bound keys and authorize resets.
 use super::clock::{advance_clock, now};
 use super::{Error, HostDb};
+use crate::hostdb::lockout::{Outcome, Socket, State};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
-
-#[derive(Clone, Copy)]
-pub(crate) enum Socket {
-    Control,
-    Local,
-}
-impl Socket {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Control => "control",
-            Self::Local => "local",
-        }
-    }
-}
-#[derive(PartialEq, Eq)]
-pub(crate) enum Outcome {
-    Failure,
-    Success,
-    /// Only an already authorized password/reset operation may request this.
-    Reset,
-}
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct State {
-    now_ms: i64,
-    locked: bool,
-    until_ms: i64,
-}
-impl State {
-    /// How long until the key accepts another attempt; zero when unlocked.
-    pub(crate) fn retry_after_ms(&self) -> i64 {
-        self.until_ms.saturating_sub(self.now_ms).max(0)
-    }
-    pub(crate) fn now_ms(&self) -> i64 {
-        self.now_ms
-    }
-    pub(crate) fn is_locked(&self) -> bool {
-        self.locked
-    }
-}
 
 struct Counter {
     failures: i64,

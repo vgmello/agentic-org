@@ -51,9 +51,7 @@ const OBJECTS: [(&str, &str, &str); 3] = [
     ),
 ];
 
-/// What the operator is told when `ensure_schema` refuses.
-pub(crate) const OUTDATED: &str =
-    "host database from an earlier development build; run `agentic-org setup` on a new instance";
+pub(crate) use crate::hostdb::sessions::OUTDATED;
 
 /// Creates the session objects in a new registry's own creation transaction.
 pub(super) fn create_schema(tx: &Transaction<'_>) -> Result<(), Error> {

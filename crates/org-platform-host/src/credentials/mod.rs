@@ -379,6 +379,10 @@ pub enum CredentialError {
     InUse,
     /// The directory store holds a name that differs from this one only by case.
     CaseAlias,
+    /// The credential store is locked or requires user interaction that is not
+    /// allowed in this context (for example macOS `errSecInteractionNotAllowed`).
+    /// Unlike other store failures, this condition may pass on its own.
+    InteractionNotAllowed,
     /// The Keychain failed with this `OSStatus`.
     Os(i32),
     /// A directory store's file operation failed with this kind of error.
@@ -399,6 +403,9 @@ impl fmt::Display for CredentialError {
             Self::InUse => f.write_str("the credential store is in use"),
             Self::CaseAlias => {
                 f.write_str("the credential store holds a name that differs only by case")
+            }
+            Self::InteractionNotAllowed => {
+                f.write_str("the credential store is locked or user interaction is not allowed")
             }
             Self::Os(status) => write!(f, "the Keychain failed (OSStatus {status})"),
             Self::Io(kind) => write!(f, "the credential store's file operation failed: {kind}"),

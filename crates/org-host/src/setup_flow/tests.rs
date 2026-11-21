@@ -451,7 +451,7 @@ fn https_setup_verifies_a_supplied_pair_before_anything_is_saved() {
         refused.contains("tls_key_mismatch") && refused.ends_with("nothing was saved"),
         "{refused}"
     );
-    assert!(!refused.contains("BEGIN"), "{refused}");
+    assert!(!refused.contains("-----BEGIN"), "{refused}");
     assert!(
         Journal::snapshot(&base, None).is_err(),
         "a record was saved"

@@ -13,38 +13,12 @@
 //! stored refusal, `tls_key_mismatch` ([`TlsStored`]), which the shared journal type does not
 //! carry.
 use org_host_control::ops::TlsRefusal;
-use org_host_control::HostOpResult;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::clock::{advance_clock, now};
 use super::journal::{id_time, immediate, maintain, stored_row, Attempt, DAY};
 use super::{Error, HostDb};
-
-/// Who made the stored pair: the instance itself, or the operator (setup's configuration, or
-/// `tls.set`). The registry's `source` column.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Source {
-    Made,
-    Supplied,
-}
-
-impl Source {
-    /// The registry's spelling.
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Source::Made => "made",
-            Source::Supplied => "supplied",
-        }
-    }
-
-    pub(crate) fn parse(text: &str) -> Option<Self> {
-        match text {
-            "made" => Some(Source::Made),
-            "supplied" => Some(Source::Supplied),
-            _ => None,
-        }
-    }
-}
+use crate::hostdb::web_tls::{Source, StoredPair, TlsLookup, TlsStored};
 
 pub(super) const TABLE_DDL: &str = r#"
 CREATE TABLE web_tls_pair (
@@ -87,27 +61,6 @@ pub(super) fn ensure_schema(db: &mut Connection) -> Result<(), Error> {
     require(&tx)?;
     tx.commit()?;
     Ok(())
-}
-
-/// The stored pair, as the registry holds it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct StoredPair {
-    pub(crate) source: Source,
-    /// The chain, in the normal form `web_tls::check` returns.
-    pub(crate) cert_pem: String,
-    /// Names the key in the host's secrets (`tls.<hex>`).
-    pub(crate) pair_fp: [u8; 32],
-    pub(crate) set_at_ms: i64,
-}
-
-/// `tls.set`'s journaled result: `completed` (`{}`), or `rejected` with the one refusal that is
-/// stored, `tls_key_mismatch`.
-pub(crate) type TlsStored = HostOpResult<serde_json::Value, TlsRefusal>;
-
-/// A `tls.set` journal lookup.
-pub(crate) enum TlsLookup {
-    Vacant,
-    Replay(TlsStored),
 }
 
 fn write_pair(tx: &Transaction<'_>, pair: &StoredPair) -> Result<(), Error> {
@@ -268,7 +221,8 @@ mod tests {
     use rusqlite::OpenFlags;
 
     use super::super::tests::connection_for_test;
-    use crate::hostdb::{Error, HostDb, DB};
+    use crate::hostdb::sqlite::{HostDb, DB};
+    use crate::hostdb::Error;
     use crate::sessions::contract_tests::{sqlite, NoSecrets};
 
     fn raw_db(home: &std::path::Path) -> rusqlite::Connection {

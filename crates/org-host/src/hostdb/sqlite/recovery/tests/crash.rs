@@ -13,8 +13,8 @@ use std::{
 };
 
 thread_local! {static STOP: Cell<u8> = const { Cell::new(0) };}
-const CHILD: &str = "hostdb::recovery::tests::crash::recovery_crash_child";
-pub(in crate::hostdb::recovery) fn checkpoint(step: u8) {
+const CHILD: &str = "hostdb::sqlite::recovery::tests::crash::recovery_crash_child";
+pub(in crate::hostdb::sqlite::recovery) fn checkpoint(step: u8) {
     if STOP.with(Cell::get) == step {
         println!("RECOVERY_CRASH_RENDEZVOUS");
         std::io::stdout().flush().unwrap();

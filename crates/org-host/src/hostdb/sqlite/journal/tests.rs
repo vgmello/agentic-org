@@ -1,5 +1,6 @@
 use super::*;
-use crate::hostdb::tests::admin_fixture::PHC;
+use crate::hostdb::sqlite::tests::admin_fixture::PHC;
+use crate::hostdb::StoreFault;
 use serde_json::json;
 
 thread_local! {
@@ -387,10 +388,7 @@ fn commit_failure_rolls_back_effect_and_clock() {
         )?;
         Ok(create_effect("created"))
     });
-    assert!(matches!(
-        result,
-        Err(Error::Sql(rusqlite::ErrorCode::ConstraintViolation))
-    ));
+    assert!(matches!(result, Err(Error::Store(StoreFault::Constraint))));
     for table in ["op_journal", "op_verifiers", "org_owners"] {
         assert_eq!(scalar(&db, &format!("SELECT count(*) FROM {table}")), 0);
     }
@@ -534,7 +532,7 @@ fn failure_at_each_sql_write_rolls_back_the_entire_transaction() {
                 )?;
                 Ok(create_effect("created"))
             }),
-            Err(Error::Sql(rusqlite::ErrorCode::ConstraintViolation))
+            Err(Error::Store(StoreFault::Constraint))
         ));
         for table in ["op_journal", "op_verifiers", "org_owners"] {
             assert_eq!(
@@ -607,7 +605,7 @@ fn reserved_conflicts_and_linked_or_abandoned_rows_replay_without_transitions() 
     };
     assert!(matches!(
         db.write(&op, NOW, |_| Ok(completed())),
-        Err(Error::Sql(rusqlite::ErrorCode::ConstraintViolation))
+        Err(Error::Store(StoreFault::Constraint))
     ));
     assert_eq!(scalar(&db, "SELECT count(*) FROM op_journal"), 3);
 }
@@ -736,7 +734,7 @@ fn lookup_and_existing_write_never_escape_a_failed_clock_update_or_commit() {
                 assert!(
                     matches!(
                         decision(&db, &op, at, writer),
-                        Err(Error::Sql(rusqlite::ErrorCode::ConstraintViolation))
+                        Err(Error::Store(StoreFault::Constraint))
                     ),
                     "writer={writer}, expired={expired}, commit={commit}"
                 );
@@ -934,12 +932,9 @@ fn pruning_and_clock_roll_back_with_the_effect_and_delete_failures() {
     db.connection.lock().unwrap().execute_batch("CREATE TRIGGER fail_prune BEFORE DELETE ON op_journal BEGIN SELECT RAISE(ABORT,'prune failed'); END;").unwrap();
     assert!(matches!(
         db.write(&op, NOW, |_| Ok(completed())),
-        Err(Error::Sql(rusqlite::ErrorCode::ConstraintViolation))
+        Err(Error::Store(StoreFault::Constraint))
     ));
-    assert_eq!(
-        db.prune(NOW),
-        Err(Error::Sql(rusqlite::ErrorCode::ConstraintViolation))
-    );
+    assert_eq!(db.prune(NOW), Err(Error::Store(StoreFault::Constraint)));
     assert_eq!(scalar(&db, "SELECT count(*) FROM op_journal"), 1);
     assert_eq!(
         scalar(
@@ -1031,7 +1026,7 @@ fn a_failed_prune_commit_preserves_rows_verifiers_and_clock_after_reopen() {
         .unwrap();
     assert_eq!(
         db.prune(NOW + 30 * DAY),
-        Err(Error::Sql(rusqlite::ErrorCode::ConstraintViolation))
+        Err(Error::Store(StoreFault::Constraint))
     );
     for table in ["op_journal", "op_verifiers"] {
         assert_eq!(scalar(&db, &format!("SELECT count(*) FROM {table}")), 1);

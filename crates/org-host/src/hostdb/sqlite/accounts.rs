@@ -1,68 +1,9 @@
 //! Private account snapshots; checked identity inputs and caller-owned authorization.
-use super::{journal::Verifier, Error, HostDb};
+use super::{Error, HostDb};
 use crate::accounts::identity::{AccountId, LoginKey};
+use crate::hostdb::accounts::{Account, Credentials, Link};
+use crate::hostdb::journal::Verifier;
 use rusqlite::{Connection, OptionalExtension};
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Link {
-    org_id: String,
-    member_id: String,
-}
-
-/// Stored authority, including revoked accounts; office IDs come from the catalog later.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Account {
-    account_id: AccountId,
-    login: String,
-    admin: bool,
-    revoked_at_ms: Option<i64>,
-    password_changed_at_ms: i64,
-    links: Vec<Link>,
-}
-
-/// An owned PHC for hashing outside the database lock; deliberately has no Debug.
-pub(crate) struct Credentials {
-    account: Account,
-    verifier: Verifier,
-}
-
-impl Link {
-    pub(crate) fn org_id(&self) -> &str {
-        &self.org_id
-    }
-    pub(crate) fn member_id(&self) -> &str {
-        &self.member_id
-    }
-}
-impl Account {
-    pub(crate) fn account_id(&self) -> &str {
-        self.account_id.as_str()
-    }
-    pub(crate) fn login(&self) -> &str {
-        &self.login
-    }
-    pub(crate) fn admin(&self) -> bool {
-        self.admin
-    }
-    pub(crate) fn revoked_at_ms(&self) -> Option<i64> {
-        self.revoked_at_ms
-    }
-    pub(crate) fn password_changed_at_ms(&self) -> i64 {
-        self.password_changed_at_ms
-    }
-    pub(crate) fn links(&self) -> &[Link] {
-        &self.links
-    }
-}
-impl Credentials {
-    pub(crate) fn account(&self) -> &Account {
-        &self.account
-    }
-    /// Borrow the checked verifier; password hashing belongs outside the registry lock.
-    pub(crate) fn verifier(&self) -> &Verifier {
-        &self.verifier
-    }
-}
 
 impl HostDb {
     /// The key was normalized and bounded by its owner. Unknown keys return None; errors propagate.
