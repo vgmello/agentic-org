@@ -228,6 +228,12 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .cmdk-trigger:hover { color: #F1F5F9; background: rgba(186, 222, 255, .05); }
 .cmdk-trigger .ic { width: 18px; height: 18px; color: #7C91AE; flex: none; transition: color .14s ease; }
 .cmdk-trigger:hover .ic { color: #7DD3FC; }
+.cmdk-shell.is-offline { opacity: .82; }
+.cmdk-shell.is-offline:hover { transform: none; background: rgba(10, 19, 35, .36); box-shadow: inset 0 1px 0 rgba(186, 222, 255, .20), inset 0 0 0 1px rgba(186, 222, 255, .16), 0 10px 30px -10px rgba(0, 0, 0, .58); }
+.cmdk-trigger.is-offline { cursor: not-allowed; color: #74849B; }
+.cmdk-trigger.is-offline:hover { color: #74849B; background: transparent; }
+.cmdk-trigger.is-offline:hover .ic { color: #7C91AE; }
+.cmdk-trigger.is-offline kbd { opacity: .4; }
 .cmdk-ph { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cmdk-trigger kbd {
   display: inline-flex; align-items: center; justify-content: center;
@@ -2187,7 +2193,7 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 <aside class="sidebar" id="sidebar" aria-label="Sidebar">
   <div class="sidebar-hd">
     <a class="logo" href="#/home" aria-label="Agentic Org home" title="Agentic Org home">
-      <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="8" fill="#615fff"/><path d="M10 22 16 9l6 13M12.5 17h7" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="ao-mark" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0EA5E9"/><stop offset="100%" stop-color="#0369A1"/></linearGradient></defs><rect x="2" y="2" width="28" height="28" rx="8" fill="url(#ao-mark)"/><path d="M10 22 16 9l6 13M12.5 17h7" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/></svg>
       <span class="name" title="Agentic Org">Agentic Org</span>
     </a>
     <button class="nav-collapse-btn" id="nav-collapse-btn" type="button" data-act="nav-collapse" aria-label="Collapse sidebar" title="Collapse sidebar" aria-pressed="false">
@@ -2235,10 +2241,10 @@ a.hb-tleg:hover { color: var(--hb-ink); }
   </div>
   <header class="topbar">
     <button class="btn ghost icon menu-btn" type="button" data-act="drawer" aria-label="Open navigation" aria-controls="sidebar"><svg class="ic ic20" aria-hidden="true"><use href="#i-menu"/></svg></button>
-    <div class="cmdk-shell">
+    <div class="cmdk-shell" id="cmdk-shell">
       <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
         <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
-        <span class="cmdk-ph">Search, run a command, or ask Org AI…</span>
+        <span class="cmdk-ph" id="cmdk-ph">Search, run a command, or ask Org AI…</span>
         <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
       </button>
       <span class="cmdk-sep" aria-hidden="true"></span>
@@ -2295,7 +2301,7 @@ const M = {
   kai:   { name: "Kai", kind: "agent", tier: "specialist", role: "Rust Developer", teams: ["platform"], mgr: "ada", live: "withyou", task: "Codec split 2a.3.2b", proj: "agency-v1", goal: "2a.3.2b merged into v1 with the full suite green", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-kai" } },
   sage:  { name: "Sage", kind: "agent", tier: "specialist", role: "Rust Developer", teams: ["platform"], mgr: "ada", live: "working", task: "Custody lock fix", proj: "office-federation", goal: "Lock fix merged after the owner picks lease or per-office lock", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-sage" } },
   quinn: { name: "Quinn", kind: "agent", tier: "specialist", role: "Rust Developer", teams: ["platform"], mgr: "ada", live: "asleep", task: "", proj: "office-federation", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "On a schedule (weekdays 09:00)", office: "sat", home: "projects/ac/agents/ac-software-engineer-quinn" } },
-  jules: { name: "Jules", kind: "agent", tier: "specialist", role: "Svelte Developer", teams: ["app"], mgr: "ada", live: "working", task: "Search placeholder contrast (BUG-84)", proj: "look-feel", goal: "BUG-84 fixed with an e2e test that fails before the fix", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-jules" } },
+  jules: { name: "Jules", kind: "agent", tier: "specialist", role: "Svelte Developer", teams: ["app"], mgr: "ada", live: "asleep", budgetCapped: true, task: "Search placeholder contrast (BUG-84)", proj: "look-feel", goal: "BUG-84 fixed with an e2e test that fails before the fix", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-jules" } },
   avery: { name: "Avery", kind: "agent", tier: "specialist", role: "Svelte Developer", teams: ["app"], mgr: "ada", live: "available", paused: true, task: "", proj: "look-feel", setup: { runtime: "Codex", model: "gpt-6.1-sol, high effort", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-software-engineer-avery" } },
   noor:  { name: "Noor Haddad", kind: "agent", tier: "specialist", role: "Support Engineer", teams: ["quality"], mgr: "tomas", live: "asleep", task: "", proj: null, setup: { runtime: "Claude Code", model: "Claude Sonnet", how: "Wakes when called", office: null, home: "projects/ac/agents/ac-support-engineer-noor", needs: "not placed in an office" } }
 };
@@ -2308,7 +2314,7 @@ const TEAMS = {
 };
 const P = {
   "agency-v1":         { name: "Agentic Org v1.0", release: "v1.0", health: "At risk", upd: 12, lead: "ada", teams: ["leadership", "platform", "app", "quality"], goal: "Ship the first release of Agentic Org: hire agents, chat, projects and work, on one office.", updated: "12m ago", channel: "agency-v1", due: "Dec 5", dueMonth: "Dec", dueDay: "05", pace: "+2d behind", paceTone: "warn", blocker: "2 sign-offs waiting: v1.0 release & test access", unblockSpotId: "in1", unblockHref: "#/inbox/in1", unblockLabel: "Review (2)", milestoneTitle: "Agentic Org v1.0", horizonStatus: "2 sign-offs", horizonNote: "Release & test access sign-offs", risk: "Two updates wait on approval and local test access is waiting on your permission." },
-  "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "Build box offline + waiting 6h on your office lock choice", unblockSpotId: "in2", unblockHref: "#/inbox/in2", unblockLabel: "Decide", milestoneTitle: "Office federation", horizonStatus: "+5d behind", horizonNote: "Lock choice & auto-reconnect fix", risk: "The Build box stayed offline after sleep. Sage's fix waits on your verification, and sync can't resume until the office is back online." },
+  "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "Build box offline · waiting 25m on lock choice", unblockSpotId: "in2", unblockHref: "#/inbox/in2", unblockLabel: "Decide", milestoneTitle: "Lock ruling & sync test", horizonStatus: "Lock choice", horizonNote: "Rowan & Sage · Office federation", risk: "The Build box stayed offline after sleep. Sage's fix waits on your verification, and sync can't resume until the office is back online." },
   "look-feel":         { name: "Look & feel refresh", release: "v1.1", health: "On track", upd: 60, lead: "eden", teams: ["product", "app"], goal: "One calm, consistent look across every screen, with icons and no emoji.", updated: "1h ago", channel: "design", due: "Nov 28", dueMonth: "Nov", dueDay: "28", pace: "On pace", paceTone: "ok", blocker: "", clearNote: "All checks passing · projected Nov 27 (1d early)", unblockSpotId: "in17", unblockHref: "#/inbox/in17", milestoneTitle: "Look & feel refresh", horizonStatus: "1d ahead", horizonNote: "Final design polish sign-off", risk: "" },
   "proto-agency":      { name: "Early UI prototype", upd: 99999, lead: null, teams: ["product"], goal: "Explore the look of the app before v1.", updated: "Nov 2", channel: "design", archived: true }
 };
@@ -2886,51 +2892,76 @@ function feedV4(items) {
 function answerOrgQuestion(rawQ) {
   const q = String(rawQ || "").trim();
   const t = q.toLowerCase();
+  if (!q) return null;
+  if (S.homeState === "error") {
+    return {
+      q,
+      html: `<strong>HQ office is currently offline.</strong> Live org metrics and agent data will return automatically as soon as your office reconnects.`
+    };
+  }
+  if (S.homeState === "empty") {
+    return {
+      q,
+      html: `Your organization is freshly set up: <strong>$0 / $210</strong> monthly spend, <strong>100% AI capacity free</strong>, <strong>0 projects</strong>, and <strong>HQ office online</strong>. Start by creating your first project or hiring your first autonomous agent.`
+    };
+  }
   const open = unhandled();
   const blocked = W.filter((w) => w.status === "Blocked");
   const runs = A.filter((a) => a.type === "run");
-  if (!q) return null;
+  const in1 = IN.find((i) => i.id === "in1");
+  const in5 = IN.find((i) => i.id === "in5");
+  const in2 = IN.find((i) => i.id === "in2");
+  const in16 = IN.find((i) => i.id === "in16");
+  const in17 = IN.find((i) => i.id === "in17");
+  const v1Pending = [in1, in5].filter((i) => i && !i.handled);
   if (/horizon|schedule|slip|pace|milestone|standard|promote|14 day|release/.test(t)) {
+    const lockTxt = in2 && !in2.handled ? `<a href="#/inbox/in2">lock choice</a> pending` : `lock choice decided`;
+    const polishTxt = in17 && !in17.handled ? `pending your <a href="#/inbox/in17">final design polish sign-off</a>` : `final polish approved`;
+    const v1Txt = v1Pending.length ? `waiting on ${plural(v1Pending.length, "sign-off", "sign-offs")}` : `all sign-offs cleared`;
+    const stdTxt = in16 && !in16.handled ? ` You also have a <a href="#/inbox/in16">company standard proposal</a> ready to adopt.` : "";
     return {
       q,
-      html: `Next 14 days: <strong>Office federation v0.9 (Nov 26)</strong> is <strong>+5d behind</strong> (Build box offline + <a href="#/inbox/in2">lock choice</a>); <strong>Look &amp; feel refresh v1.1 (Nov 28)</strong> is <strong>1 day ahead</strong> pending your <a href="#/inbox/in17">final design polish sign-off</a>; <strong>Agentic Org v1.0 (Dec 5)</strong> is <strong>+2d behind</strong> on 2 sign-offs. You also have a <a href="#/inbox/in16">company standard proposal</a> ready to adopt.`
+      html: `Next 14 days: <strong>Lock ruling &amp; sync test v0.9 (Nov 22)</strong> has Build box offline + ${lockTxt}; <strong>Final screen polish v1.1 (Nov 27)</strong> is <strong>1 day ahead</strong> (${polishTxt}); <strong>Release freeze v1.0 (Dec 2)</strong> is ${v1Txt}.${stdTxt}`
     };
   }
   if (/block|slow|v1|ship|merge/.test(t)) {
+    const syncStatus = in1 && !in1.handled
+      ? `<a href="#/members/kai">Kai</a>'s sync update passed all 412 automated checks and awaits your <a href="#/inbox/in1">release sign-off</a>.`
+      : `<a href="#/members/kai">Kai</a>'s v1.0 sync update is approved.`;
     return {
       q,
-      html: `<strong>2 tasks are waiting on you</strong> across active delivery: <a href="#/projects/office-federation/work">office lock choice</a> for <a href="#/members/sage">Sage</a> and <a href="#/projects/agency-v1/work">local test access</a> for <a href="#/members/jules">Jules</a>. Meanwhile, <a href="#/members/kai">Kai</a>'s sync update passed all 412 automated checks and awaits your <a href="#/inbox/in1">release sign-off</a>.`
+      html: `<strong>${plural(blocked.length, "task is", "tasks are")} waiting on you</strong> across active delivery${blocked.length ? ` (${blocked.map((b) => `<a href="#/projects/${b.proj}/work">${esc(b.title)}</a>`).join(", ")})` : ""}. ${syncStatus}`
     };
   }
-  if (/cycle|first-pass|accept|rework|hitl|human|quality|autonom|metric|kpi|turnaround|revision/.test(t)) {
+  if (/cycle|first-pass|accept|rework|hitl|human|quality|autonom|metric|kpi|turnaround|revision|deliver/.test(t)) {
     return {
       q,
-      html: `Last 7 days delivery quality: <strong>Avg. turnaround 18m</strong> (-14% faster), <strong>Approved first try 84%</strong> (+6%), <strong>Needed revision 16%</strong> (3 of 19 tasks), and <strong>78% autonomous</strong> (22% needed your input). Monthly spend sits at <strong>$142 / $210</strong>.`
+      html: `Last 7 days delivery quality: <strong>Approved first try 84%</strong> (+6%), <strong>Avg. turnaround 18m</strong> (-14% faster), <strong>19 tasks delivered</strong> (+4 vs prior week), and <strong>78% autonomous</strong> (22% needed your input). Monthly spend sits at <strong>$142 / $210</strong>.`
     };
   }
   if (/budget|spend|cost|\$|dollar|office|fleet|offline|jules|noor|health|pool|headroom|idle|spin|capacity/.test(t)) {
     return {
       q,
-      html: `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per completed task</strong> (-11%), with <strong>74% AI capacity free</strong>. <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Team: <strong>11 agents</strong> (8 active · 2 idle: <a href="#/members/avery">Avery</a> paused, <a href="#/members/noor">Noor</a> unplaced · 1 offline: <a href="#/members/quinn">Quinn</a> on Build box).`
+      html: `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per completed task</strong> (-11%), with <strong>74% AI capacity free</strong>. <a href="#/members/jules">Jules</a> is paused at its monthly cap (<a href="#/settings/agents/jules">raise cap</a>). Team: <strong>11 agents</strong> (7 active · 3 idle: <a href="#/members/jules">Jules</a>, <a href="#/members/avery">Avery</a>, <a href="#/members/noor">Noor</a> · 1 offline: <a href="#/members/quinn">Quinn</a> on Build box).`
     };
   }
   if (/run|overnight|happen|catch|digest|summary|activity|away/.test(t)) {
     return {
       q,
-      html: `In the last 4 hours: <strong>${runs.length} autonomous sessions</strong> completed. <a href="#/members/kai">Kai</a> finished the sync update (412 automated checks passed) and <a href="#/members/tomas">Tomas</a> approved review; <a href="#/members/avery">Avery</a> shipped 2 UI polish tasks; <a href="#/members/sage">Sage</a> tested the auto-reconnect fix. <a href="#/activity">Open activity log</a>.`
+      html: `In the last 4 hours: <strong>${runs.length} autonomous sessions</strong> completed. <a href="#/members/ada">Ada</a> &amp; <a href="#/members/maya">Maya</a> drafted v1.0 release notes &amp; onboarding; <a href="#/members/avery">Avery</a> shipped 2 UI polish tasks; <a href="#/members/sage">Sage</a> verified the auto-reconnect fix. <a href="#/activity">Open activity log</a>.`
     };
   }
   if (/federation|sage|lock|satellite/.test(t)) {
     return {
       q,
-      html: `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box went offline after sleep (auto-reconnect fix is ready to <a href="#/inbox/in11">verify</a>), and <a href="#/members/sage">Sage</a> is waiting on your <a href="#/inbox/in2">office lock choice</a> (Sage &amp; Rowan recommend the timed lease).`
+      html: `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box went offline after sleep (auto-reconnect fix is ready to <a href="#/inbox/in11">verify</a>)${in2 && !in2.handled ? `, and <a href="#/members/sage">Sage</a> is waiting on your <a href="#/inbox/in2">office lock choice</a> (Sage &amp; Rowan recommend the timed lease)` : `, and your office lock choice is locked in`}.`
     };
   }
   if (/need|urgent|priority|first|inbox|ada|hire/.test(t)) {
     const urg = open.filter((i) => i.expires);
     return {
       q,
-      html: `<strong>${open.length} items need you</strong> (${urg.length} time-sensitive). Start with <a href="#/inbox/in1">Kai's v1.0 release sign-off</a> (closes in 4h) and <a href="#/inbox/in5">Jules's test access request</a> (expires tomorrow). <a href="#/members/ada">Ada</a> also requested hiring a QA specialist to speed up reviews.`
+      html: `<strong>${open.length} items need you</strong> (${urg.length} time-sensitive). ${urg.length ? `Start with ${urg.map((u) => `<a href="#/inbox/${u.id}">${esc(u.what)}</a>`).join(" and ")}.` : "No urgent deadlines remaining."} <a href="#/members/ada">Ada</a> also requested hiring a QA specialist to speed up reviews.`
     };
   }
   return {
@@ -2974,9 +3005,9 @@ function pageHome() {
   const allAgents = Object.values(M).filter((m) => m.kind === "agent");
   const leadsN = allAgents.filter((m) => m.tier === "lead").length;
   const specsN = allAgents.filter((m) => m.tier === "specialist").length;
-  const idleSpecsN = allAgents.filter((m) => m.tier === "specialist" && (m.paused || (m.live === "asleep" && !m.proj))).length;
+  const idleSpecsN = allAgents.filter((m) => m.tier === "specialist" && (m.paused || m.budgetCapped || (m.live === "asleep" && !m.proj))).length;
   const offlineSpecsN = allAgents.filter((m) => m.setup && m.setup.office && OFFICES[m.setup.office] && OFFICES[m.setup.office].status === "Offline").length;
-  const liveWorkingAgents = st === "empty" ? [] : Object.keys(M).filter((k) => M[k].kind === "agent" && ["working", "withyou"].includes(M[k].live) && !M[k].paused);
+  const liveWorkingAgents = st === "empty" ? [] : Object.keys(M).filter((k) => M[k].kind === "agent" && ["working", "withyou"].includes(M[k].live) && !M[k].paused && !M[k].budgetCapped);
 
   const renderMetrics = () => {
     if (st === "loading") return skel(3, "Loading executive overview…");
@@ -3029,9 +3060,9 @@ function pageHome() {
           </div>
         </div>
         <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/teams/members" title="All ${allAgents.length} agents: ${liveWorkingAgents.length} active, ${idleSpecsN} idle (Avery paused, Noor unplaced), ${offlineSpecsN} waiting on offline Build box (Quinn)">
+          <a class="hb-sub-item" href="#/teams/members" title="All ${allAgents.length} agents: ${liveWorkingAgents.length} active, ${idleSpecsN} idle (Jules at budget cap, Avery paused, Noor unplaced), ${offlineSpecsN} waiting on offline Build box (Quinn)">
             <span class="hb-sub-lbl">${emptyMode ? "Team capacity" : `${leadsN} leads · ${specsN} specialists`}</span>
-            <span class="hb-sub-val">${emptyMode ? "0 agents" : `${liveWorkingAgents.length} active`}${emptyMode ? `<span class="hb-sub-meta">· 1 person</span>` : `<span class="hb-sub-meta warn">${idleSpecsN} idle</span>${offlineSpecsN ? `<span class="hb-sub-meta bad">· ${offlineSpecsN} off</span>` : ""}`}</span>
+            <span class="hb-sub-val">${emptyMode ? "0 agents" : `${liveWorkingAgents.length} active`}${emptyMode ? `<span class="hb-sub-meta">· 1 person</span>` : `<span class="hb-sub-meta warn">· ${idleSpecsN} idle</span>${offlineSpecsN ? `<span class="hb-sub-meta bad">· ${offlineSpecsN} off</span>` : ""}`}</span>
           </a>
           <a class="hb-sub-item" href="#/settings/offices" title="Connected offices running agent work">
             <span class="hb-sub-lbl">Offices</span>
@@ -3063,9 +3094,9 @@ function pageHome() {
             <span class="hb-sub-lbl">Avg. turnaround · 7d</span>
             <span class="hb-sub-val">${emptyMode ? "—" : "18m"}${emptyMode ? "" : `<span class="hb-sub-meta ok">-14%</span>`}</span>
           </a>
-          <a class="hb-sub-item" href="#/work" title="Percentage of completed tasks sent back for revisions (3 of 19 tasks)">
-            <span class="hb-sub-lbl">Needed revision · 7d</span>
-            <span class="hb-sub-val">${emptyMode ? "—" : "16%"}${emptyMode ? "" : `<span class="hb-sub-meta ok">-3%</span>`}</span>
+          <a class="hb-sub-item" href="#/work" title="Tasks completed and accepted in the last 7 days (+4 vs. prior week)">
+            <span class="hb-sub-lbl">Delivered · 7d</span>
+            <span class="hb-sub-val">${emptyMode ? "—" : "19 tasks"}${emptyMode ? "" : `<span class="hb-sub-meta ok">+4</span>`}</span>
           </a>
         </div>
       </article>
@@ -3193,10 +3224,10 @@ function pageHome() {
       </div>
 
       ${st === "loading" ? skel(4, "Summarizing recent activity…") : `<div class="hb-digest">
-        <a class="hb-dig-item" href="#/activity">
+        <a class="hb-dig-item" href="#/projects/agency-v1">
           <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-          <div class="hb-dig-body"><b>412 automated checks passed</b> — Kai finished the v1.0 sync update and Tomas approved review with zero findings.</div>
-          <span class="hb-dig-time">12m</span>
+          <div class="hb-dig-body"><b>Release notes &amp; onboarding drafted</b> — Ada &amp; Maya completed v1.0 release notes and the new-member checklist.</div>
+          <span class="hb-dig-time">18m</span>
         </a>
         <a class="hb-dig-item" href="#/projects/look-feel">
           <span class="hb-dig-ico">${ic("sparkle", "ic16 c-indigo")}</span>
@@ -3230,15 +3261,46 @@ function pageHome() {
     const pct = total ? Math.round(done * 100 / total) : 0;
     const healthTone = pr.health === "On track" ? "ok" : pr.health === "At risk" ? "warn" : pr.health === "Off track" ? "bad" : "";
     const healthBadge = pr.health === "At risk" ? pill("At risk", "amber", "warn") : projPill(p);
-    const canSpotJump = !!(pr.unblockSpotId && queue.some((q) => q.id === pr.unblockSpotId && !q.handled));
+    let blockerText = pr.blocker || "";
+    let unblockLabel = pr.unblockLabel || "Unblock";
+    let unblockHref = pr.unblockHref || `#/projects/${p}`;
+    let unblockSpotId = pr.unblockSpotId || "";
+    let clearNote = pr.clearNote || "All checks passing · on schedule";
+    if (p === "agency-v1") {
+      const pending = ["in1", "in5"].map((id) => IN.find((i) => i.id === id)).filter((i) => i && !i.handled);
+      if (pending.length === 2) {
+        blockerText = "2 sign-offs waiting: v1.0 release & test access";
+        unblockLabel = "Review (2)";
+        unblockSpotId = pending[0].id;
+        unblockHref = `#/inbox/${pending[0].id}`;
+      } else if (pending.length === 1) {
+        blockerText = pending[0].id === "in5" ? "1 sign-off waiting: local test access for Jules" : "1 sign-off waiting: v1.0 release publish";
+        unblockLabel = "Review (1)";
+        unblockSpotId = pending[0].id;
+        unblockHref = `#/inbox/${pending[0].id}`;
+      } else {
+        blockerText = "";
+        clearNote = "All v1.0 sign-offs approved · ready for launch";
+      }
+    } else if (p === "office-federation") {
+      const in2 = IN.find((i) => i.id === "in2");
+      if (in2 && in2.handled) {
+        blockerText = "Build box offline · lock choice decided";
+        unblockLabel = "Check office";
+        unblockSpotId = "";
+        unblockHref = "#/settings/offices";
+      }
+    }
+    const canSpotJump = !!(unblockSpotId && queue.some((q) => q.id === unblockSpotId && !q.handled));
     const unblockEl = canSpotJump
-      ? `<button type="button" class="hb-unblock-btn" data-act="spot-jump" data-id="${pr.unblockSpotId}">${esc(pr.unblockLabel || "Unblock")}${ic("chev-right", "ic14")}</button>`
-      : `<a class="hb-unblock-btn" href="${pr.unblockHref || `#/projects/${p}`}">${esc(pr.unblockLabel || "Unblock")}${ic("chev-right", "ic14")}</a>`;
+      ? `<button type="button" class="hb-unblock-btn" data-act="spot-jump" data-id="${unblockSpotId}">${esc(unblockLabel)}${ic("chev-right", "ic14")}</button>`
+      : `<a class="hb-unblock-btn" href="${unblockHref}">${esc(unblockLabel)}${ic("chev-right", "ic14")}</a>`;
+    const showRelTag = !!(pr.release && !pr.name.includes(pr.release));
     return `<article class="hb-card">
       <div class="hb-card-top">
         <div class="hb-card-id">
           <a class="hb-card-name" href="#/projects/${p}">${esc(pr.name)}</a>
-          ${pr.release ? `<span class="hb-rel-tag">${esc(pr.release)}</span>` : ""}
+          ${showRelTag ? `<span class="hb-rel-tag">${esc(pr.release)}</span>` : ""}
         </div>
         ${healthBadge}
       </div>
@@ -3249,11 +3311,11 @@ function pageHome() {
         </div>
         <div class="h4-bar ${healthTone}" role="progressbar" aria-label="${esc(pr.name)} progress" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${done}"><span style="width:${pct}%"></span></div>
       </div>
-      ${pr.blocker ? `<div class="hb-blocker ${pr.paceTone === "warn" ? "warn" : ""}">
-        <span class="hb-blocker-txt">${ic("warn", "ic14 " + (pr.paceTone === "warn" ? "c-amber" : "c-red"))}<span>${esc(pr.blocker)}</span></span>
+      ${blockerText ? `<div class="hb-blocker ${pr.paceTone === "warn" ? "warn" : ""}">
+        <span class="hb-blocker-txt">${ic("warn", "ic14 " + (pr.paceTone === "warn" ? "c-amber" : "c-red"))}<span>${esc(blockerText)}</span></span>
         ${unblockEl}
       </div>` : `<div class="hb-blocker ok">
-        <span class="hb-blocker-txt">${ic("check-circle", "ic14 c-green")}<span>${esc(pr.clearNote || "All checks passing · on schedule")}</span></span>
+        <span class="hb-blocker-txt">${ic("check-circle", "ic14 c-green")}<span>${esc(clearNote)}</span></span>
       </div>`}
       <div class="hb-card-foot">
         ${avStack(projMembers(p), 4)}
@@ -3264,25 +3326,52 @@ function pageHome() {
 
   const renderReleaseHorizon = () => {
     if (st !== "filled" || !projs.length) return "";
-    const upcoming = ["office-federation", "look-feel", "agency-v1"].filter((k) => P[k] && !P[k].archived);
+    const in2 = IN.find((i) => i.id === "in2");
+    const in17 = IN.find((i) => i.id === "in17");
+    const v1Pending = ["in1", "in5"].map((id) => IN.find((i) => i.id === id)).filter((i) => i && !i.handled);
+    const milestones = [
+      {
+        month: "Nov", day: "22", title: "Lock ruling & sync test", rel: "v0.9",
+        note: "Rowan & Sage · Office federation",
+        status: in2 && !in2.handled ? "Lock choice" : "Decided",
+        tone: in2 && !in2.handled ? "bad" : "ok",
+        spotId: in2 && !in2.handled ? "in2" : "",
+        href: in2 && !in2.handled ? "#/inbox/in2" : "#/projects/office-federation"
+      },
+      {
+        month: "Nov", day: "27", title: "Final screen polish", rel: "v1.1",
+        note: "Eden · Look & feel refresh",
+        status: in17 && !in17.handled ? "Sign-off" : "Approved",
+        tone: "ok",
+        spotId: in17 && !in17.handled ? "in17" : "",
+        href: in17 && !in17.handled ? "#/inbox/in17" : "#/projects/look-feel"
+      },
+      {
+        month: "Dec", day: "02", title: "Release freeze", rel: "v1.0",
+        note: "Ada & Kai · Agentic Org v1.0",
+        status: v1Pending.length ? `${v1Pending.length} ${v1Pending.length === 1 ? "sign-off" : "sign-offs"}` : "Ready",
+        tone: v1Pending.length ? "warn" : "ok",
+        spotId: v1Pending.length ? v1Pending[0].id : "",
+        href: v1Pending.length ? `#/inbox/${v1Pending[0].id}` : "#/projects/agency-v1"
+      }
+    ];
     return `<section class="hb-horizon" aria-labelledby="hb-hor-h">
       <div class="hb-hor-hd">
         <h2 class="hb-hor-title" id="hb-hor-h">Upcoming milestones · Next 14 days</h2>
-        <span class="hb-hor-sub">Shippable deliverables ordered by target date</span>
+        <span class="hb-hor-sub">Key deliverables &amp; sign-off checkpoints</span>
       </div>
       <div class="hb-hor-grid">
-        ${upcoming.map((k) => {
-          const pr = P[k];
-          const pillCls = pr.paceTone === "bad" ? "bad" : pr.paceTone === "warn" ? "warn" : "ok";
-          return `<a class="hb-hor-item" href="${pr.unblockHref || `#/projects/${k}`}"${pr.unblockSpotId && queue.some((q) => q.id === pr.unblockSpotId && !q.handled) ? ` data-act="spot-jump" data-id="${pr.unblockSpotId}"` : ""}>
+        ${milestones.map((m) => {
+          const canJump = !!(m.spotId && queue.some((q) => q.id === m.spotId && !q.handled));
+          return `<a class="hb-hor-item" href="${m.href}"${canJump ? ` data-act="spot-jump" data-id="${m.spotId}"` : ""}>
             <div class="hb-hor-l">
-              <div class="hb-hor-date"><span>${esc(pr.dueMonth || "Soon")}</span><strong>${esc(pr.dueDay || "—")}</strong></div>
+              <div class="hb-hor-date"><span>${esc(m.month)}</span><strong>${esc(m.day)}</strong></div>
               <div class="hb-hor-info">
-                <span class="hb-hor-name">${esc(pr.milestoneTitle || pr.name)}${pr.release ? `<code>${esc(pr.release)}</code>` : ""}</span>
-                <span class="hb-hor-note">${esc(pr.horizonNote || pr.goal)}</span>
+                <span class="hb-hor-name">${esc(m.title)}<code>${esc(m.rel)}</code></span>
+                <span class="hb-hor-note">${esc(m.note)}</span>
               </div>
             </div>
-            <span class="hb-pillar-pill ${pillCls}">${esc(pr.horizonStatus || pr.health)}</span>
+            <span class="hb-pillar-pill ${m.tone}">${esc(m.status)}</span>
           </a>`;
         }).join("")}
       </div>
@@ -4746,6 +4835,16 @@ function renderNav(route) {
   const homeError = r0 === "home" && S.homeState === "error";
   const badge = (homeEmpty || homeError) ? 0 : unhandled().length;
   const aiBtn = document.getElementById("cmdk-ai-trigger");
+  const cmdkShell = document.getElementById("cmdk-shell");
+  const cmdkTr = document.getElementById("cmdk-trigger");
+  const cmdkPh = document.getElementById("cmdk-ph");
+  if (cmdkShell) cmdkShell.classList.toggle("is-offline", homeError);
+  if (cmdkTr) {
+    cmdkTr.classList.toggle("is-offline", homeError);
+    cmdkTr.disabled = homeError;
+    cmdkTr.title = homeError ? "Search & commands unavailable while HQ office is offline" : "Search, run a command, or ask Org AI";
+  }
+  if (cmdkPh) cmdkPh.textContent = homeError ? "HQ office offline — search & AI unavailable" : "Search, run a command, or ask Org AI…";
   if (aiBtn) {
     aiBtn.classList.toggle("is-offline", homeError);
     aiBtn.disabled = homeError;
@@ -4754,6 +4853,7 @@ function renderNav(route) {
       : `${ic("sparkle", "ic14")}<span>Ask AI</span>`;
     aiBtn.title = homeError ? "Org AI unavailable while HQ office is offline" : "Ask Org AI";
   }
+  if (homeError && CMDK.open) closeCmdk(false);
   const item = (href, label, icon, cur, extra = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span>${extra}</a></li>`;
   const subIcon = (href, label, icon, cur, cls = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon, cls)}<span class="t">${esc(label)}</span></a></li>`;
   const more = (href, label) => `<li><a class="nav-item more" href="${href}"><span class="t">${esc(label)}</span></a></li>`;
@@ -4778,6 +4878,7 @@ function renderNav(route) {
   const favsOpen = S.v4Open["nav-favs"] !== false;
   const teamsOpen = S.v4Open["nav-teams"] ?? inTeamChild;
   const projIcon = (p) => {
+    if (homeError) return ["folder", ""];
     const h = P[p].health;
     if (h === "On track") return ["check-circle", "tone-ok"];
     if (h === "At risk") return ["warn", "tone-warn"];
@@ -4930,18 +5031,27 @@ const CMDK_AI_STARTERS = [
   { q: "Budget, capacity & idle agents", sub: "Monthly spend, AI capacity & idle specialists" },
   { q: "What happened in the last 4 hours?", sub: "Recent work digest & completions" }
 ];
+const CMDK_AI_STARTERS_EMPTY = [
+  { q: "How do I launch my first project?", sub: "Day-1 setup guide" },
+  { q: "What's my starting budget & AI capacity?", sub: "Monthly spend limit & connected models" }
+];
 function cmdkCommands() {
+  const isEmpty = S.homeState === "empty";
   return [
     { group: "Actions", label: "New task", sub: "Create a work item, bug, or request", icon: "plus", tag: "Command", run: () => toast("New task (prototype action)") },
     { group: "Actions", label: "New project", sub: "Start a project wizard to group work", icon: "folder", tag: "Wizard", run: () => toast("New project wizard (prototype action)") },
     { group: "Actions", label: "Hire an agent", sub: "Describe role, review suggestion, hire", icon: "sparkle", tag: "Wizard", run: () => toast("Hire an agent wizard (Describe, Suggestion, Review, Hiring)") },
     { group: "Actions", label: "New message", sub: "Start a conversation in Chat", icon: "chat", tag: "Command", run: () => toast("New message (prototype action)") },
     { group: "Actions", label: "Add a person", sub: "Invite a teammate to this organization", icon: "user-plus", tag: "Command", run: () => toast("Add a person (prototype action)") },
-    { group: "Ask Org AI", label: "Ask: What's slowing v1.0?", sub: "Summarize active blockers and pending sign-offs", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("What's slowing v1.0?") },
-    { group: "Ask Org AI", label: "Ask: Budget, capacity & idle agents", sub: "Check monthly spend, AI capacity & idle specialists", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Budget, capacity & idle agents") },
-    { group: "Ask Org AI", label: "Ask: Next 14 days milestones", sub: "Review upcoming deliverables and schedule pace", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Next 14 days milestones") },
+    ...(isEmpty ? [
+      { group: "Ask Org AI", label: "Ask: How do I launch my first project?", sub: "Walk through setting up projects and hiring agents", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("How do I launch my first project?") }
+    ] : [
+      { group: "Ask Org AI", label: "Ask: What's slowing v1.0?", sub: "Summarize active blockers and pending sign-offs", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("What's slowing v1.0?") },
+      { group: "Ask Org AI", label: "Ask: Budget, capacity & idle agents", sub: "Check monthly spend, AI capacity & idle specialists", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Budget, capacity & idle agents") },
+      { group: "Ask Org AI", label: "Ask: Next 14 days milestones", sub: "Review upcoming deliverables and schedule pace", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Next 14 days milestones") }
+    ]),
     { group: "Navigate", label: "Go to Home", sub: "Executive briefing & decision spotlight", icon: "home", href: "#/home" },
-    { group: "Navigate", label: "Go to Inbox", sub: `${unhandled().length} waiting on you`, icon: "inbox", href: "#/inbox" },
+    { group: "Navigate", label: "Go to Inbox", sub: `${isEmpty ? 0 : unhandled().length} waiting on you`, icon: "inbox", href: "#/inbox" },
     { group: "Navigate", label: "Go to Projects", sub: "Portfolio health & progress", icon: "folder", href: "#/projects" },
     { group: "Navigate", label: "Go to Work", sub: "Tasks, bugs, and requests", icon: "clipboard", href: "#/work" },
     { group: "Navigate", label: "Go to Chat", sub: "Team & agent conversations", icon: "chat", href: "#/chat" },
@@ -4956,6 +5066,7 @@ function askInCmdk(rawQ) {
   if (!q) return;
   CMDK.mode = "ai";
   CMDK.aiAns = answerOrgQuestion(q);
+  if (CMDK.aiAns) CMDK.aiAns._state = S.homeState;
   CMDK.q = "";
   const inp = document.getElementById("cmdk-input");
   if (inp) { inp.value = ""; inp.focus(); }
@@ -4969,11 +5080,17 @@ function setCmdkMode(mode) {
   if (inp) inp.focus();
 }
 function openCmdk(prefill = "", mode = "cmd") {
+  if (route()[0] === "home" && S.homeState === "error") {
+    toast("HQ office is offline — reconnect to use search and Org AI.", "offline");
+    return;
+  }
   CMDK.returnTo = document.activeElement;
   CMDK.open = true;
   CMDK.mode = mode === "ai" ? "ai" : "cmd";
   CMDK.q = prefill;
   CMDK.active = 0;
+  if (S.homeState === "empty" && CMDK.aiAns && CMDK.aiAns._state !== "empty") CMDK.aiAns = null;
+  if (S.homeState !== "empty" && CMDK.aiAns && CMDK.aiAns._state === "empty") CMDK.aiAns = null;
   closeMenus();
   const root = document.getElementById("cmdk-root");
   const inp = document.getElementById("cmdk-input");
@@ -5032,7 +5149,8 @@ function renderCmdk() {
       <div>${CMDK.aiAns.html}</div>
     </div>` : "";
     const curQ = CMDK.aiAns ? CMDK.aiAns.q.trim().toLowerCase() : "";
-    const chips = CMDK_AI_STARTERS.filter((s) => !curQ || s.q.trim().toLowerCase() !== curQ);
+    const starters = S.homeState === "empty" ? CMDK_AI_STARTERS_EMPTY : CMDK_AI_STARTERS;
+    const chips = starters.filter((s) => !curQ || s.q.trim().toLowerCase() !== curQ);
     const chipsHtml = `<div class="cmdk-grp">${CMDK.aiAns ? "Ask a follow-up" : "Suggested executive questions"}</div>
       <div class="cmdk-ai-chips">${chips.map((s) => `<button type="button" class="cmdk-ai-chip" data-act="cmdk-ai-ask" data-v="${esc(s.q)}">${ic("sparkle", "ic14")}<span>${esc(s.q)}</span></button>`).join("")}</div>`;
     list.innerHTML = `<div class="cmdk-ai-pane">${ansHtml}${chipsHtml}</div>`;
