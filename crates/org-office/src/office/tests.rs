@@ -622,23 +622,185 @@ fn the_projection_holds_no_form_of_the_ca_key() {
 /// `team.create` from the creator answers; every other organization command is
 /// `unsupported`; `who` and the snapshot read the projection.
 #[test]
-fn the_office_answers_team_create_and_refuses_the_rest_as_unsupported() {
+fn the_office_wires_all_implemented_organization_operations_and_refuses_unbuilt_domains() {
+    use org_proto::org::{
+        MemberAddPersonParams, MemberMoveParams, MemberRemoveParams, MemberSetReportsToParams,
+        MemberUpdatePersonParams, ProjectAddTeamParams, TeamDeleteParams, TeamMoveParams,
+        TeamSetLeadParams, TeamSetTitleParams,
+    };
+    const PERSON_A: &str = "019a0000-0000-7000-8000-0000000000a1";
     let office = Office::for_test(TestOffice::default());
-    let created = office.submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM));
-    let created = created.unwrap().unwrap();
+    // 1. Create two teams under TOP_TEAM.
+    let created = office
+        .submit_org(CREATOR, team_create(1, TEAM_A, TOP_TEAM))
+        .unwrap()
+        .unwrap();
     assert_eq!(created.position.map(|p| p.seq), Some(2));
+    office
+        .submit_org(CREATOR, team_create(2, TEAM_B, TOP_TEAM))
+        .unwrap()
+        .unwrap();
+    // Non-owner is still refused.
     let refused = office
-        .submit_org(HR, team_create(2, TEAM_B, TOP_TEAM))
+        .submit_org(
+            HR,
+            team_create(3, "019a0000-0000-7000-8000-0000000000c3", TOP_TEAM),
+        )
         .unwrap();
     assert_eq!(refused.unwrap_err().code, ErrorCode::NotAuthorized);
-    let rename = OrgCommand::TeamRename(TeamRenameParams {
-        command_id: "01HZY8M6V2Q3D4E5F000000300".into(),
-        team_id: TEAM_A.into(),
-        expected_version: 1,
-        name: "Renamed".into(),
-    });
-    let refused = office.submit_org(CREATOR, rename).unwrap();
-    assert_eq!(refused.unwrap_err().code, ErrorCode::Unsupported);
+    // 2. Rename TEAM_A.
+    let renamed = office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamRename(TeamRenameParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000300".into(),
+                team_id: TEAM_A.into(),
+                expected_version: 1,
+                name: "Platform".into(),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(renamed.position.map(|p| p.seq), Some(4));
+    // 3. Add a person directly into TEAM_A, update their profile/title/manager, appoint as lead.
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberAddPerson(MemberAddPersonParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000301".into(),
+                member_id: PERSON_A.into(),
+                name: "Ada Lovelace".into(),
+                contact: Some("ada@example.test".into()),
+                handle: Some("ada".into()),
+                home_team_id: Some(TEAM_A.into()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberUpdatePerson(MemberUpdatePersonParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000302".into(),
+                member_id: PERSON_A.into(),
+                expected_version: 1,
+                name: Some("Ada Byron".into()),
+                contact: None,
+                clear_contact: true,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamSetTitle(TeamSetTitleParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000303".into(),
+                membership_id: PERSON_A.into(),
+                expected_version: 2,
+                title_in_team: Some("Principal Engineer".into()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberSetReportsTo(MemberSetReportsToParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000304".into(),
+                member_id: PERSON_A.into(),
+                expected_version: 3,
+                reports_to_member_id: Some(CREATOR.into()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000305".into(),
+                team_id: TEAM_A.into(),
+                expected_version: 2,
+                lead_member_id: Some(PERSON_A.into()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    // Clear lead before moving person to TEAM_B, then deactivate person and archive empty TEAM_A.
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamSetLead(TeamSetLeadParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000306".into(),
+                team_id: TEAM_A.into(),
+                expected_version: 3,
+                lead_member_id: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberMove(MemberMoveParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000307".into(),
+                membership_id: PERSON_A.into(),
+                expected_version: 4,
+                new_membership_id: PERSON_A.into(),
+                to_team_id: TEAM_B.into(),
+                title_in_team: None,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamMove(TeamMoveParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000308".into(),
+                team_id: TEAM_A.into(),
+                expected_version: 4,
+                owner_team_id: Some(TEAM_B.into()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::TeamDelete(TeamDeleteParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000309".into(),
+                team_id: TEAM_A.into(),
+                expected_version: 5,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .submit_org(
+            CREATOR,
+            OrgCommand::MemberRemove(MemberRemoveParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000310".into(),
+                member_id: PERSON_A.into(),
+                expected_version: 5,
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    // Unbuilt project-team domain still answers Unsupported.
+    let unbuilt = office
+        .submit_org(
+            CREATOR,
+            OrgCommand::ProjectAddTeam(ProjectAddTeamParams {
+                command_id: "01HZY8M6V2Q3D4E5F000000311".into(),
+                project_team_id: "019a0000-0000-7000-8000-0000000000d1".into(),
+                project_id: "019a0000-0000-7000-8000-0000000000d2".into(),
+                team_id: TEAM_B.into(),
+            }),
+        )
+        .unwrap();
+    assert_eq!(unbuilt.unwrap_err().code, ErrorCode::Unsupported);
 
     let snapshot = office.org_snapshot().unwrap();
     let owners: Vec<&str> = snapshot
@@ -648,8 +810,12 @@ fn the_office_answers_team_create_and_refuses_the_rest_as_unsupported() {
         .map(|m| m.id.as_str())
         .collect();
     assert_eq!(owners, [CREATOR]);
+    assert!(snapshot
+        .members
+        .iter()
+        .any(|m| m.id == PERSON_A && m.home_team_id.as_deref() == Some(TEAM_B)));
     let who = office.who(&WhoParams::default()).unwrap().unwrap();
-    assert_eq!(who.members.len(), 2);
+    assert!(who.members.iter().any(|c| c.id == CREATOR));
     office.close().unwrap();
 }
 

@@ -558,17 +558,27 @@ fn calls_only_the_old_tables_served_answer_unsupported_through_the_real_worker()
             })
             .unwrap_err()
     ));
-    // Another organization command (B2).
+    // An unbuilt organization command (projects are not wired on org-store yet).
     assert!(owner_unsupported(
         owner
-            .call::<TeamRename>(&TeamRenameParams {
+            .call::<org_proto::org::ProjectAddTeam>(&org_proto::org::ProjectAddTeamParams {
                 command_id: command_id(7),
+                project_team_id: command_id(12),
+                project_id: command_id(13),
                 team_id: TEAM.into(),
-                name: "Renamed".into(),
-                expected_version: 1,
             })
             .unwrap_err()
     ));
+    // A wired organization command commits through the real worker.
+    let renamed = owner
+        .call::<TeamRename>(&TeamRenameParams {
+            command_id: command_id(8),
+            team_id: TEAM.into(),
+            name: "Renamed".into(),
+            expected_version: 1,
+        })
+        .unwrap();
+    assert_eq!(renamed.status, org_proto::org::CommandStatus::Committed);
 
     // The directory read still answers: no status line, everyone offline.
     let who = owner

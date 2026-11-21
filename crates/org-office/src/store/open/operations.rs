@@ -76,6 +76,22 @@ pub struct StructureOp<C> {
     pub command: C,
 }
 
+impl<C> StructureOp<C> {
+    pub fn from_request(
+        request: crate::organization::wire::StructureRequest<C>,
+        here: OfficeIdentity,
+        owner: Id,
+    ) -> Self {
+        Self {
+            operation_id: request.operation_id,
+            here,
+            owner,
+            by: request.by,
+            command: request.command,
+        }
+    }
+}
+
 impl<C: Feature> StoreOp for StructureOp<C> {
     type Out = Result<Reply, StoreError>;
 
@@ -119,6 +135,21 @@ impl ReadOp for DirectoryGeneration {
 
     fn read<S: OrganizationRead>(self, snapshot: &S) -> Result<u64, StoreError> {
         Ok(snapshot.generation()?)
+    }
+}
+
+/// The organization's top-level team ID (`number == 1`), when an organization exists.
+pub struct TopTeamId;
+
+impl ReadOp for TopTeamId {
+    type Out = Option<Id>;
+
+    fn read<S: OrganizationRead>(self, read: &S) -> Result<Option<Id>, StoreError> {
+        Ok(read
+            .teams()?
+            .into_iter()
+            .find(|team| team.number == 1)
+            .map(|team| team.id))
     }
 }
 

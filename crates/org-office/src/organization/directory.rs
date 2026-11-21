@@ -59,11 +59,14 @@ pub struct ThisOffice<'a> {
     pub name: &'a str,
 }
 
-/// The handle a member is addressed by: `owner` for the owner, an agent's `messaging_name`, a
-/// person's `name`. `None` for an agent record without its profile.
+/// The handle a member is addressed by: `owner` for the owner, an agent's `messaging_name`
+/// or `handle`, or a person's `handle`/`name`. `None` for an agent record without either.
 pub fn handle_of(member: &Member) -> Option<String> {
     if member.owner {
         return Some(OWNER_HANDLE.to_owned());
+    }
+    if let Some(handle) = &member.handle {
+        return Some(handle.clone());
     }
     match (&member.kind, &member.agent) {
         (MemberKind::Agent, Some(agent)) => Some(agent.messaging_name.clone()),
@@ -72,11 +75,14 @@ pub fn handle_of(member: &Member) -> Option<String> {
     }
 }
 
-/// The comparison key of a handle: the lower-cased `messaging_name` of an agent, the name key of
+/// The comparison key of a handle: the lower-cased handle/messaging_name, or name key of
 /// a person.
 fn handle_key(member: &Member) -> Option<String> {
     if member.owner {
         return None; // the owner's display name is not a handle; only `owner` names it
+    }
+    if let Some(handle) = &member.handle {
+        return Some(handle.to_lowercase());
     }
     match (&member.kind, &member.agent) {
         (MemberKind::Agent, Some(agent)) => Some(agent.messaging_name.to_lowercase()),
@@ -206,10 +212,11 @@ pub fn who(
         })
         .filter(|m| {
             wanted_team.is_none_or(|team| {
-                snapshot
-                    .memberships
-                    .iter()
-                    .any(|ms| ms.member_id == m.id && ms.team_id == team.id)
+                m.home_team_id.as_deref() == Some(team.id.as_str())
+                    || snapshot
+                        .memberships
+                        .iter()
+                        .any(|ms| ms.member_id == m.id && ms.team_id == team.id)
             })
         })
         .map(|m| (name_key(&m.name), m))
@@ -277,22 +284,40 @@ fn card(
             _ => MemberPresence::Offline,
         },
     };
-    let mut teams: Vec<(String, CardTeam)> = snapshot
-        .memberships
-        .iter()
-        .filter(|ms| ms.member_id == member.id)
-        .filter_map(|ms| {
-            let team = snapshot.teams.iter().find(|t| t.id == ms.team_id)?;
-            Some((
-                name_key(&team.name),
-                CardTeam {
-                    id: team.id.clone(),
-                    name: team.name.clone(),
-                    title_in_team: ms.title_in_team.clone(),
-                },
-            ))
-        })
-        .collect();
+    let mut teams: Vec<(String, CardTeam)> = if let Some(home_team_id) = &member.home_team_id {
+        snapshot
+            .teams
+            .iter()
+            .find(|t| &t.id == home_team_id)
+            .map(|team| {
+                vec![(
+                    name_key(&team.name),
+                    CardTeam {
+                        id: team.id.clone(),
+                        name: team.name.clone(),
+                        title_in_team: member.title_in_team.clone(),
+                    },
+                )]
+            })
+            .unwrap_or_default()
+    } else {
+        snapshot
+            .memberships
+            .iter()
+            .filter(|ms| ms.member_id == member.id)
+            .filter_map(|ms| {
+                let team = snapshot.teams.iter().find(|t| t.id == ms.team_id)?;
+                Some((
+                    name_key(&team.name),
+                    CardTeam {
+                        id: team.id.clone(),
+                        name: team.name.clone(),
+                        title_in_team: ms.title_in_team.clone(),
+                    },
+                ))
+            })
+            .collect()
+    };
     teams.sort_by(|a, b| (&a.0, &a.1.id).cmp(&(&b.0, &b.1.id)));
     DirectoryCard {
         id: member.id.clone(),
@@ -357,6 +382,9 @@ mod tests {
             id: id(n),
             kind: MemberKind::Person,
             name: name.into(),
+            handle: None,
+            home_team_id: None,
+            title_in_team: None,
             contact: None,
             owner: false,
             office_id: None,

@@ -33,7 +33,7 @@ use std::{
 use org_proto::{
     directory::{WhoParams, WhoResult},
     org::{CommandAccepted, OrgSnapshot},
-    ApiError, ErrorCode,
+    ApiError,
 };
 use org_store::{Clock, Files, Id, OfficeIdentity, StoreError, SystemClock, WriterAuthority};
 
@@ -49,8 +49,9 @@ use crate::{
     organization::{directory, operation_id, wire},
     rules::OrgCommand,
     store::open::{
-        open_store, CreateTeamOp, DirectorySnapshot, EngineChoice, OfficeStanding, OfficeStore,
-        StoreConfig,
+        open_store, AddPersonOp, ArchiveTeamOp, CreateTeamOp, DeactivatePersonOp,
+        DirectorySnapshot, EngineChoice, MovePersonOp, MoveTeamOp, OfficeStanding, OfficeStore,
+        StoreConfig, TopTeamId, UpdatePersonOp, UpdateTeamOp,
     },
     time,
 };
@@ -346,28 +347,70 @@ impl Office {
     }
 
     /// Runs one organization command from `member`, the member the caller's grant is bound
-    /// to. `team.create` is the organization family's; every other command answers
-    /// `unsupported` until B2. A retry with the same `command_id` gets the same answer.
+    /// to, dispatching all implemented organization-family operations on `org-store`. A
+    /// retry with the same `command_id` gets the same answer.
     pub fn submit_org(
         &self,
         member: &str,
         command: OrgCommand,
     ) -> Result<Result<CommandAccepted, ApiError>, OfficeError> {
-        let OrgCommand::TeamCreate(params) = command else {
-            let refused = "this office does not serve this organization command yet";
-            return Ok(Err(ApiError::new(ErrorCode::Unsupported, refused)));
+        let op = match wire::parse_command(member, &command, || {
+            self.store.read(TopTeamId).map(|(team, _)| team)
+        })
+        .map_err(storage)?
+        {
+            Ok(op) => op,
+            Err(refusal) => return Ok(Err(refusal)),
         };
         let here = &self.identity;
-        let answer = wire::team_create(member, &params, |request| {
-            self.store.run(CreateTeamOp {
-                operation_id: request.operation_id,
-                here: here.clone(),
-                owner: self.owner.clone(),
-                by: request.by,
-                command: request.command,
-            })
-        });
-        answer.map_err(storage)
+        let owner = &self.owner;
+        let run = |op: wire::WireOp| -> Result<Result<CommandAccepted, ApiError>, StoreError> {
+            match op {
+                wire::WireOp::CreateTeam(r) => wire::team_create_answer(
+                    self.store
+                        .run(CreateTeamOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::UpdateTeam(r) => wire::changed_answer(
+                    "team.update",
+                    self.store
+                        .run(UpdateTeamOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::MoveTeam(r) => wire::changed_answer(
+                    "team.move",
+                    self.store
+                        .run(MoveTeamOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::ArchiveTeam(r) => wire::changed_answer(
+                    "team.delete",
+                    self.store
+                        .run(ArchiveTeamOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::AddPerson(r) => wire::changed_answer(
+                    "member.add_person",
+                    self.store
+                        .run(AddPersonOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::UpdatePerson(r) => wire::changed_answer(
+                    "member.update_person",
+                    self.store
+                        .run(UpdatePersonOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::MovePerson(r) => wire::changed_answer(
+                    "member.move",
+                    self.store
+                        .run(MovePersonOp::from_request(r, here.clone(), owner.clone())),
+                ),
+                wire::WireOp::DeactivatePerson(r) => wire::changed_answer(
+                    "member.remove",
+                    self.store.run(DeactivatePersonOp::from_request(
+                        r,
+                        here.clone(),
+                        owner.clone(),
+                    )),
+                ),
+            }
+        };
+        run(op).map_err(storage)
     }
 
     /// Whether this office is its organization's HQ, as the projection holds it.

@@ -488,6 +488,15 @@ pub struct Member {
     pub id: String,
     pub kind: MemberKind,
     pub name: String,
+    /// The member's unique lowercase handle (e.g. `hr`, `alice`), when provided by `org-store`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    /// The employee's single home team ID (Doc 01).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_team_id: Option<String>,
+    /// The employee's optional title within its home team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_in_team: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -902,6 +911,10 @@ command!(
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         contact: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handle: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home_team_id: Option<String>,
     }
 );
 command!(

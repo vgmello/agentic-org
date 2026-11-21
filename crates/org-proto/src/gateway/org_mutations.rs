@@ -216,6 +216,10 @@ mutations! {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         contact: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        handle: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home_team_id: Option<String>,
     };
     MemberUpdatePerson, MemberUpdatePersonParams, MemberUpdatePerson, MemberUpdatePersonParams, "member.update_person" {
         member_id: String,

@@ -30,7 +30,7 @@ use org_store::{
 pub use operations::{
     AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
     DirectoryGeneration, DirectorySnapshot, MovePersonOp, MoveTeamOp, OfficeStanding, Standing,
-    StructureOp, UpdatePersonOp, UpdateTeamOp,
+    StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
 };
 
 use super::sqlite::SqliteEngine;

@@ -3,9 +3,11 @@ id: TASK-14
 title: >-
   Complete org-office wire cutover from legacy OrgCommand/OrgSnapshot to
   organization::records
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lead'
 created_date: '2026-11-20T23:24:00Z'
+updated_date: '2026-11-21T02:01:00Z'
 labels:
   - rust
   - architecture
