@@ -270,7 +270,11 @@ Common fields and organization scoping follow [shared contracts](README.md).
 ```sql
 CREATE TABLE organizations (
   id TEXT PRIMARY KEY,
-  slug TEXT NOT NULL UNIQUE CHECK (length(slug) > 0),
+  slug TEXT NOT NULL UNIQUE CHECK (
+    length(slug) BETWEEN 1 AND 64 AND slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(slug, '--') = 0),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   name TEXT NOT NULL,
@@ -316,7 +320,11 @@ UNIQUE (organization_id, key),
 CREATE TABLE roles (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  key TEXT CHECK (key IS NULL OR (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'
+    AND substr(key, -1, 1) GLOB '[a-z0-9]'
+    AND instr(key, '--') = 0)),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 name TEXT NOT NULL,
@@ -369,7 +377,11 @@ UNIQUE (organization_id, number),
 CREATE TABLE offices (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  slug TEXT NOT NULL CHECK (length(slug) > 0),
+  slug TEXT NOT NULL CHECK (
+    length(slug) BETWEEN 1 AND 64 AND slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(slug, '--') = 0),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 name TEXT NOT NULL,

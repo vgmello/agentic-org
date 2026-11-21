@@ -176,6 +176,7 @@ CREATE TABLE checklist_steps (
   checked_by_employee_id TEXT,
   checked_at TEXT,
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>=1),
+  CHECK (done = 1 OR (checked_by_employee_id IS NULL AND checked_at IS NULL)),
   FOREIGN KEY (organization_id,target_kind,linked_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,checked_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
@@ -230,6 +231,7 @@ CREATE TABLE owner_questions (
   PRIMARY KEY (organization_id, target_kind, target_id, id),
   CHECK ((state = 'answered' AND answer_comment_id IS NOT NULL AND answered_at IS NOT NULL) OR
     (state <> 'answered' AND answer_comment_id IS NULL AND answered_at IS NULL)),
+  CHECK (answered_at IS NULL OR answered_at >= created_at),
   FOREIGN KEY (organization_id, target_kind, target_id, question_comment_id) REFERENCES comments(organization_id, target_kind, target_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, target_kind, target_id, answer_comment_id) REFERENCES comments(organization_id, target_kind, target_id, id)
@@ -251,6 +253,7 @@ CREATE TABLE waiting_spans (
   ended_at TEXT,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
   CHECK ((waiting_on_kind = 'employee' AND waiting_on_id IS NOT NULL) OR (waiting_on_kind = 'owner' AND waiting_on_id IS NULL)),
+  CHECK (ended_at IS NULL OR ended_at >= started_at),
   FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, waiting_on_id) REFERENCES employees(organization_id, id)
@@ -376,7 +379,7 @@ erDiagram
         TEXT source_metadata_json "required"
         TEXT payload_sha256 "required"
         TEXT resource_profile "required"
-        BLOB event_bytes "required; the event as accepted"
+        BLOB event_bytes "optional; canonical bytes live on disk"
     }
 ```
 
@@ -401,7 +404,7 @@ CREATE TABLE task_events (
     json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),
   payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
   resource_profile TEXT NOT NULL CHECK (resource_profile = 'selected-task-resources/1'),
-  event_bytes BLOB NOT NULL,
+  event_bytes BLOB,
   PRIMARY KEY (organization_id, task_id, revision),
   CHECK ((actor_kind = 'employee' AND actor_id IS NOT NULL) OR (actor_kind <> 'employee' AND actor_id IS NULL)),
   CHECK (json_extract(change_json, '$.type') <> 'assignment_changed' OR (

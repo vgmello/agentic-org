@@ -71,7 +71,7 @@ erDiagram
     task_workspaces {
         TEXT organization_id PK, FK "required"
         TEXT office_id FK "required"
-        TEXT employee_id FK "required"
+        TEXT employee_id PK, FK "required"
         TEXT task_id PK, FK "required"
         TEXT repository_id PK, FK "required"
         TEXT worktree_path "required"
@@ -227,7 +227,13 @@ The runtime team tree is the local office's projection of the organization-wide 
 CREATE TABLE employees (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  handle TEXT NOT NULL CHECK (length(handle) > 0),
+  handle TEXT NOT NULL CHECK (
+    length(handle) BETWEEN 1 AND 64
+    AND handle NOT GLOB '*[^a-z0-9._-]*'
+    AND substr(handle, 1, 1) GLOB '[a-z0-9]'
+    AND substr(handle, -1, 1) <> '.'
+    AND instr(handle, '..') = 0
+    AND handle <> 'here'),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
@@ -286,7 +292,7 @@ CREATE TABLE task_workspaces (
   task_id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
   worktree_path TEXT NOT NULL,
-  PRIMARY KEY (organization_id, task_id, repository_id),
+  PRIMARY KEY (organization_id, task_id, repository_id, employee_id),
   FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id),
   FOREIGN KEY (organization_id, office_id) REFERENCES offices(organization_id, id),
   FOREIGN KEY (organization_id, task_id, repository_id) REFERENCES task_repositories(organization_id, task_id, repository_id)

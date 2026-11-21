@@ -4,7 +4,11 @@ PRAGMA recursive_triggers = ON;
 
 CREATE TABLE organizations (
   id TEXT PRIMARY KEY,
-  slug TEXT NOT NULL UNIQUE CHECK (length(slug) > 0),
+  slug TEXT NOT NULL UNIQUE CHECK (
+    length(slug) BETWEEN 1 AND 64 AND slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(slug, '--') = 0),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
   name TEXT NOT NULL,
@@ -50,7 +54,11 @@ UNIQUE (organization_id, key),
 CREATE TABLE roles (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  key TEXT,
+  key TEXT CHECK (key IS NULL OR (
+    length(key) BETWEEN 1 AND 64 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'
+    AND substr(key, -1, 1) GLOB '[a-z0-9]'
+    AND instr(key, '--') = 0)),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 name TEXT NOT NULL,
@@ -103,7 +111,11 @@ UNIQUE (organization_id, number),
 CREATE TABLE offices (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  slug TEXT NOT NULL CHECK (length(slug) > 0),
+  slug TEXT NOT NULL CHECK (
+    length(slug) BETWEEN 1 AND 64 AND slug NOT GLOB '*[^a-z0-9-]*'
+    AND substr(slug, 1, 1) GLOB '[a-z0-9]'
+    AND substr(slug, -1, 1) GLOB '[a-z0-9]'
+    AND instr(slug, '--') = 0),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 name TEXT NOT NULL,
@@ -268,7 +280,7 @@ CREATE TABLE release_repository_commits (
   release_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
-  commit_sha TEXT NOT NULL,
+  commit_sha TEXT NOT NULL CHECK (length(commit_sha) > 0),
   PRIMARY KEY (organization_id, release_id, repository_id),
   FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED,
@@ -315,7 +327,7 @@ CREATE TABLE documents (
   release_id TEXT,
   deployment_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
-  kind TEXT NOT NULL CHECK (length(kind) BETWEEN 1 AND 64 AND kind NOT GLOB '*[^a-z0-9-]*'),
+  kind TEXT NOT NULL CHECK (length(kind) BETWEEN 1 AND 64 AND kind NOT GLOB '*[^a-z0-9-]*' AND substr(kind, 1, 1) GLOB '[a-z0-9]'),
   owner_employee_id TEXT,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',
@@ -491,6 +503,7 @@ CREATE TABLE checklist_steps (
   checked_by_employee_id TEXT,
   checked_at TEXT,
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision>=1),
+  CHECK (done = 1 OR (checked_by_employee_id IS NULL AND checked_at IS NULL)),
   FOREIGN KEY (organization_id,target_kind,linked_task_id) REFERENCES record_refs(organization_id,kind,id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id,checked_by_employee_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
@@ -564,7 +577,13 @@ CREATE TABLE tombstones (
 CREATE TABLE employees (
   organization_id TEXT NOT NULL REFERENCES organizations(id),
   id TEXT NOT NULL,
-  handle TEXT NOT NULL CHECK (length(handle) > 0),
+  handle TEXT NOT NULL CHECK (
+    length(handle) BETWEEN 1 AND 64
+    AND handle NOT GLOB '*[^a-z0-9._-]*'
+    AND substr(handle, 1, 1) GLOB '[a-z0-9]'
+    AND substr(handle, -1, 1) <> '.'
+    AND instr(handle, '..') = 0
+    AND handle <> 'here'),
   schema_version INTEGER NOT NULL CHECK (schema_version = 1),
   revision INTEGER NOT NULL CHECK (revision >= 1),
 kind TEXT NOT NULL CHECK (kind IN ('agent', 'person')),
@@ -623,7 +642,7 @@ CREATE TABLE task_workspaces (
   task_id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
   worktree_path TEXT NOT NULL,
-  PRIMARY KEY (organization_id, task_id, repository_id),
+  PRIMARY KEY (organization_id, task_id, repository_id, employee_id),
   FOREIGN KEY (organization_id, employee_id) REFERENCES employees(organization_id, id),
   FOREIGN KEY (organization_id, office_id) REFERENCES offices(organization_id, id),
   FOREIGN KEY (organization_id, task_id, repository_id) REFERENCES task_repositories(organization_id, task_id, repository_id)
@@ -687,6 +706,7 @@ CREATE TABLE owner_questions (
   PRIMARY KEY (organization_id, target_kind, target_id, id),
   CHECK ((state = 'answered' AND answer_comment_id IS NOT NULL AND answered_at IS NOT NULL) OR
     (state <> 'answered' AND answer_comment_id IS NULL AND answered_at IS NULL)),
+  CHECK (answered_at IS NULL OR answered_at >= created_at),
   FOREIGN KEY (organization_id, target_kind, target_id, question_comment_id) REFERENCES comments(organization_id, target_kind, target_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, target_kind, target_id, answer_comment_id) REFERENCES comments(organization_id, target_kind, target_id, id)
@@ -708,6 +728,7 @@ CREATE TABLE waiting_spans (
   ended_at TEXT,
   PRIMARY KEY (organization_id, target_kind, target_id, id),
   CHECK ((waiting_on_kind = 'employee' AND waiting_on_id IS NOT NULL) OR (waiting_on_kind = 'owner' AND waiting_on_id IS NULL)),
+  CHECK (ended_at IS NULL OR ended_at >= started_at),
   FOREIGN KEY (organization_id, target_kind, target_id) REFERENCES record_refs(organization_id, kind, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, waiting_on_id) REFERENCES employees(organization_id, id)
@@ -864,7 +885,11 @@ CREATE TABLE feature_flags (
   revision INTEGER NOT NULL CHECK (revision >= 1),
   project_id TEXT NOT NULL,
   feature_id TEXT,
-  key TEXT NOT NULL CHECK (length(key) > 0),
+  key TEXT NOT NULL CHECK (
+    length(key) > 0 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'
+    AND substr(key, -1, 1) GLOB '[a-z0-9]'
+    AND instr(key, '--') = 0),
   owner_employee_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'retired')),
   value_type TEXT NOT NULL CHECK (value_type IN ('boolean', 'string', 'number', 'json')),
@@ -1204,7 +1229,7 @@ CREATE TABLE task_events (
     json_valid(source_metadata_json) AND json_type(source_metadata_json) = 'object'),
   payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
   resource_profile TEXT NOT NULL CHECK (resource_profile = 'selected-task-resources/1'),
-  event_bytes BLOB NOT NULL,
+  event_bytes BLOB,
   PRIMARY KEY (organization_id, task_id, revision),
   CHECK ((actor_kind = 'employee' AND actor_id IS NOT NULL) OR (actor_kind <> 'employee' AND actor_id IS NULL)),
   CHECK (json_extract(change_json, '$.type') <> 'assignment_changed' OR (
@@ -1850,7 +1875,6 @@ CREATE TABLE task_details (
   organization_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
   definition_of_done TEXT,
-  branch TEXT,
   shortcut_json TEXT CHECK (shortcut_json IS NULL OR (json_valid(shortcut_json) AND json_type(shortcut_json)='object')),
   done_anyway_json TEXT CHECK (done_anyway_json IS NULL OR (json_valid(done_anyway_json) AND json_type(done_anyway_json)='object')),
   what_happened TEXT,
@@ -1870,7 +1894,6 @@ CREATE TABLE task_details (
   request_outcome_json TEXT CHECK (request_outcome_json IS NULL OR (json_valid(request_outcome_json) AND json_type(request_outcome_json)='object')),
   merged_into_task_id TEXT,
   related_task_kind TEXT NOT NULL DEFAULT 'task' CHECK (related_task_kind='task'),
-  decline_reason TEXT,
   suggested_triager_id TEXT,
   suggested_verifier_id TEXT,
   PRIMARY KEY (organization_id,task_id),
@@ -2405,6 +2428,7 @@ CREATE TABLE development_process_roles (
   hats_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(hats_json) AND json_type(hats_json) = 'array'),
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, process_id, key),
+  UNIQUE (organization_id, process_id, position),
   FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -2420,6 +2444,7 @@ CREATE TABLE development_process_skills (
   description TEXT NOT NULL CHECK (length(description) > 0),
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, process_id, key),
+  UNIQUE (organization_id, process_id, position),
   FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -2463,6 +2488,7 @@ CREATE TABLE development_process_folders (
   summary TEXT NOT NULL DEFAULT '',
   kinds_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(kinds_json) AND json_type(kinds_json) = 'array'),
   PRIMARY KEY (organization_id, process_id, path),
+  UNIQUE (organization_id, process_id, position),
   FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -2788,3 +2814,118 @@ CREATE INDEX checklist_steps_by_linked_task ON checklist_steps(organization_id, 
 CREATE INDEX agent_execution_turns_by_task ON agent_execution_turns(organization_id, task_id);
 CREATE INDEX task_details_by_affects_feature ON task_details(organization_id, affects_feature_id);
 CREATE INDEX documents_by_project_path ON documents(organization_id, project_id, path);
+
+-- TASK-8 (M-07): uniqueness, cycle guards, terminal immutability, and counter monotonicity.
+CREATE UNIQUE INDEX one_project_brief ON documents(organization_id, project_id) WHERE kind = 'brief';
+CREATE UNIQUE INDEX documents_key_unique ON documents(organization_id, project_id, key) WHERE key IS NOT NULL;
+CREATE UNIQUE INDEX structure_documents_key_unique ON structure_documents(organization_id, key) WHERE key IS NOT NULL;
+
+CREATE TRIGGER feature_replacement_no_cycle_insert AFTER INSERT ON features
+WHEN NEW.replaced_by_feature_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'feature replacement cycle is not allowed') WHERE EXISTS (
+    WITH RECURSIVE chain(id) AS (
+      SELECT NEW.replaced_by_feature_id
+      UNION ALL
+      SELECT f.replaced_by_feature_id FROM features f
+      JOIN chain c ON f.organization_id = NEW.organization_id AND f.id = c.id
+      WHERE f.replaced_by_feature_id IS NOT NULL AND f.id <> NEW.id
+    )
+    SELECT 1 FROM chain WHERE id = NEW.id
+  );
+END;
+
+CREATE TRIGGER feature_replacement_no_cycle_update AFTER UPDATE OF replaced_by_feature_id ON features
+WHEN NEW.replaced_by_feature_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'feature replacement cycle is not allowed') WHERE EXISTS (
+    WITH RECURSIVE chain(id) AS (
+      SELECT NEW.replaced_by_feature_id
+      UNION ALL
+      SELECT f.replaced_by_feature_id FROM features f
+      JOIN chain c ON f.organization_id = NEW.organization_id AND f.id = c.id
+      WHERE f.replaced_by_feature_id IS NOT NULL AND f.id <> NEW.id
+    )
+    SELECT 1 FROM chain WHERE id = NEW.id
+  );
+END;
+
+CREATE TRIGGER deployment_rollback_no_cycle_insert AFTER INSERT ON deployments
+WHEN NEW.rollback_of_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'deployment rollback cycle is not allowed') WHERE EXISTS (
+    WITH RECURSIVE chain(id) AS (
+      SELECT NEW.rollback_of_id
+      UNION ALL
+      SELECT d.rollback_of_id FROM deployments d
+      JOIN chain c ON d.organization_id = NEW.organization_id AND d.id = c.id
+      WHERE d.rollback_of_id IS NOT NULL AND d.id <> NEW.id
+    )
+    SELECT 1 FROM chain WHERE id = NEW.id
+  );
+END;
+
+CREATE TRIGGER deployment_rollback_no_cycle_update AFTER UPDATE OF rollback_of_id ON deployments
+WHEN NEW.rollback_of_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'deployment rollback cycle is not allowed') WHERE EXISTS (
+    WITH RECURSIVE chain(id) AS (
+      SELECT NEW.rollback_of_id
+      UNION ALL
+      SELECT d.rollback_of_id FROM deployments d
+      JOIN chain c ON d.organization_id = NEW.organization_id AND d.id = c.id
+      WHERE d.rollback_of_id IS NOT NULL AND d.id <> NEW.id
+    )
+    SELECT 1 FROM chain WHERE id = NEW.id
+  );
+END;
+
+CREATE TRIGGER hire_request_employee_is_agent_insert BEFORE INSERT ON hire_requests
+WHEN NEW.employee_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'hire request employee must be an agent') WHERE EXISTS (
+    SELECT 1 FROM employees e WHERE e.organization_id = NEW.organization_id AND e.id = NEW.employee_id AND e.kind <> 'agent'
+  );
+END;
+
+CREATE TRIGGER hire_request_employee_is_agent_update BEFORE UPDATE OF employee_id ON hire_requests
+WHEN NEW.employee_id IS NOT NULL
+BEGIN
+  SELECT RAISE(ABORT, 'hire request employee must be an agent') WHERE EXISTS (
+    SELECT 1 FROM employees e WHERE e.organization_id = NEW.organization_id AND e.id = NEW.employee_id AND e.kind <> 'agent'
+  );
+END;
+
+CREATE TRIGGER hire_request_terminal_immutable BEFORE UPDATE ON hire_requests
+WHEN OLD.state IN ('hired', 'withdrawn', 'failed')
+BEGIN
+  SELECT RAISE(ABORT, 'terminal hire request is immutable');
+END;
+
+CREATE TRIGGER office_codes_immutable BEFORE UPDATE ON office_codes
+WHEN NEW.organization_id <> OLD.organization_id OR NEW.code <> OLD.code
+  OR NEW.office_id <> OLD.office_id OR NEW.issued_at <> OLD.issued_at
+  OR (OLD.retired_at IS NOT NULL AND NEW.retired_at IS NOT OLD.retired_at)
+BEGIN
+  SELECT RAISE(ABORT, 'office code identity and retirement are immutable');
+END;
+
+CREATE TRIGGER office_codes_no_delete BEFORE DELETE ON office_codes
+BEGIN
+  SELECT RAISE(ABORT, 'office codes must be retained');
+END;
+
+CREATE TRIGGER reference_counters_monotonic BEFORE UPDATE ON reference_counters
+WHEN NEW.organization_id <> OLD.organization_id OR NEW.scope_kind <> OLD.scope_kind
+  OR NEW.scope_id <> OLD.scope_id OR NEW.entity_kind <> OLD.entity_kind
+  OR NEW.last_number < OLD.last_number
+BEGIN
+  SELECT RAISE(ABORT, 'reference counter cannot decrease');
+END;
+
+CREATE TRIGGER office_task_counters_monotonic BEFORE UPDATE ON office_task_counters
+WHEN NEW.organization_id <> OLD.organization_id OR NEW.office_code <> OLD.office_code
+  OR NEW.last_number < OLD.last_number OR NEW.reserved_through < OLD.reserved_through
+BEGIN
+  SELECT RAISE(ABORT, 'office task counter cannot decrease');
+END;

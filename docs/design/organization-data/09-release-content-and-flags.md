@@ -263,7 +263,11 @@ CREATE TABLE feature_flags (
   revision INTEGER NOT NULL CHECK (revision >= 1),
   project_id TEXT NOT NULL,
   feature_id TEXT,
-  key TEXT NOT NULL CHECK (length(key) > 0),
+  key TEXT NOT NULL CHECK (
+    length(key) > 0 AND key NOT GLOB '*[^a-z0-9-]*'
+    AND substr(key, 1, 1) GLOB '[a-z0-9]'
+    AND substr(key, -1, 1) GLOB '[a-z0-9]'
+    AND instr(key, '--') = 0),
   owner_employee_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'retired')),
   value_type TEXT NOT NULL CHECK (value_type IN ('boolean', 'string', 'number', 'json')),

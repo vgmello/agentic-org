@@ -418,10 +418,10 @@ A task has zero or one `task_details` row, sharing its identity and revision. Th
 
 | Fields | Meaning |
 | --- | --- |
-| `definition_of_done`, `branch`, `shortcut_json` | Task acceptance text, task branch (not project integration branch), and structured shortcut provenance from `details.shortcut`: `{type: none}` or `{type: debt, ids: [...]}`; preserve IDs without creating a debt subsystem |
+| `definition_of_done`, `shortcut_json` | Task acceptance text and structured shortcut provenance from `details.shortcut`: `{type: none}` or `{type: debt, ids: [...]}`; preserve IDs without creating a debt subsystem. Task branches live solely on `task_repositories.branch` |
 | `done_anyway_json` | Front matter `details.done_anyway`: object `{reason, steps: [step-id, ...]}`; preserves exceptional completion evidence without implementing that workflow |
 | `what_happened`, `expected`, `steps`, `environment` | Bug reproduction text, kept distinct from the task description |
-| `severity_confirmed`, `reopen_count`, `closed_reason` | Confirmation flag, nonnegative reopen count, and closure explanation |
+| `severity_confirmed`, `reopen_count`, `closed_reason` | Confirmation flag, nonnegative reopen count, and closure/decline explanation note (paired with `tasks.resolution` for the closed resolution code) |
 | `duplicate_of_task_id`, `merged_into_task_id` | Same-organization references to retained task identity, held through `record_refs` (with the fixed `related_task_kind`) so that the reference survives when the other task becomes a tombstone; validate required target type and cycles when the command is accepted |
 | `affects_feature_id` | Affected feature, distinct from the feature implementing the fix; the task's project must match the affected feature's project |
 | `request_kind`, `request_text`, `route_reason`, `routing_source`, `routed_by_employee_id` | Original request content/category and routing decision; `routing_source` is `person | rule | copilot`, never an employee FK. An independently known actor may populate nullable `routed_by_employee_id`; otherwise it stays NULL |
@@ -450,7 +450,6 @@ CREATE TABLE task_details (
   organization_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
   definition_of_done TEXT,
-  branch TEXT,
   shortcut_json TEXT CHECK (shortcut_json IS NULL OR (json_valid(shortcut_json) AND json_type(shortcut_json)='object')),
   done_anyway_json TEXT CHECK (done_anyway_json IS NULL OR (json_valid(done_anyway_json) AND json_type(done_anyway_json)='object')),
   what_happened TEXT,
@@ -470,7 +469,6 @@ CREATE TABLE task_details (
   request_outcome_json TEXT CHECK (request_outcome_json IS NULL OR (json_valid(request_outcome_json) AND json_type(request_outcome_json)='object')),
   merged_into_task_id TEXT,
   related_task_kind TEXT NOT NULL DEFAULT 'task' CHECK (related_task_kind='task'),
-  decline_reason TEXT,
   suggested_triager_id TEXT,
   suggested_verifier_id TEXT,
   PRIMARY KEY (organization_id,task_id),
@@ -493,7 +491,6 @@ erDiagram
         TEXT organization_id PK, FK "required"
         TEXT task_id PK, FK "required"
         TEXT definition_of_done "optional"
-        TEXT branch "optional"
         TEXT shortcut_json "optional"
         TEXT done_anyway_json "optional"
         TEXT what_happened "optional"
@@ -513,7 +510,6 @@ erDiagram
         TEXT request_outcome_json "optional"
         TEXT merged_into_task_id FK "optional"
         TEXT related_task_kind "required"
-        TEXT decline_reason "optional"
         TEXT suggested_triager_id FK "optional"
         TEXT suggested_verifier_id FK "optional"
     }

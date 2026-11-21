@@ -525,6 +525,7 @@ CREATE TABLE development_process_roles (
   hats_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(hats_json) AND json_type(hats_json) = 'array'),
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, process_id, key),
+  UNIQUE (organization_id, process_id, position),
   FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -540,6 +541,7 @@ CREATE TABLE development_process_skills (
   description TEXT NOT NULL CHECK (length(description) > 0),
   body_markdown TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, process_id, key),
+  UNIQUE (organization_id, process_id, position),
   FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
@@ -583,6 +585,7 @@ CREATE TABLE development_process_folders (
   summary TEXT NOT NULL DEFAULT '',
   kinds_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(kinds_json) AND json_type(kinds_json) = 'array'),
   PRIMARY KEY (organization_id, process_id, path),
+  UNIQUE (organization_id, process_id, position),
   FOREIGN KEY (organization_id, process_id) REFERENCES development_processes(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;

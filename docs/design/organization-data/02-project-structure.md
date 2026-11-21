@@ -364,7 +364,7 @@ CREATE TABLE release_repository_commits (
   release_id TEXT NOT NULL,
   project_id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
-  commit_sha TEXT NOT NULL,
+  commit_sha TEXT NOT NULL CHECK (length(commit_sha) > 0),
   PRIMARY KEY (organization_id, release_id, repository_id),
   FOREIGN KEY (organization_id, release_id, project_id) REFERENCES releases(organization_id, id, project_id)
     DEFERRABLE INITIALLY DEFERRED,
@@ -449,7 +449,7 @@ CREATE TABLE documents (
   release_id TEXT,
   deployment_id TEXT,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'current', 'deprecated')),
-  kind TEXT NOT NULL CHECK (length(kind) BETWEEN 1 AND 64 AND kind NOT GLOB '*[^a-z0-9-]*'),
+  kind TEXT NOT NULL CHECK (length(kind) BETWEEN 1 AND 64 AND kind NOT GLOB '*[^a-z0-9-]*' AND substr(kind, 1, 1) GLOB '[a-z0-9]'),
   owner_employee_id TEXT,
   title TEXT NOT NULL,
   body_markdown TEXT NOT NULL DEFAULT '',

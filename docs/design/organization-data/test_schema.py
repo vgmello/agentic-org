@@ -389,12 +389,11 @@ class DraftSchemaTests(unittest.TestCase):
                       source_metadata_json='{"future_field":{"n":-0.000000000000123456789E+009}}',
                       resource_profile="selected-task-resources/1",
                       event_bytes=b'{"original":"retained source bytes"}')
-        for missing in ("resource_profile", "event_bytes"):
-            invalid = dict(record)
-            invalid.pop(missing)
-            with self.subTest(missing=missing), self.assertRaises(sqlite3.IntegrityError):
-                insert(self.db, "task_events", **invalid)
-            self.db.rollback()
+        invalid = dict(record)
+        invalid.pop("resource_profile")
+        with self.assertRaises(sqlite3.IntegrityError):
+            insert(self.db, "task_events", **invalid)
+        self.db.rollback()
         insert(self.db, "task_events", **record)
         self.db.commit()
         saved = dict(self.db.execute("SELECT * FROM task_events").fetchone())
@@ -478,7 +477,7 @@ class DraftSchemaTests(unittest.TestCase):
 
     def test_every_task_event_carries_its_profile_and_bytes(self):
         record = event(1, {"type": "future_event"})
-        for missing, value in (("schema_version", 1), ("resource_profile", None), ("event_bytes", None)):
+        for missing, value in (("schema_version", 1), ("resource_profile", None)):
             fields = dict(record)
             fields["change_json"] = canonical(fields.pop("change"))
             fields["source_metadata_json"] = canonical(fields.pop("source_metadata"))
@@ -487,6 +486,14 @@ class DraftSchemaTests(unittest.TestCase):
             with self.subTest(field=missing), self.assertRaises(sqlite3.IntegrityError):
                 insert(self.db, "task_events", **fields)
             self.db.rollback()
+        # event_bytes may be omitted in SQLite projection when canonical bytes live on disk (M-09).
+        fields = dict(record)
+        fields["change_json"] = canonical(fields.pop("change"))
+        fields["source_metadata_json"] = canonical(fields.pop("source_metadata"))
+        fields.update(resource_profile="selected-task-resources/1", event_bytes=None)
+        insert(self.db, "task_events", **fields)
+        self.db.commit()
+        self.assertIsNone(self.db.execute("SELECT event_bytes FROM task_events WHERE revision=1").fetchone()[0])
 
     def test_a_task_event_retry_is_refused_before_its_key_is_checked(self):
         project_event(self.db, event(1, {"type": "created"}))
@@ -2161,6 +2168,132 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         assert_refused(self, self.db, "cannot attach operational record to a deleted task", lambda: insert(
             self.db, "waiting_spans", organization_id="org", target_kind="task", target_id="budgeted-task",
             id="ws1", reason="waiting", waiting_on_kind="owner", started_at="2026-11-21T00:00:00Z"))
+
+    def test_task_8_secondary_constraints_and_redundancies(self):
+        # M-07: 2-cycles refused in features.replaced_by_feature_id & deployments.rollback_of_id.
+        insert(self.db, "features", organization_id="org", id="fa", schema_version=1, revision=1,
+               project_id="project", local_slug="fa", title="FA", status="retired")
+        insert(self.db, "features", organization_id="org", id="fb", schema_version=1, revision=1,
+               project_id="project", local_slug="fb", title="FB", status="live", owner_employee_id="reporter")
+        self.db.execute("UPDATE features SET replaced_by_feature_id='fb' WHERE id='fa'")
+        self.db.commit()
+        assert_refused(self, self.db, "feature replacement cycle is not allowed",
+                       "UPDATE features SET replaced_by_feature_id='fa' WHERE id='fb'")
+
+        insert(self.db, "releases", organization_id="org", id="r-dep", schema_version=1, revision=1,
+               project_id="project", title="R")
+        insert(self.db, "deployments", organization_id="org", id="d1", schema_version=1, revision=1,
+               project_id="project", release_id="r-dep", environment="prod", target="primary",
+               operation="deploy", status="succeeded", started_at="2026-11-21T00:00:00Z", finished_at="2026-11-21T00:01:00Z")
+        insert(self.db, "deployments", organization_id="org", id="d2", schema_version=1, revision=1,
+               project_id="project", release_id="r-dep", environment="prod", target="primary",
+               operation="rollback", rollback_of_id="d1", status="succeeded", started_at="2026-11-21T00:02:00Z", finished_at="2026-11-21T00:03:00Z")
+        self.db.commit()
+        assert_refused(self, self.db, "deployment rollback cycle is not allowed",
+                       "UPDATE deployments SET operation='rollback', rollback_of_id='d2' WHERE id='d1'")
+
+        # M-07: one_project_brief, documents_key_unique, structure_documents_key_unique.
+        insert(self.db, "documents", organization_id="org", id="b1", schema_version=1, revision=1,
+               project_id="project", kind="brief", key="proj-brief", title="Brief 1")
+        self.db.commit()
+        assert_refused(self, self.db, "UNIQUE constraint failed", lambda: insert(
+            self.db, "documents", organization_id="org", id="b2", schema_version=1, revision=1,
+            project_id="project", kind="brief", title="Brief 2"))
+        assert_refused(self, self.db, "UNIQUE constraint failed", lambda: insert(
+            self.db, "documents", organization_id="org", id="d-dup-key", schema_version=1, revision=1,
+            project_id="project", kind="design", key="proj-brief", path="product/dup.md", title="Dup"))
+        insert(self.db, "structure_documents", organization_id="org", id="sd1", key="coding-std",
+               schema_version=1, revision=1, kind="standard", title="Std 1")
+        self.db.commit()
+        assert_refused(self, self.db, "UNIQUE constraint failed", lambda: insert(
+            self.db, "structure_documents", organization_id="org", id="sd2", key="coding-std",
+            schema_version=1, revision=1, kind="standard", title="Std 2"))
+
+        # M-07: hire_requests agent-only employee & terminal immutability.
+        assert_refused(self, self.db, "hire request employee must be an agent", lambda: insert(
+            self.db, "hire_requests", organization_id="org", id="hr-person", schema_version=1, revision=1,
+            state="hired", requested_by_employee_id="reporter", home_team_id="payments",
+            confirmed_at="2026-11-21T00:00:00Z", employee_id="reporter",
+            created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z"))
+        self.hire("hr-term", state="withdrawn", closed_reason="cancelled")
+        self.db.commit()
+        assert_refused(self, self.db, "terminal hire request is immutable",
+                       "UPDATE hire_requests SET state='drafting' WHERE id='hr-term'")
+
+        # M-07: office_codes immutability/no-delete & counters monotonicity.
+        assert_refused(self, self.db, "office codes must be retained", "DELETE FROM office_codes WHERE code='A'")
+        insert(self.db, "office_task_counters", organization_id="org", office_code="A", last_number=5, reserved_through=10)
+        self.db.commit()
+        assert_refused(self, self.db, "office task counter cannot decrease",
+                       "UPDATE office_task_counters SET last_number=4 WHERE office_code='A'")
+
+        # M-07: checklist_steps unchecked-with-checker & waiting_spans inverted timestamps rejected.
+        seed_task(self.db, task="t-m07")
+        self.refused(lambda: insert(self.db, "checklist_steps", organization_id="org", target_kind="task",
+                                    target_id="t-m07", id="bad-step", position=0, text="x", required=0, done=0,
+                                    checked_by_employee_id="reporter", checked_at="2026-11-21T00:00:00Z"))
+        self.refused(lambda: insert(self.db, "waiting_spans", organization_id="org", target_kind="task",
+                                    target_id="t-m07", id="bad-wait", reason="x", waiting_on_kind="owner",
+                                    started_at="2026-11-21T01:00:00Z", ended_at="2026-11-21T00:00:00Z"))
+
+        # M-08: private-notes-schema.sql guards.
+        private = sqlite3.connect(":memory:")
+        self.addCleanup(private.close)
+        private.executescript((ROOT / "private-notes-schema.sql").read_text())
+        insert(private, "private_note_authors", organization_id="org", author_id="ana")
+        insert(private, "private_note_tasks", organization_id="org", task_id="task")
+        private.commit()
+        assert_refused(self, private, "new private note must start active at revision 1", lambda: insert(
+            private, "private_task_notes", organization_id="org", id="n-bad-rev", schema_version=1, revision=2,
+            task_id="task", author_id="ana", body_markdown="bad",
+            created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z"))
+        assert_refused(self, private, "new private note must start active at revision 1", lambda: insert(
+            private, "private_task_notes", organization_id="org", id="n-bad-del", schema_version=1, revision=1,
+            task_id="task", author_id="ana", body_markdown=None,
+            created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z", deleted_at="2026-11-21T00:00:00Z"))
+        insert(private, "private_task_notes", organization_id="org", id="n1", schema_version=1, revision=1,
+               task_id="task", author_id="ana", body_markdown="good",
+               created_at="2026-11-21T00:00:00Z", updated_at="2026-11-21T00:00:00Z")
+        insert(private, "private_note_command_receipts", organization_id="org", author_id="ana",
+               operation_id="op1", request_sha256="a"*64, command="publish", note_id="n1",
+               result_revision=1, state="completed", shared_comment_id="c-pub-1",
+               created_at="2026-11-21T00:00:00Z", finished_at="2026-11-21T00:00:01Z")
+        private.commit()
+        # Duplicate shared_comment_id refused.
+        assert_refused(self, private, "UNIQUE constraint failed", lambda: insert(
+            private, "private_note_command_receipts", organization_id="org", author_id="ana",
+            operation_id="op2", request_sha256="b"*64, command="publish", note_id="n1",
+            result_revision=1, state="completed", shared_comment_id="c-pub-1",
+            created_at="2026-11-21T00:00:02Z", finished_at="2026-11-21T00:00:03Z"))
+        # Monotonic is_deleted: 1 -> 0 refused.
+        private.execute("UPDATE private_note_tasks SET is_deleted=1 WHERE task_id='task'")
+        private.commit()
+        assert_refused(self, private, "deleted private note task mirror cannot be undeleted",
+                       "UPDATE private_note_tasks SET is_deleted=0 WHERE task_id='task'")
+
+        # M-09: task_details omits branch & decline_reason; task_workspaces allows two agents on same task+repo.
+        td_cols = [r[1] for r in self.db.execute("PRAGMA table_xinfo(task_details)")]
+        self.assertNotIn("branch", td_cols)
+        self.assertNotIn("decline_reason", td_cols)
+        insert(self.db, "task_repositories", organization_id="org", task_id="t-m07", repository_id="org-repository", branch="feat/m09")
+        insert(self.db, "task_workspaces", organization_id="org", office_id="numbering-a", employee_id="ana",
+               task_id="t-m07", repository_id="org-repository", worktree_path="/tmp/wt-ana")
+        insert(self.db, "task_workspaces", organization_id="org", office_id="numbering-a", employee_id="reporter",
+               task_id="t-m07", repository_id="org-repository", worktree_path="/tmp/wt-reporter")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM task_workspaces WHERE task_id='t-m07'").fetchone()[0], 2)
+
+        # L-03: aligned slug/handle/kind/sha CHECKs and dev-process position uniqueness.
+        self.refused(lambda: insert(self.db, "employees", organization_id="org", id="e-here", handle="here",
+                                    schema_version=1, revision=1, kind="person", name="Here", home_team_id="payments"))
+        self.refused(lambda: insert(self.db, "documents", organization_id="org", id="d-dash", schema_version=1,
+                                    revision=1, project_id="project", kind="-bad", path="product/bad.md", title="Bad"))
+        self.refused(lambda: insert(self.db, "release_repository_commits", organization_id="org",
+                                    release_id="r-dep", project_id="project", repository_id="org-repository", commit_sha=""))
+        self.package("pos-test")
+        insert(self.db, "development_process_roles", organization_id="org", process_id="pos-test", key="r1", position=0, name="R1")
+        self.db.commit()
+        self.refused(lambda: insert(self.db, "development_process_roles", organization_id="org", process_id="pos-test", key="r2", position=0, name="R2"))
 
 
 if __name__ == "__main__":
