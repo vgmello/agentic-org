@@ -1529,8 +1529,8 @@ organization_id TEXT NOT NULL,
   priority INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 64),
   PRIMARY KEY (organization_id,model_profile_id,connection_id),
   UNIQUE (organization_id,model_profile_id,priority),
-  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_execution_configs (
@@ -1551,8 +1551,8 @@ model_profile_id TEXT NOT NULL,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','system','unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id,employee_id),
-FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
+FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
   FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
@@ -1569,8 +1569,8 @@ organization_id TEXT NOT NULL,
   account_identity_ref TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (organization_id,office_id,connection_id),
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE office_connection_state (
@@ -1585,7 +1585,7 @@ organization_id TEXT NOT NULL,
   issue_code TEXT,
   PRIMARY KEY (organization_id,office_id,connection_id),
   CHECK (status<>'ready' OR (driver_version IS NOT NULL AND observed_at IS NOT NULL AND valid_until IS NOT NULL)),
-  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE office_connection_models (
@@ -1599,7 +1599,7 @@ organization_id TEXT NOT NULL,
   observed_at TEXT NOT NULL,
   valid_until TEXT NOT NULL,
   PRIMARY KEY (organization_id,office_id,connection_id,model_id),
-  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE connection_quota_state (
@@ -1615,8 +1615,8 @@ organization_id TEXT NOT NULL,
   PRIMARY KEY (organization_id,connection_id,scope_key),
   CHECK ((model_id IS NULL AND scope_key='connection') OR (model_id IS NOT NULL AND scope_key='model:'||model_id)),
   CHECK (status<>'cooldown' OR cooldown_until IS NOT NULL),
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,observed_by_office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,observed_by_office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE connection_turn_permits (
@@ -1633,9 +1633,9 @@ organization_id TEXT NOT NULL,
   coordinator_generation INTEGER NOT NULL CHECK (coordinator_generation>=1),
   PRIMARY KEY (organization_id,id),
   UNIQUE (organization_id,id,connection_id,employee_id,office_id,placement_generation,model_id),
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_execution_turns (
@@ -1665,11 +1665,11 @@ organization_id TEXT NOT NULL,
   CHECK (started_by_kind NOT IN ('recovery','background_wake') OR started_by_employee_id IS NULL),
   PRIMARY KEY (organization_id,id),
   UNIQUE (organization_id,id,employee_id,office_id,placement_generation),
-  FOREIGN KEY (organization_id,started_by_employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,started_by_employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_process_instances (
@@ -1700,9 +1700,9 @@ organization_id TEXT NOT NULL,
   CHECK ((pid IS NULL AND pgid IS NULL AND process_start_identity IS NULL AND boot_id IS NULL)
     OR (pid IS NOT NULL AND pgid IS NOT NULL AND pid>0 AND pgid>0 AND process_start_identity IS NOT NULL AND boot_id IS NOT NULL)),
   CHECK (state NOT IN ('idle','busy') OR (pid IS NOT NULL AND process_start_identity IS NOT NULL AND boot_id IS NOT NULL)),
-  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_execution_attempts (
@@ -1714,7 +1714,8 @@ organization_id TEXT NOT NULL,
   office_id TEXT NOT NULL,
   placement_generation INTEGER NOT NULL CHECK (placement_generation>=1),
   connection_id TEXT NOT NULL,
-  permit_id TEXT NOT NULL,
+  permit_authority TEXT NOT NULL DEFAULT 'hq_pool' CHECK (permit_authority IN ('hq_pool','office_local')),
+  permit_id TEXT NOT NULL CHECK (length(permit_id)>0),
   process_instance_id TEXT,
   runtime_driver TEXT NOT NULL,
   driver_version TEXT NOT NULL,
@@ -1733,11 +1734,10 @@ organization_id TEXT NOT NULL,
   UNIQUE (organization_id,turn_id,attempt_no),
   UNIQUE (organization_id,id,turn_id),
   CHECK (predecessor_attempt_id IS NULL OR predecessor_attempt_id<>id),
-  FOREIGN KEY (organization_id,turn_id,employee_id,office_id,placement_generation) REFERENCES agent_execution_turns(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,process_instance_id,employee_id,office_id,placement_generation) REFERENCES agent_process_instances(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,permit_id,connection_id,employee_id,office_id,placement_generation,requested_model_id) REFERENCES connection_turn_permits(organization_id,id,connection_id,employee_id,office_id,placement_generation,model_id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,predecessor_attempt_id,turn_id) REFERENCES agent_execution_attempts(organization_id,id,turn_id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,turn_id,employee_id,office_id,placement_generation) REFERENCES agent_execution_turns(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,process_instance_id,employee_id,office_id,placement_generation) REFERENCES agent_process_instances(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,predecessor_attempt_id,turn_id) REFERENCES agent_execution_attempts(organization_id,id,turn_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE supervisor_command_receipts (
@@ -1751,8 +1751,8 @@ organization_id TEXT NOT NULL,
   response_json TEXT NOT NULL CHECK (json_valid(response_json) AND json_type(response_json)='object'),
   recorded_at TEXT NOT NULL,
   PRIMARY KEY (organization_id,office_id,operation_id),
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TRIGGER placement_generation_must_advance BEFORE UPDATE ON agent_placements

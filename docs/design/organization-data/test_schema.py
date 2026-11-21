@@ -1659,6 +1659,43 @@ class ProcessPackageAndDocumentationTests(unittest.TestCase):
         self.assertNotIn("unrestricted", cfg_sql)
         self.assertNotIn("bypass", cfg_sql)
 
+    def test_satellite_attempt_rebuild_succeeds_without_hq_permit_rows_and_in_deferred_order(self):
+        # Insert execution rows in reverse dependency order inside one transaction, with zero rows
+        # in HQ-only connection_turn_permits, exercising both hq_pool and office_local permits.
+        sha = "a" * 64
+        insert(self.db, "agent_execution_attempts", organization_id="org", id="att-2", turn_id="turn-1",
+               attempt_no=2, employee_id="ana", office_id="numbering-b", placement_generation=1,
+               connection_id="conn-local", permit_authority="office_local", permit_id="local-permit-1",
+               runtime_driver="claude", driver_version="1.0", requested_model_id="m1", resolved_model_id="m1",
+               connection_revision=1, binding_revision=1, state="succeeded", effect_state="none",
+               predecessor_attempt_id="att-1")
+        insert(self.db, "agent_execution_attempts", organization_id="org", id="att-1", turn_id="turn-1",
+               attempt_no=1, employee_id="ana", office_id="numbering-b", placement_generation=1,
+               connection_id="conn-pool", permit_authority="hq_pool", permit_id="hq-permit-absent-on-satellite",
+               runtime_driver="claude", driver_version="1.0", requested_model_id="m1", resolved_model_id="m1",
+               connection_revision=1, binding_revision=1, state="failed", effect_state="none")
+        insert(self.db, "agent_execution_turns", organization_id="org", id="turn-1", employee_id="ana",
+               office_id="numbering-b", placement_generation=1, revision=1, workspace_key="ws",
+               input_ref="turns/turn-1/input.json", input_sha256=sha, agent_config_revision=1,
+               model_profile_id="prof-1", profile_revision=1, model_id="m1", pool_snapshot_json="[]",
+               status="succeeded", created_at="2026-11-21T00:00:00Z")
+        insert(self.db, "agent_execution_configs", organization_id="org", employee_id="ana",
+               schema_version=1, revision=1, model_profile_id="prof-1", model_id="m1",
+               system_prompt_markdown="Work carefully.")
+        insert(self.db, "model_profiles", organization_id="org", id="prof-1", schema_version=1, revision=1,
+               key="prof-1", name="Prof 1")
+        seed_provider_connection(self.db, identity="sub-pool", connection_id="conn-pool")
+        seed_provider_connection(self.db, identity="sub-local", connection_id="conn-local")
+        self.db.commit()
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM connection_turn_permits").fetchone()[0], 0)
+        self.assertEqual(self.db.execute("PRAGMA foreign_key_check").fetchall(), [])
+        self.refused(lambda: insert(
+            self.db, "agent_execution_attempts", organization_id="org", id="att-bad", turn_id="turn-1",
+            attempt_no=3, employee_id="ana", office_id="numbering-b", placement_generation=1,
+            connection_id="conn-local", permit_authority="invalid_authority", permit_id="p",
+            runtime_driver="claude", driver_version="1.0", requested_model_id="m1", resolved_model_id="m1",
+            connection_revision=1, binding_revision=1, state="selected", effect_state="none"))
+
     def test_a_process_declares_its_tabs_from_the_generic_views(self):
         self.package()
         tab = dict(organization_id="org", process_id="dss", title="Product")

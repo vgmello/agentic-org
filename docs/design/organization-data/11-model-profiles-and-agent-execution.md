@@ -75,7 +75,7 @@ The worker has one SQLite writer and one agent recovery owner. Its internal supe
 
 **Release lifecycle.** agentic-org owns online downloads and offline local-bundle installation. Stage and verify a complete platform release, including every framework executable and web assets, before activation. Check signed metadata and checksums against installed trust; offline install/upgrade performs no network requests. Startup uses the pinned installed release even if update checking fails. Background checks do not imply immediate activation: apply the configured policy, drain affected work, switch the release pin, restart through the OS service manager and verify readiness. Preserve the prior release and compatible recoverable data state; executable-only rollback after an incompatible schema change is forbidden. Updating the running host itself needs platform-aware replacement/restart. An offline bundle is not a promise of offline cloud-model access.
 
-**Satellite operation.** HQ and satellite are roles of the same office executable, not different binaries. A satellite enrolls once and reconnects outbound to HQ's authenticated federation endpoint using its office identity; browser authentication and federation TLS remain separate boundaries. Agent tools call the local worker through agent-os. The worker replicates relevant shared data and uses local repository caches/worktrees; teams/projects remain organization-wide. Disconnected tasks/features can be saved with stable IDs and pending readable numbers, as defined in document 06. The current HQ permit contract still blocks new model turns without coordinator access and stops active turns when renewal cannot be maintained. Reserved offline capacity is a later explicit extension, not an implied exception. HQ/satellite protocol compatibility is checked during independently activated installation updates.
+**Satellite operation.** HQ and satellite are roles of the same office executable, not different binaries. A satellite enrolls once and reconnects outbound to HQ's authenticated federation endpoint using its office identity; browser authentication and federation TLS remain separate boundaries. Agent tools call the local worker through agent-os. The worker replicates relevant shared data and uses local repository caches/worktrees; teams/projects remain organization-wide. Disconnected tasks/features can be saved with stable IDs and pending readable numbers, as defined in document 06. Turn admission distinguishes two permit authorities: **shared multi-office connections** use `hq_pool` permits coordinated by HQ (blocking new turns and stopping active turns if HQ renewal fails), while **office-local / unshared provider bindings** (such as per-office Claude tokens under ADR-0032 or independent per-office Codex logins) use `office_local` permits admitted and renewed locally by the satellite itself so disconnected satellites keep executing autonomously without waiting on HQ (Non-Negotiable #8). HQ/satellite protocol compatibility is checked during independently activated installation updates.
 
 The host retains office-key custody. The web process and agent-os receive only their scoped capabilities, never host key-access entitlement or office secrets keys. Moving host behavior into agentic-org serve must preserve the existing platform credential and signed-launch boundaries; reusing an executable name does not make human, host and agent authority interchangeable.
 
@@ -125,7 +125,7 @@ The [standalone installation contract](../standalone-server.md#4-setup-and-servi
 | `connection_quota_state`, `connection_turn_permits` | HQ's agent-execution record files, written through HQ's acceptance journal; committed before permit acknowledgement. |
 | `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `supervisor_command_receipts` | The turn and receipt files under `supervision/`, with the immutable input/checkpoint/tool files. A supervisor command's receipt is the receipt of its journal entry ([document 16](16-recovery-and-office-continuity.md#selected-immutable-acceptance-journal)); `supervisor_command_receipts` projects the fields execution needs from it and is not a second receipt store. |
 
-**There is no execution journal.** Every execution change (a turn or attempt transition, a process record, a permit, a cooldown, a command receipt, a pending start) is a change to a record file, accepted as one entry of the office's one acceptance journal like any other change (document 16; [ADR-0021](../../adr/0021-office-store-architecture.md); owner, 2026-11-18). An entry holds file changes, never table rows; the projector builds the tables of section 12 from the files, and a rebuilt cache reads them again. Execution records under `local/` are never published to HQ or to Git; they are replayed only by their own office. A change is acknowledged in the durable class ([ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 3) and has no flush rule of its own: the journal's flush is the only one. Input, checkpoint and tool files that a change names are written in the same entry. Hashes use `canonical-json/2` ([hash codec registry](08-record-contracts.md#hash-codec-registry)). This paragraph replaces the earlier supervision journal of transaction envelopes with row snapshots.
+**There is no execution journal.** Every durable execution state transition (a turn or attempt transition, a process record, a permit acquisition/release_pending/release, a cooldown, a command receipt, a pending start) is a change to a record file, accepted as one entry of the office's one acceptance journal like any other change (document 16; [ADR-0021](../../adr/0021-office-store-architecture.md); owner, 2026-11-18). High-frequency 10-second permit lease heartbeats are **in-memory lease extensions only**—they never write durable `F_FULLFSYNC` entries through the shared acceptance journal or SQLite writer, preserving committed-class `agent-os` hot-path latency (Non-Negotiable #18). An entry holds file changes, never table rows; the projector builds the tables of section 12 from the files, and a rebuilt cache reads them again. Execution records under `local/` are never published to HQ or to Git; they are replayed only by their own office, and satellite rebuilds never depend on HQ-only `connection_turn_permits` rows. Durable execution transitions are acknowledged in the durable class ([ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 3) and have no flush rule of their own: the journal's flush is the only one. Input, checkpoint and tool files that a change names are written in the same entry. Hashes use `canonical-json/2` ([hash codec registry](08-record-contracts.md#hash-codec-registry)). This paragraph replaces the earlier supervision journal of transaction envelopes with row snapshots.
 
 Credentials never enter organization Git, command payloads, journal events or logs. The local binding holds only a vault/keychain reference or a private auth-directory path. Auth directories are owned by the office user with mode 0700; generated files are 0600. Rebind on a new machine and probe again. Native auth variables require a reviewed adapter allowlist; HTTP keys are resolved into the approved provider-client context, not ordinary tool environments.
 
@@ -227,9 +227,11 @@ Run input is a private immutable JSON file containing the resolved employee/role
 
 ## 6. Shared quota and deterministic selection
 
-HQ's organization service is the single permit/cooldown coordinator. It journals before acknowledging and updates its projection in one atomic transaction that is serialized against every other permit decision ([ADR-0018](../../adr/0018-storage-engine-independence.md)): expire overdue active permits to release_pending; read connection and applicable model cooldowns; count active plus release_pending permits; grant only below max_concurrent_turns. Permission to proceed is a scoped opaque permit ID bound to employee/office/placement/model and coordinator generation. There is no global counter on the agent and no quota authority in an office's cached healthy flag.
+Turn admission uses two permit authorities:
+- **`hq_pool` (shared multi-office connections):** HQ's organization service is the single permit/cooldown coordinator. It journals permit acquisition, `release_pending`, and `released` transitions before acknowledging and updates its projection in one atomic transaction serialized against every other permit decision ([ADR-0018](../../adr/0018-storage-engine-independence.md)): expire overdue active permits to `release_pending`; read connection and applicable model cooldowns; count `active` plus `release_pending` permits; grant only below `max_concurrent_turns`. Permission to proceed is a scoped opaque permit ID bound to employee/office/placement/model and coordinator generation.
+- **`office_local` (office-local / unshared provider bindings):** When a connection is bound exclusively to one office (for example a per-office Claude token under ADR-0032 or an independent per-office Codex login), that office admits and renews `office_local` turn permits locally against `max_concurrent_turns` and its latest known budget-hold state. Disconnected satellites continue starting and sustaining turns on `office_local` bindings without waiting for HQ (Non-Negotiable #8).
 
-Permits last 60 seconds and renew every 10 seconds while a model turn is active. Compute local deadlines conservatively from the monotonic request-send time and the returned remaining duration. Start stop/recovery with at least 20 seconds remaining when renewal fails. **Expiry does not free capacity:** release_pending continues to count until a supervisor proves the model turn ended with no outstanding work, or proves its process/descendants gone. Unknown cleanup is not a release acknowledgement. Warm verified-idle processes consume no turn permit. Coordinator restart replays its journal and marks prior active permits release_pending before issuing new permits; affected supervisors stop/reconcile rather than reusing an old coordinator generation.
+Permits last 60 seconds and renew every 10 seconds while a model turn is active. **Lease renewals (heartbeats) extend the coordinator's in-memory deadline only and do not write durable acceptance-journal or SQLite transactions**, preventing 6–10 ms `F_FULLFSYNC` flushes from head-of-line blocking committed-class `agent-os` hot-path commands (Non-Negotiable #18). Only permit acquisition, `release_pending`, and `released` transitions are journaled durably. Compute local deadlines conservatively from the monotonic request-send time and the returned remaining duration. Start stop/recovery with at least 20 seconds remaining when renewal fails. **Expiry does not free capacity:** `release_pending` continues to count until a supervisor proves the model turn ended with no outstanding work, or proves its process/descendants gone. Unknown cleanup is not a release acknowledgement. Warm verified-idle processes consume no turn permit. Coordinator restart replays its journal and marks prior `active` permits `release_pending` before issuing new permits; affected supervisors stop/reconcile rather than reusing an old coordinator generation.
 
 A 429/quota failure is connection-wide unless verified provider evidence identifies a model-specific window. Use the provider reset/Retry-After value when present; otherwise cooldown is 900 seconds. Cooldown expiry permits another guarded attempt if local auth/entitlement evidence is still fresh; it is not an assertion that quota is known available. Unsupported quota probes leave quota status unknown and can still obtain a bounded permit, with that uncertainty exposed. Auth-expired is an office-binding observation until verified reauthentication. Never convert a tool/policy denial into permission to try a less restrictive driver.
 
@@ -237,7 +239,7 @@ For each RunTurn/ResumeTurn dispatch cycle:
 
 1. Read the frozen ordered pool and admitted policy. Reject archived profile, disabled execution config, inactive employee or stale placement.
 2. In ascending priority, check connection enabled/non-archived, local binding, exact binding revision, installed driver/verified version, fresh auth readiness, confirmed model entitlement and policy/tool/context compatibility. Unknown/stale evidence produces a skip code and asynchronous refresh, not hot-path discovery.
-3. Ask HQ for a turn permit. HQ first checks the authorized budget-control state of [document 17](17-budgets-and-controls.md): when an unreleased budget hold applies to the turn's task or to the employee, HQ grants no permit and the dispatch ends with `BUDGET_HELD`, naming the hold; the turn becomes blocked and no process is started or reused. This check applies to the first permit of a RunTurn or ResumeTurn command only. A turn can come to work on a task it did not start with: when a command of the run names a task, or sets it as the work-for context, and an unreleased hold applies to that task, the office refuses that command with the hold named, so usage does not keep accruing to a held task. A running turn is never refused for a budget: neither renewal of its permit nor the replacement permit a §7 switch requests for the same logical turn is checked, so the current turn finishes as document 17 requires. An open turn that is blocked or recovery_required is not running: ResumeTurn for it is refused while the hold applies, and the hold stays `stop_pending` until the supervisor proves no process for the affected work remains, then becomes `held`. Otherwise a full/cooling-down connection is skipped; coordinator unavailability blocks dispatch rather than bypassing global admission.
+3. Acquire a turn permit under the route's permit authority (`hq_pool` from HQ for shared multi-office connections; `office_local` from the local office for unshared per-office bindings). Before granting the first permit of a `RunTurn` or `ResumeTurn`, check the authorized budget-control state of [document 17](17-budgets-and-controls.md) (HQ authoritative for `hq_pool`; local last-known hold state for `office_local` when disconnected): when an unreleased budget hold applies to the turn's task or to the employee, grant no permit and end dispatch with `BUDGET_HELD`, naming the hold; the turn becomes blocked and no process is started or reused. A turn can come to work on a task it did not start with: when a command of the run names a task, or sets it as the work-for context, and an unreleased hold applies to that task, the office refuses that command with the hold named, so usage does not keep accruing to a held task. A running turn is never refused for a budget: neither renewal of its permit nor the replacement permit a §7 switch requests for the same logical turn is checked, so the current turn finishes as document 17 requires. An open turn that is blocked or recovery_required is not running: ResumeTurn for it is refused while the hold applies, and the hold stays `stop_pending` until the supervisor proves no process for the affected work remains, then becomes `held`. Otherwise a full/cooling-down connection is skipped; for `hq_pool` routes, coordinator unavailability skips to any eligible `office_local` route or blocks dispatch rather than bypassing global pool admission.
 4. Reserve the employee's exclusive process slot. Reuse an idle process only if connection, driver/version, canonical model, workspace and launch digest match. The digest covers connection definition revision/endpoint, canonical and resolved model IDs, driver version/executable fingerprint, workspace, resolved instructions/tool-policy revisions and binding revision, never plaintext secret values. Validate the process row matches the admitted connection/driver/model before attaching an attempt.
 5. Otherwise stop/reap/recover the previous process, create a new mark/instance, fsync planned ownership, prepare the explicit environment/launch plan, spawn through org-supervise, fsync PID/start/boot identity, then admit input. No replacement starts while cleanup is unresolved.
 6. Journal attempt and turn transitions, pump protocol, persist usage before final completion acknowledgement, release the permit after a verified terminal/idle boundary, and keep the process warm for compatible subsequent turns. Configuration changes do not rewrite the current attempt.
@@ -448,7 +450,6 @@ erDiagram
     agent_execution_configs ||--o{ agent_process_instances : owns
     agent_execution_turns ||--o{ agent_execution_attempts : bounded_attempts
     agent_process_instances o|--o{ agent_execution_attempts : executes
-    connection_turn_permits ||--o{ agent_execution_attempts : authorizes
     offices ||--o{ supervisor_command_receipts : deduplicates
     agent_placements {
         TEXT organization_id PK, FK "required"
@@ -569,11 +570,12 @@ erDiagram
         TEXT office_id FK "required"
         INTEGER placement_generation FK "required"
         TEXT connection_id FK "required"
-        TEXT permit_id FK "required"
+        TEXT permit_authority "required"
+        TEXT permit_id "required"
         TEXT process_instance_id FK "optional"
         TEXT runtime_driver "required"
         TEXT driver_version "required"
-        TEXT requested_model_id FK "required"
+        TEXT requested_model_id "required"
         TEXT resolved_model_id "required"
         INTEGER connection_revision "required"
         INTEGER binding_revision "required"
@@ -690,8 +692,8 @@ organization_id TEXT NOT NULL,
   priority INTEGER NOT NULL CHECK (priority BETWEEN 1 AND 64),
   PRIMARY KEY (organization_id,model_profile_id,connection_id),
   UNIQUE (organization_id,model_profile_id,priority),
-  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_execution_configs (
@@ -712,8 +714,8 @@ model_profile_id TEXT NOT NULL,
   updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','system','unknown')),
   updated_by_id TEXT,
   PRIMARY KEY (organization_id,employee_id),
-FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
+FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
   FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
@@ -730,8 +732,8 @@ organization_id TEXT NOT NULL,
   account_identity_ref TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (organization_id,office_id,connection_id),
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE office_connection_state (
@@ -746,7 +748,7 @@ organization_id TEXT NOT NULL,
   issue_code TEXT,
   PRIMARY KEY (organization_id,office_id,connection_id),
   CHECK (status<>'ready' OR (driver_version IS NOT NULL AND observed_at IS NOT NULL AND valid_until IS NOT NULL)),
-  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE office_connection_models (
@@ -760,7 +762,7 @@ organization_id TEXT NOT NULL,
   observed_at TEXT NOT NULL,
   valid_until TEXT NOT NULL,
   PRIMARY KEY (organization_id,office_id,connection_id,model_id),
-  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id,connection_id) REFERENCES office_connection_bindings(organization_id,office_id,connection_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE connection_quota_state (
@@ -776,8 +778,8 @@ organization_id TEXT NOT NULL,
   PRIMARY KEY (organization_id,connection_id,scope_key),
   CHECK ((model_id IS NULL AND scope_key='connection') OR (model_id IS NOT NULL AND scope_key='model:'||model_id)),
   CHECK (status<>'cooldown' OR cooldown_until IS NOT NULL),
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,observed_by_office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,observed_by_office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE connection_turn_permits (
@@ -794,9 +796,9 @@ organization_id TEXT NOT NULL,
   coordinator_generation INTEGER NOT NULL CHECK (coordinator_generation>=1),
   PRIMARY KEY (organization_id,id),
   UNIQUE (organization_id,id,connection_id,employee_id,office_id,placement_generation,model_id),
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_execution_turns (
@@ -826,11 +828,11 @@ organization_id TEXT NOT NULL,
   CHECK (started_by_kind NOT IN ('recovery','background_wake') OR started_by_employee_id IS NULL),
   PRIMARY KEY (organization_id,id),
   UNIQUE (organization_id,id,employee_id,office_id,placement_generation),
-  FOREIGN KEY (organization_id,started_by_employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,started_by_employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,task_kind,task_id) REFERENCES record_refs(organization_id,kind,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_process_instances (
@@ -861,9 +863,9 @@ organization_id TEXT NOT NULL,
   CHECK ((pid IS NULL AND pgid IS NULL AND process_start_identity IS NULL AND boot_id IS NULL)
     OR (pid IS NOT NULL AND pgid IS NOT NULL AND pid>0 AND pgid>0 AND process_start_identity IS NOT NULL AND boot_id IS NOT NULL)),
   CHECK (state NOT IN ('idle','busy') OR (pid IS NOT NULL AND process_start_identity IS NOT NULL AND boot_id IS NOT NULL)),
-  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,employee_id) REFERENCES agent_execution_configs(organization_id,employee_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE agent_execution_attempts (
@@ -875,7 +877,8 @@ organization_id TEXT NOT NULL,
   office_id TEXT NOT NULL,
   placement_generation INTEGER NOT NULL CHECK (placement_generation>=1),
   connection_id TEXT NOT NULL,
-  permit_id TEXT NOT NULL,
+  permit_authority TEXT NOT NULL DEFAULT 'hq_pool' CHECK (permit_authority IN ('hq_pool','office_local')),
+  permit_id TEXT NOT NULL CHECK (length(permit_id)>0),
   process_instance_id TEXT,
   runtime_driver TEXT NOT NULL,
   driver_version TEXT NOT NULL,
@@ -894,11 +897,10 @@ organization_id TEXT NOT NULL,
   UNIQUE (organization_id,turn_id,attempt_no),
   UNIQUE (organization_id,id,turn_id),
   CHECK (predecessor_attempt_id IS NULL OR predecessor_attempt_id<>id),
-  FOREIGN KEY (organization_id,turn_id,employee_id,office_id,placement_generation) REFERENCES agent_execution_turns(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,process_instance_id,employee_id,office_id,placement_generation) REFERENCES agent_process_instances(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,permit_id,connection_id,employee_id,office_id,placement_generation,requested_model_id) REFERENCES connection_turn_permits(organization_id,id,connection_id,employee_id,office_id,placement_generation,model_id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,predecessor_attempt_id,turn_id) REFERENCES agent_execution_attempts(organization_id,id,turn_id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,turn_id,employee_id,office_id,placement_generation) REFERENCES agent_execution_turns(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,process_instance_id,employee_id,office_id,placement_generation) REFERENCES agent_process_instances(organization_id,id,employee_id,office_id,placement_generation) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,connection_id) REFERENCES provider_connections(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,predecessor_attempt_id,turn_id) REFERENCES agent_execution_attempts(organization_id,id,turn_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TABLE supervisor_command_receipts (
@@ -912,8 +914,8 @@ organization_id TEXT NOT NULL,
   response_json TEXT NOT NULL CHECK (json_valid(response_json) AND json_type(response_json)='object'),
   recorded_at TEXT NOT NULL,
   PRIMARY KEY (organization_id,office_id,operation_id),
-  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT,
-  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT
+  FOREIGN KEY (organization_id,office_id) REFERENCES offices(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
 CREATE TRIGGER placement_generation_must_advance BEFORE UPDATE ON agent_placements
