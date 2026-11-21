@@ -17,15 +17,15 @@ tags:
 
 The browser's contract with `agentic-org-web`: routes, sessions, outcomes, lookup,
 the event stream and capabilities. `agentic-org serve` starts the web process; the
-[standalone design](standalone-server.md#5-http-and-browser-contract) places it.
+[standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#5-http-and-browser-contract) places it.
 Records, fields and identities are owned by the
-[data contract](organization-data/README.md); where an example here disagrees with
+[data contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md); where an example here disagrees with
 it, the data contract wins.
 
 Nothing has shipped, so this contract changes in place: a route is changed to its
 selected shape when its target is built, with its conformance vectors in the same
 change, and no adapter, version negotiation or second DTO is kept
-([no compatibility obligations](organization-data/README.md#no-compatibility-obligations-before-v1-ships)).
+([no compatibility obligations](../organization-data/doc-72%20-%20Organization-Data-—-README.md#no-compatibility-obligations-before-v1-ships)).
 
 ## 1. Scope and placement
 
@@ -127,8 +127,8 @@ browser resume token.
 ### Selected create-organization payload
 
 `POST /api/v1/organizations` carries what the organization needs
-([create-organization design](create-organization.md),
-[organization structure](organization-data/01-organization-structure.md)):
+([create-organization design](doc-30%20-%20Design-Create-Organization.md),
+[organization structure](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md)):
 
 | Field | Required | Meaning |
 | --- | --- | --- |
@@ -139,7 +139,7 @@ browser resume token.
 
 There is no team field. Creation makes one top-level team named after the
 organization, with the creator's person as its lead and the built-in HR lead as
-its other member ([create-organization design](create-organization.md)). The
+its other member ([create-organization design](doc-30%20-%20Design-Create-Organization.md)). The
 result is the organization view (§3) with `slug`. Connectivity and publication of
 the remote repository are reported as unverified until online operation is
 authorized.
@@ -188,7 +188,7 @@ call. The format becomes UUIDv7 with the other IDs (FC-142).
 ### Tasks
 
 Task routes are under `/api/v1/organizations/{org}/tasks` and follow the
-[task data contract](organization-data/12-task-assignment-and-history.md). Every
+[task data contract](../organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md). Every
 route keeps exact `instance_id` and `office_id` query fields; the organization and
 task come from the decoded path. Duplicate, missing, unknown and inapplicable query
 fields are refused before dispatch.
@@ -208,7 +208,7 @@ read is `task.selected.read`, an object query tagged by `kind` (`status`, `list`
 
 - **Who may change a task.** Any active employee of the organization, person or
   agent, bound as itself; there is no separate task capability
-  ([ADR-0031](../adr/0031-any-employee-changes-tasks.md)). A paused, offboarded or
+  ([ADR-0031](../../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md)). A paused, offboarded or
   deactivated employee is refused.
 - **Assignment.** The envelope is `{operation_id,scope,params}` with `scope` exactly
   `{kind:"office",instance_id,org_id,office_id}`. `params` holds exactly
@@ -249,11 +249,11 @@ codec or configuration does not enable it.
 Read only authorized projections of protected chat, usage, budget and recovery
 sources. A private task note is read by its author and by any person who can read
 the task, never by another agent, and only its author edits or deletes it
-([ADR-0031](../adr/0031-any-employee-changes-tasks.md)); no shared receipt reveals
+([ADR-0031](../../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md)); no shared receipt reveals
 that it exists. No generic SQL or lookup
 endpoint exposes raw paths, source envelopes, amounts or private result blobs.
 Cost views keep complete, partial and unavailable usage distinct and follow the
-[cost access rules](../specs/costs-and-insights-ux.md); `stop_pending` is not a
+[cost access rules](../specs/doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md); `stop_pending` is not a
 completed hold, and release caps warn only.
 
 ## 3. Views and command envelope
@@ -334,7 +334,7 @@ lookup `not_found` stays unresolved.
 
 ## 4. Browser sessions and failures
 
-[ADR-0013](../adr/0013-stored-browser-sessions.md) owns session storage and its
+[ADR-0013](../../decisions/decision-13%20-%20ADR-0013-Browser-sessions-are-stored-at-the-host-and-survive-restarts.md) owns session storage and its
 criteria SES-1 to SES-8. In short: the host stores each browser session as a record
 holding digests of the cookie and proof; the web process keeps an in-memory cache,
 validates an unknown cookie with one host call, and stores nothing. A restart of
@@ -478,7 +478,7 @@ nothing ran; anything that may have committed is unknown (504). Retries of
 
 Internally, the office's mutation receipts may hold an `outcome_unknown`
 reconciliation state
-([recovery contract](organization-data/16-recovery-and-office-continuity.md)). The
+([recovery contract](../organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md)). The
 public API maps it to the unresolved behaviour above without asserting a commit or
 causing another side effect.
 
@@ -581,7 +581,7 @@ browser string into a native method. Entity IDs travel in params.
 
 `org_proto::gateway::org_mutations` holds strict DTOs, the native-call mapping and a
 pure reply classifier. The route set follows the
-[organization structure](organization-data/01-organization-structure.md): teams are
+[organization structure](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md): teams are
 created, renamed, moved, given a lead and archived; an employee is added, updated,
 moved to another home team, given a manager and removed; a project's accountable
 owner team is transferred separately from editing its contributing teams. There

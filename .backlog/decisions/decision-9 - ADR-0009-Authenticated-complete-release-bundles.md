@@ -11,9 +11,9 @@ status: implemented
 
 Status: accepted; **implemented** in `crates/org-release` and wired into
 `crates/org-host/src/release/`. Setup uses this verifier before it
-provisions anything ([standalone design](../design/standalone-server.md)). Process
-admission per platform is owned by [ADR-0017](0017-linux-and-container-hosting.md);
-web confinement on macOS by [ADR-0008](0008-gateway-macos-sandbox.md).
+provisions anything ([standalone design](../docs/design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md)). Process
+admission per platform is owned by [ADR-0017](decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md);
+web confinement on macOS by [ADR-0008](decision-8%20-%20ADR-0008-macOS-confinement-of-the-web-process-GW-SBX-MAC-1.md).
 
 ## Requirement
 

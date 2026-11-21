@@ -12,14 +12,14 @@ status: implemented
 Status: **accepted by the owner 2026-11-17** (conflict plan entry B-09): "we need both;
 I need to be able to host the office inside a Docker container; we need to abstract what
 we need properly." Linux is built now, as its own track alongside milestone one
-(owner decision 2026-11-17); the design is [Linux host](../design/linux-host.md) and the
+(owner decision 2026-11-17); the design is [Linux host](../docs/design/doc-64%20-%20Design-Linux-and-Container-Hosting.md) and the
 increments are X1a to X6 of the implementation plan. **Implemented** (`X1a`–`X5` landed
 in `crates/org-platform` and `crates/org-platform-host`; container packaging `X6` tracked
 in backlog). Amends the platform statements of
-[standalone-server.md](../design/standalone-server.md),
-[office-host-boundary.md](../design/office-host-boundary.md),
-[ADR-0008](0008-gateway-macos-sandbox.md), which is macOS only, and
-[ADR-0011](0011-protected-recovery-delivery.md), which deferred a Linux release.
+[standalone-server.md](../docs/design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md),
+[office-host-boundary.md](../docs/design/doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md),
+[ADR-0008](decision-8%20-%20ADR-0008-macOS-confinement-of-the-web-process-GW-SBX-MAC-1.md), which is macOS only, and
+[ADR-0011](decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md), which deferred a Linux release.
 
 ## Context
 
@@ -43,10 +43,10 @@ in backlog). Amends the platform statements of
 2. **Platform differences sit behind five small contracts.** Each has a macOS and a
    Linux implementation and a refusing adapter for every other system, chosen at
    composition. The five are not the only differences: the
-   [design](../design/linux-host.md#4-the-other-platform-capabilities) names five
+   [design](../docs/design/doc-64%20-%20Design-Linux-and-Container-Hosting.md#4-the-other-platform-capabilities) names five
    further capabilities (`fs`, `dirs`, `process`, `socket`, `presence`), which follow
    the same rule, and the
-   [adapter rule](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)
+   [adapter rule](../docs/doc-8%20-%20Architecture-Rules.md#planned-variation-goes-behind-an-adapter-from-day-one)
    governs any difference found later. Nothing outside these adapters branches on the
    operating system.
    | Contract | Question it answers | macOS | Linux and containers |
@@ -81,7 +81,7 @@ in backlog). Amends the platform statements of
 ## Decisions on Linux (2026-11-17)
 
 These settle what the decisions above left open. The detail is in the
-[Linux host design](../design/linux-host.md).
+[Linux host design](../docs/design/doc-64%20-%20Design-Linux-and-Container-Hosting.md).
 
 6. **Platform differences live in two crates and nowhere else.** `crates/org-platform`
    owns the contracts and capabilities that the four executables share, with macOS,
@@ -89,7 +89,7 @@ These settle what the decisions above left open. The detail is in the
    the C library only and on no workspace crate.
    Consumers keep their policy (which image, which secret names) and pass it as data.
    This is a deliberate exception to the rule that a consumer owns its contract
-   ([architecture rules](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)):
+   ([architecture rules](../docs/doc-8%20-%20Architecture-Rules.md#planned-variation-goes-behind-an-adapter-from-day-one)):
    these capabilities are consumed by four executables and six libraries, so no one
    consumer can own them.
    `crates/org-platform-host` (amended 2026-11-18, during X1b) holds, under the same

@@ -30,7 +30,7 @@ Recovery is answering, after a crash or lost cache: “Did this command already 
 
 ## Ownership, storage and rebuilding
 
-Organization domain records live in organization Git; these operational records do not. They can contain actor/command relationships and machine-local details. Keep source records, append journals and protected result blobs in `durable/recovery/` under the one selected [storage root](README.md#shared-storage-contract), outside disposable office databases. Owner-verified backup/restore must include these sources and the separately managed credentials. The consolidated SQL is their indexed projection, not a substitute for durable journal evidence.
+Organization domain records live in organization Git; these operational records do not. They can contain actor/command relationships and machine-local details. Keep source records, append journals and protected result blobs in `durable/recovery/` under the one selected [storage root](doc-72%20-%20Organization-Data-—-README.md#shared-storage-contract), outside disposable office databases. Owner-verified backup/restore must include these sources and the separately managed credentials. The consolidated SQL is their indexed projection, not a substitute for durable journal evidence.
 
 ```text
 <data-root>/<organization-id>/durable/recovery/     # protected, never org Git
@@ -54,15 +54,15 @@ Projection JSON columns map from objects (`inventory` → `inventory_json`); nev
 escaped JSON strings in place of source objects. Do not acknowledge until the domain
 change, its source evidence and its protected receipt are one recoverable commit
 boundary: one acceptance-journal entry, committed in the operation's class
-([ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md)).
+([ADR-0014](../../decisions/decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md)).
 Independent SQL or file writes do not establish it. How the office writes, flushes and
-replays the journal is the [office store design](../office-store.md).
+replays the journal is the [office store design](../design/doc-66%20-%20Design-Office-Store-Architecture.md).
 
 ### Selected immutable acceptance journal
 
 Each office has **one acceptance journal for every record family** (organization,
 projects, work, messaging, execution and the rest), journal kind `acceptance`. It is the
-office's commit point. [ADR-0006](../../adr/0006-selected-task-acceptance.md)
+office's commit point. [ADR-0006](../../decisions/decision-6%20-%20ADR-0006-Task-changes-are-accepted-through-one-recoverable-office-journal.md)
 distinguishes the **work-origin event** identity `(office_id, origin_incarnation,
 origin_seq)` from the **journal entry** identity `(organization_id, office_id,
 journal_kind: acceptance, journal_incarnation, ordinal)`. An ordinal is a positive i64
@@ -74,7 +74,7 @@ task-revision positions.
 **Entries.** Entries are appended to segment files `segments/<first-ordinal>.log`. Each
 entry is framed as its length, a canonical JSON header, the bytes of the files it writes,
 and a SHA-256 over those stored bytes (codec `raw-bytes/1`,
-[document 08](08-record-contracts.md#hash-codec-registry)). The header holds the ordinal,
+[document 08](doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md#hash-codec-registry)). The header holds the ordinal,
 the preceding entry's hash, the office and journal identity, the acknowledgement class,
 the receipt (operation ID, kind, bound actor, fingerprint, outcome), the positions the
 entry took in each origin stream, its feed position, and its **file changes**: path,
@@ -121,7 +121,7 @@ flushed: replication and Git publication read flushed entries only. A committed-
 entry lost in a power cut therefore never left the office, and its positions may be
 allocated again. Positions that left the office are never reused, and a new incarnation
 after a restore never reuses any. Task numbers, which people see in the office, keep the
-durable mark of [document 06](06-identity-and-numbering.md).
+durable mark of [document 06](doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md).
 
 **Opening and incarnations.** Opening a journal fences writers and anchors the counters,
 logs, snapshots, receipts and source hashes the office holds. Ordinals start at 1 with
@@ -217,25 +217,25 @@ other change.
 - **The first directory generation.** Creating the organization is the first accepted
   transaction of its acceptance journal. It writes the organization, the HQ office, the
   top-level team, the creator's person record and the HR lead
-  ([document 01](01-organization-structure.md#creating-an-organization)), and that is
+  ([document 01](doc-75%20-%20Organization-Data-01-—-Organization-Structure.md#creating-an-organization)), and that is
   directory generation 1. Every later organization command (create a team, add a
   person, hire an agent, create a project with its team) is an accepted transaction
   that produces the next generation.
 - **A task's first entry.** `task.create` goes through the acceptance journal like every
   other task change. Its `created` event is revision 1 of that task's history, written
   in the same transaction as the task snapshot and the office-minted number.
-  [ADR-0006](../../adr/0006-selected-task-acceptance.md) covers changes to an existing
+  [ADR-0006](../../decisions/decision-6%20-%20ADR-0006-Task-changes-are-accepted-through-one-recoverable-office-journal.md) covers changes to an existing
   task and the same path covers creation.
 
 ## The HQ's CA records
 
 `security/ca-escrow.v1.bin` contains only the exact versioned encrypted public
-package from [ADR-0007](../../adr/0007-hq-creation-escrow.md). It belongs to the
+package from [ADR-0007](../../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md). It belongs to the
 organization: its file is a source of the organization's records, published to Git
 verbatim. The usable CA key is the HQ's local record
 `durable/local/offices/<office-id>/security/ca-key.v1.json`, never organization Git
 content. In it the CA private key is only ever wrapped by the host-held office secrets
-key ([ADR-0016](../../adr/0016-no-application-level-data-encryption.md)); the raw key
+key ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)); the raw key
 is written nowhere. The delivery code stays in protected host custody until
 acknowledged. The public package alone supplies no account, epoch or writer
 authority.
@@ -245,7 +245,7 @@ Only the public escrow package (`state/security/ca-escrow.v1.bin`) is committed 
 **What leaves an office.** Storage trees under `<data-root>/<organization-id>/durable/` fall into three explicit movement classes:
 
 1. **Git-published & state outbox (`durable/state/`):** Shared organization, project, task, document, and feature state (including public `state/security/ca-escrow.v1.bin`). Only `durable/state/` is published to organization Git or included in generic state exports.
-2. **Office-to-HQ / peer replicated over Organization-CA mTLS sync (never Git):** Protected operational streams replicated exclusively over authenticated office-to-office sync—`durable/messaging/` ([document 15](15-messaging-and-chat.md)), `durable/accounting/` ([document 10](10-usage-and-cost-accounting.md)), and selected `durable/authority/` coordination state ([documents 06, 11, 17](11-model-profiles-and-agent-execution.md)).
+2. **Office-to-HQ / peer replicated over Organization-CA mTLS sync (never Git):** Protected operational streams replicated exclusively over authenticated office-to-office sync—`durable/messaging/` ([document 15](doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md)), `durable/accounting/` ([document 10](doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md)), and selected `durable/authority/` coordination state ([documents 06, 11, 17](doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md)).
 3. **Strictly node-local (never leaves the writing office):** `durable/local/`, `durable/recovery/`, `durable/private/` (HQ-only private task notes), and `durable/budgets/` (HQ-owned protected budget policies/periods).
 
 Replication (S1) inherits a test verifying that neither Git publication nor state outbox export ever ships files outside `durable/state/`, and that strictly node-local trees never leave the writing office over any channel.
@@ -271,7 +271,7 @@ bytes are the contract:
 An HQ whose escrow package or key record is missing, whose package does not hash to
 `package_sha256`, or whose public key, organization or operation differ from the
 creation's is not opened; nothing is reset or generated again
-([ADR-0007](../../adr/0007-hq-creation-escrow.md), step 4). A retry of the creation
+([ADR-0007](../../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md), step 4). A retry of the creation
 carries the same material, and the material is part of what the retry is matched on: a
 retry with regenerated material is refused as a reused operation ID.
 
@@ -291,7 +291,7 @@ Two different moves share the word "machine". They have different status.
 
 | Move | What changes | Status |
 | --- | --- | --- |
-| Agent re-placement | One agent's current office changes. Its identity, home team, tasks and history do not. | Selected. [Document 11 §3](11-model-profiles-and-agent-execution.md#3-storage-authority-and-exact-paths) owns the rule: the previous supervisor's verified cleanup acknowledgement or an explicitly verified machine fence, then HQ journals the new office and an incremented `placement_generation`. It needs a second office, so it is first exercised when satellite offices ship. |
+| Agent re-placement | One agent's current office changes. Its identity, home team, tasks and history do not. | Selected. [Document 11 §3](doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md#3-storage-authority-and-exact-paths) owns the rule: the previous supervisor's verified cleanup acknowledgement or an explicitly verified machine fence, then HQ journals the new office and an incremented `placement_generation`. It needs a second office, so it is first exercised when satellite offices ship. |
 | Office relocation | An office's durable sources, host key custody and writer custody move to another machine. Replacing the HQ machine is the same operation. | Not supported in v1; planned for v2. Copying or restoring files does not perform it and confers no authority. |
 
 V1 keeps office relocation possible without supporting it. The evidence a
@@ -348,7 +348,7 @@ whole server, survivable: the files are the source, so a database is rebuilt fro
   starts its HQ office. The office rebuilds its projection from the files, exactly as it
   does after its cache is deleted. The office starts a new incarnation, so no sequence
   it acknowledged before is reused, and an office that cannot prove its last task number
-  takes a new office code ([identity contract](06-identity-and-numbering.md)).
+  takes a new office code ([identity contract](doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md)).
 - **Who owns it.** Accounts were host data and are gone. The administrator chooses the
   person record that is theirs, or adds one, and becomes the owner; other people are
   invited to sign in again and are tied to their existing person records.
@@ -563,4 +563,4 @@ erDiagram
     }
 ```
 
-[Budgets and controls](17-budgets-and-controls.md) now selects the budget data model. Policy/extension/hold records must survive office cache loss; automatic pausing/evaluation still requires service implementation. Other deferred features remain unchanged.
+[Budgets and controls](doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md) now selects the budget data model. Policy/extension/hold records must survive office cache loss; automatic pausing/evaluation still requires service implementation. Other deferred features remain unchanged.

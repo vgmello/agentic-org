@@ -17,12 +17,12 @@ tags:
 
 # Design: create an organization
 
-[Organization structure](organization-data/01-organization-structure.md) owns the
-records created here. The [standalone design](standalone-server.md) and the
-[installation UX](../specs/server-installation-and-access-ux.md) own installation.
-The request is the [create payload](web-api-v1.md#selected-create-organization-payload)
+[Organization structure](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md) owns the
+records created here. The [standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) and the
+[installation UX](../specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) own installation.
+The request is the [create payload](doc-71%20-%20Design-Web-HTTP-API-v1.md#selected-create-organization-payload)
 of the web API. The screens are
-[offices §5a](../specs/offices-and-teams-ux.md#5a-create-organization-administrator-only).
+[offices §5a](../specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md#5a-create-organization-administrator-only).
 
 ## Setup and ownership
 
@@ -46,7 +46,7 @@ named after the organization, without asking. The creator's person is its lead. 
 built-in HR lead is created as an agent employee in the same team; it is part of the
 product, is not kept running, and runs only when called. It is the only agent that
 is not hired: every other agent comes from a hire by someone who may hire
-([our organization in the app](../specs/our-org-in-the-app.md) §7). No team name,
+([our organization in the app](../specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md) §7). No team name,
 lead appointment or reporting line is inferred from the word HR, and further teams
 come later, a project's by default with the project.
 
@@ -78,25 +78,25 @@ come later, a project's by default with the project.
    transaction of its journal. Employee identity lives in `profile.md`. A runnable
    HR agent also needs `execution.md`, a selected model profile and local credential
    and model evidence under
-   [execution](organization-data/11-model-profiles-and-agent-execution.md); without
+   [execution](../organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md); without
    them it shows a specific not-ready state and is not launched. Offline creation
    does not probe provider authentication or model access.
 4. The host ties the creator's account to the creator's person and records it as the
    organization's owner.
 5. The host creates and keeps the office secrets key
-   ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)) and starts
+   ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)) and starts
    `agentic-org-office` through the verified rendezvous of the
-   [host boundary](office-host-boundary.md). The worker owns its `office.json`
+   [host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md). The worker owns its `office.json`
    marker. A committed office is never discarded after a lost response, and no
    replacement key is invented.
 6. The office provisions the encrypted CA escrow and one owner recovery code, the
-   same code on every retry ([ADR-0007](../adr/0007-hq-creation-escrow.md)). The
+   same code on every retry ([ADR-0007](../../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md)). The
    code then waits to be collected on the HQ machine with
    `agentic-org recovery release --org '<organization>'`; the browser shows only its
    state. Off-HQ retention is acknowledged before recovery material is reported
    collected, and the code never passes through the web process
-   ([ADR-0011](../adr/0011-protected-recovery-delivery.md)).
-   [REC-1](standalone-server.md#ca-escrow-and-the-explicit-recovery-gate) gates the
+   ([ADR-0011](../../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md)).
+   [REC-1](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#ca-escrow-and-the-explicit-recovery-gate) gates the
    supported manual HQ-loss recovery procedure.
 7. The result is the durable organization and office identity, with server,
    runtime and recovery readiness reported separately from remote repository
@@ -139,7 +139,7 @@ organization. Prove acknowledged records survive the loss of the projection.
 `agentic-org setup` creates the instance and no organization. One command creates an
 organization: the host's `organization.create`, served only on the admitted web
 connection and reached from `POST /api/v1/organizations`
-([web API](web-api-v1.md#selected-create-organization-payload)). The name-only
+([web API](doc-71%20-%20Design-Web-HTTP-API-v1.md#selected-create-organization-payload)). The name-only
 command and `organization.provision.v1` are deleted.
 
 - **Creation is asynchronous at the host.** Admission checks the administrator,
@@ -166,7 +166,7 @@ command and `organization.provision.v1` are deleted.
   the HQ machine with `agentic-org recovery release --org '<organization>'`
   (`crates/org-host/src/human/recovery.rs`), which today signs the person in with a
   password typed at the terminal; that sign-in is interim
-  ([FC-016](../FEATURES.md)).
+  ([FC-016](../doc-3%20-%20Feature-Checklist.md)).
 - **Files.** Creation is the first entry of the HQ's acceptance journal on the office
   store (B1b; `CreateOrganizationOp` in `crates/org-office/src/store/open/operations.rs`).
   The host gives the office its organization's data roots,

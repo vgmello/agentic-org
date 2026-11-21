@@ -52,9 +52,9 @@ Provide a virtual (decoupled) console window that parses background agent conver
 
 Written by the lead on 2026-11-17. It adds no requirement; it places the owner's requirement in the existing contracts.
 
-**What it matches already.** The office runs every agent headless and there is no terminal in the browser ([ADR-0004](../adr/0004-headless-agent-sessions.md)). This requirement is the read-only session view that ADR names: a console that is decoupled from the agent's process and built from what the agent's tool wrote to disk.
+**What it matches already.** The office runs every agent headless and there is no terminal in the browser ([ADR-0004](../../decisions/decision-4%20-%20ADR-0004-Agent-sessions-run-headless-people-interact-through-chat.md)). This requirement is the read-only session view that ADR names: a console that is decoupled from the agent's process and built from what the agent's tool wrote to disk.
 
-**Where the conversation files are.** Each agent has a private home that the office controls ([ADR-0015](../adr/0015-agent-isolation-modes.md), decision 10), and the vendor tool writes its conversation files there. So the office always knows where they are and can read them, in both isolation modes. The browser never reads a file: the office parses and serves the entries through the web API, to people authorized to inspect that agent (checklist row FC-150).
+**Where the conversation files are.** Each agent has a private home that the office controls ([ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md), decision 10), and the vendor tool writes its conversation files there. So the office always knows where they are and can read them, in both isolation modes. The browser never reads a file: the office parses and serves the entries through the web API, to people authorized to inspect that agent (checklist row FC-150).
 
 **One event model, two parsers.** A Claude parser and a Codex parser each turn their format into the same list of entries: message, tool call, tool result, file reference or change, usage, and notice. The view and its toggles work on that list and do not know the format. The runtime contract has a normalized session event for the live stream (`SessionEvent` in `org-agent-runtime`), but it is narrower than this list: it has no entry for a person's message, the content of a tool result or a file. So the viewer's entry model is defined here, and the live event type is extended to match it when running sessions are shown, so that one view serves a running session and a finished one.
 
@@ -65,6 +65,6 @@ Written by the lead on 2026-11-17. It adds no requirement; it places the owner's
 **Things to settle while building.**
 
 1. **The formats are the vendors' own and can change.** Each parser is tied to the tool versions it was tested with, keeps fixtures for them, and shows an entry it does not recognise as a raw entry instead of failing.
-2. **Secrets in transcripts.** Conversation files can contain tokens or file contents. The redaction rule of the [session design](../design/agent-sessions.md) applies before anything is served, and access is limited to authorized people.
+2. **Secrets in transcripts.** Conversation files can contain tokens or file contents. The redaction rule of the [session design](../design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md) applies before anything is served, and access is limited to authorized people.
 3. **A third runtime.** The requirement names Claude and Codex. The session design also lists Antigravity; it would be a third parser later.
 4. **Running sessions.** The requirement describes parsing files. Following a file as it grows gives a near-live view without any connection to the agent's process. Whether v1 needs that, or only finished and paused sessions, is the owner's call.

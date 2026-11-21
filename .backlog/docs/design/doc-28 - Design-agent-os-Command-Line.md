@@ -19,11 +19,11 @@ tags:
 
 How `agent-os` is shaped: one grammar, one answer format, one table of commands, and
 which commands milestone one and milestone two deliver. It merges the owner's
-[REQ-08](../specs/req-08-agent-os-cli-and-kernel-primitives.md) into the selected
+[REQ-08](../specs/doc-59%20-%20REQ-08-agent-os-CLI-and-Kernel-Primitives.md) into the selected
 architecture. The review of that requirement, with the decisions taken and the
 questions for the owner, is at the end of the requirement document. The increments are
-in the [implementation plan](../implementation-plan.md); the first is
-[K1](../implementation-plan.md#k1--the-command-contract).
+in the [implementation plan](../doc-5%20-%20v1-Implementation-Plan.md); the first is
+[K1](../doc-5%20-%20v1-Implementation-Plan.md#k1--the-command-contract).
 
 This document owns the command line's conventions and the list of commands. It does
 not own what a command means: each row of section 3 names the contract that does.
@@ -31,7 +31,7 @@ not own what a command means: each row of section 3 names the contract that does
 ## 1. The shape in one page
 
 - **`agent-os` is the only way an agent reaches the product**
-  ([non-negotiable 7](../architecture-non-negotiables.md)). Every call goes to the
+  ([non-negotiable 7](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md)). Every call goes to the
   agent's own office over its local socket. Nothing is offered to an agent as a tool of
   another kind.
 - **Every command is `agent-os <resource> <verb>` with named flags** and answers with
@@ -48,7 +48,7 @@ not own what a command means: each row of section 3 names the contract that does
   milestone one.
 - **The office enforces; `agent-os` asks.** An agent can run any program, so nothing
   checked only inside `agent-os` protects anything
-  ([non-negotiable 9](../architecture-non-negotiables.md)).
+  ([non-negotiable 9](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md)).
 
 ```text
  agent's shell ──▶ agent-os ──────────┐
@@ -101,7 +101,7 @@ Options every command takes:
 | `--dry-run` | writes | Decide and report; change nothing (2.6) |
 | `--idempotency-key <key>` | writes | A key the caller chooses, for safe retries (2.7) |
 | `--if-match <revision>` | writes to a record with a revision | The revision the caller last saw (2.7) |
-| `--durable` | writes | Answer only after the drive has it ([ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 4) |
+| `--durable` | writes | Answer only after the drive has it ([ADR-0014](../../decisions/decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) decision 4) |
 
 ### 2.2 Input that survives a shell
 
@@ -173,7 +173,7 @@ plain text, and `--format compact` prints `data` on success, without the envelop
   an optional field that has no value; `null` is a value only in a field of open JSON.
 - **`meta`** carries what is about the call, not the record: `status` on every
   answer with `ok: true`; the recipient's `presence` on a send or an ask
-  ([ADR-0028](../adr/0028-an-agent-is-always-available.md) decision 6); `operation_id` and `ack` (`committed` or `durable`) for a write; `revision`
+  ([ADR-0028](../../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md) decision 6); `operation_id` and `ack` (`committed` or `durable`) for a write; `revision`
   when the write produced one; `next_cursor` for a list; `dry_run: true` for a dry run.
 - **`meta.status`** is one of:
 
@@ -182,9 +182,9 @@ plain text, and `--format compact` prints `data` on success, without the envelop
   | `completed` | Done. Every read answers this | Continue |
   | `timed_out` | An ask that is not required got no answer within its wait. `data.default` holds the ask's default when it has one | Continue with the default, or without the answer |
   | `withdrawn` | The ask was withdrawn or cancelled | Continue without it |
-  | `suspended` | A required ask waited its time and no answer came: a required answer is pending ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) decision 5). `data` names what is awaited and from whom | Close out background work and end the turn. The office stops the agent and starts it again, in the same session, with the answer |
-  | `waiting` | A question is still open and the short hold of this command has ended ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) decision 15). `data` names the question and the time left of its wait | Continue with other work, or call `msg wait --ask <id>` |
-  | `gate_required` | The change needs an approval before it takes effect. No command returns it in milestones one and two: a hire has no approval ([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). It stays in the contract for a later approval | Continue with other work; the outcome arrives as a message |
+  | `suspended` | A required ask waited its time and no answer came: a required answer is pending ([ADR-0020](../../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md) decision 5). `data` names what is awaited and from whom | Close out background work and end the turn. The office stops the agent and starts it again, in the same session, with the answer |
+  | `waiting` | A question is still open and the short hold of this command has ended ([ADR-0020](../../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md) decision 15). `data` names the question and the time left of its wait | Continue with other work, or call `msg wait --ask <id>` |
+  | `gate_required` | The change needs an approval before it takes effect. No command returns it in milestones one and two: a hire has no approval ([ADR-0029](../../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)). It stays in the contract for a later approval | Continue with other work; the outcome arrives as a message |
 
   `org-command` has the six.
 
@@ -248,7 +248,7 @@ change; use a new key), `invalid_request` (the hint lists the valid flags or val
 
 - **At launch an agent receives a short catalogue,** not the schemas: one line for each
   command, generated from the table, at most 4 KiB. It reaches the agent as its own
-  input beside the processes that apply ([processes UX](../specs/processes-ux.md),
+  input beside the processes that apply ([processes UX](../specs/doc-54%20-%20Spec-Organization-Processes-and-Standards-UX.md),
   PROC-28).
 - **`agent-os --help`** lists the resources; `agent-os <resource> --help` lists its
   verbs; `agent-os <resource> <verb> --help` lists the flags. Plain text.
@@ -256,9 +256,9 @@ change; use a new key), `invalid_request` (the hint lists the valid flags or val
   `input` and `output` as JSON Schema (draft 2020-12), its `content_field`, the error
   codes it can return and its acknowledgement class. It makes no call to the office.
 - **`agent-os skill list` and `skill read`** give the product's built-in guidance on
-  using the commands ([processes design](processes.md), decision 4), on demand. How an
+  using the commands ([processes design](doc-34%20-%20Design-Organization-Processes-and-Standards.md), decision 4), on demand. How an
   agent is told to behave, and the skills there are, is the
-  [agent instructions](agent-instructions.md) design.
+  [agent instructions](doc-27%20-%20Design-Agent-Instructions-Assembly.md) design.
 
 The schemas are produced at build time from the same types the parser fills. A test
 feeds every command's example input through both the schema and the parser, so the two
@@ -272,7 +272,7 @@ does the stated revision still hold, does a rule that the code enforces refuse i
 does the change apply to the projection. It then undoes all of it and answers with
 `meta.dry_run: true`. It changes nothing: no file, no journal entry, no receipt.
 
-In the [office store](office-store.md) the writer takes a mark, runs the decision and
+In the [office store](doc-66%20-%20Design-Office-Store-Architecture.md) the writer takes a mark, runs the decision and
 applies the entry to the projection, and a failure at either step undoes to the mark. A
 dry run is those two steps followed by the same undo, without framing or appending an
 entry. The store gains one entry point for it, added with the first writing command on
@@ -290,7 +290,7 @@ This is the requirement's `grant check`. It is not a second command.
 
 - **`--idempotency-key`** is a key the caller chooses: up to 64 letters, digits and
   hyphens. Every change carries an operation ID
-  ([non-negotiable 5](../architecture-non-negotiables.md)), and the key is what a
+  ([non-negotiable 5](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md)), and the key is what a
   caller holds of it. For the same caller, repeating a call with the same key and the
   same input changes nothing further and returns the first answer; that is also how an
   agent that lost an answer gets it back. The same key with different input is
@@ -315,8 +315,8 @@ This is the requirement's `grant check`. It is not a second command.
 ### 2.8 Who is calling
 
 The office starts each run and gives it a binding
-([ADR-0003](../adr/0003-agent-messaging-office-first.md) decision 12,
-[agent sessions](agent-sessions.md)). At launch it sets:
+([ADR-0003](../../decisions/decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md) decision 12,
+[agent sessions](doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md)). At launch it sets:
 
 | Variable | Value | Used by |
 | --- | --- | --- |
@@ -333,7 +333,7 @@ The office starts each run and gives it a binding
 agent, the session, the project and the task from the binding: the token, and the
 caller's descent from the process the office started. It never reads them from a
 variable or from a flag. A command that leaves out `--project` gets the run's project
-([identity and numbering](organization-data/06-identity-and-numbering.md)); one that
+([identity and numbering](../organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md)); one that
 names another project is checked like any other call.
 
 `agent-os` refuses to run without a binding, except for `--help`, `--schema` and
@@ -362,7 +362,7 @@ variable that names the caller.
 - **No product primitive is an MCP tool.** Asking a question, reading a task or
   sending a message is always a command. This closes the open point of the processes
   design and replaces the `ask_user` tool route in the alignment of
-  [REQ-04](../specs/req-04-channel-messaging-and-question-components.md).
+  [REQ-04](../specs/doc-55%20-%20REQ-04-Channel-Messaging-and-Question-Components.md).
 - **MCP is for connectors to things outside the product** (a browser, a language
   server, a third-party service), granted to an agent through its execution
   configuration. Milestones one and two grant none: the MCP configuration the office
@@ -377,7 +377,7 @@ Owner, 2026-11-18: the common commands are fast; not every command has to be.
 
 - **The common commands** are the ones an agent runs all day: every read from its own
   office, and every write in the committed class of
-  [ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 3.
+  [ADR-0014](../../decisions/decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) decision 3.
   In this catalogue: `msg inbox`, `msg read`, `msg send`, `msg reply`, `msg done`,
   `msg defer`, `status set`, `session inspect`, `task list`, `task inspect`,
   `task create`, `task comment`, `task watch` and `checklist check`.
@@ -389,7 +389,7 @@ Owner, 2026-11-18: the common commands are fast; not every command has to be.
   change, an assignment), a command that waits for a person (`msg ask`, `msg wait`), one that
   reaches the network (`repo push`), and rare ones (`hr hire`, `repo attach`).
 - **No command holds its caller longer than the short hold,** 90 seconds unless
-  changed ([non-negotiable 18](../architecture-non-negotiables.md)). A longer wait
+  changed ([non-negotiable 18](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md)). A longer wait
   returns `waiting` and is continued by another call.
 - **What keeps the common path short.** Before its call, `agent-os` does nothing the
   call does not need: it loads no schema and no catalogue, reads no file except one
@@ -406,9 +406,9 @@ office accepts only from a person in the stated position; an agent that calls it
 
 | Command | What it answers | Contract | With |
 | --- | --- | --- | --- |
-| `session inspect` | The organization, office, employee, home team and the leads above it, the project and task of this run, the session and its state, and what it is waiting on | [Agent sessions](agent-sessions.md) | C3 |
+| `session inspect` | The organization, office, employee, home team and the leads above it, the project and task of this run, the session and its state, and what it is waiting on | [Agent sessions](doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md) | C3 |
 | `session attach` | The long-running mode (2.9) | ADR-0014 decision 5 | B6 |
-| `grant list` | What the office holds about this run's reach: the teams the employee leads and whether it may hire into them, the project and task, the worktrees and other writable places, the isolation mode, the tools and connectors of its execution configuration | [Employees](organization-data/04-agent-structure.md), [ADR-0015](../adr/0015-agent-isolation-modes.md), [execution](organization-data/11-model-profiles-and-agent-execution.md) | C3 |
+| `grant list` | What the office holds about this run's reach: the teams the employee leads and whether it may hire into them, the project and task, the worktrees and other writable places, the isolation mode, the tools and connectors of its execution configuration | [Employees](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md), [ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md), [execution](../organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) | C3 |
 
 `session suspend` and `session resume` are not commands. Suspension is the `suspended`
 outcome of a required ask, and the office performs both steps (ADR-0020 decisions 6 and
@@ -418,41 +418,41 @@ outcome of a required ask, and the office performs both steps (ADR-0020 decision
 
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
-| `org inspect` | The organization, its offices and its top team | [Organization](organization-data/01-organization-structure.md) | B2 |
-| `team list`, `team inspect` | The teams; one team (default: the caller's home team) with its lead, its members and their presence | [Organization](organization-data/01-organization-structure.md), ADR-0003 decision 14 | B2 |
-| `agent inspect`, `person inspect` | One employee's card: team, role, lead, status. The two are one call under the name that fits; each answers for either kind and says which it is | [Employees](organization-data/04-agent-structure.md) | B2 |
+| `org inspect` | The organization, its offices and its top team | [Organization](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md) | B2 |
+| `team list`, `team inspect` | The teams; one team (default: the caller's home team) with its lead, its members and their presence | [Organization](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md), ADR-0003 decision 14 | B2 |
+| `agent inspect`, `person inspect` | One employee's card: team, role, lead, status. The two are one call under the name that fits; each answers for either kind and says which it is | [Employees](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md) | B2 |
 | `status set`, `status clear` | The caller's own status line (`status.set`, committed) | ADR-0003 decision 14 | B6 |
-| `project list`, `project inspect` | The projects the caller can see; one project with its team, repositories and processes | [Projects](organization-data/02-project-structure.md) | B3 |
-| `team create`, `team update`, `person add` and the like | A person's commands: the owner changes structure. B2 names them under this grammar | [Who may change what](organization-data/04-agent-structure.md) | B2 |
-| `project create` | A person's command: the owner | [Who may change what](organization-data/04-agent-structure.md) | B3 |
-| `role list`, `role inspect` | The organization's roles; one role's body and requirements. Reading only: no command writes a role in v1 | [Roles UX](../specs/roles-ux.md) | C2 |
-| `hr hire` | Hires a new agent. Only a caller who may hire into the team can use it: the owner, or an employee with Allow hiring, into the teams it leads and the teams under them ([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). Anyone else gets `not_authorized` with the hint "You don't have access to hire. Ask your team lead.", and nothing is recorded. With every required field given (`--team`, `--role` or the fields of the proposal, `--reason`) the call is its own confirmation and the office provisions the agent. With words only, the HR lead drafts a proposal and the call returns the request in `drafting`; the draft arrives as a message, and `hr hire --id <request>` confirms it. When the caller gave only words and the HR lead cannot run, it creates nothing and is `unavailable`, with a hint to fill in the fields. There is no approval and nothing waits for anyone | [The hire flow](../specs/our-org-in-the-app.md) (STAFF, HRL, APPR) | C2 |
+| `project list`, `project inspect` | The projects the caller can see; one project with its team, repositories and processes | [Projects](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md) | B3 |
+| `team create`, `team update`, `person add` and the like | A person's commands: the owner changes structure. B2 names them under this grammar | [Who may change what](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md) | B2 |
+| `project create` | A person's command: the owner | [Who may change what](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md) | B3 |
+| `role list`, `role inspect` | The organization's roles; one role's body and requirements. Reading only: no command writes a role in v1 | [Roles UX](../specs/doc-47%20-%20Spec-Agent-Roles-Directory-UX.md) | C2 |
+| `hr hire` | Hires a new agent. Only a caller who may hire into the team can use it: the owner, or an employee with Allow hiring, into the teams it leads and the teams under them ([ADR-0029](../../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)). Anyone else gets `not_authorized` with the hint "You don't have access to hire. Ask your team lead.", and nothing is recorded. With every required field given (`--team`, `--role` or the fields of the proposal, `--reason`) the call is its own confirmation and the office provisions the agent. With words only, the HR lead drafts a proposal and the call returns the request in `drafting`; the draft arrives as a message, and `hr hire --id <request>` confirms it. When the caller gave only words and the HR lead cannot run, it creates nothing and is `unavailable`, with a hint to fill in the fields. There is no approval and nothing waits for anyone | [The hire flow](../specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md) (STAFF, HRL, APPR) | C2 |
 
 ### 3.3 Messages, questions and approvals
 
 There is one family, `msg`, for one conversation and message model
-([messaging](organization-data/15-messaging-and-chat.md)). Whether a message goes to a
+([messaging](../organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md)). Whether a message goes to a
 person, an agent or a channel is a matter of whom it is addressed to, not of which
 command is used. The names are the ones the office's calls already have (`msg.send`,
 `msg.ask`, `msg.reply`), so nothing is renamed between the command and the wire.
 
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
-| `msg send` | Sends a message `--to` a person, an agent or a channel, with a kind where the chat rules ask for one: `--kind handoff`, or `--kind announcement --reason <reason>`. Writing `@handle` in the text mentions that person or agent; the answer lists the mentions the office recorded, and any `@handle` that did not reach its employee. A hand-off or a mention sent to an idle agent starts a turn for it (C8) | [Chat UX](../specs/chat-ux.md) section 5; [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md) | B6 |
-| `msg ask` | Asks one question, or up to eight at once, with the `ask_user` schema: `choice` (single or multiple), `yes_no` or `free_text`, each with an optional default; `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for at most the short hold (90 seconds unless changed) and returns `completed` with the answer, `waiting` with the question's ID when the answer has not come yet, `timed_out` when the wait of the ask has ended, or, when required, `suspended` (ADR-0020 decisions 15 to 17). The ID is in every answer, so a repeated call with the same idempotency key never asks twice. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there: it returns the question's ID at once and opens a watch on the responses, which the channel's watcher feeds back to the asker's inbox; `meta` says whether the question is watched, and why not when it is not (C9). An ask to an idle agent starts a turn for it (C8) | [REQ-04](../specs/req-04-channel-messaging-and-question-components.md), ADR-0020, [ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md); [employees](organization-data/04-agent-structure.md) | B7 |
+| `msg send` | Sends a message `--to` a person, an agent or a channel, with a kind where the chat rules ask for one: `--kind handoff`, or `--kind announcement --reason <reason>`. Writing `@handle` in the text mentions that person or agent; the answer lists the mentions the office recorded, and any `@handle` that did not reach its employee. A hand-off or a mention sent to an idle agent starts a turn for it (C8) | [Chat UX](../specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md) section 5; [ADR-0023](../../decisions/decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md) | B6 |
+| `msg ask` | Asks one question, or up to eight at once, with the `ask_user` schema: `choice` (single or multiple), `yes_no` or `free_text`, each with an optional default; `--required`, `--wait`. `--to` names a person or an agent, or a team or project, in which case the office addresses it to the lead of that team or of the project's accountable team. It holds for at most the short hold (90 seconds unless changed) and returns `completed` with the answer, `waiting` with the question's ID when the answer has not come yet, `timed_out` when the wait of the ask has ended, or, when required, `suspended` (ADR-0020 decisions 15 to 17). The ID is in every answer, so a repeated call with the same idempotency key never asks twice. `--to` a channel with nobody named is a question that does not hold, and `--required` is refused there: it returns the question's ID at once and opens a watch on the responses, which the channel's watcher feeds back to the asker's inbox; `meta` says whether the question is watched, and why not when it is not (C9). An ask to an idle agent starts a turn for it (C8) | [REQ-04](../specs/doc-55%20-%20REQ-04-Channel-Messaging-and-Question-Components.md), ADR-0020, [ADR-0023](../../decisions/decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md); [employees](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md) | B7 |
 | `msg reply` | Replies in a thread (B6); answers an ask, naming each question and option by its ID (B7). A person and an agent answer the same way | Messaging; ADR-0020 | B6, B7 |
 | `msg accept` | `--id <message>`: accepts a hand-off addressed to the caller | Chat UX (CHAT-18) | B6 |
 | `msg withdraw` | Withdraws an ask the caller made | ADR-0020 decisions 7 and 12 | B7 |
-| `msg inbox`, `msg read` | Everything addressed to the caller, unread first, each entry with the reason it is there (`addressed`, `mention`, `thread_reply`, `answer_candidate`) and, for an answer, the question it answers; `--because <reason>` and `--thread <id>` narrow it. One message with its thread. Nothing else from a channel is in the inbox | ADR-0003 decisions 10 and 11; [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) | B6 |
+| `msg inbox`, `msg read` | Everything addressed to the caller, unread first, each entry with the reason it is there (`addressed`, `mention`, `thread_reply`, `answer_candidate`) and, for an answer, the question it answers; `--because <reason>` and `--thread <id>` narrow it. One message with its thread. Nothing else from a channel is in the inbox | ADR-0003 decisions 10 and 11; [ADR-0024](../../decisions/decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md) | B6 |
 | `msg list` | The messages of one channel, conversation or thread, when the agent chooses to read it | Messaging (`msg.list`) | B6 |
 | `msg done`, `msg defer` | `--id <message>`: the caller's own triage state. `msg done` on the caller's own channel question closes it and ends its watch | ADR-0003 decision 11; ADR-0024 | B6 |
-| `msg wait` | Holds for at most the short hold until something arrives; `--ask <id>` (or `--thread <id>`) waits for the answer to one question and returns `completed`, `waiting`, `timed_out` or `suspended` as `msg ask` does | [Agent sessions](agent-sessions.md) (holds are capped); ADR-0020 decision 15 | B6 |
+| `msg wait` | Holds for at most the short hold until something arrives; `--ask <id>` (or `--thread <id>`) waits for the answer to one question and returns `completed`, `waiting`, `timed_out` or `suspended` as `msg ask` does | [Agent sessions](doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md) (holds are capped); ADR-0020 decision 15 | B6 |
 | `channel list`, `channel join`, `channel leave` | The channels the caller may see; joining and leaving a manual channel | Chat UX (CHAT-19) | B6 |
-| `channel summarize` | `--channel <channel> --about "<what is needed>"`: answers a question about a channel's recent messages with a short text and the IDs of the messages it rests on, so that the agent does not load the channel into its context. It reads exactly what `msg list` would return to the caller, at most the latest 200 messages, and its answer is marked as derived from channel content | [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) decision 18 | C9 |
+| `channel summarize` | `--channel <channel> --about "<what is needed>"`: answers a question about a channel's recent messages with a short text and the IDs of the messages it rests on, so that the agent does not load the channel into its context. It reads exactly what `msg list` would return to the caller, at most the latest 200 messages, and its answer is marked as derived from channel content | [ADR-0024](../../decisions/decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md) decision 18 | C9 |
 
 **Approvals in milestone one.** There are none. A hire is made by someone who may
 hire and is refused for everyone else
-([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). An agent that needs a go-ahead
+([ADR-0029](../../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)). An agent that needs a go-ahead
 for anything asks a required yes-or-no question with `msg ask`; that is a question,
 not a recorded approval. `gate open` and `gate status` are in section 6.
 
@@ -548,24 +548,24 @@ The rules:
 
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
-| `task create` | Creates a task, bug or request (`--type`), in the run's project unless one is named | [Tasks](organization-data/03-features-and-work.md), [ADR-0019](../adr/0019-office-coded-task-numbers.md) | B5 |
-| `task list`, `task inspect` | Tasks by project, assignee, status or type; one task with its history | [Operational data](organization-data/05-operational-data.md) | B5 |
+| `task create` | Creates a task, bug or request (`--type`), in the run's project unless one is named | [Tasks](../organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md), [ADR-0019](../../decisions/decision-19%20-%20ADR-0019-Task-numbers-are-minted-by-the-creating-office.md) | B5 |
+| `task list`, `task inspect` | Tasks by project, assignee, status or type; one task with its history | [Operational data](../organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md) | B5 |
 | `task update` | Title, description, priority, effort | The same | B5 |
-| `task transition` | `--task <reference> --status <status>`, with `--reason` for `blocked`: changes the status, from the closed list | The same; [work items UX](../specs/work-items-ux.md) | B5 |
-| `task assign` | Changes the assigned team and assignee together, at a stated revision | [Assignment and history](organization-data/12-task-assignment-and-history.md) | B5 |
+| `task transition` | `--task <reference> --status <status>`, with `--reason` for `blocked`: changes the status, from the closed list | The same; [work items UX](../specs/doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md) | B5 |
+| `task assign` | Changes the assigned team and assignee together, at a stated revision | [Assignment and history](../organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md) | B5 |
 | `task comment`, `task watch` | Adds a public comment, read by everyone on the task; starts or stops watching | Operational data | B5 |
-| `task note add`, `task note list`, `task note update`, `task note remove` | The caller's private notes on a task (`--task`, `--text`, `--id`): its plan, reasoning and test notes. Read by the author and by people, never by another agent ([ADR-0031](../adr/0031-any-employee-changes-tasks.md)) | [Operational data](organization-data/05-operational-data.md#private-notes-attached-to-tasks) | L8 |
+| `task note add`, `task note list`, `task note update`, `task note remove` | The caller's private notes on a task (`--task`, `--text`, `--id`): its plan, reasoning and test notes. Read by the author and by people, never by another agent ([ADR-0031](../../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md)) | [Operational data](../organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#private-notes-attached-to-tasks) | L8 |
 | `checklist add`, `checklist check`, `checklist update`, `checklist remove` | A task's checklist | Work items UX (CHK) | B5 |
 
 ### 3.5 Processes, standards and guidance
 
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
-| `process list` | The processes and standards that apply to the caller's current work, or to a named task, with where each comes from and which must be followed. `--kind process` or `--kind standard` keeps one kind | [Processes design](processes.md) (`process.effective`), PROC-8 | C5 |
+| `process list` | The processes and standards that apply to the caller's current work, or to a named task, with where each comes from and which must be followed. `--kind process` or `--kind standard` keeps one kind | [Processes design](doc-34%20-%20Design-Organization-Processes-and-Standards.md) (`process.effective`), PROC-8 | C5 |
 | `process inspect` | One document's full text by key, process or standard; with `--why`, the chain from organization to team to project and which level won | The same (`process.show`, `process.why`) | C5 |
-| `skill list`, `skill read` | `skill read --name <key>`: the product's built-in guidance on its own commands, and the skills of the caller's project's development process for the caller's role; each names its source | Processes design, decision 4; [development processes](development-processes.md#6-how-skills-reach-an-agent) | C5; L12 for a development process's skills |
-| `process create`, `process update` | Add an organization process or standard at the scope of a project of the caller's own team, or change one of that project's. Never at team or organization scope, never non-overridable, never a key inherited from above | [Processes design](processes.md#5-changing-processes), decision 8 (PROC-36) | L12 |
-| `dev-process inspect` | The development process of the caller's project: its summary, stages and tabs, and the caller's role in it. Reading only: a person creates, edits and imports one in the browser | [Development processes](development-processes.md) | L12 |
+| `skill list`, `skill read` | `skill read --name <key>`: the product's built-in guidance on its own commands, and the skills of the caller's project's development process for the caller's role; each names its source | Processes design, decision 4; [development processes](doc-32%20-%20Design-Development-Processes-Process-Packages.md#6-how-skills-reach-an-agent) | C5; L12 for a development process's skills |
+| `process create`, `process update` | Add an organization process or standard at the scope of a project of the caller's own team, or change one of that project's. Never at team or organization scope, never non-overridable, never a key inherited from above | [Processes design](doc-34%20-%20Design-Organization-Processes-and-Standards.md#5-changing-processes), decision 8 (PROC-36) | L12 |
+| `dev-process inspect` | The development process of the caller's project: its summary, stages and tabs, and the caller's role in it. Reading only: a person creates, edits and imports one in the browser | [Development processes](doc-32%20-%20Design-Development-Processes-Process-Packages.md) | L12 |
 
 Processes and standards are the same kind of document, inherited the same way and
 read through the same calls, so they share one resource. A development process is a different
@@ -575,8 +575,8 @@ primitive with its own resource; its skills are read with the `skill` commands. 
 ### 3.5a Project documents
 
 The owner's REQ-06 and REQ-07 are in the repository, and these commands are their
-form in this grammar ([development processes](development-processes.md#8-the-project-documentation-tree),
-[desired state specifications](desired-state-specifications.md#6-the-contract)). They
+form in this grammar ([development processes](doc-32%20-%20Design-Development-Processes-Process-Packages.md#8-the-project-documentation-tree),
+[desired state specifications](doc-31%20-%20Design-Desired-State-Specifications-DSS.md#6-the-contract)). They
 come with L11 and L13. A call for a project that is not the caller's own is refused
 with `other_project`.
 
@@ -598,8 +598,8 @@ with `other_project`.
 
 | Command | What it does | Contract | With |
 | --- | --- | --- | --- |
-| `repo list` | The repositories of a project with their integration branches | [Git design](projects-git-github.md) | C7 |
-| `repo attach` | A person's command: links a registered repository to a project, with its integration branch | The same; [projects](organization-data/02-project-structure.md) | C7 |
+| `repo list` | The repositories of a project with their integration branches | [Git design](doc-35%20-%20Design-Projects-Git-and-GitHub.md) | C7 |
+| `repo attach` | A person's command: links a registered repository to a project, with its integration branch | The same; [projects](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md) | C7 |
 | `worktree list` | The caller's worktrees with task, repository, branch, path and state | The same, "A worktree per task and repository" | C7 |
 | `repo push` | `--task <reference>`, with `--repo` when the task has several: asks the office to push the task's branch (`git.push`). The agent holds no credential | The same | C7 |
 
@@ -622,7 +622,7 @@ of each repository's worktree.
 | `msg notify`, `msg due`, `relay`, the file queue, `--as`, `$ORG_AGENT`, `--office` | Deleted with the file queue (B6) |
 
 Nothing is kept beside its replacement
-([non-negotiable 14](../architecture-non-negotiables.md)).
+([non-negotiable 14](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md)).
 
 ### 3.8 Names that differ from the requirement
 
@@ -688,15 +688,15 @@ capability of `org-platform`, on both systems.
 | --- | --- | --- |
 | `milestone`, `release` | Features, releases and deployments are a later increment | L7, in this grammar |
 | `ia`, `fs`, `link` | They are `doc index`, the `doc` commands and `doc link-code` (3.5a), from REQ-06 and REQ-07 | L11 and L13 |
-| `process apply`, `block run` | A development process is content that agents read, with no engine: nothing applies a process or runs a block ([ADR-0026](../adr/0026-development-processes-are-content.md)). Its role-bound skills are read with `skill list` and `skill read` (3.5) | Not commands |
+| `process apply`, `block run` | A development process is content that agents read, with no engine: nothing applies a process or runs a block ([ADR-0026](../../decisions/decision-26%20-%20ADR-0026-A-development-process-is-content-the-product-runs-no-methodology.md)). Its role-bound skills are read with `skill list` and `skill read` (3.5) | Not commands |
 | `artifact publish`, `artifact drift` | They are `doc issue` and `doc status`: an issued version of a document, and whether the tasks that realize it are finished (3.5a) | L13 |
-| `event emit`, `event subscribe` | A development process is content with no engine: nothing in the product acts on a stage or on an event ([ADR-0026](../adr/0026-development-processes-are-content.md) decision 2). An agent acts because it was addressed or assigned a task | Not commands |
+| `event emit`, `event subscribe` | A development process is content with no engine: nothing in the product acts on a stage or on an event ([ADR-0026](../../decisions/decision-26%20-%20ADR-0026-A-development-process-is-content-the-product-runs-no-methodology.md) decision 2). An agent acts because it was addressed or assigned a task | Not commands |
 | `gate open`, `gate status` | An approval is a record with its own rules (3.3). A development process names no approver and grants nothing (ADR-0026 decision 1), so nothing declares a gate | Not commands. A hire has no approval; a required yes-or-no ask for anything else |
 | `worktree create`, `worktree cleanup` | The office does both, at task start and after closure (3.6) | Not commands |
 | `grant check` | It is `--dry-run` (2.6) | Not a command |
 | `session suspend`, `session resume` | They are outcomes the office performs (3.1) | Not commands |
 | `policy check` | A written standard cannot be checked by a program. Rules the code enforces are checked by `--dry-run` | With machine-checked policies, if they are added |
-| `runner spawn` | Only the office starts a run ([non-negotiable 10](../architecture-non-negotiables.md)). An agent gets a colleague running by asking it or handing work to it ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)) | Not a command |
+| `runner spawn` | Only the office starts a run ([non-negotiable 10](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md)). An agent gets a colleague running by asking it or handing work to it ([ADR-0023](../../decisions/decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md)) | Not a command |
 | `logs inspect` | The session view is for people in the browser (C4). No rule says which agent may read which session | Later |
 | `metrics query` | Usage and costs | L2 |
 | A gate resolved by policy alone | Approvals are a person's | Not in v1 |
@@ -720,7 +720,7 @@ capability of `org-platform`, on both systems.
   its row does not declare or lacks a required one.
 - **`apps/agent-os` and `apps/agentic-org`** stay thin: each chooses how the caller is
   identified and hands the arguments to the library
-  ([non-negotiable 15](../architecture-non-negotiables.md)).
+  ([non-negotiable 15](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md)).
 - **A domain's rows** are declared in the domain's crate, beside the mapping to its
   wire call, by the increment that builds the domain; never in `org-proto`, which
   `org-command` depends on for the error codes and so cannot depend on it. Until

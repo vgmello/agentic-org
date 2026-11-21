@@ -12,9 +12,9 @@ status: accepted
 Status: **accepted**.
 
 What is stored and where is owned by the
-[messaging contract](../design/organization-data/15-messaging-and-chat.md). How fast a
-send answers is owned by [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md).
-How an ask waits is owned by [ADR-0020](0020-required-asks-suspend-and-resume.md). This
+[messaging contract](../docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md). How fast a
+send answers is owned by [ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md).
+How an ask waits is owned by [ADR-0020](decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md). This
 record owns the decisions about who commits, routes and owns a message.
 
 ## Context
@@ -66,19 +66,19 @@ must stay fast under load. People take part too, through the product's own chat.
    matching ID returns the existing ask, and its reply if there is one; the same ID with
    a different sender or different content is refused.
 10. **Urgency orders, it does not interrupt.** Priority decides order and badges. It
-    never cuts a busy turn short ([chat UX](../specs/chat-ux.md#42-system-notices-and-delivery)).
+    never cuts a busy turn short ([chat UX](../docs/specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md#42-system-notices-and-delivery)).
 11. **Triage is the recipient's own state.** Read, done and defer are changes to the
     recipient's state, made by the recipient through its own office.
 12. **How an agent proves who it is.** `agent-os` connects to its office's local socket,
     which admits only the service's own operating-system user, and the agent account in
-    the `dedicated-user` mode of [ADR-0015](0015-agent-isolation-modes.md). An agent the
+    the `dedicated-user` mode of [ADR-0015](decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md). An agent the
     office runs binds with the session token the office gave that run; the office also
     checks that the caller descends from the process it started. Being admitted to the
     socket is never authorization by itself.
 13. **How a person acts.** A person acts through the browser or through `agentic-org`
     in a terminal after signing in. Either way each request reaches the office with
     that person's principal and a host-issued grant
-    ([host boundary design](../design/office-host-boundary.md)). There is no application
+    ([host boundary design](../docs/design/doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md)). There is no application
     token, and a person never uses `agent-os`.
 14. **Directory and presence.** An agent can list who is in the organization and what
     they report doing, and set its own status. Presence is not stored durably.
@@ -89,14 +89,14 @@ must stay fast under load. People take part too, through the product's own chat.
 
 | Topic | Decided in |
 | --- | --- |
-| Files, tables, hashes, who writes which file | [Messaging contract](../design/organization-data/15-messaging-and-chat.md) |
-| How fast a send answers; the long-running `agent-os` mode | [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) |
-| How long an asker waits; required asks; defaults | [ADR-0020](0020-required-asks-suspend-and-resume.md) |
-| Which message starts a turn for its recipient | [ADR-0023](0023-an-agents-ask-starts-a-turn.md) |
-| What reaches an agent's inbox; mentions; the channel watcher | [ADR-0024](0024-a-channel-question-is-watched-for-its-answer.md) |
-| Channels, threads, cards and what people see | [Chat UX](../specs/chat-ux.md), [REQ-04](../specs/req-04-channel-messaging-and-question-components.md) |
+| Files, tables, hashes, who writes which file | [Messaging contract](../docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md) |
+| How fast a send answers; the long-running `agent-os` mode | [ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) |
+| How long an asker waits; required asks; defaults | [ADR-0020](decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md) |
+| Which message starts a turn for its recipient | [ADR-0023](decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md) |
+| What reaches an agent's inbox; mentions; the channel watcher | [ADR-0024](decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md) |
+| Channels, threads, cards and what people see | [Chat UX](../docs/specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md), [REQ-04](../docs/specs/doc-55%20-%20REQ-04-Channel-Messaging-and-Question-Components.md) |
 | Wire method names and shapes | `crates/org-proto`; they change in place until v1 ships |
-| The `agent-os` commands | [Agent command line](../design/agent-os-command-line.md); what the code does today is in [`apps/agent-os/README.md`](../../apps/agent-os/README.md) |
+| The `agent-os` commands | [Agent command line](../docs/design/doc-28%20-%20Design-agent-os-Command-Line.md); what the code does today is in [`apps/agent-os/README.md`](../../apps/agent-os/README.md) |
 | External chat bridges | None. The product's own chat is the only channel. |
 
 ## What the code does today
@@ -108,7 +108,7 @@ must stay fast under load. People take part too, through the product's own chat.
   selected design makes those tables a projection of files (messaging contract).
 - `agent-os` writes to a file queue when no office is named. The file queue,
   `crates/org-spool` and the route through it are deleted
-  ([implementation plan](../implementation-plan.md), B6); `agent-os` always talks to
+  ([implementation plan](../docs/doc-5%20-%20v1-Implementation-Plan.md), B6); `agent-os` always talks to
   its office.
 - One held call on an agent's connection is capped at 60 seconds. The wait of ADR-0020
   spans several held calls.
@@ -123,21 +123,21 @@ replaced.
 
 | Cited as | Now |
 | --- | --- |
-| §1 (storage tables) | [Messaging contract](../design/organization-data/15-messaging-and-chat.md); the tables are a projection |
+| §1 (storage tables) | [Messaging contract](../docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md); the tables are a projection |
 | §2.1, §2.1.4 (finding the office, binding, call authorization) | Decisions 12 and 13 |
 | §2.2 (waiters, reply hand-off) | Decision 3 |
 | §2.3 (priority, triage, snooze, notify) | Decisions 10 and 11 |
 | §2.4 (directory, presence, the 60-second cap) | Decision 14; "What the code does today" |
-| §2.5 (talking to people) | Decision 5; [ADR-0020](0020-required-asks-suspend-and-resume.md) |
-| §2.6 (command-line surface) | [Agent command line](../design/agent-os-command-line.md) |
+| §2.5 (talking to people) | Decision 5; [ADR-0020](decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md) |
+| §2.6 (command-line surface) | [Agent command line](../docs/design/doc-28%20-%20Design-agent-os-Command-Line.md) |
 | §3.1 (work stream, hand-off when an agent moves) | Decisions 1, 4 and 6 |
 | §3.2 (recipient check, failure notice) | Decisions 7 and 8 |
 | §3.3 (deadlines, re-ask) | Decision 9 |
-| §3.4 (content hash, ordering) | [Messaging contract](../design/organization-data/15-messaging-and-chat.md) for the hash; decision 4 for ordering |
+| §3.4 (content hash, ordering) | [Messaging contract](../docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md) for the hash; decision 4 for ordering |
 | §3.5 (offline behaviour, the file queue) | Decision 1; the file queue is deleted |
-| §4 (wire additions, code ownership) | `crates/org-proto`; [project structure](../design/project-structure.md) |
-| §5 (performance targets) | [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) |
-| §6 (conversations, channels, bridges) | [Messaging contract](../design/organization-data/15-messaging-and-chat.md); [chat UX](../specs/chat-ux.md) |
+| §4 (wire additions, code ownership) | `crates/org-proto`; [project structure](../docs/design/doc-68%20-%20Design-v1-Project-Structure.md) |
+| §5 (performance targets) | [ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) |
+| §6 (conversations, channels, bridges) | [Messaging contract](../docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md); [chat UX](../docs/specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md) |
 
 ## Person-started commands
 

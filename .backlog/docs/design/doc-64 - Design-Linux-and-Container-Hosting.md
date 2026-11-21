@@ -16,13 +16,13 @@ tags:
 # Linux host design
 
 How Agentic Org runs on Linux, including as the main process of a container, under
-[ADR-0017](../adr/0017-linux-and-container-hosting.md). It names the platform
+[ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md). It names the platform
 contracts, the one crate that implements them for every operating system, the Linux
 adapter of each, what each proves, and the order of work. The macOS adapters are the
 code that exists today; their requirements stay in
-[ADR-0008](../adr/0008-gateway-macos-sandbox.md),
-[ADR-0011](../adr/0011-protected-recovery-delivery.md) and the
-[host boundary design](office-host-boundary.md).
+[ADR-0008](../../decisions/decision-8%20-%20ADR-0008-macOS-confinement-of-the-web-process-GW-SBX-MAC-1.md),
+[ADR-0011](../../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md) and the
+[host boundary design](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md).
 
 ## 1. The shared platform crate
 
@@ -35,7 +35,7 @@ all four executables. After Track X, no other Rust file has a `cfg`, `cfg_attr` 
   `confinement`, `service`, `isolation`; section 3) and five further capabilities
   (`fs`, `dirs`, `process`, `socket`, `presence`; section 4). A difference found later
   becomes a new module under the
-  [adapter rule](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one),
+  [adapter rule](../doc-8%20-%20Architecture-Rules.md#planned-variation-goes-behind-an-adapter-from-day-one),
   with its macOS, Linux and refusing adapters, and is added to section 2. Each module
   is `<capability>/mod.rs` with `macos.rs`, `linux.rs` and `refused.rs` beside it
   (declared by explicit `cfg` lines at the top of `mod.rs`, which bind `native` to the
@@ -1205,7 +1205,7 @@ everything. The cases that matter run as the service user:
 - **Connect to `host.sock`.** Admission is by UID only. With one exception, nothing is
   granted without a session the person approved in the browser. The exception is the
   one initial registration link (`admin.link.initial`,
-  [ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md)): setup
+  [ADR-0022](../../decisions/decision-22%20-%20ADR-0022-The-service-host-creates-its-own-registry-setup-has-no-reverse-bootstrap.md)): setup
   asks for it before any account exists, so on Linux any process of the service user
   that names the setup operation, which the setup record holds, can take it, once.
   That user can also write the host's registry directly, so the link gives it nothing
@@ -1273,7 +1273,7 @@ fails on Linux with unused items that only macOS code reaches (the reason CI all
 ## 7. Working in parallel with the macOS track
 
 Track X (Linux) runs beside Track A (getting in) and Track B (the store). The
-increments are in the [implementation plan](../implementation-plan.md#milestone-two--linux-in-parallel-track-x).
+increments are in the [implementation plan](../doc-5%20-%20v1-Implementation-Plan.md#milestone-two--linux-in-parallel-track-x).
 
 | Increment | Files it changes | Also changed by |
 | --- | --- | --- |

@@ -10,13 +10,13 @@ status: accepted
 # ADR-0019 · Task numbers are minted by the creating office
 
 Status: **accepted by the owner 2026-11-17**, and applied to
-the data contract ([document 06](../design/organization-data/06-identity-and-numbering.md)).
+the data contract ([document 06](../docs/organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md)).
 The owner accepted three things: the office part of a task reference is a letter
 (`T-B37`); the scheme applies to tasks only; and an office counts all its tasks in one
 sequence ("let's just do it by office and keep it simple"). The details of the grammar
 (which letters, how many) and decisions 2 and 4 to 7 are the lead's design for that
 choice. Creating a task uses the fast acknowledgement (owner, 2026-11-17;
-[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) decision 3).
+[ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) decision 3).
 
 The owner's requirement, in his words: tasks "happen inline and offline" and "have to
 happen incredibly fast"; going to HQ to create or manage a task is "too long of a round
@@ -28,7 +28,7 @@ final the moment it is created.
 
 - The selected contract has HQ allocate every readable number. An office that creates
   a task offline saves it with an empty number, shown as "Pending number", until HQ
-  answers ([document 06](../design/organization-data/06-identity-and-numbering.md)).
+  answers ([document 06](../docs/organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md)).
 - Tasks are the records agents create all day. Teams, projects, releases, milestones
   and features are created less often and may wait for HQ.
 - The owner's literal proposal concatenates digits: office 1's first task is `T-11`,
@@ -89,21 +89,21 @@ is a required parameter.
 ## Fast acknowledgement
 
 Settled by the owner on 2026-11-17: creating a task uses the committed class of
-[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md). The office answers
+[ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md). The office answers
 once its database has the task, and the drive flush follows. With office-minted numbers
 this is safe for numbering, because the durable mark of decision 7 prevents a number
 from being reused after a power cut.
 
 ## Where it is applied
 
-- [Document 06](../design/organization-data/06-identity-and-numbering.md): the reference
+- [Document 06](../docs/organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md): the reference
   rule, the multiple-offices section, files and recovery.
 - The draft schema: `tasks.office_code`, a required `tasks.number`, uniqueness of code
   and number in the organization, `office_codes` (written by HQ) and
   `office_task_counters` (each office's own), with tests.
-- The identity table of the [data index](../design/organization-data/README.md),
-  [document 03](../design/organization-data/03-features-and-work.md), the UX specs and
-  the [Git design](../design/projects-git-github.md), whose examples now read `T-A42`.
+- The identity table of the [data index](../docs/organization-data/doc-72%20-%20Organization-Data-—-README.md),
+  [document 03](../docs/organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md), the UX specs and
+  the [Git design](../docs/design/doc-35%20-%20Design-Projects-Git-and-GitHub.md), whose examples now read `T-A42`.
 
 Still to do in code (FC-142): office codes and counters, the reference parser in
 `agent-os`, the default project context, and `NumberScope` in `crates/org-work`.

@@ -17,7 +17,7 @@ tags:
 Agentic Org ships four executables. Application directories, Cargo packages and
 executable names are the same. Reusable domain and protocol libraries keep their
 `org-*` names. What each program is responsible for is fixed by the
-[architecture non-negotiables](../architecture-non-negotiables.md) (rule 7).
+[architecture non-negotiables](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md) (rule 7).
 
 | Executable | Source | Job |
 | --- | --- | --- |
@@ -54,9 +54,9 @@ source; recheck it against the commit you work on.
 
 | Executable | What works |
 | --- | --- |
-| `agentic-org` | On macOS: `setup [--name N] [--port P]` creates the instance, registers and starts its launchd user service and prints one registration link when the output is a terminal ([`crates/org-host/src/setup_flow.rs`](../../crates/org-host/src/setup_flow.rs)); `admin reset [--name N]` issues a new registration link after local presence and the system dialog (its set-new-password branch answers `unavailable` until A3); `service start\|stop\|status [--name N]`; `serve --name N` runs a registered instance from its frozen setup record and creates the host registry at first start. Help and version. Setup on unsupported systems or with `--satellite` refuses before any change. A release build of `setup` and `serve --name` refuses until it carries a pinned runtime release (SRV-1). Debug builds keep the legacy `serve --home` entry for integration tests. The host socket answers `hello`, `instance.status` (with `administrator`), `admin.link.initial` and `admin.reset` (`crates/org-host/src/service/mod.rs`, `crates/org-host/src/admin.rs`). |
+| `agentic-org` | On macOS: `setup [--name N] [--port P]` creates the instance, registers and starts its launchd user service and prints one registration link when the output is a terminal ([`crates/org-host/src/setup_flow.rs`](../../../crates/org-host/src/setup_flow.rs)); `admin reset [--name N]` issues a new registration link after local presence and the system dialog (its set-new-password branch answers `unavailable` until A3); `service start\|stop\|status [--name N]`; `serve --name N` runs a registered instance from its frozen setup record and creates the host registry at first start. Help and version. Setup on unsupported systems or with `--satellite` refuses before any change. A release build of `setup` and `serve --name` refuses until it carries a pinned runtime release (SRV-1). Debug builds keep the legacy `serve --home` entry for integration tests. The host socket answers `hello`, `instance.status` (with `administrator`), `admin.link.initial` and `admin.reset` (`crates/org-host/src/service/mod.rs`, `crates/org-host/src/admin.rs`). |
 | `agentic-org-office` | Runs when the host starts it, on macOS and GNU/Linux (`org_platform_host::admission`: on macOS the child is checked by its code signature, on Linux it runs from a sealed copy of the bytes the host hashed; a system with neither adapter starts none). Uses `org-store` and verbatim `schema.sql` (`B1b` + `B2.1` landed: organization family tables actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; legacy `org.db`/`office.db` and out-of-store SQL removed). The host launches it only over the registered instance's verified rendezvous; a host with no registered instance starts no office. Serves the local socket for `agent-os`. |
-| `agentic-org-web` | Help and version. `--serve` runs only after a verified host handoff and otherwise refuses without opening a listener ([`apps/agentic-org-web/src/main.rs`](../../apps/agentic-org-web/src/main.rs)). Serves static assets and 9 live host-backed API routes (`apps/agentic-org-web/src/api.rs`): `GET /api/v1/version`, `GET /api/v1/instance`, `POST /api/v1/links/register`, `POST /api/v1/session/sign-in`, `GET /api/v1/session`, `POST /api/v1/session/sign-out`, `GET /api/v1/organizations`, `POST /api/v1/organizations`, and `GET\|HEAD /api/v1/operations/host/{id}`. Browser-to-office domain routes (`B2 Q8` / `TASK-5`) remain pending. |
+| `agentic-org-web` | Help and version. `--serve` runs only after a verified host handoff and otherwise refuses without opening a listener ([`apps/agentic-org-web/src/main.rs`](../../../apps/agentic-org-web/src/main.rs)). Serves static assets and 9 live host-backed API routes (`apps/agentic-org-web/src/api.rs`): `GET /api/v1/version`, `GET /api/v1/instance`, `POST /api/v1/links/register`, `POST /api/v1/session/sign-in`, `GET /api/v1/session`, `POST /api/v1/session/sign-out`, `GET /api/v1/organizations`, `POST /api/v1/organizations`, and `GET\|HEAD /api/v1/operations/host/{id}`. Browser-to-office domain routes (`B2 Q8` / `TASK-5`) remain pending. |
 | `agent-os` | Directory calls (`who`) against a running office when one is named; the office answers `msg send`, `msg inbox`, `msg read` and `msg wait` with `unsupported` until B6 rebuilds messaging on the new store. With no office named it writes to a file queue, which is deleted (implementation plan B6). |
 
 Libraries that exist and are not yet reachable from any command: release
@@ -65,7 +65,7 @@ verification (`org-release`), socket admission and confinement primitives
 escrow (`org-pki`), protected HQ creation and recovery delivery in `org-host`.
 
 The order in which these become usable is the
-[implementation plan](../implementation-plan.md).
+[implementation plan](../doc-5%20-%20v1-Implementation-Plan.md).
 
 ## Verification
 

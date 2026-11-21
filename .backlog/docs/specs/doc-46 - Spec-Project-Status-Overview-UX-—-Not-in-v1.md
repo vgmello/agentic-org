@@ -28,7 +28,7 @@ builds_on: [features-ux, work-items-ux, costs-and-insights-ux, decisions-and-tec
 # Spec · Project status: a visual status and a periodic report for each project (UX)
 
 The Status page and status reports are not in v1. In v1 a project's Overview is the
-one described in [work items](work-items-ux.md#3-flow-1--project-page): brief, counts
+one described in [work items](doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md#3-flow-1--project-page): brief, counts
 and recent activity. This spec records the planned design so that v1 does not
 contradict it.
 
@@ -39,7 +39,7 @@ contradict it.
 ## What v1 must not contradict
 
 - A report is a supporting document in organization Git
-  ([project documents](../design/organization-data/02-project-structure.md)):
+  ([project documents](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md)):
   required project, at most one same-project feature, release or deployment scope,
   stable UUIDv7 ID, schema and revision, title, `kind: report`,
   `status: draft | current | deprecated`, owner and attribution. A project report is
@@ -49,18 +49,18 @@ contradict it.
   reached", show tokens and link to the app, where document 17 and COST-7 decide who
   sees amounts. Repository access is not a permission model.
 - Every number comes from projections of canonical records and the durable usage
-  ledger ([document 10](../design/organization-data/10-usage-and-cost-accounting.md)),
+  ledger ([document 10](../organization-data/doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md)),
   with freshness and completeness labels. Missing data is shown as not available,
   never zero. Moving a task or changing a release manifest does not rewrite
   historical consumption.
 - Budget state distinguishes stop pending from held; reaching a threshold does not
   prove work stopped. Release caps only warn
-  ([document 17](../design/organization-data/17-budgets-and-controls.md)).
+  ([document 17](../organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md)).
 - Releases store no status. Done is derived by the
-  [completion rule](../design/organization-data/02-project-structure.md#completion-of-milestones-and-releases);
+  [completion rule](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md#completion-of-milestones-and-releases);
   in progress means not done with at least one task out of `todo`; planned otherwise;
   released means a succeeded production deployment record
-  ([document 07](../design/organization-data/07-release-deployments.md)).
+  ([document 07](../organization-data/doc-81%20-%20Organization-Data-07-—-Release-Deployments.md)).
 
 ## The plan
 
@@ -104,7 +104,7 @@ contradict it.
 The Investment tile and cost trend show amounts only to the owner and the project's
 manager; others see the budget state only. Charts follow the dataviz rules (labelled
 values, never color alone, a table view). Metrics use the
-[shared duration definitions](costs-and-insights-ux.md#shared-duration-definitions).
+[shared duration definitions](doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md#shared-duration-definitions).
 Home › Projects status lists every project's health, features in progress, this
 month's cost (amounts under the same rule) and waiting-on-you count, sorted by
 health.

@@ -3,7 +3,7 @@
 ## Current working mode
 
 Two engineers build v1, each with their own agents. An engineer's lead agent takes an
-increment from the [implementation plan](docs/implementation-plan.md) and owns it end
+increment from the [implementation plan](.backlog/docs/doc-5%20-%20v1-Implementation-Plan.md) and owns it end
 to end: UI, backend, database, shared contracts, documentation and integration. No
 path belongs to a named person. Who owns which files is stated in the increment's
 short plan, written before code. One writer per file at a time; a file that two
@@ -21,38 +21,38 @@ completion and is not a reason to stop.
 
 The product is named **Agentic Org**. For data relationships, fields, identities,
 canonical files and selected execution/control contracts, start with
-[`docs/design/organization-data/README.md`](docs/design/organization-data/README.md)
-and the [documentation authority map](docs/design/documentation-authority.md).
-The other designs in `docs/design/`, ADRs in `docs/adr/` and UX specs in
-`docs/specs/` explain those contracts in their own contexts; where one differs from
+[`organization-data README`](.backlog/docs/organization-data/doc-72%20-%20Organization-Data-—-README.md)
+and the [documentation authority map](.backlog/docs/design/doc-62%20-%20Design-Documentation-Authority-Map.md).
+The other designs in `.backlog/docs/design/`, ADRs in `.backlog/decisions/` and UX specs in
+`.backlog/docs/specs/` explain those contracts in their own contexts; where one differs from
 the data contract, the data contract wins. A requirement document says what is to be
 built. It does not establish that a command or service exists: what exists is in the
 checklist row's evidence and in the executable status document named below.
 
-[`docs/FEATURES.md`](docs/FEATURES.md) is the single feature delivery checklist.
+[`Feature Checklist`](.backlog/docs/doc-3%20-%20Feature-Checklist.md) is the single feature delivery checklist.
 Update its relevant row when changing implementation or selecting/deferring scope;
 include evidence and remaining work. Mark Done only for the row's full stated scope,
 and keep unknown implementation status explicit. Requirements stay in their owning
 specifications; historical agent task logs do not establish feature completion.
 Assign each checklist row to one primary category defined in
-[`docs/FEATURE-AREAS.md`](docs/FEATURE-AREAS.md). Keep its scope/boundaries and area
+[`Feature Areas`](.backlog/docs/doc-4%20-%20Feature-Areas.md). Keep its scope/boundaries and area
 summary consistent with the checklist when changing statuses or categorization;
 cross-area dependencies use links rather than duplicate feature rows.
 
-The owner-requested [v1 project structure](docs/design/project-structure.md) defines the target names and domain-module/vertical-slice layout. The worker and UI source paths remain apps/agentic-org-office and apps/agentic-org-ui. Production executable names are agentic-org, agentic-org-office, agentic-org-web and agent-os; host code lives in crates/org-host and is composed by agentic-org serve. Application source/package names now match their executable names; persisted identities remain stable; domain moves remain pending. See docs/design/executable-migration.md for implemented versus unavailable entry points.
+The owner-requested [v1 project structure](.backlog/docs/design/doc-68%20-%20Design-v1-Project-Structure.md) defines the target names and domain-module/vertical-slice layout. The worker and UI source paths remain apps/agentic-org-office and apps/agentic-org-ui. Production executable names are agentic-org, agentic-org-office, agentic-org-web and agent-os; host code lives in crates/org-host and is composed by agentic-org serve. Application source/package names now match their executable names; persisted identities remain stable; domain moves remain pending. See [executable migration](.backlog/docs/design/doc-63%20-%20Design-Executables-and-Entry-Points.md) for implemented versus unavailable entry points.
 
-What to build, and in what order, is in the [implementation plan](docs/implementation-plan.md);
-[`docs/START-HERE.md`](docs/START-HERE.md) says where each kind of requirement is written.
+What to build, and in what order, is in the [implementation plan](.backlog/docs/doc-5%20-%20v1-Implementation-Plan.md);
+[`Start Here`](.backlog/docs/doc-2%20-%20Start-Here.md) says where each kind of requirement is written.
 Engineers and their agents make architectural decisions themselves, inside the
-[architecture non-negotiables](docs/architecture-non-negotiables.md), and record them.
+[architecture non-negotiables](.backlog/docs/doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md), and record them.
 
 ## Rules
-1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** For domain/data work, also read the authority map and owning organization-data contract before implementing a secondary design or UX criterion. Follow the [v1 project structure](docs/design/project-structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin. Planned variation (another OS, vendor, storage engine or deployment form) goes behind a consumer-owned adapter contract from the first implementation; every operating system without an implementation gets an adapter that fails closed, an unbuilt provider or engine is refused at composition, and later additions change only the adapter and composition ([rule](docs/architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
-2. **Branches and integration:** follow [`docs/processes/branch-and-merge.md`](docs/processes/branch-and-merge.md).
+1. **Read [`Architecture Rules`](.backlog/docs/doc-8%20-%20Architecture-Rules.md) first.** For domain/data work, also read the authority map and owning organization-data contract before implementing a secondary design or UX criterion. Follow the [v1 project structure](.backlog/docs/design/doc-68%20-%20Design-v1-Project-Structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin. Planned variation (another OS, vendor, storage engine or deployment form) goes behind a consumer-owned adapter contract from the first implementation; every operating system without an implementation gets an adapter that fails closed, an unbuilt provider or engine is refused at composition, and later additions change only the adapter and composition ([rule](.backlog/docs/doc-8%20-%20Architecture-Rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
+2. **Branches and integration:** follow [`Branch, Review and Integration`](.backlog/docs/processes/doc-20%20-%20Process-Branch-Review-and-Integration.md).
    - Start feature branches from `origin/v1`. Use separate worktrees for concurrent writers; otherwise work in the dedicated current checkout.
    - Each lead keeps one active implementation branch at a time. Preserve blocked branches/checkpoints and move to independent work rather than stopping all delivery.
    - Review completed work locally, then merge `origin/v1` into your branch, tell the other lead sessions, `git merge --no-ff` into `v1` and push it. `v1` is the integration branch for **all v1 features** (owner, 2026-11-18; `v1-integration` is retired). Do not wait for a pull request or an outside reviewer.
-   - Never push to `main` without an explicit release instruction. Never delete unmerged work. After merging, clean up your merged worktrees and local and remote branches as `docs/processes/branch-and-merge.md` §5 describes.
+   - Never push to `main` without an explicit release instruction. Never delete unmerged work. After merging, clean up your merged worktrees and local and remote branches as `.backlog/docs/processes/doc-20 - Process-Branch-Review-and-Integration.md` §5 describes.
 3. **Checks and local review:** use the installed kit's task-routing, skill-routing and review-cycle. Keep the original author context, fix confirmed findings, validate original intent and obtain the separate fresh final local review for the exact commit. The lead merges after current checks and local acceptance pass.
    - For Rust changes, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass.
    - For app changes, the type check, tests, build and relevant browser checks pass; capture UI evidence where applicable.
@@ -160,8 +160,8 @@ managed employees use their injected binding.
 
 ## Session start: check for a handover
 
-First read [`docs/workstreams/README.md`](docs/workstreams/README.md) and your stream's file
-(`backend.md`, `linux.md` or `ui.md`): it is the shared record of where each stream stands and
+First read [`Workstreams Overview`](.backlog/docs/workstreams/doc-14%20-%20Workstreams-Overview.md) and your stream's file
+(`doc-15` backend, `doc-16` linux or `doc-17` UI under `.backlog/docs/workstreams/`): it is the shared record of where each stream stands and
 what comes next; a local `HANDOVER.md` only adds checkout detail.
 
 At the start of every lead session, check for `.agent-kit/tasks/HANDOVER.md` in this
@@ -194,9 +194,10 @@ and this repository.
   dependencies, acceptance checks, routed model/effort and escalation conditions.
   Supply the selected skill packet and bounded context, preserving author sessions.
 - Every implementation and review handoff must reference the stable delivery
-  contract and [independent delivery and dependency boundaries](docs/architecture-rules.md#independent-delivery-and-dependency-boundaries).
+  contract and [independent delivery and dependency boundaries](.backlog/docs/doc-8%20-%20Architecture-Rules.md#independent-delivery-and-dependency-boundaries).
   State the usable outcome (or internal foundation), declared prerequisites and
-  early production-path verification. Include its focused policy, `docs/independent-delivery.md`,
+  early production-path verification. Include its focused policy,
+  [`.backlog/docs/doc-6 - Independent-Delivery-and-Dependency-Boundaries.md`](.backlog/docs/doc-6%20-%20Independent-Delivery-and-Dependency-Boundaries.md),
   directly in the resolved skill packet. Review actual boundaries and behavior;
   existing checks, original-author validation and fresh review gates still apply.
 - Workers return concise receipts: changed paths/source references, check results

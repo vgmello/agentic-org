@@ -20,8 +20,8 @@ spikes)**. Nothing in this note is built, and nothing here changes an accepted
 decision yet. Where it differs from an accepted ADR, the ADR still holds until the
 follow-up ADRs of [section 10](#10-adrs-and-designs-to-write-or-update-after-the-spikes)
 are accepted. Plan rows L16 and L17 of the
-[implementation plan](../implementation-plan.md#later-in-no-fixed-order); checklist
-rows FC-191 to FC-194 of the [feature checklist](../FEATURES.md).
+[implementation plan](../doc-5%20-%20v1-Implementation-Plan.md#later-in-no-fixed-order); checklist
+rows FC-191 to FC-194 of the [feature checklist](../doc-3%20-%20Feature-Checklist.md).
 
 How an instance should run once it no longer runs as the person's own login account:
 which operating-system accounts exist, how the office starts agents as their own
@@ -29,14 +29,14 @@ accounts without being an administrator, how one command sets it all up, where e
 secret lives, how the office's own sandbox sits inside those accounts, and how
 optional capabilities (containers, Xcode) are added as extensions without the core
 depending on them. It builds on
-[ADR-0015](../adr/0015-agent-isolation-modes.md) (isolation modes),
-[ADR-0016](../adr/0016-no-application-level-data-encryption.md) (secrets),
-[ADR-0017](../adr/0017-linux-and-container-hosting.md) (platforms),
-[ADR-0008](../adr/0008-gateway-macos-sandbox.md) (web confinement),
-[ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)
-(sign-in custody), the [Linux host design](linux-host.md), the
-[host boundary design](office-host-boundary.md) and the
-[standalone design](standalone-server.md).
+[ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) (isolation modes),
+[ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) (secrets),
+[ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md) (platforms),
+[ADR-0008](../../decisions/decision-8%20-%20ADR-0008-macOS-confinement-of-the-web-process-GW-SBX-MAC-1.md) (web confinement),
+[ADR-0032](../../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md)
+(sign-in custody), the [Linux host design](doc-64%20-%20Design-Linux-and-Container-Hosting.md), the
+[host boundary design](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md) and the
+[standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md).
 
 ## Owner decisions and direction (2026-11-20)
 
@@ -46,19 +46,19 @@ goes there.
 
 | # | Decision or direction | Recorded in |
 | --- | --- | --- |
-| D1 | Claude Code background tasks and sub-agents stay on across turns; use the harness fully (owner clarification 2026-11-19) | [ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6, merged with PR 17 |
-| D2 | Claude Code's own sandbox is a per-agent switch in the agent's Advanced settings, on by default (follow-up, not built) | [FC-189](../FEATURES.md) |
-| D3 | Taking over an agent's session from a terminal is paused, moved to late v1, built only if needed | [FC-151](../FEATURES.md) |
-| D4 | `os-sandbox` is v1 (late): the office's own OS sandbox around every agent, with a standard and an iOS profile | [FC-190](../FEATURES.md), ADR-0015 owner note, [section 7](#7-the-sandbox-inside-the-accounts) |
-| D5 | Dedicated non-administrator accounts: a service account for the instance and agent accounts for the agents; the office starts agents as their accounts through a grant made at setup | [Section 3](#3-accounts-proposed), [section 4](#4-starting-agents-as-their-accounts-without-being-an-administrator), [FC-191](../FEATURES.md) |
+| D1 | Claude Code background tasks and sub-agents stay on across turns; use the harness fully (owner clarification 2026-11-19) | [ADR-0025](../../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md) decision 6, merged with PR 17 |
+| D2 | Claude Code's own sandbox is a per-agent switch in the agent's Advanced settings, on by default (follow-up, not built) | [FC-189](../doc-3%20-%20Feature-Checklist.md) |
+| D3 | Taking over an agent's session from a terminal is paused, moved to late v1, built only if needed | [FC-151](../doc-3%20-%20Feature-Checklist.md) |
+| D4 | `os-sandbox` is v1 (late): the office's own OS sandbox around every agent, with a standard and an iOS profile | [FC-190](../doc-3%20-%20Feature-Checklist.md), ADR-0015 owner note, [section 7](#7-the-sandbox-inside-the-accounts) |
+| D5 | Dedicated non-administrator accounts: a service account for the instance and agent accounts for the agents; the office starts agents as their accounts through a grant made at setup | [Section 3](#3-accounts-proposed), [section 4](#4-starting-agents-as-their-accounts-without-being-an-administrator), [FC-191](../doc-3%20-%20Feature-Checklist.md) |
 | D6 | Every administrator step the core needs happens in the one setup command, never afterwards; an extension may need one later, kept minimal | [Section 5](#5-one-command-setup); the accepted exceptions are D23 |
 | D7 | The closed-list privileged helper installed by setup is the preferred way to avoid prompts after setup, to be proven by the spike | [Section 5.2](#52-administrator-rights-after-setup) |
 | D8 | Isolation by accounts is the default for an install; development uses `--isolation off`; one setting | [Section 3.4](#34-isolated-and-not-isolated-how-few-switches) |
-| D9 | Extensions are built-in modules behind a contract, in `extensions/`, contributing menu items, settings and panels; built after milestone one, while milestone one keeps the door open | [Section 8](#8-extensions), [FC-192](../FEATURES.md) |
-| D10 | Containers through Colima on macOS and Linux (rootless fallback without KVM); no `agent-os` container commands: agents use `docker` | [Section 8.5](#85-the-containers-extension), [FC-193](../FEATURES.md) |
-| D11 | An Xcode extension with its checklist and sandbox allowances | [Section 8.6](#86-the-xcode-extension), [FC-194](../FEATURES.md) |
-| D12 | The web app's extension slot is proposed to the UI stream, which agrees it with the backend stream | [Section 8.4](#84-the-ui-slot-proposal), [UI stream request](../workstreams/ui.md#request-from-the-backend-stream-the-extension-ui-slot) |
-| D13 | Data at rest is protected by disk encryption, file permissions and isolation (ADR-0016); private keys and provider credentials stay wrapped by the office secrets key | [Section 6](#6-secrets), [ADR-0016](../adr/0016-no-application-level-data-encryption.md) |
+| D9 | Extensions are built-in modules behind a contract, in `extensions/`, contributing menu items, settings and panels; built after milestone one, while milestone one keeps the door open | [Section 8](#8-extensions), [FC-192](../doc-3%20-%20Feature-Checklist.md) |
+| D10 | Containers through Colima on macOS and Linux (rootless fallback without KVM); no `agent-os` container commands: agents use `docker` | [Section 8.5](#85-the-containers-extension), [FC-193](../doc-3%20-%20Feature-Checklist.md) |
+| D11 | An Xcode extension with its checklist and sandbox allowances | [Section 8.6](#86-the-xcode-extension), [FC-194](../doc-3%20-%20Feature-Checklist.md) |
+| D12 | The web app's extension slot is proposed to the UI stream, which agrees it with the backend stream | [Section 8.4](#84-the-ui-slot-proposal), [UI stream request](../workstreams/doc-17%20-%20Product-UI-Stream-Handover-Track-U.md#request-from-the-backend-stream-the-extension-ui-slot) |
+| D13 | Data at rest is protected by disk encryption, file permissions and isolation (ADR-0016); private keys and provider credentials stay wrapped by the office secrets key | [Section 6](#6-secrets), [ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) |
 | D14 | Not adopted (owner, after evaluation): the host staying with the person on a desktop Mac. The host runs as the service account everywhere under `accounts` | [Section 6.5](#65-option-the-host-stays-with-the-person-on-a-desktop-mac) |
 | D15 | Linux: each office runs as its own instance of one shared template unit (`User=` the service account), `agentic-org-office@.service`, with a polkit rule letting the service account start and stop only `agentic-org-office@*`; the host unit keeps `NoNewPrivileges=yes`; macOS starts offices as today | [Section 4.1](#41-options) |
 | D16 | Host secrets are owner-only files for now, on macOS too; the Keychain with a Developer-ID-signed host is a later release option; development never requires signing; per-office service accounts stay a later option | [Section 6.3](#63-no-dependency-on-the-macos-login-keychain) |
@@ -70,7 +70,7 @@ goes there.
 | D22 | The Git design's `dedicated-user` rules carry over | [Section 11.4a](#114a-git-across-accounts) |
 | D23 | The named exceptions are accepted: `uninstall` and changing the isolation setting each ask once | [Section 5.2](#52-administrator-rights-after-setup) |
 | D24 | Recovery is v2: the recovery code, the escrow of the organization CA key (ADR-0007), protected recovery delivery (ADR-0011) and the recovery presence and authority question. Accepted ADR text and existing code stay until the owner confirms the updates | [Section 6.7](#67-recovery-is-v2-hq-loss-in-v1) |
-| D25 | In v1, a lost HQ is replaced by importing the organization from Git into a new HQ, with a new CA; every other office re-enrolls with one simple command ("this is your new HQ") | [Section 6.7](#67-recovery-is-v2-hq-loss-in-v1), [FC-167](../FEATURES.md) |
+| D25 | In v1, a lost HQ is replaced by importing the organization from Git into a new HQ, with a new CA; every other office re-enrolls with one simple command ("this is your new HQ") | [Section 6.7](#67-recovery-is-v2-hq-loss-in-v1), [FC-167](../doc-3%20-%20Feature-Checklist.md) |
 | D26 | One certificate authority per organization, managed by HQ; two HQs are two organizations and two CAs on the machine. The organization's CA is installed as trusted on macOS and Linux; a remote browser gets a "Trust this organization" download and compares the fingerprint first. On an `off` instance (no helper) the person installs it through that download (the system asks once) or accepts the browser warning, for development only | [Section 6.6](#66-the-organizations-certificate-authority-and-trust) |
 | D27 | Watching an agent's simulator or desktop apps: `same-user` in its old form is dropped. Preferred: the person views the agent account's own graphical session; fallback: a per-agent "visible on my desktop" opt-in where that agent runs as the person | [Section 7.1](#71-watching-an-agents-screen) |
 | D28 | iOS signing is the developer's normal setup; the Xcode extension only helps the agent use it (an App Store Connect API key is the low-friction path); simulator builds need no signing. An agent account with the Xcode extension that holds a signing credential is an exception to non-negotiable 10, accepted by the owner | [Section 8.6](#86-the-xcode-extension) |
@@ -113,18 +113,18 @@ under `extensions/`); review covers the rest of ASX-14, and ASX-15 and ASX-16.
 
 | Item | Checklist row | Plan row | Section here |
 | --- | --- | --- | --- |
-| Dedicated accounts and one-command setup | [FC-191](../FEATURES.md) | L16 ([plan](../implementation-plan.md#later-in-no-fixed-order)) | [3](#3-accounts-proposed) to [6](#6-secrets) |
-| `dedicated-user` agents (ADR-0015) | [FC-161](../FEATURES.md) | L6 | [3.1](#31-who-runs-what), [4](#4-starting-agents-as-their-accounts-without-being-an-administrator) |
-| `os-sandbox` | [FC-190](../FEATURES.md) | L15 | [7](#7-the-sandbox-inside-the-accounts) |
-| Claude Code's sandbox switch | [FC-189](../FEATURES.md) | (C3 follow-up) | [7](#7-the-sandbox-inside-the-accounts) |
-| Session take-over (paused) | [FC-151](../FEATURES.md) | Late v1, only if needed | [Owner decisions](#owner-decisions-and-direction-2026-11-20) D3 |
-| Extensions framework | [FC-192](../FEATURES.md) | L17 | [8](#8-extensions) |
-| Containers extension | [FC-193](../FEATURES.md) | L17 | [8.5](#85-the-containers-extension) |
-| Xcode extension | [FC-194](../FEATURES.md) | L17 | [8.6](#86-the-xcode-extension) |
-| Recovery code, CA escrow, protected delivery (v2) | [FC-016](../FEATURES.md) (Deferred) | | [6.7](#67-recovery-is-v2-hq-loss-in-v1) |
-| HQ loss in v1: import from Git, re-enroll | [FC-167](../FEATURES.md), [FC-020](../FEATURES.md) | R1, S1 | [6.7](#67-recovery-is-v2-hq-loss-in-v1) |
-| Organization CA trust | [FC-017](../FEATURES.md) | L16 | [6.6](#66-the-organizations-certificate-authority-and-trust) |
-| Where to start | [Backend stream](../workstreams/backend.md) | | [11](#11-spikes) (spikes first) |
+| Dedicated accounts and one-command setup | [FC-191](../doc-3%20-%20Feature-Checklist.md) | L16 ([plan](../doc-5%20-%20v1-Implementation-Plan.md#later-in-no-fixed-order)) | [3](#3-accounts-proposed) to [6](#6-secrets) |
+| `dedicated-user` agents (ADR-0015) | [FC-161](../doc-3%20-%20Feature-Checklist.md) | L6 | [3.1](#31-who-runs-what), [4](#4-starting-agents-as-their-accounts-without-being-an-administrator) |
+| `os-sandbox` | [FC-190](../doc-3%20-%20Feature-Checklist.md) | L15 | [7](#7-the-sandbox-inside-the-accounts) |
+| Claude Code's sandbox switch | [FC-189](../doc-3%20-%20Feature-Checklist.md) | (C3 follow-up) | [7](#7-the-sandbox-inside-the-accounts) |
+| Session take-over (paused) | [FC-151](../doc-3%20-%20Feature-Checklist.md) | Late v1, only if needed | [Owner decisions](#owner-decisions-and-direction-2026-11-20) D3 |
+| Extensions framework | [FC-192](../doc-3%20-%20Feature-Checklist.md) | L17 | [8](#8-extensions) |
+| Containers extension | [FC-193](../doc-3%20-%20Feature-Checklist.md) | L17 | [8.5](#85-the-containers-extension) |
+| Xcode extension | [FC-194](../doc-3%20-%20Feature-Checklist.md) | L17 | [8.6](#86-the-xcode-extension) |
+| Recovery code, CA escrow, protected delivery (v2) | [FC-016](../doc-3%20-%20Feature-Checklist.md) (Deferred) | | [6.7](#67-recovery-is-v2-hq-loss-in-v1) |
+| HQ loss in v1: import from Git, re-enroll | [FC-167](../doc-3%20-%20Feature-Checklist.md), [FC-020](../doc-3%20-%20Feature-Checklist.md) | R1, S1 | [6.7](#67-recovery-is-v2-hq-loss-in-v1) |
+| Organization CA trust | [FC-017](../doc-3%20-%20Feature-Checklist.md) | L16 | [6.6](#66-the-organizations-certificate-authority-and-trust) |
+| Where to start | [Backend stream](../workstreams/doc-15%20-%20Backend-Stream-Handover-Tracks-A-and-B.md) | | [11](#11-spikes) (spikes first) |
 
 ## 1. In one paragraph
 
@@ -141,7 +141,7 @@ person authenticates as an administrator once, in the one setup command, and not
 for the core's everyday use ([section 5.2](#52-administrator-rights-after-setup)).
 Isolation can also be switched off, for development and testing, by one setting chosen
 at setup ([section 3.4](#34-isolated-and-not-isolated-how-few-switches)). The **inner wall is the office's own
-OS sandbox** (`os-sandbox`, [FC-190](../FEATURES.md)) around each whole agent
+OS sandbox** (`os-sandbox`, [FC-190](../doc-3%20-%20Feature-Checklist.md)) around each whole agent
 process. Optional capabilities that agents need (containers, Xcode) are
 **extensions**: the product installs and manages them, the core works without them,
 and each adds only the sandbox allowances it needs for the agents that have it
@@ -154,19 +154,19 @@ proposed.
 
 | Topic | Today | Source |
 | --- | --- | --- |
-| Which account runs the instance | The person's own account. On macOS a per-user launchd agent in `~/Library/LaunchAgents`, loaded into `gui/<uid>`; on Linux a systemd user unit in `~/.config/systemd/user`; in a container, `agentic-org serve` in the foreground as UID 61000 | [Linux host design 3.4](linux-host.md#34-service-lifecycle), [`service/macos.rs`](../../crates/org-platform/src/service/macos.rs), [ADR-0017](../adr/0017-linux-and-container-hosting.md) decision 10 |
-| Running without a login | macOS: not possible; a launchd agent in the person's `gui/<uid>` domain runs only while the person is logged in. Linux: only with lingering on (`loginctl enable-linger`), which setup reports and does not run | [Linux host design 3.4](linux-host.md#34-service-lifecycle) |
-| Root | `serve` and `setup` refuse to run as root; `host.sock` admits root only for `admin reset` | [ADR-0017](../adr/0017-linux-and-container-hosting.md) decisions 10 and 11 |
-| Data root | Inside the person's home: `~/Library/Application Support/agentic.org/instances/<name>/` on macOS, `${XDG_DATA_HOME:-~/.local/share}/agentic-org/instances/<name>/` on Linux, a mounted volume in a container | [Standalone design 3](standalone-server.md#3-instance-selection-and-storage) |
-| Host secrets | macOS: the Data Protection keychain, in the signed host's access group. Linux: an owner-only directory outside the data root, or a mounted secrets volume | [Host boundary: the office secrets key](office-host-boundary.md#the-office-secrets-key), [ADR-0017](../adr/0017-linux-and-container-hosting.md) decision 8 |
-| Provider sign-ins | Wrapped by the office under the office secrets key in `durable/local/offices/<office-id>/auth/<connection-id>/` (accepted, not built) | [ADR-0016](../adr/0016-no-application-level-data-encryption.md) decision 3, [ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md) |
-| Agent isolation | `same-user` only. `dedicated-user` (one account per instance in v1) is accepted and not built; it needs a privileged launcher. `os-sandbox` is v1 scope since 2026-11-20, design proposed | [ADR-0015](../adr/0015-agent-isolation-modes.md) decisions 2, 4, 12; [FC-161, FC-190](../FEATURES.md) |
-| Agent private home | Accepted for both modes at `durable/local/offices/<office-id>/agents/<employee-id>/home/`; with a `CLAUDE_CODE_OAUTH_TOKEN`, Claude needs no Keychain and both `HOME` and `CLAUDE_CONFIG_DIR` can point into it (macOS only; Linux unverified) | [ADR-0015](../adr/0015-agent-isolation-modes.md) decisions 10 and 11, [C1 spike](../research/c1-sign-in-spike.md) |
-| Starting an agent | `org-supervise`'s `SpawnSpec` has a program, arguments, a working directory and an environment; no account or isolation field. The office can only signal processes of its own user | [`spawn.rs`](../../crates/org-supervise/src/spawn.rs), [ADR-0015](../adr/0015-agent-isolation-modes.md) context |
-| The office socket | Admits only the office's own user (`org_socket::peer_allowed(&stream, expected_uid)`) | [`serve.rs`](../../apps/agentic-org-office/src/serve.rs), [ADR-0015](../adr/0015-agent-isolation-modes.md) decision 5 |
-| `host.sock` | `0600` in a `0700` directory, plus a peer UID check; on Linux a native client is admitted by UID alone | [Host boundary 3](office-host-boundary.md#3-what-the-host-does), [Linux host design 3.1](linux-host.md#31-process-admission) |
-| Recovery presence on macOS | The host requires a peer with its own effective UID that is the current console user, in the same local console audit session | [ADR-0011](../adr/0011-protected-recovery-delivery.md), "Presence adapter" |
-| What a same-user process can do on Linux | Read every host secret, change the data, replace the host's executable or unit before its next start | [Linux host design 5](linux-host.md#5-what-a-local-attacker-can-still-do-on-linux) |
+| Which account runs the instance | The person's own account. On macOS a per-user launchd agent in `~/Library/LaunchAgents`, loaded into `gui/<uid>`; on Linux a systemd user unit in `~/.config/systemd/user`; in a container, `agentic-org serve` in the foreground as UID 61000 | [Linux host design 3.4](doc-64%20-%20Design-Linux-and-Container-Hosting.md#34-service-lifecycle), [`service/macos.rs`](../../../crates/org-platform/src/service/macos.rs), [ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md) decision 10 |
+| Running without a login | macOS: not possible; a launchd agent in the person's `gui/<uid>` domain runs only while the person is logged in. Linux: only with lingering on (`loginctl enable-linger`), which setup reports and does not run | [Linux host design 3.4](doc-64%20-%20Design-Linux-and-Container-Hosting.md#34-service-lifecycle) |
+| Root | `serve` and `setup` refuse to run as root; `host.sock` admits root only for `admin reset` | [ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md) decisions 10 and 11 |
+| Data root | Inside the person's home: `~/Library/Application Support/agentic.org/instances/<name>/` on macOS, `${XDG_DATA_HOME:-~/.local/share}/agentic-org/instances/<name>/` on Linux, a mounted volume in a container | [Standalone design 3](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#3-instance-selection-and-storage) |
+| Host secrets | macOS: the Data Protection keychain, in the signed host's access group. Linux: an owner-only directory outside the data root, or a mounted secrets volume | [Host boundary: the office secrets key](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#the-office-secrets-key), [ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md) decision 8 |
+| Provider sign-ins | Wrapped by the office under the office secrets key in `durable/local/offices/<office-id>/auth/<connection-id>/` (accepted, not built) | [ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) decision 3, [ADR-0032](../../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md) |
+| Agent isolation | `same-user` only. `dedicated-user` (one account per instance in v1) is accepted and not built; it needs a privileged launcher. `os-sandbox` is v1 scope since 2026-11-20, design proposed | [ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) decisions 2, 4, 12; [FC-161, FC-190](../doc-3%20-%20Feature-Checklist.md) |
+| Agent private home | Accepted for both modes at `durable/local/offices/<office-id>/agents/<employee-id>/home/`; with a `CLAUDE_CODE_OAUTH_TOKEN`, Claude needs no Keychain and both `HOME` and `CLAUDE_CONFIG_DIR` can point into it (macOS only; Linux unverified) | [ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) decisions 10 and 11, [C1 spike](../research/doc-25%20-%20Research-C1-Sign-In-Private-Home-and-Sub-Agent-Isolation-Spike.md) |
+| Starting an agent | `org-supervise`'s `SpawnSpec` has a program, arguments, a working directory and an environment; no account or isolation field. The office can only signal processes of its own user | [`spawn.rs`](../../../crates/org-supervise/src/spawn.rs), [ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) context |
+| The office socket | Admits only the office's own user (`org_socket::peer_allowed(&stream, expected_uid)`) | [`serve.rs`](../../../apps/agentic-org-office/src/serve.rs), [ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) decision 5 |
+| `host.sock` | `0600` in a `0700` directory, plus a peer UID check; on Linux a native client is admitted by UID alone | [Host boundary 3](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#3-what-the-host-does), [Linux host design 3.1](doc-64%20-%20Design-Linux-and-Container-Hosting.md#31-process-admission) |
+| Recovery presence on macOS | The host requires a peer with its own effective UID that is the current console user, in the same local console audit session | [ADR-0011](../../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md), "Presence adapter" |
+| What a same-user process can do on Linux | Read every host secret, change the data, replace the host's executable or unit before its next start | [Linux host design 5](doc-64%20-%20Design-Linux-and-Container-Hosting.md#5-what-a-local-attacker-can-still-do-on-linux) |
 
 That last row is the main reason for this note: the Linux host design already says
 that "`dedicated-user` (L6) closes this for agents; a separate service account closes
@@ -221,7 +221,7 @@ parents of agent homes and workspaces allow traversal only, for the agent accoun
 | Container | Unchanged: mounted volumes | Unchanged: a mounted secrets volume |
 
 The exact paths are for the spike to confirm. The rule from the
-[standalone design](standalone-server.md#3-instance-selection-and-storage) stays:
+[standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#3-instance-selection-and-storage) stays:
 setup records the path, and services and agents never infer it from `HOME`.
 Agent workspaces and private homes stay where the storage contract puts them; the
 agent account reaches them through parent directories it may traverse and not list
@@ -233,14 +233,14 @@ The person runs `agentic-org` and uses the browser. Their command line reaches t
 host over `host.sock`, which now belongs to another account, so the host admits the
 person's UID by an explicit allowed-UID list ([section 9](#9-architecture-changes)).
 Authority still comes only from a session the person approved in the browser
-([Linux host design 3.1](linux-host.md#31-process-admission)); admission is never
+([Linux host design 3.1](doc-64%20-%20Design-Linux-and-Container-Hosting.md#31-process-admission)); admission is never
 authorization. Because the data root is closed to the person, the command line finds
 the instance through a small public instance record and a socket directory that the
 person may reach (for example owned by the service account, with a group-searchable
 directory and a group-writable socket for a group setup creates for the people allowed
 to use the command line; the allowed-UID check still applies); the exact location and
 modes are for the accounts ADR. The initial registration link of
-[ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md) is then asked
+[ADR-0022](../../decisions/decision-22%20-%20ADR-0022-The-service-host-creates-its-own-registry-setup-has-no-reverse-bootstrap.md) is then asked
 for across accounts, by setup as the person.
 
 ### 3.4 Isolated and not isolated: how few switches
@@ -276,11 +276,11 @@ setting.
 - **The composition root selects adapters once.** The host and the office read the
   setting at start and pick one adapter for each seam below. No other code reads the
   setting, so there are no scattered `if isolated` checks
-  ([architecture rules](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
+  ([architecture rules](../doc-8%20-%20Architecture-Rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
 
 | Seam | `off` | `accounts` | Where it lives |
 | --- | --- | --- | --- |
-| 1. Process launch | Direct spawn, as `org-supervise` does today | Through the launcher, as the agent account | The launch contract (`org_platform::isolation`, [Linux host design 3.5](linux-host.md#35-agent-isolation)) |
+| 1. Process launch | Direct spawn, as `org-supervise` does today | Through the launcher, as the agent account | The launch contract (`org_platform::isolation`, [Linux host design 3.5](doc-64%20-%20Design-Linux-and-Container-Hosting.md#35-agent-isolation)) |
 | 2. Service registration | User level: launchd agent, systemd user unit | System level: launchd daemon with `UserName`, systemd system unit with `User=`; on Linux also the office template unit `agentic-org-office@.service` (D15) | `org_platform::service` |
 | 3. Socket admission | Allowed UIDs: the person (who is also the service user) | `host.sock`: the person; office sockets: the agent accounts; with matching directory and socket modes | Data passed to the peer check (today one UID, `peer_allowed(&stream, expected_uid)`), not a second adapter |
 | 4. Data-root and secrets locations | In the person's home (`org_platform::dirs` today) | System locations owned by the service account ([section 3.2](#32-the-data-root-moves-out-of-the-persons-home)) | `org_platform::dirs` |
@@ -317,7 +317,7 @@ seams.
 ## 4. Starting agents as their accounts without being an administrator
 
 An ordinary process cannot start or signal a process of another user
-([ADR-0015](../adr/0015-agent-isolation-modes.md) decision 4). The owner's idea: at
+([ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) decision 4). The owner's idea: at
 setup, grant the service account the right to start processes **as the listed agent
 accounts only**, and nothing else. Three ways to grant it; the spike chooses, within
 the owner's answer for Linux below.
@@ -328,7 +328,7 @@ the owner's answer for Linux below.
 | --- | --- | --- | --- |
 | How | `/etc/sudoers.d/agentic-org-<instance-id>` lets the service account run exactly one program, our launcher, only as members of our agent-account group, `NOPASSWD`, with no other command. The launcher runs **as the agent account**, validates the request and starts the agent | The office calls systemd over D-Bus to start a transient unit with `User=<agent account>`; a polkit rule allows the service account to manage units with our name prefix | A root daemon listens on a socket only the service account can reach, validates each request and starts the agent with `setuid` |
 | What runs as root | `sudo` itself (system code), which may stay as a root parent of the agent for its whole run (see below). None of our code | systemd (system code). None of our code | Our daemon, all the time |
-| Security | Smallest grant: our code never holds root, and the grant names the accounts and the program. Risks: a sudoers mistake; `sudo` must be present; on Linux the host unit's `NoNewPrivileges=yes` ([Linux host design 3.4](linux-host.md#34-service-lifecycle)) blocks `sudo`, and because no-new-privileges is inherited and cannot be cleared, the offices (children of the host) can use `sudo` only if the host unit drops it for the host, the web process and every office, or if each office runs in a unit of its own | **Unverified and likely too broad:** polkit sees the unit name and verb, not the unit's properties, so a rule that allows starting transient units may let the service account start one as root. The spike must prove a rule that limits `User=`, or this option is rejected | Largest attack surface: a long-lived root process that parses requests. Works with `NoNewPrivileges=yes` because nothing is executed set-user-ID |
+| Security | Smallest grant: our code never holds root, and the grant names the accounts and the program. Risks: a sudoers mistake; `sudo` must be present; on Linux the host unit's `NoNewPrivileges=yes` ([Linux host design 3.4](doc-64%20-%20Design-Linux-and-Container-Hosting.md#34-service-lifecycle)) blocks `sudo`, and because no-new-privileges is inherited and cannot be cleared, the offices (children of the host) can use `sudo` only if the host unit drops it for the host, the web process and every office, or if each office runs in a unit of its own | **Unverified and likely too broad:** polkit sees the unit name and verb, not the unit's properties, so a rule that allows starting transient units may let the service account start one as root. The spike must prove a rule that limits `User=`, or this option is rejected | Largest attack surface: a long-lived root process that parses requests. Works with `NoNewPrivileges=yes` because nothing is executed set-user-ID |
 | Friction | One file at setup; no daemon | One rule file at setup; Linux only | A second service to install, update and keep running |
 | macOS | Yes (`sudo` and `/etc/sudoers.d` are standard; verify the include directive on current releases) | No | Yes |
 | Linux | Yes, where `sudo` is installed; not in minimal containers unless the image adds it | Yes, with systemd and polkit; not in a container | Yes |
@@ -345,7 +345,7 @@ polkit rule, also installed at setup, lets the service account start and stop on
 `agentic-org-office@*`. The host unit keeps `NoNewPrivileges=yes`, and so does the web
 process. A new office needs no new file and no administrator. Consequence for the
 design: on Linux the host no longer starts the office itself, so four things the host
-does today for a child it starts ([host boundary](office-host-boundary.md#admission-and-the-verified-rendezvous))
+does today for a child it starts ([host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#admission-and-the-verified-rendezvous))
 must be redone for an office that systemd starts: admission (the verified memory-file
 start of ADR-0017 decision 7), the non-secret launch line on the office's stdin, the
 pidfd the host supervises it by, and the rendezvous peer check; the accounts ADR designs it and the
@@ -382,7 +382,7 @@ account; in option 3 the daemon calls the same validation code.
   what decide. The binding of an account to an office is the office's record. The
   request is a fixed, length-prefixed structure at the start of standard input, never
   free text on the command line; after it, standard input passes to the vendor tool,
-  whose headless protocol uses it ([ADR-0004](../adr/0004-headless-agent-sessions.md)).
+  whose headless protocol uses it ([ADR-0004](../../decisions/decision-4%20-%20ADR-0004-Agent-sessions-run-headless-people-interact-through-chat.md)).
   `sudo` closes other descriptors, so the spike confirms this framing (ACCT-9). Anything else is refused and logged.
 - **It applies the inner wall.** It enters the os-sandbox profile ([section 7](#7-the-sandbox-inside-the-accounts))
   before it executes the vendor program, so the agent never runs unconfined.
@@ -442,7 +442,7 @@ Rules:
   verified release names. A plan that fails any check is refused whole.
 - **Root verifies the release itself.** The privileged step and the helper check the
   release's signature against a root-owned trust registry (the publisher key) that
-  setup installs ([ADR-0009](../adr/0009-complete-release-verification.md)); they
+  setup installs ([ADR-0009](../../decisions/decision-9%20-%20ADR-0009-Authenticated-complete-release-bundles.md)); they
   never trust a manifest or digests read from the service account's release store.
 - **The grant does not change at run time.** The launcher grant names a group of agent
   accounts as its run-as list (`(%<agent group>)`), so a new account needs only a group
@@ -463,7 +463,7 @@ Rules:
   `subuid`/`subgid` ranges for agent accounts (rootless containers); on macOS,
   `DevToolsSecurity -enable` and accepting the Xcode licence (Xcode extension); on
   Ubuntu 24.04 and later, loading the AppArmor profile that grants `userns` to the
-  vendor sandbox helper ([Linux host design 3.5](linux-host.md#35-agent-isolation)).
+  vendor sandbox helper ([Linux host design 3.5](doc-64%20-%20Design-Linux-and-Container-Hosting.md#35-agent-isolation)).
   Without that profile no agent starts on such a host, in either isolation setting, so
   a setup without administrator rights cannot start agents there and says so.
 - **Changing the isolation setting later** (for example from `off` to `accounts`)
@@ -521,11 +521,11 @@ an extension's system part (for example QEMU on Linux). The options:
 
 **Service lifecycle and upgrades.** The core's maintenance commands (`service
 start`, `stop`, `status`, `logs`, `upgrade`, `uninstall`;
-[standalone design](standalone-server.md#service-and-updates)) act on a system-level
+[standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#service-and-updates)) act on a system-level
 service, which normally needs root. To keep them free of prompts:
 
 - **A stable entry point.** Today the unit and the plist name the pinned executable
-  ([Linux host design 3.4](linux-host.md#34-service-lifecycle)), so changing the pin
+  ([Linux host design 3.4](doc-64%20-%20Design-Linux-and-Container-Hosting.md#34-service-lifecycle)), so changing the pin
   would rewrite a root-owned file. Instead the system unit or daemon names a stable
   entry point that the service account repoints to the active release, so an upgrade
   never rewrites it.
@@ -539,11 +539,11 @@ service, which normally needs root. To keep them free of prompts:
   also call; the spike compares it with a stop that quiesces the instance while the
   host keeps running, and with on-demand start through launchd's `Sockets`.
 - **Releases:** a release store owned by the service account, per instance (today one
-  store is shared by every instance on the machine, [standalone design](standalone-server.md#service-and-updates);
+  store is shared by every instance on the machine, [standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#service-and-updates);
   with a service account per instance that store needs a per-instance copy or an owner
   of its own), so the host can stage and activate an upgrade without root, and the
   person's other programs cannot replace the executables (the
-  [Linux host design 5](linux-host.md#5-what-a-local-attacker-can-still-do-on-linux)
+  [Linux host design 5](doc-64%20-%20Design-Linux-and-Container-Hosting.md#5-what-a-local-attacker-can-still-do-on-linux)
   case). Root-owned releases would close that case for the service account too, at the
   price of a prompt for every upgrade; the spike weighs the two.
 - **The launcher** is root-owned ([section 4.2](#42-the-launcher)), so a release
@@ -586,7 +586,7 @@ holds up.
 grants, the helper and the system service, and ends the instance), and so does
 changing the isolation setting later ([section 5](#5-one-command-setup)). The existing
 recovery step stays as it is: on Linux, `admin reset` runs as root
-([ADR-0017](../adr/0017-linux-and-container-hosting.md) decision 11).
+([ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md) decision 11).
 
 ## 6. Secrets
 
@@ -598,20 +598,20 @@ chain today, as accepted and as the code holds it:
 1. **The private keys and provider credentials are encrypted records.** An office's
    private key (the CA key at HQ) and, when built, each provider sign-in are
    AES-256-GCM records (`org_pki::wrap`), each bound to its purpose, organization and
-   office ([ADR-0016](../adr/0016-no-application-level-data-encryption.md) decision 3,
-   [ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)).
+   office ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) decision 3,
+   [ADR-0032](../../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md)).
 2. **They are keyed by the office secrets key, which is random, not a password.** The
    host makes it from 32 random bytes (`generate_office_secrets_key` in
-   [`crates/org-host/src/secrets.rs`](../../crates/org-host/src/secrets.rs)), one per
+   [`crates/org-host/src/secrets.rs`](../../../crates/org-host/src/secrets.rs)), one per
    office.
 3. **The host keeps that key in its credential provider**
-   ([`crates/org-host/src/keys/mod.rs`](../../crates/org-host/src/keys/mod.rs)):
+   ([`crates/org-host/src/keys/mod.rs`](../../../crates/org-host/src/keys/mod.rs)):
    - macOS (release builds): a Data Protection keychain item in the signed host's
      access group, available after first unlock, this device only; other code gets
      "item not found", never a prompt
-     ([host boundary](office-host-boundary.md#the-office-secrets-key));
+     ([host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#the-office-secrets-key));
    - Linux: owner-only files in the host's credentials directory outside the data root
-     ([Linux host design 3.2](linux-host.md#32-credential-provider)), or a mounted
+     ([Linux host design 3.2](doc-64%20-%20Design-Linux-and-Container-Hosting.md#32-credential-provider)), or a mounted
      secrets volume in a container;
    - development builds and tests: plain files in a development folder, never a real
      keychain.
@@ -620,17 +620,17 @@ chain today, as accepted and as the code holds it:
    per-spawn rendezvous socket and sends `ReadyForSecrets`; the host checks that the
    connected peer is the admitted child and answers with one handoff line on that
    socket carrying the key
-   ([host boundary: admission and the verified rendezvous](office-host-boundary.md#admission-and-the-verified-rendezvous)).
+   ([host boundary: admission and the verified rendezvous](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#admission-and-the-verified-rendezvous)).
    The key is in the host's memory only from creation or load until that handoff is
    written; the worker keeps one copy in memory
-   ([host boundary](office-host-boundary.md#admission-and-the-verified-rendezvous),
-   [`contract.rs`](../../crates/org-office-launch/src/contract.rs)). (The module doc
+   ([host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#admission-and-the-verified-rendezvous),
+   [`contract.rs`](../../../crates/org-office-launch/src/contract.rs)). (The module doc
    of `crates/org-host/src/keys/mod.rs` still says "the first line of the launch pipe";
    that comment is stale and is a code follow-up.)
 5. **Agents never receive it** (non-negotiable 10, ADR-0016 decision 3). An agent
    receives only a copy of its own sign-in for the run, which the office places in its
    private home and takes back at the end
-   ([ADR-0015](../adr/0015-agent-isolation-modes.md) decision 11).
+   ([ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) decision 11).
 
 **What changes under a service account nobody logs into.** Step 3 on macOS is the one
 link in question: whether the Data Protection keychain serves a launchd daemon running
@@ -648,18 +648,18 @@ Steps 1, 2, 4 and 5 do not change.
 Recorded as the owner asked; nothing here changes a decision.
 
 - **Data is not encrypted by the application.** ADR-0002 first required SQLCipher for
-  every office database; [ADR-0016](../adr/0016-no-application-level-data-encryption.md)
+  every office database; [ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)
   superseded that (accepted 2026-11-17, implemented in increment A1): the office
   databases, the host registry and every file under `durable/` and `runtime/` are plain,
   and the workspace no longer builds SQLCipher
-  ([ADR-0002](../adr/0002-storage-sqlite-sqlcipher-one-writer.md) status line).
+  ([ADR-0002](../../decisions/decision-2%20-%20ADR-0002-Storage-SQLite-with-one-batching-writer-per-database.md) status line).
 - **What protects data at rest** is the operating system's disk encryption (FileVault on
   macOS, for example LUKS on Linux), private file permissions and agent isolation
   (ADR-0016 decision 2). Setup **checks disk encryption and warns** when it is off; it
   does not require it (ADR-0016 decision 2, ENC-3). The macOS check reads
   `diskutil info -plist` for the data root's volume
-  ([Linux host design 3.4](linux-host.md#34-service-lifecycle)). The Linux check
-  ([`disk/linux.rs`](../../crates/org-platform/src/disk/linux.rs)) follows the data
+  ([Linux host design 3.4](doc-64%20-%20Design-Linux-and-Container-Hosting.md#34-service-lifecycle)). The Linux check
+  ([`disk/linux.rs`](../../../crates/org-platform/src/disk/linux.rs)) follows the data
   root's device to dm-crypt (LUKS and other formats) through sysfs without privilege;
   it cannot see encryption by the drive, a hypervisor or a cloud provider, or fscrypt
   on a folder, and says so.
@@ -669,19 +669,19 @@ Recorded as the owner asked; nothing here changes a decision.
   decision 3). The record is the file
   `<data root>/<organization-id>/durable/local/offices/<office-id>/security/ca-key.v1.json`,
   written in HQ creation's acceptance-journal entry
-  ([office store design](office-store.md)). The store writes its files `0600` and
+  ([office store design](doc-66%20-%20Design-Office-Store-Architecture.md)). The store writes its files `0600` and
   its directories `0700` (`crates/org-store/src/files.rs`, `disk.rs`); the owner is the
   account that runs the office, today the person's own account.
 - **The office secrets key** that wraps it is in the host's credential provider: on
   macOS the Data Protection keychain (service `org.agentic.office-key`, or `org.agentic.office-key.instance.<id>` for a
   registered instance, account the office ID, the signed host's access group, available after first unlock, this device only);
   on Linux an owner-only directory outside the data root, or a mounted secrets volume
-  ([host boundary](office-host-boundary.md#the-office-secrets-key)).
+  ([host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#the-office-secrets-key)).
 - **Provider credentials** are wrapped by the office worker with the same record format
   under the separate domain `agentic-org/provider-credential/v1`, bound to the
   organization, office and connection, in
   `durable/local/offices/<office-id>/auth/<connection-id>/` (ADR-0016 decision 3,
-  [ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md);
+  [ADR-0032](../../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md);
   accepted, not built).
 
 ### 6.2 Where each secret lives (proposed)
@@ -705,7 +705,7 @@ signing. The Keychain with a Developer-ID-signed host stays an option for releas
 later, and per-office service accounts stay a later option.
 
 Owner-only files lose one macOS property the
-[Linux host design 5](linux-host.md#5-what-a-local-attacker-can-still-do-on-linux)
+[Linux host design 5](doc-64%20-%20Design-Linux-and-Container-Hosting.md#5-what-a-local-attacker-can-still-do-on-linux)
 names: the Keychain gives secrets only to the signed host. Under a service account
 that runs only our binaries, the processes that can read the files are the
 host, the web process (which is confined and holds no key-store access, ADR-0008) and
@@ -713,14 +713,14 @@ the offices; agents and the person's programs are other accounts. Within the ser
 account there is no separation: every office worker could read every office's secrets
 key, the web TLS key and the pending recovery code. The web process cannot: once
 confined it opens no file, on Linux by the seccomp filter alone even without Landlock
-(ADR-0017 decision 9, [Linux host design 3.3](linux-host.md#33-confinement-of-the-web-process)).
+(ADR-0017 decision 9, [Linux host design 3.3](doc-64%20-%20Design-Linux-and-Container-Hosting.md#33-confinement-of-the-web-process)).
 Per-office service accounts would narrow this (a later option). When the release
 option is taken up, a headless keychain or the Keychain with a signed host is compared
 with the files (SECR-2); a headless keychain needs its own unlock secret, which is
 itself a file of the service account.
 
 Claude's sign-in needs no Keychain: the C1 spike showed that a
-`CLAUDE_CODE_OAUTH_TOKEN` avoids it on macOS ([C1 spike](../research/c1-sign-in-spike.md),
+`CLAUDE_CODE_OAUTH_TOKEN` avoids it on macOS ([C1 spike](../research/doc-25%20-%20Research-C1-Sign-In-Private-Home-and-Sub-Agent-Isolation-Spike.md),
 macOS only). The accounts spike repeats that under an agent account with no login.
 
 ### 6.4 Later options, for a release spike
@@ -753,7 +753,7 @@ accounts.
 **How it would work.**
 
 - The host runs as the person, from the per-user launchd agent of today
-  ([`service/macos.rs`](../../crates/org-platform/src/service/macos.rs)). It keeps each
+  ([`service/macos.rs`](../../../crates/org-platform/src/service/macos.rs)). It keeps each
   office secrets key in the Data Protection keychain in its signed access group, as
   today ([section 6.0](#60-the-secrets-chain-in-plain-words)).
 - It starts the offices and the web process as the service account, through the grant
@@ -775,7 +775,7 @@ accounts.
 - It hands the secrets down in memory exactly as now: the launch contract's per-spawn
   rendezvous socket and its handoff line, then the descriptors of the transfer
   records, including the writer-control connection
-  ([host boundary: admission and the verified rendezvous](office-host-boundary.md#admission-and-the-verified-rendezvous);
+  ([host boundary: admission and the verified rendezvous](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#admission-and-the-verified-rendezvous);
   `org_office_launch::writer` is "writer-custody control over a host-transferred
   connected descriptor"). A Unix socket carries a descriptor between accounts, so the
   handoff itself needs no change beyond the rendezvous directory and socket being
@@ -796,9 +796,9 @@ accounts.
 | Secrets | The Keychain works as today: the key stays in the signed host's access group; no headless keychain, no unlock secret on disk. Resolves the locked-Keychain question of [section 6.3](#63-no-dependency-on-the-macos-login-keychain) on a desktop Mac | The person's own programs run as the same user as the host; on macOS the Keychain access group still keeps the keys from them (as today) |
 | Recovery | ADR-0011's presence check holds unchanged: the peer is the console user with the host's own UID, in the same console session. Resolves that open item on a desktop Mac | — |
 | When it runs | — | The host runs only while the person is logged in. Fine for a desktop Mac; not for a headless server. Headless Macs and every Linux server use the service-account host of [section 3](#3-accounts-proposed) |
-| Trust | The core (host) is trusted; the untrusted code, the agents, still runs in other accounts | The host runs with the person's file access, so a fault in the host can reach the person's files. The person's other programs are **not** kept from the offices: the grant (person → service account) belongs to the person's UID, so any of the person's programs could start a genuine office image and supply the handoff itself, unless the launcher authenticates the host (see above); the host's plist in `~/Library/LaunchAgents` and its launch path are writable by the person's programs (the [Linux host design 5](linux-host.md#5-what-a-local-attacker-can-still-do-on-linux) case, now on macOS too); and the group or access-control entry the host needs on office folders opens them to every program of the person |
-| Host's access to office folders | — | Read and limited write: the host reads the catalog and `office.json`, moves refused folders to `.refused/<id>`, writes the office logs and runs the orphan sweep. `office.json` is accepted today only when owned by the service user, the host's own UID ([host boundary](office-host-boundary.md#officejson)); that rule changes to the service account |
-| Admission | — | Today the host spawns the worker suspended and checks its code identity before it runs ([host boundary](office-host-boundary.md#admission-and-the-verified-rendezvous) step 1 and 2). Through a grant to another account the host is no longer the direct parent, so it cannot spawn it suspended; admission must instead check the connected peer's code identity through its audit token at the rendezvous, or the launcher must do the suspended spawn. Needs design and the spike |
+| Trust | The core (host) is trusted; the untrusted code, the agents, still runs in other accounts | The host runs with the person's file access, so a fault in the host can reach the person's files. The person's other programs are **not** kept from the offices: the grant (person → service account) belongs to the person's UID, so any of the person's programs could start a genuine office image and supply the handoff itself, unless the launcher authenticates the host (see above); the host's plist in `~/Library/LaunchAgents` and its launch path are writable by the person's programs (the [Linux host design 5](doc-64%20-%20Design-Linux-and-Container-Hosting.md#5-what-a-local-attacker-can-still-do-on-linux) case, now on macOS too); and the group or access-control entry the host needs on office folders opens them to every program of the person |
+| Host's access to office folders | — | Read and limited write: the host reads the catalog and `office.json`, moves refused folders to `.refused/<id>`, writes the office logs and runs the orphan sweep. `office.json` is accepted today only when owned by the service user, the host's own UID ([host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#officejson)); that rule changes to the service account |
+| Admission | — | Today the host spawns the worker suspended and checks its code identity before it runs ([host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#admission-and-the-verified-rendezvous) step 1 and 2). Through a grant to another account the host is no longer the direct parent, so it cannot spawn it suspended; admission must instead check the connected peer's code identity through its audit token at the rendezvous, or the launcher must do the suspended spawn. Needs design and the spike |
 | Control | — | The host cannot signal processes of the service account: the stop's final kill and orphan cleanup go through the launcher. It cannot run the helper either: each privileged request is relayed through a service-account process, one more path to build and test |
 | Complexity | — | A second host placement to build and test (person-hosted on a desktop Mac, service-hosted elsewhere): one more layout in the test matrix of [section 3.4](#34-isolated-and-not-isolated-how-few-switches) |
 
@@ -853,15 +853,15 @@ Owner direction 2026-11-20 (D26).
 Owner direction 2026-11-20 (D24, D25).
 
 - **Deferred to v2:** the recovery code, the escrow of the organization CA key
-  ([ADR-0007](../adr/0007-hq-creation-escrow.md)), protected recovery delivery
-  ([ADR-0011](../adr/0011-protected-recovery-delivery.md)) and the recovery presence and
+  ([ADR-0007](../../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md)), protected recovery delivery
+  ([ADR-0011](../../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md)) and the recovery presence and
   authority question (question 3).
 - **In v1, if HQ is lost,** the owner imports the organization from its Git repository
-  into a new HQ ([FC-167](../FEATURES.md), plan R1), which makes a new CA. Every other
+  into a new HQ ([FC-167](../doc-3%20-%20Feature-Checklist.md), plan R1), which makes a new CA. Every other
   office re-enrolls with one simple command that tells it "this is your new HQ"; that
   command is to be designed with satellite enrollment (FC-020, S1) and kept simple.
 - **What exists today.** The recovery code, the escrow package and recovery delivery
-  are built and tested on `v1` ([FC-016](../FEATURES.md) evidence):
+  are built and tested on `v1` ([FC-016](../doc-3%20-%20Feature-Checklist.md) evidence):
   - `crates/org-pki` (escrow envelope and recovery code);
   - `crates/org-host`: `recovery.rs`, `recovery/presence.rs`, `human/recovery.rs`,
     `hostdb/recovery.rs`, `provisioning.rs`, the supervisor;
@@ -885,9 +885,9 @@ Owner direction 2026-11-20 (D24, D25).
 | Layer | What it stops | Owner |
 | --- | --- | --- |
 | Accounts (outer wall) | Reading the data, the host's secrets, the person's home, other offices' agents' homes; signalling other accounts' processes; gaining administrator rights | Setup and the launcher, this note |
-| `os-sandbox` (inner wall) | Writing anywhere outside the agent's private home and workspace; reading outside them and read-only system tools; a tool that ignores `HOME` | The office, [FC-190](../FEATURES.md), ADR-0015 decision 12 and its owner note |
-| The vendor tool's own sandbox (optional extra layer) | What the vendor applies to the commands it runs | The vendor; Claude Code's per-agent switch, default on ([FC-189](../FEATURES.md)) |
-| The office's permission policy and fixed denies | Tool calls the office does not allow | The office ([agent sessions](agent-sessions.md)) |
+| `os-sandbox` (inner wall) | Writing anywhere outside the agent's private home and workspace; reading outside them and read-only system tools; a tool that ignores `HOME` | The office, [FC-190](../doc-3%20-%20Feature-Checklist.md), ADR-0015 decision 12 and its owner note |
+| The vendor tool's own sandbox (optional extra layer) | What the vendor applies to the commands it runs | The vendor; Claude Code's per-agent switch, default on ([FC-189](../doc-3%20-%20Feature-Checklist.md)) |
+| The office's permission policy and fixed denies | Tool calls the office does not allow | The office ([agent sessions](doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md)) |
 
 - **One profile mechanism per system, applied by the launcher** to the whole agent
   process: Seatbelt on macOS; on Linux the spike of FC-190 decides between Landlock,
@@ -896,7 +896,7 @@ Owner direction 2026-11-20 (D24, D25).
 - **The standard profile:** the agent's private home, its task workspaces and temporary
   directories read and write; the parts of the Git cache a worktree commit writes
   (objects, task branches and their logs, the worktree's administrative directory,
-  as the [Git design](projects-git-github.md) lists); its office's socket for
+  as the [Git design](doc-35%20-%20Design-Projects-Git-and-GitHub.md) lists); its office's socket for
   `agent-os`; network to the provider API and to package registries; system tools and
   installed toolchains read-only; nothing else.
 - **Extensions add allowances** to the profile, only for agents that have that
@@ -906,7 +906,7 @@ Owner direction 2026-11-20 (D24, D25).
   agent and the data, and the product says so (ADR-0016 decision 2).
 - **Nested sandboxes on macOS (open risk).** A program already inside a Seatbelt
   profile generally cannot apply another one
-  ([architecture overview](../architecture/architecture-overview.html)), and Claude
+  ([architecture overview](../../../docs/architecture/architecture-overview.html)), and Claude
   Code's Bash sandbox, SwiftPM and `xcodebuild` apply their own. Whether the vendor
   sandbox can stay on inside the office's profile, and whether Swift builds work there,
   is checked by DEV-6 and DEV-7; if not, the fallback is the vendor sandbox off inside
@@ -957,11 +957,11 @@ Nothing else in milestone one changes for extensions.
 ### 8.2 The extension contract
 
 The core owns a small, consumer-owned contract
-([architecture rules](../architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
+([architecture rules](../doc-8%20-%20Architecture-Rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
 
 | An extension may contribute | Notes |
 | --- | --- |
-| Install steps | Pinned downloads with SHA-256 checksums, into the product's own folder; the pins ship inside the signed release, so the release verifier covers them. Never from inside an agent turn ([standalone design 2](standalone-server.md#2-release-install-and-runtime-boundaries)) |
+| Install steps | Pinned downloads with SHA-256 checksums, into the product's own folder; the pins ship inside the signed release, so the release verifier covers them. Never from inside an agent turn ([standalone design 2](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#2-release-install-and-runtime-boundaries)) |
 | Privileged steps | Only from setup's closed list ([section 5](#5-one-command-setup)) |
 | A checklist | Plain-language items, each with how to check it and, where possible, a step setup can automate |
 | A health check | Reports `ready`, `needs attention` (with the checklist item) or `not available on this system` |
@@ -1010,7 +1010,7 @@ The core owns a small, consumer-owned contract
 Proposed here and **not agreed**: the UI stream owns `apps/agentic-org-ui`. **Owner's
 answer (2026-11-20):** ui-dev leads the slot's design with the backend stream when L17
 starts; neither side builds it before then. The request to ui-dev is in
-[the UI stream's file](../workstreams/ui.md).
+[the UI stream's file](../workstreams/doc-17%20-%20Product-UI-Stream-Handover-Track-U.md).
 
 - **What an extension can put in the web app.** Menu items (in the main navigation
   or as a section under Organization settings), a settings section, and its own panels
@@ -1020,7 +1020,7 @@ starts; neither side builds it before then. The request to ui-dev is in
   menu items, settings description, status and checklist, filtered by what the signed-in
   person may see. The office answers from what the composition root wired; a browser
   never decides that an extension is enabled. The route is added to the
-  [web API](web-api-v1.md) when built.
+  [web API](doc-71%20-%20Design-Web-HTTP-API-v1.md) when built.
 - **Where the UI code lives.** With the extension, in `extensions/<name>/ui/`, built
   into the web app at build time (a build-generated list of the extension UI modules
   present, so removing an extension's folder removes its screens). A menu item whose
@@ -1060,7 +1060,7 @@ with no new `agent-os` container commands (owner: do not reinvent Docker).
   instance hosted in a container (ADR-0017). In a container, rootless containers need
   user namespaces that Docker's default seccomp profile and Ubuntu's AppArmor
   restriction refuse; the repository's optional profiles allow only a sandbox that does
-  not mount a fresh `/proc` ([Linux host design 3.5](linux-host.md#35-agent-isolation)),
+  not mount a fresh `/proc` ([Linux host design 3.5](doc-64%20-%20Design-Linux-and-Container-Hosting.md#35-agent-isolation)),
   and rootless Podman or Docker does mount one, so in a container the fallback is
   unverified and may be unavailable (CON-6).
 - **Rootless fallback inside the Linux inner wall (open risk).** Landlock and seccomp
@@ -1108,20 +1108,20 @@ system".
 
 | Area | Change | Owning document |
 | --- | --- | --- |
-| Setup (A1/A2) | One administrator prompt running a fixed privileged plan; the explicit `--isolation off` choice (asked, recorded only on yes) | [Standalone design 4](standalone-server.md#4-setup-and-service-lifecycle), installation UX |
-| Service registration | A system-level variant of each `org_platform::service` adapter: launchd daemon with `UserName`, systemd system unit with `User=`, and on Linux the office template unit `agentic-org-office@.service` with its polkit rule (D15); the per-user adapters stay as the `off` adapters | [Linux host design 3.4](linux-host.md#34-service-lifecycle) |
-| Process launch | `org-supervise` gains "run as account": the isolation mode and target account in the spawn, carried out through the launcher; stop and cleanup through it too | ADR-0015 decision 4, [Linux host design 3.5](linux-host.md#35-agent-isolation) |
-| Local socket admission | Explicit allowed UIDs: the person's UID on `host.sock` for the command line; the agent accounts on the office socket for `agent-os`; socket and directory permissions to match. Admission is never authorization | ADR-0015 decision 5, ADR-0017 decision 11, [host boundary 3](office-host-boundary.md#3-what-the-host-does) |
-| Data root | A system location owned by the service account, outside the person's home | [Standalone design 3](standalone-server.md#3-instance-selection-and-storage) |
-| Web confinement | ADR-0008's Seatbelt profile and the Linux filter, rechecked under the service account and a system daemon | ADR-0008, [Linux host design 3.3](linux-host.md#33-confinement-of-the-web-process) |
+| Setup (A1/A2) | One administrator prompt running a fixed privileged plan; the explicit `--isolation off` choice (asked, recorded only on yes) | [Standalone design 4](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#4-setup-and-service-lifecycle), installation UX |
+| Service registration | A system-level variant of each `org_platform::service` adapter: launchd daemon with `UserName`, systemd system unit with `User=`, and on Linux the office template unit `agentic-org-office@.service` with its polkit rule (D15); the per-user adapters stay as the `off` adapters | [Linux host design 3.4](doc-64%20-%20Design-Linux-and-Container-Hosting.md#34-service-lifecycle) |
+| Process launch | `org-supervise` gains "run as account": the isolation mode and target account in the spawn, carried out through the launcher; stop and cleanup through it too | ADR-0015 decision 4, [Linux host design 3.5](doc-64%20-%20Design-Linux-and-Container-Hosting.md#35-agent-isolation) |
+| Local socket admission | Explicit allowed UIDs: the person's UID on `host.sock` for the command line; the agent accounts on the office socket for `agent-os`; socket and directory permissions to match. Admission is never authorization | ADR-0015 decision 5, ADR-0017 decision 11, [host boundary 3](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#3-what-the-host-does) |
+| Data root | A system location owned by the service account, outside the person's home | [Standalone design 3](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#3-instance-selection-and-storage) |
+| Web confinement | ADR-0008's Seatbelt profile and the Linux filter, rechecked under the service account and a system daemon | ADR-0008, [Linux host design 3.3](doc-64%20-%20Design-Linux-and-Container-Hosting.md#33-confinement-of-the-web-process) |
 | Recovery presence and authority | Deferred to v2 (owner, D24). Under a service-account host neither ADR-0011's macOS check nor its Linux rule holds; the v2 design takes this up. In v1, HQ loss is handled by importing from Git and re-enrolling ([section 6.7](#67-recovery-is-v2-hq-loss-in-v1)) | ADR-0011, ADR-0017 |
 | Organization CA trust | The helper installs each organization's CA as trusted when the organization is created; a "Trust this organization" download with a fingerprint to compare | This note [6.6](#66-the-organizations-certificate-authority-and-trust), ADR-0017 decision 10 |
-| Extensions | The contract crate, the top-level `extensions/` folder, composition-root wiring, the LNX-5 exception for each extension's `platform` module | [Project structure](project-structure.md) |
-| Secrets custody | Host secrets as owner-only files on macOS too; the App Store Connect API key as a wrapped office secret; the Xcode keychain, if XC-4 keeps one | ADR-0016, [host boundary](office-host-boundary.md#the-office-secrets-key) |
+| Extensions | The contract crate, the top-level `extensions/` folder, composition-root wiring, the LNX-5 exception for each extension's `platform` module | [Project structure](doc-68%20-%20Design-v1-Project-Structure.md) |
+| Secrets custody | Host secrets as owner-only files on macOS too; the App Store Connect API key as a wrapped office secret; the Xcode keychain, if XC-4 keeps one | ADR-0016, [host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md#the-office-secrets-key) |
 | Isolation setting | One instance-level setting (`off` or `accounts`) chosen at setup; the composition roots select one adapter per seam; conformance suites for both | This note, ADR-0015, the accounts ADR |
 | Administrator rights after setup | The closed-list helper installed by setup (recommended), or pre-provisioning (alternative) | This note, the accounts ADR |
-| Web app | The extension UI slot: discovery through the web API, menu items, settings sections, panels, UI modules built in from `extensions/<name>/ui/` | [Web API](web-api-v1.md), [shell spec](../specs/app-shell-ux.md) (UI stream), extensions ADR |
-| Extension settings | Stored and validated by the office | [Data contract](organization-data/README.md), extensions ADR |
+| Web app | The extension UI slot: discovery through the web API, menu items, settings sections, panels, UI modules built in from `extensions/<name>/ui/` | [Web API](doc-71%20-%20Design-Web-HTTP-API-v1.md), [shell spec](../specs/doc-39%20-%20Spec-App-Shell-and-Navigation-UX.md) (UI stream), extensions ADR |
+| Extension settings | Stored and validated by the office | [Data contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md), extensions ADR |
 
 All of these keep the architecture rules: contracts owned by their consumers (or
 shared by the platform exception), planned variation behind adapters that fail
@@ -1138,39 +1138,39 @@ not on a spike.
 | --- | --- | --- |
 | "The instance runs under dedicated non-administrator accounts" | New ADR | The service account, agent accounts per office then per agent, the data root outside the person's home, the launcher grant chosen by the spike, one-prompt setup, and the isolation setting with its `off` choice |
 | "Extensions" | New ADR | The contract, the `extensions/` folder, built-in-but-optional in v1 and out-of-process later, the contract crate's placement, the LNX-5 answer, the UI slot agreed with the UI stream |
-| [ADR-0015](../adr/0015-agent-isolation-modes.md) | Update | Decision 1: the account and the os-sandbox become two layers that combine, where decision 1 carries one isolation mode per launch; the instance-level isolation setting and how it maps onto `same-user` and `dedicated-user`; decision 3's "setup continues in `same-user`" and criterion ISO-3 become an explicit choice; decisions 2 to 5: agent accounts per office (not per instance), per-agent accounts as the later step, the launcher chosen by the spike, the socket allowing agent accounts; decision 6 (the owner may set `same-user` per agent): `same-user` in its old form is dropped under `accounts` and replaced by the per-agent "visible on my desktop" opt-in (D27, [section 7.1](#71-watching-an-agents-screen)); decision 7 (`same-user` stays the default until the spike passes): changed by the owner's direction of 2026-11-20 that `accounts` is the default for an install, pending the spike, and its spike folded into the accounts spike; the `os-sandbox` mode as the inner wall |
-| [ADR-0005](../adr/0005-standalone-server-v1.md) | Update | Decisions 2, 5 and 8: setup's one administrator prompt, the system-level service, the data root's location; decision 7: the launcher as a fifth executable, and a root daemon only if launcher option 3 is chosen |
-| [Architecture non-negotiables](../architecture-non-negotiables.md) | Update | Rule 7's four programs: name the launcher (accepted by ADR-0015 decision 4) and the closed-list helper, and a root launcher daemon if launcher option 3 is chosen |
-| [ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md) | Update | The initial registration link asked for across accounts: setup as the person, the host as the service account |
-| [Git design](projects-git-github.md) | Update | Its `dedicated-user` rules restated for a service account and per-office agent accounts (GIT-1, GIT-2) |
-| [ADR-0017](../adr/0017-linux-and-container-hosting.md) | Update | Decision 2's service lifecycle and credential provider rows (system units; files on macOS), decision 8's location, decision 10's "setup refuses root" (the privileged step), decision 11's admission by explicit allowed UIDs |
-| [ADR-0008](../adr/0008-gateway-macos-sandbox.md) | Update | The web process confined under the service account as a system daemon; recheck its profile and the host's post-accept checks there |
-| [ADR-0016](../adr/0016-no-application-level-data-encryption.md) | Update | A secrets custody note: owner-only files for host secrets on macOS too; the App Store Connect API key, and the Xcode keychain password if XC-4 keeps a keychain, as wrapped office secrets |
-| [ADR-0011](../adr/0011-protected-recovery-delivery.md) | To update after the owner confirms (D24) | Protected recovery delivery is v2; its presence and authority under a service-account host are taken up then |
-| [Linux host design](linux-host.md) | Update | System-level service adapters; the `agentic-org-office@.service` template unit and its polkit rule, with admission for an office systemd starts; `dedicated-user` and accounts in section 3.5; section 5's attacker model with a service account |
-| [Host boundary design](office-host-boundary.md) | Update | Host secrets custody; `host.sock` admission of the person's UID |
-| [Project structure](project-structure.md) | Update | The `extensions/` folder, the contract crate, composition wiring |
-| [Standalone design](standalone-server.md) | Update | Section 3's data roots and service table; section 4's setup flow and the rule of no administrator prompt for the core's everyday use |
-| [Web API](web-api-v1.md), [shell spec](../specs/app-shell-ux.md) | Update (with the UI stream) | The extensions discovery route; the menu and settings slot |
-| [Data contract](organization-data/README.md) | Update | Where an extension's settings are stored |
-| [ADR-0007](../adr/0007-hq-creation-escrow.md) | To update after the owner confirms (D24) | CA escrow and the recovery code are v2 |
-| [ADR-0016](../adr/0016-no-application-level-data-encryption.md) | To update after the owner confirms (D24) | Decision 3's "the CA from the escrow package and the recovery code" and ENC-5's recovery flows: v2; in v1 a lost CA means a new HQ and re-enrollment |
-| [ADR-0005](../adr/0005-standalone-server-v1.md) | To update after the owner confirms (D24) | "Creation includes CA escrow, recovery-code provisioning and protected delivery" and REC-1 |
-| [ADR-0012](../adr/0012-office-channel-lifecycle.md), [ADR-0013](../adr/0013-stored-browser-sessions.md) | To update after the owner confirms (D24) | Their mentions of the recovery read and recovery on `host.sock` |
+| [ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) | Update | Decision 1: the account and the os-sandbox become two layers that combine, where decision 1 carries one isolation mode per launch; the instance-level isolation setting and how it maps onto `same-user` and `dedicated-user`; decision 3's "setup continues in `same-user`" and criterion ISO-3 become an explicit choice; decisions 2 to 5: agent accounts per office (not per instance), per-agent accounts as the later step, the launcher chosen by the spike, the socket allowing agent accounts; decision 6 (the owner may set `same-user` per agent): `same-user` in its old form is dropped under `accounts` and replaced by the per-agent "visible on my desktop" opt-in (D27, [section 7.1](#71-watching-an-agents-screen)); decision 7 (`same-user` stays the default until the spike passes): changed by the owner's direction of 2026-11-20 that `accounts` is the default for an install, pending the spike, and its spike folded into the accounts spike; the `os-sandbox` mode as the inner wall |
+| [ADR-0005](../../decisions/decision-5%20-%20ADR-0005-Standalone-server-HQ-web-application-and-named-instances.md) | Update | Decisions 2, 5 and 8: setup's one administrator prompt, the system-level service, the data root's location; decision 7: the launcher as a fifth executable, and a root daemon only if launcher option 3 is chosen |
+| [Architecture non-negotiables](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md) | Update | Rule 7's four programs: name the launcher (accepted by ADR-0015 decision 4) and the closed-list helper, and a root launcher daemon if launcher option 3 is chosen |
+| [ADR-0022](../../decisions/decision-22%20-%20ADR-0022-The-service-host-creates-its-own-registry-setup-has-no-reverse-bootstrap.md) | Update | The initial registration link asked for across accounts: setup as the person, the host as the service account |
+| [Git design](doc-35%20-%20Design-Projects-Git-and-GitHub.md) | Update | Its `dedicated-user` rules restated for a service account and per-office agent accounts (GIT-1, GIT-2) |
+| [ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md) | Update | Decision 2's service lifecycle and credential provider rows (system units; files on macOS), decision 8's location, decision 10's "setup refuses root" (the privileged step), decision 11's admission by explicit allowed UIDs |
+| [ADR-0008](../../decisions/decision-8%20-%20ADR-0008-macOS-confinement-of-the-web-process-GW-SBX-MAC-1.md) | Update | The web process confined under the service account as a system daemon; recheck its profile and the host's post-accept checks there |
+| [ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) | Update | A secrets custody note: owner-only files for host secrets on macOS too; the App Store Connect API key, and the Xcode keychain password if XC-4 keeps a keychain, as wrapped office secrets |
+| [ADR-0011](../../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md) | To update after the owner confirms (D24) | Protected recovery delivery is v2; its presence and authority under a service-account host are taken up then |
+| [Linux host design](doc-64%20-%20Design-Linux-and-Container-Hosting.md) | Update | System-level service adapters; the `agentic-org-office@.service` template unit and its polkit rule, with admission for an office systemd starts; `dedicated-user` and accounts in section 3.5; section 5's attacker model with a service account |
+| [Host boundary design](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md) | Update | Host secrets custody; `host.sock` admission of the person's UID |
+| [Project structure](doc-68%20-%20Design-v1-Project-Structure.md) | Update | The `extensions/` folder, the contract crate, composition wiring |
+| [Standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) | Update | Section 3's data roots and service table; section 4's setup flow and the rule of no administrator prompt for the core's everyday use |
+| [Web API](doc-71%20-%20Design-Web-HTTP-API-v1.md), [shell spec](../specs/doc-39%20-%20Spec-App-Shell-and-Navigation-UX.md) | Update (with the UI stream) | The extensions discovery route; the menu and settings slot |
+| [Data contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md) | Update | Where an extension's settings are stored |
+| [ADR-0007](../../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md) | To update after the owner confirms (D24) | CA escrow and the recovery code are v2 |
+| [ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) | To update after the owner confirms (D24) | Decision 3's "the CA from the escrow package and the recovery code" and ENC-5's recovery flows: v2; in v1 a lost CA means a new HQ and re-enrollment |
+| [ADR-0005](../../decisions/decision-5%20-%20ADR-0005-Standalone-server-HQ-web-application-and-named-instances.md) | To update after the owner confirms (D24) | "Creation includes CA escrow, recovery-code provisioning and protected delivery" and REC-1 |
+| [ADR-0012](../../decisions/decision-12%20-%20ADR-0012-Bounded-office-channel-ownership-and-closure-CH-LIFE-1.md), [ADR-0013](../../decisions/decision-13%20-%20ADR-0013-Browser-sessions-are-stored-at-the-host-and-survive-restarts.md) | To update after the owner confirms (D24) | Their mentions of the recovery read and recovery on `host.sock` |
 | ADR-0017 decision 11 | To update after the owner confirms (D24) | Recovery on Linux |
-| Designs: [standalone](standalone-server.md) ("CA escrow and the explicit recovery gate", REC-1), [create organization](create-organization.md), [host boundary](office-host-boundary.md) (the recovery code in the handoff), [offices](offices-hq-and-satellites.md) (the REC-1 gate), [document 16](organization-data/16-recovery-and-office-continuity.md), [web API](web-api-v1.md), [executable migration](executable-migration.md) | To update after the owner confirms (D24) | Recovery code, escrow and protected delivery as v2; HQ loss in v1 by import and re-enrollment |
-| Data contract [document 01](organization-data/01-organization-structure.md) (`security/ca-escrow.v1.bin`), [STATUS](organization-data/STATUS.md) (its changelog line on the CA records), [office store](office-store.md) (the escrow package and CA records), [Linux host design](linux-host.md) (the recovery presence adapter, the pending recovery code), [project structure](project-structure.md) (`org-pki` recovery escrow) | To update after the owner confirms (D24) | Escrow and the recovery code as v2 |
-| Specs: [installation UX](../specs/server-installation-and-access-ux.md) (recovery sections, SRV-25, REC-1), [dogfood run](../specs/dogfood-run.md), [offices and teams UX](../specs/offices-and-teams-ux.md) | To update after the owner confirms (D24), with the UI stream | The same |
+| Designs: [standalone](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) ("CA escrow and the explicit recovery gate", REC-1), [create organization](doc-30%20-%20Design-Create-Organization.md), [host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md) (the recovery code in the handoff), [offices](doc-67%20-%20Design-Offices-HQ-and-Satellites.md) (the REC-1 gate), [document 16](../organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md), [web API](doc-71%20-%20Design-Web-HTTP-API-v1.md), [executable migration](doc-63%20-%20Design-Executables-and-Entry-Points.md) | To update after the owner confirms (D24) | Recovery code, escrow and protected delivery as v2; HQ loss in v1 by import and re-enrollment |
+| Data contract [document 01](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md) (`security/ca-escrow.v1.bin`), [STATUS](../organization-data/doc-73%20-%20Organization-Data-—-Status-Changelog-and-Host-Owned-Records.md) (its changelog line on the CA records), [office store](doc-66%20-%20Design-Office-Store-Architecture.md) (the escrow package and CA records), [Linux host design](doc-64%20-%20Design-Linux-and-Container-Hosting.md) (the recovery presence adapter, the pending recovery code), [project structure](doc-68%20-%20Design-v1-Project-Structure.md) (`org-pki` recovery escrow) | To update after the owner confirms (D24) | Escrow and the recovery code as v2 |
+| Specs: [installation UX](../specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) (recovery sections, SRV-25, REC-1), [dogfood run](../specs/doc-41%20-%20Spec-Dogfood-Acceptance-Walkthrough.md), [offices and teams UX](../specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md) | To update after the owner confirms (D24), with the UI stream | The same |
 | Code: the recovery and escrow code listed in [section 6.7](#67-recovery-is-v2-hq-loss-in-v1) | Only with the owner's OK | Nothing is removed without it |
 | Decision record for the non-negotiable-10 exception | New | Agent accounts with the Xcode extension may hold a signing credential (D28) |
-| [Installation UX](../specs/server-installation-and-access-ux.md) | Update (with the UI stream, which owns `docs/specs/`) | The per-user service as the default; item 4's "without administrator rights it continues in `same-user`"; the Linux `admin reset` run with `sudo` as the instance's user, which becomes the service account |
+| [Installation UX](../specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) | Update (with the UI stream, which owns `docs/specs/`) | The per-user service as the default; item 4's "without administrator rights it continues in `same-user`"; the Linux `admin reset` run with `sudo` as the instance's user, which becomes the service account |
 
 ## 11. Spikes
 
 Late v1, before the ADRs. Each runs on macOS and on Linux unless it says otherwise,
 on a disposable machine or VM, never against a real organization's data
 (non-negotiable 17). Results are recorded in `docs/research/` when the spikes run,
-with tool and system versions, as the [C1 spike](../research/c1-sign-in-spike.md) was;
+with tool and system versions, as the [C1 spike](../research/doc-25%20-%20Research-C1-Sign-In-Private-Home-and-Sub-Agent-Isolation-Spike.md) was;
 no result files exist yet.
 
 ### 11.1 Accounts and launcher
@@ -1256,7 +1256,7 @@ home; it fails if any needs a write outside home and workspace or a broader read
 
 Proves: ASX-13.
 
-The [Git design](projects-git-github.md) already defines the `dedicated-user` rules:
+The [Git design](doc-35%20-%20Design-Projects-Git-and-GitHub.md) already defines the `dedicated-user` rules:
 the office fetches and pushes from its own bare cache; the agent account writes only
 objects, task branches, their logs and its worktree's administrative directory,
 through a group shared with the service account; `safe.directory` names exact paths;

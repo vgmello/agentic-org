@@ -35,19 +35,19 @@ builds_on: [offices-and-teams-ux, agent-run-modes-ux, employee-supervision-ux, p
 ## 0. Scope and decisions
 
 V1 is a standalone Rust service on macOS and Linux, including inside a container
-([ADR-0017](../adr/0017-linux-and-container-hosting.md)). HQ serves the static
+([ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md)). HQ serves the static
 SvelteKit application and its HTTP API. Satellites run their own offices and agents
 and connect outward to HQ. Opening the website never installs or enrolls an office.
 There is no desktop application. Installers and tests never erase existing user
 directories.
 
-The design is [standalone-server.md](../design/standalone-server.md) and the decision
-is [ADR-0005](../adr/0005-standalone-server-v1.md).
+The design is [standalone-server.md](../design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) and the decision
+is [ADR-0005](../../decisions/decision-5%20-%20ADR-0005-Standalone-server-HQ-web-application-and-named-instances.md).
 
 The executables are `agentic-org` (the person's CLI and the service host),
 `agentic-org-web` (the browser server), `agentic-org-office` (one office worker)
 and `agent-os` (the agent CLI); `agentic-org-ui` holds the static browser assets.
-[Executable migration](../design/executable-migration.md) records which commands
+[Executable migration](../design/doc-63%20-%20Design-Executables-and-Entry-Points.md) records which commands
 exist today.
 
 ## 1. Install once; select an instance
@@ -87,10 +87,10 @@ For a new instance the wizard establishes, in order:
    No create-or-join selector, invitation input, satellite role or --hq join
    option is present; later HQ-issued enrollment is separate. An organization is
    created in the browser by the signed-in administrator
-   ([offices §5a](offices-and-teams-ux.md#5a-create-organization-administrator-only)).
+   ([offices §5a](doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md#5a-create-organization-administrator-only)).
 3. The administrator's registration link (§4a.2). Setup asks for no username and
    no password, creates no account and offers no recovery code.
-4. Agent isolation ([ADR-0015](../adr/0015-agent-isolation-modes.md)): setup offers
+4. Agent isolation ([ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md)): setup offers
    the isolation mode and, for `dedicated-user`, performs the one administrator step
    that creates the agent account and installs its launcher; without administrator
    rights it continues in `same-user` and says so. Until `dedicated-user` is offered
@@ -98,7 +98,7 @@ For a new instance the wizard establishes, in order:
    protection: "Agents run as alex (same-user mode): only the tool sandbox separates
    agents from the server's data." Setup also reports whether operating-system disk
    encryption is on and which file permissions it set, reading the modes back from
-   disk ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)). On a Mac:
+   disk ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)). On a Mac:
    "Disk encryption (FileVault): on." When it is off: "Disk encryption is off.
    Agentic Org does not encrypt its data; turn on FileVault in System Settings ›
    Privacy & Security." When it can't be determined, setup says so with the reason.
@@ -135,7 +135,7 @@ mirrored as ordinary durable files. `organization.yaml` stores stable ID, slug,
 name, repository ID and state branch. Team/employee/project/task paths use stable
 IDs. IDs use UUIDv7.
 Readable task references are office-minted T- for every type, never implicit B-/REQ-
-renames. [The storage tree](../design/standalone-server.md#3-instance-selection-and-storage)
+renames. [The storage tree](../design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#3-instance-selection-and-storage)
 defines durable state, authority, journal, usage archive, bindings and checkpoints
 separately from runtime office projections, one cache per office/repository, and
 employee/task worktrees. Project integration branches belong to each association.
@@ -223,7 +223,7 @@ never tied to an agent. Agents never sign in.
 
 No password is ever typed in a terminal. Accounts are created, and passwords set,
 on pages opened from one-time links (§4a.2). The recovery code is delivered only at
-the HQ machine ([ADR-0011](../adr/0011-protected-recovery-delivery.md)).
+the HQ machine ([ADR-0011](../../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md)).
 Placeholders in angle brackets, such as `<HQ machine>`, are filled from HQ's data.
 Open questions are in §4a.9.
 
@@ -250,11 +250,11 @@ shows `--name <instance>` as text to replace (§4a.3).
 - The administrator's account has no person until it creates an organization.
   Whoever creates an organization is its **owner**: the creator becomes a person
   in its top-level team and that team's lead
-  ([offices §5a](offices-and-teams-ux.md#5a-create-organization-administrator-only)).
+  ([offices §5a](doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md#5a-create-organization-administrator-only)).
   Every organization has exactly one owner. The owner can hand ownership to
   another person in the organization who has an account (offices §7.1).
 - **Everyone else gets an account from the browser.** In an organization's
-  People view ([offices §7.4](offices-and-teams-ux.md#74-add-edit-and-remove-a-person)),
+  People view ([offices §7.4](doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md#74-add-edit-and-remove-a-person)),
   the administrator or the organization's owner chooses **Invite to sign in** on a
   person. The product makes a one-time registration link, shown once, to copy and
   pass on; it sends no email. The person who opens it chooses a username and a
@@ -545,12 +545,12 @@ error. The table covers a page that loaded and then can't reach HQ.
 ### 4a.4 Session end, signing in again, and sign out
 
 **When a session ends.** It expires after 30 days without use (no fixed lifetime; the app refreshes it in
-the background while used, [ADR-0013](../adr/0013-stored-browser-sessions.md)), the
+the background while used, [ADR-0013](../../decisions/decision-13%20-%20ADR-0013-Browser-sessions-are-stored-at-the-host-and-survive-restarts.md)), the
 account's password is set from a link, its access to an organization is
 removed (People › **Remove access**, §4a.1), or it is signed out by a password
 change in another browser (§4a.2).
 A restart or update of HQ or the web process never ends a session; sessions are
-stored at the host ([ADR-0013](../adr/0013-stored-browser-sessions.md)). Signing out
+stored at the host ([ADR-0013](../../decisions/decision-13%20-%20ADR-0013-Browser-sessions-are-stored-at-the-host-and-survive-restarts.md)). Signing out
 in another tab is different: every tab goes to the sign-in page (Sign out, below). A missing session proof (cleared site
 data, a private window) counts as an ended session.
 
@@ -677,7 +677,7 @@ copy distinction, not permission to drop a draft or omit a real loss warning.
 
 ### 4a.6 Recovery code
 
-Selected implementation profile: [ADR-0011](../adr/0011-protected-recovery-delivery.md)
+Selected implementation profile: [ADR-0011](../../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md)
 REC-DEL-1 governs the native macOS flow below. Its system reason is fixed and
 sanitized and names both showing the code and recording it as stored; it does
 not interpolate organization names. Actual local console/audit-session and
@@ -687,8 +687,8 @@ invocation authenticates afresh; same-run acknowledgement uses private
 connection-bound permission, not a second dialog. On Linux there is no
 system dialog: the signed-in administrator's approval of this run in the browser is
 the one confirmation, with the same terminal checks; a run without a terminal
-receives no code ([ADR-0011](../adr/0011-protected-recovery-delivery.md),
-[ADR-0017](../adr/0017-linux-and-container-hosting.md) decision 11).
+receives no code ([ADR-0011](../../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md),
+[ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md) decision 11).
 
 The CLI asks for an explicit new package file, refuses overwrite, and requires
 the final code group plus typed `yes` for **both** package and code retained off
@@ -1059,14 +1059,14 @@ rules, which are distinct from uninstalling software on a machine.
 - SRV-18 · Production browser paths use the HTTP API, with an explicit unavailable state for missing features. An API failure never selects sample data. The unavailable pages' copy is in `app-shell-ux.md` §3 (SHELL-18 to SHELL-21).
 - SRV-19 · Withdrawn: there is no native application.
 - SRV-20 · Superseded code is deleted, not adapted, and nothing is imported. Domain rules, storage durability, office identity and supervision invariants stay covered.
-- SRV-21 · A fresh HQ completes the single-office walkthrough in [dogfood-run.md](dogfood-run.md) with a real agent; with a satellite and on both operating systems it completes the full walkthrough, including disconnect/reconnect, as the release acceptance run of milestone three. Mock-only success is insufficient.
+- SRV-21 · A fresh HQ completes the single-office walkthrough in [dogfood-run.md](doc-41%20-%20Spec-Dogfood-Acceptance-Walkthrough.md) with a real agent; with a satellite and on both operating systems it completes the full walkthrough, including disconnect/reconnect, as the release acceptance run of milestone three. Mock-only success is insufficient.
 
 - SRV-22 · The retained browser application's source/package is `apps/agentic-org-ui` / `agentic-org-ui`; worker source/package/executable are apps/agentic-org-office / agentic-org-office. Browser server and agent CLI use apps/agentic-org-web / agentic-org-web and apps/agent-os / agent-os; host library crates/org-host is composed by agentic-org serve. Workspace, imports, tests, build, packaging and ownership references agree; the rename preserves the per-office worker and host credential boundaries.
 
 - SRV-23 · Default/lab and a hostile same-host port cannot authenticate, read, mutate, stream, refresh, recover a proof or logout another origin using a copied/overwritten cookie alone. Every protected path requires the valid instance/origin-bound cookie+proof pair; proofs never enter URLs/logs/redirects.
 - SRV-24 · Two HQ organizations share one web process listener. The web process holds no office key; the host keeps provisioning and the private launch. Creation by the administrator succeeds; any other account, an employee and an office-certificate caller cannot create organizations.
 - SRV-25 · HQ creation idempotently provisions versioned encrypted CA escrow, protected one-time recovery-code delivery and off-HQ retention acknowledgement. A fixture recovers the same CA identity with the code and refuses wrong-code/damaged escrow; no code/usable CA key is replicated or logged. REC-1 remains an explicit production-recovery release decision.
-- SRV-26 · No interface the product provides (browser, CLI, HTTP API) returns one employee's or instance's private data to another employee's agent or another instance. Isolation from other processes of the same OS user depends on the agent isolation mode ([ADR-0015](../adr/0015-agent-isolation-modes.md)); in `same-user` mode it is not claimed. Release credential tests on both platforms still refuse missing/wrong keys, unavailable/locked providers and development plaintext-store fallback: existing databases/identity are unchanged, no replacement key is created, and restoring the legitimate credential allows recovery; web/CLI helpers cannot obtain raw office keys through any interface the product provides.
+- SRV-26 · No interface the product provides (browser, CLI, HTTP API) returns one employee's or instance's private data to another employee's agent or another instance. Isolation from other processes of the same OS user depends on the agent isolation mode ([ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md)); in `same-user` mode it is not claimed. Release credential tests on both platforms still refuse missing/wrong keys, unavailable/locked providers and development plaintext-store fallback: existing databases/identity are unchanged, no replacement key is created, and restoring the legitimate credential allows recovery; web/CLI helpers cannot obtain raw office keys through any interface the product provides.
 - SRV-27 · Eight HQ tabs share at most one authenticated streaming fetch per browser origin, including across login/session changes, and commands still complete under HTTP/1.1. Leader loss reconnects by cursor; unsupported coordination uses bounded short polling and no per-tab long-lived stream.
 - SRV-28 · HQ durably accepts Pause for a disconnected satellite as paused status with stop pending. Reconnect/restart reconciles the latest version before new work; a later Resume is not overwritten by stale stop delivery. An uncertain forwarded outcome stays Pending confirmation and resolves by the same operation ID.
 - SRV-29 · Every home or path input on create or update, including absolute paths and traversal, is rejected before filesystem access. The launch working directory derives from managed IDs and the selected office, employee, task and repository workspace; response paths stay read-only under PROF-4.
@@ -1170,7 +1170,7 @@ procedure and disaster-recovery evidence are required before production recovery
 claims. V1 still provisions CA escrow and its owner recovery code under SRV-25.
 The way back after losing the server or its database is to open the organization
 again from its files
-([recovery contract](../design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization),
+([recovery contract](../organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md#opening-an-existing-organization),
 implementation plan R1). Once that works, the sentence "Recovering an organization
 after losing the HQ machine isn't supported yet" is replaced, everywhere it appears,
 by one that says how.

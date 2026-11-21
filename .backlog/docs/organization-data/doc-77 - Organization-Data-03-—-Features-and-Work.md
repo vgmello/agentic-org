@@ -13,11 +13,11 @@ tags:
 
 # Features and work structure
 
-Status: **selected** data contract, revision 2.12. Uses [projects/releases/milestones](02-project-structure.md), [employees](04-agent-structure.md) and [operational metadata](05-operational-data.md).
+Status: **selected** data contract, revision 2.12. Uses [projects/releases/milestones](doc-76%20-%20Organization-Data-02-—-Project-Structure.md), [employees](doc-78%20-%20Organization-Data-04-—-Agent-Structure.md) and [operational metadata](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md).
 
 ## Explicit entities
 
-There is one authored work entity and one physical `tasks` table. `type` distinguishes `task`, `bug`, `request` or another nonempty task-type identifier. Task `type` is separate from optional `work_type: build | run` (Build/R&D or Run/KTLO). [Record contracts](08-record-contracts.md) defines that classification. All types use the same `T-<office code><number>` reference, one sequence per creating office ([document 06](06-identity-and-numbering.md)), and the same comments, checklists and operational metadata. There are no separate bug/request tables, folders or number counters. This entity remains named **task**, not work item.
+There is one authored work entity and one physical `tasks` table. `type` distinguishes `task`, `bug`, `request` or another nonempty task-type identifier. Task `type` is separate from optional `work_type: build | run` (Build/R&D or Run/KTLO). [Record contracts](doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md) defines that classification. All types use the same `T-<office code><number>` reference, one sequence per creating office ([document 06](doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md)), and the same comments, checklists and operational metadata. There are no separate bug/request tables, folders or number counters. This entity remains named **task**, not work item.
 
 ```mermaid
 erDiagram
@@ -106,11 +106,11 @@ erDiagram
 - Every task requires owning `team_id`. `project_id` is optional: null means a team task; present means a project task. A project task's owning team must equal the project's owning team. Ownership determines its backlog/scope, not who must perform the work; the number comes from the creating office (document 06).
 - `assigned_team_id` and `assignee_id` are the current team and individual assignment. Both are nullable and independent of owning `team_id`. A task can be assigned to a team awaiting an individual, directly to an individual, to both, or to neither. New assignments must resolve to active teams/employees in the same organization; neither project contribution membership nor the individual's home team is an assignment restriction or an access grant. An employee's later home-team move does not silently change the task's assigned team.
 - Creator, assigned team, assignee and the assignee's home team do not determine ownership. A Payments-owned task can be assigned to Platform and Ana without changing its owner or number. A director may assign a team task to another director without creating an artificial project. Owning-team backlog queries use `team_id`; work queues use `assigned_team_id` and/or `assignee_id`.
-- The reporter/originator is the task's immutable `created_by_kind`/`created_by_id`, populated from the admitted actor. `updated_by_*` describes only the latest change. [Task assignment and history](12-task-assignment-and-history.md) preserves previous assignments, status changes and their actors/times; it also distinguishes a recorded fix/closure actor from the current assignee.
+- The reporter/originator is the task's immutable `created_by_kind`/`created_by_id`, populated from the admitted actor. `updated_by_*` describes only the latest change. [Task assignment and history](doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md) preserves previous assignments, status changes and their actors/times; it also distinguishes a recorded fix/closure actor from the current assignee.
 - A project task can have zero or one feature and zero or one milestone, both from the same project. Team tasks have neither. Feature and milestone membership are independent.
 - A feature belongs to one project and has a numeric reference such as `F-6`. Its file stores project-unique `local_slug: table-booking`. The public feature `slug` is derived automatically as `reservations/table-booking` using the project slug, making it unique within the organization.
 - A bug is `type: bug`; `severity` is optional metadata for triage. A request is `type: request`. Changing type preserves the task's ID, number, comments and relationships. Additional types do not require new SQL tables; their workflow behaviour remains out of scope.
-- A project task may name the issued document versions it brings the code in line with, in `realizes[]`. The record and the derived convergence of a version are owned by [document 18](18-development-processes-and-project-documentation.md#tasks-that-realize-a-version).
+- A project task may name the issued document versions it brings the code in line with, in `realizes[]`. The record and the derived convergence of a version are owned by [document 18](doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md#tasks-that-realize-a-version).
 - A task can target zero or many organization repositories. For project tasks each target must appear in that project's repository associations; this cross-table rule is validated on projection and publication. Team tasks may target registered repositories without an artificial project. Each target can have a separate branch/worktree.
 
 ```text
@@ -126,7 +126,7 @@ The team path includes its full ancestor chain. Task scope and path must agree; 
 
 ### Selected assignment snapshot admission
 
-[ADR-0006 revision 4](../../adr/0006-selected-task-acceptance.md) selects an additive
+[ADR-0006 revision 4](../../decisions/decision-6%20-%20ADR-0006-Task-changes-are-accepted-through-one-recoverable-office-journal.md) selects an additive
 source-preserving editor for assignment. Snapshot schema version remains independent
 of event codec version. Preserve the exact public Markdown, including BOM, fences,
 line endings, extension spellings and body. Assignment replaces only the scalar
@@ -145,10 +145,10 @@ Unsupported forms and numbers rejected by the safe parser are refused with the r
 Profile `selected-task-resources/1` retains front matter <=64 KiB, depth <=16 and
 <=10,000 parser events; body <=8 MiB. The profile is recorded in admission/history
 metadata, not a seventh mutable property. Only classified public snapshots can
-enter [history snapshot representations](05-operational-data.md#exact-public-snapshots).
+enter [history snapshot representations](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#exact-public-snapshots).
 IDs are never renamed, and an ID is never concatenated unchecked into a filesystem path.
 
-Task token/cost totals are derived from the [usage ledger](10-usage-and-cost-accounting.md), including reviewers/helpers and retained task identities after archival. They are not counters stored on task files. Attribution captures work scope and Build/Run classification when consumption occurs, rather than joining to the task's current parents later.
+Task token/cost totals are derived from the [usage ledger](doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md), including reviewers/helpers and retained task identities after archival. They are not counters stored on task files. Attribution captures work scope and Build/Run classification when consumption occurs, rather than joining to the task's current parents later.
 
 ## Task file example
 
@@ -188,9 +188,9 @@ links: []
 Reject overlapping reservations for the same table. Include concurrent requests in the tests.
 ```
 
-The readable reference is derived as `T-A42`, and all foreign references use the stable ID. Comments live as append-only files under `comments/<comment-id>.md`, and checklist items and operational state live in `checklist.yaml` and `operations.yaml` beside `task.md` ([document 05](05-operational-data.md#shared-metadata-file-location)). To represent a projectless request, set `type: request`, keep required `team_id`, set `project_id`, `feature_id` and `milestone_id` to null, and save under that team's `work/tasks/<task-id>/`. All child metadata uses `target_kind: task`, including for bugs and requests; `type` is a classification, not an entity kind.
+The readable reference is derived as `T-A42`, and all foreign references use the stable ID. Comments live as append-only files under `comments/<comment-id>.md`, and checklist items and operational state live in `checklist.yaml` and `operations.yaml` beside `task.md` ([document 05](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#shared-metadata-file-location)). To represent a projectless request, set `type: request`, keep required `team_id`, set `project_id`, `feature_id` and `milestone_id` to null, and save under that team's `work/tasks/<task-id>/`. All child metadata uses `target_kind: task`, including for bugs and requests; `type` is a classification, not an entity kind.
 
-Tasks and features may be created in any office. A task gets its final reference from the creating office at once ([document 06](06-identity-and-numbering.md#multiple-offices)); what follows about registration applies to features. Persist their stable IDs and content immediately; final numbers and feature-slug uniqueness are registered through the shared organization authority. Pending local records remain usable by ID. A duplicate local feature slug in the same project requires explicit conflict resolution at registration; the project prefix prevents conflicts across different projects, not within the same project.
+Tasks and features may be created in any office. A task gets its final reference from the creating office at once ([document 06](doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md#multiple-offices)); what follows about registration applies to features. Persist their stable IDs and content immediately; final numbers and feature-slug uniqueness are registered through the shared organization authority. Pending local records remain usable by ID. A duplicate local feature slug in the same project requires explicit conflict resolution at registration; the project prefix prevents conflicts across different projects, not within the same project.
 
 ```yaml
 schema_version: 1
@@ -205,7 +205,7 @@ title: Table booking
 status: planned
 ```
 
-Save this feature at `projects/<project-id>/features/<feature-id>/feature.md`. Its Markdown body is the current feature definition, with sections for Purpose, How it works, Rules, Known limitations, and Non-goals. Keep detailed designs and decisions in supporting documents under the same feature folder; their association is explicit `feature_id`, not merely a Markdown link. See [document scopes and example](02-project-structure.md).
+Save this feature at `projects/<project-id>/features/<feature-id>/feature.md`. Its Markdown body is the current feature definition, with sections for Purpose, How it works, Rules, Known limitations, and Non-goals. Keep detailed designs and decisions in supporting documents under the same feature folder; their association is explicit `feature_id`, not merely a Markdown link. See [document scopes and example](doc-76%20-%20Organization-Data-02-—-Project-Structure.md).
 
 For table booking, the definition explains how a guest selects a table and time, what happens when availability changes, and limitations such as unsupported combined-table bookings. The feature's overlap-handling design documents the detailed concurrency mechanism. In Product Agency, shared authentication architecture belongs to the Care Platform project, while appointment reminder behaviour and its delivery limitations belong to that feature. Both examples use the same structure.
 
@@ -250,7 +250,7 @@ erDiagram
 
 `record_refs` is a derived lookup index across entity types, not another authored work entity. Bugs and requests register as `kind: task`, never as separate entity kinds. It allows shared metadata to point to `(target_kind, target_id)`. Before publishing a projection, validation must confirm each live lookup row has an actual source entity and each deleted row has a tombstone. Historical author/link references may resolve to tombstones.
 
-Task comments, checklist entries and activity records are defined in [operational data](05-operational-data.md). Their attachment to task identity does not make them separate work entities.
+Task comments, checklist entries and activity records are defined in [operational data](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md). Their attachment to task identity does not make them separate work entities.
 
 ## File to SQL mapping
 
@@ -260,16 +260,16 @@ Task comments, checklist entries and activity records are defined in [operationa
 | `feature_slugs` (view) | Derived from each feature's `project_id` and `local_slug`, joined to its project's `slug`; no authored file. |
 | `tasks` | Task front matter: every same-named scalar except derived `key`, plus body. Required owning `team_id`, optional `project_id`, nullable current `assigned_team_id` and `assignee_id`; `type` defaults to `task`, `priority` to `normal`, optional fields to null. Reporter/originator uses immutable `created_by_*`. |
 | `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task ID comes from the task file; project repository eligibility is validated through its optional project. |
-| `task_document_versions` | `realizes[]`: one row per `{document_id, version}`; defined in [document 18](18-development-processes-and-project-documentation.md). |
-| `links` | Source `links[]` is defined in [record contracts](08-record-contracts.md); projects/features/documents also support links. `implements`, `documents` and inverse `blocks` are derived rather than duplicated. |
-| `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](05-operational-data.md#task-activity-history) remain. References describe historical identity and do not require live owner records. |
+| `task_document_versions` | `realizes[]`: one row per `{document_id, version}`; defined in [document 18](doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md). |
+| `links` | Source `links[]` is defined in [record contracts](doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md); projects/features/documents also support links. `implements`, `documents` and inverse `blocks` are derived rather than duplicated. |
+| `tombstones` | `tombstones/<kind>/<id>.yaml`: identity, scope and terminal-state scalars; the `record_metadata` map projects into `record_metadata_json`. Task tombstones retain reporter metadata, the last assignment pair and the last task revision; their [task events](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#task-activity-history) remain. References describe historical identity and do not require live owner records. |
 | `record_refs` | Derived from parsed entities/tombstones; no extra authored file. |
 
 **Priority and effort.** Every task has a `priority` from the closed list `urgent`, `high`, `normal`, `low`; the default is `normal` and the list is the same for every task type. A task may have an `effort`: a whole number of points, zero or more, set by whoever estimates it; empty means not estimated. The product attaches no meaning to the scale, so a team may count story points or hours. Both are ordinary task fields: changing one is recorded in task history, and neither changes automatically.
 
-**Task status is one closed list:** `todo`, `in_progress`, `blocked`, `cancelled`, `done`, the same for every task type. `done` is the last value. A task is finished when it is `done` or `cancelled`, and both count as done for milestone and release completion ([document 02](02-project-structure.md#completion-of-milestones-and-releases)). An authorized person or agent sets the status, and the change is recorded in task history. Nothing changes it automatically. `resolution` keeps the reason a task was closed, for example duplicate or will not fix. Feature status stays `planned | in_progress | live | retired`. This document does not implement triage, Undo, checklist promotion, automatic feature transitions or a request-approval engine.
+**Task status is one closed list:** `todo`, `in_progress`, `blocked`, `cancelled`, `done`, the same for every task type. `done` is the last value. A task is finished when it is `done` or `cancelled`, and both count as done for milestone and release completion ([document 02](doc-76%20-%20Organization-Data-02-—-Project-Structure.md#completion-of-milestones-and-releases)). An authorized person or agent sets the status, and the change is recorded in task history. Nothing changes it automatically. `resolution` keeps the reason a task was closed, for example duplicate or will not fix. Feature status stays `planned | in_progress | live | retired`. This document does not implement triage, Undo, checklist promotion, automatic feature transitions or a request-approval engine.
 
-Private notes attached to tasks are a required, separate capability defined by [operational data](05-operational-data.md#private-notes-attached-to-tasks), including acceptance criteria PN-01–06. Shared [comments](05-operational-data.md) do not satisfy that requirement; [document 05](05-operational-data.md#private-notes-attached-to-tasks) and [private-notes-schema.sql](private-notes-schema.sql) define separate private storage. Runtime access controls still require implementation.
+Private notes attached to tasks are a required, separate capability defined by [operational data](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#private-notes-attached-to-tasks), including acceptance criteria PN-01–06. Shared [comments](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md) do not satisfy that requirement; [document 05](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#private-notes-attached-to-tasks) and [private-notes-schema.sql](../../../docs/design/organization-data/private-notes-schema.sql) define separate private storage. Runtime access controls still require implementation.
 
 Bugs and requests are tasks with the corresponding `type` from the start; there are no separate bug or request records to map.
 
@@ -528,4 +528,4 @@ erDiagram
     }
 ```
 
-[Budgets and controls](17-budgets-and-controls.md) now selects the budget data model. Policy/extension/hold records must survive office cache loss; automatic pausing/evaluation still requires service implementation. Other deferred features remain unchanged.
+[Budgets and controls](doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md) now selects the budget data model. Policy/extension/hold records must survive office cache loss; automatic pausing/evaluation still requires service implementation. Other deferred features remain unchanged.

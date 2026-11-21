@@ -10,16 +10,16 @@ status: accepted
 # ADR-0002 · Storage: SQLite with one batching writer per database
 
 Status: accepted; decision 1's SQLCipher requirement is superseded by
-[ADR-0016](0016-no-application-level-data-encryption.md) (the workspace no longer builds
-SQLCipher). Refines [ADR-0001](0001-app-is-a-client-office-is-a-server.md); the office
+[ADR-0016](decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) (the workspace no longer builds
+SQLCipher). Refines [ADR-0001](decision-1%20-%20ADR-0001-The-app-is-a-client-offices-serve-organization-data.md); the office
 acceptance journal and projection split are governed by
-[ADR-0021](0021-office-store-architecture.md).
+[ADR-0021](decision-21%20-%20ADR-0021-The-office-store-one-journal-of-file-changes-a-projection-rebuilt-from-files.md).
 Where data lives on disk is owned by the
-[organization-data storage contract](../design/organization-data/README.md#shared-storage-contract):
+[organization-data storage contract](../docs/organization-data/doc-72%20-%20Organization-Data-—-README.md#shared-storage-contract):
 one root, with sources under `durable/` and the database projection under
 `runtime/<office-id>/`. The database engine is replaceable behind store adapters
-([ADR-0018](0018-storage-engine-independence.md)). Organization data is not
-encrypted by the application ([ADR-0016](0016-no-application-level-data-encryption.md)).
+([ADR-0018](decision-18%20-%20ADR-0018-The-storage-engine-is-replaceable-PostgreSQL-must-be-possible.md)). Organization data is not
+encrypted by the application ([ADR-0016](decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)).
 
 ## Context
 
@@ -35,7 +35,7 @@ encrypted by the application ([ADR-0016](0016-no-application-level-data-encrypti
 1. **Engine: SQLite through `rusqlite`.** Only the authorized storage service opens
    its database; browser and agent clients use its domain operations (ADR-0001).
    The separate private-note store enforces its own reading rule (the author and
-   people, never another agent, [ADR-0031](0031-any-employee-changes-tasks.md)) rather
+   people, never another agent, [ADR-0031](decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md)) rather
    than reusing broad shared-task reads.
 2. **Concurrency: one writer per database.** The server keeps one write connection
    on one thread and sends every write to it through a channel. Reads use their own
@@ -56,7 +56,7 @@ encrypted by the application ([ADR-0016](0016-no-application-level-data-encrypti
    Requests that had already failed keep their own error.
 4. **Durability follows the operation's declared class.** WAL is used. Each
    operation is either committed-class or durable-class, as
-   [ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) lists. A
+   [ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) lists. A
    committed-class request is acknowledged once its transaction commits, and the
    writer forces a full flush within a bounded interval. A durable-class request
    is acknowledged only after a full flush; on macOS that means `fullfsync`,
@@ -113,7 +113,7 @@ before its runtime cache can be discarded.
 - Each database has one writer. Readers use WAL. Acknowledgements follow the
   operation's declared class, and failures never manufacture successful receipts.
 - The private-note store adds a distinct authorization and recovery boundary.
-  Under [ADR-0031](0031-any-employee-changes-tasks.md), a private note is read by
+  Under [ADR-0031](decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md), a private note is read by
   its author and by people who can read the task (read-only for non-authors), and
   never by another agent regardless of assignee, team-lead, or role status; only
   the author edits or deletes a note.
@@ -121,9 +121,9 @@ before its runtime cache can be discarded.
   budget extensions, independent holds, numbering allocations and live processes,
   as well as successful SQL replay.
 - Full source contracts are
-  [private notes](../design/organization-data/05-operational-data.md#private-notes-attached-to-tasks),
-  [accounting](../design/organization-data/10-usage-and-cost-accounting.md),
-  [execution](../design/organization-data/11-model-profiles-and-agent-execution.md),
-  [messaging](../design/organization-data/15-messaging-and-chat.md),
-  [recovery](../design/organization-data/16-recovery-and-office-continuity.md) and
-  [budgets](../design/organization-data/17-budgets-and-controls.md).
+  [private notes](../docs/organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#private-notes-attached-to-tasks),
+  [accounting](../docs/organization-data/doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md),
+  [execution](../docs/organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md),
+  [messaging](../docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md),
+  [recovery](../docs/organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md) and
+  [budgets](../docs/organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md).

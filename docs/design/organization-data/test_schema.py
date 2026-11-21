@@ -10,9 +10,38 @@ from pathlib import Path
 import re
 import sqlite3
 import unittest
+from urllib.parse import unquote
 
 
 ROOT = Path(__file__).resolve().parent
+DOCS_ROOT = ROOT.parents[2] / ".backlog" / "docs" / "organization-data"
+NUMBERED_DOC_RE = re.compile(r"Organization-Data-(\d{2})-")
+
+
+def numbered_org_data_docs():
+    matched = []
+    for path in DOCS_ROOT.glob("doc-*Organization-Data-[0-9][0-9]-*.md"):
+        match = NUMBERED_DOC_RE.search(path.name)
+        if match:
+            matched.append((int(match.group(1)), path))
+    matched.sort(key=lambda item: item[0])
+    if len(matched) != 18:
+        raise AssertionError(f"Expected 18 numbered organization-data docs in {DOCS_ROOT}, found {len(matched)}")
+    return matched
+
+
+def org_data_doc(number):
+    for doc_number, path in numbered_org_data_docs():
+        if doc_number == number:
+            return path
+    raise AssertionError(f"Missing organization-data doc {number:02d} in {DOCS_ROOT}")
+
+
+def schema_coverage_doc():
+    matches = sorted(DOCS_ROOT.glob("doc-74*.md"))
+    if len(matches) != 1:
+        raise AssertionError(f"Expected 1 doc-74 schema coverage doc in {DOCS_ROOT}, found {len(matches)}")
+    return matches[0]
 
 
 def canonical(value):
@@ -162,21 +191,24 @@ class DraftSchemaTests(unittest.TestCase):
 
         shared_sections = []
         isolated_docs = {
-            "15-messaging-and-chat.md": "messaging-schema.sql",
-            "17-budgets-and-controls.md": "budgets-schema.sql",
+            15: "messaging-schema.sql",
+            17: "budgets-schema.sql",
         }
-        for path in sorted(ROOT.glob("[0-9][0-9]-*.md")):
+        seen_isolated = set()
+        for doc_number, path in numbered_org_data_docs():
             sql_blocks = re.findall(r"```sql\n(.*?)\n```", path.read_text(), re.S)
-            if path.name in isolated_docs:
+            if doc_number in isolated_docs:
+                seen_isolated.add(doc_number)
                 doc_conn = sqlite3.connect(":memory:")
                 self.addCleanup(doc_conn.close)
                 doc_conn.executescript("\n".join(sql_blocks))
-                schema_conn = database(isolated_docs[path.name])
+                schema_conn = database(isolated_docs[doc_number])
                 self.addCleanup(schema_conn.close)
-                with self.subTest(document=path.name, schema=isolated_docs[path.name]):
+                with self.subTest(document=path.name, schema=isolated_docs[doc_number]):
                     self.assertEqual(definitions(doc_conn), definitions(schema_conn))
             else:
                 shared_sections.extend(sql_blocks)
+        self.assertEqual(seen_isolated, set(isolated_docs))
 
         documented = sqlite3.connect(":memory:")
         self.addCleanup(documented.close)
@@ -201,15 +233,15 @@ class DraftSchemaTests(unittest.TestCase):
         self.addCleanup(messaging.close)
         budgets = database("budgets-schema.sql")
         self.addCleanup(budgets.close)
-        for path in ROOT.glob("[0-9][0-9]-*.md"):
+        for doc_number, path in numbered_org_data_docs():
             for diagram in re.findall(r"```mermaid\n(.*?)\n```", path.read_text(), re.S):
                 for table, body in re.findall(r"^    (\w+) \{\n(.*?)^    \}", diagram, re.M | re.S):
                     columns = re.findall(r"^        \w+ (\w+)", body, re.M)
                     if table.startswith("private_"):
                         owner = private
-                    elif path.name == "15-messaging-and-chat.md":
+                    elif doc_number == 15:
                         owner = messaging
-                    elif path.name == "17-budgets-and-controls.md":
+                    elif doc_number == 17:
                         owner = budgets
                     else:
                         owner = self.db
@@ -706,12 +738,26 @@ class DraftSchemaTests(unittest.TestCase):
                        "UPDATE process_cleanup_records SET execution_process_id='process' WHERE id='other'")
 
     def test_relative_document_links_exist(self):
-        for path in ROOT.glob("*.md"):
-            for target in re.findall(r"\]\(([^)]+)\)", path.read_text()):
-                target = target.split("#", 1)[0]
-                if target and not re.match(r"[a-z]+://", target):
-                    with self.subTest(document=path.name, target=target):
-                        self.assertTrue((path.parent / target).exists())
+        docs = sorted(DOCS_ROOT.glob("*.md"))
+        self.assertGreaterEqual(len(docs), 21)
+        for path in docs:
+            in_fence = False
+            for line in path.read_text().splitlines():
+                if line.lstrip().startswith(("```", "~~~")):
+                    in_fence = not in_fence
+                    continue
+                if in_fence:
+                    continue
+                for target in re.findall(r"\]\(([^)]+)\)", line):
+                    target = target.strip()
+                    if target.startswith("<") and ">" in target:
+                        target = target[1:target.index(">")]
+                    else:
+                        target = target.split(' "', 1)[0].strip()
+                    target = unquote(target.split("#", 1)[0])
+                    if target and not re.match(r"[a-z]+://", target) and not target.startswith("mailto:"):
+                        with self.subTest(document=path.name, target=target):
+                            self.assertTrue((path.parent / target).exists())
 
 
 class IntegrityAuditTests(unittest.TestCase):
@@ -745,7 +791,7 @@ class IntegrityAuditTests(unittest.TestCase):
         self.db.commit()
 
     def test_execution_definitions_are_in_the_consolidated_schema(self):
-        documented = "\n\n".join(re.findall(r"```sql\n(.*?)\n```", (ROOT / "11-model-profiles-and-agent-execution.md").read_text(), re.S))
+        documented = "\n\n".join(re.findall(r"```sql\n(.*?)\n```", org_data_doc(11).read_text(), re.S))
         normalize = lambda value: re.sub(r"\s+", "", value).lower()
         self.assertIn(normalize(documented), normalize((ROOT / "schema.sql").read_text()))
 
@@ -791,7 +837,7 @@ class IntegrityAuditTests(unittest.TestCase):
         self.addCleanup(messaging.close)
         budgets = database("budgets-schema.sql")
         self.addCleanup(budgets.close)
-        coverage = (ROOT / "SCHEMA-COVERAGE.md").read_text()
+        coverage = schema_coverage_doc().read_text()
         for db in (self.db, private, messaging, budgets):
             for (name,) in db.execute("SELECT name FROM sqlite_schema WHERE type IN ('table','view')"):
                 self.assertIn(f"`{name}`", coverage)

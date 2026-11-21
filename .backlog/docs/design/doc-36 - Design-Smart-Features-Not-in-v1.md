@@ -17,15 +17,15 @@ tags:
 The copilot drafts text for a person to review and confirm. It has no domain write
 path. `crates/org-copilot` holds its registry, rendering, validation and limits.
 Execution, accounting and budgets follow the data contract:
-[execution](organization-data/11-model-profiles-and-agent-execution.md),
-[provider pools](organization-data/14-model-providers-and-connection-pools.md),
-[accounting](organization-data/10-usage-and-cost-accounting.md),
-[recovery](organization-data/16-recovery-and-office-continuity.md) and
-[budgets](organization-data/17-budgets-and-controls.md).
+[execution](../organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md),
+[provider pools](../organization-data/doc-89%20-%20Organization-Data-14-—-Model-Providers-and-Connection-Pools.md),
+[accounting](../organization-data/doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md),
+[recovery](../organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md) and
+[budgets](../organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md).
 
 The copilot is parked: the library stays compiling and tested, and it is wired to a
 model only after the first vendor runtime adapter exists
-([project structure](project-structure.md#libraries-built-but-not-yet-reached)).
+([project structure](doc-68%20-%20Design-v1-Project-Structure.md#libraries-built-but-not-yet-reached)).
 
 ## What it offers
 
@@ -42,7 +42,7 @@ own registry entry, schemas and authorized context.
 
 Two uses of the same tool-less run are not drafts for a person. They are judgments the
 product makes itself, defined by
-[ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md):
+[ADR-0024](../../decisions/decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md):
 
 - **The channel watcher's pass:** which new message in a channel responds to which
   open question. Its only effect is entries in the askers' inboxes.
@@ -148,7 +148,7 @@ receive the same schema, but the crate always validates.
 #### 2. `bug.from_sentence` (implemented library entry, version 2)
 
 The draft fills the form that creates a task of type bug
-([task data](organization-data/03-features-and-work.md)): required accountable team,
+([task data](../organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md)): required accountable team,
 optional project, immutable reporter, and independent assignment. A project bug's
 accountable team is the project's owner team.
 
@@ -207,7 +207,7 @@ exists, real copilot execution is unavailable.
 Usage, partial or unavailable, and the route are recorded in the accounting archive,
 including timed-out attempts. Budget holds apply as for any execution, unknown usage
 warns rather than counting as free, and release caps warn only. Amounts are visible
-under the [cost access rules](../specs/costs-and-insights-ux.md).
+under the [cost access rules](../specs/doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md).
 
 ### The contract
 

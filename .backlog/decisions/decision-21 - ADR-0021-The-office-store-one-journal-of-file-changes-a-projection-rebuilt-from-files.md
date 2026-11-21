@@ -14,17 +14,17 @@ status: implemented
 Status: **accepted** 2026-11-18, answering the owner's request to define the store's new
 architecture ("without unnecessary coupling", "without over-engineering"); accepted when
 the Track B lead took B1a. Implementation in progress: increments B1a to B1c of the
-[implementation plan](../implementation-plan.md). The design is the
-[office store](../design/office-store.md). This record states the choices that
-[ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md),
-[ADR-0006](0006-selected-task-acceptance.md),
-[ADR-0014](0014-acknowledgement-classes-and-agent-os-latency.md) and
-[ADR-0018](0018-storage-engine-independence.md) leave open.
+[implementation plan](../docs/doc-5%20-%20v1-Implementation-Plan.md). The design is the
+[office store](../docs/design/doc-66%20-%20Design-Office-Store-Architecture.md). This record states the choices that
+[ADR-0002](decision-2%20-%20ADR-0002-Storage-SQLite-with-one-batching-writer-per-database.md),
+[ADR-0006](decision-6%20-%20ADR-0006-Task-changes-are-accepted-through-one-recoverable-office-journal.md),
+[ADR-0014](decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) and
+[ADR-0018](decision-18%20-%20ADR-0018-The-storage-engine-is-replaceable-PostgreSQL-must-be-possible.md) leave open.
 
 ## Context
 
 - Files are the source and the database is a projection that can be deleted
-  ([non-negotiables](../architecture-non-negotiables.md) 1 and 2). ADR-0014 decision 6
+  ([non-negotiables](../docs/doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md) 1 and 2). ADR-0014 decision 6
   makes a journal under `durable/` the commit point and lets files follow.
 - Today's store (`crates/org-office/src/store.rs` and `store/`, 14,694 lines outside
   tests) keeps the old tables as the source in two plain SQLite databases (SQLCipher
@@ -116,7 +116,7 @@ the Track B lead took B1a. Implementation in progress: increments B1a to B1c of 
 - Since B1b the running office is on this store: HQ creation is the journal's first
   entry, the organization's files are under `durable/state/`, the projection under
   `runtime/<office-id>/` is rebuilt when deleted, and the host confirms the journal head
-  once per flush ([office store](../design/office-store.md) section 11). The old store,
+  once per flush ([office store](../docs/design/doc-66%20-%20Design-Office-Store-Architecture.md) section 11). The old store,
   its two databases and the SQL outside `src/store/sqlite/` are deleted;
   `crates/org-office/tests/engine_boundary.rs` keeps it so (ENG-1 for the office).
 - Calls only the old tables served answer `unsupported` until their family is on the

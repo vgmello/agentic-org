@@ -16,12 +16,12 @@ tags:
 # Design: the standalone Agentic Org server
 
 How the server is released, installed, started and reached. It implements the
-[server installation and access UX](../specs/server-installation-and-access-ux.md)
-and [ADR-0005](../adr/0005-standalone-server-v1.md). The programs and their jobs are
-fixed by the [architecture non-negotiables](../architecture-non-negotiables.md);
-[project structure](project-structure.md) owns the code layout. macOS and Linux,
+[server installation and access UX](../specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md)
+and [ADR-0005](../../decisions/decision-5%20-%20ADR-0005-Standalone-server-HQ-web-application-and-named-instances.md). The programs and their jobs are
+fixed by the [architecture non-negotiables](../doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md);
+[project structure](doc-68%20-%20Design-v1-Project-Structure.md) owns the code layout. macOS and Linux,
 including a Linux container, are both v1 hosts
-([ADR-0017](../adr/0017-linux-and-container-hosting.md)): where this document names
+([ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md)): where this document names
 launchd, the Keychain or a code signature, that is the macOS adapter of a platform
 contract, and the Linux adapter is the one ADR-0017 names.
 
@@ -91,7 +91,7 @@ signing key; a checksum from an unauthenticated source is not enough.
 
 ### Browser listener and privilege boundary
 
-The [browser BFF design](rust-browser-bff-and-static-sveltekit.md) keeps browser
+The [browser BFF design](doc-69%20-%20Design-Rust-Browser-BFF-and-Static-SvelteKit-Architecture.md) keeps browser
 response mapping in the web process and use cases in their owning Rust modules.
 
 One `agentic-org-web` per instance terminates browser HTTP and TLS, serves the UI
@@ -139,7 +139,7 @@ authorized owner (OFC-7).
 `apps/agentic-org/` owns the human CLI and the `serve` composition; there is no
 separate setup package. Release staging selects this CLI's artifact.
 
-The release verifier follows [ADR-0009](../adr/0009-complete-release-verification.md).
+The release verifier follows [ADR-0009](../../decisions/decision-9%20-%20ADR-0009-Authenticated-complete-release-bundles.md).
 Its private release store is separate from organization data and from input bundles.
 It uses owner-only `staging/`, `releases/`, `intents/` and `pins/` directories under a
 protected store, serialized by `store.lock`. Completed release trees are read-only. A
@@ -159,7 +159,7 @@ build without them embeds no publisher trust and cannot activate a production
 release; a malformed input fails the build.
 
 There is no reverse bootstrap connection
-([ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md)). Setup
+([ADR-0022](../../decisions/decision-22%20-%20ADR-0022-The-service-host-creates-its-own-registry-setup-has-no-reverse-bootstrap.md)). Setup
 registers and starts the service; the service host (`agentic-org serve --name <name>`)
 creates its own registry at first start, holding the instance and host locks it keeps
 for its whole run, so no unlocked window exists between creation and service. The
@@ -175,7 +175,7 @@ macOS; the debug executable allowance is debug-only). The secret travels only in
 reply. The setup adapter admits loopback HTTP and plain HTTP on a published port
 without a TLS pair; for HTTPS the instance makes its own certificate at its first start
 or imports a pair the setup file supplies, verified by the host's certificate verifier
-([Linux host design](linux-host.md#34-service-lifecycle), ADR-0017 decision 10).
+([Linux host design](doc-64%20-%20Design-Linux-and-Container-Hosting.md#34-service-lifecycle), ADR-0017 decision 10).
 
 ## 3. Instance selection and storage
 
@@ -205,7 +205,7 @@ Instance configuration is managed by the server and readable only by authorized 
 users. It names office IDs, the release pin, endpoints and references to credentials,
 never inline private keys. Binaries live outside mutable data.
 
-The [storage contract](organization-data/README.md#shared-storage-contract) owns the
+The [storage contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md#shared-storage-contract) owns the
 layout of each organization's data root: one root, with sources under `durable/` and
 rebuildable caches under `runtime/<office-id>/`:
 
@@ -233,7 +233,7 @@ rebuildable caches under `runtime/<office-id>/`:
 The acceptance journal holds every acknowledged change until its files are written
 and flushed; there is no separate `journal/` tree. The office store writes it at
 `durable/recovery/offices/<office-id>/journals/acceptance/<journal-incarnation>/`
-([office store](office-store.md) section 1; `crates/org-store/src/journal.rs`).
+([office store](doc-66%20-%20Design-Office-Store-Architecture.md) section 1; `crates/org-store/src/journal.rs`).
 
 Nothing under `durable/` sits inside a directory that cache cleanup removes; cleanup
 is limited to `runtime/<office-id>/`. Organization Git is remote, with an explicit
@@ -268,12 +268,12 @@ because HQ's saved address is part of enrollment.
 Credential names, key sweeps, cleanup, logs and process ownership include instance
 and office identities. A host sweeps only its own catalog. Office storage and
 configuration are not readable by agents just because they share a root. Agents run
-in the isolation mode of [ADR-0015](../adr/0015-agent-isolation-modes.md):
+in the isolation mode of [ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md):
 `same-user`, or `dedicated-user`, an OS account that setup provisions and that
 cannot read the organization's sources. Each agent has a private home under
 `durable/local/offices/<office-id>/agents/<employee-id>/home/`. Organization data is
 not encrypted by the application; disk encryption, private file permissions and the
-isolation mode protect it ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)).
+isolation mode protect it ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)).
 Sharing an OS user is not an isolation boundary between instances.
 
 ## 4. Setup and service lifecycle
@@ -292,7 +292,7 @@ link to the instance's own address. Setup asks for no username and no password a
 creates no account, organization or office. The link works once, expires after 24
 hours, and is stored at the host only as a digest; whoever opens it chooses a
 username and a password in the browser and becomes the administrator
-([installation UX](../specs/server-installation-and-access-ux.md) §4a.2).
+([installation UX](../specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) §4a.2).
 `agentic-org admin reset` on the server machine issues a new link, which cancels the
 previous one: a registration link while no administrator exists, and afterwards a
 set-new-password link for the administrator's account and no other. Service
@@ -308,7 +308,7 @@ only: the absolute paths of a supplied PEM certificate chain and key, which setu
 verifies before any change and the host imports at its first start; never the key
 itself) and `credentials` (the
 absolute directory of the Linux credential store, required on Linux;
-[Linux host design](linux-host.md#32-credential-provider)). Configuration is at most 64 KiB. Missing required input fails without a
+[Linux host design](doc-64%20-%20Design-Linux-and-Container-Hosting.md#32-credential-provider)). Configuration is at most 64 KiB. Missing required input fails without a
 prompt. Noninteractive setup prints no link; its status reports
 `administrator: none` until `agentic-org admin reset` is run in a terminal. A
 container can run setup this way, without a terminal and offline. Unsupported
@@ -345,7 +345,7 @@ offline instance still registers its repository as remote: creation checks URL a
 branch syntax and local credential configuration only, never fetches, probes Git
 authentication or discovers provider models, and saves the registration with
 connectivity and publication unverified
-([create organization](create-organization.md)). Local service readiness is distinct
+([create organization](doc-30%20-%20Design-Create-Organization.md)). Local service readiness is distinct
 from repository publication and provider readiness. There is no local-only
 organization repository fallback.
 
@@ -373,7 +373,7 @@ instance already has an administrator. A satellite-only host starts its account
 registry with no accounts. No web child or new HQ is created. Unattended enrollment may stay
 `awaiting_approval`.
 
-The satellite generates and keeps its TLS identity key ([offices design](offices-hq-and-satellites.md)),
+The satellite generates and keeps its TLS identity key ([offices design](doc-67%20-%20Design-Offices-HQ-and-Satellites.md)),
 wrapped with its office secrets key. Each irreversible step has a durable operation
 ID and completion marker. The satellite stores its TLS identity key, request and
 invitation key, and writes `office.json` (`state: pending`), before sending the
@@ -420,7 +420,7 @@ stores, credentials, unresolved communication and code checkpoints.
 
 ## 5. HTTP and browser contract
 
-The `/api/v1` surface and its conformance fixtures are in [web-api-v1.md](web-api-v1.md).
+The `/api/v1` surface and its conformance fixtures are in [web-api-v1.md](doc-71%20-%20Design-Web-HTTP-API-v1.md).
 A capability is advertised only when the real operation works.
 
 Static assets and `/api/v1/` are served from the same HQ origin. Hashed assets may be
@@ -437,7 +437,7 @@ Reads and commands are HTTP requests; server-to-browser events use one shared,
 authenticated streaming fetch per origin, coordinated across tabs (web API §6).
 Proofs never enter stream URLs. WebSocket is used only for a concrete duplex feature.
 There is no terminal in the browser
-([ADR-0004](../adr/0004-headless-agent-sessions.md)).
+([ADR-0004](../../decisions/decision-4%20-%20ADR-0004-Agent-sessions-run-headless-people-interact-through-chat.md)).
 
 Mutations carry stable operation IDs and expected versions. A durable acceptance
 records the operation ID, payload digest, principal, scope and outcome in one
@@ -473,7 +473,7 @@ reusable administration page and no reusable owner token in a URL.
 One-time links are a host-storage contract (`OneTimeLinks`,
 `crates/org-host/src/links.rs`) with a SQLite registry adapter and an in-memory
 adapter that pass one engine-independent suite
-([ADR-0018](../adr/0018-storage-engine-independence.md)):
+([ADR-0018](../../decisions/decision-18%20-%20ADR-0018-The-storage-engine-is-replaceable-PostgreSQL-must-be-possible.md)):
 
 - **Token.** 32 random bytes from the OS, written as unpadded base64url (exactly 43
   characters) after the link's `#`. Only canonical 43-character text parses; anything
@@ -509,7 +509,7 @@ same-origin requests; it never enters a URL, cookie, log or cross-origin redirec
 missing proof needs a new sign-in. Shared workers and tabs use the same origin-scoped
 session. Rotation and revocation cover both values; refresh needs the valid pair.
 Sessions are stored at the host as digests and survive restarts
-([ADR-0013](../adr/0013-stored-browser-sessions.md)). Authentication and crypto use
+([ADR-0013](../../decisions/decision-13%20-%20ADR-0013-Browser-sessions-are-stored-at-the-host-and-survive-restarts.md)). Authentication and crypto use
 maintained libraries and get a security review before release.
 
 Cookies use Secure, HttpOnly and SameSite attributes, expiry and origin checks.
@@ -537,7 +537,7 @@ connections are outbound, and HQ must be directly reachable.
 
 The host holds one office secrets key per office and passes it over the launch
 rendezvous; the office wraps its private keys with it
-([ADR-0016](../adr/0016-no-application-level-data-encryption.md)). The release keeps
+([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)). The release keeps
 separate key-access identities where the platform uses code signing; `agent-os`
 never gains the host's key entitlement. A missing or wrong key never causes a
 replacement key to be generated over existing data. An office without its secrets key
@@ -551,14 +551,14 @@ Before release, the platform adapters are proven with the real packaged binaries
   secrets in a host-only owner-only directory or a mounted secret volume, Landlock and
   seccomp confinement of the web process, process cleanup and service behaviour. The
   Linux admission check is weaker against a local attacker who can replace files as
-  the service user, and the product says so ([ADR-0017](../adr/0017-linux-and-container-hosting.md)).
+  the service user, and the product says so ([ADR-0017](../../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md)).
 - **Both:** a missing adapter or kernel feature refuses to start and says why; nothing
   runs unprotected. Backup guidance says to encrypt backups at their destination.
 
 ### CA escrow and the explicit recovery gate
 
 Creating an HQ organization creates its CA escrow and one owner recovery code
-([ADR-0007](../adr/0007-hq-creation-escrow.md), format REC-ESC-1). The code is
+([ADR-0007](../../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md), format REC-ESC-1). The code is
 generated server-side with high entropy and the escrow uses the reviewed
 Argon2id-encrypted format through maintained libraries. Only the encrypted CA
 package is replicated organization data; the code and the usable CA key never go to
@@ -584,7 +584,7 @@ resumes the same code and escrow. On acknowledgement the pending secret is erase
 never exposed again. A lost acknowledged code needs the separate recovery and
 rotation policy, never a redisplay or a setup reset.
 
-Protected delivery follows [ADR-0011](../adr/0011-protected-recovery-delivery.md)
+Protected delivery follows [ADR-0011](../../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md)
 (REC-DEL-1). The host registry keeps a versioned delivery ledger bound to the
 completed HQ reservation and the exact public package. It records delivery ordinals,
 showing dates and counts and the acknowledging actor and time, never the code. Each
@@ -628,7 +628,7 @@ re-certification, highest-epoch handling and fencing of a returning old HQ, reco
 of credentials, disclosure of data loss, reachable addresses) has no reviewed design
 yet. It must be designed and exercised before production HQ-loss recovery is claimed.
 The procedure inventories the protected sources of
-[document 16](organization-data/16-recovery-and-office-continuity.md): acknowledged
+[document 16](../organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md): acknowledged
 chat, usage, numbering allocations, mutation receipts, budget extensions and holds,
 and execution ownership. Private notes need their own authorized recovery path.
 Restoring Git or the CA escrow alone proves none of these complete, and a fresh
@@ -638,7 +638,7 @@ proof that HQ loss is recoverable.
 
 ## 7. HQ and satellite semantics
 
-The [offices design](offices-hq-and-satellites.md) owns the organization's single
+The [offices design](doc-67%20-%20Design-Offices-HQ-and-Satellites.md) owns the organization's single
 writer, deterministic apply, `(epoch, seq)` positions, snapshot replacement, work
 sequence allocation, origin incarnations, acknowledgements, deduplication, scoped
 backfill, ownership generations and handover. Local work commits while HQ is
@@ -659,16 +659,16 @@ another host's remote by copying a path. The server adds neither folder sync nor
 hosting. A cross-office coding claim needs a reachable transport and verified
 checkout, push and fetch; unpushed local work is kept in protected checkpoints.
 
-[Document 11](organization-data/11-model-profiles-and-agent-execution.md) owns
+[Document 11](../organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) owns
 execution: the office's internal supervisor, a logical controller and process slot
 per agent, the selected profile and model, ordered connection candidates, local
 bindings, shared connection permits, turns, attempts and processes, and durable
 placement fencing. Employee identity and home team are in `profile.md`; `execution.md`
 is separate and required to run. A completed turn or handoff does not close a task.
 
-[Chat](organization-data/15-messaging-and-chat.md) defines conversation membership
+[Chat](../organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md) defines conversation membership
 and per-message visibility; membership does not wake everyone.
-[Budgets](organization-data/17-budgets-and-controls.md) are data and control records:
+[Budgets](../organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md) are data and control records:
 incomplete usage is kept, manual, security and budget holds are independent, a
 pending stop differs from an acknowledged hold, and one-time extensions are durable.
 Release caps warn only. Cost access scopes and the agent's own-amount exception in
@@ -683,7 +683,7 @@ keys, bad signatures, cross-instance cleanup, port conflicts, interrupted enroll
 revoked or expired identity, incompatible versions, lost replies, stream gaps, slow
 clients, shutdown and orphan cleanup. Tests use temporary roots and fake runtimes;
 real runtime and signed-platform checks are explicit opt-in runs
-([dogfood run](../specs/dogfood-run.md)). The release walkthrough runs on macOS and on
+([dogfood run](../specs/doc-41%20-%20Spec-Dogfood-Acceptance-Walkthrough.md)). The release walkthrough runs on macOS and on
 Linux, including a container, and confirms no production mock fallback.
 
 ## What the code does today

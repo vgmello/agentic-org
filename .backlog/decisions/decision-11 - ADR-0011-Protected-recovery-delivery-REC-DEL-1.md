@@ -11,14 +11,14 @@ status: deferred
 
 Status: accepted, **deferred to v2** (owner decision D24, 2026-11-20; see
 `docs/FEATURES.md`). Builds on
-[ADR-0007](0007-hq-creation-escrow.md), whose code, KDF, envelope, CA identity,
+[ADR-0007](decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md), whose code, KDF, envelope, CA identity,
 worker-only key custody, public and private exclusions and retry rules are
 unchanged. This is not full recovery after losing HQ (REC-1).
 
 ## Requirement
 
-From the [standalone design](../design/standalone-server.md) and the
-[installation UX](../specs/server-installation-and-access-ux.md) (RCV-15, 19, 21,
+From the [standalone design](../docs/design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) and the
+[installation UX](../docs/specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) (RCV-15, 19, 21,
 22 and 25 to 27): the recovery code is released only to the signed native CLI, run
 by the instance's administrator for the local HQ, signed in by approving the run in
 a browser (no password in the terminal), with the OS user present at the
@@ -35,7 +35,7 @@ redisplayed or regenerated.
 `recovery.release` (with its `redeliver` parameter) and `recovery.acknowledge` are
 dispatched only through the native `host.sock` service to the verified signed
 `agentic-org` client; on Linux, which has no code identity for a client, to a peer
-with the service user's kernel UID ([ADR-0017](0017-linux-and-container-hosting.md)
+with the service user's kernel UID ([ADR-0017](decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md)
 decision 11), where loaded-image revalidation does not apply. Strict raw request
 decoding, the peer's kernel identity and, on macOS, loaded-image revalidation apply before and after the asynchronous OS confirmation
 and again immediately before the response and before deletion is authorized. No

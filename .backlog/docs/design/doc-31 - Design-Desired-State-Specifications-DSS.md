@@ -19,11 +19,11 @@ tags:
 
 How a person specifies software by talking to an agent, and how the specification
 stays the thing the code is held to. It implements the owner's
-[REQ-06](../specs/req-06-desired-state-spec-authoring-and-reconciliation.md) as a
-[development process](development-processes.md): the built-in development process `dss`. The general
+[REQ-06](../specs/doc-57%20-%20REQ-06-Desired-State-Specification-DSS-and-Factory-Reconciliation.md) as a
+[development process](doc-32%20-%20Design-Development-Processes-Process-Packages.md): the built-in development process `dss`. The general
 records it uses (the documentation tree, issued versions, code links and realizing
 tasks) are owned by
-[document 18](organization-data/18-development-processes-and-project-documentation.md) and
+[document 18](../organization-data/doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md) and
 are available to every development process.
 
 ## In one paragraph
@@ -56,7 +56,7 @@ converged when the tasks that realize it are finished.
    anyone. It asks the person only what neither answers, and writes the answer down so
    that it is not asked again.
 5. **Standards grow from decisions.** An answer that will be needed again becomes a
-   project standard, an ordinary record of the [process design](processes.md). It is
+   project standard, an ordinary record of the [process design](doc-34%20-%20Design-Organization-Processes-and-Standards.md). It is
    never a precondition for starting.
 6. **Staffing follows the specification.** The two leads are the whole team until both
    layers are issued. Only then do they ask for specialists.
@@ -64,7 +64,7 @@ converged when the tasks that realize it are finished.
 8. **Convergence is derived.** A version is converged when the tasks that realize it
    are finished. No one declares it.
 9. **The leads act because their skills tell them to.** The product starts nothing when
-   a version is issued ([development process design](development-processes.md), decision 2).
+   a version is issued ([development process design](doc-32%20-%20Design-Development-Processes-Process-Packages.md), decision 2).
 
 ## 1. The development process
 
@@ -140,7 +140,7 @@ name.
 The process uses releases and milestones, which is its choice, and does not use
 feature records: the Product DSS is the definition, and a
 task points at the versions it realizes. Software delivery by features is another
-development process ([development process design](development-processes.md#5-two-built-in-development-processes)).
+development process ([development process design](doc-32%20-%20Design-Development-Processes-Process-Packages.md#5-two-built-in-development-processes)).
 
 ## 3. The flow
 
@@ -150,7 +150,7 @@ development process ([development process design](development-processes.md#5-two
    change to what exists.
 2. The product lead reads the index and the documents the request touches, and asks
    what is unclear: choices and yes/no questions as structured asks
-   ([REQ-04](../specs/req-04-channel-messaging-and-question-components.md)), the rest
+   ([REQ-04](../specs/doc-55%20-%20REQ-04-Channel-Messaging-and-Question-Components.md)), the rest
    as conversation.
 3. It writes or edits the Product DSS documents. Edits are unissued changes; nothing
    downstream reads them.
@@ -161,7 +161,7 @@ development process ([development process design](development-processes.md#5-two
 ### 3.2 Derive
 
 5. The product lead hands over, and the assignment starts the technical lead
-   ([ADR-0028](../adr/0028-an-agent-is-always-available.md)): it creates a task for the technical lead, "Derive the
+   ([ADR-0028](../../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md)): it creates a task for the technical lead, "Derive the
    Technical DSS", naming the Product DSS versions just issued.
 6. The technical lead reads those versions and what changed since the versions the
    Technical DSS was last derived from (`agent-os doc diff`). For each technical
@@ -171,7 +171,7 @@ development process ([development process design](development-processes.md#5-two
      document's Decisions section. The person is not asked. This is the autonomous
      mode.
    - **Not answered:** it asks the person, marking the ask required when it cannot
-     continue without it ([ADR-0020](../adr/0020-required-asks-suspend-and-resume.md)).
+     continue without it ([ADR-0020](../../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md)).
      The answer goes into the Decisions section with who decided and when. This is the
      interactive mode. A person can also be asked by the product lead to join when the
      question is about behaviour rather than technology.
@@ -189,11 +189,11 @@ development process ([development process design](development-processes.md#5-two
    expected to touch.
 10. They decide which roles the tasks need. For each, the technical lead reads the role
     (`agent-os role inspect`) and hires through HR with a reason
-    ([development process design](development-processes.md#7-hiring-when-the-development-process-says-so)).
+    ([development process design](doc-32%20-%20Design-Development-Processes-Process-Packages.md#7-hiring-when-the-development-process-says-so)).
     It can do this when it leads the project's team, or a team above it, and has the
     Allow hiring permission. Otherwise the hire is refused, and the technical lead
     asks its own lead, who hires if it may. There is no approval
-    ([ADR-0029](../adr/0029-only-who-may-hire-hires.md)). Tasks are assigned as the
+    ([ADR-0029](../../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)). Tasks are assigned as the
     hires complete.
 
 ### 3.4 Build
@@ -226,14 +226,14 @@ development process ([development process design](development-processes.md#5-two
 
 An architecture standard is a `kind: standard` document at the project's scope,
 `projects/<project-id>/standards/<document-id>.md`
-([process design](processes.md)). It is versioned as every record is: each change
+([process design](doc-34%20-%20Design-Organization-Processes-and-Standards.md)). It is versioned as every record is: each change
 advances its revision, is attributed and is kept in organization Git. It reaches every
 agent that works on the project as guidance, and the technical lead reads it first the
 next time the same question comes up.
 
 - The technical lead writes project standards with `agent-os process create` and
   `process update`, which the process design opens to agents of the project's own team
-  ([process design](processes.md), decision 8).
+  ([process design](doc-34%20-%20Design-Organization-Processes-and-Standards.md), decision 8).
 - An agent adds standards and changes the project's own. It cannot replace one
   inherited from the organization, a team or the development process, cannot mark a document not
   overridable and cannot write at team or organization scope. A standard that should bind more than one project is proposed to
@@ -260,7 +260,7 @@ next time the same question comes up.
 ## 6. The contract
 
 These calls are general and belong to the documentation tree
-([development process design](development-processes.md#9-the-contract)).
+([development process design](doc-32%20-%20Design-Development-Processes-Process-Packages.md#9-the-contract)).
 
 | Call | Params | Result | Errors |
 | --- | --- | --- | --- |
@@ -275,12 +275,12 @@ These calls are general and belong to the documentation tree
   its latest version, or that has no owner. Any employee who may write the document may
   issue it; the result is attributed to them.
 - **`realizes`** is a field of the task and is set through the task calls
-  ([task design](tasks-projects-docs.md)). The service checks that each entry is an
+  ([task design](doc-37%20-%20Design-Tasks-Projects-and-Documents.md)). The service checks that each entry is an
   issued version of a document of the task's project.
 - **`agent-os`:** `doc issue`, `doc diff`, `doc versions`, `doc link-code` and `doc unlink-code`,
   `doc code-links [--path <file>] [--check]`, `doc status`, and `task create | edit
   --realizes <document>@<version>`. `doc link` stays the command for links between
-  records ([knowledge UX](../specs/decisions-and-tech-debt-ux.md), AUTH-5).
+  records ([knowledge UX](../specs/doc-52%20-%20Spec-Knowledge-Decisions-and-Tech-Debt-UX.md), AUTH-5).
 
 ## 7. Acceptance criteria
 
@@ -305,10 +305,10 @@ they test the skills' text as much as the product.
 ## 8. Open points
 
 - **Unattended running.** Steps 5, 10 and 12 start the next agent
-  ([ADR-0028](../adr/0028-an-agent-is-always-available.md)). How well a
+  ([ADR-0028](../../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md)). How well a
   whole change runs with nobody watching is what the run with real agents measures.
 - **Cost.** A factory spends without a person watching each step. Task and agent
-  budgets ([document 17](organization-data/17-budgets-and-controls.md)) are the limit;
+  budgets ([document 17](../organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md)) are the limit;
   the development process sets none.
 - **Granularity of a Product DSS document.** One document per product area is the
   development process's guidance. Whether very large areas need issuing by section is not decided.
@@ -319,5 +319,5 @@ they test the skills' text as much as the product.
 
 Nothing of this exists. It needs the documentation tree and issued versions, process
 development processes, the hire flow and agent sessions, none of which is built
-([development process design](development-processes.md#what-the-code-does-today)), and asks,
+([development process design](doc-32%20-%20Design-Development-Processes-Process-Packages.md#what-the-code-does-today)), and asks,
 which exist in part (FC-079).

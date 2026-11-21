@@ -18,9 +18,9 @@ tags:
 How an organization runs in several offices: what each office holds, how changes and
 messages flow between them, how a satellite joins, and what happens when HQ is
 unreachable or lost. The relationships and sources are owned by the
-[data contract](organization-data/README.md); message routing by
-[ADR-0003](../adr/0003-agent-messaging-office-first.md); how a worker is started by the
-[host boundary](office-host-boundary.md).
+[data contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md); message routing by
+[ADR-0003](../../decisions/decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md); how a worker is started by the
+[host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md).
 
 ## In one paragraph
 
@@ -55,7 +55,7 @@ process.
   expected revision. The reporter is the immutable creator. A reference such as `T-A42`
   is complete on its own.
 - **Placement.** Each office supervises its agents' turns, attempts and processes
-  ([employee supervision](employee-supervision.md)). A runnable agent needs its
+  ([employee supervision](doc-33%20-%20Design-Employee-Supervision.md)). A runnable agent needs its
   execution configuration, fresh local connection evidence and a permit from HQ.
   Placement needs the durable placement generation and cleanup or fencing of any prior
   process.
@@ -72,10 +72,10 @@ for an instance with an HQ, one `agentic-org-web`. It holds each office's secret
 the instance and catalog locks and the private launch capability; the web process has
 none of them. The worker owns domain operations, its `office.json` marker and its office
 lock. Launch, admission, quarantine, restart and error rules are in the
-[host boundary](office-host-boundary.md).
+[host boundary](doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md).
 
 Each office's data follows the
-[storage contract](organization-data/README.md#shared-storage-contract): sources under
+[storage contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md#shared-storage-contract): sources under
 `durable/`, rebuildable caches under `runtime/<office-id>/`. Private task notes are a
 separate database at HQ, read by their author and by people, never by another agent. Task worktrees survive handoff until closure;
 local-only and unpushed edits are checkpointed before any cleanup.
@@ -89,10 +89,10 @@ means recovery is required, not permission to launch.
 ## Office first: tasks and messages
 
 An office acknowledges a permitted local write once it is durable locally, before any
-network publication ([ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md)).
+network publication ([ADR-0014](../../decisions/decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md)).
 Office first does not mean an office owns teams or projects or allocates HQ's counters;
 the one sequence an office keeps is for the tasks it creates
-([document 06](organization-data/06-identity-and-numbering.md)). Stable IDs, revisions,
+([document 06](../organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md)). Stable IDs, revisions,
 the domain source and the journal and receipt evidence are stored before the
 acknowledgement. Hourly Git publication is never the only copy of an accepted change. A
 feature may have `number: null` until HQ registers it. Every acknowledged allocation
@@ -124,7 +124,7 @@ task or turn.
 
 **Messages** have immutable content and separately revisioned recipient state;
 conversation membership is independent of teams and offices. The protected envelopes
-and attachments of [document 15](organization-data/15-messaging-and-chat.md) are stored
+and attachments of [document 15](../organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md) are stored
 before the send is acknowledged. Bodies, counts, previews and search are filtered by
 message visibility. A message to another office travels office → HQ → destination over
 the existing outbound connections; local delivery works without HQ, and cross-office
@@ -288,7 +288,7 @@ different HQ.
 
 Promotion is not part of v1. Before it is built it gets its own design, which meets
 these requirements; until then the manual HQ-loss procedure is the open gate REC-1 of
-the [standalone design](standalone-server.md#ca-escrow-and-the-explicit-recovery-gate).
+the [standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#ca-escrow-and-the-explicit-recovery-gate).
 
 - **Manual and deliberate.** The owner promotes a satellite in the app, with the
   recovery code; it is never automatic.
@@ -308,7 +308,7 @@ the [standalone design](standalone-server.md#ca-escrow-and-the-explicit-recovery
   recovery code (at least 128 bits, shown once through a protected channel, stretched
   with Argon2id) and unlocked only to promote. A stolen machine can neither impersonate
   HQ nor re-certify itself. The escrow is created with the organization
-  ([standalone design](standalone-server.md#ca-escrow-and-the-explicit-recovery-gate)).
+  ([standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#ca-escrow-and-the-explicit-recovery-gate)).
 - **Revocations are replicated,** so every office refuses a removed office's
   certificate.
 - **Deduplication across promotion** covers every result the promoted office received,

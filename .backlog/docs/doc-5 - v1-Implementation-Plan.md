@@ -18,7 +18,7 @@ It orders the work so that the two engineers and their agents can work inside th
 product as early as possible. The order and the split into increments are a proposal
 and may be changed by the engineer who takes an increment. The behaviour is not a
 proposal: it is what the linked requirement documents say. Where they are silent, the
-engineer decides, inside the [architecture non-negotiables](architecture-non-negotiables.md),
+engineer decides, inside the [architecture non-negotiables](doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md),
 and writes the decision down.
 
 How to read an increment:
@@ -31,7 +31,7 @@ How to read an increment:
 - **Done when** is the finish line.
 - **Needs** names the increments that must be finished first.
 
-New here? Read [START-HERE](START-HERE.md) first.
+New here? Read [START-HERE](doc-2%20-%20Start-Here.md) first.
 
 ## The path
 
@@ -105,9 +105,9 @@ Three things to know about the order:
     stored in the clear.
   - Its change to the old office store is deliberately minimal (no encryption key, the CA
     key wrapped), because B1b deletes that code.
-- **Read:** [host boundary design](design/office-host-boundary.md),
-  [ADR-0016](adr/0016-no-application-level-data-encryption.md),
-  [ADR-0012](adr/0012-office-channel-lifecycle.md). Checklist rows FC-017, FC-162.
+- **Read:** [host boundary design](design/doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md),
+  [ADR-0016](../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md),
+  [ADR-0012](../decisions/decision-12%20-%20ADR-0012-Bounded-office-channel-ownership-and-closure-CH-LIFE-1.md). Checklist rows FC-017, FC-162.
 - **Code before A1:** `crates/org-host/src/supervisor/child.rs` implemented both launch forms;
   `crates/org-office-launch/src/contract.rs` was the rendezvous form;
   `apps/agentic-org-office/src/launch.rs` received a grant key and did not use it; the
@@ -134,10 +134,10 @@ Three things to know about the order:
     branch.
   - Setup reports the state of disk encryption and the file permissions it set.
   - Setup creates no account, no organization and no office (A3, A4).
-- **Read:** [standalone server design](design/standalone-server.md),
-  [installation and access UX](specs/server-installation-and-access-ux.md) (the SRV
+- **Read:** [standalone server design](design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md),
+  [installation and access UX](specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) (the SRV
   criteria for a single machine; the satellite ones belong to S1),
-  [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-3). Rows FC-011,
+  [ADR-0016](../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) (ENC-3). Rows FC-011,
   FC-012.
 - **Code today (A2 built, macOS):**
   - `agentic-org setup [--name N] [--port P]` (`crates/org-host/src/setup_flow.rs`)
@@ -183,12 +183,12 @@ Three things to know about the order:
   - The change stream of the web API, so that a screen shows a change without a reload.
   - Host storage is reached through a contract with a test suite that does not depend on
     the database engine. This is the host's share of ADR-0018.
-- **Read:** [web API design](design/web-api-v1.md),
-  [static UI and web process design](design/rust-browser-bff-and-static-sveltekit.md),
-  [ADR-0013](adr/0013-stored-browser-sessions.md) (SES-1 to SES-7),
-  [ADR-0008](adr/0008-gateway-macos-sandbox.md), [ADR-0012](adr/0012-office-channel-lifecycle.md),
-  [ADR-0018](adr/0018-storage-engine-independence.md) (ENG-1 and ENG-3 for the host),
-  [installation and access UX](specs/server-installation-and-access-ux.md) (SIGN criteria).
+- **Read:** [web API design](design/doc-71%20-%20Design-Web-HTTP-API-v1.md),
+  [static UI and web process design](design/doc-69%20-%20Design-Rust-Browser-BFF-and-Static-SvelteKit-Architecture.md),
+  [ADR-0013](../decisions/decision-13%20-%20ADR-0013-Browser-sessions-are-stored-at-the-host-and-survive-restarts.md) (SES-1 to SES-7),
+  [ADR-0008](../decisions/decision-8%20-%20ADR-0008-macOS-confinement-of-the-web-process-GW-SBX-MAC-1.md), [ADR-0012](../decisions/decision-12%20-%20ADR-0012-Bounded-office-channel-ownership-and-closure-CH-LIFE-1.md),
+  [ADR-0018](../decisions/decision-18%20-%20ADR-0018-The-storage-engine-is-replaceable-PostgreSQL-must-be-possible.md) (ENG-1 and ENG-3 for the host),
+  [installation and access UX](specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) (SIGN criteria).
   Rows FC-013, FC-014, FC-015, FC-155, FC-159.
 - **Code today:**
   - `apps/agentic-org-web/src/main.rs` refuses to listen. Its library has the HTTP and
@@ -230,17 +230,17 @@ Three things to know about the order:
   - The recovery code is released once, on the HQ machine. *(Owner direction
     2026-11-20: the recovery code, CA escrow and protected recovery delivery are v2;
     the built code stays until the owner confirms the document updates;
-    [note](design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1).)*
+    [note](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#67-recovery-is-v2-hq-loss-in-v1).)*
   - Organization and office IDs are UUIDv7.
   - The UI's create flow talks to the real API.
-- **Read:** [create organization design](design/create-organization.md),
-  [web API design](design/web-api-v1.md) (selected create payload),
-  [organization structure](design/organization-data/01-organization-structure.md),
-  [offices and teams UX](specs/offices-and-teams-ux.md) (create organization; OFC-15),
-  [installation and access UX](specs/server-installation-and-access-ux.md) (SRV-24,
-  accounts, recovery), [ADR-0007](adr/0007-hq-creation-escrow.md),
-  [ADR-0011](adr/0011-protected-recovery-delivery.md),
-  [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-2). Rows FC-016,
+- **Read:** [create organization design](design/doc-30%20-%20Design-Create-Organization.md),
+  [web API design](design/doc-71%20-%20Design-Web-HTTP-API-v1.md) (selected create payload),
+  [organization structure](organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md),
+  [offices and teams UX](specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md) (create organization; OFC-15),
+  [installation and access UX](specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) (SRV-24,
+  accounts, recovery), [ADR-0007](../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md),
+  [ADR-0011](../decisions/decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md),
+  [ADR-0016](../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) (ENC-2). Rows FC-016,
   FC-018, FC-029, FC-031.
 - **Code today:**
   - One command creates an organization: the host's `organization.create`, served on
@@ -249,7 +249,7 @@ Three things to know about the order:
     `crates/org-host/src/provisioning.rs`, the office's `hq_creation`). The name-only
     declarations and `organization.provision.v1` are deleted. The web process serves
     `POST` and `GET /api/v1/organizations` and the host operation lookup over it
-    ([web API](design/web-api-v1.md#selected-create-organization-payload)).
+    ([web API](design/doc-71%20-%20Design-Web-HTTP-API-v1.md#selected-create-organization-payload)).
   - The UI's create page and organizations page read that API through
     `apps/agentic-org-ui/src/lib/platform/organizations` (A4.5); the former
     `src/lib/create-flow.ts`, which ran against fakes, is deleted.
@@ -257,7 +257,7 @@ Three things to know about the order:
   owner as a person in the top-level team; its files are under `durable/state/`; the
   recovery code has been delivered once *(owner direction 2026-11-20: recovery-code
   delivery is v2, so it is no longer part of this finish line once the owner confirms;
-  [note](design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1))*;
+  [note](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#67-recovery-is-v2-hq-loss-in-v1))*;
   ENC-2 passes.
 - **Needs:** A3. A4 lands on the office store as it is. B1b then rebuilds that store
   underneath it and makes organization creation the first accepted transaction.
@@ -268,15 +268,15 @@ Three things to know about the order:
   and `agentic-org` is written against one grammar and answers in one format, and a
   test suite holds every later command to it.
 - **Build:** the shared command library of the
-  [agent command line design](design/agent-os-command-line.md): the table of commands;
+  [agent command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md): the table of commands;
   the parser (`<resource> <verb>`, named flags, no positional arguments); the three ways
   to give input (flags, `--json`, `--input-file` or `--stdin`); the answer envelope and
   its three formats; `--fields`, `--limit` and `--cursor`; `--help` and `--schema`
   generated from the table; exit codes; and the contract tests, run against a test
   office that is a stub inside the test process. No command of today is converted here.
   Each later increment adds its own rows and deletes what they replace.
-- **Read:** [REQ-08](specs/req-08-agent-os-cli-and-kernel-primitives.md),
-  [agent command line design](design/agent-os-command-line.md) sections 2, 7 and 8.
+- **Read:** [REQ-08](specs/doc-59%20-%20REQ-08-agent-os-CLI-and-Kernel-Primitives.md),
+  [agent command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md) sections 2, 7 and 8.
   Row FC-168.
 - **Code today:** `apps/agent-os/src/main.rs` parses arguments by hand, with positional
   arguments and text output; none of it is kept.
@@ -309,10 +309,10 @@ Three things to know about the order:
     the application token that A1 deletes.
   - Nothing here gives an agent a way in. An agent is an employee the office starts,
     and it uses the binding of its run (C3).
-- **Read:** [ADR-0003](adr/0003-agent-messaging-office-first.md) decisions 12 and 13 and
-  "Person-started commands", [ADR-0013](adr/0013-stored-browser-sessions.md) (SES-8),
-  [host boundary design](design/office-host-boundary.md),
-  [`apps/agent-os/README.md`](../apps/agent-os/README.md). Row FC-014.
+- **Read:** [ADR-0003](../decisions/decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md) decisions 12 and 13 and
+  "Person-started commands", [ADR-0013](../decisions/decision-13%20-%20ADR-0013-Browser-sessions-are-stored-at-the-host-and-survive-restarts.md) (SES-8),
+  [host boundary design](design/doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md),
+  [`apps/agent-os/README.md`](../../apps/agent-os/README.md). Row FC-014.
 - **Code today:** a person or the owner acts only through a host-issued grant; the
   application token is deleted (A1.8) and `msg.bind` binds agents only
   (`apps/agentic-org-office/src/serve.rs`); `agent-os` talks to an
@@ -343,8 +343,8 @@ Three things to know about the order:
 
 ### B1a · The store core on the organization family
 
-The store is built from the [office store design](design/office-store.md) and
-[ADR-0021](adr/0021-office-store-architecture.md), in three increments. B1a proves the
+The store is built from the [office store design](design/doc-66%20-%20Design-Office-Store-Architecture.md) and
+[ADR-0021](../decisions/decision-21%20-%20ADR-0021-The-office-store-one-journal-of-file-changes-a-projection-rebuilt-from-files.md), in three increments. B1a proves the
 whole path on one record family so that B2 starts on it; B1b moves the running office
 onto it and deletes the old store; B1c measures and guards it.
 
@@ -373,16 +373,16 @@ onto it and deletes the old store; B1c measures and guards it.
     memory engine and harness) with the organization family running on the memory
     engine. The second adds the SQLite engine and runs the suite and the harness on
     both engines.
-- **Read:** [office store design](design/office-store.md) sections 1 to 7 and 9,
-  [ADR-0021](adr/0021-office-store-architecture.md), the
-  [data contract index](design/organization-data/README.md) (shared storage contract),
-  [recovery contract](design/organization-data/16-recovery-and-office-continuity.md)
-  (receipts, how the directory begins), [organization structure](design/organization-data/01-organization-structure.md),
-  [agent structure](design/organization-data/04-agent-structure.md),
-  [identity and numbering](design/organization-data/06-identity-and-numbering.md),
-  [ADR-0006](adr/0006-selected-task-acceptance.md),
-  [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) decisions 2, 3, 6
-  and 8, [ADR-0018](adr/0018-storage-engine-independence.md). Rows FC-141, FC-146, FC-165.
+- **Read:** [office store design](design/doc-66%20-%20Design-Office-Store-Architecture.md) sections 1 to 7 and 9,
+  [ADR-0021](../decisions/decision-21%20-%20ADR-0021-The-office-store-one-journal-of-file-changes-a-projection-rebuilt-from-files.md), the
+  [data contract index](organization-data/doc-72%20-%20Organization-Data-—-README.md) (shared storage contract),
+  [recovery contract](organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md)
+  (receipts, how the directory begins), [organization structure](organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md),
+  [agent structure](organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md),
+  [identity and numbering](organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md),
+  [ADR-0006](../decisions/decision-6%20-%20ADR-0006-Task-changes-are-accepted-through-one-recoverable-office-journal.md),
+  [ADR-0014](../decisions/decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) decisions 2, 3, 6
+  and 8, [ADR-0018](../decisions/decision-18%20-%20ADR-0018-The-storage-engine-is-replaceable-PostgreSQL-must-be-possible.md). Rows FC-141, FC-146, FC-165.
 - **Code today:** `crates/org-office/src/store/acceptance.rs` holds the journal rules
   the design keeps (frozen decisions, anchor and chain, final-state materialization) and
   its crash tests; `store/acceptance/durable.rs` the publication primitives; `store.rs`
@@ -436,11 +436,11 @@ onto it and deletes the old store; B1c measures and guards it.
     true is updated (for example FC-072, the agent messaging command line, which is Done
     today), and the tests of the removed calls are deleted or rewritten against the new
     store, never disabled.
-- **Read:** [office store design](design/office-store.md) sections 4, 5 and 11;
-  [recovery contract](design/organization-data/16-recovery-and-office-continuity.md)
-  (opening, loss boundaries); [ADR-0007](adr/0007-hq-creation-escrow.md),
-  [ADR-0016](adr/0016-no-application-level-data-encryption.md),
-  [host boundary design](design/office-host-boundary.md).
+- **Read:** [office store design](design/doc-66%20-%20Design-Office-Store-Architecture.md) sections 4, 5 and 11;
+  [recovery contract](organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md)
+  (opening, loss boundaries); [ADR-0007](../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md),
+  [ADR-0016](../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md),
+  [host boundary design](design/doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md).
 - **Code today:** `org_office::Office` (`crates/org-office/src/office/`) opens through
   `open_store` (`crates/org-office/src/store/open.rs`) on the organization's data roots `<instance-root>/<org-id>/{durable,runtime}`, which the host
   gives it in its writer admission. HQ creation is the journal's first entry
@@ -487,9 +487,9 @@ onto it and deletes the old store; B1c measures and guards it.
   generated-column constraints listed in words in schema coverage; a SQLite checkpoint
   that keeps failing after each round is made visible (today the flusher drops its
   error and leaves the log to the next round, so a log that grows is not reported).
-- **Read:** [office store design](design/office-store.md) sections 8 and 9;
-  [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) decision 7 and
-  ACK-2, ACK-3, ACK-5 to ACK-7; [ADR-0018](adr/0018-storage-engine-independence.md)
+- **Read:** [office store design](design/doc-66%20-%20Design-Office-Store-Architecture.md) sections 8 and 9;
+  [ADR-0014](../decisions/decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) decision 7 and
+  ACK-2, ACK-3, ACK-5 to ACK-7; [ADR-0018](../decisions/decision-18%20-%20ADR-0018-The-storage-engine-is-replaceable-PostgreSQL-must-be-possible.md)
   ENG-4 and ENG-5.
 - **Code today:** no store benchmark exists; ADR-0014 holds Linux estimates only.
 - **Done when:** section 8's numbers are recorded in ADR-0014 for Linux CI and the
@@ -516,11 +516,11 @@ on the offers of design section 10.
 - **Commands:** `org inspect`, `team list`, `team inspect`, `agent inspect`, `person inspect`, and the owner's commands
   for teams and people, which this increment names under the grammar. With the first
   write on the new store: `--dry-run`, `--idempotency-key`, `--if-match` and `--durable`
-  ([command line design](design/agent-os-command-line.md), sections 2.6, 2.7 and 3.2; CLI-4, 5 and 6).
-- **Read:** [organization structure](design/organization-data/01-organization-structure.md),
-  [agent structure](design/organization-data/04-agent-structure.md),
-  [identity and numbering](design/organization-data/06-identity-and-numbering.md),
-  [teams design](design/teams-and-org-chart.md). Rows FC-025 to FC-029.
+  ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), sections 2.6, 2.7 and 3.2; CLI-4, 5 and 6).
+- **Read:** [organization structure](organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md),
+  [agent structure](organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md),
+  [identity and numbering](organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md),
+  [teams design](design/doc-38%20-%20Design-Teams-People-and-Org-Chart.md). Rows FC-025 to FC-029.
 - **Code today:** the organization family on the office store
   (`crates/org-office/src/organization/{records,ports,projector,features}`) holds
   organizations, offices, teams, employees and the HQ counters, and serves `team.create`
@@ -561,8 +561,8 @@ on the offers of design section 10.
   named after the project, under the top-level team, accountable for it. Naming an
   existing team instead stays possible. No features, releases or repositories yet.
 - **Commands:** `project list`, `project inspect`, and `project create` for the owner
-  ([command line design](design/agent-os-command-line.md), section 3.2).
-- **Read:** [project structure](design/organization-data/02-project-structure.md). Rows
+  ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), section 3.2).
+- **Read:** [project structure](organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md). Rows
   FC-030, FC-038.
 - **Done when:** a project and its team exist after a restart, created from a terminal
   and through `/api/v1`.
@@ -575,9 +575,9 @@ on the offers of design section 10.
 - **Build:** the office list and each office's state as the host and the office report
   them; restart of an office through the host. The HQ office is the only office until a
   second one is enrolled (milestone three, S1).
-- **Read:** [offices design](design/offices-hq-and-satellites.md),
-  [offices and teams UX](specs/offices-and-teams-ux.md) (OFC criteria that need one
-  office), [host boundary design](design/office-host-boundary.md). Rows FC-019, FC-021.
+- **Read:** [offices design](design/doc-67%20-%20Design-Offices-HQ-and-Satellites.md),
+  [offices and teams UX](specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md) (OFC criteria that need one
+  office), [host boundary design](design/doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md). Rows FC-019, FC-021.
 - **Code today:** the host supervises and restarts an office worker
   (`crates/org-host/src/supervisor`); the browser's office status screens run against
   fakes.
@@ -608,13 +608,13 @@ on the offers of design section 10.
     a member of a team that an agent leads, the lead of a team of agents, or a lead of
     leads. There are no access roles. Any person can interact with any agent; position
     only decides whose instructions an agent follows
-    ([supervision design](design/employee-supervision.md), decision 6). The few rights
+    ([supervision design](design/doc-33%20-%20Design-Employee-Supervision.md), decision 6). The few rights
     that are not everyone's (changing the structure, inviting and removing access,
     the two hand-overs, hiring, creating organizations) and who holds each
-    are one table in the [agent structure contract](design/organization-data/04-agent-structure.md#accounts-people-and-the-organization-owner).
-- **Read:** [installation and access UX](specs/server-installation-and-access-ux.md)
-  (accounts), [agent structure](design/organization-data/04-agent-structure.md),
-  [index, what the host owns](design/organization-data/STATUS.md#outside-this-set-what-the-host-owns).
+    are one table in the [agent structure contract](organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md#accounts-people-and-the-organization-owner).
+- **Read:** [installation and access UX](specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md)
+  (accounts), [agent structure](organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md),
+  [index, what the host owns](organization-data/doc-73%20-%20Organization-Data-—-Status-Changelog-and-Host-Owned-Records.md#outside-this-set-what-the-host-owns).
   Rows FC-029, FC-153.
 - **Code today:** `crates/org-host/src/accounts` holds only the login value types.
   Account storage is `crates/org-host/src/hostdb/accounts.rs`; its schema allows many
@@ -636,9 +636,9 @@ on the offers of design section 10.
   the office's projection rebuilt from the files; the administrator choosing their
   person record and becoming the owner; people invited again; a plain statement of
   what did not come back.
-- **Read:** [recovery contract, opening an existing organization](design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization)
-  and its loss boundaries, [identity contract](design/organization-data/06-identity-and-numbering.md),
-  [ADR-0007](adr/0007-hq-creation-escrow.md). Row FC-167.
+- **Read:** [recovery contract, opening an existing organization](organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md#opening-an-existing-organization)
+  and its loss boundaries, [identity contract](organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md),
+  [ADR-0007](../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md). Row FC-167.
 - **Code today:** nothing opens an organization from files; the office's store is the
   source of truth until B1b.
 - **Done when:** with `runtime/` and the host's database deleted, the organization is
@@ -648,16 +648,16 @@ on the offers of design section 10.
 - **Owner direction 2026-11-20:** R1 is v1's answer to a lost HQ: the organization is
   imported from Git into a new HQ with a new CA, and every other office re-enrolls with
   one simple command ("this is your new HQ"), built with satellite enrollment (S1)
-  ([note](design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1)).
+  ([note](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#67-recovery-is-v2-hq-loss-in-v1)).
 
 ### U1 · Offices, teams, people and projects in the browser
 
 - **Outcome:** the office list, the team directory, the organization chart, the project
   list and the add, edit and move dialogs work against the real API.
 - **Build:** replace the fake-backed adapters for these screens; keep the screens.
-- **Read:** [offices and teams UX](specs/offices-and-teams-ux.md) (TEAM, PEOPLE, REPORT
-  criteria), [our organization in the app](specs/our-org-in-the-app.md),
-  [app shell UX](specs/app-shell-ux.md). Rows FC-003, FC-019, FC-025 to FC-027,
+- **Read:** [offices and teams UX](specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md) (TEAM, PEOPLE, REPORT
+  criteria), [our organization in the app](specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md),
+  [app shell UX](specs/doc-39%20-%20Spec-App-Shell-and-Navigation-UX.md). Rows FC-003, FC-019, FC-025 to FC-027,
   FC-030, FC-032, FC-038.
 - **Code today:** `apps/agentic-org-ui/src/lib/components` has the dialogs and charts;
   `src/lib/platform/unavailable-api.ts` is what production uses today.
@@ -675,12 +675,12 @@ on the offers of design section 10.
   home, where its sign-in is stored, whether it resumes a session from there, and how
   it starts sub-agents under the isolation switches: that they inherit the sandbox, the
   tools and the environment, and where their conversation is kept
-  ([ADR-0025](adr/0025-agents-start-sub-agents.md) decision 10).
-- **Read:** [ADR-0015](adr/0015-agent-isolation-modes.md) decisions 7, 10 and 11,
-  [agent runtimes research](research/agent-runtimes-control.md),
-  [C1 sign-in spike record](research/c1-sign-in-spike.md),
-  [ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md).
-- **Recorded result (2026-11-19):** [C1 sign-in spike](research/c1-sign-in-spike.md)
+  ([ADR-0025](../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md) decision 10).
+- **Read:** [ADR-0015](../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) decisions 7, 10 and 11,
+  [agent runtimes research](research/doc-23%20-%20Research-Controlling-Agent-Runtimes-Claude-Code-Codex-Antigravity.md),
+  [C1 sign-in spike record](research/doc-25%20-%20Research-C1-Sign-In-Private-Home-and-Sub-Agent-Isolation-Spike.md),
+  [ADR-0032](../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md).
+- **Recorded result (2026-11-19):** [C1 sign-in spike](research/doc-25%20-%20Research-C1-Sign-In-Private-Home-and-Sub-Agent-Isolation-Spike.md)
   records macOS `27.2.1` findings on Claude Code `2.1.311` and Codex `0.169.0` (Linux
   unverified pending a Linux run; companion POC in `pocs/console-attach/`) and selects
   **`org-agent-runtime-claude`** as the first adapter for C3 (persistent `stream-json`
@@ -691,7 +691,7 @@ on the offers of design section 10.
   and Codex sub-agent isolation verification when `org-agent-runtime-codex` begins.
 - **Done when:** the result is recorded and the first adapter to build is chosen.
 - **Done (2026-11-20):** both are met on `v1` (PR 17, merge `03df9805`): the result is
-  the [C1 sign-in spike](research/c1-sign-in-spike.md) and the first adapter is
+  the [C1 sign-in spike](research/doc-25%20-%20Research-C1-Sign-In-Private-Home-and-Sub-Agent-Isolation-Spike.md) and the first adapter is
   `crates/org-agent-runtime-claude`, an internal foundation C3 builds on. The remaining
   checks listed above move with their rows (FC-161, FC-098; Codex sub-agent isolation
   with FC-172/FC-101).
@@ -702,7 +702,7 @@ on the offers of design section 10.
   confirms it, and the agent exists in the organization with its team, its home and
   how it runs. This is the only way an agent comes to exist. There is no approval:
   whoever may not hire is refused and told to ask their team lead
-  ([ADR-0029](adr/0029-only-who-may-hire-hires.md)).
+  ([ADR-0029](../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)).
 - **Build:**
   - The hire flow: describe what is needed, or fill in the details yourself; review;
     confirm. Nothing is provisioned before the hirer confirms.
@@ -715,13 +715,13 @@ on the offers of design section 10.
     whenever HR cannot run, the same flow works with the form.
   - Edit, move, pause, resume and offboard an agent.
 - **Commands:** `role list`, `role inspect` and `hr hire`, which is refused with
-  `not_authorized` for a caller who may not hire ([command line design](design/agent-os-command-line.md), section 3.2;
+  `not_authorized` for a caller who may not hire ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), section 3.2;
   CLI-14).
-- **Read:** [our organization in the app](specs/our-org-in-the-app.md) (the HR lead; the
-  hire flow; who may hire; STAFF, HRL and APPR criteria), [roles UX](specs/roles-ux.md),
-  [agent structure](design/organization-data/04-agent-structure.md),
-  [model profiles and agent execution](design/organization-data/11-model-profiles-and-agent-execution.md),
-  [providers and connection pools](design/organization-data/14-model-providers-and-connection-pools.md).
+- **Read:** [our organization in the app](specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md) (the HR lead; the
+  hire flow; who may hire; STAFF, HRL and APPR criteria), [roles UX](specs/doc-47%20-%20Spec-Agent-Roles-Directory-UX.md),
+  [agent structure](organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md),
+  [model profiles and agent execution](organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md),
+  [providers and connection pools](organization-data/doc-89%20-%20Organization-Data-14-—-Model-Providers-and-Connection-Pools.md).
   Rows FC-031, FC-033, FC-034, FC-096, FC-097.
 - **Done when:** the STAFF and HRL criteria for a hire pass with the form, HIRE-1
   and HIRE-3 to HIRE-6 and HIRE-8 of ADR-0029 pass, and no employee, home or binding
@@ -740,7 +740,7 @@ on the offers of design section 10.
   explicit instruction; `agent-os` bound to the run the office started.
 - **Commands:** the binding and the `AGENT_OS_` launch variables; `agent-os` refuses
   to run without a binding; `session inspect` and `grant list`; the short catalogue in
-  the agent's instructions; an empty MCP configuration ([command line design](design/agent-os-command-line.md),
+  the agent's instructions; an empty MCP configuration ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md),
   sections 2.5, 2.8, 2.10 and 3.1; CLI-9, 10 and 12). The check that the caller
   descends from the started process uses `org-platform` and passes on Linux in the same
   change.
@@ -749,34 +749,34 @@ on the offers of design section 10.
   sub-agent's commands and cost are the employee's; background tasks and sub-agents may
   stay running across turns while the session is active so people and agents can keep
   messaging the agent, and Pause/Stop/Offboard/stall stops and reaps everything
-  ([ADR-0025](adr/0025-agents-start-sub-agents.md); SUB-1 to SUB-5 and SUB-7). SUB-6,
+  ([ADR-0025](../decisions/decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md); SUB-1 to SUB-5 and SUB-7). SUB-6,
   the sub-agent's conversation in the session view, is finished with C4. Row FC-172.
 - **Staying alive:** after an office restart an interrupted turn continues by itself
   in the same session once the run's processes are proved gone; a turn with no
   activity for the stall time is stopped with its sub-agents, recorded as stalled,
-  and the agent goes idle ([ADR-0030](adr/0030-an-agent-works-while-it-has-work.md)
+  and the agent goes idle ([ADR-0030](../decisions/decision-30%20-%20ADR-0030-An-agent-works-while-it-has-work-continues-after-a-restart-and-a-stalled-turn-is-stopped.md)
   decisions 8 to 12; LIVE-9 to LIVE-13).
 - **Instructions:** the built-in agent instructions are the first part of what an
   agent receives, with the sections for what this build has, and their scenarios run
-  ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8, 12, 15 and 21). Row
+  ([agent instructions](design/doc-27%20-%20Design-Agent-Instructions-Assembly.md); INSTR-4, 5, 7, 8, 12, 15 and 21). Row
   FC-171.
 - **Enrollment and permission presets:** browser-driven one-time CLI enrollment
   (`claude setup-token` (preferred) or `claude auth login --claudeai`, and
   `codex login --device-auth`) inside wiped per-login `0700`
   temp directories, worker-wrapped `agentic-org/provider-credential/v1` storage, and the
   Advanced Settings `permission_preset` UI on `agent_execution_configs`
-  ([ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md);
+  ([ADR-0032](../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md);
   `ENROLL-1` to `ENROLL-7`). Row FC-189.
 - **Take-over:** paused (owner decision 2026-11-20) and moved to late v1, only if
   needed (row FC-151). C3 builds no take-over; the adapter's existing take-over
   planning stays as it is, with no new work.
-- **Read:** [agent sessions design](design/agent-sessions.md),
-  [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
-  [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
-  [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-4),
-  [ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md) (ENROLL-1 to ENROLL-7),
-  [ADR-0003](adr/0003-agent-messaging-office-first.md) decision 12,
-  [employee supervision UX](specs/employee-supervision-ux.md) (EMP criteria). Rows FC-031,
+- **Read:** [agent sessions design](design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md),
+  [how agents run](specs/doc-50%20-%20Spec-Agent-Run-Modes-and-Availability-UX.md), [ADR-0004](../decisions/decision-4%20-%20ADR-0004-Agent-sessions-run-headless-people-interact-through-chat.md),
+  [ADR-0015](../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) (ISO-3, ISO-5, ISO-8),
+  [ADR-0016](../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) (ENC-4),
+  [ADR-0032](../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md) (ENROLL-1 to ENROLL-7),
+  [ADR-0003](../decisions/decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md) decision 12,
+  [employee supervision UX](specs/doc-53%20-%20Spec-Employee-Supervision-and-Approvals-UX.md) (EMP criteria). Rows FC-031,
   FC-098, FC-100, FC-101, FC-189.
 - **Code today:** `crates/org-agent-runtime` is the contract and `crates/org-agent-runtime-claude`
   implements the sans-I/O Claude Code `2.1.311` adapter as an internal foundation with no
@@ -798,7 +798,7 @@ on the offers of design section 10.
   people.
 - **Sub-agents:** a sub-agent's conversation is shown under the turn that started it
   (SUB-6).
-- **Read:** [REQ-05](specs/req-05-virtual-console-conversation-log-viewer.md). Row FC-150.
+- **Read:** [REQ-05](specs/doc-56%20-%20REQ-05-Virtual-Console-and-Conversation-Log-Viewer.md). Row FC-150.
 - **The proof of concept needs nothing else and can start at any time.** The rest
   needs C3.
 
@@ -809,8 +809,8 @@ on the offers of design section 10.
 - **Build:** the one-chain resolution (organization, the accountable team's chain, the
   project) and its delivery at launch.
 - **Commands:** `process list` and `process inspect`, for processes and standards alike,
-  and `skill list` and `skill read` ([command line design](design/agent-os-command-line.md), section 3.5).
-- **Read:** [processes design](design/processes.md), [processes UX](specs/processes-ux.md).
+  and `skill list` and `skill read` ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), section 3.5).
+- **Read:** [processes design](design/doc-34%20-%20Design-Organization-Processes-and-Standards.md), [processes UX](specs/doc-54%20-%20Spec-Organization-Processes-and-Standards-UX.md).
   Rows FC-110, FC-112.
 - **Code today:** `crates/org-process` resolves several chains, which the design
   replaces with one, and has no caller.
@@ -839,12 +839,12 @@ on the offers of design section 10.
   decisions 5 to 7; WATCH-1, 2 and 9); `channel list`, `join` and `leave`;
   `status set` and `clear`; `session attach`, which is the long-running mode. The file
   queue goes, and every `msg` command goes to the office
-  ([command line design](design/agent-os-command-line.md), sections 2.9, 2.11, 3.3 and 3.7; CLI-13, and CLI-15 for the
+  ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), sections 2.9, 2.11, 3.3 and 3.7; CLI-13, and CLI-15 for the
   common message commands).
-- **Read:** [messaging and chat](design/organization-data/15-messaging-and-chat.md),
-  [ADR-0003](adr/0003-agent-messaging-office-first.md),
-  [ADR-0014](adr/0014-acknowledgement-classes-and-agent-os-latency.md) (ACK-1 to ACK-9),
-  [chat UX](specs/chat-ux.md) (CHAT criteria). Rows FC-074 to FC-078, FC-160.
+- **Read:** [messaging and chat](organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md),
+  [ADR-0003](../decisions/decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md),
+  [ADR-0014](../decisions/decision-14%20-%20ADR-0014-Acknowledgement-classes-and-the-agent-os-latency-target.md) (ACK-1 to ACK-9),
+  [chat UX](specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md) (CHAT criteria). Rows FC-074 to FC-078, FC-160.
 - **Code today:** `crates/org-mailbox` has directed messages, asks and triage with a
   conformance suite; `crates/org-office/src/store/messages.rs` stores them in tables the
   messaging contract replaces; `agent-os` uses a file queue by default and the office
@@ -891,10 +891,10 @@ on the offers of design section 10.
 - **Commands:** `msg ask`, to a person, an agent, a team, a project or a channel, with
   one question in flags or several in a file (`--input-format yaml`); answering with
   `msg reply --answer`; `msg withdraw`; and the `timed_out` and `withdrawn`
-  outcomes ([command line design](design/agent-os-command-line.md), sections 2.3 and 3.3; CLI-14).
-- **Read:** [REQ-04](specs/req-04-channel-messaging-and-question-components.md),
-  [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 1 to 5 and 14
-  (ASK-1, ASK-2), [chat UX](specs/chat-ux.md) (CHAT-6). Rows FC-079, FC-166.
+  outcomes ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), sections 2.3 and 3.3; CLI-14).
+- **Read:** [REQ-04](specs/doc-55%20-%20REQ-04-Channel-Messaging-and-Question-Components.md),
+  [ADR-0020](../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md) decisions 1 to 5 and 14
+  (ASK-1, ASK-2), [chat UX](specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md) (CHAT-6). Rows FC-079, FC-166.
 - **Done when:** each question type is asked from a terminal and answered in the
   browser; ASK-1, ASK-2 and ASK-10 pass.
 - **Needs:** B6.
@@ -903,9 +903,9 @@ on the offers of design section 10.
 
 - **Outcome:** an agent that cannot continue without an answer is stopped after being
   told, and starts again in the same session when the answer arrives.
-- **Commands:** the `suspended` outcome of a required ask ([command line design](design/agent-os-command-line.md),
+- **Commands:** the `suspended` outcome of a required ask ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md),
   sections 2.3 and 3.3; CLI-14).
-- **Read:** [ADR-0020](adr/0020-required-asks-suspend-and-resume.md) decisions 5 to 13.
+- **Read:** [ADR-0020](../decisions/decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md) decisions 5 to 13.
   Row FC-166.
 - **Done when:** ASK-3, ASK-5, ASK-6, ASK-7, ASK-9, ASK-11 and ASK-12 pass, and the
   presence part of ASK-4. The rest of ASK-4 (no turn permit and no subscription slot while suspended) is
@@ -925,10 +925,10 @@ on the offers of design section 10.
   it) is kept as a pending start and tried again when the turn ends, a permit or a
   connection is freed, a hold or a pause is lifted, the hour has passed or the
   office starts; two agents waiting on each other's required answer start each other
-  ([ADR-0030](adr/0030-an-agent-works-while-it-has-work.md) decisions 1 to 7).
-- **Read:** [ADR-0023](adr/0023-an-agents-ask-starts-a-turn.md) (WAKE-1 to WAKE-7),
-  [how agents run](specs/agent-run-modes-ux.md) (RUN-3),
-  [command line design](design/agent-os-command-line.md) section 3.3. Row FC-169.
+  ([ADR-0030](../decisions/decision-30%20-%20ADR-0030-An-agent-works-while-it-has-work-continues-after-a-restart-and-a-stalled-turn-is-stopped.md) decisions 1 to 7).
+- **Read:** [ADR-0023](../decisions/decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md) (WAKE-1 to WAKE-7),
+  [how agents run](specs/doc-50%20-%20Spec-Agent-Run-Modes-and-Availability-UX.md) (RUN-3),
+  [command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md) section 3.3. Row FC-169.
 - **Done when:** WAKE-1 to WAKE-7 and LIVE-1 and LIVE-4 to LIVE-7 pass, and the
   hourly-limit part of LIVE-3. LIVE-8 is finished with C6, LIVE-2 with L4 (it needs
   turn permits) and the budget part of LIVE-3 with L3.
@@ -947,10 +947,10 @@ on the offers of design section 10.
   organization's watching model profile, with the feature off when none is set; the
   bounds; each pass recorded as one product-made usage record; the `answer_candidate`
   inbox entry linked to its question or questions; `channel summarize`.
-- **Commands:** `channel summarize` ([command line design](design/agent-os-command-line.md), section 3.3).
-- **Read:** [ADR-0024](adr/0024-a-channel-question-is-watched-for-its-answer.md)
-  (WATCH-1 to WATCH-11), [smart features](design/smart-features.md) (how a tool-less
-  run is made and validated), [messaging](design/organization-data/15-messaging-and-chat.md).
+- **Commands:** `channel summarize` ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), section 3.3).
+- **Read:** [ADR-0024](../decisions/decision-24%20-%20ADR-0024-An-agents-inbox-holds-what-is-addressed-to-it-and-each-channel-has-a-watcher-that-feeds-responses-back-to-the-agents-who-asked.md)
+  (WATCH-1 to WATCH-11), [smart features](design/doc-36%20-%20Design-Smart-Features-Not-in-v1.md) (how a tool-less
+  run is made and validated), [messaging](organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md).
   Row FC-170.
 - **Code today:** `crates/org-copilot` has the registry, rendering and validation for
   tool-less runs, wired to no model.
@@ -966,15 +966,15 @@ on the offers of design section 10.
   it starts and answers with nobody pressing Run. An idle agent shows as Available, and
   whoever sends sees whether the recipient is there.
 - **Build:** the starts that
-  [ADR-0028](adr/0028-an-agent-is-always-available.md) adds to C8: a direct message or a
+  [ADR-0028](../decisions/decision-28%20-%20ADR-0028-An-agent-is-always-available-a-persons-message-and-a-task-assignment-also-start-it.md) adds to C8: a direct message or a
   mention from a person, and a task assigned to the agent, under the same admission and
   the same hourly limit. An agent that is not working shows as Available whatever its
   process is doing. The recipient's presence in the answer to a send and an ask.
-- **Read:** ADR-0028 (AVAIL-1 to AVAIL-6), [how agents run](specs/agent-run-modes-ux.md)
-  (RUN-3), [agent sessions](design/agent-sessions.md). Row FC-186.
+- **Read:** ADR-0028 (AVAIL-1 to AVAIL-6), [how agents run](specs/doc-50%20-%20Spec-Agent-Run-Modes-and-Availability-UX.md)
+  (RUN-3), [agent sessions](design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md). Row FC-186.
 - **Code today:** nothing starts an agent.
 - **Done when:** AVAIL-1 to AVAIL-6 pass, and HIRE-2 and HIRE-7 of
-  [ADR-0029](adr/0029-only-who-may-hire-hires.md).
+  [ADR-0029](../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md).
 - **Needs:** C8, C2 and, for assignments, B4.
 
 ---
@@ -986,7 +986,7 @@ on the offers of design section 10.
 - **Outcome:** a person or agent creates a task, bug or request, assigns it, changes its
   status, priority and effort, comments on it and ticks its checklist; every change is in
   its history. Any active employee may do this; there is no task capability to grant
-  ([ADR-0031](adr/0031-any-employee-changes-tasks.md); TASKAUTH-1 to TASKAUTH-3).
+  ([ADR-0031](../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md); TASKAUTH-1 to TASKAUTH-3).
 - **Build:**
   - One task record with a type. The separate bug and request families and the area
     calls and tables are deleted.
@@ -998,13 +998,13 @@ on the offers of design section 10.
   - Accountable team, and a separate assigned team and assignee, changed together at an
     expected revision.
   - An immutable history event per change, starting with `created` at revision 1.
-- **Read:** [features and work](design/organization-data/03-features-and-work.md),
-  [operational data](design/organization-data/05-operational-data.md),
-  [identity and numbering](design/organization-data/06-identity-and-numbering.md),
-  [assignment and history](design/organization-data/12-task-assignment-and-history.md),
-  [ADR-0019](adr/0019-office-coded-task-numbers.md). Rows FC-039 to FC-046, FC-050,
+- **Read:** [features and work](organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md),
+  [operational data](organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md),
+  [identity and numbering](organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md),
+  [assignment and history](organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md),
+  [ADR-0019](../decisions/decision-19%20-%20ADR-0019-Task-numbers-are-minted-by-the-creating-office.md). Rows FC-039 to FC-046, FC-050,
   FC-054, FC-056, FC-142. Task test cases from the retired assignment branch:
-  [assignment branch test cases](research/assignment-branch-test-cases.md#task-work).
+  [assignment branch test cases](research/doc-24%20-%20Research-Assignment-Branch-Test-Cases.md#task-work).
 - **Code today:** `crates/org-work` has tasks, bugs, checklists and history against the
   model the data contract replaces, with per-project counters; `selected_codec`,
   `selected_assignment` and `selected_history` are the parts written for the selected
@@ -1024,12 +1024,12 @@ on the offers of design section 10.
   context and required when there is none; the board, list and detail screens against
   the real API, updated by the change stream.
 - **Commands:** `task create`, `list`, `inspect`, `update`, `transition`, `assign`,
-  `comment` and `watch`, and `checklist` ([command line design](design/agent-os-command-line.md), sections 2.11 and 3.4;
+  `comment` and `watch`, and `checklist` ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), sections 2.11 and 3.4;
   CLI-15 for the common task commands).
-- **Read:** [work items UX](specs/work-items-ux.md) (TSK, BUG, CHK, WORK criteria),
-  [identity and numbering, default project](design/organization-data/06-identity-and-numbering.md#stable-ids-readable-references-and-scopes).
+- **Read:** [work items UX](specs/doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md) (TSK, BUG, CHK, WORK criteria),
+  [identity and numbering, default project](organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md#stable-ids-readable-references-and-scopes).
   Rows FC-038, FC-039, FC-043. Browser test cases from the retired assignment branch:
-  [assignment branch test cases](research/assignment-branch-test-cases.md#browser-and-web).
+  [assignment branch test cases](research/doc-24%20-%20Research-Assignment-Branch-Test-Cases.md#browser-and-web).
 - **Done when:** the TSK, BUG, CHK and WORK criteria that need no agent runtime pass in
   browser tests against a real instance; a task created in the browser is updated from
   a terminal and the browser shows the change without a reload.
@@ -1044,9 +1044,9 @@ on the offers of design section 10.
   reading rule (the author and people, never another agent) on every read, search,
   feed, summary, export and turn input; the notes pane on the task in the browser.
 - **Commands:** `task note add`, `list`, `update` and `remove`
-  ([command line design](design/agent-os-command-line.md), section 3.4).
-- **Read:** [document 05](design/organization-data/05-operational-data.md#private-notes-attached-to-tasks)
-  (PN-01 to PN-06), [ADR-0031](adr/0031-any-employee-changes-tasks.md). Row FC-053.
+  ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), section 3.4).
+- **Read:** [document 05](organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#private-notes-attached-to-tasks)
+  (PN-01 to PN-06), [ADR-0031](../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md). Row FC-053.
 - **Done when:** PN-01 to PN-06 and TASKAUTH-4 to TASKAUTH-7 pass.
 - **Needs:** B5 and, for TASKAUTH-5, C3. It is built straight after B5 (owner,
   2026-11-18): agents use notes for their plans from the first tasks they work on.
@@ -1056,8 +1056,8 @@ on the offers of design section 10.
 - **Outcome:** an agent works in a worktree of a registered repository and the office
   pushes its task branch.
 - **Commands:** `repo list`, `repo attach` for the owner, `worktree list` and
-  `repo push`; the office creates and removes worktrees itself ([command line design](design/agent-os-command-line.md), section 3.6).
-- **Read:** [Git design](design/projects-git-github.md) and its open questions, which the
+  `repo push`; the office creates and removes worktrees itself ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), section 3.6).
+- **Read:** [Git design](design/doc-35%20-%20Design-Projects-Git-and-GitHub.md) and its open questions, which the
   engineer answers first. Rows FC-103, FC-139, FC-140.
 - **Needs:** C3, B4.
 
@@ -1066,10 +1066,10 @@ on the offers of design section 10.
 ## Milestone two · Linux, in parallel (Track X)
 
 Linux runs as its own track, in parallel with milestone one (owner decision
-2026-11-17). Its design is [Linux host](design/linux-host.md); its acceptance criteria are
-LNX-1 to LNX-6 of [ADR-0017](adr/0017-linux-and-container-hosting.md); its checklist row
+2026-11-17). Its design is [Linux host](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md); its acceptance criteria are
+LNX-1 to LNX-6 of [ADR-0017](../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md); its checklist row
 is FC-164. The Track X engineer works on Linux; the increments touch the macOS
-increments' files only where [the design](design/linux-host.md#7-working-in-parallel-with-the-macos-track)
+increments' files only where [the design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md#7-working-in-parallel-with-the-macos-track)
 says, and agree those commits with the Track A lead.
 
 Which increment finishes each criterion: LNX-1 in X2, LNX-2 in X5, LNX-3 in X4,
@@ -1086,7 +1086,7 @@ half of LNX-6 run).
     application base only) modules, each with its macOS and refusing adapters and one
     non-conditional constructor, so that A2 never added a platform predicate outside
     the crate. The A2 lead wrote the `service` contract with its launchd adapter
-    ([design, section 3.4](design/linux-host.md#34-service-lifecycle)).
+    ([design, section 3.4](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md#34-service-lifecycle)).
   - X1a added the check `crates/org-platform/tests/platform_conditionals.rs`: it reads
     every `.rs` file outside `crates/org-platform/`, requires that `syn` parses it,
     and fails on a `cfg`, `cfg_attr`, `cfg!`, `cfg_select!` or `cfg_match!` predicate
@@ -1102,9 +1102,9 @@ half of LNX-6 run).
     target that gets only the refusing adapters, and the module stubs X1b fills.
   - X1a reviewed the `service` contract as built. What X5 must settle with the A2
     lead before it writes the systemd adapter is in the
-    [Track X record](../.agent-kit/tasks/v1-track-x.md).
-- **Read:** [Linux host design](design/linux-host.md) sections 1, 3.4 and 7,
-  [architecture rules](architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one).
+    [Track X record](../../.agent-kit/tasks/v1-track-x.md).
+- **Read:** [Linux host design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md) sections 1, 3.4 and 7,
+  [architecture rules](doc-8%20-%20Architecture-Rules.md#planned-variation-goes-behind-an-adapter-from-day-one).
 - **Code when the list was written:** the 79 listed files were 45 source files, one
   example and 33 test files (78 files and 491 predicates since A1 removed SQLCipher
   from the office store). The source files are 29 in `org-host` (among them `spawn.rs`,
@@ -1118,7 +1118,7 @@ half of LNX-6 run).
   `org-client`'s `agent.rs`, `org-spool`'s `safe_read.rs` and `agentic-org-web`'s
   `release.rs`. `org-proto/src/location.rs` hard-codes macOS values with no
   conditional. The
-  [design](design/linux-host.md#2-what-each-executable-needs-from-the-platform) maps
+  [design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md#2-what-each-executable-needs-from-the-platform) maps
   each to its contract. Milestone-one work in those files adds no new conditional.
   CI lints `org-host` and `agentic-org` on Linux with `dead_code` and
   `unused_imports` allowed and runs none of their tests there.
@@ -1138,7 +1138,7 @@ half of LNX-6 run).
   353 predicates. Linux default locations are the design's XDG ones. `org-platform`
   is libc-only and `crates/org-platform-host` holds what only the host links
   (ADR-0017 decision 6 as amended). Details and what is carried forward:
-  [Track X record](../.agent-kit/tasks/v1-track-x.md).
+  [Track X record](../../.agent-kit/tasks/v1-track-x.md).
 - **Build:** the `fs`, `dirs`, `process` and `socket` modules with today's macOS code
   and today's Linux code moved in unchanged and refusing adapters elsewhere (the flush
   of `store/acceptance/durable.rs`, or of `org-store/src/files.rs` once B1a has carried
@@ -1146,8 +1146,8 @@ half of LNX-6 run).
   `org-proto/src/location.rs` keeps only path composition; `org-supervise`'s
   `compile_error!` goes; the allowlist shrinks by every moved file.
 - **Commands:** `agent-os` and the shared command library take default locations and
-  file reads only from `org-platform` ([command line design](design/agent-os-command-line.md), section 5).
-- **Read:** [Linux host design](design/linux-host.md) section 4.
+  file reads only from `org-platform` ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), section 5).
+- **Read:** [Linux host design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md) section 4.
 - **Code today:** see X1a.
 - **Done when:** none of the moved files has a platform predicate; the macOS and Linux
   CI runs pass unchanged; the macOS CI run is the macOS verification.
@@ -1163,7 +1163,7 @@ half of LNX-6 run).
   bridge and its build script); `ServerCheck` becomes the policy that builds
   `ExpectedImage`; `ChildEnv` refuses loader variables; the supervisor's call sites
   use `Admission::spawn` and `verify_reader`.
-- **Read:** [Linux host design](design/linux-host.md) sections 3.1, 3.3 and 4.
+- **Read:** [Linux host design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md) sections 3.1, 3.3 and 4.
 - **Code today:** see X1a; `reader_is_child` in `supervisor/channels.rs` refuses on
   every system but macOS.
 - **Done when:** none of the moved files has a platform predicate; on Linux
@@ -1180,7 +1180,7 @@ half of LNX-6 run).
 - **Build:** the `credentials` module with the Keychain adapter and one directory
   engine that replaces the two development stores; `KeyStore` and `HostSecrets` become
   typed views.
-- **Read:** [Linux host design](design/linux-host.md) section 3.2.
+- **Read:** [Linux host design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md) section 3.2.
 - **Code today:** `org-host/src/keys/` and `host_secrets` each have a Keychain store
   and a separate development store.
 - **Done when:** no file in `keys/` or `host_secrets` has a platform predicate; the
@@ -1206,9 +1206,9 @@ half of LNX-6 run).
     to an unprivileged user when run as root.
   - The host's integration tests and `org-host`'s tests run on Linux.
 - **Commands:** the command contract tests that need an office pass on Linux for the
-  commands that exist then ([command line design](design/agent-os-command-line.md), section 5).
-- **Read:** [Linux host design](design/linux-host.md) sections 3.1 and 4,
-  [host boundary design](design/office-host-boundary.md) (admission and the verified
+  commands that exist then ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), section 5).
+- **Read:** [Linux host design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md) sections 3.1 and 4,
+  [host boundary design](design/doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md) (admission and the verified
   rendezvous). LNX-1.
 - **Built (2026-11-18):** the Linux admission adapter
   (`crates/org-platform-host/src/admission/linux.rs`), reviewed and hardened; the
@@ -1236,8 +1236,8 @@ half of LNX-6 run).
 - **Build:** the Linux directory credential adapter of the design, with its owner,
   mode, private-group, filesystem, `(device, inode)` disjointness, mount-point,
   empty-store and lock checks; the `credentials` property of non-interactive setup.
-- **Read:** [Linux host design](design/linux-host.md) section 3.2,
-  [ADR-0016](adr/0016-no-application-level-data-encryption.md) decision 3. LNX-4.
+- **Read:** [Linux host design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md) section 3.2,
+  [ADR-0016](../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md) decision 3. LNX-4.
 - **Code today:** a Linux release build has no store and refuses.
 - **Done when:** each wrong owner, mode, group, filesystem, store inside the data
   root, and an empty store for an instance with keys refuses the start (temporary
@@ -1260,8 +1260,8 @@ half of LNX-6 run).
     filesystem right it knows, a seccomp allowlist that kills on anything else, `prctl`
     and `ioctl` filtered by argument) and the host's check of the child's seccomp and
     no-new-privileges state.
-- **Read:** [Linux host design](design/linux-host.md) section 3.3,
-  [ADR-0008](adr/0008-gateway-macos-sandbox.md). LNX-3.
+- **Read:** [Linux host design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md) section 3.3,
+  [ADR-0008](../decisions/decision-8%20-%20ADR-0008-macOS-confinement-of-the-web-process-GW-SBX-MAC-1.md). LNX-3.
 - **Code today:** the Linux adapter is `org-platform/src/confinement/linux/` (Landlock,
   the seccomp filter and the ready report); the host starts the web process, checks its
   `/proc` status and logs how it is confined (`org-host/src/web.rs`, the `lnx_3_*`
@@ -1290,10 +1290,10 @@ half of LNX-6 run).
   pair and the host's verifier for it, unless A3 has built it; the documented run
   command and the `docker exec -u 0 … admin reset --user` step.
 - **Commands:** `agent-os` is in the image's release `bin/`, first on an agent's
-  `PATH`, and the image has a shell; no MCP wrapper is built ([command line design](design/agent-os-command-line.md),
+  `PATH`, and the image has a shell; no MCP wrapper is built ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md),
   section 5).
-- **Read:** [Linux host design](design/linux-host.md) sections 3.4 and 3.5,
-  [standalone server design](design/standalone-server.md) (service, non-interactive
+- **Read:** [Linux host design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md) sections 3.4 and 3.5,
+  [standalone server design](design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) (service, non-interactive
   setup). LNX-2.
 - **Code today:** `org_platform::service` holds the contract and the macOS launchd
   adapter (A2 B0); Linux and every other system get the refusing adapter, so setup
@@ -1342,9 +1342,9 @@ HTTP (X5), and the documented run command publishes that port on `127.0.0.1` onl
 - **Owned with Track A:** the listener and gateway contracts and FC-017 (TLS, CA
   custody and privilege separation) are theirs; the contract change is agreed with
   that lead before it is built.
-- **Read:** [Linux host design](design/linux-host.md) section 3.4,
-  [ADR-0017](adr/0017-linux-and-container-hosting.md) decision 10,
-  [standalone server design](design/standalone-server.md) (listener and Origin).
+- **Read:** [Linux host design](design/doc-64%20-%20Design-Linux-and-Container-Hosting.md) section 3.4,
+  [ADR-0017](../decisions/decision-17%20-%20ADR-0017-v1-runs-on-macOS-and-Linux-including-inside-a-container.md) decision 10,
+  [standalone server design](design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md) (listener and Origin).
 - **Needs:** X5.
 
 ### X6 · Both systems in CI
@@ -1356,7 +1356,7 @@ HTTP (X5), and the documented run command publishes that port on `127.0.0.1` onl
   container image and runs the LNX-2 send and read in it.
 - **Commands:** the command contract tests run on both systems; the catalogue and
   every schema are byte-identical on macOS and Linux; one-shot timings are recorded on
-  Linux, and `session attach` timings once B6 has landed ([command line design](design/agent-os-command-line.md), section 5; CLI-11).
+  Linux, and `session attach` timings once B6 has landed ([command line design](design/doc-28%20-%20Design-agent-os-Command-Line.md), section 5; CLI-11).
 - **Read:** ADR-0017. LNX-5, LNX-6.
 - **Code today:** `.github/workflows/ci.yml` excludes `org-host` and `agentic-org` from
   the Linux clippy and test runs.
@@ -1373,11 +1373,11 @@ HTTP (X5), and the documented run command publishes that port on `127.0.0.1` onl
   when HQ is unreachable, and messages reach people and agents in the other office.
 - **Build:** enrolment of the office from HQ, replication of the organization's data
   between HQ and the office, and relay of messages between offices through HQ.
-- **Read:** [offices design](design/offices-hq-and-satellites.md),
-  [ADR-0001](adr/0001-app-is-a-client-office-is-a-server.md),
-  [ADR-0003](adr/0003-agent-messaging-office-first.md) decisions 4 to 8,
-  [offices and teams UX](specs/offices-and-teams-ux.md) (OFC criteria for a second
-  office), [recovery contract](design/organization-data/16-recovery-and-office-continuity.md).
+- **Read:** [offices design](design/doc-67%20-%20Design-Offices-HQ-and-Satellites.md),
+  [ADR-0001](../decisions/decision-1%20-%20ADR-0001-The-app-is-a-client-offices-serve-organization-data.md),
+  [ADR-0003](../decisions/decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md) decisions 4 to 8,
+  [offices and teams UX](specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md) (OFC criteria for a second
+  office), [recovery contract](organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md).
   Rows FC-020, FC-145; the replication suite of ADR-0018 (ENG-3).
 - **Code today:** `crates/org-sync` is the replication core; nothing enrols an office. Since
   B1b a second office of one organization on one instance is refused: the host reserves writer
@@ -1394,25 +1394,25 @@ product without it.
 
 | Increment | What | Read |
 | --- | --- | --- |
-| L1 | More than one organization on an instance, and switching between them | [offices and teams UX](specs/offices-and-teams-ux.md) (OPEN criteria), FC-015. Needs A4 |
-| L2 | Usage, prices and cost views | [document 10](design/organization-data/10-usage-and-cost-accounting.md), [costs UX](specs/costs-and-insights-ux.md), FC-084 to FC-088 |
-| L3 | Budgets and the hold at the turn permit | [document 17](design/organization-data/17-budgets-and-controls.md), FC-089 to FC-093; ASK-8 |
-| L4 | Subscription pools, quota permits, failover | [documents 11 and 14](design/organization-data/11-model-profiles-and-agent-execution.md), FC-098, FC-099; the rest of ASK-4 |
-| L6 | The `dedicated-user` isolation mode | [ADR-0015](adr/0015-agent-isolation-modes.md), FC-161; ENC-4 for this mode |
-| L15 | The `os-sandbox` isolation mode: the office's own OS sandbox around the whole agent process (owner direction 2026-11-20, planned). First step: the macOS iOS-build spike | [ADR-0015](adr/0015-agent-isolation-modes.md) decision 12 and its owner direction, FC-190; inside accounts and with extension allowances: [accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md#7-the-sandbox-inside-the-accounts) (proposed, ASX-11) |
-| L16 | Dedicated non-administrator accounts and one-command secure setup: a hidden service account runs the host, the web process and the offices from boot; agent accounts run the agents; one administrator prompt at setup and none for the core's everyday use afterwards (a closed-list helper, recommended); one setting, `--isolation off\|accounts` (accounts by default for an install), keeps development and testing prompt-free and is never a silent fallback (owner direction 2026-11-20, late v1, proposed). First step: the accounts, launcher, security and secrets spikes | [Accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md#3-accounts-proposed) (proposed; requirements ASX-1 to ASX-10, ASX-12 and ASX-13, spikes in its section 11), FC-191; extends L6 and ADR-0015. ADRs follow the spikes |
-| L17 | Extensions: the contract and the built-in optional modules, first Containers (Colima) and Xcode, with the web app's extension slot agreed with the UI stream (owner direction 2026-11-20, late v1, not milestone one, proposed). First step: the containers and Xcode spikes | [Accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md#8-extensions) (proposed; ASX-14 to ASX-18), FC-192 to FC-194. Needs L15 and L16 |
-| L7 | Features, knowledge, releases and deployments | documents [03](design/organization-data/03-features-and-work.md), [07](design/organization-data/07-release-deployments.md), [09](design/organization-data/09-release-content-and-flags.md), FC-058 to FC-070 |
-| L11 | The project documentation tree and its index: sections, documents, diagrams and images under `projects/<id>/docs/`, `agent-os doc`, the Docs tab by section, and the boundary that keeps an agent to its own projects | [development process design](design/development-processes.md#8-the-project-documentation-tree), [document 18](design/organization-data/18-development-processes-and-project-documentation.md), FC-180. With or before L7, whose project-wide documents live in the tree |
-| L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/development-processes.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-175 to FC-179, FC-184, FC-187. Needs C2, C3 and L11 |
-| L13 | Issued document versions, differences, code links and the tasks that realize a version | [desired state design](design/desired-state-specifications.md#6-the-contract), document 18, FC-181, FC-182. Needs L11, B4 and C7 |
-| L14 | The built-in development processes: desired state, with a run of it with real agents from a conversation to converged code; and feature delivery | [desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), FC-183, FC-185. Needs L12, L13, B7, C6, C8, C10 and L7's feature records |
-| L9 | Install from a signed release, update, uninstall | [standalone server design](design/standalone-server.md), FC-022, FC-154 |
+| L1 | More than one organization on an instance, and switching between them | [offices and teams UX](specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md) (OPEN criteria), FC-015. Needs A4 |
+| L2 | Usage, prices and cost views | [document 10](organization-data/doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md), [costs UX](specs/doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md), FC-084 to FC-088 |
+| L3 | Budgets and the hold at the turn permit | [document 17](organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md), FC-089 to FC-093; ASK-8 |
+| L4 | Subscription pools, quota permits, failover | [documents 11 and 14](organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md), FC-098, FC-099; the rest of ASK-4 |
+| L6 | The `dedicated-user` isolation mode | [ADR-0015](../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md), FC-161; ENC-4 for this mode |
+| L15 | The `os-sandbox` isolation mode: the office's own OS sandbox around the whole agent process (owner direction 2026-11-20, planned). First step: the macOS iOS-build spike | [ADR-0015](../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md) decision 12 and its owner direction, FC-190; inside accounts and with extension allowances: [accounts, sandbox and extensions](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#7-the-sandbox-inside-the-accounts) (proposed, ASX-11) |
+| L16 | Dedicated non-administrator accounts and one-command secure setup: a hidden service account runs the host, the web process and the offices from boot; agent accounts run the agents; one administrator prompt at setup and none for the core's everyday use afterwards (a closed-list helper, recommended); one setting, `--isolation off\|accounts` (accounts by default for an install), keeps development and testing prompt-free and is never a silent fallback (owner direction 2026-11-20, late v1, proposed). First step: the accounts, launcher, security and secrets spikes | [Accounts, sandbox and extensions](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#3-accounts-proposed) (proposed; requirements ASX-1 to ASX-10, ASX-12 and ASX-13, spikes in its section 11), FC-191; extends L6 and ADR-0015. ADRs follow the spikes |
+| L17 | Extensions: the contract and the built-in optional modules, first Containers (Colima) and Xcode, with the web app's extension slot agreed with the UI stream (owner direction 2026-11-20, late v1, not milestone one, proposed). First step: the containers and Xcode spikes | [Accounts, sandbox and extensions](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#8-extensions) (proposed; ASX-14 to ASX-18), FC-192 to FC-194. Needs L15 and L16 |
+| L7 | Features, knowledge, releases and deployments | documents [03](organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md), [07](organization-data/doc-81%20-%20Organization-Data-07-—-Release-Deployments.md), [09](organization-data/doc-83%20-%20Organization-Data-09-—-Release-Content-and-Flags.md), FC-058 to FC-070 |
+| L11 | The project documentation tree and its index: sections, documents, diagrams and images under `projects/<id>/docs/`, `agent-os doc`, the Docs tab by section, and the boundary that keeps an agent to its own projects | [development process design](design/doc-32%20-%20Design-Development-Processes-Process-Packages.md#8-the-project-documentation-tree), [document 18](organization-data/doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md), FC-180. With or before L7, whose project-wide documents live in the tree |
+| L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/doc-32%20-%20Design-Development-Processes-Process-Packages.md), [REQ-07](specs/doc-58%20-%20REQ-07-Composable-Process-Packages-and-Team-Blueprints.md), FC-175 to FC-179, FC-184, FC-187. Needs C2, C3 and L11 |
+| L13 | Issued document versions, differences, code links and the tasks that realize a version | [desired state design](design/doc-31%20-%20Design-Desired-State-Specifications-DSS.md#6-the-contract), document 18, FC-181, FC-182. Needs L11, B4 and C7 |
+| L14 | The built-in development processes: desired state, with a run of it with real agents from a conversation to converged code; and feature delivery | [desired state design](design/doc-31%20-%20Design-Desired-State-Specifications-DSS.md), [REQ-06](specs/doc-57%20-%20REQ-06-Desired-State-Specification-DSS-and-Factory-Reconciliation.md), FC-183, FC-185. Needs L12, L13, B7, C6, C8, C10 and L7's feature records |
+| L9 | Install from a signed release, update, uninstall | [standalone server design](design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md), FC-022, FC-154 |
 | L10 | Rename `gateway` to `web` in code identifiers | Mechanical, any time, with one exception: the signing identifier constant, already renamed (`WEB_SIGNING_ID` in `crates/org-host/src/server_check.rs` and `release/platform.rs`), is checked at release admission |
 
 ## Checklist rows that ride with an increment
 
-Rows of the [feature checklist](FEATURES.md) that no increment above names, and where
+Rows of the [feature checklist](doc-3%20-%20Feature-Checklist.md) that no increment above names, and where
 each is finished.
 
 | Rows | What | Finished with |
@@ -1435,13 +1435,13 @@ each is finished.
 ## For every increment
 
 - An increment that gives agents a command adds or changes the section of the
-  [built-in agent instructions](design/agent-instructions.md) that tells them when to use
+  [built-in agent instructions](design/doc-27%20-%20Design-Agent-Instructions-Assembly.md) that tells them when to use
   it, and makes its scenario pass.
 - Branch from `origin/v1`. One writer per file at a time.
 - Before code, write the short plan for the increment: what a person can do at the end,
   the files you will own, what you will delete, and the decisions you are taking where
   the documents are silent.
-- Decide for yourself inside the [architecture non-negotiables](architecture-non-negotiables.md),
+- Decide for yourself inside the [architecture non-negotiables](doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md),
   and record each decision in the document that owns the topic.
 - Keep the checks green: `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test --workspace`; for the UI, its type check, tests and build. When you change

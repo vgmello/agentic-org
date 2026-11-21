@@ -17,21 +17,21 @@ tags:
 Three lead sessions build v1 at the same time, each in its own stream. This folder is their
 shared handover: what each stream has done, what is left, and what a lead starting again picks
 up first. It sits apart from the requirements and plans so that the owner can delete it once
-all three streams are finished. The session-start step in [AGENTS.md](../../AGENTS.md) and the
+all three streams are finished. The session-start step in [AGENTS.md](../../../AGENTS.md) and the
 streams' own task logs under `.agent-kit/tasks/` point here; when the folder is deleted, delete
 those pointers too (`git grep docs/workstreams` finds them).
 
 The order of work and the requirements stay where they are: the
-[implementation plan](../implementation-plan.md), the [UI plan](../plans/v1-ui-screens.md) (it reaches
-`v1` with the UI release; until then it is on branch `v1-ui`) and [FEATURES](../FEATURES.md). This folder only records progress and points into them.
+[implementation plan](../doc-5%20-%20v1-Implementation-Plan.md), the [UI plan](../plans/doc-19%20-%20v1-UI-Screens-Build-Plan.md) (it reaches
+`v1` with the UI release; until then it is on branch `v1-ui`) and [FEATURES](../doc-3%20-%20Feature-Checklist.md). This folder only records progress and points into them.
 
 ## The three streams
 
 | Stream | Lead session | File | Scope |
 | --- | --- | --- | --- |
-| Backend (tracks A and B) | backend-dev | [backend.md](backend.md) | `crates/**`, the office (`apps/agentic-org-office`), the host and command-line apps (`apps/agentic-org`, `apps/agent-os`, the server side of `apps/agentic-org-web`), the wire between servers, `docs/design/**`, `docs/adr/**`, `.agent-kit`, the backend rows of FEATURES |
-| Linux (track X) | linux-dev | [linux.md](linux.md) | Linux and the container: the platform crates, services, CI on both systems, the release image |
-| Product UI (track U) | ui-dev | [ui.md](ui.md) | `apps/agentic-org-ui/**`, `docs/specs/**`, `docs/plans/v1-ui-*`, the UI rows of FEATURES |
+| Backend (tracks A and B) | backend-dev | [backend.md](doc-15%20-%20Backend-Stream-Handover-Tracks-A-and-B.md) | `crates/**`, the office (`apps/agentic-org-office`), the host and command-line apps (`apps/agentic-org`, `apps/agent-os`, the server side of `apps/agentic-org-web`), the wire between servers, `docs/design/**`, `docs/adr/**`, `.agent-kit`, the backend rows of FEATURES |
+| Linux (track X) | linux-dev | [linux.md](doc-16%20-%20Linux-Stream-Handover-Track-X.md) | Linux and the container: the platform crates, services, CI on both systems, the release image |
+| Product UI (track U) | ui-dev | [ui.md](doc-17%20-%20Product-UI-Stream-Handover-Track-U.md) | `apps/agentic-org-ui/**`, `docs/specs/**`, `docs/plans/v1-ui-*`, the UI rows of FEATURES |
 
 A file in another stream's scope is changed only after that stream's lead hands it over
 explicitly, and is handed back when done.

@@ -10,11 +10,11 @@ status: accepted
 # ADR-0029 · Only someone who may hire can hire; there is no approval
 
 Status: **decided by the owner 2026-11-18**. Implementation pending. It replaces the
-approval and escalation of [ADR-0027](0027-a-lead-approves-a-hire.md) (its decisions
+approval and escalation of [ADR-0027](decision-27%20-%20ADR-0027-A-lead-with-hiring-power-approves-a-hire.md) (its decisions
 1, 2, 5 and 6); the permission that record introduced, `may_hire`, stays. The
-[employee contract](../design/organization-data/04-agent-structure.md#who-may-hire),
-the [hire flow](../specs/our-org-in-the-app.md) and the
-[agent command line](../design/agent-os-command-line.md) follow it.
+[employee contract](../docs/organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md#who-may-hire),
+the [hire flow](../docs/specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md) and the
+[agent command line](../docs/design/doc-28%20-%20Design-agent-os-Command-Line.md) follow it.
 
 The owner's words: "There's no approval of a hire, because the hire command is only
 allowed for who can make the hire themselves. If a staff engineer that cannot hire
@@ -88,7 +88,7 @@ approver and had no command to approve with.
 
 ## Acceptance criteria
 
-APPR-1 to APPR-7 in the [hire flow](../specs/our-org-in-the-app.md), and:
+APPR-1 to APPR-7 in the [hire flow](../docs/specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md), and:
 
 | ID | Passing evidence |
 | --- | --- |

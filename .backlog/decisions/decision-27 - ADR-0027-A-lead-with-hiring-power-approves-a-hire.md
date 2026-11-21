@@ -10,14 +10,14 @@ status: superseded
 # ADR-0027 · A lead with hiring power approves a hire
 
 Status: **decided by the owner 2026-11-18**, in answer to the hiring point of
-[REQ-07](../specs/req-07-composable-process-packages-and-team-blueprints.md): "Not a
+[REQ-07](../docs/specs/doc-58%20-%20REQ-07-Composable-Process-Packages-and-Team-Blueprints.md): "Not a
 person, a lead approves every hire. If I'm the first lead in the team because I'm a
 person, I have to approve. If an agent is the lead of the team, it's a flag in the
 agent to enable it to hire someone else." And: "Allow hiring should be a flag, because a
 team lead of an engineering team may not, but a team lead of a director team could."
 Implementation pending.
 
-**Replaced in part on 2026-11-18 by [ADR-0029](0029-only-who-may-hire-hires.md):** there
+**Replaced in part on 2026-11-18 by [ADR-0029](decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md):** there
 is no approval and no escalation. Only someone who may hire can start a hire, and
 everyone else is refused. Decisions 1, 2, 5 and 6 below, and criteria HIRE-1 to
 HIRE-7, are history. Decisions 3, 4 and 7 stand: the `may_hire` permission, how it is
@@ -34,7 +34,7 @@ an agent the owner trusted to staff its team.
 
 ## Decision
 
-> **Note:** Decisions 1, 2, 5, and 6 (hire approval chains, escalation, and hiring limits) were superseded on 2026-11-18 by [ADR-0029](0029-only-who-may-hire-hires.md) (no approval or escalation: only someone who holds `may_hire` can start a hire, bounded by `teams.max_members`). The surviving decisions from this ADR are preserved below.
+> **Note:** Decisions 1, 2, 5, and 6 (hire approval chains, escalation, and hiring limits) were superseded on 2026-11-18 by [ADR-0029](decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md) (no approval or escalation: only someone who holds `may_hire` can start a hire, bounded by `teams.max_members`). The surviving decisions from this ADR are preserved below.
 
 3. **The permission is given employee by employee, to a person or an agent.** A person's
    record is created with `may_hire` on and an agent's with it off. The lead of an
@@ -56,11 +56,11 @@ an agent the owner trusted to staff its team.
   may spend on new employees. The owner wants that as a separate, explicit switch,
   for people and agents alike.
 - **A permission in the development process.** A development process is content and grants nothing
-  ([ADR-0026](0026-development-processes-are-content.md)).
+  ([ADR-0026](decision-26%20-%20ADR-0026-A-development-process-is-content-the-product-runs-no-methodology.md)).
 
 ## Acceptance criteria
 
-Criteria HIRE-1, HIRE-2, HIRE-3, HIRE-5, HIRE-6, and HIRE-7 were superseded by [ADR-0029](0029-only-who-may-hire-hires.md) (only someone holding `may_hire` starts a hire; team capacity uses `teams.max_members`). The surviving `may_hire` permission criterion is:
+Criteria HIRE-1, HIRE-2, HIRE-3, HIRE-5, HIRE-6, and HIRE-7 were superseded by [ADR-0029](decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md) (only someone holding `may_hire` starts a hire; team capacity uses `teams.max_members`). The surviving `may_hire` permission criterion is:
 
 | ID | Passing evidence |
 | --- | --- |
@@ -70,6 +70,6 @@ Criteria HIRE-1, HIRE-2, HIRE-3, HIRE-5, HIRE-6, and HIRE-7 were superseded by [
 
 - An agent with `may_hire` can add employees, and so cost, without a person
   approving each hire first. Agent and task budgets
-  ([document 17](../design/organization-data/17-budgets-and-controls.md)) and
+  ([document 17](../docs/organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md)) and
   `teams.max_members` are the bounds, and every hire shows on the owner's Home.
-- See [ADR-0029](0029-only-who-may-hire-hires.md) for the active hiring flow and acceptance criteria.
+- See [ADR-0029](decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md) for the active hiring flow and acceptance criteria.

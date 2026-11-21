@@ -14,7 +14,7 @@ tags:
 > [!NOTE] Review note (2026-11-21)
 > Remaining Track U work (Step 4 Work tab & queued shared fixes, Steps 5–9, a2ui interaction review, and ADR-0031 private task notes UX) is now tracked in Backlog.md (`TASK-12`, `TASK-17`, `TASK-65`–`TASK-71`). Unmerged WIP branches noted for pickup: `v1-ui-work`, `v1-ui-chat-wip`, and `origin/app-frontend-dev/pointer-focus`.
 
-Last updated: 2026-11-19 (ui-dev). The steps are those of the [UI plan](../plans/v1-ui-screens.md) .
+Last updated: 2026-11-19 (ui-dev). The steps are those of the [UI plan](../plans/doc-19%20-%20v1-UI-Screens-Build-Plan.md) .
 Every screen runs against mock APIs (`bun run dev:mock`); production calls refuse until the backend
 serves them. **The owner paused new work on 2026-11-19: finish, validate and merge what is built.**
 
@@ -51,7 +51,7 @@ them in `../agentic-org-ui-wt/checkpoints/`, outside the repository:
 - the launch scripts, which pin the model.
 
 A restarted ui-dev reads `INDEX.md` after this file. If that folder is gone, this file and the
-[UI plan](../plans/v1-ui-screens.md) are enough to continue.
+[UI plan](../plans/doc-19%20-%20v1-UI-Screens-Build-Plan.md) are enough to continue.
 
 - `v1-ui` and `v1-ui-step2-all`: merged into `v1` by the UI release; no longer used (new work branches from `origin/v1`).
 - `v1-ui-work` (worktree `work/`, pushed): the stopped step 5 start, committed as WIP.
@@ -83,7 +83,7 @@ Owner-directed, 2026-11-20. The backend stream proposes how optional extensions 
 milestone one) appear in the web app: menu items, a settings section validated by the office,
 their own panels, discovery of enabled extensions from the office through the web API, and UI code
 that lives in `extensions/<name>/ui/` and is built into the web app (never Tailwind Plus outside
-`apps/agentic-org-ui`). Proposal: [accounts, sandbox and extensions, section 8.4](../design/accounts-sandbox-and-extensions.md#84-the-ui-slot-proposal).
+`apps/agentic-org-ui`). Proposal: [accounts, sandbox and extensions, section 8.4](../design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#84-the-ui-slot-proposal).
 ui-dev is asked to review it, brainstorm the slot with backend-dev, and agree its shape before either
 side builds it. Owner answer 2026-11-20: ui-dev leads the slot's design with the backend stream when L17
 starts. One point to settle together: building extension UI into the app must not make the
@@ -94,12 +94,12 @@ the navigation and settings sections driven by data where that is cheap.
 ## Request from the backend stream: recovery is v2, and a trust download
 
 Owner-directed, 2026-11-20. The recovery code, CA escrow and protected recovery delivery
-are v2 ([note, section 6.7](../design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1)).
+are v2 ([note, section 6.7](../design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#67-recovery-is-v2-hq-loss-in-v1)).
 The UI's recovery parts (the settings recovery row, the release command, the recovery
 state and their end-to-end specs) stay as they are; nothing is removed without the
 owner's OK. Planned, late v1: a "Trust this organization" download of the
 organization's CA with its fingerprint shown at creation
-([section 6.6](../design/accounts-sandbox-and-extensions.md#66-the-organizations-certificate-authority-and-trust));
+([section 6.6](../design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#66-the-organizations-certificate-authority-and-trust));
 its screen is to be agreed with ui-dev when it is built.
 
 ## For the other streams

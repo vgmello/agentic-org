@@ -15,7 +15,7 @@ tags:
 > Reviewed against `v1` and Vision (`doc-1`). Current and accurate; serves directly beneath `doc-1` Principle 7 (Vertical Slice & 9/10 Architecture). Relative links to sibling `docs/` files will be updated during `TASK-32`.
 
 These are required delivery and boundary rules under
-[Architecture Rules](architecture-rules.md#independent-delivery-and-dependency-boundaries).
+[Architecture Rules](doc-8%20-%20Architecture-Rules.md#independent-delivery-and-dependency-boundaries).
 Keep the detailed policy here; other guidance links to this document.
 
 Apply these requirements to the domain modules and vertical slices defined in
@@ -26,7 +26,7 @@ review tier.
 1. **Define the delivery before implementation.** Record the usable outcome,
    acceptance criteria, required dependencies, exact file ownership and shared
    interfaces in the increment's short plan, written before code (see the
-   [implementation plan](implementation-plan.md#for-every-increment)). Each
+   [implementation plan](doc-5%20-%20v1-Implementation-Plan.md#for-every-increment)). Each
    increment is a separate acceptance and merge unit. Keep its full production
    requirements.
 2. **Keep dependency direction explicit.** Shared foundations expose narrow,
@@ -51,7 +51,7 @@ review tier.
    source or compiler evidence to the lead who owns the increment. Decide whether
    to deliver a prerequisite or revise the interface before dependent work
    resumes, and record the decision as the
-   [non-negotiables](architecture-non-negotiables.md#who-decides-what) require.
+   [non-negotiables](doc-7%20-%20Architecture-Non-Negotiables-and-Who-Decides-What.md#who-decides-what) require.
    A material architecture change gets an independent review; unaffected
    independent work may continue. Do not import unrelated features,
    invent production capabilities or weaken requirements merely to make a build

@@ -58,17 +58,17 @@ When the owner lifts the pause: B2.2 (wire, dry run, `operation.get`; ui-dev upd
 merge). The owner's answers to Q1 to Q5 are at the end of the B2 plan.
 
 Accounts, sandbox and extensions (late v1, after milestone one's increments; the owner decides when): start
-with the spikes in [the note's section 11](../design/accounts-sandbox-and-extensions.md#11-spikes) (accounts and launcher, security, isolation setting,
+with the spikes in [the note's section 11](../design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#11-spikes) (accounts and launcher, security, isolation setting,
 secrets, administrator rights; the macOS iOS-build spike of FC-190), record
-the results in `docs/research/`, write the ADRs of [section 10](../design/accounts-sandbox-and-extensions.md#10-adrs-and-designs-to-write-or-update-after-the-spikes),
+the results in `docs/research/`, write the ADRs of [section 10](../design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#10-adrs-and-designs-to-write-or-update-after-the-spikes),
 then build L15 (`os-sandbox`, FC-190) and L16 (accounts and setup, FC-191, with L6 / FC-161), then L17
 (extensions, FC-192 to FC-194). Each spike section names the requirements (`ASX-`) it proves.
 
 ## Owner decisions 2026-11-20
 
-The full list (D1 to D28) is in [the note's owner decisions](../design/accounts-sandbox-and-extensions.md#owner-decisions-and-direction-2026-11-20);
-its requirements are `ASX-1` to `ASX-20` ([requirements](../design/accounts-sandbox-and-extensions.md#requirements)); where each is tracked is
-[its tracking table](../design/accounts-sandbox-and-extensions.md#where-this-is-tracked).
+The full list (D1 to D28) is in [the note's owner decisions](../design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#owner-decisions-and-direction-2026-11-20);
+its requirements are `ASX-1` to `ASX-20` ([requirements](../design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#requirements)); where each is tracked is
+[its tracking table](../design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#where-this-is-tracked).
 
 - Isolation by accounts is the default for an install; development uses `--isolation off` (D8; FC-191, L16).
 - One setup command does every core administrator step; a closed-list helper is preferred for later steps (D6, D7).
@@ -99,7 +99,7 @@ its requirements are `ASX-1` to `ASX-20` ([requirements](../design/accounts-sand
 
 - To do once secrets are settled: a secrets map (document and visual page: each secret, who holds it, where it
   lives, who can read it); per-program custody (each program with its own Keychain items or files) is a later
-  release option ([note, To do and 6.4](../design/accounts-sandbox-and-extensions.md#to-do)).
+  release option ([note, To do and 6.4](../design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md#to-do)).
 
 - CI on `v1` is red in jobs that were already red before B1b (checked on c60bcada, 58a44b2b, 701d8460): `rust (macos-15)` (`release::store` tests, `unsupported_bootstrap_never_creates_partial_offices_or_service_state`), Secret scanning (30 findings across the whole history), Dependency security (frontend audit). Browser CSP jobs are the UI stream's.
 

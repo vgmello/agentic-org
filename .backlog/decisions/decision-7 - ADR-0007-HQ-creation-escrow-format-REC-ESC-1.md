@@ -12,16 +12,16 @@ status: deferred
 Status: accepted, **deferred to v2** (owner decision D24, 2026-11-20; see
 `docs/FEATURES.md`). Foundation code exists in `crates/org-pki`, while end-to-end
 recovery/promotion flows are deferred to v2. Key protection follows
-[ADR-0016](0016-no-application-level-data-encryption.md); recovery-code delivery
-follows [ADR-0011](0011-protected-recovery-delivery.md).
+[ADR-0016](decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md); recovery-code delivery
+follows [ADR-0011](decision-11%20-%20ADR-0011-Protected-recovery-delivery-REC-DEL-1.md).
 
 ## Requirement
 
 Creating HQ provisions an encrypted escrow of the organization CA signing key and
 a server-generated recovery code of at least 128 random bits, derived with
 Argon2id, delivered once through a protected path, with idempotent retries
-([standalone design](../design/standalone-server.md),
-[offices design](../design/offices-hq-and-satellites.md)).
+([standalone design](../docs/design/doc-70%20-%20Design-Standalone-Agentic-Org-Server.md),
+[offices design](../docs/design/doc-67%20-%20Design-Offices-HQ-and-Satellites.md)).
 
 - The pending code belongs to the host's credential provider; only an opaque handle
   enters the creation journal. No usable CA key or code appears in replicated

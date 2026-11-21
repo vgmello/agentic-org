@@ -30,7 +30,7 @@ builds_on: [feature-requests-ux, work-items-ux, decisions-and-tech-debt-ux]
 
 # Spec · Features: a project's capabilities, defined in the repository (UX)
 
-The data contract owns the records: [features and tasks](../design/organization-data/03-features-and-work.md), [project documents](../design/organization-data/02-project-structure.md), [numbering](../design/organization-data/06-identity-and-numbering.md) and [record contracts](../design/organization-data/08-record-contracts.md). This spec owns what a person sees and does.
+The data contract owns the records: [features and tasks](../organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md), [project documents](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md), [numbering](../organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md) and [record contracts](../organization-data/doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md). This spec owns what a person sees and does.
 
 ## The request (the user, 2026-11-08)
 
@@ -53,7 +53,7 @@ The data contract owns the records: [features and tasks](../design/organization-
 5. **Lifecycle:** `planned | in_progress | live | retired`, shown as **Planned · In progress · Live · Retired**. Planned may be unassigned; In progress and Live require an active `owner_employee_id`. `delivered_at`, `retired_reason` and optional same-project `replaced_by_feature_id` are durable facts in the feature file, with revision and actor attribution. The database projects these files; it is not a status authority. Task counts derive from task `feature_id`, not a stored feature `tasks` array.
 6. **Status changes are explicit.** A person sets the feature's status. Reaching `live` does not schedule anything.
 7. **Features are the project's map.** The Features view shows capabilities, current status, accountable employee and derived task progress. It is not a required tab in the initial project navigation. Projects with no features show their tasks normally.
-8. **A project has features when its development process says so.** Features, like releases and milestones, are a primitive that a development process chooses to use (owner, 2026-11-18). A development process that uses them lists a Features tab; a project with no development process has it too. A project whose process does not, such as desired state specification, has no Features tab unless it already holds features ([development processes](../design/development-processes.md#4-the-projects-tabs), PKG-15).
+8. **A project has features when its development process says so.** Features, like releases and milestones, are a primitive that a development process chooses to use (owner, 2026-11-18). A development process that uses them lists a Features tab; a project with no development process has it too. A project whose process does not, such as desired state specification, has no Features tab unless it already holds features ([development processes](../design/doc-32%20-%20Design-Development-Processes-Process-Packages.md#4-the-projects-tabs), PKG-15).
 
 ## 1. The feature file
 
@@ -94,7 +94,7 @@ The display reference is F-6; a project with slug `agentic-org` derives the publ
 
 ## 2. Flow · The Features tab
 
-Navigation availability follows the [project IA](work-items-ux.md#3-flow-1--project-page).
+Navigation availability follows the [project IA](doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md#3-flow-1--project-page).
 The Features view requirements below apply when that view is served; they do not
 add a tab to the initial project skeleton.
 

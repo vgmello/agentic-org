@@ -29,7 +29,7 @@ Two rules frame everything below:
 - Every algorithm, path and wire sketch uses the selected storage layout, with one bare cache per repository per office, many repositories per project and per task, and one worktree per employee, task and repository.
 - Hosting-provider integrations are v2. v1 is plain Git with the office's own Git credentials.
 
-The [organization repository registrations](organization-data/01-organization-structure.md), [project links](organization-data/02-project-structure.md), [task repository targets](organization-data/03-features-and-work.md), the [shared storage contract](organization-data/README.md#shared-storage-contract) and the [authority map](documentation-authority.md) own the data model. Where this document and those contracts differ, they win. Nothing is deployed, so there is no existing layout to migrate from and no compatibility obligation.
+The [organization repository registrations](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md), [project links](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md), [task repository targets](../organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md), the [shared storage contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md#shared-storage-contract) and the [authority map](doc-62%20-%20Design-Documentation-Authority-Map.md) own the data model. Where this document and those contracts differ, they win. Nothing is deployed, so there is no existing layout to migrate from and no compatibility obligation.
 
 ## In one paragraph
 
@@ -56,14 +56,14 @@ A project is a long-lived scope of product work owned by one accountable team, w
   - `teams/<root-team-id>/.../agents/<employee-id>/tasks/<task-id>/repositories/<repository-id>/`: the worktree of a projectless (team) task.
   - `office.db`: the runtime-only rows `repository_caches` (office, repository, `bare_path`) and `task_workspaces` (office, employee, task, repository, `worktree_path`).
 - **Local-only code:** `durable/local/offices/<office-id>/repositories/<repository-id>.yaml` holds the machine-specific `origin_path`. No remote backs this code up. Its history and edits must be preserved in `durable/checkpoints/` before a cache is deleted, and moving it to another office needs an explicit bundle and import, or a remote.
-- **Git credentials:** the office's credentials for remotes are secrets. They are held by the host's credential provider or as key material only the service account can read. They never appear in organization Git, in a database in plaintext, in a cache's configuration, in a worktree, in a log, or anywhere under `runtime/` ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)).
-- **Protection at rest:** Git files are ordinary files. Disk encryption, private file permissions and the agent isolation mode protect them ([ADR-0015](../adr/0015-agent-isolation-modes.md), ADR-0016). Nothing here is encrypted by the application.
+- **Git credentials:** the office's credentials for remotes are secrets. They are held by the host's credential provider or as key material only the service account can read. They never appear in organization Git, in a database in plaintext, in a cache's configuration, in a worktree, in a log, or anywhere under `runtime/` ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)).
+- **Protection at rest:** Git files are ordinary files. Disk encryption, private file permissions and the agent isolation mode protect them ([ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md), ADR-0016). Nothing here is encrypted by the application.
 
-`<data-root>` is resolved once by the instance ([standalone design](standalone-server.md#3-instance-selection-and-storage)). It is never inferred from a working directory or `HOME`.
+`<data-root>` is resolved once by the instance ([standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md#3-instance-selection-and-storage)). It is never inferred from a working directory or `HOME`.
 
 ## Release knowledge and deployment records
 
-[Releases/milestones](organization-data/02-project-structure.md), [deployment attempts](organization-data/07-release-deployments.md) and [release content/flags](organization-data/09-release-content-and-flags.md) are selected data, not a deployment or flag-evaluation engine.
+[Releases/milestones](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md), [deployment attempts](../organization-data/doc-81%20-%20Organization-Data-07-—-Release-Deployments.md) and [release content/flags](../organization-data/doc-83%20-%20Organization-Data-09-—-Release-Content-and-Flags.md) are selected data, not a deployment or flag-evaluation engine.
 
 | Record | Selected relationship and retained evidence |
 | --- | --- |
@@ -136,7 +136,7 @@ With one cache per repository, keeping the network credential away from agents c
 - **SSH:** the office sets the SSH command for that invocation through its environment. The command ignores user SSH configuration, runs in batch mode, uses only the office's identity, and verifies the host key strictly against a known-hosts file the office owns. The key is reached through a key file or an agent socket that only the service account can open.
 - **Local repositories** need no credential.
 
-**What an agent's session receives.** Nothing that can authenticate to a remote. Its environment has no credential variable, no SSH agent socket and no askpass program. Git prompting is off (`GIT_TERMINAL_PROMPT=0`). System and global Git configuration are disabled, and `credential.helper` is set to empty through the environment-supplied configuration that [agent sessions](agent-sessions.md) already defines. The cache has no remote, so `git push` in a worktree has no destination and no credential. An agent publishes its work only by asking the office (`agent-os repo push`).
+**What an agent's session receives.** Nothing that can authenticate to a remote. Its environment has no credential variable, no SSH agent socket and no askpass program. Git prompting is off (`GIT_TERMINAL_PROMPT=0`). System and global Git configuration are disabled, and `credential.helper` is set to empty through the environment-supplied configuration that [agent sessions](doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md) already defines. The cache has no remote, so `git push` in a worktree has no destination and no credential. An agent publishes its work only by asking the office (`agent-os repo push`).
 
 **What each isolation mode guarantees.**
 
@@ -187,7 +187,7 @@ With one cache per repository, keeping the network credential away from agents c
   - *Nothing is lost:* uncommitted changes, or local commits that are on neither the remote branch nor the integration branch, stop the cleanup. The worktree stays and a person is asked.
   - The office deletes only `task/*` branches it created and that have a record. It never deletes a default or integration branch, or any tag.
 
-  The branch-record states are in the [process design](processes.md#4-task-branch-records).
+  The branch-record states are in the [process design](doc-34%20-%20Design-Organization-Processes-and-Standards.md#4-task-branch-records).
 - **Submodules and Git LFS** are not designed here. Office commands never recurse into submodules, and no filter driver is configured.
 
 ### Hardening every office Git command
@@ -205,7 +205,7 @@ With one cache per repository, keeping the network credential away from agents c
 
 ### Sandbox and deny rules for the selected paths
 
-These rules are derived for the selected paths. They are not the earlier allow and deny lists with a new prefix, and the office verifies them against the real paths before it launches a session ([folder and privacy boundaries](documentation-authority.md#folder-and-privacy-boundaries), [runtime location](organization-data/04-agent-structure.md#runtime-location)). A runtime that cannot enforce a required rule must say so and the launch is refused, as the session contract already requires.
+These rules are derived for the selected paths. They are not the earlier allow and deny lists with a new prefix, and the office verifies them against the real paths before it launches a session ([folder and privacy boundaries](doc-62%20-%20Design-Documentation-Authority-Map.md#folder-and-privacy-boundaries), [runtime location](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md#runtime-location)). A runtime that cannot enforce a required rule must say so and the launch is refused, as the session contract already requires.
 
 For a task session of one employee, with one `<worktree>` and one `<cache>` per targeted repository:
 
@@ -256,17 +256,17 @@ When v2 is planned, it should change only how the office obtains the credential 
 
 ## Code layout (architecture rules)
 
-Follow the [architecture rules](../architecture-rules.md) and the [v1 project structure](project-structure.md). No crate named here exists yet.
+Follow the [architecture rules](../doc-8%20-%20Architecture-Rules.md) and the [v1 project structure](doc-68%20-%20Design-v1-Project-Structure.md). No crate named here exists yet.
 
 - **`org-git`** (planned, no code): runs the host's `git` through the hardened runner. It owns cache creation and fetch, worktree add, move and remove, push, tagging, the compare-and-swap deletes and the per-repository lock. It knows paths, URLs and commit IDs. It does not know projects, tasks, the office database or the office's domain types.
 - **The office's domain** defines the small contracts it needs from Git (prepare a cache, create a workspace, push a task branch, clean up) and owns the records and admission rules. It does not depend on `org-git`.
 - **`agentic-org-office`** composes the two: it implements the domain's contracts by calling `org-git`, supplies the credential, and derives the session's writable roots and deny rules.
-- **`agent-os`** gains the `repo` and `worktree` commands of the [agent command line](agent-os-command-line.md) (section 3.6), among them `repo push`. Each is a socket call only and does not depend on `org-git`.
+- **`agent-os`** gains the `repo` and `worktree` commands of the [agent command line](doc-28%20-%20Design-agent-os-Command-Line.md) (section 3.6), among them `repo push`. Each is a socket call only and does not depend on `org-git`.
 - **`org-github`** is v2 and absent.
 
 ## Implementation plan
 
-Every step is planned; none has started. Each step is a separate acceptance and merge unit under the [independent delivery rules](../independent-delivery.md) and the [dependency boundaries](../architecture-rules.md#independent-delivery-and-dependency-boundaries). Each starts on its own branch from `origin/v1`, is reviewed locally and is merged into `v1`. The [feature checklist](../FEATURES.md) rows FC-139 and FC-140 track delivery; this plan does not replace them.
+Every step is planned; none has started. Each step is a separate acceptance and merge unit under the [independent delivery rules](../doc-6%20-%20Independent-Delivery-and-Dependency-Boundaries.md) and the [dependency boundaries](../doc-8%20-%20Architecture-Rules.md#independent-delivery-and-dependency-boundaries). Each starts on its own branch from `origin/v1`, is reviewed locally and is merged into `v1`. The [feature checklist](../doc-3%20-%20Feature-Checklist.md) rows FC-139 and FC-140 track delivery; this plan does not replace them.
 
 | Step | What | Kind | Depends on |
 | --- | --- | --- | --- |
@@ -293,8 +293,8 @@ Registration and project-link writes belong to the organization and project cont
 
 1. Hosting-provider integrations are v2. v1 is plain Git over the registered remote with the office's own Git credentials, local-only repositories, per-office caches and per-task worktrees. After a push a person opens any pull request and merges.
 2. The algorithms use the selected layout: one bare cache per repository per office, many repositories per project and per task, one worktree per employee, task and repository.
-3. Agents run in `same-user` or `dedicated-user` mode ([ADR-0015](../adr/0015-agent-isolation-modes.md)).
-4. No application-level encryption of data; credentials and private keys are never in plaintext in a database or in Git content ([ADR-0016](../adr/0016-no-application-level-data-encryption.md)).
+3. Agents run in `same-user` or `dedicated-user` mode ([ADR-0015](../../decisions/decision-15%20-%20ADR-0015-Agent-isolation-is-a-selectable-mode-with-a-dedicated-OS-user-provisioned-at-setup.md)).
+4. No application-level encryption of data; credentials and private keys are never in plaintext in a database or in Git content ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md)).
 5. The office runs all Git that reaches a remote, and agents never hold a credential that can push. The office never pushes a default or integration branch of a code repository and never force-pushes.
 6. Commits are authored as the owner, with the agent as co-author.
 7. Cleanup happens only after task closure, with a `merged/<branch>` or `archive/<branch>` tag and a compare-and-swap delete. Handoff never triggers cleanup.
@@ -307,14 +307,14 @@ These are gaps or tensions between this design and the selected contracts. They 
 1. **Git credentials have no selected record.** No contract says where an office's credential for a remote is bound, how it is entered, or where the office's known-hosts file lives. This document only fixes where it must not be.
 2. **Branch records have no durable home.** `task_repositories` holds `branch` and `integrated_commit`; `task_workspaces` holds `worktree_path`. Nothing selected holds the base commit, the pushed head, the branch state or the worktree's administrative directory name.
 3. **Cache writes in `dedicated-user` mode.** ADR-0015 says the agent account owns only its workspaces. A linked worktree must also write into the cache, which is outside them. This document assumes group-shared write access to the listed cache directories. The alternative is a self-contained clone in each workspace that the office fetches from, which would restore a cache agents never write but is not the "one bare clone and worktrees" shape of the storage contract.
-4. **Identifier format (settled 2026-11-17).** Stable IDs are UUIDv7 here and in the [identity contract](organization-data/06-identity-and-numbering.md).
+4. **Identifier format (settled 2026-11-17).** Stable IDs are UUIDv7 here and in the [identity contract](../organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md).
 5. **The owner's commit identity.** No selected field holds the owner's commit name and email, or an agent's co-author address.
 6. **Projectless tasks.** A team task can target a repository but has no project link, so nothing selects its base branch or the branch that proves it merged.
 7. **Organization publication.** Which office pushes `state_branch`, and how `durable/state/` becomes a commit, is not defined. This document assumes only the transport.
 8. **Local repositories.** The contract names `origin_path` but not whether the office may write task branches into that repository, which is what `agent-os repo push` would otherwise do for a local repository.
 9. **Code checkpoints.** `durable/checkpoints/` is named for unpushed and local-only code, but its format, its triggers and its restore path are not defined. Handoff and cache deletion here depend on it.
 10. **`integrated_commit`.** The contract does not say whether it is the task head that was integrated or the integration-branch commit that contains it.
-11. **Branch names for unnumbered tasks.** Not open. There are none: the creating office numbers a task at once ([ADR-0019](../adr/0019-office-coded-task-numbers.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.
+11. **Branch names for unnumbered tasks.** Not open. There are none: the creating office numbers a task at once ([ADR-0019](../../decisions/decision-19%20-%20ADR-0019-Task-numbers-are-minted-by-the-creating-office.md)), so `task/<ref>-<slug>` always has its `<ref>`, for example `task/T-B37-fix-login`.
 
 ## What the code does today
 

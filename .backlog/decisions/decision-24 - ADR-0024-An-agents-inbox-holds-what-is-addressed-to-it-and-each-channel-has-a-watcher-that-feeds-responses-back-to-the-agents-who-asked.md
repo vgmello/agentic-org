@@ -14,13 +14,13 @@ status: accepted
 Status: **accepted by the owner** (decisions 1 to 5, 2026-11-18). Implementation
 pending. Decisions 6 to 19 are its design, reviewed independently before it was
 recorded.
-[Messaging](../design/organization-data/15-messaging-and-chat.md), the
-[chat spec](../specs/chat-ux.md), the
-[agent command line](../design/agent-os-command-line.md), the
-[agent instructions](../design/agent-instructions.md),
-[smart features](../design/smart-features.md) and
-[ADR-0023](0023-an-agents-ask-starts-a-turn.md) follow it. The increment is C9 in the
-[implementation plan](../implementation-plan.md).
+[Messaging](../docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md), the
+[chat spec](../docs/specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md), the
+[agent command line](../docs/design/doc-28%20-%20Design-agent-os-Command-Line.md), the
+[agent instructions](../docs/design/doc-27%20-%20Design-Agent-Instructions-Assembly.md),
+[smart features](../docs/design/doc-36%20-%20Design-Smart-Features-Not-in-v1.md) and
+[ADR-0023](decision-23%20-%20ADR-0023-An-agents-ask-hand-off-or-mention-and-an-answer-to-its-own-question-start-a-turn-for-an-idle-agent.md) follow it. The increment is C9 in the
+[implementation plan](../docs/doc-5%20-%20v1-Implementation-Plan.md).
 
 ## Context
 
@@ -112,7 +112,7 @@ The design:
    message that makes the model fail cannot stop the watcher or be retried
    without end.
 10. **A pass is a tool-less, read-only model run,** made through the same port and
-    with the same safeguards as the [copilot](../design/smart-features.md) runs: no
+    with the same safeguards as the [copilot](../docs/design/doc-36%20-%20Design-Smart-Features-Not-in-v1.md) runs: no
     tools, no files, no network, the questions and messages given as fenced data that
     is never treated as instructions, and one validated JSON answer. A message that
     looks like it holds a secret is left out of the pass and is not judged; it does
@@ -128,7 +128,7 @@ The design:
     `msg inbox`, at its next turn boundary, or as the result of `msg wait --thread`.
     If the asker is idle, a turn starts for it in the same session (ADR-0023) for:
     - a reply in the question's thread, from anyone, while the question is open
-      ([ADR-0030](0030-an-agent-works-while-it-has-work.md) decision 6);
+      ([ADR-0030](decision-30%20-%20ADR-0030-An-agent-works-while-it-has-work-continues-after-a-restart-and-a-stalled-turn-is-stopped.md) decision 6);
     - a confident match on a message written by a person.
 
     A match the watcher is not confident of, and any match on a message written by
@@ -139,7 +139,7 @@ The design:
 13. **The model is chosen, never assumed.** The watching model profile is an
     organization setting that names one of the organization's model profiles; the
     owner sets it, and its record is added to
-    [execution](../design/organization-data/11-model-profiles-and-agent-execution.md)
+    [execution](../docs/organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md)
     with C9. With none set, or with the runtime unavailable or a budget hold on the
     organization in force, no pass runs: thread replies and mentions still arrive, and
     the answer to `msg ask` says the question is not watched and why.
@@ -153,7 +153,7 @@ The design:
 15. **Cost.** A pass is one usage record of kind `one_off`: a model call the product
     makes itself, with no employee, counted in the organization's totals and in the
     project's when the channel is a project's
-    ([usage and cost](../design/organization-data/10-usage-and-cost-accounting.md)).
+    ([usage and cost](../docs/organization-data/doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md)).
     The questions it served are in the record's metadata. It is not divided among the
     askers. The usage of a pass is recorded before its inbox entries are written,
     and a pass that failed or was interrupted keeps the usage of the call it made.
@@ -187,7 +187,7 @@ The design:
     - Its cost is the caller's, as an ordinary agent usage record.
 
     `msg list` remains for reading a few messages exactly. An agent can also hand
-    reading to a sub-agent ([ADR-0025](0025-agents-start-sub-agents.md)), which keeps
+    reading to a sub-agent ([ADR-0025](decision-25%20-%20ADR-0025-An-agent-can-start-sub-agents-inside-its-turn.md)), which keeps
     its context clean but runs on the agent's own model; `channel summarize` is the
     cheaper way to get something out of a channel.
 19. **Proved before it is trusted.** The first step of C9 is a measurement: at least

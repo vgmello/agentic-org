@@ -11,9 +11,9 @@ status: accepted
 
 Status: **accepted by the owner**, including the operations of decision 3 and the
 engine-independent contract of decision 8. Implementation pending. Durability in
-[ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md), task acceptance in
-[ADR-0006](0006-selected-task-acceptance.md) and the
-[messaging contract](../design/organization-data/15-messaging-and-chat.md) follow the
+[ADR-0002](decision-2%20-%20ADR-0002-Storage-SQLite-with-one-batching-writer-per-database.md), task acceptance in
+[ADR-0006](decision-6%20-%20ADR-0006-Task-changes-are-accepted-through-one-recoverable-office-journal.md) and the
+[messaging contract](../docs/organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md) follow the
 classes defined here.
 
 ## Context
@@ -43,7 +43,7 @@ classes defined here.
    relaying is never part of the acknowledgement (decision 9).
    The target is for the common commands, the ones an agent runs all day; not every
    command has to be fast (owner, 2026-11-18). They are listed in the
-   [agent command line](../design/agent-os-command-line.md), section 2.11.
+   [agent command line](../docs/design/doc-28%20-%20Design-agent-os-Command-Line.md), section 2.11.
 2. **Two acknowledgement classes.**
    - **Committed.** The office answers once the write is committed in its durable
      local store, without forcing the drive. The write survives a crash of the office process. It
@@ -62,7 +62,7 @@ classes defined here.
    - Committed, creating a task (owner decision): `task.create` and the
      typed creation calls such as `bug.report`. This is safe for numbering because the
      creating office mints the number under a durable mark
-     ([ADR-0019](0019-office-coded-task-numbers.md) decision 7), so a power cut can
+     ([ADR-0019](decision-19%20-%20ADR-0019-Task-numbers-are-minted-by-the-creating-office.md) decision 7), so a power cut can
      lose the newest task but can never cause a number to be given twice.
    - Reads involve no write, and presence is not persisted.
    - Durable: everything else. That includes status and resolution
@@ -79,7 +79,7 @@ classes defined here.
 5. **`agent-os` gains a session mode.** A long-running `agent-os` process binds once,
    keeps its office connection open and takes one request after another. Its shape is
    `agent-os session attach`: one command a line in, one answer envelope a line out
-   ([agent command line](../design/agent-os-command-line.md), section 2.9). An agent
+   ([agent command line](../docs/design/doc-28%20-%20Design-agent-os-Command-Line.md), section 2.9). An agent
    reaches it by sending several commands in one shell call, and the target of
    decision 1 is measured through it. The one-shot command stays for a single call, for
    people and for scripts.
@@ -110,7 +110,7 @@ classes defined here.
      drive, and a flush must complete before any durable reply in the batch is sent.
      `org-mailbox` has several write entry points and a port comment promising that
      success means durable; both are updated. The office's acceptance journal
-     ([ADR-0021](0021-office-store-architecture.md)) appends a committed-class entry
+     ([ADR-0021](decision-21%20-%20ADR-0021-The-office-store-one-journal-of-file-changes-a-projection-rebuilt-from-files.md)) appends a committed-class entry
      without a flush; the group flush that answers a durable request covers every
      earlier entry, and recovery truncates a torn tail only above the head the host
      custody last confirmed.
@@ -124,7 +124,7 @@ classes defined here.
    the message expires; a failure becomes a delivery notice, never a slower send.
    `msg.ask` is the one operation that holds its caller. Every ask has a deadline:
    the caller may state how long it expects a reply to take, otherwise the default
-   of [ADR-0020](0020-required-asks-suspend-and-resume.md) applies (one system setting,
+   of [ADR-0020](decision-20%20-%20ADR-0020-An-ask-waits-with-a-timeout-a-required-ask-suspends-the-agent-until-it-is-answered.md) applies (one system setting,
    10 minutes), and the wait ends there with a timeout result. One command does not
    hold its caller for that whole wait: it returns within a short hold and the wait
    is continued by another call (ADR-0020 decision 15). ADR-0020 also adds the

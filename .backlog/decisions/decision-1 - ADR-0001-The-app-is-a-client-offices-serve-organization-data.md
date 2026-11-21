@@ -9,8 +9,8 @@ status: accepted
 
 # ADR-0001 · The app is a client; offices serve organization data
 
-Status: accepted. [ADR-0005](0005-standalone-server-v1.md) owns standalone
-deployment. The [authority map](../design/documentation-authority.md) names the
+Status: accepted. [ADR-0005](decision-5%20-%20ADR-0005-Standalone-server-HQ-web-application-and-named-instances.md) owns standalone
+deployment. The [authority map](../docs/design/doc-62%20-%20Design-Documentation-Authority-Map.md) names the
 owning document for each topic.
 
 ## The model
@@ -38,18 +38,18 @@ owning document for each topic.
   lifetime and browser sessions are separate.
 
 The owning relationships and field contracts are in organization-data documents
-[01](../design/organization-data/01-organization-structure.md),
-[02](../design/organization-data/02-project-structure.md),
-[03](../design/organization-data/03-features-and-work.md),
-[04](../design/organization-data/04-agent-structure.md) and
-[12](../design/organization-data/12-task-assignment-and-history.md).
+[01](../docs/organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md),
+[02](../docs/organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md),
+[03](../docs/organization-data/doc-77%20-%20Organization-Data-03-—-Features-and-Work.md),
+[04](../docs/organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md) and
+[12](../docs/organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md).
 
 ## Decisions
 
 1. **One office is served by one worker process.** `agentic-org serve` composes
    the host library and supervises `agentic-org-office` workers through the
    private launch contract. The instance's `agentic-org-web` process terminates
-   browser HTTP and holds no keys. [Executable migration](../design/executable-migration.md)
+   browser HTTP and holds no keys. [Executable migration](../docs/design/doc-63%20-%20Design-Executables-and-Entry-Points.md)
    records which entry points exist today. Satellites connect outward using their
    office identities; a certificate is not owner authority.
 2. **Files are the source; the database is a projection.** Definitions, task
@@ -60,7 +60,7 @@ The owning relationships and field contracts are in organization-data documents
    messages, accounting or authority. Protected messaging sources, the usage
    archive, budget decisions, receipts and execution evidence survive cache
    deletion outside Git. Private task notes use a separate durable database
-   and never enter shared task history. [ADR-0002](0002-storage-sqlite-sqlcipher-one-writer.md)
+   and never enter shared task history. [ADR-0002](decision-2%20-%20ADR-0002-Storage-SQLite-with-one-batching-writer-per-database.md)
    owns the writer and flush guarantees.
 3. **Clients use authorized capabilities, never SQL files.** The browser uses
    HQ's HTTP API and agents use their bound office through `agent-os`. Domain
@@ -70,34 +70,34 @@ The owning relationships and field contracts are in organization-data documents
 4. **Creation and numbering authority are explicit.** HQ creates teams, projects,
    releases and milestones. Any office can durably save tasks and features while
    disconnected. A task gets its final reference from the creating office at once
-   ([ADR-0019](0019-office-coded-task-numbers.md)). A feature has a stable ID and
+   ([ADR-0019](decision-19%20-%20ADR-0019-Task-numbers-are-minted-by-the-creating-office.md)). A feature has a stable ID and
    a pending number until HQ allocates it and registers its slug. Acknowledged
    allocation evidence survives loss of a cache and does not rely on hourly Git
    publication. IDs are UUIDv7. Document
-   [06](../design/organization-data/06-identity-and-numbering.md) owns the scopes.
+   [06](../docs/organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md) owns the scopes.
 5. **Contracts change in place until v1 ships.** The local `org-proto` API, HTTP
    `/api/v1`, the sync contract and the launch contract are separate contracts.
    Each has one current form; no older version, adapter or mapping is kept
-   ([pre-release rule](../design/organization-data/README.md#no-compatibility-obligations-before-v1-ships)).
+   ([pre-release rule](../docs/organization-data/doc-72%20-%20Organization-Data-—-README.md#no-compatibility-obligations-before-v1-ships)).
    Host, worker, client, agent helpers and fixtures change together, and an
    unsupported version is rejected before dispatch. The HTTP mutation codec is
-   documented in [web-api-v1.md](../design/web-api-v1.md).
+   documented in [web-api-v1.md](../docs/design/doc-71%20-%20Design-Web-HTTP-API-v1.md).
 6. **The agent CLI stays small and office-first.** `agent-os` communicates with
    its bound office; cross-office delivery is routed through HQ
-   ([ADR-0003](0003-agent-messaging-office-first.md)).
+   ([ADR-0003](decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md)).
 7. **Repository layout:** `crates/` holds libraries and `apps/` holds runnable or
    shipped applications. Apps compose libraries; library code does not depend on
    applications. A table does not imply a crate, database or public API.
 
 ## Related decisions
 
-- [Offices, HQ and satellites](../design/offices-hq-and-satellites.md): execution
+- [Offices, HQ and satellites](../docs/design/doc-67%20-%20Design-Offices-HQ-and-Satellites.md): execution
   placement, synchronization, enrollment and recovery boundaries.
-- [Teams and the org chart](../design/teams-and-org-chart.md): home membership,
+- [Teams and the org chart](../docs/design/doc-38%20-%20Design-Teams-People-and-Org-Chart.md): home membership,
   leadership, reporting and accountable project ownership.
-- [Projects and Git](../design/projects-git-github.md): repository registrations,
+- [Projects and Git](../docs/design/doc-35%20-%20Design-Projects-Git-and-GitHub.md): repository registrations,
   project associations and isolated task workspaces.
-- [Recovery](../design/organization-data/16-recovery-and-office-continuity.md):
+- [Recovery](../docs/organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md):
   protected sources and loss boundaries. Git alone does not restore an office.
 
 ## Not in v1

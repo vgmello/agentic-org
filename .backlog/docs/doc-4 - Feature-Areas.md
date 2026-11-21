@@ -14,7 +14,7 @@ tags:
 > [!NOTE] Review note (2026-11-21)
 > Reviewed against `FEATURES.md` and `v1` (`cd19890a`). Area totals match `FEATURES.md` (13 areas, 194 rows: 9 Done, 73 In progress, 65 Planned, 1 Blocked, 46 Deferred). Two verification-focus notes are slightly stale: AREA-01 says Search/New and keyboard preferences are not built (mock UI landed in steps 0–1 per `FC-006`/`FC-007`), and AREA-02 says browser onboarding/registration page remains unbuilt (A3 B6 landed real-instance registration per `FC-014`).
 
-These are the categories used by the [single feature checklist](FEATURES.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. 
+These are the categories used by the [single feature checklist](doc-3%20-%20Feature-Checklist.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. 
 
 There are **13 categories, 194 feature rows and 0 rows needing verification**. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
@@ -23,12 +23,12 @@ There are **13 categories, 194 feature rows and 0 rows needing verification**. Z
 - Every FC- row has exactly one primary area, determined by the capability it delivers, regardless of whether it is Done, Planned, Deferred or another state.
 - Preserve FC- identifiers when moving rows. Cross-area dependencies use links; do not count the same feature twice.
 - Keep access/download/CSP features with installation and office operations. Keep deferred planning/tracking/subtask workflows with project work. Categories never group rows by status.
-- Shared shell, cost, identity and recovery dependencies do not move a domain feature out of its primary area. Code ownership still follows [AGENTS.md](../AGENTS.md).
+- Shared shell, cost, identity and recovery dependencies do not move a domain feature out of its primary area. Code ownership still follows [AGENTS.md](../../AGENTS.md).
 - These are **documentation categories**, unrelated to the product's areas feature, which is removed from v1.
 
 ## Area summary
 
-The “Needs verification” column identifies gaps in the implementation audit, not confirmed missing features. Definitions for all states are in the [checklist status legend](FEATURES.md#reading-the-status). Totals count differently sized capabilities; they are not a completion percentage.
+The “Needs verification” column identifies gaps in the implementation audit, not confirmed missing features. Definitions for all states are in the [checklist status legend](doc-3%20-%20Feature-Checklist.md#reading-the-status). Totals count differently sized capabilities; they are not a completion percentage.
 
 | Area | Scope | Total | Done | In progress | Planned | Blocked | Deferred | Needs verification |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -49,7 +49,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 ## AREA-01
 
-**Application and browser** · [Feature checklist](FEATURES.md#application-and-browser)
+**Application and browser** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#application-and-browser)
 
 **Scope:** Shared browser navigation, responsive layout, accessibility, visual interactions, search/creation entry points, preferences and shell foundations.
 
@@ -57,11 +57,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Shared controls have concrete UX gaps; Search/New and keyboard preferences are not built. Shell shortcut or layout tests alone do not establish those capabilities.
 
-**Requirements:** [Shell UX](specs/app-shell-ux.md), [Executable migration](design/executable-migration.md).
+**Requirements:** [Shell UX](specs/doc-39%20-%20Spec-App-Shell-and-Navigation-UX.md), [Executable migration](design/doc-63%20-%20Design-Executables-and-Entry-Points.md).
 
 ## AREA-02
 
-**Installation, access and office operations** · [Feature checklist](FEATURES.md#installation-access-and-office-operations)
+**Installation, access and office operations** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#installation-access-and-office-operations)
 
 **Scope:** Standalone installation, named instances, setup and registration links, organization creation, production browser service, account access/administration/recovery, satellites, office lifecycle, verified downloads and release hardening.
 
@@ -69,11 +69,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Setup creates the instance and prints a one-time registration link; it creates no account, organization or office and asks for no password. Every account is registered in the browser through a one-time link and is tied to a person. A signed-in administrator creates the organization and becomes its owner. Restart, instance and logging primitives are partial; authorized relocation/removal, update/uninstall and usable diagnostics remain. TLS/custody primitives and satellite status/repair UI are partial; production handoff and invitation/approval integration are missing; the recovery code and CA escrow are v2 (owner 2026-11-20, FC-016 Deferred). On macOS, setup reserves the instance and registers its per-user service, the service host creates its registry at first start, and `admin reset` issues a replacement registration link (FC-011, FC-012). Browser onboarding (the registration page), physical authentication, SSH refusal for `admin reset` and authentic signed-release acceptance remain. Dedicated non-administrator accounts with one-prompt setup (FC-191) are proposed and not built; today the instance runs as the person's own account.
 
-**Requirements:** [Installation/access UX](specs/server-installation-and-access-ux.md), [Office/team UX](specs/offices-and-teams-ux.md), [Host boundary](design/office-host-boundary.md), [Dogfood acceptance](specs/dogfood-run.md); proposed: [accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md).
+**Requirements:** [Installation/access UX](specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md), [Office/team UX](specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md), [Host boundary](design/doc-65%20-%20Design-Host-and-Office-Worker-Boundary.md), [Dogfood acceptance](specs/doc-41%20-%20Spec-Dogfood-Acceptance-Walkthrough.md); proposed: [accounts, sandbox and extensions](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md).
 
 ## AREA-03
 
-**Organization, people and teams** · [Feature checklist](FEATURES.md#organization-people-and-teams)
+**Organization, people and teams** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#organization-people-and-teams)
 
 **Scope:** Organization structure, people, home teams, lead/reporting relationships, accounts tied to persons, project accountability and project teams, the built-in HR lead and onboarding agents through HR, employee lifecycle, profiles, Home/Inbox and activity/presence.
 
@@ -81,11 +81,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Check home-team/lead enforcement, reporting, the account-to-person link (the owner is a person), the top-level team and project teams made by default, the HR lead made at organization creation and run only when called, the check of who may hire and the hirer's confirmation before any provisioning, and runtime effects of employee controls. Verify Inbox clearing and fresh, real activity sources.
 
-**Requirements:** [Organization UX](specs/offices-and-teams-ux.md), [Employee/Home UX](specs/our-org-in-the-app.md), [Organization contract](design/organization-data/01-organization-structure.md), [Employee contract](design/organization-data/04-agent-structure.md).
+**Requirements:** [Organization UX](specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md), [Employee/Home UX](specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md), [Organization contract](organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md), [Employee contract](organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md).
 
 ## AREA-04
 
-**Projects, tasks, bugs and requests** · [Feature checklist](FEATURES.md#projects-tasks-bugs-and-requests)
+**Projects, tasks, bugs and requests** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#projects-tasks-bugs-and-requests)
 
 **Scope:** Project work views, typed tasks/bugs/requests, assignment and accountability, lifecycle/history, checklists, output, time, shared collaboration, author-private task notes and explicitly deferred planning/tracking workflows.
 
@@ -93,11 +93,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Check unified task identities and office-minted references; assignment, reporter/history and transitions; bug triage/fix verification; request routing/outcomes; persisted checklists/output/time; comments/questions and needs-me visibility. Following/requested-by, backlog planning and subtask cascades remain Deferred.
 
-**Requirements:** [Work UX](specs/work-items-ux.md), [Request UX](specs/feature-requests-ux.md), [Work design](design/tasks-projects-docs.md), [Assignment/history](design/organization-data/12-task-assignment-and-history.md), [Private task notes](design/organization-data/13-private-task-notes.md).
+**Requirements:** [Work UX](specs/doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md), [Request UX](specs/doc-42%20-%20Spec-Feature-Requests-and-Intake-UX.md), [Work design](design/doc-37%20-%20Design-Tasks-Projects-and-Documents.md), [Assignment/history](organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md), [Private task notes](organization-data/doc-85%20-%20Organization-Data-13-—-Private-Task-Notes-Pointer.md).
 
 ## AREA-05
 
-**Feature definitions, knowledge and delivery** · [Feature checklist](FEATURES.md#feature-definitions-knowledge-and-delivery)
+**Feature definitions, knowledge and delivery** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#feature-definitions-knowledge-and-delivery)
 
 **Scope:** Canonical feature definitions/lifecycle and linked work; scoped knowledge, briefs, ADRs, shortcut provenance and feature limitations, document CLI/publication; the project documentation tree with its index, issued document versions, code links and derived convergence; release/milestone manifests, changelogs, deployment and flag records.
 
@@ -105,11 +105,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Check real feature storage/editing and task membership; document reader/editor, kinds/templates/search and publication/provenance; that the index lists exactly what the tree holds after every write, that an issued version cannot change and that an agent is refused another project's tree; release content/changelogs, deployment outcomes/rollback links and intended versus applied flag records. Authored records do not establish automation.
 
-**Requirements:** [Features UX](specs/features-ux.md), [Knowledge UX](specs/decisions-and-tech-debt-ux.md), [Development processes and project documentation](design/organization-data/18-development-processes-and-project-documentation.md), [Release content](design/organization-data/09-release-content-and-flags.md), [Deployments](design/organization-data/07-release-deployments.md).
+**Requirements:** [Features UX](specs/doc-43%20-%20Spec-Features-Milestones-and-Releases-UX.md), [Knowledge UX](specs/doc-52%20-%20Spec-Knowledge-Decisions-and-Tech-Debt-UX.md), [Development processes and project documentation](organization-data/doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md), [Release content](organization-data/doc-83%20-%20Organization-Data-09-—-Release-Content-and-Flags.md), [Deployments](organization-data/doc-81%20-%20Organization-Data-07-—-Release-Deployments.md).
 
 ## AREA-06
 
-**Chat and agent messaging** · [Feature checklist](FEATURES.md#chat-and-agent-messaging)
+**Chat and agent messaging** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#chat-and-agent-messaging)
 
 **Scope:** Agent CLI messaging, local mailbox delivery, conversations/channels/group DMs, threads, asks, attachments/reactions, handoffs, history and delivery.
 
@@ -117,11 +117,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Check visibility-safe mentions/search/attachments/reactions, drafts/history/pagination and performance, ask resolution/withdrawal, atomic task handoff and actual wake/pause/noninterrupting delivery. The existing command-line ask/reply is narrower than the selected production conversation contract.
 
-**Requirements:** [Chat UX](specs/chat-ux.md), [Messaging contract](design/organization-data/15-messaging-and-chat.md), [Messaging ADR](adr/0003-agent-messaging-office-first.md).
+**Requirements:** [Chat UX](specs/doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md), [Messaging contract](organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md), [Messaging ADR](../decisions/decision-3%20-%20ADR-0003-Agent-messaging-is-office-first.md).
 
 ## AREA-07
 
-**Usage, costs and budgets** · [Feature checklist](FEATURES.md#usage-costs-and-budgets)
+**Usage, costs and budgets** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#usage-costs-and-budgets)
 
 **Scope:** Durable usage/corrections, immutable historical attribution, model prices/tokens/USD and coverage, authorized cost views/export, period calculations and selected budget controls.
 
@@ -129,11 +129,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Check the real usage collector/archive and corrections, immutable consumer/team/task/release snapshots, pricing and unknown/partial coverage, authorized live reads/CSV and account-zone period/bucket math. Budget service gaps remain separately marked Planned.
 
-**Requirements:** [Costs UX](specs/costs-and-insights-ux.md), [Accounting contract](design/organization-data/10-usage-and-cost-accounting.md), [Budget contract](design/organization-data/17-budgets-and-controls.md).
+**Requirements:** [Costs UX](specs/doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md), [Accounting contract](organization-data/doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md), [Budget contract](organization-data/doc-92%20-%20Organization-Data-17-—-Budgets-and-Controls.md).
 
 ## AREA-08
 
-**Execution, providers and supervision** · [Feature checklist](FEATURES.md#execution-providers-and-supervision)
+**Execution, providers and supervision** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#execution-providers-and-supervision)
 
 **Scope:** Native process primitives and runtime adapters, the agent command line's contract, explicit Run, execution/model configuration, connections/pools/permits, turns/attempts/placement, health monitoring, workspace isolation, the optional extensions that give agents capabilities such as containers and Xcode (FC-192 to FC-194, proposed) and deferred scheduling/delegation.
 
@@ -141,11 +141,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Check each Claude/Codex/Agy adapter for real launch, streaming, cancellation and sandbox enforcement; check observed progress/health/waits; validate credential and other-task denies in the selected workspace topology. Generic process primitives do not prove full adapters.
 
-**Requirements:** [Run-mode UX](specs/agent-run-modes-ux.md), [Supervision UX](specs/employee-supervision-ux.md), [Session design](design/agent-sessions.md), [Execution contract](design/organization-data/11-model-profiles-and-agent-execution.md), [Providers/pools](design/organization-data/14-model-providers-and-connection-pools.md); proposed: [accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md).
+**Requirements:** [Run-mode UX](specs/doc-50%20-%20Spec-Agent-Run-Modes-and-Availability-UX.md), [Supervision UX](specs/doc-53%20-%20Spec-Employee-Supervision-and-Approvals-UX.md), [Session design](design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md), [Execution contract](organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md), [Providers/pools](organization-data/doc-89%20-%20Organization-Data-14-—-Model-Providers-and-Connection-Pools.md); proposed: [accounts, sandbox and extensions](design/doc-61%20-%20Design-Dedicated-Accounts-Agent-Sandbox-and-Extensions.md).
 
 ## AREA-09
 
-**Roles, processes and retrospectives** · [Feature checklist](FEATURES.md#roles-processes-and-retrospectives)
+**Roles, processes and retrospectives** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#roles-processes-and-retrospectives)
 
 **Scope:** Role identity/assignment, scoped process and standard content, process editor UI, v1 process resolution and agent instruction, development processes, a primitive separate from organization processes (roles, skills, tabs, a project's choice of one, seed roster, role-named hire requests, import, the built-in desired state and feature delivery processes), and the separately deferred enforcement/autonomy/retrospective engines.
 
@@ -153,11 +153,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Check actual role record/assignment persistence and organization/team/project process or standard document storage. Existing content and editor UI do not establish runtime composition, inheritance, agent injection or retrospective execution.
 
-**Requirements:** [Roles UX](specs/roles-ux.md), [Process UX](specs/processes-ux.md), [Process design](design/processes.md), [Development process design](design/development-processes.md), [Desired state design](design/desired-state-specifications.md), [REQ-06](specs/req-06-desired-state-spec-authoring-and-reconciliation.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), [Retrospective UX](specs/retrospectives-ux.md).
+**Requirements:** [Roles UX](specs/doc-47%20-%20Spec-Agent-Roles-Directory-UX.md), [Process UX](specs/doc-54%20-%20Spec-Organization-Processes-and-Standards-UX.md), [Process design](design/doc-34%20-%20Design-Organization-Processes-and-Standards.md), [Development process design](design/doc-32%20-%20Design-Development-Processes-Process-Packages.md), [Desired state design](design/doc-31%20-%20Design-Desired-State-Specifications-DSS.md), [REQ-06](specs/doc-57%20-%20REQ-06-Desired-State-Specification-DSS-and-Factory-Reconciliation.md), [REQ-07](specs/doc-58%20-%20REQ-07-Composable-Process-Packages-and-Team-Blueprints.md), [Retrospective UX](specs/doc-60%20-%20Spec-Retrospectives-and-Routines-UX-—-Not-in-v1.md).
 
 ## AREA-10
 
-**Project health and reports** · [Feature checklist](FEATURES.md#project-health-and-reports)
+**Project health and reports** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#project-health-and-reports)
 
 **Scope:** Richer project health snapshots, narrative/status reports, progress/throughput/cycle-time analytics and private away digests.
 
@@ -165,11 +165,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** No rows currently carry Needs verification: these capabilities remain Deferred. Before implementation, resolve their selection gates and metric/context contracts; do not reinterpret ordinary project overview or stored report records as delivery of the richer experience.
 
-**Requirements:** [Project status UX](specs/project-status-ux.md), [Metric definitions](specs/costs-and-insights-ux.md).
+**Requirements:** [Project status UX](specs/doc-46%20-%20Spec-Project-Status-Overview-UX-—-Not-in-v1.md), [Metric definitions](specs/doc-51%20-%20Spec-Costs-Budgets-and-Insights-UX.md).
 
 ## AREA-11
 
-**Copilot drafting** · [Feature checklist](FEATURES.md#copilot-drafting)
+**Copilot drafting** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#copilot-drafting)
 
 **Scope:** The implemented registry/rendering/output-validation library, partial text/bug drafting integration, and individually deferred suggestion/drafting candidates.
 
@@ -177,11 +177,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** No rows currently carry Needs verification. Keep library completion separate from native runtime/authorized context integration. Each deferred candidate requires its stated selection and context contract; verify reviewed confirmation before any ordinary domain save/send/hire.
 
-**Requirements:** [Smart-feature design and candidates](design/smart-features.md).
+**Requirements:** [Smart-feature design and candidates](design/doc-36%20-%20Design-Smart-Features-Not-in-v1.md).
 
 ## AREA-12
 
-**Git, identity, synchronization and recovery** · [Feature checklist](FEATURES.md#git-identity-synchronization-and-recovery)
+**Git, identity, synchronization and recovery** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#git-identity-synchronization-and-recovery)
 
 **Scope:** Registered repositories, local Git caches and worktrees (hosting-provider integrations are Deferred to v2), canonical source/projection contracts, a replaceable storage engine, stable identity/number allocation, sync primitives and protected-source office continuity/recovery.
 
@@ -189,11 +189,11 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Check repository/project branch associations and supported plain-Git/worktree operations; canonical round-trip/concurrency/tombstones; UUIDv7 stable IDs, office-minted task references and durable HQ allocations; storage reached only through engine-independent contracts. A draft schema or core sync library is insufficient.
 
-**Requirements:** [Git design](design/projects-git-github.md), [Identity contract](design/organization-data/06-identity-and-numbering.md), [Record contract](design/organization-data/08-record-contracts.md), [Recovery contract](design/organization-data/16-recovery-and-office-continuity.md).
+**Requirements:** [Git design](design/doc-35%20-%20Design-Projects-Git-and-GitHub.md), [Identity contract](organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md), [Record contract](organization-data/doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md), [Recovery contract](organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md).
 
 ## AREA-13
 
-**Session inspection and private memory** · [Feature checklist](FEATURES.md#session-inspection-and-private-memory)
+**Session inspection and private memory** · [Feature checklist](doc-3%20-%20Feature-Checklist.md#session-inspection-and-private-memory)
 
 **Scope:** Authorized read-only browser session/transcript inspection (no browser terminal, ADR-0004), office-local CLI takeover and handback and the separately deferred human-facing private notes/memory reader.
 
@@ -201,7 +201,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Verification focus:** Check actual HQ-authorized session/event/transcript reads, privacy and freshness. CLI takeover is Deferred: paused by the owner on 2026-11-20 and moved to late v1, only if needed; the private memory reader remains Deferred with confined paths, caps, no-symlink checks and its separate human-only API.
 
-**Requirements:** [Employee/profile UX](specs/our-org-in-the-app.md), [Session design](design/agent-sessions.md), [Memory/supervision gates](specs/employee-supervision-ux.md).
+**Requirements:** [Employee/profile UX](specs/doc-45%20-%20Spec-Hiring-Profiles-and-Team-Moves-UX.md), [Session design](design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md), [Memory/supervision gates](specs/doc-53%20-%20Spec-Employee-Supervision-and-Approvals-UX.md).
 
 ## Maintaining the area guide
 

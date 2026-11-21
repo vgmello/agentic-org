@@ -45,12 +45,12 @@ doesn't know whom to ask, then continue with the right person in a DM.
 v1 delivers supervision of the main process, health, recovery and the execution view.
 Goals, harness replicas, delegation, private specialists and memory collection are
 [not in v1](#5-not-in-v1). The data contract (organization-data 04, 10, 11, 14, 16 and
-17) owns the records; the [runtime design](../design/employee-supervision.md) owns the
-mechanism. Process delivery is in [`processes-ux.md`](processes-ux.md); channels in
-[`chat-ux.md`](chat-ux.md).
+17) owns the records; the [runtime design](../design/doc-33%20-%20Design-Employee-Supervision.md) owns the
+mechanism. Process delivery is in [`processes-ux.md`](doc-54%20-%20Spec-Organization-Processes-and-Standards-UX.md); channels in
+[`chat-ux.md`](doc-40%20-%20Spec-Chat-Channels-and-Structured-Asks-UX.md).
 
 These views and controls are in the HQ web application
-([server installation and access](server-installation-and-access-ux.md)). Supervision
+([server installation and access](doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md)). Supervision
 runs at the owning office and survives a browser disconnect. Server paths are
 read-only in the UI. An unavailable satellite shows stale status and a specific
 command outcome, never an unconfirmed success. A forwarded request with an unknown
@@ -87,13 +87,13 @@ does not promise available capacity.
    employee's and the office's runtime, usage, concurrency and resource budgets.
    Pause, offboarding and shutdown stop them with the main run.
 6. **A message never interrupts a busy turn.** A busy agent receives new input at its
-   next turn boundary ([ADR-0004](../adr/0004-headless-agent-sessions.md)). Taking
+   next turn boundary ([ADR-0004](../../decisions/decision-4%20-%20ADR-0004-Agent-sessions-run-headless-people-interact-through-chat.md)). Taking
    over an agent is a local command-line operation, never a browser action.
 7. **An agent follows the people above it.** It always replies to a person. It
    follows instructions from whoever it reports to, a person or an agent, and up
    that reporting line to the owner; a message from anyone else is a request, and
    its own chain wins. The rule is defined once, in the
-   [supervision design](../design/employee-supervision.md) (decision 6).
+   [supervision design](../design/doc-33%20-%20Design-Employee-Supervision.md) (decision 6).
 
 ## 1. Flow · Inspect an employee
 

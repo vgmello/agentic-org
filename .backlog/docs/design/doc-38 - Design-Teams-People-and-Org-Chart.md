@@ -18,11 +18,11 @@ tags:
 
 # Design: teams and the org chart
 
-The relationships are owned by [organization structure](organization-data/01-organization-structure.md),
-[projects](organization-data/02-project-structure.md) and
-[employees](organization-data/04-agent-structure.md). This design applies them to the
+The relationships are owned by [organization structure](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md),
+[projects](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md) and
+[employees](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md). This design applies them to the
 chart and to the rules HQ enforces when the structure changes. The screens and their
-acceptance criteria are in the [offices and teams UX](../specs/offices-and-teams-ux.md).
+acceptance criteria are in the [offices and teams UX](../specs/doc-44%20-%20Spec-Offices-Teams-People-and-Org-Chart-UX.md).
 
 ## The model in short
 
@@ -55,7 +55,7 @@ acceptance criteria are in the [offices and teams UX](../specs/offices-and-teams
 ## The model
 
 Every record has a stable UUIDv7 ID, `schema_version`, entity `revision` and common
-creator and update attribution. [Numbering](organization-data/06-identity-and-numbering.md)
+creator and update attribution. [Numbering](../organization-data/doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md)
 owns readable references: `TEAM-` and `P-` numbers are allocated by HQ for the whole
 organization. Names are display text, not IDs.
 
@@ -66,7 +66,7 @@ organization. Names are display text, not IDs.
 | Employee detail | Optional `contact`, `title`, `focus`, `role_text`, `title_in_team` and `offboarded_at`. There is no owner field. `role_text` never produces a normalized role ID. |
 | Project | `id`, `number`, organization-unique `slug`, `name`, required `owner_team_id`, optional `contributing_team_ids`, repository associations, revision. |
 | Placement | An agent's `employee_id`, `office_id` and `placement_generation`, separate from its identity and rebuilt from durable placement authority, never from a folder's existence. |
-| Execution | A separate `execution.md` selecting the model profile, model, tools, enabled state and prompt ([document 11](organization-data/11-model-profiles-and-agent-execution.md)). Credentials stay office-local. |
+| Execution | A separate `execution.md` selecting the model profile, model, tools, enabled state and prompt ([document 11](../organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md)). Credentials stay office-local. |
 
 An employee has no membership rows. `title_in_team` describes the one home-team
 appointment. A move changes `home_team_id` and the canonical path together and keeps
@@ -101,10 +101,10 @@ below the owner bar without inventing a manager reference.
 - Assignment is separate from structure: every task has an accountable `team_id`, an
   optional project and an independently nullable `assigned_team_id` and
   `assignee_id`, replaced together at an expected revision with a history event
-  ([document 12](organization-data/12-task-assignment-and-history.md)). Clearing the
+  ([document 12](../organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md)). Clearing the
   assignee keeps accountability and does not change status.
 - Messaging checks registered participants under
-  [messaging](organization-data/15-messaging-and-chat.md). Employee identity grants
+  [messaging](../organization-data/doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md). Employee identity grants
   no tools, repository access or security authority. Authority never comes from role
   text, a YAML flag or a position on the chart.
 

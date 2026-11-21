@@ -16,7 +16,7 @@ tags:
 
 What can be built and run from this checkout today, and how to do it without touching
 a real installation. Checked against the source on 2026-11-18; recheck against the
-commit you work on. [Executable migration](../design/executable-migration.md) is the
+commit you work on. [Executable migration](../design/doc-63%20-%20Design-Executables-and-Entry-Points.md) is the
 reference for what each executable does now.
 
 ## What works and what does not

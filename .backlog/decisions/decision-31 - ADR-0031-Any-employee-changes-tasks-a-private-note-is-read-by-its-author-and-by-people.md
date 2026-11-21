@@ -13,9 +13,9 @@ status: accepted
 
 Status: **decided by the owner 2026-11-18**. Implementation pending. It replaces the
 "initial mutation policy" paragraph of
-[ADR-0006](0006-selected-task-acceptance.md) and the author-only reading rule of
-private task notes. [Task assignment](../design/organization-data/12-task-assignment-and-history.md)
-and [operational data](../design/organization-data/05-operational-data.md#private-notes-attached-to-tasks)
+[ADR-0006](decision-6%20-%20ADR-0006-Task-changes-are-accepted-through-one-recoverable-office-journal.md) and the author-only reading rule of
+private task notes. [Task assignment](../docs/organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md)
+and [operational data](../docs/organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#private-notes-attached-to-tasks)
 follow it.
 
 The owner's words: "Agents should be allowed to change tasks. They can create tasks,
@@ -44,7 +44,7 @@ so a person could not read an agent's plan for a task.
    the task (its revision, its status rules, the assignee can take work). It refuses
    an employee that is paused, offboarded or deactivated.
 3. **Every change is tracked.** Each one is a task event with the actor, the time and
-   what changed ([document 05](../design/organization-data/05-operational-data.md)).
+   what changed ([document 05](../docs/organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md)).
    A mistaken change is corrected by a new change, never by editing history.
 4. **A task has two kinds of written record.**
 

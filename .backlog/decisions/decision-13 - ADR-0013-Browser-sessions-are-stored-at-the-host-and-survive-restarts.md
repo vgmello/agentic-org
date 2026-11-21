@@ -12,8 +12,8 @@ status: implemented
 Status: **accepted by the owner 2026-11-17** during the architecture review (conflict
 plan entry F-01); **implemented** in `crates/org-host/src/hostdb/` and
 `apps/agentic-org-web/src/api.rs`. Amends
-[web-api-v1.md](../design/web-api-v1.md) section 4 and the session-end
-rules in [server installation and access UX](../specs/server-installation-and-access-ux.md)
+[web-api-v1.md](../docs/design/doc-71%20-%20Design-Web-HTTP-API-v1.md) section 4 and the session-end
+rules in [server installation and access UX](../docs/specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md)
 section 4a.4. Where those say that a restart ends sessions, this ADR governs.
 
 "Web" in this ADR means the `agentic-org-web` process; code identifiers still call it
@@ -63,7 +63,7 @@ the gateway until they are renamed.
    A refresh rotates the cookie and proof, keeps the session ID, and replaces both
    stored digests together at the host.
    **Step-up.** The password is asked again only for sensitive actions, never
-   periodically; the [installation and access UX](../specs/server-installation-and-access-ux.md)
+   periodically; the [installation and access UX](../docs/specs/doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md)
    names them (changing the password, handing over the administrator role).
 4. **Restarts do not end sessions.** A restart of the web process, a restart of the
    host, an update, or a lost control connection leaves stored sessions valid. A cache

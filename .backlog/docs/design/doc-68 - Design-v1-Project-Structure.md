@@ -17,10 +17,10 @@ tags:
 
 How the code is organized: application names, domain modules containing vertical
 slices, and where shared code lives. Read the language-agnostic
-[architecture rules](../architecture-rules.md) first. Product scope and process
-boundaries are in [ADR-0005](../adr/0005-standalone-server-v1.md) and the
-[standalone design](standalone-server.md); records and storage are in the
-[data contract](organization-data/README.md). This layout is code organization: it
+[architecture rules](../doc-8%20-%20Architecture-Rules.md) first. Product scope and process
+boundaries are in [ADR-0005](../../decisions/decision-5%20-%20ADR-0005-Standalone-server-HQ-web-application-and-named-instances.md) and the
+[standalone design](doc-70%20-%20Design-Standalone-Agentic-Org-Server.md); records and storage are in the
+[data contract](../organization-data/doc-72%20-%20Organization-Data-—-README.md). This layout is code organization: it
 does not create a database, public API or executable for each table.
 
 ## 1. Names and process boundaries
@@ -37,11 +37,11 @@ does not create a database, public API or executable for each table.
 Source directories, package names and executable names match. Reusable `org-*`
 libraries keep domain and contract names. Signing identifiers and persisted
 identities do not follow file names; file names never define trust. Which entry
-points work today is in [executables and entry points](executable-migration.md).
+points work today is in [executables and entry points](doc-63%20-%20Design-Executables-and-Entry-Points.md).
 
 ## 2. Domain modules containing vertical slices
 
-The [browser BFF design](rust-browser-bff-and-static-sveltekit.md) sets the browser
+The [browser BFF design](doc-69%20-%20Design-Rust-Browser-BFF-and-Static-SvelteKit-Architecture.md) sets the browser
 API boundary and reusable module boundaries.
 
 `application -> domain module -> feature/use case`
@@ -57,9 +57,9 @@ interface files.
 | Work | Typed tasks, office-minted references, independent assignment, immutable reporter and history, conflicts; private task notes in a separate store, never read by another agent | `org-work`, with office-owned implementations of its ports |
 | Messaging | Conversations, channels, membership, delivery, asks and authorization | `org-mailbox`, with office storage and session implementations |
 | Employees | Execution configuration, model profiles and connections, permits, turns and attempts, fenced placement, process cleanup, suspension on a required ask | Employee policy and state in `org-office`; runtime adapters behind `org-agent-runtime` |
-| Organization processes | Process and standard documents, scope, override lock and one-chain resolution | `org-process`, called by the office ([processes design](processes.md#7-where-the-code-lives)) |
-| Development processes | A separate primitive: manifest, roles, skills, tabs, a project's choice of one | A module of its own in `org-process`; projection and calls in the office ([development processes](development-processes.md#10-where-the-code-lives)) |
-| Project documentation | The documentation tree, its index, issued versions, code links | Pure rules in `org-docs`; the writes and the project boundary in `org-office` ([development processes](development-processes.md#8-the-project-documentation-tree)) |
+| Organization processes | Process and standard documents, scope, override lock and one-chain resolution | `org-process`, called by the office ([processes design](doc-34%20-%20Design-Organization-Processes-and-Standards.md#7-where-the-code-lives)) |
+| Development processes | A separate primitive: manifest, roles, skills, tabs, a project's choice of one | A module of its own in `org-process`; projection and calls in the office ([development processes](doc-32%20-%20Design-Development-Processes-Process-Packages.md#10-where-the-code-lives)) |
+| Project documentation | The documentation tree, its index, issued versions, code links | Pure rules in `org-docs`; the writes and the project boundary in `org-office` ([development processes](doc-32%20-%20Design-Development-Processes-Process-Packages.md#8-the-project-documentation-tree)) |
 | Instance lifecycle | Setup, catalog, service registration, release pins, key custody, accounts and sessions | `org-host`, composed by `agentic-org` |
 | Federation | Enrollment, replication, reconnect, ownership generations | `org-sync`, `org-sync-proto`, `org-pki` |
 
@@ -148,7 +148,7 @@ apps/
   agentic-org-ui/                    # Static browser application
 ```
 
-How the office stores data is the [office store design](office-store.md). `org-store`
+How the office stores data is the [office store design](doc-66%20-%20Design-Office-Store-Architecture.md). `org-store`
 holds the engine-neutral foundation: one acceptance journal per office as the commit
 point, the single writer, the files under `durable/`, rebuild, and the `Engine` and
 `Projector` traits. Each record family (organization, projects, work, messaging,
@@ -190,8 +190,8 @@ library.
 | `org-sync`, `org-sync-proto` | Replication between HQ and satellites | Parked until the store reads and writes the canonical files | After the storage move; then satellite enrollment |
 | `org-agent-runtime`, `org-supervise` | Vendor runtime contract; process start, stop and cleanup | Continue: the next foundation for running agents | The first vendor adapter and launch path (FC-101), with the isolation modes of ADR-0015 |
 | `org-host` `hostdb` | Host accounts, sessions and office registry storage | Continue | Stored browser sessions and setup (FC-159, FC-010) |
-| `org-platform` | Holds every operating-system difference: the platform contracts of ADR-0017 with macOS, Linux and refusing adapters ([Linux host design](linux-host.md)) | New in X1a; the only crate with platform conditionals | Track X, from X1a (the first day) |
-| `org-store` | The office store's engine-neutral foundation ([office store design](office-store.md)) | New in B1a; depends on no family and not on `org-proto`: it checks only that an ID is one safe path component, and families validate UUIDv7; its full flush and open flags are `org-platform`'s | B1a |
+| `org-platform` | Holds every operating-system difference: the platform contracts of ADR-0017 with macOS, Linux and refusing adapters ([Linux host design](doc-64%20-%20Design-Linux-and-Container-Hosting.md)) | New in X1a; the only crate with platform conditionals | Track X, from X1a (the first day) |
+| `org-store` | The office store's engine-neutral foundation ([office store design](doc-66%20-%20Design-Office-Store-Architecture.md)) | New in B1a; depends on no family and not on `org-proto`: it checks only that an ID is one safe path component, and families validate UUIDv7; its full flush and open flags are `org-platform`'s | B1a |
 | `org-spool` | File queue `agent-os` uses when no office is named | Deleted, with the route through it | With conversations and messages (implementation plan B6) |
 
 ## 4. Svelte and TypeScript layout
@@ -285,7 +285,7 @@ module.
 1. The Svelte feature captures the new team and assignee and shows the submission
    and outcome state.
 2. The web process authenticates the person and passes a typed operation with its
-   operation ID and expected revision ([web API, Tasks](web-api-v1.md#tasks)).
+   operation ID and expected revision ([web API, Tasks](doc-71%20-%20Design-Web-HTTP-API-v1.md#tasks)).
 3. The command reaches the office with the person's principal and a host grant.
 4. `org-work` decides the change and the office store commits the task file, its
    history event and its idempotency receipt as one journal entry.

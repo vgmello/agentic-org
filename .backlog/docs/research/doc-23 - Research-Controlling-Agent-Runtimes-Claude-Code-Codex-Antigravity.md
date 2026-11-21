@@ -16,7 +16,7 @@ tags:
 
 Research for Agentic Org's office worker (now `agentic-org-office`). It answers how the office can start, prompt, observe, resume, stop and meter agents on three runtimes, and recommends one session abstraction. Written 2026-11-08.
 
-**Status.** A dated record of vendor behaviour; it informs designs and is not a requirement. Since it was written, [ADR-0004](../adr/0004-headless-agent-sessions.md) settled the session model: every agent runs headless under the structured driver, and the product never attaches to an agent's process. The agent command line is `agent-os`. The current design is [agent sessions](../design/agent-sessions.md); the spikes are in [`spikes/`](../../spikes/). Where this record discusses attaching, take-over or the `--bg` daemon, it describes what the vendor tools can do, not what the product does.
+**Status.** A dated record of vendor behaviour; it informs designs and is not a requirement. Since it was written, [ADR-0004](../../decisions/decision-4%20-%20ADR-0004-Agent-sessions-run-headless-people-interact-through-chat.md) settled the session model: every agent runs headless under the structured driver, and the product never attaches to an agent's process. The agent command line is `agent-os`. The current design is [agent sessions](../design/doc-29%20-%20Design-Agent-Sessions-and-Runtime-Isolation.md); the spikes are in [`spikes/`](../../../spikes). Where this record discusses attaching, take-over or the `--bg` daemon, it describes what the vendor tools can do, not what the product does.
 
 ## Evidence legend
 

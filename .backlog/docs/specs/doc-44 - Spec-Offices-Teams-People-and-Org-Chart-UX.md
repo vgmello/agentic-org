@@ -29,7 +29,7 @@ builds_on: []
 
 # Spec · Offices, organizations and teams (UX)
 
-The data contract owns the records: [organization](../design/organization-data/01-organization-structure.md), [projects](../design/organization-data/02-project-structure.md), [employees](../design/organization-data/04-agent-structure.md) and [task assignment](../design/organization-data/12-task-assignment-and-history.md). The designs are [offices, HQ and satellites](../design/offices-hq-and-satellites.md), [teams and the org chart](../design/teams-and-org-chart.md) and [create organization](../design/create-organization.md). [Server installation and access](server-installation-and-access-ux.md) owns installation, sign-in and the recovery code. The browser's machine is never an office. Look and feel follows the [shared shell standards](app-shell-ux.md#6a-shared-visual-and-interaction-rules).
+The data contract owns the records: [organization](../organization-data/doc-75%20-%20Organization-Data-01-—-Organization-Structure.md), [projects](../organization-data/doc-76%20-%20Organization-Data-02-—-Project-Structure.md), [employees](../organization-data/doc-78%20-%20Organization-Data-04-—-Agent-Structure.md) and [task assignment](../organization-data/doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md). The designs are [offices, HQ and satellites](../design/doc-67%20-%20Design-Offices-HQ-and-Satellites.md), [teams and the org chart](../design/doc-38%20-%20Design-Teams-People-and-Org-Chart.md) and [create organization](../design/doc-30%20-%20Design-Create-Organization.md). [Server installation and access](doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md) owns installation, sign-in and the recovery code. The browser's machine is never an office. Look and feel follows the [shared shell standards](doc-39%20-%20Spec-App-Shell-and-Navigation-UX.md#6a-shared-visual-and-interaction-rules).
 
 ## 0. Decisions in this spec
 
@@ -81,7 +81,7 @@ The owner and the administrator are often the same person, but they are differen
 
 ## 2. Visual direction (Tailwind Plus application UI)
 
-Apply [shared shell standards](app-shell-ux.md#6a-shared-visual-and-interaction-rules)
+Apply [shared shell standards](doc-39%20-%20Spec-App-Shell-and-Navigation-UX.md#6a-shared-visual-and-interaction-rules)
 to these flows. Lists use flat divided rows; forms use the shared controls and
 right sheets, confirmations use dialogs, and switchers use modal menus. An owner
 bar uses a neutral white/3 surface and white/10 outline, not an indigo
@@ -225,7 +225,7 @@ Status and snapshots carry freshness; a disconnected browser says Live updates p
 See SRV-7 through SRV-12 for the network/authorization behavior.
 
 Signing in, the session and sign out are in
-[server-installation-and-access-ux.md §4a](server-installation-and-access-ux.md#4a-sign-in-first-access-and-recovery-code).
+[server-installation-and-access-ux.md §4a](doc-48%20-%20Spec-Server-Installation-Sign-In-and-Access-UX.md#4a-sign-in-first-access-and-recovery-code).
 
 ### 5a. Create organization (administrator only)
 
@@ -259,7 +259,7 @@ none. Whoever creates it owns it. The mechanics are in
   repository and the state branch (and offers any organization found in the data
   folder), checks the files, shows what will and will not come back, and asks which
   person the administrator is. The rules are in the
-  [recovery contract](../design/organization-data/16-recovery-and-office-continuity.md#opening-an-existing-organization).
+  [recovery contract](../organization-data/doc-91%20-%20Organization-Data-16-—-Recovery-and-Office-Continuity.md#opening-an-existing-organization).
 
 **The form** (slide-over, as for other forms in §2):
 
@@ -308,7 +308,7 @@ none. Whoever creates it owns it. The mechanics are in
 | Checking (the response was lost) | "Checking whether Side Project was created…" with a spinner. The browser looks up the same attempt; it never sends a new one while the outcome is unknown. |
 | Session ended | The sign-in-again dialog (`server-installation-and-access-ux.md` §4a.4). The form keeps its text. After signing in, press **Create organization** again. |
 
-**Waiting for running agents.** A new organization changes the layout/policy context available to processes on this instance. The operation waits for the affected work to drain and for verified safe process cleanup before changing that context. [Execution document 11](../design/organization-data/11-model-profiles-and-agent-execution.md) owns turn, attempt and process evidence. Agents are never scheduled or restarted automatically for this flow.
+**Waiting for running agents.** A new organization changes the layout/policy context available to processes on this instance. The operation waits for the affected work to drain and for verified safe process cleanup before changing that context. [Execution document 11](../organization-data/doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) owns turn, attempt and process evidence. Agents are never scheduled or restarted automatically for this flow.
 
 - Count affected employees with active/open turns, live main processes or unresolved stopping/cleanup evidence, including a warm idle process when it holds the old layout context. A status label such as Idle, Paused or Offline does not prove quiescence. Admit the layout change only when the owning process controller confirms no affected active work/live process remains and cleanup is complete. Stale/unavailable evidence keeps the operation waiting with “Can't confirm that work has stopped on <instance>.” No cache deletion, elapsed timeout or zero presence count substitutes for this proof.
 - Waiting does not automatically stop, cancel, restart or schedule agent work. Any necessary drain/admission control and safe stop must use explicitly supported, authorized lifecycle actions and durable control state; do not imply a newly implemented drain service or invent a command. Later explicit work still requires current execution readiness, placement generation and permits.
@@ -346,7 +346,7 @@ is **Created, then stopped** (above), never a failure, so Try again can't hit
 
 A recovery package that can't be created fails the create, with the copy "Side
 Project wasn't created: its recovery material couldn't be prepared. Try again."
-([ADR-0007](../adr/0007-hq-creation-escrow.md): an organization is never accepted
+([ADR-0007](../../decisions/decision-7%20-%20ADR-0007-HQ-creation-escrow-format-REC-ESC-1.md): an organization is never accepted
 without escrow.)
 
 **Resolving a lost response** (the Checking state):
@@ -390,7 +390,7 @@ Agents never sign in, and neither does a person without an account.
 | Create an organization | The administrator only. Setup creates none | Browser (§5a) |
 | Open an organization | Any account tied to a person in it. The administrator flag alone doesn't open it | Browser |
 | Change its structure (teams, people and their places, leads, projects), and invite, approve and remove satellite offices | Its owner | Browser |
-| Hire an agent into a team | The owner, or the administrator acting in the organization, into any team; an employee with Allow hiring, into the teams it leads and the teams under them. Anyone else is refused: "You don't have access to hire. Ask your team lead." There is no approval ([ADR-0029](../adr/0029-only-who-may-hire-hires.md)) | Browser; `agent-os hr hire` for an agent |
+| Hire an agent into a team | The owner, or the administrator acting in the organization, into any team; an employee with Allow hiring, into the teams it leads and the teams under them. Anyone else is refused: "You don't have access to hire. Ask your team lead." There is no approval ([ADR-0029](../../decisions/decision-29%20-%20ADR-0029-Only-someone-who-may-hire-can-hire-there-is-no-approval.md)) | Browser; `agent-os hr hire` for an agent |
 | Read the organization, work on tasks, and talk to any person or agent | Any person with an account in it | Browser |
 | Give a person an account (Invite to sign in), a new sign-in link, or remove their access | The administrator or the organization's owner | Browser, People (§7.4) |
 | Hand ownership to another person who has an account | The owner | Browser (§7.1) |
