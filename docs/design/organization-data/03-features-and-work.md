@@ -101,11 +101,15 @@ erDiagram
 - A task can target zero or many organization repositories. For project tasks each target must appear in that project's repository associations; this cross-table rule is validated on projection and publication. Team tasks may target registered repositories without an artificial project. Each target can have a separate branch/worktree.
 
 ```text
-Project work: projects/<project-id>/work/tasks/<task-id>.md
-Team work:    teams/<team-id>/.../work/tasks/<task-id>.md
+Project work: projects/<project-id>/work/tasks/<task-id>/
+Team work:    teams/<team-id>/.../work/tasks/<task-id>/
+              ├── task.md                     # Bounded core task metadata & Markdown body
+              ├── comments/<comment-id>.md    # Append-only shared comments (never embedded in task.md)
+              ├── checklist.yaml              # Task checklist items
+              └── operations.yaml             # Watchers, owner questions, and waiting spans
 ```
 
-The team path includes its full ancestor chain. Task scope and path must agree; a project task does not get a second canonical file under its team.
+The team path includes its full ancestor chain. Task scope and path must agree; a project task does not get a second canonical directory under its team. Keeping unbounded comments and high-churn operational entries in sibling files ensures `task.md` stays compact and well below the `selected-task-resources/1` 64 KiB / 10,000-event front-matter cap regardless of discussion length, and avoids rewriting `task.md` on every comment append or checklist tick.
 
 ### Selected assignment snapshot admission
 
@@ -166,18 +170,12 @@ blocked_reason: null
 repository_ids: [01930000-0000-7000-8000-000000000002]
 branches: {}
 integrated_commits: {}
-checklist: []
-comments: []
 links: []
-operations:
-  watchers: []
-  owner_questions: []
-  waiting_spans: []
 ---
 Reject overlapping reservations for the same table. Include concurrent requests in the tests.
 ```
 
-The readable reference is derived as `T-A42`, and all foreign references use the stable ID. To represent a projectless request, set `type: request`, keep required `team_id`, set `project_id`, `feature_id` and `milestone_id` to null, and save under that team's `work/tasks/`. All child metadata uses `target_kind: task`, including for bugs and requests; `type` is a classification, not an entity kind.
+The readable reference is derived as `T-A42`, and all foreign references use the stable ID. Comments live as append-only files under `comments/<comment-id>.md`, and checklist items and operational state live in `checklist.yaml` and `operations.yaml` beside `task.md` ([document 05](05-operational-data.md#shared-metadata-file-location)). To represent a projectless request, set `type: request`, keep required `team_id`, set `project_id`, `feature_id` and `milestone_id` to null, and save under that team's `work/tasks/<task-id>/`. All child metadata uses `target_kind: task`, including for bugs and requests; `type` is a classification, not an entity kind.
 
 Tasks and features may be created in any office. A task gets its final reference from the creating office at once ([document 06](06-identity-and-numbering.md#multiple-offices)); what follows about registration applies to features. Persist their stable IDs and content immediately; final numbers and feature-slug uniqueness are registered through the shared organization authority. Pending local records remain usable by ID. A duplicate local feature slug in the same project requires explicit conflict resolution at registration; the project prefix prevents conflicts across different projects, not within the same project.
 

@@ -155,7 +155,11 @@ An employee has exactly one home team. Each team may have direct people, direct 
 ├── development-processes/<id>/
 ├── teams/<team-id>/
 │   ├── team.yaml
-│   ├── work/tasks/<task-id>.md       # Team tasks; project_id is null
+│   ├── work/tasks/<task-id>/
+│   │   ├── task.md                   # Team task core metadata & description; project_id is null
+│   │   ├── comments/<comment-id>.md  # Append-only shared comments
+│   │   ├── checklist.yaml            # Checklist items
+│   │   └── operations.yaml           # Watchers, owner questions, waiting spans
 │   ├── agents/<employee-id>/profile.md
 │   ├── people/<employee-id>/profile.md
 │   ├── processes/<document-id>.md

@@ -95,43 +95,66 @@ Each shared record in the diagram above belongs to exactly one task through `tar
 
 ## Shared metadata file location
 
-Shared comments, checklist entries and current watcher/question/waiting metadata live in their owning task's front matter. Task activity events have the shared archive defined below. Private task notes use the separate private store defined below.
+Shared comments, checklist entries, and current watcher/question/waiting metadata live as **sibling files inside their owning task's directory** (`work/tasks/<task-id>/`), never embedded in `task.md` YAML front matter. This keeps `task.md` bounded well below the 64 KiB / 10,000-event front-matter limit regardless of comment volume and ensures comment appends or checklist ticks never rewrite `task.md`. Task activity events have the shared archive defined below. Private task notes use the separate private store defined below.
 
-```yaml
-operations:
-  watchers:
-    - id: 01930000-0000-7000-8000-000000000051
-      watcher_kind: owner
-      watcher_id: null
-  owner_questions:
-    - id: 01930000-0000-7000-8000-000000000052
-      question_comment_id: 01930000-0000-7000-8000-000000000050
-      asked_by_id: 01930000-0000-7000-8000-000000000030
-      state: open
-      answer_comment_id: null
-      created_at: "2026-11-14T10:00:00Z"
-      answered_at: null
-  waiting_spans:
-    - id: 01930000-0000-7000-8000-000000000053
-      reason: Owner decision needed
-      waiting_on_kind: owner
-      waiting_on_id: null
-      question_id: 01930000-0000-7000-8000-000000000052
-      started_at: "2026-11-14T10:00:00Z"
-      ended_at: null
+```text
+work/tasks/<task-id>/
+├── task.md                     # Core task metadata & description (bounded <=64 KiB front matter)
+├── comments/<comment-id>.md    # One append-only Markdown file per shared public comment
+├── checklist.yaml              # Ordered checklist_steps[] for this task
+└── operations.yaml             # Current watchers[], owner_questions[], waiting_spans[]
 ```
 
-The parent work file must contain the referenced comment, and the asking employee must exist. Example snippets show selected fields, not a complete file. Open questions/spans and watcher subscriptions remain recoverable with pending work. Notification receipts and chat are separate data governed by [messaging](15-messaging-and-chat.md) and [recovery](16-recovery-and-office-continuity.md). Pending asks, handoffs and deliveries must survive cache loss; this paragraph does not authorize deleting them.
+Example `comments/01930000-0000-7000-8000-000000000050.md`:
+
+```markdown
+---
+schema_version: 1
+id: 01930000-0000-7000-8000-000000000050
+task_id: 01930000-0000-7000-8000-000000000040
+author_id: 01930000-0000-7000-8000-000000000030
+created_at: "2026-11-14T10:00:00Z"
+---
+Should overlapping reservations lock the whole table group or only the requested seat count?
+```
+
+Example `operations.yaml`:
+
+```yaml
+schema_version: 1
+watchers:
+  - id: 01930000-0000-7000-8000-000000000051
+    watcher_kind: owner
+    watcher_id: null
+owner_questions:
+  - id: 01930000-0000-7000-8000-000000000052
+    question_comment_id: 01930000-0000-7000-8000-000000000050
+    asked_by_id: 01930000-0000-7000-8000-000000000030
+    state: open
+    answer_comment_id: null
+    created_at: "2026-11-14T10:00:00Z"
+    answered_at: null
+waiting_spans:
+  - id: 01930000-0000-7000-8000-000000000053
+    reason: Owner decision needed
+    waiting_on_kind: owner
+    waiting_on_id: null
+    question_id: 01930000-0000-7000-8000-000000000052
+    started_at: "2026-11-14T10:00:00Z"
+    ended_at: null
+```
+
+The owning task directory's `comments/` folder must contain the referenced comment, and the asking employee must exist. Example snippets show selected fields, not a complete file. Open questions/spans and watcher subscriptions remain recoverable with pending work. Notification receipts and chat are separate data governed by [messaging](15-messaging-and-chat.md) and [recovery](16-recovery-and-office-continuity.md). Pending asks, handoffs and deliveries must survive cache loss; this paragraph does not authorize deleting them.
 
 ## File to SQL mapping
 
 | Table | Source |
 | --- | --- |
-| `checklist_steps` | `checklist[]`: `id`, `text`, `required`, `done`; position is zero-based array order; target type/ID come from the parent file. |
-| `comments` | `comments[]`: `id`, `author_id`, `created_at`, `body_markdown`; position is array order. `author_id` is the employee who wrote it. |
-| `watchers` | `operations.watchers[]`: `id`, `watcher_kind`, `watcher_id`; target type/ID and organization come from the containing work record. |
-| `owner_questions` | `operations.owner_questions[]`: every same-named question field; target type/ID and organization come from the containing work record. Question and answer comment references must resolve inside that same work record. |
-| `waiting_spans` | `operations.waiting_spans[]`: every same-named span field; target type/ID and organization come from the containing work record. A non-null `question_id` must belong to that same record. |
+| `checklist_steps` | `checklist.yaml` (`checklist[]`): `id`, `text`, `required`, `done`, `linked_task_id`, `checked_by_employee_id`, `checked_at`, `revision`; `position` is zero-based array order; target type/ID come from the owning task directory. |
+| `comments` | `comments/<comment-id>.md`: front matter (`id`, `author_id`, `created_at`) plus Markdown body (`body_markdown`); `position` is deterministic creation/UUIDv7 order within the task's `comments/` folder. `author_id` is the employee who wrote it. |
+| `watchers` | `operations.yaml` (`watchers[]`): `id`, `watcher_kind`, `watcher_id`; target type/ID and organization come from the owning task directory. |
+| `owner_questions` | `operations.yaml` (`owner_questions[]`): every same-named question field; target type/ID and organization come from the owning task directory. Question and answer comment references must resolve inside that task's `comments/` folder. |
+| `waiting_spans` | `operations.yaml` (`waiting_spans[]`): every same-named span field; target type/ID and organization come from the owning task directory. A non-null `question_id` must belong to that same task. |
 
 Closing a record must not discard an unresolved question/span silently. The lifecycle contract chooses its explicit disposition. Durations derive from saved timestamps. Task activity retention is defined below; organization-wide analytics and retention of unrelated operational streams remain separate decisions.
 
@@ -247,7 +270,7 @@ The current task file remains its latest state. Each accepted task revision also
 
 The event's stable identity is `(organization_id, task_id, revision)`. It has no new human number counter and no regenerated identity during replay. File name, task ID and revision must agree. `task_kind` is always `task`, including for bugs and requests. A command can append several consecutive events; the final task revision is the last event revision.
 
-The service commits the resulting task snapshot, its event(s), and the command's idempotency result as one recoverable operation before acknowledging. Under [ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) comments, checklist ticks and watching are acknowledged at that commit, with the flush to the drive following within a bounded interval; every other task change waits for the flush. The durable local journal must retain everything needed to finish materializing these files after a crash, using the platform durability guarantees in [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md). Hourly Git publication includes the task and its events together; it is not the acknowledgement boundary. A machine restore requires unpublished journal records as well as the published organization state. Rebuilding SQLite projects the same event identities; it creates no new history.
+The service commits the changed task file(s) (`task.md` only for core task changes; `comments/<comment-id>.md`, `checklist.yaml`, or `operations.yaml` for operational changes without rewriting `task.md`), its compact delta event(s), and the command's idempotency result as one recoverable operation before acknowledging. Under [ADR-0014](../../adr/0014-acknowledgement-classes-and-agent-os-latency.md) comments, checklist ticks and watching are acknowledged at that commit, with the flush to the drive following within a bounded interval; every other task change waits for the flush. Comment appends and checklist/watcher updates record delta events referencing the sibling file/ID rather than duplicating full `task.md` snapshots. The durable local journal must retain everything needed to finish materializing these files after a crash, using the platform durability guarantees in [ADR-0002](../../adr/0002-storage-sqlite-sqlcipher-one-writer.md). Hourly Git publication includes the task directory and its events together; it is not the acknowledgement boundary. A machine restore requires unpublished journal records as well as the published organization state. Rebuilding SQLite projects the same event identities; it creates no new history.
 
 **Why history is published to Git, and when to revisit.** One file per accepted change is kept as specified. It is what lets an office database be rebuilt with the same history and what answers who changed what after a task closes. Revisit the shape if the organization repository holds more than 100,000 history files, or a single task more than 1,000. The fallback is one append-only file per task, or keeping events only under `durable/` and publishing a summary when a task closes.
 

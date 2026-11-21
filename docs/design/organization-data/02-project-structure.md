@@ -180,7 +180,11 @@ projects/<project-id>/
 ├── docs-history/<document-id>/<version>.md   # Issued versions, written once
 ├── processes/<document-id>.md
 ├── standards/<document-id>.md
-└── work/tasks/<task-id>.md          # type: task, bug, request, or another task type
+└── work/tasks/<task-id>/
+    ├── task.md                       # type: task, bug, request, or another task type
+    ├── comments/<comment-id>.md      # Append-only shared comments
+    ├── checklist.yaml                # Checklist items
+    └── operations.yaml               # Watchers, owner questions, waiting spans
 ```
 
 Project-wide decisions, designs, reports and every process-defined kind of document live in the project's documentation tree, `docs/`, whose layout belongs to the project and whose table of contents is `docs/index.yaml` ([document 18](18-development-processes-and-project-documentation.md#project-documentation-tree)). A project that follows no development process starts with the sections `decisions`, `designs` and `reports`. The brief, and the documents of a feature, a release or a deployment, keep the fixed places shown above.
