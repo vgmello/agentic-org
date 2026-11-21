@@ -76,6 +76,8 @@ export interface AskQuestion {
 	allow_multiple?: boolean;
 	/** Preselected in the form; an option id, or `yes` / `no`. Never recorded as the person's answer. */
 	default_option?: string;
+	/** Wire alias for `default_option` (or prefilled default text on `free_text`). */
+	default_value?: string;
 	/** Not needed for Send answers. */
 	optional?: boolean;
 }

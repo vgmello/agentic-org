@@ -1,4 +1,5 @@
 import { createOperationClock, formatUuidV7 } from '../http/clock';
+import { createEventStreamClient } from '../http/events';
 import { createAuthlessJsonHttp, createGatewayPublicHttp, createJsonHttp } from '../http/json-http';
 import type { AccessView } from '../http/wire';
 import { createSessionController, type SessionState } from './session-controller';
@@ -30,11 +31,13 @@ function compose() {
 		const options = { origin: location.origin, ...LIMITS };
 		const http = createJsonHttp(options);
 		const authlessHttp = createAuthlessJsonHttp(options);
+		const eventStream = createEventStreamClient({ origin: location.origin });
 		controller = createSessionController({
 			store: createSessionStore(indexedDB),
 			gateway: createSessionGateway(createGatewayPublicHttp(options), http, authlessHttp),
 			http,
 			authlessHttp,
+			eventStream,
 			locks: navigator.locks,
 			channel: new BroadcastChannel('org-session'),
 			now: () => Date.now(),

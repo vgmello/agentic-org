@@ -6,7 +6,8 @@ const unavailable = unavailableFeature(UNAVAILABLE_MESSAGE);
 const available = Object.freeze({ available: true as const });
 
 // A3: session pages; A4.5: Create organization; A6: /set-password + /settings/access;
-// TASK-76/62: /security + /cli-approve; U1 (TASK-40): Offices, Teams, Members, Org Chart, Projects.
+// TASK-76/62: /security + /cli-approve; U1 (TASK-40): Offices, Teams, Members, Org Chart, Projects;
+// B7 (TASK-46): Home, Inbox, Chat.
 const EXACT_ENABLED_PAGES: ReadonlySet<string> = new Set([
 	'/',
 	'/sign-in',
@@ -17,6 +18,9 @@ const EXACT_ENABLED_PAGES: ReadonlySet<string> = new Set([
 	'/security',
 	'/approve',
 	'/cli-approve',
+	'/home',
+	'/inbox',
+	'/chat',
 	'/settings/offices',
 	'/offices',
 	'/settings/access',

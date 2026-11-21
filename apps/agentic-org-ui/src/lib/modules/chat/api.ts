@@ -1,17 +1,14 @@
-import { chatSender, type ChatApi, type ChatDraft } from '$lib/modules/messaging/api';
-import { unavailableCall } from '$lib/platform/unavailable-api';
-
-export { chatSender, type ChatApi, type ChatDraft };
+import {
+	chatApi,
+	chatSender,
+	sender,
+	type ChatApi,
+	type ChatDraft
+} from '$lib/modules/messaging/api';
 
 /**
- * Production fail-closed Chat API until B6/B7 messaging/asks backend routes land.
+ * Production Chat API re-exported from `$lib/modules/messaging/api` so all callers share one
+ * gateway singleton and dependency direction stays `chat -> messaging`.
  * Under `bun run dev:mock`, `e2e/fakes/modules/chat.ts` stands in for this file by name.
  */
-export const chatApi: ChatApi = Object.freeze({
-	snapshot: unavailableCall,
-	command: unavailableCall,
-	status: unavailableCall,
-	subscribe: () => () => {}
-});
-
-export const sender = chatSender(chatApi);
+export { chatApi, chatSender, sender, type ChatApi, type ChatDraft };
