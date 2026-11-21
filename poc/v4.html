@@ -1809,7 +1809,16 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 .hb-tleg.ci strong { color: #67E8F9; }
 .hb-tleg.humans strong { color: #F5C76B; }
 .hb-tleg.queued strong { color: #94A3B8; }
+.hb-time-foot {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px 18px; flex-wrap: wrap;
+}
 .hb-time-note { font-size: 0.8125rem; line-height: 1.45; color: var(--hb-muted); }
+.hb-time-auto {
+  font-size: 0.75rem; line-height: 1.4; color: var(--hb-dim);
+  font-variant-numeric: tabular-nums;
+}
+.hb-time-auto b { color: var(--hb-muted); font-weight: 600; }
 
 @media (max-width: 1240px) {
   .hb-metrics { grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); }
@@ -2706,17 +2715,6 @@ function pageHome() {
     if (st === "error") return "";
     const emptyMode = st === "empty";
     return `<section class="hb-metrics" aria-label="Decision metrics">
-      <a class="hb-metric" href="#/settings/agents/jules">
-        <div class="hb-metric-top"><span>Monthly spend</span>${ic("bolt", "ic14 c-amber")}</div>
-        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-metric-cap">${emptyMode ? "/ $210" : "/ $210 · 68%"}</span></div>
-        <div class="hb-mini-bar" aria-hidden="true"><span style="width:${emptyMode ? 0 : 68}%"></span></div>
-        <div class="hb-metric-sub">${emptyMode ? "No spend recorded yet" : "Jules at cap · ~$6.80/day"}</div>
-      </a>
-      <a class="hb-metric" href="#/activity" title="Average model spend per accepted task (last 7 days)">
-        <div class="hb-metric-top"><span>Cost per task</span>${ic("sparkle", "ic14 c-indigo")}</div>
-        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "—" : "$7.45"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">-11%</span>`}</div>
-        <div class="hb-metric-sub">${emptyMode ? "No accepted tasks yet" : "Avg per accepted task · 7d"}</div>
-      </a>
       <a class="hb-metric" href="#/activity" title="Average time from task start to accepted completion (last 7 days)">
         <div class="hb-metric-top"><span>Cycle time</span>${ic("clock", "ic14 c-indigo")}</div>
         <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "—" : "18m"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">-14%</span>`}</div>
@@ -2731,6 +2729,17 @@ function pageHome() {
         <div class="hb-metric-top"><span>Rework rate</span>${ic("refresh", "ic14 c-indigo")}</div>
         <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "—" : "16%"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">-3%</span>`}</div>
         <div class="hb-metric-sub">${emptyMode ? "No rework recorded" : "3 of 19 tasks · 7d"}</div>
+      </a>
+      <a class="hb-metric" href="#/activity" title="Average model spend per accepted task (last 7 days)">
+        <div class="hb-metric-top"><span>Cost per task</span>${ic("sparkle", "ic14 c-indigo")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "—" : "$7.45"}</span>${emptyMode ? "" : `<span class="hb-metric-delta">-11%</span>`}</div>
+        <div class="hb-metric-sub">${emptyMode ? "No accepted tasks yet" : "Avg per accepted task · 7d"}</div>
+      </a>
+      <a class="hb-metric" href="#/settings/agents/jules">
+        <div class="hb-metric-top"><span>Monthly spend</span>${ic("bolt", "ic14 c-amber")}</div>
+        <div class="hb-metric-val"><span class="hb-metric-num">${emptyMode ? "$0" : "$142"}</span><span class="hb-metric-cap">${emptyMode ? "/ $210" : "/ $210 · 68%"}</span></div>
+        <div class="hb-mini-bar" aria-hidden="true"><span style="width:${emptyMode ? 0 : 68}%"></span></div>
+        <div class="hb-metric-sub">${emptyMode ? "No spend recorded yet" : "Jules at cap · ~$6.80/day"}</div>
       </a>
     </section>`;
   };
@@ -2916,7 +2925,7 @@ function pageHome() {
         <div class="hb-eyebrow">
           <span class="h4-live-dot${st === "error" ? " is-error" : ""}" aria-hidden="true"></span>
           <span>${st === "error" ? "HQ Office · Unreachable" : "HQ Office · Online"}</span>
-          ${st !== "error" && st !== "loading" ? `<span class="hb-eyebrow-meta"><span>·</span><a href="#/settings/offices">${st === "empty" ? "1 / 1 office" : `1 / 2 offices <span class="warn-dot">(Build box offline)</span>`}</a><span>·</span><span title="Human-in-the-Loop rate: percentage of runs that paused for human input">HITL ${st === "empty" ? "—" : "22%"}</span></span>` : ""}
+          ${st !== "error" && st !== "loading" ? `<span class="hb-eyebrow-meta"><span>·</span><a href="#/settings/offices">${st === "empty" ? "1 / 1 office" : `1 / 2 offices <span class="warn-dot">(Build box offline)</span>`}</a></span>` : ""}
         </div>
         <h1 class="hb-title" tabindex="-1">${headline}</h1>
       </div>
@@ -2970,7 +2979,10 @@ function pageHome() {
           <a class="hb-tleg humans" href="#/inbox"><strong>${humanPct}%</strong><span>Waiting on humans</span></a>
           <a class="hb-tleg queued" href="#/work"><strong>${queuedPct}%</strong><span>Queued for an agent</span></a>
         </div>
-        <p class="hb-time-note">${esc(constraint)}</p>
+        <div class="hb-time-foot">
+          <p class="hb-time-note">${esc(constraint)}</p>
+          <span class="hb-time-auto" title="Human-in-the-Loop (HITL) rate: 22% of completed runs paused for human input; 78% ran autonomously"><b>78%</b> autonomous · <b>22%</b> needed human input</span>
+        </div>
       </section>`;
     })()}
   </div>`;
