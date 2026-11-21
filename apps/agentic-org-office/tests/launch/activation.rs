@@ -1,7 +1,7 @@
 //! X-02 rev15 §5.1/5.2/5.4: a fake host drives the real worker independently of 2b.4.
 use super::*;
-use agentic_org_office::test_support::FakeWriter;
 use org_office_launch::{CreateLine, Handoff, HandoffFd, HostFirstLine, OfficeLine};
+use org_office_server::test_support::FakeWriter;
 use org_proto::{GrantKey, RecoveryCode};
 use serde_json::{json, Value};
 use std::io::BufRead;

@@ -1,0 +1,39 @@
+[package]
+name = "org-office-server"
+description = "Office server orchestration: launch control, IPC socket, host channels, transfer, and inbox."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# Test helpers shared with binary integration suites: the test grant signer and a host-channel caller.
+test-support = []
+
+[dependencies]
+org-pki = { path = "../org-pki" }
+zeroize = "=1.9.1"
+org-socket = { path = "../org-socket" }
+org-proto = { path = "../org-proto" }
+org-office = { path = "../org-office" }
+# The writer custody contract the office's store calls, implemented over the host channel.
+org-store = { path = "../org-store" }
+org-work = { path = "../org-work" }
+org-mailbox = { path = "../org-mailbox" }
+org-office-launch = { path = "../org-office-launch" }
+# The default office home and the socket path limit of the build target.
+org-platform = { path = "../org-platform" }
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+org-sync = { path = "../org-sync" }
+org-office = { path = "../org-office", features = ["testkit"] }
+org-mailbox = { path = "../org-mailbox", features = ["testkit"] }
+org-client = { path = "../org-client", features = ["testkit"] }
+tempfile.workspace = true
+syn = { version = "=2.0.119", features = ["full", "visit"] }
+proc-macro2 = "=1.0.107"

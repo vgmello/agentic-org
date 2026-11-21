@@ -2,8 +2,8 @@
 //!
 //! Linux host design section 4, `fs`. The consumers are `org-host` (the instance
 //! registry, the release store, the host database, the writer marker, the recovery
-//! package export), `org-office` (durable publication), `org-client` (the agent spool)
-//! and `org-spool` (safe reads). Each keeps its policy: what is flushed and when, which
+//! package export), `org-office` (durable publication), and `org-client` (the agent spool).
+//! Each keeps its policy: what is flushed and when, which
 //! names are renamed, what a refusal means to a person. This module only asks the
 //! system, and takes plain data (a descriptor, C strings, a path to name in a refusal).
 //!

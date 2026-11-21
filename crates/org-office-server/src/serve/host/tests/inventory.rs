@@ -296,7 +296,7 @@ fn inventory() -> (BTreeSet<String>, BTreeSet<String>) {
         candidates: BTreeSet::new(),
     };
     for source in [
-        "apps/agentic-org-office/src/lib.rs",
+        "crates/org-office-server/src/lib.rs",
         "crates/org-office/src/rules/command.rs",
         "crates/org-work/src/call.rs",
     ] {

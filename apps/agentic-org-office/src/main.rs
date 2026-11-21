@@ -1,7 +1,7 @@
 //! # agentic-org-office: the office daemon
 //!
 //! A thin binary: it moves its control pipe out of the way, installs a panic hook, and runs
-//! `agentic_org_office::run`. All logic is in the library.
+//! `org_office_server::run`. All logic lives in library crates.
 
 fn main() {
     // Before startup concurrency or key material: inherited by all threads and children.
@@ -18,15 +18,15 @@ fn main() {
         std::process::exit(1);
     }
 
-    // First thing, before any thread or child exists (see `agentic_org_office::fdswap`).
-    let control = match agentic_org_office::fdswap::take_control_pipe() {
+    // First thing, before any thread or child exists (see `org_office_server::fdswap`).
+    let control = match org_office_server::fdswap::take_control_pipe() {
         Ok(control) => control,
         Err(error) => {
             eprintln!("agentic-org-office: cannot set up its descriptors: {error}");
             std::process::exit(1);
         }
     };
-    agentic_org_office::install_panic_hook();
+    org_office_server::install_panic_hook();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    std::process::exit(agentic_org_office::run(&args, control));
+    std::process::exit(org_office_server::run(&args, control));
 }

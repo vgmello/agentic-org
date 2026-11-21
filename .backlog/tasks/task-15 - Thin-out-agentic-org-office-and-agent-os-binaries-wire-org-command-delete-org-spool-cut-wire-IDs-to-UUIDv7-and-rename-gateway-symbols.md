@@ -3,9 +3,11 @@ id: TASK-15
 title: >-
   Thin out agentic-org-office and agent-os binaries, wire org-command, delete
   org-spool, cut wire IDs to UUIDv7, and rename gateway symbols
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lead'
 created_date: '2026-11-20T23:24:00Z'
+updated_date: '2026-11-21T02:48:00Z'
 labels:
   - rust
   - architecture

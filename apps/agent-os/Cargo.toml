@@ -1,6 +1,6 @@
 [package]
 name = "agent-os"
-description = "The agents' CLI: tiny and fast; messages now, tasks and queues later."
+description = "Thin composition root binary for the Agentic Org agent CLI (org-command + org-client)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,21 +11,9 @@ name = "agent-os"
 path = "src/main.rs"
 
 [dependencies]
-org-client = { path = "../../crates/org-client" }
-org-proto = { path = "../../crates/org-proto" }
-org-spool = { path = "../../crates/org-spool" }
-serde.workspace = true
-serde_json.workspace = true
+org-agent-cli = { path = "../../crates/org-agent-cli" }
 
 [dev-dependencies]
-# Test-only, for tests/office.rs: the office's `office.json` as the host's provisioning
-# leaves it. No office server runs in these tests; none is a dependency of the binary.
-org-office-launch = { path = "../../crates/org-office-launch" }
+org-proto = { path = "../../crates/org-proto" }
+serde_json.workspace = true
 tempfile.workspace = true
-
-[[test]]
-name = "office"
-path = "tests/office.rs"
-# Its own main, kept from when it also ran the office server as a child process: it runs its
-# tests one after another and honours libtest's name filters, `--skip`, `--exact` and `--list`.
-harness = false

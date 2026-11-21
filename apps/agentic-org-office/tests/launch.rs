@@ -15,9 +15,9 @@ use std::time::Duration;
 mod joined_client;
 #[path = "support/teardown.rs"]
 mod test_teardown;
-use agentic_org_office::test_support::{test_admission, FakeWriter};
 use joined_client::Client;
 use org_office_launch::{office_dir, OfficeFile};
+use org_office_server::test_support::{test_admission, FakeWriter};
 use org_proto::location::selected_office_socket_in;
 use org_proto::{frame, OfficeRole, OfficeSecretsKey};
 use tempfile::TempDir;

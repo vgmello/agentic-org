@@ -3,8 +3,8 @@
 //! transfer socket and signs a grant for the owner with the test grant key. Agents bind on the
 //! office socket by handle, with no token.
 use super::*;
-use agentic_org_office::test_support::{signed_grant, ChannelCaller};
 use org_office_launch::{ChannelKind, TransferRecord};
+use org_office_server::test_support::{signed_grant, ChannelCaller};
 use org_proto::{ApiError, Call};
 
 /// A worker started by the host on the office the worker created.
