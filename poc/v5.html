@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agentic Org</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='2' width='28' height='28' rx='8' fill='%230284c7'/%3E%3Cpath d='M10 22 16 9l6 13M12.5 17h7' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
 :root {
   color-scheme: dark;
@@ -61,10 +62,10 @@ h1[tabindex="-1"]:focus, h1[tabindex="-1"]:focus-visible, h2[tabindex="-1"]:focu
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8em; background: var(--hover); color: var(--gray-300); padding: 1px 4px; border-radius: 3px; overflow-wrap: anywhere; }
 .tnum { font-variant-numeric: tabular-nums; }
 
-/* Icons */
-.ic { width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.ic20 { width: 20px; height: 20px; } .ic16 { width: 16px; height: 16px; } .ic14 { width: 14px; height: 14px; stroke-width: 2; }
-.ic48 { width: 48px; height: 48px; }
+/* Icons (Lucide) */
+.ic { width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.ic20 { width: 20px; height: 20px; } .ic16 { width: 16px; height: 16px; } .ic14 { width: 14px; height: 14px; stroke-width: 1.9; }
+.ic48 { width: 48px; height: 48px; stroke-width: 1.5; }
 
 /* Skip link */
 .skip { position: absolute; left: 12px; top: -60px; z-index: 200; background: var(--indigo-500); color: #fff; font-weight: 600; padding: 8px 12px; border-radius: var(--radius-md); }
@@ -250,6 +251,17 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   background: linear-gradient(135deg, rgba(56, 189, 248, .38) 0%, rgba(14, 165, 233, .28) 100%);
   box-shadow: inset 0 1px 0 rgba(224, 242, 254, .40), inset 0 0 0 1px rgba(125, 211, 252, .56);
   color: #FFFFFF;
+}
+.cmdk-ai-btn.is-offline {
+  background: rgba(148, 163, 184, .09);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, .22);
+  color: #7C91AE; cursor: not-allowed; opacity: .78;
+}
+.cmdk-ai-btn.is-offline .ic { color: #FB7185; }
+.cmdk-ai-btn.is-offline:hover {
+  background: rgba(148, 163, 184, .09);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, .22);
+  color: #7C91AE;
 }
 
 .cmdk-backdrop {
@@ -881,9 +893,11 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .sheet td { color: var(--gray-300); }
 .sheet th { color: #fff; }
 .toasts { position: fixed; right: 24px; bottom: 24px; z-index: 120; display: flex; flex-direction: column; gap: 8px; }
-.toast { display: flex; gap: 12px; align-items: flex-start; max-width: 380px; border-radius: 10px; background: rgba(13, 20, 39, .78); backdrop-filter: blur(24px) saturate(170%); -webkit-backdrop-filter: blur(24px) saturate(170%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 0 0 1px rgba(255, 255, 255, .11), 0 16px 40px rgba(0, 0, 0, .52); padding: 14px 16px; }
-.toast .ic { color: var(--indigo-400); }
-.toast p { font-weight: 500; }
+.toast { display: flex; gap: 12px; align-items: center; max-width: 420px; border-radius: 11px; background: rgba(11, 20, 38, .88); backdrop-filter: blur(24px) saturate(170%); -webkit-backdrop-filter: blur(24px) saturate(170%); box-shadow: inset 0 1px 0 rgba(186, 222, 255, .18), inset 0 0 0 1px rgba(186, 222, 255, .14), 0 16px 40px rgba(0, 0, 0, .56); padding: 12px 15px; }
+.toast .ic { color: #34D399; width: 18px; height: 18px; }
+.toast p { font-weight: 500; font-size: 0.84375rem; color: #F1F5F9; flex: 1; }
+.toast-undo { padding: 4px 10px; border-radius: 7px; font-size: 0.78125rem; font-weight: 600; color: #7DD3FC; background: rgba(56, 189, 248, .14); box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .32); flex: none; transition: background-color .14s ease, color .14s ease; }
+.toast-undo:hover { background: rgba(56, 189, 248, .28); color: #FFFFFF; }
 .sheet.dialog { top: 50%; left: 50%; right: auto; bottom: auto; transform: translate(-50%, -50%); width: min(448px, calc(100% - 32px)); border-radius: var(--radius-lg); box-shadow: inset 0 0 0 1px var(--line2); padding: 24px; gap: 0; }
 .dialog h2 { font-size: 1rem; line-height: 1.75rem; font-weight: 600; }
 .dialog .dsc { margin-top: 8px; color: var(--gray-400); }
@@ -1598,7 +1612,9 @@ select.field option { background: #0E1629; color: #F8FAFC; }
   background: rgba(186, 222, 255, .07); color: var(--hb-muted);
   box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .14);
   white-space: nowrap;
+  transition: filter .14s ease, transform .14s ease, box-shadow .14s ease;
 }
+a.hb-pillar-pill:hover { filter: brightness(1.14); transform: translateY(-0.5px); }
 .hb-pillar-pill.warn { background: rgba(251, 191, 36, .12); color: #FDE68A; box-shadow: inset 0 0 0 1px rgba(251, 191, 36, .28); }
 .hb-pillar-pill.bad { background: rgba(251, 113, 133, .12); color: #FDA4AF; box-shadow: inset 0 0 0 1px rgba(251, 113, 133, .28); }
 .hb-pillar-pill.ok { background: rgba(52, 211, 153, .12); color: #6EE7B7; box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .28); }
@@ -1654,14 +1670,17 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 
 /* Left: Focused Decision Spotlight Card */
 .hb-spot {
-  position: relative; display: flex; flex-direction: column; gap: 18px;
-  padding: 24px 26px 22px; border-radius: 18px;
+  position: relative; display: flex; flex-direction: column; gap: 15px;
+  padding: 22px 24px 20px; border-radius: 18px;
   background: var(--hb-surface);
   backdrop-filter: var(--hb-blur); -webkit-backdrop-filter: var(--hb-blur);
   box-shadow: var(--hb-shadow);
-  min-height: 316px;
+  min-height: 280px;
   overflow: hidden;
+  transition: box-shadow .28s ease;
 }
+.hb-spot.is-centered { max-width: 680px; width: 100%; margin: 12px auto 0; }
+.hb-spot.is-pulse { box-shadow: inset 0 1px 0 rgba(186, 222, 255, .28), inset 0 0 0 1.5px rgba(56, 189, 248, .55), 0 18px 46px -12px rgba(14, 165, 233, .36); }
 .hb-spot::before {
   content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
   background: linear-gradient(90deg, rgba(125, 211, 252, .7) 0%, rgba(56, 189, 248, .25) 55%, transparent 100%);
@@ -1736,9 +1755,38 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   font-size: 0.875rem; line-height: 1.5; color: #E2E8F0;
 }
 .hb-spot-rec .ic { color: #7DD3FC; margin-top: 2px; flex: none; }
+.hb-spot-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px;
+  font-size: 0.78125rem; line-height: 1.4; color: var(--hb-muted);
+}
+.hb-spot-meta-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 7px;
+  background: rgba(186, 222, 255, .05);
+  box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .11);
+  color: #CBD5E1; font-weight: 500;
+}
+.hb-spot-meta-chip .ic { width: 13px; height: 13px; color: #7DD3FC; }
+.hb-spot-meta-chip.ok .ic { color: #34D399; }
+.hb-spot-meta-chip.warn .ic { color: #FBBF24; }
 .hb-spot-ctx-row { display: flex; align-items: center; gap: 10px; }
+.hb-spot-next {
+  margin-top: auto;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 11px; border-radius: 9px;
+  background: rgba(7, 14, 26, .26);
+  box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .09);
+  font-size: 0.78125rem; color: var(--hb-muted); text-align: left;
+  transition: background-color .14s ease, box-shadow .14s ease, color .14s ease;
+}
+.hb-spot-next:hover { background: rgba(16, 31, 55, .42); box-shadow: inset 0 0 0 1px rgba(186, 222, 255, .20); color: var(--hb-ink); }
+.hb-spot-next-l { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.hb-spot-next-lbl { font-size: 0.6875rem; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--hb-dim); flex: none; }
+.hb-spot-next-txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--hb-body); }
+.hb-spot-next:hover .hb-spot-next-txt { color: var(--hb-ink); }
+.hb-spot-next .ic { flex: none; color: var(--hb-dim); }
 .hb-spot-foot {
-  margin-top: auto; padding-top: 16px;
+  padding-top: 14px;
   border-top: 1px solid var(--hb-border);
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
 }
@@ -1802,7 +1850,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .hb-digest { display: flex; flex-direction: column; gap: 8px; }
 .hb-dig-item {
   display: flex; align-items: flex-start; gap: 10px;
-  padding: 10px 12px; border-radius: 10px;
+  padding: 9px 11px; border-radius: 10px;
   background: var(--hb-well);
   box-shadow: inset 0 1px 0 rgba(186, 226, 255, .10), inset 0 0 0 1px rgba(186, 226, 255, .10);
   font-size: 0.8125rem; line-height: 1.42; color: var(--hb-body);
@@ -1834,6 +1882,8 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 .hb-proj-head-l { display: flex; align-items: baseline; gap: 10px; }
 .hb-proj-head h2 { font-size: 0.96875rem; font-weight: 600; letter-spacing: -.01em; color: var(--hb-ink); }
 .hb-proj-head span { font-size: 0.8125rem; color: var(--hb-muted); }
+.hb-proj-head .link { color: #7DD3FC; }
+.hb-proj-head .link:hover { color: #BAE6FD; }
 .hb-bento { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .hb-card {
   position: relative; display: flex; flex-direction: column; gap: 14px;
@@ -1863,7 +1913,8 @@ a.hb-card-name:hover { color: #BAE6FD; }
 .hb-pace.warn { color: #FDE68A; }
 .hb-pace.bad { color: #FDA4AF; }
 .hb-blocker {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-height: 60px;
   padding: 9px 11px; border-radius: 10px;
   background: rgba(251, 113, 133, .07);
   box-shadow: inset 0 0 0 1px rgba(251, 113, 133, .18);
@@ -1980,10 +2031,17 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 .hb-tleg.humans strong { color: #F5C76B; }
 .hb-tleg.queued strong { color: #CBD5E1; }
 .hb-time-foot {
-  display: flex; align-items: baseline; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between;
   gap: 8px 18px; flex-wrap: wrap;
 }
 .hb-time-note { font-size: 0.8125rem; line-height: 1.45; color: var(--hb-muted); }
+.hb-time-acts { display: inline-flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.hb-inline-act {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 0.78125rem; font-weight: 600; color: #7DD3FC; white-space: nowrap;
+  transition: color .14s ease;
+}
+.hb-inline-act:hover { color: #BAE6FD; }
 .hb-time-auto {
   font-size: 0.75rem; line-height: 1.4; color: var(--hb-dim);
   font-variant-numeric: tabular-nums;
@@ -2061,67 +2119,67 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="i-home" viewBox="0 0 24 24"><path d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/></symbol>
-  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M2.25 13.5h3.86a2.25 2.25 0 0 1 2.012 1.244l.256.512a2.25 2.25 0 0 0 2.013 1.244h3.218a2.25 2.25 0 0 0 2.013-1.244l.256-.512a2.25 2.25 0 0 1 2.013-1.244h3.859m-19.5.338V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18v-4.162c0-.224-.034-.447-.1-.661L19.24 5.338a2.25 2.25 0 0 0-2.15-1.588H6.911a2.25 2.25 0 0 0-2.15 1.588L2.35 13.177a2.25 2.25 0 0 0-.1.661Z"/></symbol>
-  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></symbol>
-  <symbol id="i-clipboard" viewBox="0 0 24 24"><path d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25ZM6.75 12h.008v.008H6.75V12Zm0 3h.008v.008H6.75V15Zm0 3h.008v.008H6.75V18Z"/></symbol>
-  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.020.072v3.091l-3-3c-1.354 0-2.694-.055-4.020-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.760 1.614-2.760 3.235v6.226c0 1.621 1.152 3.026 2.760 3.235.577.075 1.157.14 1.740.194V21l4.155-4.155"/></symbol>
-  <symbol id="i-signal" viewBox="0 0 24 24"><path d="M9.348 14.652a3.75 3.75 0 0 1 0-5.304m5.304 0a3.75 3.75 0 0 1 0 5.304m-7.425 2.121a6.75 6.75 0 0 1 0-9.546m9.546 0a6.75 6.75 0 0 1 0 9.546M5.106 18.894c-3.808-3.807-3.808-9.980 0-13.788m13.788 0c3.808 3.807 3.808 9.980 0 13.788M12 12h.008v.008H12V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></symbol>
-  <symbol id="i-user-group" viewBox="0 0 24 24"><path d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.170 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.740.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z"/></symbol>
-  <symbol id="i-cog" viewBox="0 0 24 24"><path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.020.398 1.110.94l.213 1.281c.063.374.313.686.645.870.074.040.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.370.490l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.430l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.110-.94l-.213-1.281c-.062-.374-.312-.686-.644-.870a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.490l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.380-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.430l1.297-2.247a1.125 1.125 0 0 1 1.370-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.280Z"/><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></symbol>
-  <symbol id="i-search" viewBox="0 0 24 24"><path d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></symbol>
-  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4.5v15m7.5-7.5h-15"/></symbol>
-  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 18 18 6M6 6l12 12"/></symbol>
-  <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="m8.25 4.5 7.5 7.5-7.5 7.5"/></symbol>
-  <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="M15.75 19.5 8.25 12l7.5-7.5"/></symbol>
-  <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="m19.5 8.25-7.5 7.5-7.5-7.5"/></symbol>
-  <symbol id="i-chev-updown" viewBox="0 0 24 24"><path d="M8.25 15 12 18.75 15.75 15m-7.5-6L12 5.25 15.75 9"/></symbol>
-  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.310A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.310m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0"/></symbol>
-  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z"/></symbol>
-  <symbol id="i-check-circle" viewBox="0 0 24 24"><path d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></symbol>
-  <symbol id="i-check" viewBox="0 0 24 24"><path d="m4.5 12.75 6 6 9-13.5"/></symbol>
-  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.330.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z"/></symbol>
-  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M14.25 9v6m-4.5 0V9M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></symbol>
-  <symbol id="i-play" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/><path d="M15.91 11.672a.375.375 0 0 1 0 .656l-5.603 3.113a.375.375 0 0 1-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112Z"/></symbol>
-  <symbol id="i-offline" viewBox="0 0 24 24"><path d="m3 3 8.735 8.735m0 0a.374.374 0 1 1 .53.53m-.53-.53.53.53m0 0L21 21M14.652 9.348a3.75 3.75 0 0 1 0 5.304m2.121-7.425a6.75 6.75 0 0 1 0 9.546m2.121-11.667c3.808 3.807 3.808 9.980 0 13.788m-9.546-4.242a3.733 3.733 0 0 1-1.060-2.122m-1.061 4.243a6.75 6.75 0 0 1-1.625-6.929m-.496 9.050c-3.068-3.067-3.664-7.670-1.790-11.334M12 12h.008v.008H12V12Z"/></symbol>
-  <symbol id="i-x-circle" viewBox="0 0 24 24"><path d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></symbol>
-  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></symbol>
-  <symbol id="i-exclaim" viewBox="0 0 24 24"><path d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z"/></symbol>
-  <symbol id="i-info" viewBox="0 0 24 24"><path d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z"/></symbol>
-  <symbol id="i-office" viewBox="0 0 24 24"><path d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21"/></symbol>
-  <symbol id="i-user" viewBox="0 0 24 24"><path d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"/></symbol>
-  <symbol id="i-user-plus" viewBox="0 0 24 24"><path d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0ZM3 19.235v-.11a6.375 6.375 0 0 1 12.75 0v.109A12.318 12.318 0 0 1 9.374 21c-2.331 0-4.512-.645-6.374-1.766Z"/></symbol>
-  <symbol id="i-chip" viewBox="0 0 24 24"><path d="M8.25 3v1.5M4.5 8.25H3m18 0h-1.5M4.5 12H3m18 0h-1.5m-15 3.75H3m18 0h-1.5M8.25 19.5V21M12 3v1.5m0 15V21m3.75-18v1.5m0 15V21m-9-1.5h10.5a2.25 2.25 0 0 0 2.25-2.25V6.75a2.25 2.25 0 0 0-2.25-2.25H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5a2.25 2.25 0 0 0 2.25 2.25Zm.75-12h9v9h-9v-9Z"/></symbol>
-  <symbol id="i-thread" viewBox="0 0 24 24"><path d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z"/></symbol>
-  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"/><path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></symbol>
-  <symbol id="i-hash" viewBox="0 0 24 24"><path d="M5.25 8.25h15m-16.5 7.5h15m-1.8-13.5-3.9 19.5m-2.1-19.5-3.9 19.5"/></symbol>
-  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m6.75 7.5 3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0 0 21 18V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v12a2.25 2.25 0 0 0 2.25 2.25Z"/></symbol>
-  <symbol id="i-board" viewBox="0 0 24 24"><path d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25a2.25 2.25 0 0 1-2.25-2.25v-2.25Z"/></symbol>
-  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/></symbol>
-  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></symbol>
-  <symbol id="i-send" viewBox="0 0 24 24"><path d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"/></symbol>
-  <symbol id="i-lock" viewBox="0 0 24 24"><path d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></symbol>
-  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"/></symbol>
-  <symbol id="i-clock" viewBox="0 0 24 24"><path d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></symbol>
-  <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3"/></symbol>
-  <symbol id="i-deny" viewBox="0 0 24 24"><path d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"/></symbol>
-  <symbol id="i-open" viewBox="0 0 24 24"><path d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></symbol>
-  <symbol id="i-currency" viewBox="0 0 24 24"><path d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></symbol>
-  <symbol id="i-question" viewBox="0 0 24 24"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></symbol>
-  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M3 3v1.5M3 21v-6m0 0 2.77-.693a9 9 0 0 1 6.208.682l.108.054a9 9 0 0 0 6.086.71l3.114-.732a48.524 48.524 0 0 1-.005-10.499l-3.11.732a9 9 0 0 1-6.085-.711l-.108-.054a9 9 0 0 0-6.208-.682L3 4.5M3 15V4.5"/></symbol>
-  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/></symbol>
-  <symbol id="i-id" viewBox="0 0 24 24"><path d="M15 9h3.75M15 12h3.75M15 15h3.75M4.5 19.5h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Zm6-10.125a1.875 1.875 0 1 1-3.75 0 1.875 1.875 0 0 1 3.75 0Zm1.294 6.336a6.721 6.721 0 0 1-3.17.789 6.721 6.721 0 0 1-3.168-.789 3.376 3.376 0 0 1 6.338 0Z"/></symbol>
-  <symbol id="i-download" viewBox="0 0 24 24"><path d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></symbol>
-  <symbol id="i-key" viewBox="0 0 24 24"><path d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z"/></symbol>
-  <symbol id="i-ellipsis" viewBox="0 0 24 24"><path d="M6.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM12.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0ZM18.75 12a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Z"/></symbol>
-  <symbol id="i-adjustments" viewBox="0 0 24 24"><path d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75"/></symbol>
-  <symbol id="i-arrows-updown" viewBox="0 0 24 24"><path d="M3 7.5 7.5 3m0 0L12 7.5M7.5 3v13.5m13.5 0L16.5 21m0 0L12 16.5m4.5 4.5V7.5"/></symbol>
-  <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z"/></symbol>
-  <symbol id="i-doc-check" viewBox="0 0 24 24"><path d="M10.125 2.25h-4.5c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125v-9M10.125 2.25h.375a9 9 0 0 1 9 9v.375M10.125 2.25A3.375 3.375 0 0 1 13.5 5.625v1.5c0 .621.504 1.125 1.125 1.125h1.5a3.375 3.375 0 0 1 3.375 3.375M9 15l2.25 2.25L15 12"/></symbol>
-  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15m3 0 3-3m0 0-3-3m3 3H9"/></symbol>
-  <symbol id="i-star" viewBox="0 0 24 24"><path d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z"/></symbol>
-  <symbol id="i-sidebar" viewBox="0 0 24 24"><path d="M3.75 5.25A2.25 2.25 0 0 1 6 3h12a2.25 2.25 0 0 1 2.25 2.25v13.5A2.25 2.25 0 0 1 18 21H6a2.25 2.25 0 0 1-2.25-2.25V5.25ZM9 3v18"/></symbol>
-  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" /> <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /> <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></symbol>
+  <symbol id="i-clipboard" viewBox="0 0 24 24"><rect width="8" height="4" x="8" y="2" rx="1" ry="1" /> <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /> <path d="M12 11h4" /> <path d="M12 16h4" /> <path d="M8 11h.01" /> <path d="M8 16h.01" /></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" /></symbol>
+  <symbol id="i-signal" viewBox="0 0 24 24"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" /></symbol>
+  <symbol id="i-user-group" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /> <path d="M16 3.128a4 4 0 0 1 0 7.744" /> <path d="M22 21v-2a4 4 0 0 0-3-3.87" /> <circle cx="9" cy="7" r="4" /></symbol>
+  <symbol id="i-cog" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" /> <circle cx="12" cy="12" r="3" /></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34" /> <circle cx="11" cy="11" r="8" /></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14" /> <path d="M12 5v14" /></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18" /> <path d="m6 6 12 12" /></symbol>
+  <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+  <symbol id="i-chev-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></symbol>
+  <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+  <symbol id="i-chev-updown" viewBox="0 0 24 24"><path d="m7 15 5 5 5-5" /> <path d="m7 9 5-5 5 5" /></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0" /> <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" /></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z" /></symbol>
+  <symbol id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /> <path d="m16 9-5.5 5.5L8 12" /></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" /></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /> <line x1="10" x2="10" y1="15" y2="9" /> <line x1="14" x2="14" y1="15" y2="9" /></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z" /> <circle cx="12" cy="12" r="10" /></symbol>
+  <symbol id="i-offline" viewBox="0 0 24 24"><path d="M12 20h.01" /> <path d="M8.5 16.429a5 5 0 0 1 7 0" /> <path d="M5 12.859a10 10 0 0 1 5.17-2.69" /> <path d="M19 12.859a10 10 0 0 0-2.007-1.523" /> <path d="M2 8.82a15 15 0 0 1 4.177-2.643" /> <path d="M22 8.82a15 15 0 0 0-11.288-3.764" /> <path d="m2 2 20 20" /></symbol>
+  <symbol id="i-x-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /> <path d="m15 9-6 6" /> <path d="m9 9 6 6" /></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /> <path d="M12 9v4" /> <path d="M12 17h.01" /></symbol>
+  <symbol id="i-exclaim" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /> <line x1="12" x2="12" y1="8" y2="12" /> <line x1="12" x2="12.01" y1="16" y2="16" /></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /> <path d="M12 16v-4" /> <path d="M12 8h.01" /></symbol>
+  <symbol id="i-office" viewBox="0 0 24 24"><path d="M10 12h4" /> <path d="M10 8h4" /> <path d="M14 21v-3a2 2 0 0 0-4 0v3" /> <path d="M6 10H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" /> <path d="M6 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16" /></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /> <circle cx="12" cy="7" r="4" /></symbol>
+  <symbol id="i-user-plus" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /> <circle cx="9" cy="7" r="4" /> <line x1="19" x2="19" y1="8" y2="14" /> <line x1="22" x2="16" y1="11" y2="11" /></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24"><path d="M12 20v2" /> <path d="M12 2v2" /> <path d="M17 20v2" /> <path d="M17 2v2" /> <path d="M2 12h2" /> <path d="M2 17h2" /> <path d="M2 7h2" /> <path d="M20 12h2" /> <path d="M20 17h2" /> <path d="M20 7h2" /> <path d="M7 20v2" /> <path d="M7 2v2" /> <rect x="4" y="4" width="16" height="16" rx="2" /> <rect x="8" y="8" width="8" height="8" rx="1" /></symbol>
+  <symbol id="i-thread" viewBox="0 0 24 24"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" /></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" /> <circle cx="12" cy="12" r="3" /></symbol>
+  <symbol id="i-hash" viewBox="0 0 24 24"><line x1="4" x2="20" y1="9" y2="9" /> <line x1="4" x2="20" y1="15" y2="15" /> <line x1="10" x2="8" y1="3" y2="21" /> <line x1="16" x2="14" y1="3" y2="21" /></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="M12 19h8" /> <path d="m4 17 6-6-6-6" /></symbol>
+  <symbol id="i-board" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1" /> <rect width="7" height="7" x="14" y="3" rx="1" /> <rect width="7" height="7" x="14" y="14" rx="1" /> <rect width="7" height="7" x="3" y="14" rx="1" /></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M3 5h.01" /> <path d="M3 12h.01" /> <path d="M3 19h.01" /> <path d="M8 5h13" /> <path d="M8 12h13" /> <path d="M8 19h13" /></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /> <path d="M21 3v5h-5" /> <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /> <path d="M8 16H3v5" /></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" /> <path d="m21.854 2.147-10.94 10.939" /></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" /> <path d="M7 11V7a5 5 0 0 1 10 0v4" /></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" /> <path d="m15 5 4 4" /></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /> <path d="M12 6v6l4 2" /></symbol>
+  <symbol id="i-reply" viewBox="0 0 24 24"><path d="M20 18v-2a4 4 0 0 0-4-4H4" /> <path d="m9 17-5-5 5-5" /></symbol>
+  <symbol id="i-deny" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /> <path d="M4.929 4.929 19.07 19.071" /></symbol>
+  <symbol id="i-open" viewBox="0 0 24 24"><path d="M15 3h6v6" /> <path d="M10 14 21 3" /> <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></symbol>
+  <symbol id="i-currency" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /> <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8" /> <path d="M12 18V6" /></symbol>
+  <symbol id="i-question" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" /> <path d="M9 9.5a3 2.5 0 016 0c0 2-2 2-3 3.5" /> <path d="M12 17h.01" /></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528" /></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 5h16" /> <path d="M4 12h16" /> <path d="M4 19h16" /></symbol>
+  <symbol id="i-id" viewBox="0 0 24 24"><path d="M13 19a4 4 0 00-8 0" /> <path d="M16 10h2" /> <path d="M16 14h2" /> <circle cx="9" cy="12" r="3" /> <rect x="2" y="5" width="20" height="14" rx="2" /></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 15V3" /> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /> <path d="m7 10 5 5 5-5" /></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" /> <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" /></symbol>
+  <symbol id="i-ellipsis" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1" /> <circle cx="19" cy="12" r="1" /> <circle cx="5" cy="12" r="1" /></symbol>
+  <symbol id="i-adjustments" viewBox="0 0 24 24"><path d="M10 5H3" /> <path d="M12 19H3" /> <path d="M14 3v4" /> <path d="M16 17v4" /> <path d="M21 12h-9" /> <path d="M21 19h-5" /> <path d="M21 5h-7" /> <path d="M8 10v4" /> <path d="M8 12H3" /></symbol>
+  <symbol id="i-arrows-updown" viewBox="0 0 24 24"><path d="m21 16-4 4-4-4" /> <path d="M17 20V4" /> <path d="m3 8 4-4 4 4" /> <path d="M7 4v16" /></symbol>
+  <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z" /></symbol>
+  <symbol id="i-doc-check" viewBox="0 0 24 24"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" /> <path d="M14 2v5a1 1 0 0 0 1 1h5" /> <path d="m9 15 2 2 4-4" /></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="m16 17 5-5-5-5" /> <path d="M21 12H9" /> <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" /></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" /> <path d="M9 3v18" /></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" /> <path d="M20 2v4" /> <path d="M22 4h-4" /> <circle cx="4" cy="20" r="2" /></symbol>
 </svg>
 
 <a class="skip" href="#main" data-act="skip">Skip to content</a>
@@ -2214,7 +2272,7 @@ a.hb-tleg:hover { color: var(--hb-ink); }
     </div>
     <div class="cmdk-list" id="cmdk-list" role="listbox" aria-label="Commands and search results"></div>
     <div class="cmdk-foot" aria-hidden="true">
-      <span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
+      <span id="cmdk-foot-nav"><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
       <span><kbd>↵</kbd> Run / Ask</span>
       <span><kbd id="cmdk-switch-kbd">⌘/</kbd> Switch Search &amp; AI</span>
       <span><kbd>Esc</kbd> Close</span>
@@ -2249,14 +2307,14 @@ const TEAMS = {
   quality:    { name: "Quality", lead: "tomas", purpose: "Reviews every branch before it merges and keeps the bar high.", members: ["tomas", "noor"], channel: "agency-v1" }
 };
 const P = {
-  "agency-v1":         { name: "Agentic Org v1.0", release: "v1.0", health: "At risk", upd: 12, lead: "ada", teams: ["leadership", "platform", "app", "quality"], goal: "Ship the first release of Agentic Org: hire agents, chat, projects and work, on one office.", updated: "12m ago", channel: "agency-v1", due: "Dec 5", dueMonth: "Dec", dueDay: "05", pace: "+2d behind", paceTone: "warn", blocker: "2 sign-offs waiting on you (release update + test access)", unblockHref: "#/inbox/in1", unblockLabel: "Review (2)", milestoneTitle: "v1.0 launch", horizonStatus: "2 left", horizonNote: "Release & access sign-off", risk: "Two updates wait on approval and local test access is waiting on your permission." },
-  "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "Build box offline + waiting 6h on your office lock choice", unblockHref: "#/inbox/in2", unblockLabel: "Decide", milestoneTitle: "Second-office sync", horizonStatus: "Behind (+5d)", horizonNote: "Lock choice & wake fix", risk: "The Build box stayed offline after sleep. Sage's fix waits on your verification, and sync can't resume until the office is back online." },
-  "look-feel":         { name: "Look & feel refresh", release: "v1.1", health: "On track", upd: 60, lead: "eden", teams: ["product", "app"], goal: "One calm, consistent look across every screen, with icons and no emoji.", updated: "1h ago", channel: "design", due: "Nov 28", dueMonth: "Nov", dueDay: "28", pace: "On pace", paceTone: "ok", blocker: "", clearNote: "All checks passing · projected Nov 27 (1d early)", unblockHref: "#/inbox/in17", milestoneTitle: "Workspace UI refresh", horizonStatus: "1d ahead", horizonNote: "Ready for plan sign-off", risk: "" },
+  "agency-v1":         { name: "Agentic Org v1.0", release: "v1.0", health: "At risk", upd: 12, lead: "ada", teams: ["leadership", "platform", "app", "quality"], goal: "Ship the first release of Agentic Org: hire agents, chat, projects and work, on one office.", updated: "12m ago", channel: "agency-v1", due: "Dec 5", dueMonth: "Dec", dueDay: "05", pace: "+2d behind", paceTone: "warn", blocker: "2 sign-offs waiting: v1.0 release & test access", unblockSpotId: "in1", unblockHref: "#/inbox/in1", unblockLabel: "Review (2)", milestoneTitle: "Agentic Org v1.0", horizonStatus: "2 sign-offs", horizonNote: "Release & test access sign-offs", risk: "Two updates wait on approval and local test access is waiting on your permission." },
+  "office-federation": { name: "Office federation", release: "v0.9", health: "Off track", upd: 25, lead: "rowan", teams: ["platform"], goal: "Run agents in a second office that syncs with HQ.", updated: "25m ago", channel: "platform", due: "Nov 26", dueMonth: "Nov", dueDay: "26", pace: "+5d behind", paceTone: "bad", blocker: "Build box offline + waiting 6h on your office lock choice", unblockSpotId: "in2", unblockHref: "#/inbox/in2", unblockLabel: "Decide", milestoneTitle: "Office federation", horizonStatus: "+5d behind", horizonNote: "Lock choice & auto-reconnect fix", risk: "The Build box stayed offline after sleep. Sage's fix waits on your verification, and sync can't resume until the office is back online." },
+  "look-feel":         { name: "Look & feel refresh", release: "v1.1", health: "On track", upd: 60, lead: "eden", teams: ["product", "app"], goal: "One calm, consistent look across every screen, with icons and no emoji.", updated: "1h ago", channel: "design", due: "Nov 28", dueMonth: "Nov", dueDay: "28", pace: "On pace", paceTone: "ok", blocker: "", clearNote: "All checks passing · projected Nov 27 (1d early)", unblockSpotId: "in17", unblockHref: "#/inbox/in17", milestoneTitle: "Look & feel refresh", horizonStatus: "1d ahead", horizonNote: "Final design polish sign-off", risk: "" },
   "proto-agency":      { name: "Early UI prototype", upd: 99999, lead: null, teams: ["product"], goal: "Explore the look of the app before v1.", updated: "Nov 2", channel: "design", archived: true }
 };
 const HEALTH = { "On track": { tone: "green", icon: "check-circle" }, "At risk": { tone: "red", icon: "warn" }, "Off track": { tone: "red", icon: "x-circle" } };
 const W = [
-  { id: "T-112", kind: "task", title: "Re-sequence BUG-70 nav slices for IA v2", status: "In progress", proj: "agency-v1", who: "ada", pri: "High" },
+  { id: "T-112", kind: "task", title: "Re-sequence BUG-70 nav slices for IA v2", status: "Done", proj: "agency-v1", who: "ada", pri: "High" },
   { id: "T-118", kind: "task", title: "Custody lock fix", status: "Blocked", waitsOn: "you", proj: "office-federation", who: "sage", pri: "High" },
   { id: "T-121", kind: "task", title: "Split codec 2a.3.2b", status: "In progress", proj: "agency-v1", who: "kai", pri: "Medium" },
   { id: "T-124", kind: "task", title: "CSP gates in the UI suite", status: "Blocked", waitsOn: "you", proj: "agency-v1", who: "jules", pri: "High" },
@@ -2265,19 +2323,19 @@ const W = [
   { id: "T-133", kind: "task", title: "Restyle status pills", status: "Done", proj: "look-feel", who: "avery", pri: "Low" },
   { id: "T-135", kind: "task", title: "HQ to satellite snapshot sync", status: "To do", proj: "office-federation", who: "quinn", pri: "Medium" },
   { id: "T-138", kind: "task", title: "Enrollment certificates for new offices", status: "In progress", proj: "office-federation", who: "rowan", pri: "Low" },
-  { id: "T-140", kind: "task", title: "Review Sage's lock fix 492e59e4", status: "In progress", proj: "agency-v1", who: "tomas", pri: "High" },
-  { id: "T-142", kind: "task", title: "Write the v1.0 release notes", status: "To do", proj: "agency-v1", who: "you", pri: "Medium" },
-  { id: "T-144", kind: "task", title: "Onboarding checklist for new people", status: "To do", proj: "agency-v1", who: "maya", pri: "Low" },
+  { id: "T-140", kind: "task", title: "Review Sage's lock fix 492e59e4", status: "Done", proj: "agency-v1", who: "tomas", pri: "High" },
+  { id: "T-142", kind: "task", title: "Write the v1.0 release notes", status: "Done", proj: "agency-v1", who: "you", pri: "Medium" },
+  { id: "T-144", kind: "task", title: "Onboarding checklist for new people", status: "Done", proj: "agency-v1", who: "maya", pri: "Low" },
   { id: "T-146", kind: "task", title: "Sign the Apple developer agreement for notarization", status: "To do", proj: "agency-v1", who: "ada", pri: "High" },
-  { id: "BUG-70", kind: "bug", title: "Landing page hides what needs you", status: "Triaged", proj: "agency-v1", who: "ada", pri: "Major" },
+  { id: "BUG-70", kind: "bug", title: "Landing page hides what needs you", status: "Fixed", proj: "agency-v1", who: "ada", pri: "Major" },
   { id: "BUG-76", kind: "bug", title: "Status pill truncates letter by letter at 390 px", status: "Fixed", proj: "look-feel", who: "avery", pri: "Minor" },
   { id: "BUG-81", kind: "bug", title: "Satellite stays Offline after the Mac wakes", status: "Fixed", proj: "office-federation", who: "sage", pri: "Critical" },
   { id: "BUG-84", kind: "bug", title: "Search placeholder fails contrast", status: "In progress", proj: "look-feel", who: "jules", pri: "Minor" },
-  { id: "BUG-86", kind: "bug", title: "Chat scrolls to top after sending", status: "New", proj: "agency-v1", who: null, pri: "Major" },
+  { id: "BUG-86", kind: "bug", title: "Chat scrolls to top after sending", status: "Fixed", proj: "agency-v1", who: "jules", pri: "Major" },
   { id: "BUG-88", kind: "bug", title: "Inbox loses replies when the office restarts", status: "New", proj: "agency-v1", who: null, pri: "Critical" },
-  { id: "R-9",  kind: "request", title: "Read-only view of an agent's journal and memory", status: "Scoped", proj: "agency-v1", who: "emery", pri: "by Emery" },
+  { id: "R-9",  kind: "request", title: "Read-only view of an agent's journal and memory", status: "Approved", proj: "agency-v1", who: "emery", pri: "by Emery" },
   { id: "R-11", kind: "request", title: "Invite flow for a second office", status: "Rowan is scoping", proj: "office-federation", who: "rowan", pri: "Sent Nov 9" },
-  { id: "R-12", kind: "request", title: "Export activity as CSV", status: "Not routed", proj: "agency-v1", who: null, pri: "From Maya Chen" },
+  { id: "R-12", kind: "request", title: "Export activity as CSV", status: "Approved", proj: "agency-v1", who: "maya", pri: "From Maya Chen" },
   { id: "R-7",  kind: "request", title: "Dark-only look for v1.0", status: "Approved", proj: "look-feel", who: "eden", pri: "Approved Nov 10" }
 ];
 const KIND = {
@@ -2287,13 +2345,13 @@ const KIND = {
   problem:  { label: "Problem", plural: "Problems", icon: "warn", clears: "When it's resolved" }
 };
 const IN = [
-  { id: "in1", kind: "approval", sub: "Release sign-off", from: "ada", time: "12m", group: "Today", what: "Approve publishing Kai's sync update to v1.0", why: "Technical details: codec split 0a520e5b passed all 412 automated checks and Tomas's review is READY. High-impact release tier requires your sign-off before publishing.", rec: "Ada recommends: approve. Tomas completed review with no open issues.", proj: "agency-v1", task: "T-121", expires: "Expires in 4 hours (release window)" },
-  { id: "in5", kind: "approval", sub: "Access request", from: "jules", time: "3h", group: "Today", what: "Allow local test access for Jules's security checks", why: "Technical details: T-124 needs permission to reach local port 8443 in the test environment only. Only the owner can grant local network permissions.", rec: "Jules recommends: allow for testing only.", proj: "agency-v1", task: "T-124", expires: "Expires tomorrow" },
-  { id: "in2", kind: "decision", sub: "Direction needed", from: "sage", time: "25m", group: "Today", what: "Choose how offices share file locks: timed lease or per-office lock", why: "Work on office sync (T-118) is paused until you pick. A timed lease recovers automatically if an office goes offline; a per-office lock is a day faster to finish.", rec: "Sage recommends the timed lease. Rowan agrees.", proj: "office-federation", task: "T-118", opts: ["Use timed lease", "Per-office lock"], expires: "" },
-  { id: "in16", kind: "approval", sub: "Company standard", from: "rowan", time: "45m", group: "Today", what: "Make timed office locks a company-wide standard?", why: "Office federation proved the timed lease pattern recovers cleanly when a second office goes offline. Adopting it company-wide means every new project inherits the rule automatically—avoiding repeat escalations.", rec: "Rowan & Ada recommend: adopt standard. Eliminates repeat lock questions across teams.", proj: "office-federation", task: "T-118", expires: "",
+  { id: "in1", kind: "approval", sub: "Release sign-off", from: "ada", time: "12m", group: "Today", what: "Approve publishing Kai's sync update to v1.0", why: "Technical details: codec split 0a520e5b passed all 412 automated checks and Tomas's review is READY. High-impact release tier requires your sign-off before publishing.", rec: "Ada recommends: approve. Tomas completed review with no open issues.", impact: [["check-circle", "ok", "412 checks passed"], ["bolt", "", "Unblocks v1.0 launch"]], proj: "agency-v1", task: "T-121", expires: "Expires in 4 hours (release window)" },
+  { id: "in5", kind: "approval", sub: "Access request", from: "jules", time: "3h", group: "Today", what: "Allow local test access for Jules's security checks", why: "Technical details: T-124 needs permission to reach local port 8443 in the test environment only. Only the owner can grant local network permissions.", rec: "Jules recommends: allow for testing only.", impact: [["lock", "", "Local dev only"], ["bolt", "", "Unblocks v1.0 security checks"]], proj: "agency-v1", task: "T-124", expires: "Expires tomorrow" },
+  { id: "in2", kind: "decision", sub: "Direction needed", from: "sage", time: "25m", group: "Today", what: "Choose how offices share file locks: timed lease or per-office lock", why: "Work on office sync (T-118) is paused until you pick. A timed lease recovers automatically if an office goes offline; a per-office lock is a day faster to finish.", rec: "Sage recommends the timed lease. Rowan agrees.", impact: [["warn", "warn", "Unblocks Office federation"], ["check-circle", "ok", "Auto-recovers offline offices"]], proj: "office-federation", task: "T-118", opts: ["Use timed lease", "Per-office lock"], expires: "" },
+  { id: "in16", kind: "approval", sub: "Company standard", from: "rowan", time: "45m", group: "Today", what: "Make timed office locks a company-wide standard?", why: "Office federation proved the timed lease pattern recovers cleanly when a second office goes offline. Adopting it company-wide means every new project inherits the rule automatically—avoiding repeat escalations.", rec: "Rowan & Ada recommend: adopt standard. Eliminates repeat lock questions across teams.", impact: [["sparkle", "", "Applies to all future projects"], ["check-circle", "ok", "Cuts repeat escalations"]], proj: "office-federation", task: "T-118", expires: "",
     acts: [["Adopt company standard", "Adopted as company standard", "sparkle"], ["Keep project-only", "Kept project-only", "x"]], clears: "When you adopt or keep it project-only" },
-  { id: "in17", kind: "approval", sub: "Plan sign-off", from: "emery", time: "1h", group: "Today", what: "Approve Look & feel v1.1 plan to begin work", why: "Approving this product plan starts 6 scoped design and build tasks for the Nov 28 milestone, staying well inside your current monthly budget.", rec: "Emery & Eden recommend: approve. All design and budget checks passed.", proj: "look-feel", task: "T-131", expires: "",
-    acts: [["Approve & start work", "Plan approved — work started", "check"], ["Request changes", "Changes requested", "pencil", "changes"]], clears: "When you approve or request changes" },
+  { id: "in17", kind: "approval", sub: "Design sign-off", from: "emery", time: "1h", group: "Today", what: "Approve final design polish for Look & feel refresh", why: "Half of the v1.1 refresh is already shipped (3 of 6 tasks done, 1 day ahead). Approving the final design polish unlocks the remaining 3 screens for the Nov 28 milestone, well within your monthly budget.", rec: "Emery & Eden recommend: approve. All design and budget checks passed.", impact: [["check-circle", "ok", "3 of 6 done · 1d ahead"], ["bolt", "", "Unlocks final 3 screens"]], proj: "look-feel", task: "T-131", expires: "",
+    acts: [["Approve polish", "Design polish approved", "check"], ["Request changes", "Changes requested", "pencil", "changes"]], clears: "When you approve or request changes" },
   { id: "in3", kind: "question", sub: "Question", from: "eden", time: "1h", group: "Today", what: "Should the org chart show people and agents in one tree?", why: "Presence vocabulary (T-130). Splitting them makes reporting lines harder to follow; one tree needs the kind word on every node.", rec: "Eden recommends: one tree, with the kind word on each node.", proj: "look-feel", task: "T-130", expires: "" },
   { id: "in4", kind: "approval", sub: "Hire request", from: "ada", time: "2h", group: "Today", what: "Hire a QA engineer for the Quality team", why: "Tomas reviews every branch and UI validation queues behind him: 6 branches are waiting today.", rec: "ada recommends: one agent, Playwright focus, reports to Tomas.", proj: "agency-v1", task: "", expires: "" },
   { id: "in11", kind: "approval", sub: "Fix to verify", from: "sage", time: "3h", group: "Today", what: "Verify fix: BUG-81", why: "Sage fixed the satellite staying Offline after the Mac wakes. Tomas's review is READY and the wake test passes on a test satellite. Approving closes the bug; reopening sends it back to Sage.", rec: "Sage recommends: approve the fix.", proj: "office-federation", task: "BUG-81", expires: "",
@@ -2681,7 +2739,7 @@ function hoverWinCopy(it, label) {
   if (it.id === "in4") return "Approve hire";
   if (it.id === "in5") return "Grant test access";
   if (it.id === "in16") return "Adopt company rule";
-  if (it.id === "in17") return "Approve & start";
+  if (it.id === "in17") return "Approve final polish";
   if (/^Approve fix/i.test(label)) return "Approve fix";
   if (/^Approve$/i.test(label)) return "Approve";
   if (/^Accept$/i.test(label)) return "Accept task";
@@ -2835,13 +2893,13 @@ function answerOrgQuestion(rawQ) {
   if (/horizon|schedule|slip|pace|milestone|standard|promote|14 day|release/.test(t)) {
     return {
       q,
-      html: `Next 14 days: <strong>Second-office sync v0.9 (Nov 26)</strong> is <strong>+5d behind</strong> (Build box offline + <a href="#/inbox/in2">lock choice</a>); <strong>Refreshed workspace UI v1.1 (Nov 28)</strong> is <strong>1 day ahead</strong> pending your <a href="#/inbox/in17">plan sign-off</a>; <strong>Agentic Org v1.0 (Dec 5)</strong> is <strong>+2d behind</strong> on 2 approvals. You also have a <a href="#/inbox/in16">company standard proposal</a> ready to adopt.`
+      html: `Next 14 days: <strong>Office federation v0.9 (Nov 26)</strong> is <strong>+5d behind</strong> (Build box offline + <a href="#/inbox/in2">lock choice</a>); <strong>Look &amp; feel refresh v1.1 (Nov 28)</strong> is <strong>1 day ahead</strong> pending your <a href="#/inbox/in17">final design polish sign-off</a>; <strong>Agentic Org v1.0 (Dec 5)</strong> is <strong>+2d behind</strong> on 2 sign-offs. You also have a <a href="#/inbox/in16">company standard proposal</a> ready to adopt.`
     };
   }
   if (/block|slow|v1|ship|merge/.test(t)) {
     return {
       q,
-      html: `<strong>2 tasks are waiting on you</strong> across active delivery: <a href="#/projects/office-federation/work">office lock choice</a> for <a href="#/members/sage">Sage</a> and <a href="#/projects/agency-v1/work">local test access</a> for <a href="#/members/jules">Jules</a>. Meanwhile, <a href="#/members/kai">Kai</a>'s sync update passed all automated checks and awaits your <a href="#/inbox/in1">release sign-off</a>.`
+      html: `<strong>2 tasks are waiting on you</strong> across active delivery: <a href="#/projects/office-federation/work">office lock choice</a> for <a href="#/members/sage">Sage</a> and <a href="#/projects/agency-v1/work">local test access</a> for <a href="#/members/jules">Jules</a>. Meanwhile, <a href="#/members/kai">Kai</a>'s sync update passed all 412 automated checks and awaits your <a href="#/inbox/in1">release sign-off</a>.`
     };
   }
   if (/cycle|first-pass|accept|rework|hitl|human|quality|autonom|metric|kpi|turnaround|revision/.test(t)) {
@@ -2853,19 +2911,19 @@ function answerOrgQuestion(rawQ) {
   if (/budget|spend|cost|\$|dollar|office|fleet|offline|jules|noor|health|pool|headroom|idle|spin|capacity/.test(t)) {
     return {
       q,
-      html: `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per completed task</strong> (-11%), with <strong>74% AI capacity free</strong>. <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Team: <strong>4 leads · 7 specialists (2 idle</strong>: <a href="#/members/avery">Avery</a> paused, <a href="#/members/noor">Noor</a> unplaced). Offices: HQ online, Build box offline.`
+      html: `<strong>Monthly spend is $142 of $210 (68%, ~$204 forecast)</strong> — averaging <strong>$7.45 per completed task</strong> (-11%), with <strong>74% AI capacity free</strong>. <a href="#/members/jules">Jules</a> hit its cap (<a href="#/settings/agents/jules">raise cap</a>). Team: <strong>11 agents</strong> (8 active · 2 idle: <a href="#/members/avery">Avery</a> paused, <a href="#/members/noor">Noor</a> unplaced · 1 offline: <a href="#/members/quinn">Quinn</a> on Build box).`
     };
   }
   if (/run|overnight|happen|catch|digest|summary|activity|away/.test(t)) {
     return {
       q,
-      html: `In the last 4 hours: <strong>${runs.length} autonomous sessions</strong> completed. <a href="#/members/kai">Kai</a> finished the sync update (all checks passed) and <a href="#/members/tomas">Tomas</a> approved review; <a href="#/members/sage">Sage</a> paused waiting on your office lock choice; <a href="#/members/rowan">Rowan</a> proposed a new company lock standard. <a href="#/activity">Open activity log</a>.`
+      html: `In the last 4 hours: <strong>${runs.length} autonomous sessions</strong> completed. <a href="#/members/kai">Kai</a> finished the sync update (412 automated checks passed) and <a href="#/members/tomas">Tomas</a> approved review; <a href="#/members/avery">Avery</a> shipped 2 UI polish tasks; <a href="#/members/sage">Sage</a> tested the auto-reconnect fix. <a href="#/activity">Open activity log</a>.`
     };
   }
   if (/federation|sage|lock|satellite/.test(t)) {
     return {
       q,
-      html: `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box went offline after sleep (wake fix is ready to <a href="#/inbox/in11">verify</a>), and <a href="#/members/sage">Sage</a> is waiting on your <a href="#/inbox/in2">office lock choice</a> (Sage &amp; Rowan recommend the timed lease).`
+      html: `<a href="#/projects/office-federation">Office federation</a> is <strong>Off track (20%)</strong>: the Build box went offline after sleep (auto-reconnect fix is ready to <a href="#/inbox/in11">verify</a>), and <a href="#/members/sage">Sage</a> is waiting on your <a href="#/inbox/in2">office lock choice</a> (Sage &amp; Rowan recommend the timed lease).`
     };
   }
   if (/need|urgent|priority|first|inbox|ada|hire/.test(t)) {
@@ -2905,16 +2963,19 @@ function pageHome() {
     ? `${greet} Preparing your briefing…`
     : st === "error"
       ? `${greet} Reconnecting to HQ office.`
-      : openUrgentCount
-        ? `${greet} <em>${plural(openUrgentCount, "time-sensitive decision", "time-sensitive decisions")}</em> ${openUrgentCount === 1 ? "needs" : "need"} you.`
-        : open.length
-          ? `${greet} <em class="calm">${plural(open.length, "item", "items")}</em> waiting when you're ready.`
-          : `${greet} <em class="ok">All clear</em> across your organization.`;
+      : st === "empty"
+        ? `${greet} <em class="calm">Ready to launch</em> your organization.`
+        : openUrgentCount
+          ? `${greet} <em>${plural(openUrgentCount, "time-sensitive decision", "time-sensitive decisions")}</em> ${openUrgentCount === 1 ? "needs" : "need"} you.`
+          : open.length
+            ? `${greet} <em class="calm">${plural(open.length, "item", "items")}</em> waiting when you're ready.`
+            : `${greet} <em class="ok">All clear</em> across your organization.`;
 
   const allAgents = Object.values(M).filter((m) => m.kind === "agent");
   const leadsN = allAgents.filter((m) => m.tier === "lead").length;
   const specsN = allAgents.filter((m) => m.tier === "specialist").length;
   const idleSpecsN = allAgents.filter((m) => m.tier === "specialist" && (m.paused || (m.live === "asleep" && !m.proj))).length;
+  const offlineSpecsN = allAgents.filter((m) => m.setup && m.setup.office && OFFICES[m.setup.office] && OFFICES[m.setup.office].status === "Offline").length;
   const liveWorkingAgents = st === "empty" ? [] : Object.keys(M).filter((k) => M[k].kind === "agent" && ["working", "withyou"].includes(M[k].live) && !M[k].paused);
 
   const renderMetrics = () => {
@@ -2924,8 +2985,8 @@ function pageHome() {
     return `<section class="hb-pillars" aria-label="Executive overview: Financials, Team, and Projects">
       <article class="hb-pillar" aria-labelledby="hb-pil-fin">
         <div class="hb-pillar-hd">
-          <a class="hb-pillar-name" id="hb-pil-fin" href="#/settings/agents/jules">${ic("currency", "ic14 c-amber")}<span>Financials</span></a>
-          <span class="hb-pillar-pill ${emptyMode ? "ok" : "warn"}">${emptyMode ? "On budget" : "Jules at cap"}</span>
+          <a class="hb-pillar-name" id="hb-pil-fin" href="#/settings">${ic("currency", "ic14 c-amber")}<span>Financials</span></a>
+          <a class="hb-pillar-pill ${emptyMode ? "ok" : "warn"}" href="${emptyMode ? "#/settings" : "#/settings/agents/jules"}">${emptyMode ? "On budget" : "Jules at cap"}</a>
         </div>
         <div class="hb-pillar-hero">
           <div class="hb-pillar-valrow">
@@ -2939,7 +3000,7 @@ function pageHome() {
         </div>
         <div class="hb-pillar-sub">
           <a class="hb-sub-item" href="#/activity" title="Average AI spend per completed task (last 7 days)">
-            <span class="hb-sub-lbl">Cost per task</span>
+            <span class="hb-sub-lbl">Cost per task · 7d</span>
             <span class="hb-sub-val">${emptyMode ? "—" : "$7.45"}${emptyMode ? "" : `<span class="hb-sub-meta ok">-11%</span>`}</span>
           </a>
           <a class="hb-sub-item" href="#/settings" title="Remaining parallel capacity across your connected AI subscriptions">
@@ -2952,9 +3013,9 @@ function pageHome() {
       <article class="hb-pillar" aria-labelledby="hb-pil-team">
         <div class="hb-pillar-hd">
           <a class="hb-pillar-name" id="hb-pil-team" href="#/teams/members">${ic("user-group", "ic14 c-indigo")}<span>Team</span></a>
-          <span class="hb-pillar-pill ${emptyMode ? "ok" : "bad"}">${emptyMode ? "HQ online" : "1 office offline"}</span>
+          <a class="hb-pillar-pill ${emptyMode ? "ok" : "bad"}" href="#/settings/offices">${emptyMode ? "HQ online" : "1 office offline"}</a>
         </div>
-        <div class="hb-pillar-hero" title="Share of work completed autonomously without needing your input">
+        <div class="hb-pillar-hero" title="Share of work completed autonomously without needing your input (last 7 days)">
           <div class="hb-pillar-valrow">
             <div class="hb-pillar-primary">
               <span class="hb-pillar-num">${emptyMode ? "—" : "78%"}</span>
@@ -2968,9 +3029,9 @@ function pageHome() {
           </div>
         </div>
         <div class="hb-pillar-sub">
-          <a class="hb-sub-item" href="#/teams/members" title="Permanent team leads vs. specialists — inspect idle specialists ready to activate or pause">
+          <a class="hb-sub-item" href="#/teams/members" title="All ${allAgents.length} agents: ${liveWorkingAgents.length} active, ${idleSpecsN} idle (Avery paused, Noor unplaced), ${offlineSpecsN} waiting on offline Build box (Quinn)">
             <span class="hb-sub-lbl">${emptyMode ? "Team capacity" : `${leadsN} leads · ${specsN} specialists`}</span>
-            <span class="hb-sub-val">${emptyMode ? "0 agents" : `${liveWorkingAgents.length} active`}${emptyMode ? `<span class="hb-sub-meta">· 1 person</span>` : idleSpecsN ? `<span class="hb-sub-meta warn">${idleSpecsN} idle</span>` : `<span class="hb-sub-meta ok">0 idle</span>`}</span>
+            <span class="hb-sub-val">${emptyMode ? "0 agents" : `${liveWorkingAgents.length} active`}${emptyMode ? `<span class="hb-sub-meta">· 1 person</span>` : `<span class="hb-sub-meta warn">${idleSpecsN} idle</span>${offlineSpecsN ? `<span class="hb-sub-meta bad">· ${offlineSpecsN} off</span>` : ""}`}</span>
           </a>
           <a class="hb-sub-item" href="#/settings/offices" title="Connected offices running agent work">
             <span class="hb-sub-lbl">Offices</span>
@@ -2982,15 +3043,15 @@ function pageHome() {
       <article class="hb-pillar" aria-labelledby="hb-pil-proj">
         <div class="hb-pillar-hd">
           <a class="hb-pillar-name" id="hb-pil-proj" href="#/projects">${ic("folder", "ic14 c-green")}<span>Projects</span></a>
-          <span class="hb-pillar-pill ${emptyMode ? "" : needsAttnProjs ? "warn" : "ok"}">${emptyMode ? "No projects" : needsAttnProjs ? `${needsAttnProjs} need attention` : `${projs.length} on track`}</span>
+          <a class="hb-pillar-pill ${emptyMode ? "" : needsAttnProjs ? "warn" : "ok"}" href="#/projects">${emptyMode ? "No projects" : needsAttnProjs ? `${needsAttnProjs} need attention` : `${projs.length} on track`}</a>
         </div>
-        <div class="hb-pillar-hero" title="Percentage of completed tasks approved on the first try without revisions">
+        <div class="hb-pillar-hero" title="Percentage of completed tasks approved on the first try without revisions (last 7 days)">
           <div class="hb-pillar-valrow">
             <div class="hb-pillar-primary">
               <span class="hb-pillar-num">${emptyMode ? "—" : "84%"}</span>
               <span class="hb-pillar-unit">approved first try</span>
             </div>
-            <span class="hb-pillar-right ok">${emptyMode ? "" : "+6%"}</span>
+            <span class="hb-pillar-right ok">${emptyMode ? "" : "+6% · 7d"}</span>
           </div>
           <div class="hb-pillar-bar" aria-hidden="true">
             <span class="seg-pass" style="width:${emptyMode ? 0 : 84}%"></span>
@@ -2999,11 +3060,11 @@ function pageHome() {
         </div>
         <div class="hb-pillar-sub">
           <a class="hb-sub-item" href="#/activity" title="Average time from task start to approval (last 7 days)">
-            <span class="hb-sub-lbl">Avg. turnaround</span>
+            <span class="hb-sub-lbl">Avg. turnaround · 7d</span>
             <span class="hb-sub-val">${emptyMode ? "—" : "18m"}${emptyMode ? "" : `<span class="hb-sub-meta ok">-14%</span>`}</span>
           </a>
           <a class="hb-sub-item" href="#/work" title="Percentage of completed tasks sent back for revisions (3 of 19 tasks)">
-            <span class="hb-sub-lbl">Needed revision</span>
+            <span class="hb-sub-lbl">Needed revision · 7d</span>
             <span class="hb-sub-val">${emptyMode ? "—" : "16%"}${emptyMode ? "" : `<span class="hb-sub-meta ok">-3%</span>`}</span>
           </a>
         </div>
@@ -3014,7 +3075,7 @@ function pageHome() {
   const renderSpotlight = () => {
     if (st === "loading") return `<div class="hb-spot">${skel(3, "Loading spotlight decision…")}</div>`;
     if (st === "error") {
-      return `<section class="hb-spot is-error" role="alert" aria-label="Connection status">
+      return `<section class="hb-spot is-error is-centered" role="alert" aria-label="Connection status">
         <div class="hb-cleared">
           <span class="hb-cleared-ring is-error">${ic("offline", "ic20")}</span>
           <h2>Couldn't reach HQ office</h2>
@@ -3035,7 +3096,7 @@ function pageHome() {
     }
     if (!queue.length || (allQueueCleared && !S.v4Open["spot-review"])) {
       const isFreshEmpty = st === "empty";
-      return `<section class="hb-spot is-done" aria-label="${isFreshEmpty ? "Get started" : "Decision spotlight"}">
+      return `<section class="hb-spot is-done${isFreshEmpty ? " is-centered" : ""}" aria-label="${isFreshEmpty ? "Get started" : "Decision spotlight"}">
         <div class="hb-cleared">
           <span class="hb-cleared-ring">${ic(isFreshEmpty ? "sparkle" : "check-circle", "ic20")}</span>
           <h2>${allQueueCleared ? "Priority spotlight cleared" : isFreshEmpty ? "Your organization is ready" : "Nothing needs your decision"}</h2>
@@ -3045,7 +3106,7 @@ function pageHome() {
               ? "Start by creating your first project or hiring your first autonomous agent. Approvals, questions, and progress updates will show up right here."
               : "When an agent needs an approval, decision, or answer, it appears right here."}</p>
           <div class="hb-cleared-acts">
-            ${isFreshEmpty ? `<button class="btn sm h4-cta hb-cta-glass" data-cta-tone="ocean" type="button" data-act="proto" data-v="Create project"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>Create first project</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("sparkle", "ic16")}</span><span>Start project</span></span></span></button>
+            ${isFreshEmpty ? `<button class="btn primary sm h4-cta" data-cta-tone="win" type="button" data-act="proto" data-v="Create project"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span class="h4-cta-ico">${ic("plus", "ic16")}</span><span>Create first project</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span class="h4-cta-ico">${ic("sparkle", "ic16")}</span><span>Start project</span></span></span></button>
             <button class="btn outline sm" type="button" data-act="proto" data-v="Hire an agent">${ic("user-plus", "ic16")}Hire first agent</button>` : ""}
             ${!isFreshEmpty && open.length ? `<a class="btn primary sm h4-cta" href="#/inbox"><span class="h4-cta-fill" aria-hidden="true"></span><span class="h4-cta-sheen" aria-hidden="true"></span><span class="h4-cta-inner"><span class="h4-cta-lbl base"><span>Open Inbox (${open.length})</span></span><span class="h4-cta-lbl hover" aria-hidden="true"><span>Continue in Inbox →</span></span></span></a>` : ""}
             ${allQueueCleared ? `<button class="btn ghost sm" type="button" data-act="v4-acc" data-id="spot-review">Review handled</button>` : ""}
@@ -3062,7 +3123,7 @@ function pageHome() {
       const cls = ["hb-dot-btn", idx === S.spotIdx ? "is-cur" : "", q.expires && !q.handled ? "is-urgent" : "", q.handled ? "is-cleared" : ""].filter(Boolean).join(" ");
       return `<button type="button" class="${cls}" data-act="spot-go" data-v="${idx}" aria-label="Decision ${idx + 1} of ${queue.length}: ${esc(q.what)}" ${idx === S.spotIdx ? 'aria-current="true"' : ""}></button>`;
     }).join("");
-    return `<section class="hb-spot${isUrgent ? " is-urgent" : ""}${it.handled ? " is-done" : ""}" aria-label="Decision spotlight">
+    return `<section class="hb-spot${isUrgent ? " is-urgent" : ""}${it.handled ? " is-done" : ""}" id="hb-spotlight" aria-label="Decision spotlight">
       <div class="hb-spot-bar">
         <span class="hb-spot-badge${isUrgent ? " urgent" : ""}">${ic(isUrgent ? "clock" : k.icon, "ic14")}${it.handled ? "Handled" : isUrgent ? esc(it.expires) : esc(it.sub)}</span>
         <div class="hb-spot-nav">
@@ -3092,18 +3153,29 @@ function pageHome() {
 
         ${it.rec && !it.handled ? `<div class="hb-spot-rec">${ic("info", "ic16")}<span>${esc(it.rec)}</span></div>` : ""}
 
+        ${it.impact && it.impact.length && !it.handled ? `<div class="hb-spot-meta">${it.impact.map(([ico, tone, txt]) => `<span class="hb-spot-meta-chip${tone ? " " + tone : ""}">${ic(ico, "ic14")}<span>${esc(txt)}</span></span>`).join("")}</div>` : ""}
+
         <div class="hb-spot-ctx-row">
           <button class="h4-ctx-toggle" type="button" data-act="v4-acc" data-id="${ctxKey}" aria-expanded="${ctxOpen}" aria-controls="panel-${ctxKey}">
             ${ic("chev-right", "ic14 h4-chev")}<span>${ctxOpen ? "Hide background context" : "Read background context"}</span>
           </button>
         </div>
         ${ctxOpen ? `<div class="h4-ctx-body" id="panel-${ctxKey}">${esc(it.why)}</div>` : ""}
+        ${(() => {
+          if (queue.length < 2) return "";
+          const nextIdx = (S.spotIdx + 1) % queue.length;
+          const nxt = queue[nextIdx];
+          if (!nxt || nxt.id === it.id) return "";
+          return `<button type="button" class="hb-spot-next" data-act="spot-go" data-v="${nextIdx}">
+            <span class="hb-spot-next-l"><span class="hb-spot-next-lbl">Up next</span><span class="hb-spot-next-txt">${esc(nxt.what)}</span></span>
+            ${ic("chev-right", "ic14")}
+          </button>`;
+        })()}
       </div>
 
       <div class="hb-spot-foot">
         ${itemActionsV4(it)}
         <div style="display:flex;align-items:center;gap:6px">
-          ${queue.length > 1 ? `<button type="button" class="hb-skip-btn" data-act="spot-step" data-v="1">Next${ic("chev-right", "ic14")}</button>` : ""}
           ${remainingInInbox ? `<a class="hb-skip-btn" href="#/inbox">All ${open.length}${ic("chev-right", "ic14")}</a>` : ""}
         </div>
       </div>
@@ -3121,24 +3193,24 @@ function pageHome() {
       </div>
 
       ${st === "loading" ? skel(4, "Summarizing recent activity…") : `<div class="hb-digest">
-        <a class="hb-dig-item" href="#/inbox/in1">
+        <a class="hb-dig-item" href="#/activity">
           <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-          <div class="hb-dig-body"><b>Ready to publish</b> — Kai finished the sync update (all checks passed) and Tomas approved review.</div>
+          <div class="hb-dig-body"><b>412 automated checks passed</b> — Kai finished the v1.0 sync update and Tomas approved review with zero findings.</div>
           <span class="hb-dig-time">12m</span>
         </a>
-        <a class="hb-dig-item" href="#/inbox/in2">
-          <span class="hb-dig-ico">${ic("warn", "ic16 c-amber")}</span>
-          <div class="hb-dig-body"><b>Paused for your call</b> — Sage stopped on the office sync fix while waiting for your lock choice.</div>
-          <span class="hb-dig-time">26m</span>
-        </a>
-        <a class="hb-dig-item" href="#/inbox/in16">
+        <a class="hb-dig-item" href="#/projects/look-feel">
           <span class="hb-dig-ico">${ic("sparkle", "ic16 c-indigo")}</span>
-          <div class="hb-dig-body"><b>New company standard</b> — Rowan proposed adopting timed office locks across all future projects.</div>
-          <span class="hb-dig-time">45m</span>
+          <div class="hb-dig-body"><b>2 UI polish tasks shipped</b> — Avery completed status pill restyling and mobile badge alignment for Look &amp; feel refresh.</div>
+          <span class="hb-dig-time">1h</span>
+        </a>
+        <a class="hb-dig-item" href="#/inbox/in11">
+          <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
+          <div class="hb-dig-body"><b>Auto-reconnect fix tested</b> — Sage fixed the Build box sleep disconnect and verified it on a test office.</div>
+          <span class="hb-dig-time">2h</span>
         </a>
         ${activeLead ? `<a class="hb-dig-item" href="#/teams/members">
           <span class="hb-dig-ico"><span class="h4-live-dot" style="margin-top:4px;background:#34D399" aria-hidden="true"></span></span>
-          <div class="hb-dig-body"><b>${liveWorkingAgents.length} agents working now</b> — ${esc(M[activeLead].name)} is in a session with you${otherActive ? `, plus ${otherActive} others active` : ""}.</div>
+          <div class="hb-dig-body"><b>${liveWorkingAgents.length} agents working now</b> — ${esc(M[activeLead].name)} is in a session with you${otherActive ? `, plus ${otherActive} others delivering across 3 projects` : ""}.</div>
           <span class="hb-dig-time">Live</span>
         </a>` : `<a class="hb-dig-item" href="#/settings/agents/jules">
           <span class="hb-dig-ico">${ic("bolt", "ic16 c-amber")}</span>
@@ -3158,6 +3230,10 @@ function pageHome() {
     const pct = total ? Math.round(done * 100 / total) : 0;
     const healthTone = pr.health === "On track" ? "ok" : pr.health === "At risk" ? "warn" : pr.health === "Off track" ? "bad" : "";
     const healthBadge = pr.health === "At risk" ? pill("At risk", "amber", "warn") : projPill(p);
+    const canSpotJump = !!(pr.unblockSpotId && queue.some((q) => q.id === pr.unblockSpotId && !q.handled));
+    const unblockEl = canSpotJump
+      ? `<button type="button" class="hb-unblock-btn" data-act="spot-jump" data-id="${pr.unblockSpotId}">${esc(pr.unblockLabel || "Unblock")}${ic("chev-right", "ic14")}</button>`
+      : `<a class="hb-unblock-btn" href="${pr.unblockHref || `#/projects/${p}`}">${esc(pr.unblockLabel || "Unblock")}${ic("chev-right", "ic14")}</a>`;
     return `<article class="hb-card">
       <div class="hb-card-top">
         <div class="hb-card-id">
@@ -3175,7 +3251,7 @@ function pageHome() {
       </div>
       ${pr.blocker ? `<div class="hb-blocker ${pr.paceTone === "warn" ? "warn" : ""}">
         <span class="hb-blocker-txt">${ic("warn", "ic14 " + (pr.paceTone === "warn" ? "c-amber" : "c-red"))}<span>${esc(pr.blocker)}</span></span>
-        <a class="hb-unblock-btn" href="${pr.unblockHref || `#/projects/${p}`}">${esc(pr.unblockLabel || "Unblock")}${ic("chev-right", "ic14")}</a>
+        ${unblockEl}
       </div>` : `<div class="hb-blocker ok">
         <span class="hb-blocker-txt">${ic("check-circle", "ic14 c-green")}<span>${esc(pr.clearNote || "All checks passing · on schedule")}</span></span>
       </div>`}
@@ -3198,7 +3274,7 @@ function pageHome() {
         ${upcoming.map((k) => {
           const pr = P[k];
           const pillCls = pr.paceTone === "bad" ? "bad" : pr.paceTone === "warn" ? "warn" : "ok";
-          return `<a class="hb-hor-item" href="${pr.unblockHref || `#/projects/${k}`}">
+          return `<a class="hb-hor-item" href="${pr.unblockHref || `#/projects/${k}`}"${pr.unblockSpotId && queue.some((q) => q.id === pr.unblockSpotId && !q.handled) ? ` data-act="spot-jump" data-id="${pr.unblockSpotId}"` : ""}>
             <div class="hb-hor-l">
               <div class="hb-hor-date"><span>${esc(pr.dueMonth || "Soon")}</span><strong>${esc(pr.dueDay || "—")}</strong></div>
               <div class="hb-hor-info">
@@ -3218,7 +3294,7 @@ function pageHome() {
       <div class="hb-brief">
         <h1 class="hb-title" tabindex="-1">${headline}</h1>
       </div>
-      ${st !== "error" ? `<div class="hb-quick-acts" aria-label="Quick actions">
+      ${st !== "error" && st !== "empty" ? `<div class="hb-quick-acts" aria-label="Quick actions">
         <button class="btn sm h4-cta hb-cta-glass" data-cta-tone="ocean" type="button" data-act="proto" data-v="New task">
           <span class="h4-cta-fill" aria-hidden="true"></span>
           <span class="h4-cta-sheen" aria-hidden="true"></span>
@@ -3251,7 +3327,7 @@ function pageHome() {
     ${renderReleaseHorizon()}
 
     ${st === "loading" ? skel(1, "Analyzing where task time goes…") : st === "error" || st === "empty" ? "" : (() => {
-      const totalHrs = 54.6;
+      const totalHrs = 38.4;
       const humanPct = Math.max(8, Math.min(28, Math.round(open.length * 1.35)));
       const agentPct = 26, ciPct = 5, queuedPct = Math.max(10, 100 - agentPct - ciPct - humanPct);
       const fmtH = (p) => (totalHrs * p / 100).toFixed(1) + "h";
@@ -3279,6 +3355,10 @@ function pageHome() {
         </div>
         <div class="hb-time-foot">
           <p class="hb-time-note">${esc(constraint)}</p>
+          <div class="hb-time-acts">
+            <a class="hb-inline-act" href="#/settings/offices">Check Build box${ic("chev-right", "ic14")}</a>
+            <a class="hb-inline-act" href="#/teams/members">Review ${idleSpecsN} idle agents${ic("chev-right", "ic14")}</a>
+          </div>
         </div>
       </section>`;
     })()}
@@ -4664,7 +4744,16 @@ function renderNav(route) {
   const [r0, r1] = route;
   const homeEmpty = r0 === "home" && S.homeState === "empty";
   const homeError = r0 === "home" && S.homeState === "error";
-  const badge = homeEmpty ? 0 : unhandled().length;
+  const badge = (homeEmpty || homeError) ? 0 : unhandled().length;
+  const aiBtn = document.getElementById("cmdk-ai-trigger");
+  if (aiBtn) {
+    aiBtn.classList.toggle("is-offline", homeError);
+    aiBtn.disabled = homeError;
+    aiBtn.innerHTML = homeError
+      ? `${ic("offline", "ic14")}<span>Offline</span>`
+      : `${ic("sparkle", "ic14")}<span>Ask AI</span>`;
+    aiBtn.title = homeError ? "Org AI unavailable while HQ office is offline" : "Ask Org AI";
+  }
   const item = (href, label, icon, cur, extra = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span>${extra}</a></li>`;
   const subIcon = (href, label, icon, cur, cls = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon, cls)}<span class="t">${esc(label)}</span></a></li>`;
   const more = (href, label) => `<li><a class="nav-item more" href="${href}"><span class="t">${esc(label)}</span></a></li>`;
@@ -4848,9 +4937,9 @@ function cmdkCommands() {
     { group: "Actions", label: "Hire an agent", sub: "Describe role, review suggestion, hire", icon: "sparkle", tag: "Wizard", run: () => toast("Hire an agent wizard (Describe, Suggestion, Review, Hiring)") },
     { group: "Actions", label: "New message", sub: "Start a conversation in Chat", icon: "chat", tag: "Command", run: () => toast("New message (prototype action)") },
     { group: "Actions", label: "Add a person", sub: "Invite a teammate to this organization", icon: "user-plus", tag: "Command", run: () => toast("Add a person (prototype action)") },
-    { group: "Ask Org AI", label: "Ask: What's slowing v1.0?", sub: "Summarize active blockers and merges", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("What's blocking v1.0?") },
-    { group: "Ask Org AI", label: "Ask: Budget, headroom & idle agents", sub: "Check spend cap, model pools & idle specialists", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Budget, headroom & idle agents") },
-    { group: "Ask Org AI", label: "Ask: Next 14 days release schedule", sub: "Review upcoming milestones and slippage", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Next 14 days release schedule") },
+    { group: "Ask Org AI", label: "Ask: What's slowing v1.0?", sub: "Summarize active blockers and pending sign-offs", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("What's slowing v1.0?") },
+    { group: "Ask Org AI", label: "Ask: Budget, capacity & idle agents", sub: "Check monthly spend, AI capacity & idle specialists", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Budget, capacity & idle agents") },
+    { group: "Ask Org AI", label: "Ask: Next 14 days milestones", sub: "Review upcoming deliverables and schedule pace", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Next 14 days milestones") },
     { group: "Navigate", label: "Go to Home", sub: "Executive briefing & decision spotlight", icon: "home", href: "#/home" },
     { group: "Navigate", label: "Go to Inbox", sub: `${unhandled().length} waiting on you`, icon: "inbox", href: "#/inbox" },
     { group: "Navigate", label: "Go to Projects", sub: "Portfolio health & progress", icon: "folder", href: "#/projects" },
@@ -4922,6 +5011,8 @@ function renderCmdk() {
   if (tabAi) tabAi.setAttribute("aria-selected", String(isAi));
   if (inIco) inIco.innerHTML = `<use href="#i-${isAi ? "sparkle" : "search"}"/>`;
   if (askGo) askGo.hidden = !isAi;
+  const footNav = document.getElementById("cmdk-foot-nav");
+  if (footNav) footNav.style.display = isAi ? "none" : "";
   if (inp) {
     inp.placeholder = isAi
       ? "Ask Org AI — what's blocked, release pace, budget, or idle agents…"
@@ -4940,8 +5031,10 @@ function renderCmdk() {
       </div>
       <div>${CMDK.aiAns.html}</div>
     </div>` : "";
+    const curQ = CMDK.aiAns ? CMDK.aiAns.q.trim().toLowerCase() : "";
+    const chips = CMDK_AI_STARTERS.filter((s) => !curQ || s.q.trim().toLowerCase() !== curQ);
     const chipsHtml = `<div class="cmdk-grp">${CMDK.aiAns ? "Ask a follow-up" : "Suggested executive questions"}</div>
-      <div class="cmdk-ai-chips">${CMDK_AI_STARTERS.map((s) => `<button type="button" class="cmdk-ai-chip" data-act="cmdk-ai-ask" data-v="${esc(s.q)}">${ic("sparkle", "ic14")}<span>${esc(s.q)}</span></button>`).join("")}</div>`;
+      <div class="cmdk-ai-chips">${chips.map((s) => `<button type="button" class="cmdk-ai-chip" data-act="cmdk-ai-ask" data-v="${esc(s.q)}">${ic("sparkle", "ic14")}<span>${esc(s.q)}</span></button>`).join("")}</div>`;
     list.innerHTML = `<div class="cmdk-ai-pane">${ansHtml}${chipsHtml}</div>`;
     if (inp) inp.removeAttribute("aria-activedescendant");
     return;
@@ -5010,21 +5103,39 @@ function closeNarrowSearch() { closeCmdk(true); }
 function goSearch(href) { closeCmdk(false); if (location.hash === href) render(true); else location.hash = href; }
 
 /* ---------------------------------------------------------------- actions */
-function toast(text, icon = "info") {
+function toast(text, icon = "info", undoFn = null) {
   const t = document.createElement("div");
-  t.className = "toast"; t.innerHTML = `${ic(icon)}<p>${esc(text)}</p>`;
+  t.className = "toast";
+  t.innerHTML = `${ic(icon)}<p>${esc(text)}</p>`;
+  if (typeof undoFn === "function") {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "toast-undo"; b.textContent = "Undo";
+    b.addEventListener("click", () => { t.remove(); undoFn(); });
+    t.appendChild(b);
+  }
   const box = document.getElementById("toasts"); box.appendChild(t);
-  setTimeout(() => t.remove(), 3200);
+  setTimeout(() => t.remove(), undoFn ? 5500 : 3200);
 }
 function handle(id, outcome) {
   const it = IN.find((i) => i.id === id); if (!it || it.handled) return;
-  it.handled = true; it.handledNow = true; it.justHandled = true; it.outcome = outcome; S.replying = null;
   const w = it.task && W.find((x) => x.id === it.task);
+  const prevW = w ? { who: w.who, status: w.status, waitsOn: w.waitsOn } : null;
+  const prevSpotIdx = S.spotIdx;
+  it.handled = true; it.handledNow = true; it.justHandled = true; it.outcome = outcome; S.replying = null;
   if (w && it.assignTo && it.assignTo[outcome]) w.who = it.assignTo[outcome];
   if (w && blockedOnOwner(w) && !/Denied|Declined|Dismissed/.test(outcome)) { delete w.waitsOn; w.status = "In progress"; }
   if (w && it.sets && it.sets[outcome]) w.status = it.sets[outcome];
   else if (w && w.status === "Scoped") w.status = /Approve/.test(outcome) ? "Approved" : "Declined";
-  toast(`${outcome}. ${M[it.from].name} has been told.`, "check-circle");
+  toast(`${outcome}. ${M[it.from].name} has been notified.`, "check-circle", () => {
+    it.handled = false; it.handledNow = false; it.justHandled = false; delete it.outcome;
+    if (w && prevW) {
+      w.who = prevW.who; w.status = prevW.status;
+      if (prevW.waitsOn !== undefined) w.waitsOn = prevW.waitsOn; else delete w.waitsOn;
+    }
+    S.spotIdx = prevSpotIdx;
+    render(false);
+    toast("Undone — returned to your queue.", "refresh");
+  });
   if (route()[0] === "home") {
     const rawQ = IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
     const q = [...rawQ.filter((i) => !!i.expires), ...rawQ.filter((i) => !i.expires)];
@@ -5041,6 +5152,26 @@ function closeMenus(except) {
   document.querySelectorAll(".menu").forEach((m) => { if (m.id !== except) { m.hidden = true; const b = document.querySelector(`[aria-controls="${m.id}"]`); if (b) b.setAttribute("aria-expanded", "false"); } });
 }
 document.addEventListener("click", (e) => {
+  const spotJump = e.target.closest('[data-act="spot-jump"]');
+  if (spotJump && route()[0] === "home") {
+    const sid = spotJump.dataset.id;
+    const rawQ = IN.filter((i) => !i.handled || i.handledNow).slice(0, 5);
+    const q = [...rawQ.filter((i) => !!i.expires), ...rawQ.filter((i) => !i.expires)];
+    const idx = q.findIndex((x) => x.id === sid);
+    if (idx >= 0) {
+      e.preventDefault();
+      S.spotIdx = idx;
+      S.replying = null;
+      render(false);
+      const sp = document.getElementById("hb-spotlight");
+      if (sp) {
+        sp.scrollIntoView({ behavior: "smooth", block: "center" });
+        sp.classList.add("is-pulse");
+        setTimeout(() => sp.classList.remove("is-pulse"), 950);
+      }
+      return;
+    }
+  }
   const link = e.target.closest('a[href^="#/"]');
   if (link && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) {
     const href = link.getAttribute("href");
