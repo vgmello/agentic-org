@@ -246,7 +246,7 @@ fn version_is_the_public_constant() {
     assert_eq!(answer.status, StatusCode::OK);
     assert_eq!(
         answer.body,
-        json!({"result":{"api_version":1,"contract_revision":org_proto::gateway::CONTRACT_REVISION}})
+        json!({"result":{"api_version":1,"contract_revision":org_proto::web::CONTRACT_REVISION}})
     );
     assert_eq!(answer.headers[header::CACHE_CONTROL], "no-store");
     assert!(answer.headers.get(header::SET_COOKIE).is_none());

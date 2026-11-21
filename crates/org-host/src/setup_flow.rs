@@ -44,7 +44,7 @@ use org_host_control::admin::{
 };
 use org_host_control::listen::ListenConfig;
 use org_host_control::{
-    Administrator, GatewayState, InstanceStatus, InstanceStatusParams, InstanceStatusResult,
+    Administrator, InstanceStatus, InstanceStatusParams, InstanceStatusResult, WebState,
 };
 use org_platform::disk::{DiskEncryption, EncryptionState, Wording};
 use org_platform::service::{Lingering, ServiceError, ServiceManager, ServiceStatus, Unit};
@@ -1922,9 +1922,9 @@ fn wait_ready(
             Ok(status) if status.instance_id != instance_id => {
                 return Err("the service answering is not this instance".into())
             }
-            Ok(status) if status.gateway.state == GatewayState::Running => return Ok(status),
+            Ok(status) if status.gateway.state == WebState::Running => return Ok(status),
             Ok(status) => {
-                let held = (status.gateway.state == GatewayState::Failed)
+                let held = (status.gateway.state == WebState::Failed)
                     .then(&failed)
                     .flatten();
                 match (held, held_since) {
@@ -1946,8 +1946,8 @@ fn wait_ready(
                      (it is {}; the service's log says why); setup can be run again and \
                      continues where it stopped",
                     match state {
-                        GatewayState::Failed => "failing",
-                        GatewayState::Starting => "still starting",
+                        WebState::Failed => "failing",
+                        WebState::Starting => "still starting",
                         _ => "not configured",
                     }
                 ),

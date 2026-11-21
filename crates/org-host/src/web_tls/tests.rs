@@ -582,7 +582,7 @@ fn a_supplied_pair_is_imported_and_never_made_again() {
         tls.servable(later),
         Err(store::Unservable::NotValid)
     ));
-    assert_eq!(tls.status(later), org_proto::gateway::TlsStatus::Missing);
+    assert_eq!(tls.status(later), org_proto::web::TlsStatus::Missing);
     // The administrator's replacement is served.
     let (cert, key) = pair_for(&["org.example"], later - DAY, later + 90 * DAY);
     let id = crate::ids::generate().unwrap();
@@ -744,10 +744,10 @@ fn a_pair_that_cannot_be_served_is_never_fetched() {
     let now = wall();
     let tls = f.start(&here, None, now).unwrap();
     assert!(tls.servable(now).is_ok());
-    assert_eq!(tls.status(now), org_proto::gateway::TlsStatus::Ok);
+    assert_eq!(tls.status(now), org_proto::web::TlsStatus::Ok);
     assert_eq!(
         tls.status(now + 370 * DAY),
-        org_proto::gateway::TlsStatus::Expiring
+        org_proto::web::TlsStatus::Expiring
     );
     // A row naming another origin's pair (written behind the host's back).
     let other = make(&origin("https://other.example"), now).unwrap();
@@ -770,7 +770,7 @@ fn a_pair_that_cannot_be_served_is_never_fetched() {
     }
     f.secrets.0.lock().unwrap().clear();
     assert!(matches!(tls.fetch(), Err(store::Unservable::Storage)));
-    assert_eq!(tls.status(now), org_proto::gateway::TlsStatus::Missing);
+    assert_eq!(tls.status(now), org_proto::web::TlsStatus::Missing);
     f.db.set_web_tls_pair(&crate::hostdb::web_tls::StoredPair {
         source: Source::Made,
         cert_pem: other.chain().into(),
@@ -897,7 +897,7 @@ fn a_key_lost_while_running_closes_the_gate_after_a_failed_fetch() {
     );
     assert!(matches!(tls.fetch(), Err(store::Unservable::Storage)));
     assert!(matches!(tls.servable(now), Err(store::Unservable::Storage)));
-    assert_eq!(tls.status(now), org_proto::gateway::TlsStatus::Missing);
+    assert_eq!(tls.status(now), org_proto::web::TlsStatus::Missing);
 }
 
 /// A stored pair that has expired is judged from its remembered bounds after one full read:
@@ -918,5 +918,5 @@ fn an_expired_pair_is_read_once_by_the_gate() {
         tls.servable(later),
         Err(store::Unservable::NotValid)
     ));
-    assert_eq!(tls.status(later), org_proto::gateway::TlsStatus::Missing);
+    assert_eq!(tls.status(later), org_proto::web::TlsStatus::Missing);
 }

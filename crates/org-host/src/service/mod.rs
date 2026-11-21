@@ -12,8 +12,8 @@ mod request;
 use std::sync::Arc;
 
 use org_host_control::{
-    Administrator, GatewayState, GatewayStatus, Hello, HelloResult, InstanceMode, InstanceStatus,
-    InstanceStatusResult, OfficeCounts,
+    Administrator, Hello, HelloResult, InstanceMode, InstanceStatus, InstanceStatusResult,
+    OfficeCounts, WebState, WebStatus,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
@@ -27,7 +27,7 @@ pub(crate) struct Service {
     broadcast: Arc<Broadcast>,
     instance_id: Option<String>,
     pub(crate) authentication: Option<Arc<Authentication>>,
-    gateway: Arc<std::sync::Mutex<GatewayState>>,
+    gateway: Arc<std::sync::Mutex<WebState>>,
     provisioning: Option<Arc<crate::provisioning::Provisioning>>,
     recovery: Option<Arc<crate::recovery::Recovery>>,
     /// The `https` listener's pair: `tls.fetch`, `tls.set` and `instance.view`'s `tls`.
@@ -69,7 +69,7 @@ impl Service {
             browser_ops: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             organization_ops: std::sync::atomic::AtomicUsize::new(0),
-            gateway: Arc::new(std::sync::Mutex::new(GatewayState::NotConfigured)),
+            gateway: Arc::new(std::sync::Mutex::new(WebState::NotConfigured)),
         }
     }
     pub(crate) fn with_authentication(
@@ -153,9 +153,8 @@ impl Service {
             web_status: *crate::sync::lock(&self.gateway),
             administrator: self.administrator()?,
             tls: self.web_tls.as_ref().map(|tls| {
-                crate::web_tls::now().map_or(org_proto::gateway::TlsStatus::Missing, |now| {
-                    tls.status(now)
-                })
+                crate::web_tls::now()
+                    .map_or(org_proto::web::TlsStatus::Missing, |now| tls.status(now))
             }),
         })
     }
@@ -377,7 +376,7 @@ impl Service {
         }
         true
     }
-    pub(crate) fn with_gateway_state(mut self, state: Arc<std::sync::Mutex<GatewayState>>) -> Self {
+    pub(crate) fn with_gateway_state(mut self, state: Arc<std::sync::Mutex<WebState>>) -> Self {
         self.gateway = state;
         self
     }
@@ -937,7 +936,7 @@ impl Handler for Service {
                         Ok(InstanceStatusResult {
                             instance_id: instance_id.to_owned(),
                             mode: InstanceMode::Service,
-                            gateway: GatewayStatus {
+                            gateway: WebStatus {
                                 state: *crate::sync::lock(&self.gateway),
                             },
                             offices: OfficeCounts {
@@ -1080,8 +1079,8 @@ pub(crate) fn web_start_eligible(authenticated: bool, registered: bool) -> bool 
 }
 
 /// The readiness rule: all three conditions, never persisted state alone.
-pub(crate) fn web_serving(authenticated: bool, registered: bool, state: GatewayState) -> bool {
-    web_start_eligible(authenticated, registered) && state == GatewayState::Running
+pub(crate) fn web_serving(authenticated: bool, registered: bool, state: WebState) -> bool {
+    web_start_eligible(authenticated, registered) && state == WebState::Running
 }
 
 #[cfg(test)]
@@ -1128,17 +1127,17 @@ pub(crate) mod tests {
     #[test]
     fn web_ready_needs_authentication_registration_and_a_serving_web() {
         use super::web_serving;
-        assert!(web_serving(true, true, GatewayState::Running));
+        assert!(web_serving(true, true, WebState::Running));
         for state in [
-            GatewayState::NotConfigured,
-            GatewayState::Starting,
-            GatewayState::Failed,
-            GatewayState::Unknown,
+            WebState::NotConfigured,
+            WebState::Starting,
+            WebState::Failed,
+            WebState::Unknown,
         ] {
             assert!(!web_serving(true, true, state), "{state:?}");
         }
-        assert!(!web_serving(false, true, GatewayState::Running));
-        assert!(!web_serving(true, false, GatewayState::Running));
+        assert!(!web_serving(false, true, WebState::Running));
+        assert!(!web_serving(true, false, WebState::Running));
     }
 
     use super::*;
@@ -1623,7 +1622,7 @@ pub(crate) mod tests {
     #[test]
     fn instance_view_is_served_only_on_the_web_connection_after_the_name_is_installed() {
         use org_host_control::browser::{InstanceView, InstanceViewResult};
-        use org_host_control::{Administrator, GatewayState, InstanceMode};
+        use org_host_control::{Administrator, InstanceMode, WebState};
         let home = tempfile::tempdir().unwrap();
         let (_root, authentication, _c) = crate::service::authentication::tests::fixture();
         let authentication = Arc::new(authentication);
@@ -1665,7 +1664,7 @@ pub(crate) mod tests {
             InstanceViewResult {
                 name: "studio".into(),
                 status: InstanceMode::Service,
-                web_status: GatewayState::NotConfigured,
+                web_status: WebState::NotConfigured,
                 administrator: Administrator::Present,
                 tls: None,
             }

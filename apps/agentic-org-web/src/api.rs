@@ -28,21 +28,21 @@ use org_host_control::{
     listen::ListenOrigin,
     ops::RecoveryState as HostRecoveryState,
     organization::{self as host_org, BrowserAuth},
-    GatewayState, HostOpResult, LinkToken, Password,
+    HostOpResult, LinkToken, Password, WebState,
 };
-use org_proto::gateway::{
+use org_proto::selected_bootstrap::PlanV1;
+use org_proto::web::{
     self as gateway,
     org_mutations::{classify_org_reply, OrgMutation, OrgOperation, OrgReplyClassification},
     organizations::{
         self, CreatingOrganization, SelectedCreateRequest, SelectedOrganizationList,
         SelectedOrganizationView,
     },
-    AccountView, CreateState, GatewayError, GatewayErrorCode, GatewayStatus, ListenScheme,
-    LookupQuery, Milliseconds, MutationOutcome, OfficeView, OperationId, OperationKind,
-    OperationLookup, OrganizationLink, ReadResponse, RecoveryState, ResumeCursor, Scope,
-    SessionEstablished, SessionProof, SessionView, SnapshotResponse, StreamRequest, Version,
+    AccountView, CreateState, ListenScheme, LookupQuery, Milliseconds, MutationOutcome, OfficeView,
+    OperationId, OperationKind, OperationLookup, OrganizationLink, ReadResponse, RecoveryState,
+    ResumeCursor, Scope, SessionEstablished, SessionProof, SessionView, SnapshotResponse,
+    StreamRequest, Version, WebError, WebErrorCode, WebStatus,
 };
-use org_proto::selected_bootstrap::PlanV1;
 use serde::Deserialize;
 use std::{
     collections::BTreeSet,
@@ -166,28 +166,24 @@ struct EmptyBody {}
 fn invalid() -> ApiReply {
     ApiReply::error(
         StatusCode::BAD_REQUEST,
-        GatewayErrorCode::InvalidRequest,
+        WebErrorCode::InvalidRequest,
         "Invalid request.",
     )
 }
 fn not_found() -> ApiReply {
-    ApiReply::error(
-        StatusCode::NOT_FOUND,
-        GatewayErrorCode::NotFound,
-        "Not found.",
-    )
+    ApiReply::error(StatusCode::NOT_FOUND, WebErrorCode::NotFound, "Not found.")
 }
 fn signed_out() -> ApiReply {
     ApiReply::error(
         StatusCode::UNAUTHORIZED,
-        GatewayErrorCode::NotAuthorized,
+        WebErrorCode::NotAuthorized,
         "Sign in to continue.",
     )
 }
 fn unavailable() -> ApiReply {
     ApiReply::error(
         StatusCode::SERVICE_UNAVAILABLE,
-        GatewayErrorCode::Unavailable,
+        WebErrorCode::Unavailable,
         "Service unavailable.",
     )
 }
@@ -209,20 +205,20 @@ fn failure(failure: Failure) -> ApiReply {
         Failure::Denied => signed_out(),
         Failure::NotFound => not_found(),
         Failure::Refused(error) => {
-            let host = GatewayError::from(*error);
+            let host = WebError::from(*error);
             let (status, mut error) = match (host.code, host.field, host.rule) {
-                (GatewayErrorCode::InvalidRequest, Some(field), Some(rule)) => {
-                    let mut error = GatewayError::new(
-                        GatewayErrorCode::InvalidRequest,
+                (WebErrorCode::InvalidRequest, Some(field), Some(rule)) => {
+                    let mut error = WebError::new(
+                        WebErrorCode::InvalidRequest,
                         "This doesn't meet the sign-in rules.",
                     );
                     (error.field, error.rule) = (Some(field), Some(rule));
                     (StatusCode::BAD_REQUEST, error)
                 }
-                (GatewayErrorCode::RateLimited, _, _) if host.retry_after_ms.is_some() => (
+                (WebErrorCode::RateLimited, _, _) if host.retry_after_ms.is_some() => (
                     StatusCode::TOO_MANY_REQUESTS,
-                    GatewayError::new(
-                        GatewayErrorCode::RateLimited,
+                    WebError::new(
+                        WebErrorCode::RateLimited,
                         "Too many attempts. Try again later.",
                     ),
                 ),
@@ -242,7 +238,7 @@ fn failure(failure: Failure) -> ApiReply {
 }
 
 /// A refusal decided here, before any host call: the body or the path broke a rule.
-fn bad_input(error: GatewayError) -> ApiReply {
+fn bad_input(error: WebError) -> ApiReply {
     ApiReply::json(
         StatusCode::BAD_REQUEST,
         serde_json::to_value(ReadResponse::<()>::Error(error)).expect("gateway error serializes"),
@@ -251,8 +247,8 @@ fn bad_input(error: GatewayError) -> ApiReply {
 
 /// The browser's wording for a host refusal of a create: the code, `field` and `rule`
 /// are the host's, the message is this process's own.
-fn organization_error(host: GatewayError) -> GatewayError {
-    use GatewayErrorCode::*;
+fn organization_error(host: WebError) -> WebError {
+    use WebErrorCode::*;
     let message = match host.code {
         InvalidRequest => "This doesn't meet the organization rules.",
         AlreadyExists => "An organization with that name or slug already exists.",
@@ -260,10 +256,10 @@ fn organization_error(host: GatewayError) -> GatewayError {
         ClockSkew => "This device's clock differs too much from the server's.",
         NotAuthorized => "Only the instance administrator can create an organization.",
         _ => {
-            return GatewayError::new(Unavailable, "Service unavailable.");
+            return WebError::new(Unavailable, "Service unavailable.");
         }
     };
-    let mut error = GatewayError::new(host.code, message);
+    let mut error = WebError::new(host.code, message);
     (error.field, error.rule) = (host.field, host.rule);
     error
 }
@@ -309,24 +305,24 @@ fn create_outcome(
             operation_id,
             result: organization_view(result)?,
         },
-        Ok(HostOpResult::Rejected { refusal }) => rejected(GatewayError::from(refusal)),
+        Ok(HostOpResult::Rejected { refusal }) => rejected(WebError::from(refusal)),
         Ok(_) => MutationOutcome::Unknown { operation_id },
         Err(Failure::Refused(error)) => {
-            let error = GatewayError::from(*error);
+            let error = WebError::from(*error);
             // Only a refusal this route names is final. Anything else (a rate limit, a
             // code from a newer host) leaves the outcome unknown: the same id asks again.
             if !matches!(
                 error.code,
-                GatewayErrorCode::InvalidRequest
-                    | GatewayErrorCode::AlreadyExists
-                    | GatewayErrorCode::OperationReused
-                    | GatewayErrorCode::ClockSkew
+                WebErrorCode::InvalidRequest
+                    | WebErrorCode::AlreadyExists
+                    | WebErrorCode::OperationReused
+                    | WebErrorCode::ClockSkew
             ) {
                 return Err(Failure::Unavailable);
             }
             rejected(error)
         }
-        Err(Failure::Denied) => rejected(GatewayError::new(GatewayErrorCode::NotAuthorized, "")),
+        Err(Failure::Denied) => rejected(WebError::new(WebErrorCode::NotAuthorized, "")),
         Err(other) => return Err(other),
     })
 }
@@ -364,8 +360,8 @@ fn instance_view(
         name: host.name,
         server_version: env!("CARGO_PKG_VERSION").to_owned(),
         web_status: match host.web_status {
-            GatewayState::Running => GatewayStatus::Ok,
-            _ => GatewayStatus::Degraded,
+            WebState::Running => WebStatus::Ok,
+            _ => WebStatus::Degraded,
         },
         listen_scheme,
         tls: host.tls,
@@ -612,10 +608,7 @@ impl SessionApi {
                 return mutation(
                     MutationOutcome::<org_proto::Empty>::Rejected {
                         operation_id: op_id,
-                        error: GatewayError::new(
-                            GatewayErrorCode::Unavailable,
-                            "Service unavailable.",
-                        ),
+                        error: WebError::new(WebErrorCode::Unavailable, "Service unavailable."),
                     },
                     false,
                 );
@@ -633,10 +626,7 @@ impl SessionApi {
                 return mutation(
                     MutationOutcome::<org_proto::Empty>::Rejected {
                         operation_id: op_id,
-                        error: GatewayError::new(
-                            GatewayErrorCode::Unavailable,
-                            "Service unavailable.",
-                        ),
+                        error: WebError::new(WebErrorCode::Unavailable, "Service unavailable."),
                     },
                     false,
                 );
@@ -680,7 +670,7 @@ impl SessionApi {
         if !sse::authorize_subscriptions(&request, self.host.instance(), &linked) {
             return WebReply::Json(ApiReply::error(
                 StatusCode::FORBIDDEN,
-                GatewayErrorCode::NotAuthorized,
+                WebErrorCode::NotAuthorized,
                 "Subscription scope is not authorized.",
             ));
         }
@@ -718,8 +708,8 @@ impl SessionApi {
             Ok(_) if is_mutation => mutation(
                 MutationOutcome::<org_proto::Empty>::Rejected {
                     operation_id: op_id.expect("mutation has operation id"),
-                    error: GatewayError::new(
-                        GatewayErrorCode::NotAuthorized,
+                    error: WebError::new(
+                        WebErrorCode::NotAuthorized,
                         "You are not authorized to perform this action.",
                     ),
                 },
@@ -727,7 +717,7 @@ impl SessionApi {
             ),
             Ok(_) => ApiReply::error(
                 StatusCode::FORBIDDEN,
-                GatewayErrorCode::NotAuthorized,
+                WebErrorCode::NotAuthorized,
                 "You are not authorized to view this organization.",
             ),
         }
@@ -967,7 +957,7 @@ impl ApiBackend for SessionApi {
                 {
                     return ApiReply::error(
                         StatusCode::GONE,
-                        GatewayErrorCode::Expired,
+                        WebErrorCode::Expired,
                         "This request expired. Start again.",
                     );
                 }
@@ -1003,7 +993,7 @@ impl ApiBackend for SessionApi {
                         return if error.code == org_proto::ErrorCode::Expired {
                             ApiReply::error(
                                 StatusCode::GONE,
-                                GatewayErrorCode::Expired,
+                                WebErrorCode::Expired,
                                 "This operation is too old to look up.",
                             )
                         } else {

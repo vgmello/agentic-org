@@ -10,14 +10,14 @@ use agentic_org_web::assets::BuildFiles;
 use agentic_org_web::body::BusinessBody;
 use agentic_org_web::path::RequestPath;
 use agentic_org_web::service::{
-    run_gateway, ApiBackend, ApiLimits, ApiReply, GatewayConfig, PreparedCall,
+    run_gateway, ApiBackend, ApiLimits, ApiReply, PreparedCall, WebConfig,
 };
 use agentic_org_web::transport::{HttpLimits, ListenMode};
 use agentic_org_web::Hsts;
 use hyper::http::request::Parts;
 use hyper::{Method, StatusCode};
 use org_host_control::listen::ListenOrigin;
-use org_proto::gateway::{GatewayErrorCode, OperationId};
+use org_proto::web::{OperationId, WebErrorCode};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
@@ -62,7 +62,7 @@ impl ApiBackend for TestBackend {
             (Method::POST, ["api", "v1", "test", "mutate"]) => Ok(Route::Mutation),
             _ => Err(ApiReply::error(
                 StatusCode::NOT_FOUND,
-                GatewayErrorCode::NotFound,
+                WebErrorCode::NotFound,
                 "Not found.",
             )),
         }
@@ -73,7 +73,7 @@ impl ApiBackend for TestBackend {
         let value: Value = serde_json::from_slice(body.as_bytes()).map_err(|_| {
             ApiReply::error(
                 StatusCode::BAD_REQUEST,
-                GatewayErrorCode::InvalidRequest,
+                WebErrorCode::InvalidRequest,
                 "Invalid JSON body.",
             )
         })?;
@@ -158,7 +158,7 @@ impl Running {
         let thread = thread::spawn(move || {
             let result = run_gateway(
                 listener,
-                GatewayConfig {
+                WebConfig {
                     mode,
                     origin,
                     hsts: Hsts::On,
@@ -432,7 +432,7 @@ fn invalid_api_limits_fail_before_application_initialization() {
         BuildFiles::from_files([("index.html".into(), b"<script>0</script>".to_vec())]).unwrap();
     let error = run_gateway::<UnavailableApi, std::future::Ready<()>>(
         listener,
-        GatewayConfig {
+        WebConfig {
             mode: ListenMode::HttpLoopback,
             origin,
             hsts: Hsts::Off,

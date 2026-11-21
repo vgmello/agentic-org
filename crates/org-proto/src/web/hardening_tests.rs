@@ -44,7 +44,7 @@ fn create_in_progress_helper_matches_the_shared_conflict_wire_shape() {
             .to_owned(),
     )
     .unwrap();
-    let error = GatewayError::create_in_progress(operation_id);
+    let error = WebError::create_in_progress(operation_id);
     assert_eq!(error.http_status(true), Some(409));
     let response = ReadResponse::<Value>::Error(error);
     assert_eq!(serde_json::to_value(response).unwrap(), case["wire"]);

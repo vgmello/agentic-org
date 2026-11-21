@@ -12,7 +12,7 @@ use super::Milliseconds;
 /// credentials through Value, flatten, untagged enums, URL parameters or logs.
 ///
 /// ```compile_fail,E0599
-/// let secret = org_proto::gateway::SecretText::new("public test value".into()).unwrap();
+/// let secret = org_proto::web::SecretText::new("public test value".into()).unwrap();
 /// let _copy = secret.clone();
 /// ```
 pub struct SecretText(Vec<u8>);
@@ -93,7 +93,7 @@ impl<'de> Deserialize<'de> for SecretText {
 /// constant-time verification belong to B1-06's maintained authentication implementation.
 ///
 /// ```compile_fail,E0599
-/// let proof = org_proto::gateway::SessionProof::parse("00".repeat(32)).unwrap();
+/// let proof = org_proto::web::SessionProof::parse("00".repeat(32)).unwrap();
 /// let _copy = proof.clone();
 /// ```
 pub struct SessionProof(SecretText);

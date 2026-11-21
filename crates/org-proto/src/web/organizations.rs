@@ -6,8 +6,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    CommandEnvelope, CredentialField, CredentialRule, GatewayError, GatewayErrorCode, OfficeView,
-    OperationId, RecoveryState,
+    CommandEnvelope, CredentialField, CredentialRule, OfficeView, OperationId, RecoveryState,
+    WebError, WebErrorCode,
 };
 use crate::selected_bootstrap::PlanV1;
 
@@ -59,9 +59,9 @@ fn present<'de, D: serde::Deserializer<'de>>(
 pub type SelectedCreateRequest = CommandEnvelope<SelectedCreateParams>;
 
 /// A `400 invalid_request` that names the input and the rule it broke.
-pub fn input_refusal(field: CredentialField, rule: CredentialRule) -> GatewayError {
-    let mut error = GatewayError::new(
-        GatewayErrorCode::InvalidRequest,
+pub fn input_refusal(field: CredentialField, rule: CredentialRule) -> WebError {
+    let mut error = WebError::new(
+        WebErrorCode::InvalidRequest,
         "This doesn't meet the organization rules.",
     );
     (error.field, error.rule) = (Some(field), Some(rule));
@@ -70,7 +70,7 @@ pub fn input_refusal(field: CredentialField, rule: CredentialRule) -> GatewayErr
 
 /// A host operation id is a canonical ULID the browser minted. Anything else is refused
 /// before any host call.
-pub fn host_operation_id(raw: &str) -> Result<OperationId, GatewayError> {
+pub fn host_operation_id(raw: &str) -> Result<OperationId, WebError> {
     OperationId::parse(raw.to_owned())
         .map_err(|_| input_refusal(CredentialField::OperationId, CredentialRule::Format))
 }
@@ -78,7 +78,7 @@ pub fn host_operation_id(raw: &str) -> Result<OperationId, GatewayError> {
 impl SelectedCreateParams {
     /// The host's plan for this payload, or the first rule it breaks. Syntax only: nothing
     /// here contacts the remote.
-    pub fn plan(&self) -> Result<PlanV1, GatewayError> {
+    pub fn plan(&self) -> Result<PlanV1, WebError> {
         let repository = &self.organization_repository;
         let remote_required = || {
             input_refusal(

@@ -14,7 +14,7 @@ macro_rules! view_enum {
     };
 }
 
-view_enum!(GatewayStatus { Ok, Degraded });
+view_enum!(WebStatus { Ok, Degraded });
 view_enum!(ListenScheme {
     Https,
     HttpLoopback,
@@ -43,7 +43,7 @@ pub struct InstanceView {
     pub instance_id: String,
     pub name: String,
     pub server_version: String,
-    pub web_status: GatewayStatus,
+    pub web_status: WebStatus,
     pub listen_scheme: ListenScheme,
     /// Absent until the instance serves TLS; never certificate material.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -203,7 +203,7 @@ pub struct Capabilities {
 /// Targeted cancellation of the original create. No new ID or fingerprint is submitted.
 ///
 /// ```compile_fail
-/// use org_proto::gateway::{CancelResult, CancelState, OperationId};
+/// use org_proto::web::{CancelResult, CancelState, OperationId};
 /// let _ = CancelResult {
 ///     operation_id: OperationId::parse("01M72N8MG00000000000000006".into()).unwrap(),
 ///     state: CancelState::InProgress,

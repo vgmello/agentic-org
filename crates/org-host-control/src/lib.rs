@@ -54,7 +54,6 @@ use serde::{Deserialize, Serialize};
 
 pub mod admin;
 pub mod browser;
-pub mod gateway;
 pub mod journal;
 pub mod listen;
 pub mod ops;
@@ -63,9 +62,10 @@ pub mod pem;
 pub mod recovery;
 mod secret;
 mod status;
+pub mod web;
 pub use status::{
-    Administrator, GatewayState, GatewayStatus, InstanceMode, InstanceStatus, InstanceStatusParams,
-    InstanceStatusResult, OfficeCounts,
+    Administrator, InstanceMode, InstanceStatus, InstanceStatusParams, InstanceStatusResult,
+    OfficeCounts, WebState, WebStatus,
 };
 
 /// An organization's recovery code (X-02 §6.4), in `recovery.release`'s result: shown once,

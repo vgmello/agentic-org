@@ -35,7 +35,7 @@ impl ApiBackend for ProofBackend {
         self.0.fetch_add(1, Ordering::SeqCst);
         Err(ApiReply::error(
             StatusCode::FORBIDDEN,
-            GatewayErrorCode::NotAuthorized,
+            WebErrorCode::NotAuthorized,
             "Route proof required.",
         ))
     }

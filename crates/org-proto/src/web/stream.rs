@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{GatewayError, Milliseconds, ResponseScope, Scope, SessionReason};
+use super::{Milliseconds, ResponseScope, Scope, SessionReason, WebError};
 use crate::OrgSnapshot;
 
 /// Opaque nonsecret resume position. Authorization, scope/epoch binding and expiry must be
@@ -109,7 +109,7 @@ pub enum EventFrame {
     Unavailable {
         scope: ResponseScope,
         feed: Feed,
-        error: GatewayError,
+        error: WebError,
     },
     #[serde(other)]
     Unsupported,
@@ -143,7 +143,7 @@ enum FrameWire {
     Unavailable {
         scope: ResponseScope,
         feed: Feed,
-        error: GatewayError,
+        error: WebError,
     },
     #[serde(other)]
     Unsupported,

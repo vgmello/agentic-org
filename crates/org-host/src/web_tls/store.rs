@@ -402,8 +402,8 @@ impl WebTls {
     /// What `instance.view` says of the pair at `now`: served, expiring within 30 days, or
     /// missing (unservable, an expired pair included). Judged as the gate judges it, so a
     /// pair already verified is not read again.
-    pub(crate) fn status(&self, now: i64) -> org_proto::gateway::TlsStatus {
-        use org_proto::gateway::TlsStatus;
+    pub(crate) fn status(&self, now: i64) -> org_proto::web::TlsStatus {
+        use org_proto::web::TlsStatus;
         let _writing = crate::sync::lock(&self.writing);
         match self.judged(now) {
             Ok((_, not_after)) if not_after - now < super::RENEW_WITHIN_DAYS * super::DAY_SECS => {

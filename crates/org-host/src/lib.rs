@@ -882,7 +882,7 @@ impl Host {
         );
 
         let gateway_state = Arc::new(std::sync::Mutex::new(
-            org_host_control::GatewayState::NotConfigured,
+            org_host_control::WebState::NotConfigured,
         ));
         let web_config = startup_web(&config, &instance, &layout, dev_key_dir, web_tls.clone())?;
         let recovery = match (&instance, &authentication) {
@@ -949,7 +949,7 @@ impl Host {
             ) {
                 Ok(web) => Some(web),
                 Err(error) => {
-                    *sync::lock(&gateway_state) = org_host_control::GatewayState::Failed;
+                    *sync::lock(&gateway_state) = org_host_control::WebState::Failed;
                     host_log::log(&format!(
                         "browser service not started: {}",
                         host_log::untrusted(&error.to_string())

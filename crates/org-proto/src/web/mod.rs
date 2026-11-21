@@ -15,8 +15,8 @@ mod stream;
 mod views;
 
 pub use outcome::{
-    CommandEnvelope, CreateState, CredentialField, CredentialRule, GatewayError, GatewayErrorCode,
-    MutationOutcome, OperationId, OperationLookup, ReadResponse, ResourceAccess,
+    CommandEnvelope, CreateState, CredentialField, CredentialRule, MutationOutcome, OperationId,
+    OperationLookup, ReadResponse, ResourceAccess, WebError, WebErrorCode,
 };
 pub use session::{
     AccountView, OrganizationLink, SecretText, SessionEstablished, SessionProof, SessionView,
@@ -27,9 +27,9 @@ pub use stream::{
     Subscription, SubscriptionCursor,
 };
 pub use views::{
-    CancelResult, CancelResultState, CancelState, Capabilities, Capability, GatewayStatus,
-    InstanceView, ListenScheme, OfficeRestartResult, OfficeView, OrganizationView, RecoveryState,
-    SessionReason, TlsStatus,
+    CancelResult, CancelResultState, CancelState, Capabilities, Capability, InstanceView,
+    ListenScheme, OfficeRestartResult, OfficeView, OrganizationView, RecoveryState, SessionReason,
+    TlsStatus, WebStatus,
 };
 
 /// HTTP API and contract revision. Revisions are additive; breaking changes need a new API.
@@ -58,14 +58,14 @@ impl Default for Version {
 
 impl Version {
     /// A higher revision is additive; a lower required revision or another API needs update.
-    pub fn check_required(&self, required: Self) -> Result<(), GatewayError> {
+    pub fn check_required(&self, required: Self) -> Result<(), WebError> {
         if self.api_version == required.api_version
             && self.contract_revision >= required.contract_revision
         {
             Ok(())
         } else {
-            Err(GatewayError::new(
-                GatewayErrorCode::UnsupportedVersion,
+            Err(WebError::new(
+                WebErrorCode::UnsupportedVersion,
                 "Update this page to continue.",
             ))
         }
@@ -125,21 +125,21 @@ impl<'de> Deserialize<'de> for Milliseconds {
 /// Decode an incoming HTTP request object directly, with sanitized errors. The adapter
 /// applies finite body/time/rate limits first and wipes credential input buffers. This is
 /// ingress validation, never evidence that an already dispatched operation was rejected.
-pub fn decode_request<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, GatewayError> {
+pub fn decode_request<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, WebError> {
     if body.iter().copied().find(|b| !b.is_ascii_whitespace()) != Some(b'{') {
-        return Err(GatewayError::new(
-            GatewayErrorCode::InvalidRequest,
+        return Err(WebError::new(
+            WebErrorCode::InvalidRequest,
             "Expected a JSON object.",
         ));
     }
     serde_json::from_slice(body)
-        .map_err(|_| GatewayError::new(GatewayErrorCode::InvalidRequest, "Invalid request shape."))
+        .map_err(|_| WebError::new(WebErrorCode::InvalidRequest, "Invalid request shape."))
 }
 
 /// Validate a raw, still encoded path segment before the HTTP framework decodes/routes it.
 /// Decode at most once afterward; encoded separators must never become routing separators.
 /// The client separately segment-encodes IDs and treats an ID separator as a client bug.
-pub fn validate_raw_path_segment(segment: &str) -> Result<(), GatewayError> {
+pub fn validate_raw_path_segment(segment: &str) -> Result<(), WebError> {
     let bytes = segment.as_bytes();
     if segment.is_empty()
         || [".", "..", "%2e", ".%2e", "%2e.", "%2e%2e"]
@@ -150,8 +150,8 @@ pub fn validate_raw_path_segment(segment: &str) -> Result<(), GatewayError> {
             .windows(3)
             .any(|part| matches!(part, [b'%', b'2', b'f' | b'F'] | [b'%', b'5', b'c' | b'C']))
     {
-        Err(GatewayError::new(
-            GatewayErrorCode::InvalidRequest,
+        Err(WebError::new(
+            WebErrorCode::InvalidRequest,
             "Invalid path segment.",
         ))
     } else {
@@ -187,12 +187,12 @@ impl Scope {
     }
 
     /// Check the typed route target before forwarding. This does not authorize the caller.
-    pub fn check_target(&self, route_target: &Self) -> Result<(), GatewayError> {
+    pub fn check_target(&self, route_target: &Self) -> Result<(), WebError> {
         if self == route_target {
             Ok(())
         } else {
-            Err(GatewayError::new(
-                GatewayErrorCode::InvalidRequest,
+            Err(WebError::new(
+                WebErrorCode::InvalidRequest,
                 "The request scope does not match its route.",
             ))
         }
@@ -245,7 +245,7 @@ impl<'de> Deserialize<'de> for ResponseScope {
 /// and pass them through `from_fields`, rather than collapsing them into a map first.
 ///
 /// ```compile_fail
-/// use org_proto::gateway::LookupQuery;
+/// use org_proto::web::LookupQuery;
 /// let _ = LookupQuery { instance_id: "../outside".into(), org_id: None, office_id: None };
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,7 +302,7 @@ impl LookupQuery {
 
     pub fn from_fields<K: AsRef<str>, V: AsRef<str>>(
         fields: impl IntoIterator<Item = (K, V)>,
-    ) -> Result<Self, GatewayError> {
+    ) -> Result<Self, WebError> {
         let mut object = serde_json::Map::new();
         for (key, value) in fields {
             if object
@@ -319,14 +319,10 @@ impl LookupQuery {
     }
 
     /// Validate shape and session-instance equality before any authorization or lookup.
-    pub fn scope(
-        &self,
-        kind: OperationKind,
-        session_instance: &str,
-    ) -> Result<Scope, GatewayError> {
+    pub fn scope(&self, kind: OperationKind, session_instance: &str) -> Result<Scope, WebError> {
         if self.instance_id != session_instance {
-            return Err(GatewayError::new(
-                GatewayErrorCode::InvalidRequest,
+            return Err(WebError::new(
+                WebErrorCode::InvalidRequest,
                 "The request scope does not match its route.",
             ));
         }
@@ -349,8 +345,8 @@ impl LookupQuery {
         }
     }
 
-    fn invalid() -> GatewayError {
-        GatewayError::new(GatewayErrorCode::InvalidRequest, "Invalid lookup scope.")
+    fn invalid() -> WebError {
+        WebError::new(WebErrorCode::InvalidRequest, "Invalid lookup scope.")
     }
 }
 

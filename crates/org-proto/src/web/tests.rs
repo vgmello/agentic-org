@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-fn parse<T: DeserializeOwned>(value: &Value) -> Result<T, GatewayError> {
+fn parse<T: DeserializeOwned>(value: &Value) -> Result<T, WebError> {
     // Fixture credentials are fixed public test strings. Production credentials decode
     // directly from the HTTP buffer, never through this test-only Value path.
     decode_request(&serde_json::to_vec(value).unwrap())
@@ -78,7 +78,7 @@ fn shared_mutation_outcomes_preserve_identity_and_http_meaning() {
             if let Some(native) = case.get("native_error") {
                 let native: crate::ApiError = serde_json::from_value(native.clone()).unwrap();
                 assert_eq!(
-                    serde_json::to_value(GatewayError::from(native)).unwrap(),
+                    serde_json::to_value(WebError::from(native)).unwrap(),
                     case["wire"]["error"]
                 );
             }
@@ -183,8 +183,8 @@ fn shared_lookups_distinguish_final_abandonment_from_unresolved_and_expired() {
                     case["expect"]["http_status"]
                 );
                 let resolution = match error.code {
-                    GatewayErrorCode::NotFound => "unresolved",
-                    GatewayErrorCode::Expired => "expired",
+                    WebErrorCode::NotFound => "unresolved",
+                    WebErrorCode::Expired => "expired",
                     other => panic!("unexpected lookup error {other:?}"),
                 };
                 assert_eq!(resolution, case["expect"]["resolution"].as_str().unwrap());
@@ -358,7 +358,7 @@ fn shared_session_shapes_keep_proof_out_of_reads_and_preserve_server_clock() {
             crate::ulid_time_ms(case["raw_local_operation_id"].as_str().unwrap()),
             Some(local as u64)
         );
-        let refusal: GatewayError = parse(&case["raw_local_refusal"]).unwrap();
+        let refusal: WebError = parse(&case["raw_local_refusal"]).unwrap();
         assert_eq!(
             json!(refusal.http_status(true)),
             case["expect"]["raw_http_status"]
@@ -627,7 +627,7 @@ fn shared_resource_refusals_hide_existence_and_keep_attempts_distinct_from_looku
             "read_only" => ResourceAccess::ReadOnly,
             other => panic!("unknown access decision {other}"),
         };
-        let error = GatewayError::for_resource_access(access);
+        let error = WebError::for_resource_access(access);
         assert_eq!(
             json!(error.http_status(true)),
             case["expect"]["http_status"]
@@ -645,15 +645,15 @@ fn shared_resource_refusals_hide_existence_and_keep_attempts_distinct_from_looku
     for trace in vectors["attempts"].as_array().unwrap() {
         let submitted: MutationOutcome<Value> = parse(&trace["submit"]).unwrap();
         assert!(
-            matches!(submitted, MutationOutcome::Rejected { ref error, .. } if error.code == GatewayErrorCode::NotFound)
+            matches!(submitted, MutationOutcome::Rejected { ref error, .. } if error.code == WebErrorCode::NotFound)
         );
         let looked_up: ReadResponse<OperationLookup<Value>> = parse(&trace["lookup"]).unwrap();
         let resolution = match looked_up {
-            ReadResponse::Error(error) if error.code == GatewayErrorCode::NotFound => "unresolved",
+            ReadResponse::Error(error) if error.code == WebErrorCode::NotFound => "unresolved",
             ReadResponse::Result(OperationLookup::Outcome {
                 outcome: MutationOutcome::Rejected { error, .. },
                 ..
-            }) if error.code == GatewayErrorCode::NotFound => "rejected",
+            }) if error.code == WebErrorCode::NotFound => "rejected",
             _ => panic!("invalid shared not_found trace"),
         };
         assert_eq!(
@@ -800,7 +800,7 @@ fn shared_lookup_query_fields_are_strict_and_bound_to_the_session_instance() {
         (ResourceAccess::Hidden, &visibility["hidden"]),
         (ResourceAccess::Missing, &visibility["missing"]),
     ] {
-        let error = GatewayError::for_resource_access(access);
+        let error = WebError::for_resource_access(access);
         assert_eq!(json!(error.http_status(true)), visibility["http_status"]);
         assert_eq!(
             serde_json::to_value(ReadResponse::<serde_json::Value>::Error(error)).unwrap(),

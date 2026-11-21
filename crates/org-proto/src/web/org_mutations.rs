@@ -7,9 +7,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{
-    GatewayError, GatewayErrorCode, MutationOutcome, OperationId, Scope, MAX_SAFE_INTEGER,
-};
+use super::{MutationOutcome, OperationId, Scope, WebError, WebErrorCode, MAX_SAFE_INTEGER};
 use crate::{org, Call, Empty, Request};
 
 /// Browser versions share one nonnegative JavaScript-safe range; native versions remain u64.
@@ -79,9 +77,9 @@ impl OrganizationScope {
     }
 }
 
-fn invalid() -> GatewayError {
-    GatewayError::new(
-        GatewayErrorCode::InvalidRequest,
+fn invalid() -> WebError {
+    WebError::new(
+        WebErrorCode::InvalidRequest,
         "Invalid organization mutation.",
     )
 }
@@ -123,7 +121,7 @@ macro_rules! mutations {
 
             /// Decode after the composition has selected/authenticated the route.
             /// All failures are sanitized and happen before native dispatch.
-            pub fn decode(self, bytes: &[u8], route_scope: &Scope) -> Result<OrgMutation, GatewayError> {
+            pub fn decode(self, bytes: &[u8], route_scope: &Scope) -> Result<OrgMutation, WebError> {
                 let value: Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
                 if !value.is_object() {
                     return Err(invalid());
@@ -290,7 +288,7 @@ pub enum OrgReplyIssue {
 
 #[derive(Deserialize)]
 struct NativeRefusal {
-    code: GatewayErrorCode,
+    code: WebErrorCode,
     message: String,
 }
 
@@ -298,7 +296,7 @@ struct NativeRefusal {
 /// B1-06 must resolve it through session/grant authority before choosing an HTTP response.
 ///
 /// ```compile_fail
-/// use org_proto::gateway::org_mutations::OrgReplyClassification;
+/// use org_proto::web::org_mutations::OrgReplyClassification;
 /// let _ = serde_json::to_value(OrgReplyClassification::NeedsAuthorizationRecheck);
 /// ```
 #[derive(Debug)]
@@ -364,27 +362,25 @@ pub fn classify_org_reply(
             };
             // Native business errors cannot supply gateway session/cancellation hints.
             match &error.code {
-                GatewayErrorCode::NotAuthorized => {
-                    OrgReplyClassification::NeedsAuthorizationRecheck
-                }
-                GatewayErrorCode::Unknown => unknown(OrgReplyIssue::UnknownErrorCode),
-                GatewayErrorCode::InvalidRequest
-                | GatewayErrorCode::InvalidName
-                | GatewayErrorCode::AlreadyExists
-                | GatewayErrorCode::StorageError
-                | GatewayErrorCode::Cycle
-                | GatewayErrorCode::NotEmpty
-                | GatewayErrorCode::NotAMember
-                | GatewayErrorCode::OwnerProtected
-                | GatewayErrorCode::NotFound
-                | GatewayErrorCode::Conflict
-                | GatewayErrorCode::Expired
-                | GatewayErrorCode::ClockSkew
-                | GatewayErrorCode::Unavailable
-                | GatewayErrorCode::OperationReused => OrgReplyClassification::Outcome {
+                WebErrorCode::NotAuthorized => OrgReplyClassification::NeedsAuthorizationRecheck,
+                WebErrorCode::Unknown => unknown(OrgReplyIssue::UnknownErrorCode),
+                WebErrorCode::InvalidRequest
+                | WebErrorCode::InvalidName
+                | WebErrorCode::AlreadyExists
+                | WebErrorCode::StorageError
+                | WebErrorCode::Cycle
+                | WebErrorCode::NotEmpty
+                | WebErrorCode::NotAMember
+                | WebErrorCode::OwnerProtected
+                | WebErrorCode::NotFound
+                | WebErrorCode::Conflict
+                | WebErrorCode::Expired
+                | WebErrorCode::ClockSkew
+                | WebErrorCode::Unavailable
+                | WebErrorCode::OperationReused => OrgReplyClassification::Outcome {
                     outcome: MutationOutcome::Rejected {
                         operation_id,
-                        error: GatewayError::new(error.code, error.message),
+                        error: WebError::new(error.code, error.message),
                     },
                     issue: None,
                 },
@@ -392,20 +388,20 @@ pub fn classify_org_reply(
                 // negotiation, not a correlated organization command refusal.
                 // Keep the match exhaustive: a new vocabulary entry requires
                 // an explicit decision here rather than forwarding its text.
-                GatewayErrorCode::Other(_)
-                | GatewayErrorCode::UnknownMethod
-                | GatewayErrorCode::SnapshotRequired
-                | GatewayErrorCode::UnknownRecipient
-                | GatewayErrorCode::NotReady
-                | GatewayErrorCode::Timeout
-                | GatewayErrorCode::TooLarge
-                | GatewayErrorCode::ChecklistIncomplete
-                | GatewayErrorCode::UnsupportedVersion
-                | GatewayErrorCode::RateLimited => OrgReplyClassification::Outcome {
+                WebErrorCode::Other(_)
+                | WebErrorCode::UnknownMethod
+                | WebErrorCode::SnapshotRequired
+                | WebErrorCode::UnknownRecipient
+                | WebErrorCode::NotReady
+                | WebErrorCode::Timeout
+                | WebErrorCode::TooLarge
+                | WebErrorCode::ChecklistIncomplete
+                | WebErrorCode::UnsupportedVersion
+                | WebErrorCode::RateLimited => OrgReplyClassification::Outcome {
                     outcome: MutationOutcome::Rejected {
                         operation_id,
-                        error: GatewayError::new(
-                            GatewayErrorCode::Unavailable,
+                        error: WebError::new(
+                            WebErrorCode::Unavailable,
                             "The office could not accept this operation.",
                         ),
                     },

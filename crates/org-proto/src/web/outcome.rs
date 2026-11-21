@@ -136,7 +136,7 @@ impl<P: Serialize> CommandEnvelope<P> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
-pub enum GatewayErrorCode {
+pub enum WebErrorCode {
     InvalidRequest,
     UnknownMethod,
     InvalidName,
@@ -170,8 +170,8 @@ pub enum GatewayErrorCode {
 
 /// Sanitized human error, with optional nonsecret retry/session hints.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct GatewayError {
-    pub code: GatewayErrorCode,
+pub struct WebError {
+    pub code: WebErrorCode,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after_ms: Option<super::Milliseconds>,
@@ -221,11 +221,11 @@ pub enum CredentialRule {
     Unknown,
 }
 
-impl<'de> Deserialize<'de> for GatewayError {
+impl<'de> Deserialize<'de> for WebError {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
         struct Raw {
-            code: GatewayErrorCode,
+            code: WebErrorCode,
             message: String,
             #[serde(default)]
             retry_after_ms: Option<super::Milliseconds>,
@@ -241,7 +241,7 @@ impl<'de> Deserialize<'de> for GatewayError {
             rule: Option<CredentialRule>,
         }
         let raw = Object::<Raw>::deserialize(d)?.0;
-        if raw.code == GatewayErrorCode::RateLimited && raw.retry_after_ms.is_none() {
+        if raw.code == WebErrorCode::RateLimited && raw.retry_after_ms.is_none() {
             return Err(D::Error::custom("rate_limited requires retry_after_ms"));
         }
         if raw.field.is_some() != raw.rule.is_some() {
@@ -260,11 +260,11 @@ impl<'de> Deserialize<'de> for GatewayError {
     }
 }
 
-impl GatewayError {
+impl WebError {
     /// Cancellation keeps the original create ID; in-progress is never a successful result.
     pub fn create_in_progress(operation_id: OperationId) -> Self {
         let mut error = Self::new(
-            GatewayErrorCode::Conflict,
+            WebErrorCode::Conflict,
             "The create is still in progress; try again.",
         );
         error.operation_id = Some(operation_id);
@@ -272,7 +272,7 @@ impl GatewayError {
         error
     }
 
-    pub fn new(code: GatewayErrorCode, message: impl Into<String>) -> Self {
+    pub fn new(code: WebErrorCode, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -288,7 +288,7 @@ impl GatewayError {
     /// The error's class, for confirmed refusals only. A transport timeout after possible
     /// dispatch is an *unknown outcome*, not this error. `None` means unsupported.
     pub fn http_status(&self, authenticated: bool) -> Option<u16> {
-        use GatewayErrorCode::*;
+        use WebErrorCode::*;
         Some(match self.code {
             InvalidRequest | UnknownMethod | InvalidName | Cycle | NotEmpty | NotAMember
             | OwnerProtected | ChecklistIncomplete | ClockSkew | UnknownRecipient => 400,
@@ -310,11 +310,9 @@ impl GatewayError {
     pub fn for_resource_access(access: ResourceAccess) -> Self {
         match access {
             ResourceAccess::Missing | ResourceAccess::Hidden => {
-                Self::new(GatewayErrorCode::NotFound, "Not found.")
+                Self::new(WebErrorCode::NotFound, "Not found.")
             }
-            ResourceAccess::ReadOnly => {
-                Self::new(GatewayErrorCode::NotAuthorized, "Not authorized.")
-            }
+            ResourceAccess::ReadOnly => Self::new(WebErrorCode::NotAuthorized, "Not authorized."),
         }
     }
 }
@@ -326,29 +324,26 @@ pub enum ResourceAccess {
     ReadOnly,
 }
 
-impl From<crate::ApiError> for GatewayError {
+impl From<crate::ApiError> for WebError {
     /// The adapter logs an unexpected `not_bound` on a host-made channel as an invariant
     /// failure before converting it. Browser callers never bind and never see that code.
     fn from(error: crate::ApiError) -> Self {
         if error.code == crate::ErrorCode::NotBound {
-            return Self::new(
-                GatewayErrorCode::Unavailable,
-                "This operation is unavailable.",
-            );
+            return Self::new(WebErrorCode::Unavailable, "This operation is unavailable.");
         }
         let code = serde_json::to_value(error.code)
             .and_then(serde_json::from_value)
-            .unwrap_or(GatewayErrorCode::Unknown);
+            .unwrap_or(WebErrorCode::Unknown);
         let mut out = Self::new(code.clone(), error.message);
         // Only a rate limit carries a delay; only an input refusal names a rule.
         // A pair either side cannot name is dropped whole rather than half-sent.
-        if code == GatewayErrorCode::RateLimited {
+        if code == WebErrorCode::RateLimited {
             out.retry_after_ms =
                 super::Milliseconds::new(error.retry_after_ms.unwrap_or(0).min((1 << 53) - 1)).ok();
         }
         if matches!(
             code,
-            GatewayErrorCode::InvalidRequest | GatewayErrorCode::AlreadyExists
+            WebErrorCode::InvalidRequest | WebErrorCode::AlreadyExists
         ) {
             fn named<T: DeserializeOwned>(text: Option<String>) -> Option<T> {
                 text.and_then(|t| serde_json::from_value(Value::String(t)).ok())
@@ -541,7 +536,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Field<T> {
 /// never into a Value/untagged/flattened intermediate. Unknown additive fields are ignored.
 pub enum ReadResponse<T> {
     Result(T),
-    Error(GatewayError),
+    Error(WebError),
 }
 
 impl<T> fmt::Debug for ReadResponse<T> {
@@ -572,7 +567,7 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for ReadResponse<T> {
             #[serde(default)]
             result: Field<Object<T>>,
             #[serde(default)]
-            error: Field<Object<GatewayError>>,
+            error: Field<Object<WebError>>,
         }
         let raw = Object::<Raw<T>>::deserialize(d)?.0;
         match (raw.result, raw.error) {
@@ -600,7 +595,7 @@ pub enum MutationOutcome<T> {
     },
     Rejected {
         operation_id: OperationId,
-        error: GatewayError,
+        error: WebError,
     },
     Unknown {
         operation_id: OperationId,
@@ -680,9 +675,9 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for MutationOutcome<T> {
                 if !value.is_object() {
                     return Err(D::Error::custom("rejection error must be an object"));
                 }
-                let error: GatewayError = serde_json::from_value(value)
+                let error: WebError = serde_json::from_value(value)
                     .map_err(|_| D::Error::custom("invalid rejection error"))?;
-                if error.code == GatewayErrorCode::Unknown {
+                if error.code == WebErrorCode::Unknown {
                     Ok(Self::Unknown { operation_id })
                 } else {
                     Ok(Self::Rejected {

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use agentic_org_web::assets::BuildFiles;
-use agentic_org_web::service::{run_gateway, ApiLimits, GatewayConfig, UnavailableApi};
+use agentic_org_web::service::{run_gateway, ApiLimits, UnavailableApi, WebConfig};
 use agentic_org_web::transport::{HttpLimits, ListenMode};
 use agentic_org_web::Hsts;
 use org_host_control::listen::ListenOrigin;
@@ -34,7 +34,7 @@ fn run() -> io::Result<()> {
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
     run_gateway(
         listener,
-        GatewayConfig {
+        WebConfig {
             mode: ListenMode::HttpLoopback,
             origin,
             hsts: Hsts::Off,

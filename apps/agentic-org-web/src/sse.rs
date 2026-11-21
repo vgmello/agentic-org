@@ -15,7 +15,7 @@ use hyper::{
     header::{HeaderValue, CACHE_CONTROL, CONTENT_TYPE},
     Response, StatusCode,
 };
-use org_proto::gateway::{
+use org_proto::web::{
     EventFrame, Feed, Milliseconds, ResponseScope, ResumeCursor, ResyncReason, Scope,
     SessionReason, StreamRequest, Subscription, SubscriptionCursor,
 };

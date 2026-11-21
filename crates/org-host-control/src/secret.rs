@@ -5,7 +5,7 @@
 //! a response's result; §6.5's raw-JSON exception, see the crate docs), and copies in serde's and
 //! the transport's buffers survive; see `org_proto`'s `token` module docs.
 
-use org_proto::gateway::SecretText;
+use org_proto::web::SecretText;
 use serde::{Deserialize, Serialize};
 
 macro_rules! secret_text {

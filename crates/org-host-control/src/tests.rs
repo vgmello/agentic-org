@@ -1,9 +1,9 @@
 use serde_json::{json, Value};
 
-use crate::gateway::*;
 use crate::journal::{fingerprint_input, Journaled};
 use crate::listen::*;
 use crate::ops::*;
+use crate::web::*;
 use crate::*;
 
 const MAC: &str = "8637d563af0edf21100827a4a0a1f79f0053b6d974f0a9afb30465412e4b95a5";
@@ -569,8 +569,8 @@ fn the_host_sock_marker_is_zero() {
 #[test]
 fn gateway_rendezvous_lines_have_their_wire_shapes() {
     fn clone_only<T: Clone>() {}
-    clone_only::<GatewayFirstLine>();
-    let first = GatewayFirstLine {
+    clone_only::<WebFirstLine>();
+    let first = WebFirstLine {
         rendezvous: "/run/user/501/agentic-org/r/0123456789abcdef".into(),
         instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1".into(),
         release: None,
@@ -580,10 +580,7 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
         "instance_id": "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a1"
     });
     assert_eq!(serde_json::to_value(&first).unwrap(), wire);
-    assert_eq!(
-        serde_json::from_value::<GatewayFirstLine>(wire).unwrap(),
-        first
-    );
+    assert_eq!(serde_json::from_value::<WebFirstLine>(wire).unwrap(), first);
     for bad in [
         json!({"v": 2, "rendezvous": "/r", "instance_id": "i"}),
         json!({"v": 1, "rendezvous": "r", "instance_id": "i"}),
@@ -592,15 +589,15 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
         json!({"v": 1, "rendezvous": "/r", "instance_id": ""}),
         json!({"v": 1, "rendezvous": "/r", "instance_id": "0190A5D2-7C3E-7A01-8B2C-3D4E5F6071A1"}),
     ] {
-        assert!(serde_json::from_value::<GatewayFirstLine>(bad).is_err());
+        assert!(serde_json::from_value::<WebFirstLine>(bad).is_err());
     }
 
-    let mac = GatewayReadyForSecrets { landlock: None };
+    let mac = WebReadyForSecrets { landlock: None };
     assert_eq!(
         serde_json::to_value(mac).unwrap(),
         json!({"v": 1, "event": "ready_for_secrets"})
     );
-    let linux = GatewayReadyForSecrets {
+    let linux = WebReadyForSecrets {
         landlock: Some(LandlockStatus {
             abi: 4,
             enforcement: LandlockEnforcement::FullyEnforced,
@@ -610,20 +607,19 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
                       "landlock": {"abi": 4, "enforcement": "fully_enforced"}});
     assert_eq!(serde_json::to_value(linux).unwrap(), wire);
     assert_eq!(
-        serde_json::from_value::<GatewayReadyForSecrets>(wire).unwrap(),
+        serde_json::from_value::<WebReadyForSecrets>(wire).unwrap(),
         linux
     );
     assert!(
-        serde_json::from_value::<GatewayReadyForSecrets>(json!({"v": 1, "event": "ready"}))
-            .is_err()
+        serde_json::from_value::<WebReadyForSecrets>(json!({"v": 1, "event": "ready"})).is_err()
     );
 
     // The handoff names the transfer socket, then the listener, and carries no key.
     let wire = json!({"v": 1, "fds": ["transfer", "listener"]});
-    assert_eq!(serde_json::to_value(GatewayHandoff).unwrap(), wire);
+    assert_eq!(serde_json::to_value(WebHandoff).unwrap(), wire);
     assert_eq!(
-        serde_json::from_value::<GatewayHandoff>(wire).unwrap(),
-        GatewayHandoff
+        serde_json::from_value::<WebHandoff>(wire).unwrap(),
+        WebHandoff
     );
     for bad in [
         json!({"v": 1, "fds": ["listener", "transfer"]}),
@@ -631,7 +627,7 @@ fn gateway_rendezvous_lines_have_their_wire_shapes() {
         json!({"v": 1, "fds": []}),
         json!({"v": 2, "fds": ["transfer", "listener"]}),
     ] {
-        assert!(serde_json::from_value::<GatewayHandoff>(bad).is_err());
+        assert!(serde_json::from_value::<WebHandoff>(bad).is_err());
     }
 }
 
@@ -699,31 +695,31 @@ mod listen_vectors;
 /// refused, never silently dropped (as for launch lines).
 #[test]
 fn gateway_lines_refuse_unknown_fields() {
-    let mut first = serde_json::to_value(GatewayFirstLine {
+    let mut first = serde_json::to_value(WebFirstLine {
         rendezvous: "/tmp/agentic-org/rendezvous.sock".into(),
         instance_id: "0190a5d2-7c3e-7a01-8b2c-3d4e5f6071a2".into(),
         release: None,
     })
     .unwrap();
     let mut ready = serde_json::json!({"v": 1, "event": "ready_for_secrets"});
-    let mut handoff = serde_json::to_value(GatewayHandoff).unwrap();
+    let mut handoff = serde_json::to_value(WebHandoff).unwrap();
     // Each decodes as written, so each refusal below is the extra key's alone.
-    serde_json::from_value::<GatewayFirstLine>(first.clone()).unwrap();
-    serde_json::from_value::<GatewayReadyForSecrets>(ready.clone()).unwrap();
-    serde_json::from_value::<GatewayHandoff>(handoff.clone()).unwrap();
+    serde_json::from_value::<WebFirstLine>(first.clone()).unwrap();
+    serde_json::from_value::<WebReadyForSecrets>(ready.clone()).unwrap();
+    serde_json::from_value::<WebHandoff>(handoff.clone()).unwrap();
     first["db_key"] = serde_json::json!("01".repeat(32));
     ready["grant_key"] = serde_json::json!("secret");
     handoff["app_token"] = serde_json::json!("secret");
-    assert!(serde_json::from_value::<GatewayFirstLine>(first).is_err());
-    assert!(serde_json::from_value::<GatewayReadyForSecrets>(ready).is_err());
-    assert!(serde_json::from_value::<GatewayHandoff>(handoff).is_err());
+    assert!(serde_json::from_value::<WebFirstLine>(first).is_err());
+    assert!(serde_json::from_value::<WebReadyForSecrets>(ready).is_err());
+    assert!(serde_json::from_value::<WebHandoff>(handoff).is_err());
     // Nested: the Landlock report carries exactly its fields too.
     let landlock = serde_json::json!({"v": 1, "event": "ready_for_secrets",
         "landlock": {"abi": 3, "enforcement": "fully_enforced"}});
-    serde_json::from_value::<GatewayReadyForSecrets>(landlock.clone()).unwrap();
+    serde_json::from_value::<WebReadyForSecrets>(landlock.clone()).unwrap();
     let mut extra = landlock;
     extra["landlock"]["grant_key"] = serde_json::json!("secret");
-    assert!(serde_json::from_value::<GatewayReadyForSecrets>(extra).is_err());
+    assert!(serde_json::from_value::<WebReadyForSecrets>(extra).is_err());
 }
 
 /// X-02 §6.2: the chain is hashed in order, so the same blocks in another order are another

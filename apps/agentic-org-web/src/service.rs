@@ -13,9 +13,7 @@ use hyper::header::{HeaderName, HeaderValue, ALLOW};
 use hyper::http::request::Parts;
 use hyper::{Method, Request, Response, StatusCode};
 use org_host_control::listen::ListenOrigin;
-use org_proto::gateway::{
-    GatewayError, GatewayErrorCode, MutationOutcome, OperationId, ReadResponse,
-};
+use org_proto::web::{MutationOutcome, OperationId, ReadResponse, WebError, WebErrorCode};
 use serde_json::Value;
 
 use crate::assets::BuildFiles;
@@ -95,8 +93,8 @@ impl ApiReply {
         self
     }
 
-    pub fn error(status: StatusCode, code: GatewayErrorCode, message: &'static str) -> Self {
-        let error = ReadResponse::<Value>::Error(GatewayError::new(code, message));
+    pub fn error(status: StatusCode, code: WebErrorCode, message: &'static str) -> Self {
+        let error = ReadResponse::<Value>::Error(WebError::new(code, message));
         Self::json(
             status,
             serde_json::to_value(error).expect("gateway error serializes"),
@@ -121,18 +119,18 @@ impl ApiReply {
         match refusal {
             ApiRefusal::Options => Self::error(
                 StatusCode::METHOD_NOT_ALLOWED,
-                GatewayErrorCode::InvalidRequest,
+                WebErrorCode::InvalidRequest,
                 "Method not allowed.",
             )
             .with_header(ALLOW, HeaderValue::from_static("GET, HEAD, POST")),
             ApiRefusal::CrossSite | ApiRefusal::Origin => Self::error(
                 StatusCode::FORBIDDEN,
-                GatewayErrorCode::NotAuthorized,
+                WebErrorCode::NotAuthorized,
                 "Request origin is not authorized.",
             ),
             ApiRefusal::MediaType => Self::error(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                GatewayErrorCode::InvalidRequest,
+                WebErrorCode::InvalidRequest,
                 "Content-Type must be application/json.",
             ),
         }
@@ -171,11 +169,11 @@ impl<T> PreparedCall<T> {
 
 impl CallKind {
     fn unavailable(&self) -> ApiReply {
-        let error = GatewayError::new(GatewayErrorCode::Unavailable, "Service unavailable.");
+        let error = WebError::new(WebErrorCode::Unavailable, "Service unavailable.");
         match self {
             Self::Read => ApiReply::error(
                 StatusCode::SERVICE_UNAVAILABLE,
-                GatewayErrorCode::Unavailable,
+                WebErrorCode::Unavailable,
                 "Service unavailable.",
             ),
             Self::Mutation(id) => ApiReply::json(
@@ -193,7 +191,7 @@ impl CallKind {
         match self {
             Self::Read => ApiReply::error(
                 StatusCode::SERVICE_UNAVAILABLE,
-                GatewayErrorCode::Timeout,
+                WebErrorCode::Timeout,
                 "Backend did not answer in time.",
             ),
             Self::Mutation(id) => ApiReply::json(
@@ -257,7 +255,7 @@ impl ApiLimits {
     }
 }
 
-pub struct GatewayConfig {
+pub struct WebConfig {
     pub mode: ListenMode,
     pub origin: ListenOrigin,
     pub hsts: Hsts,
@@ -301,14 +299,14 @@ impl<B: ApiBackend> Gateway<B> {
         let mut response = if !self.admission.accepts_target_and_host(&parts) {
             ApiReply::error(
                 StatusCode::BAD_REQUEST,
-                GatewayErrorCode::InvalidRequest,
+                WebErrorCode::InvalidRequest,
                 "Invalid request authority or target.",
             )
             .into_http(head)
         } else if unsupported_version {
             ApiReply::error(
                 StatusCode::BAD_REQUEST,
-                GatewayErrorCode::InvalidRequest,
+                WebErrorCode::InvalidRequest,
                 "HTTP/1.1 is required.",
             )
             .into_http(head)
@@ -316,7 +314,7 @@ impl<B: ApiBackend> Gateway<B> {
             match RequestPath::parse(parts.uri.path()) {
                 Err(_) => ApiReply::error(
                     StatusCode::BAD_REQUEST,
-                    GatewayErrorCode::InvalidRequest,
+                    WebErrorCode::InvalidRequest,
                     "Invalid request path.",
                 )
                 .into_http(head),
@@ -328,12 +326,10 @@ impl<B: ApiBackend> Gateway<B> {
                             WebReply::Stream(stream) => stream,
                         }
                     }
-                    Ok(()) => ApiReply::error(
-                        StatusCode::NOT_FOUND,
-                        GatewayErrorCode::NotFound,
-                        "Not found.",
-                    )
-                    .into_http(head),
+                    Ok(()) => {
+                        ApiReply::error(StatusCode::NOT_FOUND, WebErrorCode::NotFound, "Not found.")
+                            .into_http(head)
+                    }
                 },
                 Ok(path) => self
                     .ui
@@ -379,22 +375,22 @@ impl<B: ApiBackend> Gateway<B> {
                 return WebReply::Json(match error {
                     BodyError::TooLarge => ApiReply::error(
                         StatusCode::PAYLOAD_TOO_LARGE,
-                        GatewayErrorCode::TooLarge,
+                        WebErrorCode::TooLarge,
                         "Request body is too large.",
                     ),
                     BodyError::TimedOut => ApiReply::error(
                         StatusCode::SERVICE_UNAVAILABLE,
-                        GatewayErrorCode::Timeout,
+                        WebErrorCode::Timeout,
                         "Request body timed out.",
                     ),
                     BodyError::Malformed => ApiReply::error(
                         StatusCode::BAD_REQUEST,
-                        GatewayErrorCode::InvalidRequest,
+                        WebErrorCode::InvalidRequest,
                         "Invalid request body.",
                     ),
                     BodyError::InvalidLimits => ApiReply::error(
                         StatusCode::SERVICE_UNAVAILABLE,
-                        GatewayErrorCode::Unavailable,
+                        WebErrorCode::Unavailable,
                         "Service unavailable.",
                     ),
                 });
@@ -445,7 +441,7 @@ impl ApiBackend for UnavailableApi {
     fn route(&self, _: &Parts, _: &RequestPath) -> Result<Self::Route, ApiReply> {
         Err(ApiReply::error(
             StatusCode::SERVICE_UNAVAILABLE,
-            GatewayErrorCode::Unavailable,
+            WebErrorCode::Unavailable,
             "Service unavailable.",
         ))
     }
@@ -465,7 +461,7 @@ impl ApiBackend for UnavailableApi {
 /// constructed only inside the runtime, after transport validates that listener.
 pub fn run_gateway<B, S>(
     listener: TcpListener,
-    config: GatewayConfig,
+    config: WebConfig,
     files: BuildFiles,
     initialize: impl FnOnce() -> io::Result<(B, S)>,
 ) -> io::Result<()>
@@ -481,7 +477,7 @@ where
 /// first accept. Its error stops the web process before it serves any request.
 pub fn run_web_reporting<B, S>(
     listener: TcpListener,
-    config: GatewayConfig,
+    config: WebConfig,
     files: BuildFiles,
     initialize: impl FnOnce() -> io::Result<(B, S)>,
     serving: impl FnOnce() -> io::Result<()>,

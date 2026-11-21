@@ -3,9 +3,9 @@
 //! this contract's [`crate::API_VERSION`].
 //!
 //! The order: the host spawns the gateway suspended, checks its image, creates the rendezvous and
-//! writes [`GatewayFirstLine`] on its stdin. The gateway applies its sandbox, connects, and sends
-//! [`GatewayReadyForSecrets`]. After its post-accept and sandbox checks the host sends one
-//! [`GatewayHandoff`] line, then one `sendmsg` carrying a 1-byte marker (`host.sock`'s,
+//! writes [`WebFirstLine`] on its stdin. The gateway applies its sandbox, connects, and sends
+//! [`WebReadyForSecrets`]. After its post-accept and sandbox checks the host sends one
+//! [`WebHandoff`] line, then one `sendmsg` carrying a 1-byte marker (`host.sock`'s,
 //! [`crate::ops::HOST_SOCK_MARKER`]: this framing follows its rule) and exactly the two
 //! descriptors it names: the transfer socket, then the browser listener. The same connection then
 //! becomes the control connection. Transfer-socket records are `org-office-launch`'s
@@ -17,7 +17,7 @@ use crate::API_VERSION;
 
 /// The gateway's first stdin line: non-secret. `Clone`, which no secret type is.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GatewayFirstLine {
+pub struct WebFirstLine {
     /// The absolute path of the per-spawn rendezvous socket, the only path the gateway's sandbox
     /// lets it connect to.
     pub rendezvous: String,
@@ -94,7 +94,7 @@ struct FirstLineWire<T> {
     release: Option<WebRelease>,
 }
 
-impl Serialize for GatewayFirstLine {
+impl Serialize for WebFirstLine {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         FirstLineWire {
             v: API_VERSION,
@@ -106,7 +106,7 @@ impl Serialize for GatewayFirstLine {
     }
 }
 
-impl<'de> Deserialize<'de> for GatewayFirstLine {
+impl<'de> Deserialize<'de> for WebFirstLine {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let wire = FirstLineWire::<String>::deserialize(d)?;
         check_version::<D>(wire.v)?;
@@ -124,7 +124,7 @@ impl<'de> Deserialize<'de> for GatewayFirstLine {
                 "the rendezvous path must be absolute, without NUL",
             ));
         }
-        Ok(GatewayFirstLine {
+        Ok(WebFirstLine {
             rendezvous: wire.rendezvous,
             instance_id: wire.instance_id,
             release: wire.release,
@@ -147,7 +147,7 @@ fn check_version<'de, D: Deserializer<'de>>(v: u32) -> Result<(), D::Error> {
 /// gateway's only thread after its one seccomp filter is installed, before any network input, so
 /// the host can trust the report as far as it trusts the image it checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GatewayReadyForSecrets {
+pub struct WebReadyForSecrets {
     /// Linux only: the Landlock domain the gateway applied. Absent on macOS.
     pub landlock: Option<LandlockStatus>,
 }
@@ -182,7 +182,7 @@ struct ReadyWire<E> {
     landlock: Option<LandlockStatus>,
 }
 
-impl Serialize for GatewayReadyForSecrets {
+impl Serialize for WebReadyForSecrets {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         ReadyWire {
             v: API_VERSION,
@@ -193,46 +193,46 @@ impl Serialize for GatewayReadyForSecrets {
     }
 }
 
-impl<'de> Deserialize<'de> for GatewayReadyForSecrets {
+impl<'de> Deserialize<'de> for WebReadyForSecrets {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let wire = ReadyWire::<String>::deserialize(d)?;
         check_version::<D>(wire.v)?;
         if wire.event != READY_FOR_SECRETS {
             return Err(serde::de::Error::custom("not ready_for_secrets"));
         }
-        Ok(GatewayReadyForSecrets {
+        Ok(WebReadyForSecrets {
             landlock: wire.landlock,
         })
     }
 }
 
-/// A descriptor named by the [`GatewayHandoff`], in the order they arrive.
+/// A descriptor named by the [`WebHandoff`], in the order they arrive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum GatewayFd {
+pub enum WebFd {
     /// The gateway's end of its transfer socket (receive-only: the host shut down its write side).
     Transfer,
     /// The browser listener the host bound from the instance configuration.
     Listener,
 }
 
-/// The host's answer to [`GatewayReadyForSecrets`]: `{"v": 1, "fds": ["transfer", "listener"]}`.
+/// The host's answer to [`WebReadyForSecrets`]: `{"v": 1, "fds": ["transfer", "listener"]}`.
 /// It carries no key (the gateway's TLS pair comes from `tls.fetch`); it names the two
 /// descriptors the following `sendmsg` carries, in order. Any other list is refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct GatewayHandoff;
+pub struct WebHandoff;
 
-/// The descriptors a [`GatewayHandoff`] names, in order.
-pub const GATEWAY_HANDOFF_FDS: [GatewayFd; 2] = [GatewayFd::Transfer, GatewayFd::Listener];
+/// The descriptors a [`WebHandoff`] names, in order.
+pub const GATEWAY_HANDOFF_FDS: [WebFd; 2] = [WebFd::Transfer, WebFd::Listener];
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HandoffWire {
     v: u32,
-    fds: Vec<GatewayFd>,
+    fds: Vec<WebFd>,
 }
 
-impl Serialize for GatewayHandoff {
+impl Serialize for WebHandoff {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         HandoffWire {
             v: API_VERSION,
@@ -242,7 +242,7 @@ impl Serialize for GatewayHandoff {
     }
 }
 
-impl<'de> Deserialize<'de> for GatewayHandoff {
+impl<'de> Deserialize<'de> for WebHandoff {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let wire = HandoffWire::deserialize(d)?;
         check_version::<D>(wire.v)?;
@@ -251,7 +251,7 @@ impl<'de> Deserialize<'de> for GatewayHandoff {
                 "the gateway handoff must name the transfer socket, then the listener",
             ));
         }
-        Ok(GatewayHandoff)
+        Ok(WebHandoff)
     }
 }
 

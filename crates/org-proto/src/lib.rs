@@ -91,12 +91,12 @@ pub mod selected_bootstrap;
 pub use identity::is_uuid_v7;
 pub mod directory;
 pub mod frame;
-pub mod gateway;
 pub mod inbox;
 pub mod location;
 pub mod msg;
 pub mod org;
 pub mod retired;
+pub mod web;
 pub mod work;
 
 mod calls;

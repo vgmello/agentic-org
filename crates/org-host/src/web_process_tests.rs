@@ -28,7 +28,7 @@ use org_host_control::{
     ops::{AccountVerify, AccountVerifyParams},
     Password, SessionHandle,
 };
-use org_host_control::{GatewayState, InstanceStatus, InstanceStatusParams};
+use org_host_control::{InstanceStatus, InstanceStatusParams, WebState};
 use org_platform::confinement::testing::{refuse_call, RefusedCall};
 use org_proto::{frame, selected_bootstrap::PlanV1, ApiError, Call, HelloParams, Request};
 use std::{
@@ -621,7 +621,7 @@ fn actual_host_spawns_web_process_serves_version_and_restarts_after_eof() {
     assert_eq!(version.body["result"]["api_version"], 1);
     assert_eq!(
         version.body["result"]["contract_revision"],
-        org_proto::gateway::CONTRACT_REVISION
+        org_proto::web::CONTRACT_REVISION
     );
     assert!(version
         .headers
@@ -827,13 +827,13 @@ fn lnx_3_host(outcome: &str) {
     };
     // The supervisor's own first settled state, before any organization exists: the web
     // process serves, or its start was refused or failed.
-    let mut before = GatewayState::NotConfigured;
+    let mut before = WebState::NotConfigured;
     wait_until("the web supervisor's first settled state", || {
         before = state(&mut wire, &mut id);
-        !matches!(before, GatewayState::NotConfigured | GatewayState::Starting)
+        !matches!(before, WebState::NotConfigured | WebState::Starting)
     });
     println!("state before HQ: {before:?}");
-    create_hq_beside(&host, address, matches!(before, GatewayState::Running));
+    create_hq_beside(&host, address, matches!(before, WebState::Running));
     println!("HQ: provisioned");
     let serving = |host: &Host| {
         wait_until("web_ready", || web_ready(host));
@@ -919,7 +919,7 @@ fn lnx_3_host(outcome: &str) {
             // comes up to 8 seconds later.)
             let web = host.web.as_ref().expect("the web process is supervised");
             wait_until("the supervisor gives up", || web.ended());
-            assert_eq!(state(&mut wire, &mut id), GatewayState::Failed);
+            assert_eq!(state(&mut wire, &mut id), WebState::Failed);
             assert!(!web_ready(&host));
             nothing_runs();
         }

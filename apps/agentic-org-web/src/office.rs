@@ -19,8 +19,8 @@ use org_host_control::{
     organization::BrowserAuth,
 };
 use org_proto::{
-    gateway::org_mutations::OrgMutation, ApiRange, Empty, Hello, HelloParams, HelloResult,
-    OrgSnapshot, OrgSnapshotCall, Outcome, Principal, Request, Response, MAX_FRAME_BYTES,
+    web::org_mutations::OrgMutation, ApiRange, Empty, Hello, HelloParams, HelloResult, OrgSnapshot,
+    OrgSnapshotCall, Outcome, Principal, Request, Response, MAX_FRAME_BYTES,
 };
 use serde_json::Value;
 use tokio::{

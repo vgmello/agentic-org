@@ -6,7 +6,7 @@ fn selected_web_pin_roundtrips_and_rejects_ambiguous_or_invalid_whole_frames() {
         manifest_sha256: "ab".repeat(32),
         sequence: u64::MAX,
     };
-    let line = GatewayFirstLine {
+    let line = WebFirstLine {
         rendezvous: "/private/tmp/r".into(),
         instance_id: "INSTANCE".into(),
         release: Some(pin),
@@ -14,7 +14,7 @@ fn selected_web_pin_roundtrips_and_rejects_ambiguous_or_invalid_whole_frames() {
     let bytes = serde_json::to_vec(&line).unwrap();
     assert!(bytes.len() < 1024);
     assert_eq!(
-        serde_json::from_slice::<GatewayFirstLine>(&bytes).unwrap(),
+        serde_json::from_slice::<WebFirstLine>(&bytes).unwrap(),
         line
     );
     let wire = serde_json::to_value(&line).unwrap();
@@ -28,31 +28,31 @@ fn selected_web_pin_roundtrips_and_rejects_ambiguous_or_invalid_whole_frames() {
         let mut bad = wire.clone();
         bad["release"][field] = value;
         assert!(
-            serde_json::from_value::<GatewayFirstLine>(bad).is_err(),
+            serde_json::from_value::<WebFirstLine>(bad).is_err(),
             "{field}"
         );
     }
     let mut bad = wire.clone();
     bad["release"]["key"] = serde_json::json!("untrusted");
-    assert!(serde_json::from_value::<GatewayFirstLine>(bad).is_err());
+    assert!(serde_json::from_value::<WebFirstLine>(bad).is_err());
     let mut missing = wire.clone();
     missing["release"]
         .as_object_mut()
         .unwrap()
         .remove("sequence");
-    assert!(serde_json::from_value::<GatewayFirstLine>(missing).is_err());
+    assert!(serde_json::from_value::<WebFirstLine>(missing).is_err());
     for suffix in [r#", "sequence":1"#, r#", "seq\u0075ence":1"#] {
         let raw = format!(
             r#"{{"v":1,"rendezvous":"/r","instance_id":"INSTANCE","release":{{"version":1,"release_id":"a","manifest_sha256":"{}","sequence":1{suffix}}}}}"#,
             "ab".repeat(32)
         );
-        assert!(serde_json::from_str::<GatewayFirstLine>(&raw).is_err());
+        assert!(serde_json::from_str::<WebFirstLine>(&raw).is_err());
     }
     let encoded = String::from_utf8(bytes).unwrap();
     let raw = format!("{},\"release\":null}}", encoded.strip_suffix('}').unwrap());
-    assert!(serde_json::from_str::<GatewayFirstLine>(&raw).is_err());
+    assert!(serde_json::from_str::<WebFirstLine>(&raw).is_err());
     // Omission remains decodable for explicit debug fixtures, not production admission.
-    assert!(serde_json::from_str::<GatewayFirstLine>(
+    assert!(serde_json::from_str::<WebFirstLine>(
         r#"{"v":1,"rendezvous":"/r","instance_id":"INSTANCE"}"#
     )
     .unwrap()

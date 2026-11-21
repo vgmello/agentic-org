@@ -2,7 +2,7 @@
 use crate::{
     api::SessionApi,
     host::{EventSink, HostControl},
-    service::{self, ApiLimits, GatewayConfig},
+    service::{self, ApiLimits, WebConfig},
     session::SessionCache,
     sse::EventHub,
     tls::TlsCertificates,
@@ -10,11 +10,11 @@ use crate::{
     Hsts,
 };
 use org_host_control::{
-    gateway::{
-        GatewayFd, GatewayFirstLine, GatewayHandoff, GatewayReadyForSecrets, LandlockEnforcement,
-        LandlockStatus, GATEWAY_HANDOFF_FDS,
-    },
     ops::{TlsFetchResult, HOST_SOCK_MARKER},
+    web::{
+        LandlockEnforcement, LandlockStatus, WebFd, WebFirstLine, WebHandoff, WebReadyForSecrets,
+        GATEWAY_HANDOFF_FDS,
+    },
 };
 use org_platform::confinement::{self, Enforcement};
 use org_socket::rights::{self, ReceiveError, StreamReceiver};
@@ -149,7 +149,7 @@ fn fatal() -> ! {
     std::process::exit(1)
 }
 
-fn first_line(reader: &mut impl BufRead) -> io::Result<GatewayFirstLine> {
+fn first_line(reader: &mut impl BufRead) -> io::Result<WebFirstLine> {
     let mut bytes = Vec::new();
     reader
         .by_ref()
@@ -203,16 +203,16 @@ fn descriptors(marker: u8, fds: Vec<OwnedFd>) -> io::Result<(UnixDatagram, TcpLi
     let mut listener = None;
     for (kind, fd) in GATEWAY_HANDOFF_FDS.into_iter().zip(fds) {
         match kind {
-            GatewayFd::Transfer => transfer = Some(rights::unix_datagram(fd)?),
-            GatewayFd::Listener => listener = Some(rights::tcp_listener(fd)?),
+            WebFd::Transfer => transfer = Some(rights::unix_datagram(fd)?),
+            WebFd::Listener => listener = Some(rights::tcp_listener(fd)?),
         }
     }
     Ok((transfer.ok_or_else(failure)?, listener.ok_or_else(failure)?))
 }
 /// The ready line for what confinement reported. A Landlock ABI is reported only by an
 /// adapter that restricted this process under it in full; seccomp has no wire field.
-fn ready(enforcement: Enforcement) -> GatewayReadyForSecrets {
-    GatewayReadyForSecrets {
+fn ready(enforcement: Enforcement) -> WebReadyForSecrets {
+    WebReadyForSecrets {
         landlock: enforcement.landlock_abi.map(|abi| LandlockStatus {
             abi,
             enforcement: LandlockEnforcement::FullyEnforced,
@@ -240,7 +240,7 @@ fn handoff(
         }
         header.push(value);
     }
-    let _: GatewayHandoff = serde_json::from_slice(&header).map_err(|_| failure())?;
+    let _: WebHandoff = serde_json::from_slice(&header).map_err(|_| failure())?;
     let (marker, fds) = byte(&mut receiver, GATEWAY_HANDOFF_FDS.len(), until, &fence)?;
     let (transfer, listener) = descriptors(marker, fds)?;
     // Type checks precede ACK, and sole receiver has consumed exactly through
@@ -529,7 +529,7 @@ pub fn serve(assets: &Path) -> io::Result<()> {
         org_host_control::listen::Hsts::Clear => Hsts::Clear,
     };
     let browser_origin = origin.clone();
-    let config = GatewayConfig {
+    let config = WebConfig {
         mode,
         origin,
         hsts,
