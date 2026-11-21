@@ -1,0 +1,42 @@
+---
+id: TASK-16
+title: >-
+  Add dedicated async multiplexed office/SSE channels to agentic-org-web and
+  clean up minor BFF/UI polish
+status: To Do
+assignee: []
+created_date: '2026-11-20T23:24:00Z'
+labels:
+  - bff
+  - rust
+  - ui
+  - p2
+milestone: m-4
+dependencies:
+  - TASK-5
+references:
+  - apps/agentic-org-web/src/service.rs
+  - apps/agentic-org-web/src/host.rs
+  - apps/agentic-org-web/src/api.rs
+  - apps/agentic-org-ui/src/app.html
+documentation:
+  - docs/architecture/architecture-and-data-audit.html
+  - docs/design/rust-browser-bff-and-static-sveltekit.md
+  - docs/design/web-api-v1.md
+priority: medium
+type: enhancement
+ordinal: 16000
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Audit findings M-12 (BFF transport) and L-05: agentic-org-web currently serializes host calls over one blocking Unix stream with a 100 ms idle poll and a 2-worker BlockingPool, which will bottleneck once multiplexed office requests and SSE live events land. Separately, api.rs duplicates admin checks and performs a serde_json roundtrip for host.recovery, and app.html sets hover preload despite effect-based fetching.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [ ] #1 agentic-org-web serves office RPCs and SSE live-event streams over dedicated async multiplexed channels without blocking on the 2-worker host BlockingPool or 100 ms poll loop.
+- [ ] #2 agentic-org-web preserves its verified zero-DB, zero-office-key, and OS confinement boundaries (dependency_closure test passes).
+- [ ] #3 JSON roundtrip mapping in apps/agentic-org-web/src/api.rs is replaced with typed From conversions, duplicate BFF auth short-circuiting is cleaned up, and app.html preload attributes match SvelteKit client fetching.
+<!-- AC:END -->
