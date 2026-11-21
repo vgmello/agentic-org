@@ -30,19 +30,20 @@ body::before {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 62% 54% at 14% 78%, rgba(46, 86, 128, .34) 0%, rgba(28, 52, 82, .14) 48%, transparent 76%),
-    radial-gradient(ellipse 58% 52% at 84% 18%, rgba(42, 92, 134, .30) 0%, rgba(24, 56, 86, .12) 46%, transparent 74%),
-    radial-gradient(ellipse 52% 46% at 54% 48%, rgba(30, 62, 96, .22) 0%, transparent 72%),
-    radial-gradient(ellipse 56% 48% at 78% 84%, rgba(34, 68, 102, .26) 0%, transparent 74%),
-    linear-gradient(155deg, #090F1A 0%, #0E1828 48%, #0A111D 100%);
+    radial-gradient(rgba(148, 179, 214, .11) 1px, transparent 1px) 0 0 / 28px 28px,
+    radial-gradient(ellipse 68% 58% at 84% 14%, rgba(56, 189, 248, .24) 0%, rgba(14, 116, 144, .10) 42%, transparent 72%),
+    radial-gradient(ellipse 64% 56% at 16% 18%, rgba(30, 100, 175, .26) 0%, rgba(14, 74, 128, .10) 44%, transparent 74%),
+    radial-gradient(ellipse 58% 52% at 54% 88%, rgba(28, 110, 168, .22) 0%, rgba(14, 82, 130, .08) 46%, transparent 74%),
+    linear-gradient(160deg, #060B14 0%, #0A1424 50%, #070E1A 100%);
 }
 body::after {
   content: "";
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto 0;
+  height: 220px;
   z-index: 0;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(186, 222, 255, .035) 0%, transparent 260px);
+  background: linear-gradient(180deg, rgba(56, 189, 248, .07) 0%, transparent 100%);
 }
 body { font-family: "Inter Variable", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 0.875rem; line-height: 1.714; -webkit-font-smoothing: antialiased; }
 a { color: inherit; text-decoration: none; }
@@ -70,7 +71,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .skip:focus { top: 12px; }
 
 /* Shell */
-.sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 50; display: flex; flex-direction: column; gap: 14px; overflow: hidden; background: rgba(255, 255, 255, .025); backdrop-filter: blur(28px) saturate(135%); -webkit-backdrop-filter: blur(28px) saturate(135%); box-shadow: inset -1px 0 0 rgba(255, 255, 255, .10); padding: 0 18px; transition: width .22s cubic-bezier(.22, 1, .36, 1), padding .22s cubic-bezier(.22, 1, .36, 1); }
+.sidebar { position: fixed; inset: 0 auto 0 0; width: 264px; z-index: 50; display: flex; flex-direction: column; gap: 14px; overflow: hidden; background: rgba(255, 255, 255, .025); backdrop-filter: blur(12px) saturate(135%); -webkit-backdrop-filter: blur(12px) saturate(135%); box-shadow: inset -1px 0 0 rgba(255, 255, 255, .10); padding: 0 18px; transition: width .22s cubic-bezier(.22, 1, .36, 1), padding .22s cubic-bezier(.22, 1, .36, 1); }
 .content { position: relative; z-index: 1; height: 100%; overflow-y: auto; padding-left: 264px; display: flex; flex-direction: column; background: transparent; transition: padding-left .22s cubic-bezier(.22, 1, .36, 1); }
 .content > main { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
 .sidebar-hd { display: flex; align-items: center; gap: 6px; min-height: 56px; flex: none; padding-top: 6px; }
@@ -204,7 +205,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
   width: min(640px, 100%); height: 46px; padding: 5px 6px 5px 6px;
   border-radius: 14px;
   background: rgba(255, 255, 255, .055);
-  backdrop-filter: blur(26px) saturate(140%); -webkit-backdrop-filter: blur(26px) saturate(140%);
+  backdrop-filter: blur(12px) saturate(140%); -webkit-backdrop-filter: blur(12px) saturate(140%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .11), inset 0 0 0 1px rgba(255, 255, 255, .14);
   transition: background-color .18s ease, box-shadow .18s ease, transform .18s ease;
 }
@@ -1521,7 +1522,7 @@ select.field option { background: #0E1629; color: #F8FAFC; }
   --hb-well: rgba(255, 255, 255, .038);
   --hb-border: rgba(255, 255, 255, .125);
   --hb-border-hi: rgba(255, 255, 255, .23);
-  --hb-blur: blur(24px) saturate(135%);
+  --hb-blur: blur(8px) saturate(135%);
   --hb-shadow: inset 0 1px 0 rgba(255, 255, 255, .09), inset 0 0 0 1px var(--hb-border);
   --hb-shadow-hi: inset 0 1px 0 rgba(255, 255, 255, .15), inset 0 0 0 1px var(--hb-border-hi);
   --hb-ink: #F8FAFC;
