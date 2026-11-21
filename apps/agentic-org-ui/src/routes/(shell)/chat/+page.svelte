@@ -10,8 +10,7 @@
 	import Callout from '$lib/components/Callout.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
-	// D-F14a: temporary route composition root; Jules's F1-02 factory cutover removes this exception.
-	import { chatApi, sender } from '$lib/modules/messaging/legacy-api';
+	import { chatApi, sender } from '$lib/modules/messaging/api';
 	import {
 		ChatSidebar,
 		NewMessageDialog,

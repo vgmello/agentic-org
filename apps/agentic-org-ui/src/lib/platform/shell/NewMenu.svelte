@@ -61,9 +61,7 @@
 	const session = $derived(sessionFor(orgApi, organizationId));
 
 	async function openDm(ids: string[]) {
-		// Chat's temporary composition (still a browser mock until plan step 8) loads only when a message is sent, so the
-		// shell never bundles it into every page. Production never gets here: the form needs orgApi.view, which refuses.
-		const { sender: chatSender } = await import('$lib/modules/messaging/legacy-api');
+		const { sender: chatSender } = await import('$lib/modules/messaging/api');
 		const accepted = await chatSender(organizationId)({ method: 'dm.open', members: ids });
 		flow = undefined;
 		await goto(

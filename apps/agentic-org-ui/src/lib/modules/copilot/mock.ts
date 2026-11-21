@@ -44,7 +44,13 @@ const fail = (code: CopilotErrorCode, message: string): never => {
 
 const chars = (text: string) => [...text].length;
 
-const clip = (text: string, max: number) => (chars(text) > max ? `${[...text].slice(0, max - 3).join('').trimEnd()}...` : text);
+const clip = (text: string, max: number) =>
+	chars(text) > max
+		? `${[...text]
+				.slice(0, max - 3)
+				.join('')
+				.trimEnd()}...`
+		: text;
 
 /** Fix spacing, capitalise the first letter and end with a full stop: a stand-in for "improve". */
 export function tidy(text: string): string {
@@ -67,11 +73,18 @@ function improveText(input: TextImproveInput): DraftResponse<TextDraft> {
 		const better = tidy(text);
 		return {
 			draft: { text: better },
-			notes: [better === text ? 'Nothing to fix: it already reads well.' : 'Kept your meaning. Fixed spacing, capital letters and the ending.']
+			notes: [
+				better === text
+					? 'Nothing to fix: it already reads well.'
+					: 'Kept your meaning. Fixed spacing, capital letters and the ending.'
+			]
 		};
 	}
 	const basis = tidy(instruction || text);
-	const notes = ['Sample data: a rule-based stand-in, not a model’s answer.', 'Unknowns are marked [?].'];
+	const notes = [
+		'Sample data: a rule-based stand-in, not a model’s answer.',
+		'Unknowns are marked [?].'
+	];
 	return { draft: { text: `${basis} [?] Add the details the copilot can't know.` }, notes };
 }
 
@@ -87,10 +100,21 @@ export function guessSeverity(sentence: string): Exclude<Severity, 'unknown'> {
 function draftBug(input: BugFromSentenceInput, context: ContextItem[]): DraftResponse<BugDraft> {
 	const sentence = input.sentence.trim().replace(/\s+/g, ' ');
 	const first = sentence.split(/(?<=[.!?])\s/)[0];
-	const title = chars(first) > 80 ? `${[...first].slice(0, 77).join('').trimEnd()}...` : first.replace(/[.!?]$/, '');
+	const title =
+		chars(first) > 80
+			? `${[...first].slice(0, 77).join('').trimEnd()}...`
+			: first.replace(/[.!?]$/, '');
 	// An area is named only when the sentence names it, and only one from the context.
-	const named = context.filter((c) => c.kind === 'area' && c.label.length >= 3 && sentence.toLowerCase().includes(c.label.toLowerCase()));
-	const notes = ['Sample data: a rule-based stand-in, not a model\u2019s answer.', "You didn't say how to make it happen, so no steps are listed."];
+	const named = context.filter(
+		(c) =>
+			c.kind === 'area' &&
+			c.label.length >= 3 &&
+			sentence.toLowerCase().includes(c.label.toLowerCase())
+	);
+	const notes = [
+		'Sample data: a rule-based stand-in, not a model\u2019s answer.',
+		"You didn't say how to make it happen, so no steps are listed."
+	];
 	return {
 		draft: {
 			title: title.replace(/^\p{Ll}/u, (c) => c.toUpperCase()),
@@ -108,13 +132,16 @@ function check(feature: FeatureId, input: FeatureShapes[FeatureId]['input']) {
 		if (!['draft', 'improve'].includes(i.mode)) fail('invalid_request', 'Unknown mode.');
 		if (!i.field) fail('invalid_request', 'The field needs a name.');
 		if (chars(i.field) > LIMITS.fieldMaxChars) fail('too_large', 'The field name is too long.');
-		if (chars(i.text) > LIMITS.textMaxChars) fail('too_large', `The text is over ${LIMITS.textMaxChars} characters.`);
+		if (chars(i.text) > LIMITS.textMaxChars)
+			fail('too_large', `The text is over ${LIMITS.textMaxChars} characters.`);
 		if (i.instruction && chars(i.instruction) > LIMITS.instructionMaxChars)
 			fail('too_large', `The instruction is over ${LIMITS.instructionMaxChars} characters.`);
 	} else {
 		const sentence = (input as BugFromSentenceInput).sentence;
-		if (typeof sentence !== 'string' || !sentence.trim()) fail('invalid_request', 'Describe the problem in a sentence first.');
-		if (chars(sentence) > LIMITS.sentenceMaxChars) fail('too_large', `Keep it under ${LIMITS.sentenceMaxChars} characters.`);
+		if (typeof sentence !== 'string' || !sentence.trim())
+			fail('invalid_request', 'Describe the problem in a sentence first.');
+		if (chars(sentence) > LIMITS.sentenceMaxChars)
+			fail('too_large', `Keep it under ${LIMITS.sentenceMaxChars} characters.`);
 	}
 }
 
@@ -129,9 +156,15 @@ export function createMockCopilot({
 		async features() {
 			return scenario === 'off' ? [] : FEATURES.map((f) => ({ ...f }));
 		},
-		async draft<F extends FeatureId>(feature: F, input: FeatureShapes[F]['input'], context: ContextItem[] = []) {
-			if (scenario === 'off') fail('copilot_unavailable', 'No agent runtime is set up on this Mac.');
-			if (!FEATURES.some((f) => f.id === feature)) fail('copilot_unavailable', 'The copilot does not offer that.');
+		async draft<F extends FeatureId>(
+			feature: F,
+			input: FeatureShapes[F]['input'],
+			context: ContextItem[] = []
+		) {
+			if (scenario === 'off')
+				fail('copilot_unavailable', 'No agent runtime is set up on this Mac.');
+			if (!FEATURES.some((f) => f.id === feature))
+				fail('copilot_unavailable', 'The copilot does not offer that.');
 			check(feature, input);
 			if (running.has(feature)) fail('copilot_busy', 'A run of this feature is still going.');
 			running.add(feature);
@@ -139,7 +172,10 @@ export function createMockCopilot({
 				await wait(delayMs);
 				if (scenario === 'timeout') fail('timeout', 'The copilot took too long.');
 				if (scenario === 'failed') fail('copilot_failed', 'The runtime failed.');
-				const answer = feature === 'text.improve' ? improveText(input as TextImproveInput) : draftBug(input as BugFromSentenceInput, context);
+				const answer =
+					feature === 'text.improve'
+						? improveText(input as TextImproveInput)
+						: draftBug(input as BugFromSentenceInput, context);
 				return answer as DraftResponse<FeatureShapes[F]['draft']>;
 			} finally {
 				running.delete(feature);
@@ -147,5 +183,3 @@ export function createMockCopilot({
 		}
 	};
 }
-
-export const mockCopilot = createMockCopilot();

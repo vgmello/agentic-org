@@ -104,7 +104,7 @@ async function open(page: Page, id = 'c-release-v1') {
 
 async function holdSend(page: Page) {
 	await page.evaluate(async () => {
-		const path = '/src/lib/modules/messaging/legacy-api.ts';
+		const path = '/e2e/fakes/modules/messaging.ts';
 		const { chatApi } = await import(path);
 		const command = chatApi.command.bind(chatApi);
 		chatApi.command = async (id: string, call: { method: string }) => {
@@ -525,7 +525,7 @@ for (const mode of ['muted', 'digest'] as const) {
 			const body = `Incoming ${mode} Also-send reply`;
 			await page.evaluate(
 				async ({ rootId, mode, body }) => {
-					const path = '/src/lib/modules/messaging/legacy-api.ts';
+					const path = '/e2e/fakes/modules/messaging.ts';
 					const { chatApi } = await import(path);
 					const snapshot = chatApi.snapshot.bind(chatApi);
 					chatApi.snapshot = async (id: string) => {

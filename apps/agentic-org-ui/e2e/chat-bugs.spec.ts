@@ -338,7 +338,7 @@ for (const movedOn of [false, true]) {
 	}) => {
 		await open(page);
 		await page.evaluate(async () => {
-			const path = '/src/lib/modules/messaging/legacy-api.ts';
+			const path = '/e2e/fakes/modules/messaging.ts';
 			const { chatApi } = await import(path);
 			const command = chatApi.command.bind(chatApi);
 			let started!: () => void;

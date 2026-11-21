@@ -162,7 +162,7 @@ test(
 		await create(page);
 		const longName = 'a'.repeat(64);
 		await page.evaluate(async (name) => {
-			const path = '/src/lib/modules/messaging/legacy-api.ts';
+			const path = '/e2e/fakes/modules/messaging.ts';
 			const { chatApi } = await import(path);
 			const snapshot = chatApi.snapshot.bind(chatApi);
 			chatApi.snapshot = async (id: string) => {

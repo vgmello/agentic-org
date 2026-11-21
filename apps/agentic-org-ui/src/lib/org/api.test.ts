@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createMockOrg, type MockStorage } from './api';
+import { createMockOrg, type MockStorage } from './mock';
 
 /** A command id is a ULID: 26 uppercase Crockford characters, the first 0 to 7. A short tag is padded into one (I, L, O and U read as 1, 1, 0 and V). */
-const cid = (tag: string) => '0'.repeat(26 - tag.length) + tag.toUpperCase().replace(/[IL]/g, '1').replace(/O/g, '0').replace(/U/g, 'V');
+const cid = (tag: string) =>
+	'0'.repeat(26 - tag.length) +
+	tag.toUpperCase().replace(/[IL]/g, '1').replace(/O/g, '0').replace(/U/g, 'V');
 
 const memory = (): MockStorage => {
 	const m = new Map<string, string>();
@@ -16,10 +18,26 @@ describe('an organization saved before projects had areas', () => {
 		const old = structuredClone((await make().view('org-1')).snapshot);
 		delete (old as { areas?: unknown }).areas;
 		old.position = { epoch: 1, seq: 7 };
-		storage.setItem('agentic-org.mock.org.org-1', JSON.stringify({ snapshot: old, answers: { c0: { command: 'x', result: { accepted: { status: 'committed' } } } }, order: ['c0'] }));
+		storage.setItem(
+			'agentic-org.mock.org.org-1',
+			JSON.stringify({
+				snapshot: old,
+				answers: { c0: { command: 'x', result: { accepted: { status: 'committed' } } } },
+				order: ['c0']
+			})
+		);
 		const { snapshot } = await make(storage).view('org-1');
-		expect(snapshot.areas?.map((a) => a.id).sort()).toEqual(['atlas-general', 'beacon-general', 'onboarding-general', 'scratch-general']);
-		expect(snapshot.areas?.find((a) => a.id === 'beacon-general')).toMatchObject({ team_id: 'web', general: true, version: 1 });
+		expect(snapshot.areas?.map((a) => a.id).sort()).toEqual([
+			'atlas-general',
+			'beacon-general',
+			'onboarding-general',
+			'scratch-general'
+		]);
+		expect(snapshot.areas?.find((a) => a.id === 'beacon-general')).toMatchObject({
+			team_id: 'web',
+			general: true,
+			version: 1
+		});
 		expect(snapshot.position.seq).toBe(7);
 	});
 });
@@ -28,25 +46,35 @@ describe('the mock office’s organization', () => {
 	it('starts with the sample, applies a command, and keeps the change across instances', async () => {
 		const storage = memory();
 		const first = make(storage);
-		const accepted = await first.command('org-1', { method: 'team.create', params: { team_id: 't-new', name: 'Ops' } });
+		const accepted = await first.command('org-1', {
+			method: 'team.create',
+			params: { team_id: 't-new', name: 'Ops' }
+		});
 		expect(accepted.status).toBe('committed');
 		expect((await make(storage).view('org-1')).snapshot.teams.map((t) => t.name)).toContain('Ops');
 	});
 
 	it('answers a repeated command id the same way and changes nothing again', async () => {
 		const org = make();
-		const command = { method: 'team.create', params: { command_id: cid('C1'), team_id: 't-new', name: 'Ops' } } as const;
+		const command = {
+			method: 'team.create',
+			params: { command_id: cid('C1'), team_id: 't-new', name: 'Ops' }
+		} as const;
 		const a = await org.command('org-1', command);
 		const b = await org.command('org-1', command);
 		expect(b).toEqual(a);
-		expect((await org.view('org-1')).snapshot.teams.filter((t) => t.name === 'Ops')).toHaveLength(1);
+		expect((await org.view('org-1')).snapshot.teams.filter((t) => t.name === 'Ops')).toHaveLength(
+			1
+		);
 		expect((await org.view('org-1')).snapshot.position.seq).toBe(a.position!.seq);
 	});
 
 	it('rejects with the error HQ would give, and changes nothing', async () => {
 		const org = make();
 		const before = await org.view('org-1');
-		await expect(org.command('org-1', { method: 'team.create', params: { team_id: 'x', name: 'design' } })).rejects.toMatchObject({ source: 'api', code: 'already_exists' });
+		await expect(
+			org.command('org-1', { method: 'team.create', params: { team_id: 'x', name: 'design' } })
+		).rejects.toMatchObject({ source: 'api', code: 'already_exists' });
 		expect(await org.view('org-1')).toEqual(before);
 	});
 
@@ -62,25 +90,48 @@ describe('the mock office’s organization', () => {
 describe('the mock office’s command handling, like HQ’s', () => {
 	it('remembers a refusal even when the same command would now succeed', async () => {
 		const org = make();
-		const c = { method: 'team.create', params: { command_id: cid('R1'), team_id: 'ops', name: 'Ops', owner_team_id: 'later' } } as const;
+		const c = {
+			method: 'team.create',
+			params: { command_id: cid('R1'), team_id: 'ops', name: 'Ops', owner_team_id: 'later' }
+		} as const;
 		await expect(org.command('org-1', c)).rejects.toMatchObject({ code: 'not_found' });
-		await org.command('org-1', { method: 'team.create', params: { team_id: 'later', name: 'Later' } });
+		await org.command('org-1', {
+			method: 'team.create',
+			params: { team_id: 'later', name: 'Later' }
+		});
 		await expect(org.command('org-1', c)).rejects.toMatchObject({ code: 'not_found' }); // the answer stands
 		expect((await org.view('org-1')).snapshot.teams.some((t) => t.id === 'ops')).toBe(false);
-		await expect(org.command('org-1', { ...c, params: { ...c.params, command_id: cid('R2') } })).resolves.toMatchObject({ status: 'committed' });
+		await expect(
+			org.command('org-1', { ...c, params: { ...c.params, command_id: cid('R2') } })
+		).resolves.toMatchObject({ status: 'committed' });
 	});
 
 	it('refuses a command id reused for a different command', async () => {
 		const org = make();
-		await org.command('org-1', { method: 'team.create', params: { command_id: cid('S1'), team_id: 'a', name: 'A' } });
-		await expect(org.command('org-1', { method: 'team.create', params: { command_id: cid('S1'), team_id: 'b', name: 'B' } })).rejects.toMatchObject({ code: 'invalid_request' });
+		await org.command('org-1', {
+			method: 'team.create',
+			params: { command_id: cid('S1'), team_id: 'a', name: 'A' }
+		});
+		await expect(
+			org.command('org-1', {
+				method: 'team.create',
+				params: { command_id: cid('S1'), team_id: 'b', name: 'B' }
+			})
+		).rejects.toMatchObject({ code: 'invalid_request' });
 		expect((await org.view('org-1')).snapshot.teams.some((t) => t.id === 'b')).toBe(false);
 	});
 
 	it('answers commands sent together one at a time, so none is lost', async () => {
 		const storage = memory();
 		const org = make(storage);
-		await Promise.all(['a', 'b', 'c'].map((id) => org.command('org-1', { method: 'team.create', params: { team_id: id, name: id.toUpperCase() } })));
+		await Promise.all(
+			['a', 'b', 'c'].map((id) =>
+				org.command('org-1', {
+					method: 'team.create',
+					params: { team_id: id, name: id.toUpperCase() }
+				})
+			)
+		);
 		const teams = (await make(storage).view('org-1')).snapshot.teams.map((t) => t.id);
 		expect(teams).toEqual(expect.arrayContaining(['a', 'b', 'c']));
 		expect((await org.view('org-1')).snapshot.position.seq).toBe(4);
@@ -91,12 +142,24 @@ describe('the mock office’s command handling, like HQ’s', () => {
 		storage.setItem('agentic-org.mock.org.org-1', '{}');
 		const org = make(storage);
 		expect((await org.view('org-1')).snapshot.teams.length).toBeGreaterThan(0);
-		await expect(org.command('org-1', { method: 'team.create', params: { command_id: cid('CONSTRUCTOR'), team_id: 'z', name: 'Z' } })).resolves.toMatchObject({ status: 'committed' });
+		await expect(
+			org.command('org-1', {
+				method: 'team.create',
+				params: { command_id: cid('CONSTRUCTOR'), team_id: 'z', name: 'Z' }
+			})
+		).resolves.toMatchObject({ status: 'committed' });
 	});
 
 	it('says so when the change can’t be saved', async () => {
-		const full: MockStorage = { getItem: () => null, setItem: () => { throw new Error('quota'); } };
-		await expect(make(full).command('org-1', { method: 'team.create', params: { team_id: 'a', name: 'A' } })).rejects.toMatchObject({ source: 'app', code: 'internal' });
+		const full: MockStorage = {
+			getItem: () => null,
+			setItem: () => {
+				throw new Error('quota');
+			}
+		};
+		await expect(
+			make(full).command('org-1', { method: 'team.create', params: { team_id: 'a', name: 'A' } })
+		).rejects.toMatchObject({ source: 'app', code: 'internal' });
 	});
 });
 
@@ -104,18 +167,26 @@ describe('the browser mock office’s organization view', () => {
 	it('is always sample data, and places agents in the office it was given', async () => {
 		const view = await createMockOrg(async () => 'office-7', { storage: memory() }).view('org-1');
 		expect(view.sample).toBe(true);
-		expect(view.snapshot.members.filter((m) => m.kind === 'agent' && m.office_id === 'office-7').length).toBeGreaterThan(0);
+		expect(
+			view.snapshot.members.filter((m) => m.kind === 'agent' && m.office_id === 'office-7').length
+		).toBeGreaterThan(0);
 	});
 
 	it('shows only the owner when asked for an empty organization', async () => {
-		const view = await createMockOrg(async () => 'o', { empty: () => true, storage: memory() }).view('org-1');
+		const view = await createMockOrg(async () => 'o', {
+			empty: () => true,
+			storage: memory()
+		}).view('org-1');
 		expect(view.snapshot.members.map((m) => m.owner)).toEqual([true]);
 	});
 
 	it('refuses an organization that is not here even when it would show an empty one', async () => {
-		const org = createMockOrg(async () => {
-			throw { source: 'api', code: 'not_found', message: 'gone' };
-		}, { empty: () => true });
+		const org = createMockOrg(
+			async () => {
+				throw { source: 'api', code: 'not_found', message: 'gone' };
+			},
+			{ empty: () => true }
+		);
 		await expect(org.view('nope')).rejects.toMatchObject({ code: 'not_found' });
 	});
 
@@ -137,9 +208,16 @@ describe('the browser mock keeps its history bounded, like the Rust mock HQ', ()
 	it('keeps only the recent answers: the oldest command is judged afresh', async () => {
 		const storage = memory();
 		const org = make(storage);
-		const first = { method: 'team.create', params: { command_id: cid('F0'), team_id: 't0', name: 'T0' } } as const;
+		const first = {
+			method: 'team.create',
+			params: { command_id: cid('F0'), team_id: 't0', name: 'T0' }
+		} as const;
 		await org.command('org-1', first);
-		for (let n = 1; n <= 1000; n++) await org.command('org-1', { method: 'team.create', params: { command_id: cid(`F${n}`), team_id: `t${n}`, name: `T${n}` } });
+		for (let n = 1; n <= 1000; n++)
+			await org.command('org-1', {
+				method: 'team.create',
+				params: { command_id: cid(`F${n}`), team_id: `t${n}`, name: `T${n}` }
+			});
 		await expect(org.command('org-1', first)).rejects.toMatchObject({ code: 'already_exists' });
 		expect(storage.getItem('agentic-org.mock.org.org-1')!.length).toBeLessThan(2_000_000);
 	}, 60_000);
@@ -147,8 +225,18 @@ describe('the browser mock keeps its history bounded, like the Rust mock HQ', ()
 	it('refuses a command too big to be a command, and an unreadable id, without keeping them', async () => {
 		const storage = memory();
 		const org = make(storage);
-		await expect(org.command('org-1', { method: 'team.create', params: { team_id: 'big', name: 'x'.repeat(20_000) } })).rejects.toMatchObject({ code: 'invalid_request' });
-		await expect(org.command('org-1', { method: 'team.create', params: { command_id: '', team_id: 'z', name: 'Z' } })).rejects.toMatchObject({ code: 'invalid_request' });
+		await expect(
+			org.command('org-1', {
+				method: 'team.create',
+				params: { team_id: 'big', name: 'x'.repeat(20_000) }
+			})
+		).rejects.toMatchObject({ code: 'invalid_request' });
+		await expect(
+			org.command('org-1', {
+				method: 'team.create',
+				params: { command_id: '', team_id: 'z', name: 'Z' }
+			})
+		).rejects.toMatchObject({ code: 'invalid_request' });
 		expect(storage.getItem('agentic-org.mock.org.org-1')).toBeNull();
 	});
 
@@ -164,34 +252,78 @@ describe('the browser mock keeps its history bounded, like the Rust mock HQ', ()
 		const storage = memory();
 		const first = make(storage);
 		await first.view('org-1');
-		const saved = { snapshot: (await first.view('org-1')).snapshot, answers: { X: { command: 'x', result: null } } };
+		const saved = {
+			snapshot: (await first.view('org-1')).snapshot,
+			answers: { X: { command: 'x', result: null } }
+		};
 		storage.setItem('agentic-org.mock.org.org-1', JSON.stringify(saved));
-		await expect(make(storage).command('org-1', { method: 'team.create', params: { command_id: cid('X'), team_id: 'n', name: 'N' } })).resolves.toMatchObject({ status: 'committed' });
+		await expect(
+			make(storage).command('org-1', {
+				method: 'team.create',
+				params: { command_id: cid('X'), team_id: 'n', name: 'N' }
+			})
+		).resolves.toMatchObject({ status: 'committed' });
 	});
 });
 
 describe('the browser mock agrees with the Rust mock on the edges', () => {
 	it('counts the size of a command in bytes, so 6000 wide characters are too big', async () => {
 		const org = make();
-		await expect(org.command('org-1', { method: 'team.create', params: { team_id: 'w', name: '名'.repeat(6000) } })).rejects.toMatchObject({ code: 'invalid_request' });
-		await expect(org.command('org-1', { method: 'team.create', params: { team_id: 'a', name: 'a'.repeat(60) } })).resolves.toMatchObject({ status: 'committed' });
+		await expect(
+			org.command('org-1', {
+				method: 'team.create',
+				params: { team_id: 'w', name: '名'.repeat(6000) }
+			})
+		).rejects.toMatchObject({ code: 'invalid_request' });
+		await expect(
+			org.command('org-1', {
+				method: 'team.create',
+				params: { team_id: 'a', name: 'a'.repeat(60) }
+			})
+		).resolves.toMatchObject({ status: 'committed' });
 	});
 
 	it('answers not_found for a missing organization before it judges the request', async () => {
-		const org = createMockOrg(async () => {
-			throw { source: 'api', code: 'not_found', message: 'gone' };
-		}, { storage: memory() });
-		await expect(org.command('missing', { method: 'team.create', params: { command_id: '', team_id: 'a', name: 'A' } })).rejects.toMatchObject({ code: 'not_found' });
+		const org = createMockOrg(
+			async () => {
+				throw { source: 'api', code: 'not_found', message: 'gone' };
+			},
+			{ storage: memory() }
+		);
+		await expect(
+			org.command('missing', {
+				method: 'team.create',
+				params: { command_id: '', team_id: 'a', name: 'A' }
+			})
+		).rejects.toMatchObject({ code: 'not_found' });
 	});
 
 	it('a stored list of answers that is not a list is ignored, and a bad answer is replaced once in the order', async () => {
 		const storage = memory();
 		const first = make(storage);
 		const snapshot = (await first.view('org-1')).snapshot;
-		storage.setItem('agentic-org.mock.org.org-1', JSON.stringify({ snapshot, answers: {}, order: 'x' }));
-		await expect(make(storage).command('org-1', { method: 'team.create', params: { command_id: cid('Q'), team_id: 'q', name: 'Q' } })).resolves.toMatchObject({ status: 'committed' });
-		storage.setItem('agentic-org.mock.org.org-1', JSON.stringify({ snapshot, answers: { [cid('Z')]: { command: 'x', result: null } }, order: [cid('Z')] }));
-		await make(storage).command('org-1', { method: 'team.create', params: { command_id: cid('Z'), team_id: 'z', name: 'Z' } });
+		storage.setItem(
+			'agentic-org.mock.org.org-1',
+			JSON.stringify({ snapshot, answers: {}, order: 'x' })
+		);
+		await expect(
+			make(storage).command('org-1', {
+				method: 'team.create',
+				params: { command_id: cid('Q'), team_id: 'q', name: 'Q' }
+			})
+		).resolves.toMatchObject({ status: 'committed' });
+		storage.setItem(
+			'agentic-org.mock.org.org-1',
+			JSON.stringify({
+				snapshot,
+				answers: { [cid('Z')]: { command: 'x', result: null } },
+				order: [cid('Z')]
+			})
+		);
+		await make(storage).command('org-1', {
+			method: 'team.create',
+			params: { command_id: cid('Z'), team_id: 'z', name: 'Z' }
+		});
 		expect(JSON.parse(storage.getItem('agentic-org.mock.org.org-1')!).order).toEqual([cid('Z')]);
 	});
 });
@@ -199,9 +331,19 @@ describe('the browser mock agrees with the Rust mock on the edges', () => {
 describe('null means not given, as on the wire', () => {
 	it('clears a lead with null instead of throwing, and an owner of null is a top-level team', async () => {
 		const org = make();
-		await org.command('org-1', { method: 'team.set_lead', params: { team_id: 'web', expected_version: 1, lead_member_id: null as unknown as undefined } });
-		expect((await org.view('org-1')).snapshot.teams.find((t) => t.id === 'web')?.lead_member_id).toBeUndefined();
-		await org.command('org-1', { method: 'team.create', params: { team_id: 'top', name: 'Top', owner_team_id: null as unknown as undefined } });
-		expect((await org.view('org-1')).snapshot.teams.find((t) => t.id === 'top')?.owner_team_id).toBeUndefined();
+		await org.command('org-1', {
+			method: 'team.set_lead',
+			params: { team_id: 'web', expected_version: 1, lead_member_id: null as unknown as undefined }
+		});
+		expect(
+			(await org.view('org-1')).snapshot.teams.find((t) => t.id === 'web')?.lead_member_id
+		).toBeUndefined();
+		await org.command('org-1', {
+			method: 'team.create',
+			params: { team_id: 'top', name: 'Top', owner_team_id: null as unknown as undefined }
+		});
+		expect(
+			(await org.view('org-1')).snapshot.teams.find((t) => t.id === 'top')?.owner_team_id
+		).toBeUndefined();
 	});
 });

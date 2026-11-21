@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { copilotApi, copilotFeatures } from '$lib/modules/copilot/api';
+import { chatApi, sender as chatSender } from '$lib/modules/messaging/api';
 import { officeApi, toAppError } from '$lib/office/api';
 import { orgApi } from '$lib/org/api';
 import { sender, workApi } from '$lib/work';
@@ -35,6 +37,28 @@ describe('production APIs before concrete gateway adapters exist', () => {
 			})
 		).rejects.toMatchObject({ code: 'unavailable' });
 		expect(workApi.requests).toBe(false);
+	});
+	it('refuses chat reads and writes without importing sample conversations or mock engines', async () => {
+		await expect(chatApi.snapshot('org')).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
+		await expect(
+			chatSender('org')({ method: 'dm.open', members: ['a', 'b'] })
+		).rejects.toMatchObject({ source: 'api', code: 'unavailable' });
+		const unsubscribe = chatApi.subscribe('org', () => {});
+		expect(() => unsubscribe()).not.toThrow();
+	});
+	it('refuses copilot calls and hides smart features in production without a scripted mock', async () => {
+		expect(copilotApi.sample).toBe(false);
+		await expect(copilotApi.features()).rejects.toMatchObject({
+			source: 'api',
+			code: 'unavailable'
+		});
+		await expect(
+			copilotApi.draft('bug.from_sentence', { sentence: 'broken' })
+		).rejects.toMatchObject({ source: 'api', code: 'unavailable' });
+		expect(await copilotFeatures(copilotApi)).toEqual([]);
 	});
 	it('keeps the missing-adapter error explicit through the existing browser error boundary', async () => {
 		const error = await officeApi.connections().catch(toAppError);
