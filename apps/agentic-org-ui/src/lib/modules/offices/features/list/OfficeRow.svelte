@@ -107,7 +107,11 @@
 				aria-label="{retry.busy ? 'Retrying…' : 'Retry'} reaching {office.name}"
 				aria-disabled={retry.busy}
 				aria-busy={retry.busy}
-				onclick={() => !retry.busy && onretry()}>{retry.busy ? 'Retrying…' : 'Retry'}</Button
+				onclick={(event) => {
+					if (retry.busy) return;
+					event.currentTarget.focus({ preventScroll: true });
+					onretry();
+				}}>{retry.busy ? 'Retrying…' : 'Retry'}</Button
 			>
 		{/if}
 		<ChevronRight

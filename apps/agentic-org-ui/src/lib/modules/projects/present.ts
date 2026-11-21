@@ -194,6 +194,18 @@ export function sortProjects<T extends Pick<ProjectRow, 'name' | 'archived'>>(ro
 	);
 }
 
+/** Project activity entries newest first, like every other activity list; unparseable dates sort last. */
+export function sortActivityNewestFirst<T extends { at: string }>(rows: readonly T[]): T[] {
+	return rows.toSorted((a, b) => {
+		const ta = Date.parse(a.at);
+		const tb = Date.parse(b.at);
+		if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+		if (Number.isNaN(ta)) return 1;
+		if (Number.isNaN(tb)) return -1;
+		return tb - ta;
+	});
+}
+
 // ── Fields (organization-data 06: slugs; 02: integration branches) ──────────────────────────────────────────────
 
 export const NAME_MAX = 80;

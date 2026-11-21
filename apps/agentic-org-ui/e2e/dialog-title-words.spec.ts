@@ -89,10 +89,8 @@ for (const name of [
 	);
 }
 
-// Live office updates must update the same mounted heading, including branch changes.
-// FIXME (release-fixes, 2026-11-19): Teams' Delete dialog works out its blockers when it opens and does not yet follow
-// live changes (offices-and-teams-ux §7.10 "Live updates apply in place"). Re-enable when the teams module does.
-test.fixme(
+// Live office updates must update the same mounted heading, including branch changes (offices-and-teams-ux §7.10).
+test(
 	'BUG-143/144 B: live refusal updates mounted title without stale word spans',
 	{ tag: '@webkit' },
 	async ({ page }) => {

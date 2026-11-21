@@ -1,5 +1,5 @@
-// Pure helpers for Members and access: the lists and the words that say each person's state.
-import type { AccessPerson, AccessState } from './types';
+// Pure helpers for Members and access: the lists, username visibility and the words that say each person's state.
+import type { AccessAdministrator, AccessOverview, AccessPerson, AccessState } from './types';
 
 export interface AccessGroups {
 	signedIn: AccessPerson[];
@@ -41,3 +41,32 @@ export const stateWord: Record<AccessState, string> = {
 
 /** Shown to viewers who may read the lists but not change them (app-shell-ux §0.1: no actions they can't use). */
 export const MANAGERS_ONLY = 'Only the owner or the administrator changes sign-in access.';
+
+type UsernameViewer = Pick<AccessOverview['viewer'], 'memberId' | 'isOwner' | 'isAdministrator'>;
+
+/** Usernames are shown only to the owner, the administrator and the person themself. */
+export function visibleUsername(
+	person: Pick<AccessPerson, 'memberId' | 'username'>,
+	viewer: UsernameViewer
+): string | undefined {
+	if (!person.username) return undefined;
+	return viewer.isOwner ||
+		viewer.isAdministrator ||
+		(!!viewer.memberId && viewer.memberId === person.memberId)
+		? person.username
+		: undefined;
+}
+
+/** The administrator's username is shown only to the owner, the administrator and the person themself. */
+export function visibleAdminUsername(
+	admin: Pick<AccessAdministrator, 'memberId' | 'username' | 'isYou'>,
+	viewer: UsernameViewer
+): string | undefined {
+	if (!admin.username) return undefined;
+	return viewer.isOwner ||
+		viewer.isAdministrator ||
+		admin.isYou ||
+		(!!admin.memberId && !!viewer.memberId && viewer.memberId === admin.memberId)
+		? admin.username
+		: undefined;
+}

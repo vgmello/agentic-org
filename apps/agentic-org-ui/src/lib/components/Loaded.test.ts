@@ -33,3 +33,27 @@ test('uses the route placeholder with both place and area', async () => {
 	expect(body).toContain("Roles isn't built yet");
 	expect(head).toContain('<title>Roles · Organization settings · Agentic Org</title>');
 });
+
+test('renders an office unsupported answer as not available in this version without a Retry button', async () => {
+	const resource = new Resource<unknown>(async () => {
+		throw {
+			source: 'api',
+			code: 'unsupported',
+			message: 'This office release does not serve roles yet.'
+		};
+	});
+	await resource.reload();
+	const { body } = render(Loaded, {
+		props: {
+			resource,
+			label: 'roles',
+			error: "Couldn't load the roles",
+			place: 'Roles',
+			area: 'Organization settings',
+			children: createRawSnippet(() => ({ render: () => '<p>Roles content</p>' }))
+		}
+	});
+	expect(body).toContain('Not available in this version');
+	expect(body).toContain('This office release does not serve roles yet.');
+	expect(body).not.toContain('Retry');
+});

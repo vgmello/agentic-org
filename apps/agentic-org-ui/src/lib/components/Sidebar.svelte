@@ -39,8 +39,27 @@
 	const items = $derived(navItems(navigation));
 	const current = $derived(navFor(page.url.pathname));
 	const responsive = $derived(presentation === 'responsive');
+	let root = $state<HTMLDivElement | null>(null);
+	let observedRail = $state<boolean | undefined>(undefined);
+	$effect(() => {
+		if (!responsive || !root) {
+			observedRail = undefined;
+			return;
+		}
+		const el = root;
+		const measure = () => {
+			const width = el.getBoundingClientRect().width;
+			const rootFont = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+			observedRail = width > 0 && width < 10 * rootFont;
+		};
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		return () => observer.disconnect();
+	});
 	const rail = $derived(
-		responsive && (innerWidth.current ?? 960) >= 640 && (innerWidth.current ?? 960) < 960
+		responsive &&
+			(observedRail ?? ((innerWidth.current ?? 960) >= 640 && (innerWidth.current ?? 960) < 960))
 	);
 	const homeLabel = $derived(`${connection.organization.name} home`);
 
@@ -119,11 +138,14 @@
 </script>
 
 <Tooltip.Provider delayDuration={150}>
-	<div class="flex min-h-0 min-w-0 grow flex-col bg-shade/10 ring-1 ring-line-subtle">
+	<div
+		bind:this={root}
+		class="@container flex min-h-0 min-w-0 grow flex-col bg-shade/10 ring-1 ring-line-subtle"
+	>
 		<!-- Application identity: the logo and organization lead Home. -->
 		<div
 			class="flex h-16 shrink-0 items-center px-4 {responsive
-				? 'max-[960px]:justify-center max-[960px]:px-2'
+				? '@max-[10rem]:justify-center @max-[10rem]:px-2'
 				: ''}"
 		>
 			<Tooltip.Root disabled={!rail || pointerHeld(resolve('/home'))}>
@@ -137,13 +159,13 @@
 							href={resolve('/home')}
 							aria-label={homeLabel}
 							class="flex min-h-11 min-w-0 items-center gap-x-3 rounded-md px-2 hover:bg-surface-raised {focusRing} {responsive
-								? 'max-[960px]:size-12 max-[960px]:justify-center max-[960px]:px-0'
+								? '@max-[10rem]:size-12 @max-[10rem]:justify-center @max-[10rem]:px-0'
 								: ''}"
 						>
 							<Logo class="size-8 shrink-0" />
 							<span
 								class="truncate text-base/7 font-semibold text-fg {responsive
-									? 'max-[960px]:sr-only'
+									? '@max-[10rem]:sr-only'
 									: ''}"
 								title={connection.organization.name}>{connection.organization.name}</span
 							>
@@ -165,7 +187,7 @@
 		<nav
 			bind:this={scroller}
 			aria-label="Main"
-			class="min-h-0 flex-1 overflow-y-auto px-4 py-2 {responsive ? 'max-[960px]:px-2' : ''}"
+			class="min-h-0 flex-1 overflow-y-auto px-4 py-2 {responsive ? '@max-[10rem]:px-2' : ''}"
 		>
 			<ul role="list" class="space-y-1">
 				{#each items as item, index (item.href)}
@@ -193,7 +215,7 @@
 											: tooltipDescription}
 										aria-current={active ? (childCurrent ? 'true' : 'page') : undefined}
 										class="relative {itemClass(active)} {focusRing} {responsive
-											? 'max-[960px]:size-12 max-[960px]:justify-center max-[960px]:gap-x-0'
+											? '@max-[10rem]:size-12 @max-[10rem]:justify-center @max-[10rem]:gap-x-0'
 											: ''} max-[639px]:min-h-11"
 									>
 										<svg
@@ -208,7 +230,7 @@
 										>
 											<path d={icons[item.icon]} stroke-linecap="round" stroke-linejoin="round" />
 										</svg>
-										<span class="min-w-0 wrap-break-word {responsive ? 'max-[960px]:sr-only' : ''}"
+										<span class="min-w-0 wrap-break-word {responsive ? '@max-[10rem]:sr-only' : ''}"
 											>{item.name}</span
 										>
 										{#if item.badge}
@@ -216,7 +238,7 @@
 											<span
 												aria-hidden="true"
 												class="ml-auto shrink-0 rounded-full bg-warning-text px-1.5 text-xs/5 font-semibold text-on-warning-strong {responsive
-													? 'max-[960px]:absolute max-[960px]:top-0.5 max-[960px]:right-0.5 max-[960px]:text-xs/4'
+													? '@max-[10rem]:absolute @max-[10rem]:top-0.5 @max-[10rem]:right-0.5 @max-[10rem]:text-xs/4'
 													: ''}">{item.badge.text}</span
 											>
 										{/if}
@@ -263,7 +285,7 @@
 
 		<div
 			class="shrink-0 space-y-1 border-t border-line-subtle px-4 py-3 {responsive
-				? 'max-[960px]:flex max-[960px]:justify-center max-[960px]:px-2'
+				? '@max-[10rem]:flex @max-[10rem]:justify-center @max-[10rem]:px-2'
 				: ''}"
 		>
 			<ShellAccountMenu {connection} compact={rail} />
@@ -271,7 +293,7 @@
 				href={resolve('/settings/offices')}
 				onclick={(event) => onNavigate?.(event, '/settings/offices')}
 				class="flex min-h-9 items-center gap-x-2 rounded-md px-2 py-1 text-xs/5 text-fg-muted hover:bg-surface-raised hover:text-fg {focusRing} {responsive
-					? 'max-[960px]:hidden'
+					? '@max-[10rem]:hidden'
 					: ''} max-[639px]:min-h-11"
 			>
 				<span

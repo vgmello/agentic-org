@@ -6,6 +6,8 @@
 -->
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
+	import { registerModalBack } from '$lib/platform/shell/modal-back';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
 	import {
@@ -28,7 +30,9 @@
 		cancelLabel = 'Cancel',
 		destructive = false,
 		onconfirm,
-		onCloseAutoFocus
+		onCloseAutoFocus,
+		opener,
+		fallback
 	}: {
 		open: boolean;
 		title: string;
@@ -42,12 +46,32 @@
 		/** Resolve to close; reject to show the reason and stay. */
 		onconfirm: () => Promise<void>;
 		onCloseAutoFocus?: (event: Event) => void;
+		opener?: HTMLElement | null;
+		fallback?: () => HTMLElement | null;
 	} = $props();
 
 	let busy = $state(false);
 	let error = $state<string | undefined>();
 	$effect(() => {
 		if (open) error = undefined;
+	});
+	// Back with a confirmation open closes it only (never navigates) unless an action is in flight (app-shell-ux §6).
+	$effect(() => {
+		if (open)
+			return registerModalBack(() => {
+				if (!busy) open = false;
+			});
+	});
+	beforeNavigate((navigation) => {
+		if (
+			window.navigation ||
+			!open ||
+			navigation.type !== 'popstate' ||
+			(navigation.delta ?? 0) >= 0
+		)
+			return;
+		navigation.cancel();
+		if (!busy) open = false;
 	});
 
 	async function confirm() {
@@ -70,7 +94,12 @@
 	onOpenChange={(next) => !next && busy && (open = true)}
 	onOpenChangeComplete={(next) => !next && (busy = false)}
 >
-	<DialogContent {onCloseAutoFocus} class="max-h-[calc(100dvh-2rem)] overflow-y-auto">
+	<DialogContent
+		{onCloseAutoFocus}
+		{opener}
+		{fallback}
+		class="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+	>
 		<DialogHeader>
 			<DialogTitle text={title} />
 			{#if description}<DialogDescription class="[overflow-wrap:anywhere]"

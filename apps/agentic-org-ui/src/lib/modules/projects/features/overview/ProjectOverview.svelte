@@ -22,7 +22,8 @@
 		keepWords,
 		openBugs,
 		openTasks,
-		projectHref
+		projectHref,
+		sortActivityNewestFirst
 	} from '../../present';
 	import { inlineLink } from '../../components/classes';
 	import { projectFrame } from '../frame/context';
@@ -182,7 +183,7 @@
 					No activity yet.
 				</p>
 			{:else}
-				<ActivityRows rows={rows.slice(0, 5)} />
+				<ActivityRows rows={sortActivityNewestFirst(rows).slice(0, 5)} />
 			{/if}
 		{/snippet}
 	</Loaded>

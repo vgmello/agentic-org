@@ -14,7 +14,7 @@
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import DividedRow from '$lib/components/DividedRow.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import { focusHeading, neighbourFocus } from '$lib/components/focus';
+	import { focusHeading, neighbourFocus, openerFrom, returnFocus } from '$lib/components/focus';
 	import { Resource } from '$lib/components/resource.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
@@ -104,6 +104,7 @@
 	let counts = $state<Counts | undefined>();
 	let organizationOfCounts = '';
 	let retryingCounts = $state(false);
+	let countRetryOpener: HTMLElement | null = null;
 	$effect(() => {
 		const pending = pendingCounts;
 		// The last answer stays only within one organization: a new one starts uncounted (no old agents under Unplaced).
@@ -114,11 +115,26 @@
 		// The last answer stays until the next arrives, so Retry (and its focus) isn't removed while it works.
 		pending.then((r) => {
 			if (pending !== pendingCounts) return;
+			const opener = countRetryOpener;
+			countRetryOpener = null;
 			counts = r;
 			retryingCounts = false;
+			if (!opener) return;
+			if ('error' in r) void returnFocus(opener);
+			else
+				void returnFocus(null, {
+					within: opener,
+					fallback: () => {
+						const heading = document.getElementById('offices-heading');
+						if (heading) heading.tabIndex = -1;
+						return heading;
+					}
+				});
 		});
 	});
-	function retryCounts() {
+	function retryCounts(event: MouseEvent) {
+		countRetryOpener = openerFrom(event);
+		countRetryOpener?.focus({ preventScroll: true });
 		retryingCounts = true;
 		void invalidate('app:offices');
 	}
@@ -308,7 +324,7 @@
 		)} agents run. HQ keeps the records and approves new offices; every other office keeps a copy."
 	>
 		{#snippet actions()}
-			{#if extra.state !== 'unavailable'}
+			{#if extra.state !== 'unavailable' && extra.state !== 'unsupported'}
 				<Button
 					class="max-[639px]:min-h-11"
 					disabled={!overview}
@@ -356,6 +372,10 @@
 			<!-- Production: the web API doesn't serve these flows yet (app-shell-ux §0.1): said, not a dead control. -->
 			<p class="text-xs/5 text-fg-muted" data-testid="offices-unavailable">
 				Adding, approving and removing offices isn't built yet. It's coming in this release.
+			</p>
+		{:else if extra.state === 'unsupported'}
+			<p class="text-xs/5 text-fg-muted" data-testid="resource-unsupported">
+				Not available in this version.{extra.message ? ` ${extra.message}` : ''}
 			</p>
 		{/if}
 
@@ -477,7 +497,7 @@
 					class="aria-disabled:cursor-not-allowed aria-disabled:opacity-60 max-[639px]:min-h-11"
 					aria-disabled={retryingCounts}
 					aria-busy={retryingCounts}
-					onclick={() => !retryingCounts && retryCounts()}
+					onclick={(e) => !retryingCounts && retryCounts(e)}
 					>{retryingCounts ? 'Retrying…' : 'Retry'}</Button
 				>
 			</p>

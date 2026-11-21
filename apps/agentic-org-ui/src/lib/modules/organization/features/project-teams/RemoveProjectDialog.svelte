@@ -17,19 +17,24 @@
 	let {
 		open = $bindable(false),
 		target,
+		opener,
+		fallback,
 		session,
 		ondone
 	}: {
 		open: boolean;
 		target:
 			{ projectId: string; projectName: string; teamName: string; teamId: string } | undefined;
+		opener?: HTMLElement | null;
+		fallback?: () => HTMLElement | null;
 		session: OrgSession;
-		ondone: (result: { message?: string }) => void;
+		ondone: (result: { message?: string }) => void | Promise<void>;
 	} = $props();
 
 	let busy = $state(false);
 	let error = $state<string | undefined>();
 	let shown = $state<typeof target>();
+	let confirmed = false;
 	$effect(() => {
 		// Only opening re-initialises the form: a reload behind the dialog (a stale edit) must keep what was typed.
 		if (open) {
@@ -37,6 +42,7 @@
 				if (!target) return;
 				shown = target;
 				error = undefined;
+				confirmed = false;
 			});
 		}
 	});
@@ -46,11 +52,12 @@
 		busy = true;
 		try {
 			await removeProjectTeam(session, shown.projectId, shown.teamId);
+			confirmed = true;
 			open = false;
-			ondone({ message: `Removed ${shown.projectName} from ${shown.teamName}.` });
+			await ondone({ message: `Removed ${shown.projectName} from ${shown.teamName}.` });
 		} catch (e) {
 			error = toAppError(e).message;
-			ondone({});
+			await ondone({});
 		} finally {
 			busy = false;
 		}
@@ -58,7 +65,14 @@
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && busy && (open = true)}>
-	<DialogContent>
+	<DialogContent
+		{opener}
+		{fallback}
+		onCloseAutoFocus={(e) => {
+			// When confirmed, `ondone` reloads the row and moves focus to Assign team; don't focus the gone chip first.
+			if (confirmed) e.preventDefault();
+		}}
+	>
 		<DialogHeader>
 			<DialogTitle text={`Remove ${shown?.projectName ?? ''} from ${shown?.teamName ?? ''}?`} />
 			<DialogDescription class="[overflow-wrap:anywhere]"
