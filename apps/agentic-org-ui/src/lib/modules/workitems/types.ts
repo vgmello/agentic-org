@@ -72,6 +72,8 @@ export interface ChecklistCount {
 export interface TaskRow {
 	id: string;
 	ref: string;
+	/** The concurrency revision every change names. */
+	revision: number;
 	type: TaskType;
 	title: string;
 	status: TaskStatus;
@@ -306,8 +308,6 @@ export interface TaskPermissions {
 }
 
 export interface TaskDetail extends TaskRow {
-	/** The concurrency revision every change names. */
-	revision: number;
 	description: string;
 	feature: { id: string; ref: string; title: string } | null;
 	milestone: { id: string; name: string } | null;

@@ -72,13 +72,17 @@
 	let blockReason = $state('');
 	let blockError = $state<string | undefined>();
 	let blocking = $state(false);
+	let announceTimer: ReturnType<typeof setTimeout> | undefined;
 
 	function announce(text: string) {
+		clearTimeout(announceTimer);
 		announcement = '';
-		setTimeout(() => {
+		announceTimer = setTimeout(() => {
 			announcement = text;
 		}, 10);
 	}
+
+	$effect(() => () => clearTimeout(announceTimer));
 
 	async function moveRow(row: TaskRow, target: BoardColumn) {
 		if (stale || row.status === target) return;
@@ -91,7 +95,7 @@
 		try {
 			await workItemsApi.setStatus(organizationId, row.id, {
 				status: target,
-				expectedRevision: 0
+				expectedRevision: row.revision
 			});
 			const msg = `Moved ${typedRef(row)} to ${STATUS_WORD[target]}.`;
 			announce(msg);
@@ -116,7 +120,7 @@
 			await workItemsApi.setStatus(organizationId, blockTarget.id, {
 				status: 'blocked',
 				blockedReason: reason,
-				expectedRevision: 0
+				expectedRevision: blockTarget.revision
 			});
 			const msg = `Marked ${typedRef(blockTarget)} as Blocked.`;
 			announce(msg);
@@ -136,7 +140,7 @@
 		try {
 			await workItemsApi.setPriority(organizationId, row.id, {
 				priority,
-				expectedRevision: 0
+				expectedRevision: row.revision
 			});
 			const msg = `Changed ${typedRef(row)} priority to ${PRIORITY_WORD[priority]}.`;
 			announce(msg);

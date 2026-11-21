@@ -34,7 +34,7 @@
 		titleError,
 		when
 	} from '../../present';
-	import type { Choices, TaskDetail, TaskStatus, WhyLink } from '../../types';
+	import type { Choices, CloseAs, TaskDetail, TaskStatus, WhyLink } from '../../types';
 	import WorkIcon from '../../components/WorkIcon.svelte';
 	import StatusBadge from '../../components/StatusBadge.svelte';
 	import BudgetChip from '../../components/BudgetChip.svelte';
@@ -90,6 +90,7 @@
 	// Action modals
 	let statusBusy = $state(false);
 	let closeOpen = $state(false);
+	let closeKind = $state<CloseAs['as']>('done');
 	let reopenOpen = $state(false);
 	let blockOpen = $state(false);
 	let createFixOpen = $state(false);
@@ -135,13 +136,17 @@
 		}
 	}
 
-	async function changeStatus(t: TaskDetail, next: TaskStatus) {
+	async function changeStatus(t: TaskDetail, selectEl: HTMLSelectElement) {
+		const next = selectEl.value as TaskStatus;
 		if (statusBusy || t.stale || next === t.status) return;
 		if (next === 'blocked') {
+			selectEl.value = t.status;
 			blockOpen = true;
 			return;
 		}
 		if (next === 'done' || next === 'cancelled') {
+			selectEl.value = t.status;
+			closeKind = next;
 			closeOpen = true;
 			return;
 		}
@@ -154,6 +159,7 @@
 			toast.success(`Moved ${t.ref} to ${STATUS_WORD[next]}.`);
 			await taskRead.reload();
 		} catch (e) {
+			selectEl.value = t.status;
 			toast.error(toAppError(e).message);
 		} finally {
 			statusBusy = false;
@@ -292,8 +298,7 @@
 									id="{uid}-status-select"
 									value={t.status}
 									disabled={statusBusy}
-									onchange={(e) =>
-										changeStatus(t, (e.currentTarget as HTMLSelectElement).value as TaskStatus)}
+									onchange={(e) => changeStatus(t, e.currentTarget as HTMLSelectElement)}
 									class="w-auto {selectClass}"
 									data-testid="detail-status-select"
 								>
@@ -309,7 +314,10 @@
 									variant="outline"
 									size="sm"
 									class={mobileButton}
-									onclick={() => (closeOpen = true)}>Close as…</Button
+									onclick={() => {
+										closeKind = 'done';
+										closeOpen = true;
+									}}>Close as…</Button
 								>
 							{:else}
 								<Button
@@ -628,6 +636,7 @@
 				{organizationId}
 				task={t}
 				bind:closeOpen
+				initialCloseKind={closeKind}
 				bind:reopenOpen
 				bind:blockOpen
 				onchanged={() => taskRead.reload()}

@@ -26,6 +26,7 @@ function makeRow(overrides: Partial<TaskRow> = {}): TaskRow {
 	return {
 		id: 't-1',
 		ref: 'T-A42',
+		revision: 1,
 		type: 'task',
 		title: 'Split checkout',
 		status: 'todo',

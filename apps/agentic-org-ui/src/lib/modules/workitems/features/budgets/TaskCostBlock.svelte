@@ -242,6 +242,7 @@
 								{taskType}
 								budget={b}
 								{rights}
+								{stale}
 								onraise={() => (setBudgetOpen = true)}
 								onchanged={handleBudgetChanged}
 							/>

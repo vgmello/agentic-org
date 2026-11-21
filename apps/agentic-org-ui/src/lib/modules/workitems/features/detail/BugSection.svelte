@@ -80,6 +80,13 @@
 	let triageError = $state<string | undefined>();
 	let triageConflict = $state<AssignmentConflict | null>(null);
 
+	const missingAssignedTeam = $derived(
+		!!task.assignedTeam && !(choices?.teams ?? []).some((t) => t.id === task.assignedTeam!.id)
+	);
+	const missingAssignee = $derived(
+		!!task.assignee && !(choices?.employees ?? []).some((e) => e.id === task.assignee!.id)
+	);
+
 	async function saveTriage(expectedRevision: number) {
 		if (triageBusy || stale) return;
 		triageBusy = true;
@@ -335,6 +342,11 @@
 					class="mt-1 {selectClass}"
 				>
 					<option value="">No assigned team</option>
+					{#if missingAssignedTeam && task.assignedTeam}
+						<option value={task.assignedTeam.id} disabled>
+							{task.assignedTeam.name} (archived)
+						</option>
+					{/if}
 					{#each choices?.teams ?? [] as t (t.id)}
 						<option value={t.id}>{t.name}</option>
 					{/each}
@@ -352,6 +364,11 @@
 					class="mt-1 {selectClass}"
 				>
 					<option value="">Unassigned individual</option>
+					{#if missingAssignee && task.assignee}
+						<option value={task.assignee.id} disabled>
+							{task.assignee.name} ({task.assignee.kind}{task.assignee.former ? ' · former' : ''})
+						</option>
+					{/if}
 					{#each choices?.employees ?? [] as emp (emp.id)}
 						<option value={emp.id}>{emp.name} ({emp.kind})</option>
 					{/each}

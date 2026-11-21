@@ -308,6 +308,7 @@ function toRow(t: TaskDetail): TaskRow {
 	return {
 		id: t.id,
 		ref: t.ref,
+		revision: t.revision,
 		type: t.type,
 		title: t.title,
 		status: t.status,
@@ -706,6 +707,12 @@ export const workItemsApi: WorkItemsApi = {
 		await writeGate();
 		const entry = findEntry(organizationId, taskId);
 		const t = entry.detail;
+		if (change.expectedRevision !== t.revision) {
+			throw fail(
+				'conflict',
+				'This work item changed while you were updating it. Reload and try again.'
+			);
+		}
 		t.status = change.status;
 		t.statusAt = nowIso();
 		t.blockedReason = change.status === 'blocked' ? (change.blockedReason ?? 'Blocked') : null;
@@ -725,6 +732,12 @@ export const workItemsApi: WorkItemsApi = {
 	async setPriority(organizationId, taskId, change) {
 		await writeGate();
 		const entry = findEntry(organizationId, taskId);
+		if (change.expectedRevision !== entry.detail.revision) {
+			throw fail(
+				'conflict',
+				'This work item changed while you were updating it. Reload and try again.'
+			);
+		}
 		entry.detail.priority = change.priority;
 		pushEvent(entry, 'priority', `changed priority to ${change.priority}`);
 	},

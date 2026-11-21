@@ -46,12 +46,17 @@
 	const doneCount = $derived(steps.filter((s) => s.done).length);
 	const requiredLeft = $derived(steps.filter((s) => s.required && !s.done).length);
 
+	let announceTimer: ReturnType<typeof setTimeout> | undefined;
+
 	function announce(text: string) {
+		clearTimeout(announceTimer);
 		announcement = '';
-		setTimeout(() => {
+		announceTimer = setTimeout(() => {
 			announcement = text;
 		}, 10);
 	}
+
+	$effect(() => () => clearTimeout(announceTimer));
 
 	async function submitLines(lines: string[], keepFocus = false) {
 		addError = stepError(lines);

@@ -101,70 +101,85 @@ test(
 	}
 );
 
-test(
-	'TASK page (/work/T-A40): fields, checklist, shared vs private notes, output, why, unknown activity, assignment conflict',
-	{ tag: '@journey' },
-	async ({ page }) => {
-		await open(page, '/work/T-A40');
-		await expect(page).toHaveTitle('T-A40 Split the checkout service · Work · Agentic Org');
-		await expect(page.getByTestId('immutable-reporter')).toContainText('Avery Stone');
-		await expect(page.getByTestId('repository-evidence')).toContainText('sam/split-checkout');
-		await expect(page.getByTestId('output-section')).toContainText('No outcome recorded.');
-		await expect(page.getByTestId('activity-events')).toContainText('Unknown change');
-		await expect(page.getByTestId('task-time')).toContainText("working time isn't tracked yet");
-		await shot(page, 'work-task-detail');
+test('TASK page (/work/T-A40): fields, checklist, shared vs private notes, output, why, unknown activity, assignment conflict', async ({
+	page
+}) => {
+	await open(page, '/work/T-A40');
+	await expect(page).toHaveTitle('T-A40 Split the checkout service · Work · Agentic Org');
+	await expect(page.getByTestId('immutable-reporter')).toContainText('Avery Stone');
+	await expect(page.getByTestId('repository-evidence')).toContainText('sam/split-checkout');
+	await expect(page.getByTestId('output-section')).toContainText('No outcome recorded.');
+	await expect(page.getByTestId('activity-events')).toContainText('Unknown change');
+	await expect(page.getByTestId('task-time')).toContainText("working time isn't tracked yet");
+	await shot(page, 'work-task-detail');
 
-		// Checklist: add step inline, mark required, reorder (CHK-2/3/4/7).
-		const stepInput = page.getByPlaceholder(/\+ Add step/);
-		await stepInput.fill('Confirm rollback safety');
-		await page.getByRole('button', { name: 'Add step' }).click();
-		await expect(page.getByTestId('checklist-items')).toContainText('Confirm rollback safety');
-		const addedStep = page
-			.getByTestId('checklist-step')
-			.filter({ hasText: 'Confirm rollback safety' });
-		await addedStep.getByRole('button', { name: 'Mark required' }).click();
-		await expect(addedStep.getByTestId('step-required-badge')).toContainText('Required');
+	// Checklist: add step inline, mark required, reorder (CHK-2/3/4/7).
+	const stepInput = page.getByPlaceholder(/\+ Add step/);
+	await stepInput.fill('Confirm rollback safety');
+	await page.getByRole('button', { name: 'Add step' }).click();
+	await expect(page.getByTestId('checklist-items')).toContainText('Confirm rollback safety');
+	const addedStep = page
+		.getByTestId('checklist-step')
+		.filter({ hasText: 'Confirm rollback safety' });
+	await addedStep.getByRole('button', { name: 'Mark required' }).click();
+	await expect(addedStep.getByTestId('step-required-badge')).toContainText('Required');
 
-		// Why block: link a document.
-		await page.getByRole('button', { name: 'Link document…' }).click();
-		await page.getByLabel('Choose document to link').selectOption('doc-adr-31');
-		await page.getByRole('button', { name: 'Link', exact: true }).click();
-		await expect(page.getByTestId('why-section')).toContainText('ADR-0031');
+	// Why block: link a document.
+	await page.getByRole('button', { name: 'Link document…' }).click();
+	await page.getByLabel('Choose document to link').selectOption('doc-adr-31');
+	await page.getByRole('button', { name: 'Link', exact: true }).click();
+	await expect(page.getByTestId('why-section')).toContainText('ADR-0031');
 
-		// Discussion: post shared comment, switch to Private notes, add & publish copy keeping private note.
-		await page.getByLabel('Add a shared comment').fill('Looks good to ship.');
-		await page.getByRole('button', { name: 'Post shared comment' }).click();
-		await expect(page.getByTestId('shared-comments')).toContainText('Looks good to ship.');
+	// Discussion: post shared comment, switch to Private notes, add & publish copy keeping private note.
+	await page.getByLabel('Add a shared comment').fill('Looks good to ship.');
+	await page.getByRole('button', { name: 'Post shared comment' }).click();
+	await expect(page.getByTestId('shared-comments')).toContainText('Looks good to ship.');
 
-		await page.getByRole('tab', { name: 'Private notes' }).click();
-		await expect(page.getByTestId('private-notes-list')).toContainText('Read-only');
-		await page.getByLabel(/Add a private note/).fill('Personal reminder before launch');
-		await page.getByRole('button', { name: 'Save private note' }).click();
-		await expect(page.getByTestId('private-notes-list')).toContainText(
-			'Personal reminder before launch'
-		);
+	await page.getByRole('tab', { name: 'Private notes' }).click();
+	await expect(page.getByTestId('private-notes-list')).toContainText('Read-only');
+	await page.getByLabel(/Add a private note/).fill('Personal reminder before launch');
+	await page.getByRole('button', { name: 'Save private note' }).click();
+	await expect(page.getByTestId('private-notes-list')).toContainText(
+		'Personal reminder before launch'
+	);
 
-		const myNote = page
-			.getByTestId('private-note')
-			.filter({ hasText: 'Personal reminder before launch' });
-		await myNote.getByRole('button', { name: 'Publish as shared comment…' }).click();
-		await page.getByRole('button', { name: 'Publish shared comment' }).click();
-		await expect(page.getByTestId('private-notes-list')).toContainText(
-			'Personal reminder before launch'
-		);
+	const myNote = page
+		.getByTestId('private-note')
+		.filter({ hasText: 'Personal reminder before launch' });
+	// Regression: Cancel on Publish dialog clears target so dialog reopens cleanly.
+	await myNote.getByRole('button', { name: 'Publish as shared comment…' }).click();
+	const publishDialog = page.getByRole('dialog', { name: 'Publish note as a shared comment?' });
+	await expect(publishDialog).toBeVisible();
+	await publishDialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(publishDialog).toBeHidden();
+	await myNote.getByRole('button', { name: 'Publish as shared comment…' }).click();
+	await expect(publishDialog).toBeVisible();
+	await publishDialog.getByRole('button', { name: 'Publish shared comment' }).click();
+	await expect(page.getByTestId('private-notes-list')).toContainText(
+		'Personal reminder before launch'
+	);
 
-		// Assignment pair conflict (?mock=conflict): shows current vs desired and retries cleanly (TRI-6).
-		await visit(page, '/work/T-A40?mock=conflict');
-		await page.getByLabel('Assigned team').selectOption('design');
-		await page.getByLabel('Assignee').selectOption('juno');
-		await page.getByRole('button', { name: 'Save assignment' }).click();
-		await expect(page.getByTestId('assignment-conflict')).toContainText(
-			'Assignment changed by Avery Stone'
-		);
-		await page.getByRole('button', { name: /Retry at rev/ }).click();
-		await expect(page.getByTestId('assignment-conflict')).toHaveCount(0);
-	}
-);
+	// Regression: Status select Cancelled… pre-selects Cancelled and resets select on Cancel.
+	const statusSelect = page.getByTestId('detail-status-select');
+	const initialStatus = await statusSelect.inputValue();
+	await statusSelect.selectOption('cancelled');
+	const cancelCloseDialog = page.getByRole('dialog', { name: 'Close T-A40' });
+	await expect(cancelCloseDialog.getByLabel('Close as')).toHaveValue('cancelled');
+	await cancelCloseDialog.getByRole('button', { name: 'Cancel' }).click();
+	await expect(cancelCloseDialog).toBeHidden();
+	await expect(statusSelect).toHaveValue(initialStatus);
+
+	// Assignment pair conflict (?mock=conflict): shows current vs desired and retries cleanly (TRI-6).
+	await visit(page, '/work/T-A40?mock=conflict');
+	await page.getByLabel('Assigned team').selectOption('design');
+	await page.getByLabel('Assignee').selectOption('juno');
+	await page.getByRole('button', { name: 'Save assignment' }).click();
+	await expect(page.getByTestId('assignment-conflict')).toContainText(
+		'Assignment changed by Avery Stone'
+	);
+	await page.getByRole('button', { name: /Retry at rev/ }).click();
+	await expect(page.getByTestId('assignment-conflict')).toHaveCount(0);
+});
 
 test('BUG page (/work/T-A42): provenance, triage, create fix task, verify still happens, close & reopen', async ({
 	page
@@ -317,26 +332,40 @@ test('BUDGETS: set budget, reached actions (Allow 20% once, agent-PM restriction
 	await expect(page.getByTestId('cost-state-only')).toBeVisible();
 	await expect(page.getByTestId('cost-time-block')).not.toContainText('$');
 
-	// Unknown save outcome -> "Save not confirmed" + Check status (BUD-2).
+	// Unknown save outcome -> "Save not confirmed", Discard attempt unblocks reopening, and Check status resolves (BUD-2).
 	await visit(page, '/work/T-A40?mock=budget-unknown');
 	await page.getByRole('button', { name: 'Change budget…' }).click();
 	const changeDialog = page.getByRole('dialog', { name: 'Change budget · T-A40' });
 	await changeDialog.getByLabel('Limit (USD)').fill('15');
 	await changeDialog.getByRole('button', { name: 'Save budget' }).click();
 	await expect(changeDialog.getByTestId('budget-form-error')).toContainText('Save not confirmed');
+	await expect(changeDialog.getByRole('button', { name: 'Discard attempt' })).toBeVisible();
 	await changeDialog.getByRole('button', { name: 'Check status' }).click();
 	await expect(changeDialog).toBeHidden();
+
+	// Stale copy keeps budget hold notice visible while hiding write actions.
+	await visit(page, '/work/T-A31?mock=stale');
+	await expect(page.getByTestId('budget-hold-label')).toHaveText('Paused · Budget reached');
+	await expect(page.getByTestId('budget-actions-stale')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Raise budget…' })).toHaveCount(0);
 });
 
 test('STATES & LAYOUT: unsupported (no Retry), error, empty, stale, not found, and 320 px / 200% text', async ({
 	page
 }) => {
-	// Unsupported queue -> explicit "Not available in this version" with NO Retry button.
+	// Unsupported queue -> explicit "Not available in this version" with NO Retry button and NO header create buttons.
 	await open(page, '/work?mock=unsupported');
 	await expect(page.getByTestId('resource-unsupported')).toContainText(
 		'Not available in this version'
 	);
 	await expect(page.getByRole('button', { name: 'Retry' })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'New task' })).toHaveCount(0);
+
+	// Show: Mine with no employee record shows banner and matches zero org items (WORK-2).
+	await visit(page, '/work?view=mine&mock=no-employee');
+	await expect(page.getByTestId('no-employee-note')).toBeVisible();
+	await expect(page.getByTestId('work-card')).toHaveCount(0);
+	await expect(page.getByTestId('work-row')).toHaveCount(0);
 
 	// Unsupported private notes & unsupported cost block on /work/T-A40 -> no Retry button.
 	await visit(page, '/work/T-A40?mock=notes-unsupported,cost-unsupported');

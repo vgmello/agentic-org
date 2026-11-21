@@ -33,6 +33,7 @@
 		organizationId,
 		task,
 		closeOpen = $bindable(false),
+		initialCloseKind = 'done',
 		reopenOpen = $bindable(false),
 		blockOpen = $bindable(false),
 		onchanged
@@ -40,6 +41,7 @@
 		organizationId: string;
 		task: TaskDetail;
 		closeOpen: boolean;
+		initialCloseKind?: CloseAs['as'];
 		reopenOpen: boolean;
 		blockOpen: boolean;
 		onchanged: () => void;
@@ -66,7 +68,7 @@
 
 	$effect(() => {
 		if (closeOpen) {
-			closeKind = 'done';
+			closeKind = initialCloseKind;
 			duplicateRef = '';
 			closeReason = '';
 			closeError = undefined;

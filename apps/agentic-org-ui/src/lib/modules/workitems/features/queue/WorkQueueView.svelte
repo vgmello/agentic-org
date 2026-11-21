@@ -25,6 +25,7 @@
 		filterRows,
 		hasActiveFilters,
 		isShowView,
+		mineRows,
 		needsMeRows,
 		readStoredLayout,
 		readStoredTab,
@@ -86,6 +87,7 @@
 	let bugGroupBy = $state<GroupBy>('assigned_team');
 	let requestGroupBy = $state<GroupBy>('status');
 	let filters = $state<QueueFilters>(defaultFilters());
+	let savedExplicit = $state(false);
 	let showOverride = $state<ShowView | null>(null);
 	let tablist = $state<HTMLDivElement | null>(null);
 
@@ -121,6 +123,10 @@
 
 	function setShow(next: ShowView) {
 		showOverride = next;
+		if (next === 'mine') {
+			savedExplicit = false;
+			if (filters.saved !== 'all') filters = { ...filters, saved: 'all' };
+		}
 		const params = new SvelteURLSearchParams(page.url.searchParams);
 		params.set('view', next);
 		void goto(resolve(`${page.url.pathname}?${params.toString()}` as '/'), {
@@ -152,7 +158,22 @@
 
 	function clearFilters() {
 		filters = defaultFilters();
+		savedExplicit = false;
 	}
+
+	function showAllSaved() {
+		savedExplicit = true;
+		filters = { ...filters, saved: 'all' };
+	}
+
+	const hasExplicitOrgFilter = $derived(
+		savedExplicit ||
+			filters.teamId !== '' ||
+			filters.assignedTeamId !== '' ||
+			filters.assigneeId !== '' ||
+			filters.reporterId !== '' ||
+			filters.projectId !== ''
+	);
 
 	const uniqueProjects = $derived.by(() => {
 		const map: Record<string, string> = {};
@@ -200,26 +221,28 @@
 		description="Tasks, bugs and requests across projects and teams."
 	>
 		{#snippet actions()}
-			<Button
-				type="button"
-				variant="outline"
-				class={mobileButton}
-				disabled={!!queueRead.data?.stale}
-				onclick={() => openCapture('request')}>New request</Button
-			>
-			<Button
-				type="button"
-				variant="outline"
-				class={mobileButton}
-				disabled={!!queueRead.data?.stale}
-				onclick={() => openCapture('bug')}>Report bug</Button
-			>
-			<Button
-				type="button"
-				class={mobileButton}
-				disabled={!!queueRead.data?.stale}
-				onclick={() => openCapture('task')}>New task</Button
-			>
+			{#if queueRead.data}
+				<Button
+					type="button"
+					variant="outline"
+					class={mobileButton}
+					disabled={!!queueRead.data.stale}
+					onclick={() => openCapture('request')}>New request</Button
+				>
+				<Button
+					type="button"
+					variant="outline"
+					class={mobileButton}
+					disabled={!!queueRead.data.stale}
+					onclick={() => openCapture('bug')}>Report bug</Button
+				>
+				<Button
+					type="button"
+					class={mobileButton}
+					disabled={!!queueRead.data.stale}
+					onclick={() => openCapture('task')}>New task</Button
+				>
+			{/if}
 		{/snippet}
 	</PageHeader>
 {/if}
@@ -236,10 +259,14 @@
 		{@const isStale = !!q.stale}
 		{@const needsMeItems = needsMeRows(q.rows)}
 		{@const showMode = isOrgScope ? activeShow : 'mine'}
+		{@const tabSelected = !isOrgScope || showMode === 'mine'}
+		{@const activeShowLabel = SHOW_VIEWS.find((v) => v.id === showMode)?.label ?? 'Work'}
+		{@const scopeMine = isOrgScope && showMode === 'mine' && !hasExplicitOrgFilter}
+		{@const baseRows = scopeMine ? mineRows(q.rows, q.viewer) : q.rows}
 		{@const savedCounts = savedFilterCounts(q.rows, q.viewer, activeTab)}
 		{@const typeTotal = q.rows.filter((r) => r.type === activeTab).length}
 		{@const filtered = filterRows(
-			q.rows,
+			baseRows,
 			q.viewer,
 			showMode === 'by_project' || showMode === 'by_assignee' ? 'all' : activeTab,
 			filters
@@ -359,8 +386,9 @@
 			<!-- Main panel -->
 			<div
 				id="{uid}-panel"
-				role="tabpanel"
-				aria-labelledby="{uid}-tab-{activeTab}"
+				role={tabSelected ? 'tabpanel' : 'region'}
+				aria-labelledby={tabSelected ? `${uid}-tab-${activeTab}` : undefined}
+				aria-label={tabSelected ? undefined : activeShowLabel}
 				class="flex min-w-0 flex-col gap-4"
 			>
 				{#if isOrgScope && showMode === 'needs_me'}
@@ -398,14 +426,17 @@
 							data-testid="saved-filters"
 						>
 							{#each SAVED_FILTERS as sf (sf.id)}
-								{@const pressed = filters.saved === sf.id}
+								{@const pressed = !scopeMine && filters.saved === sf.id}
 								{@const label =
 									activeTab === 'request' && sf.requestLabel ? sf.requestLabel : sf.label}
 								<button
 									type="button"
 									aria-pressed={pressed}
 									data-filter={sf.id}
-									onclick={() => (filters = { ...filters, saved: sf.id })}
+									onclick={() => {
+										savedExplicit = true;
+										filters = { ...filters, saved: sf.id };
+									}}
 									class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs/5 font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 {pressed
 										? 'bg-primary text-on-emphasis'
 										: 'bg-surface-raised text-fg-secondary ring-1 ring-line hover:bg-surface-overlay hover:text-fg'}"
@@ -683,13 +714,21 @@
 										class={mobileButton}
 										onclick={clearFilters}>Clear filters</Button
 									>
-								{:else if isOrgScope && showMode === 'mine'}
-									<Button
-										type="button"
-										variant="outline"
-										class={mobileButton}
-										onclick={() => setShow('by_project')}>Show by project</Button
-									>
+								{:else if scopeMine}
+									<div class="flex flex-wrap justify-center gap-2">
+										<Button
+											type="button"
+											variant="outline"
+											class={mobileButton}
+											onclick={showAllSaved}>Show all</Button
+										>
+										<Button
+											type="button"
+											variant="outline"
+											class={mobileButton}
+											onclick={() => setShow('by_project')}>Show by project</Button
+										>
+									</div>
 								{/if}
 							{/snippet}
 						</EmptyState>

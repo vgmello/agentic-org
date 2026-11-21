@@ -11,6 +11,7 @@
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import { newId } from '$lib/modules/organization/commands';
+	import { UNAVAILABLE_MESSAGE } from '$lib/platform/unavailable-api';
 	import { toAppError } from '$lib/proto';
 	import { Button } from '$lib/components/ui/button';
 	import {
@@ -87,9 +88,12 @@
 	let assignedTeamId = $state('');
 	let assigneeId = $state('');
 
+	type ChoicesState = 'loading' | 'ready' | 'unavailable' | 'unsupported' | 'error';
+
 	let choices = $state.raw<Choices | null>(null);
-	let choicesLoading = $state(false);
-	let choicesError = $state<string | undefined>();
+	let choicesState = $state<ChoicesState>('loading');
+	let choicesMessage = $state('');
+	const choicesUnavailable = $derived(choicesState !== 'ready');
 	let similar = $state.raw<TaskRow[]>([]);
 	let similarTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -146,18 +150,39 @@
 		return busy ? 'Creating…' : 'Create task';
 	});
 
+	function classifyChoicesError(e: unknown): {
+		state: 'unavailable' | 'unsupported' | 'error';
+		message: string;
+	} {
+		const failure = toAppError(e);
+		if (
+			failure.source === 'api' &&
+			failure.code === 'unavailable' &&
+			failure.message === UNAVAILABLE_MESSAGE
+		) {
+			return { state: 'unavailable', message: failure.message };
+		}
+		if (failure.source === 'api' && failure.code === 'unsupported') {
+			return { state: 'unsupported', message: failure.message };
+		}
+		return { state: 'error', message: failure.message };
+	}
+
 	async function loadChoices() {
-		choicesLoading = true;
-		choicesError = undefined;
+		choicesState = 'loading';
+		choicesMessage = '';
 		try {
-			choices = await workItemsApi.choices(organizationId);
-			if (projectId && choices.projects.some((p) => p.id === projectId)) {
+			const loaded = await workItemsApi.choices(organizationId);
+			choices = loaded;
+			choicesState = 'ready';
+			if (projectId && loaded.projects.some((p) => p.id === projectId)) {
 				chosenProjectId = projectId;
 			}
 		} catch (e) {
-			choicesError = toAppError(e).message;
-		} finally {
-			choicesLoading = false;
+			const classified = classifyChoicesError(e);
+			choices = null;
+			choicesState = classified.state;
+			choicesMessage = classified.message;
 		}
 	}
 
@@ -238,6 +263,14 @@
 		open = false;
 	}
 
+	function discardAttempt() {
+		if (busy || checking) return;
+		unknownOpId = undefined;
+		formError = undefined;
+		operationId = newId();
+		open = false;
+	}
+
 	async function focusField(field: string) {
 		await tick();
 		if (field === 'title') titleInput?.focus();
@@ -315,7 +348,7 @@
 
 	async function submit(event?: Event) {
 		event?.preventDefault();
-		if (busy || checking || unknownOpId) return;
+		if (busy || checking || unknownOpId || choicesUnavailable) return;
 		fieldErrors = {};
 		formError = undefined;
 
@@ -414,12 +447,39 @@
 			</DialogDescription>
 		</DialogHeader>
 
-		{#if choicesError}
+		{#if choicesState === 'unavailable'}
 			<div
-				class="rounded-md bg-danger-emphasis/10 px-3 py-2.5 text-sm/6 text-danger-text ring-1 ring-danger-emphasis/20"
-				role="alert"
+				class="rounded-md bg-surface-raised px-3 py-2.5 text-sm/6 text-fg-secondary ring-1 ring-line"
+				data-testid="capture-choices-unavailable"
 			>
-				Couldn't load teams and projects: {choicesError}
+				Creating work items isn't served on this server yet.
+			</div>
+		{:else if choicesState === 'unsupported'}
+			<div
+				class="rounded-md bg-surface-raised px-3 py-2.5 text-sm/6 text-fg-secondary ring-1 ring-line"
+				data-testid="capture-choices-unsupported"
+			>
+				<p class="font-medium text-fg">Not available in this version</p>
+				<p class="mt-0.5 text-xs/5 text-fg-muted">
+					{choicesMessage || "This version of the office doesn't support creating work items."}
+				</p>
+			</div>
+		{:else if choicesState === 'error'}
+			<div
+				class="flex flex-col gap-2 rounded-md bg-danger-emphasis/10 px-3 py-2.5 text-sm/6 text-danger-text ring-1 ring-danger-emphasis/20"
+				role="alert"
+				data-testid="capture-choices-error"
+			>
+				<p>Couldn't load teams and projects: {choicesMessage}</p>
+				<div>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						class={mobileButton}
+						onclick={() => loadChoices()}>Retry</Button
+					>
+				</div>
 			</div>
 		{/if}
 
@@ -642,7 +702,7 @@
 					<select
 						id="{uid}-project"
 						bind:value={chosenProjectId}
-						disabled={busy || choicesLoading || !!unknownOpId}
+						disabled={busy || choicesUnavailable || !!unknownOpId}
 						class="mt-1.5 {selectClass}"
 					>
 						<option value="">No project (team work)</option>
@@ -668,7 +728,7 @@
 							id="{uid}-team"
 							bind:this={teamSelect}
 							bind:value={chosenTeamId}
-							disabled={busy || choicesLoading || !!unknownOpId}
+							disabled={busy || choicesUnavailable || !!unknownOpId}
 							aria-invalid={fieldErrors.team ? 'true' : undefined}
 							aria-describedby={fieldErrors.team ? `${uid}-team-err` : undefined}
 							class="mt-1.5 {selectClass}"
@@ -708,7 +768,7 @@
 					<select
 						id="{uid}-assigned-team"
 						bind:value={assignedTeamId}
-						disabled={busy || choicesLoading || !!unknownOpId}
+						disabled={busy || choicesUnavailable || !!unknownOpId}
 						class="mt-1.5 {selectClass}"
 					>
 						<option value="">No assigned team</option>
@@ -723,7 +783,7 @@
 					<select
 						id="{uid}-assignee"
 						bind:value={assigneeId}
-						disabled={busy || choicesLoading || !!unknownOpId}
+						disabled={busy || choicesUnavailable || !!unknownOpId}
 						class="mt-1.5 {selectClass}"
 					>
 						<option value="">Unassigned</option>
@@ -758,6 +818,13 @@
 					onclick={() => handleOpenChange(false)}>Cancel</Button
 				>
 				{#if unknownOpId}
+					<Button
+						type="button"
+						variant="outline"
+						class={mobileButton}
+						disabled={checking}
+						onclick={discardAttempt}>Discard attempt</Button
+					>
 					<Button type="button" class={mobileButton} disabled={checking} onclick={checkCreateStatus}
 						>{checking ? 'Checking…' : 'Check status'}</Button
 					>
@@ -765,7 +832,7 @@
 					<Button
 						type="submit"
 						class={mobileButton}
-						disabled={busy || choicesLoading || !!bugSubmitDisabledReason}
+						disabled={busy || choicesUnavailable || !!bugSubmitDisabledReason}
 						aria-busy={busy}
 					>
 						{submitLabel}

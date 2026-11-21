@@ -58,6 +58,12 @@
 	const assignDirty = $derived(
 		assignedTeamId !== (task.assignedTeam?.id ?? '') || assigneeId !== (task.assignee?.id ?? '')
 	);
+	const missingAssignedTeam = $derived(
+		!!task.assignedTeam && !(choices?.teams ?? []).some((t) => t.id === task.assignedTeam!.id)
+	);
+	const missingAssignee = $derived(
+		!!task.assignee && !(choices?.employees ?? []).some((e) => e.id === task.assignee!.id)
+	);
 
 	async function saveAssignment(expectedRevision: number) {
 		if (assignBusy || stale) return;
@@ -84,7 +90,8 @@
 		}
 	}
 
-	async function changePriority(priority: Priority) {
+	async function changePriority(selectEl: HTMLSelectElement) {
+		const priority = selectEl.value as Priority;
 		if (priorityBusy || stale || priority === task.priority) return;
 		priorityBusy = true;
 		try {
@@ -95,6 +102,7 @@
 			toast.success(`Priority set to ${PRIORITY_WORD[priority]}.`);
 			onchanged();
 		} catch (e) {
+			selectEl.value = task.priority;
 			toast.error(toAppError(e).message);
 		} finally {
 			priorityBusy = false;
@@ -191,8 +199,7 @@
 							id="{uid}-side-priority"
 							value={task.priority}
 							disabled={priorityBusy}
-							onchange={(e) =>
-								changePriority((e.currentTarget as HTMLSelectElement).value as Priority)}
+							onchange={(e) => changePriority(e.currentTarget as HTMLSelectElement)}
 							class="w-auto {selectClass}"
 						>
 							{#each PRIORITIES as p (p)}
@@ -265,6 +272,11 @@
 					class="mt-1 {selectClass}"
 				>
 					<option value="">No assigned team</option>
+					{#if missingAssignedTeam && task.assignedTeam}
+						<option value={task.assignedTeam.id} disabled>
+							{task.assignedTeam.name} (archived)
+						</option>
+					{/if}
 					{#each choices?.teams ?? [] as t (t.id)}
 						<option value={t.id}>{t.name}</option>
 					{/each}
@@ -282,6 +294,11 @@
 					class="mt-1 {selectClass}"
 				>
 					<option value="">Unassigned individual</option>
+					{#if missingAssignee && task.assignee}
+						<option value={task.assignee.id} disabled>
+							{task.assignee.name} ({task.assignee.kind}{task.assignee.former ? ' · former' : ''})
+						</option>
+					{/if}
 					{#each choices?.employees ?? [] as emp (emp.id)}
 						<option value={emp.id}>
 							{emp.name} ({emp.kind}{emp.availability ? ` · ${emp.availability}` : ''})

@@ -30,6 +30,7 @@
 		taskType,
 		budget,
 		rights,
+		stale = false,
 		onraise,
 		onchanged
 	}: {
@@ -39,6 +40,7 @@
 		taskType: TaskType;
 		budget: TaskBudget;
 		rights: BudgetRights;
+		stale?: boolean;
 		onraise: () => void;
 		onchanged: (message: string) => void;
 	} = $props();
@@ -58,7 +60,7 @@
 	);
 
 	async function runAllowOnce() {
-		if (busy || checking) return;
+		if (stale || busy || checking) return;
 		error = undefined;
 		if (!allowCheck.ok) {
 			error = allowCheck.reason;
@@ -88,6 +90,7 @@
 	}
 
 	async function runClear() {
+		if (stale) return;
 		const op = newId();
 		busy = 'clear';
 		error = undefined;
@@ -112,7 +115,7 @@
 
 	async function runStop(event: SubmitEvent) {
 		event.preventDefault();
-		if (busy || checking) return;
+		if (stale || busy || checking) return;
 		const op = newId();
 		busy = 'stop';
 		error = undefined;
@@ -194,62 +197,68 @@
 		</p>
 	{/if}
 
-	<div class="flex flex-wrap gap-2">
-		{#if unknownOp}
-			<Button
-				type="button"
-				size="sm"
-				class={mobileButton}
-				disabled={checking}
-				onclick={checkUnknown}>{checking ? 'Checking…' : 'Check status'}</Button
-			>
-		{:else}
-			{#if rights.raise}
+	{#if stale}
+		<p class="text-xs/5 text-fg-muted" data-testid="budget-actions-stale">
+			Budget actions are paused while viewing an offline copy.
+		</p>
+	{:else}
+		<div class="flex flex-wrap gap-2">
+			{#if unknownOp}
 				<Button
 					type="button"
 					size="sm"
 					class={mobileButton}
-					disabled={busy !== null}
-					onclick={onraise}>Raise budget…</Button
+					disabled={checking}
+					onclick={checkUnknown}>{checking ? 'Checking…' : 'Check status'}</Button
 				>
-				{#if !budget.extended}
+			{:else}
+				{#if rights.raise}
+					<Button
+						type="button"
+						size="sm"
+						class={mobileButton}
+						disabled={busy !== null}
+						onclick={onraise}>Raise budget…</Button
+					>
+					{#if !budget.extended}
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							class={mobileButton}
+							disabled={busy !== null || !allowCheck.ok}
+							title={!allowCheck.ok ? allowCheck.reason : undefined}
+							onclick={runAllowOnce}
+						>
+							{busy === 'allow_once' ? 'Working…' : 'Allow 20% more once'}
+						</Button>
+					{/if}
 					<Button
 						type="button"
 						variant="outline"
 						size="sm"
 						class={mobileButton}
-						disabled={busy !== null || !allowCheck.ok}
-						title={!allowCheck.ok ? allowCheck.reason : undefined}
-						onclick={runAllowOnce}
+						disabled={busy !== null}
+						onclick={() => (clearOpen = true)}
 					>
-						{busy === 'allow_once' ? 'Working…' : 'Allow 20% more once'}
+						{busy === 'clear' ? 'Working…' : 'Clear budget'}
 					</Button>
 				{/if}
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					class={mobileButton}
-					disabled={busy !== null}
-					onclick={() => (clearOpen = true)}
-				>
-					{busy === 'clear' ? 'Working…' : 'Clear budget'}
-				</Button>
+				{#if rights.stop}
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						class={mobileButton}
+						disabled={busy !== null}
+						onclick={() => ((error = undefined), (stopOpen = true))}
+					>
+						{busy === 'stop' ? 'Working…' : 'Stop'}
+					</Button>
+				{/if}
 			{/if}
-			{#if rights.stop}
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					class={mobileButton}
-					disabled={busy !== null}
-					onclick={() => ((error = undefined), (stopOpen = true))}
-				>
-					{busy === 'stop' ? 'Working…' : 'Stop'}
-				</Button>
-			{/if}
-		{/if}
-	</div>
+		</div>
+	{/if}
 </div>
 
 <ConfirmDialog

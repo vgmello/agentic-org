@@ -37,6 +37,7 @@
 		showProject?: boolean;
 	} = $props();
 
+	const uid = $props.id();
 	const sortFn = $derived(tab === 'bug' ? bySeverityThenPriority : byPriorityThenAge);
 	const groups = $derived(groupRows(rows, groupBy, sortFn));
 	const showSeverityCol = $derived(tab === 'bug' || rows.some((r) => r.type === 'bug'));
@@ -44,13 +45,14 @@
 
 <div class="flex flex-col gap-6" data-testid="work-list">
 	{#each groups as group (group.key)}
-		<section aria-labelledby="group-{group.key}" class="flex flex-col gap-2">
+		{@const headingId = `${uid}-group-${group.key || 'none'}`}
+		<section aria-labelledby={headingId} class="flex flex-col gap-2">
 			{#if groupBy !== 'none'}
 				<div
 					class="sticky top-14 z-10 flex flex-wrap items-baseline justify-between gap-2 border-b border-line bg-surface py-2 min-[640px]:top-16"
 					data-testid="work-group-heading"
 				>
-					<h3 id="group-{group.key}" class="text-sm/6 font-semibold text-fg">
+					<h3 id={headingId} class="text-sm/6 font-semibold text-fg">
 						{group.label}
 						<span class="ml-1.5 text-xs/5 font-normal text-fg-muted tabular-nums"
 							>{group.rows.length}</span
@@ -63,7 +65,7 @@
 					{/if}
 				</div>
 			{:else}
-				<h3 id="group-{group.key}" class="sr-only">Work items</h3>
+				<h3 id={headingId} class="sr-only">Work items</h3>
 			{/if}
 
 			<!-- Desktop table (>= 640 px) -->

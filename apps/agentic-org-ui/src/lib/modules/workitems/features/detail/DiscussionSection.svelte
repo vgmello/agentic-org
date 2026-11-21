@@ -403,7 +403,12 @@
 
 <!-- Explicit publish preview (PN-04 / §7.1): private original stays private -->
 <ConfirmDialog
-	open={publishTarget !== null}
+	bind:open={
+		() => publishTarget !== null,
+		(next) => {
+			if (!next) publishTarget = null;
+		}
+	}
 	title="Publish note as a shared comment?"
 	description="This posts a copy to Shared discussion where everyone who can read this work item (including agents) can see it. Your private note stays private."
 	confirmLabel="Publish shared comment"
@@ -422,7 +427,12 @@
 </ConfirmDialog>
 
 <ConfirmDialog
-	open={deleteTarget !== null}
+	bind:open={
+		() => deleteTarget !== null,
+		(next) => {
+			if (!next) deleteTarget = null;
+		}
+	}
 	title="Delete this private note?"
 	description="This removes the note from your private store."
 	confirmLabel="Delete note"

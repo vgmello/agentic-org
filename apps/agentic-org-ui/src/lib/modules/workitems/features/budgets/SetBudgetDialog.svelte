@@ -176,6 +176,14 @@
 		if (busy || checking) return;
 		open = false;
 	}
+
+	function discardAttempt() {
+		if (busy || checking) return;
+		unknownOpId = undefined;
+		formError = undefined;
+		operationId = newId();
+		open = false;
+	}
 </script>
 
 <Dialog bind:open onOpenChange={(next) => !next && (busy || checking) && (open = true)}>
@@ -272,6 +280,13 @@
 					onclick={cancel}>Cancel</Button
 				>
 				{#if unknownOpId}
+					<Button
+						type="button"
+						variant="outline"
+						class={mobileButton}
+						disabled={checking}
+						onclick={discardAttempt}>Discard attempt</Button
+					>
 					<Button type="button" class={mobileButton} disabled={checking} onclick={checkStatus}
 						>{checking ? 'Checking…' : 'Check status'}</Button
 					>

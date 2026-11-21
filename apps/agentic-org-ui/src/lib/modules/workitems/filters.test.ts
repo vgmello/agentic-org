@@ -22,6 +22,7 @@ function row(overrides: Partial<TaskRow> = {}): TaskRow {
 	return {
 		id: 'id-1',
 		ref: 'T-A1',
+		revision: 1,
 		type: 'task',
 		title: 'Work item',
 		status: 'todo',

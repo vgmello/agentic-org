@@ -259,11 +259,6 @@
 					"count": 1
 				},
 				{
-					"spec": "work.spec.ts",
-					"match": "TASK page (/work/T-A40): fields, checklist",
-					"count": 1
-				},
-				{
 					"spec": "tasks.spec.ts",
 					"match": "TSK-5 and TSK-10: New task needs only a title",
 					"count": 1
