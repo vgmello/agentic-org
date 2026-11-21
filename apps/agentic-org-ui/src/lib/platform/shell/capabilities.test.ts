@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { areaCapability } from './capabilities';
 
 describe('production shell capabilities', () => {
-	it('enables session, onboarding, security, and live U1 org/office/project routes', () => {
+	it('enables session, onboarding, security, U1 org/office/project, and B7 home/inbox/chat routes', () => {
 		for (const path of [
 			'/',
 			'/sign-in',
@@ -13,6 +13,9 @@ describe('production shell capabilities', () => {
 			'/security',
 			'/approve',
 			'/cli-approve',
+			'/home',
+			'/inbox',
+			'/chat',
 			'/settings/offices',
 			'/offices',
 			'/settings/access',
@@ -39,9 +42,7 @@ describe('production shell capabilities', () => {
 			'/security/x',
 			'/approve/x',
 			'/cli-approve/x',
-			'/home',
 			'/work',
-			'/chat',
 			'/activity',
 			'/settings',
 			'/settings/costs',

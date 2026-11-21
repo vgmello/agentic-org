@@ -56,7 +56,8 @@ export interface EventStreamClientOptions {
 
 export interface EventStreamOpenRequest {
 	subscriptions: readonly Subscription[];
-	proof: string;
+	proof?: string;
+	authless?: boolean;
 	handlers?: EventStreamHandlers;
 	signal?: AbortSignal;
 }
@@ -348,7 +349,7 @@ function assertPositiveLimit(value: number): void {
 
 function encodeStreamPayload(
 	subscriptions: readonly Subscription[],
-	proof: string,
+	proof: string | undefined,
 	maxRequestBytes: number
 ): string {
 	const validated = readStreamRequest({ subscriptions });
@@ -357,7 +358,7 @@ function encodeStreamPayload(
 	if (validated.subscriptions.some((sub) => sub.feed === 'unknown'))
 		throw new NotDispatchedError('Unsupported event feed');
 	const encoded = JSON.stringify(validated, (key, value: unknown) => {
-		if (key.includes(proof) || (typeof value === 'string' && value.includes(proof)))
+		if (proof && (key.includes(proof) || (typeof value === 'string' && value.includes(proof))))
 			throw new NotDispatchedError('Session proof must be supplied only in the header');
 		return value;
 	});
@@ -367,16 +368,16 @@ function encodeStreamPayload(
 }
 
 function prepareOpenRequest(
-	{ subscriptions, proof, signal }: EventStreamOpenRequest,
+	{ subscriptions, proof, authless, signal }: EventStreamOpenRequest,
 	maxRequestBytes: number
 ): { encoded: string; headers: Headers } {
 	try {
-		assertHeaderProof(proof);
+		if (!authless) assertHeaderProof(proof);
 		const encoded = encodeStreamPayload(subscriptions, proof, maxRequestBytes);
 		const headers = new Headers({
 			Accept: 'text/event-stream',
 			'Content-Type': 'application/json',
-			[SESSION_PROOF_HEADER]: proof
+			...(proof ? { [SESSION_PROOF_HEADER]: proof } : {})
 		});
 		if (signal?.aborted) throw new NotDispatchedError('Request cancelled');
 		return { encoded, headers };

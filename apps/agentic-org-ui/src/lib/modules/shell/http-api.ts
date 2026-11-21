@@ -48,18 +48,35 @@ export function createHttpShellApi({
 		return Array.isArray(result.projects) ? result.projects.filter(isProjectNav) : [];
 	}
 
+	async function readInboxOpenCount(organizationId: string): Promise<number | null> {
+		let reply: GatewayReply;
+		try {
+			reply = await http.read(`/api/v1/organizations/${encodeURIComponent(organizationId)}/inbox`);
+		} catch {
+			return null;
+		}
+		if (reply.status !== 200) return null;
+		const root =
+			reply.body && typeof reply.body === 'object'
+				? (reply.body as { result?: { counts?: { total?: unknown } } })
+				: undefined;
+		const total = root?.result?.counts?.total;
+		return typeof total === 'number' && Number.isFinite(total) ? total : null;
+	}
+
 	return Object.freeze({
 		async navigation(organizationId: string): Promise<ShellNavigation> {
-			const [{ snapshot }, projects] = await Promise.all([
+			const [{ snapshot }, projects, inboxOpen] = await Promise.all([
 				orgApi.view(organizationId),
-				readProjects(organizationId)
+				readProjects(organizationId),
+				readInboxOpenCount(organizationId)
 			]);
 			const teamPlaces: NavPlace[] = snapshot.teams.map((t) => ({ id: t.id, name: t.name }));
 			const projectPlaces: NavPlace[] = projects
 				.filter((p) => !p.archived)
 				.map((p) => ({ id: p.id, name: p.name }));
 			return {
-				inboxOpen: null,
+				inboxOpen,
 				projects: projectPlaces,
 				teams: teamPlaces
 			};

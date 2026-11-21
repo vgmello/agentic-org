@@ -1,3 +1,4 @@
+import type { createEventStreamClient, EventStreamHandlers, Subscription } from '../http/events';
 import type { createAuthlessJsonHttp, createJsonHttp } from '../http/json-http';
 import { readJsonObject, readResponse, readSafeInteger, versionCompatible } from '../http/wire';
 import {
@@ -51,6 +52,7 @@ type Options = {
 	gateway: ControllerGateway;
 	http: ReturnType<typeof createJsonHttp>;
 	authlessHttp?: ReturnType<typeof createAuthlessJsonHttp>;
+	eventStream?: ReturnType<typeof createEventStreamClient>;
 	locks: Pick<LockManager, 'request'>;
 	channel: Pick<BroadcastChannel, 'postMessage' | 'addEventListener' | 'removeEventListener'>;
 	now: () => number;
@@ -79,6 +81,7 @@ export function createSessionController({
 	gateway,
 	http,
 	authlessHttp,
+	eventStream,
 	locks,
 	channel,
 	now,
@@ -624,6 +627,28 @@ export function createSessionController({
 		 */
 		submit: (path: string, body: unknown, signal?: AbortSignal) =>
 			send({ method: 'POST', path, body, signal }),
+		/** Opens a same-origin SSE event stream using the active session proof without exposing it. */
+		subscribeEvents(
+			subscriptions: readonly Subscription[],
+			handlers: EventStreamHandlers
+		): () => void {
+			if (disposed || !eventStream || state.kind !== 'signed-in' || subscriptions.length === 0) {
+				return () => {};
+			}
+			const expected = record;
+			if (!expected && accessState.auth_enabled) return () => {};
+			try {
+				const handle = eventStream.open({
+					subscriptions,
+					...(expected ? { proof: expected.proof } : { authless: true }),
+					handlers
+				});
+				void handle.closed.catch(() => undefined);
+				return () => handle.close();
+			} catch {
+				return () => {};
+			}
+		},
 		dispose() {
 			disposed = true;
 			versionChanged?.();
