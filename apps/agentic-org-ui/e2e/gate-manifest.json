@@ -37,6 +37,10 @@
 			"why": "new spec; not yet run on WebKit (BUG-169b)"
 		},
 		{
+			"spec": "insights.spec.ts",
+			"why": "new Step 7 spec; not yet run on WebKit (BUG-169b)"
+		},
+		{
 			"spec": "updates.spec.ts",
 			"why": "new spec; not yet run on WebKit (BUG-169b)"
 		},
@@ -456,6 +460,7 @@
 				"access.spec.ts",
 				"agent-setup.spec.ts",
 				"costs.spec.ts",
+				"insights.spec.ts",
 				"updates.spec.ts"
 			],
 			"sources": [
@@ -660,6 +665,11 @@
 			"from": "e2e/local-access-and-tls.spec.ts",
 			"to": "src/routes/(shell)/settings/+page.svelte",
 			"why": "The route scanner reads only the first path segment, so /settings/security (which composes the shared InstanceSecurityPanel) is seen as the General settings page; this spec never opens General itself."
+		},
+		{
+			"from": "e2e/insights.spec.ts",
+			"to": "src/routes/(shell)/projects/+page.svelte",
+			"why": "The route scanner reads only the first path segment, so /projects/[id]/insights (covered alongside /insights and /members/[id]/cost in Step 7) is seen as the Projects list page; this spec never opens /projects itself."
 		}
 	],
 	"rules": {

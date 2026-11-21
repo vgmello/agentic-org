@@ -28,6 +28,7 @@ export type TabId =
 	| 'team'
 	| 'activity'
 	| 'conversations'
+	| 'insights'
 	| 'settings'
 	| `process:${string}`;
 
@@ -48,6 +49,7 @@ export interface ServedTabs {
 	features: boolean;
 	releases: boolean;
 	docs: boolean;
+	insights: boolean;
 	settings: boolean;
 }
 
@@ -57,13 +59,14 @@ export const SERVED: ServedTabs = {
 	features: true,
 	releases: true,
 	docs: true,
+	insights: true,
 	settings: true
 };
 
 /**
  * The tab bar (development-processes §4): Overview and Work; the development process's tabs in order; Features and
  * Releases when the project holds them (or has no process) and the process gave no tab for them; then Docs, Team,
- * Activity, Conversations; Settings last. Nothing about tabs is stored on the project.
+ * Activity, Conversations, Insights; Settings last. Nothing about tabs is stored on the project.
  */
 export function projectTabs(
 	project: Pick<ProjectDetail, 'developmentProcess' | 'processTabs' | 'features' | 'releases'>,
@@ -91,6 +94,7 @@ export function projectTabs(
 		{ id: 'activity', label: 'Activity', path: 'activity' },
 		{ id: 'conversations', label: 'Conversations', path: 'conversations' }
 	);
+	if (served.insights) tabs.push({ id: 'insights', label: 'Insights', path: 'insights' });
 	if (served.settings) tabs.push({ id: 'settings', label: 'Settings', path: 'settings' });
 	return tabs;
 }

@@ -280,3 +280,252 @@ export interface RecordsTarget {
 	/** "Atlas", "Sam Okafor", "Build": named in the sheet's title. */
 	label: string;
 }
+
+// ---- Project Insights, Organization Insights, and Member Cost (Step 7; costs-and-insights-ux §1, §3, §4) ----------
+
+/** One bucket in a spend trend series (day, week, or month per §3 "By-period output"). */
+export interface TrendBucket {
+	key: string;
+	/** Short readable axis label: "14 Nov", "W46", "Oct 2026". */
+	label: string;
+	/** RFC 3339 inclusive start. */
+	startsAt: string;
+	/** RFC 3339 exclusive end. */
+	endsAt: string;
+	/** Edge bucket clipped by period start/end or current time. */
+	partial?: boolean;
+	totals: UsageTotals;
+}
+
+/** Actionable insight sentence pointing at an authorized underlying item (decision 7, INS-3). */
+export interface InsightNotice {
+	id: string;
+	kind: 'outlier' | 'waiting' | 'concentration' | 'speed';
+	/** Amber ('owner') is reserved strictly for items waiting on or needing owner attention. */
+	tone: 'owner' | 'neutral';
+	text: string;
+	actionLabel: string;
+	href: string;
+	/** Explicit sample size or coverage limitation. */
+	limitation?: string;
+}
+
+/** Project Insights breakdown dimensions (INS-2). */
+export type ProjectDimension = 'team' | 'consumer' | 'model' | 'task_type' | 'work_type';
+
+/** Filter key identifying one Project Insights breakdown row for drill-down. */
+export type ProjectBreakdownKey =
+	| { dimension: 'team'; teamId: string }
+	| { dimension: 'team'; notOnTask: true }
+	| { dimension: 'consumer'; memberId: string }
+	| { dimension: 'consumer'; oneOff: true }
+	| { dimension: 'model'; provider: string | null; model: string | null }
+	| { dimension: 'task_type'; taskType: string }
+	| { dimension: 'work_type'; workType: 'build' | 'run' | 'not_recorded' }
+	| { all: true };
+
+export interface InsightBreakdownRow {
+	id: string;
+	key: ProjectBreakdownKey;
+	label: string;
+	subtitle?: string;
+	memberId?: string;
+	teamId?: string;
+	archived?: boolean;
+	overhead?: boolean;
+	totals: UsageTotals;
+	/** Completed work items in this row during the period; null when not applicable (e.g., overhead). */
+	itemsDone: number | null;
+	/** Known cost divided by items done; null when unknown or itemsDone === 0. */
+	costPerTaskMicroUsd: number | null;
+	/** Median lead time in seconds; null when unavailable or fewer than 5 items. */
+	medianLeadSeconds: number | null;
+	/** Median cycle time in seconds; null when unavailable or fewer than 5 items. */
+	medianCycleSeconds: number | null;
+	/** Completed sample count behind the medians. */
+	sampleCount: number;
+}
+
+/** Release lifetime cap summary on Project Insights (§1, document 17). Release caps warn only, never hold. */
+export interface ReleaseCapRow {
+	releaseId: string;
+	number: number;
+	title: string;
+	versionLabel?: string;
+	unit: BudgetUnit;
+	/** Cap limit in micro-USD or tokens; undefined when no cap is set. */
+	capLimit?: number;
+	/** Known spend attributed to this release (micro-USD or tokens matching `unit`). */
+	spent: number;
+	complete: boolean;
+	/** RFC 3339 when released (succeeded production deployment). */
+	releasedAt?: string;
+	/** Retained checkpoint spend at release time; never recomputed from today's membership. */
+	spentAtRelease?: number;
+}
+
+/** Speed summary row by work item kind (TIME-2: medians only, working time not tracked yet). */
+export interface SpeedKindRow {
+	kind: string;
+	label: string;
+	sampleCount: number;
+	medianLeadSeconds: number | null;
+	medianCycleSeconds: number | null;
+	medianWaitingSeconds: number | null;
+}
+
+/** Project › Insights payload (costs-and-insights-ux §1, §3, INS-1..5). */
+export interface ProjectInsights {
+	project: { id: string; name: string; number: number; slug: string };
+	period: ResolvedPeriod;
+	previous?: { period: ResolvedPeriod; knownCostMicroUsd: number | null };
+	/** Total cost to date leading the Cost section (decision 6, INS-5). */
+	investment: {
+		toDate: UsageTotals;
+		sinceAt: string | null;
+		tasksDone: number;
+		bugsDone: number;
+	};
+	totals: UsageTotals;
+	work: {
+		tasksDone: number;
+		bugsDone: number;
+		requestsScoped: number;
+		waitingOnYouSeconds: number | null;
+		cancelledCostMicroUsd: number | null;
+		cancelledRecords: number;
+	};
+	trend: TrendBucket[];
+	insights: InsightNotice[];
+	breakdowns: {
+		byTeam: InsightBreakdownRow[];
+		byConsumer: InsightBreakdownRow[];
+		byModel: InsightBreakdownRow[];
+		byTaskType: InsightBreakdownRow[];
+		byWorkType: InsightBreakdownRow[];
+	};
+	releaseCaps: ReleaseCapRow[];
+	speed: SpeedKindRow[];
+	coverage: Coverage;
+	viewer: { scope: 'organization' | 'managed'; canExport: boolean };
+}
+
+/** One project row on Organization Insights › Projects (§1, §3). */
+export interface OrgInsightProjectRow {
+	projectId: string;
+	projectNumber: number;
+	name: string;
+	archived?: boolean;
+	accountableTeam?: string;
+	toDate: UsageTotals;
+	thisMonth: UsageTotals;
+	lastMonth: UsageTotals;
+	periodTotals: UsageTotals;
+	/** Percent change from last month to this month; null when either unknown or last month had no spend. */
+	changePercent: number | null;
+	itemsDone: number;
+	medianLeadSeconds: number | null;
+	sampleCount: number;
+}
+
+/** Organization Insights `/insights` payload (costs-and-insights-ux §1, §3). */
+export interface OrganizationInsights {
+	period: ResolvedPeriod;
+	previous?: { period: ResolvedPeriod; knownCostMicroUsd: number | null };
+	totals: UsageTotals;
+	work: {
+		tasksDone: number;
+		bugsDone: number;
+		requestsScoped: number;
+		waitingOnYouSeconds: number | null;
+		cancelledCostMicroUsd: number | null;
+		cancelledRecords: number;
+	};
+	trend: TrendBucket[];
+	insights: InsightNotice[];
+	projects: OrgInsightProjectRow[];
+	/** Owner-only org-level Not on a task bucket; absent for project managers. */
+	notOnTask?: UsageTotals;
+	coverage: Coverage;
+	viewer: { scope: 'organization' | 'managed'; canExport: boolean };
+}
+
+/** Member profile › Cost breakdown by project (COST-7). */
+export interface MemberProjectSpendRow {
+	id: string;
+	projectId?: string;
+	label: string;
+	archived?: boolean;
+	/** True for a project's own Not on a task bucket, or the org-wide Not on a task bucket (owner only). */
+	notOnTask?: boolean;
+	totals: UsageTotals;
+}
+
+/** Member profile › Cost top tasks by cost (COST-7). */
+export interface MemberTaskSpendRow {
+	taskRef: string;
+	title: string;
+	projectId?: string;
+	projectName?: string;
+	totals: UsageTotals;
+}
+
+export type MemberRecordsFilter =
+	| { kind: 'all' }
+	| { kind: 'period'; period: 'today' | 'this_week' | 'this_month' | 'last_month' }
+	| { kind: 'project'; projectId: string; notOnTask?: boolean }
+	| { kind: 'org_not_on_task' }
+	| { kind: 'task'; taskRef: string };
+
+/** Member profile › Cost tab payload (costs-and-insights-ux §1 Agent profile › Cost, COST-7, §4). */
+export interface MemberCostOverview {
+	memberId: string;
+	/** `organization` for owner; `managed` for a project manager (labelled "in your projects"). */
+	scope: 'organization' | 'managed';
+	timeZone: string;
+	periods: {
+		today: UsageTotals;
+		thisWeek: UsageTotals;
+		thisMonth: UsageTotals;
+		lastMonth: UsageTotals;
+	};
+	byProject: MemberProjectSpendRow[];
+	topTasks: MemberTaskSpendRow[];
+	/** Owner only: daily and monthly calendar budgets in the budget zone. Omitted for project managers (COST-7). */
+	budgets?: {
+		zone: { name: string | null; source: 'owner_account' | 'hq' };
+		daily?: BudgetPeriodState;
+		monthly?: BudgetPeriodState;
+		canManage: boolean;
+		/** Neutral note after a hold releases on period reset; never promises execution resumed. */
+		resetNote?: string;
+	};
+	coverage: Coverage;
+}
+
+/** Set or raise an agent's daily or monthly calendar budget (owner only, §4). */
+export interface AgentBudgetDraft {
+	periodKind: 'daily' | 'monthly';
+	unit: BudgetUnit;
+	/** Positive integer micro-USD or tokens matching `unit`. */
+	limit: number;
+	operationId: string;
+}
+
+/** Clear, extend once (+20%), or keep paused on a reached agent calendar budget (owner only, §4). */
+export interface AgentBudgetAction {
+	periodKind: 'daily' | 'monthly';
+	action: 'clear' | 'allow_once' | 'keep_paused';
+	reason?: string;
+	operationId: string;
+}
+
+export type AgentBudgetOperationOutcome =
+	{ state: 'applied' } | { state: 'not_applied'; reason: string } | { state: 'pending' };
+
+/** Export payload returned for CSV generation, obeying the same viewer scope as the screen. */
+export interface UsageExportResult {
+	period: ResolvedPeriod;
+	records: UsageRecord[];
+	coverage: Coverage;
+}

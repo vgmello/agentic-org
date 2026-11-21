@@ -93,3 +93,43 @@ export function formatCount(n: number | null): string {
 export function formatBudgetAmount(unit: 'usd' | 'tokens', amount: number): string {
 	return unit === 'usd' ? formatUsd(amount) : `${formatTokens(amount)} tokens`;
 }
+
+/** Editable plain string for an existing budget limit ("20.00" or "25000000"). */
+export function budgetInputValue(unit: 'usd' | 'tokens', amount: number): string {
+	if (unit === 'tokens') return String(Math.max(0, Math.trunc(amount)));
+	return rateInput(amount);
+}
+
+/** Parses a positive USD budget limit to exact integer micro-USD (no floats, rejects <= 0). */
+export function parseBudgetUsd(
+	input: string
+): { ok: true; value: number } | { ok: false; error: string } {
+	const parsed = parseRate(input);
+	if (!parsed.ok) {
+		if (parsed.error.includes('provider charges')) {
+			return { ok: false, error: 'That budget amount is too large. Check the amount.' };
+		}
+		return parsed;
+	}
+	if (parsed.value === null) return { ok: false, error: 'Enter a budget amount.' };
+	if (parsed.value <= 0) return { ok: false, error: 'Enter an amount greater than zero.' };
+	return { ok: true, value: parsed.value };
+}
+
+/** Parses a positive whole-number token budget limit. */
+export function parseBudgetTokens(
+	input: string
+): { ok: true; value: number } | { ok: false; error: string } {
+	const text = input.trim().replaceAll(',', '').replaceAll(' ', '');
+	if (!text) return { ok: false, error: 'Enter a token limit.' };
+	if (!/^\d+$/.test(text)) return { ok: false, error: 'Enter a whole number of tokens.' };
+	const value = Number(text);
+	if (!Number.isSafeInteger(value) || value <= 0)
+		return { ok: false, error: 'Enter a whole number greater than zero.' };
+	return { ok: true, value };
+}
+
+/** Document 17 one-time 20% extension: L + floor(L / 5). */
+export function extendedBudgetLimit(baseLimit: number): number {
+	return baseLimit + Math.floor(baseLimit / 5);
+}
