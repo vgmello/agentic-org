@@ -1,3 +1,4 @@
+import { formatUuidV7 } from '$lib/platform/http/clock';
 import {
 	asApiErrorCode,
 	gatewayStatusCode,
@@ -24,6 +25,8 @@ const msToIso = (v: unknown): string | undefined => {
 	const n = asNum(v);
 	return n !== undefined ? new Date(n).toISOString() : undefined;
 };
+const defaultNewId = () =>
+	formatUuidV7(Date.now(), globalThis.crypto.getRandomValues(new Uint8Array(10)));
 
 /** Extracts `<msg_id>` from a wire inbox reference (`<office_id>:msg:<msg_id>`). */
 export function extractMessageId(reference: string): string | undefined {
@@ -64,22 +67,10 @@ function mapRef(raw: unknown): { id: string; name: string } | undefined {
 	return id ? { id, name: asStr(r?.name) ?? id } : undefined;
 }
 
-function mapActions(raw: unknown, dismissable: boolean, state: 'open' | 'handled'): InboxAction[] {
-	if (state === 'handled') return [];
-	const out: InboxAction[] = [];
-	const entries = Array.isArray(raw) ? raw : [];
-	for (const item of entries) {
-		const word = item === 'reject' ? 'deny' : asStr(item);
-		if (word && ACTIONS.has(word) && !out.includes(word as InboxAction)) {
-			out.push(word as InboxAction);
-		}
-	}
-	if (dismissable && !out.includes('dismiss')) out.push('dismiss');
-	return out;
-}
-
 function mapChoices(raw: unknown): { id: string; label: string }[] | undefined {
 	if (!Array.isArray(raw)) return undefined;
+	// Only emit choices when wire options carry explicit `{ id, label }` pairs; bare label strings
+	// must never be sent as `option_id` to `/chat/answer`.
 	const list = raw
 		.map((entry) => {
 			const r = asRec(entry);
@@ -91,8 +82,125 @@ function mapChoices(raw: unknown): { id: string; label: string }[] | undefined {
 	return list.length ? list : undefined;
 }
 
+function hasRawStringOptions(raw: unknown): boolean {
+	return Array.isArray(raw) && raw.some((entry) => typeof entry === 'string' && entry.length > 0);
+}
+
+function decodeOpenTarget(
+	target: string | undefined,
+	id: string | undefined,
+	label: string
+): InboxItem['open'] {
+	if (!id) return undefined;
+	if (target === 'message' || target === 'ask' || target === 'chat') {
+		return { path: `/chat?m=${encodeURIComponent(id)}`, label };
+	}
+	if (target === 'conversation') {
+		return { path: `/chat?c=${encodeURIComponent(id)}`, label };
+	}
+	return undefined;
+}
+
+function extractOpenFromActions(raw: unknown, reference: string): InboxItem['open'] {
+	if (Array.isArray(raw)) {
+		for (const entry of raw) {
+			const r = asRec(entry);
+			if (asStr(r?.type) !== 'open') continue;
+			const open = asRec(r?.open);
+			const mapped = decodeOpenTarget(
+				asStr(open?.target),
+				asStr(open?.id),
+				asStr(r?.label) || 'Open in Chat'
+			);
+			if (mapped) return mapped;
+		}
+	}
+	const msgId = extractMessageId(reference);
+	return msgId
+		? { path: `/chat?m=${encodeURIComponent(msgId)}`, label: 'Open in Chat' }
+		: undefined;
+}
+
+function deriveCallAction(
+	action: Rec,
+	source: string | undefined,
+	kind: InboxKind,
+	hasChoiceIds: boolean,
+	hasBareOptions: boolean
+): InboxAction | undefined {
+	const op = asStr(action.op);
+	const params = asRec(action.params);
+	if (op === 'msg.done' || op === 'chat.done') return 'dismiss';
+	if (op === 'msg.reply' || op === 'chat.reply') return 'reply';
+	if (op === 'msg.answer' || op === 'chat.answer') {
+		const optId = asStr(params?.option_id);
+		if (optId === 'approve') return 'approve';
+		if (optId === 'reject' || optId === 'deny') return 'deny';
+		if (kind === 'approval' || source === 'approval') return 'approve';
+		if (hasChoiceIds) return 'choose';
+		return hasBareOptions ? undefined : 'reply';
+	}
+	return undefined;
+}
+
+function deriveFallbackActions(
+	source: string | undefined,
+	kind: InboxKind,
+	hasChoiceIds: boolean,
+	hasBareOptions: boolean
+): InboxAction[] {
+	if (source === 'approval' || kind === 'approval') return ['approve', 'deny'];
+	if (source === 'mailbox') return ['reply'];
+	if (source === 'ask' || kind === 'question' || kind === 'decision') {
+		if (hasChoiceIds) return ['choose'];
+		return hasBareOptions ? [] : ['reply'];
+	}
+	return [];
+}
+
+function addUnique(list: InboxAction[], action: InboxAction | undefined) {
+	if (action && !list.includes(action)) list.push(action);
+}
+
+function mapActions(params: {
+	raw: unknown;
+	source: string | undefined;
+	kind: InboxKind;
+	hasChoiceIds: boolean;
+	hasBareOptions: boolean;
+	dismissable: boolean;
+	state: 'open' | 'handled';
+}): InboxAction[] {
+	const { raw, source, kind, hasChoiceIds, hasBareOptions, dismissable, state } = params;
+	if (state === 'handled') return [];
+	const out: InboxAction[] = [];
+	const entries = Array.isArray(raw) ? raw : [];
+	for (const item of entries) {
+		if (typeof item === 'string') {
+			const word = item === 'reject' ? 'deny' : item;
+			if (ACTIONS.has(word)) addUnique(out, word as InboxAction);
+			continue;
+		}
+		const rec = asRec(item);
+		if (asStr(rec?.type) === 'call') {
+			addUnique(out, deriveCallAction(rec!, source, kind, hasChoiceIds, hasBareOptions));
+		}
+	}
+	if (out.length === 0) {
+		for (const action of deriveFallbackActions(source, kind, hasChoiceIds, hasBareOptions)) {
+			addUnique(out, action);
+		}
+	}
+	if (kind === 'approval' && out.includes('approve')) addUnique(out, 'deny');
+	if (dismissable) addUnique(out, 'dismiss');
+	return out;
+}
+
 function sourceLabel(source: string | undefined, kind: InboxKind): string {
 	if (!source) return kind === 'approval' ? 'Approval' : 'Chat ask';
+	if (source === 'approval') return 'Chat approval';
+	if (source === 'ask') return 'Chat ask';
+	if (source === 'mailbox') return 'Chat message';
 	if (source === 'chat' || source === 'messaging') {
 		return kind === 'approval' ? 'Chat approval' : 'Chat ask';
 	}
@@ -107,47 +215,60 @@ function mapHandled(r: Rec, state: 'open' | 'handled', fallbackIso: string): Inb
 	};
 }
 
-function openLinkFor(reference: string): InboxItem['open'] {
-	const msgId = extractMessageId(reference);
-	return msgId
-		? { path: `/chat?m=${encodeURIComponent(msgId)}`, label: 'Open in Chat' }
-		: undefined;
-}
-
-function mapWireInboxItem(raw: unknown, fallbackIso: string): InboxItem | undefined {
+function mapWireInboxItem(
+	raw: unknown,
+	fallbackIso: string
+): { item: InboxItem; rawSource?: string } | undefined {
 	const r = asRec(raw);
-	const reference = asStr(r?.reference);
+	const reference = asStr(r?.ref) ?? asStr(r?.reference);
 	const summary = asStr(r?.summary);
 	if (!r || !reference || !summary) return undefined;
 	const rawKind = asStr(r.kind) ?? 'question';
 	const kind: InboxKind = KINDS.has(rawKind) ? (rawKind as InboxKind) : 'question';
 	const state: 'open' | 'handled' = r.state === 'handled' ? 'handled' : 'open';
-	return {
-		id: reference,
+	const rawSource = asStr(r.source);
+	const choices = mapChoices(r.options);
+	const actions = mapActions({
+		raw: r.actions,
+		source: rawSource,
 		kind,
-		source: sourceLabel(asStr(r.source), kind),
-		title: summary,
-		who: mapPerson(r.member),
-		...optField('team', mapRef(r.team)),
-		...optField('project', mapRef(r.project)),
-		why: asStr(r.context) ?? summary,
-		...optField('recommendation', asStr(r.recommendation) || undefined),
-		created_at: msToIso(r.created_at_ms) ?? fallbackIso,
-		...optField('expires_at', msToIso(r.expires_at_ms)),
-		actions: mapActions(r.actions, r.dismissable === true, state),
-		...optField('choices', mapChoices(r.options)),
-		...optField('open', openLinkFor(reference)),
-		state,
-		...optField('handled', mapHandled(r, state, fallbackIso))
+		hasChoiceIds: !!choices?.length,
+		hasBareOptions: hasRawStringOptions(r.options),
+		dismissable: r.dismissable === true,
+		state
+	});
+	return {
+		rawSource,
+		item: {
+			id: reference,
+			kind,
+			source: sourceLabel(rawSource, kind),
+			title: summary,
+			who: mapPerson(r.member),
+			...optField('team', mapRef(r.team)),
+			...optField('project', mapRef(r.project)),
+			why: asStr(r.context) ?? summary,
+			...optField('recommendation', asStr(r.recommendation) || undefined),
+			created_at: msToIso(r.created_at_ms) ?? fallbackIso,
+			...optField('expires_at', msToIso(r.expires_at_ms)),
+			actions,
+			...optField('choices', choices),
+			...optField('open', extractOpenFromActions(r.actions, reference)),
+			state,
+			...optField('handled', mapHandled(r, state, fallbackIso))
+		}
 	};
 }
 
-function requestAction(
-	base: string,
-	msgId: string,
-	request: InboxRequest,
-	choices?: { id: string; label: string }[]
-): { path: string; body: unknown; outcome: string } {
+function requestAction(params: {
+	base: string;
+	msgId: string;
+	request: InboxRequest;
+	rawSource?: string;
+	choices?: { id: string; label: string }[];
+	newId: () => string;
+}): { path: string; body: unknown; outcome: string } {
+	const { base, msgId, request, rawSource, choices, newId } = params;
 	switch (request.type) {
 		case 'approve':
 			return {
@@ -170,6 +291,13 @@ function requestAction(
 			};
 		}
 		case 'reply':
+			if (rawSource === 'mailbox') {
+				return {
+					path: `${base}/chat/reply`,
+					body: { id: newId(), to_id: msgId, body: request.text },
+					outcome: 'Replied'
+				};
+			}
 			return {
 				path: `${base}/chat/answer`,
 				body: { ask_id: msgId, text: request.text },
@@ -188,18 +316,20 @@ export interface HttpInboxApiOptions {
 	http: GatewayHttpTransport;
 	subscribe?: (organizationId: string, onChange: () => void) => () => void;
 	now?: () => string;
+	newId?: () => string;
 }
 
 /**
- * Production HTTP adapter for the unified Inbox (`/api/v1/organizations/{org}/inbox` + chat answer/done).
+ * Production HTTP adapter for the unified Inbox (`/api/v1/organizations/{org}/inbox` + chat answer/reply/done).
  * Fails closed on gateway errors and never falls back to browser mocks.
  */
 export function createHttpInboxApi({
 	http,
 	subscribe,
-	now = () => new Date().toISOString()
+	now = () => new Date().toISOString(),
+	newId = defaultNewId
 }: HttpInboxApiOptions): InboxApi {
-	const cachedItems = new Map<string, Map<string, InboxItem>>();
+	const cachedItems = new Map<string, Map<string, { item: InboxItem; rawSource?: string }>>();
 	const localListeners = new Map<string, Set<() => void>>();
 
 	function notify(orgId: string) {
@@ -223,11 +353,11 @@ export function createHttpInboxApi({
 			const result = unwrapInboxReply(reply, 'The Inbox could not be loaded.');
 			const asOf = asStr(result.as_of) ?? now();
 			const rawItems = Array.isArray(result.items) ? result.items : [];
-			const items = rawItems
+			const mapped = rawItems
 				.map((entry) => mapWireInboxItem(entry, asOf))
-				.filter((item): item is InboxItem => item !== undefined);
-			cachedItems.set(organizationId, new Map(items.map((item) => [item.id, item])));
-			return items;
+				.filter((x): x is { item: InboxItem; rawSource?: string } => x !== undefined);
+			cachedItems.set(organizationId, new Map(mapped.map((m) => [m.item.id, m])));
+			return mapped.map((m) => m.item);
 		},
 
 		async act(organizationId: string, itemId: string, request: InboxRequest): Promise<InboxItem> {
@@ -240,8 +370,15 @@ export function createHttpInboxApi({
 				} satisfies AppError;
 			}
 			const base = `/api/v1/organizations/${encodeURIComponent(organizationId)}`;
-			const existing = cachedItems.get(organizationId)?.get(itemId);
-			const action = requestAction(base, msgId, request, existing?.choices);
+			const cached = cachedItems.get(organizationId)?.get(itemId);
+			const action = requestAction({
+				base,
+				msgId,
+				request,
+				rawSource: cached?.rawSource,
+				choices: cached?.item.choices,
+				newId
+			});
 			let reply: GatewayReply;
 			try {
 				reply = await http.submit(action.path, action.body);
@@ -254,9 +391,9 @@ export function createHttpInboxApi({
 			}
 			unwrapInboxReply(reply, 'The Inbox action was refused.');
 
-			const updated: InboxItem = existing
+			const updated: InboxItem = cached
 				? {
-						...existing,
+						...cached.item,
 						state: 'handled',
 						actions: [],
 						handled: { outcome: action.outcome, by: 'you', at: now() }
@@ -273,7 +410,7 @@ export function createHttpInboxApi({
 						state: 'handled',
 						handled: { outcome: action.outcome, by: 'you', at: now() }
 					};
-			cachedItems.get(organizationId)?.set(itemId, updated);
+			cachedItems.get(organizationId)?.set(itemId, { item: updated, rawSource: cached?.rawSource });
 			notify(organizationId);
 			return updated;
 		},

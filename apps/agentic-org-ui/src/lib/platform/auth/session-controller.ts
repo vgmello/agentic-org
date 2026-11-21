@@ -1,4 +1,5 @@
 import type { createEventStreamClient, EventStreamHandlers, Subscription } from '../http/events';
+import { createEventStreamManager } from './event-stream-manager';
 import type { createAuthlessJsonHttp, createJsonHttp } from '../http/json-http';
 import { readJsonObject, readResponse, readSafeInteger, versionCompatible } from '../http/wire';
 import {
@@ -132,6 +133,7 @@ export function createSessionController({
 	};
 	const recovering = (token: number, attempt: number) => active(token) && recovery === attempt;
 	const ended = (reason: 'ended' | 'signed-out' | 'changed-account', login?: string) => {
+		streams.closeAll();
 		generation++;
 		recovery++;
 		record = undefined;
@@ -140,6 +142,27 @@ export function createSessionController({
 	const reauth = (reason: 'session_ended' | 'unknown' = 'session_ended') => {
 		if (state.kind === 'signed-in') publish({ ...state, reauth: reason });
 	};
+	const streams = createEventStreamManager(eventStream, {
+		isSignedIn: () => state.kind === 'signed-in',
+		isDisposed: () => disposed,
+		authEnabled: () => accessState.auth_enabled,
+		currentRecord: () => record,
+		async recoverRotatedProof(expected, sessionReason) {
+			const token = generation;
+			const stored = await store.read();
+			if (!active(token)) return undefined;
+			if (!stored || !sameAccount(expected, stored)) {
+				ended(stored ? 'changed-account' : 'ended', stored?.login);
+				return undefined;
+			}
+			if (stored.proof !== expected.proof) {
+				record = stored;
+				return stored.proof;
+			}
+			reauth(sessionReason);
+			return undefined;
+		}
+	});
 	const viewOf = ({ proof: _proof, ...view }: EstablishedSession): SessionView => view;
 	function accept(session: EstablishedSession) {
 		return readSessionRecord({
@@ -614,6 +637,7 @@ export function createSessionController({
 					refusal = error;
 				}
 				await store.clear();
+				streams.closeAll();
 				if (authoritative(version)) ended('signed-out');
 				notify({ kind: 'signed-out' });
 				if (refusal) throw refusal;
@@ -628,29 +652,11 @@ export function createSessionController({
 		submit: (path: string, body: unknown, signal?: AbortSignal) =>
 			send({ method: 'POST', path, body, signal }),
 		/** Opens a same-origin SSE event stream using the active session proof without exposing it. */
-		subscribeEvents(
-			subscriptions: readonly Subscription[],
-			handlers: EventStreamHandlers
-		): () => void {
-			if (disposed || !eventStream || state.kind !== 'signed-in' || subscriptions.length === 0) {
-				return () => {};
-			}
-			const expected = record;
-			if (!expected && accessState.auth_enabled) return () => {};
-			try {
-				const handle = eventStream.open({
-					subscriptions,
-					...(expected ? { proof: expected.proof } : { authless: true }),
-					handlers
-				});
-				void handle.closed.catch(() => undefined);
-				return () => handle.close();
-			} catch {
-				return () => {};
-			}
-		},
+		subscribeEvents: (subscriptions: readonly Subscription[], handlers: EventStreamHandlers) =>
+			streams.subscribe(subscriptions, handlers),
 		dispose() {
 			disposed = true;
+			streams.closeAll();
 			versionChanged?.();
 			generation++;
 			recovery++;

@@ -28,8 +28,8 @@ import {
 	type QuestionType,
 	type Reaction,
 	type Withdrawal
-} from '$lib/modules/messaging/types';
-import type { ChatApi } from '$lib/modules/messaging/api';
+} from './types';
+import type { ChatApi } from './api';
 
 type Rec = Record<string, unknown>;
 type DirectoryEntry = NonNullable<ChatSnapshot['directory']>[number];
@@ -126,7 +126,7 @@ function normalizeQuestion(raw: unknown): AskQuestion | undefined {
 	const prompt = asStr(r?.prompt);
 	const rawType = asStr(r?.question_type);
 	if (!id || !prompt || !rawType || !QUESTION_TYPES.has(rawType)) return undefined;
-	const def = asStr(r?.default_option) ?? asStr(r?.default_value);
+	const def = asStr(r?.default_option) || asStr(r?.default_value) || undefined;
 	return {
 		id,
 		question_type: rawType as QuestionType,
@@ -213,17 +213,61 @@ function normalizeReactions(raw: unknown): Partial<Record<Reaction, string[]>> |
 	return Object.keys(out).length ? out : undefined;
 }
 
-function normalizeAutoChannel(raw: unknown): AutoChannel | undefined {
-	const r = asRec(raw);
-	if (!r) return undefined;
-	if (r.type === 'general') return { type: 'general' };
-	if (r.type === 'project' && typeof r.project_id === 'string') {
-		return { type: 'project', project_id: r.project_id };
+function normalizeAutoScope(r: Rec): AutoChannel | undefined {
+	const scope = asStr(r.auto_scope);
+	if (scope === 'organization') return { type: 'general' };
+	if (scope === 'team') {
+		const teamId = asStr(r.team_id);
+		return teamId ? { type: 'team', team_id: teamId } : undefined;
 	}
-	if (r.type === 'team' && typeof r.team_id === 'string') {
-		return { type: 'team', team_id: r.team_id };
+	if (scope === 'project') {
+		const projectId = asStr(r.project_id);
+		return projectId ? { type: 'project', project_id: projectId } : undefined;
 	}
 	return undefined;
+}
+
+function normalizeAutoChannel(r: Rec): AutoChannel | undefined {
+	const flat = normalizeAutoScope(r);
+	if (flat) return flat;
+	const auto = asRec(r.auto);
+	if (!auto) return undefined;
+	if (auto.type === 'general') return { type: 'general' };
+	if (auto.type === 'project' && typeof auto.project_id === 'string') {
+		return { type: 'project', project_id: auto.project_id };
+	}
+	if (auto.type === 'team' && typeof auto.team_id === 'string') {
+		return { type: 'team', team_id: auto.team_id };
+	}
+	return undefined;
+}
+
+function extractActiveMembers(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return [];
+	const out: string[] = [];
+	for (const entry of raw) {
+		if (typeof entry === 'string') {
+			if (entry) out.push(entry);
+			continue;
+		}
+		const rec = asRec(entry);
+		const id = asStr(rec?.employee_id);
+		if (id && !asStr(rec?.left_at)) out.push(id);
+	}
+	return out;
+}
+
+function extractPinIds(raw: unknown): string[] {
+	if (!Array.isArray(raw)) return [];
+	const out: string[] = [];
+	for (const entry of raw) {
+		if (typeof entry === 'string' && entry) out.push(entry);
+		else {
+			const id = asStr(asRec(entry)?.message_id);
+			if (id) out.push(id);
+		}
+	}
+	return out;
 }
 
 function resolveConvKind(
@@ -234,17 +278,26 @@ function resolveConvKind(
 	return CONV_KINDS.has(rawKind) ? (rawKind as ConversationKind) : 'unknown';
 }
 
+interface MappedConversation {
+	conversation: Conversation;
+	readAt?: string;
+	lastReadMessageId?: string;
+	pinIds: string[];
+}
+
 function mapConversation(
 	raw: unknown,
 	fallbackKind: ConversationKind = 'channel'
-): { conversation: Conversation; readAt?: string } | undefined {
+): MappedConversation | undefined {
 	const r = asRec(raw);
 	const id = asStr(r?.id);
 	if (!r || !id) return undefined;
 	const rawAccess = asStr(r.access);
 	const access =
 		rawAccess && CHANNEL_ACCESS.has(rawAccess) ? (rawAccess as ChannelAccess) : undefined;
-	const members = Array.isArray(r.members) ? asStrList(r.members) : asStrList(r.participants);
+	const members = Array.isArray(r.members)
+		? extractActiveMembers(r.members)
+		: extractActiveMembers(r.participants);
 	const conversation: Conversation = {
 		id,
 		kind: resolveConvKind(asStr(r.kind), fallbackKind),
@@ -253,10 +306,15 @@ function mapConversation(
 		...optField('access', access),
 		members,
 		...optField('archived', r.archived === true ? true : undefined),
-		...optField('auto', normalizeAutoChannel(r.auto)),
+		...optField('auto', normalizeAutoChannel(r)),
 		created_at: asIso(r.created_at ?? r.created_at_ms)
 	};
-	return { conversation, ...optField('readAt', asStr(r.read_at) ?? asStr(r.last_read_at)) };
+	return {
+		conversation,
+		...optField('readAt', asStr(r.read_at) ?? asStr(r.last_read_at)),
+		...optField('lastReadMessageId', asStr(r.last_read_message_id)),
+		pinIds: extractPinIds(r.pins)
+	};
 }
 
 function extractCardFields(meta: Rec | undefined): Partial<ChatMessage> {
@@ -279,6 +337,10 @@ function extractCardFields(meta: Rec | undefined): Partial<ChatMessage> {
 	};
 }
 
+function isMemberSenderKind(kind: string | undefined): boolean {
+	return kind === 'agent' || kind === 'person' || kind === 'employee';
+}
+
 function resolveSender(r: Rec): { from: string; entry?: DirectoryEntry } {
 	const senderKind = asStr(r.sender_kind);
 	const senderId = asStr(r.sender_employee_id);
@@ -287,14 +349,14 @@ function resolveSender(r: Rec): { from: string; entry?: DirectoryEntry } {
 		senderKind === 'office' || senderKind === 'system'
 			? 'office'
 			: (senderId ?? senderName ?? 'unknown');
-	if (!senderId || !senderName || (senderKind !== 'agent' && senderKind !== 'person')) {
+	if (!senderId || !senderName || !isMemberSenderKind(senderKind)) {
 		return { from };
 	}
 	return {
 		from,
 		entry: {
 			id: senderId,
-			kind: senderKind,
+			kind: senderKind === 'person' ? 'person' : 'agent',
 			name: senderName,
 			handle: senderName.toLowerCase().replace(/[^a-z0-9]+/g, '-') || senderId
 		}
@@ -317,7 +379,8 @@ function resolveThreadRoot(r: Rec, id: string): string | undefined {
 
 function mapMessage(
 	raw: unknown,
-	fallbackConvId: string
+	fallbackConvId: string,
+	pinnedIds: ReadonlySet<string>
 ): { message: ChatMessage; seq: number; sender?: DirectoryEntry } | undefined {
 	const r = asRec(raw);
 	const id = asStr(r?.id);
@@ -338,21 +401,60 @@ function mapMessage(
 		...optField('answer', normalizeAnswer(r.answer)),
 		...optField('withdrawn', normalizeWithdrawal(r.withdrawal)),
 		...resolveAcceptance(r.acceptance),
-		...optField('reactions', normalizeReactions(r.reactions))
+		...optField('reactions', normalizeReactions(r.reactions)),
+		...optField('pinned', pinnedIds.has(id) ? true : undefined)
 	};
 	return { message, seq: asNum(r.origin_sequence) ?? 0, sender };
 }
 
-function buildAskQuestions(call: Extract<ChatCall, { method: 'msg.send' }>): AskQuestion[] {
-	if (call.questions?.length) return call.questions;
+interface WireAskQuestion {
+	id: string;
+	question_type: QuestionType;
+	prompt: string;
+	options?: AskOption[];
+	allow_multiple?: boolean;
+	default_value?: string;
+	optional?: boolean;
+}
+
+function serializeAskQuestion(q: AskQuestion): WireAskQuestion {
+	const defaultValue = q.default_option || q.default_value || undefined;
+	return {
+		id: q.id,
+		question_type: q.question_type,
+		prompt: q.prompt,
+		...optField('options', q.options),
+		...optField('allow_multiple', q.allow_multiple || undefined),
+		...optField('default_value', defaultValue),
+		...optField('optional', q.optional || undefined)
+	};
+}
+
+const APPROVAL_OPTIONS: AskOption[] = [
+	{ id: 'approve', label: 'Approve' },
+	{ id: 'reject', label: 'Reject' }
+];
+
+function buildAskQuestions(call: Extract<ChatCall, { method: 'msg.send' }>): WireAskQuestion[] {
+	if (call.questions?.length) return call.questions.map(serializeAskQuestion);
 	if (call.options?.length) {
+		return [
+			serializeAskQuestion({
+				id: 'q1',
+				question_type: 'choice',
+				prompt: call.body,
+				options: call.options,
+				...optField('default_option', call.default_option || undefined)
+			})
+		];
+	}
+	if (call.approval) {
 		return [
 			{
 				id: 'q1',
 				question_type: 'choice',
 				prompt: call.body,
-				options: call.options,
-				...optField('default_option', call.default_option)
+				options: APPROVAL_OPTIONS
 			}
 		];
 	}
@@ -401,10 +503,10 @@ async function dispatchAsk(
 			to: call.conversation_id,
 			body: call.body,
 			questions: buildAskQuestions(call),
+			...optField('addressed_to', call.addressed_to),
 			...optField('required', call.required),
 			...optField('blocks', call.blocks),
-			...optField('approval', call.approval),
-			...optField('meta', call.addressed_to ? { addressed_to: call.addressed_to } : undefined)
+			...optField('approval', call.approval)
 		},
 		'The ask could not be sent.'
 	);
@@ -445,12 +547,6 @@ async function dispatchOrdinaryMessage(
 	};
 }
 
-function isStructuredAsk(call: Extract<ChatCall, { method: 'msg.send' }>): boolean {
-	return (
-		call.kind === 'request' && !!(call.questions?.length || call.options?.length || call.approval)
-	);
-}
-
 interface CacheState {
 	reactions: Map<string, Partial<Record<Reaction, string[]>>>;
 	lastMessageByConv: Map<string, string>;
@@ -472,7 +568,7 @@ type CallHandler<M extends ChatCall['method']> = (
 
 const CALL_HANDLERS: Partial<{ [M in ChatCall['method']]: CallHandler<M> }> = {
 	'msg.send': ({ base, http }, call) =>
-		isStructuredAsk(call)
+		call.kind === 'request'
 			? dispatchAsk(base, http, call)
 			: dispatchOrdinaryMessage(base, http, call),
 	'chat.answer': async ({ base, http }, call) => {
@@ -584,39 +680,55 @@ const CALL_HANDLERS: Partial<{ [M in ChatCall['method']]: CallHandler<M> }> = {
 function mergeConversations(convRes: Rec, chanRes: Rec) {
 	const byId = new Map<string, Conversation>();
 	const readAt: Record<string, string> = {};
+	const lastReadByConv = new Map<string, string>();
+	const pinnedIds = new Set<string>();
 	const joinedIds: string[] = [];
 	const rawConvs = Array.isArray(convRes.conversations) ? convRes.conversations : [];
 	for (const entry of rawConvs) {
 		const mapped = mapConversation(entry, 'dm');
 		if (!mapped) continue;
-		byId.set(mapped.conversation.id, mapped.conversation);
-		joinedIds.push(mapped.conversation.id);
-		if (mapped.readAt) readAt[mapped.conversation.id] = mapped.readAt;
+		const cid = mapped.conversation.id;
+		byId.set(cid, mapped.conversation);
+		joinedIds.push(cid);
+		if (mapped.readAt) readAt[cid] = mapped.readAt;
+		if (mapped.lastReadMessageId) lastReadByConv.set(cid, mapped.lastReadMessageId);
+		for (const pinId of mapped.pinIds) pinnedIds.add(pinId);
 	}
 	const rawChans = Array.isArray(chanRes.channels) ? chanRes.channels : [];
 	for (const entry of rawChans) {
 		const mapped = mapConversation(entry, 'channel');
-		if (mapped && !byId.has(mapped.conversation.id))
+		if (mapped && !byId.has(mapped.conversation.id)) {
 			byId.set(mapped.conversation.id, mapped.conversation);
+		}
 	}
-	return { conversations: [...byId.values()], joinedIds, readAt };
+	return { conversations: [...byId.values()], joinedIds, readAt, lastReadByConv, pinnedIds };
 }
 
-function collectMessages(lists: { convId: string; items: unknown[] }[], cache: CacheState) {
+function collectMessages(
+	lists: { convId: string; items: unknown[] }[],
+	cache: CacheState,
+	pinnedIds: ReadonlySet<string>,
+	lastReadByConv: ReadonlyMap<string, string>,
+	readAt: Record<string, string>
+) {
 	cache.reactions.clear();
 	cache.lastMessageByConv.clear();
 	const messages: ChatMessage[] = [];
 	const dirMap = new Map<string, DirectoryEntry>();
 	let maxSeq = 0;
 	for (const { convId, items } of lists) {
+		const readMsgId = lastReadByConv.get(convId);
 		for (const item of items) {
-			const mapped = mapMessage(item, convId);
+			const mapped = mapMessage(item, convId, pinnedIds);
 			if (!mapped) continue;
 			messages.push(mapped.message);
 			maxSeq = Math.max(maxSeq, mapped.seq);
 			if (mapped.message.reactions)
 				cache.reactions.set(mapped.message.id, mapped.message.reactions);
 			cache.lastMessageByConv.set(convId, mapped.message.id);
+			if (readMsgId && mapped.message.id === readMsgId && !readAt[convId]) {
+				readAt[convId] = mapped.message.created_at;
+			}
 			if (mapped.sender) dirMap.set(mapped.sender.id, mapped.sender);
 		}
 	}
@@ -664,7 +776,10 @@ export function createHttpChatApi({ http, subscribe, viewerId }: HttpChatApiOpti
 					channels: []
 				}))
 			]);
-			const { conversations, joinedIds, readAt } = mergeConversations(convRes, chanRes);
+			const { conversations, joinedIds, readAt, lastReadByConv, pinnedIds } = mergeConversations(
+				convRes,
+				chanRes
+			);
 			const lists = await Promise.all(
 				joinedIds.map((convId) =>
 					safeSubmit(
@@ -676,7 +791,13 @@ export function createHttpChatApi({ http, subscribe, viewerId }: HttpChatApiOpti
 				)
 			);
 			const cache = cacheFor(organizationId);
-			const { messages, maxSeq, directory } = collectMessages(lists, cache);
+			const { messages, maxSeq, directory } = collectMessages(
+				lists,
+				cache,
+				pinnedIds,
+				lastReadByConv,
+				readAt
+			);
 			return {
 				state: {
 					seq: maxSeq,

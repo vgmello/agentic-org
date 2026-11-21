@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { RadioGroup } from 'bits-ui';
 	import { Button } from '$lib/components/ui/button';
 	import { Checkbox } from '$lib/components/ui/checkbox';
@@ -28,7 +28,8 @@
 
 	type Value = { option_ids: string[]; text: string };
 
-	const defaultOf = (q: AskQuestion): string | undefined => q.default_option ?? q.default_value;
+	const defaultOf = (q: AskQuestion): string | undefined =>
+		q.default_option || q.default_value || undefined;
 
 	function buildInitial(list: AskQuestion[]): Record<string, Value> {
 		return Object.fromEntries(
@@ -86,8 +87,8 @@
 
 	function go(to: number) {
 		step = to;
-		// Keep the keyboard on the new question.
-		queueMicrotask(() => legend?.focus());
+		// Keep the keyboard on the new question after Svelte renders the updated step.
+		void tick().then(() => legend?.focus());
 	}
 
 	function submit(event: SubmitEvent) {
@@ -248,6 +249,7 @@
 				type="button"
 				size="sm"
 				variant="outline"
+				{disabled}
 				onclick={() => go(step - 1)}>Back</Button
 			>{/if}
 		{#if last}
@@ -263,7 +265,7 @@
 						: `${missing.length} questions need an answer`}
 				</p>{/if}
 		{:else}
-			<Button type="submit" size="sm" variant="outline">Next</Button>
+			<Button type="submit" size="sm" variant="outline" {disabled}>Next</Button>
 		{/if}
 	</div>
 </form>

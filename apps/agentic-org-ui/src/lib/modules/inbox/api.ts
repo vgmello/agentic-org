@@ -45,7 +45,8 @@ const gatewayInboxApi = createHttpInboxApi({
 		read: (path, signal) => appSession.controller().read(path, signal),
 		submit: (path, body, signal) => appSession.controller().submit(path, body, signal)
 	},
-	subscribe: subscribeInboxFeeds
+	subscribe: subscribeInboxFeeds,
+	newId: () => appSession.newOperationId()
 });
 
 /**

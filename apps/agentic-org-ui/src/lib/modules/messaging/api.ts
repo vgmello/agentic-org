@@ -1,7 +1,7 @@
 import { appSession } from '$lib/platform/auth/app-session.svelte';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import { newId } from '$lib/modules/organization/commands';
-import { createHttpChatApi } from '$lib/modules/chat/http-api';
+import { createHttpChatApi } from './http-api';
 import type { ChatAccepted, ChatCall, ChatCallStatus, ChatSnapshot } from './types';
 
 /**
