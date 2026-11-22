@@ -1915,13 +1915,13 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   font-size: 0.72rem; font-weight: 500; color: var(--hb-muted);
 }
 
-.hb-digest { display: flex; flex-direction: column; gap: 10px; flex: 1; justify-content: space-between; }
+.hb-digest { display: flex; flex-direction: column; gap: 6px; flex: 1; justify-content: flex-start; }
 .hb-dig-item {
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 12px 13px; border-radius: 10px;
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 7px 11px; border-radius: 8px;
   background: var(--hb-well);
   box-shadow: inset 0 1px 0 rgba(186, 226, 255, .10), inset 0 0 0 1px rgba(186, 226, 255, .10);
-  font-size: 0.8125rem; line-height: 1.42; color: var(--hb-body);
+  font-size: 0.78125rem; line-height: 1.32; color: var(--hb-body);
   transition: background-color .14s ease, box-shadow .14s ease;
 }
 a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 226, 255, .20), inset 0 0 0 1px var(--hb-border-hi); }
@@ -3214,42 +3214,51 @@ html[data-theme="report"] .hb-dot-btn:hover::after { background: #64748B; }
 html[data-theme="report"] .hb-dot-btn.is-cur::after { width: 20px; background: #0B101B; }
 html[data-theme="report"] .hb-dot-btn.is-cur.is-urgent::after { background: #B83232; }
 html[data-theme="report"] .hb-dot-btn.is-urgent:not(.is-cleared)::after { background: #C98A2B; }
-html[data-theme="report"] .hb-arrow-btn { border-radius: 4px; background: #F4F6F9; box-shadow: none; color: #0B101B; }
-html[data-theme="report"] .hb-arrow-btn:hover:not(:disabled) { background: #0B101B; box-shadow: none; color: #FFFFFF; }
+html[data-theme="report"] .hb-arrow-btn {
+  border-radius: 4px; background: #FFFFFF;
+  box-shadow: inset 0 0 0 1px #B8C4D4; color: #0B101B;
+}
+html[data-theme="report"] .hb-arrow-btn:disabled {
+  background: #F4F6F9; box-shadow: inset 0 0 0 1px #D5DDE8; color: #94A3B8; opacity: .65;
+}
+html[data-theme="report"] .hb-arrow-btn:hover:not(:disabled) {
+  background: #0B101B; box-shadow: inset 0 0 0 1px #0B101B; color: #FFFFFF;
+}
 html[data-theme="report"] .hb-spot-rec {
-  border-radius: 3px; background: #F5F7FA;
-  box-shadow: inset 3px 0 0 #1B365D;
+  border-radius: 4px; background: #EEF2F7;
+  box-shadow: inset 3px 0 0 #1B365D, inset 0 0 0 1px #CFD9E6;
   color: #0B101B; font-style: normal;
 }
 html[data-theme="report"] .hb-spot-rec .ic { color: #1B365D; }
 html[data-theme="report"] .hb-spot-meta {
-  border-radius: 4px; background: #F8F9FB;
-  box-shadow: none;
+  border-radius: 4px; background: #EEF2F7;
+  box-shadow: inset 0 0 0 1px #CFD9E6;
   padding: 13px 6px;
 }
-html[data-theme="report"] .hb-spot-cell + .hb-spot-cell { border-left: 1px solid #EAEEF4; }
-html[data-theme="report"] .hb-spot-well { border-radius: 4px; background: #EEF4FA; box-shadow: none; color: #1B365D; }
-html[data-theme="report"] .hb-spot-well.ok { background: #ECF7F4; box-shadow: none; color: #146C5B; }
-html[data-theme="report"] .hb-spot-well.warn { background: #FAF3E3; box-shadow: none; color: #975A16; }
-html[data-theme="report"] .hb-spot-well.muted { background: #EEF1F6; box-shadow: none; color: #475569; }
+html[data-theme="report"] .hb-spot-cell + .hb-spot-cell { border-left: 1px solid #CFD9E6; }
+html[data-theme="report"] .hb-spot-well { border-radius: 4px; background: #E3ECF6; box-shadow: inset 0 0 0 1px #C5D4E6; color: #1B365D; }
+html[data-theme="report"] .hb-spot-well.ok { background: #E1F3EE; box-shadow: inset 0 0 0 1px #B8DFD5; color: #146C5B; }
+html[data-theme="report"] .hb-spot-well.warn { background: #F7ECDA; box-shadow: inset 0 0 0 1px #E4CEAA; color: #975A16; }
+html[data-theme="report"] .hb-spot-well.muted { background: #E6EBF2; box-shadow: inset 0 0 0 1px #CBD5E1; color: #475569; }
 html[data-theme="report"] .hb-spot-cell-val { color: #0B101B; font-weight: 650; }
-html[data-theme="report"] .hb-spot-cell-sub { color: #64748B; }
+html[data-theme="report"] .hb-spot-cell-sub { color: #475569; }
 html[data-theme="report"] .h4-ctx-toggle { color: #1B365D; font-weight: 600; border-radius: 4px; }
-html[data-theme="report"] .h4-ctx-toggle:hover { background: #F4F6F9; color: #0B101B; }
-html[data-theme="report"] .h4-ctx-body { border-radius: 3px; background: #F7F8FA; color: #2C3646; box-shadow: inset 2px 0 0 #CBD3DF; }
+html[data-theme="report"] .h4-ctx-toggle:hover { background: #EEF2F7; color: #0B101B; }
+html[data-theme="report"] .h4-ctx-body { border-radius: 4px; background: #EEF2F7; color: #2C3646; box-shadow: inset 2px 0 0 #94A3B8, inset 0 0 0 1px #CFD9E6; }
 html[data-theme="report"] .hb-spot-next {
-  border-radius: 4px; background: #F8F9FB; box-shadow: none;
+  border-radius: 4px; background: #EEF2F7; box-shadow: inset 0 0 0 1px #CFD9E6;
 }
-html[data-theme="report"] .hb-spot-next:hover { background: #F1F4F8; box-shadow: none; }
+html[data-theme="report"] .hb-spot-next:hover { background: #E3EAF3; box-shadow: inset 0 0 0 1px #B8C4D4; }
+html[data-theme="report"] .hb-spot-next-lbl { color: #475569; }
 html[data-theme="report"] .hb-spot-next-exp {
-  border-radius: 3px; background: #FAF3E3; box-shadow: none; color: #8A520B;
+  border-radius: 3px; background: #F7ECDA; box-shadow: inset 0 0 0 1px #E4CEAA; color: #8A520B;
 }
 html[data-theme="report"] .hb-spot-next-exp .ic { color: #B7791F; }
-html[data-theme="report"] .hb-spot-foot { border-top: 1px solid #F1F4F8; }
+html[data-theme="report"] .hb-spot-foot { border-top: 1px solid #E2E7EF; }
 html[data-theme="report"] .hb-spot-foot .btn.outline {
-  border-radius: 4px; background: #F4F6F9; color: #0B101B; box-shadow: none;
+  border-radius: 4px; background: #FFFFFF; color: #0B101B; box-shadow: inset 0 0 0 1px #B8C4D4;
 }
-html[data-theme="report"] .hb-spot-foot .btn.outline:hover { background: #E6EAF0; box-shadow: none; color: #0B101B; }
+html[data-theme="report"] .hb-spot-foot .btn.outline:hover { background: #EEF2F7; box-shadow: inset 0 0 0 1px #94A3B8; color: #0B101B; }
 html[data-theme="report"] .hb-spot-foot .btn.ghost:hover,
 html[data-theme="report"] .hb-skip-btn:hover { background: #F4F6F9; color: #0B101B; border-radius: 4px; }
 
@@ -3273,12 +3282,13 @@ html[data-theme="report"] .hb-cu-window {
 html[data-theme="report"] .hb-digest { gap: 0; }
 html[data-theme="report"] .hb-dig-item {
   border-radius: 0; background: transparent; box-shadow: none;
-  padding: 14px 6px; border-top: 1px solid #F1F4F8;
+  padding: 7px 6px; font-size: 0.78125rem; line-height: 1.32;
+  border-top: 1px solid #EEF1F6;
 }
-html[data-theme="report"] .hb-dig-item:first-child { border-top: 1px solid #EAEEF4; }
-html[data-theme="report"] a.hb-dig-item:hover { background: #F7F9FC; box-shadow: none; border-radius: 4px; }
+html[data-theme="report"] .hb-dig-item:first-child { border-top: 1px solid #DCE2EC; }
+html[data-theme="report"] a.hb-dig-item:hover { background: #F4F6F9; box-shadow: none; border-radius: 4px; }
 html[data-theme="report"] .hb-dig-time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #64748B; }
-html[data-theme="report"] .hb-cu-foot { border-top: 1px solid #F1F4F8; }
+html[data-theme="report"] .hb-cu-foot { border-top: 1px solid #E2E7EF; padding-top: 10px; }
 
 /* Section 03: Open Borderless Portfolio Columns (Projects Row) */
 html[data-theme="report"] .hb-proj-sec {
@@ -3413,14 +3423,14 @@ html[data-theme="report"] .btn.primary.h4-cta:focus-visible {
   background: #1B365D; transform: none; box-shadow: none;
 }
 html[data-theme="report"] .h4-cta.hb-cta-glass {
-  background: #F4F6F9; color: #0B101B;
+  background: #1B365D; color: #FFFFFF;
   backdrop-filter: none; -webkit-backdrop-filter: none;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px #152B4A;
 }
-html[data-theme="report"] .h4-cta.hb-cta-glass .h4-cta-lbl .ic { color: #0B101B; }
+html[data-theme="report"] .h4-cta.hb-cta-glass .h4-cta-lbl .ic { color: #FFFFFF; }
 html[data-theme="report"] .h4-cta.hb-cta-glass:hover,
 html[data-theme="report"] .h4-cta.hb-cta-glass:focus-visible {
-  background: #0B101B; color: #FFFFFF; box-shadow: none; transform: none;
+  background: #0B101B; color: #FFFFFF; box-shadow: inset 0 0 0 1px #0B101B; transform: none;
 }
 html[data-theme="report"] .h4-cta.hb-cta-glass:hover .h4-cta-lbl .ic,
 html[data-theme="report"] .h4-cta.hb-cta-glass:focus-visible .h4-cta-lbl .ic { color: #FFFFFF; }
@@ -4634,21 +4644,59 @@ function pageHome() {
     const activeLead = liveWorkingAgents.includes("kai") ? "kai" : (liveWorkingAgents[0] || null);
     const otherActive = Math.max(0, liveWorkingAgents.length - 1);
     const recentDone = IN.filter((i) => i.handled && i.handledNow).slice(0, 2);
+    const liveAgentRows = activeLead ? [
+      `<a class="hb-dig-item" href="#/teams/members">
+        <span class="hb-dig-ico"><span class="h4-live-dot" style="background:#34D399" aria-hidden="true"></span></span>
+        <div class="hb-dig-body"><b>${liveWorkingAgents.length} agents working now</b> — ${esc(M[activeLead].name)} is in a session with you${otherActive ? `, plus ${otherActive} others across 3 projects` : ""}.</div>
+        <span class="hb-dig-time">Live</span>
+      </a>`,
+      `<a class="hb-dig-item" href="#/projects/agency-v1">
+        <span class="hb-dig-ico"><span class="h4-live-dot" style="background:#38BDF8" aria-hidden="true"></span></span>
+        <div class="hb-dig-body"><b>Maya auditing launch checklist</b> — verifying macOS &amp; Linux setup steps before sign-off.</div>
+        <span class="hb-dig-time">Live</span>
+      </a>`
+    ] : [
+      `<a class="hb-dig-item" href="#/settings/agents/jules">
+        <span class="hb-dig-ico">${ic("bolt", "ic16 c-amber")}</span>
+        <div class="hb-dig-body"><b>Budget reached</b> — Jules hit its monthly spend limit; new work waits until Dec 1.</div>
+        <span class="hb-dig-time">3h</span>
+      </a>`
+    ];
     const staticRows = [
       `<a class="hb-dig-item" href="#/projects/agency-v1">
         <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-        <div class="hb-dig-body"><b>Release notes &amp; onboarding drafted</b> — Ada &amp; Maya completed v1.0 release notes and the new-member checklist.</div>
+        <div class="hb-dig-body"><b>Release notes &amp; onboarding drafted</b> — Ada &amp; Maya completed v1.0 notes and checklist.</div>
         <span class="hb-dig-time">18m</span>
       </a>`,
       `<a class="hb-dig-item" href="#/projects/look-feel">
         <span class="hb-dig-ico">${ic("check-circle", "ic16 c-indigo")}</span>
-        <div class="hb-dig-body"><b>2 UI polish tasks shipped</b> — Avery completed status pill restyling and mobile badge alignment for Look &amp; feel refresh.</div>
+        <div class="hb-dig-body"><b>2 UI polish tasks shipped</b> — Avery restyled status pills and mobile badge alignment.</div>
         <span class="hb-dig-time">1h</span>
       </a>`,
       `<a class="hb-dig-item" href="#/inbox/in11">
         <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-        <div class="hb-dig-body"><b>Reconnect fix ready</b> — Sage fixed the Build box office sleep disconnect on a test setup; ready for your check.</div>
+        <div class="hb-dig-body"><b>Reconnect fix ready</b> — Sage resolved Build box sleep disconnect; ready for review.</div>
         <span class="hb-dig-time">2h</span>
+      </a>`,
+      `<a class="hb-dig-item" href="#/projects/agency-v1">
+        <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
+        <div class="hb-dig-body"><b>Workspace CI suite green</b> — 412 automated checks passed on the v1 release candidate.</div>
+        <span class="hb-dig-time">2h</span>
+      </a>`,
+      `<a class="hb-dig-item" href="#/settings/offices">
+        <span class="hb-dig-ico">${ic("check-circle", "ic16 c-indigo")}</span>
+        <div class="hb-dig-body"><b>Host socket confinement verified</b> — Tomas cleared security review with zero regressions.</div>
+        <span class="hb-dig-time">3h</span>
+      </a>`,
+      `<a class="hb-dig-item" href="#/projects/look-feel">
+        <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
+        <div class="hb-dig-body"><b>Theme tokens isolated</b> — Ocean, Light, and Classic stylesheets split into standalone files.</div>
+        <span class="hb-dig-time">3h</span>
+      </a>`,
+      `<a class="hb-dig-item" href="#/settings/costs">
+        <span class="hb-dig-ico">${ic("check-circle", "ic16 c-indigo")}</span>
+        <div class="hb-dig-body"><b>Cost ledger rolled over</b> — Daily usage and token spend synced across HQ &amp; Build box.</div>
+        <span class="hb-dig-time">4h</span>
       </a>`
     ];
     const dynamicRows = recentDone.map((d) => `<a class="hb-dig-item" href="#/inbox/${d.id}">
@@ -4656,7 +4704,7 @@ function pageHome() {
       <div class="hb-dig-body"><b>${esc(d.outcome)}</b> — ${esc(d.what)} (${esc(M[d.from].name)} notified).</div>
       <span class="hb-dig-time">Now</span>
     </a>`);
-    const shownRows = [...dynamicRows, ...staticRows].slice(0, 3).join("");
+    const shownRows = [...liveAgentRows, ...dynamicRows, ...staticRows].slice(0, 9).join("");
     return `<aside class="hb-catchup" aria-label="Autonomous catch-up">
       <div class="hb-cu-hd">
         <div class="hb-cu-title">${ic("signal", "ic16")}<span class="lbl-std">Catch-up</span><span class="lbl-rep">Operations &amp; Activity Brief</span></div>
@@ -4665,15 +4713,6 @@ function pageHome() {
 
       ${st === "loading" ? skel(4, "Summarizing recent activity…") : `<div class="hb-digest">
         ${shownRows}
-        ${activeLead ? `<a class="hb-dig-item" href="#/teams/members">
-          <span class="hb-dig-ico"><span class="h4-live-dot" style="background:#34D399" aria-hidden="true"></span></span>
-          <div class="hb-dig-body"><b>${liveWorkingAgents.length} agents working now</b> — ${esc(M[activeLead].name)} is in a session with you${otherActive ? `, plus ${otherActive} others delivering across 3 projects` : ""}.</div>
-          <span class="hb-dig-time">Live</span>
-        </a>` : `<a class="hb-dig-item" href="#/settings/agents/jules">
-          <span class="hb-dig-ico">${ic("bolt", "ic16 c-amber")}</span>
-          <div class="hb-dig-body"><b>Budget reached</b> — Jules hit its monthly spend limit; new work waits until Dec 1.</div>
-          <span class="hb-dig-time">3h</span>
-        </a>`}
       </div>`}
 
       <div class="hb-cu-foot">
