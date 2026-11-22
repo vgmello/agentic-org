@@ -1,0 +1,65 @@
+/*
+ * Theme: classic — Original v0 Slate + Indigo, flat professional (zero shadows or blur)
+ * Strictly scoped to `html[data-ui-theme='classic']` and `.swatch-classic`.
+ */
+
+html[data-ui-theme='classic'] {
+	color-scheme: dark;
+	--background: #1e2939;
+	--card: #243144;
+	--popover: #243144;
+	--primary: #615fff;
+	--ring: #7c86ff;
+	--border: rgba(255, 255, 255, 0.1);
+	--exec-bg: #1e2939;
+	--exec-sidebar-bg: #161f2d;
+	--exec-surface: #243144;
+	--exec-surface-hi: #29384d;
+	--exec-well: #1a2433;
+	--exec-border: rgba(255, 255, 255, 0.1);
+	--exec-border-hi: rgba(255, 255, 255, 0.18);
+	--exec-blur: none;
+	--exec-shadow: inset 0 0 0 1px var(--exec-border);
+	--exec-shadow-hi: inset 0 0 0 1px var(--exec-border-hi);
+	--exec-ink: #ffffff;
+	--exec-body: #d1d5dc;
+	--exec-muted: #99a1af;
+	--exec-dim: #99a1af;
+	--exec-accent: #615fff;
+	--exec-accent-hi: #7c86ff;
+	--exec-accent-ink: #a3b3ff;
+	--exec-accent-soft: rgba(97, 95, 255, 0.16);
+	--exec-accent-ring: rgba(124, 134, 255, 0.34);
+	--exec-sky: #a3b3ff;
+	--exec-sky-bg: rgba(97, 95, 255, 0.14);
+	--exec-sky-ring: rgba(124, 134, 255, 0.3);
+	--exec-cta-bg: linear-gradient(135deg, #615fff 0%, #615fff 100%);
+	--exec-cta-fill: linear-gradient(135deg, #7c86ff 0%, #7c86ff 100%);
+	--exec-cta-glass-bg: rgba(97, 95, 255, 0.14);
+	--exec-cta-glass-ink: #e0e7ff;
+	--exec-avatar-bg: #1e2939;
+	--exec-avatar-ring: #243144;
+}
+
+html[data-ui-theme='classic'] .exec-canvas::before {
+	display: none;
+}
+
+html[data-ui-theme='classic'] .exec-well {
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+	box-shadow: inset 0 0 0 1px var(--exec-border);
+}
+
+html[data-ui-theme='classic'] .exec-cta .exec-cta-sheen {
+	display: none;
+}
+
+/* Settings preview swatch */
+.swatch-classic {
+	background: #1e2939;
+}
+
+.swatch-classic .swatch-bar {
+	background: #615fff;
+}

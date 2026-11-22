@@ -1,28 +1,33 @@
 export type UiTheme = 'ocean' | 'light' | 'classic';
+export type UiColorScheme = 'dark' | 'light';
 
 export const UI_THEMES: readonly {
 	id: UiTheme;
 	label: string;
 	shortLabel: string;
 	description: string;
+	scheme: UiColorScheme;
 }[] = [
 	{
 		id: 'ocean',
 		label: 'Ocean (Frosted)',
 		shortLabel: 'Ocean',
-		description: 'Deep ocean canvas with subtle translucent frosted panels and sky accents.'
+		description: 'Deep ocean canvas with subtle translucent frosted panels and sky accents.',
+		scheme: 'dark'
 	},
 	{
 		id: 'light',
 		label: 'Light (Frosted)',
 		shortLabel: 'Light',
-		description: 'Frosted platinum glass panels over a crisp dot canvas with obsidian and deep-navy accents.'
+		description: 'Frosted platinum glass panels over a crisp dot canvas with obsidian and deep-navy accents.',
+		scheme: 'light'
 	},
 	{
 		id: 'classic',
 		label: 'Classic (v0 Flat)',
 		shortLabel: 'Classic',
-		description: 'Original v0 slate and indigo palette, flat hairline borders, no shadows or blur.'
+		description: 'Original v0 slate and indigo palette, flat hairline borders, no shadows or blur.',
+		scheme: 'dark'
 	}
 ] as const;
 
@@ -34,10 +39,15 @@ export const STORAGE_KEYS = {
 	singleKey: 'agentic-org.ui.singleKey'
 } as const;
 
-const VALID_THEMES = new Set<UiTheme>(['ocean', 'light', 'classic']);
+const VALID_THEMES = new Set<UiTheme>(UI_THEMES.map((t) => t.id));
+const THEME_SCHEMES = new Map<UiTheme, UiColorScheme>(UI_THEMES.map((t) => [t.id, t.scheme]));
 
 export function isUiTheme(value: unknown): value is UiTheme {
 	return typeof value === 'string' && VALID_THEMES.has(value as UiTheme);
+}
+
+export function isLightTheme(theme: UiTheme): boolean {
+	return THEME_SCHEMES.get(theme) === 'light';
 }
 
 export interface StorageLike {
@@ -133,10 +143,10 @@ export function applyUiAttributes(
 	theme: UiTheme
 ): void {
 	if (!root) return;
-	const effectiveTheme: UiTheme = executiveUi ? theme : theme === 'light' ? 'light' : 'classic';
+	const effectiveTheme: UiTheme = executiveUi ? theme : isLightTheme(theme) ? theme : 'classic';
 	root.dataset.uiMode = executiveUi ? 'executive' : 'legacy';
 	root.dataset.uiTheme = effectiveTheme;
-	const isLight = effectiveTheme === 'light';
+	const isLight = isLightTheme(effectiveTheme);
 	root.classList.toggle('dark', !isLight);
 	root.classList.toggle('light', isLight);
 }

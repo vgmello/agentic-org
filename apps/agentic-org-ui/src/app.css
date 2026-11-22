@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
 @import "@fontsource-variable/inter";
-@import "./lib/styles/themes.css";
+@import "./lib/styles/themes/index.css";
 
 /* The app is dark only: <html class="dark"> is set in app.html. Tailwind Plus markup uses its
    `dark:` classes as written. */

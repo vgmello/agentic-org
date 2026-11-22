@@ -235,24 +235,4 @@
 		height: 5px;
 		border-radius: 999px;
 	}
-	.swatch-ocean {
-		background: linear-gradient(135deg, #060b14 0%, #0f2544 100%);
-	}
-	.swatch-ocean .swatch-bar {
-		background: linear-gradient(90deg, #0284c7, #38bdf8);
-	}
-	.swatch-light {
-		background:
-			radial-gradient(rgba(15, 23, 42, 0.24) 1px, transparent 1px) 0 0 / 8px 8px,
-			linear-gradient(135deg, #d5dce7 0%, #eef2f7 100%);
-	}
-	.swatch-light .swatch-bar {
-		background: linear-gradient(90deg, #0f172a, #0f4c81);
-	}
-	.swatch-classic {
-		background: #1e2939;
-	}
-	.swatch-classic .swatch-bar {
-		background: #615fff;
-	}
 </style>

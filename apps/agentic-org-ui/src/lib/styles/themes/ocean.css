@@ -1,0 +1,68 @@
+/*
+ * Theme: ocean — Frosted Ocean Dark (default for Executive UI v2)
+ * Strictly scoped to `html[data-ui-theme='ocean']` and `.swatch-ocean`.
+ */
+
+html[data-ui-theme='ocean'] {
+	color-scheme: dark;
+	--background: #060b14;
+	--card: #0c1729;
+	--popover: #0b1426;
+	--primary: #0284c7;
+	--ring: #38bdf8;
+	--border: rgba(186, 222, 255, 0.12);
+	--exec-bg: #060b14;
+	--exec-sidebar-bg: rgba(9, 17, 30, 0.58);
+	--exec-surface: rgba(10, 19, 35, 0.28);
+	--exec-surface-hi: rgba(15, 28, 50, 0.38);
+	--exec-well: rgba(7, 14, 26, 0.26);
+	--exec-border: rgba(186, 222, 255, 0.11);
+	--exec-border-hi: rgba(186, 222, 255, 0.22);
+	--exec-blur: blur(0.9px) saturate(145%);
+	--exec-shadow:
+		inset 0 1px 0 rgba(186, 222, 255, 0.12), inset 0 0 0 1px var(--exec-border),
+		0 14px 36px -14px rgba(0, 0, 0, 0.55);
+	--exec-shadow-hi:
+		inset 0 1px 0 rgba(186, 222, 255, 0.19), inset 0 0 0 1px var(--exec-border-hi),
+		0 18px 42px -14px rgba(0, 0, 0, 0.62);
+	--exec-ink: #f8fafc;
+	--exec-body: #d6e1ee;
+	--exec-muted: #a3b5cc;
+	--exec-dim: #8599b2;
+	--exec-accent: #0284c7;
+	--exec-accent-hi: #0ea5e9;
+	--exec-accent-ink: #7dd3fc;
+	--exec-accent-soft: rgba(56, 189, 248, 0.13);
+	--exec-accent-ring: rgba(125, 211, 252, 0.3);
+	--exec-cta-bg: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+	--exec-cta-fill: linear-gradient(135deg, #0369a1 0%, #0284c7 55%, #0ea5e9 100%);
+	--exec-cta-glass-bg: rgba(56, 189, 248, 0.13);
+	--exec-cta-glass-ink: #e0f2fe;
+	--exec-avatar-bg: #142238;
+	--exec-avatar-ring: #0a1424;
+}
+
+html[data-ui-theme='ocean'] .exec-canvas::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	z-index: 0;
+	pointer-events: none;
+	background:
+		radial-gradient(rgba(148, 179, 214, 0.11) 1px, transparent 1px) 0 0 / 28px 28px,
+		radial-gradient(ellipse 68% 58% at 84% 14%, rgba(56, 189, 248, 0.24) 0%, rgba(14, 116, 144, 0.1) 42%, transparent 72%),
+		radial-gradient(ellipse 64% 56% at 16% 18%, rgba(30, 100, 175, 0.26) 0%, rgba(14, 74, 128, 0.1) 44%, transparent 74%),
+		radial-gradient(ellipse 58% 52% at 54% 88%, rgba(28, 110, 168, 0.22) 0%, rgba(14, 82, 130, 0.08) 46%, transparent 74%),
+		linear-gradient(160deg, #060b14 0%, #0a1424 50%, #070e1a 100%);
+}
+
+/* Settings preview swatch */
+.swatch-ocean {
+	background:
+		radial-gradient(rgba(148, 179, 214, 0.22) 1px, transparent 1px) 0 0 / 8px 8px,
+		linear-gradient(135deg, #060b14 0%, #0f2544 100%);
+}
+
+.swatch-ocean .swatch-bar {
+	background: linear-gradient(90deg, #0284c7, #38bdf8);
+}
