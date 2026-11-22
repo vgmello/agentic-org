@@ -31,12 +31,24 @@
 
 	let { spotlight, organizationId, snapshot, isDayOne, onRefresh }: Props = $props();
 
-	let spotIdx = $state(0);
+	let spotIdx = $derived.by(() => {
+		void organizationId;
+		return 0;
+	});
 	let busyId = $state<string | undefined>(undefined);
-	let decliningId = $state<string | undefined>(undefined);
-	let declineReason = $state('');
+	let decliningId = $derived.by<string | undefined>(() => {
+		void organizationId;
+		return undefined;
+	});
+	let declineReason = $derived.by(() => {
+		void organizationId;
+		return '';
+	});
 	let restoreDenyFocus = false;
-	let openContextIds = $state<Record<string, boolean>>({});
+	let openContextIds = $derived.by<Record<string, boolean>>(() => {
+		void organizationId;
+		return {};
+	});
 
 	const focusDenyInput: Attachment<HTMLInputElement> = (el) => {
 		el.focus();
@@ -51,6 +63,7 @@
 
 	const safeIdx = $derived(spotlight.length > 0 ? Math.min(spotIdx, spotlight.length - 1) : 0);
 	const visibleDots = $derived(spotlight.slice(0, 6));
+	const activeDotIdx = $derived(safeIdx < visibleDots.length ? safeIdx : 0);
 	const currentDecision = $derived(spotlight[safeIdx]);
 	const nextDecision = $derived(
 		spotlight.length > 1 ? spotlight[(safeIdx + 1) % spotlight.length] : undefined
@@ -171,7 +184,7 @@
 							id="exec-spot-dot-{i}"
 							aria-selected={i === safeIdx}
 							aria-label="Decision {i + 1}: {d.title}"
-							tabindex={i === safeIdx ? 0 : -1}
+							tabindex={i === activeDotIdx ? 0 : -1}
 							onclick={() => selectDecision(i)}
 							onkeydown={(e) => handleDotKeydown(e, i)}
 							class={['queue-dot', i === safeIdx && 'is-cur', d.urgent && 'is-urgent']}
@@ -187,7 +200,7 @@
 						disabled={spotlight.length <= 1}
 						onclick={() => selectDecision((safeIdx - 1 + spotlight.length) % spotlight.length)}
 						aria-label="Previous decision"
-						class="stepper-arrow flex size-7 items-center justify-center rounded-full"
+						class="stepper-arrow flex size-9 items-center justify-center rounded-full"
 					>
 						<ChevronLeft class="size-4" aria-hidden="true" />
 					</button>
@@ -196,7 +209,7 @@
 						disabled={spotlight.length <= 1}
 						onclick={() => selectDecision((safeIdx + 1) % spotlight.length)}
 						aria-label="Next decision"
-						class="stepper-arrow flex size-7 items-center justify-center rounded-full"
+						class="stepper-arrow flex size-9 items-center justify-center rounded-full"
 					>
 						<ChevronRight class="size-4" aria-hidden="true" />
 					</button>
@@ -220,11 +233,11 @@
 				<span>{currentDecision.projectName}</span>
 			</div>
 
-			<h2
+			<h3
 				class="text-lg leading-snug font-semibold tracking-tight text-[var(--exec-ink)] sm:text-xl"
 			>
 				{currentDecision.title}
-			</h2>
+			</h3>
 
 			<div class="rec-callout flex items-start gap-2.5 px-3.5 py-2.5 text-sm">
 				<Info class="mt-0.5 size-4 shrink-0 text-[var(--exec-accent-ink)]" aria-hidden="true" />
@@ -384,7 +397,7 @@
 								type="button"
 								disabled={busyId === currentDecision.id}
 								onclick={() => void runAction('secondary')}
-								class="deny-confirm inline-flex min-h-8 items-center rounded-md px-3 text-xs font-semibold"
+								class="deny-confirm inline-flex min-h-9 items-center rounded-md px-3 text-xs font-semibold"
 							>
 								Confirm
 							</button>
@@ -419,7 +432,7 @@
 			<button
 				type="button"
 				onclick={() => selectDecision((safeIdx + 1) % spotlight.length)}
-				class="exec-well next-bar flex items-center justify-between gap-2 px-3 py-2 text-left text-xs"
+				class="exec-well next-bar flex min-h-9 items-center justify-between gap-2 px-3 py-2 text-left text-xs"
 			>
 				<span class="flex min-w-0 items-center gap-2">
 					<span
@@ -563,7 +576,7 @@
 		color: var(--exec-muted);
 	}
 	.ctx-toggle {
-		min-height: 32px;
+		min-height: 36px;
 		color: var(--exec-accent-ink);
 		transition:
 			background-color 0.14s ease,
@@ -649,5 +662,20 @@
 	}
 	.next-bar:hover {
 		background: var(--exec-surface-hi);
+	}
+	@media (max-width: 720px), (pointer: coarse) {
+		.deny-btn,
+		.outline-btn,
+		.skip-btn,
+		.deny-confirm,
+		.ctx-toggle,
+		.next-bar,
+		.deny-input {
+			min-height: 44px;
+		}
+		.stepper-arrow {
+			min-width: 44px;
+			min-height: 44px;
+		}
 	}
 </style>

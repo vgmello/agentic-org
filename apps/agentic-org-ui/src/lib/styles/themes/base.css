@@ -331,6 +331,12 @@
 	color: var(--exec-on-accent);
 }
 
+@media (max-width: 720px), (pointer: coarse) {
+	.exec-cta {
+		min-height: 44px;
+	}
+}
+
 /*
  * Light-scheme readability bridge for existing Tailwind Plus screens (/projects, /work,
  * /offices, /org-chart, /agents, /chat, /processes) whenever ANY light theme (Report) is active.

@@ -140,13 +140,14 @@
 		background: var(--exec-panel-bg-hover);
 		box-shadow: var(--exec-panel-shadow-hover);
 	}
-	.proj-card + .proj-card {
-		border-top: var(--exec-col-divider);
+	@media (max-width: 767px) {
+		.proj-card + .proj-card {
+			border-top: var(--exec-col-divider);
+		}
 	}
 	@media (min-width: 768px) and (max-width: 1023px) {
 		.proj-card {
 			padding: var(--exec-proj-pad);
-			border-top: 0;
 			border-left: var(--exec-col-divider);
 		}
 		.proj-card:nth-child(2n + 1) {
@@ -165,7 +166,6 @@
 	@media (min-width: 1024px) {
 		.proj-card {
 			padding: var(--exec-proj-pad);
-			border-top: 0;
 			border-left: var(--exec-col-divider);
 		}
 		.proj-card:nth-child(3n + 1) {
@@ -240,6 +240,11 @@
 		background: var(--exec-surface);
 		color: var(--exec-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+	}
+	@media (max-width: 720px), (pointer: coarse) {
+		.unblock-btn {
+			min-height: 44px;
+		}
 	}
 	.proj-foot {
 		border-top: 1px solid var(--exec-border);

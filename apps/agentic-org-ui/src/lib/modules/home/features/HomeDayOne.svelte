@@ -54,4 +54,9 @@
 	.outline-action:hover {
 		background: var(--exec-surface-hi);
 	}
+	@media (max-width: 720px), (pointer: coarse) {
+		.outline-action {
+			min-height: 44px;
+		}
+	}
 </style>

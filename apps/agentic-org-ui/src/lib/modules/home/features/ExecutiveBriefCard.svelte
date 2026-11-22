@@ -91,7 +91,7 @@
 					onclick={() => selectLens(option.id)}
 					onkeydown={(e) => handleBriefTabKeydown(e, idx)}
 					class={[
-						'lens-tab px-2.5 py-1 text-[11px] font-semibold',
+						'lens-tab inline-flex min-h-9 items-center px-2.5 py-1 text-[11px] font-semibold',
 						briefLens === option.id && 'is-on'
 					]}
 				>
@@ -119,7 +119,7 @@
 			{/each}
 
 			{#if briefLens === 'today' && catchUp.length > 0}
-				<div class="brief-entry flex flex-col gap-1.5 pt-1">
+				<div class="brief-entry is-catchup flex flex-col gap-1.5">
 					<span class="brief-kicker tone-accent">Recent Catch-up</span>
 					<div class="flex flex-col gap-1.5">
 						{#each catchUp as row (row.id)}
@@ -182,7 +182,7 @@
 					onclick={copyBrief}
 					aria-live="polite"
 					class={[
-						'brief-copy inline-flex min-h-8 items-center gap-1.5 px-2.5 text-xs font-semibold',
+						'brief-copy inline-flex min-h-9 items-center gap-1.5 px-2.5 text-xs font-semibold',
 						briefCopied && 'is-copied'
 					]}
 				>
@@ -258,6 +258,9 @@
 	}
 	.brief-entry {
 		padding-block: var(--exec-memo-item-py);
+	}
+	.brief-entry.is-catchup {
+		padding-top: max(4px, var(--exec-memo-item-py));
 	}
 	.brief-entry:first-child {
 		padding-top: var(--exec-memo-first-pt);
@@ -341,6 +344,13 @@
 		}
 		.brief-expand {
 			display: inline-flex;
+		}
+	}
+	@media (max-width: 720px), (pointer: coarse) {
+		.lens-tab,
+		.brief-expand,
+		.brief-copy {
+			min-height: 44px;
 		}
 	}
 </style>
