@@ -3106,10 +3106,15 @@ html[data-theme="report"] .hb-spot.is-urgent { border-top-color: #B83A2D; }
 html[data-theme="report"] .hb-spot.is-done { border-top-color: #0E6B50; }
 html[data-theme="report"] .hb-spot.is-error { border-top-color: #B83A2D; }
 html[data-theme="report"] .hb-spot::before { display: none; }
+html[data-theme="report"] .hb-spot-bar { flex-wrap: nowrap; gap: 8px; }
 html[data-theme="report"] .hb-spot-badge {
-  border-radius: 2px; text-transform: uppercase; letter-spacing: .07em; font-size: 0.68rem; font-weight: 700;
+  border-radius: 2px; text-transform: uppercase; letter-spacing: .04em; font-size: 0.65rem; font-weight: 700;
+  padding: 3px 8px; white-space: nowrap;
   background: #EAF1F6; box-shadow: inset 0 0 0 1px #8CB0C9; color: #0F3D5E;
 }
+html[data-theme="report"] .hb-spot-nav { gap: 8px; flex: none; }
+html[data-theme="report"] .hb-dot-btn { width: 16px; }
+html[data-theme="report"] .hb-dot-btn.is-cur { width: 24px; }
 html[data-theme="report"] .hb-spot-badge.urgent {
   background: #FCECE9; box-shadow: inset 0 0 0 1px #D9897E; color: #9B2C20;
 }
