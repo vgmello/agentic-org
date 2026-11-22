@@ -194,7 +194,12 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .foot .office-rail .obadge { position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; border-radius: 99px; background: #1b2533; display: inline-flex; align-items: center; justify-content: center; }
 .foot .office-rail .obadge .ic { width: 12px; height: 12px; stroke-width: 2; color: var(--green-400); }
 
-.proto-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px var(--gutter); background: rgba(8, 15, 28, .54); backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%); border-bottom: 1px solid rgba(186, 222, 255, .09); font-size: 13px; color: var(--gray-300); flex-shrink: 0; }
+.proto-hotzone { position: fixed; top: 0; left: 264px; right: 0; height: 14px; z-index: 59; display: flex; justify-content: center; align-items: flex-start; padding-top: 3px; transition: left .22s cubic-bezier(.22, 1, .36, 1), opacity .18s ease; }
+.proto-hotzone::after { content: ""; width: 38px; height: 3px; border-radius: 999px; background: rgba(186, 222, 255, .26); transition: background-color .18s ease, width .18s ease, opacity .18s ease; }
+.proto-hotzone:hover::after { width: 52px; background: rgba(125, 211, 252, .65); }
+.proto-hotzone.is-hidden { opacity: 0; pointer-events: none; }
+.proto-banner { position: fixed; top: 0; left: 264px; right: 0; z-index: 60; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px var(--gutter); background: rgba(8, 15, 28, .88); backdrop-filter: blur(22px) saturate(160%); -webkit-backdrop-filter: blur(22px) saturate(160%); border-bottom: 1px solid rgba(186, 222, 255, .14); box-shadow: 0 12px 32px -8px rgba(0, 0, 0, .58); font-size: 13px; color: var(--gray-300); flex-shrink: 0; transform: translateY(-100%); opacity: 0; pointer-events: none; transition: transform .22s cubic-bezier(.22, 1, .36, 1), opacity .18s ease, left .22s cubic-bezier(.22, 1, .36, 1); }
+.proto-banner.is-open { transform: translateY(0); opacity: 1; pointer-events: auto; }
 .proto-banner .grow { flex: 1; min-width: 110px; }
 .bctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .ver-ctl { display: inline-flex; align-items: center; gap: 6px; }
@@ -956,6 +961,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 @media (min-width: 640px) and (max-width: 959px) {
   .sidebar { width: 64px; padding: 0 8px; gap: 12px; overflow: visible; }
   .content { padding-left: 64px; }
+  .proto-banner, .proto-hotzone { left: 64px; }
   .logo { justify-content: center; margin: 8px auto 0; width: 48px; height: 48px; padding: 0; }
   .logo .name { display: none; }
   .nav-label, .subwrap, .nav-fold-btn { display: none; }
@@ -1010,13 +1016,14 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
   .c-chip-btn, .c-work-box summary { min-height: 44px; padding-top: 8px; padding-bottom: 8px; }
   .c-form { flex-direction: column; }
   .dl { grid-template-columns: 1fr; gap: 2px 0; } .dl dd { margin-bottom: 8px; }
-  .proto-banner { padding: 8px var(--gutter); }
+  .proto-banner { padding: 8px var(--gutter); left: 0; }
+  .proto-hotzone { left: 0; }
 }
 .scrim { display: none; position: fixed; inset: 0; z-index: 45; background: rgb(16 24 40 / .8); }
 @media (prefers-reduced-motion: reduce) {
   .p-working::after, .skel-b, .skel-c, .c-dot, .c-caret-blink, .h4-live-dot::after, .h4-decision.win-burst { animation: none; }
   .sidebar, .h4-kpi, .h4-decision, .h4-proj, .h4-now-item, .h4-cta, .h4-cta-fill, .h4-cta-sheen, .h4-cta-ico, .h4-cta-lbl,
-  .hb-pillar, .hb-card, .hb-spot, .hb-dot-btn, .hb-dot-btn::after, .hb-tseg, .cmdk-shell, .cmdk-opt { transition: none !important; }
+  .hb-pillar, .hb-card, .hb-spot, .hb-dot-btn, .hb-dot-btn::after, .hb-tseg, .cmdk-shell, .cmdk-opt, .proto-banner, .proto-hotzone { transition: none !important; }
 }
 
 /* ── v4 Home: Elevated Hierarchy, Relationship Grouping & Frosted Glass ── */
@@ -2142,6 +2149,7 @@ a.hb-tleg:hover { color: var(--hb-ink); }
 @media (min-width: 960px) {
   body.nav-collapsed .sidebar { width: 68px; padding: 0 10px; gap: 10px; overflow: visible; }
   body.nav-collapsed .content { padding-left: 68px; }
+  body.nav-collapsed .proto-banner, body.nav-collapsed .proto-hotzone { left: 68px; }
   body.nav-collapsed .sidebar-hd { flex-direction: column; gap: 6px; padding-top: 10px; }
   body.nav-collapsed .logo { width: 44px; height: 44px; margin: 0; padding: 0; justify-content: center; flex: none; }
   body.nav-collapsed .logo .name { display: none; }
@@ -2263,11 +2271,13 @@ html[data-theme="light"] .foot .who { color: #090F1A; }
 html[data-theme="light"] .foot .office { color: #475569; }
 html[data-theme="light"] .foot .office .ic14 { color: #047857; }
 html[data-theme="light"] .foot .office-rail .obadge { background: rgba(255, 255, 255, .92); }
+html[data-theme="light"] .proto-hotzone::after { background: rgba(15, 23, 42, .20); }
+html[data-theme="light"] .proto-hotzone:hover::after { background: rgba(15, 76, 129, .55); }
 html[data-theme="light"] .proto-banner {
-  background: rgba(255, 255, 255, .56);
+  background: rgba(255, 255, 255, .90);
   backdrop-filter: blur(22px) saturate(165%); -webkit-backdrop-filter: blur(22px) saturate(165%);
   border-bottom: 1px solid rgba(15, 23, 42, .12);
-  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, .60);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, .75), 0 10px 28px -10px rgba(15, 23, 42, .22);
   color: #475569;
 }
 html[data-theme="light"] .seg {
@@ -2686,9 +2696,12 @@ html[data-theme="classic"] .nav-item[aria-current="page"] .ic,
 html[data-theme="classic"] .nav-item.cur .ic { color: #7c86ff; }
 html[data-theme="classic"] .nav-sub { border-left-color: rgba(255, 255, 255, .08); }
 html[data-theme="classic"] .foot { border-top-color: rgba(255, 255, 255, .07); }
+html[data-theme="classic"] .proto-hotzone::after { background: rgba(255, 255, 255, .20); }
+html[data-theme="classic"] .proto-hotzone:hover::after { background: rgba(124, 134, 255, .65); }
 html[data-theme="classic"] .proto-banner {
   background: #161f2d; backdrop-filter: none; -webkit-backdrop-filter: none;
-  border-bottom-color: rgba(255, 255, 255, .07);
+  border-bottom-color: rgba(255, 255, 255, .08);
+  box-shadow: 0 10px 28px -8px rgba(0, 0, 0, .55);
 }
 html[data-theme="classic"] .seg { background: #101828; backdrop-filter: none; -webkit-backdrop-filter: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); }
 html[data-theme="classic"] .topbar { background: #1e2939; border-bottom: 1px solid rgba(255, 255, 255, .06); }
@@ -2907,10 +2920,13 @@ html[data-theme="report"] .foot .office .ic14 { color: #146C5B; }
 html[data-theme="report"] .foot .office-rail .obadge { background: #F9FAFC; }
 
 /* Restrained Flat Chrome (Banner & Search Bar) */
+html[data-theme="report"] .proto-hotzone::after { background: rgba(11, 16, 27, .16); }
+html[data-theme="report"] .proto-hotzone:hover::after { background: rgba(11, 16, 27, .48); }
 html[data-theme="report"] .proto-banner {
-  background: #F9FAFC;
+  background: rgba(255, 255, 255, .97);
   backdrop-filter: none; -webkit-backdrop-filter: none;
-  border-bottom: 1px solid #EEF1F6;
+  border-bottom: 1px solid #E2E8F0;
+  box-shadow: 0 10px 28px -14px rgba(11, 16, 27, .14);
   color: #475569;
 }
 html[data-theme="report"] .seg {
@@ -3541,6 +3557,7 @@ html[data-theme="report"] .split .list {
 <div class="scrim" data-act="drawer-close"></div>
 
 <div class="content" id="content">
+  <div class="proto-hotzone" id="banner-hotzone" aria-hidden="true" title="Hover top edge for prototype controls"></div>
   <div class="proto-banner" id="banner" role="note">
     <svg class="ic ic16" aria-hidden="true"><use href="#i-info"/></svg>
     <span class="grow">Prototype · information architecture v2 · draft 4.1 · mock data</span>
@@ -3570,7 +3587,7 @@ html[data-theme="report"] .split .list {
       <span class="cmdk-sep" aria-hidden="true"></span>
       <button class="cmdk-ai-btn" id="cmdk-ai-trigger" type="button" data-act="cmdk-open-ai" aria-haspopup="dialog" aria-controls="cmdk-dialog">
         <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg>
-        <span>Ask AI</span>
+        <span>Ask</span>
       </button>
     </div>
   </header>
@@ -6256,7 +6273,7 @@ function renderNav(route) {
     aiBtn.disabled = homeError;
     aiBtn.innerHTML = homeError
       ? `${ic("offline", "ic14")}<span>Offline</span>`
-      : `${ic("sparkle", "ic14")}<span>Ask AI</span>`;
+      : `${ic("sparkle", "ic14")}<span>Ask</span>`;
     aiBtn.title = homeError ? "Org AI unavailable while HQ office is offline" : "Ask Org AI";
   }
   if (homeError && CMDK.open) closeCmdk(false);
@@ -6885,7 +6902,7 @@ document.addEventListener("click", (e) => {
     case "cmdk-ai-submit": askInCmdk(CMDK.q); break;
     case "cmdk-ai-clear": CMDK.aiAns = null; CMDK.aiHistory = []; renderCmdk(); { const i = document.getElementById("cmdk-input"); if (i) i.focus(); } break;
     case "cmdk-run": runCmdkItem(Number(v)); break;
-    case "banner-close": document.getElementById("banner").remove(); { const c = document.getElementById("cmdk-trigger"); if (c) c.focus(); } break;
+    case "banner-close": { const b = document.getElementById("banner"); if (b) b.remove(); const hz = document.getElementById("banner-hotzone"); if (hz) hz.remove(); const c = document.getElementById("cmdk-trigger"); if (c) c.focus(); } break;
     case "close-sheet": closeSheet(); break;
     case "drawer": document.body.classList.add("drawer"); document.querySelector("#nav a").focus(); break;
     case "drawer-close": document.body.classList.remove("drawer"); break;
@@ -7030,6 +7047,71 @@ if (verSel) {
   verSel.addEventListener("change", () => { location.href = verSel.value + (location.hash || ""); });
   window.addEventListener("pageshow", () => { verSel.value = verSel.dataset.cur; });
 }
+
+/* Auto-hide prototype top banner unless mouse hovers near top edge or banner */
+(() => {
+  const banner = document.getElementById("banner");
+  const hotzone = document.getElementById("banner-hotzone");
+  if (!banner || !hotzone) return;
+  let hideTimer = null;
+  let overBanner = false;
+  let overZone = false;
+  const setOpen = (open) => {
+    banner.classList.toggle("is-open", open);
+    hotzone.classList.toggle("is-hidden", open);
+  };
+  const keepOpen = () => {
+    if (!document.body.contains(banner)) return true;
+    const active = document.activeElement;
+    if (overBanner || overZone) return true;
+    if (active && banner.contains(active) && (active.tagName === "SELECT" || active.matches(":focus-visible"))) return true;
+    return false;
+  };
+  const showBanner = () => {
+    clearTimeout(hideTimer);
+    if (!document.body.contains(banner)) return;
+    setOpen(true);
+  };
+  const scheduleHide = (delay = 240) => {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (!keepOpen()) setOpen(false);
+    }, delay);
+  };
+  hotzone.addEventListener("pointerenter", () => { overZone = true; showBanner(); });
+  hotzone.addEventListener("pointerleave", () => { overZone = false; scheduleHide(); });
+  hotzone.addEventListener("click", () => { showBanner(); });
+  banner.addEventListener("pointerenter", () => { overBanner = true; showBanner(); });
+  banner.addEventListener("pointerleave", () => {
+    overBanner = false;
+    const active = document.activeElement;
+    if (active && banner.contains(active) && active.tagName === "BUTTON") active.blur();
+    scheduleHide();
+  });
+  banner.addEventListener("focusin", (e) => {
+    if (e.target && (e.target.tagName === "SELECT" || e.target.matches(":focus-visible"))) showBanner();
+  });
+  banner.addEventListener("focusout", () => { scheduleHide(160); });
+  document.addEventListener("mousemove", (e) => {
+    if (!document.body.contains(banner)) return;
+    const leftEdge = banner.getBoundingClientRect().left;
+    if (e.clientY <= 14 && e.clientX >= leftEdge) {
+      overZone = true;
+      showBanner();
+    } else if (overZone && e.clientY > 18) {
+      overZone = false;
+      scheduleHide();
+    }
+  }, { passive: true });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && banner.classList.contains("is-open")) {
+      overBanner = false;
+      overZone = false;
+      if (document.activeElement && banner.contains(document.activeElement)) document.activeElement.blur();
+      setOpen(false);
+    }
+  });
+})();
 
 document.addEventListener("submit", (e) => {
   if (e.target && e.target.id === "hb-ask-form") {
