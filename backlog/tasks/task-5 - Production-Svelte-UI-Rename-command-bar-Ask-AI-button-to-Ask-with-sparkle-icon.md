@@ -1,12 +1,12 @@
 ---
 id: TASK-5
 title: >-
-  Production Svelte UI: Rename command bar 'Ask AI' button to 'Ask' with sparkle
-  icon
+  Production Svelte UI: Rename command bar to 'Ask' + 'Ask Clara' (Chief of
+  Staff)
 status: To Do
 assignee: []
 created_date: '2026-11-22T01:26:00Z'
-updated_date: '2026-11-22T02:06:00Z'
+updated_date: '2026-11-22T02:23:00Z'
 labels:
   - ui
   - shell
@@ -20,7 +20,7 @@ ordinal: 5000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Update ExecutiveCommandBar.svelte so the AI action button displays sparkle icon + 'Ask', and rename all 'Ask Org AI' / 'Org AI' copy (placeholder, modal tab, group headings, aria labels) to 'Ask Org' across all themes.
+Update ExecutiveCommandBar.svelte so the action button displays sparkle icon + 'Ask' and references the built-in AI Chief of Staff ('Ask Clara') across placeholder, modal tab, group headings, and aria labels.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
