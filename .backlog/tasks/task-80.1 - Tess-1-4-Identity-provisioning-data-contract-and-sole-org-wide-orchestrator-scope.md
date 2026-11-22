@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T02:35:00Z'
+updated_date: '2026-11-22T03:45:00Z'
 labels:
   - backend
   - rust
@@ -33,13 +34,13 @@ ordinal: 81000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Provision Tess as the second built-in organization agent (alongside HR) and establish her data contract, lifecycle invariants, and sole org-wide orchestrator authority boundary. Tess is the only agent allowed to orchestrate across all teams, projects, agents, and people; all other agents remain scoped to their normal team/reporting/project boundaries. Runs on demand (never spinning idle) with full office journal audit attribution and strict caller read boundaries (never exposing other agents private notes or host-only secrets).
+Provision Tess as the second built-in organization agent (alongside HR) and establish her data contract, lifecycle invariants, org-wide hiring authority, and sole org-wide orchestrator authority boundary. Tess is the only agent allowed to orchestrate across all teams, projects, agents, and people; all other agents remain scoped to their normal team/reporting/project boundaries. Unlike ordinary agents (which default to may_hire = false and can only hire into subtrees they lead), Tess is provisioned with may_hire = true and can initiate hires into any team in the organization through the HR hire flow (still respecting HR proposal/provisioning and team max_members limits). Runs on demand (never spinning idle) with full office journal audit attribution and strict caller read boundaries (never exposing other agents private notes or host-only secrets).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 Organization creation atomically provisions employees.builtin_key = "chief_of_staff" (kind: agent, display name: Tess, role: Chief of Staff) in the top-level team reporting directly to the organization owner, enforced unique per organization alongside hr; existing orgs without Tess can be bootstrapped/migrated safely.
-- [ ] #2 Tess has no hire request (Hired by omitted), defaults to may_hire = false, cannot be offboarded or deleted while the organization exists, and stores the full expansion "Tactical Execution & Squad Supervisor" strictly in her profile bio/charter.
-- [ ] #3 Organization Data contracts (doc-75, doc-78) and schema.sql are updated for builtin_key = "chief_of_staff", enforcing Tess as the sole org-wide orchestrator while preventing non-Chief-of-Staff agents from bypassing team/reporting/project scope.
-- [ ] #4 Tess executes on demand with turns, reads, and actions recorded in the office journal under her employee ID, strictly respecting caller visibility (no private task notes of other agents, no host-only secrets), backed by automated tests.
+- [ ] #2 Tess has no hire request (Hired by omitted), defaults to may_hire = true with org-wide hiring authority into any team through the HR hire flow (respecting ADR-0029 provisioning and team max_members; owner can toggle may_hire), cannot be offboarded or deleted while the organization exists, and stores the full expansion "Tactical Execution & Squad Supervisor" strictly in her profile bio/charter.
+- [ ] #3 Organization Data contracts (doc-75, doc-78), ADR-0029 hiring rules, and schema.sql are updated for builtin_key = "chief_of_staff", granting org-wide hiring when may_hire = true and enforcing Tess as the sole org-wide orchestrator while preventing non-Chief-of-Staff agents from bypassing team/reporting/project scope.
+- [ ] #4 Tess executes on demand with turns, reads, and actions recorded in the office journal under her employee ID, strictly respecting caller visibility (no private task notes of other agents, no host-only secrets), backed by automated tests including org-wide hiring via HR.
 <!-- AC:END -->
