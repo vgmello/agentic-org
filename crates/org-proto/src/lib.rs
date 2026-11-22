@@ -104,6 +104,7 @@ pub mod org;
 pub mod private_notes;
 pub mod processes;
 pub mod projects;
+pub mod providers;
 pub mod retired;
 pub mod rfc3339;
 pub mod sessions;

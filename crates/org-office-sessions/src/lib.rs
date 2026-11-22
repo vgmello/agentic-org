@@ -20,6 +20,7 @@ pub mod manager;
 pub mod preset;
 mod pump;
 pub mod recovery;
+pub mod router;
 pub mod runtime_registry;
 pub mod subagents;
 pub mod transcript;
@@ -56,6 +57,8 @@ pub use wake::{
     DEFAULT_HOURLY_WAKE_LIMIT, DEFAULT_SUSPEND_GRACE, DEFAULT_WAKE_WINDOW,
 };
 
+#[cfg(test)]
+mod pool_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

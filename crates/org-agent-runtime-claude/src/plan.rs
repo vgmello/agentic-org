@@ -684,6 +684,7 @@ pub(crate) fn auth_env_names() -> Vec<EnvName> {
         "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
         "ANTHROPIC_API_KEY",
         "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+        "ANTHROPIC_BASE_URL",
     ]
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static auth env name is valid"))

@@ -46,10 +46,48 @@ pub(crate) type TurnEndedHook = Arc<dyn Fn(&str) + Send + Sync>;
 pub(crate) type OpenRequiredAsksHook = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 /// Records normalized runtime usage from a supervised session turn into the office accounting ledger (`L2`/`L3`).
 pub(crate) type UsageHook = Arc<dyn Fn(&str, &str, &org_agent_runtime::Usage) + Send + Sync>;
+/// Acquires a turn permit synchronously before dispatching a follow-up turn inside a live pump
+/// (`L4` / `doc-88` §6: eliminates permit-less follow-up & background-wake turns).
+pub(crate) type PermitAcquireHook =
+    Arc<dyn Fn(&str, Option<&str>) -> Result<(String, u64), String> + Send + Sync>;
+/// Renews an active turn permit in memory (`TASK-2` / `L4`, zero durable writes).
+pub(crate) type PermitRenewHook = Arc<dyn Fn(&str, u64) -> bool + Send + Sync>;
+/// Releases a turn permit after verified process/turn cleanup (`ASK-4`, `LIVE-2`).
+pub(crate) type PermitReleaseHook = Arc<dyn Fn(&str) + Send + Sync>;
+/// Marks a turn permit `release_pending` when child cleanup cannot be verified (`AE-07`).
+pub(crate) type PermitReleasePendingHook = Arc<dyn Fn(&str) + Send + Sync>;
+/// Records a rate-limit cooldown on a provider connection (`L4` / `FC-099`).
+pub(crate) type RateLimitHook = Arc<dyn Fn(&str, Option<&str>) + Send + Sync>;
+/// Request to relaunch a failed turn on the next eligible connection in the frozen pool (`doc-88` §7).
+#[derive(Clone, Debug)]
+pub(crate) struct FailoverRequest {
+    pub employee_id: String,
+    pub failed_connection_id: String,
+    pub objective: String,
+    pub workspace: Option<String>,
+    pub task_ref: Option<String>,
+    pub tried_connections: Vec<String>,
+    pub reason: &'static str,
+    pub rate_limit_resets_at: Option<String>,
+}
+pub(crate) type FailoverHook = Arc<dyn Fn(FailoverRequest) + Send + Sync>;
 /// Returns `true` when durable suspension was recorded (non-empty required asks), `false` if
 /// all required asks were answered/withdrawn before suspension took effect (`High #3`).
 pub(crate) type SuspendedHook =
     Arc<dyn Fn(&str, Vec<String>, Option<String>, Option<String>) -> bool + Send + Sync>;
+
+pub(crate) struct PumpHooks {
+    pub has_open_required_asks: Option<OpenRequiredAsksHook>,
+    pub on_turn_ended: Option<TurnEndedHook>,
+    pub on_suspended: Option<SuspendedHook>,
+    pub on_usage: Option<UsageHook>,
+    pub on_permit_acquire: Option<PermitAcquireHook>,
+    pub on_permit_renew: Option<PermitRenewHook>,
+    pub on_permit_release: Option<PermitReleaseHook>,
+    pub on_permit_release_pending: Option<PermitReleasePendingHook>,
+    pub on_rate_limit: Option<RateLimitHook>,
+    pub on_failover: Option<FailoverHook>,
+}
 
 pub(crate) struct SessionRuntimeState {
     pub employee_id: String,
@@ -114,15 +152,17 @@ impl SessionRuntimeState {
 pub(crate) struct PumpContext {
     pub employee_id: String,
     pub run_id: String,
+    pub connection_id: Option<String>,
+    pub active_permit: Arc<Mutex<Option<(String, u64)>>>,
+    pub workspace: Option<String>,
+    pub task_ref: Option<String>,
+    pub tried_connections: Vec<String>,
     pub store: SessionStore,
     pub bindings: RunBindingRegistry,
     pub state: Arc<Mutex<SessionRuntimeState>>,
     pub stop_plan: org_agent_runtime::StopPlan,
     pub cleanup_paths: Vec<org_agent_runtime::CleanupPath>,
-    pub has_open_required_asks: Option<OpenRequiredAsksHook>,
-    pub on_turn_ended: Option<TurnEndedHook>,
-    pub on_suspended: Option<SuspendedHook>,
-    pub on_usage: Option<UsageHook>,
+    pub hooks: PumpHooks,
 }
 
 enum ReaderMsg {
@@ -143,6 +183,14 @@ struct PumpLoopState {
     turn_just_ended: bool,
     stalled: bool,
     exit_observed_at: Option<Instant>,
+    had_external_effect: bool,
+    accepted_commands_baseline: usize,
+    rate_limited: bool,
+    rate_limit_resets_at: Option<String>,
+    last_permit_renew: Instant,
+    permit_lease_deadline: Option<Instant>,
+    current_objective: String,
+    failover_pending: Option<FailoverRequest>,
 }
 
 impl PumpLoopState {
@@ -159,6 +207,14 @@ impl PumpLoopState {
             turn_just_ended: false,
             stalled: false,
             exit_observed_at: None,
+            had_external_effect: false,
+            accepted_commands_baseline: 0,
+            rate_limited: false,
+            rate_limit_resets_at: None,
+            last_permit_renew: Instant::now(),
+            permit_lease_deadline: None,
+            current_objective: String::new(),
+            failover_pending: None,
         }
     }
 }
@@ -226,12 +282,36 @@ pub(crate) fn run_pump(
     );
 }
 
+fn release_active_permit(ctx: &PumpContext) {
+    let taken = ctx
+        .active_permit
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take();
+    if let (Some((permit_id, _)), Some(cb)) = (taken, ctx.hooks.on_permit_release.as_ref()) {
+        cb(&permit_id);
+    }
+}
+
+fn mark_active_permit_release_pending(ctx: &PumpContext) {
+    let taken = ctx
+        .active_permit
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take();
+    if let (Some((permit_id, _)), Some(cb)) = (taken, ctx.hooks.on_permit_release_pending.as_ref())
+    {
+        cb(&permit_id);
+    }
+}
+
 fn should_exit_loop(
     child: &mut org_supervise::OwnedChild,
     ctx: &PumpContext,
     loop_state: &mut PumpLoopState,
 ) -> bool {
     let has_open_asks = ctx
+        .hooks
         .has_open_required_asks
         .as_ref()
         .is_some_and(|check| check(&ctx.employee_id));
@@ -254,7 +334,11 @@ fn should_exit_loop(
         if has_open_asks {
             loop_state.suspend_now = true;
         } else if !loop_state.stop_requested && !should_finish_after_exit(child, loop_state) {
-            if let Some(hook) = &ctx.on_turn_ended {
+            // Always release the completed turn's permit; any follow-up turn in `pending_turns`
+            // acquires/verifies its own permit right before `Control::Send` (`doc-88` §6).
+            release_active_permit(ctx);
+            loop_state.permit_lease_deadline = None;
+            if let Some(hook) = &ctx.hooks.on_turn_ended {
                 hook(&ctx.employee_id);
             }
         }
@@ -288,11 +372,12 @@ fn finish_pump(
     } else {
         StopMode::Graceful
     };
-    finalize_child(child, stdin, session, ctx, mode, false);
+    let cleanup_verified = finalize_child(child, stdin, session, ctx, mode, false);
     let _ = out_reader.join();
     let _ = err_reader.join();
-    if loop_state.suspend_now {
+    if loop_state.suspend_now && cleanup_verified {
         let persisted_suspended = ctx
+            .hooks
             .on_suspended
             .as_ref()
             .is_some_and(|hook| hook(&ctx.employee_id, reaped_bg, session_id_snap, rsid_snap));
@@ -305,6 +390,19 @@ fn finish_pump(
                 guard.state = SessionState::Suspended;
             }
         }
+    }
+    if cleanup_verified {
+        // Release permit AFTER verified process cleanup & suspension persistence (`ASK-4`, `LIVE-2`).
+        release_active_permit(ctx);
+        if let (Some(req), Some(cb)) = (
+            loop_state.failover_pending.as_ref(),
+            ctx.hooks.on_failover.as_ref(),
+        ) {
+            cb(req.clone());
+        }
+    } else {
+        // Unproven cleanup (`AE-07`): keep slot occupied in `release_pending` & require recovery.
+        mark_active_permit_release_pending(ctx);
     }
 }
 
@@ -352,6 +450,7 @@ fn drain_commands(
             }
             PumpCommand::Stop { reason } => {
                 loop_state.stop_requested = true;
+                loop_state.failover_pending = None;
                 if let Ok(outs) = session.control(Control::Close, Instant::now()) {
                     apply_outputs(outs, stdin, ctx, loop_state, session);
                 }
@@ -376,6 +475,41 @@ fn enqueue_background_wakes(ctx: &PumpContext, loop_state: &mut PumpLoopState) {
     }
 }
 
+fn ensure_permit_for_turn(ctx: &PumpContext, loop_state: &mut PumpLoopState) -> bool {
+    let Some(conn_id) = ctx.connection_id.as_deref() else {
+        return true;
+    };
+    let already_held = ctx
+        .active_permit
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some();
+    if already_held {
+        loop_state
+            .permit_lease_deadline
+            .get_or_insert_with(|| Instant::now() + Duration::from_secs(60));
+        return true;
+    }
+    let Some(acquire) = ctx.hooks.on_permit_acquire.as_ref() else {
+        return true;
+    };
+    match acquire(conn_id, ctx.task_ref.as_deref()) {
+        Ok(permit) => {
+            *ctx.active_permit.lock().unwrap_or_else(|p| p.into_inner()) = Some(permit);
+            loop_state.permit_lease_deadline = Some(Instant::now() + Duration::from_secs(60));
+            true
+        }
+        Err(reason) => {
+            let mut st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+            st.last_error = Some(reason);
+            if st.state == SessionState::Running {
+                st.state = SessionState::Idle;
+            }
+            false
+        }
+    }
+}
+
 fn dispatch_next_turn(
     stdin: &mut org_supervise::ChildStdin,
     ctx: &PumpContext,
@@ -389,8 +523,18 @@ fn dispatch_next_turn(
     {
         return;
     }
+    if !ensure_permit_for_turn(ctx, loop_state) {
+        loop_state.pending_turns.clear();
+        return;
+    }
     let text = loop_state.pending_turns.remove(0);
     let objective_for_disk = text.clone();
+    loop_state.current_objective = text.clone();
+    loop_state.had_external_effect = false;
+    loop_state.accepted_commands_baseline = ctx.bindings.accepted_commands(&ctx.employee_id).len();
+    loop_state.rate_limited = false;
+    loop_state.rate_limit_resets_at = None;
+    loop_state.last_permit_renew = Instant::now();
     if let Ok(outs) = session.control(
         Control::Send {
             text,
@@ -404,6 +548,9 @@ fn dispatch_next_turn(
             rec.active = true;
         });
         apply_outputs(outs, stdin, ctx, loop_state, session);
+    } else {
+        release_active_permit(ctx);
+        loop_state.permit_lease_deadline = None;
     }
 }
 
@@ -450,6 +597,42 @@ fn poll_io(
     }
 }
 
+const LEASE_RENEW_INTERVAL: Duration = Duration::from_secs(10);
+const LEASE_SAFETY_MARGIN: Duration = Duration::from_secs(20);
+const LEASE_WINDOW: Duration = Duration::from_secs(60);
+
+fn check_permit_heartbeat(ctx: &PumpContext, loop_state: &mut PumpLoopState, now: Instant) {
+    if !loop_state.turn_active {
+        return;
+    }
+    if loop_state.last_permit_renew.elapsed() >= LEASE_RENEW_INTERVAL {
+        loop_state.last_permit_renew = now;
+        let current = ctx
+            .active_permit
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if let (Some((pid, generation)), Some(cb)) = (current, ctx.hooks.on_permit_renew.as_ref()) {
+            if cb(&pid, generation) {
+                loop_state.permit_lease_deadline = Some(now + LEASE_WINDOW);
+            } else {
+                let mut st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+                st.last_error = Some("turn permit lease renewal failed; stopping turn".into());
+                loop_state.stop_requested = true;
+                return;
+            }
+        }
+    }
+    if loop_state
+        .permit_lease_deadline
+        .is_some_and(|d| d.saturating_duration_since(now) <= LEASE_SAFETY_MARGIN)
+    {
+        let mut st = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
+        st.last_error = Some("turn permit lease approaching expiry; stopping turn".into());
+        loop_state.stop_requested = true;
+    }
+}
+
 fn drive_deadlines(
     stdin: &mut org_supervise::ChildStdin,
     ctx: &PumpContext,
@@ -457,6 +640,7 @@ fn drive_deadlines(
     session: &mut Box<dyn org_agent_runtime::Session>,
 ) {
     let now = Instant::now();
+    check_permit_heartbeat(ctx, loop_state, now);
     if session.next_deadline().is_some_and(|d| now >= d) {
         let outs = session.on_tick(now);
         apply_outputs(outs, stdin, ctx, loop_state, session);
@@ -555,8 +739,10 @@ fn handle_event(
             persist_turn_update(ctx, |rec| rec.active = true);
         }
         SessionEvent::AssistantText { text, .. } => state.last_reply = Some(text.clone()),
-        SessionEvent::TurnEnded { errors, .. } => {
-            handle_turn_ended(&mut state, loop_state, ctx, errors);
+        SessionEvent::TurnEnded {
+            outcome, errors, ..
+        } => {
+            handle_turn_ended(&mut state, loop_state, ctx, outcome, errors);
         }
         SessionEvent::StartFailed { reason } => {
             state.last_error = Some(format!("start failed: {reason:?}"));
@@ -566,11 +752,29 @@ fn handle_event(
             state.backgrounds.record_usage(usage);
             let run_id = ctx.run_id.clone();
             let emp_id = ctx.employee_id.clone();
-            let hook = ctx.on_usage.clone();
+            let hook = ctx.hooks.on_usage.clone();
             drop(state);
             if let Some(cb) = hook {
                 cb(&emp_id, &run_id, usage);
             }
+        }
+        SessionEvent::RateLimit(rl) => {
+            if rl.status == org_agent_runtime::LimitStatus::Rejected {
+                loop_state.rate_limited = true;
+                if rl.resets_at.is_some() {
+                    loop_state.rate_limit_resets_at = rl.resets_at.clone();
+                }
+                let conn_id = ctx.connection_id.clone();
+                let hook = ctx.hooks.on_rate_limit.clone();
+                drop(state);
+                if let (Some(cid), Some(cb)) = (conn_id, hook) {
+                    cb(&cid, rl.resets_at.as_deref());
+                }
+            }
+        }
+        SessionEvent::ToolStarted { .. } => {
+            loop_state.had_external_effect = true;
+            return handle_tool_or_approval_event(&mut state, event);
         }
         other => return handle_tool_or_approval_event(&mut state, other),
     }
@@ -620,6 +824,7 @@ fn handle_turn_ended(
     state: &mut SessionRuntimeState,
     loop_state: &mut PumpLoopState,
     ctx: &PumpContext,
+    outcome: &org_agent_runtime::TurnOutcome,
     errors: &[String],
 ) {
     loop_state.turn_active = false;
@@ -628,12 +833,16 @@ fn handle_turn_ended(
     if !errors.is_empty() {
         state.last_error = Some(errors.join("; "));
     }
+    let failover_blocked_recovery = evaluate_turn_failover(state, loop_state, ctx, outcome, errors);
     if state.state == SessionState::Running {
         state.state = SessionState::Idle;
     }
     persist_turn_update(ctx, |rec| {
         rec.active = false;
         rec.consecutive_stalls = 0;
+        if failover_blocked_recovery {
+            rec.recovery_required = true;
+        }
         let mem_cmds: Vec<String> = ctx
             .bindings
             .accepted_commands(&ctx.employee_id)
@@ -644,6 +853,51 @@ fn handle_turn_ended(
             rec.accepted_commands = mem_cmds;
         }
     });
+}
+
+fn evaluate_turn_failover(
+    state: &mut SessionRuntimeState,
+    loop_state: &mut PumpLoopState,
+    ctx: &PumpContext,
+    outcome: &org_agent_runtime::TurnOutcome,
+    errors: &[String],
+) -> bool {
+    if matches!(outcome, org_agent_runtime::TurnOutcome::Completed) {
+        return false;
+    }
+    let Some(reason) = crate::router::classify_failover_error(errors, loop_state.rate_limited)
+    else {
+        return false;
+    };
+    let Some(conn_id) = ctx.connection_id.as_ref() else {
+        return false;
+    };
+    let turn_cmds = ctx.bindings.accepted_commands(&ctx.employee_id).len();
+    let has_effects =
+        loop_state.had_external_effect || turn_cmds > loop_state.accepted_commands_baseline;
+    if has_effects {
+        state.state = SessionState::RecoveryRequired;
+        state.recovery_required = true;
+        state.last_error = Some(format!("failover blocked after side effects ({reason})"));
+        loop_state.stop_requested = true;
+        return true;
+    }
+    let mut tried = ctx.tried_connections.clone();
+    if !tried.contains(conn_id) {
+        tried.push(conn_id.clone());
+    }
+    loop_state.failover_pending = Some(FailoverRequest {
+        employee_id: ctx.employee_id.clone(),
+        failed_connection_id: conn_id.clone(),
+        objective: loop_state.current_objective.clone(),
+        workspace: ctx.workspace.clone(),
+        task_ref: ctx.task_ref.clone(),
+        tried_connections: tried,
+        reason,
+        rate_limit_resets_at: loop_state.rate_limit_resets_at.clone(),
+    });
+    loop_state.stop_requested = true;
+    false
 }
 
 fn persist_turn_update(
@@ -760,7 +1014,7 @@ pub(crate) fn finalize_child(
     ctx: &PumpContext,
     mode: StopMode,
     suspended: bool,
-) {
+) -> bool {
     let accepted = ctx
         .bindings
         .accepted_commands(&ctx.employee_id)
@@ -774,20 +1028,30 @@ pub(crate) fn finalize_child(
         let _ = stdin.close();
     }
     let sockets = org_supervise::runtime::socket_cleanup(&ctx.cleanup_paths).unwrap_or_default();
-    let exit_info = match child.cleanup_and_reap(&sockets) {
-        Ok(report) => ExitInfo {
-            code: report.status.code(),
-            signal: report.status.signal(),
-        },
-        Err(_) => ExitInfo {
-            code: None,
-            signal: None,
-        },
+    let (cleanup_verified, exit_info) = match child.cleanup_and_reap(&sockets) {
+        Ok(report) => (
+            true,
+            ExitInfo {
+                code: report.status.code(),
+                signal: report.status.signal(),
+            },
+        ),
+        Err(_) => (
+            false,
+            ExitInfo {
+                code: None,
+                signal: None,
+            },
+        ),
     };
     let _ = session.on_exit(exit_info, Instant::now());
     let mut state = ctx.state.lock().unwrap_or_else(|p| p.into_inner());
     let _ = state.backgrounds.reap_all(rfc3339_now());
-    if suspended {
+    if !cleanup_verified {
+        state.state = SessionState::RecoveryRequired;
+        state.recovery_required = true;
+        state.last_error = Some("child process cleanup could not be verified".into());
+    } else if suspended {
         state.state = SessionState::Suspended;
     } else if !matches!(
         state.state,
@@ -798,8 +1062,12 @@ pub(crate) fn finalize_child(
     drop(state);
     persist_turn_update(ctx, |rec| {
         rec.active = false;
+        if !cleanup_verified {
+            rec.recovery_required = true;
+        }
         if rec.accepted_commands.len() < accepted.len() {
             rec.accepted_commands = accepted;
         }
     });
+    cleanup_verified
 }

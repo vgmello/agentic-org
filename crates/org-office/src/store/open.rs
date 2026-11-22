@@ -50,14 +50,15 @@ pub use operations::{
     CheckOp, CreateOrganizationOp, CreateProjectOp, CreateTeamOp, DeactivatePersonOp,
     DirectoryGeneration, DirectorySnapshot, EmployeeById, HireInspectById, HiresList,
     ImportOrganizationOp, ModelProfileById, ModelProfilesList, MovePersonOp, MoveTeamOp,
-    OfficeStanding, ProjectCheckOp, ProjectInspectByRef, ProjectsList, ProviderConnectionById,
-    ReceiptById, RemoveProjectTeamOp, RoleById, RoleInspectByRef, RolesList, Standing, StructureOp,
-    TopTeamId, UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
+    OfficeStanding, OfficesCount, ProjectCheckOp, ProjectInspectByRef, ProjectsList,
+    ProviderConnectionById, ProviderConnectionsList, ReceiptById, RemoveProjectTeamOp, RoleById,
+    RoleInspectByRef, RolesList, Standing, StructureOp, TopTeamId, UpdatePersonOp, UpdateTeamOp,
+    WatchingModelRead,
 };
 
 use super::sqlite::{
     accounting::SqliteAccountingStore, budgets::SqliteBudgetStore,
-    private_notes::SqlitePrivateNotesStore, SqliteEngine,
+    private_notes::SqlitePrivateNotesStore, providers::SqliteProviderPoolStore, SqliteEngine,
 };
 use crate::{
     accounting::AccountingStore,
@@ -69,6 +70,7 @@ use crate::{
     private_notes::PrivateNotesStore,
     processes::projector::ProcessFiles,
     projects::projector::ProjectFiles,
+    providers::ProviderPoolStore,
     tasks::{
         ports::{TasksEngine, TasksRead},
         projector::TaskFiles,
@@ -135,6 +137,29 @@ pub(crate) fn open_budgets(
         )?)),
         #[cfg(any(test, feature = "testkit"))]
         EngineChoice::Memory => Ok(Arc::new(crate::budgets::memory::MemoryBudgetStore::new())),
+    }
+}
+
+/// Opens the isolated `L4` provider bindings, discovery cache, and dual-authority quota permit
+/// store (`TASK-54`, `doc-88`, `doc-89`, `TASK-2` non-blocking in-memory lease heartbeats).
+pub(crate) fn open_providers(
+    engine: EngineChoice,
+    durable_root: &Path,
+    runtime_root: &Path,
+    office_id: &str,
+    org_id: &str,
+) -> Result<Arc<dyn ProviderPoolStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqliteProviderPoolStore::open(
+            durable_root,
+            runtime_root,
+            office_id,
+            org_id,
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(
+            crate::providers::memory::MemoryProviderPoolStore::new(),
+        )),
     }
 }
 

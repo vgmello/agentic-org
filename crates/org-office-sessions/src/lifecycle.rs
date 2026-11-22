@@ -15,7 +15,11 @@ use org_proto::sessions::SessionState;
 use crate::binding::RunBindingRegistry;
 use crate::credentials::{now_ms, rfc3339_now};
 use crate::manager::{SessionManager, SessionRegistry};
-use crate::pump::{OpenRequiredAsksHook, PumpCommand, SuspendedHook, TurnEndedHook};
+use crate::pump::{
+    FailoverHook, OpenRequiredAsksHook, PermitAcquireHook, PermitReleaseHook,
+    PermitReleasePendingHook, PermitRenewHook, PumpCommand, PumpHooks, RateLimitHook,
+    SuspendedHook, TurnEndedHook,
+};
 use crate::recovery::SessionStore;
 use crate::wake::{
     compose_coalesced_wake_objective, compose_required_ask_resume_objective, PendingAskAnswer,
@@ -170,6 +174,17 @@ impl SessionManager {
                 })
         };
         if suspended_resume.is_some() {
+            for _ in 0..10 {
+                let outcome = self.try_resume_suspended(asker_id);
+                if outcome
+                    != (WakeOutcome::Queued {
+                        reason: WakeHoldReason::Busy,
+                    })
+                {
+                    return outcome;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
             return self.try_resume_suspended(asker_id);
         }
         if self.has_live_active_turn(asker_id) {
@@ -399,14 +414,7 @@ impl SessionManager {
         out
     }
 
-    pub(crate) fn build_pump_hooks(
-        &self,
-    ) -> (
-        OpenRequiredAsksHook,
-        TurnEndedHook,
-        SuspendedHook,
-        crate::pump::UsageHook,
-    ) {
+    pub(crate) fn build_pump_hooks(&self, employee_id: &str, route_digest: String) -> PumpHooks {
         let open_asks_check = Arc::clone(&self.open_required_asks);
         let has_open: OpenRequiredAsksHook = Arc::new(move |emp_id: &str| {
             open_asks_check
@@ -468,7 +476,35 @@ impl SessionManager {
             record_session_usage(&usage_office, &usage_baselines, emp_id, run_id, seq, usage);
         });
 
-        (has_open, on_turn_ended, on_suspended, on_usage)
+        let (on_permit_acquire, on_permit_renew, on_permit_release, on_permit_release_pending) =
+            build_permit_hooks(self, employee_id, route_digest);
+
+        let rl_office = Arc::clone(&self.office);
+        let on_rate_limit: RateLimitHook = Arc::new(move |conn_id, resets_at| {
+            let _ = rl_office.record_connection_cooldown_internal(conn_id, None, resets_at, None);
+        });
+
+        let failover_weak = self.weak_self();
+        let on_failover: FailoverHook = Arc::new(move |req| {
+            if let Some(mgr) = failover_weak.as_ref().and_then(|w| w.upgrade()) {
+                let _ = std::thread::Builder::new()
+                    .name("org-pool-failover".into())
+                    .spawn(move || mgr.failover_relaunch(req));
+            }
+        });
+
+        PumpHooks {
+            has_open_required_asks: Some(has_open),
+            on_turn_ended: Some(on_turn_ended),
+            on_suspended: Some(on_suspended),
+            on_usage: Some(on_usage),
+            on_permit_acquire: Some(on_permit_acquire),
+            on_permit_renew: Some(on_permit_renew),
+            on_permit_release: Some(on_permit_release),
+            on_permit_release_pending: Some(on_permit_release_pending),
+            on_rate_limit: Some(on_rate_limit),
+            on_failover: Some(on_failover),
+        }
     }
 
     fn load_agent_employee(&self, employee_id: &str) -> Option<Employee> {
@@ -578,6 +614,15 @@ impl SessionManager {
         susp: SuspendedStateRecord,
     ) -> WakeOutcome {
         let emp_id = employee.id.as_str();
+        if self
+            .store
+            .read_pending_wakes(emp_id)
+            .ok()
+            .flatten()
+            .is_none_or(|q| q.items.is_empty())
+        {
+            return WakeOutcome::Ignored;
+        }
         let Some(_dispatch_guard) = DispatchWakeGuard::try_acquire(&self.dispatching_wakes, emp_id)
         else {
             return WakeOutcome::Queued {
@@ -694,6 +739,15 @@ impl SessionManager {
 
     fn try_dispatch_pending_queue(&self, employee: &Employee) -> WakeOutcome {
         let emp_id = employee.id.as_str();
+        if self
+            .store
+            .read_pending_wakes(emp_id)
+            .ok()
+            .flatten()
+            .is_none_or(|q| q.items.is_empty())
+        {
+            return WakeOutcome::Ignored;
+        }
         let Some(_dispatch_guard) = DispatchWakeGuard::try_acquire(&self.dispatching_wakes, emp_id)
         else {
             return WakeOutcome::Queued {
@@ -1118,6 +1172,175 @@ fn persist_suspended_record(
     let _ = store.write_suspended_state_redacted(&record, active_secrets);
 }
 
+fn build_permit_hooks(
+    mgr: &SessionManager,
+    employee_id: &str,
+    route_digest: String,
+) -> (
+    PermitAcquireHook,
+    PermitRenewHook,
+    PermitReleaseHook,
+    PermitReleasePendingHook,
+) {
+    let acq_office = Arc::clone(&mgr.office);
+    let acq_emp = employee_id.to_owned();
+    let on_permit_acquire: PermitAcquireHook = Arc::new(move |conn_id, task_id| {
+        let digest = (!route_digest.is_empty()).then_some(route_digest.as_str());
+        match crate::router::acquire_warm_permit_for_office(
+            &acq_office,
+            conn_id,
+            &acq_emp,
+            task_id,
+            digest,
+        ) {
+            crate::router::WarmPermitOutcome::Granted(p) => Ok(p),
+            crate::router::WarmPermitOutcome::StaleWarm => {
+                Err("WARM_ROUTE_STALE: session configuration changed".into())
+            }
+            crate::router::WarmPermitOutcome::Unavailable { reason, .. } => {
+                Err(format!("POOL_EXHAUSTED: [{reason}]"))
+            }
+            crate::router::WarmPermitOutcome::Refused(err) => Err(err.message),
+        }
+    });
+
+    let renew_office = Arc::clone(&mgr.office);
+    let on_permit_renew: PermitRenewHook = Arc::new(move |permit_id, generation| {
+        renew_office
+            .renew_turn_permit(permit_id, generation)
+            .is_ok_and(|r| r.is_ok())
+    });
+
+    let release_office = Arc::clone(&mgr.office);
+    let release_weak = mgr.weak_self();
+    let on_permit_release: PermitReleaseHook = Arc::new(move |permit_id| {
+        let _ = release_office.release_turn_permit(permit_id);
+        if let Some(m) = release_weak.as_ref().and_then(|w| w.upgrade()) {
+            let _ = std::thread::Builder::new()
+                .name("org-permit-wake".into())
+                .spawn(move || m.process_due_wakes());
+        }
+    });
+
+    let pending_office = Arc::clone(&mgr.office);
+    let on_permit_release_pending: PermitReleasePendingHook = Arc::new(move |permit_id| {
+        let _ = pending_office.mark_turn_permit_release_pending(permit_id);
+    });
+
+    (
+        on_permit_acquire,
+        on_permit_renew,
+        on_permit_release,
+        on_permit_release_pending,
+    )
+}
+
+fn try_send_wake_on_live_handle(
+    employee_id: &str,
+    queue_task_id: Option<&str>,
+    objective: String,
+    ctx: &TurnEndDrainCtx,
+) -> Result<bool, WakeHoldReason> {
+    let handle_info = {
+        let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
+        reg.live.get(employee_id).map(|handle| {
+            (
+                handle.tx.clone(),
+                handle.connection_id.clone(),
+                handle.route_digest.clone(),
+                Arc::clone(&handle.active_permit),
+            )
+        })
+    };
+    let Some((tx, conn_id, route_digest, active_permit)) = handle_info else {
+        return Ok(false);
+    };
+    let acquired_pid = match acquire_live_handle_permit(
+        &ctx.office,
+        conn_id.as_deref(),
+        (!route_digest.is_empty()).then_some(route_digest.as_str()),
+        &active_permit,
+        employee_id,
+        queue_task_id,
+    ) {
+        Ok(pid) => pid,
+        Err(LivePermitError::Stale) => {
+            let _ = tx.send(PumpCommand::Stop {
+                reason: "warm_route_stale".into(),
+            });
+            return Err(WakeHoldReason::AdmissionRefused);
+        }
+        Err(LivePermitError::Hold(reason)) => return Err(reason),
+    };
+    if tx.send(PumpCommand::SendTurn(objective)).is_ok() {
+        return Ok(true);
+    }
+    if let Some(pid) = acquired_pid {
+        let _ = active_permit
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        let _ = ctx.office.release_turn_permit(&pid);
+    }
+    Ok(false)
+}
+
+enum LivePermitError {
+    Stale,
+    Hold(WakeHoldReason),
+}
+
+fn acquire_live_handle_permit(
+    office: &Office,
+    conn_id: Option<&str>,
+    route_digest: Option<&str>,
+    active_permit: &Arc<Mutex<Option<(String, u64)>>>,
+    employee_id: &str,
+    task_id: Option<&str>,
+) -> Result<Option<String>, LivePermitError> {
+    let Some(cid) = conn_id else {
+        return Ok(None);
+    };
+    if active_permit
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some()
+    {
+        return Ok(None);
+    }
+    match crate::router::acquire_warm_permit_for_office(
+        office,
+        cid,
+        employee_id,
+        task_id,
+        route_digest,
+    ) {
+        crate::router::WarmPermitOutcome::Granted(p) => {
+            let pid = p.0.clone();
+            let mut slot = active_permit.lock().unwrap_or_else(|e| e.into_inner());
+            if slot.is_none() {
+                *slot = Some(p);
+                return Ok(Some(pid));
+            }
+            drop(slot);
+            let _ = office.release_turn_permit(&pid);
+            Ok(None)
+        }
+        crate::router::WarmPermitOutcome::StaleWarm => Err(LivePermitError::Stale),
+        crate::router::WarmPermitOutcome::Unavailable { .. } => {
+            Err(LivePermitError::Hold(WakeHoldReason::AdmissionRefused))
+        }
+        crate::router::WarmPermitOutcome::Refused(err) => {
+            let reason = if err.message.starts_with("BUDGET_HELD") {
+                WakeHoldReason::BudgetHold
+            } else {
+                WakeHoldReason::AdmissionRefused
+            };
+            Err(LivePermitError::Hold(reason))
+        }
+    }
+}
+
 fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) {
     let Some(_dispatch_guard) = DispatchWakeGuard::try_acquire(&ctx.dispatching_wakes, employee_id)
     else {
@@ -1185,11 +1408,13 @@ fn drain_pending_wakes_into_live_pump(employee_id: &str, ctx: &TurnEndDrainCtx) 
         }
     }
     let objective = compose_coalesced_wake_objective(&queue.items, &[]);
-    let sent = {
-        let reg = ctx.registry.lock().unwrap_or_else(|p| p.into_inner());
-        reg.live
-            .get(employee_id)
-            .is_some_and(|handle| handle.tx.send(PumpCommand::SendTurn(objective)).is_ok())
+    let sent = match try_send_wake_on_live_handle(employee_id, queue_task_id, objective, ctx) {
+        Ok(sent) => sent,
+        Err(reason) => {
+            queue.set_hold(reason, ts, None);
+            let _ = ctx.store.write_pending_wakes_redacted(&queue, &refs);
+            return;
+        }
     };
     if sent {
         if !person_triggered {
@@ -1329,6 +1554,7 @@ pub fn spawn_wake_retry_loop(
     stopping: Arc<std::sync::atomic::AtomicBool>,
     interval: Duration,
 ) -> Option<std::thread::JoinHandle<()>> {
+    SessionManager::attach_self(&manager);
     let slice = Duration::from_millis(50);
     std::thread::Builder::new()
         .name("org-wake-retry".into())

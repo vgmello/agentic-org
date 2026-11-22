@@ -32,6 +32,7 @@ mod mailbox_store;
 mod msg_calls;
 mod org_feed;
 mod process_calls;
+mod provider_calls;
 mod revocations;
 mod serve;
 mod signals;
@@ -861,6 +862,7 @@ fn start_session_manager(
         office,
         org_office_sessions::SessionManagerConfig::production(socket.to_path_buf()),
     ));
+    org_office_sessions::SessionManager::attach_self(&session_manager);
     match session_manager.recover_on_startup() {
         Ok(report) if !report.actions.is_empty() => {
             eprintln!(
@@ -1195,6 +1197,20 @@ fn build_office_ports(
                     &office,
                     Some(&sessions),
                     &live,
+                    member,
+                    request,
+                )
+            }))
+        },
+        providers: {
+            let office = Arc::clone(&office);
+            let sessions = Arc::clone(&session_manager);
+            let wake = Arc::clone(wake);
+            Some(Box::new(move |member, request| {
+                provider_calls::dispatch_provider_pool_rpc(
+                    &office,
+                    Some(&sessions),
+                    Some(&wake),
                     member,
                     request,
                 )

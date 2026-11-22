@@ -436,6 +436,7 @@ pub(crate) fn auth_env_names() -> Vec<EnvName> {
         "GOOGLE_API_KEY",
         "ANTIGRAVITY_API_KEY",
         "AGY_AUTH_TOKEN",
+        "GOOGLE_GEMINI_BASE_URL",
     ]
     .into_iter()
     .map(|name| EnvName::try_from(name).expect("static auth env"))

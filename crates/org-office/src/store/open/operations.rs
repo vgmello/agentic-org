@@ -480,6 +480,17 @@ impl ReadOp for AgentExecutionById {
     }
 }
 
+/// Lists provider connections ordered by ID (`provider.connection.list`).
+pub struct ProviderConnectionsList;
+
+impl ReadOp for ProviderConnectionsList {
+    type Out = Vec<records::ProviderConnection>;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.provider_connections()?)
+    }
+}
+
 /// Lists model profiles ordered by ID (`model_profile.list`).
 pub struct ModelProfilesList;
 
@@ -573,5 +584,17 @@ impl ReadOp for CheckHrMessageAccess {
             return Ok(false);
         };
         crate::organization::features::authority::may_hire_anywhere(read, &self.owner, sender)
+    }
+}
+
+/// Counts registered offices in this organization so turn-permit authority selects
+/// `office_local` for single-office setups and `hq_pool` for shared multi-office setups (`doc-88` §6).
+pub struct OfficesCount;
+
+impl ReadOp for OfficesCount {
+    type Out = usize;
+
+    fn read<S: TasksRead>(self, read: &S) -> Result<usize, StoreError> {
+        Ok(read.offices()?.len())
     }
 }

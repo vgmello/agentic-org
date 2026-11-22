@@ -145,6 +145,9 @@ pub type ProcessesFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + 
 /// Dispatches L2/L3 usage, cost accounting, and budget RPCs (`TASK-53`).
 pub type CostsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches L4 provider connection pools, bindings, model discovery, readiness, and quota RPCs (`TASK-54`).
+pub type ProvidersFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
@@ -181,6 +184,8 @@ pub struct OfficePorts {
     pub processes: Option<ProcessesFn>,
     /// L2/L3 usage, cost accounting, and budget controls dispatcher (`TASK-53`).
     pub costs: Option<CostsFn>,
+    /// L4 provider pools, office bindings, discovery, readiness, and quota dispatcher (`TASK-54`).
+    pub providers: Option<ProvidersFn>,
     /// Who a `msg.bind` names.
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
@@ -1510,6 +1515,31 @@ fn project_or_hiring(request: &Request, shared: &Shared, binding: &Binding) -> O
         .or_else(|| git_rpc(request, shared, binding))
         .or_else(|| processes_rpc(request, shared, binding))
         .or_else(|| costs_rpc(request, shared, binding))
+        .or_else(|| providers_rpc(request, shared, binding))
+}
+
+fn providers_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::provider_calls::is_provider_pool_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(providers) = &shared.ports.providers {
+        if let Some(response) = providers(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
 }
 
 fn costs_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
@@ -2938,6 +2968,7 @@ mod tests {
             git: None,
             processes: None,
             costs: None,
+            providers: None,
             directory,
         }
     }
@@ -3406,6 +3437,7 @@ mod tests {
                 git: None,
                 processes: None,
                 costs: None,
+                providers: None,
                 directory,
             },
             launch_key(),
@@ -3888,6 +3920,7 @@ mod tests {
                     git: None,
                     processes: None,
                     costs: None,
+                    providers: None,
                     directory,
                 },
                 launch_key(),
@@ -4395,6 +4428,7 @@ mod tests {
                 git: None,
                 processes: None,
                 costs: None,
+                providers: None,
                 directory,
             },
             launch_key(),
