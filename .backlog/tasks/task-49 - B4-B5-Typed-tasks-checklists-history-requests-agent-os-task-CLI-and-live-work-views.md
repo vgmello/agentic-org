@@ -3,10 +3,11 @@ id: TASK-49
 title: >-
   B4 & B5: Typed tasks, checklists, history, requests, agent-os task CLI, and
   live work views
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lead'
 created_date: '2026-11-21T00:11:00Z'
-updated_date: '2026-11-21T03:50:00Z'
+updated_date: '2026-11-22T01:20:00Z'
 labels:
   - backend
   - rust

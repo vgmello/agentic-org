@@ -3,9 +3,11 @@ id: TASK-77
 title: >-
   B4b: First-class task dependencies, searchable labels, reference/modified
   files, and task ordering
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@lead'
 created_date: '2026-11-21T22:21:00Z'
+updated_date: '2026-11-22T01:20:00Z'
 labels:
   - backend
   - rust
