@@ -10,13 +10,15 @@ import type {
 	ActivityRun,
 	ActivityThread
 } from '../../../src/lib/modules/activity/types';
-import { mockLatency, mockMode } from '../mock-mode';
+import { isPocDataset, mockLatency, mockMode } from '../mock-mode';
+import { pocActivityRows } from '../poc-dataset';
 import arrivals from '../data/activity/arrivals.json' with { type: 'json' };
 import rowData from '../data/activity/rows.json' with { type: 'json' };
 import threadData from '../data/activity/threads.json' with { type: 'json' };
 
 const MINUTE = 60_000;
 let rows: ActivityRow[] | undefined;
+let loadedDataset: 'poc' | 'default' | undefined;
 let people = new Map<string, ActivityActor>();
 const listeners = new Set<(row: ActivityRow) => void>();
 let arrived = 0;
@@ -47,7 +49,13 @@ function arrive() {
 async function load(organizationId: string) {
 	const { snapshot } = await orgApi.view(organizationId);
 	people = new Map(snapshot.members.map((m) => [m.id, { id: m.id, name: m.name, kind: m.kind }]));
-	if (rows) return snapshot;
+	const currentDataset = isPocDataset() ? 'poc' : 'default';
+	if (rows && loadedDataset === currentDataset) return snapshot;
+	loadedDataset = currentDataset;
+	if (currentDataset === 'poc') {
+		rows = pocActivityRows();
+		return snapshot;
+	}
 	const base = Date.now();
 	const actor = (id: string): ActivityActor => people.get(id) ?? { id, name: id, kind: 'agent' };
 	rows = rowData.map((r) => {

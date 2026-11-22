@@ -51,12 +51,69 @@
 	const entries = $derived.by<CommandEntry[]>(() => {
 		const q = query.trim().toLowerCase();
 		const list: CommandEntry[] = [
-			{ id: 'go-home', group: 'Navigate', label: 'Go to Home', sub: 'Executive briefing & Spotlight', href: '/home' },
-			{ id: 'go-inbox', group: 'Navigate', label: 'Go to Inbox', sub: 'Decisions waiting on you', href: '/inbox' },
-			{ id: 'go-projects', group: 'Navigate', label: 'Go to Projects', sub: 'Portfolio health & teams', href: '/projects' },
-			{ id: 'go-work', group: 'Navigate', label: 'Go to Work', sub: 'Tasks, bugs & requests', href: '/work' },
-			{ id: 'go-offices', group: 'Navigate', label: 'Go to Offices', sub: 'Connected machines & status', href: '/offices' },
-			{ id: 'go-settings', group: 'Navigate', label: 'Go to Settings', sub: 'Themes & feature flags', href: '/settings' },
+			{
+				id: 'go-home',
+				group: 'Navigate',
+				label: 'Go to Home',
+				sub: 'Executive briefing & Spotlight',
+				href: '/home'
+			},
+			{
+				id: 'go-inbox',
+				group: 'Navigate',
+				label: 'Go to Inbox',
+				sub: 'Decisions waiting on you',
+				href: '/inbox'
+			},
+			{
+				id: 'go-projects',
+				group: 'Navigate',
+				label: 'Go to Projects',
+				sub: 'Portfolio health & teams',
+				href: '/projects'
+			},
+			{
+				id: 'go-work',
+				group: 'Navigate',
+				label: 'Go to Work',
+				sub: 'Tasks, bugs & requests',
+				href: '/work'
+			},
+			{
+				id: 'go-teams',
+				group: 'Navigate',
+				label: 'Go to Teams',
+				sub: 'Teams & project ownership',
+				href: '/teams'
+			},
+			{
+				id: 'go-members',
+				group: 'Navigate',
+				label: 'Go to Members',
+				sub: 'People, agents & presence',
+				href: '/teams/members'
+			},
+			{
+				id: 'go-offices',
+				group: 'Navigate',
+				label: 'Go to Offices',
+				sub: 'Connected machines & status',
+				href: '/settings/offices'
+			},
+			{
+				id: 'go-costs',
+				group: 'Navigate',
+				label: 'Go to Costs',
+				sub: 'Monthly spend & agent budgets',
+				href: '/settings/costs'
+			},
+			{
+				id: 'go-settings',
+				group: 'Navigate',
+				label: 'Go to Settings',
+				sub: 'Organization & appearance themes',
+				href: '/settings'
+			},
 			...UI_THEMES.map((t) => ({
 				id: `theme-${t.id}`,
 				group: 'Appearance',
@@ -73,7 +130,7 @@
 					group: 'Projects',
 					label: p.name,
 					sub: p.key ? `Project · ${p.key.toUpperCase()}` : 'Project',
-					href: `/projects/${p.id}`
+					href: `/projects/${p.id}/work`
 				});
 			}
 			for (const m of nonOwners(snapshot).slice(0, 12)) {
@@ -82,7 +139,7 @@
 					group: 'Team',
 					label: m.name,
 					sub: m.agent?.role ?? m.kind,
-					href: '/org-chart'
+					href: `/members/${m.id}`
 				});
 			}
 		}
@@ -131,7 +188,10 @@
 		const trimmed = raw.trim();
 		if (!trimmed || !snapshot) return;
 		const ans = answerExecutiveQuestion(trimmed, { snapshot, items, offices, ownerId });
-		aiHistory = [ans, ...aiHistory.filter((x) => x.query.toLowerCase() !== ans.query.toLowerCase())];
+		aiHistory = [
+			ans,
+			...aiHistory.filter((x) => x.query.toLowerCase() !== ans.query.toLowerCase())
+		];
 		query = '';
 	}
 
@@ -189,7 +249,9 @@
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-<header class="exec-topbar sticky top-0 z-30 flex h-[68px] shrink-0 items-center justify-center px-6">
+<header
+	class="exec-topbar sticky top-0 z-30 flex h-[68px] shrink-0 items-center justify-center px-6"
+>
 	<div class="exec-cmdk-bar flex h-[46px] w-full max-w-[640px] items-center rounded-[14px] p-1.5">
 		<button
 			type="button"
@@ -229,13 +291,19 @@
 			class="exec-modal flex max-h-[78vh] w-full max-w-[650px] flex-col overflow-hidden rounded-[18px]"
 		>
 			<div class="exec-modal-hd flex items-center justify-between gap-3 px-4 py-3">
-				<div class="exec-tab-group inline-flex items-center gap-1 rounded-[10px] p-0.5" role="tablist">
+				<div
+					class="exec-tab-group inline-flex items-center gap-1 rounded-[10px] p-0.5"
+					role="tablist"
+				>
 					<button
 						type="button"
 						role="tab"
 						aria-selected={mode === 'cmd'}
 						onclick={() => (mode = 'cmd')}
-						class={['exec-tab inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold', mode === 'cmd' && 'is-on']}
+						class={[
+							'exec-tab inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold',
+							mode === 'cmd' && 'is-on'
+						]}
 					>
 						<Search class="size-3.5" aria-hidden="true" />
 						<span>Search &amp; Commands</span>
@@ -245,20 +313,33 @@
 						role="tab"
 						aria-selected={mode === 'ai'}
 						onclick={() => (mode = 'ai')}
-						class={['exec-tab inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold', mode === 'ai' && 'is-on']}
+						class={[
+							'exec-tab inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold',
+							mode === 'ai' && 'is-on'
+						]}
 					>
 						<Sparkles class="size-3.5" aria-hidden="true" />
 						<span>Ask Org AI</span>
 					</button>
 				</div>
-				<button type="button" onclick={closeModal} class="exec-kbd px-2 py-1 text-[11px]">ESC</button>
+				<button type="button" onclick={closeModal} class="exec-kbd px-2 py-1 text-[11px]"
+					>ESC</button
+				>
 			</div>
 
 			<div class="exec-modal-in flex items-center gap-3 px-4 py-3.5">
 				{#if mode === 'ai'}
-					<Sparkles class="size-5 shrink-0" style="color: var(--exec-accent-ink);" aria-hidden="true" />
+					<Sparkles
+						class="size-5 shrink-0"
+						style="color: var(--exec-accent-ink);"
+						aria-hidden="true"
+					/>
 				{:else}
-					<Search class="size-5 shrink-0" style="color: var(--exec-accent-ink);" aria-hidden="true" />
+					<Search
+						class="size-5 shrink-0"
+						style="color: var(--exec-accent-ink);"
+						aria-hidden="true"
+					/>
 				{/if}
 				<input
 					bind:this={inputEl}
@@ -299,7 +380,10 @@
 										aria-selected={idx === activeIdx}
 										onmouseenter={() => (activeIdx = idx)}
 										onclick={() => runEntry(entry)}
-										class={['exec-opt flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left text-sm', idx === activeIdx && 'is-on']}
+										class={[
+											'exec-opt flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left text-sm',
+											idx === activeIdx && 'is-on'
+										]}
 									>
 										{#if entry.group === 'Projects'}
 											<Folder class="size-4 shrink-0" aria-hidden="true" />
@@ -311,7 +395,9 @@
 											<Search class="size-4 shrink-0" aria-hidden="true" />
 										{/if}
 										<span class="min-w-0 flex-1 truncate font-medium">{entry.label}</span>
-										<span class="hidden truncate text-xs sm:inline" style="color: var(--exec-dim);">{entry.sub}</span>
+										<span class="hidden truncate text-xs sm:inline" style="color: var(--exec-dim);"
+											>{entry.sub}</span
+										>
 										<span class="exec-tag shrink-0">{entry.group}</span>
 									</button>
 								</li>
@@ -322,7 +408,10 @@
 					<div class="flex flex-col gap-3 p-1">
 						{#if currentAi}
 							<div class="exec-ai-card relative overflow-hidden rounded-xl p-4 pl-5">
-								<div class="mb-2 flex items-center justify-between gap-2 text-xs font-semibold" style="color: var(--exec-accent-ink);">
+								<div
+									class="mb-2 flex items-center justify-between gap-2 text-xs font-semibold"
+									style="color: var(--exec-accent-ink);"
+								>
 									<span class="inline-flex items-center gap-1.5">
 										<Sparkles class="size-3.5" aria-hidden="true" />
 										<span>Org AI · “{currentAi.query}”</span>
@@ -336,7 +425,9 @@
 										Clear
 									</button>
 								</div>
-								<p class="text-sm font-semibold" style="color: var(--exec-ink);">{currentAi.headline}</p>
+								<p class="text-sm font-semibold" style="color: var(--exec-ink);">
+									{currentAi.headline}
+								</p>
 								<ul class="mt-2 flex flex-col gap-1.5 text-sm" style="color: var(--exec-body);">
 									{#each currentAi.bullets as bullet (bullet.text)}
 										<li class="flex flex-wrap items-baseline gap-x-2">
@@ -359,7 +450,10 @@
 
 						{#if earlierAi.length > 0}
 							<div class="flex flex-wrap items-center gap-1.5">
-								<span class="text-[11px] font-semibold tracking-wider uppercase" style="color: var(--exec-dim);">
+								<span
+									class="text-[11px] font-semibold tracking-wider uppercase"
+									style="color: var(--exec-dim);"
+								>
 									Earlier
 								</span>
 								{#each earlierAi as turn (turn.query)}
@@ -377,7 +471,10 @@
 
 						{#if followUps.length > 0}
 							<div>
-								<div class="mb-2 text-[11px] font-semibold tracking-wider uppercase" style="color: var(--exec-dim);">
+								<div
+									class="mb-2 text-[11px] font-semibold tracking-wider uppercase"
+									style="color: var(--exec-dim);"
+								>
 									{aiHistory.length > 0 ? 'Ask a follow-up' : 'Suggested executive questions'}
 								</div>
 								<div class="flex flex-wrap gap-2">
@@ -387,7 +484,11 @@
 											onclick={() => submitAi(starter)}
 											class="exec-chip inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
 										>
-											<Sparkles class="size-3.5" style="color: var(--exec-accent-ink);" aria-hidden="true" />
+											<Sparkles
+												class="size-3.5"
+												style="color: var(--exec-accent-ink);"
+												aria-hidden="true"
+											/>
 											<span>{starter}</span>
 										</button>
 									{/each}
@@ -398,7 +499,10 @@
 				{/if}
 			</div>
 
-			<div class="exec-modal-foot flex flex-wrap items-center gap-4 px-4 py-2 text-[11px]" aria-hidden="true">
+			<div
+				class="exec-modal-foot flex flex-wrap items-center gap-4 px-4 py-2 text-[11px]"
+				aria-hidden="true"
+			>
 				<span><kbd class="exec-kbd mr-1">↵</kbd> Run / Ask</span>
 				<span><kbd class="exec-kbd mr-1">⌘/</kbd> Switch Search &amp; AI</span>
 				<span><kbd class="exec-kbd mr-1">Esc</kbd> Close</span>
@@ -409,7 +513,10 @@
 
 <style>
 	.exec-topbar {
-		background: transparent;
+		background: color-mix(in srgb, var(--exec-bg) 88%, transparent);
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		border-bottom: 1px solid var(--exec-border);
 	}
 	.exec-cmdk-bar {
 		background: var(--exec-surface);

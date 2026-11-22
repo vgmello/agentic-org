@@ -1,3 +1,5 @@
+import { SvelteURLSearchParams } from 'svelte/reactivity';
+
 export type UiTheme = 'ocean' | 'classic' | 'report' | 'report-dark';
 export type UiColorScheme = 'dark' | 'light';
 
@@ -26,20 +28,21 @@ export const UI_THEMES: readonly {
 		id: 'report',
 		label: 'Report',
 		shortLabel: 'Report',
-		description: 'Modern 2D executive layout on a crisp white canvas with ink and steel-blue accents.',
+		description:
+			'Modern 2D executive layout on a crisp white canvas with ink and steel-blue accents.',
 		scheme: 'light'
 	},
 	{
 		id: 'report-dark',
 		label: 'Report Night',
 		shortLabel: 'Night',
-		description: 'Modern 2D executive layout paired with Classic slate surfaces and indigo accents.',
+		description:
+			'Modern 2D executive layout paired with Classic slate surfaces and indigo accents.',
 		scheme: 'dark'
 	}
 ] as const;
 
 export const STORAGE_KEYS = {
-	executiveUi: 'agentic-org.ui.executive',
 	theme: 'agentic-org.ui.theme',
 	navCollapsed: 'agentic-org.ui.navCollapsed',
 	favorites: 'agentic-org.ui.favoriteProjects',
@@ -71,7 +74,6 @@ export interface StorageLike {
 }
 
 export interface UiPrefBootstrap {
-	executiveUi: boolean;
 	theme: UiTheme;
 	navCollapsed: boolean;
 	favoriteProjects: string[];
@@ -79,31 +81,25 @@ export interface UiPrefBootstrap {
 }
 
 /**
- * Pure parser for URL query params + storage + build env, so preference precedence
+ * Pure parser for URL query params + storage so preference precedence
  * is deterministic and unit-tested without a browser.
  */
 export function resolveInitialPreferences({
 	search = '',
-	storage,
-	envExecutiveDefault = false
+	storage
 }: {
 	search?: string;
 	storage?: StorageLike;
-	envExecutiveDefault?: boolean;
 } = {}): UiPrefBootstrap {
 	// Local one-shot query parsing, never mutated or read reactively.
-	// eslint-disable-next-line svelte/prefer-svelte-reactivity
-	const params = new URLSearchParams(search);
-	const urlUi = params.get('ui');
+	const params = new SvelteURLSearchParams(search);
 	const urlTheme = normalizeUiTheme(params.get('theme'));
 
-	let storedExec: string | null = null;
 	let storedThemeRaw: string | null = null;
 	let storedCollapsed: string | null = null;
 	let storedFavs: string | null = null;
 	let storedSingleKey: string | null = null;
 	try {
-		storedExec = storage?.getItem(STORAGE_KEYS.executiveUi) ?? null;
 		storedThemeRaw = storage?.getItem(STORAGE_KEYS.theme) ?? null;
 		storedCollapsed = storage?.getItem(STORAGE_KEYS.navCollapsed) ?? null;
 		storedFavs = storage?.getItem(STORAGE_KEYS.favorites) ?? null;
@@ -113,20 +109,7 @@ export function resolveInitialPreferences({
 	}
 
 	const storedTheme = normalizeUiTheme(storedThemeRaw);
-
-	const executiveUi =
-		urlUi === 'v2' || urlUi === '1' || urlUi === 'true'
-			? true
-			: urlUi === 'v1' || urlUi === '0' || urlUi === 'false'
-				? false
-				: storedExec === '1'
-					? true
-					: storedExec === '0'
-						? false
-						: envExecutiveDefault;
-
-	const defaultTheme: UiTheme = executiveUi ? 'ocean' : 'classic';
-	const theme: UiTheme = urlTheme ?? storedTheme ?? defaultTheme;
+	const theme: UiTheme = urlTheme ?? storedTheme ?? 'ocean';
 
 	let favoriteProjects: string[] = [];
 	if (storedFavs) {
@@ -141,7 +124,6 @@ export function resolveInitialPreferences({
 	}
 
 	return {
-		executiveUi,
 		theme,
 		navCollapsed: storedCollapsed === '1',
 		favoriteProjects,
@@ -149,41 +131,26 @@ export function resolveInitialPreferences({
 	};
 }
 
-/** Apply active theme and UI mode attributes to the document root cleanly (zero inline scripts). */
-export function applyUiAttributes(
-	root: HTMLElement | undefined,
-	executiveUi: boolean,
-	theme: UiTheme
-): void {
+/** Apply active theme attributes to the document root cleanly (zero inline scripts). */
+export function applyUiAttributes(root: HTMLElement | undefined, theme: UiTheme): void {
 	if (!root) return;
-	const effectiveTheme: UiTheme = executiveUi ? theme : isLightTheme(theme) ? theme : 'classic';
-	root.dataset.uiMode = executiveUi ? 'executive' : 'legacy';
-	root.dataset.uiTheme = effectiveTheme;
-	const isLight = isLightTheme(effectiveTheme);
+	root.dataset.uiMode = 'executive';
+	root.dataset.uiTheme = theme;
+	const isLight = isLightTheme(theme);
 	root.classList.toggle('dark', !isLight);
 	root.classList.toggle('light', isLight);
 }
 
 class UiPreferencesStore {
-	executiveUi = $state(false);
 	theme = $state<UiTheme>('ocean');
 	navCollapsed = $state(false);
 	favoriteProjects = $state<string[]>([]);
 	singleKeyShortcuts = $state(true);
 	#hydrated = false;
-	#explicitTheme = false;
 
 	hydrate(search = typeof window !== 'undefined' ? window.location.search : ''): void {
-		const envDefault =
-			typeof import.meta !== 'undefined' &&
-			(import.meta.env as Record<string, string | undefined>)?.PUBLIC_EXECUTIVE_UI === '1';
 		const storage = typeof window !== 'undefined' ? window.localStorage : undefined;
-		const resolved = resolveInitialPreferences({
-			search,
-			storage,
-			envExecutiveDefault: envDefault
-		});
-		this.executiveUi = resolved.executiveUi;
+		const resolved = resolveInitialPreferences({ search, storage });
 		this.theme = resolved.theme;
 		this.navCollapsed = resolved.navCollapsed;
 		this.favoriteProjects = resolved.favoriteProjects;
@@ -191,7 +158,7 @@ class UiPreferencesStore {
 		this.#hydrated = true;
 
 		// Persist explicit URL overrides and auto-migrate persisted 'light' -> 'report'.
-		const params = new URLSearchParams(search);
+		const params = new SvelteURLSearchParams(search);
 		const urlTheme = normalizeUiTheme(params.get('theme'));
 		const storedThemeRaw = (() => {
 			try {
@@ -201,8 +168,6 @@ class UiPreferencesStore {
 			}
 		})();
 		const storedTheme = normalizeUiTheme(storedThemeRaw);
-		this.#explicitTheme = Boolean(urlTheme || storedTheme);
-		if (params.has('ui')) this.#save(STORAGE_KEYS.executiveUi, this.executiveUi ? '1' : '0');
 		if (urlTheme) {
 			this.#save(STORAGE_KEYS.theme, this.theme);
 		} else if (storedThemeRaw === 'light' && storedTheme === 'report') {
@@ -215,20 +180,10 @@ class UiPreferencesStore {
 		return this.#hydrated;
 	}
 
-	setExecutiveUi(enabled: boolean): void {
-		this.executiveUi = enabled;
-		this.#save(STORAGE_KEYS.executiveUi, enabled ? '1' : '0');
-		if (enabled && !this.#explicitTheme) {
-			this.theme = 'ocean';
-		}
-		this.syncDom();
-	}
-
 	setTheme(next: UiTheme): void {
 		const normalized = normalizeUiTheme(next);
 		if (!normalized) return;
 		this.theme = normalized;
-		this.#explicitTheme = true;
 		this.#save(STORAGE_KEYS.theme, normalized);
 		this.syncDom();
 	}
@@ -258,7 +213,7 @@ class UiPreferencesStore {
 
 	syncDom(): void {
 		if (typeof document === 'undefined') return;
-		applyUiAttributes(document.documentElement, this.executiveUi, this.theme);
+		applyUiAttributes(document.documentElement, this.theme);
 	}
 
 	#save(key: string, value: string): void {

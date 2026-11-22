@@ -12,7 +12,8 @@ import { newId } from '$lib/org/commands';
 import { officeApi } from '$lib/office/api';
 import { unavailableCall } from '$lib/platform/unavailable-api';
 import type { Member, OrgSnapshot } from '$lib/proto';
-import { mockLatency, mockMode } from '../mock-mode';
+import { isPocDataset, mockLatency, mockMode } from '../mock-mode';
+import { pocMemberRows } from '../poc-dataset';
 import type { MembersApi } from '../../../src/lib/modules/members/api';
 import { busyText } from '../../../src/lib/modules/members/present';
 import type {
@@ -276,6 +277,7 @@ function presenceOf(m: Member): MemberRow['presence'] {
 }
 
 export async function rows(organizationId: string): Promise<MemberRow[]> {
+	if (isPocDataset()) return structuredClone(pocMemberRows());
 	const s = await snapshotFor(organizationId);
 	const offices = await officesFor(organizationId);
 	const ownerId = ownerIdOf(s);

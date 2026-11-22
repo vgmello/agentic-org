@@ -3,7 +3,8 @@
 // `nobody`, `nomonth` or `error` (the projects section fails).
 import { orgApi } from '$lib/org/api';
 import type { HomeApi } from '../../../src/lib/modules/home/api';
-import { mockLatency, mockMode } from '../mock-mode';
+import { isPocDataset, mockLatency, mockMode } from '../mock-mode';
+import { pocHomeProjects } from '../poc-dataset';
 import summary from '../data/home/summary.json' with { type: 'json' };
 
 const MINUTE = 60_000;
@@ -16,6 +17,7 @@ export const homeApi: HomeApi = {
 		const mode = mockMode();
 		if (mode.includes('error')) throw new Error('The office did not answer in time.');
 		if (mode.includes('noprojects')) return [];
+		if (isPocDataset()) return structuredClone(pocHomeProjects());
 		return (snapshot.projects ?? [])
 			.filter((p) => !p.archived)
 			.map((p) => {

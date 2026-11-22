@@ -10,6 +10,8 @@ import type { OrgSnapshot } from '$lib/proto';
 import { orgApi } from '$lib/org/api';
 import { newId } from '$lib/org/commands';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { isPocDataset } from '../mock-mode';
+import { pocTeamRows } from '../poc-dataset';
 import teamsData from '../data/teams/teams.json' with { type: 'json' };
 import tasksData from '../data/members/tasks.json' with { type: 'json' };
 import {
@@ -94,6 +96,7 @@ async function found(organizationId: string, teamId: string) {
 export const teamsApi: TeamsApi = {
 	async list(organizationId) {
 		await gate();
+		if (isPocDataset()) return scenario() === 'empty' ? [] : structuredClone(pocTeamRows());
 		return scenario() === 'empty' ? [] : teamRows(organizationId);
 	},
 	async team(organizationId, teamId) {

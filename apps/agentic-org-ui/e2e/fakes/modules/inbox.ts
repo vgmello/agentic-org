@@ -5,7 +5,8 @@
 import { orgApi } from '$lib/org/api';
 import type { InboxApi } from '../../../src/lib/modules/inbox/api';
 import type { InboxItem } from '../../../src/lib/modules/inbox/types';
-import { mockLatency, mockMode } from '../mock-mode';
+import { isPocDataset, mockLatency, mockMode } from '../mock-mode';
+import { pocInboxItems } from '../poc-dataset';
 import data from '../data/inbox/items.json' with { type: 'json' };
 
 const MINUTE = 60_000;
@@ -22,13 +23,20 @@ type Raw = (typeof data.open)[number] & {
 };
 
 let items: InboxItem[] | undefined;
+let loadedDataset: 'poc' | 'default' | undefined;
 const failed = new Set<string>();
 const refusals = new Map<string, string>();
 const listeners = new Set<() => void>();
 let liveTimer: ReturnType<typeof setTimeout> | undefined;
 
 async function load(organizationId: string): Promise<InboxItem[]> {
-	if (items) return items;
+	const currentDataset = isPocDataset() ? 'poc' : 'default';
+	if (items && loadedDataset === currentDataset) return items;
+	loadedDataset = currentDataset;
+	if (currentDataset === 'poc') {
+		items = pocInboxItems();
+		return items;
+	}
 	const { snapshot } = await orgApi.view(organizationId);
 	const people = new Map(snapshot.members.map((m) => [m.id, m]));
 	const teams = new Map(snapshot.teams.map((t) => [t.id, t.name]));

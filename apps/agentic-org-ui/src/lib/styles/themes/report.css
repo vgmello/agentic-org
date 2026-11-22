@@ -154,10 +154,10 @@ html[data-ui-theme='report'] {
 	--exec-seg-queued: var(--tone-queued);
 	--exec-seg-queued-high: var(--tone-bad-bar);
 
-	/* Authoritative monochrome CTAs & steel-blue hover */
+	/* Authoritative monochrome CTAs & steel-blue hover (consistent with --primary across all pages) */
 	--exec-cta-bg: #0b101b;
 	--exec-cta-fill: #1d4e89;
-	--exec-cta-glass-bg: #1d4e89;
+	--exec-cta-glass-bg: #0b101b;
 	--exec-cta-glass-ink: #ffffff;
 	--exec-avatar-bg: #f1f4f8;
 	--exec-avatar-ring: #ffffff;
@@ -175,11 +175,11 @@ html[data-ui-theme='report'] {
 	--exec-deny-confirm-hover: var(--tone-bad-ink);
 	--exec-deny-confirm-ink: #ffffff;
 
-	/* Executive Brief memo */
-	--exec-cos-bg: #f7f9fc;
-	--exec-cos-fade: #f7f9fc;
-	--exec-cos-border: #dce2ec;
-	--exec-cos-rule: var(--tone-accent);
+	/* Executive Brief memo (borderless editorial column on Report Day) */
+	--exec-cos-bg: transparent;
+	--exec-cos-fade: #ffffff;
+	--exec-cos-border: transparent;
+	--exec-cos-rule: transparent;
 
 	/* Unread rail dot */
 	--exec-nav-dot: var(--tone-warn);
@@ -344,6 +344,57 @@ html[data-ui-theme^='report'] .hb-brief-card {
 	padding: 0 0 0 36px;
 }
 
+/* Flat 2D borderless editorial Executive Brief on Report Day & Night */
+html[data-ui-theme^='report'] .hb-cos-memo {
+	background: transparent;
+	box-shadow: none;
+	border-radius: 0;
+	padding: 0;
+}
+
+html[data-ui-theme^='report'] .hb-cos-scroll {
+	gap: 0;
+}
+
+html[data-ui-theme^='report'] .hb-cos-scroll > div {
+	padding: 12px 0;
+}
+
+html[data-ui-theme^='report'] .hb-cos-scroll > div:first-child {
+	padding-top: 2px;
+}
+
+html[data-ui-theme^='report'] .hb-cos-scroll > div + div {
+	border-top: 1px solid var(--report-rule-subtle);
+}
+
+html[data-ui-theme^='report'] .hb-brief-lenses {
+	border-radius: 4px;
+	box-shadow: inset 0 0 0 1px var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .hb-lens-tab,
+html[data-ui-theme^='report'] .hb-cos-copy,
+html[data-ui-theme^='report'] .hb-cos-expand,
+html[data-ui-theme^='report'] .hb-rec,
+html[data-ui-theme^='report'] .hb-ctx-body,
+html[data-ui-theme^='report'] .hb-blocker,
+html[data-ui-theme^='report'] .hb-deny-btn,
+html[data-ui-theme^='report'] .hb-deny-guard,
+html[data-ui-theme^='report'] .hb-outline-btn {
+	border-radius: 4px;
+}
+
+html[data-ui-theme^='report'] .exec-cmdk-bar {
+	border-radius: 6px;
+	box-shadow: inset 0 0 0 1px var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .exec-cmdk-trigger,
+html[data-ui-theme^='report'] .exec-ai-btn {
+	border-radius: 4px;
+}
+
 html[data-ui-theme^='report'] .hb-spot:hover,
 html[data-ui-theme^='report'] .hb-brief-card:hover,
 html[data-ui-theme^='report'] .hb-time-card:hover {
@@ -423,6 +474,43 @@ html[data-ui-theme^='report'] .hb-time-bar > a {
 		border-left: 0;
 		border-top: 1px solid var(--report-rule-subtle);
 	}
+}
+
+/* Domain views 2D flat editorial polish under Report Day & Report Night */
+html[data-ui-theme^='report'] .exec-card {
+	border-radius: 4px;
+	box-shadow: inset 0 0 0 1px var(--report-rule);
+}
+
+html[data-ui-theme^='report'] .exec-card:hover {
+	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
+}
+
+html[data-ui-theme^='report'] .inbox-page,
+html[data-ui-theme^='report'] .act-page {
+	max-width: none;
+}
+
+html[data-ui-theme^='report'] .inbox-head,
+html[data-ui-theme^='report'] .act-head {
+	padding-bottom: 16px;
+	border-bottom: 1.5px solid var(--report-masthead-rule);
+}
+
+html[data-ui-theme^='report'] .inbox-card,
+html[data-ui-theme^='report'] .act-list {
+	border-radius: 4px;
+	background: transparent;
+}
+
+html[data-ui-theme^='report'] .bg-bar-track,
+html[data-ui-theme^='report'] .bg-bar-track > span,
+html[data-ui-theme^='report'] .bg-bar-track > div {
+	border-radius: 1px;
+}
+
+html[data-ui-theme='report'] .exec-legacy-compat [data-slot='badge'] {
+	border-radius: 3px;
 }
 
 /* Settings preview swatch */

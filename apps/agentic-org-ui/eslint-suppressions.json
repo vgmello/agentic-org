@@ -146,11 +146,6 @@
       "count": 1
     }
   },
-  "src/lib/platform/shell/MobileNavigation.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    }
-  },
   "src/lib/platform/shell/Unavailable.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 2

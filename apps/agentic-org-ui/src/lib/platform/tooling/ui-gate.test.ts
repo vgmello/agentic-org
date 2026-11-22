@@ -1410,7 +1410,7 @@ describe('selector', () => {
 
 	it.each([
 		['a shared UI primitive', ui('src/lib/components/ui/button/button.svelte')],
-		['the app shell', ui('src/lib/platform/shell/ShellTopbar.svelte')],
+		['the app shell', ui('src/lib/platform/shell/ExecutiveCommandBar.svelte')],
 		['the shell layout', ui('src/routes/(shell)/+layout.svelte')],
 		['playwright config', ui('playwright.config.ts')],
 		['the lockfile', ui('bun.lock')],

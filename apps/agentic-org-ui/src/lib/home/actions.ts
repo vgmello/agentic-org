@@ -1,11 +1,12 @@
 import type { OrgSnapshot } from '$lib/proto';
+import { inboxApi } from '$lib/modules/inbox/api';
 import { newId } from '$lib/org/commands';
 import { sender, workApi } from '$lib/work';
 import type { SpotlightDecision } from './model';
 
 /**
  * Execute a real decision action from Executive Home Spotlight or Inbox
- * through the canonical `workApi` command channel.
+ * through the owning canonical domain channel (`inboxApi` or `workApi`).
  */
 export async function executeDecisionAction(
 	organizationId: string,
@@ -14,8 +15,49 @@ export async function executeDecisionAction(
 	snapshot: OrgSnapshot,
 	declineReason = 'Declined from executive review'
 ): Promise<{ message: string; navigateTo?: string }> {
-	const send = sender(organizationId);
+	if (decision.sourceKind === 'inbox' && decision.inboxItem) {
+		const inboxItem = decision.inboxItem;
+		if (action === 'secondary') {
+			if (decision.secondaryAction?.kind === 'deny_inbox') {
+				const reason = declineReason.trim() || 'Declined from executive review';
+				await inboxApi.act(organizationId, inboxItem.id, { type: 'deny', reason });
+				return { message: `Denied “${inboxItem.title}”.` };
+			}
+			if (decision.secondaryAction?.kind === 'choose_inbox') {
+				await inboxApi.act(organizationId, inboxItem.id, {
+					type: 'choose',
+					choice: decision.secondaryAction.choiceId
+				});
+				return { message: `Recorded “${decision.secondaryAction.label}”.` };
+			}
+			return { message: '', navigateTo: decision.detailHref };
+		}
+
+		switch (decision.primaryAction.kind) {
+			case 'approve_inbox': {
+				await inboxApi.act(organizationId, inboxItem.id, { type: 'approve' });
+				return { message: `Approved “${inboxItem.title}”.` };
+			}
+			case 'choose_inbox': {
+				await inboxApi.act(organizationId, inboxItem.id, {
+					type: 'choose',
+					choice: decision.primaryAction.choiceId
+				});
+				return { message: `Recorded “${decision.primaryAction.label}”.` };
+			}
+			case 'dismiss_inbox': {
+				await inboxApi.act(organizationId, inboxItem.id, { type: 'dismiss' });
+				return { message: `Dismissed “${inboxItem.title}”.` };
+			}
+			case 'open_inbox':
+			default:
+				return { message: '', navigateTo: decision.detailHref };
+		}
+	}
+
 	const item = decision.item;
+	if (!item) return { message: '', navigateTo: decision.detailHref };
+	const send = sender(organizationId);
 
 	if (action === 'secondary') {
 		if (decision.secondaryAction?.kind === 'decline_request') {
@@ -83,8 +125,7 @@ export async function executeDecisionAction(
 				(snapshot.areas ?? []).find((a) => !a.deleted && a.project_id === item.project_id) ??
 				(snapshot.areas ?? []).find((a) => !a.deleted);
 			if (!area) return { message: '', navigateTo: decision.detailHref };
-			const sev =
-				item.severity && item.severity !== 'unknown' ? item.severity : 'minor';
+			const sev = item.severity && item.severity !== 'unknown' ? item.severity : 'minor';
 			await send({
 				method: 'bug.triage',
 				item_id: item.id,
@@ -95,5 +136,7 @@ export async function executeDecisionAction(
 			});
 			return { message: `Triaged “${item.title}”.` };
 		}
+		default:
+			return { message: '', navigateTo: decision.detailHref };
 	}
 }

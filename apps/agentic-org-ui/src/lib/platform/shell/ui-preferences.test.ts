@@ -17,59 +17,40 @@ function memoryStorage(initial: Record<string, string> = {}): StorageLike {
 	};
 }
 
-describe('ui preferences and executive UI feature flag', () => {
-	it('defaults to legacy mode (executiveUi off) and classic theme when no overrides exist', () => {
+describe('ui preferences and 4-theme selection', () => {
+	it('defaults to ocean theme with shortcuts enabled when no overrides exist', () => {
 		const resolved = resolveInitialPreferences();
-		expect(resolved.executiveUi).toBe(false);
-		expect(resolved.theme).toBe('classic');
+		expect(resolved.theme).toBe('ocean');
 		expect(resolved.navCollapsed).toBe(false);
 		expect(resolved.singleKeyShortcuts).toBe(true);
 	});
 
-	it('switches default theme to ocean when executiveUi is enabled via storage or env', () => {
-		const viaStorage = resolveInitialPreferences({
-			storage: memoryStorage({ [STORAGE_KEYS.executiveUi]: '1' })
-		});
-		expect(viaStorage.executiveUi).toBe(true);
-		expect(viaStorage.theme).toBe('ocean');
-
-		const viaEnv = resolveInitialPreferences({ envExecutiveDefault: true });
-		expect(viaEnv.executiveUi).toBe(true);
-		expect(viaEnv.theme).toBe('ocean');
+	it('reads saved theme from storage across all 4 v6 themes', () => {
+		for (const id of ['ocean', 'classic', 'report', 'report-dark'] as const) {
+			const resolved = resolveInitialPreferences({
+				storage: memoryStorage({ [STORAGE_KEYS.theme]: id })
+			});
+			expect(resolved.theme).toBe(id);
+		}
 	});
 
-	it('gives URL query params priority over storage and supports all 4 v6 themes', () => {
-		const storage = memoryStorage({
-			[STORAGE_KEYS.executiveUi]: '0',
-			[STORAGE_KEYS.theme]: 'ocean'
-		});
-		const on = resolveInitialPreferences({ search: '?ui=v2&theme=report', storage });
-		expect(on.executiveUi).toBe(true);
-		expect(on.theme).toBe('report');
-
-		const night = resolveInitialPreferences({ search: '?ui=v2&theme=report-dark', storage });
-		expect(night.executiveUi).toBe(true);
-		expect(night.theme).toBe('report-dark');
-
-		const off = resolveInitialPreferences({
-			search: '?ui=v1&theme=classic',
-			storage: memoryStorage({ [STORAGE_KEYS.executiveUi]: '1' })
-		});
-		expect(off.executiveUi).toBe(false);
-		expect(off.theme).toBe('classic');
+	it('gives URL query params priority over storage for all 4 v6 themes', () => {
+		const storage = memoryStorage({ [STORAGE_KEYS.theme]: 'ocean' });
+		expect(resolveInitialPreferences({ search: '?theme=report', storage }).theme).toBe('report');
+		expect(resolveInitialPreferences({ search: '?theme=report-dark', storage }).theme).toBe(
+			'report-dark'
+		);
+		expect(resolveInitialPreferences({ search: '?theme=classic', storage }).theme).toBe('classic');
 	});
 
 	it('auto-migrates persisted or URL light theme cleanly to report', () => {
 		const fromStorage = resolveInitialPreferences({
-			storage: memoryStorage({
-				[STORAGE_KEYS.executiveUi]: '1',
-				[STORAGE_KEYS.theme]: 'light'
-			})
+			storage: memoryStorage({ [STORAGE_KEYS.theme]: 'light' })
 		});
 		expect(fromStorage.theme).toBe('report');
 
 		const fromUrl = resolveInitialPreferences({
-			search: '?ui=v2&theme=light',
+			search: '?theme=light',
 			storage: memoryStorage({ [STORAGE_KEYS.theme]: 'ocean' })
 		});
 		expect(fromUrl.theme).toBe('report');
@@ -78,7 +59,6 @@ describe('ui preferences and executive UI feature flag', () => {
 
 	it('ignores invalid theme values and malformed favorites JSON safely', () => {
 		const storage = memoryStorage({
-			[STORAGE_KEYS.executiveUi]: '1',
 			[STORAGE_KEYS.theme]: 'neon-invalid',
 			[STORAGE_KEYS.favorites]: '{not json',
 			[STORAGE_KEYS.navCollapsed]: '1',

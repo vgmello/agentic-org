@@ -24,7 +24,8 @@ import type {
 	TeamRef
 } from '../../../src/lib/modules/projects/types';
 import { OUTCOME_UNKNOWN } from '../../../src/lib/modules/projects/outcome';
-import { mockMode } from '../mock-mode';
+import { isPocDataset, mockMode } from '../mock-mode';
+import { pocProjectRows } from '../poc-dataset';
 import { rows as memberRows, teamRef } from './members';
 import data from '../data/projects/projects.json' with { type: 'json' };
 import devData from '../data/processes/development-processes.json' with { type: 'json' };
@@ -252,6 +253,13 @@ async function setTeams(
 export const projectsApi: ProjectsApi = {
 	async list(organizationId) {
 		await read();
+		if (isPocDataset()) {
+			return {
+				projects: on('empty') ? [] : structuredClone(pocProjectRows()),
+				viewer: { canCreate: !on('viewer') },
+				...stale()
+			};
+		}
 		const s = await repaired(organizationId);
 		const projects = on('empty')
 			? []

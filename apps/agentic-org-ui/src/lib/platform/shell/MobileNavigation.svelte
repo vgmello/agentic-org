@@ -1,24 +1,24 @@
 <script lang="ts">
 	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
-	import { tick, type ComponentProps } from 'svelte';
+	import { resolve } from '$app/paths';
+	import { tick } from 'svelte';
 	import { innerWidth } from 'svelte/reactivity/window';
 	import MenuIcon from '@lucide/svelte/icons/menu';
-	import type { Connection } from '$lib/proto';
-	import type { ShellNavigation } from '$lib/modules/shell/types';
-	import Sidebar from '$lib/components/Sidebar.svelte';
+	import type { Connection, ProjectSummary } from '$lib/proto';
+	import ExecutiveSidebar from './ExecutiveSidebar.svelte';
 	import * as Sheet from '$lib/components/ui/sheet';
 	import { registerModalBack } from './modal-back';
 	import { focusDestinationHeading } from './focus-destination';
 
 	let {
 		connection,
-		navigation,
-		officeStatus,
+		needsYouCount = 0,
+		projects = [],
 		onWiden
 	}: {
 		connection: Connection;
-		navigation?: ShellNavigation;
-		officeStatus?: ComponentProps<typeof Sidebar>['officeStatus'];
+		needsYouCount?: number;
+		projects?: ProjectSummary[];
 		onWiden: () => void;
 	} = $props();
 	const menuId = $props.id();
@@ -68,9 +68,6 @@
 		const from = new URL(oldURL);
 		const to = new URL(newURL);
 		if (from.pathname !== to.pathname || from.search !== to.search) return;
-
-		// Older browsers can safely reverse Back from an observed append to its base URL.
-		// Arbitrary native fragment histories need the Navigation API's traversal direction.
 		legacyReturnUrl = oldURL;
 		window.history.forward();
 		open = false;
@@ -135,10 +132,9 @@
 		const from = window.location.href;
 		closeForNavigation();
 		try {
-			if (new URL(href, from).href !== from) await goto(href);
+			if (new URL(href, from).href !== from) await goto(resolve(href as '/'));
 			await focusDestinationHeading();
 		} catch {
-			// SvelteKit owns route errors. Restore the trigger only if this page stayed put.
 			if (window.location.href === from && trigger?.isConnected && !open) focusNavigationControl();
 		}
 	}
@@ -165,6 +161,6 @@
 	>
 		<Sheet.Title class="sr-only">Main navigation</Sheet.Title>
 		<Sheet.Description class="sr-only">Choose an area of the organization.</Sheet.Description>
-		<Sidebar {connection} {navigation} {officeStatus} presentation="drawer" onNavigate={select} />
+		<ExecutiveSidebar {connection} {needsYouCount} {projects} onNavigate={select} />
 	</Sheet.Content>
 </Sheet.Root>

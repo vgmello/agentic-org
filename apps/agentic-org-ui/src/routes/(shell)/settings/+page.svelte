@@ -1,25 +1,11 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
-	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import Check from '@lucide/svelte/icons/check';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import GeneralPanel from '$lib/modules/settings/features/general/GeneralPanel.svelte';
 	import { pageTitle } from '$lib/nav';
 	import { UI_THEMES, uiPrefs, type UiTheme } from '$lib/platform/shell/ui-preferences.svelte';
 
 	let { data } = $props();
-
-	function toggleExecutiveUi() {
-		const next = !uiPrefs.executiveUi;
-		uiPrefs.setExecutiveUi(next);
-		toast.success(
-			next
-				? 'Executive UI (v2) enabled — open Home or switch themes anytime.'
-				: 'Switched back to Classic v1 shell.'
-		);
-	}
 
 	function selectTheme(theme: UiTheme) {
 		uiPrefs.setTheme(theme);
@@ -35,67 +21,7 @@
 	/>{/key}
 
 <div class="mx-auto flex w-full max-w-[960px] flex-col gap-6 px-6 pt-2 pb-10 sm:px-8">
-	<!-- Feature Flag: Executive UI (v2) -->
-	<section class="exec-card flex flex-col gap-4 p-5 sm:p-6" aria-labelledby="settings-flag-h">
-		<div class="flex flex-wrap items-start justify-between gap-4">
-			<div class="max-w-xl">
-				<div class="inline-flex items-center gap-2">
-					<Sparkles class="size-4" style="color: var(--exec-accent-ink);" aria-hidden="true" />
-					<h2 id="settings-flag-h" class="text-base font-semibold" style="color: var(--exec-ink);">
-						Executive UI (v2) feature flag
-					</h2>
-				</div>
-				<p class="mt-1 text-sm" style="color: var(--exec-muted);">
-					Enable the new Executive Home, Decision Spotlight, floating Command &amp; Org AI bar (⌘K),
-					collapsible sidebar, and multi-theme shell. Saved locally per browser so the team can test it safely.
-				</p>
-			</div>
-			<div class="flex items-center gap-3">
-				<button
-					type="button"
-					role="switch"
-					aria-checked={uiPrefs.executiveUi}
-					aria-labelledby="settings-flag-h"
-					data-testid="executive-ui-toggle"
-					onclick={toggleExecutiveUi}
-					class={[
-						'flag-switch relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-0.5 transition-colors',
-						uiPrefs.executiveUi && 'is-on'
-					]}
-				>
-					<span
-						class={[
-							'flag-thumb block size-6 rounded-full bg-on-emphasis transition-transform',
-							uiPrefs.executiveUi && 'translate-x-5'
-						]}
-					></span>
-				</button>
-				<span
-					class="text-xs font-semibold"
-					style="color: {uiPrefs.executiveUi ? 'var(--exec-ok)' : 'var(--exec-muted)'};"
-				>
-					{uiPrefs.executiveUi ? 'ON' : 'OFF'}
-				</span>
-			</div>
-		</div>
-
-		{#if uiPrefs.executiveUi}
-			<div class="flex flex-wrap items-center gap-3 pt-1">
-				<button type="button" onclick={() => void goto(resolve('/home'))} class="exec-cta">
-					<span class="exec-cta-fill" aria-hidden="true"></span>
-					<span class="exec-cta-inner">
-						<span>Open Executive Home</span>
-						<ChevronRight class="size-4" aria-hidden="true" />
-					</span>
-				</button>
-				<span class="text-xs" style="color: var(--exec-dim);">
-					Tip: you can also toggle via URL with <code>?ui=v2</code> or <code>?ui=v1</code>.
-				</span>
-			</div>
-		{/if}
-	</section>
-
-	<!-- Appearance: Themes -->
+	<!-- Appearance: 4 Themes -->
 	<section class="exec-card flex flex-col gap-4 p-5 sm:p-6" aria-labelledby="settings-theme-h">
 		<div>
 			<h2 id="settings-theme-h" class="text-base font-semibold" style="color: var(--exec-ink);">
@@ -153,14 +79,6 @@
 </div>
 
 <style>
-	.flag-switch {
-		background: var(--exec-bar-track);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi);
-	}
-	.flag-switch.is-on {
-		background: var(--exec-accent);
-		box-shadow: none;
-	}
 	.theme-card {
 		background: var(--exec-well);
 		box-shadow: inset 0 0 0 1px var(--exec-border);

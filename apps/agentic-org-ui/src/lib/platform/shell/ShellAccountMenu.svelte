@@ -85,7 +85,8 @@
 				role="tooltip"
 				side="right"
 				sideOffset={12}
-				class="z-[100] rounded-md bg-tooltip px-3 py-2 text-xs text-fg">You · Owner</Tooltip.Content
+				class="z-[100] rounded-md bg-tooltip px-3 py-2 text-xs text-on-emphasis"
+				>You · Owner</Tooltip.Content
 			></Tooltip.Portal
 		>
 	</Tooltip.Root>

@@ -13,6 +13,7 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Clipboard from '@lucide/svelte/icons/clipboard';
 	import Clock from '@lucide/svelte/icons/clock';
+	import DollarSign from '@lucide/svelte/icons/dollar-sign';
 	import Info from '@lucide/svelte/icons/info';
 	import Plus from '@lucide/svelte/icons/plus';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
@@ -24,6 +25,15 @@
 	import XCircle from '@lucide/svelte/icons/x-circle';
 	import Zap from '@lucide/svelte/icons/zap';
 	import type { OfficeInfo, WorkItemSummary } from '$lib/proto';
+	import { activityApi, type ActivityRow } from '$lib/modules/activity';
+	import { costsApi, type AgentBudgets, type OrganizationCost } from '$lib/modules/costs';
+	import { homeApi } from '$lib/modules/home/api';
+	import type { HomeProject } from '$lib/modules/home/types';
+	import { inboxApi, type InboxItem } from '$lib/modules/inbox';
+	import { membersApi, type MemberRow } from '$lib/modules/members';
+	import { officesApi, layerOffices } from '$lib/modules/offices';
+	import { accountZone } from '$lib/modules/preferences';
+	import { projectsApi, type ProjectRow } from '$lib/modules/projects';
 	import { executeDecisionAction } from '$lib/home/actions';
 	import {
 		deriveCatchUpDigest,
@@ -32,13 +42,14 @@
 		deriveKpiMetrics,
 		deriveProjectCards,
 		deriveTaskTimeBreakdown,
-		greetingForHour
+		greetingForHour,
+		isDenyAction,
+		type BriefLens,
+		type HomeDomainData
 	} from '$lib/home/model';
-	import HomeView from '$lib/modules/home/features/view/HomeView.svelte';
 	import { pageTitle } from '$lib/nav';
 	import { officeApi, toAppError } from '$lib/office/api';
 	import { owner } from '$lib/org/model';
-	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import { workApi } from '$lib/work';
 
 	let { data } = $props();
@@ -49,6 +60,14 @@
 
 	let items = $state.raw<WorkItemSummary[] | undefined>(undefined);
 	let offices = $state.raw<OfficeInfo[]>([]);
+	let orgCost = $state.raw<OrganizationCost | undefined>(undefined);
+	let agentBudgets = $state.raw<AgentBudgets | undefined>(undefined);
+	let inboxItems = $state.raw<InboxItem[]>([]);
+	let memberRows = $state.raw<MemberRow[] | undefined>(undefined);
+	let projectRows = $state.raw<ProjectRow[] | undefined>(undefined);
+	let homeProjects = $state.raw<HomeProject[] | undefined>(undefined);
+	let activityRows = $state.raw<ActivityRow[] | undefined>(undefined);
+
 	let loadError = $state<string | undefined>(undefined);
 	let busyId = $state<string | undefined>(undefined);
 	let spotIdx = $state(0);
@@ -57,19 +76,37 @@
 	let denyInputEl = $state<HTMLInputElement | null>(null);
 	let denyTriggerEl = $state<HTMLButtonElement | null>(null);
 	let openContextIds = $state<Record<string, boolean>>({});
+	let briefLens = $state<BriefLens>('today');
 	let briefExpanded = $state(false);
 	let briefCopied = $state(false);
 	let briefCopyTimer: ReturnType<typeof setTimeout> | undefined;
 	let nowMs = $state(Date.now());
+
+	const BRIEF_LENSES: readonly { id: BriefLens; label: string }[] = [
+		{ id: 'today', label: 'Today' },
+		{ id: 'week', label: '7-Day' },
+		{ id: 'board', label: 'Board' }
+	];
 
 	const activeOffices = $derived(
 		offices.length > 0 ? offices : data.connection.organization.offices
 	);
 	const loading = $derived(items === undefined && loadError === undefined);
 	const workItems = $derived(items ?? []);
+	const domain = $derived<HomeDomainData>({
+		orgCost,
+		agentBudgets,
+		inboxItems,
+		memberRows,
+		projectRows,
+		homeProjects,
+		activityRows
+	});
 
-	const kpis = $derived(deriveKpiMetrics(snapshot, workItems, activeOffices, ownerId));
-	const spotlight = $derived(deriveDecisionSpotlight(workItems, snapshot, ownerId, nowMs));
+	const kpis = $derived(deriveKpiMetrics(snapshot, workItems, activeOffices, ownerId, domain));
+	const spotlight = $derived(
+		deriveDecisionSpotlight(workItems, snapshot, ownerId, nowMs, inboxItems)
+	);
 	const safeIdx = $derived(spotlight.length > 0 ? Math.min(spotIdx, spotlight.length - 1) : 0);
 	const currentDecision = $derived(spotlight[safeIdx]);
 	const nextDecision = $derived(
@@ -78,8 +115,8 @@
 	const currentCtxOpen = $derived(
 		currentDecision ? Boolean(openContextIds[currentDecision.id]) : false
 	);
-	const projectCards = $derived(deriveProjectCards(snapshot, workItems));
-	const catchUp = $derived(deriveCatchUpDigest(workItems, snapshot, nowMs));
+	const projectCards = $derived(deriveProjectCards(snapshot, workItems, domain));
+	const catchUp = $derived(deriveCatchUpDigest(workItems, snapshot, nowMs, activityRows));
 	const brief = $derived(
 		deriveExecutiveBrief(
 			snapshot,
@@ -87,15 +124,20 @@
 			activeOffices,
 			ownerId,
 			data.connection.organization.name,
-			nowMs
+			nowMs,
+			domain
 		)
 	);
-	const taskTime = $derived(deriveTaskTimeBreakdown(workItems, ownerId, kpis.offlineOffices));
+	const activeBrief = $derived(brief.lenses[briefLens]);
+	const taskTime = $derived(
+		deriveTaskTimeBreakdown(workItems, ownerId, kpis.offlineOffices, domain)
+	);
 	const greeting = $derived(greetingForHour(new Date(nowMs).getHours()));
 	const isDayOne = $derived(
 		!loading &&
 			!loadError &&
 			workItems.length === 0 &&
+			inboxItems.length === 0 &&
 			projectCards.length === 0 &&
 			kpis.totalAgents === 0
 	);
@@ -103,25 +145,59 @@
 	async function loadLive() {
 		loadError = undefined;
 		try {
-			const [workRes, orgsRes] = await Promise.allSettled([
+			await accountZone.ensure(organizationId).catch(() => undefined);
+			const timeZone = accountZone.zone || 'UTC';
+			const [
+				workRes,
+				orgsRes,
+				officesRes,
+				costRes,
+				budgetsRes,
+				inboxRes,
+				membersRes,
+				projectsRes,
+				homeProjRes,
+				activityRes
+			] = await Promise.allSettled([
 				workApi.snapshot(organizationId),
-				officeApi.peekOrganizations()
+				officeApi.peekOrganizations(),
+				officesApi.overview(organizationId),
+				costsApi.organizationCost(organizationId, { kind: 'this_month', timeZone }),
+				costsApi.agentBudgets(organizationId),
+				inboxApi.list(organizationId),
+				membersApi.directory(organizationId),
+				projectsApi.list(organizationId),
+				homeApi.projects(organizationId),
+				activityApi.feed(organizationId, { kind: 'all' }, 12)
 			]);
+
 			if (workRes.status === 'fulfilled') {
 				items = workRes.value.items;
 			} else {
 				const err = toAppError(workRes.reason);
-				// Graceful empty when work endpoint is unavailable on a fresh office
 				if (err.source === 'api' && (err.code === 'unsupported' || err.code === 'unavailable')) {
 					items = [];
 				} else {
 					loadError = err.message;
 				}
 			}
-			if (orgsRes.status === 'fulfilled') {
-				const found = orgsRes.value.find((o) => o.id === organizationId);
-				if (found && found.offices.length > 0) offices = found.offices;
-			}
+
+			const baseOffices =
+				orgsRes.status === 'fulfilled'
+					? (orgsRes.value.find((o) => o.id === organizationId)?.offices ??
+						data.connection.organization.offices)
+					: data.connection.organization.offices;
+			const overview = officesRes.status === 'fulfilled' ? officesRes.value : undefined;
+			offices = layerOffices(baseOffices, overview);
+
+			orgCost = costRes.status === 'fulfilled' ? costRes.value : undefined;
+			agentBudgets = budgetsRes.status === 'fulfilled' ? budgetsRes.value : undefined;
+			inboxItems = inboxRes.status === 'fulfilled' ? inboxRes.value : [];
+			memberRows = membersRes.status === 'fulfilled' ? membersRes.value : undefined;
+			projectRows = projectsRes.status === 'fulfilled' ? projectsRes.value.projects : undefined;
+			homeProjects = homeProjRes.status === 'fulfilled' ? homeProjRes.value : undefined;
+			activityRows = activityRes.status === 'fulfilled' ? activityRes.value.rows : undefined;
+
 			nowMs = Date.now();
 		} catch (e) {
 			loadError = toAppError(e).message;
@@ -129,7 +205,7 @@
 	}
 
 	onMount(() => {
-		if (uiPrefs.executiveUi) void loadLive();
+		void loadLive();
 	});
 
 	onDestroy(() => {
@@ -160,27 +236,43 @@
 		}
 	}
 
+	function handleBriefTabKeydown(event: KeyboardEvent, index: number) {
+		const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+		if (!step && event.key !== 'Home' && event.key !== 'End') return;
+		event.preventDefault();
+		const nextIdx =
+			event.key === 'Home'
+				? 0
+				: event.key === 'End'
+					? BRIEF_LENSES.length - 1
+					: (index + step + BRIEF_LENSES.length) % BRIEF_LENSES.length;
+		const nextLens = BRIEF_LENSES[nextIdx].id;
+		briefLens = nextLens;
+		briefCopied = false;
+		void tick().then(() => document.getElementById(`hb-brief-tab-${nextLens}`)?.focus());
+	}
+
 	function toggleContext(id: string) {
 		openContextIds = { ...openContextIds, [id]: !openContextIds[id] };
 	}
 
 	function copyBrief() {
 		if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-			void navigator.clipboard.writeText(brief.copyText).catch(() => undefined);
+			void navigator.clipboard.writeText(activeBrief.copyText).catch(() => undefined);
 		}
 		briefCopied = true;
 		clearTimeout(briefCopyTimer);
 		briefCopyTimer = setTimeout(() => {
 			briefCopied = false;
 		}, 2400);
-		toast.success('Executive brief copied to clipboard.');
+		toast.success(`${activeBrief.label} executive brief copied to clipboard.`);
 	}
 
 	async function runAction(kind: 'primary' | 'secondary') {
 		if (!currentDecision || busyId) return;
 		if (
 			kind === 'secondary' &&
-			currentDecision.secondaryAction?.kind === 'decline_request' &&
+			isDenyAction(currentDecision.secondaryAction) &&
 			decliningId !== currentDecision.id
 		) {
 			await armDeny(currentDecision.id);
@@ -213,729 +305,809 @@
 
 <svelte:head><title>{pageTitle('Home')}</title></svelte:head>
 
-{#if uiPrefs.executiveUi}
-	<div class="hb-page mx-auto flex w-full max-w-[1260px] flex-col gap-6 px-6 pt-3 pb-12 sm:px-8">
-		<!-- Zone 1: Executive Greeting Header -->
-		<section class="hb-hero flex flex-wrap items-center justify-between gap-4">
-			<h1 id="shell-page-title" tabindex="-1" class="hb-h1 focus:outline-none">
-				{#if loadError}
-					{greeting} <em class="tone-bad">Office unreachable.</em>
-				{:else if loading}
-					{greeting}
-				{:else if isDayOne}
-					Welcome to {data.connection.organization.name}. <em class="tone-calm">Ready to launch.</em>
-				{:else if spotlight.length > 0}
-					{greeting}
-					<em class={spotlight.some((s) => s.urgent) ? 'tone-warn' : 'tone-calm'}>
-						{spotlight.length} {spotlight.length === 1 ? 'decision' : 'decisions'}
-					</em>
-					{spotlight.length === 1 ? 'needs' : 'need'} you.
-				{:else}
-					{greeting} <em class="tone-ok">All clear</em> across your organization.
-				{/if}
-			</h1>
-			<a href={resolve('/work')} class="exec-cta exec-cta-glass">
+<div class="hb-page mx-auto flex w-full max-w-[1260px] flex-col gap-6 px-6 pt-3 pb-12 sm:px-8">
+	<!-- Zone 1: Executive Greeting Header -->
+	<section class="hb-hero flex flex-wrap items-center justify-between gap-4">
+		<h1 id="shell-page-title" tabindex="-1" class="hb-h1 focus:outline-none">
+			{#if loadError}
+				{greeting} <em class="tone-bad">Office unreachable.</em>
+			{:else if loading}
+				{greeting}
+			{:else if isDayOne}
+				Welcome to {data.connection.organization.name}. <em class="tone-calm">Ready to launch.</em>
+			{:else if spotlight.length > 0}
+				{greeting}
+				<em class={spotlight.some((s) => s.urgent) ? 'tone-warn' : 'tone-calm'}>
+					{spotlight.length}
+					{spotlight.length === 1 ? 'decision' : 'decisions'}
+				</em>
+				{spotlight.length === 1 ? 'needs' : 'need'} you.
+			{:else}
+				{greeting} <em class="tone-ok">All clear</em> across your organization.
+			{/if}
+		</h1>
+		<a href={resolve('/work')} class="exec-cta exec-cta-glass">
+			<span class="exec-cta-fill" aria-hidden="true"></span>
+			<span class="exec-cta-sheen" aria-hidden="true"></span>
+			<span class="exec-cta-inner">
+				<Plus class="size-4" aria-hidden="true" />
+				<span>New task</span>
+			</span>
+		</a>
+	</section>
+
+	{#if loadError}
+		<!-- Error state -->
+		<section class="exec-card flex flex-col items-center gap-3 px-6 py-12 text-center" role="alert">
+			<span class="hb-ring is-bad flex size-12 items-center justify-center rounded-full">
+				<AlertTriangle class="size-6" aria-hidden="true" />
+			</span>
+			<h2 class="text-base font-semibold" style="color: var(--exec-ink);">
+				Couldn't reach live work data
+			</h2>
+			<p class="max-w-md text-sm" style="color: var(--exec-muted);">{loadError}</p>
+			<button type="button" onclick={() => void loadLive()} class="exec-cta mt-2">
 				<span class="exec-cta-fill" aria-hidden="true"></span>
-				<span class="exec-cta-sheen" aria-hidden="true"></span>
 				<span class="exec-cta-inner">
-					<Plus class="size-4" aria-hidden="true" />
-					<span>New task</span>
+					<RefreshCw class="size-4" aria-hidden="true" />
+					<span>Try again</span>
 				</span>
-			</a>
+			</button>
+		</section>
+	{:else if loading}
+		<!-- 3-Column Skeletons -->
+		<div
+			class="grid grid-cols-1 gap-4 md:grid-cols-3"
+			aria-busy="true"
+			aria-label="Loading executive overview"
+		>
+			{#each [1, 2, 3] as n (n)}
+				<div class="exec-card flex flex-col gap-3 p-5">
+					<div class="hb-skel h-3 w-24 rounded"></div>
+					<div class="hb-skel h-7 w-36 rounded"></div>
+					<div class="hb-skel h-1.5 w-full rounded-full"></div>
+					<div class="hb-skel h-3 w-44 rounded"></div>
+				</div>
+			{/each}
+		</div>
+	{:else}
+		<!-- Zone 1b: 3 Executive KPI Pillars (Financials, Workforce & Offices, Work & Flow) -->
+		<section
+			class="hb-pillars grid grid-cols-1 gap-4 lg:grid-cols-3"
+			aria-label="Executive overview: Financials, Workforce, and Work & Flow"
+		>
+			<!-- Pillar 1: Financials / Monthly Spend & Budget (costsApi -> /settings/costs) -->
+			<article class="exec-card hb-pillar flex flex-col gap-3 p-4.5">
+				<div class="flex items-center justify-between gap-2">
+					<a href={resolve('/settings/costs')} class="hb-pil-name inline-flex items-center gap-1.5">
+						<DollarSign class="size-3.5" style="color: var(--exec-warn);" aria-hidden="true" />
+						<span>Financials</span>
+					</a>
+					<a
+						href={resolve('/settings/costs')}
+						class={[
+							'hb-pil-pill',
+							kpis.financials.pillTone === 'bad'
+								? 'is-bad'
+								: kpis.financials.pillTone === 'warn'
+									? 'is-warn'
+									: 'is-ok'
+						]}
+					>
+						{kpis.financials.pillLabel}
+					</a>
+				</div>
+				<a
+					href={resolve('/settings/costs')}
+					class="hb-pil-hero -m-1 flex flex-col gap-2 rounded-lg p-1"
+				>
+					<div class="flex items-baseline justify-between gap-2">
+						<div class="flex items-baseline gap-1.5">
+							<span class="hb-pil-num">{kpis.financials.spentLabel}</span>
+							<span class="text-xs font-medium" style="color: var(--exec-muted);">
+								{kpis.financials.budgetLabel}
+							</span>
+						</div>
+						{#if kpis.financials.available && kpis.financials.budgetMicroUsd !== null}
+							<span class="text-xs font-semibold tabular-nums" style="color: var(--exec-dim);">
+								{kpis.financials.usagePct}% used
+							</span>
+						{/if}
+					</div>
+					<div class="hb-bar-track" aria-hidden="true">
+						<span class="hb-bar-accent" style="width: {kpis.financials.usagePct}%"></span>
+					</div>
+				</a>
+				<div class="hb-pil-sub grid grid-cols-2 gap-3 pt-2.5">
+					<a
+						href={resolve('/settings/costs')}
+						class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1"
+					>
+						<span class="text-[11px] font-medium" style="color: var(--exec-dim);">
+							Cost / completed
+						</span>
+						<span class="text-sm font-semibold tabular-nums" style="color: var(--exec-ink);">
+							{kpis.financials.costPerTaskLabel}
+						</span>
+					</a>
+					<a
+						href={resolve('/settings/costs')}
+						class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1"
+					>
+						<span class="text-[11px] font-medium" style="color: var(--exec-dim);">
+							Agent budgets
+						</span>
+						<span class="text-sm font-semibold tabular-nums" style="color: var(--exec-ink);">
+							{#if kpis.financials.available}
+								{kpis.financials.budgetedAgentsCount} active
+							{:else}
+								Configure
+							{/if}
+						</span>
+					</a>
+				</div>
+			</article>
+
+			<!-- Pillar 2: Workforce & Offices (membersApi + officesApi -> /teams/members, /settings/offices) -->
+			<article class="exec-card hb-pillar flex flex-col gap-3 p-4.5">
+				<div class="flex items-center justify-between gap-2">
+					<a href={resolve('/teams/members')} class="hb-pil-name inline-flex items-center gap-1.5">
+						<Users class="size-3.5" style="color: var(--exec-accent-ink);" aria-hidden="true" />
+						<span>Workforce &amp; Offices</span>
+					</a>
+					<a
+						href={resolve('/settings/offices')}
+						class={['hb-pil-pill', kpis.officePillTone === 'bad' ? 'is-bad' : 'is-ok']}
+						title={kpis.offlineOffices > 0
+							? `Offline: ${kpis.offlineOfficeNames.join(', ')}`
+							: 'All offices online'}
+					>
+						{kpis.officePillLabel}
+					</a>
+				</div>
+				<a
+					href={resolve('/teams/members')}
+					class="hb-pil-hero -m-1 flex flex-col gap-2 rounded-lg p-1"
+				>
+					<div class="flex items-baseline justify-between gap-2">
+						<div class="flex items-baseline gap-1.5">
+							<span class="hb-pil-num">{kpis.totalAgents > 0 ? `${kpis.autonomyPct}%` : '—'}</span>
+							<span class="text-xs font-medium" style="color: var(--exec-muted);">autonomous</span>
+						</div>
+						<span class="text-xs font-semibold tabular-nums" style="color: var(--exec-dim);">
+							{kpis.peopleCount}
+							{kpis.peopleCount === 1 ? 'person' : 'people'} · {kpis.totalAgents}
+							agents
+						</span>
+					</div>
+					<div class="hb-bar-track" aria-hidden="true">
+						<span class="hb-bar-sky" style="width: {kpis.autonomyPct}%"></span>
+						{#if kpis.totalAgents > 0 && kpis.autonomyPct < 100}
+							<span class="hb-bar-warn" style="width: {100 - kpis.autonomyPct}%"></span>
+						{/if}
+					</div>
+				</a>
+				<div class="hb-pil-sub grid grid-cols-[1.22fr_1fr] gap-2.5 pt-2.5">
+					<a
+						href={resolve('/teams/members')}
+						class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1"
+					>
+						<span class="truncate text-[11px] font-medium" style="color: var(--exec-dim);">
+							Agents
+						</span>
+						<span
+							class="truncate text-sm font-semibold tabular-nums"
+							style="color: var(--exec-ink);"
+						>
+							{kpis.activeAgents} active
+							{#if kpis.pausedAgents > 0}
+								<span class="ml-1 text-[11px]" style="color: var(--exec-warn);">
+									· {kpis.pausedAgents} idle
+								</span>
+							{/if}
+							{#if kpis.unplacedAgents > 0}
+								<span class="ml-1 text-[11px]" style="color: var(--exec-bad);">
+									· {kpis.unplacedAgents} off
+								</span>
+							{/if}
+						</span>
+					</a>
+					<a
+						href={resolve('/settings/offices')}
+						class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1"
+						title={kpis.offlineOffices > 0
+							? `${kpis.onlineOffices} online · ${kpis.offlineOffices} offline (${kpis.offlineOfficeNames.join(', ')})`
+							: `${kpis.onlineOffices} online`}
+					>
+						<span class="truncate text-[11px] font-medium" style="color: var(--exec-dim);">
+							Offices
+						</span>
+						<span
+							class="flex items-baseline gap-1.5 truncate text-[13px] font-semibold tabular-nums"
+						>
+							<span style="color: var(--exec-ok);">{kpis.onlineOffices} online</span>
+							{#if kpis.offlineOffices > 0}
+								<span style="color: var(--exec-dim);" aria-hidden="true">·</span>
+								<span style="color: var(--exec-bad);">{kpis.offlineOffices} offline</span>
+							{/if}
+						</span>
+					</a>
+				</div>
+			</article>
+
+			<!-- Pillar 3: Work & Flow / Delivery (workApi -> /work, /projects) -->
+			<article class="exec-card hb-pillar flex flex-col gap-3 p-4.5">
+				<div class="flex items-center justify-between gap-2">
+					<a href={resolve('/work')} class="hb-pil-name inline-flex items-center gap-1.5">
+						<Activity class="size-3.5" style="color: var(--exec-ok);" aria-hidden="true" />
+						<span>Work &amp; Flow</span>
+					</a>
+					<a
+						href={resolve('/projects')}
+						class={['hb-pil-pill', kpis.projectsAttention > 0 ? 'is-warn' : 'is-ok']}
+					>
+						{kpis.projectsAttention > 0
+							? `${kpis.projectsAttention} need attention`
+							: kpis.projectsTotal > 0
+								? 'All on track'
+								: 'No projects yet'}
+					</a>
+				</div>
+				<a href={resolve('/work')} class="hb-pil-hero -m-1 flex flex-col gap-2 rounded-lg p-1">
+					<div class="flex items-baseline justify-between gap-2">
+						<div class="flex items-baseline gap-1.5">
+							<span class="hb-pil-num"
+								>{kpis.doneCount > 0 ? `${kpis.firstTryPassPct}%` : `${kpis.completionPct}%`}</span
+							>
+							<span class="text-xs font-medium" style="color: var(--exec-muted);">
+								{kpis.doneCount > 0 ? 'clean delivery' : 'complete'}
+							</span>
+						</div>
+						<span class="text-xs font-semibold tabular-nums" style="color: var(--exec-dim);">
+							{kpis.openCount} open · {kpis.doneCount} done
+						</span>
+					</div>
+					<div class="hb-bar-track" aria-hidden="true">
+						<span
+							class="hb-bar-ok"
+							style="width: {kpis.doneCount > 0 ? kpis.firstTryPassPct : kpis.completionPct}%"
+						></span>
+					</div>
+				</a>
+				<div class="hb-pil-sub grid grid-cols-2 gap-3 pt-2.5">
+					<a href={resolve('/work')} class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1">
+						<span class="text-[11px] font-medium" style="color: var(--exec-dim);">Progress</span>
+						<span class="text-sm font-semibold tabular-nums" style="color: var(--exec-ink);">
+							{kpis.completionPct}%
+							<span class="ml-1 text-[11px] font-semibold" style="color: var(--exec-ok);">
+								{kpis.doneCount} done
+							</span>
+						</span>
+					</a>
+					<a href={resolve('/inbox')} class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1">
+						<span class="text-[11px] font-medium" style="color: var(--exec-dim);">Blocked</span>
+						<span class="text-sm font-semibold tabular-nums" style="color: var(--exec-ink);">
+							{kpis.blockedCount}
+							<span
+								class="ml-1 text-[11px] font-semibold"
+								style="color: {kpis.blockedCount > 0 ? 'var(--exec-bad)' : 'var(--exec-ok)'};"
+							>
+								{kpis.blockedCount > 0 ? 'blocked' : 'clear'}
+							</span>
+						</span>
+					</a>
+				</div>
+			</article>
 		</section>
 
-		{#if loadError}
-			<!-- Error state -->
-			<section class="exec-card flex flex-col items-center gap-3 px-6 py-12 text-center" role="alert">
-				<span class="hb-ring is-bad flex size-12 items-center justify-center rounded-full">
-					<AlertTriangle class="size-6" aria-hidden="true" />
-				</span>
-				<h2 class="text-base font-semibold" style="color: var(--exec-ink);">
-					Couldn't reach live work data
-				</h2>
-				<p class="max-w-md text-sm" style="color: var(--exec-muted);">{loadError}</p>
-				<button type="button" onclick={() => void loadLive()} class="exec-cta mt-2">
-					<span class="exec-cta-fill" aria-hidden="true"></span>
-					<span class="exec-cta-inner">
-						<RefreshCw class="size-4" aria-hidden="true" />
-						<span>Try again</span>
-					</span>
-				</button>
-			</section>
-		{:else if loading}
-			<!-- 3-Column Skeletons -->
-			<div
-				class="grid grid-cols-1 gap-4 md:grid-cols-3"
-				aria-busy="true"
-				aria-label="Loading executive overview"
+		<!-- Zone 2: Decision & Approval Queue + Executive Brief -->
+		<section
+			class="hb-stage grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.42fr)_minmax(340px,1fr)]"
+		>
+			<!-- Left: Decision Spotlight (inboxApi + workApi) -->
+			<article
+				class={[
+					'exec-card hb-spot relative flex min-h-[280px] flex-col gap-4 overflow-hidden p-5 sm:p-6',
+					currentDecision?.urgent && 'is-urgent'
+				]}
+				aria-label="Decision Spotlight"
 			>
-				{#each [1, 2, 3] as n (n)}
-					<div class="exec-card flex flex-col gap-3 p-5">
-						<div class="hb-skel h-3 w-24 rounded"></div>
-						<div class="hb-skel h-7 w-36 rounded"></div>
-						<div class="hb-skel h-1.5 w-full rounded-full"></div>
-						<div class="hb-skel h-3 w-44 rounded"></div>
-					</div>
-				{/each}
-			</div>
-		{:else}
-			<!-- Zone 1b: 3 Executive KPI Pillars -->
-			<section
-				class="hb-pillars grid grid-cols-1 gap-4 lg:grid-cols-3"
-				aria-label="Executive overview: Work, Team, and Delivery"
-			>
-				<!-- Pillar 1: Work & Flow -->
-				<article class="exec-card hb-pillar flex flex-col gap-3 p-4.5">
-					<div class="flex items-center justify-between gap-2">
-						<a href={resolve('/work')} class="hb-pil-name inline-flex items-center gap-1.5">
-							<Activity class="size-3.5" style="color: var(--exec-sky);" aria-hidden="true" />
-							<span>Work &amp; Flow</span>
-						</a>
-						<a
-							href={resolve('/inbox')}
-							class={['hb-pil-pill', kpis.urgentCount > 0 ? 'is-warn' : 'is-ok']}
-						>
-							{kpis.urgentCount > 0 ? `${kpis.urgentCount} need you` : 'Queue clear'}
-						</a>
-					</div>
-					<a href={resolve('/work')} class="hb-pil-hero -m-1 flex flex-col gap-2 rounded-lg p-1">
-						<div class="flex items-baseline justify-between gap-2">
-							<div class="flex items-baseline gap-1.5">
-								<span class="hb-pil-num">{kpis.openCount}</span>
-								<span class="text-xs font-medium" style="color: var(--exec-muted);">open items</span>
-							</div>
-							<span class="text-xs font-semibold tabular-nums" style="color: var(--exec-dim);">
-								{kpis.completionPct}% complete
-							</span>
-						</div>
-						<div class="hb-bar-track" aria-hidden="true">
-							<span class="hb-bar-budget" style="width: {kpis.completionPct}%"></span>
-						</div>
-					</a>
-					<div class="hb-pil-sub grid grid-cols-2 gap-3 pt-2.5">
-						<a href={resolve('/work')} class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1">
-							<span class="text-[11px] font-medium" style="color: var(--exec-dim);">Completed</span>
-							<span class="text-sm font-semibold tabular-nums" style="color: var(--exec-ink);">
-								{kpis.doneCount}
-								<span class="ml-1 text-[11px] font-semibold" style="color: var(--exec-ok);">
-									done
-								</span>
-							</span>
-						</a>
-						<a href={resolve('/inbox')} class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1">
-							<span class="text-[11px] font-medium" style="color: var(--exec-dim);">Blocked</span>
-							<span class="text-sm font-semibold tabular-nums" style="color: var(--exec-ink);">
-								{kpis.blockedCount}
-								<span
-									class="ml-1 text-[11px] font-semibold"
-									style="color: {kpis.blockedCount > 0 ? 'var(--exec-bad)' : 'var(--exec-ok)'};"
-								>
-									{kpis.blockedCount > 0 ? 'blocked' : 'clear'}
-								</span>
-							</span>
-						</a>
-					</div>
-				</article>
+				<div class="hb-rep-only items-baseline justify-between gap-3">
+					<h2 class="text-lg font-bold tracking-tight" style="color: var(--exec-ink);">
+						Decision &amp; Approval Queue
+					</h2>
+				</div>
 
-				<!-- Pillar 2: Team & Offices -->
-				<article class="exec-card hb-pillar flex flex-col gap-3 p-4.5">
-					<div class="flex items-center justify-between gap-2">
-						<a href={resolve('/agents')} class="hb-pil-name inline-flex items-center gap-1.5">
-							<Users class="size-3.5" style="color: var(--exec-accent-ink);" aria-hidden="true" />
-							<span>Team</span>
-						</a>
-						<a
-							href={resolve('/offices')}
-							class={['hb-pil-pill', kpis.officePillTone === 'bad' ? 'is-bad' : 'is-ok']}
-							title={kpis.offlineOffices > 0
-								? `Offline: ${kpis.offlineOfficeNames.join(', ')}`
-								: 'All offices online'}
+				{#if currentDecision}
+					<div class="flex flex-wrap items-center justify-between gap-2">
+						<span
+							class={[
+								'hb-spot-badge inline-flex items-center gap-1.5',
+								currentDecision.urgent && 'is-urgent'
+							]}
 						>
-							{kpis.officePillLabel}
-						</a>
-					</div>
-					<a href={resolve('/agents')} class="hb-pil-hero -m-1 flex flex-col gap-2 rounded-lg p-1">
-						<div class="flex items-baseline justify-between gap-2">
-							<div class="flex items-baseline gap-1.5">
-								<span class="hb-pil-num">{kpis.totalAgents > 0 ? `${kpis.autonomyPct}%` : '—'}</span>
-								<span class="text-xs font-medium" style="color: var(--exec-muted);">autonomous</span>
-							</div>
-							<span class="text-xs font-semibold tabular-nums" style="color: var(--exec-dim);">
-								{kpis.peopleCount} {kpis.peopleCount === 1 ? 'person' : 'people'} · {kpis.totalAgents}
-								agents
-							</span>
-						</div>
-						<div class="hb-bar-track" aria-hidden="true">
-							<span class="hb-bar-sky" style="width: {kpis.autonomyPct}%"></span>
-							{#if kpis.totalAgents > 0 && kpis.autonomyPct < 100}
-								<span class="hb-bar-warn" style="width: {100 - kpis.autonomyPct}%"></span>
-							{/if}
-						</div>
-					</a>
-					<div class="hb-pil-sub grid grid-cols-[1.22fr_1fr] gap-2.5 pt-2.5">
-						<a href={resolve('/agents')} class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1">
-							<span class="truncate text-[11px] font-medium" style="color: var(--exec-dim);">
-								Agents
-							</span>
-							<span class="truncate text-sm font-semibold tabular-nums" style="color: var(--exec-ink);">
-								{kpis.activeAgents} active
-								{#if kpis.pausedAgents > 0}
-									<span class="ml-1 text-[11px]" style="color: var(--exec-warn);">
-										· {kpis.pausedAgents} idle
-									</span>
-								{/if}
-								{#if kpis.unplacedAgents > 0}
-									<span class="ml-1 text-[11px]" style="color: var(--exec-bad);">
-										· {kpis.unplacedAgents} off
-									</span>
-								{/if}
-							</span>
-						</a>
-						<a
-							href={resolve('/offices')}
-							class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1"
-							title={kpis.offlineOffices > 0
-								? `${kpis.onlineOffices} online · ${kpis.offlineOffices} offline (${kpis.offlineOfficeNames.join(', ')})`
-								: `${kpis.onlineOffices} online`}
-						>
-							<span class="truncate text-[11px] font-medium" style="color: var(--exec-dim);">
-								Offices
-							</span>
-							<span class="flex items-baseline gap-1.5 truncate text-[13px] font-semibold tabular-nums">
-								<span style="color: var(--exec-ok);">{kpis.onlineOffices} online</span>
-								{#if kpis.offlineOffices > 0}
-									<span style="color: var(--exec-dim);" aria-hidden="true">·</span>
-									<span style="color: var(--exec-bad);">{kpis.offlineOffices} offline</span>
-								{/if}
-							</span>
-						</a>
-					</div>
-				</article>
-
-				<!-- Pillar 3: Delivery -->
-				<article class="exec-card hb-pillar flex flex-col gap-3 p-4.5">
-					<div class="flex items-center justify-between gap-2">
-						<a href={resolve('/projects')} class="hb-pil-name inline-flex items-center gap-1.5">
-							<CheckCircle2 class="size-3.5" style="color: var(--exec-ok);" aria-hidden="true" />
-							<span>Delivery</span>
-						</a>
-						<a
-							href={resolve('/projects')}
-							class={['hb-pil-pill', kpis.projectsAttention > 0 ? 'is-warn' : 'is-ok']}
-						>
-							{kpis.projectsAttention > 0
-								? `${kpis.projectsAttention} need attention`
-								: kpis.projectsTotal > 0
-									? 'All on track'
-									: 'No projects yet'}
-						</a>
-					</div>
-					<a href={resolve('/projects')} class="hb-pil-hero -m-1 flex flex-col gap-2 rounded-lg p-1">
-						<div class="flex items-baseline justify-between gap-2">
-							<div class="flex items-baseline gap-1.5">
-								<span class="hb-pil-num">{kpis.doneCount > 0 ? `${kpis.firstTryPassPct}%` : '—'}</span>
-								<span class="text-xs font-medium" style="color: var(--exec-muted);">
-									clean delivery
-								</span>
-							</div>
-							<span class="text-xs font-semibold tabular-nums" style="color: var(--exec-ok);">
-								{kpis.projectsTotal} {kpis.projectsTotal === 1 ? 'project' : 'projects'}
-							</span>
-						</div>
-						<div class="hb-bar-track" aria-hidden="true">
-							<span class="hb-bar-ok" style="width: {kpis.firstTryPassPct}%"></span>
-						</div>
-					</a>
-					<div class="hb-pil-sub grid grid-cols-2 gap-3 pt-2.5">
-						<a href={resolve('/work')} class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1">
-							<span class="text-[11px] font-medium" style="color: var(--exec-dim);">Open bugs</span>
-							<span class="text-sm font-semibold tabular-nums" style="color: var(--exec-ink);">
-								{kpis.openBugs}
-								{#if kpis.criticalBugs > 0}
-									<span class="ml-1 text-[11px]" style="color: var(--exec-bad);">
-										{kpis.criticalBugs} serious
-									</span>
-								{/if}
-							</span>
-						</a>
-						<a href={resolve('/work')} class="hb-sub-cell -m-1 flex flex-col gap-0.5 rounded-md p-1">
-							<span class="text-[11px] font-medium" style="color: var(--exec-dim);">Delivered</span>
-							<span class="text-sm font-semibold tabular-nums" style="color: var(--exec-ink);">
-								{kpis.doneCount} {kpis.doneCount === 1 ? 'item' : 'items'}
-							</span>
-						</a>
-					</div>
-				</article>
-			</section>
-
-			<!-- Zone 2: Decision & Approval Queue + Executive Brief -->
-			<section class="hb-stage grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.42fr)_minmax(340px,1fr)]">
-				<!-- Left: Decision Spotlight -->
-				<article
-					class={[
-						'exec-card hb-spot relative flex min-h-[280px] flex-col gap-4 overflow-hidden p-5 sm:p-6',
-						currentDecision?.urgent && 'is-urgent'
-					]}
-					aria-label="Decision Spotlight"
-				>
-					<div class="hb-rep-only items-baseline justify-between gap-3">
-						<h2 class="text-lg font-bold tracking-tight" style="color: var(--exec-ink);">
-							Decision &amp; Approval Queue
-						</h2>
-					</div>
-
-					{#if currentDecision}
-						<div class="flex flex-wrap items-center justify-between gap-2">
-							<span
-								class={[
-									'hb-spot-badge inline-flex items-center gap-1.5',
-									currentDecision.urgent && 'is-urgent'
-								]}
-							>
-								<Clock class="size-3.5" aria-hidden="true" />
-								<span>{currentDecision.badgeText}</span>
-							</span>
-							<div class="flex items-center gap-2.5">
-								<div class="flex items-center gap-1" role="tablist" aria-label="Priority queue">
-									{#each spotlight.slice(0, 6) as d, i (d.id)}
-										<button
-											type="button"
-											role="tab"
-											aria-selected={i === safeIdx}
-											aria-label="Decision {i + 1}: {d.title}"
-											onclick={() => {
-												spotIdx = i;
-												decliningId = undefined;
-												declineReason = '';
-											}}
-											class={['hb-dot', i === safeIdx && 'is-cur', d.urgent && 'is-urgent']}
-										></button>
-									{/each}
-								</div>
-								<span class="text-xs font-semibold tabular-nums" style="color: var(--exec-muted);">
-									Priority {safeIdx + 1} of {spotlight.length}
-								</span>
-								<div class="flex items-center gap-1">
+							<Clock class="size-3.5" aria-hidden="true" />
+							<span>{currentDecision.badgeText}</span>
+						</span>
+						<div class="flex items-center gap-2.5">
+							<div class="flex items-center gap-1" role="tablist" aria-label="Priority queue">
+								{#each spotlight.slice(0, 6) as d, i (d.id)}
 									<button
 										type="button"
-										disabled={spotlight.length <= 1}
+										role="tab"
+										aria-selected={i === safeIdx}
+										aria-label="Decision {i + 1}: {d.title}"
 										onclick={() => {
-											spotIdx = (safeIdx - 1 + spotlight.length) % spotlight.length;
+											spotIdx = i;
 											decliningId = undefined;
 											declineReason = '';
 										}}
-										aria-label="Previous decision"
-										class="hb-arrow flex size-7 items-center justify-center rounded-full"
-									>
-										<ChevronLeft class="size-4" aria-hidden="true" />
-									</button>
-									<button
-										type="button"
-										disabled={spotlight.length <= 1}
-										onclick={() => {
-											spotIdx = (safeIdx + 1) % spotlight.length;
-											decliningId = undefined;
-											declineReason = '';
-										}}
-										aria-label="Next decision"
-										class="hb-arrow flex size-7 items-center justify-center rounded-full"
-									>
-										<ChevronRight class="size-4" aria-hidden="true" />
-									</button>
-								</div>
-							</div>
-						</div>
-
-						<div class="flex flex-1 flex-col gap-3.5">
-							<div class="flex flex-wrap items-center gap-2 text-xs" style="color: var(--exec-muted);">
-								<span
-									class="hb-av inline-flex size-6 items-center justify-center rounded-full text-[10px] font-bold"
-									style="color: var(--exec-ink);"
-								>
-									{currentDecision.actorInitials}
-								</span>
-								<span class="font-semibold" style="color: var(--exec-ink);">
-									{currentDecision.actorName}
-								</span>
-								<span aria-hidden="true">·</span>
-								<span>{currentDecision.kindLabel}</span>
-								<span aria-hidden="true">·</span>
-								<span>{currentDecision.ageLabel}</span>
-								<span aria-hidden="true">·</span>
-								<span>{currentDecision.projectName}</span>
-							</div>
-
-							<h2
-								class="text-lg leading-snug font-semibold tracking-tight sm:text-xl"
-								style="color: var(--exec-ink);"
-							>
-								{currentDecision.title}
-							</h2>
-
-							<div class="hb-rec flex items-start gap-2.5 rounded-xl px-3.5 py-2.5 text-sm">
-								<Info
-									class="mt-0.5 size-4 shrink-0"
-									style="color: var(--exec-accent-ink);"
-									aria-hidden="true"
-								/>
-								<span>{currentDecision.recommendation}</span>
-							</div>
-
-							<!-- 3-Column Risk, Impact & Proof Strip -->
-							<div class="exec-well grid grid-cols-1 gap-2.5 p-3 sm:grid-cols-3 sm:gap-0 sm:px-1">
-								{#each [currentDecision.risk, currentDecision.impact, currentDecision.proof] as cell, ci (cell.label + ci)}
-									<div class={['flex min-w-0 items-center gap-2.5 sm:px-3', ci > 0 && 'hb-cell-sep']}>
-										<span
-											class={[
-												'hb-well-ico flex size-8 shrink-0 items-center justify-center rounded-full',
-												`tone-${cell.tone}`
-											]}
-										>
-											{#if cell.icon === 'shield-check'}
-												<ShieldCheck class="size-4" aria-hidden="true" />
-											{:else if cell.icon === 'shield-alert'}
-												<ShieldAlert class="size-4" aria-hidden="true" />
-											{:else if cell.icon === 'bolt'}
-												<Zap class="size-4" aria-hidden="true" />
-											{:else if cell.icon === 'scale'}
-												<Scale class="size-4" aria-hidden="true" />
-											{:else if cell.icon === 'check-circle'}
-												<CheckCircle2 class="size-4" aria-hidden="true" />
-											{:else}
-												<Clock class="size-4" aria-hidden="true" />
-											{/if}
-										</span>
-										<div class="min-w-0">
-											<div class="truncate text-xs font-semibold" style="color: var(--exec-ink);">
-												{cell.label}
-											</div>
-											<div class="truncate text-[11px]" style="color: var(--exec-muted);">
-												{cell.sub}
-											</div>
-										</div>
-									</div>
+										class={['hb-dot', i === safeIdx && 'is-cur', d.urgent && 'is-urgent']}
+									></button>
 								{/each}
 							</div>
-
-							<!-- Inline expandable background context disclosure -->
-							<div class="flex flex-col gap-2">
+							<span class="text-xs font-semibold tabular-nums" style="color: var(--exec-muted);">
+								Priority {safeIdx + 1} of {spotlight.length}
+							</span>
+							<div class="flex items-center gap-1">
 								<button
 									type="button"
-									onclick={() => toggleContext(currentDecision.id)}
-									aria-expanded={currentCtxOpen}
-									aria-controls="panel-spot-ctx-{currentDecision.id}"
-									class="hb-ctx-toggle inline-flex w-fit items-center gap-1.5 rounded-md px-1.5 text-xs font-semibold"
+									disabled={spotlight.length <= 1}
+									onclick={() => {
+										spotIdx = (safeIdx - 1 + spotlight.length) % spotlight.length;
+										decliningId = undefined;
+										declineReason = '';
+									}}
+									aria-label="Previous decision"
+									class="hb-arrow flex size-7 items-center justify-center rounded-full"
 								>
-									<ChevronRight
-										class={['hb-ctx-chev size-3.5 transition-transform', currentCtxOpen && 'rotate-90']}
-										aria-hidden="true"
-									/>
-									<span>
-										{currentCtxOpen ? 'Hide background context' : 'Read background context'}
-									</span>
+									<ChevronLeft class="size-4" aria-hidden="true" />
 								</button>
-								{#if currentCtxOpen}
-									<div
-										id="panel-spot-ctx-{currentDecision.id}"
-										class="hb-ctx-body rounded-lg px-3.5 py-2.5 text-xs leading-relaxed"
-									>
-										<p>{currentDecision.backgroundContext}</p>
-										{#if currentDecision.auditChecks.length > 0}
-											<div
-												class="hb-ctx-checks mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1.5 pt-2.5"
-												role="list"
-												aria-label="Decision checks"
-											>
-												{#each currentDecision.auditChecks as chk (chk)}
-													<span class="inline-flex items-center gap-1.5" role="listitem">
-														<CheckCircle2
-															class="size-3.5 shrink-0"
-															style="color: var(--exec-ok);"
-															aria-hidden="true"
-														/>
-														<span>{chk}</span>
-													</span>
-												{/each}
-											</div>
-										{/if}
-									</div>
-								{/if}
+								<button
+									type="button"
+									disabled={spotlight.length <= 1}
+									onclick={() => {
+										spotIdx = (safeIdx + 1) % spotlight.length;
+										decliningId = undefined;
+										declineReason = '';
+									}}
+									aria-label="Next decision"
+									class="hb-arrow flex size-7 items-center justify-center rounded-full"
+								>
+									<ChevronRight class="size-4" aria-hidden="true" />
+								</button>
 							</div>
 						</div>
+					</div>
 
-						<!-- Action Bar directly above UP NEXT -->
-						<div class="hb-spot-foot flex flex-wrap items-center justify-between gap-3 pt-3.5">
-							<div class="hb-spot-actions flex flex-1 flex-wrap items-center gap-2">
-								<button
-									type="button"
-									disabled={busyId === currentDecision.id}
-									onclick={() => void runAction('primary')}
-									class="exec-cta hb-touch-btn"
-								>
-									<span class="exec-cta-fill" aria-hidden="true"></span>
-									<span class="exec-cta-sheen" aria-hidden="true"></span>
-									<span class="exec-cta-inner">
-										<Check class="size-4" aria-hidden="true" />
-										<span>{currentDecision.primaryAction.label}</span>
+					<div class="flex flex-1 flex-col gap-3.5">
+						<div
+							class="flex flex-wrap items-center gap-2 text-xs"
+							style="color: var(--exec-muted);"
+						>
+							<span
+								class="hb-av inline-flex size-6 items-center justify-center rounded-full text-[10px] font-bold"
+								style="color: var(--exec-ink);"
+							>
+								{currentDecision.actorInitials}
+							</span>
+							<span class="font-semibold" style="color: var(--exec-ink);">
+								{currentDecision.actorName}
+							</span>
+							<span aria-hidden="true">·</span>
+							<span>{currentDecision.kindLabel}</span>
+							<span aria-hidden="true">·</span>
+							<span>{currentDecision.ageLabel}</span>
+							<span aria-hidden="true">·</span>
+							<span>{currentDecision.projectName}</span>
+						</div>
+
+						<h2
+							class="text-lg leading-snug font-semibold tracking-tight sm:text-xl"
+							style="color: var(--exec-ink);"
+						>
+							{currentDecision.title}
+						</h2>
+
+						<div class="hb-rec flex items-start gap-2.5 rounded-xl px-3.5 py-2.5 text-sm">
+							<Info
+								class="mt-0.5 size-4 shrink-0"
+								style="color: var(--exec-accent-ink);"
+								aria-hidden="true"
+							/>
+							<span>{currentDecision.recommendation}</span>
+						</div>
+
+						<!-- 3-Column Risk, Impact & Proof Strip -->
+						<div class="exec-well grid grid-cols-1 gap-2.5 p-3 sm:grid-cols-3 sm:gap-0 sm:px-1">
+							{#each [currentDecision.risk, currentDecision.impact, currentDecision.proof] as cell, ci (cell.label + ci)}
+								<div class={['flex min-w-0 items-center gap-2.5 sm:px-3', ci > 0 && 'hb-cell-sep']}>
+									<span
+										class={[
+											'hb-well-ico flex size-8 shrink-0 items-center justify-center rounded-full',
+											`tone-${cell.tone}`
+										]}
+									>
+										{#if cell.icon === 'shield-check'}
+											<ShieldCheck class="size-4" aria-hidden="true" />
+										{:else if cell.icon === 'shield-alert'}
+											<ShieldAlert class="size-4" aria-hidden="true" />
+										{:else if cell.icon === 'bolt'}
+											<Zap class="size-4" aria-hidden="true" />
+										{:else if cell.icon === 'scale'}
+											<Scale class="size-4" aria-hidden="true" />
+										{:else if cell.icon === 'check-circle'}
+											<CheckCircle2 class="size-4" aria-hidden="true" />
+										{:else}
+											<Clock class="size-4" aria-hidden="true" />
+										{/if}
 									</span>
-								</button>
-								{#if currentDecision.secondaryAction?.kind === 'decline_request'}
-									{#if decliningId !== currentDecision.id}
-										<span class="hb-act-sep" aria-hidden="true"></span>
-										<button
-											bind:this={denyTriggerEl}
-											type="button"
-											disabled={busyId === currentDecision.id}
-											onclick={() => void armDeny(currentDecision.id)}
-											class="hb-deny-btn hb-touch-btn inline-flex items-center gap-1.5 rounded-lg px-3 text-xs font-semibold"
+									<div class="min-w-0">
+										<div class="truncate text-xs font-semibold" style="color: var(--exec-ink);">
+											{cell.label}
+										</div>
+										<div class="truncate text-[11px]" style="color: var(--exec-muted);">
+											{cell.sub}
+										</div>
+									</div>
+								</div>
+							{/each}
+						</div>
+
+						<!-- Inline expandable background context disclosure -->
+						<div class="flex flex-col gap-2">
+							<button
+								type="button"
+								onclick={() => toggleContext(currentDecision.id)}
+								aria-expanded={currentCtxOpen}
+								aria-controls="panel-spot-ctx-{currentDecision.id}"
+								class="hb-ctx-toggle inline-flex w-fit items-center gap-1.5 rounded-md px-1.5 text-xs font-semibold"
+							>
+								<ChevronRight
+									class={[
+										'hb-ctx-chev size-3.5 transition-transform',
+										currentCtxOpen && 'rotate-90'
+									]}
+									aria-hidden="true"
+								/>
+								<span>
+									{currentCtxOpen ? 'Hide background context' : 'Read background context'}
+								</span>
+							</button>
+							{#if currentCtxOpen}
+								<div
+									id="panel-spot-ctx-{currentDecision.id}"
+									class="hb-ctx-body rounded-lg px-3.5 py-2.5 text-xs leading-relaxed"
+								>
+									<p>{currentDecision.backgroundContext}</p>
+									{#if currentDecision.auditChecks.length > 0}
+										<div
+											class="hb-ctx-checks mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1.5 pt-2.5"
+											role="list"
+											aria-label="Decision checks"
 										>
-											<Ban class="size-3.5" aria-hidden="true" />
-											<span>{currentDecision.secondaryAction.label}</span>
-										</button>
+											{#each currentDecision.auditChecks as chk (chk)}
+												<span class="inline-flex items-center gap-1.5" role="listitem">
+													<CheckCircle2
+														class="size-3.5 shrink-0"
+														style="color: var(--exec-ok);"
+														aria-hidden="true"
+													/>
+													<span>{chk}</span>
+												</span>
+											{/each}
+										</div>
 									{/if}
-								{:else if currentDecision.secondaryAction}
+								</div>
+							{/if}
+						</div>
+					</div>
+
+					<!-- Action Bar directly above UP NEXT -->
+					<div class="hb-spot-foot flex flex-wrap items-center justify-between gap-3 pt-3.5">
+						<div class="hb-spot-actions flex flex-1 flex-wrap items-center gap-2">
+							<button
+								type="button"
+								disabled={busyId === currentDecision.id}
+								onclick={() => void runAction('primary')}
+								class="exec-cta hb-touch-btn"
+							>
+								<span class="exec-cta-fill" aria-hidden="true"></span>
+								<span class="exec-cta-sheen" aria-hidden="true"></span>
+								<span class="exec-cta-inner">
+									<Check class="size-4" aria-hidden="true" />
+									<span>{currentDecision.primaryAction.label}</span>
+								</span>
+							</button>
+							{#if isDenyAction(currentDecision.secondaryAction)}
+								{#if decliningId !== currentDecision.id}
+									<span class="hb-act-sep" aria-hidden="true"></span>
 									<button
+										bind:this={denyTriggerEl}
 										type="button"
 										disabled={busyId === currentDecision.id}
-										onclick={() => void runAction('secondary')}
-										class="hb-outline-btn hb-touch-btn inline-flex items-center gap-1.5 rounded-lg px-3 text-xs font-semibold"
+										onclick={() => void armDeny(currentDecision.id)}
+										class="hb-deny-btn hb-touch-btn inline-flex items-center gap-1.5 rounded-lg px-3 text-xs font-semibold"
 									>
+										<Ban class="size-3.5" aria-hidden="true" />
 										<span>{currentDecision.secondaryAction.label}</span>
 									</button>
 								{/if}
-							</div>
-							<div class="flex items-center gap-2">
-								<a
-									href={resolve(currentDecision.detailHref as '/work')}
-									class="hb-skip-btn hb-touch-btn inline-flex items-center gap-0.5 rounded-lg px-2 text-xs font-medium"
+							{:else if currentDecision.secondaryAction}
+								<button
+									type="button"
+									disabled={busyId === currentDecision.id}
+									onclick={() => void runAction('secondary')}
+									class="hb-outline-btn hb-touch-btn inline-flex items-center gap-1.5 rounded-lg px-3 text-xs font-semibold"
 								>
-									<span>Details</span>
-									<ChevronRight class="size-3.5" aria-hidden="true" />
-								</a>
-								<a
-									href={resolve('/inbox')}
-									class="hb-skip-btn hb-touch-btn inline-flex items-center gap-0.5 rounded-lg px-2 text-xs font-medium"
-								>
-									<span>All {spotlight.length} in Inbox</span>
-									<ChevronRight class="size-3.5" aria-hidden="true" />
-								</a>
-							</div>
-
-							{#if decliningId === currentDecision.id}
-								<div
-									class="hb-deny-guard flex w-full flex-col gap-2 rounded-lg p-3"
-									role="group"
-									aria-label="Confirm deny"
-								>
-									<div class="flex flex-wrap items-center justify-between gap-2.5">
-										<span class="hb-deny-guard-lbl inline-flex items-center gap-1.5 text-xs font-semibold">
-											<Ban class="size-3.5 shrink-0" aria-hidden="true" />
-											<span>Confirm deny?</span>
-										</span>
-										<div class="flex items-center gap-1.5">
-											<button
-												type="button"
-												disabled={busyId === currentDecision.id}
-												onclick={() => void runAction('secondary')}
-												class="hb-deny-confirm hb-touch-btn inline-flex items-center rounded-md px-3 text-xs font-semibold"
-											>
-												Confirm
-											</button>
-											<button
-												type="button"
-												onclick={() => void cancelDeny()}
-												class="hb-skip-btn hb-touch-btn inline-flex items-center rounded-md px-2.5 text-xs font-semibold"
-											>
-												Keep
-											</button>
-										</div>
-									</div>
-									<label class="sr-only" for="deny-msg-{currentDecision.id}">
-										Optional reason for {currentDecision.actorName}
-									</label>
-									<input
-										bind:this={denyInputEl}
-										bind:value={declineReason}
-										onkeydown={handleDenyKeydown}
-										id="deny-msg-{currentDecision.id}"
-										type="text"
-										autocomplete="off"
-										placeholder="Optional reason for {currentDecision.actorName}… (Enter to confirm, Esc to cancel)"
-										class="hb-input min-h-9 w-full rounded-md px-2.5 py-1.5 text-xs"
-									/>
-								</div>
+									<span>{currentDecision.secondaryAction.label}</span>
+								</button>
 							{/if}
 						</div>
-
-						<!-- UP NEXT tucked below action bar -->
-						{#if nextDecision}
-							<button
-								type="button"
-								onclick={() => {
-									spotIdx = (safeIdx + 1) % spotlight.length;
-									decliningId = undefined;
-									declineReason = '';
-								}}
-								class="exec-well hb-next-bar flex items-center justify-between gap-2 px-3 py-2 text-left text-xs"
+						<div class="flex items-center gap-2">
+							<a
+								href={resolve(currentDecision.detailHref as '/work')}
+								class="hb-skip-btn hb-touch-btn inline-flex items-center gap-0.5 rounded-lg px-2 text-xs font-medium"
 							>
-								<span class="flex min-w-0 items-center gap-2">
-									<span
-										class="shrink-0 text-[10px] font-bold tracking-wider uppercase"
-										style="color: var(--exec-dim);"
-									>
-										Up next
-									</span>
-									<span class="truncate font-medium" style="color: var(--exec-body);">
-										{nextDecision.title}
-									</span>
-								</span>
-								<ChevronRight
-									class="size-3.5 shrink-0"
-									style="color: var(--exec-dim);"
-									aria-hidden="true"
-								/>
-							</button>
-						{/if}
-					{:else}
-						<!-- All clear / Day-1 Launch -->
-						<div class="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
-							<span class="hb-ring is-ok flex size-12 items-center justify-center rounded-full">
-								<CheckCircle2 class="size-6" aria-hidden="true" />
-							</span>
-							<h2 class="text-base font-semibold" style="color: var(--exec-ink);">
-								{isDayOne ? 'Launch your organization' : 'Nothing waiting on you'}
-							</h2>
-							<p class="max-w-md text-sm" style="color: var(--exec-muted);">
-								{isDayOne
-									? 'Your HQ office is online. Add your first agents, create a project, or open Work to start autonomous delivery.'
-									: 'Every decision is cleared. Your agents and teams are continuing work autonomously.'}
-							</p>
-							<div class="mt-2 flex flex-wrap justify-center gap-2.5">
-								<a href={resolve('/work')} class="exec-cta">
-									<span class="exec-cta-fill" aria-hidden="true"></span>
-									<span class="exec-cta-inner">
-										<span>Open Work</span>
-										<ChevronRight class="size-4" aria-hidden="true" />
-									</span>
-								</a>
-								<a
-									href={resolve('/agents')}
-									class="hb-outline-btn hb-touch-btn inline-flex items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold"
-								>
-									<span>Manage Agents</span>
-								</a>
-							</div>
+								<span>Details</span>
+								<ChevronRight class="size-3.5" aria-hidden="true" />
+							</a>
+							<a
+								href={resolve('/inbox')}
+								class="hb-skip-btn hb-touch-btn inline-flex items-center gap-0.5 rounded-lg px-2 text-xs font-medium"
+							>
+								<span>All {spotlight.length} in Inbox</span>
+								<ChevronRight class="size-3.5" aria-hidden="true" />
+							</a>
 						</div>
-					{/if}
-				</article>
 
-				<!-- Right: Executive Brief Card -->
-				<aside
-					class="exec-card hb-brief-card flex flex-col gap-3.5 p-5"
-					aria-label="Executive Brief"
-				>
-					<div class="flex items-center justify-between gap-2">
-						<h2
-							class="inline-flex items-center gap-2 text-sm font-semibold"
-							style="color: var(--exec-ink);"
-						>
-							<Sparkles class="size-4" style="color: var(--exec-accent-ink);" aria-hidden="true" />
-							<span>Executive Brief</span>
-						</h2>
-						<span class="hb-cu-pill inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-medium">
-							<span class="size-1.5 rounded-full" style="background: var(--exec-ok);"></span>
-							<span>{brief.updatedLabel}</span>
-						</span>
+						{#if decliningId === currentDecision.id}
+							<div
+								class="hb-deny-guard flex w-full flex-col gap-2 rounded-lg p-3"
+								role="group"
+								aria-label="Confirm deny"
+							>
+								<div class="flex flex-wrap items-center justify-between gap-2.5">
+									<span
+										class="hb-deny-guard-lbl inline-flex items-center gap-1.5 text-xs font-semibold"
+									>
+										<Ban class="size-3.5 shrink-0" aria-hidden="true" />
+										<span>Confirm deny?</span>
+									</span>
+									<div class="flex items-center gap-1.5">
+										<button
+											type="button"
+											disabled={busyId === currentDecision.id}
+											onclick={() => void runAction('secondary')}
+											class="hb-deny-confirm hb-touch-btn inline-flex items-center rounded-md px-3 text-xs font-semibold"
+										>
+											Confirm
+										</button>
+										<button
+											type="button"
+											onclick={() => void cancelDeny()}
+											class="hb-skip-btn hb-touch-btn inline-flex items-center rounded-md px-2.5 text-xs font-semibold"
+										>
+											Keep
+										</button>
+									</div>
+								</div>
+								<label class="sr-only" for="deny-msg-{currentDecision.id}">
+									Optional reason for {currentDecision.actorName}
+								</label>
+								<input
+									bind:this={denyInputEl}
+									bind:value={declineReason}
+									onkeydown={handleDenyKeydown}
+									id="deny-msg-{currentDecision.id}"
+									type="text"
+									autocomplete="off"
+									placeholder="Optional reason for {currentDecision.actorName}… (Enter to confirm, Esc to cancel)"
+									class="hb-input min-h-9 w-full rounded-md px-2.5 py-1.5 text-xs"
+								/>
+							</div>
+						{/if}
 					</div>
 
-					<div class={['hb-cos-memo flex min-h-0 flex-1 flex-col gap-3 rounded-xl p-4', briefExpanded && 'is-expanded']}>
-						<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-						<div
-							id="hb-cos-scroll"
-							class="hb-cos-scroll flex min-h-0 flex-1 flex-col gap-3.5"
-							tabindex="0"
-							aria-label="Executive brief content"
-						>
-							{#each brief.sections as sec (sec.id)}
-								<div class="flex flex-col gap-1">
-									<span class={['hb-cos-k', `tone-${sec.tone}`]}>{sec.kicker}</span>
-									<p class="text-[13px] leading-relaxed" style="color: var(--exec-body);">
-										{sec.body}
-									</p>
-								</div>
-							{/each}
-
-							{#if catchUp.length > 0}
-								<div class="flex flex-col gap-1.5 pt-1">
-									<span class="hb-cos-k tone-accent">Recent Catch-up</span>
-									<div class="flex flex-col gap-1.5">
-										{#each catchUp as row (row.id)}
-											<a
-												href={resolve(row.href as '/work')}
-												class="hb-cu-row flex items-start gap-2 rounded-lg p-2 text-xs"
-											>
-												<span class="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
-													{#if row.tone === 'ok'}
-														<CheckCircle2
-															class="size-3.5"
-															style="color: var(--exec-ok);"
-															aria-hidden="true"
-														/>
-													{:else if row.tone === 'warn'}
-														<AlertTriangle
-															class="size-3.5"
-															style="color: var(--exec-warn);"
-															aria-hidden="true"
-														/>
-													{:else if row.tone === 'live'}
-														<span class="size-2 rounded-full" style="background: var(--exec-ok);"></span>
-													{:else}
-														<Clock
-															class="size-3.5"
-															style="color: var(--exec-accent-ink);"
-															aria-hidden="true"
-														/>
-													{/if}
-												</span>
-												<span class="min-w-0 flex-1 leading-snug" style="color: var(--exec-body);">
-													<strong style="color: var(--exec-ink);">{row.title}</strong> — {row.detail}
-												</span>
-												<span
-													class="shrink-0 text-[11px] tabular-nums"
-													style="color: var(--exec-dim);"
-												>
-													{row.timeLabel}
-												</span>
-											</a>
-										{/each}
-									</div>
-								</div>
-							{/if}
-						</div>
-
+					<!-- UP NEXT tucked below action bar -->
+					{#if nextDecision}
 						<button
 							type="button"
-							onclick={() => (briefExpanded = !briefExpanded)}
-							aria-expanded={briefExpanded}
-							aria-controls="hb-cos-scroll"
-							class="hb-cos-expand hb-touch-btn items-center gap-1.5 self-start rounded-md px-3 text-xs font-semibold"
+							onclick={() => {
+								spotIdx = (safeIdx + 1) % spotlight.length;
+								decliningId = undefined;
+								declineReason = '';
+							}}
+							class="exec-well hb-next-bar flex items-center justify-between gap-2 px-3 py-2 text-left text-xs"
 						>
-							<span>{briefExpanded ? 'Show less' : 'Show full brief'}</span>
-							<ChevronDown
-								class={['size-3.5 transition-transform', briefExpanded && 'rotate-180']}
+							<span class="flex min-w-0 items-center gap-2">
+								<span
+									class="shrink-0 text-[10px] font-bold tracking-wider uppercase"
+									style="color: var(--exec-dim);"
+								>
+									Up next
+								</span>
+								<span class="truncate font-medium" style="color: var(--exec-body);">
+									{nextDecision.title}
+								</span>
+							</span>
+							<ChevronRight
+								class="size-3.5 shrink-0"
+								style="color: var(--exec-dim);"
 								aria-hidden="true"
 							/>
 						</button>
-
-						<div class="hb-cos-sig mt-auto flex flex-wrap items-center justify-between gap-2 pt-3">
-							<a
-								href={resolve('/activity')}
-								class="inline-flex items-center gap-1 text-xs font-medium"
-								style="color: var(--exec-muted);"
-							>
-								<span>Full activity log</span>
-								<ChevronRight class="size-3.5" aria-hidden="true" />
+					{/if}
+				{:else}
+					<!-- All clear / Day-1 Launch -->
+					<div class="flex flex-1 flex-col items-center justify-center gap-3 py-8 text-center">
+						<span class="hb-ring is-ok flex size-12 items-center justify-center rounded-full">
+							<CheckCircle2 class="size-6" aria-hidden="true" />
+						</span>
+						<h2 class="text-base font-semibold" style="color: var(--exec-ink);">
+							{isDayOne ? 'Launch your organization' : 'Nothing waiting on you'}
+						</h2>
+						<p class="max-w-md text-sm" style="color: var(--exec-muted);">
+							{isDayOne
+								? 'Your HQ office is online. Add your first agents, create a project, or open Work to start autonomous delivery.'
+								: 'Every decision is cleared. Your agents and teams are continuing work autonomously.'}
+						</p>
+						<div class="mt-2 flex flex-wrap justify-center gap-2.5">
+							<a href={resolve('/work')} class="exec-cta">
+								<span class="exec-cta-fill" aria-hidden="true"></span>
+								<span class="exec-cta-inner">
+									<span>Open Work</span>
+									<ChevronRight class="size-4" aria-hidden="true" />
+								</span>
 							</a>
+							<a
+								href={resolve('/teams/members')}
+								class="hb-outline-btn hb-touch-btn inline-flex items-center gap-1.5 rounded-lg px-3.5 text-xs font-semibold"
+							>
+								<span>Manage Members</span>
+							</a>
+						</div>
+					</div>
+				{/if}
+			</article>
+
+			<!-- Right: Executive Brief Card with 3 Lenses (Today / 7-Day / Board) -->
+			<aside class="exec-card hb-brief-card flex flex-col gap-3.5 p-5" aria-label="Executive Brief">
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<h2
+						class="inline-flex items-center gap-2 text-sm font-semibold"
+						style="color: var(--exec-ink);"
+					>
+						<Sparkles class="size-4" style="color: var(--exec-accent-ink);" aria-hidden="true" />
+						<span>Executive Brief</span>
+					</h2>
+					<div
+						class="hb-brief-lenses inline-flex items-center gap-0.5 rounded-lg p-0.5"
+						role="tablist"
+						aria-label="Brief timeframe"
+					>
+						{#each BRIEF_LENSES as option, idx (option.id)}
+							<button
+								type="button"
+								role="tab"
+								id="hb-brief-tab-{option.id}"
+								aria-selected={briefLens === option.id}
+								aria-controls="hb-cos-scroll"
+								tabindex={briefLens === option.id ? 0 : -1}
+								onclick={() => {
+									briefLens = option.id;
+									briefCopied = false;
+								}}
+								onkeydown={(e) => handleBriefTabKeydown(e, idx)}
+								class={[
+									'hb-lens-tab rounded-md px-2.5 py-1 text-[11px] font-semibold',
+									briefLens === option.id && 'is-on'
+								]}
+							>
+								{option.label}
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<div
+					class={[
+						'hb-cos-memo flex min-h-0 flex-1 flex-col gap-3 rounded-xl p-4',
+						briefExpanded && 'is-expanded'
+					]}
+				>
+					<div
+						id="hb-cos-scroll"
+						role="tabpanel"
+						aria-labelledby="hb-brief-tab-{briefLens}"
+						class="hb-cos-scroll flex min-h-0 flex-1 flex-col gap-3.5"
+						tabindex="0"
+					>
+						{#each activeBrief.sections as sec (sec.id)}
+							<div class="flex flex-col gap-1">
+								<span class={['hb-cos-k', `tone-${sec.tone}`]}>{sec.kicker}</span>
+								<p class="text-[13px] leading-relaxed" style="color: var(--exec-body);">
+									{sec.body}
+								</p>
+							</div>
+						{/each}
+
+						{#if briefLens === 'today' && catchUp.length > 0}
+							<div class="flex flex-col gap-1.5 pt-1">
+								<span class="hb-cos-k tone-accent">Recent Catch-up</span>
+								<div class="flex flex-col gap-1.5">
+									{#each catchUp as row (row.id)}
+										<a
+											href={resolve(row.href as '/activity')}
+											class="hb-cu-row flex items-start gap-2 rounded-lg p-2 text-xs"
+										>
+											<span class="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
+												{#if row.tone === 'ok'}
+													<CheckCircle2
+														class="size-3.5"
+														style="color: var(--exec-ok);"
+														aria-hidden="true"
+													/>
+												{:else if row.tone === 'warn'}
+													<AlertTriangle
+														class="size-3.5"
+														style="color: var(--exec-warn);"
+														aria-hidden="true"
+													/>
+												{:else if row.tone === 'live'}
+													<span class="size-2 rounded-full" style="background: var(--exec-ok);"
+													></span>
+												{:else}
+													<Clock
+														class="size-3.5"
+														style="color: var(--exec-accent-ink);"
+														aria-hidden="true"
+													/>
+												{/if}
+											</span>
+											<span class="min-w-0 flex-1 leading-snug" style="color: var(--exec-body);">
+												<strong style="color: var(--exec-ink);">{row.title}</strong> — {row.detail}
+											</span>
+											<span
+												class="shrink-0 text-[11px] tabular-nums"
+												style="color: var(--exec-dim);"
+											>
+												{row.timeLabel}
+											</span>
+										</a>
+									{/each}
+								</div>
+							</div>
+						{/if}
+					</div>
+
+					<button
+						type="button"
+						onclick={() => (briefExpanded = !briefExpanded)}
+						aria-expanded={briefExpanded}
+						aria-controls="hb-cos-scroll"
+						class="hb-cos-expand hb-touch-btn items-center gap-1.5 self-start rounded-md px-3 text-xs font-semibold"
+					>
+						<span>{briefExpanded ? 'Show less' : 'Show full brief'}</span>
+						<ChevronDown
+							class={['size-3.5 transition-transform', briefExpanded && 'rotate-180']}
+							aria-hidden="true"
+						/>
+					</button>
+
+					<div class="hb-cos-sig mt-auto flex flex-wrap items-center justify-between gap-2 pt-3">
+						<a
+							href={resolve('/activity')}
+							class="inline-flex items-center gap-1 text-xs font-medium"
+							style="color: var(--exec-muted);"
+						>
+							<span>Full activity log</span>
+							<ChevronRight class="size-3.5" aria-hidden="true" />
+						</a>
+						<div class="flex items-center gap-2">
+							<span class="text-[11px]" style="color: var(--exec-dim);">
+								{activeBrief.updatedLabel}
+							</span>
 							<button
 								type="button"
 								onclick={copyBrief}
@@ -955,237 +1127,256 @@
 							</button>
 						</div>
 					</div>
-				</aside>
-			</section>
+				</div>
+			</aside>
+		</section>
 
-			<!-- Zone 3: Projects Bento Row -->
-			{#if projectCards.length > 0}
-				<section class="hb-proj-sec flex flex-col gap-3.5" aria-labelledby="hb-projects-heading">
-					<div class="flex items-baseline justify-between gap-3">
-						<div class="flex items-baseline gap-2.5">
-							<h2 id="hb-projects-heading" class="text-[15px] font-semibold" style="color: var(--exec-ink);">
-								Projects
-							</h2>
-							<span class="text-xs" style="color: var(--exec-muted);">
-								{projectCards.length} active{kpis.projectsAttention > 0
-									? ` · ${kpis.projectsAttention} need attention`
-									: ''}
-							</span>
-						</div>
-						<a
-							href={resolve('/projects')}
-							class="inline-flex items-center gap-0.5 text-xs font-semibold"
-							style="color: var(--exec-accent-ink);"
+		<!-- Zone 3: Project Delivery Scorecard (projectsApi + workApi) -->
+		{#if projectCards.length > 0}
+			<section class="hb-proj-sec flex flex-col gap-3.5" aria-labelledby="hb-projects-heading">
+				<div class="flex items-baseline justify-between gap-3">
+					<div class="flex items-baseline gap-2.5">
+						<h2
+							id="hb-projects-heading"
+							class="text-[15px] font-semibold"
+							style="color: var(--exec-ink);"
 						>
-							<span>All projects</span>
-							<ChevronRight class="size-3.5" aria-hidden="true" />
-						</a>
-					</div>
-					<div class="hb-bento grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-						{#each projectCards.slice(0, 6) as proj (proj.id)}
-							<article class="exec-card hb-proj-card flex flex-col gap-3.5 p-5">
-								<div class="flex items-center justify-between gap-2">
-									<div class="flex min-w-0 items-baseline gap-2">
-										<a
-											href={resolve(`/projects/${proj.id}` as '/projects')}
-											class="truncate text-[15px] font-semibold hover:underline"
-											style="color: var(--exec-ink);"
-										>
-											{proj.name}
-										</a>
-										{#if proj.key}
-											<span class="hb-key-tag font-mono text-[11px]">{proj.key}</span>
-										{/if}
-									</div>
-									<span class={['hb-pil-pill inline-flex items-center gap-1', `is-${proj.healthTone}`]}>
-										{#if proj.healthTone === 'bad'}
-											<XCircle class="size-3" aria-hidden="true" />
-										{:else if proj.healthTone === 'warn'}
-											<AlertTriangle class="size-3" aria-hidden="true" />
-										{:else}
-											<CheckCircle2 class="size-3" aria-hidden="true" />
-										{/if}
-										<span>{proj.health}</span>
-									</span>
-								</div>
-
-								<div class="flex flex-col gap-1.5">
-									<div
-										class="flex items-baseline justify-between text-xs tabular-nums"
-										style="color: var(--exec-muted);"
-									>
-										<span>{proj.doneCount} of {proj.totalCount} done</span>
-										<strong class="text-sm" style="color: var(--exec-ink);">{proj.pct}%</strong>
-									</div>
-									<div class="hb-bar-track" aria-hidden="true">
-										<span class={`hb-bar-${proj.healthTone}`} style="width: {proj.pct}%"></span>
-									</div>
-								</div>
-
-								<div
-									class={[
-										'hb-blocker flex min-h-[56px] items-center justify-between gap-2.5 rounded-xl px-3 py-2 text-xs',
-										`tone-${proj.blockerTone}`
-									]}
-								>
-									<span class="min-w-0 flex-1 leading-snug">{proj.blockerText}</span>
-									<a
-										href={resolve(proj.actionHref as '/work')}
-										class="hb-unblock hb-touch-btn inline-flex shrink-0 items-center gap-0.5 rounded-md px-2.5 py-1 text-[11px] font-semibold"
-									>
-										<span>{proj.actionLabel}</span>
-										<ChevronRight class="size-3" aria-hidden="true" />
-									</a>
-								</div>
-
-								<div
-									class="hb-spot-foot mt-auto flex items-center justify-between gap-2 pt-3 text-xs"
-									style="color: var(--exec-muted);"
-								>
-									<div class="flex items-center">
-										{#each proj.memberInitials as init, idx (init + idx)}
-											<span
-												class="hb-av hb-av-stack inline-flex size-6 items-center justify-center rounded-full text-[9px] font-bold"
-												style="color: var(--exec-ink);"
-											>
-												{init}
-											</span>
-										{/each}
-										{#if proj.extraMembers > 0}
-											<span class="ml-1.5 text-[11px]">+{proj.extraMembers}</span>
-										{/if}
-									</div>
-									<a
-										href={resolve(`/projects/${proj.id}` as '/projects')}
-										class="inline-flex items-center gap-0.5 hover:underline"
-									>
-										<span>Lead {proj.leadName}</span>
-										<ChevronRight class="size-3" aria-hidden="true" />
-									</a>
-								</div>
-							</article>
-						{/each}
-					</div>
-				</section>
-			{/if}
-
-			<!-- Zone 4: Where Task Time Goes -->
-			{#if taskTime.totalOpen > 0}
-				<section class="exec-card hb-time-card flex flex-col gap-3 p-5" aria-labelledby="hb-time-heading">
-					<div class="flex flex-wrap items-baseline justify-between gap-2">
-						<h2 id="hb-time-heading" class="text-[15px] font-semibold" style="color: var(--exec-ink);">
-							Where task time goes
+							Project Delivery Scorecard
 						</h2>
-						<span class="text-xs tabular-nums" style="color: var(--exec-dim);">
-							{taskTime.totalOpen} open {taskTime.totalOpen === 1 ? 'item' : 'items'}
+						<span class="text-xs" style="color: var(--exec-muted);">
+							{projectCards.length} active{kpis.projectsAttention > 0
+								? ` · ${kpis.projectsAttention} need attention`
+								: ''}
 						</span>
 					</div>
-
-					<div
-						class="hb-time-bar flex h-2.5 gap-1 overflow-hidden rounded-full"
-						role="group"
-						aria-label="Open task distribution"
+					<a
+						href={resolve('/projects')}
+						class="inline-flex items-center gap-0.5 text-xs font-semibold"
+						style="color: var(--exec-accent-ink);"
 					>
-						{#if taskTime.workingPct > 0}
-							<a
-								href={resolve('/agents')}
-								class="hb-seg-agents rounded-full"
-								style="width: {taskTime.workingPct}%"
-								aria-label="Agents working: {taskTime.workingPct}%"
-							></a>
-						{/if}
-						{#if taskTime.reviewPct > 0}
-							<a
-								href={resolve('/work')}
-								class="hb-seg-ci rounded-full"
-								style="width: {taskTime.reviewPct}%"
-								aria-label="In review: {taskTime.reviewPct}%"
-							></a>
-						{/if}
-						{#if taskTime.waitingYouPct > 0}
-							<a
-								href={resolve('/inbox')}
-								class="hb-seg-human rounded-full"
-								style="width: {taskTime.waitingYouPct}%"
-								aria-label="Waiting on you: {taskTime.waitingYouPct}%"
-							></a>
-						{/if}
-						{#if taskTime.queuedPct > 0}
-							<a
-								href={resolve('/work')}
+						<span>All projects</span>
+						<ChevronRight class="size-3.5" aria-hidden="true" />
+					</a>
+				</div>
+				<div class="hb-bento grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+					{#each projectCards.slice(0, 6) as proj (proj.id)}
+						<article class="exec-card hb-proj-card flex flex-col gap-3.5 p-5">
+							<div class="flex items-center justify-between gap-2">
+								<div class="flex min-w-0 items-baseline gap-2">
+									<a
+										href={resolve(proj.workHref as '/projects')}
+										class="truncate text-[15px] font-semibold hover:underline"
+										style="color: var(--exec-ink);"
+									>
+										{proj.name}
+									</a>
+									{#if proj.key}
+										<span class="hb-key-tag font-mono text-[11px]">{proj.key}</span>
+									{/if}
+								</div>
+								<span class={['hb-pil-pill inline-flex items-center gap-1', proj.statusPillClass]}>
+									{#if proj.healthTone === 'bad'}
+										<XCircle class="size-3" aria-hidden="true" />
+									{:else if proj.healthTone === 'warn'}
+										<AlertTriangle class="size-3" aria-hidden="true" />
+									{:else}
+										<CheckCircle2 class="size-3" aria-hidden="true" />
+									{/if}
+									<span>{proj.health}</span>
+								</span>
+							</div>
+
+							<a href={resolve(proj.workHref as '/projects')} class="flex flex-col gap-1.5">
+								<div
+									class="flex items-baseline justify-between text-xs tabular-nums"
+									style="color: var(--exec-muted);"
+								>
+									<span>
+										{proj.doneCount} of {proj.totalCount} done{proj.dueLabel
+											? ` · Due ${proj.dueLabel}`
+											: ''}
+									</span>
+									<strong class="text-sm" style="color: var(--exec-ink);">{proj.pct}%</strong>
+								</div>
+								<div class="hb-bar-track" aria-hidden="true">
+									<span class={`hb-bar-${proj.healthTone}`} style="width: {proj.pct}%"></span>
+								</div>
+							</a>
+
+							<div
 								class={[
-									'rounded-full',
-									taskTime.queuedIsHigh ? 'hb-seg-queued-high' : 'hb-seg-queued'
+									'hb-blocker flex min-h-[56px] items-center justify-between gap-2.5 rounded-xl px-3 py-2 text-xs',
+									`tone-${proj.blockerTone}`
 								]}
-								style="width: {taskTime.queuedPct}%"
-								aria-label="Waiting for an agent: {taskTime.queuedPct}%"
-							></a>
-						{/if}
-					</div>
-
-					<div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
-						<a href={resolve('/agents')} class="inline-flex items-center gap-1.5">
-							<span class="size-2 rounded-full" style="background: var(--tone-accent);"></span>
-							<strong style="color: var(--exec-sky);">{taskTime.workingPct}%</strong>
-							<span style="color: var(--exec-muted);">Agents working ({taskTime.workingCount})</span>
-						</a>
-						<a href={resolve('/work')} class="inline-flex items-center gap-1.5">
-							<span class="size-2 rounded-full" style="background: var(--tone-ok);"></span>
-							<strong style="color: var(--exec-ok);">{taskTime.reviewPct}%</strong>
-							<span style="color: var(--exec-muted);">In review ({taskTime.reviewCount})</span>
-						</a>
-						<a href={resolve('/inbox')} class="inline-flex items-center gap-1.5">
-							<span class="size-2 rounded-full" style="background: var(--tone-warn);"></span>
-							<strong style="color: var(--exec-warn);">{taskTime.waitingYouPct}%</strong>
-							<span style="color: var(--exec-muted);">Waiting on you ({taskTime.waitingYouCount})</span>
-						</a>
-						<a href={resolve('/work')} class="inline-flex items-center gap-1.5">
-							<span
-								class="size-2 rounded-full"
-								style="background: {taskTime.queuedIsHigh ? 'var(--tone-bad)' : 'var(--tone-queued)'};"
-							></span>
-							<strong
-								style="color: {taskTime.queuedIsHigh ? 'var(--exec-bad)' : 'var(--exec-purple)'};"
 							>
-								{taskTime.queuedPct}%
-							</strong>
-							<span style="color: var(--exec-muted);">Waiting for an agent ({taskTime.queuedCount})</span>
-						</a>
-					</div>
+								<span class="min-w-0 flex-1 leading-snug">{proj.blockerText}</span>
+								<a
+									href={resolve(proj.actionHref as '/work')}
+									class="hb-unblock hb-touch-btn inline-flex shrink-0 items-center gap-0.5 rounded-md px-2.5 py-1 text-[11px] font-semibold"
+								>
+									<span>{proj.actionLabel}</span>
+									<ChevronRight class="size-3" aria-hidden="true" />
+								</a>
+							</div>
 
-					<div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-						<p style="color: var(--exec-muted);">{taskTime.summary}</p>
-						<div class="flex items-center gap-3.5">
+							<div
+								class="hb-spot-foot mt-auto flex items-center justify-between gap-2 pt-3 text-xs"
+								style="color: var(--exec-muted);"
+							>
+								<div class="flex items-center">
+									{#each proj.memberInitials as init, idx (init + idx)}
+										<span
+											class="hb-av hb-av-stack inline-flex size-6 items-center justify-center rounded-full text-[9px] font-bold"
+											style="color: var(--exec-ink);"
+										>
+											{init}
+										</span>
+									{/each}
+									{#if proj.extraMembers > 0}
+										<span class="ml-1.5 text-[11px]">+{proj.extraMembers}</span>
+									{/if}
+								</div>
+								<a
+									href={resolve(proj.workHref as '/projects')}
+									class="inline-flex items-center gap-0.5 hover:underline"
+								>
+									<span>Lead {proj.leadName}</span>
+									<ChevronRight class="size-3" aria-hidden="true" />
+								</a>
+							</div>
+						</article>
+					{/each}
+				</div>
+			</section>
+		{/if}
+
+		<!-- Zone 4: Capacity & Task Time Breakdown -->
+		{#if taskTime.totalOpen > 0}
+			<section
+				class="exec-card hb-time-card flex flex-col gap-3 p-5"
+				aria-labelledby="hb-time-heading"
+			>
+				<div class="flex flex-wrap items-baseline justify-between gap-2">
+					<h2
+						id="hb-time-heading"
+						class="text-[15px] font-semibold"
+						style="color: var(--exec-ink);"
+					>
+						Where task time goes
+					</h2>
+					<span class="text-xs tabular-nums" style="color: var(--exec-dim);">
+						{taskTime.totalOpen} open {taskTime.totalOpen === 1 ? 'item' : 'items'}
+					</span>
+				</div>
+
+				<div
+					class="hb-time-bar flex h-2.5 gap-1 overflow-hidden rounded-full"
+					role="group"
+					aria-label="Open task distribution"
+				>
+					{#if taskTime.workingPct > 0}
+						<a
+							href={resolve('/teams/members')}
+							class="hb-seg-agents rounded-full"
+							style="width: {taskTime.workingPct}%"
+							aria-label="Agents working: {taskTime.workingPct}%"
+						></a>
+					{/if}
+					{#if taskTime.reviewPct > 0}
+						<a
+							href={resolve('/work')}
+							class="hb-seg-ci rounded-full"
+							style="width: {taskTime.reviewPct}%"
+							aria-label="In review: {taskTime.reviewPct}%"
+						></a>
+					{/if}
+					{#if taskTime.waitingYouPct > 0}
+						<a
+							href={resolve('/inbox')}
+							class="hb-seg-human rounded-full"
+							style="width: {taskTime.waitingYouPct}%"
+							aria-label="Waiting on you: {taskTime.waitingYouPct}%"
+						></a>
+					{/if}
+					{#if taskTime.queuedPct > 0}
+						<a
+							href={resolve(kpis.offlineOffices > 0 ? '/settings/offices' : '/work')}
+							class={[
+								'rounded-full',
+								taskTime.queuedIsHigh ? 'hb-seg-queued-high' : 'hb-seg-queued'
+							]}
+							style="width: {taskTime.queuedPct}%"
+							aria-label="Waiting for an agent: {taskTime.queuedPct}%"
+						></a>
+					{/if}
+				</div>
+
+				<div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+					<a href={resolve('/teams/members')} class="inline-flex items-center gap-1.5">
+						<span class="size-2 rounded-full" style="background: var(--tone-accent);"></span>
+						<strong style="color: var(--exec-sky);">{taskTime.workingPct}%</strong>
+						<span style="color: var(--exec-muted);">Agents working ({taskTime.workingCount})</span>
+					</a>
+					<a href={resolve('/work')} class="inline-flex items-center gap-1.5">
+						<span class="size-2 rounded-full" style="background: var(--tone-ok);"></span>
+						<strong style="color: var(--exec-ok);">{taskTime.reviewPct}%</strong>
+						<span style="color: var(--exec-muted);">In review ({taskTime.reviewCount})</span>
+					</a>
+					<a href={resolve('/inbox')} class="inline-flex items-center gap-1.5">
+						<span class="size-2 rounded-full" style="background: var(--tone-warn);"></span>
+						<strong style="color: var(--exec-warn);">{taskTime.waitingYouPct}%</strong>
+						<span style="color: var(--exec-muted);"
+							>Waiting on you ({taskTime.waitingYouCount})</span
+						>
+					</a>
+					<a
+						href={resolve(kpis.offlineOffices > 0 ? '/settings/offices' : '/work')}
+						class="inline-flex items-center gap-1.5"
+					>
+						<span
+							class="size-2 rounded-full"
+							style="background: {taskTime.queuedIsHigh
+								? 'var(--tone-bad)'
+								: 'var(--tone-queued)'};"
+						></span>
+						<strong
+							style="color: {taskTime.queuedIsHigh ? 'var(--exec-bad)' : 'var(--exec-purple)'};"
+						>
+							{taskTime.queuedPct}%
+						</strong>
+						<span style="color: var(--exec-muted);">
+							Waiting for an agent ({taskTime.queuedCount})
+						</span>
+					</a>
+				</div>
+
+				<div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+					<p style="color: var(--exec-muted);">{taskTime.summary}</p>
+					<div class="flex items-center gap-3.5">
+						<a
+							href={resolve(taskTime.primaryLink.href as '/work')}
+							class="inline-flex items-center gap-0.5 font-semibold"
+							style="color: var(--exec-accent-ink);"
+						>
+							<span>{taskTime.primaryLink.label}</span>
+							<ChevronRight class="size-3.5" aria-hidden="true" />
+						</a>
+						{#if taskTime.secondaryLink}
 							<a
-								href={resolve(taskTime.primaryLink.href as '/work')}
+								href={resolve(taskTime.secondaryLink.href as '/work')}
 								class="inline-flex items-center gap-0.5 font-semibold"
 								style="color: var(--exec-accent-ink);"
 							>
-								<span>{taskTime.primaryLink.label}</span>
+								<span>{taskTime.secondaryLink.label}</span>
 								<ChevronRight class="size-3.5" aria-hidden="true" />
 							</a>
-							{#if taskTime.secondaryLink}
-								<a
-									href={resolve(taskTime.secondaryLink.href as '/work')}
-									class="inline-flex items-center gap-0.5 font-semibold"
-									style="color: var(--exec-accent-ink);"
-								>
-									<span>{taskTime.secondaryLink.label}</span>
-									<ChevronRight class="size-3.5" aria-hidden="true" />
-								</a>
-							{/if}
-						</div>
+						{/if}
 					</div>
-				</section>
-			{/if}
+				</div>
+			</section>
 		{/if}
-	</div>
-{:else}
-	<HomeView
-		organizationId={data.connection.organization.id}
-		organizationName={data.connection.organization.name}
-	/>
-{/if}
+	{/if}
+</div>
 
 <style>
 	.hb-h1 {
@@ -1264,20 +1455,20 @@
 		height: 100%;
 		border-radius: 999px;
 	}
-	.hb-bar-budget {
-		background: var(--exec-bar-budget);
+	.hb-bar-accent {
+		background: var(--tone-accent-bar);
 	}
 	.hb-bar-sky {
-		background: var(--exec-bar-sky);
+		background: var(--tone-accent-bar);
 	}
 	.hb-bar-ok {
-		background: var(--exec-bar-ok);
+		background: var(--tone-ok-bar);
 	}
 	.hb-bar-warn {
-		background: var(--exec-bar-warn);
+		background: var(--tone-warn-bar);
 	}
 	.hb-bar-bad {
-		background: var(--exec-bar-bad);
+		background: var(--tone-bad-bar);
 	}
 	.hb-pil-sub {
 		border-top: 1px solid var(--exec-border);
@@ -1462,12 +1653,25 @@
 	.hb-cu-row:hover {
 		background: var(--exec-surface-hi);
 	}
-	.hb-cu-pill {
+	/* Executive Brief 3-Lens Toggle & Memo */
+	.hb-brief-lenses {
 		background: var(--exec-well);
 		box-shadow: inset 0 0 0 1px var(--exec-border);
-		color: var(--exec-muted);
 	}
-	/* Executive Brief memo */
+	.hb-lens-tab {
+		color: var(--exec-muted);
+		transition:
+			background-color 0.14s ease,
+			color 0.14s ease;
+	}
+	.hb-lens-tab:hover {
+		color: var(--exec-ink);
+	}
+	.hb-lens-tab.is-on {
+		background: var(--exec-accent-soft);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
 	.hb-cos-memo {
 		background: var(--exec-cos-bg);
 		box-shadow:
@@ -1634,21 +1838,5 @@
 	}
 	.hb-seg-queued-high {
 		background: var(--exec-seg-queued-high);
-	}
-	@media (max-width: 720px), (pointer: coarse) {
-		.hb-touch-btn,
-		.hb-ctx-toggle,
-		.hb-arrow {
-			min-height: 44px;
-		}
-		.hb-arrow {
-			min-width: 44px;
-		}
-		.hb-act-sep {
-			display: none;
-		}
-		.hb-deny-btn {
-			margin-left: auto;
-		}
 	}
 </style>

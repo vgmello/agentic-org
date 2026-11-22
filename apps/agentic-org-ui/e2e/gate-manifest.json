@@ -574,11 +574,6 @@
 		},
 		{
 			"from": "src/routes/(shell)/+layout.svelte",
-			"to": "src/lib/offices/{model,probe}.ts",
-			"why": "The footer's office line uses the same status words and live-check rule as Offices (displayStatus, statusInfo); offices specs cover that model."
-		},
-		{
-			"from": "src/routes/(shell)/+layout.svelte",
 			"to": "src/lib/modules/messaging/index.ts",
 			"why": "The layout only calls provideDraftStore (kept shared in messaging/drafts); the barrel is loaded on every page, so an import-time failure in any chat file shows in the always-run journeys."
 		},
@@ -623,9 +618,14 @@
 			"why": "The dev-mock fake implements the employees module's api contract and only needs its types; the fake is never part of a production build."
 		},
 		{
-			"from": "e2e/fakes/modules/offices.ts",
+			"from": "e2e/fakes/{modules/offices,poc-dataset}.ts",
 			"to": "src/lib/modules/offices/{api,types}.ts",
-			"why": "The dev-mock fake implements the offices module's api contract and only needs its types; the fake is never part of a production build."
+			"why": "The dev-mock fakes implement the offices module's api contract and POC mirror dataset and only need its types; the fakes are never part of a production build."
+		},
+		{
+			"from": "src/routes/(shell)/{+layout,home/+page}.svelte",
+			"to": "src/lib/modules/offices/index.ts",
+			"why": "The Executive shell and Home Workforce & Offices KPI read layered satellite office counts through the offices module's public index (officesApi, layerOffices); the offices specs cover that module."
 		},
 		{
 			"from": "e2e/fakes/modules/org-chart.ts",
@@ -706,7 +706,7 @@
 			"src/routes/(shell)/teams/(views)/+{layout.svelte,page.ts}",
 			"src/routes/(shell)/settings/+layout.svelte",
 			"src/lib/components/{MiniIcon,PageHeader,TabsNav,EmptyState,ErrorState,SkeletonRows,DescriptionList,Section,Avatar,StatTile,NotBuilt,Loaded,ConfirmDialog,CopyButton}.svelte",
-			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,Sidebar,LiveBanner,Logo,resource,classes,focus,pills}.*",
+			"src/lib/components/{Callout,DividedRow,StatusPill,icons,HeroIcon,heroicons,LiveBanner,Logo,resource,classes,focus,pills}.*",
 			"static/**",
 			"vite.config.ts",
 			"svelte.config.js",

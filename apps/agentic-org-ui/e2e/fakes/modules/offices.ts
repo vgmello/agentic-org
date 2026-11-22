@@ -18,6 +18,8 @@ import type {
 	SatelliteDetails
 } from '../../../src/lib/modules/offices/types';
 import { unavailableCall } from '$lib/platform/unavailable-api';
+import { isPocDataset } from '../mock-mode';
+import { pocOfficesOverview } from '../poc-dataset';
 import full from '../data/offices/seed.json' with { type: 'json' };
 
 /** HQ alone: the seed with nothing joined, invited, pending or queued. */
@@ -195,6 +197,10 @@ function progressOf(s: NonNullable<typeof state>, op: Op): AddProgress {
 
 export const officesApi: OfficesApi = {
 	async overview(organizationId) {
+		if (isPocDataset()) {
+			await wait();
+			return structuredClone(pocOfficesOverview());
+		}
 		const s = await gate(organizationId);
 		const pendingAdds: PendingAdd[] = s.ops
 			.filter((o) => o.waiting && !o.cancelled)

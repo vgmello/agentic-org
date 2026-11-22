@@ -129,8 +129,8 @@ html[data-ui-theme='report-dark'] {
 
 	--exec-cta-bg: #615fff;
 	--exec-cta-fill: #7c86ff;
-	--exec-cta-glass-bg: rgba(97, 95, 255, 0.14);
-	--exec-cta-glass-ink: #e0e7ff;
+	--exec-cta-glass-bg: #615fff;
+	--exec-cta-glass-ink: #ffffff;
 	--exec-avatar-bg: #1e2939;
 	--exec-avatar-ring: #1e2939;
 
@@ -147,11 +147,11 @@ html[data-ui-theme='report-dark'] {
 	--exec-deny-confirm-hover: #b91c1c;
 	--exec-deny-confirm-ink: #ffffff;
 
-	/* Executive Brief memo */
-	--exec-cos-bg: #16202e;
-	--exec-cos-fade: #16202e;
-	--exec-cos-border: rgba(255, 255, 255, 0.09);
-	--exec-cos-rule: #7c86ff;
+	/* Executive Brief memo (borderless editorial column on Report Night) */
+	--exec-cos-bg: transparent;
+	--exec-cos-fade: #1e2939;
+	--exec-cos-border: transparent;
+	--exec-cos-rule: transparent;
 
 	/* Unread rail dot */
 	--exec-nav-dot: var(--tone-warn);
