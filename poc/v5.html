@@ -1915,23 +1915,23 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   font-size: 0.72rem; font-weight: 500; color: var(--hb-muted);
 }
 
-.hb-digest { display: flex; flex-direction: column; gap: 6px; flex: 1; justify-content: flex-start; }
+.hb-digest { display: flex; flex-direction: column; gap: 5px; flex: 1; justify-content: flex-start; }
 .hb-dig-item {
-  display: flex; align-items: flex-start; gap: 9px;
-  padding: 7px 11px; border-radius: 8px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 7px;
   background: var(--hb-well);
   box-shadow: inset 0 1px 0 rgba(186, 226, 255, .10), inset 0 0 0 1px rgba(186, 226, 255, .10);
-  font-size: 0.78125rem; line-height: 1.32; color: var(--hb-body);
+  font-size: 0.765rem; line-height: 1.28; color: var(--hb-body);
   transition: background-color .14s ease, box-shadow .14s ease;
 }
 a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 0 rgba(186, 226, 255, .20), inset 0 0 0 1px var(--hb-border-hi); }
-.hb-dig-ico { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; margin-top: 2px; flex: none; }
+.hb-dig-ico { width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .hb-dig-item b { color: var(--hb-ink); font-weight: 600; }
 .hb-dig-item .muted { color: var(--hb-muted); }
 
-/* Spacious Catch-up Digest Footer & Timestamps */
-.hb-dig-body { flex: 1; min-width: 0; }
-.hb-dig-time { font-size: 0.7rem; font-weight: 500; color: var(--hb-dim); white-space: nowrap; flex: none; margin-top: 2px; font-variant-numeric: tabular-nums; }
+/* Compact Catch-up Digest Footer & Timestamps */
+.hb-dig-body { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hb-dig-time { font-size: 0.6875rem; font-weight: 500; color: var(--hb-dim); white-space: nowrap; flex: none; font-variant-numeric: tabular-nums; }
 .hb-cu-foot {
   margin-top: auto; padding-top: 12px;
   border-top: 1px solid var(--hb-border);
@@ -3282,7 +3282,7 @@ html[data-theme="report"] .hb-cu-window {
 html[data-theme="report"] .hb-digest { gap: 0; }
 html[data-theme="report"] .hb-dig-item {
   border-radius: 0; background: transparent; box-shadow: none;
-  padding: 7px 6px; font-size: 0.78125rem; line-height: 1.32;
+  padding: 8px 6px; font-size: 0.78125rem; line-height: 1.28;
   border-top: 1px solid #EEF1F6;
 }
 html[data-theme="report"] .hb-dig-item:first-child { border-top: 1px solid #DCE2EC; }
@@ -4647,61 +4647,61 @@ function pageHome() {
     const liveAgentRows = activeLead ? [
       `<a class="hb-dig-item" href="#/teams/members">
         <span class="hb-dig-ico"><span class="h4-live-dot" style="background:#34D399" aria-hidden="true"></span></span>
-        <div class="hb-dig-body"><b>${liveWorkingAgents.length} agents working now</b> — ${esc(M[activeLead].name)} is in a session with you${otherActive ? `, plus ${otherActive} others across 3 projects` : ""}.</div>
+        <div class="hb-dig-body"><b>${liveWorkingAgents.length} agents working now</b> — ${esc(M[activeLead].name)} in session${otherActive ? ` + ${otherActive} across 3 projects` : ""}</div>
         <span class="hb-dig-time">Live</span>
       </a>`,
       `<a class="hb-dig-item" href="#/projects/agency-v1">
         <span class="hb-dig-ico"><span class="h4-live-dot" style="background:#38BDF8" aria-hidden="true"></span></span>
-        <div class="hb-dig-body"><b>Maya auditing launch checklist</b> — verifying macOS &amp; Linux setup steps before sign-off.</div>
+        <div class="hb-dig-body"><b>Maya auditing v1.0 checklist</b> — macOS &amp; Linux setup checks</div>
         <span class="hb-dig-time">Live</span>
       </a>`
     ] : [
       `<a class="hb-dig-item" href="#/settings/agents/jules">
         <span class="hb-dig-ico">${ic("bolt", "ic16 c-amber")}</span>
-        <div class="hb-dig-body"><b>Budget reached</b> — Jules hit its monthly spend limit; new work waits until Dec 1.</div>
+        <div class="hb-dig-body"><b>Budget reached</b> — Jules hit monthly spend limit until Dec 1</div>
         <span class="hb-dig-time">3h</span>
       </a>`
     ];
     const staticRows = [
       `<a class="hb-dig-item" href="#/projects/agency-v1">
         <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-        <div class="hb-dig-body"><b>Release notes &amp; onboarding drafted</b> — Ada &amp; Maya completed v1.0 notes and checklist.</div>
+        <div class="hb-dig-body"><b>Release notes drafted</b> — Ada &amp; Maya completed v1.0 guide</div>
         <span class="hb-dig-time">18m</span>
       </a>`,
       `<a class="hb-dig-item" href="#/projects/look-feel">
         <span class="hb-dig-ico">${ic("check-circle", "ic16 c-indigo")}</span>
-        <div class="hb-dig-body"><b>2 UI polish tasks shipped</b> — Avery restyled status pills and mobile badge alignment.</div>
+        <div class="hb-dig-body"><b>2 UI polish tasks shipped</b> — Avery updated pills &amp; badges</div>
         <span class="hb-dig-time">1h</span>
       </a>`,
       `<a class="hb-dig-item" href="#/inbox/in11">
         <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-        <div class="hb-dig-body"><b>Reconnect fix ready</b> — Sage resolved Build box sleep disconnect; ready for review.</div>
+        <div class="hb-dig-body"><b>Reconnect fix ready</b> — Sage resolved Build box sleep drop</div>
         <span class="hb-dig-time">2h</span>
       </a>`,
       `<a class="hb-dig-item" href="#/projects/agency-v1">
         <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-        <div class="hb-dig-body"><b>Workspace CI suite green</b> — 412 automated checks passed on the v1 release candidate.</div>
+        <div class="hb-dig-body"><b>Workspace CI suite green</b> — 412 checks passed on v1 RC</div>
         <span class="hb-dig-time">2h</span>
       </a>`,
       `<a class="hb-dig-item" href="#/settings/offices">
         <span class="hb-dig-ico">${ic("check-circle", "ic16 c-indigo")}</span>
-        <div class="hb-dig-body"><b>Host socket confinement verified</b> — Tomas cleared security review with zero regressions.</div>
+        <div class="hb-dig-body"><b>Socket confinement verified</b> — Tomas cleared host review</div>
         <span class="hb-dig-time">3h</span>
       </a>`,
       `<a class="hb-dig-item" href="#/projects/look-feel">
         <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-        <div class="hb-dig-body"><b>Theme tokens isolated</b> — Ocean, Light, and Classic stylesheets split into standalone files.</div>
+        <div class="hb-dig-body"><b>Theme tokens isolated</b> — split into 1-file-per-theme CSS</div>
         <span class="hb-dig-time">3h</span>
       </a>`,
       `<a class="hb-dig-item" href="#/settings/costs">
         <span class="hb-dig-ico">${ic("check-circle", "ic16 c-indigo")}</span>
-        <div class="hb-dig-body"><b>Cost ledger rolled over</b> — Daily usage and token spend synced across HQ &amp; Build box.</div>
+        <div class="hb-dig-body"><b>Cost ledger rolled over</b> — HQ &amp; Build box spend synced</div>
         <span class="hb-dig-time">4h</span>
       </a>`
     ];
     const dynamicRows = recentDone.map((d) => `<a class="hb-dig-item" href="#/inbox/${d.id}">
       <span class="hb-dig-ico">${ic("check-circle", "ic16 c-green")}</span>
-      <div class="hb-dig-body"><b>${esc(d.outcome)}</b> — ${esc(d.what)} (${esc(M[d.from].name)} notified).</div>
+      <div class="hb-dig-body"><b>${esc(d.outcome)}</b> — ${esc(d.what)} (${esc(M[d.from].name)} notified)</div>
       <span class="hb-dig-time">Now</span>
     </a>`);
     const shownRows = [...liveAgentRows, ...dynamicRows, ...staticRows].slice(0, 9).join("");
