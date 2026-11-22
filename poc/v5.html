@@ -203,8 +203,6 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .proto-banner.is-open { transform: translateY(0); opacity: 1; pointer-events: auto; }
 .proto-banner .grow { flex: 1; min-width: 80px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-.ver-ctl { display: inline-flex; align-items: center; gap: 6px; }
-.ver-select { font-size: 0.8125rem; font-weight: 600; padding: 0 20px 0 8px; cursor: pointer; }
 .topbar { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: center; gap: 12px; height: 68px; padding: 12px var(--gutter) 10px; background: transparent; flex-shrink: 0; }
 .topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: linear-gradient(180deg, rgba(6, 13, 25, .74) 0%, rgba(6, 13, 25, .42) 72%, rgba(6, 13, 25, 0) 100%); backdrop-filter: blur(18px) saturate(145%); -webkit-backdrop-filter: blur(18px) saturate(145%); -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 76%, transparent 100%); mask-image: linear-gradient(180deg, #000 0%, #000 76%, transparent 100%); }
 .topbar .menu-btn { position: absolute; left: 12px; }
@@ -3183,6 +3181,14 @@ html[data-theme^="report"] .hb-tleg.queued.is-high strong { color: #B83232; }
   html[data-theme^="report"] .hb-pillar { padding: 16px 0; }
   html[data-theme^="report"] .hb-pillar + .hb-pillar { border-left: 0; border-top: 1px solid #EEF1F6; }
 }
+@media (max-width: 720px) {
+  html[data-theme^="report"] .hb-spot-bar { flex-wrap: wrap; gap: 10px; }
+  html[data-theme^="report"] .hb-spot-badge { max-width: 100%; white-space: normal; }
+  html[data-theme^="report"] .hb-spot-nav { width: 100%; justify-content: space-between; }
+  html[data-theme^="report"] .hb-spot-meta { grid-template-columns: 1fr; gap: 0; padding: 6px 0; }
+  html[data-theme^="report"] .hb-spot-cell { padding: 10px 0; }
+  html[data-theme^="report"] .hb-spot-cell + .hb-spot-cell { border-left: 0; border-top: 1px solid #E5EAF2; padding-top: 10px; }
+}
 
 /* Authoritative Monochrome Buttons, Borderless Flat Status Tags & Sub-Pages */
 html[data-theme^="report"] .btn,
@@ -3622,6 +3628,9 @@ html[data-theme="report-dark"] .hb-tleg.queued.is-high strong { color: #fda4af; 
 @media (max-width: 960px) {
   html[data-theme="report-dark"] .hb-pillar + .hb-pillar { border-top-color: rgba(255, 255, 255, .08); }
 }
+@media (max-width: 720px) {
+  html[data-theme="report-dark"] .hb-spot-cell + .hb-spot-cell { border-top-color: rgba(255, 255, 255, .08); }
+}
 
 /* Report Night Buttons, Tags & Sub-Pages */
 html[data-theme="report-dark"] .btn.primary.h4-cta,
@@ -3786,19 +3795,7 @@ html[data-theme="report-dark"] .split .list { background: #161f2d; }
   <div class="proto-hotzone" id="banner-hotzone" aria-hidden="true" title="Hover top edge for prototype controls"></div>
   <div class="proto-banner" id="banner" role="note">
     <svg class="ic ic16" aria-hidden="true"><use href="#i-info"/></svg>
-    <span class="grow">Prototype · information architecture v2 · draft 4.1 · mock data</span>
-    <label class="ver-ctl" for="ver-select">
-      <span class="seg-label">Version</span>
-      <select class="field ver-select" id="ver-select" data-cur="/v5" aria-label="Prototype version">
-        <option value="/v1">v1 · Original</option>
-        <option value="/v2">v2 · Navy</option>
-        <option value="/v3">v3 · Orb</option>
-        <option value="/v4">v4 · Elevated</option>
-        <option value="/v5-beta">v5 · Beta</option>
-        <option value="/v5-beta1">v5 · Beta 1</option>
-        <option value="/v5" selected>v5 · Frosted</option>
-      </select>
-    </label>
+    <span class="grow">Prototype · v5 · mock data</span>
     <div class="bctl" id="banner-ctl"></div>
     <button class="btn ghost sm icon" type="button" data-act="banner-close" aria-label="Dismiss prototype banner"><svg class="ic ic16" aria-hidden="true"><use href="#i-x"/></svg></button>
   </div>
@@ -7328,12 +7325,6 @@ document.addEventListener("keydown", (e) => {
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 });
-
-const verSel = document.getElementById("ver-select");
-if (verSel) {
-  verSel.addEventListener("change", () => { location.href = verSel.value + (location.hash || ""); });
-  window.addEventListener("pageshow", () => { verSel.value = verSel.dataset.cur; });
-}
 
 /* Auto-hide prototype top banner unless mouse hovers near top edge or banner */
 (() => {
