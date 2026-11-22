@@ -1894,6 +1894,17 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 }
 .hb-ctx-check { display: inline-flex; align-items: center; gap: 5px; }
 .hb-ctx-check .ic { color: #6EE7B7; flex: none; }
+.hb-spot-foot-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 720px) {
+  .hb-spot-foot { flex-direction: column; align-items: stretch; gap: 6px; }
+  .hb-spot-foot .actions { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .hb-spot-foot .hb-act-sep { display: none; }
+  .hb-spot-foot .hb-deny-btn { margin-left: auto; }
+  .hb-spot-foot .hb-deny-guard { flex: 1 1 100%; justify-content: space-between; }
+  .hb-spot-foot-meta { width: 100%; justify-content: space-between; padding-top: 2px; }
+  .hb-spot-foot-meta .btn.ghost { padding-left: 0; }
+  .hb-spot-foot-meta .hb-skip-btn { padding-right: 0; }
+}
 .hb-skip-btn {
   display: inline-flex; align-items: center; gap: 4px; min-height: 44px;
   padding: 0 12px; border-radius: 8px;
@@ -4492,9 +4503,9 @@ function board(items, kind) {
 }
 
 /* ---------------------------------------------------------------- pages */
-function itemActionsV4(it) {
+function itemActionsV4(it, opts = {}) {
   if (it.handled) return `<p class="h4-handled-win" id="handled-${esc(it.id)}">${ic("check-circle", "ic16")}<span>${esc(it.outcome)}</span></p>`;
-  const open = `<a class="btn ghost sm" href="#/inbox/${it.id}">Details${ic("chev-right", "ic14")}</a>`;
+  const open = opts.hideDetails ? "" : `<a class="btn ghost sm" href="#/inbox/${it.id}">Details${ic("chev-right", "ic14")}</a>`;
   if (S.replying === it.id) {
     const changes = S.replyMode === "changes", deny = S.replyMode === "deny", who = esc(M[it.from].name);
     const lbl = deny ? `Optional reason for ${who}…` : changes ? `What should ${who} change?` : `Reply to ${who}`;
@@ -4538,11 +4549,11 @@ function itemActionsV4(it) {
   else if (it.kind === "question") b.push(btn("primary", "reply", "", "reply", "Reply", "reply"));
   else if (it.kind === "decision") it.opts.forEach((o, i) => b.push(btn(i ? "outline" : "primary", "handle", "Chose: " + o, i ? null : "check", o, "win")));
   else if (it.kind === "problem") { if (it.resume) b.push(btn("primary", "handle", "Goal resumed", "play", "Resume", "win")); if (it.assign) b.push(btn("primary", "assign", "", "user-plus", "Assign…", "win")); if (it.dismiss) guardedHtml = denySlot("Dismiss", "Dismissed", "x"); }
-  b.push(open);
   if (guardedHtml) {
     b.push(`<span class="hb-act-sep" aria-hidden="true"></span>`);
     b.push(guardedHtml);
   }
+  if (open) b.push(open);
   return `<div class="actions">${b.join("")}</div>`;
 }
 function needsCardV4(it) {
@@ -4988,8 +4999,9 @@ function pageHome() {
       </div>
 
       <div class="hb-spot-foot">
-        ${itemActionsV4(it)}
-        <div style="display:flex;align-items:center;gap:6px">
+        ${itemActionsV4(it, { hideDetails: true })}
+        <div class="hb-spot-foot-meta">
+          ${!it.handled ? `<a class="btn ghost sm" href="#/inbox/${it.id}">Details${ic("chev-right", "ic14")}</a>` : ""}
           ${allQueueCleared && S.v4Open["spot-review"] ? `<button type="button" class="hb-skip-btn" data-act="v4-acc" data-id="spot-review">Done reviewing</button>` : ""}
           ${remainingInInbox ? `<a class="hb-skip-btn" href="#/inbox">All ${open.length} in Inbox${ic("chev-right", "ic14")}</a>` : ""}
         </div>
