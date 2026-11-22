@@ -26,6 +26,7 @@ pub mod hiring;
 pub mod may_hire;
 pub mod move_person;
 pub mod move_team;
+pub mod provider_pools;
 pub mod roles;
 pub(crate) mod shared;
 pub mod team_limit;
@@ -50,6 +51,9 @@ pub use hiring::{ConfirmHire, DraftHire, HireAgent, HireChanged, WithdrawHire};
 pub use may_hire::SetMayHire;
 pub use move_person::MovePerson;
 pub use move_team::MoveTeam;
+pub use provider_pools::{
+    validate_endpoint_url, CreateModelProfile, UpdateModelProfile, UpdateProviderConnection,
+};
 pub use roles::{CreateRole, UpdateRole};
 pub use team_limit::SetTeamMaxMembers;
 pub use update_person::{Edit, UpdatePerson};
@@ -85,6 +89,9 @@ pub enum Op {
     OffboardAgent,
     UpsertAgentExecution,
     CreateProviderConnection,
+    UpdateProviderConnection,
+    CreateModelProfile,
+    UpdateModelProfile,
     SetWatchingModel,
     CreateProject,
     AddProjectTeam,
@@ -94,7 +101,7 @@ pub enum Op {
 }
 
 impl Op {
-    pub const ALL: [Op; 30] = [
+    pub const ALL: [Op; 33] = [
         Op::CreateOrganization,
         Op::ImportOrganization,
         Op::CreateTeam,
@@ -119,6 +126,9 @@ impl Op {
         Op::OffboardAgent,
         Op::UpsertAgentExecution,
         Op::CreateProviderConnection,
+        Op::UpdateProviderConnection,
+        Op::CreateModelProfile,
+        Op::UpdateModelProfile,
         Op::SetWatchingModel,
         Op::CreateProject,
         Op::AddProjectTeam,
@@ -159,6 +169,9 @@ impl Op {
             Op::OffboardAgent => "organization.offboard_agent",
             Op::UpsertAgentExecution => "organization.upsert_agent_execution",
             Op::CreateProviderConnection => "organization.create_provider_connection",
+            Op::UpdateProviderConnection => "organization.update_provider_connection",
+            Op::CreateModelProfile => "organization.create_model_profile",
+            Op::UpdateModelProfile => "organization.update_model_profile",
             Op::SetWatchingModel => "organization.set_watching_model",
             Op::CreateProject => "organization.create_project",
             Op::AddProjectTeam => "organization.add_project_team",

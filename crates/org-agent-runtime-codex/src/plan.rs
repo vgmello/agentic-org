@@ -305,10 +305,15 @@ fn build_env_add(ctx: &LaunchContext) -> Vec<(EnvName, String)> {
 }
 
 pub(crate) fn auth_env_names() -> Vec<EnvName> {
-    ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"]
-        .into_iter()
-        .map(|name| EnvName::try_from(name).expect("static auth env"))
-        .collect()
+    [
+        "OPENAI_API_KEY",
+        "CODEX_API_KEY",
+        "CODEX_ACCESS_TOKEN",
+        "OPENAI_BASE_URL",
+    ]
+    .into_iter()
+    .map(|name| EnvName::try_from(name).expect("static auth env"))
+    .collect()
 }
 
 fn secret_env_names() -> Vec<EnvName> {

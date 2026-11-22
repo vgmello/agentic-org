@@ -12,11 +12,11 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use org_agent_runtime::{
-    AgentIdentity, AgentName, AgentRuntime, Decision, EnvName, LaunchContext, PathPattern,
-    RuntimeId, SessionId, SessionKind, SessionSpec, SpecPath, Token,
+    AgentIdentity, AgentName, Decision, EnvName, LaunchContext, PathPattern, RuntimeId, SessionId,
+    SessionKind, SessionSpec, SpecPath, Token,
 };
 use org_office::organization_family::records::{
-    BuiltinKey, Employee, EmployeeKind, EmployeeStatus, PermissionPreset, ProviderAuthMode,
+    BuiltinKey, Employee, EmployeeKind, EmployeeStatus, PermissionPreset,
 };
 use org_office::Office;
 use org_proto::sessions::{
@@ -41,7 +41,7 @@ use crate::instructions::{
     SAME_USER_ISOLATION_NOTICE,
 };
 use crate::preset::{build_grants_summary, build_session_policy, PresetConfig};
-use crate::pump::{run_pump, PumpCommand, PumpContext, SessionRuntimeState};
+use crate::pump::{run_pump, FailoverRequest, PumpCommand, PumpContext, SessionRuntimeState};
 use crate::recovery::{
     ActiveTurnRecord, NativeProcessExitOracle, PendingStartRecord, ProcessExitOracle,
     RecoveryAction, RecoveryReport, SessionStore, StallWatchdog, DEFAULT_STALL_TIMEOUT,
@@ -89,6 +89,10 @@ pub(crate) struct LiveSessionHandle {
     pub state: Arc<Mutex<SessionRuntimeState>>,
     pub tx: Sender<PumpCommand>,
     pub thread: Option<JoinHandle<()>>,
+    pub connection_id: Option<String>,
+    pub route_digest: String,
+    pub workspace: Option<String>,
+    pub active_permit: Arc<Mutex<Option<(String, u64)>>>,
 }
 
 #[derive(Default)]
@@ -109,12 +113,27 @@ impl Drop for StartSlotGuard<'_> {
     }
 }
 
-struct ResolvedRuntimePolicy {
-    adapter: Arc<dyn AgentRuntime>,
-    model_token: Option<Token>,
-    auth_env: Vec<(OsString, OsString)>,
-    preset: PermissionPreset,
-    sandbox_enabled: bool,
+struct PermitGuard<'a> {
+    office: &'a Office,
+    permit: Option<(String, u64)>,
+}
+
+impl<'a> PermitGuard<'a> {
+    fn new(office: &'a Office, permit: Option<(String, u64)>) -> Self {
+        Self { office, permit }
+    }
+
+    fn take(&mut self) -> Option<(String, u64)> {
+        self.permit.take()
+    }
+}
+
+impl Drop for PermitGuard<'_> {
+    fn drop(&mut self) {
+        if let Some((pid, _)) = self.permit.take() {
+            let _ = self.office.release_turn_permit(&pid);
+        }
+    }
 }
 
 struct PlannedSessionLaunch {
@@ -123,6 +142,12 @@ struct PlannedSessionLaunch {
     session_id: String,
     mark_str: String,
     runtime_id: String,
+    connection_id: Option<String>,
+    route_digest: String,
+    workspace_arg: Option<String>,
+    permit: Option<(String, u64)>,
+    task_ref: Option<String>,
+    tried_connections: Vec<String>,
     home: PathBuf,
     workspace_real: PathBuf,
     tmpdir: PathBuf,
@@ -139,6 +164,12 @@ struct PreparedSessionLaunch {
     run_id: String,
     session_id: String,
     runtime_id: String,
+    connection_id: Option<String>,
+    route_digest: String,
+    workspace_arg: Option<String>,
+    permit: Option<(String, u64)>,
+    task_ref: Option<String>,
+    tried_connections: Vec<String>,
     home: PathBuf,
     preset_cfg: PresetConfig,
     spec_hash: String,
@@ -207,6 +238,7 @@ pub struct SessionManager {
     watch_notice_provider: Mutex<Option<WatchNoticeProvider>>,
     startup_recovery: Mutex<RecoveryReport>,
     command_cache: Mutex<HashMap<(String, String, String), CachedRpcResponse>>,
+    self_ref: Mutex<Option<std::sync::Weak<SessionManager>>>,
 }
 
 impl SessionManager {
@@ -247,7 +279,21 @@ impl SessionManager {
             watch_notice_provider: Mutex::new(None),
             startup_recovery: Mutex::new(RecoveryReport::default()),
             command_cache: Mutex::new(HashMap::new()),
+            self_ref: Mutex::new(None),
         }
+    }
+
+    /// Registers a weak self-reference so pump permit-release and §7 failover callbacks can wake
+    /// waiting agents (`LIVE-2`) and relaunch on the next pool connection (`doc-88` §7).
+    pub fn attach_self(this: &Arc<Self>) {
+        *this.self_ref.lock().unwrap_or_else(|p| p.into_inner()) = Some(Arc::downgrade(this));
+    }
+
+    pub(crate) fn weak_self(&self) -> Option<std::sync::Weak<Self>> {
+        self.self_ref
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     pub fn bindings(&self) -> &RunBindingRegistry {
@@ -355,6 +401,15 @@ impl SessionManager {
             if let Some(thread) = handle.thread.take() {
                 let _ = thread.join();
             }
+            if let Some((pid, _)) = handle
+                .active_permit
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take()
+            {
+                let _ = self.office.release_turn_permit(&pid);
+                self.process_due_wakes();
+            }
             let view = handle
                 .state
                 .lock()
@@ -398,7 +453,8 @@ impl SessionManager {
             .instruction
             .as_deref()
             .map(|text| build_objective_text(&employee, actor_member_id, text));
-        let (live_view, finished_handle) = self.reserve_start_or_send(&employee, initial_obj)?;
+        let (live_view, finished_handle) =
+            self.reserve_start_or_send(&employee, initial_obj, None, params.workspace.as_deref())?;
         if let Some(mut old) = finished_handle {
             if let Some(thread) = old.thread.take() {
                 let _ = thread.join();
@@ -449,7 +505,7 @@ impl SessionManager {
             workspace: None,
         };
         let (live_view, finished_handle) =
-            self.reserve_start_or_send(employee, Some(objective.clone()))?;
+            self.reserve_start_or_send(employee, Some(objective.clone()), task_ref, None)?;
         if let Some(mut old) = finished_handle {
             if let Some(thread) = old.thread.take() {
                 let _ = thread.join();
@@ -1128,6 +1184,8 @@ impl SessionManager {
         &self,
         employee: &Employee,
         objective: Option<String>,
+        task_ref: Option<&str>,
+        requested_workspace: Option<&str>,
     ) -> Result<(Option<SessionView>, Option<LiveSessionHandle>), ApiError> {
         let emp_id = employee.id.as_str();
         let mut reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
@@ -1139,26 +1197,51 @@ impl SessionManager {
         }
         let finished = if let Some(handle) = reg.live.get(emp_id) {
             let state = handle.state.lock().unwrap_or_else(|p| p.into_inner());
-            if !matches!(
-                state.state,
-                SessionState::Stopped
-                    | SessionState::Stopping
-                    | SessionState::Suspended
-                    | SessionState::StallLocked
-                    | SessionState::RecoveryRequired
-            ) {
+            let workspace_matches = handle.workspace.as_deref() == requested_workspace;
+            if workspace_matches
+                && !matches!(
+                    state.state,
+                    SessionState::Stopped
+                        | SessionState::Stopping
+                        | SessionState::Suspended
+                        | SessionState::StallLocked
+                        | SessionState::RecoveryRequired
+                )
+            {
                 if let Some(text) = objective {
                     let text = self.prepend_watch_notices(emp_id, text);
-                    if handle.tx.send(PumpCommand::SendTurn(text)).is_ok() {
-                        return Ok((Some(state.to_view()), None));
-                    }
-                    true
-                } else {
-                    return Ok((Some(state.to_view()), None));
+                    let tx = handle.tx.clone();
+                    let st = Arc::clone(&handle.state);
+                    let conn_id = handle.connection_id.clone();
+                    let route_digest = handle.route_digest.clone();
+                    let active_permit = Arc::clone(&handle.active_permit);
+                    drop(state);
+                    // Reserve `starting` BEFORE releasing `reg` lock so no concurrent caller
+                    // can race into a second spawn (`Finding #3`).
+                    reg.starting.insert(emp_id.to_owned());
+                    drop(reg);
+                    return dispatch_warm_handle_turn(
+                        self,
+                        WarmHandleTurn {
+                            emp_id,
+                            task_ref,
+                            tx,
+                            state: st,
+                            conn_id,
+                            route_digest,
+                            active_permit,
+                            text,
+                        },
+                    );
                 }
-            } else {
-                true
+                return Ok((Some(state.to_view()), None));
             }
+            if !workspace_matches {
+                let _ = handle.tx.send(PumpCommand::Stop {
+                    reason: "workspace_changed".into(),
+                });
+            }
+            true
         } else {
             false
         };
@@ -1194,18 +1277,29 @@ impl SessionManager {
         resume_runtime_session_id: Option<&str>,
         task_ref: Option<&str>,
     ) -> Result<PreparedSessionLaunch, ApiError> {
+        let opts = LaunchRouteOpts {
+            resume_runtime_session_id,
+            task_ref,
+            is_failover_switch: false,
+            excluded_connections: HashSet::new(),
+            tried_connections: Vec::new(),
+        };
         let objective = self.prepend_watch_notices(employee.id.as_str(), objective);
-        let planned =
-            self.plan_session_launch(employee, params, resume_runtime_session_id, task_ref)?;
+        let planned = self.plan_session_launch(employee, params, opts)?;
         self.issue_and_spawn_launch(objective, planned)
+    }
+
+    /// Handles §7 connection failover after a pre-side-effect `rate_limited`, `quota_exhausted`,
+    /// `auth_expired`, or `model_unavailable` turn failure (`doc-88` §7).
+    pub(crate) fn failover_relaunch(&self, req: FailoverRequest) {
+        run_failover_relaunch(self, req);
     }
 
     fn plan_session_launch(
         &self,
         employee: &Employee,
         params: &MemberSessionStartParams,
-        resume_runtime_session_id: Option<&str>,
-        task_ref: Option<&str>,
+        opts: LaunchRouteOpts<'_>,
     ) -> Result<PlannedSessionLaunch, ApiError> {
         let emp_id = employee.id.as_str().to_owned();
         let home = self
@@ -1215,19 +1309,28 @@ impl SessionManager {
         let workspace_real = resolve_workspace(&home, params.workspace.as_deref())?;
         let workspace_spec = canonical_or_spec(&workspace_real)?;
 
-        let resolved = self.resolve_runtime_and_policy(&emp_id)?;
+        let admitted = crate::router::select_and_admit_route(
+            &self.office,
+            self.enrollment.vault(),
+            &self.config.runtimes,
+            &emp_id,
+            opts.task_ref,
+            opts.is_failover_switch,
+            &opts.excluded_connections,
+        )?;
+        let mut permit_guard = PermitGuard::new(&self.office, admitted.permit);
         let binary = self
             .config
             .runtimes
-            .resolve_binary(resolved.adapter.as_ref(), None)
+            .resolve_binary(admitted.adapter.as_ref(), None)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable"))?;
 
         let socket_str = self.config.office_socket.display().to_string();
         let office_socket_spec = SpecPath::try_from(socket_str.as_str()).ok();
         let denied_globs = self.denied_office_globs();
         let preset_cfg = build_session_policy(
-            resolved.preset,
-            resolved.sandbox_enabled,
+            admitted.preset,
+            admitted.sandbox_enabled,
             &workspace_spec,
             office_socket_spec.as_ref(),
             &denied_globs,
@@ -1241,21 +1344,31 @@ impl SessionManager {
         let _ = write_subagent_definition(&runtime_dir, &subagent_def);
 
         let instructions =
-            self.build_instructions(employee, &home, &workspace_real, &preset_cfg, task_ref)?;
+            self.build_instructions(employee, &home, &workspace_real, &preset_cfg, opts.task_ref)?;
         let spec = build_session_spec(
-            resolved.adapter.id(),
+            admitted.adapter.id(),
             employee,
-            resolved.model_token,
+            admitted.model_token,
             workspace_spec,
             instructions,
             &preset_cfg,
         )?;
-        let spec_hash = spec.spec_hash();
+        let spec_hash = if admitted.route_digest_suffix.is_empty() {
+            spec.spec_hash()
+        } else {
+            format!(
+                "{}:route={}",
+                spec.spec_hash(),
+                admitted.route_digest_suffix
+            )
+        };
         let run_id = format!("run-{}", next_entropy_hex(10)?);
         let session_id = format!("sess-{}", next_entropy_hex(10)?);
         let mark_str = format!("m-{}", next_entropy_hex(12)?);
 
-        let resume_sid = resume_runtime_session_id.and_then(|raw| SessionId::try_from(raw).ok());
+        let resume_sid = opts
+            .resume_runtime_session_id
+            .and_then(|raw| SessionId::try_from(raw).ok());
         let new_sid = if resume_sid.is_some() {
             None
         } else {
@@ -1271,23 +1384,32 @@ impl SessionManager {
             resume: resume_sid,
             config_dir: None,
         };
-        let (plan, session) = resolved
+        let (plan, session) = admitted
             .adapter
             .plan_session(&spec, &ctx)
             .map_err(|_| ApiError::new(ErrorCode::Unavailable, "runtime rejected session spec"))?;
+
+        let mut launch_env = admitted.auth_env;
+        launch_env.extend(admitted.endpoint_env);
 
         Ok(PlannedSessionLaunch {
             emp_id,
             run_id,
             session_id,
             mark_str,
-            runtime_id: resolved.adapter.id().as_str().to_owned(),
+            runtime_id: admitted.adapter.id().as_str().to_owned(),
+            connection_id: admitted.connection_id,
+            route_digest: admitted.route_digest_suffix,
+            workspace_arg: params.workspace.clone(),
+            permit: permit_guard.take(),
+            task_ref: opts.task_ref.map(str::to_owned),
+            tried_connections: opts.tried_connections,
             home,
             workspace_real,
             tmpdir,
             preset_cfg,
             spec_hash,
-            auth_env: resolved.auth_env,
+            auth_env: launch_env,
             ctx,
             plan,
             session,
@@ -1305,6 +1427,12 @@ impl SessionManager {
             session_id,
             mark_str,
             runtime_id,
+            connection_id,
+            route_digest,
+            workspace_arg,
+            permit,
+            task_ref,
+            tried_connections,
             home,
             workspace_real,
             tmpdir,
@@ -1315,6 +1443,7 @@ impl SessionManager {
             plan,
             session,
         } = planned;
+        let mut permit_guard = PermitGuard::new(&self.office, permit);
         let binding = self
             .bindings
             .issue(&emp_id, &run_id, &session_id, 0)
@@ -1366,6 +1495,12 @@ impl SessionManager {
             run_id,
             session_id,
             runtime_id,
+            connection_id,
+            route_digest,
+            workspace_arg,
+            permit: permit_guard.take(),
+            task_ref,
+            tried_connections,
             home,
             preset_cfg,
             spec_hash,
@@ -1450,6 +1585,12 @@ impl SessionManager {
             run_id,
             session_id,
             runtime_id,
+            connection_id,
+            route_digest,
+            workspace_arg,
+            permit,
+            task_ref,
+            tried_connections,
             home,
             preset_cfg,
             spec_hash,
@@ -1459,6 +1600,7 @@ impl SessionManager {
             session,
             lifecycle,
         } = prepared;
+        let active_permit = Arc::new(Mutex::new(permit));
         let runtime_state = Arc::new(Mutex::new(SessionRuntimeState {
             employee_id: emp_id.clone(),
             office_id: self.office.info().office_id.clone(),
@@ -1498,20 +1640,21 @@ impl SessionManager {
         if !objective.is_empty() {
             let _ = tx.send(PumpCommand::SendTurn(objective));
         }
-        let (has_open_required_asks, on_turn_ended, on_suspended, on_usage) =
-            self.build_pump_hooks();
+        let hooks = self.build_pump_hooks(&emp_id, route_digest.clone());
         let pump_ctx = PumpContext {
             employee_id: emp_id.clone(),
             run_id,
+            connection_id: connection_id.clone(),
+            active_permit: Arc::clone(&active_permit),
+            workspace: workspace_arg.clone(),
+            task_ref,
+            tried_connections,
             store: self.store.clone(),
             bindings: self.bindings.clone(),
             state: Arc::clone(&runtime_state),
             stop_plan: lifecycle.stop,
             cleanup_paths: lifecycle.cleanup_after_exit,
-            has_open_required_asks: Some(has_open_required_asks),
-            on_turn_ended: Some(on_turn_ended),
-            on_suspended: Some(on_suspended),
-            on_usage: Some(on_usage),
+            hooks,
         };
         let thread_name = format!("org-session-{}", &emp_id[..emp_id.len().min(8)]);
         let spawned_child = spawned;
@@ -1522,8 +1665,15 @@ impl SessionManager {
             Ok(handle) => handle,
             Err(_) => {
                 // Note: if spawn fails, the closure (holding spawned_child) drops, which reaps the
-                // child via OwnedChild::drop, and we revoke the run binding explicitly.
+                // child via OwnedChild::drop, and we revoke the run binding & permit explicitly.
                 self.bindings.revoke(&emp_id, None);
+                if let Some((pid, _)) = active_permit
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .take()
+                {
+                    let _ = self.office.release_turn_permit(&pid);
+                }
                 return Err(ApiError::new(
                     ErrorCode::Unavailable,
                     "could not start session pump thread",
@@ -1541,6 +1691,10 @@ impl SessionManager {
                 state: runtime_state,
                 tx,
                 thread: Some(thread),
+                connection_id,
+                route_digest,
+                workspace: workspace_arg,
+                active_permit,
             },
         );
         Ok(view)
@@ -1557,90 +1711,6 @@ impl SessionManager {
             Some(cfg) => (cfg.permission_preset, true),
             None => (PermissionPreset::SafeAsk, true),
         })
-    }
-
-    fn resolve_runtime_and_policy(
-        &self,
-        employee_id: &str,
-    ) -> Result<ResolvedRuntimePolicy, ApiError> {
-        let exec = self.office.load_agent_execution(employee_id).map_err(|_| {
-            ApiError::new(ErrorCode::StorageError, "could not load execution config")
-        })?;
-        let preset = exec
-            .as_ref()
-            .map(|e| e.permission_preset)
-            .unwrap_or(PermissionPreset::SafeAsk);
-        let mut runtime_key = "claude".to_owned();
-        let mut model_token = None;
-        let mut auth_env = Vec::new();
-        if let Some(cfg) = exec {
-            if let Some(profile) = self
-                .office
-                .load_model_profile(cfg.model_profile_id.as_str())
-                .map_err(|_| {
-                    ApiError::new(ErrorCode::StorageError, "could not load model profile")
-                })?
-            {
-                let conn_id = profile
-                    .generated_for_connection_id
-                    .as_ref()
-                    .or_else(|| profile.connection_ids.first());
-                if let Some(conn_id) = conn_id {
-                    self.apply_connection_auth(conn_id.as_str(), &mut runtime_key, &mut auth_env)?;
-                }
-                model_token = Token::try_from(cfg.model_id.as_str())
-                    .ok()
-                    .or_else(|| Token::try_from(profile.key.as_str()).ok());
-            }
-        }
-        let adapter =
-            self.config.runtimes.resolve(&runtime_key).map_err(|_| {
-                ApiError::new(ErrorCode::Unavailable, "agent runtime is unavailable")
-            })?;
-        Ok(ResolvedRuntimePolicy {
-            adapter,
-            model_token,
-            auth_env,
-            preset,
-            sandbox_enabled: true,
-        })
-    }
-
-    fn apply_connection_auth(
-        &self,
-        conn_id: &str,
-        runtime_key: &mut String,
-        auth_env: &mut Vec<(OsString, OsString)>,
-    ) -> Result<(), ApiError> {
-        let Some(conn) = self.office.load_provider_connection(conn_id).map_err(|_| {
-            ApiError::new(
-                ErrorCode::StorageError,
-                "could not load provider connection",
-            )
-        })?
-        else {
-            return Ok(());
-        };
-        *runtime_key = conn.runtime_driver.clone();
-        let secret = self
-            .enrollment
-            .vault()
-            .load_unwrapped(conn.id.as_str())
-            .map_err(|_| {
-                ApiError::new(
-                    ErrorCode::Unavailable,
-                    "provider credential could not be unwrapped",
-                )
-            })?;
-        let Some(secret) = secret else {
-            return Ok(());
-        };
-        let secret_str = std::str::from_utf8(&secret).map_err(|_| {
-            ApiError::new(ErrorCode::Unavailable, "provider credential is not UTF-8")
-        })?;
-        let var_name = auth_env_var_for(&conn.runtime_driver, conn.auth_mode, secret_str);
-        auth_env.push((OsString::from(var_name), OsString::from(secret_str)));
-        Ok(())
     }
 
     fn prepare_run_dirs(&self, employee_id: &str) -> Result<(PathBuf, PathBuf), ApiError> {
@@ -1786,7 +1856,9 @@ impl SessionManager {
             .join(&self.office.info().office_id);
         push_glob(&durable.join("state"));
         push_glob(&durable.join("journal"));
+        push_glob(&durable.join("authority"));
         push_glob(&office_local.join("auth"));
+        push_glob(&office_local.join("connections"));
         push_glob(&office_local.join("sessions"));
         push_glob(&office_local.join("enroll-tmp"));
         if let Some(org_dir) = durable.parent() {
@@ -1818,6 +1890,263 @@ impl SessionManager {
             sandbox_enabled,
         ))
     }
+}
+
+struct LaunchRouteOpts<'a> {
+    resume_runtime_session_id: Option<&'a str>,
+    task_ref: Option<&'a str>,
+    is_failover_switch: bool,
+    excluded_connections: HashSet<String>,
+    tried_connections: Vec<String>,
+}
+
+struct WarmHandleTurn<'a> {
+    emp_id: &'a str,
+    task_ref: Option<&'a str>,
+    tx: Sender<PumpCommand>,
+    state: Arc<Mutex<SessionRuntimeState>>,
+    conn_id: Option<String>,
+    route_digest: String,
+    active_permit: Arc<Mutex<Option<(String, u64)>>>,
+    text: String,
+}
+
+fn dispatch_warm_handle_turn(
+    mgr: &SessionManager,
+    turn: WarmHandleTurn<'_>,
+) -> Result<(Option<SessionView>, Option<LiveSessionHandle>), ApiError> {
+    // Caller already reserved `reg.starting` for `turn.emp_id`. Release it on warm success or
+    // error, and keep it reserved only when transferring to cold-start (`Ok((None, old))`).
+    let slot_guard = StartSlotGuard {
+        registry: &mgr.registry,
+        employee_id: turn.emp_id.to_owned(),
+    };
+    let needs_permit = turn.conn_id.is_some()
+        && turn
+            .active_permit
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_none();
+    if !needs_permit {
+        if turn.tx.send(PumpCommand::SendTurn(turn.text)).is_ok() {
+            let view = turn
+                .state
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .to_view();
+            return Ok((Some(view), None));
+        }
+        let old = mgr
+            .registry
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .live
+            .remove(turn.emp_id);
+        std::mem::forget(slot_guard);
+        return Ok((None, old));
+    }
+    let cid = turn.conn_id.as_deref().unwrap_or_default();
+    let digest = (!turn.route_digest.is_empty()).then_some(turn.route_digest.as_str());
+    let granted =
+        match acquire_or_reroute_warm_permit(mgr, cid, turn.emp_id, turn.task_ref, digest)? {
+            Ok(p) => p,
+            Err(old) => {
+                std::mem::forget(slot_guard);
+                return Ok((None, old));
+            }
+        };
+    let mut pguard = PermitGuard::new(&mgr.office, Some(granted));
+    {
+        let mut slot = turn.active_permit.lock().unwrap_or_else(|p| p.into_inner());
+        if slot.is_none() {
+            *slot = pguard.take();
+        }
+    }
+    if turn.tx.send(PumpCommand::SendTurn(turn.text)).is_ok() {
+        let view = turn
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .to_view();
+        return Ok((Some(view), None));
+    }
+    if let Some((pid, _)) = turn
+        .active_permit
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take()
+    {
+        let _ = mgr.office.release_turn_permit(&pid);
+    }
+    let old = mgr
+        .registry
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .live
+        .remove(turn.emp_id);
+    std::mem::forget(slot_guard);
+    Ok((None, old))
+}
+
+fn acquire_or_reroute_warm_permit(
+    mgr: &SessionManager,
+    cid: &str,
+    emp_id: &str,
+    task_ref: Option<&str>,
+    route_digest: Option<&str>,
+) -> Result<Result<(String, u64), Option<LiveSessionHandle>>, ApiError> {
+    match crate::router::acquire_warm_permit_for_office(
+        &mgr.office,
+        cid,
+        emp_id,
+        task_ref,
+        route_digest,
+    ) {
+        crate::router::WarmPermitOutcome::Granted(p) => Ok(Ok(p)),
+        crate::router::WarmPermitOutcome::Refused(err) => Err(err),
+        crate::router::WarmPermitOutcome::Unavailable {
+            multi_connection: false,
+            reason,
+        } => Err(ApiError::new(
+            ErrorCode::Conflict,
+            format!("POOL_EXHAUSTED: [{reason}]"),
+        )),
+        crate::router::WarmPermitOutcome::StaleWarm
+        | crate::router::WarmPermitOutcome::Unavailable {
+            multi_connection: true,
+            ..
+        } => {
+            let old = mgr
+                .registry
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .live
+                .remove(emp_id);
+            if let Some(ref handle) = old {
+                let _ = handle.tx.send(PumpCommand::Stop {
+                    reason: "pool_reroute".into(),
+                });
+            }
+            Ok(Err(old))
+        }
+    }
+}
+
+fn run_failover_relaunch(mgr: &SessionManager, req: FailoverRequest) {
+    match req.reason {
+        "rate_limited" | "quota_exhausted" => {
+            let _ = mgr.office.record_connection_cooldown_internal(
+                &req.failed_connection_id,
+                None,
+                req.rate_limit_resets_at.as_deref(),
+                None,
+            );
+        }
+        "auth_expired" => {
+            let _ = mgr
+                .office
+                .mark_connection_auth_expired_internal(&req.failed_connection_id, req.reason);
+        }
+        _ => {}
+    }
+    let dead_handle = {
+        let mut reg = mgr.registry.lock().unwrap_or_else(|p| p.into_inner());
+        if reg.starting.contains(&req.employee_id) {
+            return;
+        }
+        let old = reg.live.remove(&req.employee_id);
+        reg.starting.insert(req.employee_id.clone());
+        old
+    };
+    if let Some(mut old) = dead_handle {
+        if let Some(thread) = old.thread.take() {
+            let _ = thread.join();
+        }
+    }
+    let _guard = StartSlotGuard {
+        registry: &mgr.registry,
+        employee_id: req.employee_id.clone(),
+    };
+    let Ok(employee) = mgr.require_active_agent(&req.employee_id) else {
+        return;
+    };
+    let Ok(cmd_suffix) = next_entropy_hex(8) else {
+        return;
+    };
+    let params = MemberSessionStartParams {
+        command_id: format!("failover-{cmd_suffix}"),
+        employee_id: req.employee_id.clone(),
+        instruction: Some(req.objective.clone()),
+        workspace: req.workspace.clone(),
+    };
+    let excluded: HashSet<String> = req.tried_connections.iter().cloned().collect();
+    let opts = LaunchRouteOpts {
+        resume_runtime_session_id: None,
+        task_ref: req.task_ref.as_deref(),
+        is_failover_switch: true,
+        excluded_connections: excluded,
+        tried_connections: req.tried_connections.clone(),
+    };
+    let objective = mgr.prepend_watch_notices(employee.id.as_str(), req.objective.clone());
+    let launch_res = mgr
+        .plan_session_launch(&employee, &params, opts)
+        .and_then(|planned| mgr.issue_and_spawn_launch(objective, planned));
+    match launch_res {
+        Ok(prepared) => {
+            let _ = mgr.install_live_session(prepared);
+        }
+        Err(err) => record_failover_exhausted(mgr, &req, &err),
+    }
+}
+
+fn record_failover_exhausted(mgr: &SessionManager, req: &FailoverRequest, err: &ApiError) {
+    let note = serde_json::json!({
+        "type": "pool_failover_exhausted",
+        "failed_connection_id": req.failed_connection_id,
+        "reason": req.reason,
+        "error": err.message,
+        "at": rfc3339_now(),
+    });
+    let _ = mgr.store.append_history(&req.employee_id, &note, &[]);
+    let mut last_view = mgr.idle_view_for(&req.employee_id).unwrap_or_else(|_| {
+        build_idle_session_view(
+            &mgr.store,
+            &req.employee_id,
+            &mgr.office.info().office_id,
+            mgr.office.agent_private_home_path(&req.employee_id),
+            PermissionPreset::SafeAsk,
+            true,
+        )
+    });
+    last_view.last_error = Some(err.message.clone());
+    mgr.last_states
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(req.employee_id.clone(), last_view);
+    // Queue a Recovery wake so the exhausted turn automatically retries when cooldown/capacity clears.
+    let ts = crate::credentials::now_ms();
+    let _lock = mgr.lifecycle_lock.lock().unwrap_or_else(|p| p.into_inner());
+    let mut queue = mgr
+        .store
+        .read_pending_wakes(&req.employee_id)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| crate::wake::PendingWakeQueueRecord::empty(&req.employee_id));
+    queue.push_dedup(crate::wake::PendingWakeItem {
+        item_id: format!("failover:{}:{}", req.failed_connection_id, ts),
+        kind: crate::wake::WakeKind::Recovery,
+        sender_id: mgr.office.owner_member_id().to_owned(),
+        sender_name: "Office Supervisor".into(),
+        sender_is_person: true,
+        conversation_id: None,
+        source_id: req.failed_connection_id.clone(),
+        summary: req.objective.clone(),
+        enqueued_at_ms: ts,
+    });
+    queue.set_hold(crate::wake::WakeHoldReason::AdmissionRefused, ts, None);
+    let tokens = mgr.bindings.active_tokens();
+    let refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    let _ = mgr.store.write_pending_wakes_redacted(&queue, &refs);
 }
 
 fn overlay_durable_wake_state(store: &SessionStore, employee_id: &str, view: &mut SessionView) {
@@ -2002,33 +2331,6 @@ fn command_cache_meta(request: &Request) -> Option<(String, String)> {
         fp.push_str(&format!("{b:02x}"));
     }
     Some((cid, fp))
-}
-
-fn auth_env_var_for(driver: &str, mode: ProviderAuthMode, secret: &str) -> &'static str {
-    let lower = driver.to_ascii_lowercase();
-    if lower.contains("google")
-        || lower.contains("agy")
-        || lower.contains("antigravity")
-        || lower.contains("gemini")
-    {
-        return if mode == ProviderAuthMode::SubscriptionCli {
-            "AGY_AUTH_TOKEN"
-        } else {
-            "GEMINI_API_KEY"
-        };
-    }
-    if lower.contains("openai") || lower.contains("codex") || lower.contains("gpt") {
-        return if mode == ProviderAuthMode::SubscriptionCli {
-            "CODEX_ACCESS_TOKEN"
-        } else {
-            "OPENAI_API_KEY"
-        };
-    }
-    if mode == ProviderAuthMode::SubscriptionCli || secret.starts_with("sk-ant-oat") {
-        "CLAUDE_CODE_OAUTH_TOKEN"
-    } else {
-        "ANTHROPIC_API_KEY"
-    }
 }
 
 fn parse_decision(decision_str: &str, reason: Option<String>) -> Result<Decision, ApiError> {

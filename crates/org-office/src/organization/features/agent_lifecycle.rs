@@ -678,11 +678,11 @@ fn check_provider_fields(cmd: &CreateProviderConnection) -> Result<(), Refusal> 
     if cmd
         .endpoint_url
         .as_deref()
-        .is_some_and(|u| !records::is_line(u))
+        .is_some_and(|u| !super::provider_pools::validate_endpoint_url(u))
     {
         return reject(
             RejectCode::InvalidRequest,
-            "endpoint_url must be a single line of text",
+            "endpoint_url must be a valid https:// or loopback http:// URL without credentials",
         );
     }
     Ok(())

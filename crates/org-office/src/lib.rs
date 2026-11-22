@@ -52,6 +52,7 @@ mod private_fs;
 pub mod private_notes;
 pub mod processes;
 pub mod projects;
+pub mod providers;
 pub mod rules;
 mod store;
 pub mod tasks;

@@ -976,7 +976,7 @@ fn real_supervised_agent_completes_instruction_in_private_home_and_redacts_token
         1,
         &ProviderConnectionCreateParams {
             command_id: new_uuid_v7(),
-            connection_id: conn_id,
+            connection_id: conn_id.clone(),
             default_profile_id: prof_id.clone(),
             key: "claude-test".into(),
             name: "Claude Test".into(),
@@ -993,6 +993,7 @@ fn real_supervised_agent_completes_instruction_in_private_home_and_redacts_token
         .dispatch_hiring_rpc(Some(&owner_id), &conn_req)
         .expect("provider connection dispatched");
     assert!(matches!(conn_resp.outcome, org_proto::Outcome::Result(_)));
+    bind_and_refresh_test_connection(&office, &owner_id, &conn_id, "claude-sonnet-4-6");
 
     // Hire an agent through C2 HrHire
     let req_id = new_uuid_v7();
@@ -1394,7 +1395,7 @@ fn multi_turn_persists_second_objective_and_accepted_commands_survive_stop_and_d
         1,
         &ProviderConnectionCreateParams {
             command_id: new_uuid_v7(),
-            connection_id: conn_id,
+            connection_id: conn_id.clone(),
             default_profile_id: prof_id.clone(),
             key: "claude-t2".into(),
             name: "Claude T2".into(),
@@ -1414,6 +1415,7 @@ fn multi_turn_persists_second_objective_and_accepted_commands_survive_stop_and_d
             .outcome,
         org_proto::Outcome::Result(_)
     ));
+    bind_and_refresh_test_connection(&office, &owner_id, &conn_id, "claude-sonnet-4-6");
 
     let emp_id = new_uuid_v7();
     let hire_req = Request::new::<HrHire>(
@@ -1844,6 +1846,7 @@ fn hire_agent_with_runtime(
         .dispatch_hiring_rpc(Some(owner_id), &conn_req)
         .unwrap();
     assert!(matches!(resp.outcome, org_proto::Outcome::Result(_)));
+    bind_and_refresh_test_connection(office, owner_id, &conn_id, model_id);
 
     let hire_req = Request::new::<HrHire>(
         2,
@@ -2532,4 +2535,47 @@ echo '{{"type":"result","subtype":"success","is_error":false}}'
         !captured.contains("CONTRIB_TEAM_MUST_NOT_APPEAR"),
         "contributing team standard leaked into project task wake: {captured}"
     );
+}
+
+fn bind_and_refresh_test_connection(
+    office: &Office,
+    owner_id: &str,
+    conn_id: &str,
+    model_id: &str,
+) {
+    office
+        .provider_binding_set(
+            owner_id,
+            org_proto::providers::ProviderBindingSetParams {
+                operation_id: new_uuid_v7(),
+                connection_id: conn_id.to_owned(),
+                expected_revision: None,
+                auth_context_ref: format!("vault://{conn_id}"),
+                runtime_binary_path: None,
+                account_identity_ref: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    office
+        .provider_connection_refresh(
+            owner_id,
+            org_proto::providers::ProviderConnectionRefreshParams {
+                connection_id: conn_id.to_owned(),
+                driver_version: Some("1.0.0".into()),
+                auth_signed_in: Some(true),
+                observed_subscription_identity: None,
+                operator_attested_subscription: false,
+                models: vec![org_proto::providers::DiscoveredModelInput {
+                    model_id: model_id.to_owned(),
+                    driver_model_id: model_id.to_owned(),
+                    entitlement: org_proto::providers::DiscoveredModelEntitlement::Confirmed,
+                    capabilities_json: "{}".into(),
+                }],
+                issue_code: None,
+                ttl_seconds: Some(300),
+            },
+        )
+        .unwrap()
+        .unwrap();
 }

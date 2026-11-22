@@ -23,6 +23,7 @@ mod organization;
 pub(crate) mod private_notes;
 mod processes;
 mod projects;
+pub(crate) mod providers;
 mod receipts;
 mod schema;
 #[cfg(test)]

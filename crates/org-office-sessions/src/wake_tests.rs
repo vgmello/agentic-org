@@ -284,12 +284,13 @@ impl WakeFixture {
         let snap = office.org_snapshot().unwrap();
         let root_team_id = snap.teams[0].id.clone();
 
+        let conn_id = next_id();
         let prof_id = next_id();
         let conn_req = Request::new::<ProviderConnectionCreate>(
             1,
             &ProviderConnectionCreateParams {
                 command_id: next_id(),
-                connection_id: next_id(),
+                connection_id: conn_id.clone(),
                 default_profile_id: prof_id.clone(),
                 key: "claude-wake".into(),
                 name: "Claude Wake".into(),
@@ -303,6 +304,41 @@ impl WakeFixture {
         )
         .unwrap();
         let _ = office.dispatch_hiring_rpc(Some(&owner_id), &conn_req);
+        office
+            .provider_binding_set(
+                &owner_id,
+                org_proto::providers::ProviderBindingSetParams {
+                    operation_id: next_id(),
+                    connection_id: conn_id.clone(),
+                    expected_revision: None,
+                    auth_context_ref: "vault://claude-wake".into(),
+                    runtime_binary_path: None,
+                    account_identity_ref: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+        office
+            .provider_connection_refresh(
+                &owner_id,
+                org_proto::providers::ProviderConnectionRefreshParams {
+                    connection_id: conn_id,
+                    driver_version: Some("1.0.0".into()),
+                    auth_signed_in: Some(true),
+                    observed_subscription_identity: None,
+                    operator_attested_subscription: false,
+                    models: vec![org_proto::providers::DiscoveredModelInput {
+                        model_id: "claude-sonnet-4-6".into(),
+                        driver_model_id: "claude-sonnet-4-6".into(),
+                        entitlement: org_proto::providers::DiscoveredModelEntitlement::Confirmed,
+                        capabilities_json: "{}".into(),
+                    }],
+                    issue_code: None,
+                    ttl_seconds: Some(300),
+                },
+            )
+            .unwrap()
+            .unwrap();
 
         let agent_a = Self::hire(&office, &owner_id, &root_team_id, &prof_id, "Ada", "ada");
         let agent_b = Self::hire(

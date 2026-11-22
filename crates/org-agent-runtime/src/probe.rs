@@ -125,6 +125,68 @@ pub enum Probe {
     Auth,
     /// The account's quota, for a runtime that doesn't report it in-stream (polled).
     Quota,
+    /// Per-connection model catalog & entitlement discovery (`doc-88` §4, `L4` / `FC-098`).
+    Models,
+}
+
+/// Entitlement state observed for a discovered model (`doc-89`, `office_connection_models`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum ModelEntitlement {
+    /// Provider confirmed this connection is entitled to use the model.
+    Confirmed,
+    /// Provider explicitly denied access to this model on this connection.
+    Denied,
+    /// Model appeared in a listing without verified entitlement proof.
+    Unknown,
+}
+
+impl ModelEntitlement {
+    /// Returns the canonical wire/SQL string for this entitlement state.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Confirmed => "confirmed",
+            Self::Denied => "denied",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// One model discovered for a specific connection (`doc-88` §4, `doc-89`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DiscoveredModel {
+    /// Canonical model ID normalized by the adapter.
+    pub model_id: String,
+    /// Adapter/driver-specific model or deployment identifier.
+    pub driver_model_id: String,
+    /// Entitlement proof state for this connection.
+    pub entitlement: ModelEntitlement,
+    /// JSON object of model capabilities (defaults to `"{}"`).
+    pub capabilities_json: String,
+}
+
+impl DiscoveredModel {
+    /// Creates a discovered model with empty capabilities JSON (`"{}"`).
+    pub fn new(
+        model_id: impl Into<String>,
+        driver_model_id: impl Into<String>,
+        entitlement: ModelEntitlement,
+    ) -> Self {
+        Self {
+            model_id: model_id.into(),
+            driver_model_id: driver_model_id.into(),
+            entitlement,
+            capabilities_json: "{}".into(),
+        }
+    }
+
+    /// Runs `f` over every free-text field before logging or persisting probe output.
+    pub fn redact(&mut self, f: &mut dyn FnMut(&mut String)) {
+        f(&mut self.model_id);
+        f(&mut self.driver_model_id);
+        f(&mut self.capabilities_json);
+    }
 }
 
 /// What a one-shot probe process produced. Output past the supervisor's cap is cut off.
@@ -181,6 +243,11 @@ pub enum ProbeResult {
         /// One per window the runtime reported.
         limits: Vec<RateLimit>,
     },
+    /// Discovered models and entitlements for this connection (`L4` / `FC-098`).
+    Models {
+        /// One per model reported by the connection probe.
+        models: Vec<DiscoveredModel>,
+    },
     /// The probe shows the runtime can't be used.
     Unavailable {
         /// Why.
@@ -205,6 +272,11 @@ impl ProbeResult {
             ProbeResult::Quota { limits } => {
                 for limit in limits {
                     limit.redact(f);
+                }
+            }
+            ProbeResult::Models { models } => {
+                for model in models {
+                    model.redact(f);
                 }
             }
             ProbeResult::Unavailable { reason } => match reason {
@@ -264,6 +336,14 @@ mod tests {
             ProbeResult::Quota {
                 limits: vec![limit],
             },
+            ProbeResult::Models {
+                models: vec![DiscoveredModel {
+                    model_id: "s:model".into(),
+                    driver_model_id: "s:driver_model".into(),
+                    entitlement: ModelEntitlement::Confirmed,
+                    capabilities_json: "s:caps".into(),
+                }],
+            },
             ProbeResult::Unavailable {
                 reason: Unavailable::Other {
                     detail: "s:detail".into(),
@@ -279,7 +359,16 @@ mod tests {
         }
         assert_eq!(
             seen,
-            ["s:raw", "s:method", "s:window", "s:resets", "s:detail"]
+            [
+                "s:raw",
+                "s:method",
+                "s:window",
+                "s:resets",
+                "s:model",
+                "s:driver_model",
+                "s:caps",
+                "s:detail"
+            ]
         );
         assert!(!format!("{results:?}").contains("\"s:"));
     }

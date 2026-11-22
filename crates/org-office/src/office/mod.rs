@@ -30,6 +30,9 @@ mod private_notes;
 #[cfg(test)]
 mod private_notes_tests;
 mod processes;
+#[cfg(test)]
+mod provider_pool_tests;
+mod providers;
 mod tasks;
 #[cfg(any(test, feature = "testkit"))]
 mod testkit;
@@ -161,6 +164,8 @@ pub struct Office {
     accounting: Arc<dyn crate::accounting::AccountingStore>,
     /// Isolated `L3` budget policies, periods, notices, and holds (`protected/budgets.db`).
     budgets: Arc<dyn crate::budgets::BudgetStore>,
+    /// Isolated `L4` provider bindings, discovery observations, permits, and cooldowns (`protected/providers.db`).
+    providers: Arc<dyn crate::providers::ProviderPoolStore>,
     // The store closes before the lock is released: fields drop in order.
     store: OfficeStore,
     _lock: File,
@@ -225,6 +230,7 @@ pub(crate) struct CompanionStores {
     pub private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
     pub accounting: Arc<dyn crate::accounting::AccountingStore>,
     pub budgets: Arc<dyn crate::budgets::BudgetStore>,
+    pub providers: Arc<dyn crate::providers::ProviderPoolStore>,
 }
 
 pub(crate) fn open_companion_stores(
@@ -246,6 +252,13 @@ pub(crate) fn open_companion_stores(
             &info.org_id,
         )?,
         budgets: crate::store::open::open_budgets(
+            engine,
+            &roots.durable,
+            &roots.runtime,
+            &info.office_id,
+            &info.org_id,
+        )?,
+        providers: crate::store::open::open_providers(
             engine,
             &roots.durable,
             &roots.runtime,
@@ -390,6 +403,7 @@ impl Office {
             private_notes: companions.private_notes,
             accounting: companions.accounting,
             budgets: companions.budgets,
+            providers: companions.providers,
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]

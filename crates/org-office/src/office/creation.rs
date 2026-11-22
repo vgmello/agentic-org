@@ -321,6 +321,7 @@ impl Office {
             private_notes: companions.private_notes,
             accounting: companions.accounting,
             budgets: companions.budgets,
+            providers: companions.providers,
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]
