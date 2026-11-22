@@ -677,14 +677,25 @@ fn recovery_handles_clean_resume_unprovable_exit_resume_cap_and_stall_lock() {
 }
 
 // ---------------------------------------------------------------------------
-// Architecture Rule 1: Unbuilt adapters (codex, agy) fail closed
+// Architecture Rule 1 & TASK-83: Production registry wires claude, codex, agy;
+// unknown runtimes fail closed.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn unbuilt_runtime_adapters_fail_closed() {
+fn production_registry_wires_claude_codex_and_agy_and_refuses_unknown() {
     let reg = RuntimeRegistry::production();
-    for name in ["codex", "agy"] {
-        let adapter = reg.resolve(name).unwrap();
+    for (alias, expected_id) in [
+        ("claude", "claude"),
+        ("anthropic", "claude"),
+        ("codex", "codex"),
+        ("openai", "codex"),
+        ("gpt", "codex"),
+        ("agy", "agy"),
+        ("antigravity", "agy"),
+        ("google", "agy"),
+    ] {
+        let adapter = reg.resolve(alias).expect("adapter resolves");
+        assert_eq!(adapter.id().as_str(), expected_id);
         let ws = SpecPath::try_from("/tmp/ws").unwrap();
         let spec = SessionSpec {
             runtime: adapter.id(),
@@ -721,15 +732,19 @@ fn unbuilt_runtime_adapters_fail_closed() {
             runtime_dir: ws.clone(),
             tmpdir: ws,
             office_env_names: Vec::new(),
-            new_session_id: None,
+            new_session_id: Some(org_agent_runtime::SessionId::try_from("sess-test-1").unwrap()),
             resume: None,
             config_dir: None,
         };
-        assert!(matches!(
-            adapter.plan_session(&spec, &ctx),
-            Err(PlanError::Unsupported(_))
-        ));
+        let (plan, _) = adapter
+            .plan_session(&spec, &ctx)
+            .expect("built adapter plans session");
+        assert!(!plan.args.is_empty());
     }
+    assert!(matches!(
+        reg.resolve("nonexistent-runtime"),
+        Err(crate::RuntimeRegistryError::UnknownRuntime(_))
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -1794,4 +1809,282 @@ fn c4_session_list_and_transcript_rpcs_enforce_auth_and_redaction() {
         cross.outcome,
         org_proto::Outcome::Error(e) if e.code == org_proto::ErrorCode::NotAuthorized
     ));
+}
+
+fn hire_agent_with_runtime(
+    office: &Office,
+    owner_id: &str,
+    root_team_id: &str,
+    provider_type: &str,
+    runtime_driver: &str,
+    handle: &str,
+    model_id: &str,
+) -> (String, String) {
+    let conn_id = new_uuid_v7();
+    let prof_id = new_uuid_v7();
+    let conn_req = Request::new::<ProviderConnectionCreate>(
+        1,
+        &ProviderConnectionCreateParams {
+            command_id: new_uuid_v7(),
+            connection_id: conn_id.clone(),
+            default_profile_id: prof_id.clone(),
+            key: format!("{handle}-conn"),
+            name: format!("{handle} conn"),
+            provider_type: provider_type.into(),
+            auth_mode: "api_key".into(),
+            subscription_identity: None,
+            runtime_driver: runtime_driver.into(),
+            endpoint_url: None,
+            max_concurrent_turns: 2,
+        },
+    )
+    .unwrap();
+    let resp = office
+        .dispatch_hiring_rpc(Some(owner_id), &conn_req)
+        .unwrap();
+    assert!(matches!(resp.outcome, org_proto::Outcome::Result(_)));
+
+    let hire_req = Request::new::<HrHire>(
+        2,
+        &HrHireParams {
+            command_id: new_uuid_v7(),
+            request_id: new_uuid_v7(),
+            employee_id: new_uuid_v7(),
+            home_team_id: root_team_id.into(),
+            role_id: None,
+            proposal: HireProposalWire {
+                name: format!("Agent {handle}"),
+                handle: handle.into(),
+                title: Some("Engineer".into()),
+                focus: None,
+                role_text: None,
+                title_in_team: Some("Engineer".into()),
+                reports_to_employee_id: Some(owner_id.into()),
+                office_id: None,
+                model_profile_id: Some(prof_id),
+                model_id: Some(model_id.into()),
+                permission_preset: Some("workspace_edits".into()),
+                tools_config: Vec::new(),
+                system_prompt_markdown: None,
+                body: Some("Answer directly.".into()),
+            },
+            reason: "Runtime E2E".into(),
+        },
+    )
+    .unwrap();
+    let hired_resp = office
+        .dispatch_hiring_rpc(Some(owner_id), &hire_req)
+        .unwrap();
+    match hired_resp.outcome {
+        org_proto::Outcome::Result(v) => {
+            let hired: org_proto::hiring::HireOpResult = serde_json::from_value(v).unwrap();
+            (hired.employee_id.expect("employee_id"), conn_id)
+        }
+        org_proto::Outcome::Error(e) => panic!("hire failed: {e:?}"),
+    }
+}
+
+fn wait_for_reply(manager: &SessionManager, owner_id: &str, agent_id: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let inspected = manager.inspect_session(owner_id, Some(agent_id)).unwrap();
+        if let Some(reply) = inspected.session.last_reply {
+            return reply;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("timed out waiting for reply from {agent_id}");
+}
+
+fn write_fake_cli(dir: &Path, name: &str, script: &str) -> PathBuf {
+    let path = dir.join(name);
+    fs::write(&path, script).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[test]
+fn real_process_fake_cli_runs_native_agy_and_codex_adapters_end_to_end() {
+    let _ = org_platform::process::harden_self();
+    let office: Arc<Office> = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let (agy_id, agy_conn_id) = hire_agent_with_runtime(
+        &office,
+        &owner_id,
+        &root_team_id,
+        "google",
+        "agy",
+        "neo-agy",
+        "gemini-2.5-pro",
+    );
+    let (codex_id, codex_conn_id) = hire_agent_with_runtime(
+        &office,
+        &owner_id,
+        &root_team_id,
+        "openai",
+        "codex",
+        "gpt-codex",
+        "gpt-5.4",
+    );
+
+    let bin_dir = tempfile::tempdir().unwrap();
+    // Because enforces_deny_rules=false and fixed denies exist, workspace_edits narrows
+    // to Ask ("ask" on Agy, "workspace-write" + "untrusted" on Codex).
+    let fake_agy = write_fake_cli(
+        bin_dir.path(),
+        "agy",
+        r#"#!/bin/sh
+read init_line
+echo '{"type":"control_response","response":{"subtype":"success","request_id":"host-1","response":{"agents":["neo-agy"],"mode":"ask","version":"1.5.14"}}}'
+read user_line
+mkdir -p "$HOME/.gemini/antigravity-cli/brain/agy-live-1/.system_generated/logs"
+printf '{"step_index":1,"type":"PLANNER_RESPONSE","created_at":"2026-11-22T06:00:00Z","content":"Transcript leak key=%s"}\n' "$GEMINI_API_KEY" > "$HOME/.gemini/antigravity-cli/brain/agy-live-1/.system_generated/logs/transcript.jsonl"
+echo '{"type":"system","subtype":"init","conversation_id":"agy-live-1","mode":"ask"}'
+printf '{"type":"assistant","message":{"id":"m1","model":"gemini-2.5-pro","content":[{"type":"text","text":"Agy reply tok=%s key=%s"}],"usage":{"input_tokens":20,"output_tokens":10}}}\n' "$AGENT_OS_SESSION_TOKEN" "$GEMINI_API_KEY"
+echo '{"type":"result","subtype":"success","is_error":false}'
+"#,
+    );
+    let fake_codex = write_fake_cli(
+        bin_dir.path(),
+        "codex",
+        r#"#!/bin/sh
+read init_line
+echo '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"codex","version":"0.169.0"}}}'
+read initialized_line
+read thread_line
+echo '{"jsonrpc":"2.0","id":2,"result":{"thread":{"id":"codex-live-1","sandbox":"workspace-write","approvalPolicy":"untrusted"}}}'
+read turn_line
+mkdir -p "$HOME/.codex/sessions/2026/11/22"
+printf '{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"Transcript leak key=%s"}}\n' "$OPENAI_API_KEY" > "$HOME/.codex/sessions/2026/11/22/codex-live-1.jsonl"
+echo '{"jsonrpc":"2.0","method":"turn/started","params":{"turn":{"id":"t1"}}}'
+printf '{"jsonrpc":"2.0","method":"item/completed","params":{"item":{"id":"i1","type":"agentMessage","text":"Codex reply tok=%s key=%s"}}}\n' "$AGENT_OS_SESSION_TOKEN" "$OPENAI_API_KEY"
+echo '{"jsonrpc":"2.0","method":"thread/tokenUsage/updated","params":{"tokenUsage":{"last":{"inputTokens":30,"outputTokens":15}}}}'
+echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"t1","status":"completed"}}}'
+"#,
+    );
+
+    let mut registry = RuntimeRegistry::production();
+    registry.register(
+        Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+        Some(fake_agy),
+    );
+    registry.register(
+        Arc::new(org_agent_runtime_codex::CodexRuntime::new()),
+        Some(fake_codex),
+    );
+    let sock_dir = tempfile::tempdir().unwrap();
+    let mut cfg = SessionManagerConfig::production(sock_dir.path().join("office.sock"));
+    cfg.runtimes = registry;
+    cfg.helper_dir = Some(bin_dir.path().to_path_buf());
+    let manager = SessionManager::new(Arc::clone(&office), cfg);
+
+    // Verify CLI enrollment aliases ("agy" and "gpt") and credential vault injection.
+    let agy_secret = "AIzaSyAgyTestKeySecretValue987654";
+    let codex_secret = "sk-proj-CodexTestKeySecretValue987654";
+    let agy_enroll = manager
+        .enrollment()
+        .start(&owner_id, &agy_conn_id, "agy")
+        .expect("agy alias enrollment starts");
+    assert_eq!(agy_enroll.state, EnrollmentState::AwaitingCode);
+    let agy_done = manager
+        .enrollment()
+        .submit_code(&owner_id, &agy_conn_id, &agy_enroll.login_id, agy_secret)
+        .expect("agy credential stored");
+    assert_eq!(agy_done.state, EnrollmentState::Completed);
+
+    let codex_enroll = manager
+        .enrollment()
+        .start(&owner_id, &codex_conn_id, "gpt")
+        .expect("gpt alias enrollment starts");
+    assert_eq!(codex_enroll.state, EnrollmentState::PendingBrowser);
+    let codex_done = manager
+        .enrollment()
+        .submit_code(
+            &owner_id,
+            &codex_conn_id,
+            &codex_enroll.login_id,
+            codex_secret,
+        )
+        .expect("codex credential stored");
+    assert_eq!(codex_done.state, EnrollmentState::Completed);
+
+    for (agent_id, expected_prefix, expected_sid, secret) in [
+        (
+            &agy_id,
+            "Agy reply tok=[REDACTED] key=[REDACTED]",
+            "agy-live-1",
+            agy_secret,
+        ),
+        (
+            &codex_id,
+            "Codex reply tok=[REDACTED] key=[REDACTED]",
+            "codex-live-1",
+            codex_secret,
+        ),
+    ] {
+        manager
+            .start_session(
+                &owner_id,
+                &MemberSessionStartParams {
+                    command_id: new_uuid_v7(),
+                    employee_id: agent_id.clone(),
+                    instruction: Some("Say hello".into()),
+                    workspace: None,
+                },
+            )
+            .expect("session started");
+        let reply = wait_for_reply(&manager, &owner_id, agent_id);
+        assert!(reply.contains(expected_prefix), "unexpected reply: {reply}");
+        assert!(!reply.contains(secret), "secret leaked in reply: {reply}");
+        let stored = manager.store().read_active_turn(agent_id).unwrap().unwrap();
+        assert_eq!(stored.runtime_session_id.as_deref(), Some(expected_sid));
+
+        // Verify C4 transcript list + read with secret redaction for both Agy and Codex.
+        let list = manager
+            .list_sessions(
+                &owner_id,
+                &org_proto::sessions::MemberSessionListParams {
+                    employee_id: Some(agent_id.clone()),
+                    limit: Some(10),
+                },
+            )
+            .expect("list_sessions");
+        assert!(
+            list.sessions.iter().any(|s| s.session_id == expected_sid),
+            "expected {expected_sid} in {:?}",
+            list.sessions
+        );
+        let tx = manager
+            .read_session_transcript(
+                &owner_id,
+                &org_proto::sessions::MemberSessionTranscriptParams {
+                    employee_id: Some(agent_id.clone()),
+                    session_id: Some(expected_sid.into()),
+                    include_tool_calls: Some(true),
+                    include_file_changes: Some(true),
+                    include_subagents: Some(true),
+                    cursor: None,
+                    limit: Some(50),
+                },
+            )
+            .expect("read_session_transcript");
+        let combined: String = tx
+            .entries
+            .iter()
+            .filter_map(|e| e.text.as_deref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            combined.contains("Transcript leak key=[REDACTED]"),
+            "unexpected transcript text: {combined}"
+        );
+        assert!(
+            !combined.contains(secret),
+            "secret leaked in transcript: {combined}"
+        );
+
+        let _ = manager.stop_session(agent_id, "done");
+    }
 }

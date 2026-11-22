@@ -269,7 +269,17 @@ pub fn redact_secrets(text: &str, active_secrets: &[&str]) -> String {
             out = out.replace(secret, "[REDACTED]");
         }
     }
-    for prefix in ["sk-ant-oat", "sk-ant-api", "sk-proj-", "gho_", "ghp_"] {
+    for prefix in [
+        "sk-ant-oat",
+        "sk-ant-api",
+        "sk-ant-ort",
+        "sk-proj-",
+        "sk-svcacct-",
+        "sk-admin-",
+        "AIza",
+        "gho_",
+        "ghp_",
+    ] {
         out = redact_prefixed_tokens(&out, prefix);
     }
     redact_bearer_tokens(&out)
@@ -387,8 +397,9 @@ impl EnrollmentDriver for CliEnrollmentDriver {
         provider: &str,
         _temp_dir: &Path,
     ) -> Result<EnrollmentPrompt, EnrollmentVaultError> {
-        match provider {
-            "anthropic" | "claude" => Ok(EnrollmentPrompt {
+        let normalized = provider.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "anthropic" | "claude" | "claude-code" => Ok(EnrollmentPrompt {
                 state: EnrollmentState::AwaitingCode,
                 auth_url: Some("https://claude.ai/oauth/authorize".to_owned()),
                 device_code: None,
@@ -397,7 +408,7 @@ impl EnrollmentDriver for CliEnrollmentDriver {
                         .to_owned(),
                 ),
             }),
-            "openai" | "codex" => Ok(EnrollmentPrompt {
+            "openai" | "codex" | "codex-cli" | "gpt" => Ok(EnrollmentPrompt {
                 state: EnrollmentState::PendingBrowser,
                 auth_url: Some("https://auth.openai.com/codex/device".to_owned()),
                 device_code: Some(format!(
@@ -410,8 +421,19 @@ impl EnrollmentDriver for CliEnrollmentDriver {
                         .to_owned(),
                 ),
             }),
-            other => Err(EnrollmentVaultError::InvalidInput(format!(
-                "unsupported enrollment provider `{other}`"
+            "google" | "agy" | "antigravity" | "antigravity-cli" | "gemini" => {
+                Ok(EnrollmentPrompt {
+                    state: EnrollmentState::AwaitingCode,
+                    auth_url: Some("https://antigravity.google/auth".to_owned()),
+                    device_code: None,
+                    message: Some(
+                        "Authenticate with Antigravity (agy) in your browser and paste the returned authorization code or API key."
+                            .to_owned(),
+                    ),
+                })
+            }
+            _ => Err(EnrollmentVaultError::InvalidInput(format!(
+                "unsupported enrollment provider `{provider}`"
             ))),
         }
     }

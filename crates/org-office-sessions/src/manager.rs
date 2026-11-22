@@ -1967,8 +1967,23 @@ fn command_cache_meta(request: &Request) -> Option<(String, String)> {
 
 fn auth_env_var_for(driver: &str, mode: ProviderAuthMode, secret: &str) -> &'static str {
     let lower = driver.to_ascii_lowercase();
-    if lower.contains("openai") || lower.contains("codex") {
-        return "OPENAI_API_KEY";
+    if lower.contains("google")
+        || lower.contains("agy")
+        || lower.contains("antigravity")
+        || lower.contains("gemini")
+    {
+        return if mode == ProviderAuthMode::SubscriptionCli {
+            "AGY_AUTH_TOKEN"
+        } else {
+            "GEMINI_API_KEY"
+        };
+    }
+    if lower.contains("openai") || lower.contains("codex") || lower.contains("gpt") {
+        return if mode == ProviderAuthMode::SubscriptionCli {
+            "CODEX_ACCESS_TOKEN"
+        } else {
+            "OPENAI_API_KEY"
+        };
     }
     if mode == ProviderAuthMode::SubscriptionCli || secret.starts_with("sk-ant-oat") {
         "CLAUDE_CODE_OAUTH_TOKEN"

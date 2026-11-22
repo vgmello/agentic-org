@@ -1,17 +1,16 @@
-//! Runtime adapter registry: `ClaudeRuntime` production adapter + fail-closed slots for
-//! planned `codex` and `agy` adapters (`AGENTS.md` Rule 1, `TASK-42`).
+//! Runtime adapter registry: production adapters for `claude` (`ClaudeRuntime`), `codex`
+//! (`CodexRuntime`), and `agy` (`AgyRuntime`), failing closed on any unknown runtime ID
+//! (`AGENTS.md` Rule 1, `TASK-42`, `TASK-83`).
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use org_agent_runtime::{
-    AgentRuntime, Capabilities, CostBasis, LaunchContext, LaunchPlan, PlanError, Probe,
-    ProbeContext, ProbeOutput, ProbeResult, ProbeRun, RuntimeId, Session, SessionSpec, Unavailable,
-    UsageScope, VersionRange,
-};
+use org_agent_runtime::AgentRuntime;
+use org_agent_runtime_agy::AgyRuntime;
 use org_agent_runtime_claude::ClaudeRuntime;
+use org_agent_runtime_codex::CodexRuntime;
 
 /// Errors resolving a runtime adapter or its executable path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,85 +39,6 @@ impl fmt::Display for RuntimeRegistryError {
 
 impl std::error::Error for RuntimeRegistryError {}
 
-/// Fail-closed placeholder adapter for planned runtimes (`codex`, `agy`) per Architecture Rule 1.
-#[derive(Debug, Clone, Copy)]
-struct RefusedRuntime {
-    id: &'static str,
-    binary: &'static str,
-}
-
-impl AgentRuntime for RefusedRuntime {
-    fn id(&self) -> RuntimeId {
-        RuntimeId::try_from(self.id).expect("static runtime id is valid")
-    }
-
-    fn binary_name(&self) -> &'static str {
-        self.binary
-    }
-
-    fn capabilities(&self) -> Capabilities {
-        Capabilities {
-            steer: false,
-            interrupt_in_band: false,
-            idle_interrupt_ends_turn: false,
-            approval_bridge: false,
-            deny_message_reaches_model: false,
-            runtime_cancels_approvals: false,
-            unsolicited_turns: false,
-            session_id_known_up_front: false,
-            resume_ignores_cwd: false,
-            resume_applies_instructions: false,
-            reads_workspace_instruction_files: false,
-            tools_detach_from_group: false,
-            take_over: false,
-            enforces_writable_roots: false,
-            enforces_deny_write: false,
-            enforces_deny_read: false,
-            enforces_unix_socket_allowlist: false,
-            enforces_tool_allowlist: false,
-            enforces_deny_rules: false,
-            usage_scope: UsageScope::TurnDelta,
-            cost: CostBasis::ListPriceEstimate,
-            tested_versions: VersionRange {
-                min: "0.0.0".to_owned(),
-                max: "0.0.0".to_owned(),
-            },
-        }
-    }
-
-    fn plan_session(
-        &self,
-        _spec: &SessionSpec,
-        _ctx: &LaunchContext,
-    ) -> Result<(LaunchPlan, Box<dyn Session>), PlanError> {
-        Err(PlanError::Unsupported(
-            "runtime adapter is not yet built in this release",
-        ))
-    }
-
-    fn plan_take_over(
-        &self,
-        _spec: &SessionSpec,
-        _ctx: &LaunchContext,
-        _cols: u16,
-        _rows: u16,
-    ) -> Result<LaunchPlan, PlanError> {
-        Err(PlanError::Unsupported(
-            "runtime adapter is not yet built in this release",
-        ))
-    }
-
-    fn plan_probe(&self, _probe: Probe, _ctx: &ProbeContext) -> Option<ProbeRun> {
-        None
-    }
-
-    fn parse_probe(&self, _probe: Probe, _out: &ProbeOutput) -> ProbeResult {
-        ProbeResult::Unavailable {
-            reason: Unavailable::NotInstalled,
-        }
-    }
-}
-
 /// Registry of available [`AgentRuntime`] adapters and optional explicit executable overrides.
 #[derive(Clone)]
 pub struct RuntimeRegistry {
@@ -133,32 +53,20 @@ impl Default for RuntimeRegistry {
 }
 
 impl RuntimeRegistry {
-    /// Production registry: `claude` backed by [`ClaudeRuntime`]; `codex` and `agy` present
-    /// behind the consumer-owned [`AgentRuntime`] contract and failing closed until implemented.
+    /// Production registry wiring all three native adapters (`claude`, `codex`, `agy`) behind
+    /// the consumer-owned [`AgentRuntime`] contract. Any unknown runtime ID fails closed.
     pub fn production() -> Self {
         let mut adapters: BTreeMap<String, Arc<dyn AgentRuntime>> = BTreeMap::new();
         adapters.insert("claude".to_owned(), Arc::new(ClaudeRuntime::new()));
-        adapters.insert(
-            "codex".to_owned(),
-            Arc::new(RefusedRuntime {
-                id: "codex",
-                binary: "codex",
-            }),
-        );
-        adapters.insert(
-            "agy".to_owned(),
-            Arc::new(RefusedRuntime {
-                id: "agy",
-                binary: "agy",
-            }),
-        );
+        adapters.insert("codex".to_owned(), Arc::new(CodexRuntime::new()));
+        adapters.insert("agy".to_owned(), Arc::new(AgyRuntime::new()));
         Self {
             adapters,
             binary_overrides: BTreeMap::new(),
         }
     }
 
-    /// Registers or replaces an adapter and optional explicit binary path (used by tests and future adapters).
+    /// Registers or replaces an adapter and optional explicit binary path (used by tests and extensions).
     pub fn register(&mut self, adapter: Arc<dyn AgentRuntime>, binary_override: Option<PathBuf>) {
         let key = adapter.id().as_str().to_owned();
         if let Some(path) = binary_override {
@@ -167,7 +75,8 @@ impl RuntimeRegistry {
         self.adapters.insert(key, adapter);
     }
 
-    /// Resolves `runtime_id` (normalizing provider names like `"anthropic"` -> `"claude"`).
+    /// Resolves `runtime_id` (normalizing provider names like `"anthropic"` -> `"claude"`,
+    /// `"openai"`/`"gpt"` -> `"codex"`, `"google"`/`"antigravity"` -> `"agy"`).
     pub fn resolve(&self, runtime_id: &str) -> Result<Arc<dyn AgentRuntime>, RuntimeRegistryError> {
         let key = normalize_runtime_key(runtime_id);
         self.adapters
@@ -226,8 +135,8 @@ impl RuntimeRegistry {
 fn normalize_runtime_key(raw: &str) -> &str {
     match raw.trim().to_ascii_lowercase().as_str() {
         "anthropic" | "claude" | "claude-code" => "claude",
-        "openai" | "codex" | "codex-cli" => "codex",
-        "google" | "agy" | "antigravity" => "agy",
+        "openai" | "codex" | "codex-cli" | "gpt" => "codex",
+        "google" | "agy" | "antigravity" | "antigravity-cli" | "gemini" => "agy",
         _ => raw.trim(),
     }
 }
