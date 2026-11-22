@@ -1684,3 +1684,114 @@ fn enrollment_submit_command_cache_hashes_params_without_retaining_plaintext_cod
         );
     }
 }
+
+#[test]
+fn c4_session_list_and_transcript_rpcs_enforce_auth_and_redaction() {
+    let office: Arc<Office> = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let snap = office.org_snapshot().unwrap();
+    let hr_agent_id = snap
+        .members
+        .iter()
+        .find(|m| m.kind == org_proto::org::MemberKind::Agent)
+        .expect("built-in HR agent exists")
+        .id
+        .clone();
+
+    let home = office.ensure_private_home(&hr_agent_id).unwrap();
+    let proj_dir = home.join(".claude/projects/-workspace");
+    fs::create_dir_all(&proj_dir).unwrap();
+    let sample = [
+        r#"{"type":"user","timestamp":"2026-11-22T04:00:00Z","message":{"role":"user","content":"Check sk-ant-api03-SECRETVALUE12345"}}"#,
+        r#"{"type":"assistant","timestamp":"2026-11-22T04:00:01Z","message":{"model":"claude-sonnet-4-6","content":[{"type":"text","text":"Checked."},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"README.md"}}]}}"#,
+    ]
+    .join("\n");
+    fs::write(proj_dir.join("sess-hr-1.jsonl"), sample).unwrap();
+
+    let sock_dir = tempfile::tempdir().unwrap();
+    let cfg = SessionManagerConfig::production(sock_dir.path().join("office.sock"));
+    let manager = SessionManager::new(Arc::clone(&office), cfg);
+
+    // Owner lists sessions for HR agent.
+    let list_req = Request::new::<org_proto::sessions::MemberSessionList>(
+        1,
+        &org_proto::sessions::MemberSessionListParams {
+            employee_id: Some(hr_agent_id.clone()),
+            limit: Some(10),
+        },
+    )
+    .unwrap();
+    let list_resp = manager.dispatch_rpc(Some(&owner_id), &list_req).unwrap();
+    let listed: org_proto::sessions::SessionListResult = match list_resp.outcome {
+        org_proto::Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+        org_proto::Outcome::Error(e) => panic!("list failed: {e:?}"),
+    };
+    assert_eq!(listed.sessions.len(), 1);
+    assert_eq!(listed.sessions[0].session_id, "sess-hr-1");
+    assert!(!listed.sessions[0]
+        .preview
+        .as_deref()
+        .unwrap_or("")
+        .contains("SECRETVALUE12345"));
+
+    // Owner reads transcript with toggles.
+    let tx_req = Request::new::<org_proto::sessions::MemberSessionTranscript>(
+        2,
+        &org_proto::sessions::MemberSessionTranscriptParams {
+            employee_id: Some(hr_agent_id.clone()),
+            session_id: Some("sess-hr-1".into()),
+            include_tool_calls: Some(false),
+            include_file_changes: Some(true),
+            include_subagents: Some(true),
+            cursor: Some(0),
+            limit: Some(50),
+        },
+    )
+    .unwrap();
+    let tx_resp = manager.dispatch_rpc(Some(&owner_id), &tx_req).unwrap();
+    let tx: org_proto::sessions::SessionTranscriptResult = match tx_resp.outcome {
+        org_proto::Outcome::Result(v) => serde_json::from_value(v).unwrap(),
+        org_proto::Outcome::Error(e) => panic!("transcript failed: {e:?}"),
+    };
+    assert_eq!(tx.session_id, "sess-hr-1");
+    assert_eq!(tx.files.len(), 1);
+    assert_eq!(tx.files[0].path, "README.md");
+    assert!(tx
+        .entries
+        .iter()
+        .all(|e| e.kind != org_proto::sessions::TranscriptEntryKind::ToolCall));
+    assert!(!serde_json::to_string(&tx)
+        .unwrap()
+        .contains("SECRETVALUE12345"));
+
+    // Unbound caller and path-traversal session_id are refused.
+    let unbound = manager.dispatch_rpc(None, &tx_req).unwrap();
+    assert!(matches!(
+        unbound.outcome,
+        org_proto::Outcome::Error(e) if e.code == org_proto::ErrorCode::NotAuthorized
+    ));
+    let bad_sid = Request::new::<org_proto::sessions::MemberSessionTranscript>(
+        3,
+        &org_proto::sessions::MemberSessionTranscriptParams {
+            employee_id: Some(hr_agent_id.clone()),
+            session_id: Some("../etc/passwd".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let bad_resp = manager.dispatch_rpc(Some(&owner_id), &bad_sid).unwrap();
+    assert!(matches!(
+        bad_resp.outcome,
+        org_proto::Outcome::Error(e) if e.code == org_proto::ErrorCode::InvalidRequest
+    ));
+
+    // Another agent cannot inspect HR's transcript.
+    let fake_other_agent = new_uuid_v7();
+    let cross = manager
+        .dispatch_rpc(Some(&fake_other_agent), &tx_req)
+        .unwrap();
+    assert!(matches!(
+        cross.outcome,
+        org_proto::Outcome::Error(e) if e.code == org_proto::ErrorCode::NotAuthorized
+    ));
+}

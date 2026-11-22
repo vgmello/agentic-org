@@ -21,10 +21,12 @@ use org_office::organization_family::records::{
 use org_office::Office;
 use org_proto::sessions::{
     MemberSessionApprovalDecide, MemberSessionClearStall, MemberSessionGrants,
-    MemberSessionInspect, MemberSessionStart, MemberSessionStartParams, MemberSessionStop,
-    ProviderCredentialRevoke, ProviderCredentialStatus, ProviderEnrollmentCancel,
-    ProviderEnrollmentStart, ProviderEnrollmentStatus, ProviderEnrollmentSubmit,
-    SessionGrantsResult, SessionInspectResult, SessionState, SessionView,
+    MemberSessionInspect, MemberSessionList, MemberSessionListParams, MemberSessionStart,
+    MemberSessionStartParams, MemberSessionStop, MemberSessionTranscript,
+    MemberSessionTranscriptParams, ProviderCredentialRevoke, ProviderCredentialStatus,
+    ProviderEnrollmentCancel, ProviderEnrollmentStart, ProviderEnrollmentStatus,
+    ProviderEnrollmentSubmit, SessionGrantsResult, SessionInspectResult, SessionListResult,
+    SessionState, SessionTranscriptResult, SessionView,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 use org_supervise::{Environment, SearchPath, SessionMark};
@@ -507,6 +509,135 @@ impl SessionManager {
         })
     }
 
+    /// Lists discovered live and historical conversation sessions in an agent's private home
+    /// (`REQ-05`, `FC-150`). Only authorized people/owner or the agent itself may inspect.
+    pub fn list_sessions(
+        &self,
+        caller_id: &str,
+        params: &MemberSessionListParams,
+    ) -> Result<SessionListResult, ApiError> {
+        let target = params.employee_id.as_deref().unwrap_or(caller_id);
+        if target != caller_id {
+            self.authorize_owner_or_person(caller_id)?;
+        }
+        if params.limit == Some(0) {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "limit must be greater than zero",
+            ));
+        }
+        let employee = self.require_agent(target)?;
+        let home = self.office.agent_private_home_path(employee.id.as_str());
+        let live_sid = self.live_runtime_session_id(employee.id.as_str());
+        let secrets = self.active_redaction_secrets(employee.id.as_str());
+        let refs: Vec<&str> = secrets.iter().map(|s| s.as_str()).collect();
+        Ok(crate::transcript::list_agent_sessions(
+            employee.id.as_str(),
+            &home,
+            live_sid.as_deref(),
+            params.limit,
+            &refs,
+        ))
+    }
+
+    /// Reads, parses, nests sub-agents (`SUB-6`), filters, and redacts a conversation transcript
+    /// on the office (`REQ-05`, `FC-150`).
+    pub fn read_session_transcript(
+        &self,
+        caller_id: &str,
+        params: &MemberSessionTranscriptParams,
+    ) -> Result<SessionTranscriptResult, ApiError> {
+        let target = params.employee_id.as_deref().unwrap_or(caller_id);
+        if target != caller_id {
+            self.authorize_owner_or_person(caller_id)?;
+        }
+        if params.limit == Some(0) {
+            return Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "limit must be greater than zero",
+            ));
+        }
+        if let Some(ref sid) = params.session_id {
+            if !crate::transcript::is_safe_session_id(sid) {
+                return Err(ApiError::new(
+                    ErrorCode::InvalidRequest,
+                    "invalid session_id",
+                ));
+            }
+        }
+        let employee = self.require_agent(target)?;
+        let home = self.office.agent_private_home_path(employee.id.as_str());
+        let live_sid = self.live_runtime_session_id(employee.id.as_str());
+        let query = crate::transcript::TranscriptQuery {
+            include_tool_calls: params.include_tool_calls.unwrap_or(true),
+            include_file_changes: params.include_file_changes.unwrap_or(true),
+            include_subagents: params.include_subagents.unwrap_or(true),
+            cursor: params.cursor.unwrap_or(0),
+            limit: params
+                .limit
+                .map(|n| n as usize)
+                .unwrap_or(crate::transcript::DEFAULT_TRANSCRIPT_LIMIT),
+        };
+        let secrets = self.active_redaction_secrets(employee.id.as_str());
+        let refs: Vec<&str> = secrets.iter().map(|s| s.as_str()).collect();
+        crate::transcript::load_agent_transcript(
+            employee.id.as_str(),
+            &home,
+            params.session_id.as_deref(),
+            live_sid.as_deref(),
+            query,
+            &refs,
+        )
+        .map_err(|_| ApiError::new(ErrorCode::StorageError, "could not read session transcript"))?
+        .ok_or_else(|| ApiError::new(ErrorCode::NotFound, "session transcript not found"))
+    }
+
+    fn active_redaction_secrets(&self, employee_id: &str) -> Vec<zeroize::Zeroizing<String>> {
+        let mut secrets: Vec<zeroize::Zeroizing<String>> = self
+            .bindings
+            .active_tokens()
+            .into_iter()
+            .map(zeroize::Zeroizing::new)
+            .collect();
+        let Ok(Some(exec)) = self.office.load_agent_execution(employee_id) else {
+            return secrets;
+        };
+        let Ok(Some(prof)) = self
+            .office
+            .load_model_profile(exec.model_profile_id.as_str())
+        else {
+            return secrets;
+        };
+        let conn_ids = prof
+            .generated_for_connection_id
+            .iter()
+            .chain(prof.connection_ids.iter());
+        for conn_id in conn_ids {
+            if let Ok(Some(raw)) = self.enrollment.vault().load_unwrapped(conn_id.as_str()) {
+                if let Ok(text) = std::str::from_utf8(&raw) {
+                    secrets.push(zeroize::Zeroizing::new(text.to_owned()));
+                }
+            }
+        }
+        secrets
+    }
+
+    fn live_runtime_session_id(&self, employee_id: &str) -> Option<String> {
+        let reg = self.registry.lock().unwrap_or_else(|p| p.into_inner());
+        let handle = reg.live.get(employee_id)?;
+        let guard = handle.state.lock().unwrap_or_else(|p| p.into_inner());
+        if !matches!(
+            guard.state,
+            SessionState::Starting | SessionState::Running | SessionState::WaitingApproval
+        ) {
+            return None;
+        }
+        guard
+            .runtime_session_id
+            .clone()
+            .or_else(|| guard.session_id.clone())
+    }
+
     /// Lists effective permission grants & sandbox constraints (`CLI-10`). Agents may only read self.
     pub fn list_grants(
         &self,
@@ -776,6 +907,18 @@ impl SessionManager {
                 request,
                 member,
                 |m, p| self.clear_stall_lock(m, &p.employee_id),
+            ));
+        }
+        if request.is::<MemberSessionList>() {
+            return Some(handle_call::<MemberSessionList>(request, member, |m, p| {
+                self.list_sessions(m, &p)
+            }));
+        }
+        if request.is::<MemberSessionTranscript>() {
+            return Some(handle_call::<MemberSessionTranscript>(
+                request,
+                member,
+                |m, p| self.read_session_transcript(m, &p),
             ));
         }
         None
@@ -1795,6 +1938,8 @@ fn is_c3_rpc_method(method: &str) -> bool {
         "member.session_start"
             | "member.session_stop"
             | "member.session_inspect"
+            | "member.session_list"
+            | "member.session_transcript"
             | "member.session_grants"
             | "member.session_approval"
             | "member.session_clear_stall"

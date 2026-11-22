@@ -1454,11 +1454,14 @@ fn is_hiring_method(request: &Request) -> bool {
 fn is_session_control_method(request: &Request) -> bool {
     use org_proto::sessions::{
         MemberSessionApprovalDecide, MemberSessionClearStall, MemberSessionGrants,
-        MemberSessionInspect, MemberSessionStart, MemberSessionStop,
+        MemberSessionInspect, MemberSessionList, MemberSessionStart, MemberSessionStop,
+        MemberSessionTranscript,
     };
     request.is::<MemberSessionStart>()
         || request.is::<MemberSessionStop>()
         || request.is::<MemberSessionInspect>()
+        || request.is::<MemberSessionList>()
+        || request.is::<MemberSessionTranscript>()
         || request.is::<MemberSessionGrants>()
         || request.is::<MemberSessionApprovalDecide>()
         || request.is::<MemberSessionClearStall>()

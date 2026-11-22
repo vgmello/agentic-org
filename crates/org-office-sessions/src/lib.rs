@@ -22,6 +22,7 @@ mod pump;
 pub mod recovery;
 pub mod runtime_registry;
 pub mod subagents;
+pub mod transcript;
 pub mod wake;
 
 pub use binding::{AcceptedCommandRecord, ActiveRunBinding, BindingRejection, RunBindingRegistry};
