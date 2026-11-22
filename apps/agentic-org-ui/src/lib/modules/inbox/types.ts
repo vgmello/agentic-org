@@ -35,6 +35,8 @@ export interface InboxItem {
 	/** When it lapses, when the source says so. */
 	expires_at?: string;
 	actions: InboxAction[];
+	/** Optional domain-supplied primary approval button label; defaults to "Approve" when omitted. */
+	approve_label?: string;
 	/** The options of a decision. */
 	choices?: { id: string; label: string }[];
 	/** Where the item's subject lives, for Open. */

@@ -95,27 +95,37 @@
 		shellOffices.length > 0 ? shellOffices : data.connection.organization.offices
 	);
 
-	function loadShellData(id: string) {
+	let shellLoadSeq = 0;
+
+	function loadShellData(id: string, reset = false) {
+		const seq = ++shellLoadSeq;
 		let cancelled = false;
+		if (reset) {
+			shellSnapshot = undefined;
+			shellWork = [];
+			shellInbox = [];
+			shellOffices = [];
+		}
+		const baseOffices = data.connection.organization.offices;
 		void Promise.allSettled([
 			orgApi.view(id),
 			workApi.snapshot(id),
 			inboxApi.list(id),
 			officesApi.overview(id)
 		]).then(([orgRes, workRes, inboxRes, officesRes]) => {
-			if (cancelled) return;
+			if (cancelled || seq !== shellLoadSeq) return;
 			if (orgRes.status === 'fulfilled') shellSnapshot = orgRes.value.snapshot;
 			if (workRes.status === 'fulfilled') shellWork = workRes.value.items;
 			if (inboxRes.status === 'fulfilled') shellInbox = inboxRes.value;
 			const overview = officesRes.status === 'fulfilled' ? officesRes.value : undefined;
-			shellOffices = layerOffices(data.connection.organization.offices, overview);
+			shellOffices = layerOffices(baseOffices, overview);
 		});
 		return () => {
 			cancelled = true;
 		};
 	}
 
-	$effect(() => loadShellData(organizationId));
+	$effect(() => loadShellData(organizationId, true));
 
 	function focusDesktopNavigation() {
 		desktopNavigation?.querySelector<HTMLElement>('a[aria-current="page"]')?.focus();
@@ -216,7 +226,7 @@
 		/>
 	</div>
 	<main
-		aria-labelledby="shell-page-title"
+		aria-label={areaFor(page.url.pathname) ?? 'Agentic Org'}
 		class={[
 			'exec-legacy-compat relative z-10 h-full overflow-y-auto transition-[padding] duration-300 ease-out',
 			sidebarCollapsed ? 'min-[640px]:pl-[68px]' : 'min-[640px]:pl-[264px]'
@@ -229,13 +239,12 @@
 				projects={shellSnapshot?.projects ?? []}
 				onWiden={focusDesktopNavigation}
 			/>
-			<span id="shell-page-title" class="text-sm font-semibold"
-				>{areaFor(page.url.pathname) ?? 'Agentic Org'}</span
-			>
+			<span class="text-sm font-semibold">{areaFor(page.url.pathname) ?? 'Agentic Org'}</span>
 		</div>
 		<ExecutiveCommandBar
 			snapshot={shellSnapshot}
 			items={shellWork}
+			inboxItems={shellInbox}
 			offices={activeOffices}
 			ownerId={shellOwnerId}
 		/>

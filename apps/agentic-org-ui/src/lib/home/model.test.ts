@@ -177,6 +177,7 @@ describe('executive home view model', () => {
 				created_at: '2026-11-21T04:45:00Z',
 				expires_at: '2026-11-21T08:45:00Z',
 				actions: ['approve', 'deny'],
+				approve_label: 'Approve release',
 				open: { path: '/work/T-1', label: 'Open T-1' },
 				state: 'open'
 			}
@@ -217,7 +218,7 @@ describe('executive home view model', () => {
 		);
 		expect(spot).toHaveLength(3);
 		expect(spot[0].sourceKind).toBe('inbox');
-		expect(spot[0].primaryAction).toEqual({ kind: 'approve_inbox', label: "Approve Kai's sync" });
+		expect(spot[0].primaryAction).toEqual({ kind: 'approve_inbox', label: 'Approve release' });
 		expect(spot[0].secondaryAction).toEqual({ kind: 'deny_inbox', label: 'Deny' });
 		expect(spot[1].id).toBe('b1');
 		expect(spot[2].id).toBe('r1');

@@ -9,6 +9,7 @@
 	import Sparkles from '@lucide/svelte/icons/sparkles';
 	import Users from '@lucide/svelte/icons/users';
 	import type { OfficeInfo, OrgSnapshot, WorkItemSummary } from '$lib/proto';
+	import type { InboxItem } from '$lib/modules/inbox';
 	import { answerExecutiveQuestion, type OrgAiAnswer } from '$lib/home/model';
 	import { nonOwners } from '$lib/org/model';
 	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
@@ -16,11 +17,13 @@
 	let {
 		snapshot,
 		items = [],
+		inboxItems = [],
 		offices = [],
 		ownerId = 'owner'
 	}: {
 		snapshot?: OrgSnapshot;
 		items?: WorkItemSummary[];
+		inboxItems?: readonly InboxItem[];
 		offices?: OfficeInfo[];
 		ownerId?: string;
 	} = $props();
@@ -40,6 +43,7 @@
 	let activeIdx = $state(0);
 	let aiHistory = $state<OrgAiAnswer[]>([]);
 	let inputEl = $state<HTMLInputElement | null>(null);
+	let openerEl: HTMLElement | null = null;
 
 	const AI_STARTERS = [
 		'What needs me first?',
@@ -160,12 +164,16 @@
 			.slice(0, 12);
 	});
 
+	const safeActiveIdx = $derived(entries.length > 0 ? Math.min(activeIdx, entries.length - 1) : 0);
 	const currentAi = $derived(aiHistory[0]);
 	const earlierAi = $derived(aiHistory.slice(1, 5));
 	const askedSet = $derived(new Set(aiHistory.map((h) => h.query.toLowerCase())));
 	const followUps = $derived(AI_STARTERS.filter((s) => !askedSet.has(s.toLowerCase())));
 
 	async function openModal(nextMode: 'cmd' | 'ai') {
+		if (!open && typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+			openerEl = document.activeElement;
+		}
 		mode = nextMode;
 		open = true;
 		activeIdx = 0;
@@ -173,13 +181,21 @@
 		inputEl?.focus();
 	}
 
-	function closeModal() {
+	function closeModal(restoreFocus = true) {
 		open = false;
 		query = '';
+		activeIdx = 0;
+		const target = openerEl;
+		openerEl = null;
+		if (restoreFocus && target?.isConnected) {
+			void tick().then(() => {
+				if (target.isConnected) target.focus();
+			});
+		}
 	}
 
 	function runEntry(entry: CommandEntry) {
-		closeModal();
+		closeModal(!entry.href);
 		if (entry.action) entry.action();
 		else if (entry.href) void goto(resolve(entry.href as '/'));
 	}
@@ -187,7 +203,13 @@
 	function submitAi(raw: string) {
 		const trimmed = raw.trim();
 		if (!trimmed || !snapshot) return;
-		const ans = answerExecutiveQuestion(trimmed, { snapshot, items, offices, ownerId });
+		const ans = answerExecutiveQuestion(trimmed, {
+			snapshot,
+			items,
+			offices,
+			ownerId,
+			domain: { inboxItems }
+		});
 		aiHistory = [
 			ans,
 			...aiHistory.filter((x) => x.query.toLowerCase() !== ans.query.toLowerCase())
@@ -236,13 +258,13 @@
 		}
 		if (event.key === 'ArrowDown') {
 			event.preventDefault();
-			activeIdx = entries.length > 0 ? (activeIdx + 1) % entries.length : 0;
+			activeIdx = entries.length > 0 ? (safeActiveIdx + 1) % entries.length : 0;
 		} else if (event.key === 'ArrowUp') {
 			event.preventDefault();
-			activeIdx = entries.length > 0 ? (activeIdx - 1 + entries.length) % entries.length : 0;
-		} else if (event.key === 'Enter' && entries[activeIdx]) {
+			activeIdx = entries.length > 0 ? (safeActiveIdx - 1 + entries.length) % entries.length : 0;
+		} else if (event.key === 'Enter' && entries[safeActiveIdx]) {
 			event.preventDefault();
-			runEntry(entries[activeIdx]);
+			runEntry(entries[safeActiveIdx]);
 		}
 	}
 </script>
@@ -322,7 +344,7 @@
 						<span>Ask Org AI</span>
 					</button>
 				</div>
-				<button type="button" onclick={closeModal} class="exec-kbd px-2 py-1 text-[11px]"
+				<button type="button" onclick={() => closeModal()} class="exec-kbd px-2 py-1 text-[11px]"
 					>ESC</button
 				>
 			</div>
@@ -344,6 +366,7 @@
 				<input
 					bind:this={inputEl}
 					bind:value={query}
+					oninput={() => (activeIdx = 0)}
 					onkeydown={handleInputKeydown}
 					type="search"
 					placeholder={mode === 'ai'
@@ -377,12 +400,12 @@
 									<button
 										type="button"
 										role="option"
-										aria-selected={idx === activeIdx}
+										aria-selected={idx === safeActiveIdx}
 										onmouseenter={() => (activeIdx = idx)}
 										onclick={() => runEntry(entry)}
 										class={[
 											'exec-opt flex w-full items-center gap-3 rounded-[10px] px-3 py-2.5 text-left text-sm',
-											idx === activeIdx && 'is-on'
+											idx === safeActiveIdx && 'is-on'
 										]}
 									>
 										{#if entry.group === 'Projects'}
@@ -435,7 +458,7 @@
 											{#if bullet.href && bullet.linkLabel}
 												<a
 													href={resolve(bullet.href as '/')}
-													onclick={closeModal}
+													onclick={() => closeModal(false)}
 													class="text-xs font-semibold underline underline-offset-2"
 													style="color: var(--exec-accent-ink);"
 												>

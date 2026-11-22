@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import Activity from '@lucide/svelte/icons/activity';
 	import AlertTriangle from '@lucide/svelte/icons/alert-triangle';
@@ -94,15 +93,25 @@
 
 	const loading = $derived(activityRows === undefined && workItems === undefined);
 
-	onMount(() => {
-		void Promise.allSettled([
-			activityApi.feed(organizationId, { kind: 'all' }, 40),
-			workApi.snapshot(organizationId)
-		]).then(([actRes, workRes]) => {
-			activityRows = actRes.status === 'fulfilled' ? actRes.value.rows : [];
-			workItems = workRes.status === 'fulfilled' ? workRes.value.items : [];
-			nowMs = Date.now();
-		});
+	let loadSeq = 0;
+
+	$effect(() => {
+		const id = organizationId;
+		const seq = ++loadSeq;
+		let cancelled = false;
+		activityRows = undefined;
+		workItems = undefined;
+		void Promise.allSettled([activityApi.feed(id, { kind: 'all' }, 40), workApi.snapshot(id)]).then(
+			([actRes, workRes]) => {
+				if (cancelled || seq !== loadSeq) return;
+				activityRows = actRes.status === 'fulfilled' ? actRes.value.rows : [];
+				workItems = workRes.status === 'fulfilled' ? workRes.value.items : [];
+				nowMs = Date.now();
+			}
+		);
+		return () => {
+			cancelled = true;
+		};
 	});
 </script>
 

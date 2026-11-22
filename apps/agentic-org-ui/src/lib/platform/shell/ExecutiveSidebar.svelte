@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
+	import { Tooltip } from 'bits-ui';
 	import Activity from '@lucide/svelte/icons/activity';
 	import Bot from '@lucide/svelte/icons/bot';
 	import Building2 from '@lucide/svelte/icons/building-2';
@@ -19,6 +20,7 @@
 	import Workflow from '@lucide/svelte/icons/workflow';
 	import type { Connection, ProjectSummary } from '$lib/proto';
 	import { isOfficeOnline } from '$lib/home/model';
+	import ShellAccountMenu from './ShellAccountMenu.svelte';
 	import { UI_THEMES, uiPrefs } from './ui-preferences.svelte';
 
 	let {
@@ -67,366 +69,355 @@
 	});
 </script>
 
-<aside
-	aria-label="Sidebar"
-	onpointerenter={onPointerEnter}
-	onpointerleave={onPointerLeave}
-	onfocusin={onFocusIn}
-	onfocusout={onFocusOut}
-	class="exec-sidebar flex h-full min-w-0 flex-col overflow-hidden"
-	data-collapsed={collapsed ? 'true' : undefined}
->
-	<div
-		class={[
-			'flex min-h-14 shrink-0 items-center pt-2',
-			collapsed ? 'justify-center px-2' : 'justify-between gap-2 px-3'
-		]}
+<Tooltip.Provider delayDuration={150}>
+	<aside
+		aria-label="Sidebar"
+		onpointerenter={onPointerEnter}
+		onpointerleave={onPointerLeave}
+		onfocusin={onFocusIn}
+		onfocusout={onFocusOut}
+		class="exec-sidebar flex h-full min-w-0 flex-col overflow-hidden"
+		data-collapsed={collapsed ? 'true' : undefined}
 	>
-		<a
-			href={resolve('/home')}
-			onclick={(event) => onNavigate?.(event, '/home')}
+		<div
 			class={[
-				'exec-logo flex min-w-0 items-center rounded-lg py-1.5',
-				collapsed ? 'size-11 justify-center px-0' : 'flex-1 gap-2.5 px-2'
+				'flex min-h-14 shrink-0 items-center pt-2',
+				collapsed ? 'justify-center px-2' : 'justify-between gap-2 px-3'
 			]}
-			title={connection.organization.name}
 		>
-			<span
-				class="exec-brand-mark flex size-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-on-emphasis"
-				aria-hidden="true"
-			>
-				A
-			</span>
-			{#if !collapsed}
-				<span class="truncate text-sm font-semibold" style="color: var(--exec-ink);">
-					{connection.organization.name}
-				</span>
-			{/if}
-		</a>
-		{#if onToggleCollapse && !collapsed}
-			<button
-				type="button"
-				onclick={onToggleCollapse}
-				aria-label={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
-				aria-pressed={pinned}
-				title={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
+			<a
+				href={resolve('/home')}
+				onclick={(event) => onNavigate?.(event, '/home')}
 				class={[
-					'exec-icon-btn flex size-7 shrink-0 items-center justify-center rounded-md',
-					pinned && 'is-pinned'
+					'exec-logo flex min-w-0 items-center rounded-lg py-1.5',
+					collapsed ? 'size-11 justify-center px-0' : 'flex-1 gap-2.5 px-2'
 				]}
+				title={connection.organization.name}
 			>
-				<PanelLeft class="size-4" aria-hidden="true" />
-			</button>
-		{/if}
-	</div>
-
-	<nav
-		aria-label="Main"
-		class={[
-			'flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto py-3',
-			collapsed ? 'items-center gap-3 px-2' : 'gap-5 px-3'
-		]}
-	>
-		<div class={collapsed ? 'w-full' : undefined}>
-			{#if !collapsed}
-				<div class="exec-nav-label px-2.5 pb-1.5">Focus</div>
-			{/if}
-			<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
-				<li>
-					<a
-						href={resolve('/home')}
-						onclick={(e) => onNavigate?.(e, '/home')}
-						aria-current={isActive('/home') ? 'page' : undefined}
-						title="Home"
-						class={['exec-nav-item', collapsed && 'is-rail', isActive('/home') && 'is-active']}
-					>
-						<House class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Home</span>{/if}
-					</a>
-				</li>
-				<li>
-					<a
-						href={resolve('/inbox')}
-						onclick={(e) => onNavigate?.(e, '/inbox')}
-						aria-current={isActive('/inbox') ? 'page' : undefined}
-						title={needsYouCount > 0 ? `Inbox (${needsYouCount} waiting on you)` : 'Inbox'}
-						class={['exec-nav-item', collapsed && 'is-rail', isActive('/inbox') && 'is-active']}
-					>
-						<Inbox class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}
-							<span class="truncate">Inbox</span>
-						{/if}
-						{#if needsYouCount > 0}
-							<span class={['exec-nav-dot', collapsed && 'is-rail']} aria-hidden="true"></span>
-							<span class="sr-only">, {needsYouCount} waiting on you</span>
-						{/if}
-					</a>
-				</li>
-			</ul>
-		</div>
-
-		<div class={collapsed ? 'w-full' : undefined}>
-			{#if !collapsed}
-				<div class="exec-nav-label px-2.5 pb-1.5">Workspace</div>
-			{/if}
-			<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
-				<li>
-					<a
-						href={resolve('/work')}
-						onclick={(e) => onNavigate?.(e, '/work')}
-						aria-current={isActive('/work') ? 'page' : undefined}
-						title="Work"
-						class={['exec-nav-item', collapsed && 'is-rail', isActive('/work') && 'is-active']}
-					>
-						<ClipboardList class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Work</span>{/if}
-					</a>
-				</li>
-				<li>
-					<a
-						href={resolve('/chat')}
-						onclick={(e) => onNavigate?.(e, '/chat')}
-						aria-current={isActive('/chat') ? 'page' : undefined}
-						title="Chat"
-						class={['exec-nav-item', collapsed && 'is-rail', isActive('/chat') && 'is-active']}
-					>
-						<MessageSquare class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Chat</span>{/if}
-					</a>
-				</li>
-				<li>
-					<a
-						href={resolve('/activity')}
-						onclick={(e) => onNavigate?.(e, '/activity')}
-						aria-current={isActive('/activity') ? 'page' : undefined}
-						title="Activity"
-						class={['exec-nav-item', collapsed && 'is-rail', isActive('/activity') && 'is-active']}
-					>
-						<Activity class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Activity</span>{/if}
-					</a>
-				</li>
-				<li>
-					<a
-						href={resolve('/projects')}
-						onclick={(e) => onNavigate?.(e, '/projects')}
-						aria-current={isActive('/projects') ? 'page' : undefined}
-						title="Projects"
-						class={['exec-nav-item', collapsed && 'is-rail', isActive('/projects') && 'is-active']}
-					>
-						<Folder class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Projects</span>{/if}
-					</a>
-				</li>
-			</ul>
-		</div>
-
-		{#if !collapsed && favoriteList.length > 0}
-			<div>
-				<div class="exec-nav-label flex items-center gap-1.5 px-2.5 pb-1.5">
-					<Star class="size-3" aria-hidden="true" />
-					<span>Favorite projects</span>
-				</div>
-				<ul class="flex flex-col gap-0.5">
-					{#each favoriteList as proj (proj.id)}
-						{@const href = `/projects/${proj.id}/work`}
-						<li>
-							<a
-								href={resolve(href as '/projects')}
-								onclick={(e) => onNavigate?.(e, href)}
-								aria-current={isActive(`/projects/${proj.id}`) ? 'page' : undefined}
-								class={['exec-nav-item', isActive(`/projects/${proj.id}`) && 'is-active']}
-							>
-								<Folder class="size-4 shrink-0" aria-hidden="true" />
-								<span class="truncate">{proj.name}</span>
-							</a>
-						</li>
-					{/each}
-				</ul>
-			</div>
-		{/if}
-
-		<div class={collapsed ? 'w-full' : undefined}>
-			{#if !collapsed}
-				<div class="exec-nav-label px-2.5 pb-1.5">Organization</div>
-			{/if}
-			<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
-				<li>
-					<a
-						href={resolve('/teams')}
-						onclick={(e) => onNavigate?.(e, '/teams')}
-						aria-current={isTeamsActive ? 'page' : undefined}
-						title="Teams"
-						class={['exec-nav-item', collapsed && 'is-rail', isTeamsActive && 'is-active']}
-					>
-						<Users class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Teams</span>{/if}
-					</a>
-				</li>
-				<li>
-					<a
-						href={resolve('/teams/org-chart')}
-						onclick={(e) => onNavigate?.(e, '/teams/org-chart')}
-						aria-current={isActive('/teams/org-chart') ? 'page' : undefined}
-						title="Org chart"
-						class={[
-							'exec-nav-item',
-							collapsed && 'is-rail',
-							isActive('/teams/org-chart') && 'is-active'
-						]}
-					>
-						<Network class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Org chart</span>{/if}
-					</a>
-				</li>
-				<li>
-					<a
-						href={resolve('/teams/members')}
-						onclick={(e) => onNavigate?.(e, '/teams/members')}
-						aria-current={isActive('/teams/members') ? 'page' : undefined}
-						title="Members"
-						class={[
-							'exec-nav-item',
-							collapsed && 'is-rail',
-							isActive('/teams/members') && 'is-active'
-						]}
-					>
-						<Bot class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Members</span>{/if}
-					</a>
-				</li>
-				<li>
-					<a
-						href={resolve('/settings/processes')}
-						onclick={(e) => onNavigate?.(e, '/settings/processes')}
-						aria-current={isActive('/settings/processes') ? 'page' : undefined}
-						title="Processes"
-						class={[
-							'exec-nav-item',
-							collapsed && 'is-rail',
-							isActive('/settings/processes') && 'is-active'
-						]}
-					>
-						<Workflow class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Processes</span>{/if}
-					</a>
-				</li>
-				<li>
-					<a
-						href={resolve('/settings/offices')}
-						onclick={(e) => onNavigate?.(e, '/settings/offices')}
-						aria-current={isActive('/settings/offices') ? 'page' : undefined}
-						title="Offices"
-						class={[
-							'exec-nav-item',
-							collapsed && 'is-rail',
-							isActive('/settings/offices') && 'is-active'
-						]}
-					>
-						<Building2 class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Offices</span>{/if}
-					</a>
-				</li>
-				<li>
-					<a
-						href={resolve('/settings')}
-						onclick={(e) => onNavigate?.(e, '/settings')}
-						aria-current={pathname === '/settings' ? 'page' : undefined}
-						title="Settings"
-						class={[
-							'exec-nav-item',
-							collapsed && 'is-rail',
-							pathname === '/settings' && 'is-active'
-						]}
-					>
-						<Settings class="size-[18px] shrink-0" aria-hidden="true" />
-						{#if !collapsed}<span class="truncate">Settings</span>{/if}
-					</a>
-				</li>
-			</ul>
-		</div>
-	</nav>
-
-	<div
-		class={[
-			'exec-sidebar-foot shrink-0 py-2.5',
-			collapsed ? 'flex flex-col items-center gap-1 px-2' : 'px-3'
-		]}
-	>
-		{#if !collapsed}
-			<div
-				class="exec-theme-pills mb-2.5 grid grid-cols-4 gap-0.5 rounded-lg p-1"
-				role="group"
-				aria-label="Theme"
-			>
-				{#each UI_THEMES as option (option.id)}
-					<button
-						type="button"
-						onclick={() => uiPrefs.setTheme(option.id)}
-						aria-pressed={uiPrefs.theme === option.id}
-						title={option.label}
-						class={[
-							'exec-theme-pill truncate rounded-md px-1 py-1 text-[11px] font-semibold',
-							uiPrefs.theme === option.id && 'is-on'
-						]}
-					>
-						{option.shortLabel}
-					</button>
-				{/each}
-			</div>
-		{/if}
-		<a
-			href={resolve('/welcome')}
-			onclick={(e) => onNavigate?.(e, '/welcome')}
-			class={[
-				'exec-foot-link flex items-center rounded-lg',
-				collapsed ? 'size-11 justify-center p-0' : 'gap-2.5 px-2 py-1.5'
-			]}
-			title="Switch organization ({connection.organization.name})"
-		>
-			<span
-				class="exec-foot-av flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
-				style="color: var(--exec-ink);"
-			>
-				Y
-			</span>
-			{#if !collapsed}
-				<span class="min-w-0 flex-1">
-					<span class="block truncate text-xs font-semibold" style="color: var(--exec-ink);">
+				<span
+					class="exec-brand-mark flex size-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-on-emphasis"
+					aria-hidden="true"
+				>
+					A
+				</span>
+				{#if !collapsed}
+					<span class="truncate text-sm font-semibold" style="color: var(--exec-ink);">
 						{connection.organization.name}
 					</span>
-					<span class="block truncate text-[11px]" style="color: var(--exec-muted);">
-						Switch organization
-					</span>
-				</span>
+				{/if}
+			</a>
+			{#if onToggleCollapse && !collapsed}
+				<button
+					type="button"
+					onclick={onToggleCollapse}
+					aria-label={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
+					aria-pressed={pinned}
+					title={pinned ? 'Auto-hide sidebar' : 'Pin sidebar open'}
+					class={[
+						'exec-icon-btn flex size-7 shrink-0 items-center justify-center rounded-md',
+						pinned && 'is-pinned'
+					]}
+				>
+					<PanelLeft class="size-4" aria-hidden="true" />
+				</button>
 			{/if}
-		</a>
-		<a
-			href={resolve('/settings/offices')}
-			onclick={(e) => onNavigate?.(e, '/settings/offices')}
+		</div>
+
+		<nav
+			aria-label="Main"
 			class={[
-				'exec-foot-link flex items-center rounded-lg text-[11px]',
-				collapsed ? 'size-11 justify-center p-0' : 'mt-1 gap-2 px-2 py-1'
+				'flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto py-3',
+				collapsed ? 'items-center gap-3 px-2' : 'gap-5 px-3'
 			]}
-			title="{connection.office.host} · {connection.office.name} · {officeOnline
-				? 'Online'
-				: 'Offline'}"
 		>
-			{#if officeOnline}
-				<CheckCircle2 class="size-3.5 shrink-0" style="color: var(--exec-ok);" aria-hidden="true" />
-			{:else}
-				<WifiOff class="size-3.5 shrink-0" style="color: var(--exec-bad);" aria-hidden="true" />
+			<div class={collapsed ? 'w-full' : undefined}>
+				{#if !collapsed}
+					<div class="exec-nav-label px-2.5 pb-1.5">Focus</div>
+				{/if}
+				<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
+					<li>
+						<a
+							href={resolve('/home')}
+							onclick={(e) => onNavigate?.(e, '/home')}
+							aria-current={isActive('/home') ? 'page' : undefined}
+							title="Home"
+							class={['exec-nav-item', collapsed && 'is-rail', isActive('/home') && 'is-active']}
+						>
+							<House class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Home</span>{/if}
+						</a>
+					</li>
+					<li>
+						<a
+							href={resolve('/inbox')}
+							onclick={(e) => onNavigate?.(e, '/inbox')}
+							aria-current={isActive('/inbox') ? 'page' : undefined}
+							title={needsYouCount > 0 ? `Inbox (${needsYouCount} waiting on you)` : 'Inbox'}
+							class={['exec-nav-item', collapsed && 'is-rail', isActive('/inbox') && 'is-active']}
+						>
+							<Inbox class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}
+								<span class="truncate">Inbox</span>
+							{/if}
+							{#if needsYouCount > 0}
+								<span class={['exec-nav-dot', collapsed && 'is-rail']} aria-hidden="true"></span>
+								<span class="sr-only">, {needsYouCount} waiting on you</span>
+							{/if}
+						</a>
+					</li>
+				</ul>
+			</div>
+
+			<div class={collapsed ? 'w-full' : undefined}>
+				{#if !collapsed}
+					<div class="exec-nav-label px-2.5 pb-1.5">Workspace</div>
+				{/if}
+				<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
+					<li>
+						<a
+							href={resolve('/work')}
+							onclick={(e) => onNavigate?.(e, '/work')}
+							aria-current={isActive('/work') ? 'page' : undefined}
+							title="Work"
+							class={['exec-nav-item', collapsed && 'is-rail', isActive('/work') && 'is-active']}
+						>
+							<ClipboardList class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Work</span>{/if}
+						</a>
+					</li>
+					<li>
+						<a
+							href={resolve('/chat')}
+							onclick={(e) => onNavigate?.(e, '/chat')}
+							aria-current={isActive('/chat') ? 'page' : undefined}
+							title="Chat"
+							class={['exec-nav-item', collapsed && 'is-rail', isActive('/chat') && 'is-active']}
+						>
+							<MessageSquare class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Chat</span>{/if}
+						</a>
+					</li>
+					<li>
+						<a
+							href={resolve('/activity')}
+							onclick={(e) => onNavigate?.(e, '/activity')}
+							aria-current={isActive('/activity') ? 'page' : undefined}
+							title="Activity"
+							class={[
+								'exec-nav-item',
+								collapsed && 'is-rail',
+								isActive('/activity') && 'is-active'
+							]}
+						>
+							<Activity class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Activity</span>{/if}
+						</a>
+					</li>
+					<li>
+						<a
+							href={resolve('/projects')}
+							onclick={(e) => onNavigate?.(e, '/projects')}
+							aria-current={isActive('/projects') ? 'page' : undefined}
+							title="Projects"
+							class={[
+								'exec-nav-item',
+								collapsed && 'is-rail',
+								isActive('/projects') && 'is-active'
+							]}
+						>
+							<Folder class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Projects</span>{/if}
+						</a>
+					</li>
+				</ul>
+			</div>
+
+			{#if !collapsed && favoriteList.length > 0}
+				<div>
+					<div class="exec-nav-label flex items-center gap-1.5 px-2.5 pb-1.5">
+						<Star class="size-3" aria-hidden="true" />
+						<span>Favorite projects</span>
+					</div>
+					<ul class="flex flex-col gap-0.5">
+						{#each favoriteList as proj (proj.id)}
+							{@const href = `/projects/${proj.id}/work`}
+							<li>
+								<a
+									href={resolve(href as '/projects')}
+									onclick={(e) => onNavigate?.(e, href)}
+									aria-current={isActive(`/projects/${proj.id}`) ? 'page' : undefined}
+									class={['exec-nav-item', isActive(`/projects/${proj.id}`) && 'is-active']}
+								>
+									<Folder class="size-4 shrink-0" aria-hidden="true" />
+									<span class="truncate">{proj.name}</span>
+								</a>
+							</li>
+						{/each}
+					</ul>
+				</div>
 			{/if}
+
+			<div class={collapsed ? 'w-full' : undefined}>
+				{#if !collapsed}
+					<div class="exec-nav-label px-2.5 pb-1.5">Organization</div>
+				{/if}
+				<ul class={['flex flex-col', collapsed ? 'items-center gap-1' : 'gap-0.5']}>
+					<li>
+						<a
+							href={resolve('/teams')}
+							onclick={(e) => onNavigate?.(e, '/teams')}
+							aria-current={isTeamsActive ? 'page' : undefined}
+							title="Teams"
+							class={['exec-nav-item', collapsed && 'is-rail', isTeamsActive && 'is-active']}
+						>
+							<Users class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Teams</span>{/if}
+						</a>
+					</li>
+					<li>
+						<a
+							href={resolve('/teams/org-chart')}
+							onclick={(e) => onNavigate?.(e, '/teams/org-chart')}
+							aria-current={isActive('/teams/org-chart') ? 'page' : undefined}
+							title="Org chart"
+							class={[
+								'exec-nav-item',
+								collapsed && 'is-rail',
+								isActive('/teams/org-chart') && 'is-active'
+							]}
+						>
+							<Network class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Org chart</span>{/if}
+						</a>
+					</li>
+					<li>
+						<a
+							href={resolve('/teams/members')}
+							onclick={(e) => onNavigate?.(e, '/teams/members')}
+							aria-current={isActive('/teams/members') ? 'page' : undefined}
+							title="Members"
+							class={[
+								'exec-nav-item',
+								collapsed && 'is-rail',
+								isActive('/teams/members') && 'is-active'
+							]}
+						>
+							<Bot class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Members</span>{/if}
+						</a>
+					</li>
+					<li>
+						<a
+							href={resolve('/settings/processes')}
+							onclick={(e) => onNavigate?.(e, '/settings/processes')}
+							aria-current={isActive('/settings/processes') ? 'page' : undefined}
+							title="Processes"
+							class={[
+								'exec-nav-item',
+								collapsed && 'is-rail',
+								isActive('/settings/processes') && 'is-active'
+							]}
+						>
+							<Workflow class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Processes</span>{/if}
+						</a>
+					</li>
+					<li>
+						<a
+							href={resolve('/settings/offices')}
+							onclick={(e) => onNavigate?.(e, '/settings/offices')}
+							aria-current={isActive('/settings/offices') ? 'page' : undefined}
+							title="Offices"
+							class={[
+								'exec-nav-item',
+								collapsed && 'is-rail',
+								isActive('/settings/offices') && 'is-active'
+							]}
+						>
+							<Building2 class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Offices</span>{/if}
+						</a>
+					</li>
+					<li>
+						<a
+							href={resolve('/settings')}
+							onclick={(e) => onNavigate?.(e, '/settings')}
+							aria-current={pathname === '/settings' ? 'page' : undefined}
+							title="Settings"
+							class={[
+								'exec-nav-item',
+								collapsed && 'is-rail',
+								pathname === '/settings' && 'is-active'
+							]}
+						>
+							<Settings class="size-[18px] shrink-0" aria-hidden="true" />
+							{#if !collapsed}<span class="truncate">Settings</span>{/if}
+						</a>
+					</li>
+				</ul>
+			</div>
+		</nav>
+
+		<div
+			class={[
+				'exec-sidebar-foot shrink-0 py-2.5',
+				collapsed ? 'flex flex-col items-center gap-1 px-2' : 'px-3'
+			]}
+		>
 			{#if !collapsed}
-				<span class="truncate" style="color: var(--exec-muted);">
-					{connection.office.host} · {connection.office.name} · {officeOnline
-						? 'Online'
-						: 'Offline'}
-				</span>
+				<div
+					class="exec-theme-pills mb-2.5 grid grid-cols-4 gap-0.5 rounded-lg p-1"
+					role="group"
+					aria-label="Theme"
+				>
+					{#each UI_THEMES as option (option.id)}
+						<button
+							type="button"
+							onclick={() => uiPrefs.setTheme(option.id)}
+							aria-pressed={uiPrefs.theme === option.id}
+							title={option.label}
+							class={[
+								'exec-theme-pill truncate rounded-md px-1 py-1 text-[11px] font-semibold',
+								uiPrefs.theme === option.id && 'is-on'
+							]}
+						>
+							{option.shortLabel}
+						</button>
+					{/each}
+				</div>
 			{/if}
-		</a>
-	</div>
-</aside>
+			<ShellAccountMenu {connection} compact={collapsed} />
+			<a
+				href={resolve('/settings/offices')}
+				onclick={(e) => onNavigate?.(e, '/settings/offices')}
+				class={[
+					'exec-foot-link flex items-center rounded-lg text-[11px]',
+					collapsed ? 'size-11 justify-center p-0' : 'mt-1 gap-2 px-2 py-1'
+				]}
+				title="{connection.office.host} · {connection.office.name} · {officeOnline
+					? 'Online'
+					: 'Offline'}"
+			>
+				{#if officeOnline}
+					<CheckCircle2
+						class="size-3.5 shrink-0"
+						style="color: var(--exec-ok);"
+						aria-hidden="true"
+					/>
+				{:else}
+					<WifiOff class="size-3.5 shrink-0" style="color: var(--exec-bad);" aria-hidden="true" />
+				{/if}
+				{#if !collapsed}
+					<span class="truncate" style="color: var(--exec-muted);">
+						{connection.office.host} · {connection.office.name} · {officeOnline
+							? 'Online'
+							: 'Offline'}
+					</span>
+				{/if}
+			</a>
+		</div>
+	</aside>
+</Tooltip.Provider>
 
 <style>
 	.exec-sidebar {
@@ -530,9 +521,5 @@
 		background: var(--exec-accent-soft);
 		color: var(--exec-ink);
 		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
-	}
-	.exec-foot-av {
-		background: var(--exec-avatar-bg);
-		box-shadow: inset 0 0 0 1px var(--exec-border);
 	}
 </style>

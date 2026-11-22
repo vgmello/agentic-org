@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
@@ -45,11 +45,16 @@
 		return allDecisions.filter((d) => d.category === filter);
 	});
 
-	async function load() {
+	let loadSeq = 0;
+	let destroyed = false;
+
+	async function load(targetOrgId = organizationId, isCancelled: () => boolean = () => false) {
+		const seq = ++loadSeq;
 		const [workRes, inboxRes] = await Promise.allSettled([
-			workApi.snapshot(organizationId),
-			inboxApi.list(organizationId)
+			workApi.snapshot(targetOrgId),
+			inboxApi.list(targetOrgId)
 		]);
+		if (destroyed || isCancelled() || seq !== loadSeq) return;
 		if (workRes.status === 'fulfilled') {
 			items = workRes.value.items;
 		} else {
@@ -65,8 +70,21 @@
 		nowMs = Date.now();
 	}
 
-	onMount(() => {
-		void load();
+	$effect(() => {
+		const id = organizationId;
+		let cancelled = false;
+		items = undefined;
+		inboxItems = [];
+		decliningId = undefined;
+		declineReason = '';
+		void load(id, () => cancelled);
+		return () => {
+			cancelled = true;
+		};
+	});
+
+	onDestroy(() => {
+		destroyed = true;
 	});
 
 	async function armDeny(id: string) {
@@ -76,9 +94,12 @@
 		denyInputEl?.focus();
 	}
 
-	function cancelDeny() {
+	async function cancelDeny() {
+		const prevId = decliningId;
 		decliningId = undefined;
 		declineReason = '';
+		await tick();
+		if (prevId) document.getElementById(`inbox-deny-btn-${prevId}`)?.focus();
 	}
 
 	function handleDenyKeydown(event: KeyboardEvent, decision: SpotlightDecision) {
@@ -87,7 +108,7 @@
 			void act(decision, 'secondary');
 		} else if (event.key === 'Escape') {
 			event.preventDefault();
-			cancelDeny();
+			void cancelDeny();
 		}
 	}
 
@@ -328,6 +349,7 @@
 						{#if isDenyAction(d.secondaryAction)}
 							{#if decliningId !== d.id}
 								<button
+									id="inbox-deny-btn-{d.id}"
 									type="button"
 									disabled={busyId === d.id}
 									onclick={() => void armDeny(d.id)}
@@ -372,7 +394,7 @@
 										</button>
 										<button
 											type="button"
-											onclick={cancelDeny}
+											onclick={() => void cancelDeny()}
 											class="inbox-cancel inline-flex h-8 items-center rounded-md px-2.5 text-xs font-semibold"
 										>
 											Keep

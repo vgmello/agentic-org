@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount, tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
@@ -142,10 +142,19 @@
 			kpis.totalAgents === 0
 	);
 
-	async function loadLive() {
+	let loadSeq = 0;
+	let destroyed = false;
+
+	async function loadLive(
+		targetOrgId = organizationId,
+		baseConnectionOffices = data.connection.organization.offices,
+		isCancelled: () => boolean = () => false
+	) {
+		const seq = ++loadSeq;
 		loadError = undefined;
 		try {
-			await accountZone.ensure(organizationId).catch(() => undefined);
+			await accountZone.ensure(targetOrgId).catch(() => undefined);
+			if (destroyed || isCancelled() || seq !== loadSeq) return;
 			const timeZone = accountZone.zone || 'UTC';
 			const [
 				workRes,
@@ -159,17 +168,18 @@
 				homeProjRes,
 				activityRes
 			] = await Promise.allSettled([
-				workApi.snapshot(organizationId),
+				workApi.snapshot(targetOrgId),
 				officeApi.peekOrganizations(),
-				officesApi.overview(organizationId),
-				costsApi.organizationCost(organizationId, { kind: 'this_month', timeZone }),
-				costsApi.agentBudgets(organizationId),
-				inboxApi.list(organizationId),
-				membersApi.directory(organizationId),
-				projectsApi.list(organizationId),
-				homeApi.projects(organizationId),
-				activityApi.feed(organizationId, { kind: 'all' }, 12)
+				officesApi.overview(targetOrgId),
+				costsApi.organizationCost(targetOrgId, { kind: 'this_month', timeZone }),
+				costsApi.agentBudgets(targetOrgId),
+				inboxApi.list(targetOrgId),
+				membersApi.directory(targetOrgId),
+				projectsApi.list(targetOrgId),
+				homeApi.projects(targetOrgId),
+				activityApi.feed(targetOrgId, { kind: 'all' }, 12)
 			]);
+			if (destroyed || isCancelled() || seq !== loadSeq) return;
 
 			if (workRes.status === 'fulfilled') {
 				items = workRes.value.items;
@@ -184,9 +194,8 @@
 
 			const baseOffices =
 				orgsRes.status === 'fulfilled'
-					? (orgsRes.value.find((o) => o.id === organizationId)?.offices ??
-						data.connection.organization.offices)
-					: data.connection.organization.offices;
+					? (orgsRes.value.find((o) => o.id === targetOrgId)?.offices ?? baseConnectionOffices)
+					: baseConnectionOffices;
 			const overview = officesRes.status === 'fulfilled' ? officesRes.value : undefined;
 			offices = layerOffices(baseOffices, overview);
 
@@ -200,15 +209,36 @@
 
 			nowMs = Date.now();
 		} catch (e) {
+			if (destroyed || isCancelled() || seq !== loadSeq) return;
 			loadError = toAppError(e).message;
 		}
 	}
 
-	onMount(() => {
-		void loadLive();
+	$effect(() => {
+		const id = organizationId;
+		const baseOffices = data.connection.organization.offices;
+		let cancelled = false;
+		items = undefined;
+		offices = [];
+		orgCost = undefined;
+		agentBudgets = undefined;
+		inboxItems = [];
+		memberRows = undefined;
+		projectRows = undefined;
+		homeProjects = undefined;
+		activityRows = undefined;
+		loadError = undefined;
+		spotIdx = 0;
+		decliningId = undefined;
+		declineReason = '';
+		void loadLive(id, baseOffices, () => cancelled);
+		return () => {
+			cancelled = true;
+		};
 	});
 
 	onDestroy(() => {
+		destroyed = true;
 		clearTimeout(briefCopyTimer);
 	});
 
@@ -391,7 +421,9 @@
 								? 'is-bad'
 								: kpis.financials.pillTone === 'warn'
 									? 'is-warn'
-									: 'is-ok'
+									: kpis.financials.pillTone === 'muted'
+										? 'is-muted'
+										: 'is-ok'
 						]}
 					>
 						{kpis.financials.pillLabel}
@@ -457,7 +489,14 @@
 					</a>
 					<a
 						href={resolve('/settings/offices')}
-						class={['hb-pil-pill', kpis.officePillTone === 'bad' ? 'is-bad' : 'is-ok']}
+						class={[
+							'hb-pil-pill',
+							kpis.officePillTone === 'bad'
+								? 'is-bad'
+								: kpis.officePillTone === 'muted'
+									? 'is-muted'
+									: 'is-ok'
+						]}
 						title={kpis.offlineOffices > 0
 							? `Offline: ${kpis.offlineOfficeNames.join(', ')}`
 							: 'All offices online'}
@@ -1429,6 +1468,11 @@
 		background: var(--exec-bad-bg);
 		color: var(--exec-bad);
 		box-shadow: inset 0 0 0 1px var(--exec-bad-ring);
+	}
+	.hb-pil-pill.is-muted {
+		background: var(--exec-well);
+		color: var(--exec-muted);
+		box-shadow: inset 0 0 0 1px var(--exec-border);
 	}
 	.hb-pil-hero:hover,
 	.hb-sub-cell:hover {

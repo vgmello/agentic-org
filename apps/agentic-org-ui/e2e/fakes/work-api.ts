@@ -4,7 +4,7 @@ import { workSender } from '../../src/lib/work/index';
 import { createMockWork } from '../../src/lib/work/api';
 import { orgApi } from '$lib/org/api';
 import { isPocDataset } from './mock-mode';
-import { pocWorkItems } from './poc-dataset';
+import { pocWorkActivity, pocWorkItemById, pocWorkItems } from './poc-dataset';
 
 const base = createMockWork(orgApi);
 
@@ -16,6 +16,18 @@ export const workApi: typeof base = {
 			return { position: { incarnation: 1, seq: items.length }, items };
 		}
 		return base.snapshot(organizationId, projectId, closedSince);
+	},
+	async get(organizationId, itemId) {
+		if (isPocDataset()) {
+			const item = pocWorkItemById(itemId);
+			if (item) return item;
+			throw { source: 'api', code: 'not_found', message: "That work item isn't here." };
+		}
+		return base.get(organizationId, itemId);
+	},
+	async activity(organizationId, itemId) {
+		if (isPocDataset()) return pocWorkActivity(itemId);
+		return base.activity(organizationId, itemId);
 	}
 };
 

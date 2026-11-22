@@ -2,7 +2,7 @@
  * POC-mirror dataset (`?mock=poc`) mirroring `poc/v6.html` across canonical domain fakes so the Svelte app and
  * `poc/v6.html` can be compared side by side without modifying production builds or default Northwind/Atlas fixtures.
  */
-import type { OrgSnapshot, WorkItemSummary } from '$lib/proto';
+import type { OrgSnapshot, WorkEvent, WorkItem, WorkItemSummary } from '$lib/proto';
 import type { ActivityRow } from '../../src/lib/modules/activity/types';
 import type {
 	AgentBudgets,
@@ -437,6 +437,7 @@ export function pocInboxItems(): InboxItem[] {
 			created_at: agoIso(12),
 			expires_at: aheadIso(240),
 			actions: ['approve', 'deny'],
+			approve_label: "Approve Kai's sync",
 			open: { path: '/work/T-121', label: 'Open T-121' },
 			state: 'open'
 		},
@@ -452,6 +453,7 @@ export function pocInboxItems(): InboxItem[] {
 				'Tess suggests: apply reroute. Recovers ~6h of queued wait time at $0 extra spend.',
 			created_at: agoIso(4),
 			actions: ['approve', 'deny'],
+			approve_label: 'Apply Jules reroute',
 			open: { path: '/work/BUG-84', label: 'Open BUG-84' },
 			state: 'open'
 		},
@@ -468,6 +470,7 @@ export function pocInboxItems(): InboxItem[] {
 			created_at: agoIso(180),
 			expires_at: aheadIso(1440),
 			actions: ['approve', 'deny'],
+			approve_label: 'Allow test access',
 			open: { path: '/work/T-124', label: 'Open T-124' },
 			state: 'open'
 		},
@@ -503,6 +506,7 @@ export function pocInboxItems(): InboxItem[] {
 				'Rowan & Ada recommend: adopt standard. Keeps first-try approval rates above 80%.',
 			created_at: agoIso(45),
 			actions: ['approve', 'deny'],
+			approve_label: 'Adopt CI standard',
 			open: { path: '/work/T-121', label: 'Open T-121' },
 			state: 'open'
 		},
@@ -518,6 +522,7 @@ export function pocInboxItems(): InboxItem[] {
 			recommendation: 'Emery & Eden recommend: approve. All design and budget checks passed.',
 			created_at: agoIso(60),
 			actions: ['approve', 'deny'],
+			approve_label: 'Approve design polish',
 			open: { path: '/work/T-131', label: 'Open T-131' },
 			state: 'open'
 		},
@@ -1386,6 +1391,53 @@ export function pocTeamRows(): TeamRow[] {
 			projects: [{ id: 'agency-v1', name: 'Agentic Org v1.0', role: 'contributor' }],
 			maxMembers: 6,
 			status: 'active'
+		}
+	];
+}
+
+export function pocWorkItemById(idOrRef: string): WorkItem | undefined {
+	const needle = idOrRef.trim().toLowerCase();
+	const summary = pocWorkItems().find(
+		(i) => i.id.toLowerCase() === needle || i.short_id.toLowerCase() === needle
+	);
+	if (!summary) return undefined;
+	return {
+		...summary,
+		description: summary.blocked_reason
+			? `${summary.title} — ${summary.blocked_reason}.`
+			: `${summary.title} tracked in Agentic Org POC mirror dataset.`,
+		checklist: [
+			{
+				id: `${summary.id}-step-1`,
+				text: 'Implementation and unit checks complete',
+				done: true,
+				required: true,
+				position: 0
+			},
+			{
+				id: `${summary.id}-step-2`,
+				text: 'Peer review verified',
+				done: summary.status === 'done' || summary.status === 'closed',
+				required: false,
+				position: 1
+			}
+		],
+		watchers: summary.assignee_id ? [summary.assignee_id] : [],
+		links: [],
+		comments: []
+	};
+}
+
+export function pocWorkActivity(idOrRef: string): WorkEvent[] {
+	const item = pocWorkItemById(idOrRef);
+	if (!item) return [];
+	return [
+		{
+			id: `ev-${item.id}-1`,
+			item_id: item.id,
+			kind: 'created',
+			actor_id: item.created_by,
+			at: item.created_at
 		}
 	];
 }

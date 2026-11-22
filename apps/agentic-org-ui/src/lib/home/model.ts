@@ -373,16 +373,7 @@ export function deriveFinancialKpi(
 
 function inboxPrimaryLabel(item: InboxItem): string {
 	if (item.actions.includes('choose') && item.choices?.[0]) return item.choices[0].label;
-	if (item.actions.includes('approve')) {
-		const t = item.title;
-		if (/^Approve publishing Kai/i.test(t)) return "Approve Kai's sync";
-		if (/^Reroute Jules/i.test(t)) return 'Apply Jules reroute';
-		if (/^Allow local test access/i.test(t)) return 'Allow test access';
-		if (/^Require automated checks/i.test(t)) return 'Adopt CI standard';
-		if (/^Approve final design polish/i.test(t)) return 'Approve design polish';
-		if (/^Verify fix/i.test(t)) return 'Approve fix';
-		return 'Approve';
-	}
+	if (item.actions.includes('approve')) return item.approve_label?.trim() || 'Approve';
 	if (item.actions.includes('dismiss')) return 'Dismiss';
 	return item.open?.label ?? 'Open in Inbox';
 }
