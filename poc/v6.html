@@ -5118,6 +5118,7 @@ function pageHome() {
     </section>`;
   };
 
+  const openUrgent = open.filter((i) => i.expires);
   const forecastLine = st === "filled"
     ? (S.aiRebalanced
       ? `AI rebalanced <strong>3 idle specialists</strong> onto the queue — projected wait time dropped from <strong>47% to 15%</strong>.`
