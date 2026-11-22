@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T02:08:00Z'
-updated_date: '2026-11-22T03:45:00Z'
+updated_date: '2026-11-22T14:30:00Z'
 labels:
   - backend
   - ui
@@ -49,3 +49,10 @@ Introduce Tess, a built-in AI Chief of Staff agent provisioned automatically wit
 - [ ] #4 Tess proposed solutions appear as actionable suggestion cards in the left-hand Decision & Approval Queue and Inbox with rationale and structured risk/impact/verification metadata; applying executes only after explicit owner confirmation and logs attributed audit history.
 - [ ] #5 Global command bar (⌘K) shows placeholder "Search, run a command, or ask Tess…" with ✨ Ask opening Ask Tess, and clicking ✨ Ask about this on any active decision card opens Ask Tess pre-scoped to that item while enforcing caller read/private-note/secret boundaries.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Backend Implementation Blueprint (Tess Chief of Staff — parent of 80.1..80.4):
+Execute subtasks in strict order: TASK-80.1 (identity/provisioning/sole orchestrator & org-wide may_hire) -> TASK-80.2 (Executive Brief API: Today/7-Day/Board read-only synthesis) -> TASK-80.3 (Suggestions Queue: new inbox kind 'suggestion' with explicit owner Apply/Dismiss & journal audit) -> TASK-80.4 (Ask Tess global & item-scoped Q&A enforcing caller read/private-note/secret boundaries). Coordinate UI surfaces with ui-dev once backend /api/v1 routes land.
+<!-- SECTION:PLAN:END -->

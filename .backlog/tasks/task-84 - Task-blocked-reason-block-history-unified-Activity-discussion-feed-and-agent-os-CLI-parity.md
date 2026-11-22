@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T14:20:00Z'
-updated_date: '2026-11-22T14:21:00Z'
+updated_date: '2026-11-22T14:30:00Z'
 labels:
   - backend
   - ui
@@ -62,3 +62,20 @@ Tasks can be blocked in two fundamentally different ways that must be modeled an
 - [ ] #4 Documentation, contracts, UX specs, and ADRs are updated to match: doc-77 (two-kind blocking model + blocked_reason invariant), doc-79 (canonical status_changed payload and blocked -> blocked duration rule), doc-84 (preserved block/unblock history), doc-49 (TSK-3, derived dependency blocks vs explicit general/owner blocks, unified feed), doc-28 (agent-os --reason, --ready, and history filters), doc-37, doc-71 (task transition/comment/history routes), doc-3 (FC-043/FC-054 evidence), and schema.sql where applicable, preserving ADR-0031, ADR-0006, and ADR-0014 invariants.
 - [ ] #5 Automated backend, agent-os CLI, and UI/Playwright tests (wide, 320 px, 200% text, keyboard, screen-reader speech) verify derived dependency-block calculation and auto-clear (including cancelled dependency surfacing), required explicit block reason (1..=1000 chars), in-place reason edit, general vs owner-block distinction, coexisting dependency + explicit block rendering, unblock clearing with retained history, unified feed deduplication, and CLI read/transition/history parity.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Backend & CLI Implementation Blueprint (TASK-84):
+1. Wire & Domain (crates/org-proto/src/tasks.rs, crates/org-office/src/tasks/, crates/org-office/src/office/tasks.rs):
+   - Add derived dependency-block projection on TaskView (blocking_dependencies / derived_blocked / has_cancelled_dependency computed from unfinished depends_on rows; auto-clears when all upstream tasks reach done).
+   - Add explicit blocked_reason (required 1..=1000 trimmed chars on status=blocked; line breaks allowed), waiting_on_owner (bool, default false), in-place blocked->blocked reason edit recording previous_blocked_reason in task_events without resetting blocked duration, atomic clear on unblock, and optional transition note/reason on all other transitions.
+   - Extend task list/search (--query) to match blocked_reason and add --ready / dependency-blocked filtering.
+   - Dual-engine persistence in crates/org-office/src/tasks/memory.rs and crates/org-office/src/store/sqlite/tasks.rs + schema/test_schema.py sync.
+2. agent-os CLI & HTTP routes (crates/org-agent-cli/, apps/agent-os/, apps/agentic-org-web/src/api/task_routes.rs):
+   - Expose blocked_reason, resolution, and derived dependency-block state in task list & task inspect; keep K1 launch catalogue <= 4096 bytes.
+   - Expose change in EVENT_FIELDS for task history and add --event-type / --blocks-only filters.
+   - Adopt --reason as primary flag on task transition (keep --blocked-reason and --note aliases; refuse --blocked-reason on non-blocked transitions with actionable hint; add --waiting-on owner).
+3. Docs & UI handoff: update doc-77, doc-79, doc-84, doc-49, doc-28, doc-37, doc-71, doc-3 (FC-043/FC-054); leave AC #3/#5 UI/Playwright rendering for UI stream if backend-only pass.
+4. Verification: cargo test -p org-proto -p org-office tasks -p org-agent-cli -p agentic-org-web; python3 -B -m unittest docs/design/organization-data/test_schema.py.
+<!-- SECTION:PLAN:END -->

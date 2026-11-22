@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-21T00:11:00Z'
+updated_date: '2026-11-22T14:30:00Z'
 labels:
   - backend
   - rust
@@ -36,3 +37,14 @@ Run the macOS iOS-build spike (building an iOS app with xcodebuild and running s
 - [ ] #2 Office confines agent processes under os-sandbox with standard and iOS profiles across supported runtimes without bypassing fail-closed platform adapters.
 - [ ] #3 ASX-11 and FC-190 criteria pass (or documented fallback for iOS simulators is verified).
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Backend Implementation Blueprint (L15 — os-sandbox & Spikes):
+1. Research Spikes: execute macOS Seatbelt iOS/xcodebuild+simulator spike and Linux sandbox spike (Landlock vs mount-namespace root vs bubblewrap); record findings in docs/research/ and update ADR-0015 (decision-15).
+2. Fail-closed Platform Adapters (crates/org-platform/src/confinement/ & crates/org-supervise/):
+   - Add os-sandbox isolation mode with Standard and iOS profiles behind consumer-owned platform traits; every unsupported OS fails closed (AGENTS.md Rule 1).
+   - Integrate with org-office-sessions/src/preset.rs and manager.rs across Claude, Codex, and Agy runtimes without breaking private 0700 homes or workspace access.
+3. Verification: cargo test -p org-platform -p org-supervise -p org-office-sessions; ASX-11 & FC-190 checks; update doc-3.
+<!-- SECTION:PLAN:END -->
