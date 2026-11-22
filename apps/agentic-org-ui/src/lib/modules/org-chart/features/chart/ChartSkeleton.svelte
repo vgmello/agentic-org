@@ -18,7 +18,7 @@
 	<span class="sr-only">{slow ? 'Still loading the org chart' : 'Loading the org chart'}</span>
 	<div aria-hidden="true">
 		{#if slow}<p class="mb-4 text-xs/5 text-fg-muted">Still loading…</p>{/if}
-		<div class="flex items-center gap-x-4 rounded-lg border border-line bg-shade/10 p-4">
+		<div class="exec-well flex items-center gap-x-4 p-4">
 			<span class="size-12 shrink-0 {shape} rounded-full"></span>
 			<span class="min-w-0 flex-1">
 				<span class="block h-4 w-1/3 {shape}"></span>

@@ -86,7 +86,7 @@
 					<ul role="list" class="divide-y divide-line-subtle border-y border-line-subtle">
 						{#each withBudget as agent (agent.memberId)}
 							<li
-								class="grid gap-x-8 gap-y-4 px-4 py-4 min-[640px]:px-6 min-[1024px]:grid-cols-[minmax(10rem,14rem)_1fr_1fr] min-[1024px]:px-8"
+								class="grid gap-x-8 gap-y-4 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/40 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:grid-cols-[minmax(10rem,14rem)_1fr_1fr] min-[1024px]:px-8"
 								data-agent={agent.memberId}
 							>
 								<p class="min-w-0 text-sm/6 font-semibold text-fg [overflow-wrap:anywhere]">

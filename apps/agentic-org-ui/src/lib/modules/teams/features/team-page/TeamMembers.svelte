@@ -57,7 +57,7 @@
 			{#each rows as m (m.id)}
 				{@const presence = rowPresence({ presence: m.presence && { id: m.presence } })}
 				<li
-					class="relative flex flex-wrap items-center gap-x-3 gap-y-3 border-t border-line-subtle py-4"
+					class="relative -mx-2 flex flex-wrap items-center gap-x-3 gap-y-3 rounded-lg border-t border-line-subtle px-2 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none"
 				>
 					<Avatar name={m.name} size="md" />
 					<!-- Beside the avatar while that leaves it 200 px, else below it; the pill wraps below the text. -->
@@ -66,7 +66,7 @@
 						class="flex min-w-0 flex-[1_1_200px] flex-wrap items-center gap-x-3 gap-y-2"
 					>
 						<div class="min-w-0 flex-[1_1_12rem]">
-							<p class="flex flex-wrap items-baseline gap-x-2 text-sm/6">
+							<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/6">
 								<a
 									href={resolve(`/members/${encodeURIComponent(m.id)}` as '/')}
 									class="rounded-sm font-semibold text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
@@ -74,7 +74,10 @@
 										class="sr-only">, {kindWord(m.kind).toLowerCase()}</span
 									></a
 								>
-								{#if m.lead}<span class="text-xs/5 font-medium text-brand-text">Lead</span>{/if}
+								{#if m.lead}<span
+										class="inline-flex items-center rounded-full bg-brand/10 px-2 py-0.5 text-[11px]/4 font-medium text-brand-text ring-1 ring-brand/25 ring-inset"
+										>Lead</span
+									>{/if}
 							</p>
 							<div class={factsWrap}>
 								<ul role="list" class="{factsList} text-xs/5 text-fg-muted">

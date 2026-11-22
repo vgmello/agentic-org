@@ -55,7 +55,7 @@
 	data-testid="office-row"
 	data-office={office.id}
 	data-office-name={office.name}
-	class="{compactRow.gutters} {compactRow.gap} flex flex-wrap items-center justify-end gap-x-4 gap-y-2 hover:bg-tint/[0.025]"
+	class="{compactRow.gutters} {compactRow.gap} flex flex-wrap items-center justify-end gap-x-4 gap-y-2 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none"
 >
 	<button
 		type="button"
@@ -80,7 +80,7 @@
 						? "Can't reach this office"
 						: (why ?? secondaryText(shown) + (here ? " (you're here)" : ''))}{/if}
 			</span>
-			<span data-testid="agent-count" aria-hidden="true">
+			<span data-testid="agent-count" aria-hidden="true" class="tabular-nums">
 				{#if agents !== undefined}{agents} {agents === 1 ? 'agent' : 'agents'}
 				{:else if countError}—
 				{:else}<span

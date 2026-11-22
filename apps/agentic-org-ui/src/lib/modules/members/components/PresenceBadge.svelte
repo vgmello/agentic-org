@@ -11,18 +11,18 @@
 	let { presence, class: className = '' }: { presence: Presence; class?: string } = $props();
 	const tone = $derived(PRESENCE[presence.id].tone);
 	const pill = {
-		amber: 'bg-warning/10 text-warning-text-strong ring-warning/30',
-		indigo: 'bg-brand/10 text-brand-text ring-brand/30',
-		green: 'bg-success/10 text-success-text ring-success/20',
+		amber: 't-amber',
+		indigo: 'presence-pill-accent',
+		green: 't-green',
 		gray: 'bg-quiet/10 text-fg-secondary ring-quiet/20',
-		sky: 'bg-info/10 text-info-text ring-info/20'
+		sky: 'presence-pill-accent'
 	} as const;
 	const dot = {
-		amber: 'fill-warning-text',
-		indigo: 'fill-brand-text',
-		green: 'fill-success',
-		gray: 'fill-fg-muted',
-		sky: 'fill-info-text'
+		amber: 'presence-dot-warn',
+		indigo: 'presence-dot-accent',
+		green: 'presence-dot-ok',
+		gray: 'presence-dot-muted',
+		sky: 'presence-dot-accent'
 	} as const;
 </script>
 
@@ -43,7 +43,7 @@
 				/></svg
 			>
 		{:else if presence.id === 'needs_you'}
-			<svg viewBox="0 0 16 16" class="size-4 fill-warning-text" aria-hidden="true"
+			<svg viewBox="0 0 16 16" class="presence-dot-warn size-4" aria-hidden="true"
 				><path
 					fill-rule="evenodd"
 					d="M15 8A7 7 0 1 1 1 8a7 7 0 0 1 14 0ZM8 4a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 8 4Zm0 8a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
@@ -75,3 +75,23 @@
 		{/if}
 	{/snippet}
 </StatusPill>
+
+<style>
+	:global(.presence-pill-accent) {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+	.presence-dot-warn {
+		fill: var(--tone-warn);
+	}
+	.presence-dot-accent {
+		fill: var(--tone-accent);
+	}
+	.presence-dot-ok {
+		fill: var(--tone-ok);
+	}
+	.presence-dot-muted {
+		fill: var(--fg-muted);
+	}
+</style>

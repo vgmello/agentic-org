@@ -77,13 +77,15 @@
 	description="Who works in which team. Each team can sit under another; a team's lead manages everything under it."
 >
 	{#snippet actions()}
-		<Button href={resolve(HIRE_REQUESTS_URL as '/')} variant="outline" class="max-[639px]:h-11"
-			>Hire requests</Button
+		<Button
+			href={resolve(HIRE_REQUESTS_URL as '/')}
+			variant="outline"
+			class="min-h-9 max-[639px]:h-11">Hire requests</Button
 		>
-		<Button href={resolve(hireUrl() as '/')} variant="outline" class="max-[639px]:h-11"
+		<Button href={resolve(hireUrl() as '/')} variant="outline" class="min-h-9 max-[639px]:h-11"
 			>Hire an agent</Button
 		>
-		<Button class="max-[639px]:h-11" onclick={() => dialogs?.openNew()}>
+		<Button class="min-h-9 max-[639px]:h-11" onclick={() => dialogs?.openNew()}>
 			<MiniIcon name="plus" class="-ml-0.5 size-5" /> New team
 		</Button>
 	{/snippet}
@@ -109,7 +111,7 @@
 	<ul role="list" class="divide-y divide-line-subtle" aria-label="Teams, as a tree">
 		{#each rows as { team, depth, children } (team.id)}
 			<li
-				class="relative flex flex-wrap items-start gap-x-3 px-4 py-4 transition-colors duration-150 min-[640px]:px-6 min-[1024px]:grid min-[1024px]:px-8 {GRID} {justAdded ===
+				class="relative flex flex-wrap items-start gap-x-3 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:grid min-[1024px]:px-8 {GRID} {justAdded ===
 				team.id
 					? 'bg-primary/10'
 					: ''}"
@@ -121,7 +123,7 @@
 							aria-hidden="true"
 							class="flex shrink-0 justify-end self-center"
 							style:width="{Math.min(depth, 6) * 1.5}rem"
-							><span class="h-px w-3 bg-tint/20"></span></span
+							><span class="h-px w-3 bg-line-strong"></span></span
 						>{/if}
 					<p class="flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm/6">
 						<a
@@ -198,7 +200,7 @@
 			>
 				Archived teams <span class="font-normal text-fg-muted">{archived.length}</span>
 			</summary>
-			<ul role="list" class="mt-2 space-y-2">
+			<ul role="list" class="mt-2 flex flex-col gap-2">
 				{#each archived as team (team.id)}
 					<li class="flex flex-wrap items-center gap-x-2 text-sm/6 text-fg-secondary">
 						<a

@@ -69,7 +69,15 @@
 	);
 
 	const pill = (s: RequestStatus) =>
-		s.tone === 'working' ? 'bg-brand/10 text-brand-text ring-brand/30' : tone[s.tone];
+		s.tone === 'working'
+			? 'bg-brand/10 text-brand-text ring-brand/30'
+			: s.tone === 'ok'
+				? 't-green'
+				: s.tone === 'bad'
+					? 't-red'
+					: s.tone === 'owner'
+						? 't-amber'
+						: tone[s.tone];
 
 	/** Where a row's name leads: a hire still in the flow opens there, a hired agent opens its profile. */
 	function linkOf(r: HireRequest): string | undefined {
@@ -157,7 +165,7 @@
 				{@const status = requestStatus(r, r.name)}
 				{@const href = linkOf(r)}
 				<li
-					class="relative flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-4 {gutters}"
+					class="relative flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none {gutters}"
 				>
 					<div class="min-w-0 flex-1 basis-64">
 						<p class="flex flex-wrap items-baseline gap-x-2 text-sm/6">

@@ -243,9 +243,14 @@
 							>
 								{repairOpen ? 'Hide repair instructions' : 'Show local CLI repair instructions'}
 							</Button>
-							<div id={repairId} hidden={!repairOpen} class="mt-3 space-y-2 text-fg-secondary">
+							<div
+								id={repairId}
+								hidden={!repairOpen}
+								class="mt-3 flex flex-col gap-2 text-fg-secondary"
+							>
 								<p>On <OfficeRepairLocation {office} />, run:</p>
-								<pre class="overflow-x-auto rounded-md bg-shade/20 px-3 py-2 text-xs text-fg"><code
+								<pre
+									class="overflow-x-auto rounded-md bg-surface-sunken px-3 py-2 text-xs text-fg ring-1 ring-line ring-inset"><code
 										>{repairCommand}</code
 									></pre>
 								<Button variant="outline" size="sm" onclick={copyRepairCommand}
@@ -265,14 +270,14 @@
 				{/if}
 				{#if details}
 					<dt class="text-fg-muted">Last seen</dt>
-					<dd class="text-fg" data-testid="office-last-seen">
+					<dd class="text-fg tabular-nums" data-testid="office-last-seen">
 						{details.lastSeenAt ? agoText(details.lastSeenAt, Date.now()) : 'Not known'}
 					</dd>
 					<dt class="text-fg-muted">Sync</dt>
-					<dd class="text-fg" data-testid="office-sync">{syncText(details)}</dd>
+					<dd class="text-fg tabular-nums" data-testid="office-sync">{syncText(details)}</dd>
 					{#if details.version}
 						<dt class="text-fg-muted">Version</dt>
-						<dd class="text-fg">Agentic Org {details.version}</dd>
+						<dd class="text-fg tabular-nums">Agentic Org {details.version}</dd>
 					{/if}
 					<dt class="text-fg-muted">Follows</dt>
 					<dd class="min-w-0 text-fg [overflow-wrap:anywhere]">

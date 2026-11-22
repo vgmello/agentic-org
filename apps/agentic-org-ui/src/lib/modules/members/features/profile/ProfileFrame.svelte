@@ -358,7 +358,7 @@
 			{@const manage = p.viewer.isOwnerOrAdmin && active && !!record}
 			{@const tabs = tabsFor(p)}
 			<header
-				class="border-b border-line-subtle bg-shade/10 px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8"
+				class="profile-masthead border-b border-line px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8"
 			>
 				<a
 					href={resolve('/teams/members')}
@@ -576,7 +576,7 @@
 					onCloseAutoFocus={restoreAfterChange}
 				>
 					{#snippet body()}
-						<ul role="list" class="list-disc space-y-1 pl-5">
+						<ul role="list" class="flex list-disc flex-col gap-1 pl-5">
 							{#each shown.lines as line, i (i)}<li>
 									{line}
 								</li>{/each}
@@ -615,3 +615,9 @@
 		{/snippet}
 	</Loaded>
 {/if}
+
+<style>
+	.profile-masthead {
+		background: var(--exec-well);
+	}
+</style>

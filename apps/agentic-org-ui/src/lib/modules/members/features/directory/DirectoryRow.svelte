@@ -41,7 +41,7 @@
 </script>
 
 <li
-	class="relative grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-4 @max-[20rem]:grid-cols-1 gap-y-1 px-4 py-4 transition-colors duration-150 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8 @min-[56rem]:col-span-full @min-[56rem]:grid-cols-subgrid @min-[56rem]:items-center {highlight
+	class="relative grid grid-cols-[2.25rem_minmax(0,1fr)] gap-x-4 gap-y-1 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8 @max-[20rem]:grid-cols-1 @min-[56rem]:col-span-full @min-[56rem]:grid-cols-subgrid @min-[56rem]:items-center {highlight
 		? 'bg-primary/10'
 		: ''}"
 	data-member={member.id}
@@ -58,17 +58,23 @@
 				class="rounded-sm font-semibold text-fg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus [overflow-wrap:anywhere]"
 				><span class="absolute inset-0" aria-hidden="true"></span>{member.name}</a
 			>
+			<span
+				aria-hidden="true"
+				class={[
+					'inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px]/4 font-medium ring-1 ring-inset',
+					member.kind === 'agent'
+						? 'bg-brand/10 text-brand-text ring-brand/25'
+						: 'bg-surface-overlay text-fg-secondary ring-line'
+				]}>{kindWord(member.kind)}</span
+			>
 			<!-- The member profile's Owner badge (ProfileFrame), so the owner reads the same everywhere. -->
 			{#if owner}<StatusPill label="Owner" class="bg-brand/10 text-brand-text ring-brand/30" />{/if}
 		</p>
 		<p class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-fg-muted">
-			<span aria-hidden="true">{kindWord(member.kind)}</span>
-			{#if member.role}<span aria-hidden="true">·</span><span class="[overflow-wrap:anywhere]"
-					>{member.role}</span
+			{#if member.role}<span class="[overflow-wrap:anywhere]">{member.role}</span><span
+					aria-hidden="true">·</span
 				>{/if}
-			<span aria-hidden="true">·</span><span class="font-mono [overflow-wrap:anywhere]"
-				>@{member.handle}</span
-			>
+			<span class="font-mono [overflow-wrap:anywhere]">@{member.handle}</span>
 			{#if canSignIn}<span aria-hidden="true">·</span><span class="text-fg-secondary"
 					>Can sign in</span
 				>{/if}

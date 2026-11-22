@@ -18,7 +18,7 @@
 				<span class="font-semibold text-fg">{row.actor}</span>
 				{row.text}
 			</p>
-			<p class="text-xs/5 text-fg-muted">
+			<p class="text-xs/5 text-fg-muted tabular-nums">
 				<span class="sr-only">{row.kind}, </span><span aria-hidden="true">{row.kind} · </span><time
 					datetime={row.at}>{whenText(row.at)}</time
 				>

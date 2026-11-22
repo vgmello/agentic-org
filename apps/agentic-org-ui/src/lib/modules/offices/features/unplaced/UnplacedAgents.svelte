@@ -28,7 +28,7 @@
 	} = $props();
 </script>
 
-<section aria-labelledby="unplaced" class="space-y-3" data-testid="unplaced-note">
+<section aria-labelledby="unplaced" class="flex flex-col gap-3" data-testid="unplaced-note">
 	<h3
 		id="unplaced"
 		tabindex="-1"

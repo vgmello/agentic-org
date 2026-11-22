@@ -157,7 +157,7 @@
 
 						<div class="mt-3 grid gap-4 min-[960px]:grid-cols-2">
 							{#if group.current}
-								<div>
+								<div class="rounded-lg bg-surface-raised/60 p-3 ring-1 ring-line-subtle ring-inset">
 									{@render versionLine(group.current, 'In effect')}
 									<div class="mt-2">{@render rateList(group.current)}</div>
 								</div>
@@ -168,7 +168,10 @@
 								</p>
 							{/if}
 							{#each group.scheduled as price (price.id)}
-								<div data-testid="scheduled-rate">
+								<div
+									data-testid="scheduled-rate"
+									class="rounded-lg bg-surface-raised/40 p-3 ring-1 ring-line-subtle ring-inset"
+								>
 									{@render versionLine(price, 'Scheduled')}
 									<div class="mt-2">{@render rateList(price)}</div>
 								</div>

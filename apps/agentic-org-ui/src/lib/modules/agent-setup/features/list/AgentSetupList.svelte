@@ -96,7 +96,7 @@
 				{@const h = health(agent)}
 				{@const reported = reportedText(agent.placement, now)}
 				<li
-					class="relative grid grid-cols-1 gap-y-2 px-4 py-4 transition-colors duration-150 hover:bg-tint/[0.02] motion-reduce:transition-none min-[640px]:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(10rem,5fr)] min-[640px]:gap-x-4 @4xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(0,4fr)_minmax(10rem,5fr)] min-[640px]:px-6 min-[1024px]:px-8"
+					class="relative grid grid-cols-1 gap-y-2 px-4 py-4 transition-colors duration-150 hover:bg-surface-raised/60 motion-reduce:transition-none min-[640px]:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(10rem,5fr)] min-[640px]:gap-x-4 min-[640px]:px-6 min-[1024px]:px-8 @4xl:grid-cols-[minmax(0,5fr)_minmax(0,6fr)_minmax(0,4fr)_minmax(10rem,5fr)]"
 					data-agent={agent.memberId}
 				>
 					<div class="{cell} min-[640px]:row-span-2 @4xl:row-span-1">

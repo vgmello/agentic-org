@@ -20,8 +20,8 @@
 	}: Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & { health: Health } = $props();
 
 	const TONE: Record<Health['kind'], string> = {
-		ready: tone.ok,
-		needs_setup: tone.owner,
+		ready: 't-green',
+		needs_setup: 't-amber',
 		paused: tone.neutral,
 		unknown: tone.neutral
 	};

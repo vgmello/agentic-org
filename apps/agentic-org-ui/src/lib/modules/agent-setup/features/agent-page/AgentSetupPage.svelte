@@ -354,13 +354,13 @@
 						{/if}
 					</p>
 					{#if hh.kind === 'needs_setup'}
-						<ul role="list" class="mt-3 max-w-3xl space-y-3">
+						<ul role="list" class="mt-3 flex max-w-3xl flex-col gap-3">
 							{#each hh.reasons as reason (reason.code)}
 								<li class="[overflow-wrap:anywhere]">
 									<p class="font-medium text-fg">{reason.text}</p>
 									{#if reason.fix}<p class="text-fg-muted">
 											{#each codeParts(reason.fix) as part, i (i)}{#if part.code}<code
-														class="rounded-sm bg-surface-raised px-1 font-mono text-fg-body"
+														class="rounded-sm bg-surface-sunken px-1.5 py-0.5 font-mono text-fg-body ring-1 ring-line-subtle ring-inset"
 														>{part.text}</code
 													>{:else}{part.text}{/if}{/each}
 										</p>{/if}
@@ -443,7 +443,7 @@
 
 			{#snippet connections()}
 				{#if d.execution && d.execution.connections.length}
-					<ol role="list" class="space-y-2">
+					<ol role="list" class="flex flex-col gap-2">
 						{#each d.execution.connections as c, i (c.id)}
 							<li class="[overflow-wrap:anywhere]">
 								<span class="text-fg-secondary">{i + 1}. {c.name}</span>
@@ -592,7 +592,7 @@
 				onCloseAutoFocus={restore}
 			>
 				{#snippet body()}
-					<ul role="list" class="list-disc space-y-1 pl-5">
+					<ul role="list" class="flex list-disc flex-col gap-1 pl-5">
 						{#each shown.lines as line, i (i)}<li>{line}</li>{/each}
 					</ul>
 				{/snippet}

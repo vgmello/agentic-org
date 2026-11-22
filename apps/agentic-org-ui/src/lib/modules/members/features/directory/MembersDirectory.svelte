@@ -189,28 +189,30 @@
 	emptyDescription="Everyone in {organizationName} is listed here, people and agents. Its owner and the HR lead join when it's created; if no one shows, HQ hasn't sent the members yet."
 >
 	{#snippet emptyAction()}{@render addPerson(false)}{/snippet}
-	<fieldset class="flex flex-wrap items-center gap-2 px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
-		<legend class="sr-only">Show members</legend>
-		{#each DIRECTORY_FILTERS as f (f.id)}
-			<label
-				class="inline-flex min-h-9 cursor-pointer items-center gap-x-1.5 rounded-md px-3 text-sm/6 font-semibold ring-1 ring-inset has-checked:bg-surface-overlay has-checked:text-fg has-checked:ring-line-strong has-checked:underline has-checked:underline-offset-4 has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-focus max-[639px]:min-h-11 {filter ===
-				f.id
-					? ''
-					: 'text-fg-muted ring-line hover:text-fg'}"
-			>
-				<input
-					type="radio"
-					name="members-filter"
-					value={f.id}
-					bind:group={filter}
-					class="sr-only"
-				/>
-				{f.label}
-				<span class="font-normal text-fg-muted tabular-nums">{view.counts[f.id]}</span>
-			</label>
-		{/each}
-		<p class="sr-only" role="status">{shownText(view.current.length, filter)}</p>
-	</fieldset>
+	<div class="px-4 py-4 min-[640px]:px-6 min-[1024px]:px-8">
+		<fieldset class="exec-well inline-flex flex-wrap items-center gap-1 p-1">
+			<legend class="sr-only">Show members</legend>
+			{#each DIRECTORY_FILTERS as f (f.id)}
+				<label
+					class={[
+						'dir-filter inline-flex min-h-9 cursor-pointer items-center gap-x-1.5 rounded-lg px-3 text-sm/6 font-semibold transition-colors has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-focus max-[639px]:min-h-11',
+						filter === f.id ? 'is-on' : 'text-fg-muted hover:text-fg'
+					]}
+				>
+					<input
+						type="radio"
+						name="members-filter"
+						value={f.id}
+						bind:group={filter}
+						class="sr-only"
+					/>
+					{f.label}
+					<span class="font-normal text-fg-muted tabular-nums">{view.counts[f.id]}</span>
+				</label>
+			{/each}
+			<p class="sr-only" role="status">{shownText(view.current.length, filter)}</p>
+		</fieldset>
+	</div>
 
 	{#if view.current.length === 0}
 		<div
@@ -305,3 +307,11 @@
 		ondone={confirmed}
 	/>
 {/if}
+
+<style>
+	.dir-filter.is-on {
+		background: var(--exec-accent-soft);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--exec-accent-ring);
+	}
+</style>

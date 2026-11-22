@@ -20,20 +20,19 @@
 		organizationId={data.connection.organization.id}
 	/>{/key}
 
-<div class="mx-auto flex w-full max-w-[960px] flex-col gap-6 px-6 pt-2 pb-10 sm:px-8">
-	<!-- Appearance: 4 Themes -->
-	<section class="exec-card flex flex-col gap-4 p-5 sm:p-6" aria-labelledby="settings-theme-h">
-		<div>
-			<h2 id="settings-theme-h" class="text-base font-semibold" style="color: var(--exec-ink);">
-				Appearance &amp; Theme
-			</h2>
-			<p class="mt-0.5 text-sm" style="color: var(--exec-muted);">
-				Choose between Frosted Ocean, Classic Slate, Report (Modern 2D Day), or Report Night.
-			</p>
-		</div>
+<section
+	class="border-t border-line-subtle px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8"
+	aria-labelledby="settings-theme-h"
+>
+	<div class="max-w-4xl">
+		<h3 id="settings-theme-h" class="text-base/7 font-semibold text-fg">Appearance &amp; Theme</h3>
+		<p class="mt-1 max-w-3xl text-sm/6 text-fg-muted">
+			Choose between Frosted Ocean, Classic Slate, Report (Modern 2D Day), or Report Night. Saved on
+			this browser.
+		</p>
 
 		<div
-			class="grid grid-cols-1 gap-3 sm:grid-cols-2"
+			class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
 			role="radiogroup"
 			aria-labelledby="settings-theme-h"
 		>
@@ -46,7 +45,7 @@
 					data-testid="theme-option-{option.id}"
 					onclick={() => selectTheme(option.id)}
 					class={[
-						'theme-card flex flex-col items-start gap-2.5 rounded-xl p-4 text-left',
+						'theme-card flex min-h-11 flex-col items-start gap-2.5 rounded-xl p-4 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
 						selected && 'is-selected'
 					]}
 				>
@@ -58,25 +57,22 @@
 							<span class="swatch-bar"></span>
 						</div>
 						{#if selected}
-							<span
-								class="flex size-5 items-center justify-center rounded-full"
-								style="background: var(--exec-accent); color: var(--exec-on-accent);"
-							>
+							<span class="theme-check flex size-5 items-center justify-center rounded-full">
 								<Check class="size-3.5" aria-hidden="true" />
 							</span>
 						{/if}
 					</div>
 					<div>
-						<div class="text-sm font-semibold" style="color: var(--exec-ink);">{option.label}</div>
-						<p class="mt-0.5 text-xs leading-relaxed" style="color: var(--exec-muted);">
+						<div class="text-sm/6 font-semibold text-fg">{option.label}</div>
+						<p class="mt-0.5 text-xs/5 text-fg-muted">
 							{option.description}
 						</p>
 					</div>
 				</button>
 			{/each}
 		</div>
-	</section>
-</div>
+	</div>
+</section>
 
 <style>
 	.theme-card {
@@ -92,7 +88,11 @@
 	}
 	.theme-card.is-selected {
 		background: var(--exec-accent-soft);
-		box-shadow: inset 0 0 0 1.5px var(--exec-accent);
+		box-shadow: inset 0 0 0 1.5px var(--tone-accent);
+	}
+	.theme-check {
+		background: var(--tone-accent);
+		color: var(--exec-on-accent);
 	}
 	.theme-swatch {
 		position: relative;

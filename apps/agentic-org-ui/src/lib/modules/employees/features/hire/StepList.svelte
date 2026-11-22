@@ -25,7 +25,7 @@
 	<ol role="list" class="hidden flex-wrap items-center gap-x-2 gap-y-1 min-[640px]:flex">
 		{#each STEPS as label, i (label)}
 			<li class="flex items-center gap-x-2 text-sm/6">
-				{#if i > 0}<span aria-hidden="true" class="h-px w-6 bg-surface-overlay"></span>{/if}
+				{#if i > 0}<span aria-hidden="true" class="h-px w-6 bg-line-strong"></span>{/if}
 				<span
 					aria-current={i === current ? 'step' : undefined}
 					class={[
@@ -40,11 +40,11 @@
 					<span
 						aria-hidden="true"
 						class={[
-							'flex size-6 shrink-0 items-center justify-center rounded-full text-xs/5 tabular-nums',
+							'flex size-6 shrink-0 items-center justify-center rounded-full text-xs/5 font-semibold tabular-nums',
 							i === current
 								? 'bg-primary text-on-emphasis'
 								: i < current
-									? 'bg-surface-overlay text-fg-secondary'
+									? 't-green'
 									: 'outline-1 -outline-offset-1 outline-line-strong'
 						]}>{i + 1}</span
 					>
