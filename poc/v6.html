@@ -671,7 +671,7 @@ select:focus-visible, select.field:focus-visible { outline: 2px solid var(--indi
 select.field { width: auto; padding-right: 28px; height: 2.25rem; padding-top: 0; padding-bottom: 0; }
 select.field option { background: var(--gray-800); }
 textarea::placeholder, input.field::placeholder { color: var(--gray-400); }
-.progress { height: 6px; border-radius: 99px; background: var(--line2); overflow: hidden; }
+.progress { height: 6px; border-radius: 99px; background: rgba(186, 222, 255, .14); overflow: hidden; }
 .progress > span { display: block; height: 100%; background: var(--indigo-400); border-radius: 99px; }
 .progress.done > span { background: var(--gray-500); }
 .prog-line { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--gray-400); }
@@ -1458,7 +1458,7 @@ table.tbl { width: 100%; border-collapse: collapse; text-align: left; }
 .h4-proj-prog { display: flex; flex-direction: column; gap: 6px; }
 .h4-proj-prog-hd { display: flex; align-items: baseline; justify-content: space-between; font-size: 0.75rem; line-height: 1rem; color: var(--h4-muted); font-variant-numeric: tabular-nums; }
 .h4-proj-prog-hd strong { color: var(--h4-ink); font-weight: 600; }
-.h4-bar { height: 6px; border-radius: 999px; background: rgba(148, 163, 184, .14); overflow: hidden; }
+.h4-bar { height: 6px; border-radius: 999px; background: rgba(186, 222, 255, .14); overflow: hidden; }
 .h4-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--indigo-400); }
 .h4-bar.ok > span { background: #34D399; }
 .h4-bar.warn > span { background: #FBBF24; }
@@ -1668,14 +1668,14 @@ a.hb-pillar-hero:hover { background: rgba(186, 222, 255, .05); }
 .hb-pillar-bar {
   display: flex; align-items: stretch; gap: 2px;
   height: 6px; border-radius: 999px; overflow: hidden;
-  background: rgba(186, 222, 255, .12);
+  background: rgba(186, 222, 255, .14);
 }
 .hb-pillar-bar > span { display: block; height: 100%; border-radius: 999px; }
 .hb-pillar-bar .seg-spend { background: linear-gradient(90deg, #38BDF8 0%, #FBBF24 100%); }
 .hb-pillar-bar .seg-auto { background: linear-gradient(90deg, #38BDF8 0%, #7DD3FC 100%); }
 .hb-pillar-bar .seg-human { background: rgba(251, 191, 36, .75); }
 .hb-pillar-bar .seg-pass { background: linear-gradient(90deg, #10B981 0%, #34D399 100%); }
-.hb-pillar-bar .seg-rework { background: rgba(148, 163, 184, .32); }
+.hb-pillar-bar .seg-rework { display: none; }
 
 .hb-pillar-sub {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
@@ -2308,7 +2308,7 @@ a.hb-card-lead:hover { color: var(--hb-ink); }
 .hb-time-bar {
   display: flex; align-items: stretch; gap: 3px; height: 10px;
   border-radius: 999px; overflow: hidden;
-  background: rgba(8, 15, 28, .55);
+  background: rgba(186, 222, 255, .14);
 }
 .hb-tseg {
   display: block; height: 100%; border-radius: 999px;
@@ -2608,7 +2608,10 @@ html[data-theme="classic"] .hb-spot-foot .btn.outline,
 html[data-theme="classic"] .hb-unblock-btn { background: #1e2939; color: #d1d5dc; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
 html[data-theme="classic"] .hb-spot-foot .btn.outline:hover,
 html[data-theme="classic"] .hb-unblock-btn:hover { background: #615fff; color: #ffffff; box-shadow: inset 0 0 0 1px #7c86ff; }
-html[data-theme="classic"] .hb-time-bar { background: #1a2433; box-shadow: none; }
+html[data-theme="classic"] .hb-pillar-bar,
+html[data-theme="classic"] .h4-bar,
+html[data-theme="classic"] .progress,
+html[data-theme="classic"] .hb-time-bar { background: rgba(148, 163, 184, .20); box-shadow: none; }
 html[data-theme="classic"] .hb-tseg.agents,
 html[data-theme="classic"] .hb-tleg.agents .hb-tleg-dot { background: #615fff; }
 html[data-theme="classic"] .hb-tseg.ci,
@@ -2966,14 +2969,14 @@ html[data-theme^="report"] .hb-sub-meta.bad,
 html[data-theme^="report"] .hb-sub-bad,
 html[data-theme^="report"] .hb-pace.bad { color: #B83232; }
 html[data-theme^="report"] .hb-pillar-bar {
-  height: 6px; border-radius: 1px; gap: 2px; background: #EEF1F6;
+  height: 6px; border-radius: 1px; gap: 2px; background: #E5EAF1;
 }
 html[data-theme^="report"] .hb-pillar-bar > span { border-radius: 1px; }
 html[data-theme^="report"] .hb-pillar-bar .seg-spend { background: linear-gradient(90deg, #1D4E89 0%, #3B82C4 52%, #EAB308 100%); }
 html[data-theme^="report"] .hb-pillar-bar .seg-auto { background: #1D4E89; }
 html[data-theme^="report"] .hb-pillar-bar .seg-human { background: #EAB308; }
 html[data-theme^="report"] .hb-pillar-bar .seg-pass { background: #16A34A; }
-html[data-theme^="report"] .hb-pillar-bar .seg-rework { background: #D5DCE6; }
+html[data-theme^="report"] .hb-pillar-bar .seg-rework { display: none; }
 html[data-theme^="report"] .hb-pillar-sub { border-top: 1px solid #F1F4F8; padding-top: 10px; }
 html[data-theme^="report"] .hb-sub-lbl { font-size: 0.68rem; font-weight: 550; color: #64748B; text-transform: uppercase; letter-spacing: .05em; }
 
@@ -3216,7 +3219,9 @@ html[data-theme^="report"] .hb-rel-tag {
   border-radius: 3px; background: #F4F6F9; color: #475569; box-shadow: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem;
 }
-html[data-theme^="report"] .h4-bar { height: 6px; border-radius: 1px; background: #EEF1F6; }
+html[data-theme^="report"] .h4-bar,
+html[data-theme^="report"] .progress { height: 6px; border-radius: 1px; background: #E5EAF1; }
+html[data-theme^="report"] .progress > span { border-radius: 1px; }
 html[data-theme^="report"] .h4-bar > span { border-radius: 1px; background: #1D4E89; }
 html[data-theme^="report"] .h4-bar.ok > span { background: #16A34A; }
 html[data-theme^="report"] .h4-bar.warn > span { background: #EAB308; }
@@ -3263,7 +3268,7 @@ html[data-theme^="report"] .hb-time-title {
 }
 html[data-theme^="report"] .hb-time-unit { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; color: #526074; }
 html[data-theme^="report"] .hb-time-bar {
-  height: 14px; border-radius: 1px; gap: 2px; background: #EEF1F6; box-shadow: none;
+  height: 14px; border-radius: 1px; gap: 2px; background: #E5EAF1; box-shadow: none;
 }
 html[data-theme^="report"] .hb-tseg { border-radius: 1px; box-shadow: none; }
 html[data-theme^="report"] .hb-tseg.agents { background: #1D4E89; }
@@ -3586,12 +3591,13 @@ html[data-theme="report-dark"] .hb-pace.warn { color: #FBBF24; }
 html[data-theme="report-dark"] .hb-sub-meta.bad,
 html[data-theme="report-dark"] .hb-sub-bad,
 html[data-theme="report-dark"] .hb-pace.bad { color: #FDA4AF; }
-html[data-theme="report-dark"] .hb-pillar-bar { background: #1a2433; }
+html[data-theme="report-dark"] .hb-pillar-bar,
+html[data-theme="report-dark"] .progress { background: rgba(148, 163, 184, .20); }
 html[data-theme="report-dark"] .hb-pillar-bar .seg-spend { background: #615fff; }
 html[data-theme="report-dark"] .hb-pillar-bar .seg-auto { background: #615fff; }
 html[data-theme="report-dark"] .hb-pillar-bar .seg-human { background: #FBBF24; }
 html[data-theme="report-dark"] .hb-pillar-bar .seg-pass { background: linear-gradient(90deg, #10B981 0%, #34D399 100%); }
-html[data-theme="report-dark"] .hb-pillar-bar .seg-rework { background: rgba(148, 163, 184, .32); }
+html[data-theme="report-dark"] .hb-pillar-bar .seg-rework { display: none; }
 html[data-theme="report-dark"] .hb-pillar-sub { border-top-color: rgba(255, 255, 255, .08); }
 html[data-theme="report-dark"] .hb-sub-lbl { color: #99a1af; }
 
@@ -3735,7 +3741,7 @@ html[data-theme="report-dark"] .hb-card-name { color: #ffffff; }
 html[data-theme="report-dark"] .hb-rel-tag,
 html[data-theme="report-dark"] .hb-card-ver { background: #1a2433; color: #d1d5dc; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
 html[data-theme="report-dark"] .h4-bar,
-html[data-theme="report-dark"] .hb-card-rail { background: #1a2433; }
+html[data-theme="report-dark"] .hb-card-rail { background: rgba(148, 163, 184, .20); }
 html[data-theme="report-dark"] .hb-blocker {
   background: rgba(251, 113, 133, .07); box-shadow: inset 3px 0 0 #FB7185; color: #E2E8F0;
 }
@@ -3773,7 +3779,7 @@ html[data-theme="report-dark"] .hb-hor-date strong { color: #ffffff; }
 
 /* Report Night Capacity & Bottleneck Analysis (Exact Classic Colors) */
 html[data-theme="report-dark"] .hb-time-unit { color: #99a1af; }
-html[data-theme="report-dark"] .hb-time-bar { background: #1a2433; }
+html[data-theme="report-dark"] .hb-time-bar { background: rgba(148, 163, 184, .20); }
 html[data-theme="report-dark"] .hb-tseg.agents,
 html[data-theme="report-dark"] .hb-tleg.agents .hb-tleg-dot { background: #615fff; }
 html[data-theme="report-dark"] .hb-tseg.ci,
