@@ -92,8 +92,10 @@ fn flag_takes_value(forwarded: &[String], flag_name: &str) -> bool {
     ) {
         return true;
     }
-    let (Some(resource), Some(verb)) = (forwarded.first(), forwarded.get(1)) else {
-        return false;
+    let (resource, verb) = match forwarded {
+        [a, b, v, ..] if a == "task" && b == "note" => ("task-note", v.as_str()),
+        [r, v, ..] => (r.as_str(), v.as_str()),
+        _ => return false,
     };
     let table = org_agent_cli::table::table();
     let Some(cmd) = table.find(resource, verb) else {

@@ -98,6 +98,7 @@ pub mod inbox;
 pub mod location;
 pub mod msg;
 pub mod org;
+pub mod private_notes;
 pub mod projects;
 pub mod retired;
 pub mod sessions;

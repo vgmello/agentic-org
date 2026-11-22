@@ -3,7 +3,7 @@ id: doc-74
 title: Organization Data — Schema Coverage and Integrity Review
 type: specification
 created_date: '2026-11-21T01:30:00Z'
-updated_date: '2026-11-22T01:24:00Z'
+updated_date: '2026-11-22T03:11:00Z'
 tags:
   - organization-data
   - contract
@@ -53,7 +53,7 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code loads this table with these columns and actively reads/writes it through its domain port), **DDL loaded only** (created verbatim from `schema.sql` by `crates/org-office/src/store/sqlite/schema.rs`, with no domain projector or read/write port yet), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (not loaded in the runtime schema and no code).
 
-As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all **79 shared tables and 12 views** plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **66 shared tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), while the isolated databases (`private-notes-schema.sql` 4 tables, `messaging-schema.sql` 8 domain + 5 mirror tables, `budgets-schema.sql` 6 domain + 4 mirror tables) remain **Absent** from runtime code until their increments (`B6`, `L3`, `L8`) open their dedicated protected databases.
+As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all **79 shared tables and 12 views** plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **66 shared tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), while the isolated private task notes database (`private-notes-schema.sql` 4 tables: `private_note_authors`, `private_note_tasks`, `private_task_notes`, `private_note_command_receipts`) is **Implemented** in `crates/org-office/src/store/sqlite/private_notes.rs` at `runtime/<office-id>/private/task-notes.db` (`TASK-50` / `L8`); the remaining isolated databases (`messaging-schema.sql` 8 domain + 5 mirror tables, `budgets-schema.sql` 6 domain + 4 mirror tables) remain **Absent** from runtime code until their increments open their dedicated protected databases.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |

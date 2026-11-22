@@ -39,7 +39,7 @@ pub fn run(arguments: Vec<String>) -> Result<(), String> {
         [command, rest @ ..] if command == "admin" => admin::run(rest),
         [command, rest @ ..] if command == "office" => office::run(rest),
         [command, rest @ ..] if command == "project" => project::run(rest),
-        [command, ..] if matches!(command.as_str(), "task" | "checklist") => {
+        [command, ..] if matches!(command.as_str(), "task" | "checklist" | "task-note") => {
             sign_in::run_office_command(&arguments)
         }
         [command, rest @ ..] if command == "service" => service::run(rest),

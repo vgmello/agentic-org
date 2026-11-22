@@ -83,6 +83,9 @@ fn parse_line_args(raw: &str) -> Result<Vec<String>, String> {
         parts.remove(0);
         parts.insert(0, "list".into());
         parts.insert(0, "directory".into());
+    } else if parts.len() >= 2 && parts[0] == "task" && parts[1] == "note" {
+        parts.remove(0);
+        parts[0] = "task-note".into();
     }
     let mut args = parts;
     if let Some(input) = obj.get("input").filter(|v| !v.is_null()) {
@@ -226,5 +229,11 @@ mod tests {
         let l2: Value = serde_json::from_str(lines[2]).unwrap();
         assert_eq!(l2["ok"], true);
         assert_eq!(l2["data"]["status"], "building");
+
+        let parsed =
+            parse_line_args(r#"{"command":"task note add","input":{"task":"T-A1","text":"plan"}}"#)
+                .unwrap();
+        assert_eq!(parsed[0], "task-note");
+        assert_eq!(parsed[1], "add");
     }
 }

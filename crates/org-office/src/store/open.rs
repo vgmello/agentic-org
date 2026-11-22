@@ -48,17 +48,38 @@ pub use operations::{
     TopTeamId, UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
 };
 
-use super::sqlite::SqliteEngine;
+use super::sqlite::{private_notes::SqlitePrivateNotesStore, SqliteEngine};
 use crate::{
+    error::OfficeError,
     messaging::projector::MessagingFiles,
     office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
     organization::projector::OrganizationFiles,
+    private_notes::PrivateNotesStore,
     projects::projector::ProjectFiles,
     tasks::{
         ports::{TasksEngine, TasksRead},
         projector::TaskFiles,
     },
 };
+
+/// Opens the isolated per-author private task notes store (`TASK-50`, `L8`, `ADR-0016`)
+/// at `<runtime-root>/<office-id>/private/task-notes.db` for SQLite or in-memory for tests.
+pub(crate) fn open_private_notes(
+    engine: EngineChoice,
+    runtime_root: &Path,
+    office_id: &str,
+) -> Result<Arc<dyn PrivateNotesStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqlitePrivateNotesStore::open(
+            runtime_root,
+            office_id,
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(
+            crate::private_notes::memory::MemoryPrivateNotesStore::new(),
+        )),
+    }
+}
 
 /// The file of an office's projection, under `<runtime-root>/<office-id>/`.
 const PROJECTION_FILE: &str = "office.db";

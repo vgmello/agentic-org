@@ -44,6 +44,12 @@ pub fn execute_with_office(program: &str, args: &[String], office: &mut dyn Offi
         rewritten.extend_from_slice(&args[1..]);
         normalized = rewritten;
         &normalized
+    } else if matches!(args, [a, b, ..] if a == "task" && b == "note") {
+        let mut rewritten = Vec::with_capacity(args.len().saturating_sub(1));
+        rewritten.push("task-note".to_owned());
+        rewritten.extend_from_slice(&args[2..]);
+        normalized = rewritten;
+        &normalized
     } else {
         args
     };

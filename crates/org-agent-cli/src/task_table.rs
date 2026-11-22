@@ -456,6 +456,52 @@ const CHECKLIST_MOVE_INPUT: &[Field] = &[
     Field::required("position", Type::Integer, "Zero-based target position"),
 ];
 
+const NOTE_OUTPUT_FIELDS: &[Field] = &[
+    Field::required("id", Type::String, "Private note UUIDv7"),
+    Field::required("task_id", Type::String, "Task UUIDv7"),
+    Field::required("author_id", Type::String, "Author employee UUIDv7"),
+    Field::required("revision", Type::Integer, "Note revision"),
+    Field::required("body_markdown", Type::String, "Private Markdown body"),
+    Field::required("created_at", Type::String, "Creation timestamp"),
+    Field::required("updated_at", Type::String, "Update timestamp"),
+    Field::required("editable", Type::Boolean, "True if caller is author"),
+];
+
+const NOTE_OUTPUT: Type = Type::Object(NOTE_OUTPUT_FIELDS);
+
+const NOTE_REMOVED_FIELDS: &[Field] = &[
+    Field::required("note_id", Type::String, "Deleted private note UUIDv7"),
+    Field::required("task_id", Type::String, "Task UUIDv7"),
+    Field::required("revision", Type::Integer, "Tombstone revision"),
+    Field::required("deleted_at", Type::String, "Deletion timestamp"),
+];
+
+const NOTE_PUBLISH_FIELDS: &[Field] = &[
+    Field::required("note", NOTE_OUTPUT, "Private note (unchanged)"),
+    Field::required("comment", COMMENT_TYPE, "Published shared comment"),
+    Field::required("task_id", Type::String, "Task UUIDv7"),
+    Field::required("key", Type::String, "Task key"),
+];
+
+const NOTE_ADD_INPUT: &[Field] = &[
+    Field::required("task", Type::String, "Task UUIDv7 or T-<CODE><N> key"),
+    Field::required("text", Type::String, "Private note Markdown text"),
+];
+
+const NOTE_LIST_INPUT: &[Field] = &[
+    Field::required("task", Type::String, "Task UUIDv7 or T-<CODE><N> key"),
+    Field::optional("author_id", Type::String, "Filter by author ID (people)"),
+];
+
+const NOTE_ID_INPUT: &[Field] = &[Field::required("id", Type::String, "Private note UUIDv7")];
+
+const NOTE_UPDATE_INPUT: &[Field] = &[
+    Field::required("id", Type::String, "Private note UUIDv7"),
+    Field::required("text", Type::String, "Updated private note text"),
+];
+
+const NOTE_EXAMPLE_JSON: &str = r#"{"id":"0193a5c0-0000-7000-8000-000000000400","task_id":"0193a5c0-0000-7000-8000-000000000100","author_id":"0193a5c0-0000-7000-8000-000000000001","revision":1,"body_markdown":"Check race condition","created_at":"2026-11-22T00:00:00.000Z","updated_at":"2026-11-22T00:00:00.000Z","editable":true}"#;
+
 const TASK_EXAMPLE_JSON: &str = r#"{"id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1","type":"task","title":"Implement auth","status":"todo","priority":"high","team_id":"0193a5c0-0000-7000-8000-000000000010","rank_order":10,"labels":["backend","security"],"reference_files":["docs/auth.md"],"modified_files":["src/auth.rs"],"depends_on":[],"dependents":[],"revision":1,"checklist_total":0,"checklist_done":0,"comment_count":0,"watcher_count":0}"#;
 
 const CHECKLIST_EXAMPLE_JSON: &str = r#"{"task_id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1","revision":2,"checklist":[{"id":"0193a5c0-0000-7000-8000-000000000200","position":0,"text":"Add tests","required":true,"done":false,"revision":1}]}"#;
@@ -786,6 +832,108 @@ pub const TASK_COMMANDS: &[Command] = &[
         example: Example {
             input: r#"{"task":"T-A1","step_id":"0193a5c0-0000-7000-8000-000000000200","position":0}"#,
             output: CHECKLIST_EXAMPLE_JSON,
+        },
+    },
+    Command {
+        resource: "task-note",
+        verb: "add",
+        summary: "Add private note",
+        call: "tasks.notes.add",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::No,
+        },
+        input: NOTE_ADD_INPUT,
+        content_field: Some("text"),
+        output: NOTE_OUTPUT_FIELDS,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"task":"T-A1","text":"Check race condition"}"#,
+            output: NOTE_EXAMPLE_JSON,
+        },
+    },
+    Command {
+        resource: "task-note",
+        verb: "list",
+        summary: "List private notes",
+        call: "tasks.notes.list",
+        kind: Kind::List,
+        input: NOTE_LIST_INPUT,
+        content_field: None,
+        output: NOTE_OUTPUT_FIELDS,
+        errors: READ_ERRORS,
+        example: Example {
+            input: r#"{"task":"T-A1"}"#,
+            output: r#"[{"id":"0193a5c0-0000-7000-8000-000000000400","task_id":"0193a5c0-0000-7000-8000-000000000100","author_id":"0193a5c0-0000-7000-8000-000000000001","revision":1,"body_markdown":"Check race condition","created_at":"2026-11-22T00:00:00.000Z","updated_at":"2026-11-22T00:00:00.000Z","editable":true}]"#,
+        },
+    },
+    Command {
+        resource: "task-note",
+        verb: "get",
+        summary: "Get private note",
+        call: "tasks.notes.get",
+        kind: Kind::Read,
+        input: NOTE_ID_INPUT,
+        content_field: None,
+        output: NOTE_OUTPUT_FIELDS,
+        errors: READ_ERRORS,
+        example: Example {
+            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000400"}"#,
+            output: NOTE_EXAMPLE_JSON,
+        },
+    },
+    Command {
+        resource: "task-note",
+        verb: "update",
+        summary: "Edit private note",
+        call: "tasks.notes.update",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::Required,
+        },
+        input: NOTE_UPDATE_INPUT,
+        content_field: Some("text"),
+        output: NOTE_OUTPUT_FIELDS,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000400","text":"Updated plan"}"#,
+            output: NOTE_EXAMPLE_JSON,
+        },
+    },
+    Command {
+        resource: "task-note",
+        verb: "remove",
+        summary: "Delete private note",
+        call: "tasks.notes.remove",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::Required,
+        },
+        input: NOTE_ID_INPUT,
+        content_field: None,
+        output: NOTE_REMOVED_FIELDS,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000400"}"#,
+            output: r#"{"note_id":"0193a5c0-0000-7000-8000-000000000400","task_id":"0193a5c0-0000-7000-8000-000000000100","revision":2,"deleted_at":"2026-11-22T00:05:00.000Z"}"#,
+        },
+    },
+    Command {
+        resource: "task-note",
+        verb: "publish",
+        summary: "Publish note copy",
+        call: "tasks.notes.publish",
+        kind: Kind::Write {
+            ack: Ack::Committed,
+            if_match: IfMatch::Required,
+        },
+        input: NOTE_ID_INPUT,
+        content_field: None,
+        output: NOTE_PUBLISH_FIELDS,
+        errors: WRITE_ERRORS,
+        example: Example {
+            input: r#"{"id":"0193a5c0-0000-7000-8000-000000000400"}"#,
+            output: r#"{"note":{"id":"0193a5c0-0000-7000-8000-000000000400","task_id":"0193a5c0-0000-7000-8000-000000000100","author_id":"0193a5c0-0000-7000-8000-000000000001","revision":1,"body_markdown":"Check race condition","created_at":"2026-11-22T00:00:00.000Z","updated_at":"2026-11-22T00:00:00.000Z","editable":true},"comment":{"id":"0193a5c0-0000-7000-8000-000000000300","position":0,"author_id":"0193a5c0-0000-7000-8000-000000000001","created_at":"2026-11-22T00:01:00.000Z","body_markdown":"Check race condition"},"task_id":"0193a5c0-0000-7000-8000-000000000100","key":"T-A1"}"#,
         },
     },
 ];

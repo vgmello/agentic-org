@@ -21,6 +21,9 @@ mod folder;
 mod hiring;
 mod intent;
 mod messaging;
+mod private_notes;
+#[cfg(test)]
+mod private_notes_tests;
 mod tasks;
 #[cfg(any(test, feature = "testkit"))]
 mod testkit;
@@ -145,6 +148,8 @@ pub struct Office {
     clock_high_ms: AtomicU64,
     /// In-memory runtime presence and self-reported status lines (`status.set`, `who`).
     runtime: crate::messaging::runtime::OfficeRuntime,
+    /// Isolated per-author private task notes store (`runtime/<office-id>/private/task-notes.db`).
+    private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
     // The store closes before the lock is released: fields drop in order.
     store: OfficeStore,
     _lock: File,
@@ -310,6 +315,11 @@ impl Office {
         let creation_command = intent.operation.clone();
 
         let store = open_store(&options.config(&roots, &custody)).map_err(storage)?;
+        let private_notes = crate::store::open::open_private_notes(
+            options.engine,
+            &roots.runtime,
+            &info.office_id,
+        )?;
         let clock_high_ms = AtomicU64::new(options.clock.now().0);
         let office = Office {
             folder,
@@ -323,6 +333,7 @@ impl Office {
             clock: options.clock,
             clock_high_ms,
             runtime: crate::messaging::runtime::OfficeRuntime::new(),
+            private_notes,
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]

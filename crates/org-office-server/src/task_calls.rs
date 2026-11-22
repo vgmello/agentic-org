@@ -10,6 +10,10 @@ use std::sync::Arc;
 use org_office::organization_family::records::EmployeeKind;
 use org_office::tasks::features::TaskWriteOutcome;
 use org_office::Office;
+use org_proto::private_notes::{
+    TasksNotesAdd, TasksNotesGet, TasksNotesList, TasksNotesPublish, TasksNotesRemove,
+    TasksNotesUpdate,
+};
 use org_proto::tasks::{
     TasksAddDependency, TasksAssign, TasksChecklistAdd, TasksChecklistCheck, TasksChecklistEdit,
     TasksChecklistMove, TasksChecklistRemove, TasksComment, TasksComments, TasksCreate,
@@ -49,11 +53,21 @@ fn is_task_checklist_method(request: &Request) -> bool {
         || request.is::<TasksChecklistMove>()
 }
 
+fn is_task_notes_method(request: &Request) -> bool {
+    request.is::<TasksNotesAdd>()
+        || request.is::<TasksNotesList>()
+        || request.is::<TasksNotesGet>()
+        || request.is::<TasksNotesUpdate>()
+        || request.is::<TasksNotesRemove>()
+        || request.is::<TasksNotesPublish>()
+}
+
 /// Whether `request` belongs to the unified v1 `tasks.*` RPC family.
 pub(crate) fn is_task_method(request: &Request) -> bool {
     is_task_core_method(request)
         || is_task_collab_method(request)
         || is_task_checklist_method(request)
+        || is_task_notes_method(request)
 }
 
 /// Live task RPC service composed over [`Office`], [`LiveEvents`], and optional [`SessionManager`].
@@ -89,6 +103,7 @@ impl TaskService {
         self.dispatch_core(member, request)
             .or_else(|| self.dispatch_collab(member, request))
             .or_else(|| self.dispatch_checklist(member, request))
+            .or_else(|| self.dispatch_notes(member, request))
     }
 
     fn dispatch_core(&self, member: &str, request: &Request) -> Option<Response> {
@@ -221,6 +236,42 @@ impl TaskService {
         if request.is::<TasksChecklistMove>() {
             return Some(self.run_notifying::<TasksChecklistMove>(request, |p| {
                 self.office.task_checklist_move(member, p)
+            }));
+        }
+        None
+    }
+
+    /// Private task notes (`TASK-50`, `L8`, `ADR-0031`). Add/update/remove NEVER emit shared
+    /// `LiveEvents` or wake agents (`PN-02`); only explicit `publish` emits a shared comment.
+    fn dispatch_notes(&self, member: &str, request: &Request) -> Option<Response> {
+        if request.is::<TasksNotesAdd>() {
+            return Some(run_call::<TasksNotesAdd>(request, |p| {
+                self.office.task_note_add(member, p)
+            }));
+        }
+        if request.is::<TasksNotesList>() {
+            return Some(run_call::<TasksNotesList>(request, |p| {
+                self.office.task_note_list(member, p)
+            }));
+        }
+        if request.is::<TasksNotesGet>() {
+            return Some(run_call::<TasksNotesGet>(request, |p| {
+                self.office.task_note_get(member, p)
+            }));
+        }
+        if request.is::<TasksNotesUpdate>() {
+            return Some(run_call::<TasksNotesUpdate>(request, |p| {
+                self.office.task_note_update(member, p)
+            }));
+        }
+        if request.is::<TasksNotesRemove>() {
+            return Some(run_call::<TasksNotesRemove>(request, |p| {
+                self.office.task_note_remove(member, p)
+            }));
+        }
+        if request.is::<TasksNotesPublish>() {
+            return Some(self.run_notifying::<TasksNotesPublish>(request, |p| {
+                self.office.task_note_publish(member, p)
             }));
         }
         None
@@ -502,5 +553,110 @@ mod tests {
         assert_eq!(inspected.task.status, TaskStatus::InProgress);
         assert_eq!(inspected.dependent_tasks.len(), 1);
         assert_eq!(inspected.history.len(), 3);
+    }
+
+    #[test]
+    fn private_notes_never_emit_live_events_until_explicit_publish() {
+        use org_proto::private_notes::{
+            TasksNotesAddParams, TasksNotesPublishParams, TasksNotesUpdateParams,
+        };
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let office = Arc::new(Office::for_test(TestOffice::default()));
+        let owner = office.owner_member_id().to_owned();
+        let root_team = office.org_snapshot().unwrap().teams[0].id.clone();
+        let notifications = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&notifications);
+        let live = Arc::new(LiveEvents::new(Box::new(move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+        })));
+        let svc = TaskService::new(Arc::clone(&office), live, None);
+
+        let create_req = Request::new::<TasksCreate>(
+            1,
+            &TasksCreateParams {
+                command_id: uuid(100),
+                task_id: uuid(101),
+                team_id: Some(root_team),
+                project_id: None,
+                assigned_team_id: None,
+                assignee_id: None,
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Private note host test".into(),
+                body_markdown: String::new(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: None,
+                labels: vec![],
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                details: None,
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &create_req).unwrap().outcome,
+            Outcome::Result(_)
+        ));
+        let before = notifications.load(Ordering::Relaxed);
+
+        let note_id = uuid(102);
+        let add_req = Request::new::<TasksNotesAdd>(
+            2,
+            &TasksNotesAddParams {
+                command_id: uuid(103),
+                task: "T-A1".into(),
+                note_id: note_id.clone(),
+                body_markdown: "Private draft".into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &add_req).unwrap().outcome,
+            Outcome::Result(_)
+        ));
+        let edit_req = Request::new::<TasksNotesUpdate>(
+            3,
+            &TasksNotesUpdateParams {
+                command_id: uuid(104),
+                note_id: note_id.clone(),
+                expected_revision: 1,
+                body_markdown: "Refined private draft".into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &edit_req).unwrap().outcome,
+            Outcome::Result(_)
+        ));
+        assert_eq!(
+            notifications.load(Ordering::Relaxed),
+            before,
+            "private note add/update must not emit shared LiveEvents"
+        );
+
+        let pub_req = Request::new::<TasksNotesPublish>(
+            4,
+            &TasksNotesPublishParams {
+                command_id: uuid(105),
+                note_id,
+                expected_revision: 2,
+                comment_id: uuid(106),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &pub_req).unwrap().outcome,
+            Outcome::Result(_)
+        ));
+        assert_eq!(notifications.load(Ordering::Relaxed), before + 1);
+        // Replay does not emit a duplicate LiveEvents notification.
+        assert!(matches!(
+            svc.dispatch(Some(&owner), &pub_req).unwrap().outcome,
+            Outcome::Result(_)
+        ));
+        assert_eq!(notifications.load(Ordering::Relaxed), before + 1);
     }
 }

@@ -3,7 +3,7 @@ id: doc-3
 title: Feature Checklist
 type: guide
 created_date: '2026-11-21T00:14:00Z'
-updated_date: '2026-11-21T20:21:00Z'
+updated_date: '2026-11-22T03:11:00Z'
 tags:
   - features
   - checklist
@@ -151,7 +151,7 @@ Full requirements: [Projects, tasks, bugs and requests](specs/doc-49%20-%20Spec-
 | [ ] | FC-050 | [Plain task checklists](specs/doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md) | In progress | Persisted plain checklist operations exist; selected source/identity and production browser integration remain. Valid, authorized work writes previously served by the office answer `unsupported` until B4 rebuilds work on the office store (B1b). |
 | [ ] | FC-051 | [Task output and completion evidence](specs/doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md) | Planned | No dedicated Output view, deliverable resolver or shared completion explanation; generic links do not satisfy this feature. |
 | [ ] | FC-052 | [Task work and waiting time](specs/doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md) | In progress | Time and waiting computations exist in the code; revised reopen/baseline/overlap semantics and target live reads remain. Valid, authorized work writes previously served by the office answer `unsupported` until B4 rebuilds work on the office store (B1b). |
-| [ ] | FC-053 | [Private task notes](organization-data/doc-85%20-%20Organization-Data-13-—-Private-Task-Notes-Pointer.md) | Planned | A note is read by its author and by people, never by another agent ([ADR-0031](../decisions/decision-31%20-%20ADR-0031-Any-employee-changes-tasks-a-private-note-is-read-by-its-author-and-by-people.md)). Not implemented: the data contract defines the structure; runtime, access controls and UI do not exist. Shared comments do not satisfy privacy. |
+| [ ] | FC-053 | [Private task notes](organization-data/doc-85%20-%20Organization-Data-13-—-Private-Task-Notes-Pointer.md) | In progress | Isolated `runtime/<office-id>/private/task-notes.db` store (`private-notes-schema.sql`), `ADR-0031` access boundary (`PN-01..06`, `TASKAUTH-4..7` verified on Memory + SQLite with restart/rebuild survival and `durable/` leak audit), explicit 2-phase publish-copy, `tasks.notes.*` RPCs, `/api/v1` BFF routes, and `agent-os`/`agentic-org` `task note` CLI are implemented (`TASK-50`). Remaining: browser private notes pane UI (`TASK-67`). |
 | [ ] | FC-054 | [Shared comments, watchers and owner questions](organization-data/doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md) | In progress | Shared comments/watch/question state exists; selected source/receipt durability and authorized browser integration remain. Valid, authorized work writes previously served by the office answer `unsupported` until B4 rebuilds work on the office store (B1b). |
 | [ ] | FC-055 | [Needs-me and owner-wait views](specs/doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md) | In progress | Needs-you sample view and owner-wait primitives exist; authenticated live aggregation and selected scoping remain. Valid, authorized work writes previously served by the office answer `unsupported` until B4 rebuilds work on the office store (B1b). |
 | [ ] | FC-056 | [Areas and advanced checklist execution](specs/doc-49%20-%20Spec-Work-Items-and-Tasks-UX.md) | Deferred | Withdrawn: areas are not part of v1, and the `area.*` calls and tables in the code are deleted with the typed-task work; a task's accountable team supplies that context. Advanced checklist execution is not part of v1. |
