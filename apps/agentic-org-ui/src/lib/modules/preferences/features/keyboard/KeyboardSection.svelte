@@ -46,10 +46,10 @@
 				<span
 					class="relative inline-flex h-6 w-11 shrink-0 rounded-full p-0.5 outline-1 -outline-offset-1 transition-colors duration-200 motion-reduce:transition-none {on
 						? 'bg-primary outline-primary'
-						: 'bg-bar-track outline-line-strong'}"
+						: 'switch-track-off outline-line-strong'}"
 				>
 					<span
-						class="size-5 rounded-full bg-on-emphasis shadow-xs transition-transform duration-200 motion-reduce:transition-none {on
+						class="size-5 rounded-full bg-on-emphasis shadow-xs ring-1 ring-line-strong transition-transform duration-200 motion-reduce:transition-none {on
 							? 'translate-x-5'
 							: 'translate-x-0'}"
 					></span>
@@ -64,3 +64,9 @@
 		{/if}
 	</div>
 </Section>
+
+<style>
+	.switch-track-off {
+		background: var(--bar-track);
+	}
+</style>

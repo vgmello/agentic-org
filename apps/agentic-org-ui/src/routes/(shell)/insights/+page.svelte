@@ -52,7 +52,7 @@
 <div class="flex flex-col gap-6 px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8">
 	<section
 		aria-labelledby="insights-status-heading"
-		class="exec-card flex max-w-4xl flex-col gap-2 p-5 sm:p-6"
+		class="insights-banner flex max-w-4xl flex-col gap-2 p-5 sm:p-6"
 	>
 		<div class="flex items-center gap-2.5">
 			<span
@@ -108,6 +108,17 @@
 </div>
 
 <style>
+	.insights-banner {
+		background: var(--exec-surface);
+		backdrop-filter: var(--exec-blur);
+		-webkit-backdrop-filter: var(--exec-blur);
+		box-shadow: var(--exec-shadow);
+		border-radius: 16px;
+	}
+	:global(html[data-ui-theme^='report']) .insights-banner {
+		border-radius: 4px;
+		box-shadow: inset 0 0 0 1px var(--report-rule);
+	}
 	.insights-icon-badge {
 		background: var(--tone-accent-bg);
 		color: var(--tone-accent-ink);

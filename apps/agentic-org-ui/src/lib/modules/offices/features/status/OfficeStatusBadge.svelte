@@ -73,4 +73,7 @@
 		color: var(--tone-accent-ink);
 		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
 	}
+	:global(.t-amber) :global(svg.text-warning) {
+		color: var(--tone-warn-ink);
+	}
 </style>

@@ -44,7 +44,7 @@
 							i === current
 								? 'bg-primary text-on-emphasis'
 								: i < current
-									? 't-green'
+									? 'step-done'
 									: 'outline-1 -outline-offset-1 outline-line-strong'
 						]}>{i + 1}</span
 					>
@@ -54,3 +54,11 @@
 		{/each}
 	</ol>
 </nav>
+
+<style>
+	.step-done {
+		background: var(--tone-ok-bg);
+		color: var(--tone-ok-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-ok-ring);
+	}
+</style>

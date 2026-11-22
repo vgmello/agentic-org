@@ -83,7 +83,7 @@
 		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
 	}
 	.presence-dot-warn {
-		fill: var(--tone-warn);
+		fill: var(--tone-warn-ink);
 	}
 	.presence-dot-accent {
 		fill: var(--tone-accent);

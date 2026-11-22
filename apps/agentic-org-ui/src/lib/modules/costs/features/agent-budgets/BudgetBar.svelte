@@ -114,6 +114,6 @@
 		background: var(--tone-bad-bar);
 	}
 	.budget-dot-warn {
-		background: var(--tone-warn);
+		background: var(--tone-warn-ink);
 	}
 </style>

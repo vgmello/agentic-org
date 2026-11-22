@@ -91,7 +91,7 @@
 		box-shadow: inset 0 0 0 1.5px var(--tone-accent);
 	}
 	.theme-check {
-		background: var(--tone-accent);
+		background: var(--exec-accent);
 		color: var(--exec-on-accent);
 	}
 	.theme-swatch {

@@ -22,6 +22,7 @@
 	];
 	const query = $derived((page.url.searchParams.get('q') ?? '').trim());
 	let draft = $derived(query);
+	let inputEl = $state<HTMLInputElement | null>(null);
 	let phase = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
 	let results = $state.raw<SearchResults | undefined>();
 	let failure = $state<string | undefined>();
@@ -30,6 +31,8 @@
 	async function run() {
 		const asked = query;
 		if (!asked) {
+			++request;
+			failure = undefined;
 			phase = 'idle';
 			results = undefined;
 			return;
@@ -62,6 +65,7 @@
 	function clear() {
 		draft = '';
 		if (query) void goto(resolve('/search'), { keepFocus: true });
+		inputEl?.focus();
 	}
 
 	const total = $derived(results ? GROUPS.reduce((n, g) => n + results![g.key].length, 0) : 0);
@@ -86,12 +90,13 @@
 		>
 			<SearchIcon class="size-4 shrink-0 text-fg-muted" aria-hidden="true" />
 			<input
+				bind:this={inputEl}
 				id="search-page-query"
 				type="search"
 				bind:value={draft}
 				placeholder="Search projects, work references (T-14), or members…"
 				autocomplete="off"
-				class="min-w-0 flex-1 bg-transparent py-1.5 text-sm/6 text-fg placeholder:text-fg-muted focus:outline-none"
+				class="min-w-0 flex-1 bg-transparent py-1.5 text-sm/6 text-fg placeholder:text-fg-muted focus:outline-none [&::-webkit-search-cancel-button]:hidden"
 			/>
 			{#if draft}
 				<button
