@@ -1973,6 +1973,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .30);
 }
 .hb-cos-memo {
+  --hb-cos-fade: rgba(12, 24, 44, .94);
   display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0;
   padding: 18px 20px; border-radius: 12px;
   background: linear-gradient(150deg, rgba(56, 189, 248, .07) 0%, rgba(12, 24, 44, .46) 100%);
@@ -1989,11 +1990,40 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .hb-cos-scroll::-webkit-scrollbar-track { background: transparent; }
 .hb-cos-scroll::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, .32); border-radius: 999px; }
 .hb-cos-scroll::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, .55); }
+.hb-cos-expand {
+  display: none;
+  align-items: center; gap: 5px; align-self: flex-start;
+  padding: 5px 10px; border-radius: 6px;
+  font-size: 0.8125rem; font-weight: 600; color: #7DD3FC;
+  background: rgba(56, 189, 248, .12);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .26);
+  transition: background-color .14s ease, color .14s ease;
+}
+.hb-cos-expand:hover { background: rgba(56, 189, 248, .22); color: #F8FAFC; }
+.hb-cos-expand .ic { width: 14px; height: 14px; transition: transform .18s ease; }
+.hb-cos-expand[aria-expanded="true"] .ic { transform: rotate(180deg); }
 @media (min-width: 1121px) {
   .hb-stage:not(.is-single) .hb-catchup { height: 0; min-height: 100%; overflow: hidden; }
 }
 @media (max-width: 1120px) {
-  .hb-cos-scroll { max-height: 360px; }
+  .hb-cos-scroll {
+    position: relative;
+    overflow: hidden;
+    max-height: 215px;
+    padding-right: 0;
+  }
+  .hb-cos-scroll::after {
+    content: "";
+    position: absolute; left: 0; right: 0; bottom: 0; height: 52px;
+    background: linear-gradient(to bottom, transparent, var(--hb-cos-fade));
+    pointer-events: none;
+  }
+  .hb-cos-memo.is-expanded .hb-cos-scroll {
+    max-height: none;
+    overflow: visible;
+  }
+  .hb-cos-memo.is-expanded .hb-cos-scroll::after { display: none; }
+  .hb-cos-expand { display: inline-flex; }
 }
 .hb-cos-sec { display: flex; flex-direction: column; gap: 5px; }
 .hb-cos-k {
@@ -2481,15 +2511,17 @@ html[data-theme="classic"] .hb-ai-chip { background: #1e2939; box-shadow: inset 
 html[data-theme="classic"] .hb-ai-chip:hover { background: #263447; color: #ffffff; box-shadow: inset 0 0 0 1px rgba(124, 134, 255, .45); }
 html[data-theme="classic"] .hb-brief-lenses { background: #101828; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .09); }
 html[data-theme="classic"] .hb-brief-lenses button[aria-pressed="true"] { background: #615fff; color: #ffffff; box-shadow: none; }
-html[data-theme="classic"] .hb-cos-memo { background: #16202e; box-shadow: inset 3px 0 0 #7c86ff, inset 0 0 0 1px rgba(255, 255, 255, .09); }
+html[data-theme="classic"] .hb-cos-memo { --hb-cos-fade: #16202e; background: #16202e; box-shadow: inset 3px 0 0 #7c86ff, inset 0 0 0 1px rgba(255, 255, 255, .09); }
 html[data-theme="classic"] .hb-cos-k,
 html[data-theme="classic"] .hb-spot-ai-ask,
 html[data-theme="classic"] .hb-cos-copy,
+html[data-theme="classic"] .hb-cos-expand,
 html[data-theme="classic"] .hb-cos-mark,
 html[data-theme="classic"] .hb-spot-next-ai { color: #a3b3ff; }
 html[data-theme="classic"] .hb-cos-mark,
 html[data-theme="classic"] .hb-spot-ai-ask,
 html[data-theme="classic"] .hb-cos-copy,
+html[data-theme="classic"] .hb-cos-expand,
 html[data-theme="classic"] .hb-spot-next-ai { background: rgba(97, 95, 255, .15); box-shadow: inset 0 0 0 1px rgba(124, 134, 255, .32); }
 html[data-theme="classic"] .hb-dig-item { background: #1a2433; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
 html[data-theme="classic"] a.hb-dig-item:hover { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
@@ -3004,6 +3036,7 @@ html[data-theme^="report"] .hb-brief-lenses button { color: #475569; border-radi
 html[data-theme^="report"] .hb-brief-lenses button:hover { color: #0B101B; }
 html[data-theme^="report"] .hb-brief-lenses button[aria-pressed="true"] { background: #0B101B; color: #FFFFFF; box-shadow: none; }
 html[data-theme^="report"] .hb-cos-memo {
+  --hb-cos-fade: #F7F9FC;
   border-radius: 0 4px 4px 0; background: #F7F9FC;
   box-shadow: inset 3px 0 0 #1B365D; padding: 16px 18px;
 }
@@ -3018,10 +3051,12 @@ html[data-theme^="report"] .hb-cos-sig-name { color: #0B101B; }
 html[data-theme^="report"] .hb-cos-sig-role,
 html[data-theme^="report"] .hb-cos-sig-meta { color: #64748B; }
 html[data-theme^="report"] .hb-cos-copy,
+html[data-theme^="report"] .hb-cos-expand,
 html[data-theme^="report"] .hb-spot-ai-ask {
   border-radius: 4px; background: #EEF4FA; color: #1B365D; box-shadow: inset 0 0 0 1px #C5D4E6;
 }
 html[data-theme^="report"] .hb-cos-copy:hover,
+html[data-theme^="report"] .hb-cos-expand:hover,
 html[data-theme^="report"] .hb-spot-ai-ask:hover { background: #1B365D; color: #FFFFFF; box-shadow: inset 0 0 0 1px #1B365D; }
 html[data-theme^="report"] .hb-spot-next-ai { border-radius: 3px; background: #EEF4FA; color: #1B365D; }
 html[data-theme^="report"] .hb-digest { gap: 0; }
@@ -3494,7 +3529,7 @@ html[data-theme="report-dark"] .hb-brief-lenses { background: #232A38; }
 html[data-theme="report-dark"] .hb-brief-lenses button { color: #9AA8BE; }
 html[data-theme="report-dark"] .hb-brief-lenses button:hover { color: #F1F5F9; }
 html[data-theme="report-dark"] .hb-brief-lenses button[aria-pressed="true"] { background: #EEF2F7; color: #161B24; }
-html[data-theme="report-dark"] .hb-cos-memo { background: #222835; box-shadow: inset 3px 0 0 #6EA4E8; }
+html[data-theme="report-dark"] .hb-cos-memo { --hb-cos-fade: #222835; background: #222835; box-shadow: inset 3px 0 0 #6EA4E8; }
 html[data-theme="report-dark"] .hb-cos-k { color: #86B9F5; }
 html[data-theme="report-dark"] .hb-cos-k.is-warn { color: #F2C05C; }
 html[data-theme="report-dark"] .hb-cos-k.is-ok { color: #56D4AA; }
@@ -3506,8 +3541,10 @@ html[data-theme="report-dark"] .hb-cos-sig-name { color: #F1F5F9; }
 html[data-theme="report-dark"] .hb-cos-sig-role,
 html[data-theme="report-dark"] .hb-cos-sig-meta { color: #8B99B0; }
 html[data-theme="report-dark"] .hb-cos-copy,
+html[data-theme="report-dark"] .hb-cos-expand,
 html[data-theme="report-dark"] .hb-spot-ai-ask { background: #1F2E45; color: #A5CCFA; box-shadow: inset 0 0 0 1px #334B70; }
 html[data-theme="report-dark"] .hb-cos-copy:hover,
+html[data-theme="report-dark"] .hb-cos-expand:hover,
 html[data-theme="report-dark"] .hb-spot-ai-ask:hover { background: #EEF2F7; color: #161B24; box-shadow: inset 0 0 0 1px #EEF2F7; }
 html[data-theme="report-dark"] .hb-spot-next-ai { background: #1F2E45; color: #A5CCFA; }
 html[data-theme="report-dark"] .hb-dig-item { border-top-color: #273041; }
@@ -4034,7 +4071,7 @@ const PAST_SESSIONS = [
 /* ---------------------------------------------------------------- state */
 const S = { theme: "ocean", homeState: "filled", inboxKind: "all", inboxProj: "all", inboxTeam: "all", replying: null, replyMode: null, workLayout: "list", focusAfter: null,
   projLayout: "list", actFilter: "all", openRuns: {}, people: "all", thread: null, showArchived: false, answered: {}, lastRoute: null, consoleAgent: "ada",
-  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today" };
+  taskFilter: "all", consoleView: "activity", consoleScope: "all", consoleTools: true, openKnow: {}, v4Open: { "nav-favs": true }, favProjs: ["agency-v1", "look-feel"], navCollapsed: false, spotIdx: 0, askQ: "", askAns: null, briefLens: "today", briefExpanded: false };
 const THEME_STORE = "agentic-org.v5.theme";
 const VALID_THEMES = new Set(["ocean", "classic", "report", "report-dark"]);
 const normalizeTheme = (t) => (t === "light" ? "report" : t);
@@ -4867,10 +4904,13 @@ function pageHome() {
       </div>
 
       ${st === "loading" ? skel(4, "Tess is preparing your executive brief…") : `
-      <div class="hb-cos-memo">
-        <div class="hb-cos-scroll" tabindex="0" aria-label="Executive brief content">
+      <div class="hb-cos-memo${S.briefExpanded ? " is-expanded" : ""}">
+        <div class="hb-cos-scroll" id="hb-cos-scroll" tabindex="0" aria-label="Executive brief content">
           ${briefSections}
         </div>
+        <button type="button" class="hb-cos-expand" data-act="brief-expand" aria-expanded="${!!S.briefExpanded}" aria-controls="hb-cos-scroll">
+          <span>${S.briefExpanded ? "Show less" : "Show full brief"}</span>${ic("chev-down", "ic14")}
+        </button>
         <div class="hb-cos-sig">
           <a class="hb-cos-sig-who" href="#/members/tess" title="Open Tess's profile">
             <span class="hb-cos-mark" aria-hidden="true">${ic("sparkle", "ic14")}</span>
@@ -7138,6 +7178,7 @@ document.addEventListener("click", (e) => {
     case "cmdk-ai-ask": askInCmdk(v); break;
     case "brief-ai-ask": openCmdk("", "ai"); askInCmdk(v); break;
     case "brief-lens": S.briefLens = v; render(false); break;
+    case "brief-expand": S.briefExpanded = !S.briefExpanded; render(false); break;
     case "ai-copy-board": {
       const memo = "Executive Brief — Signed: Tess, Chief of Staff\n• Velocity: 19 tasks delivered (+4 WoW), 84% first-pass approval, 78% autonomous.\n• Launch: Agentic Org v1.0 green on 412 CI checks; Kai's sync sign-off is the primary remaining gate for Dec 5.\n• Watchpoints: Build box offline (+5d slip on v0.9, reconnect fix staged); Jules at $210 cap (zero-cost reroute queued).";
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(memo).catch(() => {});
