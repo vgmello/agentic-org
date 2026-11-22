@@ -35,9 +35,6 @@
   "src/lib/components/TaskSheet.svelte": {
     "@typescript-eslint/no-unused-expressions": {
       "count": 1
-    },
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
     }
   },
   "src/lib/components/testing/focus-primitives.svelte": {
@@ -56,11 +53,6 @@
     }
   },
   "src/lib/modules/messaging/components/Rich.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    }
-  },
-  "src/lib/modules/messaging/features/answer-ask/AskCard.svelte": {
     "svelte/no-navigation-without-resolve": {
       "count": 1
     }
@@ -183,17 +175,11 @@
     "no-undef": {
       "count": 2
     },
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    },
     "svelte/no-useless-mustaches": {
       "count": 1
     }
   },
   "src/routes/(shell)/work/+page.svelte": {
-    "svelte/no-navigation-without-resolve": {
-      "count": 1
-    },
     "svelte/prefer-svelte-reactivity": {
       "count": 1
     }

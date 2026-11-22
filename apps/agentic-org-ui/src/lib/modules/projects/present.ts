@@ -136,6 +136,29 @@ export function doneText(t: TaskCounts): string {
 	return `${count.format(t.done)} of ${plural(total, 'task')} done`;
 }
 
+/** Delivery progress percentage (0–100) from delivered tasks over counted tasks. */
+export function progressPercent(t: TaskCounts): number {
+	const total = countedTasks(t);
+	if (total === 0) return 0;
+	return Math.min(100, Math.max(0, Math.round((t.done / total) * 100)));
+}
+
+export type ProjectBarTone = 'ok' | 'warn' | 'bad' | 'accent' | 'archived';
+
+/** Semantic progress-bar tone matching Executive Home scorecard cues. */
+export function projectBarTone(
+	tasks: TaskCounts,
+	bugs: BugCounts,
+	archived = false
+): ProjectBarTone {
+	if (archived) return 'archived';
+	if (bugs.critical > 0) return 'bad';
+	if (tasks.blocked > 0 || bugs.major > 0) return 'warn';
+	const total = countedTasks(tasks);
+	if (total > 0 && tasks.done >= total) return 'ok';
+	return 'accent';
+}
+
 const SEVERITIES: [keyof BugCounts, string][] = [
 	['critical', 'critical'],
 	['major', 'major'],

@@ -19,17 +19,22 @@
 	let view = $state<'tasks' | 'bugs'>('tasks');
 </script>
 
-<div class="min-w-0 space-y-5 px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8">
-	<div role="tablist" aria-label="Work" class="flex flex-wrap gap-x-1 border-b border-line">
+<div class="flex min-w-0 flex-col gap-5 px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8">
+	<div
+		role="tablist"
+		aria-label="Work"
+		class="exec-well inline-flex w-fit flex-wrap items-center gap-1 p-1"
+	>
 		{#each views as v (v.id)}
 			<button
 				type="button"
 				role="tab"
 				aria-selected={view === v.id}
 				onclick={() => (view = v.id)}
-				class="px-3 py-2 text-sm/6 focus-visible:outline-2 focus-visible:outline-ring {view === v.id
-					? 'border-b-2 border-brand font-semibold text-fg'
-					: 'text-fg-secondary hover:text-fg'}">{v.name}</button
+				class={[
+					'proj-work-tab min-h-9 rounded-lg px-3.5 text-sm/6 font-medium transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11',
+					view === v.id ? 'is-on font-semibold' : 'hover:text-fg'
+				]}>{v.name}</button
 			>
 		{/each}
 	</div>
@@ -49,3 +54,14 @@
 		/>
 	{/if}
 </div>
+
+<style>
+	.proj-work-tab {
+		color: var(--exec-muted);
+	}
+	.proj-work-tab.is-on {
+		background: var(--tone-accent-bg);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+</style>

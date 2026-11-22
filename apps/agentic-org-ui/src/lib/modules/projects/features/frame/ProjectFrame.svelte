@@ -11,6 +11,7 @@
 	import { afterNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import Callout from '$lib/components/Callout.svelte';
 	import Loaded from '$lib/components/Loaded.svelte';
 	import TabsNav from '$lib/components/TabsNav.svelte';
@@ -19,11 +20,15 @@
 	import { projectsApi } from '../../api';
 	import {
 		PROJECTS_URL,
+		countedTasks,
 		doneText,
+		progressPercent,
+		projectBarTone,
 		projectHref,
 		projectRef,
 		projectTabs,
-		tabAt
+		tabAt,
+		type ProjectBarTone
 	} from '../../present';
 	import { fact, factsLine } from '../../components/classes';
 	import TeamLink from '../../components/TeamLink.svelte';
@@ -95,16 +100,23 @@
 			return;
 		setTimeout(() => document.getElementById('project-tab-heading')?.focus(), 0);
 	});
+	const barFill: Record<ProjectBarTone, string> = {
+		ok: 'var(--tone-ok-bar)',
+		warn: 'var(--tone-warn-bar)',
+		bad: 'var(--tone-bad-bar)',
+		accent: 'var(--tone-accent-bar)',
+		archived: 'var(--quiet)'
+	};
 </script>
 
 <svelte:head><title>{title}</title></svelte:head>
 
 <!-- The one named back link, in every state. -->
-<div class="px-4 pt-6 min-[640px]:px-6 min-[1024px]:px-8">
+<div class="px-4 pt-5 min-[640px]:px-6 min-[1024px]:px-8">
 	<a
 		href={resolve(PROJECTS_URL)}
-		class="inline-flex min-h-6 items-center rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
-		>Projects</a
+		class="inline-flex min-h-6 items-center gap-1 rounded-sm text-sm/6 font-semibold text-link hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11"
+		><ChevronLeft class="size-4 shrink-0" aria-hidden="true" />Projects</a
 	>
 </div>
 {#if read.state === 'loading'}
@@ -113,12 +125,10 @@
 	<Loaded resource={read} label="the project" error="Couldn't load this project">
 		{#snippet children(lookup)}
 			{#if !lookup.found}
-				<header
-					class="border-b border-line-subtle px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8"
-				>
+				<header class="border-b border-line px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8">
 					<h2
 						id="project-heading"
-						class="text-base/7 font-semibold text-fg [overflow-wrap:anywhere] focus:outline-none"
+						class="text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
 					>
 						Project not found
 					</h2>
@@ -126,18 +136,24 @@
 				</header>
 			{:else}
 				{@const p = lookup.project}
+				{@const totalTasks = countedTasks(p.tasks)}
+				{@const pct = progressPercent(p.tasks)}
+				{@const tone = projectBarTone(p.tasks, p.bugs, p.archived)}
 				<header
-					class="border-b border-line-subtle px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8"
+					class="project-masthead border-b border-line px-4 pt-2 pb-6 min-[640px]:px-6 min-[1024px]:px-8"
 					data-testid="project-header"
 				>
 					<h2
 						id="project-heading"
-						class="flex flex-wrap items-baseline gap-x-3 text-base/7 font-semibold text-fg [overflow-wrap:anywhere] focus:outline-none"
+						class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-xl/7 font-semibold tracking-tight text-fg [overflow-wrap:anywhere] focus:outline-none"
 					>
 						{p.name}
-						<span class="font-mono text-xs/5 font-normal text-fg-muted">{projectRef(p)}</span>
+						<span
+							class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-xs/5 font-normal text-fg-muted ring-1 ring-line ring-inset"
+							>{projectRef(p)}</span
+						>
 						{#if p.archived}<span
-								class="inline-flex shrink-0 items-center rounded-md bg-surface-raised px-2 text-xs/5 font-medium whitespace-nowrap text-fg-secondary ring-1 ring-line ring-inset"
+								class="inline-flex shrink-0 items-center rounded-full bg-surface-raised px-2 py-0.5 text-xs/5 font-medium whitespace-nowrap text-fg-secondary ring-1 ring-line ring-inset"
 								>Archived</span
 							>{/if}
 					</h2>
@@ -156,6 +172,26 @@
 							Slug: <span class="font-mono text-xs/5 text-fg-secondary">{p.slug}</span>
 						</li>
 					</ul>
+					<div class="mt-3 flex max-w-sm items-center gap-3">
+						<div
+							class="h-1.5 flex-1 overflow-hidden rounded-full bg-bar-track"
+							role="progressbar"
+							aria-label="{p.name} delivery progress"
+							aria-valuemin="0"
+							aria-valuemax={totalTasks}
+							aria-valuenow={p.tasks.done}
+							aria-valuetext={doneText(p.tasks)}
+						>
+							<span
+								class="block h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none"
+								style:width="{pct}%"
+								style:background={barFill[tone]}
+							></span>
+						</div>
+						{#if totalTasks > 0}
+							<span class="shrink-0 text-xs/5 font-medium text-fg-muted tabular-nums">{pct}%</span>
+						{/if}
+					</div>
 				</header>
 				{#if p.stale}
 					<StaleNotice stale={p.stale} retrying={read.reloading} onretry={() => read.reload()} />

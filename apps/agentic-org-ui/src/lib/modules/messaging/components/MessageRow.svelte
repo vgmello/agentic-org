@@ -131,7 +131,7 @@
 		onfocusout={(event) =>
 			(focusWithin =
 				event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))}
-		class="group relative grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-2 max-[640px]:gap-x-[12px] max-[640px]:px-[8px] hover:bg-tint/[0.03] focus-within:bg-tint/[0.03]"
+		class="group relative grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 rounded-md px-2 py-2 transition-colors max-[640px]:gap-x-[12px] max-[640px]:px-[8px] hover:bg-surface-raised focus-within:bg-surface-raised"
 		data-testid="message"
 		data-kind={message.kind}
 		data-id={message.id}
@@ -216,11 +216,12 @@
 							{#if r.who.length}
 								<button
 									type="button"
-									class="inline-flex items-center gap-x-1 rounded-full px-2 py-0.5 text-xs/5 disabled:opacity-50 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus outline-1 -outline-offset-1 {r.who.includes(
-										ctx.actor
-									)
-										? 'bg-primary/20 text-brand-text-stronger outline-brand/50'
-										: 'bg-surface-raised text-fg-body outline-line'}"
+									class={[
+										'inline-flex items-center gap-x-1 rounded-full px-2 py-0.5 text-xs/5 transition-colors disabled:opacity-50 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus',
+										r.who.includes(ctx.actor)
+											? 'chat-react-on font-medium'
+											: 'bg-surface-raised text-fg-body ring-1 ring-line ring-inset hover:bg-surface-overlay'
+									]}
 									disabled={!officeRunning}
 									aria-pressed={r.who.includes(ctx.actor)}
 									aria-label="{r.label}, {r.who.length}"
@@ -396,3 +397,11 @@
 		{/if}
 	</article>
 </div>
+
+<style>
+	.chat-react-on {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+</style>

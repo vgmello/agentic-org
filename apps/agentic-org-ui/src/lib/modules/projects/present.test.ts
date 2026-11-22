@@ -7,6 +7,8 @@ import {
 	featuresText,
 	keepWords,
 	openText,
+	progressPercent,
+	projectBarTone,
 	projectTabs,
 	slugFrom,
 	slugProblem,
@@ -148,6 +150,23 @@ describe('counts', () => {
 				{ name: 'Zed', archived: false }
 			]).map((p) => p.name)
 		).toEqual(['beacon', 'Zed', 'Atlas']);
+	});
+	it('computes delivery progress percentage and semantic bar tone', () => {
+		const noBugs = { critical: 0, major: 0, minor: 0, trivial: 0, unset: 0 };
+		expect(progressPercent(t)).toBe(44);
+		expect(progressPercent({ todo: 0, inProgress: 0, blocked: 0, done: 0, cancelled: 3 })).toBe(0);
+		expect(progressPercent({ todo: 0, inProgress: 0, blocked: 0, done: 6, cancelled: 0 })).toBe(
+			100
+		);
+		expect(projectBarTone(t, noBugs, true)).toBe('archived');
+		expect(projectBarTone(t, { ...noBugs, critical: 1 }, false)).toBe('bad');
+		expect(projectBarTone(t, noBugs, false)).toBe('warn');
+		expect(
+			projectBarTone({ todo: 0, inProgress: 0, blocked: 0, done: 6, cancelled: 0 }, noBugs, false)
+		).toBe('ok');
+		expect(
+			projectBarTone({ todo: 2, inProgress: 1, blocked: 0, done: 3, cancelled: 0 }, noBugs, false)
+		).toBe('accent');
 	});
 });
 

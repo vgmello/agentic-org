@@ -48,8 +48,7 @@
 	} = $props();
 
 	const item =
-		'flex w-full items-start gap-x-[min(.75rem,12px)] rounded-md px-[min(.5rem,8px)] py-1.5 text-left text-sm/6 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring';
-	const on = 'bg-surface-overlay text-fg';
+		'flex w-full items-start gap-x-[min(.75rem,12px)] rounded-md px-[min(.5rem,8px)] py-1.5 text-left text-sm/6 transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring';
 	const off = 'text-fg-secondary hover:bg-surface-raised hover:text-fg';
 	const here = (v: ChatView, id?: string) =>
 		view.type === v.type &&
@@ -114,7 +113,7 @@
 	<li>
 		<button
 			type="button"
-			class="{item} {active ? on : off}"
+			class={[item, active ? 'chat-nav-on font-medium text-fg' : off]}
 			aria-current={active ? 'true' : undefined}
 			aria-label={r.other && r.presence
 				? `${r.title}, ${PRESENCE_WORD[r.presence]}${r.mentions ? `, ${r.mentions} mentions` : r.unread ? `, ${r.unread} unread` : ''}`
@@ -148,13 +147,13 @@
 					>{/if}
 				{#if r.mentions > 0}
 					<span
-						class="shrink-0 rounded-full bg-primary px-1.5 text-xs/5 font-semibold text-on-emphasis"
+						class="shrink-0 rounded-full bg-primary px-1.5 text-xs/5 font-semibold text-on-emphasis tabular-nums"
 						aria-label="{r.mentions} mentions"
 						data-testid="mention-count">{r.mentions}</span
 					>
 				{:else if r.unread > 0}
 					<span
-						class="shrink-0 text-xs/5 font-semibold text-fg-body"
+						class="chat-unread-pill shrink-0 rounded-full px-1.5 text-xs/5 font-semibold tabular-nums"
 						aria-label="{r.unread} unread"
 						data-testid="unread-count">{r.unread}</span
 					>
@@ -167,14 +166,14 @@
 {#snippet navigation()}
 	<nav
 		bind:this={nav}
-		class="flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-line bg-shade/10 p-[min(.75rem,12px)]"
+		class="chat-rail flex h-full w-full min-w-0 shrink-0 flex-col gap-y-5 overflow-y-auto border-r border-line p-[min(.75rem,12px)]"
 		aria-label="Chat"
 	>
-		<ul class="space-y-0.5">
+		<ul class="flex flex-col gap-0.5">
 			<li>
 				<button
 					type="button"
-					class="{item} {here({ type: 'needs' }) ? on : off}"
+					class={[item, here({ type: 'needs' }) ? 'chat-nav-on font-medium text-fg' : off]}
 					aria-current={here({ type: 'needs' }) ? 'true' : undefined}
 					data-testid="needs-you-link"
 					onclick={() => onselect({ type: 'needs' })}
@@ -188,7 +187,7 @@
 								: ''}">Needs you</span
 						>
 						{#if bar.needsYou.length}<span
-								class="shrink-0 rounded-full bg-warning px-1.5 text-xs/5 font-semibold text-on-warning"
+								class="t-amber shrink-0 rounded-full px-1.5 text-xs/5 font-semibold tabular-nums"
 								data-testid="needs-you-count">{bar.needsYou.length}</span
 							>{/if}
 					</span>
@@ -197,7 +196,7 @@
 			<li>
 				<button
 					type="button"
-					class="{item} {here({ type: 'mentions' }) ? on : off}"
+					class={[item, here({ type: 'mentions' }) ? 'chat-nav-on font-medium text-fg' : off]}
 					aria-current={here({ type: 'mentions' }) ? 'true' : undefined}
 					data-testid="mentions-link"
 					onclick={() => onselect({ type: 'mentions' })}
@@ -211,7 +210,8 @@
 						<span class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal]"
 							>Mentions</span
 						>
-						{#if bar.mentions.length}<span class="shrink-0 text-xs/5 font-semibold text-fg-body"
+						{#if bar.mentions.length}<span
+								class="shrink-0 text-xs/5 font-semibold text-fg-body tabular-nums"
 								>{bar.mentions.length}</span
 							>{/if}
 					</span>
@@ -220,7 +220,7 @@
 			<li>
 				<button
 					type="button"
-					class="{item} {here({ type: 'threads' }) ? on : off}"
+					class={[item, here({ type: 'threads' }) ? 'chat-nav-on font-medium text-fg' : off]}
 					aria-current={here({ type: 'threads' }) ? 'true' : undefined}
 					data-testid="threads-link"
 					onclick={() => onselect({ type: 'threads' })}
@@ -234,7 +234,8 @@
 						<span class="max-w-full whitespace-normal [overflow-wrap:normal] [word-break:normal]"
 							>Threads</span
 						>
-						{#if unreadThreads}<span class="shrink-0 text-xs/5 font-semibold text-fg-body"
+						{#if unreadThreads}<span
+								class="shrink-0 text-xs/5 font-semibold text-fg-body tabular-nums"
 								>{unreadThreads}</span
 							>{/if}
 					</span>
@@ -243,8 +244,10 @@
 		</ul>
 
 		<div>
-			<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">Channels</h2>
-			<ul class="mt-1 space-y-0.5" data-testid="channels">
+			<h2 class="px-2 text-[11px]/6 font-semibold tracking-wider text-fg-muted uppercase">
+				Channels
+			</h2>
+			<ul class="mt-1 flex flex-col gap-0.5" data-testid="channels">
 				{#each bar.channels as r (r.conversation.id)}{@render row(r)}{/each}
 			</ul>
 			<button
@@ -259,10 +262,10 @@
 		</div>
 
 		<div>
-			<h2 class="px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase">
+			<h2 class="px-2 text-[11px]/6 font-semibold tracking-wider text-fg-muted uppercase">
 				Direct messages
 			</h2>
-			<ul class="mt-1 space-y-0.5" data-testid="dms">
+			<ul class="mt-1 flex flex-col gap-0.5" data-testid="dms">
 				{#each bar.dms as r (r.conversation.id)}{@render row(r)}{/each}
 			</ul>
 			<button
@@ -279,10 +282,10 @@
 		{#if bar.asOwner.length}
 			<details class="group" data-testid="as-owner">
 				<summary
-					class="cursor-pointer px-2 text-xs/6 font-semibold tracking-wide text-fg-muted uppercase hover:text-fg"
+					class="cursor-pointer px-2 text-[11px]/6 font-semibold tracking-wider text-fg-muted uppercase hover:text-fg"
 					>Reading as the owner · {bar.asOwner.length}</summary
 				>
-				<ul class="mt-1 space-y-0.5">
+				<ul class="mt-1 flex flex-col gap-0.5">
 					{#each bar.asOwner as r (r.conversation.id)}{@render row(r)}{/each}
 				</ul>
 			</details>
@@ -322,3 +325,18 @@
 		</SheetContent>
 	</Sheet>
 {/if}
+
+<style>
+	.chat-rail {
+		background: var(--exec-sidebar-bg);
+	}
+	.chat-nav-on {
+		background: var(--tone-accent-bg);
+		color: var(--exec-ink);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+	.chat-unread-pill {
+		background: var(--tone-accent-bg);
+		color: var(--tone-accent-ink);
+	}
+</style>

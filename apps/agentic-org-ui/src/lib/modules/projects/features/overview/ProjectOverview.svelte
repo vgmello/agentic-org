@@ -22,7 +22,10 @@
 		keepWords,
 		openBugs,
 		openTasks,
-		projectHref
+		progressPercent,
+		projectBarTone,
+		projectHref,
+		type ProjectBarTone
 	} from '../../present';
 	import { inlineLink } from '../../components/classes';
 	import { projectFrame } from '../frame/context';
@@ -43,8 +46,18 @@
 			: undefined
 	);
 	const bugs = $derived(bugParts(p.bugs));
+	const totalTasks = $derived(countedTasks(p.tasks));
+	const pct = $derived(progressPercent(p.tasks));
+	const barTone = $derived(projectBarTone(p.tasks, p.bugs, p.archived));
+	const barFill: Record<ProjectBarTone, string> = {
+		ok: 'var(--tone-ok-bar)',
+		warn: 'var(--tone-warn-bar)',
+		bad: 'var(--tone-bad-bar)',
+		accent: 'var(--tone-accent-bar)',
+		archived: 'var(--quiet)'
+	};
 
-	const h4 = 'text-sm/6 font-semibold text-fg';
+	const h4 = 'text-xs/5 font-semibold tracking-wider uppercase text-fg-muted';
 	/** Read between a figure's qualifiers, which are shown apart by space alone. */
 	const separator = ', ';
 </script>
@@ -53,13 +66,28 @@
 {#snippet figure(
 	label: string,
 	value: string,
-	parts: { text: string; severity?: keyof BugCounts }[]
+	parts: { text: string; severity?: keyof BugCounts; warn?: boolean }[],
+	bar?: { pct: number; fill: string }
 )}
-	<div class="bg-surface px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8">
-		<dt class="text-sm/6 font-medium text-fg-muted">{label}</dt>
-		<dd class="mt-1 text-2xl/8 font-semibold tracking-tight text-fg tabular-nums">{value}</dd>
-		<dd class="mt-1 flex flex-wrap gap-x-2 text-xs/5 text-fg-muted">
-			{#each parts as part, i (part.text)}<span class="whitespace-nowrap"
+	<div class="bg-surface px-4 py-5 min-[640px]:px-6 min-[1024px]:px-8">
+		<dt class="text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase">{label}</dt>
+		<dd class="mt-1 text-2xl/8 font-bold tracking-tight text-fg tabular-nums">{value}</dd>
+		{#if bar}
+			<dd class="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-bar-track" aria-hidden="true">
+				<span
+					class="block h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none"
+					style:width="{bar.pct}%"
+					style:background={bar.fill}
+				></span>
+			</dd>
+		{/if}
+		<dd class="mt-1.5 flex flex-wrap gap-1.5 text-xs/5 text-fg-muted">
+			{#each parts as part, i (part.text)}<span
+					class={[
+						'whitespace-nowrap',
+						part.warn &&
+							't-amber inline-flex items-center rounded-full px-1.5 py-0.5 text-xs/4 font-medium'
+					]}
 					>{#if part.severity}<SeverityMark
 							severity={part.severity}
 							text={part.text}
@@ -72,31 +100,41 @@
 {/snippet}
 
 <dl
-	class="grid grid-cols-1 gap-px border-b border-line-subtle bg-line-subtle min-[640px]:grid-cols-2 {money
+	class="grid grid-cols-1 gap-px border-b border-line bg-line min-[640px]:grid-cols-2 {money
 		? 'min-[1280px]:grid-cols-5'
 		: 'min-[1280px]:grid-cols-4'}"
 	data-testid="project-figures"
 >
 	{@render figure('Open tasks', String(openTasks(p.tasks)), [
-		{ text: p.tasks.blocked > 0 ? `${p.tasks.blocked} blocked` : 'None blocked' }
-	])}
-	{@render figure('Done', String(p.tasks.done), [
 		{
-			text:
-				countedTasks(p.tasks) === 0
-					? 'No tasks yet'
-					: `of ${countedTasks(p.tasks)} ${countedTasks(p.tasks) === 1 ? 'task' : 'tasks'}`
+			text: p.tasks.blocked > 0 ? `${p.tasks.blocked} blocked` : 'None blocked',
+			warn: p.tasks.blocked > 0
 		}
 	])}
+	{@render figure(
+		'Done',
+		String(p.tasks.done),
+		[
+			{
+				text:
+					totalTasks === 0
+						? 'No tasks yet'
+						: `of ${totalTasks} ${totalTasks === 1 ? 'task' : 'tasks'}`
+			}
+		],
+		totalTasks > 0 ? { pct, fill: barFill[barTone] } : undefined
+	)}
 	{@render figure(
 		'Open bugs',
 		String(openBugs(p.bugs)),
 		bugs.length ? bugs.map((b) => ({ text: b.text, severity: b.key })) : [{ text: 'None open' }]
 	)}
 	<!-- The features line, word for word (features-ux "Overview tile"). -->
-	<div class="bg-surface px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8" data-testid="features-line">
-		<dt class="text-sm/6 font-medium text-fg-muted">Features<span class="sr-only">:</span></dt>
-		<dd class="mt-1 text-base/7 font-semibold text-fg">{keepWords(featuresText(p.features))}</dd>
+	<div class="bg-surface px-4 py-5 min-[640px]:px-6 min-[1024px]:px-8" data-testid="features-line">
+		<dt class="text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase">
+			Features<span class="sr-only">:</span>
+		</dt>
+		<dd class="mt-1.5 text-base/7 font-semibold text-fg">{keepWords(featuresText(p.features))}</dd>
 	</div>
 	{#if money}
 		{@render figure('Investment', money.toDate, money.thisMonth ? [{ text: money.thisMonth }] : [])}

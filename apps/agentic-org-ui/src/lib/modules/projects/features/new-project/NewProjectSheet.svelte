@@ -108,17 +108,23 @@
 		if (open) return registerModalBack(() => (open = false));
 	});
 
+	let teamsSeq = 0;
+
 	function loadTeams() {
+		const seq = ++teamsSeq;
+		const org = organizationId;
 		teamsError = undefined;
 		teamsLoading = true;
-		projectsApi.teamChoices(organizationId).then(
+		projectsApi.teamChoices(org).then(
 			(rows) => {
+				if (seq !== teamsSeq || org !== organizationId) return;
 				teams = rows;
 				teamsLoading = false;
 				// The default place for a new team is the organization's top-level team (§7.9).
 				if (!parentId) parentId = rows.find((t) => t.organizationTeam)?.id ?? NO_PARENT;
 			},
 			(e) => {
+				if (seq !== teamsSeq || org !== organizationId) return;
 				teamsError = toAppError(e).message;
 				teamsLoading = false;
 			}
@@ -443,13 +449,13 @@
 						type="button"
 						variant="outline"
 						disabled={!!busy}
-						class={mobileButton}
+						class="min-h-9 {mobileButton} [@media(pointer:coarse)]:min-h-11"
 						onclick={() => (open = false)}>Cancel</Button
 					>
 					{#if unresolved}
 						<Button
 							type="button"
-							class="min-w-32 {mobileButton}"
+							class="min-h-9 min-w-32 {mobileButton} [@media(pointer:coarse)]:min-h-11"
 							aria-busy={busy === 'checking'}
 							disabled={busy === 'checking'}
 							onclick={checkStatus}>{busy === 'checking' ? 'Checking…' : 'Check status'}</Button
@@ -460,7 +466,7 @@
 							disabled={!!busy || waitingForTeams}
 							aria-busy={busy === 'creating'}
 							aria-describedby={waitingForTeams ? 'new-project-waiting' : undefined}
-							class="min-w-32 {mobileButton}"
+							class="min-h-9 min-w-32 {mobileButton} [@media(pointer:coarse)]:min-h-11"
 							>{busy === 'creating' ? 'Creating…' : 'Create project'}</Button
 						>
 					{/if}

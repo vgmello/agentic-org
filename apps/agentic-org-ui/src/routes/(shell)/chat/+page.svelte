@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { onMount, tick, untrack } from 'svelte';
+	import { onDestroy, onMount, tick, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { beforeNavigate, goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import { toast } from 'svelte-sonner';
 	import Search from '@lucide/svelte/icons/search';
 	import Users from '@lucide/svelte/icons/users';
@@ -285,12 +286,24 @@
 		if (!pendingPlace || page.url.href === pendingPlace.href) documentPlace = viewTitle;
 	});
 
+	let loadSeq = 0;
+	let destroyed = false;
+
+	onDestroy(() => {
+		destroyed = true;
+	});
+
 	async function load() {
+		const seq = ++loadSeq;
+		const targetOrgId = organizationId;
 		try {
+			const snap = await chatApi.snapshot(targetOrgId);
+			if (destroyed || seq !== loadSeq || targetOrgId !== organizationId) return;
 			now = new Date().toISOString();
-			chat = await chatApi.snapshot(organizationId);
+			chat = snap;
 			loadError = undefined;
 		} catch (e) {
+			if (destroyed || seq !== loadSeq || targetOrgId !== organizationId) return;
 			if (!chat) loadError = toAppError(e).message;
 		}
 	}
@@ -449,7 +462,8 @@
 	) {
 		if (next.href === (pendingPlace ?? page.url).href) return;
 		pendingPlace = next;
-		void goto(next, {
+		const target = `${next.pathname}${next.search}${next.hash}`;
+		void goto(resolve(target as '/chat'), {
 			...options,
 			replaceState: options.replaceState || next.href === page.url.href,
 			keepFocus: true,
@@ -915,7 +929,7 @@
 			aria-label="Conversation"
 		>
 			<div
-				class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3 max-[640px]:px-[8px]"
+				class="chat-conv-head flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3 max-[640px]:px-[8px]"
 			>
 				<div class="min-w-0 max-w-full">
 					<div class="flex min-w-0 flex-wrap items-center gap-2">
@@ -936,7 +950,7 @@
 							>
 								Conversations
 								{#if bar.needsYou.length}<span
-										class="rounded-full bg-warning px-1.5 text-xs/5 font-semibold text-on-warning"
+										class="t-amber rounded-full px-1.5 text-xs/5 font-semibold tabular-nums"
 										aria-hidden="true">{bar.needsYou.length}</span
 									>{/if}
 							</Button>
@@ -946,7 +960,7 @@
 							tabindex="-1"
 							class="min-w-0 max-w-full whitespace-normal {conversation && !searching
 								? '[overflow-wrap:anywhere]'
-								: ''} text-base/7 font-semibold text-fg focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+								: ''} text-base/7 font-semibold tracking-tight text-fg focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
 							data-testid="conversation-title"
 						>
 							{viewTitle}
@@ -970,7 +984,7 @@
 					{/if}
 					<div class="relative min-w-0 max-w-full max-[640px]:w-full">
 						<Search
-							class="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-fg-muted"
+							class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-fg-muted"
 							aria-hidden="true"
 						/>
 						<label class="sr-only" for="chat-search">Search chat</label>
@@ -980,7 +994,7 @@
 							value={query}
 							oninput={(event) => changeQuery(event.currentTarget.value)}
 							placeholder="Search · from:@ada in:#atlas has:ask"
-							class="w-56 max-w-full rounded-md bg-surface py-1.5 pr-3 pl-8 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus max-[640px]:w-full"
+							class="w-56 max-w-full rounded-md bg-surface-raised py-1.5 pr-3 pl-8 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-focus max-[640px]:w-full"
 							data-testid="chat-search"
 						/>
 					</div>
@@ -1121,23 +1135,22 @@
 							{#each convView.shown as m, i (m.id)}
 								{#if dayChange(convView.shown, i)}
 									<div
-										class="my-2 flex items-center gap-x-3 px-2 text-xs/5 text-fg-muted"
+										class="my-3 flex items-center gap-x-3 px-2 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase"
 										aria-live="off"
 									>
-										<span class="h-px flex-1 bg-surface-overlay"></span>{dayLabel(
-											m.created_at,
-											now
-										)}<span class="h-px flex-1 bg-surface-overlay"></span>
+										<span class="h-px flex-1 bg-line"></span>{dayLabel(m.created_at, now)}<span
+											class="h-px flex-1 bg-line"
+										></span>
 									</div>
 								{/if}
 								{#if m.id === newAt}
 									<div
-										class="my-2 flex items-center gap-x-3 px-2 text-xs/5 font-semibold text-brand-text"
+										class="chat-new-divider my-2.5 flex items-center gap-x-3 px-2 text-[11px]/5 font-semibold tracking-wider uppercase"
 										aria-live="off"
 										data-testid="new-divider"
 									>
-										<span class="h-px flex-1 bg-brand/40"></span>New<span
-											class="h-px flex-1 bg-brand/40"
+										<span class="chat-new-line h-px flex-1"></span>New<span
+											class="chat-new-line h-px flex-1"
 										></span>
 									</div>
 								{/if}
@@ -1150,7 +1163,7 @@
 							{:else}
 								{#if conversation.auto?.type === 'general'}
 									<div
-										class="mx-auto my-8 max-w-md rounded-lg border border-line bg-tint/[0.03] p-5 text-center"
+										class="exec-card mx-auto my-8 max-w-md p-6 text-center"
 										data-testid="welcome-card"
 									>
 										<h3 class="text-sm/6 font-semibold text-fg">Welcome to #general</h3>
@@ -1330,6 +1343,12 @@
 	.chat-frame {
 		--chat-header-height: 4rem;
 		height: calc(100dvh - var(--chat-header-height));
+	}
+	.chat-new-divider {
+		color: var(--tone-accent-ink);
+	}
+	.chat-new-line {
+		background: var(--tone-accent-ring);
 	}
 	@media (width < 640px) {
 		.chat-frame {

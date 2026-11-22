@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { tick, untrack } from 'svelte';
+	import { resolve } from '$app/paths';
 	import HeroIcon from '$lib/components/HeroIcon.svelte';
 	import type { DraftText } from '../../drafts/store';
 	import { Button } from '$lib/components/ui/button';
@@ -114,17 +115,14 @@
 
 <div
 	data-ask-id={message.id}
-	class="rounded-lg border {done
-		? 'border-line bg-tint/[0.03]'
-		: isAsk
-			? 'border-warning/40 bg-warning/5'
-			: 'border-brand/30 bg-brand/5'} p-4 max-[640px]:px-[8px] max-[640px]:py-3"
+	class={[
+		'rounded-lg p-4 max-[640px]:px-[8px] max-[640px]:py-3',
+		done ? 'border border-line bg-surface-raised' : isAsk ? 'chat-ask-open' : 'chat-handoff-open'
+	]}
 	data-testid={isAsk ? 'ask-card' : 'handoff-card'}
 	data-answered={done ? 'true' : 'false'}
 >
-	<p
-		class="text-xs/5 font-semibold {isAsk ? 'text-warning-text-strong' : 'text-brand-text-strong'}"
-	>
+	<p class={['text-xs/5 font-semibold', isAsk ? 'text-warning-text' : 'text-brand-text']}>
 		<HeroIcon
 			variant="micro"
 			name={isAsk
@@ -183,7 +181,7 @@
 			data-testid="app-only"
 		>
 			This is answered only in Agentic Org, never from a bridge. <a
-				href="/chat"
+				href={resolve('/chat')}
 				class="font-semibold text-brand-text underline">Open in Agentic Org</a
 			>
 		</p>
@@ -267,3 +265,14 @@
 	{/if}
 	{#if error}<p class="mt-2 text-sm/6 text-danger" role="alert">{error}</p>{/if}
 </div>
+
+<style>
+	.chat-ask-open {
+		background: var(--tone-warn-bg);
+		box-shadow: inset 0 0 0 1px var(--tone-warn-ring);
+	}
+	.chat-handoff-open {
+		background: var(--tone-accent-bg);
+		box-shadow: inset 0 0 0 1px var(--tone-accent-ring);
+	}
+</style>

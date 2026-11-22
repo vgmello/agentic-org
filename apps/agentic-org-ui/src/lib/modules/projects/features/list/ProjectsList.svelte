@@ -29,12 +29,16 @@
 		CHANGES_PAUSED,
 		bugParts,
 		bugsText,
+		countedTasks,
 		openBugs,
 		doneText,
 		openText,
+		progressPercent,
+		projectBarTone,
 		projectHref,
 		projectRef,
-		sortProjects
+		sortProjects,
+		type ProjectBarTone
 	} from '../../present';
 	import type { ProjectRow } from '../../types';
 	import { fact, rowTitleLink } from '../../components/classes';
@@ -98,14 +102,22 @@
 	}
 
 	const columns = 'min-[1024px]:grid min-[1024px]:items-start min-[1024px]:gap-x-6';
-	const withMoney = 'min-[1024px]:grid-cols-[minmax(0,1fr)_11rem_13rem_10rem]';
-	const withoutMoney = 'min-[1024px]:grid-cols-[minmax(0,1fr)_11rem_13rem]';
+	const withMoney = 'min-[1024px]:grid-cols-[minmax(0,1fr)_13rem_13.5rem_10rem]';
+	const withoutMoney = 'min-[1024px]:grid-cols-[minmax(0,1fr)_13rem_13.5rem]';
+
+	const barFill: Record<ProjectBarTone, string> = {
+		ok: 'var(--tone-ok-bar)',
+		warn: 'var(--tone-warn-bar)',
+		bad: 'var(--tone-bad-bar)',
+		accent: 'var(--tone-accent-bar)',
+		archived: 'var(--quiet)'
+	};
 </script>
 
 {#snippet createButton(idPrefix: string)}
-	<div class="flex flex-col items-start gap-y-1 {idPrefix === 'empty' ? 'items-center' : ''}">
+	<div class={['flex flex-col gap-y-1', idPrefix === 'empty' ? 'items-center' : 'items-start']}>
 		<Button
-			class={mobileButton}
+			class="min-h-9 {mobileButton} [@media(pointer:coarse)]:min-h-11"
 			disabled={paused}
 			aria-describedby={paused ? `${idPrefix}-paused` : undefined}
 			onclick={(e: MouseEvent) => newProject(e)}
@@ -193,20 +205,23 @@
 				</p>
 			{/if}
 			<div
-				class="hidden border-b border-line px-4 py-3 text-xs/5 font-semibold text-fg-muted min-[640px]:px-6 min-[1024px]:px-8 {columns} {amounts
+				class="hidden border-b border-line px-4 py-2.5 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase min-[640px]:px-6 min-[1024px]:px-8 {columns} {amounts
 					? withMoney
 					: withoutMoney}"
 				aria-hidden="true"
 			>
 				<span>Project</span>
-				<span>Tasks</span>
+				<span>Tasks &amp; progress</span>
 				<span>Open bugs</span>
 				{#if amounts}<span class="text-right">Investment</span>{/if}
 			</div>
 			<ul role="list" class="divide-y divide-line-subtle" aria-labelledby="projects-heading">
 				{#each rows as r (r.id)}
+					{@const total = countedTasks(r.tasks)}
+					{@const pct = progressPercent(r.tasks)}
+					{@const tone = projectBarTone(r.tasks, r.bugs, r.archived)}
 					<li
-						class="relative px-4 py-4 transition-colors duration-150 hover:bg-tint/[0.02] motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8 {columns} {amounts
+						class="group relative px-4 py-4 transition-colors duration-150 hover:bg-surface-raised motion-reduce:transition-none min-[640px]:px-6 min-[1024px]:px-8 {columns} {amounts
 							? withMoney
 							: withoutMoney}"
 						data-testid="project-row"
@@ -217,13 +232,16 @@
 								<a href={resolve(projectHref(r.id) as '/')} class={rowTitleLink}
 									><span class="absolute inset-0" aria-hidden="true"></span>{r.name}</a
 								>
-								<span class="font-mono text-xs/5 text-fg-muted">{projectRef(r)}</span>
+								<span
+									class="rounded bg-surface-raised px-1.5 py-0.5 font-mono text-[11px]/4 text-fg-muted ring-1 ring-line ring-inset"
+									>{projectRef(r)}</span
+								>
 								{#if r.archived}<span
-										class="inline-flex shrink-0 items-center rounded-md bg-surface-raised px-2 text-xs/5 font-medium whitespace-nowrap text-fg-secondary ring-1 ring-line ring-inset"
+										class="inline-flex shrink-0 items-center rounded-full bg-surface-raised px-2 py-0.5 text-[11px]/4 font-medium whitespace-nowrap text-fg-secondary ring-1 ring-line ring-inset"
 										>Archived</span
 									>{/if}
 							</p>
-							<ul role="list" class="mt-1 space-y-0.5 text-xs/5 text-fg-muted">
+							<ul role="list" class="mt-1.5 flex flex-col gap-0.5 text-xs/5 text-fg-muted">
 								<li class={fact} data-testid="owner-team">
 									Accountable team: <TeamLink team={r.ownerTeam} size="xs" />
 								</li>
@@ -235,13 +253,41 @@
 								{/if}
 							</ul>
 						</div>
-						<div class="mt-2 min-[1024px]:mt-0">
-							<p class="text-sm/6 text-fg-secondary tabular-nums" data-testid="open-tasks">
+						<div class="mt-2.5 flex flex-col gap-1 min-[1024px]:mt-0">
+							<p
+								class={[
+									'text-sm/6 tabular-nums',
+									r.tasks.blocked > 0 ? 'font-medium text-warning-text' : 'text-fg-secondary'
+								]}
+								data-testid="open-tasks"
+							>
 								{openText(r.tasks)}
 							</p>
+							<div class="flex items-center gap-2">
+								<div
+									class="h-1.5 flex-1 overflow-hidden rounded-full bg-bar-track"
+									role="progressbar"
+									aria-label="{r.name} progress"
+									aria-valuemin="0"
+									aria-valuemax={total}
+									aria-valuenow={r.tasks.done}
+									aria-valuetext={doneText(r.tasks)}
+								>
+									<span
+										class="block h-full rounded-full transition-[width] duration-300 motion-reduce:transition-none"
+										style:width="{pct}%"
+										style:background={barFill[tone]}
+									></span>
+								</div>
+								{#if total > 0}
+									<span class="shrink-0 text-[11px]/4 font-medium text-fg-muted tabular-nums"
+										>{pct}%</span
+									>
+								{/if}
+							</div>
 							<p class="text-xs/5 text-fg-muted tabular-nums">{doneText(r.tasks)}</p>
 						</div>
-						<div class="mt-1 min-[1024px]:mt-0" data-testid="bugs">
+						<div class="mt-2 min-[1024px]:mt-0" data-testid="bugs">
 							<p class="text-sm/6 text-fg-secondary tabular-nums">
 								<span class="sr-only">{bugsText(r.bugs)}</span><span aria-hidden="true"
 									>{openBugs(r.bugs) === 0
@@ -250,7 +296,7 @@
 								>
 							</p>
 							{#if openBugs(r.bugs) > 0}
-								<p class="flex flex-wrap gap-x-2 text-xs/5 text-fg-muted" aria-hidden="true">
+								<p class="mt-1 flex flex-wrap gap-1.5 text-xs/5 text-fg-muted" aria-hidden="true">
 									{#each bugParts(r.bugs) as part (part.key)}<SeverityMark
 											severity={part.key}
 											text={part.text}
@@ -259,7 +305,7 @@
 							{/if}
 						</div>
 						{#if amounts}
-							<div class="mt-1 min-[1024px]:mt-0" data-testid="investment">
+							<div class="mt-2 min-[1024px]:mt-0" data-testid="investment">
 								{@render money(r)}
 							</div>
 						{/if}

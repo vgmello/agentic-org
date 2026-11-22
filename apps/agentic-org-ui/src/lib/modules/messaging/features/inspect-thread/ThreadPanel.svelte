@@ -105,12 +105,12 @@
 		>
 	</div>
 	<div
-		class="min-h-16 flex-1 space-y-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]"
+		class="flex min-h-16 flex-1 flex-col gap-1 overflow-y-auto px-2 py-3 max-[640px]:px-[8px]"
 		data-focus-scope
 	>
 		{#key threadId}
 			<div
-				class="space-y-1"
+				class="flex flex-col gap-1"
 				role="log"
 				aria-label="Thread messages"
 				aria-live="polite"
@@ -134,9 +134,13 @@
 					{onanswer}
 					{onaccept}
 				/>
-				<p class="px-2 pt-2 text-xs/5 text-fg-muted" aria-live="off" data-testid="thread-count">
-					{replies.length}
-					{replies.length === 1 ? 'reply' : 'replies'}
+				<p
+					class="flex items-center gap-2 px-2 pt-2 text-[11px]/5 font-semibold tracking-wider text-fg-muted uppercase"
+					aria-live="off"
+					data-testid="thread-count"
+				>
+					<span>{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</span>
+					<span class="h-px flex-1 bg-line" aria-hidden="true"></span>
 				</p>
 				{#each replies as r (r.id)}
 					<MessageRow
