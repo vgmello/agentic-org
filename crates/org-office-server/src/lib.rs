@@ -33,6 +33,7 @@ mod revocations;
 mod serve;
 mod signals;
 mod startup;
+mod task_calls;
 #[cfg(any(test, all(feature = "test-support", debug_assertions)))]
 pub mod test_support;
 mod transfer;
@@ -1103,10 +1104,18 @@ fn build_office_ports(
                 },
             )
         },
-        live,
+        live: Arc::clone(&live),
         feed: Some(messaging.feed),
         mailbox: Some(messaging.mailbox),
         chat: Some(messaging.chat),
+        tasks: Some({
+            let svc = Arc::new(task_calls::TaskService::new(
+                Arc::clone(&office),
+                live,
+                Some(Arc::clone(&session_manager)),
+            ));
+            Box::new(move |member, request| svc.dispatch(member, request))
+        }),
         directory: messaging.directory,
         submit: {
             let office = Arc::clone(&office);

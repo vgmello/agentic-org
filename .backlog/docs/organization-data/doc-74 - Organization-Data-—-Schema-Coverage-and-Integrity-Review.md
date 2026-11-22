@@ -3,7 +3,7 @@ id: doc-74
 title: Organization Data — Schema Coverage and Integrity Review
 type: specification
 created_date: '2026-11-21T01:30:00Z'
-updated_date: '2026-11-22T01:01:00Z'
+updated_date: '2026-11-22T01:24:00Z'
 tags:
   - organization-data
   - contract
@@ -15,7 +15,7 @@ tags:
 
 The primary design documents define four SQL artifacts so sensitive operational projections are isolated from shared plaintext `office.db` ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md), `TASK-10`):
 
-- Load [`schema.sql`](../../../docs/design/organization-data/schema.sql) once into the shared office projection (`runtime/<office-id>/office.db`): **77 tables and 12 views**.
+- Load [`schema.sql`](../../../docs/design/organization-data/schema.sql) once into the shared office projection (`runtime/<office-id>/office.db`): **79 tables and 12 views**.
 - Load [`private-notes-schema.sql`](../../../docs/design/organization-data/private-notes-schema.sql) into the separate durable private-notes database (`runtime/<office-id>/private/task-notes.db`): **4 tables**.
 - Load [`messaging-schema.sql`](../../../docs/design/organization-data/messaging-schema.sql) into the separate access-controlled messaging database (`runtime/<office-id>/protected/messaging.db`): **8 messaging tables + 5 identity mirror tables** (`messaging_organizations`, `messaging_teams`, `messaging_projects`, `messaging_employees`, `messaging_offices`).
 - Load [`budgets-schema.sql`](../../../docs/design/organization-data/budgets-schema.sql) into the separate access-controlled budgets database (`runtime/<office-id>/protected/budgets.db`): **6 budget tables + 4 identity mirror tables** (`budget_organizations`, `budget_tasks`, `budget_employees`, `budget_releases`).
@@ -28,7 +28,7 @@ These are draft definitions, not application migrations.
 | --- | --- | --- |
 | [01](doc-75%20-%20Organization-Data-01-—-Organization-Structure.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `organizations`, `repositories`, `roles`, `teams`, `offices`, `structure_documents`, `local_repository_locations`, `repository_caches` |
 | [02](doc-76%20-%20Organization-Data-02-—-Project-Structure.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `projects`, `project_contributing_teams`, `project_repositories`, `releases`, `release_repository_commits`, `milestones`, `documents`, `milestone_progress`, `release_progress` |
-| [03](doc-77%20-%20Organization-Data-03-—-Features-and-Work.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `features`, `tasks`, `task_repositories`, `record_refs`, `tombstones`, `feature_slugs` |
+| [03](doc-77%20-%20Organization-Data-03-—-Features-and-Work.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `features`, `tasks`, `task_repositories`, `task_labels`, `task_files`, `record_refs`, `tombstones`, `feature_slugs` |
 | [04](doc-78%20-%20Organization-Data-04-—-Agent-Structure.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `employees`, `agent_placements`, `task_workspaces`, `hire_requests` |
 | [05](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `comments`, `checklist_steps`, `watchers`, `owner_questions`, `waiting_spans`, `task_events` |
 | [06](doc-80%20-%20Organization-Data-06-—-Identity-and-Numbering.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `reference_counters`, `reference_allocations`, `office_codes`, `office_task_counters` |
@@ -53,7 +53,7 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code loads this table with these columns and actively reads/writes it through its domain port), **DDL loaded only** (created verbatim from `schema.sql` by `crates/org-office/src/store/sqlite/schema.rs`, with no domain projector or read/write port yet), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (not loaded in the runtime schema and no code).
 
-As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all **77 shared tables and 12 views** plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **66 shared tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), while the isolated databases (`private-notes-schema.sql` 4 tables, `messaging-schema.sql` 8 domain + 5 mirror tables, `budgets-schema.sql` 6 domain + 4 mirror tables) remain **Absent** from runtime code until their increments (`B6`, `L3`, `L8`) open their dedicated protected databases.
+As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all **79 shared tables and 12 views** plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **66 shared tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), while the isolated databases (`private-notes-schema.sql` 4 tables, `messaging-schema.sql` 8 domain + 5 mirror tables, `budgets-schema.sql` 6 domain + 4 mirror tables) remain **Absent** from runtime code until their increments (`B6`, `L3`, `L8`) open their dedicated protected databases.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |
@@ -68,8 +68,8 @@ As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `
 | `budget_periods` | table | Absent | Isolated in `protected/budgets.db` (`budgets-schema.sql`); no projector yet |
 | `budget_policy_versions` | table | Absent | Isolated in `protected/budgets.db` (`budgets-schema.sql`); no projector yet |
 | `budgets` | table | Absent | Isolated in `protected/budgets.db` (`budgets-schema.sql`); no projector yet |
-| `checklist_steps` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `comments` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `checklist_steps` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` |
+| `comments` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` |
 | `connection_quota_state` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `connection_turn_permits` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `conversation_memberships` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet |
@@ -89,7 +89,7 @@ As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `
 | `feature_flags` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `hire_requests` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `features` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `links` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `links` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (`TASK-77` depends_on DAG + links) |
 | `local_repository_locations` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `message_attachments` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet |
 | `message_reactions` | table | Absent | Isolated in `protected/messaging.db` (`messaging-schema.sql`); no projector yet |
@@ -106,7 +106,7 @@ As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `
 | `office_connection_state` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `office_origin_streams` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `work_origin_*` deleted) |
 | `office_recovery_checkpoints` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `org_replica*` deleted) |
-| `office_task_counters` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `office_task_counters` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (local `T-<CODE><N>` minting) |
 | `offices` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
 | `organizations` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
 | `owner_questions` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
@@ -135,18 +135,20 @@ As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `
 | `repository_caches` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `roles` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
 | `structure_documents` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `task_details` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `task_details` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` |
 | `task_document_versions` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `task_events` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `work_events`/`selected_events` deleted) |
+| `task_events` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (verbatim `schema.sql`) |
+| `task_files` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (`TASK-77` reference & modified files) |
+| `task_labels` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (`TASK-77` searchable labels) |
 | `task_repositories` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `task_workspaces` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `tasks` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet (legacy `work_items` deleted) |
+| `tasks` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` (`TASK-49` + `TASK-77` rank_order) |
 | `teams` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`) |
 | `tombstones` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `usage_records` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `usage_stream_checkpoints` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `waiting_spans` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
-| `watchers` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `watchers` | table | Implemented | Active in `crates/org-office/src/store/sqlite/tasks.rs` |
 | `watching_model_settings` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`, `ADR-0024` d13) |
 | `document_version_progress` | view | DDL loaded only | Created by verbatim `schema.sql` |
 | `effective_usage_records` | view | DDL loaded only | Created by verbatim `schema.sql` |

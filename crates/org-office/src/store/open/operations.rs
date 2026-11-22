@@ -5,7 +5,6 @@ use org_store::{Actor, Id, OfficeIdentity, Receipt, Reply, Store, StoreError};
 
 use super::{OfficeEngine, ReadOp, StoreOp};
 use crate::{
-    messaging::ports::MessagingRead,
     office_local::CaMaterial,
     organization::{
         features::{
@@ -18,6 +17,7 @@ use crate::{
         features::{AddProjectTeam, CreateProject, ProjectFeature, RemoveProjectTeam},
         records::Project as ProjectRecord,
     },
+    tasks::ports::TasksRead,
 };
 
 /// Creates the organization, with the HQ's CA records in the same entry: the
@@ -196,7 +196,7 @@ pub struct ReceiptById(pub Id);
 impl ReadOp for ReceiptById {
     type Out = Option<Receipt>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Option<Receipt>, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Option<Receipt>, StoreError> {
         Ok(read.receipt(&self.0)?)
     }
 }
@@ -296,7 +296,7 @@ pub struct ProjectsList {
 impl ReadOp for ProjectsList {
     type Out = Vec<ProjectRecord>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         let mut projects = read.projects()?;
         if !self.include_archived {
             projects.retain(|p| !p.archived);
@@ -311,7 +311,7 @@ pub struct ProjectInspectByRef(pub String);
 impl ReadOp for ProjectInspectByRef {
     type Out = Option<ProjectRecord>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.resolve_project(&self.0)?)
     }
 }
@@ -339,7 +339,7 @@ pub struct DirectoryGeneration;
 impl ReadOp for DirectoryGeneration {
     type Out = u64;
 
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<u64, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<u64, StoreError> {
         Ok(snapshot.generation()?)
     }
 }
@@ -350,7 +350,7 @@ pub struct TopTeamId;
 impl ReadOp for TopTeamId {
     type Out = Option<Id>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Option<Id>, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Option<Id>, StoreError> {
         Ok(read
             .teams()?
             .into_iter()
@@ -369,7 +369,7 @@ pub struct DirectorySnapshot {
 impl ReadOp for DirectorySnapshot {
     type Out = org_proto::OrgSnapshot;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(snapshot::project(read, &self.owner)?)
     }
 }
@@ -391,7 +391,7 @@ pub struct OfficeStanding {
 impl ReadOp for OfficeStanding {
     type Out = Standing;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Standing, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Standing, StoreError> {
         let organization = read.organization()?.map(|record| record.id);
         let office = read.office(&self.office)?;
         let hq = office.is_some_and(|office| office.role == records::OfficeRole::Hq);
@@ -405,7 +405,7 @@ pub struct RolesList;
 impl ReadOp for RolesList {
     type Out = Vec<records::Role>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.roles()?)
     }
 }
@@ -416,7 +416,7 @@ pub struct RoleInspectByRef(pub String);
 impl ReadOp for RoleInspectByRef {
     type Out = Option<records::Role>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         let target = self.0.trim();
         let roles = read.roles()?;
         if let Some(found) = roles
@@ -446,7 +446,7 @@ pub struct HiresList {
 impl ReadOp for HiresList {
     type Out = Vec<records::HireRequest>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         let mut hires = read.hire_requests()?;
         if let Some(team) = &self.team_id {
             hires.retain(|h| h.home_team_id.as_str() == team);
@@ -464,7 +464,7 @@ pub struct HireInspectById(pub Id);
 impl ReadOp for HireInspectById {
     type Out = Option<records::HireRequest>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.hire_request(&self.0)?)
     }
 }
@@ -475,7 +475,7 @@ pub struct AgentExecutionById(pub Id);
 impl ReadOp for AgentExecutionById {
     type Out = Option<records::AgentExecutionConfig>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.agent_execution(&self.0)?)
     }
 }
@@ -486,7 +486,7 @@ pub struct ModelProfilesList;
 impl ReadOp for ModelProfilesList {
     type Out = Vec<records::ModelProfile>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.model_profiles()?)
     }
 }
@@ -497,7 +497,7 @@ pub struct EmployeeById(pub Id);
 impl ReadOp for EmployeeById {
     type Out = Option<records::Employee>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.employee(&self.0)?)
     }
 }
@@ -508,7 +508,7 @@ pub struct RoleById(pub Id);
 impl ReadOp for RoleById {
     type Out = Option<records::Role>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.role(&self.0)?)
     }
 }
@@ -519,7 +519,7 @@ pub struct ProviderConnectionById(pub Id);
 impl ReadOp for ProviderConnectionById {
     type Out = Option<records::ProviderConnection>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.provider_connection(&self.0)?)
     }
 }
@@ -530,7 +530,7 @@ pub struct ModelProfileById(pub Id);
 impl ReadOp for ModelProfileById {
     type Out = Option<records::ModelProfile>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.model_profile(&self.0)?)
     }
 }
@@ -541,7 +541,7 @@ pub struct WatchingModelRead;
 impl ReadOp for WatchingModelRead {
     type Out = Option<records::WatchingModelSetting>;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<Self::Out, StoreError> {
         Ok(read.watching_model()?)
     }
 }
@@ -557,7 +557,7 @@ pub struct CheckHrMessageAccess {
 impl ReadOp for CheckHrMessageAccess {
     type Out = bool;
 
-    fn read<S: MessagingRead>(self, read: &S) -> Result<bool, StoreError> {
+    fn read<S: TasksRead>(self, read: &S) -> Result<bool, StoreError> {
         let employees = read.employees()?;
         let hr = employees
             .iter()

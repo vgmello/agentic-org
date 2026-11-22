@@ -19,12 +19,12 @@ use crate::organization::{
     records::{Employee, Organization, Team, TeamAllocation, TeamCounter},
     testkit::{creation_command, OrganizationScript, Step, CREATION_AT},
 };
-use crate::projects::ports::ProjectsRead;
 
 mod ack;
 mod crashes;
 mod local;
 mod messaging;
+mod tasks;
 
 pub(super) const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
 
@@ -130,7 +130,7 @@ pub(super) struct ReadDirectory;
 impl ReadOp for ReadDirectory {
     type Out = Directory;
 
-    fn read<S: ProjectsRead>(self, snapshot: &S) -> Result<Directory, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Directory, StoreError> {
         Ok(Directory {
             generation: snapshot.generation()?,
             organization: snapshot.organization()?,
@@ -348,7 +348,7 @@ struct HeldRead {
 impl ReadOp for HeldRead {
     type Out = u64;
 
-    fn read<S: ProjectsRead>(self, snapshot: &S) -> Result<u64, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<u64, StoreError> {
         let generation = snapshot.generation()?;
         self.began.send(()).expect("the test is waiting");
         self.end.recv().expect("the test ends the read");

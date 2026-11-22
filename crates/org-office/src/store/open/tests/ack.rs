@@ -70,7 +70,7 @@ struct ReadSourceExists(DurablePath);
 impl ReadOp for ReadSourceExists {
     type Out = bool;
 
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<bool, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<bool, StoreError> {
         Ok(snapshot.source_hash(&self.0)?.is_some())
     }
 }
@@ -80,7 +80,7 @@ struct HasReceiptOp(Id);
 impl ReadOp for HasReceiptOp {
     type Out = bool;
 
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<bool, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<bool, StoreError> {
         Ok(snapshot.receipt(&self.0)?.is_some())
     }
 }
@@ -408,7 +408,7 @@ struct HoldReadOp {
 impl ReadOp for HoldReadOp {
     type Out = ();
 
-    fn read<S: MessagingRead>(self, _snapshot: &S) -> Result<(), StoreError> {
+    fn read<S: TasksRead>(self, _snapshot: &S) -> Result<(), StoreError> {
         let _ = self.entered.send(());
         let _ = self.release.recv_timeout(Duration::from_secs(5));
         Ok(())

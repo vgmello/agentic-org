@@ -17,6 +17,8 @@ pub mod session_dispatch;
 pub mod session_table;
 pub mod sources;
 pub mod table;
+pub mod task_dispatch;
+pub mod task_table;
 
 use std::io::{self, Write};
 

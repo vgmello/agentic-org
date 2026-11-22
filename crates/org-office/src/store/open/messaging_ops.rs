@@ -30,6 +30,7 @@ use crate::messaging::{
         ParticipantReceivedSnapshot, RecipientStateRecord, SenderKind, SCHEMA_VERSION,
     },
 };
+use crate::tasks::ports::TasksRead;
 
 fn storage_refusal(msg: &str) -> Refusal {
     Refusal::rejected(
@@ -393,7 +394,7 @@ pub struct InspectAskStatusRead {
 
 impl ReadOp for InspectAskStatusRead {
     type Out = Result<ChatWaitAskResult, ApiError>;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         Ok(asks::inspect_ask_status(
             snapshot,
             &self.owner,
@@ -419,7 +420,7 @@ pub struct OpenOwnerInboxRead {
 
 impl ReadOp for OpenOwnerInboxRead {
     type Out = Vec<OwnerInboxEntry>;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         let mut entries = Vec::new();
         for st in snapshot.recipient_states_for_employee(&self.owner)? {
             if st.state == MessageLifecycleState::Done {
@@ -472,7 +473,7 @@ pub struct ListChannelsRead {
 
 impl ReadOp for ListChannelsRead {
     type Out = ChatChannelsResult;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         Ok(features::list_channels(
             snapshot,
             &self.viewer,
@@ -492,7 +493,7 @@ pub struct ListConversationsRead {
 
 impl ReadOp for ListConversationsRead {
     type Out = ChatConversationsResult;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         Ok(features::list_conversations(
             snapshot,
             &self.viewer,
@@ -511,7 +512,7 @@ pub struct ChatInboxRead {
 
 impl ReadOp for ChatInboxRead {
     type Out = Result<ChatInboxResult, ApiError>;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         Ok(features::list_chat_inbox(
             snapshot,
             &self.owner,
@@ -530,7 +531,7 @@ pub struct ChatMessagesRead {
 
 impl ReadOp for ChatMessagesRead {
     type Out = Result<ChatMessagesResult, ApiError>;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         Ok(features::list_chat_messages(
             snapshot,
             &self.owner,
@@ -1322,7 +1323,7 @@ pub struct GetMailboxMessageRead(pub String);
 
 impl ReadOp for GetMailboxMessageRead {
     type Out = Option<MailboxStored>;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         let Some(msg) = snapshot.message(&self.0)? else {
             return Ok(None);
         };
@@ -1348,7 +1349,7 @@ pub struct PeekUnreadRead {
 
 impl ReadOp for PeekUnreadRead {
     type Out = PeekUnreadOut;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         let mut states = snapshot.recipient_states_for_employee(&self.to_member_id)?;
         states.retain(|s| s.state == MessageLifecycleState::Unread);
         states.sort_by(|a, b| {
@@ -1491,7 +1492,7 @@ impl ListMailboxHeadersRead {
 
 impl ReadOp for ListMailboxHeadersRead {
     type Out = HeaderPage;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         let mut headers = match &self.scope_inbox {
             Some(inbox_emp) => self.collect_inbox(snapshot, inbox_emp)?,
             None => self.collect_all_or_participant(snapshot)?,
@@ -1518,7 +1519,7 @@ pub struct FindReplyForAskRead {
 
 impl ReadOp for FindReplyForAskRead {
     type Out = Option<MailboxStored>;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         let Some(ask) = snapshot.message(&self.ask_id)? else {
             return Ok(None);
         };
@@ -1555,7 +1556,7 @@ pub struct ListActiveSnoozeDeadlinesRead;
 
 impl ReadOp for ListActiveSnoozeDeadlinesRead {
     type Out = Vec<(String, String, String)>;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         let mut out = Vec::new();
         for st in snapshot.all_recipient_states()? {
             if st.state == MessageLifecycleState::Snoozed {
@@ -1578,7 +1579,7 @@ pub struct OrgChangesAfterRead {
 
 impl ReadOp for OrgChangesAfterRead {
     type Out = Vec<OrgChangedData>;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         let org_snap = crate::organization::snapshot::project(snapshot, &self.owner)?;
         let teams: BTreeMap<&str, &org_proto::Team> =
             org_snap.teams.iter().map(|t| (t.id.as_str(), t)).collect();
@@ -1746,7 +1747,7 @@ pub struct ChannelMessagesForCallerRead {
 impl ReadOp for ChannelMessagesForCallerRead {
     type Out = Result<(ConversationRecord, Vec<MessageRecord>), ApiError>;
 
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         Ok(features::channel_messages_for_caller(
             snapshot,
             &self.owner,
@@ -1766,7 +1767,7 @@ pub struct ChannelMessagesRawRead {
 impl ReadOp for ChannelMessagesRawRead {
     type Out = Vec<MessageRecord>;
 
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         Ok(snapshot.messages_in_conversation(&self.conversation_id)?)
     }
 }
@@ -1780,7 +1781,7 @@ pub struct ConversationByIdRead {
 impl ReadOp for ConversationByIdRead {
     type Out = Option<ConversationRecord>;
 
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
         if let Some(conv) = snapshot.conversation(&self.conversation_id)? {
             return Ok(Some(conv));
         }

@@ -15,6 +15,7 @@ mod instance_routes;
 mod open_routes;
 mod org_routes;
 mod session_routes;
+mod task_routes;
 
 pub use instance_routes::{CallerAuth, TlsEnableInput};
 
@@ -167,6 +168,7 @@ pub enum Route {
     Hiring(hiring_routes::HiringRoute),
     Sessions(session_routes::SessionRoute),
     Chat(chat_routes::ChatRoute),
+    Tasks(task_routes::TaskRoute),
 }
 
 pub enum Call {
@@ -202,6 +204,7 @@ pub enum Call {
     Hiring(hiring_routes::HiringCall),
     Sessions(session_routes::SessionCall),
     Chat(chat_routes::ChatCall),
+    Tasks(task_routes::TaskCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -996,6 +999,7 @@ impl ApiBackend for SessionApi {
             Route::Hiring(route) => return hiring_routes::prepare(route, bytes),
             Route::Sessions(route) => return session_routes::prepare(route, bytes),
             Route::Chat(route) => return chat_routes::prepare(route, bytes),
+            Route::Tasks(route) => return task_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -1095,6 +1099,12 @@ impl ApiBackend for SessionApi {
                 ),
                 streaming: false,
             },
+            Call::Tasks(call) => AsyncDispatch::Async {
+                future: Box::pin(
+                    async move { WebReply::Json(task_routes::execute(&self, call).await) },
+                ),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
         }
     }
@@ -1113,6 +1123,7 @@ impl ApiBackend for SessionApi {
             Call::Hiring(_) => unreachable!("Call::Hiring is dispatched asynchronously"),
             Call::Sessions(_) => unreachable!("Call::Sessions is dispatched asynchronously"),
             Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
+            Call::Tasks(_) => unreachable!("Call::Tasks is dispatched asynchronously"),
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))

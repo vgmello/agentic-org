@@ -3,7 +3,7 @@ id: doc-77
 title: Organization Data 03 — Features and Work
 type: specification
 created_date: '2026-11-21T01:30:00Z'
-updated_date: '2026-11-21T01:30:00Z'
+updated_date: '2026-11-22T01:24:00Z'
 tags:
   - organization-data
   - contract
@@ -32,6 +32,8 @@ erDiagram
     milestones o|--o{ tasks : milestone_id
     employees o|--o{ tasks : assigned
     tasks ||--o{ task_repositories : targets
+    tasks ||--o{ task_labels : tagged_with
+    tasks ||--o{ task_files : references_and_modifies
     repositories ||--o{ task_repositories : registered_target
     features {
         TEXT organization_id PK, FK "required"
@@ -87,6 +89,7 @@ erDiagram
         TEXT severity "optional"
         TEXT resolution "optional"
         TEXT blocked_reason "optional"
+        INTEGER rank_order "optional"
         TEXT created_at "optional"
         TEXT created_by_kind "required"
         TEXT created_by_id FK "optional"
@@ -100,6 +103,17 @@ erDiagram
         TEXT repository_id PK, FK "required"
         TEXT branch "optional"
         TEXT integrated_commit "optional"
+    }
+    task_labels {
+        TEXT organization_id PK, FK "required"
+        TEXT task_id PK, FK "required"
+        TEXT label PK "required"
+    }
+    task_files {
+        TEXT organization_id PK, FK "required"
+        TEXT task_id PK, FK "required"
+        TEXT role PK "required"
+        TEXT path PK "required"
     }
 ```
 
@@ -259,6 +273,8 @@ Task comments, checklist entries and activity records are defined in [operationa
 | `features` | `features/<id>/feature.md`: stable `id`, `number`, `local_slug`, revision fields, `project_id`, `title`, `status`, body; `key` and public full slug are derived. |
 | `feature_slugs` (view) | Derived from each feature's `project_id` and `local_slug`, joined to its project's `slug`; no authored file. |
 | `tasks` | Task front matter: every same-named scalar except derived `key`, plus body. Required owning `team_id`, optional `project_id`, nullable current `assigned_team_id` and `assignee_id`; `type` defaults to `task`, `priority` to `normal`, optional fields to null. Reporter/originator uses immutable `created_by_*`. |
+| `task_labels` | Normalized lowercase `labels[]` attached to the task for indexed single- and multi-label search and filtering (`TASK-77`). |
+| `task_files` | Distinct `reference_files[]` (`role = 'reference'`) and `modified_files[]` (`role = 'modified'`) relative paths attached to the task (`TASK-77`). |
 | `task_repositories` | `repository_ids[]`; corresponding `branches[repository_id]` and `integrated_commits[repository_id]`. Task ID comes from the task file; project repository eligibility is validated through its optional project. |
 | `task_document_versions` | `realizes[]`: one row per `{document_id, version}`; defined in [document 18](doc-86%20-%20Organization-Data-18-—-Development-Processes-and-Project-Documentation.md). |
 | `links` | Source `links[]` is defined in [record contracts](doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md); projects/features/documents also support links. `implements`, `documents` and inverse `blocks` are derived rather than duplicated. |
@@ -345,6 +361,7 @@ CREATE TABLE tasks (
   severity TEXT,
   resolution TEXT,
   blocked_reason TEXT,
+  rank_order INTEGER CHECK (rank_order >= 0),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
@@ -377,6 +394,36 @@ CREATE TABLE task_repositories (
   FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, repository_id) REFERENCES repositories(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+
+CREATE TABLE task_labels (
+  organization_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  label TEXT NOT NULL CHECK (
+    length(label) BETWEEN 1 AND 64
+    AND label NOT GLOB '*[^a-z0-9._:/-]*'
+    AND substr(label, 1, 1) GLOB '[a-z0-9]'
+    AND substr(label, -1, 1) GLOB '[a-z0-9]'
+  ),
+  PRIMARY KEY (organization_id, task_id, label),
+  FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE task_files (
+  organization_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('reference', 'modified')),
+  path TEXT NOT NULL CHECK (
+    length(path) BETWEEN 1 AND 1024
+    AND substr(path, 1, 1) <> '/'
+    AND instr(path, '..') = 0
+    AND instr(path, char(0)) = 0
+  ),
+  PRIMARY KEY (organization_id, task_id, role, path),
+  FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
