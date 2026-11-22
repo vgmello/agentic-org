@@ -13,10 +13,11 @@ use serde_json::{json, Value};
 
 pub use hiring::{
     agent_execution_path, decode_agent_execution, decode_hire_request, decode_model_profile,
-    decode_provider_connection, encode_agent_execution, encode_hire_request, encode_model_profile,
-    encode_provider_connection, hire_request_path, model_profile_path, provider_connection_path,
-    AgentExecutionConfig, HireProposal, HireRequest, HireState, ModelProfile, PermissionPreset,
-    ProviderAuthMode, ProviderConnection,
+    decode_provider_connection, decode_watching_model, encode_agent_execution, encode_hire_request,
+    encode_model_profile, encode_provider_connection, encode_watching_model, hire_request_path,
+    model_profile_path, provider_connection_path, watching_model_path, AgentExecutionConfig,
+    HireProposal, HireRequest, HireState, ModelProfile, PermissionPreset, ProviderAuthMode,
+    ProviderConnection, WatchingModelSetting,
 };
 pub use yaml::RecordError;
 use yaml::{Fields, Reader};
@@ -961,6 +962,8 @@ pub enum Kind {
     ProviderConnection(Id),
     /// A model profile (`model-profiles/<id>.yaml`).
     ModelProfile(Id),
+    /// Organization-wide channel watching model profile setting (`execution/watching-model.yaml`).
+    WatchingModel,
     /// The scope the path names.
     TeamCounter(Id),
     TeamAllocation(Id, u64),
@@ -988,6 +991,7 @@ pub fn kind_of(path: &DurablePath) -> Option<Kind> {
         ["state", "roles", name] => name.strip_suffix(".md").and_then(stable_id).map(Kind::Role),
         ["state", "provider-connections", name] => file(name).map(Kind::ProviderConnection),
         ["state", "model-profiles", name] => file(name).map(Kind::ModelProfile),
+        ["state", "execution", "watching-model.yaml"] => Some(Kind::WatchingModel),
         ["state", "security", "ca-escrow.v1.bin"] => Some(Kind::CaEscrow),
         ["state", "identity", "counters", "organization", scope, "team.yaml"] => {
             id(scope).map(Kind::TeamCounter)

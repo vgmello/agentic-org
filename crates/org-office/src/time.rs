@@ -7,7 +7,7 @@ pub(crate) fn now_rfc3339() -> String {
     format_epoch_ms(now_ms())
 }
 
-pub(crate) fn format_rfc3339_ms(ms: u64) -> String {
+pub fn format_rfc3339_ms(ms: u64) -> String {
     format_epoch_ms(ms)
 }
 

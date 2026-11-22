@@ -657,7 +657,7 @@ fn c8_busy_agent_coalesces_three_arriving_wakes_into_one_follow_up_turn() {
 #[test]
 fn c8_hourly_limit_person_exemption_and_post_restart_pending_wakes() {
     let fx = WakeFixture::new(LOOP_ECHO_SCRIPT);
-    let mgr = fx.make_manager(2, Duration::from_millis(600), Duration::from_secs(2));
+    let mgr = fx.make_manager(2, Duration::from_millis(2000), Duration::from_secs(2));
 
     let make_agent_wake = |id: &str| PendingWakeItem {
         item_id: id.into(),
@@ -701,8 +701,8 @@ fn c8_hourly_limit_person_exemption_and_post_restart_pending_wakes() {
     mgr.stop_all("step3");
 
     // Simulate window expiry (LIVE-3) + full office restart (LIVE-4) with durable pending wake.
-    std::thread::sleep(Duration::from_millis(650));
-    let mgr_after_restart = fx.make_manager(2, Duration::from_millis(600), Duration::from_secs(2));
+    std::thread::sleep(Duration::from_millis(2100));
+    let mgr_after_restart = fx.make_manager(2, Duration::from_millis(2000), Duration::from_secs(2));
     mgr_after_restart
         .store()
         .write_pending_wakes(&crate::wake::PendingWakeQueueRecord {
@@ -720,7 +720,7 @@ fn c8_hourly_limit_person_exemption_and_post_restart_pending_wakes() {
                 enqueued_at_ms: now_ms(),
             }],
             hold_reason: Some(WakeHoldReason::HourlyLimit),
-            held_since_ms: Some(now_ms().saturating_sub(700)),
+            held_since_ms: Some(now_ms().saturating_sub(2200)),
             retry_after_ms: Some(now_ms().saturating_sub(10)),
             updated_at: crate::credentials::rfc3339_now(),
         })

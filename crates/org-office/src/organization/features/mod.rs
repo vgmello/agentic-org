@@ -38,8 +38,8 @@ use serde::{Deserialize, Serialize};
 
 pub use add_person::AddPerson;
 pub use agent_lifecycle::{
-    CreateProviderConnection, MoveAgent, OffboardAgent, SetAgentStatus, UpdateAgent,
-    UpsertAgentExecution,
+    CreateProviderConnection, MoveAgent, OffboardAgent, SetAgentStatus, SetWatchingModel,
+    UpdateAgent, UpsertAgentExecution,
 };
 pub use archive_team::ArchiveTeam;
 pub use authority::HIRE_DENIED;
@@ -85,13 +85,14 @@ pub enum Op {
     OffboardAgent,
     UpsertAgentExecution,
     CreateProviderConnection,
+    SetWatchingModel,
     CreateProject,
     AddProjectTeam,
     RemoveProjectTeam,
 }
 
 impl Op {
-    pub const ALL: [Op; 27] = [
+    pub const ALL: [Op; 28] = [
         Op::CreateOrganization,
         Op::ImportOrganization,
         Op::CreateTeam,
@@ -116,6 +117,7 @@ impl Op {
         Op::OffboardAgent,
         Op::UpsertAgentExecution,
         Op::CreateProviderConnection,
+        Op::SetWatchingModel,
         Op::CreateProject,
         Op::AddProjectTeam,
         Op::RemoveProjectTeam,
@@ -153,6 +155,7 @@ impl Op {
             Op::OffboardAgent => "organization.offboard_agent",
             Op::UpsertAgentExecution => "organization.upsert_agent_execution",
             Op::CreateProviderConnection => "organization.create_provider_connection",
+            Op::SetWatchingModel => "organization.set_watching_model",
             Op::CreateProject => "organization.create_project",
             Op::AddProjectTeam => "organization.add_project_team",
             Op::RemoveProjectTeam => "organization.remove_project_team",

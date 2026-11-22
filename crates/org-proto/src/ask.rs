@@ -202,6 +202,12 @@ pub struct ChatAskResult {
     pub recipient_presence: Vec<crate::directory::RecipientPresence>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub woke_agents: Vec<String>,
+    /// Whether the office opened a channel question watch (`ADR-0024` d13/d14, `WATCH-5/6`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watched: Option<bool>,
+    /// Why a channel question watch was not started (e.g. `no_watching_model`, `watch_limit_reached`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch_not_started_reason: Option<String>,
 }
 
 impl Call for ChatAsk {

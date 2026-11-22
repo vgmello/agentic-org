@@ -443,6 +443,7 @@ CREATE TABLE tasks (
   severity TEXT,
   resolution TEXT,
   blocked_reason TEXT,
+  rank_order INTEGER CHECK (rank_order >= 0),
   created_at TEXT,
   created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee', 'system', 'unknown')),
   created_by_id TEXT,
@@ -475,6 +476,35 @@ CREATE TABLE task_repositories (
   FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (organization_id, repository_id) REFERENCES repositories(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE task_labels (
+  organization_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  label TEXT NOT NULL CHECK (
+    length(label) BETWEEN 1 AND 64
+    AND label NOT GLOB '*[^a-z0-9._:/-]*'
+    AND substr(label, 1, 1) GLOB '[a-z0-9]'
+    AND substr(label, -1, 1) GLOB '[a-z0-9]'
+  ),
+  PRIMARY KEY (organization_id, task_id, label),
+  FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id)
+    DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE task_files (
+  organization_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('reference', 'modified')),
+  path TEXT NOT NULL CHECK (
+    length(path) BETWEEN 1 AND 1024
+    AND substr(path, 1, 1) <> '/'
+    AND instr(path, '..') = 0
+    AND instr(path, char(0)) = 0
+  ),
+  PRIMARY KEY (organization_id, task_id, role, path),
+  FOREIGN KEY (organization_id, task_id) REFERENCES tasks(organization_id, id)
     DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
@@ -1646,6 +1676,24 @@ FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,i
   FOREIGN KEY (organization_id,updated_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
+CREATE TABLE watching_model_settings (
+  organization_id TEXT NOT NULL PRIMARY KEY REFERENCES organizations(id),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  model_profile_id TEXT,
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','system','unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','system','unknown')),
+  updated_by_id TEXT,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,updated_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
 CREATE TABLE office_connection_bindings (
 organization_id TEXT NOT NULL,
   office_id TEXT NOT NULL,
@@ -2455,8 +2503,11 @@ CREATE TRIGGER waiting_spans_reject_deleted_task BEFORE INSERT ON waiting_spans
 BEGIN SELECT RAISE(ABORT,'cannot attach operational record to a deleted task') WHERE EXISTS (
  SELECT 1 FROM record_refs r WHERE r.organization_id=NEW.organization_id AND r.kind=NEW.target_kind AND r.id=NEW.target_id AND r.is_deleted=1); END;
 
--- Targeted hot-path composite indexes and high-fanout FK indexes (TASK-6: H-10, H-13).
+-- Targeted hot-path composite indexes and high-fanout FK indexes (TASK-6: H-10, H-13; TASK-77).
 CREATE INDEX tasks_by_feature ON tasks(organization_id, feature_id);
+CREATE INDEX tasks_by_order ON tasks(organization_id, rank_order, number);
+CREATE INDEX task_labels_by_label ON task_labels(organization_id, label, task_id);
+CREATE INDEX task_files_by_role_path ON task_files(organization_id, role, path, task_id);
 CREATE INDEX task_document_versions_by_document ON task_document_versions(organization_id, document_id, version, task_id);
 CREATE INDEX document_code_links_by_document ON document_code_links(organization_id, document_id);
 CREATE INDEX document_version_sources_by_source ON document_version_sources(organization_id, source_document_id, source_version, document_id, version);

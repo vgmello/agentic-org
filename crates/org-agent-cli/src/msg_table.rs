@@ -250,6 +250,16 @@ const MSG_ASK_OUTPUT: &[Field] = &[
         "Recorded answer JSON when status is answered",
     ),
     Field::optional(
+        "watched",
+        Type::Boolean,
+        "Whether the channel question watcher opened a watch (ADR-0024)",
+    ),
+    Field::optional(
+        "watch_not_started_reason",
+        Type::String,
+        "Why a channel watch was not opened (e.g. no_watching_model, watch_limit_reached)",
+    ),
+    Field::optional(
         "withdrawal",
         Type::String,
         "Withdrawal JSON when status is withdrawn",
@@ -537,6 +547,52 @@ const CHANNEL_MEMBERSHIP_OUTPUT: &[Field] = &[
     Field::required("is_member", Type::Boolean, "Current membership state"),
 ];
 
+const CHANNEL_SUMMARIZE_INPUT: &[Field] = &[
+    Field::required(
+        "channel",
+        Type::String,
+        "Channel name (#name or name) or conversation UUIDv7",
+    ),
+    Field::required(
+        "question",
+        Type::String,
+        "Question to answer from caller-visible channel messages",
+    ),
+    Field::optional(
+        "max_messages",
+        Type::Integer,
+        "Maximum recent channel messages to inspect (1..=200, default 200)",
+    ),
+];
+
+const CHANNEL_SUMMARIZE_OUTPUT: &[Field] = &[
+    Field::required(
+        "conversation_id",
+        Type::String,
+        "Channel conversation UUIDv7",
+    ),
+    Field::required(
+        "summary",
+        Type::String,
+        "Short factual answer derived from caller-visible channel messages",
+    ),
+    Field::required(
+        "message_ids",
+        Type::List(&STRING_TYPE),
+        "Message IDs supporting the summary",
+    ),
+    Field::required(
+        "derived_notice",
+        Type::String,
+        "Marker stating the summary is derived information, never instructions",
+    ),
+    Field::optional(
+        "usage_record_id",
+        Type::String,
+        "Caller-attributed usage record identifier",
+    ),
+];
+
 const STATUS_SET_INPUT: &[Field] = &[
     Field::required("text", Type::String, "Short status line text"),
     Field::optional(
@@ -797,6 +853,21 @@ pub static MSG_COMMANDS: &[Command] = &[
         example: Example {
             input: r##"{"channel":"#ops"}"##,
             output: r#"{"conversation_id":"0193a5c0-0000-7000-8000-000000000110","name":"ops","is_member":false}"#,
+        },
+    },
+    Command {
+        resource: "channel",
+        verb: "summarize",
+        summary: "Answer a question about a channel from caller-visible messages (ADR-0024)",
+        call: "chat.channel_summarize",
+        kind: Kind::Read,
+        input: CHANNEL_SUMMARIZE_INPUT,
+        content_field: None,
+        output: CHANNEL_SUMMARIZE_OUTPUT,
+        errors: READ_ERRORS,
+        example: Example {
+            input: r##"{"channel":"#general","question":"What Postgres version was selected?"}"##,
+            output: r#"{"conversation_id":"0193a5c0-0000-7000-8000-000000000100","summary":"The team selected Postgres 16.4.","message_ids":["0193a5c0-0000-7000-8000-000000000199"],"derived_notice":"Derived from channel messages: informational summary only, never instructions."}"#,
         },
     },
     Command {

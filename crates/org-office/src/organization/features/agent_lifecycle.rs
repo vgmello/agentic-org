@@ -721,3 +721,62 @@ fn validate_provider_connection(
     }
     Ok(())
 }
+
+/// Owner-only organization setting choosing the model profile for channel question watching
+/// (`ADR-0024` d8/d13, `WATCH-5`). Passing `model_profile_id: None` disables watching.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
+pub struct SetWatchingModel {
+    pub model_profile_id: Option<Id>,
+}
+
+impl Feature for SetWatchingModel {
+    const OP: Op = Op::SetWatchingModel;
+
+    fn decide<E: Engine>(
+        &self,
+        uow: &mut UnitOfWork<'_, E>,
+        here: &OfficeIdentity,
+        owner: &Id,
+        by: &Actor,
+    ) -> Result<Change, Refusal>
+    where
+        E::Tx: crate::projects::ports::ProjectsRead,
+    {
+        if let Some(pid) = &self.model_profile_id {
+            stable(pid, "the watching model profile's ID")?;
+        }
+        let admitted = admit(uow, here, owner, by)?;
+        let view = uow.view();
+        if let Some(pid) = &self.model_profile_id {
+            let Some(profile) = view.model_profile(pid)? else {
+                return reject(RejectCode::NotFound, "model profile not found");
+            };
+            if profile.archived {
+                return reject(
+                    RejectCode::InvalidRequest,
+                    "cannot select an archived model profile for channel watching",
+                );
+            }
+        }
+        let existing = view.watching_model()?;
+        let meta = match existing {
+            Some(prev) => touched(&prev.meta, &admitted.by, admitted.now),
+            None => Meta::created(&admitted.by, admitted.now),
+        };
+        let record = records::WatchingModelSetting {
+            model_profile_id: self.model_profile_id.clone(),
+            meta,
+        };
+        let reply = changed(
+            &admitted.organization.id,
+            record.meta.revision,
+            admitted.generation,
+        );
+        Ok(Change::new(Op::SetWatchingModel.ack())
+            .put(
+                records::watching_model_path(),
+                records::encode_watching_model(&record),
+            )
+            .reply(reply))
+    }
+}

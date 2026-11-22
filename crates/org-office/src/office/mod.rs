@@ -21,6 +21,7 @@ mod folder;
 mod hiring;
 mod intent;
 mod messaging;
+mod tasks;
 #[cfg(any(test, feature = "testkit"))]
 mod testkit;
 #[cfg(test)]

@@ -49,6 +49,7 @@ mod private_fs;
 pub mod projects;
 pub mod rules;
 mod store;
+pub mod tasks;
 pub use store::open::messaging_ops::{
     LocalTransitionInput, MailboxCommitInput, MailboxCommitOut, MailboxStored, NotifyCandidateOut,
     OwnerInboxEntry, PeekUnreadOut,
@@ -64,6 +65,7 @@ pub use store::open::{
     StructureOp, UpdatePersonOp, UpdateTeamOp,
 };
 mod time;
+pub use time::format_rfc3339_ms;
 pub use time::parse_rfc3339_ms;
 
 pub use error::{NameError, OfficeError};

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Raised by the copilot when a run's deadline has passed (or the run is abandoned). The adapter
@@ -53,7 +54,7 @@ pub struct RunOutput {
 }
 
 /// Token usage, when the runtime reports it (for the "Copilot" cost line).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Usage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
@@ -85,4 +86,14 @@ pub trait CopilotRuntime: Send + Sync + 'static {
     fn available(&self) -> bool;
 
     fn run(&self, request: &RunRequest, cancel: &CancelToken) -> Result<RunOutput, RuntimeError>;
+}
+
+impl CopilotRuntime for Arc<dyn CopilotRuntime> {
+    fn available(&self) -> bool {
+        (**self).available()
+    }
+
+    fn run(&self, request: &RunRequest, cancel: &CancelToken) -> Result<RunOutput, RuntimeError> {
+        (**self).run(request, cancel)
+    }
 }

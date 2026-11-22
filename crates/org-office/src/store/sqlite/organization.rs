@@ -22,7 +22,7 @@ use crate::organization::{
         EmployeeStatus, HireProposal, HireRequest, HireState, Meta, ModelProfile, Office,
         OfficeCode, OfficeRole, Organization, PermissionPreset, ProviderAuthMode,
         ProviderConnection, Repository, RepositoryKind, Role, Team, TeamAllocation, TeamCounter,
-        TeamStatus,
+        TeamStatus, WatchingModelSetting,
     },
 };
 
@@ -324,6 +324,13 @@ fn agent_execution_row(row: &Row<'_>) -> rusqlite::Result<AgentExecutionConfig> 
     })
 }
 
+fn watching_model_row(row: &Row<'_>) -> rusqlite::Result<WatchingModelSetting> {
+    Ok(WatchingModelSetting {
+        model_profile_id: optional_id(row, 0)?,
+        meta: meta(row, 1)?,
+    })
+}
+
 fn provider_connection_row(row: &Row<'_>) -> rusqlite::Result<ProviderConnection> {
     let auth_text: String = row.get(4)?;
     let auth_mode =
@@ -566,6 +573,15 @@ macro_rules! sqlite_read {
                     profile.connection_ids = profile_connections(db, scope, &profile.id)?;
                 }
                 Ok(profiles)
+            }
+
+            fn watching_model(&self) -> Result<Option<WatchingModelSetting>, EngineError> {
+                let (db, scope) = self.view()?;
+                let sql = format!(
+                    "SELECT model_profile_id, {META} FROM watching_model_settings \
+                     WHERE organization_id = ?1"
+                );
+                one(db, &sql, vec![text(scope)], watching_model_row)
             }
 
             fn team_counter(&self) -> Result<Option<TeamCounter>, EngineError> {
@@ -987,6 +1003,27 @@ impl OrganizationWrite for SqliteTx {
         )?;
         let sql = "DELETE FROM model_profiles WHERE organization_id = ?1 AND id = ?2";
         run(db, sql, vec![text(scope), text(id.as_str())])
+    }
+
+    fn put_watching_model(&mut self, record: &WatchingModelSetting) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        let mut values = vec![
+            text(scope),
+            optional_id_value(record.model_profile_id.as_ref()),
+            Value::Integer(1),
+        ];
+        meta_values(&record.meta, &mut values)?;
+        let columns = format!("organization_id, model_profile_id, schema_version, {META}");
+        put(db, "watching_model_settings", &columns, 1, values)
+    }
+
+    fn remove_watching_model(&mut self) -> Result<(), EngineError> {
+        let (db, scope) = self.view()?;
+        run(
+            db,
+            "DELETE FROM watching_model_settings WHERE organization_id = ?1",
+            vec![text(scope)],
+        )
     }
 
     fn put_team_counter(&mut self, record: &TeamCounter) -> Result<(), EngineError> {

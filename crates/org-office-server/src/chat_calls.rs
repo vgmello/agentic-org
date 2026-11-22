@@ -11,9 +11,10 @@ use org_proto::ask::{
     MAX_SHORT_HOLD_MS,
 };
 use org_proto::chat::{
-    header_only_received, ChatChannelCreate, ChatChannelJoin, ChatChannelLeave, ChatChannels,
-    ChatConversations, ChatEventsPoll, ChatEventsPollResult, ChatInbox, ChatMarkRead, ChatMessages,
-    ChatMute, ChatReact, ChatSend, DmOpen, MsgAccept,
+    header_only_received, ChatChannelCreate, ChatChannelJoin, ChatChannelLeave,
+    ChatChannelSummarize, ChatChannels, ChatConversations, ChatEventsPoll, ChatEventsPollResult,
+    ChatInbox, ChatMarkRead, ChatMessages, ChatMute, ChatReact, ChatSend, ChatWatchingModelGet,
+    ChatWatchingModelSet, DmOpen, MsgAccept,
 };
 use org_proto::{ApiError, Call, ErrorCode, Request, Response};
 
@@ -40,6 +41,9 @@ fn is_channel_or_dm_method(request: &Request) -> bool {
         || request.is::<ChatChannelCreate>()
         || request.is::<ChatChannelJoin>()
         || request.is::<ChatChannelLeave>()
+        || request.is::<ChatChannelSummarize>()
+        || request.is::<ChatWatchingModelGet>()
+        || request.is::<ChatWatchingModelSet>()
         || request.is::<ChatConversations>()
 }
 
@@ -102,16 +106,18 @@ pub(crate) struct ChatService {
     live: Arc<LiveEvents>,
     mailbox: Arc<Mailbox>,
     sessions: Option<Arc<org_office_sessions::SessionManager>>,
+    watcher: Arc<crate::watcher::ChannelWatcher>,
     owner_id: String,
     ask_waiters: AskWaiters,
 }
 
 impl ChatService {
-    pub(crate) fn new(
+    pub(crate) fn with_watcher(
         office: Arc<Office>,
         live: Arc<LiveEvents>,
         mailbox: Arc<Mailbox>,
         sessions: Option<Arc<org_office_sessions::SessionManager>>,
+        watcher: Arc<crate::watcher::ChannelWatcher>,
     ) -> Self {
         let owner_id = office.owner_member_id().to_owned();
         Self {
@@ -119,6 +125,7 @@ impl ChatService {
             live,
             mailbox,
             sessions,
+            watcher,
             owner_id,
             ask_waiters: AskWaiters::default(),
         }
@@ -132,7 +139,7 @@ impl ChatService {
         stopping: &AtomicBool,
         request: &Request,
     ) -> Option<Response> {
-        if !is_chat_method(request) {
+        if !is_chat_method(request) && !request.is::<org_proto::msg::MsgDone>() {
             return None;
         }
         let Some(member) = member else {
@@ -141,7 +148,7 @@ impl ChatService {
                 ApiError::new(ErrorCode::NotBound, "connection is not bound"),
             ));
         };
-        if let Some(resp) = self.dispatch_channel_or_dm(member, request) {
+        if let Some(resp) = self.dispatch_channel_or_dm(member, via_grant, request) {
             return Some(resp);
         }
         if let Some(resp) = self.dispatch_message_ops(member, request) {
@@ -178,7 +185,12 @@ impl ChatService {
         None
     }
 
-    fn dispatch_channel_or_dm(&self, member: &str, request: &Request) -> Option<Response> {
+    fn dispatch_channel_or_dm(
+        &self,
+        member: &str,
+        via_grant: bool,
+        request: &Request,
+    ) -> Option<Response> {
         if request.is::<DmOpen>() {
             return Some(run_call::<DmOpen>(request, |p| {
                 self.office.dm_open(member, p)
@@ -200,9 +212,16 @@ impl ChatService {
             }));
         }
         if request.is::<ChatChannelLeave>() {
-            return Some(run_call::<ChatChannelLeave>(request, |p| {
-                self.office.set_channel_membership(member, p, false)
-            }));
+            return Some(self.handle_channel_leave(member, request));
+        }
+        if request.is::<ChatChannelSummarize>() {
+            return Some(self.handle_channel_summarize(member, request));
+        }
+        if request.is::<ChatWatchingModelGet>() {
+            return Some(self.handle_watching_model_get(request));
+        }
+        if request.is::<ChatWatchingModelSet>() {
+            return Some(self.handle_watching_model_set(member, via_grant, request));
         }
         if request.is::<ChatConversations>() {
             return Some(run_call::<ChatConversations>(request, |p| {
@@ -244,6 +263,9 @@ impl ChatService {
         if request.is::<MsgAccept>() {
             return Some(self.handle_msg_accept(member, request));
         }
+        if request.is::<org_proto::msg::MsgDone>() {
+            return Some(self.handle_msg_done(member, request));
+        }
         None
     }
 
@@ -276,6 +298,8 @@ impl ChatService {
                     if owner_touched {
                         self.live.record_mailbox_change();
                     }
+                    self.watcher
+                        .on_channel_message_posted(&committed.message, committed.conversation_kind);
                 }
                 if let Some(sessions) = &self.sessions {
                     let (woke, presence) = crate::wake_bridge::on_chat_send_committed(
@@ -314,6 +338,180 @@ impl ChatService {
                 storage_err(request.id)
             }
         }
+    }
+
+    fn handle_msg_done(&self, member: &str, request: &Request) -> Response {
+        let target_id = request
+            .params::<org_proto::msg::MsgDone>()
+            .ok()
+            .map(|p| p.id);
+        // Capture related question IDs before `mailbox.done` marks an `answer_candidate` done.
+        let linked_qids: Vec<String> = target_id
+            .as_deref()
+            .and_then(|id| {
+                self.office
+                    .chat_inbox(
+                        member,
+                        org_proto::chat::ChatInboxParams {
+                            include_all: true,
+                            because: None,
+                            from: None,
+                            thread_id: None,
+                            cursor: None,
+                            limit: Some(100),
+                        },
+                    )
+                    .ok()
+                    .and_then(Result::ok)
+                    .map(|page| {
+                        page.items
+                            .into_iter()
+                            .find(|i| i.id == id)
+                            .map(|i| i.related_message_ids)
+                            .unwrap_or_default()
+                    })
+            })
+            .unwrap_or_default();
+
+        let resp = crate::msg_calls::answer(request, Some(&self.mailbox), Some(member), false)
+            .unwrap_or_else(|| crate::msg_calls::unsupported(request.id));
+        match &resp.outcome {
+            org_proto::Outcome::Result(_) => {
+                // High #1: only close watches owned by `member` (`asker_id == member`).
+                if let Some(id) = target_id.as_deref() {
+                    let _ = self.watcher.on_question_done_by(member, id);
+                }
+                for qid in &linked_qids {
+                    let _ = self.watcher.on_question_done_by(member, qid);
+                }
+                resp
+            }
+            org_proto::Outcome::Error(err) if err.code == ErrorCode::NotFound => {
+                // High #1: an asker has no recipient state for their own channel question; allow
+                // `msg.done` on their own watched question ID to close that watch cleanly.
+                if let Some(id) = target_id.as_deref() {
+                    if self.watcher.on_question_done_by(member, id) {
+                        let resolved_at = org_office::format_rfc3339_ms(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map_or(0, |d| d.as_millis() as u64),
+                        );
+                        return ok_reply::<org_proto::msg::MsgDone>(
+                            request.id,
+                            &org_proto::msg::MsgDoneResult {
+                                id: id.to_owned(),
+                                resolved_at,
+                            },
+                        );
+                    }
+                }
+                resp
+            }
+            _ => resp,
+        }
+    }
+
+    fn handle_channel_leave(&self, member: &str, request: &Request) -> Response {
+        let Ok(params) = request.params::<ChatChannelLeave>() else {
+            return invalid_params(request.id, ChatChannelLeave::METHOD);
+        };
+        match self.office.set_channel_membership(member, params, false) {
+            Ok(Ok(res)) => {
+                self.watcher.on_member_left_channel(member, &res.channel.id);
+                ok_reply::<ChatChannelLeave>(request.id, &res)
+            }
+            Ok(Err(refusal)) => Response::error(request.id, refusal),
+            Err(error) => {
+                crate::logged(ChatChannelLeave::METHOD, &error);
+                storage_err(request.id)
+            }
+        }
+    }
+
+    fn handle_channel_summarize(&self, member: &str, request: &Request) -> Response {
+        let Ok(params) = request.params::<ChatChannelSummarize>() else {
+            return invalid_params(request.id, ChatChannelSummarize::METHOD);
+        };
+        match self.watcher.summarize_channel(member, &params) {
+            Ok(res) => ok_reply::<ChatChannelSummarize>(request.id, &res),
+            Err(refusal) => Response::error(request.id, refusal),
+        }
+    }
+
+    fn handle_watching_model_get(&self, request: &Request) -> Response {
+        match self.office.watching_model_view() {
+            Ok(res) => ok_reply::<ChatWatchingModelGet>(request.id, &res),
+            Err(error) => {
+                crate::logged(ChatWatchingModelGet::METHOD, &error);
+                storage_err(request.id)
+            }
+        }
+    }
+
+    fn handle_watching_model_set(
+        &self,
+        member: &str,
+        via_grant: bool,
+        request: &Request,
+    ) -> Response {
+        if !via_grant {
+            return Response::error(
+                request.id,
+                ApiError::new(
+                    ErrorCode::NotAuthorized,
+                    "only the authenticated organization owner may change the watching model",
+                ),
+            );
+        }
+        let Ok(params) = request.params::<ChatWatchingModelSet>() else {
+            return invalid_params(request.id, ChatWatchingModelSet::METHOD);
+        };
+        match self.office.set_watching_model_setting(
+            member,
+            &params.command_id,
+            params.model_profile_id.as_deref(),
+        ) {
+            Ok(Ok(res)) => ok_reply::<ChatWatchingModelSet>(request.id, &res),
+            Ok(Err(refusal)) => Response::error(request.id, refusal),
+            Err(error) => {
+                crate::logged(ChatWatchingModelSet::METHOD, &error);
+                storage_err(request.id)
+            }
+        }
+    }
+
+    fn open_channel_watch_if_applicable(
+        &self,
+        member: &str,
+        committed: &org_office::messaging::asks::AskCommitted,
+    ) -> (Option<bool>, Option<String>) {
+        if !committed.inserted {
+            return (None, None);
+        }
+        let conv_kind = self
+            .office
+            .conversation_by_id(&committed.result.conversation_id)
+            .ok()
+            .flatten()
+            .map_or(org_proto::chat::ConversationKind::Dm, |c| c.kind);
+        if conv_kind != org_proto::chat::ConversationKind::Channel {
+            return (None, None);
+        }
+        let q_text = committed
+            .card
+            .questions
+            .iter()
+            .map(|q| q.prompt.as_str())
+            .collect::<Vec<_>>()
+            .join(" / ");
+        let (watched, reason) = self.watcher.on_channel_ask_opened(
+            member,
+            &committed.result.ask_id,
+            &committed.result.conversation_id,
+            conv_kind,
+            &q_text,
+        );
+        (Some(watched), reason)
     }
 
     fn hold_for_ask(
@@ -384,9 +582,13 @@ impl ChatService {
                     ),
                     None => (Vec::new(), Vec::new()),
                 };
+                let (watched, watch_reason) =
+                    self.open_channel_watch_if_applicable(member, &committed);
                 let mut res: ChatAskResult = committed.result;
                 res.woke_agents = woke;
                 res.recipient_presence = presence;
+                res.watched = watched;
+                res.watch_not_started_reason = watch_reason;
                 if res.status == AskStatus::Waiting && hold_ms != Some(0) {
                     if let Ok(Ok(waited)) =
                         self.hold_for_ask(member, &res.ask_id, hold_ms, stopping)
@@ -433,6 +635,8 @@ impl ChatService {
                 {
                     self.live.record_mailbox_change();
                 }
+                self.watcher
+                    .on_question_closed(&committed.result.ask_id, "answered");
                 if let Some(sessions) = &self.sessions {
                     crate::wake_bridge::on_chat_answer_committed(
                         &self.office,
@@ -465,6 +669,8 @@ impl ChatService {
                 {
                     self.live.record_mailbox_change();
                 }
+                self.watcher
+                    .on_question_closed(&committed.result.ask_id, "withdrawn");
                 if let Some(sessions) = &self.sessions {
                     crate::wake_bridge::on_msg_withdraw_committed(sessions, member, &committed);
                 }

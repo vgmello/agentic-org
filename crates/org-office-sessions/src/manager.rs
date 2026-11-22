@@ -187,6 +187,9 @@ impl Drop for BindingGuard<'_> {
 
 /// Coordinates all live agent sessions, run bindings, recovery, and provider CLI enrollments
 /// for one [`Office`].
+/// Callback supplying drained watch-ended notices for an agent's next turn (`ADR-0024` d14).
+pub type WatchNoticeProvider = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
+
 pub struct SessionManager {
     pub(crate) office: Arc<Office>,
     pub(crate) config: SessionManagerConfig,
@@ -199,6 +202,7 @@ pub struct SessionManager {
     pub(crate) budget_hold: Arc<Mutex<Option<String>>>,
     pub(crate) lifecycle_lock: Arc<Mutex<()>>,
     pub(crate) dispatching_wakes: Arc<Mutex<HashSet<String>>>,
+    watch_notice_provider: Mutex<Option<WatchNoticeProvider>>,
     startup_recovery: Mutex<RecoveryReport>,
     command_cache: Mutex<HashMap<(String, String, String), CachedRpcResponse>>,
 }
@@ -238,6 +242,7 @@ impl SessionManager {
             budget_hold: Arc::new(Mutex::new(None)),
             lifecycle_lock: Arc::new(Mutex::new(())),
             dispatching_wakes: Arc::new(Mutex::new(HashSet::new())),
+            watch_notice_provider: Mutex::new(None),
             startup_recovery: Mutex::new(RecoveryReport::default()),
             command_cache: Mutex::new(HashMap::new()),
         }
@@ -245,6 +250,36 @@ impl SessionManager {
 
     pub fn bindings(&self) -> &RunBindingRegistry {
         &self.bindings
+    }
+
+    /// Registers an office-local provider supplying pending channel watch-ended notices to prepend
+    /// to an agent's next turn objective (`ADR-0024` d14).
+    pub fn set_watch_notice_provider(&self, provider: WatchNoticeProvider) {
+        *self
+            .watch_notice_provider
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(provider);
+    }
+
+    fn prepend_watch_notices(&self, employee_id: &str, objective: String) -> String {
+        let provider = self
+            .watch_notice_provider
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let Some(provider) = provider else {
+            return objective;
+        };
+        let notices = provider(employee_id);
+        if notices.is_empty() {
+            return objective;
+        }
+        let header = notices.join("\n");
+        if objective.is_empty() {
+            header
+        } else {
+            format!("{header}\n\n{objective}")
+        }
     }
 
     /// Records an accepted `agent-os` command in memory and durably in `active-turn.v1.json`
@@ -964,6 +999,7 @@ impl SessionManager {
                     | SessionState::RecoveryRequired
             ) {
                 if let Some(text) = objective {
+                    let text = self.prepend_watch_notices(emp_id, text);
                     if handle.tx.send(PumpCommand::SendTurn(text)).is_ok() {
                         return Ok((Some(state.to_view()), None));
                     }
@@ -1008,6 +1044,7 @@ impl SessionManager {
         objective: String,
         resume_runtime_session_id: Option<&str>,
     ) -> Result<PreparedSessionLaunch, ApiError> {
+        let objective = self.prepend_watch_notices(employee.id.as_str(), objective);
         let planned = self.plan_session_launch(employee, params, resume_runtime_session_id)?;
         self.issue_and_spawn_launch(objective, planned)
     }

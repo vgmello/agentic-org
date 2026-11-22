@@ -16,6 +16,7 @@ use super::{
     records::{
         AgentExecutionConfig, Employee, HireRequest, ModelProfile, Office, OfficeCode,
         Organization, ProviderConnection, Repository, Role, Team, TeamAllocation, TeamCounter,
+        WatchingModelSetting,
     },
 };
 
@@ -33,6 +34,7 @@ pub struct OrganizationTables {
     agent_executions: BTreeMap<Id, AgentExecutionConfig>,
     provider_connections: BTreeMap<Id, ProviderConnection>,
     model_profiles: BTreeMap<Id, ModelProfile>,
+    watching_model: Option<WatchingModelSetting>,
     team_counter: Option<TeamCounter>,
     team_allocations: BTreeMap<u64, TeamAllocation>,
     record_refs: BTreeSet<RecordRef>,
@@ -91,6 +93,7 @@ impl FamilyTable for OrganizationTables {
             self.provider_connections.values(),
         ));
         lines.extend(rows("model_profiles", self.model_profiles.values()));
+        lines.extend(rows("watching_model_settings", &self.watching_model));
         lines.extend(rows("reference_counters", &self.team_counter));
         let allocations = self.team_allocations.values();
         lines.extend(rows("reference_allocations", allocations));
@@ -213,6 +216,10 @@ macro_rules! memory_read {
 
             fn model_profiles(&self) -> Result<Vec<ModelProfile>, EngineError> {
                 read(self.table(), |t| t.model_profiles.values().cloned().collect())
+            }
+
+            fn watching_model(&self) -> Result<Option<WatchingModelSetting>, EngineError> {
+                read(self.table(), |t| t.watching_model.clone())
             }
 
             fn team_counter(&self) -> Result<Option<TeamCounter>, EngineError> {
@@ -360,6 +367,16 @@ impl OrganizationWrite for MemoryTx {
         self.table_mut::<OrganizationTables>()?
             .model_profiles
             .remove(id);
+        Ok(())
+    }
+
+    fn put_watching_model(&mut self, record: &WatchingModelSetting) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?.watching_model = Some(record.clone());
+        Ok(())
+    }
+
+    fn remove_watching_model(&mut self) -> Result<(), EngineError> {
+        self.table_mut::<OrganizationTables>()?.watching_model = None;
         Ok(())
     }
 

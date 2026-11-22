@@ -58,7 +58,7 @@ struct HasReceipt(Id);
 impl ReadOp for HasReceipt {
     type Out = bool;
 
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<bool, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<bool, StoreError> {
         Ok(snapshot.receipt(&self.0)?.is_some())
     }
 }
@@ -68,7 +68,7 @@ struct Source(DurablePath);
 impl ReadOp for Source {
     type Out = Option<Sha256>;
 
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Option<Sha256>, StoreError> {
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Option<Sha256>, StoreError> {
         Ok(snapshot.source_hash(&self.0)?)
     }
 }

@@ -14,6 +14,7 @@
 
 pub(crate) mod messaging_ops;
 mod operations;
+pub(crate) mod task_ops;
 #[cfg(test)]
 mod tests;
 
@@ -29,9 +30,10 @@ use org_store::{
 };
 
 pub use messaging_ops::{
-    ChannelCreateOp, ChannelMembershipOp, ChatAnswerOp, ChatInboxRead, ChatMarkReadOp,
-    ChatMessagesRead, ChatMuteOp, ChatReactOp, ChatSendOp, ClaimMailboxReadOp,
-    CommitMailboxMessageOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
+    ChannelCreateOp, ChannelMembershipOp, ChannelMessagesForCallerRead, ChannelMessagesRawRead,
+    ChatAnswerOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead, ChatMuteOp, ChatReactOp,
+    ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, ConversationByIdRead,
+    DeliverAnswerCandidatesOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
     InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead, ListConversationsRead,
     ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp,
     MsgWithdrawOp, OpenOwnerInboxRead, OrgChangesAfterRead, PeekUnreadRead,
@@ -43,18 +45,19 @@ pub use operations::{
     ImportOrganizationOp, ModelProfileById, ModelProfilesList, MovePersonOp, MoveTeamOp,
     OfficeStanding, ProjectCheckOp, ProjectInspectByRef, ProjectsList, ProviderConnectionById,
     ReceiptById, RemoveProjectTeamOp, RoleById, RoleInspectByRef, RolesList, Standing, StructureOp,
-    TopTeamId, UpdatePersonOp, UpdateTeamOp,
+    TopTeamId, UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
 };
 
 use super::sqlite::SqliteEngine;
 use crate::{
-    messaging::{
-        ports::{MessagingEngine, MessagingRead},
-        projector::MessagingFiles,
-    },
+    messaging::projector::MessagingFiles,
     office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
     organization::projector::OrganizationFiles,
     projects::projector::ProjectFiles,
+    tasks::{
+        ports::{TasksEngine, TasksRead},
+        projector::TaskFiles,
+    },
 };
 
 /// The file of an office's projection, under `<runtime-root>/<office-id>/`.
@@ -147,9 +150,9 @@ impl StoreConfig {
 }
 
 /// An engine every family of the office runs on. It grows by one bound per family.
-pub trait OfficeEngine: MessagingEngine {}
+pub trait OfficeEngine: TasksEngine {}
 
-impl<E: MessagingEngine> OfficeEngine for E {}
+impl<E: TasksEngine> OfficeEngine for E {}
 
 /// One operation on the store, whichever engine holds the projection.
 pub trait StoreOp {
@@ -160,7 +163,7 @@ pub trait StoreOp {
 /// One read of a consistent snapshot, whichever engine holds the projection.
 pub trait ReadOp {
     type Out;
-    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
+    fn read<S: TasksRead>(self, snapshot: &S) -> Result<Self::Out, StoreError>;
 }
 
 /// A store and the engine under it.
@@ -225,10 +228,11 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let files: Arc<dyn Projector<E>> = Arc::new(OrganizationFiles::new(organization.clone()));
     let projects: Arc<dyn Projector<E>> = Arc::new(ProjectFiles::new(organization.clone()));
     let messaging: Arc<dyn Projector<E>> = Arc::new(MessagingFiles::new(organization.clone()));
+    let tasks: Arc<dyn Projector<E>> = Arc::new(TaskFiles::new());
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
     #[cfg_attr(not(any(test, feature = "testkit")), allow(unused_mut))]
     let mut projectors: Vec<Arc<dyn Projector<E>>> =
-        vec![files, projects, messaging, Arc::new(local)];
+        vec![files, projects, messaging, tasks, Arc::new(local)];
     #[cfg(any(test, feature = "testkit"))]
     if let Some(probe) = &config.testing.probe {
         projectors.push(probe.projector());

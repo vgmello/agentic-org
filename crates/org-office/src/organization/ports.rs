@@ -9,7 +9,7 @@ use org_store::{CoreRead, Engine, EngineError, Id};
 
 use super::records::{
     AgentExecutionConfig, Employee, HireRequest, ModelProfile, Office, OfficeCode, Organization,
-    ProviderConnection, Repository, Role, Team, TeamAllocation, TeamCounter,
+    ProviderConnection, Repository, Role, Team, TeamAllocation, TeamCounter, WatchingModelSetting,
 };
 
 /// The deepest team tree a chain is followed through. A path cannot hold more.
@@ -66,6 +66,7 @@ pub trait OrganizationRead: CoreRead {
     fn model_profile(&self, id: &Id) -> Result<Option<ModelProfile>, EngineError>;
     /// In order of ID.
     fn model_profiles(&self) -> Result<Vec<ModelProfile>, EngineError>;
+    fn watching_model(&self) -> Result<Option<WatchingModelSetting>, EngineError>;
     fn team_counter(&self) -> Result<Option<TeamCounter>, EngineError>;
     /// In order of number.
     fn team_allocations(&self) -> Result<Vec<TeamAllocation>, EngineError>;
@@ -125,6 +126,8 @@ pub trait OrganizationWrite: OrganizationRead {
     fn remove_provider_connection(&mut self, id: &Id) -> Result<(), EngineError>;
     fn put_model_profile(&mut self, record: &ModelProfile) -> Result<(), EngineError>;
     fn remove_model_profile(&mut self, id: &Id) -> Result<(), EngineError>;
+    fn put_watching_model(&mut self, record: &WatchingModelSetting) -> Result<(), EngineError>;
+    fn remove_watching_model(&mut self) -> Result<(), EngineError>;
     fn put_team_counter(&mut self, record: &TeamCounter) -> Result<(), EngineError>;
     fn remove_team_counter(&mut self) -> Result<(), EngineError>;
     fn put_team_allocation(&mut self, record: &TeamAllocation) -> Result<(), EngineError>;

@@ -135,6 +135,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             live,
             mailbox: Some(mailbox),
             chat: None,
+            tasks: None,
             directory,
         },
         crate::test_support::grant_key(),

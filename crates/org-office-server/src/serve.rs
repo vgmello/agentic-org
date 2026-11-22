@@ -133,6 +133,9 @@ pub type ChatFn = Box<
         + Sync,
 >;
 
+/// Dispatches B4/B5/B4b unified `tasks.*` RPCs (`TASK-49`, `TASK-77`).
+pub type TasksFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
@@ -161,6 +164,8 @@ pub struct OfficePorts {
     pub mailbox: Option<Arc<Mailbox>>,
     /// B6 chat/channel/DM/accept/events-poll dispatcher.
     pub chat: Option<ChatFn>,
+    /// B4/B5/B4b unified typed tasks dispatcher (`TASK-49`, `TASK-77`).
+    pub tasks: Option<TasksFn>,
     /// Who a `msg.bind` names.
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
@@ -1475,6 +1480,31 @@ fn project_or_hiring(request: &Request, shared: &Shared, binding: &Binding) -> O
     project_read(request, shared, binding)
         .or_else(|| hiring_rpc(request, shared, binding))
         .or_else(|| sessions_rpc(request, shared, binding))
+        .or_else(|| tasks_rpc(request, shared, binding))
+}
+
+fn tasks_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::task_calls::is_task_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(tasks) = &shared.ports.tasks {
+        if let Some(response) = tasks(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
 }
 
 fn sessions_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
@@ -1520,6 +1550,20 @@ fn answer_message(request: &Request, shared: &Shared, binding: &Binding) -> Opti
             .unwrap_or_else(|| msg_calls::unsupported(request.id)),
             None => msg_calls::unsupported(request.id),
         });
+    }
+    // High #1: when `ports.chat` is active, let `ChatService` close any asker-owned channel
+    // watch on `msg.done`; when `ports.chat` is `None`, preserve the `msg_calls::answer` fallback.
+    if request.is::<org_proto::msg::MsgDone>() {
+        if let Some(chat) = &shared.ports.chat {
+            if let Some(resp) = chat(
+                binding.member(),
+                binding.via_grant(),
+                &shared.stopping,
+                request,
+            ) {
+                return Some(resp);
+            }
+        }
     }
     if request.is::<org_proto::msg::MsgSend>() {
         if let (Some(guard), Some(member)) = (&shared.ports.hr_message_guard, binding.member()) {
@@ -2778,6 +2822,7 @@ mod tests {
             live: Arc::new(LiveEvents::new(Box::new(|| {}))),
             mailbox: Some(mailbox),
             chat: None,
+            tasks: None,
             directory,
         }
     }
@@ -3242,6 +3287,7 @@ mod tests {
                 live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                 mailbox: Some(mailbox),
                 chat: None,
+                tasks: None,
                 directory,
             },
             launch_key(),
@@ -3720,6 +3766,7 @@ mod tests {
                     live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                     mailbox: Some(mailbox),
                     chat: None,
+                    tasks: None,
                     directory,
                 },
                 launch_key(),
@@ -4223,6 +4270,7 @@ mod tests {
                 live: Arc::new(LiveEvents::new(Box::new(|| {}))),
                 mailbox: Some(mailbox),
                 chat: None,
+                tasks: None,
                 directory,
             },
             launch_key(),

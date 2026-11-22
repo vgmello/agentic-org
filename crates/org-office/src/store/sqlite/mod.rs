@@ -23,6 +23,7 @@ mod receipts;
 mod schema;
 #[cfg(test)]
 mod spike;
+mod tasks;
 #[cfg(test)]
 mod tests;
 
