@@ -51,7 +51,9 @@ impl Fixture {
         let journal = Journal::open(&self.base, None).unwrap();
         let input = Input {
             version: 1,
+            service: crate::instance::setup::Service::Registered,
             root: self.base.join("instance"),
+            credentials: None,
             listen,
         };
         let pin = ReleasePin {
@@ -310,4 +312,299 @@ fn a_start_without_admitted_runtime_refuses_before_touching_the_instance() {
         0,
         "no custody"
     );
+}
+
+impl Fixture {
+    /// Writes setup's record for a reserved instance whose credential directory is
+    /// `credentials`, in the service mode `service`.
+    fn record_with_credentials(
+        &self,
+        id: String,
+        listen: ListenConfig,
+        service: crate::instance::setup::Service,
+        credentials: &std::path::Path,
+    ) {
+        let journal = Journal::open(&self.base, None).unwrap();
+        let input = Input {
+            version: 1,
+            service,
+            root: self.base.join("instance"),
+            credentials: Some(credentials.to_owned()),
+            listen,
+        };
+        let pin = ReleasePin {
+            release_id: "fixture-1".into(),
+            sequence: 1,
+            manifest_sha256: "a".repeat(64),
+        };
+        let record = journal.freeze(input, true, pin).unwrap();
+        journal
+            .write(&Record {
+                instance_id: Some(id),
+                credentials: Some(credentials.to_owned()),
+                ..record
+            })
+            .unwrap();
+    }
+}
+
+/// A credential directory beside the fixture, outside the account's records (`base`), as
+/// setup makes one: `<another temporary directory>/secrets`, mode 700.
+fn credential_directory() -> (tempfile::TempDir, PathBuf) {
+    let temp =
+        tempfile::tempdir_in(org_platform::dirs::testing::disk_backed_temp().unwrap()).unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    fs::set_permissions(&base, fs::Permissions::from_mode(0o700)).unwrap();
+    let secrets = base.join("secrets");
+    fs::create_dir(&secrets).unwrap();
+    fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700)).unwrap();
+    (temp, secrets)
+}
+
+/// Whether a refusal is this machine's, not the rule's: the temporary directory is on a
+/// filesystem that cannot hold a credential directory.
+fn this_machine_cannot_hold_one(refused: &str) -> bool {
+    refused.contains("must be on ext4")
+}
+
+/// Runs `f` with this thread's host starts walking to their credential directory from
+/// `base` (`release_store::WALK_FROM`): every check below `base` is the host's.
+fn walking_from<R>(base: &std::path::Path, f: impl FnOnce() -> R) -> R {
+    crate::release_store::WALK_FROM.with(|from| *from.borrow_mut() = Some(base.to_owned()));
+    let result = f();
+    crate::release_store::WALK_FROM.with(|from| *from.borrow_mut() = None);
+    result
+}
+
+/// X5 review, fourth round (Sol P1-1, P1-2, P1-5): where this system keeps a host's secrets
+/// in a directory and the setup record names one, a development build keeps every secret
+/// there, as a release build does, and needs no development key folder. The directory is
+/// judged at every start with the release rules: an instance whose records say keys exist
+/// does not start on an empty one (a lost secrets volume), and nothing is made in it.
+#[test]
+fn a_recorded_credential_directory_holds_a_development_builds_custody() {
+    use org_platform_host::credentials::{protected_store, ProtectedStore};
+    if protected_store() != Ok(ProtectedStore::ReleaseDirectory) {
+        println!("skipped: this system records no credential directory");
+        return;
+    }
+    let f = fixture();
+    let (_secrets_temp, secrets) = credential_directory();
+    let listen = listen(7420);
+    let id = f.reserve(Some(&listen));
+    f.record_with_credentials(
+        id.clone(),
+        listen,
+        crate::instance::setup::Service::Registered,
+        &secrets,
+    );
+    // No development key folder: the recorded directory is the custody.
+    let walk_base = secrets.parent().unwrap().to_owned();
+    let start = || {
+        let mut config = f.config();
+        config.dev_key_dir = None;
+        walking_from(&walk_base, || {
+            Host::start_registered_at(config, &f.paths, None)
+        })
+    };
+    let host = match start() {
+        Ok(host) => host,
+        Err(error) if this_machine_cannot_hold_one(&error.to_string()) => {
+            println!("skipped: {error}");
+            return;
+        }
+        Err(error) => panic!("{error}"),
+    };
+    assert!(f.registry_db().exists());
+    host.shutdown();
+    // Both views were opened in the directory (each made its item store there, with its
+    // lock), and nothing in the development folder: there is none.
+    for store in ["host-secrets", "office-keys"] {
+        assert!(
+            secrets.join(store).join(".lock").is_file(),
+            "{store}: {:?}",
+            walk(&secrets)
+        );
+    }
+    assert!(f.custody().is_empty(), "the development folder was used");
+
+    // An office exists, and the directory is replaced by an empty one: the start refuses
+    // before any key or secret is made, and the directory stays empty.
+    let offices = f
+        .base
+        .join("instance/office-state")
+        .join(org_office_launch::OFFICES_DIR_NAME);
+    fs::create_dir_all(offices.join("01AAAAAAAAAAAAAAAAAAAAAAAA")).unwrap();
+    fs::remove_dir_all(&secrets).unwrap();
+    fs::create_dir(&secrets).unwrap();
+    fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700)).unwrap();
+    let refused = start().err().expect("refused").to_string();
+    assert!(
+        refused.contains("credentials missing") && refused.contains(&*secrets.to_string_lossy()),
+        "{refused}"
+    );
+    assert_eq!(fs::read_dir(&secrets).unwrap().count(), 0);
+    assert!(f.custody().is_empty());
+}
+
+#[test]
+fn a_host_refuses_a_credential_directory_bound_to_another_instance() {
+    use org_platform_host::credentials::{protected_store, ProtectedStore};
+    if protected_store() != Ok(ProtectedStore::ReleaseDirectory) {
+        return;
+    }
+    let (_temp, secrets) = credential_directory();
+    let owner = fixture();
+    let other = fixture();
+    let listen = listen(7420);
+    let owner_id = owner.reserve(Some(&listen));
+    let other_id = other.reserve(Some(&listen));
+    assert_ne!(owner_id, other_id);
+    for (fixture, id) in [(&owner, &owner_id), (&other, &other_id)] {
+        fixture.record_with_credentials(
+            id.clone(),
+            listen.clone(),
+            crate::instance::setup::Service::Registered,
+            &secrets,
+        );
+    }
+    let start = |fixture: &Fixture| walking_from(secrets.parent().unwrap(), || fixture.start());
+    match start(&owner) {
+        Ok(host) => host.shutdown(),
+        Err(error) if this_machine_cannot_hold_one(&error.to_string()) => return,
+        Err(error) => panic!("{error}"),
+    }
+
+    // A first start on the other data root must not open custody. Creating a host
+    // registry would clean up this writer item.
+    let writer = secrets.join("host-secrets/writer-device");
+    fs::write(&writer, b"writer of the original instance").unwrap();
+    fs::set_permissions(&writer, fs::Permissions::from_mode(0o600)).unwrap();
+    let refused = match start(&other) {
+        Err(error) => error.to_string(),
+        Ok(host) => {
+            host.shutdown();
+            panic!("started with another instance's credential directory");
+        }
+    };
+    assert!(refused.contains("bound to another instance"), "{refused}");
+    assert!(!other.registry_db().exists());
+    assert_eq!(
+        fs::read(&writer).unwrap(),
+        b"writer of the original instance"
+    );
+    let marker = secrets.join(".instance");
+    assert_eq!(fs::read_to_string(&marker).unwrap(), owner_id);
+    assert_eq!(
+        fs::metadata(marker).unwrap().permissions().mode() & 0o7777,
+        0o600
+    );
+}
+
+/// X5 review, fourth round (Sol P1-3): the credential directory is kept apart from the
+/// account's records as it is from the data folder: one inside the records' directory is
+/// refused, and nothing is made in it.
+#[test]
+fn a_credential_directory_among_the_accounts_records_is_refused() {
+    use org_platform_host::credentials::{protected_store, ProtectedStore};
+    if protected_store() != Ok(ProtectedStore::ReleaseDirectory) {
+        println!("skipped: this system records no credential directory");
+        return;
+    }
+    let f = fixture();
+    // The fixture's records are in `base` itself.
+    let secrets = f.base.join("secrets");
+    fs::create_dir(&secrets).unwrap();
+    fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700)).unwrap();
+    let listen = listen(7420);
+    let id = f.reserve(Some(&listen));
+    f.record_with_credentials(
+        id,
+        listen,
+        crate::instance::setup::Service::Registered,
+        &secrets,
+    );
+    let refused = walking_from(&f.base, || f.start())
+        .err()
+        .expect("refused")
+        .to_string();
+    if this_machine_cannot_hold_one(&refused) {
+        println!("skipped: {refused}");
+        return;
+    }
+    assert!(refused.contains("account's records"), "{refused}");
+    assert_eq!(fs::read_dir(&secrets).unwrap().count(), 0);
+    assert!(!f.registry_db().exists());
+}
+
+/// A development build whose record names no credential directory makes the development
+/// key folder its environment names when it is missing (mode 700), never its parent.
+#[test]
+fn a_missing_development_key_folder_is_made_but_never_its_parent() {
+    let f = fixture();
+    let listen = listen(7420);
+    let id = f.reserve(Some(&listen));
+    f.record(listen, Some(id));
+    fs::remove_dir(f.base.join("keys")).unwrap();
+    f.start().unwrap().shutdown();
+    assert_eq!(
+        fs::metadata(f.base.join("keys"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o700
+    );
+    let mut config = f.config();
+    config.dev_key_dir = Some(f.base.join("absent/keys"));
+    let refused = Host::start_registered_at(config, &f.paths, None)
+        .err()
+        .expect("refused")
+        .to_string();
+    assert!(
+        refused.contains("making the development key folder"),
+        "{refused}"
+    );
+    assert!(!f.base.join("absent").exists());
+}
+
+/// X5 review, second round: on a system that keeps a host's secrets in a directory, a
+/// foreground record that names no secrets volume (setup refuses such a file; this one is
+/// written by hand) does not start, so neither the volume's checks nor the development key
+/// folder's rule can be skipped. Nothing is written.
+#[test]
+fn a_foreground_record_without_its_secrets_volume_does_not_start_where_one_is_required() {
+    use org_platform_host::credentials::{protected_store, ProtectedStore};
+    if protected_store() != Ok(ProtectedStore::ReleaseDirectory) {
+        println!("skipped: this system keeps no host secrets in a directory");
+        return;
+    }
+    let f = fixture();
+    let listen = listen(7420);
+    let id = f.reserve(Some(&listen));
+    let journal = Journal::open(&f.base, None).unwrap();
+    let input = Input {
+        version: 1,
+        service: crate::instance::setup::Service::Foreground,
+        root: f.base.join("instance"),
+        credentials: None,
+        listen,
+    };
+    let pin = ReleasePin {
+        release_id: "fixture-1".into(),
+        sequence: 1,
+        manifest_sha256: "a".repeat(64),
+    };
+    let record = journal.freeze(input, true, pin).unwrap();
+    journal
+        .write(&Record {
+            instance_id: Some(id),
+            ..record
+        })
+        .unwrap();
+    drop(journal);
+    let refused = f.start().err().expect("refused").to_string();
+    assert!(refused.contains(FOREGROUND_WITHOUT_VOLUME), "{refused}");
+    assert!(f.custody().is_empty(), "custody was written");
+    assert!(!f.registry_db().exists());
 }

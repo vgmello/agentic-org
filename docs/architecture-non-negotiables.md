@@ -10,6 +10,12 @@ and recorded. It is short on purpose: everything not listed here is yours to dec
   a task or commenting on one) answers in single-digit milliseconds, with a target median of
   1 ms and 95th percentile of 2 ms for an office-local call in the long-running mode.
 - **Works alone.** An office keeps working when HQ or the network is unreachable.
+  *Recorded exceptions (owner, 2026-11-19):* HQ turn-permit admission
+  ([document 11](design/organization-data/11-model-profiles-and-agent-execution.md)) and
+  HQ-centralized refresh for single-use rotating provider OAuth tokens in multi-office
+  Codex pools ([ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md)
+  decision 6), where a satellite continues until its current short-lived access token
+  expires unless configured with an independent per-office login.
 - **Reliable and light.** Nothing acknowledged is lost. Memory and disk use stay small.
 - **Simple.** Between two designs that meet the requirement, the simpler and more
   elegant one wins. Rebuilding a part is fine when the result is cleaner; nothing has

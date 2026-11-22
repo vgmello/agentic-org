@@ -213,7 +213,10 @@ Three things to know about the order:
     product: it appears and is addressed as an agent, but it is not kept running. It
     runs only when called, and the onboarding of a new agent is product code it
     invokes (C2, C3).
-  - The recovery code is released once, on the HQ machine.
+  - The recovery code is released once, on the HQ machine. *(Owner direction
+    2026-11-20: the recovery code, CA escrow and protected recovery delivery are v2;
+    the built code stays until the owner confirms the document updates;
+    [note](design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1).)*
   - Organization and office IDs are UUIDv7.
   - The UI's create flow talks to the real API.
 - **Read:** [create organization design](design/create-organization.md),
@@ -238,7 +241,10 @@ Three things to know about the order:
     `src/lib/create-flow.ts`, which ran against fakes, is deleted.
 - **Done when:** an organization created in the browser exists after a restart with its
   owner as a person in the top-level team; its files are under `durable/state/`; the
-  recovery code has been delivered once; ENC-2 passes.
+  recovery code has been delivered once *(owner direction 2026-11-20: recovery-code
+  delivery is v2, so it is no longer part of this finish line once the owner confirms;
+  [note](design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1))*;
+  ENC-2 passes.
 - **Needs:** A3. A4 lands on the office store as it is. B1b then rebuilds that store
   underneath it and makes organization creation the first accepted transaction.
 
@@ -299,7 +305,22 @@ Three things to know about the order:
   office only when one is named and otherwise writes to a file queue, which B6 deletes.
 - **Done when:** SES-8 passes; a signed-in person runs a read command and a write
   command against the office from a terminal; the same commands are refused without a
-  session.
+  session. `agent-os` addresses a selected office: a UUIDv7 office ID and that office's
+  socket (`org_proto::location::selected_office_socket_in`), where today
+  `crates/org-client/src/agent.rs` takes plain office IDs only. With it, the cases B1b
+  removed from `apps/agent-os/tests/office.rs` return there against a running office
+  (their agent comes from B2): an agent the office does not know is refused at its bind
+  (exit 1, naming the office and the agent, nothing spooled); an office named by mistake
+  is still told at once. With A5's client, two B1b checks that ran short of the real
+  host return through it (row FC-146): (a) create, `team.create`, stop, delete
+  `runtime/<office-id>/`, restart, then an equal `org.snapshot` and the same
+  `team.create` command ID returns its original answer, where B1b proves this at worker
+  level and through the host only without office calls; (b) a flipped journal byte at
+  or below the confirmed head, an older segment copy behind the host checkpoint and a
+  closed custody channel are each refused through the real host (the flipped byte
+  naming its ordinal; the closed channel failing closed), where B1b proves them at the
+  worker's custody adapter with a fake writer, and of these refusals the host's custody
+  unit tests prove only the confirmation rule that adapter relies on.
 - **Needs:** A4, K1.
 
 ---
@@ -406,11 +427,31 @@ onto it and deletes the old store; B1c measures and guards it.
   (opening, loss boundaries); [ADR-0007](adr/0007-hq-creation-escrow.md),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md),
   [host boundary design](design/office-host-boundary.md).
-- **Code today:** `crates/org-office/src/office.rs` opens `org.db` and `office.db` and
-  writes `meta` rows; `office/hq_creation.rs` and `store/hq_creation.rs` hold the
-  creation record; `apps/agentic-org-office/src/transfer/writer.rs` is the host custody
-  channel, called twice per write and once per read today; `apps/agentic-org-office/src/lib.rs`
-  wired the mailbox to the old tables until B1b's first merge, which unplugged it (`unsupported`).
+- **Code today:** `org_office::Office` (`crates/org-office/src/office/`) opens through
+  `open_store` (`crates/org-office/src/store/open.rs`) on the organization's data roots `<instance-root>/<org-id>/{durable,runtime}`, which the host
+  gives it in its writer admission. HQ creation is the journal's first entry
+  (`CreateOrganizationOp`, `store/open/operations.rs`): the organization's files under
+  `durable/state/`, the escrow package `state/security/ca-escrow.v1.bin` and the CA key
+  record `local/offices/<office-id>/security/ca-key.v1.json`, wrapped by the office
+  secrets key (`office_local/`). `apps/agentic-org-office/src/transfer/writer.rs`
+  implements `org_store::WriterAuthority` over writer-control wire version 2: the head is
+  read once at opening and confirmed once per flush, and the host checks it
+  (`crates/org-host/src/writer.rs`); no office starts without custody. The clean-stop
+  marker is `local/offices/<office-id>/clean-stop`. `org.snapshot`, `who`, `inbox.list`,
+  `msg.bind`'s lookup (`apps/agentic-org-office/src/directory.rs`) and `team.create`
+  answer from the store; work, operation lookup, the other organization commands,
+  messaging, status lines and `subscribe` answer `unsupported`. The old store and every
+  SQL statement outside `src/store/sqlite/` are deleted;
+  `crates/org-office/tests/engine_boundary.rs` parses the crate with `syn` and fails on a `rusqlite` path or SQL outside it (empty
+  allowlist). `TestOffice` opens on the memory engine by default and the office's tests
+  run on both engines. Done-when evidence: deleting `runtime/<office-id>/` rebuilds with
+  no loss in process (`office/tests.rs`), through the real worker
+  (`apps/agentic-org-office/tests/launch/activation/owner.rs`) and through the real host
+  (`crates/org-host/src/web_process_tests/organizations.rs`, ignored real-process); an
+  answered team survives a `SIGKILL` (`owner.rs`
+  `a_committed_team_survives_killing_the_worker_after_its_answer`); STORE-6 on the
+  production path (`office/tests.rs` `creation_writes_exactly_the_golden_files_and_the_ca_records`).
+  An organization created before B1b is refused, not migrated.
 - **Done when:** with an organization created through the host, deleting
   `runtime/<office-id>/` and restarting rebuilds the projection with no loss; a
   committed organization write survives killing the office right after its answer; the
@@ -420,7 +461,7 @@ onto it and deletes the old store; B1c measures and guards it.
 - **Needs:** B1a; A1 (the store it deletes is the one A1 changes); A4 (the creation path
   it moves).
 - **Paths:** the data-root contract paths (`<data-root>/<org-id>/durable/state/…`) are
-  B1b's. A4 writes `<instance-root>/durable/state/<org-id>/`.
+  B1b's; since B1b the office writes there (A4 wrote `<instance-root>/durable/state/<org-id>/`).
 
 ### B1c · The store measured and guarded
 
@@ -466,13 +507,33 @@ on the offers of design section 10.
   [agent structure](design/organization-data/04-agent-structure.md),
   [identity and numbering](design/organization-data/06-identity-and-numbering.md),
   [teams design](design/teams-and-org-chart.md). Rows FC-025 to FC-029.
-- **Code today:** `crates/org-office/src/organization` and `employees` implement members
-  with several memberships (a `memberships` table in `store/org.rs`); the rules in
-  `crates/org-office/src/rules` carry tests worth keeping where the rule is unchanged.
+- **Code today:** the organization family on the office store
+  (`crates/org-office/src/organization/{records,ports,projector,features}`) holds
+  organizations, offices, teams, employees and the HQ counters, and serves `team.create`
+  and the directory reads (B1a, B1b). B1b deleted the old store, including its
+  `memberships` table (`store/org.rs`), and left `crates/org-office/src/rules/**`,
+  `employees/**` and `organization/{structure,people,policy,view,directory,apply}.rs`
+  in place: pure rules over `OrgView`, with `rules/memory.rs` as their only
+  implementation, still modelling several memberships per member. Outside its own tests,
+  the office uses only `rules::OrgCommand` (the wire command `Office::submit_org` takes)
+  and `organization::directory::resolve_member` (`msg.bind`). B2 deletes or replaces
+  them: it owns the move from many-to-many membership to one home team, keeping the
+  tests worth keeping where a rule is unchanged.
 - **Done when:** every rule the three data documents state for teams, employees and
   roles is enforced by the office and covered by the engine-independent organization
   suite; each action in the outcome works from the command line and through `/api/v1`
   and is in the history. The screen criteria (TEAM, PEOPLE, REPORT) are finished in U1.
+  Since B1b no agent binds on an office's socket: the creation's HR lead has no office
+  and no agent profile, and agents come only through a hire (C2). Once an agent is placed
+  in an office and A5 lets `agent-os` address a selected office,
+  `apps/agent-os/tests/office.rs` regains the cases B1b removed: `agent-os who` through
+  the office for a placed agent (everyone, one by name, the owner by kind,
+  the plain-text card), and an offboarded agent refused at its next bind; the messaging
+  cases (send, inbox, read and wait answered `unsupported` with no body shown) return
+  with B6. LNX-2 (`deploy/container/lnx2.sh`) likewise regains `agent-os` inside the
+  container (an agent's directory read of another through the office, after a restart
+  and in a replacement container); B1b's LNX-2 creates the organization through the web
+  API and checks the worker serving under custody instead.
   `operation.get` for organization commands answers from the store's receipts,
   replacing the `unsupported` B1b left (a client learns a committed command's answer
   without resending it).
@@ -570,6 +631,10 @@ on the offers of design section 10.
   opened again from its repository and every record published before the loss is
   there; an invalid organization record refuses the open and names the file.
 - **Needs:** B1b, A4, A6.
+- **Owner direction 2026-11-20:** R1 is v1's answer to a lost HQ: the organization is
+  imported from Git into a new HQ with a new CA, and every other office re-enrolls with
+  one simple command ("this is your new HQ"), built with satellite enrollment (S1)
+  ([note](design/accounts-sandbox-and-extensions.md#67-recovery-is-v2-hq-loss-in-v1)).
 
 ### U1 · Offices, teams, people and projects in the browser
 
@@ -598,9 +663,24 @@ on the offers of design section 10.
   tools and the environment, and where their conversation is kept
   ([ADR-0025](adr/0025-agents-start-sub-agents.md) decision 10).
 - **Read:** [ADR-0015](adr/0015-agent-isolation-modes.md) decisions 7, 10 and 11,
-  [agent runtimes research](research/agent-runtimes-control.md).
+  [agent runtimes research](research/agent-runtimes-control.md),
+  [C1 sign-in spike record](research/c1-sign-in-spike.md),
+  [ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md).
+- **Recorded result (2026-11-19):** [C1 sign-in spike](research/c1-sign-in-spike.md)
+  records macOS `27.2.1` findings on Claude Code `2.1.311` and Codex `0.169.0` (Linux
+  unverified pending a Linux run; companion POC in `pocs/console-attach/`) and selects
+  **`org-agent-runtime-claude`** as the first adapter for C3 (persistent `stream-json`
+  keeping background commands and sub-agents alive across turns per ADR-0025 decision 6
+  amended 2026-11-19, plus per-office `CLAUDE_CODE_OAUTH_TOKEN` for portable/private-`HOME`
+  sign-in). Remaining before `dedicated-user` becomes default: the macOS second-OS-account
+  + Xcode check (ADR-0015 decision 7 / `ISO-6`), Linux sign-in/isolation verification,
+  and Codex sub-agent isolation verification when `org-agent-runtime-codex` begins.
 - **Done when:** the result is recorded and the first adapter to build is chosen.
-- **Needs nothing else and can start at any time.**
+- **Done (2026-11-20):** both are met on `v1` (PR 17, merge `03df9805`): the result is
+  the [C1 sign-in spike](research/c1-sign-in-spike.md) and the first adapter is
+  `crates/org-agent-runtime-claude`, an internal foundation C3 builds on. The remaining
+  checks listed above move with their rows (FC-161, FC-098; Codex sub-agent isolation
+  with FC-172/FC-101).
 
 ### C2 · Hire an agent through HR
 
@@ -652,7 +732,9 @@ on the offers of design section 10.
   change.
 - **Sub-agents:** the adapter enables the runtime's own sub-agent tool, inside the
   parent's sandbox, tools and policy; the office writes the sub-agent definition; a
-  sub-agent's commands and cost are the employee's; nothing outlives the turn
+  sub-agent's commands and cost are the employee's; background tasks and sub-agents may
+  stay running across turns while the session is active so people and agents can keep
+  messaging the agent, and Pause/Stop/Offboard/stall stops and reaps everything
   ([ADR-0025](adr/0025-agents-start-sub-agents.md); SUB-1 to SUB-5 and SUB-7). SUB-6,
   the sub-agent's conversation in the session view, is finished with C4. Row FC-172.
 - **Staying alive:** after an office restart an interrupted turn continues by itself
@@ -664,15 +746,29 @@ on the offers of design section 10.
   agent receives, with the sections for what this build has, and their scenarios run
   ([agent instructions](design/agent-instructions.md); INSTR-4, 5, 7, 8, 12, 15 and 21). Row
   FC-171.
+- **Enrollment and permission presets:** browser-driven one-time CLI enrollment
+  (`claude setup-token` (preferred) or `claude auth login --claudeai`, and
+  `codex login --device-auth`) inside wiped per-login `0700`
+  temp directories, worker-wrapped `agentic-org/provider-credential/v1` storage, and the
+  Advanced Settings `permission_preset` UI on `agent_execution_configs`
+  ([ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md);
+  `ENROLL-1` to `ENROLL-7`). Row FC-189.
+- **Take-over:** paused (owner decision 2026-11-20) and moved to late v1, only if
+  needed (row FC-151). C3 builds no take-over; the adapter's existing take-over
+  planning stays as it is, with no new work.
 - **Read:** [agent sessions design](design/agent-sessions.md),
   [how agents run](specs/agent-run-modes-ux.md), [ADR-0004](adr/0004-headless-agent-sessions.md),
   [ADR-0015](adr/0015-agent-isolation-modes.md) (ISO-3, ISO-5, ISO-8),
   [ADR-0016](adr/0016-no-application-level-data-encryption.md) (ENC-4),
+  [ADR-0032](adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md) (ENROLL-1 to ENROLL-7),
   [ADR-0003](adr/0003-agent-messaging-office-first.md) decision 12,
   [employee supervision UX](specs/employee-supervision-ux.md) (EMP criteria). Rows FC-031,
-  FC-098, FC-100, FC-101.
-- **Code today:** `crates/org-runtime` is the contract; only `crates/org-supervise`
-  uses its types, and nothing launches an agent.
+  FC-098, FC-100, FC-101, FC-189.
+- **Code today:** `crates/org-agent-runtime` is the contract and `crates/org-agent-runtime-claude`
+  implements the sans-I/O Claude Code `2.1.311` adapter as an internal foundation with no
+  production caller yet (alongside `config_dir` and adapter-declared `auth_env_names`
+  supervision plumbing in `org-agent-runtime` and `org-supervise`); `crates/org-agent-runtime-codex`
+  and the office session runner remain to be built.
   `crates/org-supervise` starts, stops and cleans up processes; it is used only to
   recover processes the office owned before a restart, not to launch an agent.
 - **Done when:** a hired agent completes an instruction given from its page, the HR
@@ -741,8 +837,9 @@ on the offers of design section 10.
   when one is named.
 - **Done when:** the CHAT criteria for sending, reading and channels pass; the
   engine-independent messaging suite passes; ACK-1 is measured on a Mac and recorded.
-  B6 also restores LNX-1's send and read through the office in
-  `apps/agentic-org/tests/lnx1.rs`, which B1b reduced to a directory read and a refused send.
+  B6 also brings `agent-os` send and read through the office back to LNX-1
+  (`apps/agentic-org/tests/lnx1.rs`), once B2 places agents and A5 lets `agent-os`
+  address a selected office; B1b took `agent-os` out of LNX-1.
   B6 serves again what B1b switched off with the old tables, through the office or A3's
   `/events`, each with its scenario as a test: `subscribe` (a caller without a grant or
   binding is refused `not_authorized`; another caller's committed `team.create` arrives as
@@ -892,7 +989,8 @@ on the offers of design section 10.
   [identity and numbering](design/organization-data/06-identity-and-numbering.md),
   [assignment and history](design/organization-data/12-task-assignment-and-history.md),
   [ADR-0019](adr/0019-office-coded-task-numbers.md). Rows FC-039 to FC-046, FC-050,
-  FC-054, FC-056, FC-142.
+  FC-054, FC-056, FC-142. Task test cases from the retired assignment branch:
+  [assignment branch test cases](research/assignment-branch-test-cases.md#task-work).
 - **Code today:** `crates/org-work` has tasks, bugs, checklists and history against the
   model the data contract replaces, with per-project counters; `selected_codec`,
   `selected_assignment` and `selected_history` are the parts written for the selected
@@ -916,7 +1014,8 @@ on the offers of design section 10.
   CLI-15 for the common task commands).
 - **Read:** [work items UX](specs/work-items-ux.md) (TSK, BUG, CHK, WORK criteria),
   [identity and numbering, default project](design/organization-data/06-identity-and-numbering.md#stable-ids-readable-references-and-scopes).
-  Rows FC-038, FC-039, FC-043.
+  Rows FC-038, FC-039, FC-043. Browser test cases from the retired assignment branch:
+  [assignment branch test cases](research/assignment-branch-test-cases.md#browser-and-web).
 - **Done when:** the TSK, BUG, CHK and WORK criteria that need no agent runtime pass in
   browser tests against a real instance; a task created in the browser is updated from
   a terminal and the browser shows the change without a reload.
@@ -1196,11 +1295,14 @@ half of LNX-6 run).
   setup reports when it is off.
 - **Needs:** X2, X3, X4, A2 (setup) and A3 (the web process and sign-in).
 
-### X7 · HTTPS for a container, with the instance's own certificate (pending)
+### X7 · HTTPS for a container, with the instance's own certificate (in progress)
 
-Recorded by the owner on 2026-11-18. Until it is built the container serves the
-browser over plain HTTP (X5), and the documented run command publishes that port on
-`127.0.0.1` only.
+Recorded by the owner on 2026-11-18. Built for every instance on its branch (host, web
+process, setup; ADR-0017 decision 10 records the decisions: the instance's own ECDSA
+P-256 certificate, a supplied pair, custody, `tls.set` and `tls.renew`; plain HTTP on a
+published port stays as an explicit choice). Until the container's setup file, README
+and LNX-2 move to `https` (unblocked now that B1b has landed) the container serves the browser over plain
+HTTP (X5), and the documented run command publishes that port on `127.0.0.1` only.
 
 - **Outcome:** the container serves the browser over HTTPS without the operator making
   anything: at first start the instance makes its own certificate for the configured
@@ -1263,7 +1365,10 @@ browser over plain HTTP (X5), and the documented run command publishes that port
   [offices and teams UX](specs/offices-and-teams-ux.md) (OFC criteria for a second
   office), [recovery contract](design/organization-data/16-recovery-and-office-continuity.md).
   Rows FC-020, FC-145; the replication suite of ADR-0018 (ENG-3).
-- **Code today:** `crates/org-sync` is the replication core; nothing enrols an office.
+- **Code today:** `crates/org-sync` is the replication core; nothing enrols an office. Since
+  B1b a second office of one organization on one instance is refused: the host reserves writer
+  custody only into empty per-organization roots (`crates/org-host/src/writer.rs`
+  `empty_reservation_root`); S1 decides per-office roots.
 - **Needs:** milestone one. It starts with its own short plan.
 
 ---
@@ -1280,6 +1385,9 @@ product without it.
 | L3 | Budgets and the hold at the turn permit | [document 17](design/organization-data/17-budgets-and-controls.md), FC-089 to FC-093; ASK-8 |
 | L4 | Subscription pools, quota permits, failover | [documents 11 and 14](design/organization-data/11-model-profiles-and-agent-execution.md), FC-098, FC-099; the rest of ASK-4 |
 | L6 | The `dedicated-user` isolation mode | [ADR-0015](adr/0015-agent-isolation-modes.md), FC-161; ENC-4 for this mode |
+| L15 | The `os-sandbox` isolation mode: the office's own OS sandbox around the whole agent process (owner direction 2026-11-20, planned). First step: the macOS iOS-build spike | [ADR-0015](adr/0015-agent-isolation-modes.md) decision 12 and its owner direction, FC-190; inside accounts and with extension allowances: [accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md#7-the-sandbox-inside-the-accounts) (proposed, ASX-11) |
+| L16 | Dedicated non-administrator accounts and one-command secure setup: a hidden service account runs the host, the web process and the offices from boot; agent accounts run the agents; one administrator prompt at setup and none for the core's everyday use afterwards (a closed-list helper, recommended); one setting, `--isolation off\|accounts` (accounts by default for an install), keeps development and testing prompt-free and is never a silent fallback (owner direction 2026-11-20, late v1, proposed). First step: the accounts, launcher, security and secrets spikes | [Accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md#3-accounts-proposed) (proposed; requirements ASX-1 to ASX-10, ASX-12 and ASX-13, spikes in its section 11), FC-191; extends L6 and ADR-0015. ADRs follow the spikes |
+| L17 | Extensions: the contract and the built-in optional modules, first Containers (Colima) and Xcode, with the web app's extension slot agreed with the UI stream (owner direction 2026-11-20, late v1, not milestone one, proposed). First step: the containers and Xcode spikes | [Accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md#8-extensions) (proposed; ASX-14 to ASX-18), FC-192 to FC-194. Needs L15 and L16 |
 | L7 | Features, knowledge, releases and deployments | documents [03](design/organization-data/03-features-and-work.md), [07](design/organization-data/07-release-deployments.md), [09](design/organization-data/09-release-content-and-flags.md), FC-058 to FC-070 |
 | L11 | The project documentation tree and its index: sections, documents, diagrams and images under `projects/<id>/docs/`, `agent-os doc`, the Docs tab by section, and the boundary that keeps an agent to its own projects | [development process design](design/development-processes.md#8-the-project-documentation-tree), [document 18](design/organization-data/18-development-processes-and-project-documentation.md), FC-180. With or before L7, whose project-wide documents live in the tree |
 | L12 | Development processes: records, catalogue, editor and import; the Development process select on a project with its seed roster; the project's tabs from the process; skills in an agent's instructions; `agent-os role`, `skill` and a role on a hire request; and organization process and standard writes by agents for their own project | [development process design](design/development-processes.md), [REQ-07](specs/req-07-composable-process-packages-and-team-blueprints.md), FC-175 to FC-179, FC-184, FC-187. Needs C2, C3 and L11 |
@@ -1308,14 +1416,14 @@ each is finished.
 | FC-023 | Logs, doctor and support diagnostics | Later, with L9 |
 | FC-123, FC-124 | Drafting text and a bug from a sentence | Later |
 | FC-147, FC-148 | Restore of protected data; credential rebind and cache rebuild | Later |
-| FC-151 | Taking over an agent's session from a terminal and handing it back | Later |
+| FC-151 | Taking over an agent's session from a terminal and handing it back | Late v1, only if needed (paused by the owner on 2026-11-20) |
 
 ## For every increment
 
 - An increment that gives agents a command adds or changes the section of the
   [built-in agent instructions](design/agent-instructions.md) that tells them when to use
   it, and makes its scenario pass.
-- Branch from `origin/v1-integration`. One writer per file at a time.
+- Branch from `origin/v1`. One writer per file at a time.
 - Before code, write the short plan for the increment: what a person can do at the end,
   the files you will own, what you will delete, and the decisions you are taking where
   the documents are silent.
@@ -1325,4 +1433,4 @@ each is finished.
   `cargo test --workspace`; for the UI, its type check, tests and build. When you change
   the data contract, `python3 docs/design/organization-data/test_schema.py`.
 - Update the checklist row with evidence. Mark it Done only for the row's whole scope.
-- Get an independent review, then merge into `v1-integration`.
+- Get an independent review, then merge `origin/v1` into your branch, tell the other lead sessions, then `git merge --no-ff` into `v1` and push it.

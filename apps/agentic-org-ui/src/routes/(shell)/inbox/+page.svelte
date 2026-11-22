@@ -15,8 +15,11 @@
 	import type { WorkItemSummary } from '$lib/proto';
 	import { executeDecisionAction } from '$lib/home/actions';
 	import { deriveDecisionSpotlight, type SpotlightDecision } from '$lib/home/model';
+	import InboxView from '$lib/modules/inbox/features/view/InboxView.svelte';
+	import { pageTitle } from '$lib/nav';
 	import { toAppError } from '$lib/office/api';
 	import { owner } from '$lib/org/model';
+	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import { workApi } from '$lib/work';
 
 	let { data } = $props();
@@ -50,7 +53,7 @@
 	}
 
 	onMount(() => {
-		void load();
+		if (uiPrefs.executiveUi) void load();
 	});
 
 	async function act(decision: SpotlightDecision, kind: 'primary' | 'secondary') {
@@ -72,131 +75,148 @@
 	}
 </script>
 
-<svelte:head><title>Inbox · Agentic Org</title></svelte:head>
+<svelte:head><title>{pageTitle('Inbox')}</title></svelte:head>
 
-<div class="mx-auto flex w-full max-w-[1100px] flex-col gap-5 px-6 pt-3 pb-12 sm:px-8">
-	<div class="flex flex-wrap items-center justify-between gap-4">
-		<div>
-			<h1 id="shell-page-title" tabindex="-1" class="text-2xl font-semibold tracking-tight focus:outline-none" style="color: var(--exec-ink);">
-				Inbox
-			</h1>
-			<p class="mt-0.5 text-sm" style="color: var(--exec-muted);">
-				{allDecisions.length === 0
-					? 'All caught up — nothing needs your decision.'
-					: `${allDecisions.length} ${allDecisions.length === 1 ? 'item needs' : 'items need'} your decision.`}
-			</p>
-		</div>
-		<div class="exec-well inline-flex items-center gap-1 p-1" role="tablist" aria-label="Filter decisions">
-			{#each [['all', 'All'], ['request', 'Requests'], ['bug', 'Bugs'], ['task', 'Blocked']] as [val, label] (val)}
-				<button
-					type="button"
-					role="tab"
-					aria-selected={filter === val}
-					onclick={() => (filter = val as typeof filter)}
-					class={['inbox-tab rounded-lg px-3 py-1.5 text-xs font-semibold', filter === val && 'is-on']}
+{#if uiPrefs.executiveUi}
+	<div class="mx-auto flex w-full max-w-[1100px] flex-col gap-5 px-6 pt-3 pb-12 sm:px-8">
+		<div class="flex flex-wrap items-center justify-between gap-4">
+			<div>
+				<h1
+					id="shell-page-title"
+					tabindex="-1"
+					class="text-2xl font-semibold tracking-tight focus:outline-none"
+					style="color: var(--exec-ink);"
 				>
-					{label}
-				</button>
-			{/each}
+					Inbox
+				</h1>
+				<p class="mt-0.5 text-sm" style="color: var(--exec-muted);">
+					{allDecisions.length === 0
+						? 'All caught up — nothing needs your decision.'
+						: `${allDecisions.length} ${allDecisions.length === 1 ? 'item needs' : 'items need'} your decision.`}
+				</p>
+			</div>
+			<div
+				class="exec-well inline-flex items-center gap-1 p-1"
+				role="tablist"
+				aria-label="Filter decisions"
+			>
+				{#each [['all', 'All'], ['request', 'Requests'], ['bug', 'Bugs'], ['task', 'Blocked']] as [val, label] (val)}
+					<button
+						type="button"
+						role="tab"
+						aria-selected={filter === val}
+						onclick={() => (filter = val as typeof filter)}
+						class={['inbox-tab rounded-lg px-3 py-1.5 text-xs font-semibold', filter === val && 'is-on']}
+					>
+						{label}
+					</button>
+				{/each}
+			</div>
 		</div>
-	</div>
 
-	{#if items === undefined}
-		<div class="flex flex-col gap-3" aria-busy="true">
-			{#each [1, 2, 3] as n (n)}
-				<div class="exec-card h-32 p-5"></div>
-			{/each}
-		</div>
-	{:else if filtered.length === 0}
-		<div class="exec-card flex flex-col items-center gap-2.5 px-6 py-16 text-center">
-			<span class="inbox-ok-ring flex size-12 items-center justify-center rounded-full">
-				<CheckCircle2 class="size-6" aria-hidden="true" />
-			</span>
-			<h2 class="text-base font-semibold" style="color: var(--exec-ink);">Nothing waiting here</h2>
-			<p class="max-w-sm text-sm" style="color: var(--exec-muted);">
-				Your agents and teams will surface approvals, verifications, and blockers here when they need you.
-			</p>
-			<a href={resolve('/home')} class="exec-cta mt-2">
-				<span class="exec-cta-fill" aria-hidden="true"></span>
-				<span class="exec-cta-inner"><span>Back to Home</span></span>
-			</a>
-		</div>
-	{:else}
-		<ul class="flex flex-col gap-3.5">
-			{#each filtered as d (d.id)}
-				<li class="exec-card flex flex-col gap-3.5 p-5">
-					<div class="flex flex-wrap items-center justify-between gap-2">
-						<div class="flex flex-wrap items-center gap-2 text-xs" style="color: var(--exec-muted);">
-							<span class={['inbox-badge', d.urgent && 'is-urgent']}>{d.badgeText}</span>
-							<span class="font-semibold" style="color: var(--exec-ink);">{d.actorName}</span>
-							<span aria-hidden="true">·</span>
-							<span>{d.projectName}</span>
-							<span aria-hidden="true">·</span>
-							<span>{d.ageLabel}</span>
-						</div>
-						<a href={resolve(d.detailHref as '/work')} class="inline-flex items-center gap-0.5 text-xs font-medium" style="color: var(--exec-accent-ink);">
-							<span>Open in Work</span>
-							<ChevronRight class="size-3.5" aria-hidden="true" />
-						</a>
-					</div>
-
-					<h2 class="text-base font-semibold" style="color: var(--exec-ink);">{d.title}</h2>
-					<p class="text-sm" style="color: var(--exec-body);">{d.recommendation}</p>
-
-					<div class="exec-well grid grid-cols-1 gap-2 p-2.5 sm:grid-cols-3">
-						{#each [d.risk, d.impact, d.proof] as cell, i (cell.label + i)}
-							<div class="flex items-center gap-2 px-1.5">
-								{#if cell.icon === 'shield-check'}
-									<ShieldCheck class="size-4 shrink-0" style="color: var(--exec-ok);" aria-hidden="true" />
-								{:else if cell.icon === 'shield-alert'}
-									<ShieldAlert class="size-4 shrink-0" style="color: var(--exec-warn);" aria-hidden="true" />
-								{:else if cell.icon === 'bolt'}
-									<Zap class="size-4 shrink-0" style="color: var(--exec-sky);" aria-hidden="true" />
-								{:else if cell.icon === 'scale'}
-									<Scale class="size-4 shrink-0" style="color: var(--exec-sky);" aria-hidden="true" />
-								{:else if cell.icon === 'check-circle'}
-									<CheckCircle2 class="size-4 shrink-0" style="color: var(--exec-ok);" aria-hidden="true" />
-								{:else}
-									<Clock class="size-4 shrink-0" style="color: var(--exec-muted);" aria-hidden="true" />
-								{/if}
-								<div class="min-w-0">
-									<div class="truncate text-xs font-semibold" style="color: var(--exec-ink);">{cell.label}</div>
-									<div class="truncate text-[11px]" style="color: var(--exec-muted);">{cell.sub}</div>
-								</div>
+		{#if items === undefined}
+			<div class="flex flex-col gap-3" aria-busy="true">
+				{#each [1, 2, 3] as n (n)}
+					<div class="exec-card h-32 p-5"></div>
+				{/each}
+			</div>
+		{:else if filtered.length === 0}
+			<div class="exec-card flex flex-col items-center gap-2.5 px-6 py-16 text-center">
+				<span class="inbox-ok-ring flex size-12 items-center justify-center rounded-full">
+					<CheckCircle2 class="size-6" aria-hidden="true" />
+				</span>
+				<h2 class="text-base font-semibold" style="color: var(--exec-ink);">Nothing waiting here</h2>
+				<p class="max-w-sm text-sm" style="color: var(--exec-muted);">
+					Your agents and teams will surface approvals, verifications, and blockers here when they need you.
+				</p>
+				<a href={resolve('/home')} class="exec-cta mt-2">
+					<span class="exec-cta-fill" aria-hidden="true"></span>
+					<span class="exec-cta-inner"><span>Back to Home</span></span>
+				</a>
+			</div>
+		{:else}
+			<ul class="flex flex-col gap-3.5">
+				{#each filtered as d (d.id)}
+					<li class="exec-card flex flex-col gap-3.5 p-5">
+						<div class="flex flex-wrap items-center justify-between gap-2">
+							<div class="flex flex-wrap items-center gap-2 text-xs" style="color: var(--exec-muted);">
+								<span class={['inbox-badge', d.urgent && 'is-urgent']}>{d.badgeText}</span>
+								<span class="font-semibold" style="color: var(--exec-ink);">{d.actorName}</span>
+								<span aria-hidden="true">·</span>
+								<span>{d.projectName}</span>
+								<span aria-hidden="true">·</span>
+								<span>{d.ageLabel}</span>
 							</div>
-						{/each}
-					</div>
+							<a
+								href={resolve(d.detailHref as '/work')}
+								class="inline-flex items-center gap-0.5 text-xs font-medium"
+								style="color: var(--exec-accent-ink);"
+							>
+								<span>Open in Work</span>
+								<ChevronRight class="size-3.5" aria-hidden="true" />
+							</a>
+						</div>
 
-					<div class="flex flex-wrap items-center gap-2 pt-1">
-						<button
-							type="button"
-							disabled={busyId === d.id}
-							onclick={() => void act(d, 'primary')}
-							class="exec-cta"
-						>
-							<span class="exec-cta-fill" aria-hidden="true"></span>
-							<span class="exec-cta-inner">
-								<Check class="size-4" aria-hidden="true" />
-								<span>{d.primaryAction.label}</span>
-							</span>
-						</button>
-						{#if d.secondaryAction}
+						<h2 class="text-base font-semibold" style="color: var(--exec-ink);">{d.title}</h2>
+						<p class="text-sm" style="color: var(--exec-body);">{d.recommendation}</p>
+
+						<div class="exec-well grid grid-cols-1 gap-2 p-2.5 sm:grid-cols-3">
+							{#each [d.risk, d.impact, d.proof] as cell, i (cell.label + i)}
+								<div class="flex items-center gap-2 px-1.5">
+									{#if cell.icon === 'shield-check'}
+										<ShieldCheck class="size-4 shrink-0" style="color: var(--exec-ok);" aria-hidden="true" />
+									{:else if cell.icon === 'shield-alert'}
+										<ShieldAlert class="size-4 shrink-0" style="color: var(--exec-warn);" aria-hidden="true" />
+									{:else if cell.icon === 'bolt'}
+										<Zap class="size-4 shrink-0" style="color: var(--exec-sky);" aria-hidden="true" />
+									{:else if cell.icon === 'scale'}
+										<Scale class="size-4 shrink-0" style="color: var(--exec-sky);" aria-hidden="true" />
+									{:else if cell.icon === 'check-circle'}
+										<CheckCircle2 class="size-4 shrink-0" style="color: var(--exec-ok);" aria-hidden="true" />
+									{:else}
+										<Clock class="size-4 shrink-0" style="color: var(--exec-muted);" aria-hidden="true" />
+									{/if}
+									<div class="min-w-0">
+										<div class="truncate text-xs font-semibold" style="color: var(--exec-ink);">{cell.label}</div>
+										<div class="truncate text-[11px]" style="color: var(--exec-muted);">{cell.sub}</div>
+									</div>
+								</div>
+							{/each}
+						</div>
+
+						<div class="flex flex-wrap items-center gap-2 pt-1">
 							<button
 								type="button"
 								disabled={busyId === d.id}
-								onclick={() => void act(d, 'secondary')}
-								class="inbox-outline inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold"
+								onclick={() => void act(d, 'primary')}
+								class="exec-cta"
 							>
-								<Ban class="size-3.5" aria-hidden="true" />
-								<span>{d.secondaryAction.label}</span>
+								<span class="exec-cta-fill" aria-hidden="true"></span>
+								<span class="exec-cta-inner">
+									<Check class="size-4" aria-hidden="true" />
+									<span>{d.primaryAction.label}</span>
+								</span>
 							</button>
-						{/if}
-					</div>
-				</li>
-			{/each}
-		</ul>
-	{/if}
-</div>
+							{#if d.secondaryAction}
+								<button
+									type="button"
+									disabled={busyId === d.id}
+									onclick={() => void act(d, 'secondary')}
+									class="inbox-outline inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold"
+								>
+									<Ban class="size-3.5" aria-hidden="true" />
+									<span>{d.secondaryAction.label}</span>
+								</button>
+							{/if}
+						</div>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</div>
+{:else}
+	<InboxView organizationId={data.connection.organization.id} />
+{/if}
 
 <style>
 	.inbox-tab {

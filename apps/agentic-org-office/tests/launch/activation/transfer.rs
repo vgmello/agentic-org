@@ -414,6 +414,9 @@ fn valid_revocations_have_no_ack_and_overflow_is_fatal_after_fifo_application() 
     session.no_stdout();
 }
 
+/// A transfer endpoint that is a stream, with records written back to back: the worker's first
+/// read (the writer control) is not one record, so it refuses the launch before it creates
+/// anything, and nothing on it is acknowledged.
 #[test]
 fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
     let _process = process_isolation();
@@ -454,8 +457,9 @@ fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
         json!({"v":1,"event":"fds_received","of":"handoff"})
     );
     drop(child);
-    assert_eq!(line(&mut reader)["event"], "created");
-    assert_eq!(line(&mut reader)["event"], "ready");
+    let failed = line(&mut reader);
+    assert_eq!(failed["event"], "failed", "{failed}");
+    assert_eq!(failed["code"], "storage_error", "{failed}");
     // Darwin answers EINVAL to a timeout change once the worker has exited and closed its end;
     // the read below then ends at EOF without blocking, so the timeout is not needed.
     match stream.set_read_timeout(Some(Duration::from_secs(2))) {
@@ -466,7 +470,11 @@ fn stream_handoff_with_concatenated_records_is_fatal_without_ack() {
         frame::read_line(&mut reader).unwrap().is_none(),
         "concatenated records received an ACK"
     );
-    assert_transfer_fatal(&mut run, "concatenated stream");
+    assert_eq!(run.wait().code(), Some(1));
+    assert!(
+        !world.folder(OFFICE).exists(),
+        "a refused create stored something"
+    );
     assert!(matches!(
         run.events.recv_timeout(WAIT),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
@@ -557,7 +565,7 @@ fn sender_retries_actual_backpressure_then_refuses_oversize_and_expired_deadline
 }
 
 #[test]
-fn losing_all_host_channels_terminates_without_ack_or_orphan_and_reopens_the_db() {
+fn losing_all_host_channels_terminates_without_ack_or_orphan_and_the_office_reopens() {
     let _process = process_isolation();
     let world = World::new();
     let session = ready_create(&world);
@@ -601,7 +609,7 @@ fn losing_all_host_channels_terminates_without_ack_or_orphan_and_reopens_the_db(
     );
     assert_reopens(&world);
     eprintln!(
-        "measured all-host-channel exit: code={:?} elapsed={:?}; no stdout ACK/orphan; DB reopened",
+        "measured all-host-channel exit: code={:?} elapsed={:?}; no stdout ACK/orphan; office reopened",
         status.code(),
         started.elapsed()
     );
@@ -825,21 +833,7 @@ fn host_grants_allow_owner_requests_without_binding_and_observe_fifo_revocation(
     let _process = process_isolation();
     let world = World::new();
     ready_create(&world).stop();
-    let office = org_office::Office::open_for_instance(
-        world.folder(OFFICE),
-        org_office::Key::from_office_secrets_key(office_secrets_key()),
-        INSTANCE,
-    )
-    .unwrap();
-    let owner = office
-        .org_snapshot()
-        .unwrap()
-        .members
-        .into_iter()
-        .find(|m| m.owner)
-        .unwrap()
-        .id;
-    drop(office);
+    let owner = OWNER;
     let mut session = handshake(
         &world,
         FirstLine::Start,

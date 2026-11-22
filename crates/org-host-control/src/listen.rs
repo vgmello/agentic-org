@@ -25,10 +25,20 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ListenMode {
-    /// TLS, with the stored pair. The only mode in which the host binds a non-loopback listener.
+    /// TLS, with the stored pair.
     Https,
     /// Plain HTTP, bound to exactly `127.0.0.1` or `::1`.
     HttpLoopback,
+    /// Plain HTTP on a listen address that is not a loopback address, for one case only: an
+    /// instance that runs in the foreground as a container's main process, whose port the
+    /// container runtime publishes on the Docker host's own loopback
+    /// (`-p 127.0.0.1:8443:8443`). The browser-facing origin is therefore that address,
+    /// `http://127.0.0.1:<port>`, and nothing else is accepted as one: not the name
+    /// `localhost`, which can resolve to `::1`, where the port is not published and another
+    /// program of the machine could listen, and not `[::1]` either. It is chosen
+    /// by name in a setup file, never implied by `http` and an address, and only an instance
+    /// whose service mode is `foreground` may have it ([`ListenMode::fits_service`]).
+    HttpPublished,
 }
 
 impl ListenMode {
@@ -36,10 +46,49 @@ impl ListenMode {
     pub fn scheme(self) -> OriginScheme {
         match self {
             ListenMode::Https => OriginScheme::Https,
-            ListenMode::HttpLoopback => OriginScheme::Http,
+            ListenMode::HttpLoopback | ListenMode::HttpPublished => OriginScheme::Http,
+        }
+    }
+
+    /// The wire spelling.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ListenMode::Https => "https",
+            ListenMode::HttpLoopback => "http_loopback",
+            ListenMode::HttpPublished => "http_published",
+        }
+    }
+
+    /// Whether an instance may have a listener of this mode, given whether its service mode
+    /// is `foreground` (nothing is registered; a container runtime is its supervisor). The
+    /// one rule: `http_published` is for a foreground instance only. A registered service
+    /// runs on a machine, where a port bound off loopback is on that machine's networks;
+    /// in a container the runtime decides where the port is published. The service mode is
+    /// data of the setup record: nothing detects a container.
+    pub fn fits_service(self, foreground: bool) -> Result<(), ForegroundOnly> {
+        match (self, foreground) {
+            (ListenMode::HttpPublished, false) => Err(ForegroundOnly),
+            _ => Ok(()),
         }
     }
 }
+
+/// `http_published` on an instance whose service mode is not `foreground`
+/// ([`ListenMode::fits_service`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ForegroundOnly;
+
+impl fmt::Display for ForegroundOnly {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(
+            "the scheme http_published (plain HTTP on a published port) is only for an instance \
+             whose service mode is foreground, the main process of a container; a registered \
+             service listens with http_loopback or https",
+        )
+    }
+}
+
+impl std::error::Error for ForegroundOnly {}
 
 /// The `hsts` setting: `off`, `on` or `clear`. X-02 carries the value only; what it means for
 /// `Strict-Transport-Security` is B1-05's header rules. `off` is what setup writes when the
@@ -201,6 +250,12 @@ pub enum OriginError {
     LoopbackAddress,
     /// Fit, `http_loopback`: the host isn't the bound IP literal itself (plan A-10).
     NotBoundLiteral,
+    /// Fit, `http_published`: the listen address is a loopback address. A loopback listener
+    /// is `http_loopback`'s.
+    PublishedAddress,
+    /// Fit, `http_published`: the host isn't `127.0.0.1`, the address the port is published
+    /// on.
+    PublishedHost,
 }
 
 impl OriginError {
@@ -226,6 +281,8 @@ impl OriginError {
             OriginError::PortMismatch => "port_mismatch",
             OriginError::LoopbackAddress => "loopback_address",
             OriginError::NotBoundLiteral => "not_bound_literal",
+            OriginError::PublishedAddress => "published_address",
+            OriginError::PublishedHost => "published_host",
         }
     }
 }
@@ -255,6 +312,15 @@ impl fmt::Display for OriginError {
             OriginError::LoopbackAddress => "http_loopback must listen on exactly 127.0.0.1 or ::1",
             OriginError::NotBoundLiteral => {
                 "in http_loopback the origin's host must be the bound IP literal"
+            }
+            OriginError::PublishedAddress => {
+                "http_published is for a listen address that is not a loopback address; on \
+                 127.0.0.1 or ::1 the scheme is http_loopback"
+            }
+            OriginError::PublishedHost => {
+                "in http_published the origin's host must be 127.0.0.1: the port is published on \
+                 the Docker host's 127.0.0.1, and a name such as localhost can resolve to ::1, \
+                 where it is not"
             }
         })
     }
@@ -320,14 +386,32 @@ impl ListenOrigin {
     ///   `localhost` (plan A-10: a name could resolve to an address another local process
     ///   holds).
     ///
+    /// - in `http_published`, the listen address is not a loopback address (a loopback
+    ///   listener is `http_loopback`'s, with its stricter host rule);
+    /// - in `http_published`, the host is exactly the IPv4 literal `127.0.0.1`: the browser
+    ///   reaches the listener through a port published on its own machine's `127.0.0.1`, so
+    ///   no other host is the listener's (plan A-10's rule, as in `http_loopback`: the name
+    ///   `localhost` can resolve to `::1`, where the port is not published and another local
+    ///   program could listen), and a request that names another host is not for this
+    ///   origin.
+    ///
     /// In `https` any canonical host fits, IP literals included. Certificate coverage isn't part
-    /// of this check. The first failure, in that order, is returned.
+    /// of this check. The first failure, in that order, is returned. Whether the instance may
+    /// have the mode at all is [`ListenMode::fits_service`].
     pub fn check(&self, mode: ListenMode, address: IpAddr, port: u16) -> Result<(), OriginError> {
         if self.scheme != mode.scheme() {
             return Err(OriginError::SchemeMismatch);
         }
         if self.port() != port {
             return Err(OriginError::PortMismatch);
+        }
+        if mode == ListenMode::HttpPublished {
+            if address.is_loopback() {
+                return Err(OriginError::PublishedAddress);
+            }
+            if self.host != OriginHost::Ipv4(Ipv4Addr::LOCALHOST) {
+                return Err(OriginError::PublishedHost);
+            }
         }
         if mode == ListenMode::HttpLoopback {
             let loopback = address == IpAddr::V4(Ipv4Addr::LOCALHOST)

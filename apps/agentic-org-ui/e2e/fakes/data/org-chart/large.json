@@ -1,0 +1,27 @@
+{
+	"why": "?mock=large: more than 50 reporting nodes, so levels below two start collapsed (offices-and-teams-ux §7.10). Invented agents, read-only: they exist only in this read.",
+	"managers": [
+		{ "id": "lg-rhea", "name": "Rhea Lund", "reportsTo": "sam" },
+		{ "id": "lg-tomas", "name": "Tomas Vidal", "reportsTo": "sam" },
+		{ "id": "lg-wen", "name": "Wen Zhou", "reportsTo": "juno" }
+	],
+	"firstNames": [
+		"Ada",
+		"Bram",
+		"Cleo",
+		"Dev",
+		"Esme",
+		"Finn",
+		"Gus",
+		"Ilse",
+		"Jory",
+		"Kit",
+		"Lark",
+		"Moss",
+		"Nell",
+		"Otto",
+		"Pia",
+		"Rook"
+	],
+	"lastNames": ["Ames", "Bell", "Cruz"]
+}

@@ -12,6 +12,7 @@ use org_store::{
 };
 
 use super::*;
+use crate::office_local::{testkit::ca_material, CaMaterial};
 use crate::organization::{
     features::CreateTeam,
     ports::RecordRef,
@@ -20,6 +21,7 @@ use crate::organization::{
 };
 
 mod crashes;
+mod local;
 
 pub(super) const ENGINES: [EngineChoice; 2] = [EngineChoice::Sqlite, EngineChoice::Memory];
 
@@ -145,11 +147,23 @@ pub(super) fn directory(store: &OfficeStore) -> Directory {
     store.read(ReadDirectory).expect("a read").0
 }
 
+/// The seed of the suite's CA material.
+pub(super) const CA: u8 = 1;
+
 pub(super) fn create_organization(store: &OfficeStore, op: u64) -> Result<Reply, StoreError> {
+    create_organization_with(store, op, ca_material(&identity().organization_id, CA))
+}
+
+pub(super) fn create_organization_with(
+    store: &OfficeStore,
+    op: u64,
+    ca: CaMaterial,
+) -> Result<Reply, StoreError> {
     store.run(CreateOrganizationOp {
         operation_id: id(op),
         here: identity(),
         command: creation_command(),
+        ca,
     })
 }
 
@@ -161,7 +175,7 @@ pub(super) fn team_command(team: u64, parent: u64) -> CreateTeam {
     CreateTeam {
         id: id(team),
         name: format!("Team {team:x}"),
-        parent: id(parent),
+        parent: Some(id(parent)),
     }
 }
 
@@ -169,6 +183,7 @@ pub(super) fn create_team(store: &OfficeStore, op: u64, team: u64) -> Result<Rep
     store.run(CreateTeamOp {
         operation_id: id(op),
         here: identity(),
+        owner: id(CREATOR),
         by: Actor::Employee(id(CREATOR)),
         command: team_command(team, TOP_TEAM),
     })

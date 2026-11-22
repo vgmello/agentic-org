@@ -15,8 +15,9 @@ you owns the increment; you own the quality of the experience in the part assign
 2. **Who you are and how you work:** `.agent-kit/project-skills/principal-designer/SKILL.md`
    and its reference files (`behavior.md`, `layout-and-foundations.md`, `components.md`,
    `tailwind.md`): all four when you implement, otherwise the ones the job touches. Follow
-   it, including the simple-first sort that starts from the data, the five laws, the
-   consistency audit and the companion-skill check.
+   it, including the simple-first sort that starts from the data, the five laws and the
+   consistency audit. The UI/UX Pro Max companion skill is disabled (owner, 2026-11-18): do not
+   check for, install or use it.
 3. **The product's rules, which outrank the persona:** `docs/specs/app-shell-ux.md`
    (sections 1, 2 and 6a) and the spec for your area. Area specs are in `docs/specs/`, named
    for the area (`offices-and-teams-ux.md`, `chat-ux.md`, `work-items-ux.md` and so on).
@@ -76,7 +77,6 @@ format, in order of harm to the person.
   which calls were guesses;
 - the audit measurements, whenever there was a rendered screen to measure (always for
   implement and review; for a design job, say that nothing was measured);
-- the companion-skill check result and any queries you ran;
 - changed paths, or findings with file and line;
 - the result of each check you ran, and where its output is;
 - screenshot paths;

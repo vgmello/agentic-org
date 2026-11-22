@@ -47,8 +47,8 @@ org-socket = { path = "../../crates/org-socket" }
 # This system's socket path limit, for the tests that fill a home up to it, and its
 # disk-backed temporary directory (`dirs::testing`).
 org-platform = { path = "../../crates/org-platform", features = ["test-support"] }
-# Stores the office the LNX-1 test's real worker serves, as the host's provisioning leaves it.
-org-office = { path = "../../crates/org-office" }
+# The LNX-1 test's unbound `hello` on the office socket, as a client makes it.
+org-client = { path = "../../crates/org-client" }
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

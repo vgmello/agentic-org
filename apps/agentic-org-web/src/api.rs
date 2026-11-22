@@ -23,7 +23,7 @@ use org_host_control::{
         InstanceViewResult, LinkRegister, LinkRegisterParams, SessionSignIn, SessionSignInParams,
         SessionValidate, SessionValidateParams,
     },
-    listen::{ListenOrigin, OriginScheme},
+    listen::ListenOrigin,
     organization::{self as host_org, BrowserAuth},
     GatewayState, HostOpResult, LinkToken, Password,
 };
@@ -57,12 +57,21 @@ pub struct SessionApi {
 
 impl SessionApi {
     /// `origin` is the configured listen origin; its scheme decides the cookie's `Secure`.
-    pub fn new(host: Arc<HostControl>, cache: Arc<SessionCache>, origin: &ListenOrigin) -> Self {
+    /// `mode` is the listener's, as `tls.fetch` answered it: the instance view's
+    /// `listen_scheme`.
+    pub fn new(
+        host: Arc<HostControl>,
+        cache: Arc<SessionCache>,
+        origin: &ListenOrigin,
+        mode: org_host_control::listen::ListenMode,
+    ) -> Self {
+        use org_host_control::listen::ListenMode;
         let scheme = origin.scheme().as_str();
         Self {
-            listen_scheme: match origin.scheme() {
-                OriginScheme::Https => ListenScheme::Https,
-                _ => ListenScheme::HttpLoopback,
+            listen_scheme: match mode {
+                ListenMode::Https => ListenScheme::Https,
+                ListenMode::HttpLoopback => ListenScheme::HttpLoopback,
+                ListenMode::HttpPublished => ListenScheme::HttpPublished,
             },
             cookie: CookieName::new(host.instance(), scheme == "https"),
             origin: BrowserOrigin {
@@ -309,8 +318,9 @@ fn now_ms() -> u64 {
 }
 
 /// The public instance view of the host's `instance.view` (web-api-v1 §3). `web_status`
-/// is `ok` only while the host reports the web process running. `tls` stays absent
-/// until TLS lands; no path, socket or certificate material is reported.
+/// is `ok` only while the host reports the web process running. `tls` is the host's word on
+/// an `https` listener's certificate, absent for plain HTTP; no path, socket or certificate
+/// material is reported.
 fn instance_view(
     instance_id: &str,
     listen_scheme: ListenScheme,
@@ -325,7 +335,7 @@ fn instance_view(
             _ => GatewayStatus::Degraded,
         },
         listen_scheme,
-        tls: None,
+        tls: host.tls,
         server_time_ms: Milliseconds::new(now_ms()).map_err(|_| Failure::Unavailable)?,
     })
 }

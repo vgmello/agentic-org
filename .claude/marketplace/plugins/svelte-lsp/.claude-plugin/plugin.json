@@ -1,0 +1,12 @@
+{
+  "name": "svelte-lsp",
+  "description": "Svelte language server for .svelte files. The binary comes from svelte-language-server (AGENTS.md, Tools for agents); the pinned Svelte MCP is in the root .mcp.json.",
+  "version": "1.0.0",
+  "lspServers": {
+    "svelte": {
+      "command": "svelteserver",
+      "args": ["--stdio"],
+      "extensionToLanguage": { ".svelte": "svelte" }
+    }
+  }
+}

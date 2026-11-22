@@ -30,8 +30,11 @@
 		deriveTaskTimeBreakdown,
 		greetingForHour
 	} from '$lib/home/model';
+	import HomeView from '$lib/modules/home/features/view/HomeView.svelte';
+	import { pageTitle } from '$lib/nav';
 	import { officeApi, toAppError } from '$lib/office/api';
 	import { owner } from '$lib/org/model';
+	import { uiPrefs } from '$lib/platform/shell/ui-preferences.svelte';
 	import { workApi } from '$lib/work';
 
 	let { data } = $props();
@@ -99,7 +102,7 @@
 	}
 
 	onMount(() => {
-		void loadLive();
+		if (uiPrefs.executiveUi) void loadLive();
 	});
 
 	async function runAction(kind: 'primary' | 'secondary') {
@@ -134,8 +137,9 @@
 	}
 </script>
 
-<svelte:head><title>Home · Agentic Org</title></svelte:head>
+<svelte:head><title>{pageTitle('Home')}</title></svelte:head>
 
+{#if uiPrefs.executiveUi}
 <div class="hb-page mx-auto flex w-full max-w-[1260px] flex-col gap-6 px-6 pt-3 pb-12 sm:px-8">
 	<!-- Zone 1: Executive Greeting Header -->
 	<section class="flex flex-wrap items-center justify-between gap-4">
@@ -726,22 +730,25 @@
 
 				<div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
 					<a href={resolve('/agents')} class="inline-flex items-center gap-1.5">
-						<span class="size-2 rounded-full bg-sky-400"></span>
+						<span class="size-2 rounded-full bg-info"></span>
 						<strong style="color: var(--exec-sky);">{taskTime.workingPct}%</strong>
 						<span style="color: var(--exec-muted);">Agents working ({taskTime.workingCount})</span>
 					</a>
 					<a href={resolve('/work')} class="inline-flex items-center gap-1.5">
-						<span class="size-2 rounded-full bg-emerald-400"></span>
+						<span class="size-2 rounded-full bg-positive"></span>
 						<strong style="color: var(--exec-ok);">{taskTime.reviewPct}%</strong>
 						<span style="color: var(--exec-muted);">In review ({taskTime.reviewCount})</span>
 					</a>
 					<a href={resolve('/inbox')} class="inline-flex items-center gap-1.5">
-						<span class="size-2 rounded-full bg-amber-400"></span>
+						<span class="size-2 rounded-full bg-warning"></span>
 						<strong style="color: var(--exec-warn);">{taskTime.waitingYouPct}%</strong>
 						<span style="color: var(--exec-muted);">Waiting on you ({taskTime.waitingYouCount})</span>
 					</a>
 					<a href={resolve('/work')} class="inline-flex items-center gap-1.5">
-						<span class={['size-2 rounded-full', taskTime.queuedIsHigh ? 'bg-rose-400' : 'bg-violet-400']}></span>
+						<span
+							class="size-2 rounded-full"
+							style="background: {taskTime.queuedIsHigh ? 'var(--exec-bad)' : 'var(--exec-purple)'};"
+						></span>
 						<strong style="color: {taskTime.queuedIsHigh ? 'var(--exec-bad)' : 'var(--exec-purple)'};">
 							{taskTime.queuedPct}%
 						</strong>
@@ -768,6 +775,12 @@
 		{/if}
 	{/if}
 </div>
+{:else}
+	<HomeView
+		organizationId={data.connection.organization.id}
+		organizationName={data.connection.organization.name}
+	/>
+{/if}
 
 <style>
 	.hb-h1 {
@@ -898,14 +911,14 @@
 		transition: width 0.2s ease, background-color 0.16s ease;
 	}
 	.hb-dot.is-urgent {
-		background: rgba(251, 191, 36, 0.65);
+		background: color-mix(in srgb, var(--warning) 65%, transparent);
 	}
 	.hb-dot.is-cur {
 		width: 22px;
 		background: var(--exec-accent);
 	}
 	.hb-dot.is-cur.is-urgent {
-		background: #fbbf24;
+		background: var(--warning);
 	}
 	.hb-arrow {
 		background: var(--exec-well);

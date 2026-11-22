@@ -49,15 +49,96 @@ Engineers and their agents make architectural decisions themselves, inside the
 ## Rules
 1. **Read [`docs/architecture-rules.md`](docs/architecture-rules.md) first.** For domain/data work, also read the authority map and owning organization-data contract before implementing a secondary design or UX criterion. Follow the [v1 project structure](docs/design/project-structure.md): apps compose crates, policies own their required contracts, and dependencies on `org-proto` are intentional rather than mandatory for every crate. No source cycles. Logic lives in libraries, and binaries stay thin. Planned variation (another OS, vendor, storage engine or deployment form) goes behind a consumer-owned adapter contract from the first implementation; every operating system without an implementation gets an adapter that fails closed, an unbuilt provider or engine is refused at composition, and later additions change only the adapter and composition ([rule](docs/architecture-rules.md#planned-variation-goes-behind-an-adapter-from-day-one)).
 2. **Branches and integration:** follow [`docs/processes/branch-and-merge.md`](docs/processes/branch-and-merge.md).
-   - Start feature branches from `origin/v1-integration`. Use separate worktrees for concurrent writers; otherwise work in the dedicated current checkout.
+   - Start feature branches from `origin/v1`. Use separate worktrees for concurrent writers; otherwise work in the dedicated current checkout.
    - Each lead keeps one active implementation branch at a time. Preserve blocked branches/checkpoints and move to independent work rather than stopping all delivery.
-   - Review completed work locally, then `git merge --no-ff` into `v1-integration` and push that branch. It is the integration branch for **all v1 features**. Do not wait for a pull request or an outside reviewer.
-   - Never push to `main` or merge into release `v1` without an explicit release instruction. Never delete unmerged work; verify integration before cleaning up merged branches/worktrees.
+   - Review completed work locally, then merge `origin/v1` into your branch, tell the other lead sessions, `git merge --no-ff` into `v1` and push it. `v1` is the integration branch for **all v1 features** (owner, 2026-11-18; `v1-integration` is retired). Do not wait for a pull request or an outside reviewer.
+   - Never push to `main` without an explicit release instruction. Never delete unmerged work. After merging, clean up your merged worktrees and local and remote branches as `docs/processes/branch-and-merge.md` §5 describes.
 3. **Checks and local review:** use the installed kit's task-routing, skill-routing and review-cycle. Keep the original author context, fix confirmed findings, validate original intent and obtain the separate fresh final local review for the exact commit. The lead merges after current checks and local acceptance pass.
    - For Rust changes, `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass.
    - For app changes, the type check, tests, build and relevant browser checks pass; capture UI evidence where applicable.
    - For documentation/workflow-only changes, run relevant kit/catalog checks and review the changed instructions; no unrelated application test run is required.
 4. **Never write to a user's organization workspace from tests.** Use temporary directories.
+5. **Pull request descriptions are short:** sections **Why**, **What**, **Notes** and **Breaking changes** ("None" when nothing breaks), at most 2,000 characters in total; shorter is better, about two or three short paragraphs (owner, 2026-11-19).
+5. **Required tools are green before any work starts.** See [Tools for agents](#tools-for-agents).
+
+## Tools for agents
+
+Start the agent (Claude Code or Codex) at the repository root; it is the entry point for
+all work, including the UI. **Every tool below is required and must be green before
+any work starts**, in every checkout and worktree (each is prepared on its own; a new
+worktree runs the setup commands below first). Run `.agents/check-tools.sh` from the
+repository root to check: it prints nothing when all are present. When it reports a
+missing tool, do not start or continue the task: tell the user each missing tool, what
+it is for and the command that fixes it, and wait until the check passes. Never work
+around a missing tool, and never disable or bypass the check (for example by creating
+its `.agents/.tools-ready` marker by hand).
+
+- **Claude Code** runs the check automatically at session start and before every
+  Edit/Write tool call, and blocks those calls while a tool is missing. Shell commands
+  stay available only to install the tools; never write project files through the
+  shell while the check is red.
+- **Codex** runs `.agents/check-tools.sh --codex` itself before starting work; that
+  mode skips the rows marked *Claude Code only*.
+- **Required skills loaded:** `svelte-code-writer`, `svelte-core-bestpractices`,
+  `shadcn-svelte` and `playwright-cli`. The check proves each is installed and valid;
+  only the agent can see whether its session loaded them. At session start, confirm
+  each appears in your list of available skills (Claude Code loads them from
+  `.claude/skills/`, pre-approved in `.claude/settings.json`; Codex from
+  `.agents/skills/`). If any is missing, stop, name it and tell
+  the user; do not start work.
+- **Worktrees:** a subagent in a separate worktree is gated against the session's
+  checkout, so prepare and check the worktree (`cd` into it and run the check) before
+  that subagent starts.
+
+| Tool | What it gives agents | Set up with |
+| --- | --- | --- |
+| UI dependencies | Svelte MCP server, pinned shadcn-svelte CLI, type checks, lint, tests | `cd apps/agentic-org-ui && bun install --frozen-lockfile` |
+| Playwright browsers | UI browser tests | `cd apps/agentic-org-ui && bunx --no-install playwright install chromium webkit firefox` |
+| Node (`.node-version`) and Bun (`packageManager` in the UI `package.json`) | UI toolchain | install the pinned versions |
+| rustup and the pinned toolchain | Rust toolchain from `rust-toolchain.toml` | <https://rustup.rs>, then `rustup toolchain install` at the repository root |
+| rust-analyzer | Rust navigation (Claude Code LSP tool, Codex Rust LSP MCP) | `rustup component add rust-analyzer` at the repository root |
+| svelte-language-server | Svelte navigation (Claude Code: the repository's `svelte-lsp` plugin; Codex: `svelte_lsp` in `.codex/config.toml`) | `npm i -g svelte-language-server@0.18.6` |
+| mcp-language-server (*Codex only*) | Codex's bridge to the Rust, TypeScript and Svelte language servers (`.codex/config.toml`) | `go install github.com/isaacphi/mcp-language-server@v0.1.1` |
+| typescript-language-server with TypeScript 6 | TypeScript navigation (Claude Code LSP tool; Codex: `typescript_lsp` in `.codex/config.toml`); TypeScript 7 has no `tsserver` | `npm i -g typescript-language-server@6.1.0 typescript@6.0.3` |
+| python3 | agent kit checks (`.agent-kit/runtime/kit_hooks.py check`) | install Python 3 |
+| Repowise code index | `starter_kit_context` `lookup`: search, symbols, relationships and history | `python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs` |
+| Hindsight memory (local `hindsight-embed` daemon) | `starter_kit_context` `recall`: reviewed project memory | install as in "Local memory daemon" in `.agent-kit/ADOPTION.md`, then `python3 .agent-kit/runtime/kit_memory.py setup` (also restarts a stopped daemon) |
+| cargo-deny 0.20.2, Gitleaks 8.30.1 | required local checks | Homebrew on macOS; see `DEVELOPMENT.md` |
+| playwright-cli | browser skill | `bun add --global --exact @playwright/cli@0.1.24` |
+| Required skills (links: *Claude Code only*) | the skills below | committed; `git checkout -- .claude/skills .agents/skills` restores them |
+
+If tools that are installed are reported missing, the agent was probably started
+without your shell's `PATH`; start it from a terminal with your normal profile.
+
+Claude Code configuration in the repository supplies the rest; approve it when Claude
+Code first asks (Codex uses `.codex/config.toml`, managed by the agent kit):
+
+- `.mcp.json`: the Svelte MCP server, run from the lockfile-pinned
+  `apps/agentic-org-ui/node_modules`, never downloaded at run time; and the agent
+  kit's `starter_kit_context` server (the launcher from `.agent-kit/context-mcp.json`).
+  Use its `lookup` for code discovery before broad searches and its `recall` for
+  project memory, as `.agent-kit/reference/CONTEXT_TOOLS.md` describes.
+- `.claude/skills/`: committed links to the required skills in `.agents/skills`
+  (sources in `skills-lock.json`; do not edit those vendored copies). Follow
+  `apps/agentic-org-ui/AGENTS.md` for Svelte documentation and autofixer use; the
+  `svelte-file-editor` agent comes from the UI app.
+- `.claude/marketplace/`: the repository's own `svelte-lsp` plugin, which only runs
+  `svelteserver` for `.svelte` files. The upstream `svelte` plugin is not used because
+  its MCP server downloads `@sveltejs/mcp` at run time.
+- `.claude/settings.json`: the `typescript-lsp`, `rust-analyzer-lsp` and `svelte-lsp`
+  plugins, the kit's hooks, the tool check at session start and before Edit/Write tool calls, pre-approval of the
+  required skills, and `permissions.deny` rules for the download forms below.
+
+Use only pinned tools; never download a package at run time. The vendored skills show
+download forms (`npx`, `pnpm dlx`, `bunx --bun`, `@latest`, `npm init`, `npm install -g`).
+Use these instead:
+
+- shadcn-svelte: `cd apps/agentic-org-ui && bunx --no-install shadcn-svelte <command>`
+  (the version in the UI's `package.json`).
+- Playwright test runner: `cd apps/agentic-org-ui && bunx --no-install playwright <command>`.
+- Browser automation: the pinned global `playwright-cli`.
+
+`DEVELOPMENT.md` has the full list of checks and versions.
 
 ## The goal: work inside the product as soon as possible
 
@@ -78,6 +159,10 @@ person-started commands select an explicit instance and office or a saved contex
 managed employees use their injected binding.
 
 ## Session start: check for a handover
+
+First read [`docs/workstreams/README.md`](docs/workstreams/README.md) and your stream's file
+(`backend.md`, `linux.md` or `ui.md`): it is the shared record of where each stream stands and
+what comes next; a local `HANDOVER.md` only adds checkout detail.
 
 At the start of every lead session, check for `.agent-kit/tasks/HANDOVER.md` in this
 checkout (each checkout has its own). It is local session state, ignored by Git and

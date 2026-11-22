@@ -2,7 +2,7 @@
 
 These are the categories used by the [single feature checklist](FEATURES.md). Each area below documents what it covers, where its boundary lies, which requirements define it and what implementation evidence needs checking. 
 
-There are **13 categories, 188 feature rows and 0 rows needing verification**. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
+There are **13 categories, 194 feature rows and 0 rows needing verification**. Zero unknown states does not mean zero remaining work or complete test acceptance. Feature delivery statuses and evidence live only in FEATURES.md; the table below is their summary. A category has no independent completion state.
 
 ## Categorization rules
 
@@ -18,20 +18,20 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 | Area | Scope | Total | Done | In progress | Planned | Blocked | Deferred | Needs verification |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| [AREA-01 · Application and browser](#area-01) | Shell, navigation, accessibility, search and preferences | 9 | 2 | 3 | 3 | 0 | 1 | 0 |
-| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 23 | 1 | 17 | 2 | 1 | 2 | 0 |
+| [AREA-01 · Application and browser](#area-01) | Shell, navigation, accessibility, search and preferences | 9 | 2 | 5 | 1 | 0 | 1 | 0 |
+| [AREA-02 · Installation, access and office operations](#area-02) | Install, accounts/security, services, satellites and office lifecycle | 24 | 1 | 17 | 2 | 1 | 3 | 0 |
 | [AREA-03 · Organization, people and teams](#area-03) | Membership, reporting, hiring, profiles, Home and activity | 13 | 1 | 12 | 0 | 0 | 0 | 0 |
 | [AREA-04 · Projects, tasks, bugs and requests](#area-04) | Typed work, assignment/history, collaboration and planning gates | 23 | 0 | 16 | 2 | 0 | 5 | 0 |
 | [AREA-05 · Feature definitions, knowledge and delivery](#area-05) | Feature/knowledge authoring, project documentation and release/deployment records | 17 | 0 | 1 | 15 | 0 | 1 | 0 |
 | [AREA-06 · Chat and agent messaging](#area-06) | Conversations, asks and handoffs | 15 | 2 | 6 | 5 | 0 | 2 | 0 |
-| [AREA-07 · Usage, costs and budgets](#area-07) | Usage, attribution, pricing, cost reads and budget controls | 11 | 0 | 0 | 10 | 0 | 1 | 0 |
-| [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 19 | 1 | 3 | 11 | 0 | 4 | 0 |
+| [AREA-07 · Usage, costs and budgets](#area-07) | Usage, attribution, pricing, cost reads and budget controls | 11 | 0 | 1 | 9 | 0 | 1 | 0 |
+| [AREA-08 · Execution, providers and supervision](#area-08) | Runtimes, routing, supervision and workspace isolation | 24 | 1 | 5 | 14 | 0 | 4 | 0 |
 | [AREA-09 · Roles, processes and retrospectives](#area-09) | Role/guidance content, development processes and deferred learning engines | 18 | 0 | 3 | 10 | 0 | 5 | 0 |
 | [AREA-10 · Project health and reports](#area-10) | Health, narratives, analytics and private digests | 5 | 0 | 0 | 0 | 0 | 5 | 0 |
 | [AREA-11 · Copilot drafting](#area-11) | Reviewed drafts and suggestion candidates | 17 | 1 | 2 | 0 | 0 | 14 | 0 |
-| [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 15 | 1 | 4 | 7 | 0 | 3 | 0 |
-| [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 2 | 0 | 1 | 0 |
-| **Total** | | **188** | **9** | **67** | **67** | **1** | **44** | **0** |
+| [AREA-12 · Git, identity, synchronization and recovery](#area-12) | Repositories, canonical records, numbering, sync and restore | 15 | 1 | 5 | 6 | 0 | 3 | 0 |
+| [AREA-13 · Session inspection and private memory](#area-13) | Session reads, human takeover and private profile memory | 3 | 0 | 0 | 1 | 0 | 2 | 0 |
+| **Total** | | **194** | **9** | **73** | **65** | **1** | **46** | **0** |
 
 ## AREA-01
 
@@ -53,9 +53,9 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Boundary:** Owns service/access/enrollment behavior. Team membership belongs to AREA-03; durable source restoration and process-safe cache rebuild belong to AREA-12. CSP is classified here with production security, even though it affects every screen.
 
-**Verification focus:** Setup creates the instance and prints a one-time registration link; it creates no account, organization or office and asks for no password. Every account is registered in the browser through a one-time link and is tied to a person. A signed-in administrator creates the organization and becomes its owner. Restart, instance and logging primitives are partial; authorized relocation/removal, update/uninstall and usable diagnostics remain. TLS/custody primitives and satellite status/repair UI are partial; production handoff, CA escrow and invitation/approval integration are missing. On macOS, setup reserves the instance and registers its per-user service, the service host creates its registry at first start, and `admin reset` issues a replacement registration link (FC-011, FC-012). Browser onboarding (the registration page), physical authentication, SSH refusal for `admin reset` and authentic signed-release acceptance remain.
+**Verification focus:** Setup creates the instance and prints a one-time registration link; it creates no account, organization or office and asks for no password. Every account is registered in the browser through a one-time link and is tied to a person. A signed-in administrator creates the organization and becomes its owner. Restart, instance and logging primitives are partial; authorized relocation/removal, update/uninstall and usable diagnostics remain. TLS/custody primitives and satellite status/repair UI are partial; production handoff and invitation/approval integration are missing; the recovery code and CA escrow are v2 (owner 2026-11-20, FC-016 Deferred). On macOS, setup reserves the instance and registers its per-user service, the service host creates its registry at first start, and `admin reset` issues a replacement registration link (FC-011, FC-012). Browser onboarding (the registration page), physical authentication, SSH refusal for `admin reset` and authentic signed-release acceptance remain. Dedicated non-administrator accounts with one-prompt setup (FC-191) are proposed and not built; today the instance runs as the person's own account.
 
-**Requirements:** [Installation/access UX](specs/server-installation-and-access-ux.md), [Office/team UX](specs/offices-and-teams-ux.md), [Host boundary](design/office-host-boundary.md), [Dogfood acceptance](specs/dogfood-run.md).
+**Requirements:** [Installation/access UX](specs/server-installation-and-access-ux.md), [Office/team UX](specs/offices-and-teams-ux.md), [Host boundary](design/office-host-boundary.md), [Dogfood acceptance](specs/dogfood-run.md); proposed: [accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md).
 
 ## AREA-03
 
@@ -121,13 +121,13 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Execution, providers and supervision** · [Feature checklist](FEATURES.md#execution-providers-and-supervision)
 
-**Scope:** Native process primitives and runtime adapters, the agent command line's contract, explicit Run, execution/model configuration, connections/pools/permits, turns/attempts/placement, health monitoring, workspace isolation and deferred scheduling/delegation.
+**Scope:** Native process primitives and runtime adapters, the agent command line's contract, explicit Run, execution/model configuration, connections/pools/permits, turns/attempts/placement, health monitoring, workspace isolation, the optional extensions that give agents capabilities such as containers and Xcode (FC-192 to FC-194, proposed) and deferred scheduling/delegation.
 
 **Boundary:** Owns running work safely. Employee identity belongs to AREA-03, budget semantics to AREA-07, human session inspection/takeover to AREA-13, and durable recovery evidence to AREA-12. Starting an agent on an ask or an assignment is selected (ADR-0028); schedules, always-on agents and delegate engines remain Deferred.
 
 **Verification focus:** Check each Claude/Codex/Agy adapter for real launch, streaming, cancellation and sandbox enforcement; check observed progress/health/waits; validate credential and other-task denies in the selected workspace topology. Generic process primitives do not prove full adapters.
 
-**Requirements:** [Run-mode UX](specs/agent-run-modes-ux.md), [Supervision UX](specs/employee-supervision-ux.md), [Session design](design/agent-sessions.md), [Execution contract](design/organization-data/11-model-profiles-and-agent-execution.md), [Providers/pools](design/organization-data/14-model-providers-and-connection-pools.md).
+**Requirements:** [Run-mode UX](specs/agent-run-modes-ux.md), [Supervision UX](specs/employee-supervision-ux.md), [Session design](design/agent-sessions.md), [Execution contract](design/organization-data/11-model-profiles-and-agent-execution.md), [Providers/pools](design/organization-data/14-model-providers-and-connection-pools.md); proposed: [accounts, sandbox and extensions](design/accounts-sandbox-and-extensions.md).
 
 ## AREA-09
 
@@ -185,7 +185,7 @@ The “Needs verification” column identifies gaps in the implementation audit,
 
 **Boundary:** Owns human inspection/control of a session and profile memory access. Process execution belongs to AREA-08; author-private task notes belong to AREA-04. A profile placeholder or runtime transcript does not establish a private memory store.
 
-**Verification focus:** Check actual HQ-authorized session/event/transcript reads, privacy and freshness. CLI takeover is Planned pending PTY/lease/handback integration; the private memory reader remains Deferred with confined paths, caps, no-symlink checks and its separate human-only API.
+**Verification focus:** Check actual HQ-authorized session/event/transcript reads, privacy and freshness. CLI takeover is Deferred: paused by the owner on 2026-11-20 and moved to late v1, only if needed; the private memory reader remains Deferred with confined paths, caps, no-symlink checks and its separate human-only API.
 
 **Requirements:** [Employee/profile UX](specs/our-org-in-the-app.md), [Session design](design/agent-sessions.md), [Memory/supervision gates](specs/employee-supervision-ux.md).
 

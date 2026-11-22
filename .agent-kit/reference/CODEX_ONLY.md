@@ -30,7 +30,8 @@ required on every host. Native role instructions do not create separate sandboxe
 the review wrapper launches fresh read-only exec processes and explicit-session
 writable repair turns.
 
-The default model is `gpt-6.1-sol`: Low for bounded extraction only, Medium for
+The default model is `gpt-6.2-sol` (owner switch from `gpt-6.1-sol` on 2026-11-18, after a live call
+confirmed access; the effort levels below were set for 6.1 and are kept): Low for bounded extraction only, Medium for
 fully evidenced familiar implementation, High for lead planning and other bounded
 implementation/review, Xhigh for ambiguous/high-risk work and architecture review.
 The review/fix rounds run on the routing policy's `review.model` (`gpt-6.1-sol` or
@@ -75,7 +76,7 @@ The installer and diagnostics never make model calls. Live validation requires
 working Codex authentication and access to the configured model/effort. Missing
 access must remain an explicit blocker, never a fake ACCEPTED outcome.
 
-Sources checked November 14, 2026: [Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol),
+Sources checked November 14, 2026 (then `gpt-6.1-sol`): [Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol),
 [native agents](https://learn.chatgpt.com/docs/agent-configuration/subagents),
 [skills](https://learn.chatgpt.com/docs/build-skills),
 [hooks](https://learn.chatgpt.com/docs/hooks).

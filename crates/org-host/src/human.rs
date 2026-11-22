@@ -56,6 +56,17 @@ impl Wire {
         params: &C::Params,
         principal: Option<&Principal>,
     ) -> Result<C::Result, String> {
+        self.call_answer::<C>(params, principal)?
+            .map_err(|_| unavailable())
+    }
+
+    /// [`Wire::call`], with the code of a refusal the host answered kept: `Ok(Err(code))`.
+    /// Only its code: an error's message is the host's and is not shown.
+    pub(crate) fn call_answer<C: Call>(
+        &mut self,
+        params: &C::Params,
+        principal: Option<&Principal>,
+    ) -> Result<Result<C::Result, org_proto::ErrorCode>, String> {
         self.id = self
             .id
             .checked_add(1)
@@ -124,26 +135,26 @@ impl Wire {
         if response.id != self.id {
             return Err(unavailable());
         }
-        response.into_result::<C>().map_err(|error| {
-            #[cfg(test)]
-            match &error {
-                org_proto::CallError::Api(error) => {
-                    eprintln!("native {} refused: {:?}", C::METHOD, error.code)
-                }
-                org_proto::CallError::Decode(_) => {
-                    eprintln!("native {} result decode failed", C::METHOD)
-                }
+        match response.into_result::<C>() {
+            Ok(result) => Ok(Ok(result)),
+            Err(org_proto::CallError::Api(error)) => {
+                #[cfg(test)]
+                eprintln!("native {} refused: {:?}", C::METHOD, error.code);
+                Ok(Err(error.code))
             }
-            let _ = error;
-            unavailable()
-        })
+            Err(org_proto::CallError::Decode(_)) => {
+                #[cfg(test)]
+                eprintln!("native {} result decode failed", C::METHOD);
+                Err(unavailable())
+            }
+        }
     }
 }
 fn session(handle: &SessionHandle) -> SessionHandle {
     SessionHandle::new(handle.expose().into()).expect("live nonempty handle")
 }
 
-fn password() -> Result<Password, String> {
+pub(crate) fn password() -> Result<Password, String> {
     terminal::password()
 }
 /// A development build may place every instance under an explicit application base,
@@ -186,7 +197,10 @@ pub(crate) fn paths(name: Option<&str>) -> Result<Paths, String> {
         );
     }
     let account = crate::home::account_dir().ok_or("account home unavailable")?;
-    Paths::prepare(&account, user_temp(&account)?, name).map_err(|_| unavailable())
+    // The instance's own reason: which folder, and the rule it broke (a data volume on a
+    // memory filesystem, a folder of another user). Paths and fixed texts only.
+    Paths::prepare(&account, user_temp(&account)?, name)
+        .map_err(|why| format!("this account's instance folders cannot be used: {why}"))
 }
 fn user_temp(account: &std::path::Path) -> Result<PathBuf, String> {
     use org_platform::dirs::UserTempError;
@@ -197,7 +211,7 @@ fn user_temp(account: &std::path::Path) -> Result<PathBuf, String> {
     })
 }
 mod host;
-pub(crate) use host::verify_host;
+pub(crate) use host::{host_is_named_by_user_alone, verify_host, verify_service_host};
 mod recovery;
 pub use recovery::recovery;
 mod terminal;

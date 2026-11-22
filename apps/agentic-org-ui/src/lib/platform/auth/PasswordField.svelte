@@ -20,7 +20,7 @@
 </script>
 
 <div>
-	<label for={id} class="block text-sm/6 font-medium text-white">{label}</label>
+	<label for={id} class="block text-sm/6 font-medium text-fg">{label}</label>
 	<div class="mt-2 flex gap-x-2">
 		<input
 			{id}
@@ -31,18 +31,18 @@
 			{readonly}
 			aria-invalid={error ? 'true' : undefined}
 			aria-describedby={error ? `${id}-error` : undefined}
-			class="block w-full rounded-md bg-white/5 px-3 py-1.5 text-base text-white outline-1 -outline-offset-1 outline-white/10 placeholder:text-gray-500 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-500 sm:text-sm/6"
+			class="block w-full rounded-md bg-surface-raised px-3 py-1.5 text-base text-fg outline-1 -outline-offset-1 outline-line placeholder:text-fg-subtle focus:outline-2 focus:-outline-offset-2 focus:outline-ring sm:text-sm/6"
 		/>
 		<button
 			type="button"
 			aria-pressed={shown}
 			aria-controls={id}
 			onclick={() => (shown = !shown)}
-			class="rounded-md bg-white/10 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/20 focus-visible:outline-2 focus-visible:outline-indigo-500"
+			class="rounded-md bg-surface-overlay px-3 py-1.5 text-sm font-semibold text-fg hover:bg-tint/20 focus-visible:outline-2 focus-visible:outline-ring"
 			>Show</button
 		>
 	</div>
 	{#if error}
-		<p id="{id}-error" class="mt-2 text-sm/6 text-red-400">{error}</p>
+		<p id="{id}-error" class="mt-2 text-sm/6 text-danger">{error}</p>
 	{/if}
 </div>

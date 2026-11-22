@@ -73,31 +73,9 @@ fn assert_named_peer_closed(kind: &str) {
     {
         let path = directory.0.join(format!("{kind}-{index}"));
         let (stream, mut peer) = if kind == "bound" {
-            use std::os::unix::ffi::OsStrExt;
+            use std::os::fd::AsFd;
             let (stream, peer) = UnixStream::pair().unwrap();
-            let bytes = path.as_os_str().as_bytes();
-            // SAFETY: zero initializes every byte, including the UNIX path terminator.
-            let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-            assert!(bytes.len() < address.sun_path.len());
-            address.sun_family = libc::AF_UNIX as _;
-            #[cfg(target_os = "macos")]
-            {
-                address.sun_len = std::mem::size_of_val(&address).try_into().unwrap();
-            }
-            for (slot, byte) in address.sun_path.iter_mut().zip(bytes) {
-                *slot = *byte as _;
-            }
-            // SAFETY: stream owns fd; the initialized address is covered by the supplied length.
-            assert_eq!(
-                unsafe {
-                    libc::bind(
-                        stream.as_raw_fd(),
-                        (&address as *const libc::sockaddr_un).cast(),
-                        std::mem::size_of_val(&address) as _,
-                    )
-                },
-                0
-            );
+            org_platform::socket::testing::bind_path(stream.as_fd(), &path).unwrap();
             (stream, peer)
         } else {
             let listener = std::os::unix::net::UnixListener::bind(path).unwrap();

@@ -62,7 +62,7 @@
 			class="exec-logo flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5"
 			title={connection.organization.name}
 		>
-			<span class="exec-brand-mark flex size-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white" aria-hidden="true">
+			<span class="exec-brand-mark flex size-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-on-emphasis" aria-hidden="true">
 				A
 			</span>
 			{#if !collapsed}

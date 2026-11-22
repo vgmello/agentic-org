@@ -27,7 +27,7 @@
           ],
           "paths": [
             "docs/*",
-            "crates/org-runtime/src/*"
+            "crates/org-agent-runtime/src/*"
           ]
         },
         [

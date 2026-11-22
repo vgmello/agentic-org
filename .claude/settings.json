@@ -1,4 +1,23 @@
 {
+  "permissions": {
+    "allow": [
+      "Skill(svelte-code-writer)",
+      "Skill(svelte-core-bestpractices)",
+      "Skill(shadcn-svelte)",
+      "Skill(playwright-cli)"
+    ],
+    "deny": [
+      "Bash(npx shadcn-svelte:*)",
+      "Bash(npx shadcn-svelte@latest:*)",
+      "Bash(pnpm dlx shadcn-svelte:*)",
+      "Bash(pnpm dlx shadcn-svelte@latest:*)",
+      "Bash(bunx --bun shadcn-svelte@latest:*)",
+      "Bash(npx playwright:*)",
+      "Bash(npm init playwright:*)",
+      "Bash(npm init playwright@latest:*)",
+      "Bash(npm install -g @playwright/cli@latest:*)"
+    ]
+  },
   "extraKnownMarketplaces": {
     "claude-plugins-official": {
       "source": {
@@ -6,23 +25,34 @@
         "repo": "anthropics/claude-plugins-official"
       }
     },
-    "svelte": {
+    "agentic-org": {
       "source": {
-        "source": "github",
-        "repo": "sveltejs/ai-tools"
+        "source": "directory",
+        "path": "./.claude/marketplace"
       }
     }
   },
   "enabledPlugins": {
     "rust-analyzer-lsp@claude-plugins-official": true,
     "typescript-lsp@claude-plugins-official": true,
-    "svelte@svelte": true
+    "svelte-lsp@agentic-org": true
   },
   "enabledMcpjsonServers": [
-    "starter_kit_context"
+    "starter_kit_context",
+    "svelte"
   ],
   "hooks": {
     "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.agents/check-tools.sh",
+            "timeout": 30
+          }
+        ]
+      },
       {
         "hooks": [
           {
@@ -48,6 +78,11 @@
       {
         "matcher": "Edit|MultiEdit|Write|NotebookEdit",
         "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.agents/check-tools.sh --gate",
+            "timeout": 30
+          },
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.agent-kit/runtime/kit_hooks.py\" guard",

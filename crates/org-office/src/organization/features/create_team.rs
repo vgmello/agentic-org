@@ -1,15 +1,18 @@
-//! Creating a team under an existing one. HQ numbers it: the team, the advanced counter
-//! and the number's immutable allocation are the files of one entry (document 06).
+//! Creating a team, under an existing one or at the top level (the organization is a
+//! team forest, owner decision Q1). HQ numbers it: the team, the advanced counter and the
+//! number's immutable allocation are the files of one entry (document 06).
 
-use org_store::{
-    Actor, Change, Engine, Id, OfficeIdentity, Operation, Refusal, Stream, UnitOfWork,
-};
+use org_store::{Actor, Change, Engine, Id, OfficeIdentity, Refusal, UnitOfWork};
 use serde::{Deserialize, Serialize};
 
-use super::{invalid, operation, reply, require, Op};
+use super::{
+    invalid, reply,
+    shared::{admit, id_in_use, reject, sibling_named, team_file},
+    stable, Feature, Op, RejectCode,
+};
 use crate::organization::{
-    ports::{OrganizationRead, MAX_TEAM_DEPTH},
-    records::{self, By, Meta, OfficeRole, Team, TeamAllocation, TeamStatus},
+    ports::OrganizationRead,
+    records::{self, Meta, Team, TeamAllocation, TeamStatus},
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize)]
@@ -17,7 +20,8 @@ pub struct CreateTeam {
     /// Minted by the caller, so a retry names the same team.
     pub id: Id,
     pub name: String,
-    pub parent: Id,
+    /// `None`: a top-level team.
+    pub parent: Option<Id>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -30,83 +34,67 @@ pub struct TeamCreated {
     pub generation: u64,
 }
 
-/// Why an admitted creation was rejected. Recorded, so a retry gets the same answer.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TeamRejection {
-    ParentArchived,
-}
+impl Feature for CreateTeam {
+    const OP: Op = Op::CreateTeam;
 
-/// The reply of a rejected creation.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TeamRejected {
-    pub rejected: TeamRejection,
-}
-
-impl CreateTeam {
-    /// The identity a retry is matched on.
-    pub fn operation(&self, id: Id, by: &Actor) -> Operation {
-        operation(Op::CreateTeam, id, by.clone(), self)
+    fn decide<E: Engine>(
+        &self,
+        uow: &mut UnitOfWork<'_, E>,
+        here: &OfficeIdentity,
+        owner: &Id,
+        by: &Actor,
+    ) -> Result<Change, Refusal>
+    where
+        E::Tx: OrganizationRead,
+    {
+        decide(uow, here, owner, by, self)
     }
 }
 
-/// The caller has authorized `by`; this decides whether the organization allows it.
+/// Only the owner creates a team (document 04, "Who may change what").
 pub fn decide<E: Engine>(
     uow: &mut UnitOfWork<'_, E>,
     here: &OfficeIdentity,
+    owner: &Id,
     by: &Actor,
     command: &CreateTeam,
 ) -> Result<Change, Refusal>
 where
     E::Tx: OrganizationRead,
 {
-    let stable = records::is_stable_id(command.id.as_str());
-    require(stable, "the team's ID is a UUIDv7 in lowercase text")?;
-    require(
-        records::is_line(&command.name),
-        "the name is one line of text",
-    )?;
-    let generation = uow.next(Stream::Organization)?;
-    let now = uow.now();
-
-    let view = uow.view();
-    let Some(organization) = view.organization()? else {
-        return invalid("there is no organization yet");
-    };
-    // HQ alone creates teams: a satellite's copy of the counter is not an authority.
-    let office = view.office(&here.office_id)?;
-    let headquarters = office.is_some_and(|office| office.role == OfficeRole::Hq);
-    require(headquarters, "only HQ creates a team")?;
-    let by = match by {
-        Actor::Employee(id) => {
-            let known = view.employee(id)?.is_some();
-            require(known, "the actor is not an employee on record")?;
-            By::Employee(id.clone())
-        }
-        Actor::System => By::System,
-    };
-    let Some(parent) = view.team(&command.parent)? else {
-        return invalid("no such parent team");
-    };
-    // An ID names one record of the organization, whatever its kind.
-    let in_use = view.team(&command.id)?.is_some()
-        || command.id == organization.id
-        || view.office(&command.id)?.is_some()
-        || view.employee(&command.id)?.is_some()
-        || view.repositories()?.iter().any(|r| r.id == command.id);
-    require(!in_use, "the team's ID is in use")?;
-    if !parent.is_active() {
-        let rejected = TeamRejected {
-            rejected: TeamRejection::ParentArchived,
-        };
-        return Err(Refusal::rejected(reply(&rejected)));
+    stable(&command.id, "the team's ID")?;
+    if let Some(parent) = &command.parent {
+        stable(parent, "the parent team's ID")?;
     }
-    let Some(mut chain) = view.team_chain(&parent.id)? else {
-        return invalid("the parent team has no chain of parents to a top-level team");
-    };
+    let admitted = admit(uow, here, owner, by)?;
+    let view = uow.view();
+    let mut chain = Vec::new();
+    if let Some(parent) = &command.parent {
+        let Some(parent) = view.team(parent)? else {
+            return reject(RejectCode::NotFound, "no such parent team");
+        };
+        let Some(above) = view.team_chain(&parent.id)? else {
+            return invalid("the parent team has no chain of parents to a top-level team");
+        };
+        if !parent.is_active() {
+            return reject(RejectCode::InvalidRequest, "the parent team is archived");
+        }
+        chain = above;
+    }
     chain.push(command.id.clone());
-    require(chain.len() <= MAX_TEAM_DEPTH, "the team tree is too deep")?;
+    let path = team_file(&chain)?;
+    if !records::is_line(&command.name) {
+        return reject(RejectCode::InvalidName, "the name is one line of text");
+    }
+    let parent = command.parent.as_ref();
+    if sibling_named(view, parent, &command.name, &command.id)? {
+        let clash = "a team with that name already exists here";
+        return reject(RejectCode::AlreadyExists, clash);
+    }
+    if id_in_use(view, &admitted.organization, &command.id)? {
+        return reject(RejectCode::AlreadyExists, "the team's ID is in use");
+    }
+    let organization = &admitted.organization;
     let Some(counter) = view.team_counter()? else {
         return invalid("the organization has no team counter");
     };
@@ -120,25 +108,25 @@ where
         id: command.id.clone(),
         name: command.name.clone(),
         number,
-        parent_team_id: Some(parent.id),
+        parent_team_id: command.parent.clone(),
         lead_employee_id: None,
         status: TeamStatus::Active,
-        meta: Meta::created(&by, now),
+        max_members: records::DEFAULT_MAX_MEMBERS,
+        meta: Meta::created(&admitted.by, admitted.now),
     };
     let allocation = TeamAllocation {
         organization_id: organization.id.clone(),
         number,
         team_id: team.id.clone(),
-        allocated_at: records::time_text(now),
+        allocated_at: records::time_text(admitted.now),
     };
     let created = TeamCreated {
         id: team.id.clone(),
         number,
-        generation,
+        generation: admitted.generation,
     };
-    // A tree within the depth limit but too deep for a path is refused here.
     Ok(Change::new(Op::CreateTeam.ack())
-        .put(records::team_path(&chain)?, records::encode_team(&team))
+        .put(path, records::encode_team(&team))
         .put(
             records::team_counter_path(&organization.id),
             records::encode_team_counter(&counter),

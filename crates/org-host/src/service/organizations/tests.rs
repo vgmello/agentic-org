@@ -82,7 +82,7 @@ impl Hq for FakeHq {
         if *worker == Worker::Refuses {
             return Err(ApiError::new(ErrorCode::NotAuthorized, "refused"));
         }
-        let bootstrap = first.hq_creation.unwrap().bootstrap.unwrap();
+        let bootstrap = first.hq_creation.bootstrap;
         assert_eq!(bootstrap.creator.employee_id, first.owner_member_id);
         let office = serde_json::from_value(serde_json::json!({
             "id": first.office.office_id, "organization_id": first.org_id, "name": "HQ",
@@ -134,7 +134,6 @@ struct Parts {
     keys: Arc<crate::keys::memory::MemoryKeys>,
     writers: Arc<Writers>,
     instance: String,
-    root: std::path::PathBuf,
     office_home: std::path::PathBuf,
 }
 impl Parts {
@@ -145,7 +144,6 @@ impl Parts {
             self.keys.clone(),
             Arc::clone(&self.writers),
             &self.instance,
-            &self.root,
             &self.office_home,
         ))
     }
@@ -183,7 +181,6 @@ fn host(worker: Worker) -> Host {
         keys: Arc::new(crate::keys::memory::MemoryKeys::default()),
         writers: Writers::open(custody.clone(), db.clone(), &instance, &state_root).unwrap(),
         instance,
-        root: state_root,
         office_home,
     };
     let provisioning = parts.provisioning(&db, &custody);
@@ -1062,7 +1059,7 @@ fn a_stopped_host_ends_its_retry_and_neither_creates_nor_links_afterwards() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(2));
     }
-    restarted.stop();
+    restarted.stop_by(Instant::now() + crate::Timings::default().shutdown_grace);
     assert_eq!(
         restarted.driving_now(),
         0,
@@ -1089,7 +1086,7 @@ fn a_stopped_host_ends_its_retry_and_neither_creates_nor_links_afterwards() {
     }
     restarted.halt();
     hq.set(Worker::Creates);
-    restarted.stop();
+    restarted.stop_by(Instant::now() + crate::Timings::default().shutdown_grace);
     assert_eq!(restarted.driving_now(), 0);
     assert_eq!(host.reserved(), 1, "no link after the stop began");
     assert!(events.0.lock().unwrap().is_empty());
@@ -1098,6 +1095,38 @@ fn a_stopped_host_ends_its_retry_and_neither_creates_nor_links_afterwards() {
     next.start(hq.clone());
     wait_idle(&next);
     assert_eq!(host.reserved(), 0);
+}
+
+/// X5 review V2: a stopping host waits for a creation thread only until the provisioning
+/// margin after the deadline it fixed when it was asked to stop, whatever the thread waits
+/// for (here a worker that never answers, as a thread waiting for a write lock of the
+/// registry would): with the default grace period that is inside the host's bound of 2.5 s.
+#[test]
+fn a_stopping_host_waits_for_a_creation_that_does_not_end_only_until_its_bound() {
+    let host = host(Worker::Blocks);
+    let auth = host.sign_in("Owner", 1);
+    let id = op();
+    assert_eq!(
+        host.create(&auth, &id, &plan("Example", "example"))
+            .unwrap(),
+        HostOpResult::Accepted
+    );
+    host.asked(1);
+    let asked = Instant::now();
+    host.provisioning
+        .stop_by(asked + crate::Timings::default().shutdown_grace);
+    let took = asked.elapsed();
+    assert!(
+        took >= crate::Timings::default().shutdown_grace,
+        "it waited for the creation: {took:?}"
+    );
+    assert!(took < Duration::from_millis(2500), "{took:?}");
+    assert_eq!(host.provisioning.driving_now(), 1, "the creation was left");
+    // Left to itself, it ends once its worker answers, and records nothing: the host
+    // stopped.
+    host.hq.set(Worker::Creates);
+    host.idle();
+    assert_eq!(host.reserved(), 1);
 }
 
 fn staged(host: &Host, operation: &str) -> Option<Value> {

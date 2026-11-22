@@ -38,7 +38,7 @@ def load_policy(path=None):
             value["implementation"]["familiar_requires_all"] != list(FACTS)):
         raise ValueError("Unsupported routing policy or eligibility criteria")
     codex = value["mode"] == "codex-only"
-    lead, helper = ("gpt-6.1-sol", "gpt-6.1-sol") if codex else ("opus", "haiku")
+    lead, helper = ("gpt-6.2-sol", "gpt-6.2-sol") if codex else ("opus", "haiku")
     normal, risk = ("high", "xhigh") if codex else ("medium", "high")
     review = value["review"]
     if (type(review["default_rounds"]) is not int or type(review["maximum_rounds"]) is not int or
@@ -48,7 +48,7 @@ def load_policy(path=None):
             review["stop_on_repeated_findings"] is not True or review["final_model"] != lead or
             review["final_default_effort"] != normal or review["final_risk_effort"] != risk):
         raise ValueError("Routing policy violates supported review boundaries")
-    expected = {"familiar": {"model": "gpt-6.1-sol" if codex else "sonnet", "effort": "medium"},
+    expected = {"familiar": {"model": "gpt-6.2-sol" if codex else "sonnet", "effort": "medium"},
                 "default": {"model": lead, "effort": normal},
                 "difficult": {"model": lead, "effort": risk}}
     if any(value["implementation"][k] != v for k, v in expected.items()):

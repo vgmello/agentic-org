@@ -16,19 +16,30 @@ mod operations;
 #[cfg(test)]
 mod tests;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
-
-use org_store::{
-    Clock, EngineError, FeedPosition, OfficeIdentity, Opening, Projector, Status, Store,
-    StoreError, StoreParts, WriterAuthority,
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
 };
 
-pub use operations::{CreateOrganizationOp, CreateTeamOp, DirectoryGeneration};
+use org_store::{
+    Clock, EngineError, FeedPosition, Files, FilesError, Id, OfficeIdentity, Opening, Projector,
+    Status, Store, StoreError, StoreParts, WriterAuthority,
+};
+
+pub use operations::{
+    AddPersonOp, ArchiveTeamOp, CreateOrganizationOp, CreateTeamOp, DeactivatePersonOp,
+    DirectoryGeneration, DirectorySnapshot, MovePersonOp, MoveTeamOp, OfficeStanding, Standing,
+    StructureOp, UpdatePersonOp, UpdateTeamOp,
+};
 
 use super::sqlite::SqliteEngine;
-use crate::organization::{
-    ports::{OrganizationEngine, OrganizationRead},
-    projector::OrganizationFiles,
+use crate::{
+    office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
+    organization::{
+        ports::{OrganizationEngine, OrganizationRead},
+        projector::OrganizationFiles,
+    },
 };
 
 /// The file of an office's projection, under `<runtime-root>/<office-id>/`.
@@ -141,6 +152,12 @@ pub trait ReadOp {
 pub struct Opened<E: OfficeEngine> {
     store: Store<E>,
     engine: Arc<E>,
+    /// Where an orderly stop leaves its marker, and for which journal.
+    durable: PathBuf,
+    office: Id,
+    incarnation: Id,
+    /// Whether the last stop before this opening was orderly.
+    stopped_cleanly: bool,
 }
 
 /// An office's open store.
@@ -196,10 +213,12 @@ fn memory_engine() -> org_store::testkit::MemoryEngine {
 /// The store on `engine`, with every family's projector.
 fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>, StoreError> {
     let engine = Arc::new(engine);
-    let organization = config.identity.organization_id.clone();
-    let files: Arc<dyn Projector<E>> = Arc::new(OrganizationFiles::new(organization));
+    let here = &config.identity;
+    let organization = here.organization_id.clone();
+    let files: Arc<dyn Projector<E>> = Arc::new(OrganizationFiles::new(organization.clone()));
+    let local = OfficeLocalFiles::new(organization, here.office_id.clone());
     #[cfg_attr(not(any(test, feature = "testkit")), allow(unused_mut))]
-    let mut projectors = vec![files];
+    let mut projectors: Vec<Arc<dyn Projector<E>>> = vec![files, Arc::new(local)];
     #[cfg(any(test, feature = "testkit"))]
     if let Some(probe) = &config.testing.probe {
         projectors.push(probe.projector());
@@ -219,12 +238,73 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     if let Some(faults) = &config.testing.faults {
         parts = org_store::testkit::with_faults(parts, faults);
     }
+    // The last stop's marker is read before the store opens, and removed only once it
+    // has: an opening that fails leaves it for the next.
+    let marker = clean_stop::read(&Files::open(&config.durable_root)?, &here.office_id);
     let store = Store::open(parts)?;
-    Ok(Opened { store, engine })
+    let head = store.status().flushed;
+    let stopped_cleanly = clean_stop::was_clean(marker.as_ref(), &here.journal_incarnation, head);
+    if marker.is_some() {
+        clean_stop::remove(&config.durable_root, &here.office_id)
+            .map_err(|e| marker_error(&config.durable_root, "remove", &e))?;
+    }
+    Ok(Opened {
+        store,
+        engine,
+        durable: config.durable_root.clone(),
+        office: here.office_id.clone(),
+        incarnation: here.journal_incarnation.clone(),
+        stopped_cleanly,
+    })
+}
+
+fn marker_error(durable: &Path, action: &'static str, error: &std::io::Error) -> StoreError {
+    StoreError::Files(FilesError::Io {
+        path: durable.display().to_string(),
+        action,
+        message: format!("the clean-stop marker: {error}"),
+        flush: false,
+    })
+}
+
+impl<E: OfficeEngine> Opened<E> {
+    /// The orderly stop of the store itself: everything appended is flushed, confirmed
+    /// and written to its files, and the threads are joined. Returns the marker to leave.
+    fn close_store(self) -> Result<(Arc<E>, Marker), StoreError> {
+        // The caller owns the store: no submission is in flight, so the head after this
+        // sync is the head the store closes at.
+        self.store.sync()?;
+        let head = self.store.status().flushed;
+        self.store.close()?;
+        let marker = Marker {
+            durable: self.durable,
+            office: self.office,
+            record: CleanStop {
+                journal_incarnation: self.incarnation,
+                head_ordinal: head,
+            },
+        };
+        Ok((self.engine, marker))
+    }
+}
+
+/// The marker an orderly stop leaves, once everything under it has succeeded.
+struct Marker {
+    durable: PathBuf,
+    office: Id,
+    record: CleanStop,
+}
+
+impl Marker {
+    fn write(self) -> Result<(), StoreError> {
+        clean_stop::write(&self.durable, &self.office, &self.record)
+            .map_err(|e| marker_error(&self.durable, "write", &e))
+    }
 }
 
 /// Opens the office's store on the engine the configuration names. The projection is
-/// made, or rebuilt from the files and the journal, as it needs to be.
+/// made, or rebuilt from the files and the journal, as it needs to be. The last stop's
+/// clean-stop marker is consumed: [`OfficeStore::stopped_cleanly`] reports it.
 pub fn open_store(config: &StoreConfig) -> Result<OfficeStore, StoreError> {
     match config.engine {
         EngineChoice::Sqlite => Ok(OfficeStore::Sqlite(open_on(
@@ -251,22 +331,38 @@ impl OfficeStore {
         on_store!(self, opened => opened.store.status())
     }
 
+    /// Why the store stopped accepting (a failed flush, append or projection), if it has.
+    /// It accepts nothing more in this process.
+    pub fn fatal(&self) -> Option<StoreError> {
+        self.status().stopped
+    }
+
+    /// Whether the stop before this opening was orderly: [`OfficeStore::close`] left its
+    /// marker, for this journal incarnation, at the head the store opened with. A kill, a
+    /// drop, a fatal store or a failed close leaves none.
+    pub fn stopped_cleanly(&self) -> bool {
+        on_store!(self, opened => opened.stopped_cleanly)
+    }
+
     /// Returns when every accepted entry is flushed, confirmed and written to its files.
     pub fn sync(&self) -> Result<(), StoreError> {
         on_store!(self, opened => opened.store.sync())
     }
 
-    /// The orderly stop. The SQLite projection's log is then folded into its file; a
-    /// store that is dropped instead does no such work and loses nothing by it.
+    /// The orderly stop. The SQLite projection's log is then folded into its file, and the
+    /// clean-stop marker is written last. A store that is dropped instead does no such
+    /// work and loses nothing by it, and the next opening is told the stop was not clean.
     pub fn close(self) -> Result<(), StoreError> {
-        match self {
+        let marker = match self {
             OfficeStore::Sqlite(opened) => {
-                opened.store.close()?;
-                Ok(opened.engine.checkpoint()?)
+                let (engine, marker) = opened.close_store()?;
+                engine.checkpoint()?;
+                marker
             }
             #[cfg(any(test, feature = "testkit"))]
-            OfficeStore::Memory(opened) => opened.store.close(),
-        }
+            OfficeStore::Memory(opened) => opened.close_store()?.1,
+        };
+        marker.write()
     }
 
     /// The digest of the DDL the SQLite projection is made from.

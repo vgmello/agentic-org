@@ -447,16 +447,18 @@
 	}
 	.exec-ai-btn:hover {
 		background: var(--exec-accent);
-		color: #ffffff;
+		color: var(--on-emphasis);
 	}
 	.exec-modal-backdrop {
-		background: rgba(4, 8, 18, 0.52);
+		background: color-mix(in srgb, var(--scrim) 52%, transparent);
 		backdrop-filter: blur(8px);
 		-webkit-backdrop-filter: blur(8px);
 	}
 	.exec-modal {
 		background: var(--popover);
-		box-shadow: inset 0 0 0 1px var(--exec-border-hi), 0 24px 64px rgba(0, 0, 0, 0.38);
+		box-shadow:
+			inset 0 0 0 1px var(--exec-border-hi),
+			0 24px 64px color-mix(in srgb, var(--shade) 38%, transparent);
 	}
 	.exec-modal-hd,
 	.exec-modal-foot {

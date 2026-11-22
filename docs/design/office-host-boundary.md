@@ -74,7 +74,7 @@ close-on-exec, so no child keeps the lock.
 ### `office.json`
 
 ```json
-{"v":1,"office_id":"0193…","office_name":"HQ","role":"hq",
+{"v":2,"office_id":"0193…","office_name":"HQ","role":"hq",
  "org_id":"0193…","org_name":"Acme","created_at":"2026-11-08T02:10:00.000Z"}
 ```
 
@@ -164,26 +164,39 @@ sandbox policies ([agent sessions](agent-sessions.md#managed-state)).
 ### HQ creation context
 
 An HQ create carries an `hq_creation` object with exactly
-`{version:1, operation_id, escrow_profile:1, public_root}`, with a UUIDv7 operation ID
-and the absolute canonical state root. The protected host provisioning operation
-supplies it, the owner's security principal and the recovery code. Unsupported versions
-and duplicates fail before any change.
+`{version:2, operation_id, escrow_profile:1, bootstrap}`: the operation ID as the wire
+carries it (a ULID until the separate ID slice moves the wire to UUIDv7) and the
+prepared organization (`org_proto::selected_bootstrap::PreparedV1`)
+(`crates/org-office-launch/src/contract.rs`, `HqCreationV1`). It carries no path. The
+organization's data roots, `<instance-root>/<org-id>/durable` and
+`<instance-root>/<org-id>/runtime`, come in the host's writer admission, which the worker
+takes over the writer-control wire before it creates or opens anything and checks for
+this organization and owner (`apps/agentic-org-office/src/lib.rs`). The protected host
+provisioning operation supplies the context, the owner's security principal and the
+recovery code. Unsupported versions and duplicates fail before any change.
 
-The worker freezes the nonsecret request identity in `hq-creation.v1.json` under the
-office lock before preparing anything. One local transaction then stores the operation
-and owner binding, the CA private key wrapped with the office secrets key (an
-`org_pki::wrap` record bound to the organization, the office and the CA purpose;
-ADR-0016 decision 3), the public envelope and the completion version. That record is excluded from replication and
-journal capture. An interrupted preparation resumes only the identical intent and
-verifies retained material instead of generating it again; foreign data, missing
-committed material or changed input stay intact and need recovery
-([ADR-0007](../adr/0007-hq-creation-escrow.md)).
+The worker freezes the nonsecret request identity, with the data roots and the host's
+custody reservation, in `hq-creation.v1.json` (content version 3,
+`crates/org-office/src/office/intent.rs`) under the office lock before preparing
+anything. The organization's first journal entry then writes, in one accepted operation,
+the organization's files, the public escrow package `state/security/ca-escrow.v1.bin`
+and the CA key record `local/offices/<office-id>/security/ca-key.v1.json`: the CA
+private key wrapped with the office secrets key (an `org_pki::wrap` record bound to the
+organization, the office and the CA purpose; ADR-0016 decision 3), with the operation
+ID, the public key and the package's digest, in the one form of data contract document
+16 ("The HQ's CA records"). On disk the operation ID is the UUIDv7 the office maps the
+wire's ULID to (`organization::operation_id::from_wire_ulid`). The key record is never
+organization Git content and is never replicated or exported; the protected journal
+holds it, wrapped, until the entry's segment is released. An interrupted preparation
+resumes only the identical intent and verifies retained material instead of generating
+it again; foreign data, missing committed material or changed input stay intact and
+need recovery ([ADR-0007](../adr/0007-hq-creation-escrow.md)). A file the office did
+not write where creation writes stops it and names the path.
 
-The public root must exist, resolve without symlinks or aliases, and be disjoint from
-the office's private directory; it is frozen in the intent, never taken from a browser.
-Before `created`, the exact committed public envelope is published there immutably as
-`security/ca-escrow.v1.bin`. Reopening repairs a missing file from the retained record;
-conflicting bytes require recovery.
+`created` is reported only after the entry's files are written and `office.json` last
+(`org_office::Office::provision_hq`). Opening an HQ refuses when the escrow package or
+the key record is missing, the package's SHA-256 differs from the record's, or the
+public key, organization or operation differ (`org_office::office_local::CaRecords`).
 
 ### Provisioning an organization
 
@@ -311,7 +324,9 @@ restarted.
   replace their record idempotently.
 - **Shutdown** (the service manager's stop signal, or the host exiting): close every
   child's stdin and its rendezvous connection (the worker stops on the rendezvous
-  closing), wait up to 10 s, then SIGKILL what is left, and reap.
+  closing), wait until 1.5 s after the stop was asked for (`Timings::shutdown_grace`, on
+  every system), then SIGKILL what is left, and reap. The whole stop ends within 2.5 s
+  of the signal ([Linux host design](linux-host.md#34-service-lifecycle)).
 - **Create:** under the catalog mutex only, check the name and its uniqueness among the
   instance's organizations (ignoring case, counting creates in flight), make the IDs,
   reserve the name and release the mutex. Outside it: create the office secrets key and
@@ -407,9 +422,20 @@ it restarts the worker; it never races a live worker over its agents.
   sees "this operating system has no office secrets key store", never a Keychain-only
   reason. No file of key custody names an operating system. The supervisor and
   provisioning never branch on the platform.
-- Storage: every database (host registry, `org.db`, `office.db`) is plain SQLite from
+- Storage: every database (the host registry and each office's projection
+  `<instance-root>/<org-id>/runtime/<office-id>/office.db`) is plain SQLite from
   `rusqlite`'s `bundled` feature, protected by owner-only file permissions; there is no
-  SQLCipher dependency, database key or initialization fence (ADR-0016).
+  SQLCipher dependency, database key or initialization fence (ADR-0016). The office's
+  sources are files and its acceptance journal under `<instance-root>/<org-id>/durable/`
+  ([office store](office-store.md)); the projection is rebuilt from them when deleted.
+  Only `crates/org-host` and `crates/org-office` depend on `rusqlite`, and in
+  `org-office` only `src/store/sqlite/` names it
+  (`crates/org-office/tests/engine_boundary.rs`).
+- Writer custody: `crates/org-host/src/writer.rs` keeps one record per office (schema
+  3, writer-control wire version 2, `org_office_launch::writer`) with the writer
+  identity minted at the protected reservation, the organization's data roots, the
+  owner binding and the last journal head the office confirmed. Every office needs one
+  to start; the store confirms its head once per flush and the host checks it.
 - The organization name rule is `org_proto::OrganizationName`: trimmed, Unicode
   lowercase as its key, refusing empty, too long and control characters
   (`invalid_name`).
@@ -425,8 +451,9 @@ it restarts the worker; it never races a live worker over its agents.
 | A3 | The web process starts through the same launch contract as an office worker | The web process has its own rendezvous lines (`GatewayFirstLine`, `GatewayReadyForSecrets` in `crates/org-host-control/src/gateway.rs`), separate from the office worker's. |
 | A3 | Seven web channels per office | Done: `MAX_WEB_CHANNELS` is 7 and a test refuses the eighth. |
 | A3 | The host serves the web's work reads through the office channel | `host.sock` dispatches only `hello` and `instance.status`. |
-| A1 | No database key; the office secrets key instead | The office databases are plain SQLite and open without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). The host keeps the keys behind its `OfficeSecretsKeys` contract (§5), a view over the platform's credential store; a system without a credential store refuses every call. |
-| X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Since X2 to X4 (2026-11-18): workers start on macOS and GNU/Linux (`org_platform_host::admission`); host secrets use the Keychain on macOS and a checked, owner-only directory on Linux (`org_platform_host::credentials`); the web process confines itself with Seatbelt on macOS and a seccomp filter on Linux. Service registration on Linux and the container are X5, not integrated. |
+| A1 | No database key; the office secrets key instead | The office's projection is plain SQLite and opens without a key; the launch handoff carries the per-office key as `office_secrets_key` (required on a create, `null` on a start when the host has none, absent on a discard), which the worker uses only to wrap and unwrap the CA private key. Without it, or with a wrong one, the office serves its data and only the CA is unavailable. The `key_missing` status reason and launch code are gone (a `key_missing` from an older server decodes as a retried `storage_error`). The host keeps the keys behind its `OfficeSecretsKeys` contract (§5), a view over the platform's credential store; a system without a credential store refuses every call. |
+| X1a to X6 | macOS and Linux, including a container ([Linux host design](linux-host.md)) | Since X2 to X4 (2026-11-18): workers start on macOS and GNU/Linux (`org_platform_host::admission`); host secrets use the Keychain on macOS and a checked, owner-only directory on Linux (`org_platform_host::credentials`); the web process confines itself with Seatbelt on macOS and a seccomp filter on Linux. Service registration on Linux and the container are X5, integrated into `v1` on 2026-11-19 (FC-164). |
+| B1b | The office on its store, under host writer custody | The office runs on the store of [office store](office-store.md) section 11: HQ creation is the first entry of its acceptance journal, with the organization's files, the escrow package and the wrapped CA key record; the projection under `runtime/<office-id>/` is rebuilt when deleted (real host: `web_process_tests::organizations::actual_office_runtime_deleted_while_stopped_is_rebuilt_and_the_organization_stays_listed`, ignored). The host keeps writer custody per office and starts no office without it. `org.snapshot`, `who`, `inbox.list`, `msg.bind`'s lookup and `team.create` answer from the store; every other call the old tables served answers `unsupported` (work B4; operation lookup and other organization commands B2; messaging, status lines and `subscribe` B6). |
 
 `organization.create` is the only create: served on the admitted web connection,
 authorized by the browser pair digests and the origin, administrator required, and
@@ -434,11 +461,17 @@ refused on `host.sock`. It writes the creator's person record and takes no team 
 `organization.provision.v1` is deleted (implementation plan A4).
 
 The office directory today is `<home>/offices/<office-id>/` under the host home
-resolved by `org_proto::location`, holding `org.db`, `office.db` and `workspace/`
-besides `office.lock` and `office.json`. Those databases are the source of truth until
-the store writes the [storage tree](organization-data/README.md#shared-storage-contract)
-(implementation plan B1b). The rendezvous's first line still has an optional
-`id_profile: "selected_v1"`; without it the code accepts the older alphanumeric IDs, and
-`office.json` version 2 holds UUIDv7 IDs. Every ID becomes UUIDv7 and the profile
-switch goes (FC-142). The `joined` event, the `child` and `child_gone` events, the
+resolved by `org_proto::location`. It holds the office lock `office.lock` (taken before
+anything is read), the host's writer-custody marker `selected-writer.required`
+(installed before a create), the creation intent `hq-creation.v1.json` (frozen first)
+and `office.json` (written last: the office is finished). It holds no database and no
+workspace. The organization's data is the
+[storage tree](organization-data/README.md#shared-storage-contract) under the data roots
+`<instance-root>/<org-id>/durable` (the acceptance journal and the organization's
+files) and `<instance-root>/<org-id>/runtime` (the projection, which can be deleted and
+rebuilt). An office folder made by the old databases (`org.db`, `office.db`) is refused,
+never migrated. The rendezvous's first line names its office and
+organization by UUIDv7 only (B1b removed the `id_profile` switch and the older
+alphanumeric IDs from the launch line), and `office.json` version 2 holds UUIDv7 IDs.
+The other places that still accept the older IDs move to UUIDv7 with FC-142. The `joined` event, the `child` and `child_gone` events, the
 temp handle and the layout-change notice are not yet part of the rendezvous.

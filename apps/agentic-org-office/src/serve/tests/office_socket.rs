@@ -142,7 +142,7 @@ fn principal_envelopes_are_refused_before_each_special_dispatch_in_both_modes() 
         let dir = tempfile::Builder::new().prefix("sv").tempdir().unwrap();
         let path = dir.path().join("s.sock");
         let mut ports = ports(Box::new(|| panic!("principal must not read snapshots")));
-        ports.submit = Box::new(|_| panic!("principal must not submit or store a command"));
+        ports.submit = Box::new(|_, _| panic!("principal must not submit or store a command"));
         let shared = Arc::new(Shared::new(&test_info(), &path, ports, auth(grants)));
         let _server = running(&path, &shared);
         let mut client = Client::connect(&path);
@@ -176,7 +176,7 @@ fn refused_principal_bind_preserves_binding_held_calls_and_subscription_generati
     let path = dir.path().join("s.sock");
     let feed = Arc::new(FakeFeed::default());
     let mut ports = ports(Box::new(|| Err(SnapshotFailure::Storage)));
-    ports.submit = Box::new(|_| panic!("principal must not submit or store a command"));
+    ports.submit = Box::new(|_, _| panic!("principal must not submit or store a command"));
     ports.feed = Some(Box::new(Arc::clone(&feed)));
     let mailbox = Arc::clone(ports.mailbox.as_ref().unwrap());
     let shared = Arc::new(Shared::new(&test_info(), &path, ports, launch_key()));

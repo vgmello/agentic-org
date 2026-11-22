@@ -60,6 +60,28 @@ text_enum!(
     /// One field of state: `paused` is for agents only.
     EmployeeStatus { Active => "active", Paused => "paused", Inactive => "inactive" }
 );
+/// What makes an employee part of the product (document 04): `hr` is the built-in HR
+/// lead, one agent per organization, never with hiring power.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum BuiltinKey {
+    Hr,
+}
+
+impl BuiltinKey {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            BuiltinKey::Hr => "hr",
+        }
+    }
+
+    fn read_optional(reader: &mut Reader, key: &str) -> Result<Option<Self>, RecordError> {
+        match reader.optional_text(key)?.as_deref() {
+            None => Ok(None),
+            Some("hr") => Ok(Some(BuiltinKey::Hr)),
+            Some(_) => Err(reader.error(key, "not one of: hr")),
+        }
+    }
+}
 
 impl EmployeeKind {
     /// The folder of a team that holds this kind's profiles.
@@ -523,8 +545,13 @@ pub struct Team {
     pub parent_team_id: Option<Id>,
     pub lead_employee_id: Option<Id>,
     pub status: TeamStatus,
+    /// How many employees the team takes by hiring (document 04); at least 1.
+    pub max_members: u64,
     pub meta: Meta,
 }
+
+/// The member limit a new team has (document 01).
+pub const DEFAULT_MAX_MEMBERS: u64 = 6;
 
 impl Team {
     pub fn is_active(&self) -> bool {
@@ -566,6 +593,7 @@ pub fn encode_team(record: &Team) -> Vec<u8> {
     fields.insert("parent_team_id".into(), id(&record.parent_team_id));
     fields.insert("lead_employee_id".into(), id(&record.lead_employee_id));
     fields.insert("status".into(), json!(record.status.as_str()));
+    fields.insert("max_members".into(), json!(record.max_members));
     yaml::encode(&fields)
 }
 
@@ -579,7 +607,11 @@ pub fn decode_team(bytes: &[u8]) -> Result<Team, RecordError> {
         parent_team_id: optional_id(&mut reader, "parent_team_id")?,
         lead_employee_id: optional_id(&mut reader, "lead_employee_id")?,
         status: TeamStatus::read(&mut reader, "status")?,
+        max_members: reader.number("max_members")?,
     };
+    if record.max_members == 0 {
+        return Err(reader.error("max_members", "below 1"));
+    }
     if record.number == 0 {
         return Err(reader.error("number", "below 1"));
     }
@@ -614,6 +646,8 @@ pub struct Employee {
     pub offboarded_at: Option<String>,
     /// Hiring power: on for a person's new record, off for an agent's.
     pub may_hire: bool,
+    /// Set only on the built-in HR lead.
+    pub builtin_key: Option<BuiltinKey>,
     pub meta: Meta,
     /// The Markdown after the front matter.
     pub body: String,
@@ -652,6 +686,8 @@ pub fn encode_employee(record: &Employee) -> Vec<u8> {
     fields.insert("title_in_team".into(), json!(record.title_in_team));
     fields.insert("offboarded_at".into(), json!(record.offboarded_at));
     fields.insert("may_hire".into(), json!(record.may_hire));
+    let builtin = record.builtin_key.map(BuiltinKey::as_str);
+    fields.insert("builtin_key".into(), json!(builtin));
     yaml::encode_document(&fields, &record.body)
 }
 
@@ -674,8 +710,14 @@ pub fn decode_employee(bytes: &[u8]) -> Result<Employee, RecordError> {
         title_in_team: optional_line(&mut reader, "title_in_team")?,
         offboarded_at: optional_time(&mut reader, "offboarded_at")?,
         may_hire: reader.flag("may_hire")?,
+        builtin_key: BuiltinKey::read_optional(&mut reader, "builtin_key")?,
         body,
     };
+    let builtin_ok =
+        record.builtin_key.is_none() || (record.kind == EmployeeKind::Agent && !record.may_hire);
+    if !builtin_ok {
+        return Err(reader.error("builtin_key", "only an agent without may_hire"));
+    }
     if record.status == EmployeeStatus::Paused && record.kind != EmployeeKind::Agent {
         return Err(reader.error("status", "only an agent is paused"));
     }
@@ -685,6 +727,45 @@ pub fn decode_employee(bytes: &[u8]) -> Result<Employee, RecordError> {
     if record.reports_to_employee_id.as_ref() == Some(&record.id) {
         return Err(reader.error("reports_to_employee_id", "nobody reports to themselves"));
     }
+    reader.finish()?;
+    Ok(record)
+}
+
+// ---- roles/<role-id>.md ----
+
+/// A role of the organization (document 01). Read-only in v1: no command writes one.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Role {
+    pub id: Id,
+    pub key: Option<String>,
+    pub name: String,
+    pub meta: Meta,
+    /// The Markdown after the front matter.
+    pub body: String,
+}
+
+pub fn role_path(role: &Id) -> DurablePath {
+    path(&format!("state/roles/{role}.md"))
+}
+
+pub fn encode_role(record: &Role) -> Vec<u8> {
+    let mut fields = Fields::new();
+    record.meta.write(&mut fields);
+    fields.insert("id".into(), json!(record.id.as_str()));
+    fields.insert("key".into(), json!(record.key));
+    fields.insert("name".into(), json!(record.name));
+    yaml::encode_document(&fields, &record.body)
+}
+
+pub fn decode_role(bytes: &[u8]) -> Result<Role, RecordError> {
+    let (mut reader, body) = yaml::decode_document(bytes)?;
+    let record = Role {
+        meta: Meta::read(&mut reader)?,
+        id: id(&mut reader, "id")?,
+        key: optional_line(&mut reader, "key")?,
+        name: line(&mut reader, "name")?,
+        body,
+    };
     reader.finish()?;
     Ok(record)
 }
@@ -793,6 +874,63 @@ pub fn decode_team_allocation(bytes: &[u8]) -> Result<TeamAllocation, RecordErro
     Ok(record)
 }
 
+// ---- security/ca-escrow.v1.bin ----
+
+/// The largest escrow package ADR-0007 allows, in bytes.
+pub const MAX_CA_ESCROW_BYTES: usize = 4475;
+/// The magic and version an escrow package starts with (ADR-0007).
+const CA_ESCROW_MAGIC: &[u8; 8] = b"AGORGCA1";
+/// The one suite ADR-0007 defines.
+const CA_ESCROW_SUITE: u8 = 1;
+/// The ciphertext lengths ADR-0007 allows: up to 4096 PKCS#8 bytes plus the 16-byte tag.
+const CA_ESCROW_CIPHERTEXT: std::ops::RangeInclusive<usize> = 17..=4112;
+
+/// The organization's public CA escrow package (data contract document 01, ADR-0007): the
+/// exact encrypted envelope, published to Git verbatim. Its bytes are the record.
+pub fn ca_escrow_path() -> DurablePath {
+    path("state/security/ca-escrow.v1.bin")
+}
+
+/// The CA's public key in the escrow package `package` of `organization`, once its framing
+/// is checked: magic and version, the organization ID, the suite, an uncompressed SEC1
+/// public key, and a ciphertext length that ends the package exactly. The ciphertext is not
+/// opened: that takes the recovery code and is the PKI adapter's (`org-pki`).
+pub fn ca_escrow_public_key(package: &[u8], organization: &Id) -> Result<[u8; 65], RecordError> {
+    let refused = |reason: &str| RecordError::new("", reason);
+    let short = || refused("cut short");
+    if package.len() > MAX_CA_ESCROW_BYTES {
+        return Err(refused("larger than an escrow package can be"));
+    }
+    let Some(rest) = package.strip_prefix(CA_ESCROW_MAGIC.as_slice()) else {
+        return Err(refused("not an escrow package of version 1"));
+    };
+    let (length, rest) = rest.split_first_chunk::<2>().ok_or_else(short)?;
+    let length = usize::from(u16::from_be_bytes(*length));
+    if !(1..=255).contains(&length) {
+        return Err(refused("the organization ID is 1 to 255 bytes"));
+    }
+    let (recorded, rest) = rest.split_at_checked(length).ok_or_else(short)?;
+    if recorded != organization.as_str().as_bytes() {
+        return Err(refused("sealed for another organization"));
+    }
+    let (&suite, rest) = rest.split_first().ok_or_else(short)?;
+    if suite != CA_ESCROW_SUITE {
+        return Err(refused("not suite 1"));
+    }
+    // The salt (16 bytes) and the nonce (12) are the PKI adapter's.
+    let (_, rest) = rest.split_at_checked(16 + 12).ok_or_else(short)?;
+    let (public, rest) = rest.split_first_chunk::<65>().ok_or_else(short)?;
+    if public[0] != 4 {
+        return Err(refused("the public key is not an uncompressed SEC1 key"));
+    }
+    let (ciphertext, rest) = rest.split_first_chunk::<4>().ok_or_else(short)?;
+    let ciphertext = u32::from_be_bytes(*ciphertext) as usize;
+    if !CA_ESCROW_CIPHERTEXT.contains(&ciphertext) || rest.len() != ciphertext {
+        return Err(refused("the ciphertext is not the length the header gives"));
+    }
+    Ok(*public)
+}
+
 // ---- which record a path holds ----
 
 /// The record a path of this family holds, with what the path itself says.
@@ -802,6 +940,7 @@ pub enum Kind {
     Repositories,
     Office(Id),
     OfficeCodes,
+    Role(Id),
     /// The teams from the top-level one down to this one.
     Team(Vec<Id>),
     /// The home team's chain, the folder's kind and the employee.
@@ -809,6 +948,8 @@ pub enum Kind {
     /// The scope the path names.
     TeamCounter(Id),
     TeamAllocation(Id, u64),
+    /// The public CA escrow package.
+    CaEscrow,
 }
 
 /// A number as a path writes it: decimal, no sign, no leading zero, at least 1.
@@ -828,6 +969,8 @@ pub fn kind_of(path: &DurablePath) -> Option<Kind> {
         ["state", "repositories.yaml"] => Some(Kind::Repositories),
         ["state", "offices", name] => file(name).map(Kind::Office),
         ["state", "identity", "office-codes.yaml"] => Some(Kind::OfficeCodes),
+        ["state", "roles", name] => name.strip_suffix(".md").and_then(stable_id).map(Kind::Role),
+        ["state", "security", "ca-escrow.v1.bin"] => Some(Kind::CaEscrow),
         ["state", "identity", "counters", "organization", scope, "team.yaml"] => {
             id(scope).map(Kind::TeamCounter)
         }

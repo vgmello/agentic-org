@@ -104,6 +104,24 @@ section 8.
     How each vendor runtime is pointed at a relocated sign-in (an environment variable
     for the configuration folder, and on macOS where the Keychain entry is looked up)
     is the first item of the spike in decision 7.
+
+    *C1 spike addendum (2026-11-19, [c1-sign-in-spike.md](../research/c1-sign-in-spike.md)):*
+    (a) On macOS, overriding `HOME` into the agent's private home breaks macOS Keychain
+    lookup for Claude; supplying a 1-year `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`)
+    avoids Keychain completely and lets both `HOME` and `CLAUDE_CONFIG_DIR` point into the
+    private home on macOS (headless Linux behavior remains unverified until a Linux run).
+    (b) Codex OAuth refresh tokens are single-use rotating tokens, so copying one
+    `auth.json` across concurrent agents or offices risks `refresh_token_already_used`
+    revocations; [ADR-0032](0032-browser-driven-cli-signin-and-remote-token-distribution.md)
+    makes HQ-centralized single-lock refresh via `codex app-server` `chatgptAuthTokens`
+    the default for multi-office Codex pools (explicitly recorded as an exception to
+    "Works alone" in [architecture-non-negotiables.md](../architecture-non-negotiables.md);
+    synthetic protocol probe verified zero `auth.json` written to disk on Codex `0.169.0`;
+    live model turn and vendor-supported refresh path remain required before shipping),
+    with independent per-office `codex login --device-auth` available for extended offline
+    use. The macOS second-OS-account
+    and Xcode check of decision 7 (`ISO-6`) remains pending; `same-user` stays the default
+    until it passes.
 12. **Changing the filesystem root was evaluated and is the reserved `os-sandbox`
     mode, not v1.** The owner asked whether putting each agent in its own root
     directory (chroot) would be a cheap sandbox.
@@ -118,6 +136,25 @@ section 8.
     specified next as one mode with two adapters: a mount-namespace root on Linux and
     a Seatbelt deny-by-default profile on macOS. It needs its own spike and is not a
     v1 commitment.
+    *Owner direction 2026-11-20:* the owner moved `os-sandbox` into v1 scope on
+    2026-11-20 (FC-190, plan row L15). That replaces "not a v1 commitment" above, the
+    words "not v1" in this decision's heading, and, in decision 2, "Two modes in v1"
+    and "reserved for later modes" as they apply to `os-sandbox` (`container` stays
+    reserved for later); the accepted text is left as it was. Its design is still
+    proposed, not yet accepted as a full decision. How it sits inside dedicated
+    accounts, and the extensions that add allowances to its profiles, are proposed in
+    [accounts, sandbox and extensions](../design/accounts-sandbox-and-extensions.md). The office puts its
+    own OS sandbox around the whole agent process, for every kind of agent: Seatbelt on
+    macOS; on Linux a spike decides between Landlock, the mount-namespace root above,
+    and bubblewrap (installable). Profiles depend on the kind of agent: a standard
+    profile (its private home and workspace, plus read-only system tools) and an iOS
+    profile that also allows Xcode,
+    DerivedData, CoreSimulator and simulator services, and signing. First step: a
+    macOS spike that builds an iOS app with `xcodebuild`, boots a simulator and runs
+    its tests under a Seatbelt profile. If simulators cannot be sandboxed, iOS agents
+    run in their own office or Mac in `dedicated-user` mode. The vendor tool's own
+    sandbox stays an optional extra layer; Claude Code's cannot be configured for the
+    simulator service.
 
 ## Acceptance criteria
 

@@ -41,7 +41,7 @@ interface files.
 | Organization | One home team per employee, recursive teams and leads, roles, accountable project ownership, repository registrations | Organization module in `org-office` |
 | Work | Typed tasks, office-minted references, independent assignment, immutable reporter and history, conflicts; private task notes in a separate store, never read by another agent | `org-work`, with office-owned implementations of its ports |
 | Messaging | Conversations, channels, membership, delivery, asks and authorization | `org-mailbox`, with office storage and session implementations |
-| Employees | Execution configuration, model profiles and connections, permits, turns and attempts, fenced placement, process cleanup, suspension on a required ask | Employee policy and state in `org-office`; runtime adapters behind `org-runtime` |
+| Employees | Execution configuration, model profiles and connections, permits, turns and attempts, fenced placement, process cleanup, suspension on a required ask | Employee policy and state in `org-office`; runtime adapters behind `org-agent-runtime` |
 | Organization processes | Process and standard documents, scope, override lock and one-chain resolution | `org-process`, called by the office ([processes design](processes.md#7-where-the-code-lives)) |
 | Development processes | A separate primitive: manifest, roles, skills, tabs, a project's choice of one | A module of its own in `org-process`; projection and calls in the office ([development processes](development-processes.md#10-where-the-code-lives)) |
 | Project documentation | The documentation tree, its index, issued versions, code links | Pure rules in `org-docs`; the writes and the project boundary in `org-office` ([development processes](development-processes.md#8-the-project-documentation-tree)) |
@@ -107,7 +107,7 @@ crates/
   org-command/                       # The command contract: table, parser, envelope, help, schemas, contract tests
   org-platform/                      # Every OS difference: platform contracts and their macOS, Linux and refusing adapters
   org-socket/                        # Portable Unix-socket I/O: ticked reads, descriptor passing
-  org-runtime/                       # Vendor runtime contract and conformance support
+  org-agent-runtime/                 # Vendor runtime contract and conformance support
   org-supervise/                     # OS process ownership and cleanup
   org-process/                       # Process and standard resolution
   org-docs/                          # Document and front-matter parsing and editing
@@ -118,9 +118,9 @@ crates/
   org-copilot/                       # Bounded draft-only helper
   # Added when their first caller is built:
   org-git/                           # Local Git adapter
-  org-runtime-claude/                # Vendor adapters behind org-runtime
-  org-runtime-codex/
-  org-runtime-agy/
+  org-agent-runtime-claude/          # Vendor adapters behind org-agent-runtime
+  org-agent-runtime-codex/
+  org-agent-runtime-agy/
   org-office-sessions/               # Agent sessions in the office (agent-sessions design)
 
 apps/
@@ -171,7 +171,7 @@ library.
 | `org-release` | Verifies a signed release manifest and its files | Continue | `agentic-org setup` and update (FC-010, FC-011) |
 | `org-pki` | Seals and recovers the CA key with the recovery code | Continue; it also gains the office-secrets-key wrapping of ADR-0016 | HQ creation through setup (FC-016, FC-162) |
 | `org-sync`, `org-sync-proto` | Replication between HQ and satellites | Parked until the store reads and writes the canonical files | After the storage move; then satellite enrollment |
-| `org-runtime`, `org-supervise` | Vendor runtime contract; process start, stop and cleanup | Continue: the next foundation for running agents | The first vendor adapter and launch path (FC-101), with the isolation modes of ADR-0015 |
+| `org-agent-runtime`, `org-supervise` | Vendor runtime contract; process start, stop and cleanup | Continue: the next foundation for running agents | The first vendor adapter and launch path (FC-101), with the isolation modes of ADR-0015 |
 | `org-host` `hostdb` | Host accounts, sessions and office registry storage | Continue | Stored browser sessions and setup (FC-159, FC-010) |
 | `org-platform` | Holds every operating-system difference: the platform contracts of ADR-0017 with macOS, Linux and refusing adapters ([Linux host design](linux-host.md)) | New in X1a; the only crate with platform conditionals | Track X, from X1a (the first day) |
 | `org-store` | The office store's engine-neutral foundation ([office store design](office-store.md)) | New in B1a; depends on no family and not on `org-proto`: it checks only that an ID is one safe path component, and families validate UUIDv7; its full flush and open flags are `org-platform`'s | B1a |

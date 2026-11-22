@@ -28,7 +28,7 @@ in the "What the code does today" section of each design.
 | Chat data, visibility and who writes what | [Messaging](organization-data/15-messaging-and-chat.md), [ADR-0003](../adr/0003-agent-messaging-office-first.md) |
 | How fast an operation answers, and when it is acknowledged | [ADR-0014](../adr/0014-acknowledgement-classes-and-agent-os-latency.md) |
 | How an ask waits; required asks | [ADR-0020](../adr/0020-required-asks-suspend-and-resume.md) |
-| What starts an agent's turn | [Run modes](../specs/agent-run-modes-ux.md): a person's Run, the answer to a required ask (ADR-0020), being addressed by another agent or answered ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), or a person's direct message or mention or a task assignment ([ADR-0028](../adr/0028-an-agent-is-always-available.md)) |
+| What starts an agent's turn | [Run modes](../specs/agent-run-modes-ux.md): a person's Run, the answer to a required ask (ADR-0020), being addressed by another agent or answered ([ADR-0023](../adr/0023-an-agents-ask-starts-a-turn.md)), a person's direct message or mention or a task assignment ([ADR-0028](../adr/0028-an-agent-is-always-available.md)), a reactive completion wake from the agent's own active background task or sub-agent ([ADR-0025](../adr/0025-agents-start-sub-agents.md) decision 6), or a recovery |
 | What reaches an agent's inbox; mentions; the channel watcher | [ADR-0024](../adr/0024-a-channel-question-is-watched-for-its-answer.md) |
 | Sub-agents inside an agent's turn | [ADR-0025](../adr/0025-agents-start-sub-agents.md) |
 | What every agent is told about how to work in the product | [Agent instructions](agent-instructions.md). It follows the contracts it names and never overrides one |
@@ -39,10 +39,11 @@ in the "What the code does today" section of each design.
 | Encryption and secrets | [ADR-0016](../adr/0016-no-application-level-data-encryption.md) |
 | Budgets | [Budgets](organization-data/17-budgets-and-controls.md); the [cost UX](../specs/costs-and-insights-ux.md) for presentation and access |
 | Model profiles, providers, permits, placement | [Execution](organization-data/11-model-profiles-and-agent-execution.md), [providers and pools](organization-data/14-model-providers-and-connection-pools.md) |
+| Browser-driven CLI sign-in enrollment, provider credential wrapping/distribution, and permission presets | [ADR-0032](../adr/0032-browser-driven-cli-signin-and-remote-token-distribution.md), [providers and pools](organization-data/14-model-providers-and-connection-pools.md), [execution](organization-data/11-model-profiles-and-agent-execution.md), [ADR-0016](../adr/0016-no-application-level-data-encryption.md) |
 | How agents run, isolation, private homes | [ADR-0004](../adr/0004-headless-agent-sessions.md), [ADR-0015](../adr/0015-agent-isolation-modes.md), [agent sessions](agent-sessions.md) |
 | Browser sessions | [ADR-0013](../adr/0013-stored-browser-sessions.md), [web API](web-api-v1.md) |
 | Platforms and containers | [ADR-0017](../adr/0017-linux-and-container-hosting.md) |
-| Installation, service and privilege boundaries | [Standalone design](standalone-server.md), [host boundary](office-host-boundary.md), [installation UX](../specs/server-installation-and-access-ux.md), [ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md) |
+| Installation, service and privilege boundaries | [Standalone design](standalone-server.md), [host boundary](office-host-boundary.md), [installation UX](../specs/server-installation-and-access-ux.md), [ADR-0022](../adr/0022-host-creates-its-registry-no-reverse-bootstrap.md). Proposed, not accepted: [dedicated accounts, the agent sandbox and extensions](accounts-sandbox-and-extensions.md); the accepted documents win until its ADRs are written |
 | Executable names and which entry points work | [Executables and entry points](executable-migration.md) |
 | Code layout and dependency direction | [Architecture rules](../architecture-rules.md), [project structure](project-structure.md) |
 | What must be preserved from before | Nothing: [no compatibility obligations before v1 ships](organization-data/README.md#no-compatibility-obligations-before-v1-ships) |

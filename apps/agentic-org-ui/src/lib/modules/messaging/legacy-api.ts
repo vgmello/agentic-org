@@ -3,6 +3,7 @@
  * Jules's F1-02 per-feature factory cutover replaces this with the platform factory / unavailable default.
  * Route callers (the only allowed callers outside this module):
  * - src/routes/(shell)/chat/+page.svelte
+ * - src/lib/platform/shell/NewMenu.svelte, by a lazy import when New › Message sends (never a static import)
  * Keep this file out of the public index.
  */
 import { orgApi } from '$lib/org/api';
@@ -17,7 +18,11 @@ import type { ChatAccepted, ChatCall } from './types';
 export const chatApi = createMockChat(orgApi);
 
 /** A call without its change id, which `sender` adds (one fresh ULID per call). */
-export type ChatDraft = ChatCall extends infer C ? (C extends unknown ? Omit<C, 'change_id'> : never) : never;
+export type ChatDraft = ChatCall extends infer C
+	? C extends unknown
+		? Omit<C, 'change_id'>
+		: never
+	: never;
 
 export const sender =
 	(organizationId: string) =>

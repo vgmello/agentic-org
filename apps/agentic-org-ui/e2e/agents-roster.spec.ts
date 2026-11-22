@@ -3,555 +3,351 @@ import { visit } from './ready';
 import { shot } from './shot';
 import { enterMockedOrganization } from './mock-organization';
 
+// Teams › Members (offices-and-teams-ux §7.0, §7.2, PEOPLE-1/2, TEAM-12; our-org-in-the-app §5 AC-IA08, §7). The old
+// Agents roster (status filters, ?q= search, ?add=1 and Add agent) is replaced: agents come only from Hire.
+
 async function createOrg(page: Page) {
 	await enterMockedOrganization(page);
-	await expect(page).toHaveURL(/\/agents$/);
+	await expect(page).toHaveURL(/\/teams\/members$/);
 }
-const rows = (page: Page) => page.getByTestId('agent-row');
-
-// Cache the transformed test module before routing; no APIResponse outlives its test context.
-async function mockOrgApi(page: Page, addition: () => string) {
-	const response = await page.request.get('/e2e/fakes/org-api.ts');
-	expect(response.status()).toBe(200);
-	const source = await response.text();
-	let calls = 0;
-	await page.route('**/e2e/fakes/org-api.ts*', async (route) => {
-		calls++;
-		await route.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'cache-control': 'no-store' }, body: source + '\n' + addition() });
-	});
-	return () => calls;
-}
-
-test.afterEach(async ({ page }) => {
-	await page.unrouteAll({ behavior: 'wait' });
-});
-
-
-test('AGENT-3: the Agents screen lists every agent A–Z with what it runs on, how it runs, status, teams, office and manager', { tag: '@journey' }, async ({ page }) => {
+async function openMembers(page: Page, query = '') {
 	await createOrg(page);
+	await visit(page, '/teams/members' + query);
+}
+const list = (page: Page) => page.getByRole('list', { name: 'Members', exact: true });
+const rows = (page: Page) => list(page).getByRole('listitem');
+const row = (page: Page, id: string) => list(page).locator(`[data-member="${id}"]`);
+const filter = (page: Page, name: 'All' | 'People' | 'Agents') =>
+	page
+		.getByRole('group', { name: 'Show members', exact: true })
+		.getByRole('radio', { name: new RegExp(`^${name} `) });
+
+/** Chooses a filter as a person does: by its visible label (the radio itself is visually hidden). */
+const choose = (page: Page, name: 'All' | 'People' | 'Agents') =>
+	filter(page, name).locator('..').click();
+
+const NAMES = [
+	'Alex Kim',
+	'Avery Stone',
+	'Hana Weiss',
+	'Inês Duarte',
+	'Juno Park',
+	'Kai Lindqvist',
+	'Leo Brandt',
+	'Mira Castillo',
+	'Noor Haddad',
+	'Pax Moreau',
+	'Quinn Adeyemi',
+	'Sam Okafor'
+];
+
+test(
+	'PEOPLE-1 TEAM-12: Members lists people and agents A–Z with kind in words, handle, role, home team and presence',
+	{ tag: '@journey' },
+	async ({ page }) => {
+		await openMembers(page);
+		await expect(page).toHaveTitle('Members · Teams · Agentic Org');
+		await expect(page.getByRole('heading', { level: 2, name: /^Members/ })).toContainText('12');
+		await expect(rows(page)).toHaveCount(12);
+		await expect(rows(page).locator('[data-member-link]')).toHaveText(NAMES);
+		await expect(filter(page, 'All')).toBeChecked();
+		for (const [name, count] of [
+			['All', 12],
+			['People', 4],
+			['Agents', 8]
+		] as const)
+			await expect(filter(page, name).locator('..')).toContainText(String(count));
+
+		// The owner appears once, as the person they are, with Owner and Can sign in (§7.1, §7.2).
+		const alex = row(page, 'you');
+		await expect(alex.getByRole('link', { name: 'Alex Kim, person', exact: true })).toHaveAttribute(
+			'href',
+			'/members/you'
+		);
+		await expect(alex).toContainText('Owner');
+		await expect(alex).toContainText('Person');
+		await expect(alex).toContainText('@alex-kim');
+		await expect(alex).toContainText('Can sign in');
+		await expect(list(page).getByText('Owner', { exact: true })).toHaveCount(1);
+
+		// An agent: kind in words, its office and freshness, its current task and one presence word (never colour alone).
+		const sam = row(page, 'sam');
+		await expect(sam.getByRole('link', { name: 'Sam Okafor, agent', exact: true })).toHaveAttribute(
+			'href',
+			'/members/sam'
+		);
+		await expect(sam).toContainText('Agent');
+		await expect(sam).toContainText('@sam');
+		await expect(sam).toContainText('Engineering');
+		await expect(sam).toContainText(/Runs at .+ · reported .+ ago/);
+		await expect(sam).toContainText('T-A40');
+		await expect(sam).toContainText('Split the checkout service');
+		await expect(sam.locator('[data-presence]')).toHaveText('Working');
+		await expect(row(page, 'ines')).toContainText('Unplaced');
+		// A person never shows an office (PEOPLE-6), and nobody shows Can sign in without an account.
+		await expect(row(page, 'leo')).not.toContainText('Runs at');
+		await expect(row(page, 'leo')).not.toContainText('Can sign in');
+		// A missing home team is an invalid record, never "No team" (TEAM-3).
+		await expect(row(page, 'quinn')).toContainText(
+			'No home team on record: this record is invalid'
+		);
+		// Unknown presence is omitted in rows (AC-IA08).
+		await expect(row(page, 'leo').locator('[data-presence]')).toHaveCount(0);
+		await expect(page.locator('[data-presence=unknown]')).toHaveCount(0);
+
+		// Agents come only from Hire: no Add agent, no bring-in, no sample data (our-org-in-the-app §7).
+		await expect(page.getByRole('link', { name: 'Hire an agent', exact: true })).toHaveAttribute(
+			'href',
+			'/teams/hire'
+		);
+		await expect(page.getByRole('button', { name: /Add agent|bring in/i })).toHaveCount(0);
+		await expect(page.getByTestId('sample-data-note')).toHaveCount(0);
+		await shot(page, 'members-directory');
+	}
+);
+
+test('PEOPLE-1: All · People · Agents filters from the keyboard and announces how many are shown', async ({
+	page
+}) => {
+	await openMembers(page);
+	await filter(page, 'All').focus();
+	await page.keyboard.press('ArrowRight');
+	await expect(filter(page, 'People')).toBeChecked();
+	await expect(filter(page, 'People')).toBeFocused();
+	await expect(rows(page)).toHaveCount(4);
+	await expect(list(page).locator('[data-kind=agent]')).toHaveCount(0);
+	await expect(page.getByRole('status').filter({ hasText: 'shown' })).toHaveText('4 people shown');
+	await page.keyboard.press('ArrowRight');
+	await expect(filter(page, 'Agents')).toBeChecked();
 	await expect(rows(page)).toHaveCount(8);
-	const names = await rows(page).locator('th a').allInnerTexts();
-	expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
-	const noor = page.locator('[data-testid=agent-row][data-agent=noor]');
-	await expect(noor).toContainText('Noor Haddad');
-	await expect(noor).toContainText('web engineer');
-	await expect(noor).toContainText('Claude Code');
-	await expect(noor).toContainText('On call');
-	await expect(noor.getByTestId('agent-status')).toHaveText(/Asleep · wakes when called/);
-	await expect(noor.getByTestId('agent-now')).toHaveText('—');
-	await expect(noor).not.toContainText('Active');
-	await expect(noor).toContainText('Design, Web');
-	await expect(noor).toContainText('HQ');
-	await expect(noor).toContainText('Sam Okafor'); // reports to
-	await expect(page.locator('[data-testid=agent-row][data-agent=ines]')).toContainText('Unplaced');
-	await shot(page, 'agents-roster');
+	await expect(list(page).locator('[data-kind=person]')).toHaveCount(0);
+	await expect(page.getByRole('status').filter({ hasText: 'shown' })).toHaveText('8 agents shown');
 });
 
-test('AGENT-3: filters by status, and an agent who left is listed only under Former', async ({ page }) => {
+test(
+	'AC-IA06: a name in the directory opens that member’s profile',
+	{ tag: '@journey' },
+	async ({ page }) => {
+		await openMembers(page);
+		const link = row(page, 'noor').getByRole('link', { name: 'Noor Haddad, agent', exact: true });
+		await link.focus();
+		await link.press('Enter');
+		await expect(page).toHaveURL(/\/members\/noor$/);
+		await expect(page.getByRole('heading', { level: 2, name: /^Noor Haddad/ })).toBeVisible();
+	}
+);
+
+test(
+	'PEOPLE-2 §7.4: Add a person adds the row once, focuses it and says agents can reach them',
+	{ tag: '@journey' },
+	async ({ page }) => {
+		await openMembers(page);
+		await choose(page, 'Agents');
+		await page.getByRole('main').getByRole('button', { name: 'Add a person', exact: true }).click();
+		const sheet = page.getByRole('dialog');
+		await sheet.getByLabel('Name').fill('Zed Example');
+		await sheet.getByRole('button', { name: 'Add person', exact: true }).click();
+		await expect(
+			page.getByText('Added Zed Example. Agents can now reach Zed.', { exact: true })
+		).toBeVisible();
+		await expect(filter(page, 'All')).toBeChecked();
+		await expect(rows(page)).toHaveCount(13);
+		await expect(
+			page.getByRole('link', { name: 'Zed Example, person', exact: true })
+		).toBeFocused();
+		await expect(rows(page).filter({ hasText: 'Zed Example' })).toHaveCount(1);
+	}
+);
+
+test('WCAG 3.2.2 §7.4: a row arriving late does not take focus from where the person moved it', async ({
+	page
+}) => {
+	// ?mock=race: the add's read resolves first but is superseded; a newer read brings the row 1.5 s later.
+	await openMembers(page, '?mock=race');
+	await expect(rows(page)).toHaveCount(12);
+	await page.getByRole('main').getByRole('button', { name: 'Add a person', exact: true }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByLabel('Name').fill('Vale Example');
+	await sheet.getByRole('button', { name: 'Add person', exact: true }).click();
+	await expect(sheet).toHaveCount(0);
+	// Before the row arrives, the person moves on to the filters.
+	const people = filter(page, 'People');
+	await people.focus();
+	await expect(people).toBeFocused();
+	await expect(rows(page).filter({ hasText: 'Vale Example' })).toHaveCount(1);
+	// The row is shown and highlighted, but focus stays where the person put it.
+	await expect(list(page).locator('li.bg-primary\\/10')).toHaveCount(1);
+	await expect(people).toBeFocused();
+});
+
+test('§7.4: the added row is focused even when a live change supersedes the read the add started', async ({
+	page
+}) => {
+	// ?mock=race: the add's read resolves first but is superseded; a newer read brings the row 1.5 s later.
+	await openMembers(page, '?mock=race');
+	await expect(rows(page)).toHaveCount(12);
+	await page.getByRole('main').getByRole('button', { name: 'Add a person', exact: true }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByLabel('Name').fill('Wren Example');
+	await sheet.getByRole('button', { name: 'Add person', exact: true }).click();
+	await expect(
+		page.getByText('Added Wren Example. Agents can now reach Wren.', { exact: true })
+	).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Wren Example, person', exact: true })).toBeFocused();
+	await expect(rows(page).filter({ hasText: 'Wren Example' })).toHaveCount(1);
+	await expect(rows(page)).toHaveCount(13);
+});
+
+test('§7.1: a person added from the top bar’s New appears in the open directory without a reload', async ({
+	page
+}) => {
+	await openMembers(page);
+	await choose(page, 'People');
+	await expect(rows(page)).toHaveCount(4);
+	await page.getByRole('button', { name: 'New', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Add a person', exact: true }).click();
+	const sheet = page.getByRole('dialog');
+	await sheet.getByLabel('Name').fill('Yara Example');
+	await sheet.getByRole('button', { name: 'Add person', exact: true }).click();
+	await expect(sheet).toHaveCount(0);
+	// The page was not reloaded: the filter choice made before the add is still in place.
+	await expect(filter(page, 'People')).toBeChecked();
+	await expect(rows(page).filter({ hasText: 'Yara Example' })).toHaveCount(1);
+	await expect(rows(page)).toHaveCount(5);
+	await expect(page.getByRole('heading', { level: 2, name: /^Members/ })).toContainText('13');
+});
+
+test('§7.4 PEOPLE-5: a former member is listed apart, without presence, account or work', async ({
+	page
+}) => {
 	await createOrg(page);
-	await visit(page, '/org-chart');
-	await page.locator('[data-testid=team-card][data-team=web]').getByRole('button', { name: /^Noor Haddad/ }).click();
-	await page.getByTestId('selected-member').getByRole('button', { name: 'Pause…' }).click();
-	await page.getByRole('dialog').getByRole('button', { name: 'Pause Noor Haddad' }).click();
-	await expect(page.getByText('Paused Noor Haddad.')).toBeVisible();
-	await page.locator('[data-testid=team-card][data-team=eng]').getByRole('button', { name: /^Sam Okafor/ }).click();
-	await page.getByTestId('selected-member').getByRole('button', { name: 'Offboard…' }).click();
-	await page.getByRole('dialog').getByRole('button', { name: 'Offboard Sam Okafor' }).click();
+	// Offboard from the member's profile (More › Offboard…), as a person does.
+	await visit(page, '/members/sam');
+	await page.getByRole('button', { name: /^More/ }).click();
+	await page.getByRole('menuitem', { name: 'Offboard…', exact: true }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Offboard', exact: true }).click();
 	await expect(page.getByText('Offboarded Sam Okafor.')).toBeVisible();
+	await visit(page, '/teams/members');
+	await expect(rows(page)).toHaveCount(11);
+	await expect(filter(page, 'Agents').locator('..')).toContainText('7');
+	const former = page.getByTestId('former-members');
+	await former.getByText('Former members').click();
+	const sam = page
+		.getByRole('list', { name: 'Former members', exact: true })
+		.locator('[data-member=sam]');
+	await expect(sam).toContainText(/Former member|Left /);
+	await expect(sam.locator('[data-presence]')).toHaveCount(0);
+	await expect(sam).not.toContainText('Split the checkout service');
+	await expect(sam).not.toContainText('Can sign in');
+	await shot(page, 'members-former');
+});
 
+test('every directory state is real: empty, error with Retry, unavailable, filtered-empty and loading', async ({
+	page
+}) => {
+	await openMembers(page, '?mock=empty');
+	await expect(page.getByRole('heading', { name: 'No members yet', exact: true })).toBeVisible();
+	await expect(
+		page.getByRole('main').getByRole('button', { name: 'Add a person', exact: true })
+	).toHaveCount(2);
+
+	await visit(page, '/teams/members?mock=fails');
+	await expect(page.getByText("Couldn't load the members", { exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+	await expect(rows(page)).toHaveCount(0);
+
+	await visit(page, '/teams/members?mock=unavailable');
+	await expect(
+		page.getByRole('heading', { name: "Members isn't built yet", exact: true })
+	).toBeVisible();
+	await expect(rows(page)).toHaveCount(0);
+
+	await visit(page, '/teams/members?mock=no-agents');
+	await choose(page, 'Agents');
+	const empty = page.getByTestId('members-filtered-empty');
+	await expect(empty).toContainText('No agents in Acme yet. An agent joins only through Hire.');
+	await expect(empty.getByRole('link', { name: 'Hire an agent', exact: true })).toHaveAttribute(
+		'href',
+		'/teams/hire'
+	);
+
+	await visit(page, '/teams/members?mock=all-former');
+	await expect(page.getByTestId('members-filtered-empty')).toContainText(
+		'No current members: everyone listed here is a former member.'
+	);
+	await choose(page, 'Agents');
+	await expect(page.getByTestId('members-filtered-empty')).toContainText(
+		'No current agents in Acme.'
+	);
+	await expect(page.getByTestId('former-members')).toContainText('Former members');
+
+	await visit(page, '/teams/members?mock=slow');
+	await expect(
+		page.getByRole('status').filter({ hasText: /Loading members|Still loading members/ })
+	).toBeAttached();
+	await expect(rows(page)).toHaveCount(12, { timeout: 10_000 });
+});
+
+test('retired roster URLs: ?add=1 opens nothing and ?q= no longer filters; /agents opens Members', async ({
+	page
+}) => {
+	await createOrg(page);
 	await visit(page, '/agents');
-	await expect(rows(page)).toHaveCount(7); // All leaves out the one who left
-	await page.getByRole('button', { name: /^Paused/ }).click();
-	await expect(rows(page)).toHaveCount(1);
-	await expect(rows(page).first()).toContainText('Noor Haddad');
-	await expect(rows(page).first()).toContainText('Paused');
-	await page.getByRole('button', { name: /^Former/ }).click();
-	await expect(rows(page)).toHaveCount(1);
-	await expect(rows(page).first()).toContainText('Sam Okafor');
-	await expect(rows(page).first()).toContainText('Former');
-	await page.getByRole('button', { name: /^Active/ }).click();
-	await expect(rows(page)).toHaveCount(6);
-});
-
-test('AGENT-3: a name opens the org chart with that agent selected', { tag: '@journey' }, async ({ page }) => {
-	await createOrg(page);
-	await page.locator('[data-testid=agent-row][data-agent=kai] th a').click();
-	await expect(page).toHaveURL(/\/org-chart\?member=kai$/);
-	await expect(page.getByTestId('selected-member')).toContainText('Kai Lindqvist');
-});
-
-test('AGENT-4: Add agent from the Agents screen adds a row', { tag: '@journey' }, async ({ page }) => {
-	await createOrg(page);
-	await page.getByRole('button', { name: 'Add agent' }).first().click();
-	const sheet = page.getByRole('dialog', { name: 'Add an agent' });
-	await sheet.getByLabel('Name', { exact: true }).fill('Cameron Díaz');
-	await sheet.getByLabel('Role').fill('QA engineer');
-	await sheet.getByRole('button', { name: 'Add agent' }).click();
-	await expect(page.getByText('Added Cameron Díaz.')).toBeVisible();
-	await expect(rows(page)).toHaveCount(9);
-	await expect(page.locator('[data-testid=agent-row]', { hasText: 'Cameron Díaz' })).toContainText('cameron-diaz');
-});
-
-test('AGENT-3: an organization with no agents says so and offers Add your first agent', async ({ page }) => {
-	await createOrg(page);
-	await visit(page, '/agents?org=empty');
-	await expect(page.getByTestId('no-agents')).toContainText('No agents yet');
-	await shot(page, 'employees-empty');
-	await page.getByRole('button', { name: 'Add your first agent' }).click();
-	const sheet = page.getByRole('dialog', { name: 'Add an agent' });
-	await expect(sheet).toBeVisible();
-	await expect(sheet.getByRole('button', { name: 'Add agent' })).toBeDisabled();
-	await expect(sheet.getByRole('list', { name: 'Teams' })).toHaveText('There are no teams yet.');
-	await shot(page, 'employees-first-agent', { context: sheet });
-});
-
-test('AGENT-3 URL q: search uses trimmed name/title text and retains keyboard filtering', async ({ page }) => {
-	await createOrg(page);
-	await visit(page, '/agents?q=' + encodeURIComponent('  WeB EnGiNeEr  '));
-	const search = page.getByLabel('Search agents', { exact: true });
-	await expect(search).toHaveValue('WeB EnGiNeEr');
-	await expect(rows(page)).toHaveCount(1);
-	await expect(rows(page)).toContainText('Noor Haddad');
-	await search.fill('noOR');
-	await expect(rows(page)).toHaveCount(1);
-	await expect(rows(page)).toContainText('Noor Haddad');
-	await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('noOR');
-	await search.fill('Avery Stone');
-	await expect(rows(page)).toHaveCount(0);
-	await search.fill('   ');
-	await expect(rows(page)).toHaveCount(8);
-	await search.press('Tab');
-	await expect(search).toHaveValue('');
-	await search.fill('web');
-	await search.press('End');
-	await search.pressSequentially(' engineer');
-	await expect(search).toHaveValue('web engineer');
-	await expect(rows(page)).toHaveCount(1);
-	await expect(search).toBeFocused();
-	await shot(page, 'agents-query-name-title');
-});
-
-test('AGENT-4 URL add: opens once and clears the intent before refresh or Back', async ({ page }) => {
-	await createOrg(page);
-	await visit(page, '/agents?add=1');
-	const dialog = page.getByRole('dialog', { name: 'Add an agent' });
-	await expect(dialog).toBeVisible();
-	await expect.poll(() => new URL(page.url()).searchParams.has('add')).toBe(false);
-	await dialog.getByLabel('Name', { exact: true }).fill('Kept draft');
-	await page.reload();
-	await expect(dialog).toHaveCount(0);
-	await expect(page.getByTestId('agent-roster')).toBeVisible();
-	await page.getByRole('link', { name: 'Projects', exact: true }).click();
-	await expect(page).toHaveURL(/\/projects$/);
-	await page.goBack();
-	await expect(page.getByTestId('agent-roster')).toBeVisible();
-	await expect(dialog).toHaveCount(0);
-	await shot(page, 'agents-add-intent-cleared');
-});
-
-test('AGENT-3 URL q: search is ANDed with status and URL edits replace history', async ({ page }) => {
-	await createOrg(page);
-	await visit(page, '/org-chart');
-	await page.locator('[data-testid=team-card][data-team=web]').getByRole('button', { name: /^Noor Haddad/ }).click();
-	await page.getByTestId('selected-member').getByRole('button', { name: 'Pause…' }).click();
-	await page.getByRole('dialog').getByRole('button', { name: 'Pause Noor Haddad' }).click();
-	await expect(page.getByText('Paused Noor Haddad.')).toBeVisible();
-	await visit(page, '/projects');
-	await page.getByRole('link', { name: 'Agents', exact: true }).click();
-	await expect(page).toHaveURL(/\/agents$/);
-	const entries = await page.evaluate(() => history.length);
-	const search = page.getByLabel('Search agents', { exact: true });
-	await search.fill('noor');
-	await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('noor');
-	await expect(rows(page)).toHaveCount(1);
-	await page.getByRole('button', { name: /^Active / }).click();
-	await expect(rows(page)).toHaveCount(0);
-	await expect(page.getByTestId('no-match')).toHaveText('No agents match your search.');
-	await page.getByRole('button', { name: /^Paused / }).click();
-	await expect(rows(page)).toHaveCount(1);
-	await expect(rows(page).getByTestId('agent-status')).toHaveText('Paused');
-	expect(await page.evaluate(() => history.length)).toBe(entries);
-	await page.goBack();
-	await expect(page).toHaveURL(/\/projects$/);
-	await page.goForward();
-	await expect(search).toHaveValue('noor');
-	await expect(rows(page)).toHaveCount(1);
-	await page.reload();
-	await expect(search).toHaveValue('noor');
-	await expect(rows(page)).toHaveCount(1);
-	await shot(page, 'agents-query-history-and-status');
-});
-
-test('AGENT-3 URL q: 200 and 201-character inputs and whitespace remain bounded', async ({ page }) => {
-	await createOrg(page);
-	for (const length of [200, 201]) {
-		await visit(page, '/agents?q=' + 'a'.repeat(length));
-		await expect(page.getByLabel('Search agents', { exact: true })).toHaveValue('a'.repeat(200));
-		await expect(rows(page)).toHaveCount(0);
-	}
-	const bounded = page.getByLabel('Search agents', { exact: true });
-	await bounded.fill('b'.repeat(201));
-	await expect(bounded).toHaveValue('b'.repeat(200));
-	await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('b'.repeat(200));
-	await visit(page, '/agents?q=' + encodeURIComponent(' \t\n '));
-	await expect(page.getByLabel('Search agents', { exact: true })).toHaveValue('');
-	await expect(rows(page)).toHaveCount(8);
-	await shot(page, 'agents-query-whitespace');
-});
-
-test('AGENT-4 URL add: Escape restores Add focus and invalid values do not open', async ({ page }) => {
-	await createOrg(page);
-	await visit(page, '/agents?q=Noor&add=1#roster');
-	const dialog = page.getByRole('dialog', { name: 'Add an agent' });
-	await expect(dialog).toBeVisible();
-	await page.keyboard.press('Escape');
-	await expect(dialog).toHaveCount(0);
-	await expect(page.getByRole('button', { name: 'Add agent', exact: true })).toBeFocused();
-	expect(new URL(page.url()).searchParams.get('q')).toBe('Noor');
-	expect(new URL(page.url()).hash).toBe('#roster');
-	for (const parameters of ['add=0', 'add=', 'add=true', 'add=1&add=1', 'add=1&add=0']) {
-		await visit(page, '/agents?' + parameters);
-		await expect(page.getByTestId('agent-roster')).toBeVisible();
-		await expect.poll(() => new URL(page.url()).searchParams.has('add')).toBe(false);
-		await expect(dialog).toHaveCount(0);
-	}
-	await shot(page, 'agents-add-invalid');
-});
-
-test('AGENT-4 URL add: an already-open dialog keeps its draft on a repeated intent', async ({ page }) => {
-	await createOrg(page);
-	const search = page.getByLabel('Search agents', { exact: true });
-	await search.fill('Noor');
-	await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('Noor');
-	await page.getByRole('button', { name: 'Add agent', exact: true }).click();
-	const dialog = page.getByRole('dialog', { name: 'Add an agent' });
-	await dialog.getByLabel('Name', { exact: true }).fill('Existing draft');
-	// A test-owned link exercises real same-page router navigation while the dialog is open.
-	await dialog.evaluate((element) => {
-		const link = document.createElement('a');
-		link.href = '/agents?add=1'; link.textContent = 'Repeat Add intent';
-		element.prepend(link);
-	});
-	const entries = await page.evaluate(() => history.length);
-	await dialog.getByRole('link', { name: 'Repeat Add intent' }).click();
-	await expect.poll(() => page.evaluate(() => history.length)).toBe(entries + 1);
-	await expect.poll(() => new URL(page.url()).searchParams.has('add')).toBe(false);
-	await expect(dialog).toHaveCount(1);
-	await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('Existing draft');
-	await shot(page, 'agents-add-existing-draft', { context: dialog });
-	await page.keyboard.press('Escape');
-	await expect(dialog).toHaveCount(0);
-	await expect(search).toHaveValue('');
-	await expect(rows(page)).toHaveCount(8);
-});
-
-test('AGENT-4 URL add: an unavailable shell defers the intent until recovery', async ({ page }) => {
-	await createOrg(page);
-	let intercepted = 0;
-	const pattern = '**/e2e/fakes/capabilities.ts*';
-	await page.route(pattern, async (route) => {
-		intercepted++;
-		await route.fulfill({ contentType: 'text/javascript', headers: { 'cache-control': 'no-store' }, body: 'export const areaCapability = () => ({ available: false, reason: "unavailable", message: "Unavailable" });' });
-	});
-	await visit(page, '/agents?add=1');
-	await expect(page.getByTestId('area-unavailable')).toBeVisible();
+	await expect(page).toHaveURL(/\/teams\/members$/);
+	await visit(page, '/teams/members?add=1');
+	await expect(rows(page)).toHaveCount(12);
 	await expect(page.getByRole('dialog')).toHaveCount(0);
-	expect(new URL(page.url()).searchParams.get('add')).toBe('1');
-	expect(intercepted).toBeGreaterThan(0);
-	await shot(page, 'agents-add-unavailable-deferred');
-	await page.unroute(pattern);
-	await page.reload();
-	const dialog = page.getByRole('dialog', { name: 'Add an agent' });
-	await expect(dialog).toBeVisible();
-	await expect.poll(() => new URL(page.url()).searchParams.has('add')).toBe(false);
-	await page.reload();
-	await expect(dialog).toHaveCount(0);
+	await visit(page, '/teams/members?q=noor');
+	await expect(rows(page)).toHaveCount(12);
+	await expect(page.getByRole('searchbox')).toHaveCount(0);
 });
 
-test('AGENT-4 URL add: a load error defers intent and recovery consumes it once', async ({ page }) => {
-	await createOrg(page);
-	let failing = true;
-	const intercepted = await mockOrgApi(page, () => failing ? 'orgApi.view = async () => { throw { source: "api", code: "storage_error", message: "Office unavailable for test" }; };' : '');
-	await visit(page, '/agents?add=1');
-	await expect(page.getByText('Office unavailable for test', { exact: true })).toBeVisible();
-	await expect(page.getByRole('dialog')).toHaveCount(0);
-	expect(new URL(page.url()).searchParams.get('add')).toBe('1');
-	expect(intercepted()).toBeGreaterThan(0);
-	await shot(page, 'agents-add-load-error-deferred');
-	failing = false;
-	await page.reload();
-	const dialog = page.getByRole('dialog', { name: 'Add an agent' });
-	await expect(dialog).toBeVisible();
-	await expect.poll(() => new URL(page.url()).searchParams.has('add')).toBe(false);
-	await page.reload();
-	await expect(dialog).toHaveCount(0);
-});
-
-test('AGENT-4 URL add: HQ refusal keeps the existing dialog error and entered values', async ({ page }) => {
-	await createOrg(page);
-	const intercepted = await mockOrgApi(page, () => 'orgApi.command = async () => { throw { source: "api", code: "not_authorized", message: "HQ refused this Add" }; };');
-	await visit(page, '/agents?add=1');
-	const dialog = page.getByRole('dialog', { name: 'Add an agent' });
-	await expect(dialog).toBeVisible();
-	await dialog.getByLabel('Name', { exact: true }).fill('Test Agent');
-	await dialog.getByLabel('Role', { exact: true }).fill('Tester');
-	await dialog.getByRole('button', { name: 'Add agent', exact: true }).click();
-	await expect(dialog.getByText('HQ refused this Add', { exact: true })).toBeVisible();
-	await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('Test Agent');
-	expect(intercepted()).toBeGreaterThan(0);
-	await expect(rows(page)).toHaveCount(8);
-	await shot(page, 'agents-add-hq-refusal', { context: dialog });
-});
-
-test('AGENT-3/4 URL input: replacements preserve focus and never refetch the roster', async ({ page }) => {
-	await createOrg(page);
-	const intercepted = await mockOrgApi(page, () => 'const originalViewForTest = orgApi.view.bind(orgApi); orgApi.view = (...args) => { window.__rosterReads = (window.__rosterReads || 0) + 1; return originalViewForTest(...args); };');
-	await visit(page, '/agents?q=&add=1#agents-query');
-	const dialog = page.getByRole('dialog', { name: 'Add an agent' });
-	await expect(dialog).toBeVisible();
-	await expect.poll(() => new URL(page.url()).searchParams.has('add')).toBe(false);
-	const reads = () => page.evaluate(() => (window as unknown as { __rosterReads: number }).__rosterReads);
-	expect(await reads()).toBe(1);
-	expect(intercepted()).toBeGreaterThan(0);
-	await page.keyboard.press('Escape');
-	const search = page.getByLabel('Search agents', { exact: true });
-	const main = page.getByRole('main');
-	await main.evaluate((element) => { element.scrollTop = 20; });
-	await search.focus();
-	const scrollBefore = await main.evaluate((element) => element.scrollTop);
-	expect(scrollBefore).toBeGreaterThan(0);
-	await search.pressSequentially(' ');
-	await expect.poll(() => new URL(page.url()).searchParams.has('q')).toBe(false);
-	expect(new URL(page.url()).hash).toBe('#agents-query');
-	expect(await main.evaluate((element) => element.scrollTop)).toBe(scrollBefore);
-	expect(await reads()).toBe(1);
-	await search.fill('');
-	await search.pressSequentially('web engineer');
-	await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('web engineer');
-	await expect(rows(page)).toHaveCount(1);
-	await expect(search).toBeFocused();
-	expect(await reads()).toBe(1);
-	await search.fill('');
-	await expect.poll(() => new URL(page.url()).searchParams.has('q')).toBe(false);
-	await expect(rows(page)).toHaveCount(8);
-	await expect(search).toBeFocused();
-	expect(await reads()).toBe(1);
-	await shot(page, 'agents-query-no-refetch');
-});
-
-for (const width of [320, 640, 960, 1280]) for (const scale of [1, 1.25, 2]) {
-	test('AGENT-3/4 URL preflight: query and dialog states at ' + width + 'px and ' + scale * 100 + '% text', async ({ page }) => {
-		await createOrg(page);
-		const size = async () => {
-			await page.setViewportSize({ width, height: 900 });
-			await page.locator('html').evaluate((html, pixels) => { html.style.fontSize = pixels + 'px'; }, 16 * scale);
-		};
-		await size();
-		expect((await page.request.get('/e2e/fakes/org-api.ts')).status()).toBe(200);
-		const search = page.getByLabel('Search agents', { exact: true });
-		await search.scrollIntoViewIfNeeded();
-		const fits = await search.evaluate((input) => {
-			const box = input.getBoundingClientRect();
-			return box.left >= 0 && box.right <= innerWidth && box.width > 0;
-		});
-		expect(fits).toBe(true);
-		await expect(rows(page)).toHaveCount(8);
-		await shot(page, 'agents-query-' + width + '-' + scale + '-all', { context: search.locator('..') });
-		await search.fill('Noor');
-		await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('Noor');
-		await expect(rows(page)).toHaveCount(1);
-		await expect(search).toBeFocused();
-		await expect(page.getByRole('table', { name: 'Agents', exact: true }).getByRole('columnheader')).toHaveText(['Agent', 'Runs on', 'How it runs', 'Status', 'Now', 'Teams', 'Office', 'Reports to']);
-		await shot(page, 'agents-query-' + width + '-' + scale + '-match');
-		await search.fill('no-such-agent');
-		await expect(page.getByTestId('no-match')).toHaveText('No agents match your search.');
-		await shot(page, 'agents-query-' + width + '-' + scale + '-no-match', { context: page.getByTestId('no-match') });
-		await visit(page, '/agents?q=Noor&add=1');
-		await size();
-		const dialog = page.getByRole('dialog', { name: 'Add an agent' });
-		await expect(dialog).toBeVisible();
-		await expect.poll(() => new URL(page.url()).searchParams.has('add')).toBe(false);
-		await dialog.getByLabel('Name', { exact: true }).focus();
-		await expect(dialog.getByLabel('Name', { exact: true })).toBeFocused();
-		await shot(page, 'agents-query-' + width + '-' + scale + '-dialog', { context: dialog });
-		await page.keyboard.press('Escape');
-		await expect(dialog).toHaveCount(0);
-		await expect(page.getByRole('button', { name: 'Add agent', exact: true })).toBeFocused();
-		await visit(page, '/agents?org=empty&q=Noor');
-		await size();
-		await expect(page.getByTestId('no-agents')).toContainText('No agents yet');
-		await expect(search).toHaveValue('Noor');
-		await expect(rows(page)).toHaveCount(0);
-		await shot(page, 'agents-query-' + width + '-' + scale + '-empty', { context: page.getByTestId('no-agents') });
+for (const [width, scale] of [
+	[320, 1],
+	[320, 2],
+	[390, 1],
+	[1024, 1],
+	[1440, 1],
+	[1440, 2]
+] as const) {
+	test(`§6a reflow: rows stay readable at ${width}px and ${scale * 100}% text`, async ({
+		page
+	}) => {
+		await page.setViewportSize({ width, height: 900 });
+		await openMembers(page);
+		await page.locator('html').evaluate((html, pixels) => {
+			html.style.fontSize = pixels + 'px';
+		}, 16 * scale);
+		await expect(rows(page)).toHaveCount(12);
+		// Columns appear only when the list itself is at least 56rem wide; otherwise rows stack.
+		const columns = page
+			.getByTestId('members-list')
+			.locator('[aria-hidden=true]')
+			.filter({ hasText: 'Working on' });
+		if (width === 1440 && scale === 1) await expect(columns).toBeVisible();
+		else await expect(columns).toBeHidden();
+		expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0);
+		// Every presence pill keeps whole words inside its row: nothing clipped or cut (Kai's is the longest).
+		const pills = await list(page)
+			.locator('[data-presence]')
+			.evaluateAll((pills) =>
+				pills.map((pill) => {
+					const li = pill.closest('li')!.getBoundingClientRect(),
+						box = pill.getBoundingClientRect();
+					const label = pill.lastElementChild as HTMLElement;
+					return {
+						inside: box.left >= li.left - 1 && box.right <= li.right + 1,
+						clipped: label.scrollWidth > label.clientWidth + 1
+					};
+				})
+			);
+		expect(pills.length).toBeGreaterThan(0);
+		for (const p of pills) expect(p).toEqual({ inside: true, clipped: false });
+		// Names never break one word per line: the name column is at least a few words wide.
+		const nameWidth = await row(page, 'avery')
+			.locator('[data-member-link]')
+			.evaluate((a) => a.getBoundingClientRect().width);
+		expect(nameWidth).toBeGreaterThan(60 * scale);
+		await shot(page, `members-reflow-${width}-${scale}`);
 	});
 }
-
-test('AGENT-4 URL add: the existing Add action is disabled during a pending navigation', async ({ page }) => {
-	await createOrg(page);
-	await mockOrgApi(page, () => 'const originalHeldViewForTest = orgApi.view.bind(orgApi); orgApi.view = async (...args) => { if (window.__holdRosterView) await window.holdRosterForTest(); return originalHeldViewForTest(...args); };');
-	await visit(page, '/agents');
-	let release!: () => void;
-	const gate = new Promise<void>((resolve) => { release = resolve; });
-	let held = 0;
-	await page.exposeFunction('holdRosterForTest', async () => {
-		held++;
-		await gate;
-	});
-	await page.evaluate(() => { (window as unknown as { __holdRosterView: boolean }).__holdRosterView = true; });
-	const navigation = page.getByRole('link', { name: 'Projects', exact: true }).click();
-	try {
-		await expect.poll(() => held).toBeGreaterThan(0);
-		await expect(page.getByRole('main', { includeHidden: true }).getByRole('button', { name: 'Add agent', exact: true, includeHidden: true })).toBeDisabled();
-		await expect(page.getByRole('dialog')).toHaveCount(0);
-		await shot(page, 'agents-add-navigation-pending');
-	} finally {
-		release();
-		await navigation;
-	}
-	await expect(page).toHaveURL(/\/projects$/);
-	await page.getByRole('link', { name: 'Agents', exact: true }).click();
-	await expect(page.getByRole('button', { name: 'Add agent', exact: true })).toBeEnabled();
-});
-
-test('AGENT-4 URL focus: a pending navigation returns URL-dialog focus to enabled search', async ({ page }) => {
-	await createOrg(page);
-	await mockOrgApi(page, () => 'const pendingFocusView = orgApi.view.bind(orgApi); orgApi.view = async (...args) => { if (window.__holdRosterView) await window.holdRosterForTest(); return pendingFocusView(...args); };');
-	await visit(page, '/agents?add=1');
-	const dialog = page.getByRole('dialog', { name: 'Add an agent' });
-	await expect(dialog).toBeVisible();
-	await expect.poll(() => new URL(page.url()).searchParams.has('add')).toBe(false);
-	let release!: () => void;
-	const gate = new Promise<void>((resolve) => { release = resolve; });
-	let held = 0;
-	await page.exposeFunction('holdRosterForTest', async () => {
-		held++;
-		await gate;
-	});
-	await page.evaluate(() => { (window as unknown as { __holdRosterView: boolean }).__holdRosterView = true; });
-	await dialog.evaluate((element) => {
-		const link = document.createElement('a');
-		link.href = '/projects'; link.textContent = 'Navigate to Projects'; element.prepend(link);
-	});
-	const navigation = dialog.getByRole('link', { name: 'Navigate to Projects' }).click();
-	try {
-		await expect.poll(() => held).toBeGreaterThan(0);
-		await expect(page.getByRole('main', { includeHidden: true }).getByRole('button', { name: 'Add agent', exact: true, includeHidden: true })).toBeDisabled();
-		await page.keyboard.press('Escape');
-		await expect(dialog).toHaveCount(0);
-		await expect(page.getByLabel('Search agents', { exact: true })).toBeFocused();
-		await shot(page, 'agents-add-close-while-navigation-pending');
-	} finally {
-		release();
-		await navigation;
-	}
-});
-
-test('AGENT-4 legacy focus: empty-organization Add keeps its original opener', async ({ page }) => {
-	await createOrg(page);
-	await visit(page, '/agents?org=empty');
-	const opener = page.getByRole('button', { name: 'Add your first agent', exact: true });
-	await opener.focus(); await opener.press('Enter');
-	await expect(page.getByRole('dialog', { name: 'Add an agent' })).toBeVisible();
-	await page.keyboard.press('Escape');
-	await expect(page.getByRole('dialog')).toHaveCount(0);
-	await expect(opener).toBeFocused();
-	await shot(page, 'agents-add-empty-opener-focus');
-});
-
-test('AGENT-3 query field: design-system v1 boundary and keyboard outline are visible', async ({ page }) => {
-	await createOrg(page);
-	const input = page.getByLabel('Search agents', { exact: true });
-	const colors = await page.evaluate(() => {
-		const reference = document.createElement('span'); reference.style.display = 'none';
-		document.body.append(reference);
-		reference.style.color = 'var(--color-gray-500)'; const boundary = getComputedStyle(reference).color;
-		reference.style.color = 'var(--color-indigo-400)'; const focus = getComputedStyle(reference).color;
-		reference.remove(); return { boundary, focus };
-	});
-	const style = () => input.evaluate((element) => {
-		const css = getComputedStyle(element);
-		return { style: css.outlineStyle, width: css.outlineWidth, color: css.outlineColor, offset: parseFloat(css.outlineOffset), border: css.borderTopWidth };
-	});
-	await expect(input).toHaveAccessibleDescription('Name or role title');
-	const idle = await style();
-	expect.soft(idle.style).toBe('solid'); expect.soft(idle.width).toBe('1px');
-	expect.soft(idle.color).toBe(colors.boundary); expect.soft(idle.border).toBe('0px');
-	await input.focus();
-	const focused = await style();
-	expect.soft(focused.style).toBe('solid'); expect.soft(focused.width).toBe('2px');
-	expect.soft(focused.color).toBe(colors.focus); expect.soft(focused.offset).toBeLessThanOrEqual(0);
-	await shot(page, 'agents-query-design-system-focus');
-});
-
-test('AGENT-3 URL q: a missing optional role title still supports name search', async ({ page }) => {
-	await createOrg(page);
-	const intercepted = await mockOrgApi(page, () => 'const optionalTitleView = orgApi.view.bind(orgApi); orgApi.view = async (...args) => { const view = structuredClone(await optionalTitleView(...args)); delete view.snapshot.members.find((member) => member.id === "noor").agent.title; return view; };');
-	await visit(page, '/agents?q=web%20engineer');
-	const search = page.getByLabel('Search agents', { exact: true });
-	await expect(page.getByTestId('no-match')).toHaveText('No agents match your search.');
-	await expect(page.getByRole('heading', { name: 'Something went wrong' })).toHaveCount(0);
-	expect(intercepted()).toBeGreaterThan(0);
-	await search.fill('Noor');
-	await expect(rows(page)).toHaveCount(1);
-	await expect(rows(page)).toContainText('Noor Haddad');
-	await shot(page, 'agents-query-optional-title');
-});
-
-
-test('AGENT-3 URL q: a lowercase query finds a mixed-case fixture role title', async ({ page }) => {
-	await createOrg(page);
-	await mockOrgApi(page, () => 'const titleCaseView = orgApi.view.bind(orgApi); orgApi.view = async (...args) => { const view = structuredClone(await titleCaseView(...args)); view.snapshot.members.find((member) => member.id === "noor").agent.title = "Web Engineer"; return view; };');
-	await visit(page, '/agents?q=web%20engineer');
-	await expect(page.getByLabel('Search agents', { exact: true })).toHaveValue('web engineer');
-	await expect(rows(page)).toHaveCount(1);
-	await expect(rows(page)).toContainText('Noor Haddad');
-	await expect(rows(page)).toContainText('Web Engineer');
-	await page.getByLabel('Search agents', { exact: true }).fill('WEB ENGINEER');
-	await expect(rows(page)).toHaveCount(1);
-	await shot(page, 'agents-query-mixed-title');
-});
-
-test('AGENT-3 URL q: the first rendered field and roster already reflect the incoming query', async ({ page }) => {
-	await createOrg(page);
-	await page.addInitScript(() => {
-		const observer = new MutationObserver(() => {
-			const input = document.querySelector<HTMLInputElement>('#agents-query');
-			if (!input || !document.querySelector('[data-testid="agent-roster"]')) return;
-			(window as Window & { __firstAgentsRender?: unknown }).__firstAgentsRender = {
-				query: input.value,
-				rows: [...document.querySelectorAll('[data-testid="agent-row"] th a')].map((link) => link.textContent)
-			};
-			observer.disconnect();
-		});
-		observer.observe(document, { childList: true, subtree: true });
-	});
-	await visit(page, '/agents?q=noor');
-	await expect(page.getByLabel('Search agents', { exact: true })).toHaveValue('noor');
-	const first = await page.evaluate(() => (window as Window & { __firstAgentsRender?: unknown }).__firstAgentsRender);
-	expect(first).toEqual({ query: 'noor', rows: ['Noor Haddad'] });
-	await shot(page, 'agents-query-first-render');
-});
-
-test('AGENT-4 URL add: already-open intent preserves the empty-organization opener focus', async ({ page }) => {
-	await createOrg(page);
-	await visit(page, '/agents?org=empty');
-	const opener = page.getByRole('button', { name: 'Add your first agent', exact: true });
-	await opener.focus(); await opener.press('Enter');
-	const dialog = page.getByRole('dialog', { name: 'Add an agent' });
-	await expect(dialog).toBeVisible();
-	await dialog.getByLabel('Name', { exact: true }).fill('Kept empty-org draft');
-	await dialog.evaluate((element) => {
-		const link = document.createElement('a');
-		link.href = '/agents?org=empty&add=1'; link.textContent = 'Repeat empty-org Add intent';
-		element.prepend(link);
-	});
-	const entries = await page.evaluate(() => history.length);
-	await dialog.getByRole('link', { name: 'Repeat empty-org Add intent' }).click();
-	await expect.poll(() => page.evaluate(() => history.length)).toBe(entries + 1);
-	await expect.poll(() => new URL(page.url()).searchParams.has('add')).toBe(false);
-	await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('Kept empty-org draft');
-	await page.keyboard.press('Escape');
-	await expect(dialog).toHaveCount(0);
-	await expect(opener).toBeFocused();
-	await shot(page, 'agents-add-already-open-empty-focus');
-});

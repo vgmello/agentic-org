@@ -4,7 +4,7 @@ Status: **selected** data contract, revision 2.8. This document owns usage accou
 
 ## v1 evidence and selected port
 
-At v1 commit `ee84e7ba231fbef79373f641c3d24fd26a248be5`, [the runtime usage contract](../../../crates/org-runtime/src/usage.rs) defines input/output/cache-read/cache-write/reasoning counts, runtime list-price estimates, and separate token/cost delta versus cumulative scopes. [The cost UX](../../specs/costs-and-insights-ux.md) defines per-record attribution, agent-by-task rollups, project investment, price versions and honest missing-data handling. The checked office/server code has no complete persisted usage ledger. This document carries over those accounting data needs, not the old session/agent setup, task-guessing heuristics, cost visibility implementation or budget engines.
+At v1 commit `ee84e7ba231fbef79373f641c3d24fd26a248be5`, [the runtime usage contract](../../../crates/org-agent-runtime/src/usage.rs) defines input/output/cache-read/cache-write/reasoning counts, runtime list-price estimates, and separate token/cost delta versus cumulative scopes. [The cost UX](../../specs/costs-and-insights-ux.md) defines per-record attribution, agent-by-task rollups, project investment, price versions and honest missing-data handling. The checked office/server code has no complete persisted usage ledger. This document carries over those accounting data needs, not the old session/agent setup, task-guessing heuristics, cost visibility implementation or budget engines.
 
 ## One ledger; derived totals
 

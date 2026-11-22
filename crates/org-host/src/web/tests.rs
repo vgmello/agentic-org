@@ -20,6 +20,9 @@ fn loopback() -> ListenConfig {
     .unwrap()
 }
 
+/// The stop flag of a start that the host never stops.
+static GOING: AtomicBool = AtomicBool::new(false);
+
 /// The rendezvous-through-ACK bound for tests that start a real child. Production
 /// uses `WAIT` (5 s); a parallel workspace test run can delay a child's start past
 /// that, so tests allow far longer. Tests of the deadline itself pass their own.
@@ -31,8 +34,10 @@ fn start(config: &Configuration, handler: Arc<dyn Handler>) -> io::Result<Runnin
     Running::start(
         config,
         &Image::new(&config.check, &config.program),
+        None,
         handler,
         START_WAIT,
+        &GOING,
     )
 }
 
@@ -86,7 +91,9 @@ fn refused_web_start_never_becomes_ready() {
             check: ServerCheck::gateway_for_build(false, None).unwrap(),
             critical_paths: vec![],
             release: None,
+            tls: None,
         },
+        None,
         Arc::new(NoOps),
         Arc::clone(&state),
         Arc::new(|| true),
@@ -130,6 +137,7 @@ fn an_admission_refusal_inside_start_keeps_its_cause() {
         check: ServerCheck::gateway_for_build(false, None).unwrap(),
         critical_paths: vec![],
         release: None,
+        tls: None,
     };
     let Err(error) = start(&config, Arc::new(NoOps)) else {
         panic!("a release build without a team or a selected release never spawns")
@@ -772,6 +780,7 @@ fn scripted_config(
         check,
         critical_paths: vec![],
         release: None,
+        tls: None,
     };
     (dir, config)
 }
@@ -913,6 +922,104 @@ fn a_child_that_exits_before_connecting_names_its_status() {
         message.contains("the child exited before connecting (exit code 3)"),
         "{message}"
     );
+}
+
+/// X5 review, third round, P2: a start given the listener setup bound serves on that one
+/// socket and binds nothing. The port stays held throughout (here by a second handle on
+/// the same socket, as setup holds it), so a start that bound again would be refused
+/// ("bind the browser listener"); this one goes on to start its child. A listener on
+/// another address or port is refused before anything is spawned.
+#[test]
+fn a_start_given_a_bound_listener_serves_on_it_and_binds_nothing() {
+    let (_dir, config) = scripted_config("first-line\nexit 3\n", |_, _, _| Ok(None));
+    let held =
+        TcpListener::bind((config.listen.address(), config.listen.port())).expect("its port");
+    let holding = held.try_clone().unwrap();
+    let image = Image::new(&config.check, &config.program);
+    let message = match Running::start(
+        &config,
+        &image,
+        Some(held),
+        Arc::new(NoOps),
+        START_WAIT,
+        &GOING,
+    ) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("this start must be refused"),
+    };
+    assert!(
+        message.contains("the child exited before connecting (exit code 3)"),
+        "{message}"
+    );
+    drop(holding);
+
+    let elsewhere = TcpListener::bind("127.0.0.1:0").unwrap();
+    let message = match Running::start(
+        &config,
+        &image,
+        Some(elsewhere),
+        Arc::new(NoOps),
+        START_WAIT,
+        &GOING,
+    ) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("a listener on another port must be refused"),
+    };
+    assert!(
+        message.contains("the browser listener is not on its configured address and port"),
+        "{message}"
+    );
+}
+
+/// X5 review, third round, P1: when a start or a run of the web process ends (as at a
+/// host's stop), the web process is killed and reaped at once, whatever a request of its
+/// control connection is doing. A request still running (here held on a lock the test
+/// holds, as a write lock of the registry would be held) is waited for only afterwards.
+#[test]
+fn a_running_request_never_keeps_the_web_process_alive() {
+    struct Holds(Arc<Mutex<()>>, Arc<AtomicBool>);
+    impl Handler for Holds {
+        fn handle(&self, _: org_proto::Request, _: &Arc<Connection>, _: crate::peer::Received) {
+            self.1.store(true, Ordering::SeqCst);
+            drop(lock(&self.0));
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let held = Arc::new(Mutex::new(()));
+    let entered = Arc::new(AtomicBool::new(false));
+    let holding = lock(&held);
+    let (host, mut peer) = UnixStream::pair().unwrap();
+    let (transfer, _child) = UnixDatagram::pair().unwrap();
+    let handler = Arc::new(Holds(Arc::clone(&held), Arc::clone(&entered)));
+    let control = WebConnection::start(host, transfer, loopback(), handler).unwrap();
+    let spawned = held_child(dir.path());
+    let pid = spawned.child.id();
+    let running = Running {
+        control,
+        process: spawned.child,
+        _stdin: spawned.stdin,
+        layers: org_platform::confinement::Layers {
+            description: "nothing: a test's own child".to_owned(),
+            landlock_missing: false,
+        },
+        captured: Stderr::capture(spawned.stderr, "stderr-held-request-test").unwrap(),
+    };
+    let hello = org_proto::Request::new::<org_host_control::Hello>(1, &Default::default());
+    org_proto::frame::write_message(&mut peer, &hello.unwrap()).unwrap();
+    wait_for("the request to run", || entered.load(Ordering::SeqCst));
+
+    let stopping = thread::spawn(move || drop(running));
+    // Reaped: no process has the pid any more (a zombie still would).
+    // SAFETY: signal 0 only asks whether the pid exists.
+    let exists = || unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+    let until = Instant::now() + Duration::from_secs(5);
+    while exists() && Instant::now() < until {
+        thread::sleep(Duration::from_millis(5));
+    }
+    let reaped = !exists();
+    drop(holding);
+    stopping.join().unwrap();
+    assert!(reaped, "the web process lived on while a request of it ran");
 }
 
 /// Collects supervisor log lines.
@@ -1092,7 +1199,7 @@ fn free_port() -> u16 {
 }
 
 #[test]
-fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
+fn the_supervisor_refuses_an_https_listener_without_a_stored_pair() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let https = serde_json::from_str(
@@ -1109,23 +1216,96 @@ fn the_supervisor_refuses_a_listener_that_is_not_http_loopback() {
             check: ServerCheck::gateway_for_build(true, None).unwrap(),
             critical_paths: vec![],
             release: None,
+            tls: None,
         },
+        None,
         Arc::new(NoOps),
         Arc::clone(&state),
         Arc::new(|| true),
     );
     let Err(error) = started else {
-        panic!("an HTTPS listener never starts the web process")
+        panic!("an HTTPS listener without a pair never starts the web process")
     };
     // The confinement question comes first: where it refuses, the listener is not
     // looked at, and that refusal is the next test's.
     if org_platform::confinement::web_confinement_supported().is_ok() {
         assert_eq!(
             error.to_string(),
-            "the web process requires a verified HTTP loopback listener"
+            "the web process requires a verified TLS pair for its https listener: tls_missing"
         );
     }
     assert_eq!(*lock(&state), GatewayState::NotConfigured);
+}
+
+/// The `https` gate (X-02 §2, pre-spawn): a stored pair that names the origin passes; none
+/// is `tls_missing`, one for another host `tls_name_mismatch`, one whose key is gone is
+/// `tls_missing` too. Nothing is bound or spawned on a refusal.
+#[test]
+fn the_https_gate_admits_only_a_stored_pair_that_names_the_origin() {
+    use crate::web_tls::tests::started;
+    let now = crate::web_tls::now().unwrap();
+    let (_kept, tls) = started("https://127.0.0.1:48125");
+    https_gate(Some(&*tls), now).unwrap();
+    let refusal = |result: io::Result<()>| result.unwrap_err().to_string();
+    assert!(refusal(https_gate(None, now)).ends_with(": tls_missing"));
+    // Expired: 398 days on.
+    assert!(refusal(https_gate(Some(&*tls), now + 398 * 86_400)).contains("tls_not_valid"));
+    let (kept, other) = started("https://org.example:48125");
+    crate::web_tls::tests::store_pair_of(&kept, &other, "https://elsewhere.example");
+    assert!(refusal(https_gate(Some(&*other), now)).contains("tls_name_mismatch"));
+    crate::web_tls::tests::lose_keys(&kept);
+    assert!(refusal(https_gate(Some(&*other), now)).contains("tls_missing"));
+}
+
+/// The web start's eligibility in `https`: the host's own eligibility and a pair that can be
+/// served now. A pair that cannot be served keeps the web process waiting (the supervisor
+/// counts no failed start), and the refusal is logged once.
+#[test]
+fn an_https_web_start_waits_while_its_pair_cannot_be_served() {
+    use crate::web_tls::tests::started;
+    let (kept, tls) = started("https://127.0.0.1:48126");
+    assert!(gated(Arc::new(|| true), Arc::clone(&tls))());
+    assert!(!gated(Arc::new(|| false), Arc::clone(&tls))());
+    crate::web_tls::tests::store_pair_of(&kept, &tls, "https://elsewhere.example");
+    let waiting = gated(Arc::new(|| true), Arc::clone(&tls));
+    let (answers, log) = crate::host_log::capture(|| (waiting(), waiting()));
+    assert_eq!(answers, (false, false));
+    assert_eq!(log.len(), 1, "{log:?}");
+    assert!(log[0].contains("tls_name_mismatch"), "{log:?}");
+}
+
+/// The listener gate admits the two plain HTTP modes: a published listener of a foreground
+/// instance passes it as a loopback one does, and the supervisor starts.
+#[test]
+fn the_supervisor_admits_a_published_plain_http_listener() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+    let published: ListenConfig = serde_json::from_str(
+        r#"{"address":"0.0.0.0","port":48125,"scheme":"http_published","origin":"http://127.0.0.1:48125","hsts":"off"}"#,
+    )
+    .unwrap();
+    let started = Supervisor::start(
+        Configuration {
+            listen: published,
+            ..startable(dir.path())
+        },
+        None,
+        Arc::new(NoOps),
+        Arc::clone(&state),
+        // Never eligible: the gate is what this asks about, and nothing is started.
+        Arc::new(|| false),
+    );
+    match started {
+        Ok(supervisor) => drop(supervisor),
+        // Only a system that cannot confine the web process refuses, and for that reason.
+        Err(error) => {
+            assert!(org_platform::confinement::web_confinement_supported().is_err());
+            assert!(
+                !error.to_string().contains("plain HTTP listener"),
+                "{error}"
+            );
+        }
+    }
 }
 
 /// A configuration that every check but confinement would let start: a debug
@@ -1139,6 +1319,7 @@ fn startable(dir: &Path) -> Configuration {
         check: ServerCheck::gateway_for_build(true, None).unwrap(),
         critical_paths: vec![],
         release: None,
+        tls: None,
     }
 }
 
@@ -1148,6 +1329,7 @@ fn the_supervisor_starts_only_where_the_web_process_can_be_confined() {
     let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
     let started = Supervisor::start(
         startable(dir.path()),
+        None,
         Arc::new(NoOps),
         Arc::clone(&state),
         Arc::new(|| false),
@@ -1238,6 +1420,7 @@ fn lnx_3_a_host_under_a_profile_starts_nothing_only_where_the_filter_is_refused(
         let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
         let started = Supervisor::start(
             startable(dir.path()),
+            None,
             Arc::new(NoOps),
             Arc::clone(&state),
             Arc::new(|| false),
@@ -1300,7 +1483,10 @@ fn a_control_line_is_read_through_its_newline_up_to_1023_bytes() {
     peer.write_all(&full).unwrap();
     peer.write_all(b"\nnext").unwrap();
     let until = Instant::now() + Duration::from_secs(5);
-    assert_eq!(line(&mut receiver, until, "ready line").unwrap(), full);
+    assert_eq!(
+        line(&mut receiver, until, &GOING, "ready line").unwrap(),
+        full
+    );
 }
 
 #[test]
@@ -1308,7 +1494,7 @@ fn a_control_line_longer_than_1023_bytes_is_refused() {
     let (mut receiver, mut peer) = control_pair();
     peer.write_all(&[b'a'; 1024]).unwrap();
     let until = Instant::now() + Duration::from_secs(5);
-    let error = line(&mut receiver, until, "ready line").unwrap_err();
+    let error = line(&mut receiver, until, &GOING, "ready line").unwrap_err();
     assert_eq!(
         error.to_string(),
         "web process start failed: the ready line exceeds 1023 bytes"
@@ -1321,7 +1507,7 @@ fn a_control_line_that_does_not_arrive_before_the_deadline_is_refused() {
     peer.write_all(b"partial").unwrap();
     let started = Instant::now();
     let until = started + Duration::from_millis(100);
-    let error = line(&mut receiver, until, "handoff ACK").unwrap_err();
+    let error = line(&mut receiver, until, &GOING, "handoff ACK").unwrap_err();
     assert_eq!(
         error.to_string(),
         "web process start failed: the handoff ACK did not arrive before the deadline"
@@ -1345,7 +1531,7 @@ fn a_peer_that_closes_with_unread_bytes_is_a_control_eof() {
     drop(theirs);
     let mut receiver = org_socket::rights::StreamReceiver::new(ours);
     let until = Instant::now() + Duration::from_secs(5);
-    let error = line(&mut receiver, until, "handoff ACK").unwrap_err();
+    let error = line(&mut receiver, until, &GOING, "handoff ACK").unwrap_err();
     assert_eq!(
         error.to_string(),
         "web process start failed: control EOF before the handoff ACK"
@@ -1361,7 +1547,7 @@ fn control_eof_before_a_line_is_refused() {
     peer.write_all(b"partial").unwrap();
     drop(peer);
     let until = Instant::now() + Duration::from_secs(5);
-    let error = line(&mut receiver, until, "ready line").unwrap_err();
+    let error = line(&mut receiver, until, &GOING, "ready line").unwrap_err();
     assert_eq!(
         error.to_string(),
         "web process start failed: control EOF before the ready line"
@@ -1374,7 +1560,7 @@ fn control_eof_before_a_line_is_refused() {
     };
     assert!(went_away(&error));
     let (mut receiver, _peer) = control_pair();
-    let late = line(&mut receiver, Instant::now(), "ready line").unwrap_err();
+    let late = line(&mut receiver, Instant::now(), &GOING, "ready line").unwrap_err();
     assert!(!went_away(&late), "{late}");
 }
 
@@ -1403,6 +1589,55 @@ fn a_rendezvous_folder_that_is_a_symlink_is_refused_before_binding() {
     );
 }
 
+/// X5 review V2: a host that stops while its web process's start waits for the child, to
+/// connect or then to send its ready line, does not wait for the start's deadline (60 s
+/// here): the supervision ends at once, as after a failed start, with nothing logged of it,
+/// the state `failed` and the child killed (its standard error ends).
+#[test]
+fn a_stop_ends_a_start_that_waits_for_the_web_process_at_once() {
+    for (n, steps) in [
+        "first-line\nstderr waiting\nstay\n",
+        "first-line\nconnect\nstderr waiting\nstay\n",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (_dir, mut config) = scripted_config(steps, |_, _, _| Ok(None));
+        let instance = format!("stalled-start-{}-{n}", std::process::id());
+        config.instance = instance.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let state = Arc::new(Mutex::new(GatewayState::NotConfigured));
+        let (lines, log) = recording();
+        let thread = {
+            let (stop, state) = (Arc::clone(&stop), Arc::clone(&state));
+            thread::spawn(move || {
+                let image = Image::new(&config.check, &config.program);
+                supervise(&stop, &state, &|| true, Timing::PRODUCTION, &log, || {
+                    Running::start(&config, &image, None, Arc::new(NoOps), START_WAIT, &stop)
+                })
+            })
+        };
+        let supervisor = Supervisor {
+            stop,
+            state: Arc::clone(&state),
+            thread: Some(thread),
+        };
+        wait_for("the web process to wait for the host", || {
+            lock(&CAPTURED_STDERR)
+                .get(&instance)
+                .is_some_and(|captured| captured.bytes.ends_with(b"waiting\n"))
+        });
+        let asked = Instant::now();
+        assert!(supervisor.join_by(asked + START_WAIT), "{steps}");
+        let took = asked.elapsed();
+        assert!(took < Duration::from_secs(1), "{steps}: {took:?}");
+        assert_eq!(*lock(&state), GatewayState::Failed);
+        assert!(lock(&lines).is_empty(), "{:?}", lock(&lines));
+        // Its standard error ended: the child is gone.
+        assert_eq!(captured_stderr(&instance).unwrap(), b"waiting\n");
+    }
+}
+
 #[test]
 fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -1410,7 +1645,7 @@ fn a_child_that_does_not_connect_before_the_deadline_is_refused() {
     let mut spawned = held_child(dir.path());
     // The deadline has passed: no connection is accepted, and the child still runs.
     let error = rendezvous
-        .accept(&mut spawned.child, Instant::now())
+        .accept(&mut spawned.child, Instant::now(), &GOING)
         .unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -1701,6 +1936,7 @@ fn unchecked(dir: &Path, program: PathBuf) -> Configuration {
         check: ServerCheck::Skip,
         critical_paths: vec![],
         release: None,
+        tls: None,
     }
 }
 
@@ -1714,10 +1950,11 @@ fn one_web_admission_serves_every_start_and_is_never_built_again() {
     let config = unchecked(dir.path(), fake_program(dir.path(), "first-line\nexit 3\n"));
     let image = Image::new(&config.check, &config.program);
     let built = image.admission().unwrap();
-    let failed_start = || match Running::start(&config, &image, Arc::new(NoOps), START_WAIT) {
-        Err(error) => error.to_string(),
-        Ok(_) => panic!("the fake web process exits before it connects"),
-    };
+    let failed_start =
+        || match Running::start(&config, &image, None, Arc::new(NoOps), START_WAIT, &GOING) {
+            Err(error) => error.to_string(),
+            Ok(_) => panic!("the fake web process exits before it connects"),
+        };
     for _ in 0..2 {
         assert_eq!(failed_start(), EXITED);
         assert!(Arc::ptr_eq(&built, &image.admission().unwrap()));
@@ -1772,7 +2009,7 @@ fn a_web_admission_that_could_not_be_built_is_logged_and_asked_for_again() {
         (identity, other) => panic!("{identity:?}: {:?}", other.map(drop)),
     };
     // No web process starts, whichever step notices.
-    let message = match Running::start(&config, &image, Arc::new(NoOps), START_WAIT) {
+    let message = match Running::start(&config, &image, None, Arc::new(NoOps), START_WAIT, &GOING) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("a missing program was started"),
     };
@@ -1782,7 +2019,7 @@ fn a_web_admission_that_could_not_be_built_is_logged_and_asked_for_again() {
     );
     // The program appears: the next start builds the admission, or finds the one it has.
     fake_program(dir.path(), "first-line\nexit 3\n");
-    let message = match Running::start(&config, &image, Arc::new(NoOps), START_WAIT) {
+    let message = match Running::start(&config, &image, None, Arc::new(NoOps), START_WAIT, &GOING) {
         Err(error) => error.to_string(),
         Ok(_) => panic!("the fake web process exits before it connects"),
     };
@@ -2017,13 +2254,53 @@ fn only_the_start_of_a_childs_standard_error_is_kept() {
     let early = format!("{REFUSAL_PREFIX}{reason}\n{}", "x".repeat(100_000));
     let captured =
         Stderr::capture(io::Cursor::new(early.into_bytes()), "stderr-unit-test").unwrap();
-    assert_eq!(captured.refusal(WAIT).as_deref(), Some(reason));
+    assert!(matches!(captured.ending(WAIT), Ending::Refused(found) if found == reason));
     assert_eq!(lock(&captured.kept).0.len(), STDERR_KEPT);
-    // A refusal line after the kept bytes is not seen.
+    // A refusal line after the kept bytes is not seen, and nothing whole was kept.
     let late = format!("{}\n{REFUSAL_PREFIX}{reason}\n", "x".repeat(STDERR_KEPT));
     let captured = Stderr::capture(io::Cursor::new(late.into_bytes()), "stderr-unit-test").unwrap();
-    assert_eq!(captured.refusal(WAIT), None);
+    assert!(matches!(captured.ending(WAIT), Ending::Silent));
     assert!(lock(&captured.kept).1, "read to its end");
+}
+
+/// X5 review, fourth round (V-c): a child that ended before it connected without a refusal
+/// line is reported with the last whole line it wrote (after a notice before it), as
+/// printable ASCII and bounded; a line cut off at the end is not taken.
+#[test]
+fn a_child_that_ended_otherwise_is_reported_with_its_last_whole_line() {
+    let said = |text: &str| {
+        let captured = Stderr::capture(
+            io::Cursor::new(text.as_bytes().to_vec()),
+            "stderr-unit-test",
+        )
+        .unwrap();
+        match captured.ending(WAIT) {
+            Ending::Said(line) => Some(line),
+            Ending::Silent => None,
+            Ending::Refused(reason) => panic!("a refusal: {reason}"),
+        }
+    };
+    assert_eq!(
+        said(
+            "agentic-org-web: explicit debug unpinned fixture preload; no production release \
+             admission\nagentic-org-web: startup refused: ui build: InvalidKey\n"
+        )
+        .as_deref(),
+        Some("agentic-org-web: startup refused: ui build: InvalidKey")
+    );
+    assert_eq!(
+        said("agentic-org-web: authenticated startup unavailable\n\n").as_deref(),
+        Some("agentic-org-web: authenticated startup unavailable")
+    );
+    assert_eq!(
+        said("one\nforged\u{1b}[2J\u{202e}line\n").as_deref(),
+        Some("forged?[2J?line")
+    );
+    let long = said(&format!("{}\n", "y".repeat(900))).unwrap();
+    assert_eq!(long.len(), REASON_BYTES);
+    assert_eq!(said("whole\ncut off"), Some("whole".to_owned()));
+    assert_eq!(said("cut off"), None);
+    assert_eq!(said(""), None);
 }
 
 #[test]
@@ -2164,24 +2441,39 @@ fn a_child_that_exited_with_a_refusal_line_gives_the_failed_start_its_reason() {
     );
 }
 
+/// A child that exited without a refusal line is no refusal: the cause stays, followed by
+/// the last whole line it wrote, if any, shown as printable ASCII (X5 review, fourth
+/// round, V-c).
 #[test]
-fn a_child_that_exited_without_a_refusal_line_leaves_the_cause_as_it_is() {
-    for script in [
-        "exit 1\n",
-        "stderr agentic-org-web: authenticated startup unavailable\nexit 1\n",
-        // Not printable: a tab in the reason.
-        "stderr agentic-org-web: startup refused: confinement: a\tb\nexit 1\n",
-        // No line feed.
-        "stderr-raw agentic-org-web: startup refused: confinement: cut\nexit 1\n",
+fn a_child_that_exited_without_a_refusal_line_keeps_the_cause_and_says_its_last_line() {
+    for (script, expected) in [
+        ("exit 1\n", "web process start failed: the cause"),
+        (
+            "stderr agentic-org-web: authenticated startup unavailable\nexit 1\n",
+            "web process start failed: the cause; it wrote: agentic-org-web: authenticated \
+             startup unavailable",
+        ),
+        (
+            "stderr agentic-org-web: startup refused: ui build: InvalidKey\nexit 1\n",
+            "web process start failed: the cause; it wrote: agentic-org-web: startup refused: \
+             ui build: InvalidKey",
+        ),
+        // Not printable: a tab in the reason. No refusal, and the tab is not shown raw.
+        (
+            "stderr agentic-org-web: startup refused: confinement: a\tb\nexit 1\n",
+            "web process start failed: the cause; it wrote: agentic-org-web: startup refused: \
+             confinement: a?b",
+        ),
+        // No line feed: nothing whole was written.
+        (
+            "stderr-raw agentic-org-web: startup refused: confinement: cut\nexit 1\n",
+            "web process start failed: the cause",
+        ),
     ] {
         let (mut child, captured, _stdin) = stepping(script);
         wait_for("the child exits", || matches!(child.try_wait(), Ok(true)));
         let error = with_refusal(failed("the cause"), &captured, &mut child);
-        assert_eq!(
-            error.to_string(),
-            "web process start failed: the cause",
-            "{script}"
-        );
+        assert_eq!(error.to_string(), expected, "{script}");
     }
 }
 
@@ -2305,6 +2597,7 @@ fn real_web() -> RealWeb {
             check: ServerCheck::gateway_for_build(true, None).unwrap(),
             critical_paths: vec![root.join("critical")],
             release: None,
+            tls: None,
         },
         handler,
         offices,
@@ -2431,7 +2724,16 @@ fn the_real_web_process_is_started_only_confined_and_then_serves() {
                 &|| true,
                 Timing::PRODUCTION,
                 &log,
-                || Running::start(&web.config, &image, web.handler.clone(), START_WAIT),
+                || {
+                    Running::start(
+                        &web.config,
+                        &image,
+                        None,
+                        web.handler.clone(),
+                        START_WAIT,
+                        &stopping,
+                    )
+                },
             )
         });
         wait_for("the supervised web process serves", || {
@@ -2546,7 +2848,16 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
             &|| true,
             timing,
             &log,
-            || Running::start(&web.config, &image, web.handler.clone(), START_WAIT),
+            || {
+                Running::start(
+                    &web.config,
+                    &image,
+                    None,
+                    web.handler.clone(),
+                    START_WAIT,
+                    &GOING,
+                )
+            },
         );
         assert_eq!(*lock(&state), GatewayState::Failed);
         for line in lock(&lines).iter() {
@@ -2583,4 +2894,25 @@ fn lnx_3_the_real_web_process_that_cannot_confine_itself_is_logged_with_its_reas
         "authenticated browser restart limit reached after {MAX_STARTS} failed starts; last: "
     ));
     assert!(last.is_some_and(is_cause), "{printed}");
+}
+
+/// The line a web process writes when a `tls.renew` kept its pair is found across reads, its
+/// reason only when it is a known one, and at most [`RENEWAL_KEPT_LOGGED`] times.
+#[test]
+fn a_kept_renewal_line_is_found_across_reads_and_only_for_known_reasons() {
+    let mut kept = RenewalKept::default();
+    let line = format!("{RENEWAL_KEPT_PREFIX}replace_failed\n");
+    let (head, tail) = line.as_bytes().split_at(20);
+    assert!(kept.read(head).is_empty());
+    assert_eq!(kept.read(tail), ["replace_failed"]);
+    let other = format!(
+        "noise\n{RENEWAL_KEPT_PREFIX}-----BEGIN PRIVATE KEY-----\n{RENEWAL_KEPT_PREFIX}{}\n\
+         {RENEWAL_KEPT_PREFIX}unavailable",
+        "x".repeat(300)
+    );
+    assert!(kept.read(other.as_bytes()).is_empty(), "no line ended yet");
+    assert_eq!(kept.read(b"\n"), ["unavailable"]);
+    let many = format!("{RENEWAL_KEPT_PREFIX}fetch_failed\n").repeat(40);
+    assert_eq!(kept.read(many.as_bytes()).len(), RENEWAL_KEPT_LOGGED - 2);
+    assert!(renewal_kept_text("fetch_failed").contains("fetch_failed"));
 }

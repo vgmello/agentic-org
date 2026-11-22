@@ -35,6 +35,7 @@ mod refused;
 use refused as native;
 
 use crate::Refused;
+use std::ffi::OsString;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -59,6 +60,25 @@ pub fn account_application_base(home: &Path) -> Result<PathBuf, Refused> {
 /// GNU/Linux: `XDG_DATA_HOME`.
 pub fn application_base_variables() -> Result<&'static [&'static str], Refused> {
     native::application_base_variables()
+}
+
+/// The environment variables that can move any location of this module on this system:
+/// [`application_base`], [`user_temp_base`] and [`credential_directory_base`]. A consumer
+/// that has another program resolve the same locations (a service manager starts its units
+/// with an environment of its own) gives it these, with their values. macOS: none.
+/// GNU/Linux: `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME`.
+pub fn location_variables() -> Result<&'static [&'static str], Refused> {
+    native::location_variables()
+}
+
+/// The [`location_variables`] of this process that move a location away from where it
+/// is without them, for the account whose home is `home`, with their values: what a
+/// consumer gives another program so that it resolves the same locations. A variable that
+/// is unset, not an absolute path (which the path rule ignores), or that names the default
+/// folder itself (spelled differently, or through a link) is not one: carried, it would only
+/// make two environments that resolve the same locations look different. macOS: none.
+pub fn location_overrides(home: &Path) -> Result<Vec<(&'static str, OsString)>, Refused> {
+    native::location_overrides(home)
 }
 
 /// The default folder for the credential directories of the account whose home is

@@ -54,6 +54,16 @@ impl Broadcast {
         });
     }
 
+    /// Queues the host's own event `name` (one `org_proto` does not define, such as
+    /// `tls.renew`) with `data` to every subscriber, under the lock.
+    pub(crate) fn publish_named(&self, name: &str, data: Value) {
+        let mut subscribers = lock(&self.subscribers);
+        subscribers.retain(|s| s.strong_count() > 0);
+        for subscriber in subscribers.iter().filter_map(Weak::upgrade) {
+            subscriber.send_event(name, data.clone());
+        }
+    }
+
     /// Runs `f` under the lock: a change, the responses that report it and the events that
     /// announce it, all in one critical section, so no other event or snapshot comes between.
     pub(crate) fn critical<R>(&self, f: impl FnOnce(&mut Held<'_>) -> R) -> R {

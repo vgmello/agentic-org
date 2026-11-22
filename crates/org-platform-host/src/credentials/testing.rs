@@ -23,7 +23,18 @@ pub fn release_directory_below_with_stores(
     location: super::ReleaseDirectory<'_>,
     item_stores: &[super::ItemStore<'_>],
 ) -> Result<super::ReleaseRoot, super::CredentialError> {
-    super::native::release_directory_below(base, &location, item_stores)
+    release_directory_below_apart_from(base, location, item_stores, &[])
+}
+
+/// [`release_directory_apart_from`](super::release_directory_apart_from) with its walk
+/// started at `base`, as [`release_directory_below_with_stores`] is.
+pub fn release_directory_below_apart_from(
+    base: &Path,
+    location: super::ReleaseDirectory<'_>,
+    item_stores: &[super::ItemStore<'_>],
+    account_data: &[std::os::fd::BorrowedFd<'_>],
+) -> Result<super::ReleaseRoot, super::CredentialError> {
+    super::native::release_directory_below(base, &location, item_stores, account_data)
         .map(|root| super::ReleaseRoot { root })
 }
 

@@ -2,7 +2,7 @@
 //! Run the real root composition in an isolated test child, then inspect cleanup
 //! BEFORE that child's process exit can mask a forgotten service or database.
 use super::super::*;
-use org_office::{Key, NewOffice};
+use crate::hq_creation::tests::{code, key, World, INSTANCE, OFFICE};
 use org_office_launch::{
     self, ChannelKind, Handoff, HandoffFd, HostFirstLine, OfficeLine, RendezvousEvent,
     TransferRecord,
@@ -12,8 +12,7 @@ use std::io::{BufReader, Read, Seek, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::time::Duration;
-const ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-const INSTANCE: &str = "0190a5d2-7c3e-7a01-8b2c-3d4e5f607182";
+const ID: &str = OFFICE;
 const PROBE: &str = "KAI_ROOT_TRANSFER_TEST_CHILD";
 
 fn isolated(case: &str, test: &str) {
@@ -61,19 +60,11 @@ fn root_service_start_refusal_reports_fixed_diagnostic_and_releases_office() {
 
 fn probe(failure: bool) {
     let dir = tempfile::Builder::new().prefix("kr").tempdir().unwrap();
-    let folder = dir.path().join(ID);
     let runtime = dir.path().join("run");
     std::fs::create_dir(&runtime).unwrap();
     let office_socket = socket_path(&runtime, ID).unwrap();
-    let info = NewOffice {
-        office_id: ID.into(),
-        office_name: "HQ".into(),
-        role: org_office::OfficeRole::Hq,
-        org_id: ID.into(),
-        org_name: "Acme".into(),
-    };
-    let key = || Key::from_office_secrets_key(OfficeSecretsKey::from_bytes([4; 32]));
-    let office = Office::create_for_instance(&folder, &info, key(), INSTANCE).unwrap();
+    let world = World::new();
+    let office = world.prepare(Some(key()), code()).unwrap();
     let path = dir.path().join("rv.sock");
     let listener = UnixListener::bind(&path).unwrap();
     listener.set_nonblocking(true).unwrap();
@@ -81,8 +72,6 @@ fn probe(failure: bool) {
     org_office_launch::write_first_line(
         &mut input,
         &HostFirstLine::Start(OfficeLine {
-            id_profile: None,
-            selected_writer_required: false,
             instance_id: INSTANCE.into(),
             office_id: ID.into(),
             rendezvous: path.to_str().unwrap().into(),
@@ -121,7 +110,7 @@ fn probe(failure: bool) {
         assert_eq!(ready["event"], "ready_for_secrets");
         let (worker, transfer) = UnixDatagram::pair().unwrap();
         let handoff = Handoff::Start {
-            office_secrets_key: Some(OfficeSecretsKey::from_bytes([4; 32])),
+            office_secrets_key: Some(OfficeSecretsKey::from_bytes([8; 32])),
             grant_key: GrantKey::from_bytes([7; 32]),
             fds: vec![HandoffFd::Transfer],
         };
@@ -187,6 +176,8 @@ fn probe(failure: bool) {
         Some(startup::Request::Launch { .. })
     ));
     let lifetime = control.lifetime().unwrap();
+    // The office was opened beforehand, on its own custody channel: no writer control here.
+    let transfer = control.transfer();
     if failure {
         transfer::tests::refuse_next_spawn();
     }
@@ -211,11 +202,12 @@ fn probe(failure: bool) {
     };
     let code = serve_office(
         control,
+        transfer,
         lifetime,
         &runtime,
         office,
         crate::serve::LaunchAuth::from(GrantKey::from_bytes([7; 32])),
-        Some(INSTANCE.into()),
+        INSTANCE.into(),
     );
     if let Some(joining) = joining {
         joining.join().unwrap();
@@ -231,10 +223,12 @@ fn probe(failure: bool) {
             "root returned while a channel was still owned"
         );
     }
-    drop(
-        Office::open_for_instance(&folder, key(), INSTANCE)
-            .expect("root returned before closing Office databases/lock"),
-    );
+    // The root closed the office: its lock is free and the stop was orderly (the store's
+    // clean-stop marker), unless the transfer service never started.
+    let reopened = world
+        .open(Some(key()))
+        .expect("root returned before closing the office and its lock");
+    assert_eq!(reopened.stopped_cleanly(), !failure);
 }
 fn pass_marker(stream: &UnixStream, fd: std::os::fd::RawFd) {
     let mut marker = [org_office_launch::FD_MARKER];

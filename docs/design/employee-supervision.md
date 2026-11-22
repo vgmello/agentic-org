@@ -18,7 +18,7 @@ satellite completed an operation.
 
 1. **One office owns execution.** `agentic-org-office` contains the supervisor,
    router and session runner; there is no separate supervisor daemon. `org-supervise`
-   is the OS process library and `org-runtime` the vendor runtime contract. Domain
+   is the OS process library and `org-agent-runtime` the vendor runtime contract. Domain
    modules have no process-control dependencies.
 2. **Employee identity is the organization's.** The home team, role and reporting
    line are in `profile.md`; model profile, model, tools and prompt are in
@@ -157,10 +157,13 @@ process text. No process edit invents commands or changes tool permissions.
 
 Goals and goal reminders, automatic scheduling, generated native agent definitions
 and private specialists, delegation chosen by a process, and memory checkpoints are not
-part of v1. Starting a sub-agent inside the vendor tool is
-([ADR-0025](../adr/0025-agents-start-sub-agents.md)): it runs within the turn, in the
-parent's sandbox and under the office's rules; the office grants it nothing of its own
-and tracks no separate job for it. EMP criteria about these features describe later work.
+part of v1. Starting a sub-agent or background task inside the vendor tool is
+([ADR-0025](../adr/0025-agents-start-sub-agents.md)): it runs in the parent's sandbox
+and under the office's rules, may stay active across turns inside the live session so
+the agent remains conversational while background work completes (decision 6), is
+stopped and reaped on Pause, Stop, Offboard or stall timeout (`SUB-5`), and is granted
+nothing of its own beyond the employee's permissions. EMP criteria about these features
+describe later work.
 
 ## 6. Validation
 
@@ -173,7 +176,7 @@ real organization.
 ## What the code does today
 
 `crates/org-supervise` starts, stops and cleans up processes with ownership marks, and
-`crates/org-runtime` defines the runtime contract. The office does not use `org-supervise`:
+`crates/org-agent-runtime` defines the runtime contract. The office does not use `org-supervise`:
 B1b deleted the worker's owned-process recovery adapter, which only tests invoked;
 C3 wires production recovery. Nothing launches an agent, and there is no permit or placement code
 (implementation plan C3).

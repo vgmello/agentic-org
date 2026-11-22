@@ -16,8 +16,9 @@ pub enum OfficeError {
     NotFound,
     /// Enrollment has not installed the organization's first materialized snapshot yet.
     SnapshotPending,
-    /// `Office::create` found an office (an `office.json`, databases or a workspace) already in
-    /// the folder, or `Office::discard` found one that is finished or holds an organization.
+    /// Creation found an office already in the folder (an `office.json` or a creation intent for
+    /// another request), or `Office::discard` found a creation intent, an `office.json`, the host's
+    /// custody marker or a file it stages one in.
     OfficeExists,
     /// Disk, database or OS failure. The cause is kept for the server's log only; `Display`
     /// never includes paths or SQL, so it is safe to show to a client.

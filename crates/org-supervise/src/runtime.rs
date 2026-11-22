@@ -2,11 +2,12 @@
 //! Lifecycle instructions are retained explicitly and mapped into generic core types;
 //! preparing a launch does not execute them. This is not a complete session runner.
 
+use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use org_runtime::{
+use org_agent_runtime::{
     CleanupPath, EnvName, FileLocation, LaunchContext, LaunchPlan, ProbeContext, ProbePlan,
     SessionId, Stdio, StopPlan,
 };
@@ -19,21 +20,21 @@ pub fn stop_policy(plan: &StopPlan) -> io::Result<crate::StopPolicy> {
         .steps
         .iter()
         .map(|step| match *step {
-            org_runtime::StopStep::CloseStdin { grace_ms } => crate::StopStep::CloseStdin {
+            org_agent_runtime::StopStep::CloseStdin { grace_ms } => crate::StopStep::CloseStdin {
                 grace: Duration::from_millis(grace_ms),
             },
-            org_runtime::StopStep::Signal {
+            org_agent_runtime::StopStep::Signal {
                 signal,
                 target,
                 grace_ms,
             } => crate::StopStep::Signal {
                 signal: match signal {
-                    org_runtime::StopSignal::Interrupt => crate::StopSignal::Interrupt,
-                    org_runtime::StopSignal::Terminate => crate::StopSignal::Terminate,
+                    org_agent_runtime::StopSignal::Interrupt => crate::StopSignal::Interrupt,
+                    org_agent_runtime::StopSignal::Terminate => crate::StopSignal::Terminate,
                 },
                 target: match target {
-                    org_runtime::SignalTarget::Leader => crate::SignalTarget::Leader,
-                    org_runtime::SignalTarget::Group => crate::SignalTarget::Group,
+                    org_agent_runtime::SignalTarget::Leader => crate::SignalTarget::Leader,
+                    org_agent_runtime::SignalTarget::Group => crate::SignalTarget::Group,
                 },
                 grace: Duration::from_millis(grace_ms),
             },
@@ -71,7 +72,7 @@ pub struct RuntimeProbe {
     /// Record mark, spawn, then record identity with the same callbacks as sessions.
     pub prepared: PreparedSpawn,
     /// Initial stdin lines, in order.
-    pub stdin_lines: Vec<org_runtime::Line>,
+    pub stdin_lines: Vec<org_agent_runtime::Line>,
     /// Stdin/protocol shape.
     pub mode: ProbeMode,
     /// Overall deadline duration, fixed by the caller when the process starts.
@@ -83,14 +84,28 @@ pub struct RuntimeProbe {
 
 /// Prepare a probe without borrowing agent authority or writing a workspace. `temp_root`
 /// must be an existing, real-path own-UID/0700 session temp folder allocated by the caller.
-/// Refuse all context-only names (ORG_*, GIT_CONFIG_*, GH_CONFIG_DIR) rather than
-/// silently stripping accidentally supplied agent or tool authority.
+/// Refuse all context-only names (`ORG_*`, `AGENT_OS_*`, `GIT_CONFIG_*`, `GH_CONFIG_DIR`)
+/// rather than silently stripping accidentally supplied agent or tool authority.
 /// The fresh private cwd protects shared folders from CLIs that write relative dotfiles.
 /// No ProbeSession is called here, and neither stdout nor stderr is consumed.
 pub fn prepare_probe(
     plan: ProbePlan,
     ctx: &ProbeContext,
     environment: Environment,
+    mark: SessionMark,
+    temp_root: &Path,
+    mode: ProbeMode,
+) -> io::Result<RuntimeProbe> {
+    prepare_probe_with_auth(plan, ctx, environment, &[], mark, temp_root, mode)
+}
+
+/// Same as [`prepare_probe`], also admitting runtime auth environment variables declared
+/// by [`ProbePlan::auth_env_names`]. Any name not declared by the adapter's plan is refused.
+pub fn prepare_probe_with_auth(
+    plan: ProbePlan,
+    ctx: &ProbeContext,
+    environment: Environment,
+    auth_env: &[(OsString, OsString)],
     mark: SessionMark,
     temp_root: &Path,
     mode: ProbeMode,
@@ -105,6 +120,8 @@ pub fn prepare_probe(
             "probe executable differs from the recorded runtime path",
         ));
     }
+    let declared_auth: Vec<&str> = plan.auth_env_names.iter().map(EnvName::as_str).collect();
+    let environment = environment.with_declared_auth(auth_env, &declared_auth)?;
     let additions = plan
         .env_add
         .into_iter()
@@ -137,7 +154,9 @@ pub fn prepare_probe(
 const REVIEWED_ENV_SWITCHES: &[&str] = &[
     "DISABLE_AUTOUPDATER",
     "ENABLE_TOOL_SEARCH",
-    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS",
+    "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+    "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
 ];
 
 /// The runtime-only lifecycle metadata, retained for the pump/stop layer.
@@ -169,6 +188,19 @@ pub fn prepare(
     environment: Environment,
     mark: SessionMark,
 ) -> io::Result<RuntimeLaunch> {
+    prepare_with_auth(plan, ctx, environment, &[], mark)
+}
+
+/// Same as [`prepare`], also admitting runtime auth environment variables declared by
+/// [`LaunchPlan::auth_env_names`]. Any name not declared by the adapter's plan is refused
+/// before writing any planned file.
+pub fn prepare_with_auth(
+    plan: LaunchPlan,
+    ctx: &LaunchContext,
+    environment: Environment,
+    auth_env: &[(OsString, OsString)],
+    mark: SessionMark,
+) -> io::Result<RuntimeLaunch> {
     let LaunchPlan {
         program,
         args,
@@ -181,6 +213,7 @@ pub fn prepare(
         stop,
         cleanup_after_exit,
         secret_env_names,
+        auth_env_names,
     } = plan;
     if stdio != Stdio::Piped {
         return Err(unsupported("PTY spawning is not implemented in this slice"));
@@ -195,6 +228,8 @@ pub fn prepare(
             "plan executable differs from the recorded runtime path",
         ));
     }
+    let declared_auth: Vec<&str> = auth_env_names.iter().map(EnvName::as_str).collect();
+    let environment = environment.with_declared_auth(auth_env, &declared_auth)?;
     let additions = env_add
         .into_iter()
         .map(|(name, value)| (name.as_str().into(), value.into()))

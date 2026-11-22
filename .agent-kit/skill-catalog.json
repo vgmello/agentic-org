@@ -1,12 +1,12 @@
 {
   "version": 1,
   "status": "ready",
-  "reviewed_by": "Codex lead01a1dd82-ffe6-7363-af94-6072c75de2d1; native boundary independently READY01a1e6ef-b253-7853-85fd-24d579b41d67, source handoff verified2026-11-17; docs reassessment claude session_015ExbMo",
-  "rationale": "F3c native composition uses existing credential/storage/recovery/release procedures and ADR0007/0009/0011/0012; no new framework/provider/auth/wire design. Root inspected actual full host manifest/lock diff and root-lock-inspection-1:158existing packages retain versions/sources/checksums,165total with7required tar0.4.46/flate2 1.1.11 transitive records; only existing org-host dependency record changes, retained exact hmac/org-release/cc1.11.1/ring0.17.14 edges. Root verified93owned hashes/1401nonowned inputs and exact build-script source/token pin; other guards unchanged. Refresh only2assessed evidence hashes. Existing security-boundaries, releaseverification ADR0009, protectedrecovery ADR0007/0011, Rust role and explicit active native-boundary/source-grant handoff cover actual source. No extra skill/role or new tool is needed; native ARC/late callback/source pin/sameconnection ACK and archive/runtime trust questions remain mandatory. Three exact missing registry/test/worker Arc<Office> caller paths are allowed under unchanged reviewed native composition, never a Shared selected-task shim.27launchcodec tests pass, native/worker builds fail until actual closure. Full checks/real native fixture/original-author/freshinitial/separatefinal acceptance and authentic physical/signing/REC1/existingHQ requirements remain. Prior rationale preserved in Git. Docs reassessment 2026-11-17 by Claude session_015ExbMo, three rounds: conflict fixes A-01..A-06; owner decisions in ADR0004 headless sessions/no browser terminal, ADR0013 stored sessions, ADR0014 acknowledgement classes, ADR0015 isolation modes and private agent home, ADR0016 no application-level encryption, ADR0017 macOS+Linux/containers, ADR0018 replaceable storage engine, ADR0019 office-coded task numbers (accepted in part); pre-release rule (no compatibility work before v1 ships); names web/agent-os; ADR0020 required asks; old tool, queue and legacy structures dropped. No new tool, role or stack. Code unchanged.",
+  "reviewed_by": "Codex lead01a1dd82 (F3c); Claude session_015ExbMo (docs 2026-11-17); Claude session_015ExbMnxeFeac1c16wAFWyh (UI manifest 2026-11-18); full earlier IDs at 34ca1855",
+  "rationale": "Merge of origin/v1 into v1-ui on 2026-11-19 changed AGENTS.md on both sides; this catalog hash is refreshed to the merged file only. No reassessment of the merged text is recorded yet: a project-capabilities reassessment is pending for the lead. Earlier rationales (origin/v1 docs 2026-11-17; v1-ui UI manifest 2026-11-18) are preserved in Git at origin/v1:.agent-kit/skill-catalog.json and HEAD:.agent-kit/skill-catalog.json.",
   "project_evidence": [
     {
       "path": ".agent-kit/project-roles/code-reviewer.md",
-      "sha256": "3a1126e9d29b1fbbc526f5290e8133d666a7edc8ef763d11168be8c8851bfcc5"
+      "sha256": "cddb511e8b74c37d520e2915eee4d023d85af66dc3769423d130825b32ee8682"
     },
     {
       "path": ".agent-kit/project-roles/codebase-scout.md",
@@ -18,15 +18,15 @@
     },
     {
       "path": ".agent-kit/project-roles/staff-engineer.md",
-      "sha256": "9df6019afd5837ba5e13c3658b47190f2edeb15701b29a2682a287b0794661ed"
+      "sha256": "cd2620176f20cb6ef01bc5418c2608c0dbd3e77e7975b822b2e6db968c59c00d"
     },
     {
       "path": ".agent-kit/project-skills/hq-creation-provider/SKILL.md",
-      "sha256": "554bb2c00ac92aeaec675a58e02f33c5a6fc1f5ad5a4f76f352f1fc80eb1b4b1"
+      "sha256": "8c415b1df618756743687c5f83cc6f2eea8292d362d519cf25af2340d67bea9d"
     },
     {
       "path": ".agent-kit/project-skills/kit-maintenance/SKILL.md",
-      "sha256": "c0343c5f725d6ea9ff0a75ad34003c14e3edd4bb0dcc1b1bc9ff53afe00ea2eb"
+      "sha256": "9034015870774e754825535ebd29dfc6093968278ac3fbbdad139d4a30e6139f"
     },
     {
       "path": ".agent-kit/project-skills/rust-workspace/SKILL.md",
@@ -70,31 +70,31 @@
     },
     {
       "path": ".codex/config.toml",
-      "sha256": "a1cdbc3c7a52ba6cb3d7bcd37e34f04a0c28564aa8595dbdad62b6f446fef4f3"
+      "sha256": "df51918b40eec9c98b07a642eb6dc9e983126710a6ed3793ec0b08076068ebdb"
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "79ba00c826c2dd5b4ceb3623fe686c598f2be8969000f5566f6dd7b008b05a6c"
+      "sha256": "5bf4698d44d5ab40ee0a93e15a65a968db70763dac3ca8d19d73dcfa4a1170b9"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "f59bf1404ad4e5bed6ae694790cd82ddcf039df7068582b1cfd5fec149e82ff4"
+      "sha256": "9efc935ff609dc7c8d3407b5778ef2afc64ed3835c7afe8dc91aa05f1addc136"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "2b0695362034836bff00b6b2129d941f80ada7f81eef63c51872b1c1289f284b"
+      "sha256": "a2fec1b5a9e2b60712fc22bf25cf95c45b60f3d5d3cd39909d50396fd4659300"
     },
     {
       "path": "Cargo.toml",
-      "sha256": "8263b161ef70997e168ab09ff8074ae276869044ff62957e9946be184d34c1da"
+      "sha256": "36f85448956fdfa043582f6176b11400ebafc8f3d2ba95dad16e00431b344f20"
     },
     {
       "path": "apps/agentic-org-office/Cargo.toml",
-      "sha256": "ec69bc81feb5874a133b99db211e8ec69637b76b750f53a7ab483dc97388051f"
+      "sha256": "c8ed6d020e51837564bc06e31c7947f48e76757c989651814591b64937cdc1ed"
     },
     {
       "path": "apps/agentic-org-ui/AGENTS.md",
-      "sha256": "9ddf8bf65a90042fdf9b7b5bbcba4cece92bac35331a517f21a1f215c4c8b58c"
+      "sha256": "03cfeaa96ee26e6d6bb54f01f381d450c1dc9a6543e0cedd52a6b3b126f45652"
     },
     {
       "path": "apps/agentic-org-ui/components.json",
@@ -102,7 +102,7 @@
     },
     {
       "path": "apps/agentic-org-ui/package.json",
-      "sha256": "a6a47bf87e5801b67f8b15a3f2c1d4f2a42bff5de1e7d538de9723d2d4ec1210"
+      "sha256": "d12adc9634b1abc5234eda191e924a53e69e3134c9ed534a95d1a2449b815aa1"
     },
     {
       "path": "apps/agentic-org-web/Cargo.toml",
@@ -118,15 +118,15 @@
     },
     {
       "path": "crates/org-host/Cargo.toml",
-      "sha256": "658a01df9a0297c3826f0297584053c4fb0596fb71f779dcc6420aab58c03b05"
+      "sha256": "061891a42710c09cc4ad53a3bc5d8dda3ee772f0405b14b6d857a1b462ddf0a3"
     },
     {
       "path": "crates/org-office-launch/Cargo.toml",
-      "sha256": "f98458710d9697445041863a31f18922e6afa6f5a4b81eb50e36dbdf225b19ca"
+      "sha256": "cc38c67f9cd514683ee8d06e578822cdf1cee41e2c82ca137be34a6a65e66e5c"
     },
     {
       "path": "crates/org-office/Cargo.toml",
-      "sha256": "c07d04241dc7d05649b37a5dd8cd48a20dde55b83d2d5f34859c2c960fd46729"
+      "sha256": "ec4da6f3181b139b23a9a426c3a6d365e2e4bab0fd5051898145250a5aaf7b90"
     },
     {
       "path": "crates/org-pki/Cargo.toml",
@@ -150,7 +150,7 @@
     },
     {
       "path": "docs/adr/0007-hq-creation-escrow.md",
-      "sha256": "4d245c2cb68fe3242c46a11da40621ddc78d9d5aa1a6f476224a2cb27418f36e"
+      "sha256": "6d4f62b3c6e3852be280eca8bdf861b34902308072eb4e09cb140b6c28081d2e"
     },
     {
       "path": "docs/adr/0008-gateway-macos-sandbox.md",
@@ -174,23 +174,23 @@
     },
     {
       "path": "docs/design/documentation-authority.md",
-      "sha256": "379ca93190007a8da2ef54a6a7645850b82c10e3a908739016211ec2fc37f8a0"
+      "sha256": "932125458dcb653db992316d154c2653187597aa7d49622b9c0c4254892b940c"
     },
     {
       "path": "docs/design/organization-data/01-organization-structure.md",
-      "sha256": "bf075c7126b9097253b19fd4bb43183d3c15de6663f862bdbc7379b5bdc242f9"
+      "sha256": "a58d5f7081499692e4d4feec31b99670f1f85ff4939b1c5f9a31fd745f3b2b39"
     },
     {
       "path": "docs/design/organization-data/16-recovery-and-office-continuity.md",
-      "sha256": "149365ade0686c43df89cd1dcae4b5a5598d63235ceb699a86da9ee91ea213e5"
+      "sha256": "50bc1ede7000f1d7b543a527ea176db70289d6e8caf67b1e659d5d9983b595fa"
     },
     {
       "path": "docs/design/organization-data/README.md",
-      "sha256": "f90935b8d6fd2d93d800bfaec3ce1c5fd9f148d89b4f9982b3556bc99a40b08b"
+      "sha256": "d78cffe89ab3a466d3443b0a8408524282102a458137bfb09408c47dcbffd3cf"
     },
     {
       "path": "docs/design/project-structure.md",
-      "sha256": "c857c6e75485c6a303389e8df3501f09e1fb22fe0cc2d4265c83cc771f8d660c"
+      "sha256": "8b8cdcec54228b541c82dc2a47dd54ba9d052de16bbd5ca43db325b425556305"
     },
     {
       "path": "docs/independent-delivery.md",
@@ -198,7 +198,7 @@
     },
     {
       "path": "docs/processes/branch-and-merge.md",
-      "sha256": "2ce376007e5c79e188a60fbe5aa7e77d7eb80f0982f4badb190ab3236763384b"
+      "sha256": "25034864d676a785b38accc80e8f5e5343e3a4c373221fbf9870230bf8510f52"
     },
     {
       "path": "rust-toolchain.toml",
@@ -321,7 +321,8 @@
         "crates/org-proto",
         "crates/org-sync-proto",
         "crates/org-office-launch",
-        "crates/org-runtime",
+        "crates/org-agent-runtime",
+        "crates/org-agent-runtime-claude",
         "crates/org-host-control",
         "crates/org-release"
       ],

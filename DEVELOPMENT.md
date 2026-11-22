@@ -86,7 +86,9 @@ regenerate `scripts/format-baseline.json` to make a failing check pass.
 
 Agents discover the committed skills in `.agents/skills`, among them shadcn-svelte,
 Microsoft's Playwright CLI and the Svelte skills `svelte-code-writer` and
-`svelte-core-bestpractices`. `skills-lock.json` records their sources. Follow the UI's
+`svelte-core-bestpractices`. `skills-lock.json` records their sources. `AGENTS.md`
+("Tools for agents") lists every tool agents need; they are required, and work does
+not start until `.agents/check-tools.sh` passes. Follow the UI's
 `AGENTS.md` for Svelte documentation and autofixer use.
 
 Both harnesses get the same tools from committed configuration:
@@ -94,9 +96,11 @@ Both harnesses get the same tools from committed configuration:
 | Tool | Claude Code | Codex |
 | --- | --- | --- |
 | Instructions | `CLAUDE.md` imports `AGENTS.md` | `AGENTS.md` |
+| Required-tools check (`.agents/check-tools.sh`) | session start and Edit/Write hooks in `.claude/settings.json` | run with `--codex` before work |
 | Repowise lookup (`starter_kit_context`) | `.mcp.json` | `.codex/config.toml` |
-| Svelte MCP, pinned `@sveltejs/mcp` | `svelte` plugin | `.codex/config.toml` |
-| Rust, TypeScript and Svelte language servers | LSP plugins in `.claude/settings.json` | `mcp-language-server` entries in `.codex/config.toml` |
+| Svelte MCP, pinned `@sveltejs/mcp` | `.mcp.json` | `.codex/config.toml` |
+| Skills (`.agents/skills`) | committed links in `.claude/skills` | `.agents/skills` |
+| Rust, TypeScript and Svelte language servers | LSP plugins in `.claude/settings.json` (Svelte: the repository's `svelte-lsp` plugin in `.claude/marketplace`) | `mcp-language-server` entries in `.codex/config.toml` |
 | Kit hooks (secret-file guard, format, verify, checkpoint) | `.claude/settings.json` | `.codex/hooks.json` |
 | Roles | `.claude/agents` | `.codex/agents` |
 
@@ -105,7 +109,7 @@ servers. Install the binaries both harnesses run:
 
 ```sh
 rustup component add rust-analyzer rust-src
-bun add --global --exact typescript@6.0.3 typescript-language-server svelte-language-server
+bun add --global --exact typescript@6.0.3 typescript-language-server@6.1.0 svelte-language-server@0.18.6
 go install github.com/isaacphi/mcp-language-server@v0.1.1
 python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path crates/org-proto/src/identity.rs
 ```
@@ -113,12 +117,6 @@ python3 .agent-kit/runtime/kit_context.py setup --query is_uuid_v7 --expect-path
 Codex needs `mcp-language-server`; Claude Code does not. Run `bun install` in
 `apps/agentic-org-ui` before the Svelte MCP starts. `bun run mcp:svelte` starts the
 same pinned server by hand.
-
-`.claude/cloud-setup.sh` is the setup script for a Claude Code cloud environment. It
-installs the pinned Node, Bun, Rust components, language servers, cargo-deny,
-gitleaks, Repowise, UI dependencies and Playwright browsers, and links
-`.agents/skills` into the ignored `.claude/skills`. Paste it into the environment's
-Setup script setting.
 
 The browser skill uses a separate global CLI so its Playwright dependency cannot
 change the application's test runner. Install its pinned version:
@@ -151,8 +149,6 @@ weighs Fitts's, Hick's and Jakob's laws, proximity and the isolation effect whil
 and runs a measured consistency audit before handing over. Product specs outrank it. The
 lead still owns the increment, file ownership and the review gates in `AGENTS.md`.
 
-The persona can consult the third-party UI/UX Pro Max skill when it is installed in the
-checkout (`.claude/skills/`, ignored by Git). It is optional and nothing depends on it.
-Installing it is a lead's decision: the installer adds six other, uninspected skills that
-must be removed, and whatever is left is offered to every Claude session in that checkout.
-The persona file gives the pinned command and the limits.
+The persona's third-party UI/UX Pro Max companion skill is disabled (owner, 2026-11-18): agents
+do not check for, install or use it. Its former instructions stay commented out in the persona
+file for reference.

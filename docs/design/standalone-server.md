@@ -44,7 +44,7 @@ and it never becomes HQ because its connection failed.
 
 | Executable | Role |
 | --- | --- |
-| `agentic-org` | The person's command line. `setup` creates the instance and prints the administrator's registration link; `admin reset` re-issues it or resets the administrator's password; `serve` runs the host: accounts, sessions, secrets, child supervision and update management. |
+| `agentic-org` | The person's command line. `setup` creates the instance and prints the administrator's registration link; `admin reset` re-issues it or resets the administrator's password; `admin tls set` replaces an `https` instance's TLS pair (Linux host design 3.4); `serve` runs the host: accounts, sessions, secrets, child supervision and update management. |
 | `agentic-org-web` | Browser HTTPS, sign-in, static assets, API responses and live events. No keys and no database. |
 | `agentic-org-office` | One HQ or satellite office: every domain rule, the one data writer, and the supervisor of its agents. |
 | `agent-os` | The agent's command line, with employee-scoped authority. |
@@ -157,8 +157,10 @@ secret, so setup never issues a second link. The caller is admitted like every
 host's and the signing check (retained identifier
 `com.vgmello.agentic-org.org-office-host`, compiled team and hardened-runtime checks on
 macOS; the debug executable allowance is debug-only). The secret travels only in the
-reply. The setup adapter admits loopback HTTP without a TLS pair; a supplied TLS pair
-is refused until the host certificate verifier exists.
+reply. The setup adapter admits loopback HTTP and plain HTTP on a published port
+without a TLS pair; for HTTPS the instance makes its own certificate at its first start
+or imports a pair the setup file supplies, verified by the host's certificate verifier
+([Linux host design](linux-host.md#34-service-lifecycle), ADR-0017 decision 10).
 
 ## 3. Instance selection and storage
 
@@ -196,11 +198,11 @@ rebuildable caches under `runtime/<office-id>/`:
 <data-root>/<organization-id>/
 ├── durable/                  # sources: back up all of it; never removed by cleanup
 │   ├── state/                # organization Git files
-│   ├── journal/              # acknowledged unpublished changes
 │   ├── authority/            # numbering, placement generations, permits (06, 11)
 │   ├── accounting/           # usage streams and checkpoints (10)
 │   ├── messaging/            # protected envelopes and attachments (15)
-│   ├── recovery/             # receipts, streams, journals, snapshots, cleanup (16)
+│   ├── recovery/             # receipts, streams, snapshots, cleanup (16), and each office's
+│   │                         #   acceptance journal: offices/<office-id>/journals/acceptance/
 │   ├── budgets/              # policies, periods, events, extensions and holds (17)
 │   ├── private/              # HQ only: private task notes (05)
 │   ├── local/offices/        # private local bindings and agents' private homes, never Git
@@ -212,6 +214,11 @@ rebuildable caches under `runtime/<office-id>/`:
         ├── projects/<project-id>/tasks/<task-id>/repositories/<repository-id>/
         └── tasks/<task-id>/repositories/<repository-id>/
 ```
+
+The acceptance journal holds every acknowledged change until its files are written
+and flushed; there is no separate `journal/` tree. The office store writes it at
+`durable/recovery/offices/<office-id>/journals/acceptance/<journal-incarnation>/`
+([office store](office-store.md) section 1; `crates/org-store/src/journal.rs`).
 
 Nothing under `durable/` sits inside a directory that cache cleanup removes; cleanup
 is limited to `runtime/<office-id>/`. Organization Git is remote, with an explicit
@@ -281,7 +288,10 @@ or issuing a link. Existing satellite-only state is never converted into HQ.
 `setup --non-interactive --config <file>` takes a strict JSON object with
 `version: 1`, an absolute `root` and `listen` (the host-control `ListenConfig`). It
 holds no login, password, organization, TLS private key, satellite role or extra
-property, apart from `service` (`registered` or `foreground`) and `credentials` (the
+property, apart from `service` (`registered` or `foreground`), `tls` (with `https`
+only: the absolute paths of a supplied PEM certificate chain and key, which setup
+verifies before any change and the host imports at its first start; never the key
+itself) and `credentials` (the
 absolute directory of the Linux credential store, required on Linux;
 [Linux host design](linux-host.md#32-credential-provider)). Configuration is at most 64 KiB. Missing required input fails without a
 prompt. Noninteractive setup prints no link; its status reports

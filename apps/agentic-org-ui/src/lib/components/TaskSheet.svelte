@@ -200,7 +200,7 @@
 		const select = document.getElementById('task-assignee') as HTMLSelectElement | null;
 		if (select && s) select.value = s.assignee_id ?? '';
 	}
-	const field = 'w-full rounded-md bg-gray-800 px-2 py-2 text-sm/6 text-white outline-1 -outline-offset-1 outline-white/10 focus-visible:outline-2 focus-visible:outline-indigo-400';
+	const field = 'w-full rounded-md bg-surface px-2 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus';
 </script>
 
 <Sheet bind:open>
@@ -217,8 +217,8 @@
 					<Input id="task-title" bind:value={title} maxlength={WORK_LIMITS.title * 2} disabled={busy} autocomplete="off" onblur={() => saveField('Title')} />
 				</div>
 
-				{#if fromRequest}<p class="text-sm/6 text-gray-300 [overflow-wrap:anywhere]" data-testid="task-from-request">From <a class="underline hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-400" href="/work?request={fromRequest.id}" onclick={() => (open = false)}>{fromRequest.ref} · {fromRequest.title}</a></p>{/if}
-				{#if fixed.length > 0}<p class="text-sm/6 text-gray-300" data-testid="task-fixes">Fixes {fixed.map((b) => `${b.ref} · ${b.title}`).join(', ')}</p>{/if}
+				{#if fromRequest}<p class="text-sm/6 text-fg-secondary [overflow-wrap:anywhere]" data-testid="task-from-request">From <a class="underline hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus" href="/work?request={fromRequest.id}" onclick={() => (open = false)}>{fromRequest.ref} · {fromRequest.title}</a></p>{/if}
+				{#if fixed.length > 0}<p class="text-sm/6 text-fg-secondary" data-testid="task-fixes">Fixes {fixed.map((b) => `${b.ref} · ${b.title}`).join(', ')}</p>{/if}
 
 				<div class="grid gap-4 sm:grid-cols-2">
 					<div class="space-y-2">
@@ -237,10 +237,10 @@
 				</div>
 
 				{#if s.status === 'blocked' && s.blocked_reason}
-					<p class="rounded-md bg-amber-500/10 px-3 py-2 text-sm/6 text-amber-100" data-testid="blocked-reason">Blocked: {s.blocked_reason}</p>
+					<p class="rounded-md bg-warning-emphasis/10 px-3 py-2 text-sm/6 text-warning-text-stronger" data-testid="blocked-reason">Blocked: {s.blocked_reason}</p>
 				{/if}
 				{#if pending === 'blocked'}
-					<div class="space-y-2 rounded-md bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10">
+					<div class="space-y-2 rounded-md bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line">
 						<Label for="task-blocked-reason">What is it blocked on?</Label>
 						<Input id="task-blocked-reason" bind:value={blockedReason} maxlength={WORK_LIMITS.blockedReason * 2} autocomplete="off" />
 						<div class="flex gap-x-2">
@@ -250,7 +250,7 @@
 					</div>
 				{/if}
 				{#if pending === 'done_anyway'}
-					<div class="space-y-2 rounded-md bg-white/5 p-3 outline-1 -outline-offset-1 outline-white/10">
+					<div class="space-y-2 rounded-md bg-surface-raised p-3 outline-1 -outline-offset-1 outline-line">
 						<Label for="task-anyway">Why is it done with required steps left?</Label>
 						<Input id="task-anyway" bind:value={anywayReason} autocomplete="off" />
 						<div class="flex gap-x-2">
@@ -260,7 +260,7 @@
 					</div>
 				{/if}
 				{#if s.done_anyway && item.done_anyway_detail}
-					<p class="text-sm/6 text-gray-300" data-testid="done-anyway">Done anyway: {item.done_anyway_detail.reason}</p>
+					<p class="text-sm/6 text-fg-secondary" data-testid="done-anyway">Done anyway: {item.done_anyway_detail.reason}</p>
 				{/if}
 
 				<div class="space-y-2">
@@ -270,7 +270,7 @@
 						{#each people as p (p.member.id)}<option value={p.member.id}>{p.label}</option>{/each}
 					</select>
 					{#if assignPending && assignWarning(snapshot, assignPending)}
-						<div class="space-y-2 rounded-md bg-amber-500/10 p-3 text-sm/6 text-amber-100" role="alert" data-testid="assign-warning">
+						<div class="space-y-2 rounded-md bg-warning-emphasis/10 p-3 text-sm/6 text-warning-text-stronger" role="alert" data-testid="assign-warning">
 							<p>{assignWarning(snapshot, assignPending)}</p>
 							<div class="flex gap-x-2"><Button size="sm" disabled={busy} onclick={confirmAssign}>Assign anyway</Button><Button size="sm" variant="outline" onclick={cancelAssign}>Cancel</Button></div>
 						</div>
@@ -281,37 +281,37 @@
 				<div class="space-y-2">
 					<Label for="task-dod">Definition of done</Label>
 					<textarea id="task-dod" bind:value={definitionOfDone} rows="2" maxlength={WORK_LIMITS.definitionOfDone * 2} disabled={busy} placeholder="The goal the agent works to" class={field} onblur={() => saveField('Definition of done')}></textarea>
-					<p class="h-5 text-xs/5 text-gray-400" role="status" data-testid="saved">{saved}</p>
+					<p class="h-5 text-xs/5 text-fg-muted" role="status" data-testid="saved">{saved}</p>
 				</div>
 
 				<section class="space-y-2" aria-labelledby="task-checklist">
-					<h3 id="task-checklist" class="text-sm/6 font-semibold text-white">Checklist {#if item.checklist.length > 0}<span class="font-normal text-gray-400">{s.checklist.done} of {s.checklist.total}</span>{/if}</h3>
-					<ul class="divide-y divide-white/5 rounded-lg bg-white/5 outline-1 -outline-offset-1 outline-white/10" data-testid="checklist">
+					<h3 id="task-checklist" class="text-sm/6 font-semibold text-fg">Checklist {#if item.checklist.length > 0}<span class="font-normal text-fg-muted">{s.checklist.done} of {s.checklist.total}</span>{/if}</h3>
+					<ul class="divide-y divide-line-subtle rounded-lg bg-surface-raised outline-1 -outline-offset-1 outline-line" data-testid="checklist">
 						{#each item.checklist as step (step.id)}
 							<li class="flex items-center gap-x-3 px-3 py-2 text-sm/6">
 								<Checkbox checked={step.done} disabled={busy || !!step.task_id} aria-label={step.text} onCheckedChange={(on) => change({ method: 'checklist.check', step_id: step.id, done: on === true }  )} />
-								<span class="min-w-0 flex-1 [overflow-wrap:anywhere] {step.done ? 'text-gray-400 line-through' : 'text-white'}">{step.text}</span>
+								<span class="min-w-0 flex-1 [overflow-wrap:anywhere] {step.done ? 'text-fg-muted line-through' : 'text-fg'}">{step.text}</span>
 								{#if step.required}<Badge variant="secondary">Required</Badge>{/if}
-								<button type="button" class="rounded p-1 text-gray-400 hover:text-white focus-visible:outline-2 focus-visible:outline-indigo-400" aria-label={`Remove step ${step.text}`} disabled={busy} onclick={() => change({ method: 'checklist.remove', step_id: step.id, expected_version: step.version }  )}><Trash2 class="size-4" aria-hidden="true" /></button>
+								<button type="button" class="rounded p-1 text-fg-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-focus" aria-label={`Remove step ${step.text}`} disabled={busy} onclick={() => change({ method: 'checklist.remove', step_id: step.id, expected_version: step.version }  )}><Trash2 class="size-4" aria-hidden="true" /></button>
 							</li>
 						{:else}
-							<li class="px-3 py-2 text-sm/6 text-gray-400">No steps yet.</li>
+							<li class="px-3 py-2 text-sm/6 text-fg-muted">No steps yet.</li>
 						{/each}
 					</ul>
 					<form class="flex gap-x-2" onsubmit={addStep}>
 						<Input aria-label="New step" placeholder="Add a step" bind:value={newStep} maxlength={WORK_LIMITS.stepText * 2} disabled={busy} autocomplete="off" />
-						<label class="flex shrink-0 items-center gap-x-1.5 text-sm/6 text-gray-300"><Checkbox bind:checked={newRequired} aria-label="Required" /> Required</label>
+						<label class="flex shrink-0 items-center gap-x-1.5 text-sm/6 text-fg-secondary"><Checkbox bind:checked={newRequired} aria-label="Required" /> Required</label>
 						<Button type="submit" variant="outline" disabled={busy || newStep.trim() === ''}>Add step</Button>
 					</form>
 				</section>
 
-				<p class="text-sm/6 text-gray-400" data-testid="task-time">{timeBlock(item.time)}</p>
+				<p class="text-sm/6 text-fg-muted" data-testid="task-time">{timeBlock(item.time)}</p>
 
-				{#if error}<p class="text-sm/6 text-red-400 [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
+				{#if error}<p class="text-sm/6 text-danger [overflow-wrap:anywhere]" role="alert">{error}</p>{/if}
 
-				<div class="border-t border-white/10 pt-4">
+				<div class="border-t border-line pt-4">
 					{#if confirmDelete}
-						<p class="text-sm/6 text-gray-300">Delete {taskRef(s)}? Its history stays and its number is never reused.</p>
+						<p class="text-sm/6 text-fg-secondary">Delete {taskRef(s)}? Its history stays and its number is never reused.</p>
 						<div class="mt-2 flex gap-x-2">
 							<Button variant="destructive" size="sm" disabled={busy} onclick={remove}>Delete task</Button>
 							<Button variant="outline" size="sm" onclick={() => (confirmDelete = false)}>Keep</Button>
@@ -322,7 +322,7 @@
 				</div>
 			</div>
 		{:else if error}
-			<p class="px-4 text-sm/6 text-red-400" role="alert">{error}</p>
+			<p class="px-4 text-sm/6 text-danger" role="alert">{error}</p>
 		{/if}
 	</SheetContent>
 </Sheet>

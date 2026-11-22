@@ -228,8 +228,10 @@ impl Tree {
                 data_root: data_root.as_fd(),
                 mount_point_required,
                 expect_items,
+                instance_id: None,
             },
             &STORES,
+            &[],
         )
         .map(|root| Opened { root })
     }
@@ -248,8 +250,10 @@ impl Tree {
                 data_root: self.data_root().as_fd(),
                 mount_point_required: false,
                 expect_items,
+                instance_id: None,
             },
             stores,
+            &[],
         )
         .map(|root| Opened { root })
     }
@@ -258,9 +262,82 @@ impl Tree {
         self.open_with(path, &self.data_root(), false, false)
     }
 
+    /// Opens the release directory at `path` as [`Tree::open_with`] does, for a host whose
+    /// other persistent data is in the directories `account_data`.
+    fn open_apart(
+        &self,
+        path: &Path,
+        data_root: &File,
+        mount_point_required: bool,
+        account_data: &[&File],
+    ) -> Result<Opened, CredentialError> {
+        let account_data: Vec<_> = account_data.iter().map(|file| file.as_fd()).collect();
+        release_directory_below(
+            &self.base,
+            &ReleaseDirectory {
+                path,
+                data_root: data_root.as_fd(),
+                mount_point_required,
+                expect_items: false,
+                instance_id: None,
+            },
+            &STORES,
+            &account_data,
+        )
+        .map(|root| Opened { root })
+    }
+
     fn open_expecting_items(&self, path: &Path) -> Result<Opened, CredentialError> {
         self.open_with(path, &self.data_root(), false, true)
     }
+}
+
+#[test]
+fn an_unmarked_store_with_credentials_cannot_be_claimed() {
+    let Some(tree) = Tree::accepted() else {
+        return;
+    };
+    let path = tree.dir("secrets", 0o700);
+    let data_root = tree.data_root();
+    let location = ReleaseDirectory {
+        path: &path,
+        data_root: data_root.as_fd(),
+        mount_point_required: false,
+        expect_items: false,
+        instance_id: Some("fixture-instance"),
+    };
+    let probe = || {
+        check_unused(
+            Walk {
+                start: &tree.base,
+                root: open_absolute(&tree.base).unwrap(),
+                names: vec![OsStr::new("secrets")],
+            },
+            &location,
+            &STORES,
+            &[],
+        )
+    };
+    probe().unwrap();
+    assert!(listing(&path).is_empty());
+
+    let keys = path.join("office-keys");
+    mkdir(&keys, 0o700);
+    let key = keys.join("hq.key");
+    fs::write(&key, b"previous key").unwrap();
+    chmod(&key, 0o600);
+    assert!(matches!(
+        probe(),
+        Err(CredentialError::Root(RootRefusal {
+            rule: RootRule::CredentialsPresent,
+            ..
+        }))
+    ));
+    let result =
+        release_directory_below(&tree.base, &location, &STORES, &[]).map(|root| Opened { root });
+    assert_eq!(refusal(result), (RootRule::CredentialsPresent, keys));
+    assert_eq!(listing(&path), ["office-keys", "office-keys/hq.key"]);
+    assert_eq!(fs::read(key).unwrap(), b"previous key");
 }
 
 /// Opens `path` from `/`, through the contract, with `data_root` as the data root.
@@ -275,6 +352,7 @@ fn from_filesystem_root(
             data_root: data_root.as_fd(),
             mount_point_required: false,
             expect_items,
+            instance_id: None,
         },
         &STORES,
     )
@@ -1018,14 +1096,18 @@ fn a_required_mount_point_refuses_an_ordinary_directory_and_the_probe_knows_moun
     );
 }
 
-/// The other way of the mount-point rule: a store that is the root of a mount is
-/// accepted when one is required, next to a data root on a volume of its own (where a
-/// mount point is required the store may not be in the data root's volume, and a data
-/// root on the machine's own disk has all of that disk as its volume). Making a mount
-/// takes root (and a container that allows it); otherwise the reason is printed and
-/// the probe test above, with the decision's tests, carries the rule.
+/// A store that is the root of a bind mount of a directory on the machine's own disk,
+/// next to a data root on a volume of its own. Where a mount point is required it is
+/// refused as mounted twice: the disk's own mount shows the same directory, so its keys
+/// can be reached outside the store (X5 final review). In a container only the volume's
+/// mount shows it, and LNX-2 starts the real image that way, with "credentials missing"
+/// for an empty volume (its step 7). Where none is required the same store opens, and the
+/// empty-store rule holds. Making a mount takes root (and a container that allows it);
+/// otherwise the reason is printed and the probe test above, with the decision's tests,
+/// carries the rule.
 #[test]
-fn a_required_mount_point_accepts_a_store_that_is_the_root_of_a_mount() {
+fn a_bind_mounted_store_on_the_machines_disk_is_refused_as_mounted_twice_where_a_mount_point_is_required(
+) {
     if !is_root() {
         println!(
             "skipped: only root can mount, and no mount root here is a directory this user \
@@ -1065,14 +1147,20 @@ fn a_required_mount_point_accepts_a_store_that_is_the_root_of_a_mount() {
             return;
         }
     };
-    // An empty mounted volume with records: credentials missing, as after a replaced
-    // container with a new volume.
+    // Where a mount point is required: the disk's own mount shows the store too.
+    // (Kept as a value, so that the assertions below come after the unmount.)
+    let required = match tree.open_with(&store, &tree.data_root(), true, true) {
+        Err(CredentialError::Root(RootRefusal { rule, path })) => Some((rule, path)),
+        _ => None,
+    };
+    // An empty store with records: credentials missing, as after a replaced container
+    // with a new volume.
     let first = tree
-        .open_with(&store, &tree.data_root(), true, true)
+        .open_with(&store, &tree.data_root(), false, true)
         .map(|_| ())
         .map_err(|error| error.to_string());
     let second = tree
-        .open_with(&store, &tree.data_root(), true, false)
+        .open_with(&store, &tree.data_root(), false, false)
         .map(|root| {
             root.store(HOST_SECRETS)
                 .unwrap()
@@ -1081,13 +1169,16 @@ fn a_required_mount_point_accepts_a_store_that_is_the_root_of_a_mount() {
         })
         .map_err(|error| error.to_string());
     let third = tree
-        .open_with(&store, &tree.data_root(), true, true)
+        .open_with(&store, &tree.data_root(), false, true)
         .map(|_| ())
         .map_err(|error| error.to_string());
     // Unmount before any assertion, so that a failure leaves no mount behind.
     // SAFETY: a NUL-terminated path; `MNT_DETACH` cannot block on a busy mount.
     let unmounted = unsafe { libc::umount2(target.as_ptr(), libc::MNT_DETACH) };
     assert_eq!(unmounted, 0);
+    let (rule, named) = required.expect("a store mounted twice was not refused");
+    assert_eq!(rule, RootRule::MountedElsewhere);
+    assert_ne!(named, store, "the store's own mount was named");
     assert!(
         first.is_err_and(|text| text.contains("credentials missing")),
         "an empty mounted store with records was not refused as missing"
@@ -1095,7 +1186,8 @@ fn a_required_mount_point_accepts_a_store_that_is_the_root_of_a_mount() {
     assert_eq!(second, Ok(()));
     assert_eq!(third, Ok(()));
     println!(
-        "accepted as a mount root: a bind mount at {}",
+        "a bind mount at {} on this disk: refused as mounted twice where a mount point is \
+         required, and opened where none is",
         store.display()
     );
 }
@@ -1196,8 +1288,10 @@ fn a_second_host_on_the_same_store_is_refused_until_the_first_has_dropped_every_
                 data_root: data_root.as_fd(),
                 mount_point_required: false,
                 expect_items: false,
+                instance_id: None,
             },
             &STORES,
+            &[],
         )
         .map(|root| Opened { root });
         assert_eq!(refusal(second), (RootRule::InUse, store));
@@ -1308,12 +1402,13 @@ fn a_lock_made_under_a_mask_that_takes_the_owners_bits_is_usable_and_an_old_one_
             data_root: data_root.as_fd(),
             mount_point_required: false,
             expect_items: false,
+            instance_id: None,
         };
         // SAFETY: this exact-test child runs nothing else.
         unsafe { libc::umask(0o277) };
         // Everything this open makes gets its mode set, whatever the mask is: the
         // root's lock, the item stores' directories and their locks, and an item.
-        let opened = release_directory_below(&base, &location, &STORES)
+        let opened = release_directory_below(&base, &location, &STORES, &[])
             .map(|root| Opened { root })
             .unwrap();
         let keys = opened.store(OFFICE_KEYS).unwrap();
@@ -1324,9 +1419,11 @@ fn a_lock_made_under_a_mask_that_takes_the_owners_bits_is_usable_and_an_old_one_
             &base,
             &ReleaseDirectory {
                 expect_items: true,
+                instance_id: None,
                 ..location
             },
             &STORES,
+            &[],
         )
         .map(|root| Opened { root })
         .unwrap();
@@ -1602,6 +1699,7 @@ fn a_refusal_names_the_directory_and_the_rule_and_a_location_prints_no_path() {
         data_root: data_root.as_fd(),
         mount_point_required: true,
         expect_items: false,
+        instance_id: None,
     };
     let printed = format!("{location:?}");
     assert!(printed.contains("mount_point_required: true"), "{printed}");
@@ -1850,7 +1948,7 @@ fn a_directory_is_placed_in_its_filesystem_by_the_real_mount_table() {
     mkdir(&tree.base.join("a"), 0o700);
     mkdir(&tree.base.join("a/b with space"), 0o700);
     let at =
-        |path: &Path| place(File::open(path).unwrap().as_fd(), &table).map(|(place, _mount)| place);
+        |path: &Path| place(File::open(path).unwrap().as_fd(), &table).map(|(place, _, _)| place);
     let base = at(&tree.base).unwrap();
     let below = at(&tree.base.join("a/b with space")).unwrap();
     assert_eq!(below.filesystem, base.filesystem);
@@ -1888,7 +1986,7 @@ fn a_directory_is_placed_in_its_filesystem_by_the_real_mount_table() {
     assert_eq!(place(held.as_fd(), &table).unwrap().0.path, expected);
     // The mount a directory is in comes with its place: what it shows is the top of
     // the subtree the directory is in, and the directory's place is inside that.
-    let (placed, mount) = place(File::open(&tree.base).unwrap().as_fd(), &table).unwrap();
+    let (placed, mount, _) = place(File::open(&tree.base).unwrap().as_fd(), &table).unwrap();
     let volume = mounts::shown(&mount).unwrap();
     assert_eq!(volume.filesystem, placed.filesystem);
     assert!(placed.path.starts_with(&volume.path));
@@ -2033,7 +2131,9 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
 
     // 4. Two volumes, as a container has them: a bind of one directory where the
     //    data is, a bind of another where the secrets are, the instance's root a
-    //    directory inside the data volume. Accepted, as a mount point and otherwise.
+    //    directory inside the data volume. Accepted where no mount point is required.
+    //    As a mount point it is refused here, as it would not be in a container: this
+    //    machine's own mount of the disk shows the secrets volume's directory too.
     let data_volume = tree.dir("data-volume", 0o700);
     mkdir(&data_volume.join("instance"), 0o700);
     let data_mount = tree.dir("container-data", 0o700);
@@ -2046,8 +2146,11 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
     let Some(fifth) = mounted(&volume, &secrets) else {
         return;
     };
-    drop(tree.open_with(&secrets, &instance, false, false).unwrap());
-    let opened = tree.open_with(&secrets, &instance, true, false).unwrap();
+    assert_eq!(
+        refusal(tree.open_with(&secrets, &instance, true, false)).0,
+        RootRule::MountedElsewhere
+    );
+    let opened = tree.open_with(&secrets, &instance, false, false).unwrap();
     opened
         .store(OFFICE_KEYS)
         .unwrap()
@@ -2111,6 +2214,78 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
     );
     drop((top, instance, secrets_bound, data_bound));
 
+    // 4b. The data root on a volume of its own, mounted inside the account's data volume
+    //     (`-v D:/data -v I:/data/instance -v D/secrets:/secrets`): the store is apart from
+    //     the instance's volume, and every key is still in `D`, which holds the account's
+    //     records. Judged against the records as well, it is refused for that volume
+    //     (X5 review, fourth round, P1).
+    let outer = tree.dir("outer-volume", 0o700);
+    mkdir(&outer.join("instance"), 0o700);
+    mkdir(&outer.join("records"), 0o700);
+    mkdir(&outer.join("secrets"), 0o700);
+    let inner_volume = tree.dir("instance-volume", 0o700);
+    let container_data = tree.dir("container-data-3", 0o700);
+    let container_secrets = tree.dir("container-secrets-3", 0o700);
+    let Some(outer_bound) = mounted(&outer, &container_data) else {
+        return;
+    };
+    let Some(inner_bound) = mounted(&inner_volume, &container_data.join("instance")) else {
+        return;
+    };
+    let Some(secrets_bound) = mounted(&outer.join("secrets"), &container_secrets) else {
+        return;
+    };
+    let instance = File::open(container_data.join("instance")).unwrap();
+    let records = File::open(container_data.join("records")).unwrap();
+    // Against the instance's own volume alone the earlier rules pass it (that was the
+    // gap); the data volume's own mount shows it, so it is refused for that now.
+    assert_eq!(
+        refusal(tree.open_apart(&container_secrets, &instance, true, &[])).0,
+        RootRule::MountedElsewhere
+    );
+    assert_eq!(
+        refusal(tree.open_apart(&container_secrets, &instance, true, &[&records])),
+        (RootRule::AccountData, container_secrets.clone())
+    );
+    // Both refusals come before the store's lock: nothing is made in it.
+    assert!(listing(&outer.join("secrets")).is_empty());
+    drop((records, instance, secrets_bound, inner_bound, outer_bound));
+
+    // 4c. The store mounted again inside the data root (`mount --bind credentials
+    //     data/extra`), and a folder of it there: refused, naming that mount, and nothing
+    //     is made. Mounted again outside the data, it is accepted where no mount point is
+    //     required (X5 final review; the mount-point case is the mount table's, in
+    //     mounts.rs: here this machine's own mount of the disk shows every directory).
+    let keys = tree.dir("keys-volume", 0o700);
+    mkdir(&keys.join("office-keys"), 0o700);
+    let extra = tree.data.join("extra");
+    mkdir(&extra, 0o700);
+    let Some(again_inside) = mounted(&keys, &extra) else {
+        return;
+    };
+    assert_eq!(
+        refusal(tree.open(&keys)),
+        (RootRule::MountedInData, extra.clone())
+    );
+    drop(again_inside);
+    let part = tree.data.join("part");
+    mkdir(&part, 0o700);
+    let Some(part_inside) = mounted(&keys.join("office-keys"), &part) else {
+        return;
+    };
+    assert_eq!(
+        refusal(tree.open(&keys)),
+        (RootRule::MountedInData, part.clone())
+    );
+    drop(part_inside);
+    assert_eq!(listing(&keys), ["office-keys"]);
+    let beside = tree.dir("beside", 0o700);
+    let Some(again_outside) = mounted(&keys, &beside) else {
+        return;
+    };
+    drop(tree.open(&keys).unwrap());
+    drop(again_outside);
+
     // 5. A mount whose directory was deleted: where it is cannot be said, so it is
     //    refused, not assumed to be elsewhere.
     let gone = tree.dir("gone", 0o700);
@@ -2131,8 +2306,43 @@ fn a_bind_mount_cannot_hide_a_store_inside_the_data_root_or_the_reverse() {
     drop(sixth);
     println!(
         "bind mounts judged on a real kernel: inside, reverse, alias, two volumes, secrets \
-         in the data volume, deleted ({})",
+         in the data volume, the store mounted again, deleted ({})",
         tree.base.display()
+    );
+}
+
+/// X5 review, fourth round (P1): the account's other persistent data (its records) is kept
+/// apart from the store as the data root is. A store inside the records' directory, or one
+/// that contains it, is refused; without the records named it would have been accepted.
+#[test]
+fn a_store_that_shares_a_directory_with_the_accounts_records_is_refused() {
+    let Some(tree) = Tree::accepted() else { return };
+    let records = tree.dir("records", 0o700);
+    let inside = records.join("credentials");
+    mkdir(&inside, 0o700);
+    let held = File::open(&records).unwrap();
+    drop(
+        tree.open_apart(&inside, &tree.data_root(), false, &[])
+            .unwrap(),
+    );
+    fs::remove_file(inside.join(".lock")).unwrap();
+    assert_eq!(
+        refusal(tree.open_apart(&inside, &tree.data_root(), false, &[&held])),
+        (RootRule::AccountData, inside.clone())
+    );
+    assert!(listing(&inside).is_empty(), "something was made");
+    let outer = tree.dir("outer", 0o700);
+    mkdir(&outer.join("records"), 0o700);
+    let contained = File::open(outer.join("records")).unwrap();
+    assert_eq!(
+        refusal(tree.open_apart(&outer, &tree.data_root(), false, &[&contained])),
+        (RootRule::AccountData, outer.clone())
+    );
+    // Apart from both, it opens.
+    let apart = tree.dir("credentials", 0o700);
+    drop(
+        tree.open_apart(&apart, &tree.data_root(), false, &[&held, &contained])
+            .unwrap(),
     );
 }
 
@@ -2222,6 +2432,7 @@ fn the_directories_a_deployment_names_are_judged_as_its_host_judges_them() {
         data_root: data.as_fd(),
         mount_point_required: true,
         expect_items: false,
+        instance_id: None,
     };
     match contract(location, &STORES) {
         Ok(opened) => {
@@ -2235,6 +2446,7 @@ fn the_directories_a_deployment_names_are_judged_as_its_host_judges_them() {
             let again = contract(
                 ReleaseDirectory {
                     expect_items: true,
+                    instance_id: None,
                     ..location
                 },
                 &STORES,
