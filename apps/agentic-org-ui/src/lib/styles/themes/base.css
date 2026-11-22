@@ -123,6 +123,87 @@
 	--exec-nav-dot: var(--tone-warn);
 	--exec-nav-dot-halo: rgba(251, 191, 36, 0.18);
 	--exec-nav-dot-ring: #161f2d;
+
+	/* Executive layout & density tokens (carded defaults for Ocean & Classic; overridden by Report) */
+	--exec-page-max-w: 1260px;
+	--exec-page-gap: 1.5rem;
+	--exec-hero-align: center;
+	--exec-hero-pad-b: 0px;
+	--exec-hero-border: 0px solid transparent;
+	--exec-h1-weight: 600;
+	--exec-h1-tracking: -0.03em;
+	--exec-h1-em-decoration: none;
+	--exec-h1-em-warn: var(--exec-warn);
+	--exec-h1-em-calm: var(--exec-accent-ink);
+	--exec-h1-em-ok: var(--exec-ok);
+	--exec-h1-em-bad: var(--exec-bad);
+	--exec-h1-em-ul-warn: transparent;
+	--exec-h1-em-ul-calm: transparent;
+	--exec-h1-em-ul-ok: transparent;
+	--exec-h1-em-ul-bad: transparent;
+
+	--exec-section-head-display: none;
+	--exec-section-gap: 1rem;
+	--exec-stage-gap: 1.25rem;
+	--exec-section-border: 0px solid transparent;
+	--exec-kpi-pad-y: 0px;
+	--exec-section-pad-y: 0px;
+	--exec-time-pad: 1.25rem;
+	--exec-col-divider: 0px solid transparent;
+
+	--exec-panel-bg: var(--exec-surface);
+	--exec-panel-bg-hover: var(--exec-surface-hi);
+	--exec-panel-blur: var(--exec-blur);
+	--exec-panel-shadow: var(--exec-shadow);
+	--exec-panel-shadow-hover: var(--exec-shadow-hi);
+	--exec-panel-radius: 16px;
+
+	--exec-pillar-pad: 1.125rem;
+	--exec-pillar-pad-sm: 1.125rem;
+	--exec-pillar-edge-pad: 1.125rem;
+	--exec-kpi-num-size: 1.625rem;
+	--exec-kpi-num-lh: 1.1;
+	--exec-kpi-num-weight: 650;
+	--exec-kpi-num-tracking: -0.03em;
+
+	--exec-bar-height: 5px;
+	--exec-bar-radius: 999px;
+	--exec-time-bar-height: 10px;
+	--exec-time-bar-radius: 999px;
+
+	--exec-pill-radius: 999px;
+	--exec-pill-ring-ok: inset 0 0 0 1px var(--exec-ok-ring);
+	--exec-pill-ring-warn: inset 0 0 0 1px var(--exec-warn-ring);
+	--exec-pill-ring-bad: inset 0 0 0 1px var(--exec-bad-ring);
+	--exec-pill-ring-muted: inset 0 0 0 1px var(--exec-border);
+
+	--exec-spot-accent-display: block;
+	--exec-spot-pad-sm: 1.25rem;
+	--exec-spot-pad-md: 1.5rem;
+	--exec-spot-pad-xl: 1.5rem;
+	--exec-brief-pad: 1.25rem;
+	--exec-brief-pad-sm: 1.25rem;
+	--exec-memo-bg: var(--exec-cos-bg);
+	--exec-memo-shadow: inset 3px 0 0 var(--exec-cos-rule), inset 0 0 0 1px var(--exec-cos-border);
+	--exec-memo-radius: 12px;
+	--exec-memo-pad: 1rem;
+	--exec-memo-gap: 0.875rem;
+	--exec-memo-item-py: 0px;
+	--exec-memo-first-pt: 0px;
+
+	--exec-lenses-radius: 8px;
+	--exec-lenses-shadow: inset 0 0 0 1px var(--exec-border);
+	--exec-sm-radius: 6px;
+	--exec-ctrl-radius: 8px;
+	--exec-inset-radius: 12px;
+
+	--exec-proj-pad: 1.25rem;
+	--exec-proj-pad-sm: 1.25rem;
+	--exec-proj-edge-pad: 1.25rem;
+	--exec-proj-row-pt: 1.25rem;
+	--exec-proj-row-mt: 0px;
+	--exec-proj-row-pt-md: 1.25rem;
+	--exec-proj-row-mt-md: 0px;
 }
 
 /* Shared semantic status pills */
@@ -248,11 +329,6 @@
 .exec-cta-glass:hover,
 .exec-cta-glass:focus-visible {
 	color: var(--exec-on-accent);
-}
-
-/* Report-only headings hidden by default on Ocean & Classic */
-.hb-rep-only {
-	display: none;
 }
 
 /*

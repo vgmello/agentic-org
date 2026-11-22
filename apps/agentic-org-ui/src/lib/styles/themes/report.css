@@ -191,9 +191,94 @@ html[data-ui-theme='report'] {
 	--report-rule-subtle: #eef1f6;
 	--report-masthead-rule: #0b101b;
 	--report-accent-bar: #0b101b;
+
+	/* Report Day masthead emphasis & flat borderless pills */
+	--exec-h1-em-warn: #0b101b;
+	--exec-h1-em-calm: #0b101b;
+	--exec-h1-em-ok: #0b101b;
+	--exec-h1-em-bad: #0b101b;
+	--exec-h1-em-ul-warn: var(--tone-bad);
+	--exec-h1-em-ul-calm: var(--tone-accent);
+	--exec-h1-em-ul-ok: var(--tone-ok);
+	--exec-h1-em-ul-bad: var(--tone-bad);
+	--exec-pill-ring-ok: none;
+	--exec-pill-ring-warn: none;
+	--exec-pill-ring-bad: none;
+	--exec-pill-ring-muted: none;
 }
 
-/* ── Shared Modern 2D Executive Report Structural Layout (Day & Night) ── */
+/* ── Shared Modern 2D Executive Report Layout Tokens (Day & Night) ── */
+html[data-ui-theme^='report'] {
+	--exec-page-max-w: none;
+	--exec-page-gap: 0px;
+	--exec-hero-align: flex-end;
+	--exec-hero-pad-b: 18px;
+	--exec-hero-border: 1.5px solid var(--report-masthead-rule);
+	--exec-h1-weight: 700;
+	--exec-h1-tracking: -0.038em;
+	--exec-h1-em-decoration: underline;
+
+	--exec-section-head-display: flex;
+	--exec-section-gap: 0px;
+	--exec-stage-gap: 0px;
+	--exec-section-border: 1px solid var(--report-rule);
+	--exec-kpi-pad-y: 22px 0 26px;
+	--exec-section-pad-y: 32px 0 34px;
+	--exec-time-pad: 32px 0 8px;
+	--exec-col-divider: 1px solid var(--report-rule-subtle);
+
+	--exec-panel-bg: transparent;
+	--exec-panel-bg-hover: transparent;
+	--exec-panel-blur: none;
+	--exec-panel-shadow: none;
+	--exec-panel-shadow-hover: none;
+	--exec-panel-radius: 0px;
+
+	--exec-pillar-pad: 4px 28px;
+	--exec-pillar-pad-sm: 16px 0;
+	--exec-pillar-edge-pad: 0px;
+	--exec-kpi-num-size: 2.2rem;
+	--exec-kpi-num-lh: 1.05;
+	--exec-kpi-num-weight: 750;
+	--exec-kpi-num-tracking: -0.045em;
+
+	--exec-bar-height: 6px;
+	--exec-bar-radius: 1px;
+	--exec-time-bar-height: 14px;
+	--exec-time-bar-radius: 1px;
+
+	--exec-pill-radius: 3px;
+
+	--exec-spot-accent-display: none;
+	--exec-spot-pad-sm: 0 0 24px;
+	--exec-spot-pad-md: 0 0 24px;
+	--exec-spot-pad-xl: 0 36px 0 0;
+	--exec-brief-pad: 0 0 0 36px;
+	--exec-brief-pad-sm: 24px 0 0;
+	--exec-memo-bg: transparent;
+	--exec-memo-shadow: none;
+	--exec-memo-radius: 0px;
+	--exec-memo-pad: 0px;
+	--exec-memo-gap: 0px;
+	--exec-memo-item-py: 12px;
+	--exec-memo-first-pt: 2px;
+
+	--exec-lenses-radius: 4px;
+	--exec-lenses-shadow: inset 0 0 0 1px var(--report-rule);
+	--exec-sm-radius: 4px;
+	--exec-ctrl-radius: 4px;
+	--exec-inset-radius: 4px;
+
+	--exec-proj-pad: 4px 28px;
+	--exec-proj-pad-sm: 16px 0;
+	--exec-proj-edge-pad: 0px;
+	--exec-proj-row-pt: 24px;
+	--exec-proj-row-mt: 20px;
+	--exec-proj-row-pt-md: 20px;
+	--exec-proj-row-mt-md: 16px;
+}
+
+/* ── Shared Modern 2D Executive Report Structural Primitives (Day & Night) ── */
 html[data-ui-theme^='report'] .exec-canvas::before,
 html[data-ui-theme^='report'] .exec-canvas::after {
 	display: none;
@@ -206,7 +291,6 @@ html[data-ui-theme^='report'] .exec-well {
 	box-shadow: inset 0 0 0 1px var(--exec-border-hi);
 }
 
-/* Base 2D flat card polish for domain views (declared BEFORE Home .hb-* rules so borderless Home wins cascade) */
 html[data-ui-theme^='report'] .exec-card {
 	border-radius: 4px;
 	box-shadow: inset 0 0 0 1px var(--report-rule);
@@ -224,175 +308,11 @@ html[data-ui-theme^='report'] .exec-cta .exec-cta-sheen {
 	display: none;
 }
 
-html[data-ui-theme^='report'] .hb-rep-only {
-	display: flex;
-}
-
 html[data-ui-theme='report'] .t-green,
 html[data-ui-theme='report'] .t-amber,
 html[data-ui-theme='report'] .t-red {
 	border-radius: 3px;
 	box-shadow: none;
-}
-
-/* Open, borderless editorial Home canvas */
-html[data-ui-theme^='report'] .hb-page {
-	max-width: none;
-	gap: 0;
-}
-
-html[data-ui-theme^='report'] .hb-hero {
-	padding-bottom: 18px;
-	border-bottom: 1.5px solid var(--report-masthead-rule);
-	align-items: flex-end;
-}
-
-html[data-ui-theme^='report'] .hb-h1 {
-	font-weight: 700;
-	letter-spacing: -0.038em;
-}
-
-html[data-ui-theme='report'] .hb-h1 em {
-	color: #0b101b;
-	text-decoration: underline;
-	text-decoration-thickness: 2.5px;
-	text-underline-offset: 5px;
-}
-
-html[data-ui-theme='report'] .hb-h1 em.tone-warn,
-html[data-ui-theme='report'] .hb-h1 em.tone-bad {
-	text-decoration-color: var(--tone-bad);
-}
-
-html[data-ui-theme='report'] .hb-h1 em.tone-calm {
-	text-decoration-color: var(--tone-accent);
-}
-
-html[data-ui-theme='report'] .hb-h1 em.tone-ok {
-	text-decoration-color: var(--tone-ok);
-}
-
-/* Section 01: Open Boxless KPI Summary Strip */
-html[data-ui-theme^='report'] .hb-pillars {
-	gap: 0;
-	padding: 22px 0 26px;
-	border-bottom: 1px solid var(--report-rule);
-}
-
-html[data-ui-theme^='report'] .hb-pillar {
-	border-radius: 0;
-	border: 0;
-	box-shadow: none;
-	background: transparent;
-	padding: 4px 28px;
-}
-
-html[data-ui-theme^='report'] .hb-pillar:first-child {
-	padding-left: 0;
-}
-
-html[data-ui-theme^='report'] .hb-pillar:last-child {
-	padding-right: 0;
-}
-
-html[data-ui-theme^='report'] .hb-pillar + .hb-pillar {
-	border-left: 1px solid var(--report-rule-subtle);
-}
-
-html[data-ui-theme^='report'] .hb-pillar:hover {
-	background: transparent;
-	box-shadow: none;
-}
-
-html[data-ui-theme^='report'] .hb-pil-num {
-	font-size: 2.2rem;
-	line-height: 1.05;
-	font-weight: 750;
-	letter-spacing: -0.045em;
-}
-
-html[data-ui-theme^='report'] .hb-pil-pill {
-	border-radius: 3px;
-}
-
-html[data-ui-theme='report'] .hb-pil-pill {
-	box-shadow: none;
-}
-
-html[data-ui-theme^='report'] .hb-bar-track {
-	height: 6px;
-	border-radius: 1px;
-}
-
-html[data-ui-theme^='report'] .hb-bar-track > span {
-	border-radius: 1px;
-}
-
-/* Section 02: Open 2-Column Executive Stage */
-html[data-ui-theme^='report'] .hb-stage {
-	gap: 0;
-	padding: 32px 0 34px;
-	border-bottom: 1px solid var(--report-rule);
-}
-
-html[data-ui-theme^='report'] .hb-spot {
-	border-radius: 0;
-	box-shadow: none;
-	background: transparent;
-	padding: 0 36px 0 0;
-}
-
-html[data-ui-theme^='report'] .hb-spot::before {
-	display: none;
-}
-
-html[data-ui-theme^='report'] .hb-brief-card {
-	border-radius: 0;
-	box-shadow: none;
-	background: transparent;
-	border-left: 1px solid var(--report-rule-subtle);
-	padding: 0 0 0 36px;
-}
-
-/* Flat 2D borderless editorial Executive Brief on Report Day & Night */
-html[data-ui-theme^='report'] .hb-cos-memo {
-	background: transparent;
-	box-shadow: none;
-	border-radius: 0;
-	padding: 0;
-}
-
-html[data-ui-theme^='report'] .hb-cos-scroll {
-	gap: 0;
-}
-
-html[data-ui-theme^='report'] .hb-cos-scroll > div {
-	padding: 12px 0;
-}
-
-html[data-ui-theme^='report'] .hb-cos-scroll > div:first-child {
-	padding-top: 2px;
-}
-
-html[data-ui-theme^='report'] .hb-cos-scroll > div + div {
-	border-top: 1px solid var(--report-rule-subtle);
-}
-
-html[data-ui-theme^='report'] .hb-brief-lenses {
-	border-radius: 4px;
-	box-shadow: inset 0 0 0 1px var(--report-rule);
-}
-
-html[data-ui-theme^='report'] .hb-lens-tab,
-html[data-ui-theme^='report'] .hb-cos-copy,
-html[data-ui-theme^='report'] .hb-cos-expand,
-html[data-ui-theme^='report'] .hb-rec,
-html[data-ui-theme^='report'] .hb-ctx-body,
-html[data-ui-theme^='report'] .hb-blocker,
-html[data-ui-theme^='report'] .hb-deny-btn,
-html[data-ui-theme^='report'] .hb-deny-guard,
-html[data-ui-theme^='report'] .hb-outline-btn {
-	border-radius: 4px;
 }
 
 html[data-ui-theme^='report'] .exec-cmdk-bar {
@@ -403,114 +323,6 @@ html[data-ui-theme^='report'] .exec-cmdk-bar {
 html[data-ui-theme^='report'] .exec-cmdk-trigger,
 html[data-ui-theme^='report'] .exec-ai-btn {
 	border-radius: 4px;
-}
-
-html[data-ui-theme^='report'] .hb-spot:hover,
-html[data-ui-theme^='report'] .hb-brief-card:hover,
-html[data-ui-theme^='report'] .hb-time-card:hover {
-	background: transparent;
-	box-shadow: none;
-}
-
-/* Section 03: Open Borderless Portfolio Columns */
-html[data-ui-theme^='report'] .hb-proj-sec {
-	padding: 32px 0 34px;
-	border-bottom: 1px solid var(--report-rule);
-}
-
-html[data-ui-theme^='report'] .hb-bento {
-	gap: 0;
-}
-
-html[data-ui-theme^='report'] .hb-proj-card {
-	border-radius: 0;
-	box-shadow: none;
-	background: transparent;
-	padding: 4px 28px;
-	border-left: 1px solid var(--report-rule-subtle);
-}
-
-html[data-ui-theme^='report'] .hb-proj-card:hover {
-	background: transparent;
-	box-shadow: none;
-}
-
-@media (min-width: 1024px) {
-	html[data-ui-theme^='report'] .hb-proj-card:nth-child(3n + 1) {
-		border-left: 0;
-		padding-left: 0;
-	}
-	html[data-ui-theme^='report'] .hb-proj-card:nth-child(3n) {
-		padding-right: 0;
-	}
-	html[data-ui-theme^='report'] .hb-proj-card:nth-child(n + 4) {
-		border-top: 1px solid var(--report-rule-subtle);
-		padding-top: 24px;
-		margin-top: 20px;
-	}
-}
-
-@media (min-width: 768px) and (max-width: 1023px) {
-	html[data-ui-theme^='report'] .hb-proj-card:nth-child(2n + 1) {
-		border-left: 0;
-		padding-left: 0;
-	}
-	html[data-ui-theme^='report'] .hb-proj-card:nth-child(2n) {
-		padding-right: 0;
-	}
-	html[data-ui-theme^='report'] .hb-proj-card:nth-child(n + 3) {
-		border-top: 1px solid var(--report-rule-subtle);
-		padding-top: 20px;
-		margin-top: 16px;
-	}
-}
-
-/* Section 04: Open 2D Stacked Bar */
-html[data-ui-theme^='report'] .hb-time-card {
-	border-radius: 0;
-	box-shadow: none;
-	background: transparent;
-	padding: 32px 0 8px;
-}
-
-html[data-ui-theme^='report'] .hb-time-bar {
-	height: 14px;
-	border-radius: 1px;
-}
-
-html[data-ui-theme^='report'] .hb-time-bar > a {
-	border-radius: 1px;
-}
-
-@media (max-width: 1279px) {
-	html[data-ui-theme^='report'] .hb-spot {
-		padding: 0 0 24px;
-	}
-	html[data-ui-theme^='report'] .hb-brief-card {
-		border-left: 0;
-		border-top: 1px solid var(--report-rule-subtle);
-		padding: 24px 0 0;
-	}
-}
-
-@media (max-width: 1023px) {
-	html[data-ui-theme^='report'] .hb-pillar {
-		padding: 16px 0;
-	}
-	html[data-ui-theme^='report'] .hb-pillar + .hb-pillar {
-		border-left: 0;
-		border-top: 1px solid var(--report-rule-subtle);
-	}
-}
-
-@media (max-width: 767px) {
-	html[data-ui-theme^='report'] .hb-proj-card {
-		padding: 16px 0;
-		border-left: 0;
-	}
-	html[data-ui-theme^='report'] .hb-proj-card + .hb-proj-card {
-		border-top: 1px solid var(--report-rule-subtle);
-	}
 }
 
 /* Domain views 2D flat editorial polish under Report Day & Report Night */

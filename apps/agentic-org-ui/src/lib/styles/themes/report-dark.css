@@ -163,32 +163,16 @@ html[data-ui-theme='report-dark'] {
 	--report-rule-subtle: rgba(255, 255, 255, 0.08);
 	--report-masthead-rule: rgba(255, 255, 255, 0.16);
 	--report-accent-bar: #7c86ff;
-}
 
-html[data-ui-theme='report-dark'] .hb-h1 em {
-	text-decoration: underline;
-	text-decoration-thickness: 2.5px;
-	text-underline-offset: 5px;
-}
-
-html[data-ui-theme='report-dark'] .hb-h1 em.tone-warn {
-	color: var(--tone-warn-ink);
-	text-decoration-color: var(--tone-warn);
-}
-
-html[data-ui-theme='report-dark'] .hb-h1 em.tone-calm {
-	color: var(--tone-accent-ink);
-	text-decoration-color: var(--tone-accent-hi);
-}
-
-html[data-ui-theme='report-dark'] .hb-h1 em.tone-ok {
-	color: var(--tone-ok-ink);
-	text-decoration-color: var(--tone-ok);
-}
-
-html[data-ui-theme='report-dark'] .hb-h1 em.tone-bad {
-	color: var(--tone-bad-ink);
-	text-decoration-color: var(--tone-bad);
+	/* Report Night masthead emphasis */
+	--exec-h1-em-warn: var(--tone-warn-ink);
+	--exec-h1-em-calm: var(--tone-accent-ink);
+	--exec-h1-em-ok: var(--tone-ok-ink);
+	--exec-h1-em-bad: var(--tone-bad-ink);
+	--exec-h1-em-ul-warn: var(--tone-warn);
+	--exec-h1-em-ul-calm: var(--tone-accent-hi);
+	--exec-h1-em-ul-ok: var(--tone-ok);
+	--exec-h1-em-ul-bad: var(--tone-bad);
 }
 
 /* Settings preview swatch */
