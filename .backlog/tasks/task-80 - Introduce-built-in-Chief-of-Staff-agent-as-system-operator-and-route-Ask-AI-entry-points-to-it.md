@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-22T02:08:00Z'
+updated_date: '2026-11-22T02:17:00Z'
 labels:
   - backend
   - ui
@@ -33,7 +34,7 @@ ordinal: 80000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Today the only built-in organization agent is HR (builtin_key: hr), while product-wide Ask AI / Ask interactions have no single persistent agent owner responsible for operating the system. Introducing a built-in Chief of Staff agent gives every organization a dedicated, always-addressable operator agent that backs every Ask AI / Ask interaction in the UI. Instead of talking to a stateless helper, the user communicates directly with the Chief of Staff — who understands the organization, operates system workflows (work items, coordination, delegation, status, HR handoffs), records conversations and usage like any other agent, and enforces caller authorization boundaries rather than bypassing office access controls.
+Today the only built-in organization agent is HR (builtin_key: hr), while product-wide Ask AI / Ask interactions have no single persistent agent owner responsible for operating the system. Introducing a built-in Chief of Staff agent gives every organization a dedicated, always-addressable operator agent that backs every Ask AI / Ask interaction in the UI. Crucially, the Chief of Staff is the sole agent in the organization permitted to orchestrate across everything and everyone — coordinating across all teams, projects, agents, people, and system workflows (work items, delegation, status, HR handoffs) — while all other agents remain bounded to their team, reporting, and project scopes. Conversations and usage are recorded under its stable identity like any other agent, and office-enforced caller authorization and confirmation boundaries remain intact.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -42,4 +43,5 @@ Today the only built-in organization agent is HR (builtin_key: hr), while produc
 - [ ] #2 Organization Data contracts and SQL schema (doc-78, doc-75, schema.sql) support the Chief of Staff builtin_key with uniqueness per organization and preserve office-enforced authorization rules so Chief of Staff actions never bypass the requesting person authority or skip required confirmations for structural/destructive changes.
 - [ ] #3 Every Ask AI / Ask entry point in the UI routes the user conversation to the built-in Chief of Staff agent (attaching current view/entity context when triggered from a specific screen), persists messages in normal Chat/conversation history, and shows an explicit unavailable state when no runtime/provider is configured.
 - [ ] #4 Chief of Staff usage and turns are recorded under its stable employee identity in the normal accounting and activity streams, and automated backend + UI tests cover provisioning, uniqueness, Ask AI routing with context, authorization enforcement, and unavailable-runtime handling.
+- [ ] #5 Chief of Staff is enforced as the sole organization-wide orchestrator agent: it is the only agent authorized to orchestrate and coordinate across all teams, projects, agents, and people in the organization, while non-Chief-of-Staff agents remain restricted to their normal team/reporting/project boundaries.
 <!-- AC:END -->
