@@ -25,6 +25,7 @@ mod messaging;
 mod private_notes;
 #[cfg(test)]
 mod private_notes_tests;
+mod processes;
 mod tasks;
 #[cfg(any(test, feature = "testkit"))]
 mod testkit;

@@ -623,10 +623,16 @@ impl SessionManager {
             "waited_ms": held_since.map(|s| ts.saturating_sub(s)),
             "at": rfc3339_now(),
         });
+        let task_ref = matching
+            .iter()
+            .find(|i| i.kind == WakeKind::TaskAssignment)
+            .map(|i| i.source_id.as_str())
+            .filter(|s| !s.is_empty());
         match self.spawn_or_send_autonomous(
             employee,
             objective,
             susp.runtime_session_id.as_deref(),
+            task_ref,
             trigger,
         ) {
             Ok(_) => {
@@ -722,7 +728,19 @@ impl SessionManager {
             "waited_ms": waited_ms,
             "at": rfc3339_now(),
         });
-        match self.spawn_or_send_autonomous(employee, objective, resume_rsid.as_deref(), trigger) {
+        let task_ref = queue
+            .items
+            .iter()
+            .find(|i| i.kind == WakeKind::TaskAssignment)
+            .map(|i| i.source_id.as_str())
+            .filter(|s| !s.is_empty());
+        match self.spawn_or_send_autonomous(
+            employee,
+            objective,
+            resume_rsid.as_deref(),
+            task_ref,
+            trigger,
+        ) {
             Ok(_) => {
                 let _lock = self
                     .lifecycle_lock
@@ -821,6 +839,7 @@ impl SessionManager {
             employee,
             objective,
             susp.runtime_session_id.as_deref(),
+            None,
             trigger,
         ) {
             Ok(_) => {

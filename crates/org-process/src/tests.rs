@@ -1,676 +1,551 @@
-use super::*;
-use crate::file::read;
+use std::collections::{BTreeMap, BTreeSet};
 
-const ULID: &str = "01jd8z3f0000000000000000ab";
-const MEMBER: &str = "01JD8Z3F0000000000000000CD";
+use crate::{
+    find_builtin_skill, list_builtin_skills, render_instructions, resolve_single_chain,
+    validate_write, CallerKind, DocumentKind, DocumentStatus, LayerOutcome, ProcessKey,
+    RenderError, RenderInput, Scope, SingleChainInputs, StructureDocInput, WinnerKind,
+    WriteCheckInput, WriteViolation,
+};
 
-fn project() -> ProjectKey {
-    ProjectKey::new("atlas").unwrap()
-}
-
-fn team() -> Place {
-    Place::Team(TeamId::new("web").unwrap())
-}
-
-/// A valid team-level file; `edit` changes its front-matter lines before it is joined.
-fn file(edit: impl FnOnce(&mut Vec<String>)) -> String {
-    let mut lines: Vec<String> = [
-        format!("id: doc-{ULID}"),
-        "process: review-and-merge".into(),
-        "name: Review and merge".into(),
-        "kind: process".into(),
-        "level: team".into(),
-        "scope: web".into(),
-        "version: 3".into(),
-        "owner: ac-staff-engineer-ada".into(),
-        "summary: Own review; the reviewer's READY; the lead's go; merge.".into(),
-        "applies_to: every agent that changes a repository".into(),
-        "overridable: true".into(),
-        "status: active".into(),
-        "overrides: review-and-merge@2".into(),
-        "moments:".into(),
-        "  waking_up: \"Check on your branch first.\"".into(),
-        "checklist:".into(),
-        "  - { text: \"Own fresh review\", required: true }".into(),
-        "  - { text: \"The lead's go\" }".into(),
-    ]
-    .into();
-    edit(&mut lines);
-    format!("---\n{}\n---\n# Review and merge\n", lines.join("\n"))
-}
-
-type Edit = Box<dyn FnOnce(&mut Vec<String>)>;
-
-/// Removes `key`'s line and its indented block; returns where it was.
-fn take_block(lines: &mut Vec<String>, key: &str) -> usize {
-    let at = lines
-        .iter()
-        .position(|l| l.starts_with(&format!("{key}:")))
-        .unwrap();
-    let end = (at + 1..lines.len())
-        .find(|&n| !lines[n].starts_with(' '))
-        .unwrap_or(lines.len());
-    lines.drain(at..end);
-    at
-}
-
-fn set(key: &str, value: &str) -> Edit {
-    let (key, value) = (key.to_owned(), value.to_owned());
-    Box::new(move |lines| {
-        let at = take_block(lines, &key);
-        lines.insert(at, format!("{key}: {value}"));
-    })
-}
-
-fn drop_key(key: &str) -> Edit {
-    let key = key.to_owned();
-    Box::new(move |lines| {
-        take_block(lines, &key);
-    })
-}
-
-#[test]
-fn paths_map_to_their_place_and_nothing_else_does() {
-    let key = project();
-    let member = MemberId::new(MEMBER).unwrap();
-    let cases = [
-        (
-            Repo::Handbook,
-            "processes/review.md",
-            Some(Place::Organization),
-        ),
-        (
-            Repo::Handbook,
-            "teams/web/processes/review.md",
-            Some(team()),
-        ),
-        (
-            Repo::Handbook,
-            &format!("agents/{MEMBER}/processes/mine.md"),
-            Some(Place::Agent(member)),
-        ),
-        (
-            Repo::Project(&key),
-            "docs/processes/review.md",
-            Some(Place::Project(key.clone())),
-        ),
-        (Repo::Handbook, "processes/sub/review.md", None),
-        (Repo::Handbook, "processes/review.txt", None),
-        (Repo::Handbook, "processes/.md", None),
-        (Repo::Handbook, "processes/.hidden.md", None),
-        (Repo::Handbook, "processes/../processes/review.md", None),
-        (Repo::Handbook, "/processes/review.md", None),
-        (Repo::Handbook, "processes//review.md", None),
-        (Repo::Handbook, "teams/w eb/processes/review.md", None),
-        (Repo::Handbook, "agents/short/processes/mine.md", None),
-        (Repo::Handbook, "docs/processes/review.md", None),
-        (Repo::Project(&key), "processes/review.md", None),
-        (Repo::Project(&key), "docs/processes/x/review.md", None),
-    ];
-    for (repo, path, expected) in cases {
-        let found = location(repo, path);
-        assert_eq!(
-            found.clone().map(|at| at.place().clone()),
-            expected,
-            "{path}"
-        );
-        assert!(found.is_none_or(|at| !at.name_refused()), "{path}");
+fn doc(
+    id: &str,
+    key: Option<&str>,
+    kind: DocumentKind,
+    scope: Scope,
+    overridable: bool,
+    status: DocumentStatus,
+    body: &str,
+) -> StructureDocInput {
+    StructureDocInput {
+        id: id.to_owned(),
+        key: key.map(|k| ProcessKey::new(k).expect("valid key")),
+        kind,
+        title: format!("Title {id}"),
+        status,
+        owner_employee_id: (status == DocumentStatus::Current).then(|| "emp-owner".to_owned()),
+        scope,
+        overridable,
+        revision: 1,
+        body_markdown: body.to_owned(),
+        path: format!("processes/{id}.md"),
+        blob_sha256: format!("sha-{id}"),
+        invalid_field: None,
     }
 }
 
 #[test]
-fn ids_and_keys_have_their_shapes() {
-    assert!(ProcessKey::new("review-and-merge").is_some() && ProcessKey::new("1x").is_some());
-    for bad in ["", "-x", "Review", "a_b", &"a".repeat(65)] {
-        assert!(ProcessKey::new(bad).is_none(), "{bad}");
-    }
-    assert!(ProcessKey::new(&"a".repeat(64)).is_some());
-    assert!(
-        TeamId::new("Web_team-1").is_some()
-            && TeamId::new("").is_none()
-            && TeamId::new("a/b").is_none()
+fn single_chain_resolution_applies_org_team_project_and_enforces_non_overridable() {
+    let org_sealed = doc(
+        "d-org-sec",
+        Some("security-baseline"),
+        DocumentKind::Standard,
+        Scope::Organization,
+        false,
+        DocumentStatus::Current,
+        "Never leak secrets.",
     );
-    assert!(
-        ProjectKey::new("ab").is_some()
-            && ProjectKey::new("a").is_none()
-            && ProjectKey::new("Ab").is_none()
+    let team_illegal_override = doc(
+        "d-team-sec",
+        Some("security-baseline"),
+        DocumentKind::Standard,
+        Scope::Team("t-child".into()),
+        true,
+        DocumentStatus::Current,
+        "Attempted weaker security.",
     );
-    assert!(MemberId::new(MEMBER).is_some() && MemberId::new(&MEMBER[1..]).is_none());
-    for good in ["ab", "a1", "abcdefghij"] {
-        assert!(ProjectKey::new(good).is_some(), "{good}");
-    }
-    for bad in ["a", "Ab", "1a", "abcdefghijk", "a-b"] {
-        assert!(ProjectKey::new(bad).is_none(), "{bad}");
-    }
-    assert!(TeamId::new(&"t".repeat(64)).is_some() && TeamId::new(&"t".repeat(65)).is_none());
-    assert!(MemberId::new(&format!("{}-", &MEMBER[1..])).is_none());
-    for level in [
-        Level::Organization,
-        Level::Team,
-        Level::Project,
-        Level::Agent,
-    ] {
-        assert_eq!(Level::parse(level.as_str()), Some(level));
-    }
-    assert_eq!(Level::parse("Team"), None);
-}
+    let org_review = doc(
+        "d-org-rev",
+        Some("code-review"),
+        DocumentKind::Process,
+        Scope::Organization,
+        true,
+        DocumentStatus::Current,
+        "One reviewer.",
+    );
+    let root_team_review = doc(
+        "d-troot-rev",
+        Some("code-review"),
+        DocumentKind::Process,
+        Scope::Team("t-root".into()),
+        true,
+        DocumentStatus::Current,
+        "Two reviewers.",
+    );
+    let proj_review = doc(
+        "d-proj-rev",
+        Some("code-review"),
+        DocumentKind::Process,
+        Scope::Project("p-1".into()),
+        true,
+        DocumentStatus::Current,
+        "Two reviewers plus CI.",
+    );
+    // Contributing team document must NOT apply (outside accountable chain).
+    let contrib_team_doc = doc(
+        "d-contrib",
+        Some("contrib-only"),
+        DocumentKind::Process,
+        Scope::Team("t-contrib".into()),
+        true,
+        DocumentStatus::Current,
+        "Should be ignored.",
+    );
+    // Draft and deprecated docs are excluded silently.
+    let draft_doc = doc(
+        "d-draft",
+        Some("wip"),
+        DocumentKind::Process,
+        Scope::Organization,
+        true,
+        DocumentStatus::Draft,
+        "Draft text.",
+    );
+    let dep_doc = doc(
+        "d-dep",
+        Some("old"),
+        DocumentKind::Standard,
+        Scope::Organization,
+        true,
+        DocumentStatus::Deprecated,
+        "Old text.",
+    );
 
-#[test]
-fn a_valid_file_reads_with_every_field() {
-    let read = read(&team(), &file(|_| {})).unwrap();
-    assert_eq!(read.id, Some(format!("doc-{ULID}")));
-    // A doc written with git has no id until its first save through the tool.
-    assert_eq!(
-        crate::file::read(&team(), &file(drop_key("id")))
-            .unwrap()
-            .id,
-        None
-    );
-    assert_eq!(read.key.as_str(), "review-and-merge");
-    assert_eq!(
-        (read.place.clone(), read.version, read.overridable),
-        (team(), 3, true)
-    );
-    assert_eq!(read.status, Status::Active);
-    assert_eq!(
-        read.overrides,
-        Some((ProcessKey::new("review-and-merge").unwrap(), 2))
-    );
-    assert_eq!(
-        read.moments.waking_up.as_deref(),
-        Some("Check on your branch first.")
-    );
-    assert_eq!(
-        (read.moments.starting_task, read.moments.finishing_task),
-        (None, None)
-    );
-    let steps = [("Own fresh review", true), ("The lead's go", false)];
-    let got: Vec<_> = read
-        .checklist
-        .iter()
-        .map(|s| (s.text.as_str(), s.required))
-        .collect();
-    assert_eq!(got, steps);
-    // The organization's level has no scope; null and absent are the same.
-    for edit in [set("scope", "null"), drop_key("scope")] {
-        let org = file(|l| {
-            edit(l);
-            set("level", "organization")(l);
-        });
-        assert_eq!(
-            crate::file::read(&Place::Organization, &org).unwrap().place,
-            Place::Organization
-        );
-    }
-    for (status, expected) in [("draft", Status::Draft), ("retired", Status::Retired)] {
-        assert_eq!(
-            crate::file::read(&team(), &file(set("status", status)))
-                .unwrap()
-                .status,
-            expected
-        );
-    }
-}
-
-#[test]
-fn every_problem_names_its_field() {
-    use ProblemKind::*;
-    let long = |n| format!("\"{}\"", "x".repeat(n));
-    let steps = |n| format!("[{}]", vec!["{text: s}"; n].join(", "));
-    let cases: Vec<(String, &str, ProblemKind)> = vec![
-        (
-            file(|l| l.push("sealled: true".into())),
-            "sealled",
-            Unrecognized,
-        ),
-        (
-            file(|l| l.insert(15, "  sometime: x".into())),
-            "moments.sometime",
-            Unrecognized,
-        ),
-        (
-            file(set("checklist", "[{text: a}, {text: b, extra: 1}]")),
-            "checklist[1].extra",
-            Unrecognized,
-        ),
-        (file(drop_key("name")), "name", Missing),
-        (file(set("name", "null")), "name", Missing),
-        (
-            file(set("id", "doc-01JD8Z3F0000000000000000AB")),
-            "id",
-            Invalid,
-        ),
-        (file(set("id", "ADR-0001")), "id", Invalid),
-        (file(set("kind", "adr")), "kind", Invalid),
-        (file(set("level", "project")), "level", WrongPlace),
-        (file(set("level", "3")), "level", Invalid),
-        (file(set("scope", "mobile")), "scope", WrongPlace),
-        (file(drop_key("scope")), "scope", WrongPlace),
-        (file(set("scope", "[web]")), "scope", Invalid),
-        (file(set("version", "0")), "version", Invalid),
-        (file(set("version", "\"3\"")), "version", Invalid),
-        (file(set("version", "4294967296")), "version", Invalid),
-        (file(set("status", "paused")), "status", Invalid),
-        (file(set("overridable", "\"yes\"")), "overridable", Invalid),
-        (file(set("overridable", "yes")), "overridable", Invalid),
-        (
-            file(set("overrides", "review-and-merge")),
-            "overrides",
-            Invalid,
-        ),
-        (
-            file(set("overrides", "review-and-merge@0")),
-            "overrides",
-            Invalid,
-        ),
-        (file(set("overrides", "Review@1")), "overrides", Invalid),
-        (file(set("process", "Review_Merge")), "process", Invalid),
-        (file(set("summary", &long(201))), "summary", Invalid),
-        (file(set("summary", "\"two\\nlines\"")), "summary", Invalid),
-        (file(set("summary", "\" \"")), "summary", Invalid),
-        (
-            file(set(
-                "moments",
-                &("{waking_up: ".to_owned() + &long(501) + "}"),
-            )),
-            "moments.waking_up",
-            Invalid,
-        ),
-        (file(set("moments", "[x]")), "moments", Invalid),
-        (file(set("checklist", &steps(51))), "checklist", Invalid),
-        (
-            file(set("checklist", "[{required: true}]")),
-            "checklist[0].text",
-            Missing,
-        ),
-        (
-            file(set("checklist", "[{text: a, required: maybe}]")),
-            "checklist[0].required",
-            Invalid,
-        ),
-        (file(set("checklist", "[x]")), "checklist[0]", Invalid),
-        (
-            file(|l| l.push("name: again".into())),
-            "name",
-            FrontMatter(org_docs::Reason::DuplicateKey),
-        ),
-        (
-            file(set("id", "doc-81jd8z3f0000000000000000ab")),
-            "id",
-            Invalid,
-        ),
-        (
-            file(set("id", "doc-01jd8z3f0000000000000000il")),
-            "id",
-            Invalid,
-        ),
-        (
-            file(set("id", "doc-01jd8z3f0000000000000000a")),
-            "id",
-            Invalid,
-        ),
-        (file(set("level", "bogus")), "level", Invalid),
-        (file(set("level", "Team")), "level", Invalid),
-        (file(set("overrides", "other-key@1")), "overrides", Invalid),
-        (
-            file(set("overrides", "review-and-merge@01")),
-            "overrides",
-            Invalid,
-        ),
-        (
-            file(set("overrides", "review-and-merge@+1")),
-            "overrides",
-            Invalid,
-        ),
-        (
-            file(set("overrides", "review-and-merge@1@2")),
-            "overrides",
-            Invalid,
-        ),
-        (file(set("summary", "\"a\\u2028b\"")), "summary", Invalid),
-        (file(set("summary", "\"a\\tb\"")), "summary", Invalid),
-        (file(set("summary", "\"a\\rb\"")), "summary", Invalid),
-        (file(set("summary", "\"trailing \"")), "summary", Invalid),
-        (
-            file(set("summary", &format!("\"{}\"", "é".repeat(201)))),
-            "summary",
-            Invalid,
-        ),
-        (
-            file(set("checklist", "[{text: null}]")),
-            "checklist[0].text",
-            Missing,
-        ),
-        (file(set("status", "off")), "reason", Missing),
-        (file(set("summary", "\"a\\u2029b\"")), "summary", Invalid),
-        (file(set("summary", "\"a\\u202eb\"")), "summary", Invalid),
-        (file(set("summary", "\"a\\u200bb\"")), "summary", Invalid),
-        (file(set("summary", "\"a\\u2066b\"")), "summary", Invalid),
-        (
-            file(|l| {
-                l.push("zz: 1".into());
-                l.push("aa: 1".into());
-            }),
-            "aa",
-            Unrecognized,
-        ),
-        ("# No front matter\n".into(), "", NoFrontMatter),
-    ];
-    for (text, field, kind) in cases {
-        let problem = read(&team(), &text).unwrap_err();
-        assert_eq!(
-            (problem.field.as_str(), problem.kind),
-            (field, kind),
-            "{field}"
-        );
-    }
-    // The limits themselves are allowed.
-    assert!(read(&team(), &file(set("summary", &long(200)))).is_ok());
-    let at_limit = "{waking_up: ".to_owned() + &long(500) + "}";
-    assert!(read(&team(), &file(set("moments", &at_limit))).is_ok());
-    assert!(read(&team(), &file(set("checklist", &steps(50)))).is_ok());
-}
-
-#[test]
-fn the_scope_must_match_and_an_invalid_file_keeps_what_could_be_read() {
-    // The organization has no scope, so a scope there is out of place.
-    let org = file(|l| {
-        set("level", "organization")(l);
-        set("scope", "web")(l);
+    let set = resolve_single_chain(&SingleChainInputs {
+        team_chain: vec!["t-root".into(), "t-child".into()],
+        project_id: Some("p-1".into()),
+        documents: vec![
+            org_sealed,
+            team_illegal_override,
+            org_review,
+            root_team_review,
+            proj_review,
+            contrib_team_doc,
+            draft_doc,
+            dep_doc,
+        ],
+        scope_names: BTreeMap::from([
+            (Scope::Team("t-root".into()), "Engineering".into()),
+            (Scope::Team("t-child".into()), "Payments".into()),
+            (Scope::Project("p-1".into()), "Billing".into()),
+        ]),
     });
-    let problem = read(&Place::Organization, &org).unwrap_err();
-    assert_eq!(
-        (problem.field.as_str(), problem.kind),
-        ("scope", ProblemKind::WrongPlace)
+
+    // Security baseline stays at Organization; team attempt is Refused.
+    let sec = set.find_by_key("security-baseline").expect("sec entry");
+    assert_eq!(sec.winner.as_ref().unwrap().doc.id, "d-org-sec");
+    assert_eq!(sec.winner.as_ref().unwrap().kind, WinnerKind::Inherited);
+    assert!(sec
+        .layers
+        .iter()
+        .any(|l| l.doc.id == "d-team-sec" && matches!(l.outcome, LayerOutcome::Refused { .. })));
+
+    // Overridable code-review resolves to project winner replacing root team.
+    let rev = set.find_by_key("code-review").expect("rev entry");
+    let rev_w = rev.winner.as_ref().unwrap();
+    assert_eq!(rev_w.doc.id, "d-proj-rev");
+    assert_eq!(rev_w.kind, WinnerKind::Override);
+    assert_eq!(rev_w.replaces.as_ref().unwrap().id, "d-troot-rev");
+
+    // Contributing team, draft, and deprecated docs do not appear.
+    assert!(set.find_by_key("contrib-only").is_none());
+    assert!(set.find_by_key("wip").is_none());
+    assert!(set.find_by_key("old").is_none());
+}
+
+#[test]
+fn clashed_or_invalid_non_overridable_doc_keeps_key_sealed_below() {
+    let mut bad_org = doc(
+        "d-bad-org",
+        Some("pci"),
+        DocumentKind::Process,
+        Scope::Organization,
+        false,
+        DocumentStatus::Current,
+        "Broken front matter",
     );
-    // An invalid file still reports its key and whether it is sealed (§3.2 rule 2).
-    let sealed_but_bad = file(|l| {
-        set("overridable", "false")(l);
-        set("version", "0")(l);
+    bad_org.invalid_field = Some("owner_employee_id".into());
+    let team_try = doc(
+        "d-team-pci",
+        Some("pci"),
+        DocumentKind::Process,
+        Scope::Team("t1".into()),
+        true,
+        DocumentStatus::Current,
+        "Lower override attempt",
+    );
+    let set = resolve_single_chain(&SingleChainInputs {
+        team_chain: vec!["t1".into()],
+        project_id: None,
+        documents: vec![bad_org, team_try],
+        scope_names: BTreeMap::new(),
     });
-    let problem = read(&team(), &sealed_but_bad).unwrap_err();
-    assert_eq!(
-        problem.key.as_ref().map(ProcessKey::as_str),
-        Some("review-and-merge")
+    let pci = set.find_by_key("pci").unwrap();
+    assert!(pci.winner.is_none());
+    assert!(pci
+        .layers
+        .iter()
+        .any(|l| l.doc.id == "d-team-pci" && matches!(l.outcome, LayerOutcome::Refused { .. })));
+}
+
+#[test]
+fn render_delivers_mandatory_in_full_refuses_overflow_and_caps_overridable() {
+    let mandatory = doc(
+        "d-mand",
+        Some("pci-policy"),
+        DocumentKind::Standard,
+        Scope::Organization,
+        false,
+        DocumentStatus::Current,
+        "MANDATORY RULE: Encrypt cardholder data at rest.",
     );
-    assert_eq!(problem.sealed, Some(true));
-    let unreadable = read(&team(), "---\nprocess: [\n---\n").unwrap_err();
-    assert_eq!((unreadable.key, unreadable.sealed), (None, None));
-    // Multi-byte text is limited by characters, not bytes; a null `required` is false.
-    let ok = file(set("summary", &format!("\"{}\"", "é".repeat(200))));
-    assert!(read(&team(), &ok).is_ok());
-    let step = read(
-        &team(),
-        &file(set("checklist", "[{text: a, required: null}]")),
+    let big_overridable = doc(
+        "d-over",
+        Some("style-guide"),
+        DocumentKind::Process,
+        Scope::Organization,
+        true,
+        DocumentStatus::Current,
+        &"x".repeat(30 * 1024),
+    );
+    let set = resolve_single_chain(&SingleChainInputs {
+        team_chain: vec![],
+        project_id: None,
+        documents: vec![mandatory, big_overridable],
+        scope_names: BTreeMap::new(),
+    });
+
+    // Normal budget: mandatory included in full; oversized overridable omitted (not marked delivered).
+    let rendered = render_instructions(&set, &RenderInput::default()).unwrap();
+    assert!(rendered.text.contains("MANDATORY RULE"));
+    assert!(rendered.text.contains("Process context limit reached"));
+    assert_eq!(rendered.mandatory_count, 1);
+    assert_eq!(rendered.omitted_overridable_count, 1);
+    assert_eq!(rendered.delivered_blobs.len(), 1);
+    assert_eq!(rendered.delivered_blobs[0].0, "pci-policy");
+
+    // Tiny budget where mandatory alone overflows -> launch refused naming the document.
+    let err = render_instructions(
+        &set,
+        &RenderInput {
+            read_blobs: BTreeMap::new(),
+            overridable_cap_bytes: 1024,
+            total_budget_bytes: 64,
+        },
+    )
+    .unwrap_err();
+    match err {
+        RenderError::MandatoryBudgetExceeded {
+            document_titles, ..
+        } => assert_eq!(document_titles, vec!["Title d-mand".to_owned()]),
+    }
+
+    // Already-read blobs are skipped in body section.
+    let small_over = doc(
+        "d-small",
+        Some("small-guide"),
+        DocumentKind::Process,
+        Scope::Organization,
+        true,
+        DocumentStatus::Current,
+        "Short body text.",
+    );
+    let set2 = resolve_single_chain(&SingleChainInputs {
+        team_chain: vec![],
+        project_id: None,
+        documents: vec![small_over],
+        scope_names: BTreeMap::new(),
+    });
+    let mut read_blobs = BTreeMap::new();
+    read_blobs.insert("small-guide".into(), BTreeSet::from(["sha-d-small".into()]));
+    let r2 = render_instructions(
+        &set2,
+        &RenderInput {
+            read_blobs,
+            ..RenderInput::default()
+        },
     )
     .unwrap();
-    assert!(!step.checklist[0].required);
-    let moments = read(&team(), &file(set("moments", "{waking_up: null}"))).unwrap();
-    assert_eq!(moments.moments.waking_up, None);
-    // A turned-off process says why (processes-ux.md decision 4).
-    let off = file(|l| {
-        set("status", "off")(l);
-        l.push("reason: we report daily".into());
-    });
-    let off = read(&team(), &off).unwrap();
-    assert_eq!(
-        (off.status, off.reason.as_deref()),
-        (Status::Off, Some("we report daily"))
-    );
-    // A draft or retired file never seals, even when it is invalid (§3.2 rule 2).
-    for (status, sealed) in [("draft", false), ("retired", false), ("active", true)] {
-        let bad = file(|l| {
-            set("status", status)(l);
-            set("overridable", "false")(l);
-            set("name", "\" x\"")(l);
-        });
-        assert_eq!(
-            read(&team(), &bad).unwrap_err().sealed,
-            Some(sealed),
-            "{status}"
-        );
-    }
+    assert!(r2.delivered_blobs.is_empty());
+    assert!(!r2.text.contains("Short body text.\n```"));
 }
 
 #[test]
-fn hidden_text_is_refused_but_joiners_and_direction_marks_are_kept() {
-    let summary = |text: &str| file(set("summary", &format!("\"{text}\"")));
-    for hidden in [
-        "a\\u200bb",
-        "a\\u202eb",
-        "a\\u2066b",
-        "a\\ufeffb",
-        "a\\u2064b",
-        "ok\\U000E0049",
-        "x\\u3164y",
-    ] {
-        let problem = read(&team(), &summary(hidden)).unwrap_err();
-        assert_eq!(
-            (problem.field.as_str(), problem.kind),
-            ("summary", ProblemKind::Invalid),
-            "{hidden}"
-        );
-    }
-    // A family emoji (ZWJ), a Persian word (ZWNJ), a flag (ZWJ + VS16) and direction marks.
-    for kept in [
-        "Family \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
-        "\u{0645}\u{06CC}\u{200C}\u{062E}",
-        "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}",
-        "a\u{200E}b\u{200F}c",
-    ] {
-        assert!(read(&team(), &summary(kept)).is_ok(), "{kept}");
-    }
-    // A draft never seals, even when `overridable` can't be read.
-    let draft = file(|l| {
-        set("status", "draft")(l);
-        set("overridable", "\"maybe\"")(l);
-    });
-    assert_eq!(read(&team(), &draft).unwrap_err().sealed, Some(false));
-}
-
-#[test]
-fn each_place_has_its_level_and_scope() {
-    let member = MemberId::new(MEMBER).unwrap();
-    let cases = [
-        (Place::Organization, Level::Organization, None),
-        (team(), Level::Team, Some("web")),
-        (Place::Project(project()), Level::Project, Some("atlas")),
-        (Place::Agent(member), Level::Agent, Some(MEMBER)),
-    ];
-    for (place, level, scope) in cases {
-        assert_eq!((place.level(), place.scope()), (level, scope), "{place:?}");
-    }
-}
-
-const REFUSED_NAMES: [&str; 9] = [
-    "a b",
-    "a\nb",
-    "a\tb",
-    "a\u{202e}b",
-    "-x",
-    "a\\b",
-    "a\u{200b}b",
-    "a\u{feff}",
-    "a\u{7}b",
-];
-
-#[test]
-fn file_names_a_doc_may_not_have_are_never_handbook_process_files() {
-    for name in REFUSED_NAMES {
-        for folder in ["processes", "teams/web/processes"] {
-            let path = format!("{folder}/{name}.md");
-            assert_eq!(location(Repo::Handbook, &path), None, "{name:?}");
-        }
-    }
-    let plain = location(Repo::Handbook, "processes/a-b_c.1.md").unwrap();
-    assert_eq!(
-        (plain.place(), plain.name_refused()),
-        (&Place::Organization, false)
-    );
-}
-
-#[test]
-fn a_project_file_with_a_refused_name_is_listed_with_a_file_name_problem() {
-    let key = project();
-    let place = Place::Project(key.clone());
-    let at = |level: &str, scope: &str| {
-        let (level, scope) = (level.to_owned(), scope.to_owned());
-        file(move |l| {
-            set("level", &level)(l);
-            set("scope", &scope)(l);
-            set("overridable", "false")(l);
-        })
-    };
-    for name in REFUSED_NAMES {
-        let found = location(Repo::Project(&key), &format!("docs/processes/{name}.md"));
-        let found = found.unwrap_or_else(|| panic!("{name:?} vanished"));
-        assert_eq!(
-            (found.place(), found.name_refused()),
-            (&place, true),
-            "{name:?}"
-        );
-        // Valid front matter or not, it is a problem that keeps the key and the seal.
-        let problem = found.read(&at("project", "atlas")).unwrap_err();
-        assert_eq!(
-            (problem.field.as_str(), problem.kind, problem.sealed),
-            ("file name", ProblemKind::FileName, Some(true)),
-            "{name:?}"
-        );
-        assert_eq!(problem.key.unwrap().as_str(), "review-and-merge");
-        let problem = found.read(&at("team", "atlas")).unwrap_err();
-        assert_eq!(
-            (problem.kind, problem.sealed),
-            (ProblemKind::FileName, Some(true))
-        );
-        let problem = found.read("no front matter").unwrap_err();
-        assert_eq!(
-            (problem.kind, problem.key, problem.sealed),
-            (ProblemKind::FileName, None, None)
-        );
-    }
-    // A plain name reads as `read` does.
-    let found = location(Repo::Project(&key), "docs/processes/review.md").unwrap();
-    assert!(!found.name_refused());
-    assert_eq!(
-        found.read(&at("project", "atlas")),
-        read(&place, &at("project", "atlas"))
-    );
-    // Hidden and nested files still aren't process files.
-    for path in [
-        "docs/processes/.x y.md",
-        "docs/processes/a b/c.md",
-        "docs/processes/ .txt",
-    ] {
-        assert_eq!(location(Repo::Project(&key), path), None, "{path}");
-    }
-}
-
-#[test]
-fn project_and_agent_files_read_only_at_their_own_level() {
-    let member = MemberId::new(MEMBER).unwrap();
-    let at = |level: &str, scope: &str| {
-        let (level, scope) = (level.to_owned(), scope.to_owned());
-        file(move |l| {
-            set("level", &level)(l);
-            set("scope", &scope)(l);
-        })
-    };
-    let project_place = Place::Project(project());
-    let agent_place = Place::Agent(member);
-    assert_eq!(
-        read(&project_place, &at("project", "atlas")).unwrap().place,
-        project_place
-    );
-    assert_eq!(
-        read(&agent_place, &at("agent", MEMBER)).unwrap().place,
-        agent_place
-    );
-    for (place, text) in [
-        (&agent_place, at("project", MEMBER)),
-        (&project_place, at("agent", "atlas")),
-    ] {
-        let problem = read(place, &text).unwrap_err();
-        assert_eq!(
-            (problem.field.as_str(), problem.kind),
-            ("level", ProblemKind::WrongPlace)
-        );
-    }
-}
-
-#[test]
-fn empty_text_missing_applies_to_and_multi_line_moments_are_refused() {
-    let cases = [
-        (
-            file(set("summary", "\"\"")),
-            "summary",
-            ProblemKind::Invalid,
+fn write_validation_enforces_already_exists_sealed_and_agent_boundaries() {
+    let existing = vec![
+        doc(
+            "d-org-sealed",
+            Some("sec"),
+            DocumentKind::Standard,
+            Scope::Organization,
+            false,
+            DocumentStatus::Current,
+            "Sealed",
         ),
-        (file(set("name", "\"\"")), "name", ProblemKind::Invalid),
-        (
-            file(set("checklist", "[{text: \"\"}]")),
-            "checklist[0].text",
-            ProblemKind::Invalid,
+        doc(
+            "d-org-over",
+            Some("style"),
+            DocumentKind::Standard,
+            Scope::Organization,
+            true,
+            DocumentStatus::Current,
+            "Org style",
         ),
-        (
-            file(drop_key("applies_to")),
-            "applies_to",
-            ProblemKind::Missing,
-        ),
-        (
-            file(set("moments", "{waking_up: \"a\\nb\"}")),
-            "moments.waking_up",
-            ProblemKind::Invalid,
+        doc(
+            "d-proj-1",
+            Some("api-conventions"),
+            DocumentKind::Standard,
+            Scope::Project("p1".into()),
+            true,
+            DocumentStatus::Current,
+            "Project API",
         ),
     ];
-    for (text, field, kind) in cases {
-        let problem = read(&team(), &text).unwrap_err();
-        assert_eq!(
-            (problem.field.as_str(), problem.kind),
-            (field, kind),
-            "{field}"
-        );
-    }
+
+    // Duplicate key at same scope -> AlreadyExists.
+    let dup = validate_write(&WriteCheckInput {
+        caller: CallerKind::Person { is_owner: true },
+        target_scope: Scope::Project("p1".into()),
+        existing_document_id: None,
+        key: Some("api-conventions"),
+        kind: DocumentKind::Standard,
+        title: "Dup",
+        status: DocumentStatus::Current,
+        owner_employee_id: Some("emp-1"),
+        overridable: true,
+        body_markdown: "body",
+        project_owner_team_id: Some("t-owner"),
+        ancestor_team_chain: &["t-root".into(), "t-owner".into()],
+        existing_docs: &existing,
+    });
+    assert_eq!(
+        dup,
+        Err(WriteViolation::AlreadyExists {
+            key: "api-conventions".into()
+        })
+    );
+
+    // Overriding a sealed org key at project scope -> Sealed.
+    let sealed = validate_write(&WriteCheckInput {
+        caller: CallerKind::Person { is_owner: true },
+        target_scope: Scope::Project("p1".into()),
+        existing_document_id: None,
+        key: Some("sec"),
+        kind: DocumentKind::Standard,
+        title: "Try override",
+        status: DocumentStatus::Current,
+        owner_employee_id: Some("emp-1"),
+        overridable: true,
+        body_markdown: "body",
+        project_owner_team_id: Some("t-owner"),
+        ancestor_team_chain: &["t-root".into(), "t-owner".into()],
+        existing_docs: &existing,
+    });
+    assert_eq!(
+        sealed,
+        Err(WriteViolation::Sealed {
+            key: "sec".into(),
+            sealed_by_scope: Scope::Organization
+        })
+    );
+
+    // Agent of owning team's descendant can add a new overridable project standard.
+    let agent_ok = validate_write(&WriteCheckInput {
+        caller: CallerKind::Agent {
+            home_team_id: "t-sub".into(),
+            home_team_chain: vec!["t-root".into(), "t-owner".into(), "t-sub".into()],
+        },
+        target_scope: Scope::Project("p1".into()),
+        existing_document_id: None,
+        key: Some("grpc-errors"),
+        kind: DocumentKind::Standard,
+        title: "gRPC errors",
+        status: DocumentStatus::Current,
+        owner_employee_id: Some("emp-agent"),
+        overridable: true,
+        body_markdown: "Use canonical error codes.",
+        project_owner_team_id: Some("t-owner"),
+        ancestor_team_chain: &["t-root".into(), "t-owner".into()],
+        existing_docs: &existing,
+    });
+    assert!(agent_ok.is_ok());
+
+    // Agent CANNOT replace an inherited org/team key, CANNOT write non-overridable,
+    // CANNOT write at team/org scope, and CANNOT write from a contributing team.
+    let agent_inherited = validate_write(&WriteCheckInput {
+        caller: CallerKind::Agent {
+            home_team_id: "t-owner".into(),
+            home_team_chain: vec!["t-root".into(), "t-owner".into()],
+        },
+        target_scope: Scope::Project("p1".into()),
+        existing_document_id: None,
+        key: Some("style"),
+        kind: DocumentKind::Standard,
+        title: "Override org style",
+        status: DocumentStatus::Current,
+        owner_employee_id: Some("emp-agent"),
+        overridable: true,
+        body_markdown: "nope",
+        project_owner_team_id: Some("t-owner"),
+        ancestor_team_chain: &["t-root".into(), "t-owner".into()],
+        existing_docs: &existing,
+    });
+    assert!(matches!(
+        agent_inherited,
+        Err(WriteViolation::NotAuthorized { .. })
+    ));
+
+    let agent_contrib = validate_write(&WriteCheckInput {
+        caller: CallerKind::Agent {
+            home_team_id: "t-contrib".into(),
+            home_team_chain: vec!["t-root".into(), "t-contrib".into()],
+        },
+        target_scope: Scope::Project("p1".into()),
+        existing_document_id: None,
+        key: Some("new-proj-std"),
+        kind: DocumentKind::Standard,
+        title: "From contrib",
+        status: DocumentStatus::Current,
+        owner_employee_id: Some("emp-agent"),
+        overridable: true,
+        body_markdown: "nope",
+        project_owner_team_id: Some("t-owner"),
+        ancestor_team_chain: &["t-root".into(), "t-owner".into()],
+        existing_docs: &existing,
+    });
+    assert!(matches!(
+        agent_contrib,
+        Err(WriteViolation::NotAuthorized { .. })
+    ));
+
+    // Non-owner person CANNOT unseal or deprecate an existing non-overridable org standard.
+    let non_owner_unseal = validate_write(&WriteCheckInput {
+        caller: CallerKind::Person { is_owner: false },
+        target_scope: Scope::Organization,
+        existing_document_id: Some("d-org-sealed"),
+        key: Some("sec"),
+        kind: DocumentKind::Standard,
+        title: "Weakened Org Security",
+        status: DocumentStatus::Deprecated,
+        owner_employee_id: Some("emp-person"),
+        overridable: true,
+        body_markdown: "trying to unseal",
+        project_owner_team_id: None,
+        ancestor_team_chain: &[],
+        existing_docs: &existing,
+    });
+    assert!(matches!(
+        non_owner_unseal,
+        Err(WriteViolation::NotAuthorized { .. })
+    ));
+
+    // Agent CANNOT unseal or modify an existing non-overridable project standard.
+    let mut with_locked_proj = existing.clone();
+    with_locked_proj.push(doc(
+        "d-proj-locked",
+        Some("pci-lock"),
+        DocumentKind::Standard,
+        Scope::Project("p1".into()),
+        false,
+        DocumentStatus::Current,
+        "Strict",
+    ));
+    let agent_unseal_proj = validate_write(&WriteCheckInput {
+        caller: CallerKind::Agent {
+            home_team_id: "t-owner".into(),
+            home_team_chain: vec!["t-root".into(), "t-owner".into()],
+        },
+        target_scope: Scope::Project("p1".into()),
+        existing_document_id: Some("d-proj-locked"),
+        key: Some("pci-lock"),
+        kind: DocumentKind::Standard,
+        title: "PCI Lock Unlocked",
+        status: DocumentStatus::Current,
+        owner_employee_id: Some("emp-agent"),
+        overridable: true,
+        body_markdown: "unlocked",
+        project_owner_team_id: Some("t-owner"),
+        ancestor_team_chain: &["t-root".into(), "t-owner".into()],
+        existing_docs: &with_locked_proj,
+    });
+    assert!(matches!(
+        agent_unseal_proj,
+        Err(WriteViolation::NotAuthorized { .. })
+    ));
 }
 
 #[test]
-fn every_character_org_office_refuses_in_status_lines_is_refused_here() {
-    // The same cases as org-office's status-line test (organization/status.rs).
-    for bad in [
-        "two\nlines",
-        "tab\there",
-        "bell\u{7}",
-        "nul\0",
-        "esc\u{1b}[0m",
-        "line\u{2028}break",
-        "para\u{2029}graph",
-        "hidden\u{200b}gap",
-        "flip\u{202e}ed",
-        "bom\u{feff}",
-        "joiner\u{2060}",
-        "invisible\u{2064}times",
-        "isolate\u{2066}x",
-        "isolate\u{2069}",
-        "deprecated\u{206a}",
-        "deprecated\u{206f}",
-        "embed\u{202a}",
-        "tag\u{e0041}",
-        "tag\u{e007f}",
-        "selector\u{e0100}",
-        "selector\u{e01ef}",
-        "mongolian\u{180e}",
-        "annotation\u{fff9}",
-        "annotation\u{fffb}",
-        "filler\u{115f}",
-        "filler\u{1160}",
-        "filler\u{3164}",
-        "filler\u{ffa0}",
-    ] {
-        let quoted = serde_json::to_string(bad).unwrap();
-        let problem = read(&team(), &file(set("summary", &quoted))).unwrap_err();
-        assert_eq!(
-            (problem.field.as_str(), problem.kind),
-            ("summary", ProblemKind::Invalid),
-            "{bad:?}"
-        );
+fn render_budget_respects_separator_unique_omitted_count_and_preserves_notice() {
+    let mut docs = vec![doc(
+        "d-mand",
+        Some("mand"),
+        DocumentKind::Standard,
+        Scope::Organization,
+        false,
+        DocumentStatus::Current,
+        "Always check auth.",
+    )];
+    for i in 0..8 {
+        docs.push(doc(
+            &format!("d-ovr-{i}"),
+            Some(&format!("guide-{i}")),
+            DocumentKind::Process,
+            Scope::Organization,
+            true,
+            DocumentStatus::Current,
+            &"Body text for guide. ".repeat(20),
+        ));
     }
+    let set = resolve_single_chain(&SingleChainInputs {
+        team_chain: vec![],
+        project_id: None,
+        documents: docs,
+        scope_names: BTreeMap::new(),
+    });
+    // Tight budget: enough for mandatory + separator + header + notice + a couple summaries,
+    // forcing both summary and body omission.
+    let mand_only = render_instructions(
+        &set,
+        &RenderInput {
+            read_blobs: BTreeMap::new(),
+            overridable_cap_bytes: 0,
+            total_budget_bytes: 64 * 1024,
+        },
+    )
+    .expect("mandatory only");
+    let tight_budget = mand_only.text.len() + 2 + 320;
+    let rendered = render_instructions(
+        &set,
+        &RenderInput {
+            read_blobs: BTreeMap::new(),
+            overridable_cap_bytes: crate::OVERRIDABLE_CAP_BYTES,
+            total_budget_bytes: tight_budget,
+        },
+    )
+    .expect("tight render");
+    assert!(
+        rendered.text.len() <= tight_budget,
+        "rendered {} bytes exceeded tight budget {}",
+        rendered.text.len(),
+        tight_budget
+    );
+    assert!(
+        rendered.omitted_overridable_count <= 8 && rendered.omitted_overridable_count > 0,
+        "omitted count must never double-count: {}",
+        rendered.omitted_overridable_count
+    );
+    assert!(
+        rendered.text.contains("Process context limit reached"),
+        "omission notice must not be dropped: {}",
+        rendered.text
+    );
+}
+
+#[test]
+fn builtin_skills_are_discoverable_and_readable() {
+    let skills = list_builtin_skills();
+    assert!(skills.len() >= 5);
+    let skill = find_builtin_skill("processes-and-standards").expect("skill found");
+    assert_eq!(skill.source, "built_in");
+    assert!(skill.body_markdown.contains("agent-os process list"));
+    assert!(find_builtin_skill("no-such-skill").is_none());
 }

@@ -917,6 +917,7 @@ dependencies = [
  "org-docs",
  "org-office-launch",
  "org-platform",
+ "org-process",
  "org-proto",
  "org-store",
  "proc-macro2",

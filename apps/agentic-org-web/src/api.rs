@@ -15,6 +15,7 @@ mod hiring_routes;
 mod instance_routes;
 mod open_routes;
 mod org_routes;
+mod process_routes;
 mod session_routes;
 mod task_routes;
 
@@ -171,6 +172,7 @@ pub enum Route {
     Chat(chat_routes::ChatRoute),
     Tasks(task_routes::TaskRoute),
     Git(git_routes::GitRoute),
+    Process(process_routes::ProcessRoute),
 }
 
 pub enum Call {
@@ -208,6 +210,7 @@ pub enum Call {
     Chat(chat_routes::ChatCall),
     Tasks(task_routes::TaskCall),
     Git(git_routes::GitCall),
+    Process(process_routes::ProcessCall),
 }
 
 /// A login and password as the browser sent them; the password stays zeroizing.
@@ -1004,6 +1007,7 @@ impl ApiBackend for SessionApi {
             Route::Chat(route) => return chat_routes::prepare(route, bytes),
             Route::Tasks(route) => return task_routes::prepare(route, bytes),
             Route::Git(route) => return git_routes::prepare(route, bytes),
+            Route::Process(route) => return process_routes::prepare(route, bytes),
         };
         Ok(PreparedCall::read(call, bytes.len()))
     }
@@ -1115,6 +1119,12 @@ impl ApiBackend for SessionApi {
                 ),
                 streaming: false,
             },
+            Call::Process(call) => AsyncDispatch::Async {
+                future: Box::pin(async move {
+                    WebReply::Json(process_routes::execute(&self, call).await)
+                }),
+                streaming: false,
+            },
             other => AsyncDispatch::Sync(other),
         }
     }
@@ -1135,6 +1145,7 @@ impl ApiBackend for SessionApi {
             Call::Chat(_) => unreachable!("Call::Chat is dispatched asynchronously"),
             Call::Tasks(_) => unreachable!("Call::Tasks is dispatched asynchronously"),
             Call::Git(_) => unreachable!("Call::Git is dispatched asynchronously"),
+            Call::Process(_) => unreachable!("Call::Process is dispatched asynchronously"),
             Call::Session(pair) => match self
                 .validate(pair)
                 .and_then(|s| view(self.host.instance(), s))

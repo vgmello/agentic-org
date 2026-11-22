@@ -15,6 +15,7 @@
 pub(crate) mod git_ops;
 pub(crate) mod messaging_ops;
 mod operations;
+pub(crate) mod process_ops;
 pub(crate) mod task_ops;
 #[cfg(test)]
 mod tests;
@@ -60,6 +61,7 @@ use crate::{
     office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
     organization::projector::OrganizationFiles,
     private_notes::PrivateNotesStore,
+    processes::projector::ProcessFiles,
     projects::projector::ProjectFiles,
     tasks::{
         ports::{TasksEngine, TasksRead},
@@ -255,10 +257,17 @@ fn open_on<E: OfficeEngine>(config: &StoreConfig, engine: E) -> Result<Opened<E>
     let projects: Arc<dyn Projector<E>> = Arc::new(ProjectFiles::new(organization.clone()));
     let messaging: Arc<dyn Projector<E>> = Arc::new(MessagingFiles::new(organization.clone()));
     let tasks: Arc<dyn Projector<E>> = Arc::new(TaskFiles::new());
+    let processes: Arc<dyn Projector<E>> = Arc::new(ProcessFiles::new());
     let local = OfficeLocalFiles::new(organization, here.office_id.clone());
     #[cfg_attr(not(any(test, feature = "testkit")), allow(unused_mut))]
-    let mut projectors: Vec<Arc<dyn Projector<E>>> =
-        vec![files, projects, messaging, tasks, Arc::new(local)];
+    let mut projectors: Vec<Arc<dyn Projector<E>>> = vec![
+        files,
+        projects,
+        messaging,
+        tasks,
+        processes,
+        Arc::new(local),
+    ];
     #[cfg(any(test, feature = "testkit"))]
     if let Some(probe) = &config.testing.probe {
         projectors.push(probe.projector());

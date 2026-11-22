@@ -54,6 +54,7 @@ pub struct InstructionInput<'a> {
     pub team_name: &'a str,
     pub role_name: Option<&'a str>,
     pub role_instructions: Option<&'a str>,
+    pub process_instructions: Option<&'a str>,
     pub agent_instructions: &'a str,
     pub is_hr_lead: bool,
     pub private_home: &'a str,
@@ -150,6 +151,11 @@ pub fn assemble_standing_instructions(
 
     // Part 2: Built-in behavioral rules & precedence chain (INSTR-4, INSTR-8)
     parts.push(BUILTIN_BEHAVIORAL_RULES.to_owned());
+
+    // Part 2b: Resolved organization processes & standards (non-overridable in full + capped overridable, C5 / doc-34 §3.2)
+    if let Some(proc_text) = input.process_instructions.filter(|s| !s.trim().is_empty()) {
+        parts.push(proc_text.trim().to_owned());
+    }
 
     // Part 3: Same-user isolation notice (FC-102)
     parts.push(format!(

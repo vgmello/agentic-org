@@ -15,6 +15,8 @@ pub mod keys;
 pub mod msg_dispatch;
 pub mod msg_table;
 pub mod office;
+pub mod process_dispatch;
+pub mod process_table;
 pub mod session_dispatch;
 pub mod session_table;
 pub mod sources;

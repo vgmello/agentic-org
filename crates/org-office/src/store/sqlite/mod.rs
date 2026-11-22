@@ -19,6 +19,7 @@ mod dump;
 mod messaging;
 mod organization;
 pub(crate) mod private_notes;
+mod processes;
 mod projects;
 mod receipts;
 mod schema;

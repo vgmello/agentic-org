@@ -137,6 +137,7 @@ fn shared_with_snapshot(snapshot: serve::SnapshotFn) -> Arc<serve::Shared> {
             chat: None,
             tasks: None,
             git: None,
+            processes: None,
             directory,
         },
         crate::test_support::grant_key(),

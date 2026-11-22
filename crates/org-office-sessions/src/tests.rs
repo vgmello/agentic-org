@@ -86,6 +86,7 @@ fn builtin_instructions_stay_under_10kib_and_all_named_commands_exist_in_live_ta
             team_name: "Engineering",
             role_name: Some("Staff Engineer"),
             role_instructions: Some("Write clean Rust."),
+            process_instructions: None,
             agent_instructions: "Prefer small diffs.",
             is_hr_lead: true,
             private_home: "/tmp/ada/home",
@@ -2087,4 +2088,448 @@ echo '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"t1","st
 
         let _ = manager.stop_session(agent_id, "done");
     }
+}
+
+#[test]
+fn session_launch_injects_effective_processes_and_refuses_mandatory_budget_overflow() {
+    use org_proto::processes::{
+        DocumentKindWire, DocumentStatusWire, ProcessScopeWire, ProcessWriteParams,
+    };
+
+    let _ = org_platform::process::harden_self();
+    let office: Arc<Office> = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+
+    let (agent_id, conn_id) = hire_agent_with_runtime(
+        &office,
+        &owner_id,
+        &root_team_id,
+        "google",
+        "agy",
+        "proc-bot",
+        "gemini-2.5-pro",
+    );
+
+    // Seed a non-overridable org standard and an overridable guidance process.
+    office
+        .process_write(
+            &owner_id,
+            ProcessWriteParams {
+                command_id: new_uuid_v7(),
+                document_id: None,
+                kind: DocumentKindWire::Standard,
+                scope: ProcessScopeWire::Organization,
+                key: Some("no-secrets".into()),
+                title: "Never Log Secrets".into(),
+                status: DocumentStatusWire::Current,
+                owner_employee_id: Some(owner_id.clone()),
+                overridable: false,
+                body_markdown: "MANDATORY_SENTINEL: Never print API keys in stdout.".into(),
+                expected_revision: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+    office
+        .process_write(
+            &owner_id,
+            ProcessWriteParams {
+                command_id: new_uuid_v7(),
+                document_id: None,
+                kind: DocumentKindWire::Process,
+                scope: ProcessScopeWire::Organization,
+                key: Some("pr-style".into()),
+                title: "PR Style Guide".into(),
+                status: DocumentStatusWire::Current,
+                owner_employee_id: Some(owner_id.clone()),
+                overridable: true,
+                body_markdown: "GUIDANCE_SENTINEL: Keep PRs concise.".into(),
+                expected_revision: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+    // Verify rendered instructions include mandatory standard in full and overridable guidance.
+    let rendered = office
+        .render_agent_process_instructions(
+            &agent_id,
+            None,
+            None,
+            std::collections::BTreeMap::new(),
+            128 * 1024,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(
+        rendered
+            .text
+            .contains("MANDATORY_SENTINEL: Never print API keys in stdout."),
+        "mandatory non-overridable standard missing: {}",
+        rendered.text
+    );
+    assert!(
+        rendered.text.contains("PR Style Guide"),
+        "overridable guidance missing: {}",
+        rendered.text
+    );
+
+    // Prepare a real SessionManager with a stub agy binary + enrolled credential.
+    let tmp = tempfile::tempdir().unwrap();
+    let capture_path = tmp.path().join("captured-init.txt");
+    let fake_agy = write_fake_cli(
+        tmp.path(),
+        "agy",
+        &format!(
+            r#"#!/bin/sh
+settings=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--settings" ]; then
+    shift
+    settings="$1"
+  fi
+  shift
+done
+cat "$(dirname "$settings")/agy-instructions.md" > "{capture}"
+read init_line
+echo '{{"type":"control_response","response":{{"subtype":"success","request_id":"host-1","response":{{"agents":["proc-bot"],"mode":"ask","version":"1.5.14"}}}}}}'
+read user_line
+echo '{{"type":"system","subtype":"init","conversation_id":"agy-proc-1","mode":"ask"}}'
+echo '{{"type":"assistant","message":{{"id":"m1","model":"gemini-2.5-pro","content":[{{"type":"text","text":"Ack"}}],"usage":{{"input_tokens":5,"output_tokens":2}}}}}}'
+echo '{{"type":"result","subtype":"success","is_error":false}}'
+"#,
+            capture = capture_path.display()
+        ),
+    );
+    let mut registry = RuntimeRegistry::production();
+    registry.register(
+        Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+        Some(fake_agy),
+    );
+    let mut cfg = SessionManagerConfig::production(tmp.path().join("office.sock"));
+    cfg.runtimes = registry;
+    cfg.helper_dir = Some(tmp.path().to_path_buf());
+    let manager = SessionManager::new(Arc::clone(&office), cfg);
+
+    // Enroll API key credential for the agent's connection so start_session reaches build_instructions.
+    let enrolled = manager
+        .enrollment()
+        .start(&owner_id, &conn_id, "agy")
+        .unwrap();
+    manager
+        .enrollment()
+        .submit_code(
+            &owner_id,
+            &conn_id,
+            &enrolled.login_id,
+            "test-gemini-key-for-c5",
+        )
+        .unwrap();
+
+    // 1. Live launch succeeds and injects the mandatory standard into the runtime's instructions!
+    manager
+        .start_session(
+            &owner_id,
+            &MemberSessionStartParams {
+                command_id: new_uuid_v7(),
+                employee_id: agent_id.clone(),
+                instruction: Some("Hello".into()),
+                workspace: None,
+            },
+        )
+        .expect("session starts with effective processes");
+    let _ = wait_for_reply(&manager, &owner_id, &agent_id);
+    let _ = manager.stop_session(&agent_id, "check capture");
+    let captured = fs::read_to_string(&capture_path).expect("captured init");
+    assert!(
+        captured.contains("MANDATORY_SENTINEL: Never print API keys in stdout."),
+        "launched runtime did not receive mandatory org standard in instructions: {captured}"
+    );
+    assert!(
+        captured.contains("PR Style Guide"),
+        "launched runtime did not receive overridable guidance in instructions: {captured}"
+    );
+
+    // 2. Seed a huge non-overridable standard that overflows the 128 KiB launch budget.
+    office
+        .process_write(
+            &owner_id,
+            ProcessWriteParams {
+                command_id: new_uuid_v7(),
+                document_id: None,
+                kind: DocumentKindWire::Standard,
+                scope: ProcessScopeWire::Organization,
+                key: Some("huge-mandatory-policy".into()),
+                title: "Oversized Mandatory Policy".into(),
+                status: DocumentStatusWire::Current,
+                owner_employee_id: Some(owner_id.clone()),
+                overridable: false,
+                body_markdown: "X".repeat(135 * 1024),
+                expected_revision: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+    // Launch MUST fail closed when mandatory non-overridable standards exceed budget (doc-34 Decision 4).
+    let err = manager
+        .start_session(
+            &owner_id,
+            &MemberSessionStartParams {
+                command_id: new_uuid_v7(),
+                employee_id: agent_id,
+                instruction: Some("Start".into()),
+                workspace: None,
+            },
+        )
+        .expect_err("launch must refuse when mandatory standards overflow budget");
+    assert_eq!(err.code, org_proto::ErrorCode::InvalidRequest);
+    assert!(
+        err.message.contains("Oversized Mandatory Policy")
+            || err.message.contains("huge-mandatory-policy"),
+        "refusal should name offending mandatory doc: {}",
+        err.message
+    );
+}
+
+fn seed_project_task_wake_fixture(
+    office: &Arc<Office>,
+    owner_id: &str,
+    root_team_id: &str,
+) -> (String, String, String, String) {
+    use org_office::rules::OrgCommand;
+    use org_proto::org::{ProjectCreateParams, TeamCreateParams};
+    use org_proto::processes::{
+        DocumentKindWire, DocumentStatusWire, ProcessScopeWire, ProcessWriteParams,
+    };
+    use org_proto::tasks::TasksCreateParams;
+
+    let owning_team = new_uuid_v7();
+    office
+        .submit_org(
+            owner_id,
+            OrgCommand::TeamCreate(TeamCreateParams {
+                command_id: new_uuid_v7(),
+                team_id: owning_team.clone(),
+                name: "Payments".into(),
+                owner_team_id: Some(root_team_id.to_owned()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+    let contrib_team = new_uuid_v7();
+    office
+        .submit_org(
+            owner_id,
+            OrgCommand::TeamCreate(TeamCreateParams {
+                command_id: new_uuid_v7(),
+                team_id: contrib_team.clone(),
+                name: "QA Guild".into(),
+                owner_team_id: Some(root_team_id.to_owned()),
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+    let project_id = new_uuid_v7();
+    office
+        .submit_org(
+            owner_id,
+            OrgCommand::ProjectCreate(ProjectCreateParams {
+                command_id: new_uuid_v7(),
+                project_id: project_id.clone(),
+                name: "Ledger".into(),
+                key: None,
+                description: None,
+                teams: vec![],
+                general_area_id: String::new(),
+                general_area_name: None,
+                repo: None,
+                integration_branch: None,
+                slug: Some("ledger".into()),
+                owner_team_id: Some(owning_team.clone()),
+                create_team_id: None,
+                parent_team_id: None,
+                contributing_team_ids: vec![contrib_team.clone()],
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+    let (contrib_agent_id, conn_id) = hire_agent_with_runtime(
+        office,
+        owner_id,
+        &contrib_team,
+        "google",
+        "agy",
+        "qa-bot",
+        "gemini-2.5-pro",
+    );
+
+    for (scope, key, title, body) in [
+        (
+            ProcessScopeWire::Team {
+                team_id: owning_team,
+            },
+            "payments-audit",
+            "Payments Audit Rule",
+            "OWNING_TEAM_MANDATORY_SENTINEL",
+        ),
+        (
+            ProcessScopeWire::Team {
+                team_id: contrib_team,
+            },
+            "qa-only",
+            "QA Guild Rule",
+            "CONTRIB_TEAM_MUST_NOT_APPEAR",
+        ),
+        (
+            ProcessScopeWire::Project {
+                project_id: project_id.clone(),
+            },
+            "ledger-invariants",
+            "Ledger Invariants",
+            "PROJECT_MANDATORY_SENTINEL",
+        ),
+    ] {
+        office
+            .process_write(
+                owner_id,
+                ProcessWriteParams {
+                    command_id: new_uuid_v7(),
+                    document_id: None,
+                    kind: DocumentKindWire::Standard,
+                    scope,
+                    key: Some(key.into()),
+                    title: title.into(),
+                    status: DocumentStatusWire::Current,
+                    owner_employee_id: Some(owner_id.to_owned()),
+                    overridable: false,
+                    body_markdown: body.into(),
+                    expected_revision: None,
+                },
+            )
+            .unwrap()
+            .unwrap();
+    }
+
+    let task = office
+        .task_create(
+            owner_id,
+            TasksCreateParams {
+                command_id: new_uuid_v7(),
+                task_id: new_uuid_v7(),
+                team_id: None,
+                project_id: Some(project_id),
+                assigned_team_id: None,
+                assignee_id: Some(contrib_agent_id.clone()),
+                task_type: Some("task".into()),
+                work_type: None,
+                title: "Audit ledger entries".into(),
+                body_markdown: "Check double-entry invariant.".into(),
+                priority: None,
+                effort: None,
+                severity: None,
+                rank_order: Some(1),
+                labels: vec![],
+                reference_files: vec![],
+                modified_files: vec![],
+                depends_on: vec![],
+                details: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .task;
+    (contrib_agent_id, conn_id, task.id, task.title)
+}
+
+#[test]
+fn task_assignment_wake_injects_project_owning_chain_for_contributing_agent() {
+    let _ = org_platform::process::harden_self();
+    let office: Arc<Office> = Arc::new(Office::for_test(TestOffice::default()));
+    let owner_id = office.owner_member_id().to_owned();
+    let root_team_id = office.org_snapshot().unwrap().teams[0].id.clone();
+    let (contrib_agent_id, conn_id, task_id, task_title) =
+        seed_project_task_wake_fixture(&office, &owner_id, &root_team_id);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let capture_path = tmp.path().join("captured-task-instructions.txt");
+    let fake_agy = write_fake_cli(
+        tmp.path(),
+        "agy",
+        &format!(
+            r#"#!/bin/sh
+settings=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--settings" ]; then
+    shift
+    settings="$1"
+  fi
+  shift
+done
+cat "$(dirname "$settings")/agy-instructions.md" > "{capture}"
+read init_line
+echo '{{"type":"control_response","response":{{"subtype":"success","request_id":"host-1","response":{{"agents":["qa-bot"],"mode":"ask","version":"1.5.14"}}}}}}'
+read user_line
+echo '{{"type":"system","subtype":"init","conversation_id":"agy-task-1","mode":"ask"}}'
+echo '{{"type":"assistant","message":{{"id":"m1","model":"gemini-2.5-pro","content":[{{"type":"text","text":"Audited"}}],"usage":{{"input_tokens":5,"output_tokens":2}}}}}}'
+echo '{{"type":"result","subtype":"success","is_error":false}}'
+"#,
+            capture = capture_path.display()
+        ),
+    );
+    let mut registry = RuntimeRegistry::production();
+    registry.register(
+        Arc::new(org_agent_runtime_agy::AgyRuntime::new()),
+        Some(fake_agy),
+    );
+    let mut cfg = SessionManagerConfig::production(tmp.path().join("office.sock"));
+    cfg.runtimes = registry;
+    cfg.helper_dir = Some(tmp.path().to_path_buf());
+    let manager = SessionManager::new(Arc::clone(&office), cfg);
+
+    let enrolled = manager
+        .enrollment()
+        .start(&owner_id, &conn_id, "agy")
+        .unwrap();
+    manager
+        .enrollment()
+        .submit_code(
+            &owner_id,
+            &conn_id,
+            &enrolled.login_id,
+            "test-key-task-wake",
+        )
+        .unwrap();
+
+    // Wake contributing-team agent for the project task.
+    let outcome = manager.on_task_assigned(
+        &contrib_agent_id,
+        &owner_id,
+        "Owner",
+        true,
+        &task_id,
+        &task_title,
+    );
+    assert_eq!(outcome, crate::WakeOutcome::Started);
+    let _ = wait_for_reply(&manager, &owner_id, &contrib_agent_id);
+    let _ = manager.stop_session(&contrib_agent_id, "done");
+
+    let captured = fs::read_to_string(&capture_path).expect("captured task instructions");
+    assert!(
+        captured.contains("OWNING_TEAM_MANDATORY_SENTINEL"),
+        "project owning team standard missing on task wake: {captured}"
+    );
+    assert!(
+        captured.contains("PROJECT_MANDATORY_SENTINEL"),
+        "project mandatory standard missing on task wake: {captured}"
+    );
+    assert!(
+        !captured.contains("CONTRIB_TEAM_MUST_NOT_APPEAR"),
+        "contributing team standard leaked into project task wake: {captured}"
+    );
 }

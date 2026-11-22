@@ -437,6 +437,7 @@ impl SessionManager {
         employee: &Employee,
         objective: String,
         resume_runtime_session_id: Option<&str>,
+        task_ref: Option<&str>,
         trigger_entry: serde_json::Value,
     ) -> Result<SessionView, ApiError> {
         let emp_id = employee.id.as_str();
@@ -466,8 +467,13 @@ impl SessionManager {
         };
         self.check_not_blocked(emp_id)?;
         let _ = self.store.append_history(emp_id, &trigger_entry, &refs);
-        let prepared =
-            self.prepare_and_spawn_raw(employee, &params, objective, resume_runtime_session_id)?;
+        let prepared = self.prepare_and_spawn_raw(
+            employee,
+            &params,
+            objective,
+            resume_runtime_session_id,
+            task_ref,
+        )?;
         self.install_live_session(prepared)
     }
 
@@ -1177,7 +1183,7 @@ impl SessionManager {
             .as_deref()
             .map(|text| build_objective_text(employee, actor_member_id, text))
             .unwrap_or_default();
-        self.prepare_and_spawn_raw(employee, params, objective, resume_runtime_session_id)
+        self.prepare_and_spawn_raw(employee, params, objective, resume_runtime_session_id, None)
     }
 
     fn prepare_and_spawn_raw(
@@ -1186,9 +1192,11 @@ impl SessionManager {
         params: &MemberSessionStartParams,
         objective: String,
         resume_runtime_session_id: Option<&str>,
+        task_ref: Option<&str>,
     ) -> Result<PreparedSessionLaunch, ApiError> {
         let objective = self.prepend_watch_notices(employee.id.as_str(), objective);
-        let planned = self.plan_session_launch(employee, params, resume_runtime_session_id)?;
+        let planned =
+            self.plan_session_launch(employee, params, resume_runtime_session_id, task_ref)?;
         self.issue_and_spawn_launch(objective, planned)
     }
 
@@ -1197,6 +1205,7 @@ impl SessionManager {
         employee: &Employee,
         params: &MemberSessionStartParams,
         resume_runtime_session_id: Option<&str>,
+        task_ref: Option<&str>,
     ) -> Result<PlannedSessionLaunch, ApiError> {
         let emp_id = employee.id.as_str().to_owned();
         let home = self
@@ -1231,7 +1240,8 @@ impl SessionManager {
             build_general_subagent_definition(preset_cfg.allowed_tools.as_deref(), None);
         let _ = write_subagent_definition(&runtime_dir, &subagent_def);
 
-        let instructions = self.build_instructions(employee, &home, &workspace_real, &preset_cfg);
+        let instructions =
+            self.build_instructions(employee, &home, &workspace_real, &preset_cfg, task_ref)?;
         let spec = build_session_spec(
             resolved.adapter.id(),
             employee,
@@ -1654,12 +1664,37 @@ impl SessionManager {
         home: &Path,
         workspace: &Path,
         preset_cfg: &PresetConfig,
-    ) -> String {
+        task_ref: Option<&str>,
+    ) -> Result<String, ApiError> {
         let info = self.office.info();
         let role = employee
             .role_id
             .as_ref()
             .and_then(|id| self.office.load_role(id.as_str()).ok().flatten());
+        let rendered_processes = match self
+            .office
+            .render_agent_process_instructions(
+                employee.id.as_str(),
+                None,
+                task_ref,
+                std::collections::BTreeMap::new(),
+                128 * 1024,
+            )
+            .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))?
+        {
+            Ok(rendered) => rendered,
+            Err(err) if task_ref.is_some() && err.code == ErrorCode::NotFound => self
+                .office
+                .render_agent_process_instructions(
+                    employee.id.as_str(),
+                    None,
+                    None,
+                    std::collections::BTreeMap::new(),
+                    128 * 1024,
+                )
+                .map_err(|e| ApiError::new(ErrorCode::StorageError, e.to_string()))??,
+            Err(err) => return Err(err),
+        };
         let table = org_agent_cli::table::table();
         let input = InstructionInput {
             organization_name: &info.org_name,
@@ -1670,6 +1705,8 @@ impl SessionManager {
             team_name: employee.home_team_id.as_str(),
             role_name: role.as_ref().map(|r| r.name.as_str()),
             role_instructions: role.as_ref().map(|r| r.body.as_str()),
+            process_instructions: (!rendered_processes.text.is_empty())
+                .then_some(rendered_processes.text.as_str()),
             agent_instructions: &employee.body,
             is_hr_lead: employee.builtin_key == Some(BuiltinKey::Hr),
             private_home: &home.display().to_string(),
@@ -1677,7 +1714,7 @@ impl SessionManager {
             permission_preset: preset_cfg.preset.as_str(),
             sandbox_enabled: preset_cfg.sandbox.enabled,
         };
-        assemble_standing_instructions(&input, &table)
+        Ok(assemble_standing_instructions(&input, &table))
     }
 
     fn build_environment(

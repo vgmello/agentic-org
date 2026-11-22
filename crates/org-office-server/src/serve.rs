@@ -139,6 +139,9 @@ pub type TasksFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send
 /// Dispatches C7 repository, worktree, and Git push RPCs (`TASK-51`).
 pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches C5 organization processes, standards, and built-in skills RPCs (`TASK-44`).
+pub type ProcessesFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
@@ -171,6 +174,8 @@ pub struct OfficePorts {
     pub tasks: Option<TasksFn>,
     /// C7 repository, worktree, and Git push dispatcher (`TASK-51`).
     pub git: Option<GitFn>,
+    /// C5 organization processes, standards, and built-in skills dispatcher (`TASK-44`).
+    pub processes: Option<ProcessesFn>,
     /// Who a `msg.bind` names.
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
@@ -1490,6 +1495,31 @@ fn project_or_hiring(request: &Request, shared: &Shared, binding: &Binding) -> O
         .or_else(|| sessions_rpc(request, shared, binding))
         .or_else(|| tasks_rpc(request, shared, binding))
         .or_else(|| git_rpc(request, shared, binding))
+        .or_else(|| processes_rpc(request, shared, binding))
+}
+
+fn processes_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::process_calls::is_process_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(processes) = &shared.ports.processes {
+        if let Some(response) = processes(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
 }
 
 fn git_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
@@ -2868,6 +2898,7 @@ mod tests {
             chat: None,
             tasks: None,
             git: None,
+            processes: None,
             directory,
         }
     }
@@ -3334,6 +3365,7 @@ mod tests {
                 chat: None,
                 tasks: None,
                 git: None,
+                processes: None,
                 directory,
             },
             launch_key(),
@@ -3814,6 +3846,7 @@ mod tests {
                     chat: None,
                     tasks: None,
                     git: None,
+                    processes: None,
                     directory,
                 },
                 launch_key(),
@@ -4319,6 +4352,7 @@ mod tests {
                 chat: None,
                 tasks: None,
                 git: None,
+                processes: None,
                 directory,
             },
             launch_key(),

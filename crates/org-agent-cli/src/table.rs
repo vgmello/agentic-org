@@ -533,6 +533,7 @@ pub fn table() -> CommandTable {
         crate::msg_table::MSG_COMMANDS,
         crate::task_table::TASK_COMMANDS,
         crate::git_table::GIT_COMMANDS,
+        crate::process_table::PROCESS_COMMANDS,
     ])
     .expect("agent-os command table is valid")
 }

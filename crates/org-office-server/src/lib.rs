@@ -30,6 +30,7 @@ mod live;
 mod mailbox_store;
 mod msg_calls;
 mod org_feed;
+mod process_calls;
 mod revocations;
 mod serve;
 mod signals;
@@ -1161,6 +1162,12 @@ fn build_office_ports(
         git: Some(Box::new(move |member, request| {
             git_svc.dispatch(member, request)
         })),
+        processes: {
+            let office = Arc::clone(&office);
+            Some(Box::new(move |member, request| {
+                process_calls::dispatch_process_rpc(&office, member, request)
+            }))
+        },
         directory: messaging.directory,
         submit,
     }

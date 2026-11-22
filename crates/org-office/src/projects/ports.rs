@@ -4,10 +4,11 @@
 use org_store::{Engine, EngineError, Id};
 
 use crate::organization::ports::{OrganizationRead, OrganizationWrite};
+use crate::processes::ports::ProcessesRead;
 
 use super::records::{Project, ProjectAllocation, ProjectCounter};
 
-pub trait ProjectsRead: OrganizationRead {
+pub trait ProjectsRead: OrganizationRead + ProcessesRead {
     fn project(&self, id: &Id) -> Result<Option<Project>, EngineError>;
     fn project_by_number(&self, number: u64) -> Result<Option<Project>, EngineError>;
     fn project_by_slug(&self, slug: &str) -> Result<Option<Project>, EngineError>;
