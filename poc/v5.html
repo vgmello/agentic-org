@@ -1915,6 +1915,47 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   font-size: 0.72rem; font-weight: 500; color: var(--hb-muted);
 }
 
+/* AI-Native Executive Brief Synthesis Block */
+.hb-ai-brief {
+  display: flex; flex-direction: column; gap: 9px;
+  padding: 12px 14px; border-radius: 10px;
+  background: linear-gradient(135deg, rgba(56, 189, 248, .08) 0%, rgba(15, 29, 52, .48) 100%);
+  box-shadow: inset 3px 0 0 #38BDF8, inset 0 0 0 1px rgba(125, 211, 252, .16);
+}
+.hb-ai-eyebrow {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.65rem; font-weight: 650; letter-spacing: .11em;
+  text-transform: uppercase; color: #7DD3FC;
+}
+.hb-ai-eyebrow .ic { width: 12px; height: 12px; color: #38BDF8; }
+.hb-ai-text {
+  font-size: 0.8125rem; line-height: 1.5; color: var(--hb-body);
+}
+.hb-ai-text strong { color: var(--hb-ink); font-weight: 600; }
+.hb-ai-text .hb-ai-risk { color: #FDE68A; font-weight: 600; }
+.hb-ai-chips { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.hb-ai-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 6px;
+  background: rgba(186, 226, 255, .07);
+  box-shadow: inset 0 0 0 1px rgba(186, 226, 255, .14);
+  font-size: 0.71rem; font-weight: 550; color: #CBD5E1;
+  transition: background-color .14s ease, color .14s ease, box-shadow .14s ease;
+}
+.hb-ai-chip .ic { width: 11px; height: 11px; color: #7DD3FC; }
+.hb-ai-chip:hover {
+  background: rgba(56, 189, 248, .16); color: #F8FAFC;
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, .34);
+}
+.hb-dig-subhd {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-top: 2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.65rem; font-weight: 650; letter-spacing: .11em;
+  text-transform: uppercase; color: var(--hb-dim);
+}
+
 .hb-digest { display: flex; flex-direction: column; gap: 6px; flex: 1; justify-content: flex-start; }
 .hb-dig-item {
   display: flex; align-items: flex-start; gap: 9px;
@@ -2333,6 +2374,15 @@ html[data-theme="classic"] .hb-spot-well.ok { background: rgba(0, 201, 80, .12);
 html[data-theme="classic"] .hb-spot-well.warn { background: rgba(255, 185, 0, .12); box-shadow: inset 0 0 0 1px rgba(255, 210, 48, .28); color: #ffd230; }
 html[data-theme="classic"] .hb-spot-next { background: #1a2433; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
 html[data-theme="classic"] .hb-spot-next:hover { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
+html[data-theme="classic"] .hb-ai-brief {
+  background: #16202e;
+  box-shadow: inset 3px 0 0 #7c86ff, inset 0 0 0 1px rgba(255, 255, 255, .10);
+}
+html[data-theme="classic"] .hb-ai-eyebrow,
+html[data-theme="classic"] .hb-ai-eyebrow .ic,
+html[data-theme="classic"] .hb-ai-chip .ic { color: #a3b3ff; }
+html[data-theme="classic"] .hb-ai-chip { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10); color: #d1d5dc; }
+html[data-theme="classic"] .hb-ai-chip:hover { background: #263447; color: #ffffff; box-shadow: inset 0 0 0 1px rgba(124, 134, 255, .45); }
 html[data-theme="classic"] .hb-dig-item { background: #1a2433; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
 html[data-theme="classic"] a.hb-dig-item:hover { background: #1e2939; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
 html[data-theme="classic"] .hb-blocker.sky { background: rgba(97, 95, 255, .10); box-shadow: inset 0 0 0 1px rgba(124, 134, 255, .24); }
@@ -2819,6 +2869,28 @@ html[data-theme^="report"] .hb-cu-window {
   border-radius: 3px; background: #F4F6F9; box-shadow: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.68rem; color: #475569;
 }
+html[data-theme^="report"] .hb-ai-brief {
+  border-radius: 0 4px 4px 0;
+  background: #F7F9FC;
+  box-shadow: inset 3px 0 0 #1B365D;
+  padding: 12px 14px;
+  gap: 8px;
+}
+html[data-theme^="report"] .hb-ai-eyebrow,
+html[data-theme^="report"] .hb-ai-eyebrow .ic { color: #1B365D; }
+html[data-theme^="report"] .hb-ai-text { font-size: 0.8125rem; line-height: 1.5; color: #2C3646; }
+html[data-theme^="report"] .hb-ai-text strong { color: #0B101B; font-weight: 650; }
+html[data-theme^="report"] .hb-ai-text .hb-ai-risk { color: #9B2424; font-weight: 650; }
+html[data-theme^="report"] .hb-ai-chip {
+  border-radius: 4px; background: #FFFFFF;
+  box-shadow: inset 0 0 0 1px #D5DDE8; color: #1E293B;
+}
+html[data-theme^="report"] .hb-ai-chip .ic { color: #1B365D; }
+html[data-theme^="report"] .hb-ai-chip:hover {
+  background: #1B365D; color: #FFFFFF; box-shadow: inset 0 0 0 1px #1B365D;
+}
+html[data-theme^="report"] .hb-ai-chip:hover .ic { color: #FFFFFF; }
+html[data-theme^="report"] .hb-dig-subhd { color: #64748B; padding-top: 4px; }
 html[data-theme^="report"] .hb-digest { gap: 0; }
 html[data-theme^="report"] .hb-dig-item {
   border-radius: 0; background: transparent; box-shadow: none;
@@ -3268,6 +3340,23 @@ html[data-theme="report-dark"] .hb-skip-btn:hover { background: #161D2B; color: 
 
 /* Night Operations & Activity Brief */
 html[data-theme="report-dark"] .hb-cu-window { background: #141A26; color: #94A3B8; }
+html[data-theme="report-dark"] .hb-ai-brief {
+  background: #121722; box-shadow: inset 3px 0 0 #60A5FA;
+}
+html[data-theme="report-dark"] .hb-ai-eyebrow,
+html[data-theme="report-dark"] .hb-ai-eyebrow .ic { color: #7AB3F0; }
+html[data-theme="report-dark"] .hb-ai-text { color: #CBD5E1; }
+html[data-theme="report-dark"] .hb-ai-text strong { color: #F8FAFC; }
+html[data-theme="report-dark"] .hb-ai-text .hb-ai-risk { color: #F2B84B; }
+html[data-theme="report-dark"] .hb-ai-chip {
+  background: #161D2B; box-shadow: inset 0 0 0 1px #29354B; color: #CBD5E1;
+}
+html[data-theme="report-dark"] .hb-ai-chip .ic { color: #7AB3F0; }
+html[data-theme="report-dark"] .hb-ai-chip:hover {
+  background: #F8FAFC; color: #0B0E14; box-shadow: inset 0 0 0 1px #F8FAFC;
+}
+html[data-theme="report-dark"] .hb-ai-chip:hover .ic { color: #0B0E14; }
+html[data-theme="report-dark"] .hb-dig-subhd { color: #7E8CA3; }
 html[data-theme="report-dark"] .hb-dig-item { border-top-color: #1A2230; }
 html[data-theme="report-dark"] .hb-dig-item:first-child { border-top-color: #242E40; }
 html[data-theme="report-dark"] a.hb-dig-item:hover { background: #131924; }
@@ -4626,14 +4715,29 @@ function pageHome() {
       <div class="hb-dig-body"><b>${esc(d.outcome)}</b> — ${esc(d.what)} (${esc(M[d.from].name)} notified)</div>
       <span class="hb-dig-time">Now</span>
     </a>`);
-    const shownRows = [...liveAgentRows, ...dynamicRows, ...staticRows].slice(0, 8).join("");
-    return `<aside class="hb-catchup" aria-label="Autonomous catch-up">
+    const shownRows = [...liveAgentRows, ...dynamicRows, ...staticRows].slice(0, 4).join("");
+    const briefCopy = recentDone.length
+      ? `You cleared <strong>${recentDone.length} ${recentDone.length === 1 ? "decision" : "decisions"}</strong> this session while <strong>${liveWorkingAgents.length} agents</strong> keep shipping across 3 projects (84% first-pass approval). <span class="hb-ai-risk">Top watchpoint:</span> Build box office remains offline (+5d slip on Office federation) and Jules is at its $210 cap.`
+      : `Delivery is tracking strong at <strong>84% first-pass approval</strong> (19 tasks in 7d) with <strong>${liveWorkingAgents.length} agents live</strong>. <span class="hb-ai-risk">Two risks to watch:</span> Build box office is offline (5d slip on Office federation) and Jules hit its $210 cap — clearing Kai’s v1.0 sync unblocks release.`;
+    return `<aside class="hb-catchup" aria-label="Executive brief and activity">
       <div class="hb-cu-hd">
-        <div class="hb-cu-title">${ic("signal", "ic16")}<span class="lbl-std">Catch-up</span><span class="lbl-rep">Operations &amp; Activity Brief</span></div>
-        <span class="hb-cu-window"><span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>Last 4 hours</span>
+        <div class="hb-cu-title">${ic("sparkle", "ic16")}<span class="lbl-std">AI Brief</span><span class="lbl-rep">Executive Brief</span></div>
+        <span class="hb-cu-window"><span class="h4-live-dot" style="width:6px;height:6px" aria-hidden="true"></span>Updated 2m ago</span>
       </div>
 
-      ${st === "loading" ? skel(4, "Summarizing recent activity…") : `<div class="hb-digest">
+      ${st === "loading" ? skel(4, "Synthesizing executive brief…") : `
+      <div class="hb-ai-brief">
+        <div class="hb-ai-eyebrow">${ic("sparkle", "ic14")}<span>Org AI synthesis</span></div>
+        <p class="hb-ai-text">${briefCopy}</p>
+        <div class="hb-ai-chips">
+          <button type="button" class="hb-ai-chip" data-act="brief-ai-ask" data-v="Why is Build box offline?">${ic("sparkle", "ic14")}<span>Build box outage</span></button>
+          <button type="button" class="hb-ai-chip" data-act="brief-ai-ask" data-v="Why did Jules hit its budget cap?">${ic("sparkle", "ic14")}<span>Jules spend cap</span></button>
+          <button type="button" class="hb-ai-chip" data-act="brief-ai-ask" data-v="Give me an executive summary of blockers and priorities">${ic("sparkle", "ic14")}<span>Board summary</span></button>
+        </div>
+      </div>
+
+      <div class="hb-dig-subhd"><span>Live &amp; Highlights</span><span>Last 4h</span></div>
+      <div class="hb-digest">
         ${shownRows}
       </div>`}
 
@@ -6892,6 +6996,7 @@ document.addEventListener("click", (e) => {
     case "cmdk-close": closeCmdk(true); break;
     case "cmdk-mode": setCmdkMode(v); break;
     case "cmdk-ai-ask": askInCmdk(v); break;
+    case "brief-ai-ask": openCmdk("", "ai"); askInCmdk(v); break;
     case "cmdk-ai-submit": askInCmdk(CMDK.q); break;
     case "cmdk-ai-clear": CMDK.aiAns = null; CMDK.aiHistory = []; renderCmdk(); { const i = document.getElementById("cmdk-input"); if (i) i.focus(); } break;
     case "cmdk-run": runCmdkItem(Number(v)); break;
