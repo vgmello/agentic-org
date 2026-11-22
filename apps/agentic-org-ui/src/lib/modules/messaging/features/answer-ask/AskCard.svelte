@@ -192,7 +192,7 @@
 					<Button
 						type="button"
 						size="sm"
-						class="h-auto min-h-8 max-w-full whitespace-normal px-[clamp(8px,calc(18px_-_.5rem),10px)] py-1 text-center max-[640px]:min-h-[max(44px,2rem)]"
+						class="h-auto min-h-9 max-w-full whitespace-normal px-[clamp(8px,calc(18px_-_.5rem),10px)] py-1 text-center max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 						variant="outline"
 						disabled={busy}
 						onclick={() => ((rejecting = !rejecting), (replying = false))}>{o.label}</Button
@@ -201,7 +201,7 @@
 					<Button
 						type="button"
 						size="sm"
-						class="h-auto min-h-8 max-w-full whitespace-normal px-[clamp(8px,calc(18px_-_.5rem),10px)] py-1 text-center max-[640px]:min-h-[max(44px,2rem)]"
+						class="h-auto min-h-9 max-w-full whitespace-normal px-[clamp(8px,calc(18px_-_.5rem),10px)] py-1 text-center max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 						variant={message.approval ? 'default' : 'outline'}
 						disabled={busy}
 						onclick={() => go(() => onanswer({ option_id: o.id }))}>{o.label}</Button
@@ -213,6 +213,7 @@
 					type="button"
 					size="sm"
 					variant="ghost"
+					class="h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					disabled={busy}
 					onclick={() => ((replying = !replying), (rejecting = false))}>Reply…</Button
 				>
@@ -240,8 +241,11 @@
 					placeholder={rejecting ? 'Why do you reject it?' : 'Your reply'}
 					class="min-w-0 flex-1 rounded-md bg-surface px-3 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus"
 				></textarea>
-				<Button type="submit" size="sm" disabled={busy || text.trim() === ''}
-					>{rejecting ? 'Reject' : 'Send reply'}</Button
+				<Button
+					type="submit"
+					size="sm"
+					class="h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
+					disabled={busy || text.trim() === ''}>{rejecting ? 'Reject' : 'Send reply'}</Button
 				>
 			</form>
 		{/if}
@@ -251,6 +255,7 @@
 					type="button"
 					size="sm"
 					variant="outline"
+					class="h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					disabled={busy}
 					onclick={() => go(onaccept)}>Accept</Button
 				>{/if}
@@ -258,6 +263,7 @@
 					type="button"
 					size="sm"
 					variant="ghost"
+					class="h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					onclick={(event) => onreplyinthread?.(event.currentTarget)}>Reply…</Button
 				>{/if}
 			{#if message.linked_ref}<div><Rich body={`Linked to ${message.linked_ref}`} /></div>{/if}

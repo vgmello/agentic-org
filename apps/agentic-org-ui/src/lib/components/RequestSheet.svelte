@@ -80,18 +80,24 @@
 		destroyed = true;
 	});
 
-	async function load() {
-		if (!requestId) return;
+	async function load(): Promise<boolean> {
+		if (!requestId) return false;
+		const forOrg = organizationId;
+		const forRequest = requestId;
 		const mine = ++loads;
 		try {
 			const [got, history] = await Promise.all([
-				workApi.get(organizationId, requestId),
-				workApi.activity(organizationId, requestId)
+				workApi.get(forOrg, forRequest),
+				workApi.activity(forOrg, forRequest)
 			]);
-			if (destroyed || mine !== loads) return;
+			if (destroyed || mine !== loads || forOrg !== organizationId || forRequest !== requestId)
+				return false;
 			[item, events] = [got, history];
+			return true;
 		} catch (e) {
-			if (!destroyed && mine === loads) error = toAppError(e).message;
+			if (!destroyed && mine === loads && forOrg === organizationId && forRequest === requestId)
+				error = toAppError(e).message;
+			return false;
 		}
 	}
 
@@ -107,9 +113,18 @@
 				cited = undefined;
 				busy = false;
 				sheet += 1;
-				void load().then(
-					() => start && item && OPEN_STATUSES.includes(item.summary.status) && begin(start)
-				);
+				const mine = sheet;
+				void load().then((ok) => {
+					if (
+						ok &&
+						!destroyed &&
+						mine === sheet &&
+						start &&
+						item &&
+						OPEN_STATUSES.includes(item.summary.status)
+					)
+						begin(start);
+				});
 			});
 		}
 	});

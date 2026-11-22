@@ -71,15 +71,18 @@
 
 	async function load() {
 		if (!bugId) return false;
+		const forOrg = organizationId;
 		const forBug = bugId;
 		const seq = ++loadSeq;
 		try {
-			const got = await workApi.get(organizationId, bugId);
-			if (destroyed || forBug !== bugId || seq !== loadSeq) return false;
+			const got = await workApi.get(forOrg, forBug);
+			if (destroyed || forOrg !== organizationId || forBug !== bugId || seq !== loadSeq)
+				return false;
 			item = got;
 			return true;
 		} catch (e) {
-			if (!destroyed && forBug === bugId && seq === loadSeq) error = toAppError(e).message;
+			if (!destroyed && forOrg === organizationId && forBug === bugId && seq === loadSeq)
+				error = toAppError(e).message;
 			return false;
 		}
 	}
@@ -169,6 +172,7 @@
 	const triager = $derived(nameOf(snapshot, snapshot.members.find((m) => m.owner)?.id));
 	const field =
 		'w-full rounded-md bg-surface-raised px-2.5 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus';
+	const actionBtn = 'h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11';
 	const close = () => ((step = undefined), (note = ''), (anyway = ''), (askAnyway = false));
 
 	function pillToneClass(tone: WorkTone): string {
@@ -358,6 +362,7 @@
 							</div>
 						</div>
 						<Button
+							class={actionBtn}
 							disabled={busy}
 							onclick={() =>
 								act(
@@ -401,7 +406,7 @@
 					{#if s.status !== 'closed' && s.status !== 'fixed'}<Button
 							size="sm"
 							variant="outline"
-							class="w-fit"
+							class="w-fit {actionBtn}"
 							disabled={busy}
 							onclick={createFixTask}>Create a fix task</Button
 						>{/if}
@@ -445,6 +450,7 @@
 					<div class="flex flex-wrap gap-2" data-testid="bug-actions">
 						{#if s.status === 'triaged' || s.status === 'in_progress'}<Button
 								size="sm"
+								class={actionBtn}
 								onclick={() => (step = 'fix')}>Mark fixed…</Button
 							>{/if}
 						{#if s.status === 'fixed'}
@@ -453,6 +459,7 @@
 							</p>
 							<Button
 								size="sm"
+								class={actionBtn}
 								disabled={busy}
 								onclick={() =>
 									act(
@@ -460,18 +467,20 @@
 										`${bugRef(s)} verified and closed.`
 									)}>It's fixed: close</Button
 							>
-							<Button size="sm" variant="outline" onclick={() => (step = 'still')}
+							<Button size="sm" variant="outline" class={actionBtn} onclick={() => (step = 'still')}
 								>Still happens…</Button
 							>
 						{/if}
 						{#if s.status !== 'closed'}<Button
 								size="sm"
 								variant="outline"
+								class={actionBtn}
 								onclick={() => (step = 'close')}>Close…</Button
 							>{/if}
 						{#if s.status === 'closed'}<Button
 								size="sm"
 								variant="outline"
+								class={actionBtn}
 								onclick={() => (step = 'reopen')}>Reopen…</Button
 							>{/if}
 					</div>
@@ -515,6 +524,7 @@
 						<div class="flex gap-x-2">
 							<Button
 								size="sm"
+								class={actionBtn}
 								disabled={busy ||
 									(step === 'close' && closeAs === 'duplicate'
 										? original === ''
@@ -532,7 +542,7 @@
 											? 'Reopen'
 											: 'Close bug'}
 							</Button>
-							<Button size="sm" variant="outline" onclick={close}>Cancel</Button>
+							<Button size="sm" variant="outline" class={actionBtn} onclick={close}>Cancel</Button>
 						</div>
 					</section>
 				{/if}

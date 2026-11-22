@@ -293,18 +293,24 @@
 		destroyed = true;
 	});
 
-	async function load() {
+	async function load(
+		targetOrgId = organizationId,
+		isCancelled: () => boolean = () => false
+	): Promise<boolean> {
 		const seq = ++loadSeq;
-		const targetOrgId = organizationId;
 		try {
 			const snap = await chatApi.snapshot(targetOrgId);
-			if (destroyed || seq !== loadSeq || targetOrgId !== organizationId) return;
+			if (destroyed || isCancelled() || seq !== loadSeq || targetOrgId !== organizationId)
+				return false;
 			now = new Date().toISOString();
 			chat = snap;
 			loadError = undefined;
+			return true;
 		} catch (e) {
-			if (destroyed || seq !== loadSeq || targetOrgId !== organizationId) return;
+			if (destroyed || isCancelled() || seq !== loadSeq || targetOrgId !== organizationId)
+				return false;
 			if (!chat) loadError = toAppError(e).message;
+			return false;
 		}
 	}
 
@@ -313,17 +319,44 @@
 		const syncCompactPanels = () => (compactPanels = media.matches);
 		syncCompactPanels();
 		media.addEventListener('change', syncCompactPanels);
-		void load().then(() => {
-			openLocation(urlLocation(page.url.search));
-			lastSearch = page.url.search;
-			started = true;
-		});
-		const stop = chatApi.subscribe(organizationId, () => void load());
-		const timer = setInterval(() => void load(), 30_000);
 		return () => {
-			stop();
-			clearInterval(timer);
 			media.removeEventListener('change', syncCompactPanels);
+		};
+	});
+
+	$effect(() => {
+		const id = organizationId;
+		let cancelled = false;
+		let stop: (() => void) | undefined;
+		let timer: ReturnType<typeof setInterval> | undefined;
+		untrack(() => {
+			chat = undefined;
+			loadError = undefined;
+			view = { type: 'needs' };
+			threadRoot = undefined;
+			threadOpener = undefined;
+			rowActivity.clear();
+			showMembers = false;
+			membersOpener = undefined;
+			showMuted = false;
+			openDigest = undefined;
+			pending = [];
+			readMarker = undefined;
+			highlight = undefined;
+			started = false;
+			void load(id, () => cancelled).then((ok) => {
+				if (destroyed || cancelled || !ok) return;
+				openLocation(urlLocation(page.url.search));
+				lastSearch = page.url.search;
+				started = true;
+			});
+			stop = chatApi.subscribe(id, () => void load(id, () => cancelled));
+			timer = setInterval(() => void load(id, () => cancelled), 30_000);
+		});
+		return () => {
+			cancelled = true;
+			stop?.();
+			clearInterval(timer);
 		};
 	});
 
@@ -938,7 +971,7 @@
 								bind:ref={sidebarToggle}
 								variant="outline"
 								size="sm"
-								class="h-auto min-h-8 max-w-full flex-wrap px-[min(.625rem,8px)] py-1.5"
+								class="h-auto min-h-9 max-w-full flex-wrap px-[min(.625rem,8px)] py-1.5 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 								aria-haspopup="dialog"
 								aria-expanded={sidebarOpen}
 								aria-controls={conversationsId}
@@ -977,6 +1010,7 @@
 							type="button"
 							variant="outline"
 							size="sm"
+							class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 							aria-pressed={showMembers}
 							onclick={(event) => toggleMembers(event.currentTarget)}
 							><Users aria-hidden="true" /> Members</Button

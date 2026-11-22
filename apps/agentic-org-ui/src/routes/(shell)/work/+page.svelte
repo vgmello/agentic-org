@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, tick } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
@@ -93,12 +93,22 @@
 	$effect(() => {
 		const id = organizationId;
 		let cancelled = false;
-		const nextTab = page.url.searchParams.get('request') ? tab : rememberedTab(id);
-		tab = nextTab;
-		chosen = false;
-		items = undefined;
-		loadError = undefined;
-		void load(id, () => cancelled, nextTab);
+		untrack(() => {
+			const nextTab = page.url.searchParams.get('request') ? tab : rememberedTab(id);
+			tab = nextTab;
+			chosen = false;
+			items = undefined;
+			loadError = undefined;
+			taskOpen = false;
+			bugOpen = false;
+			requestOpen = false;
+			newRequestOpen = false;
+			taskId = undefined;
+			bugId = undefined;
+			requestId = undefined;
+			requestStart = undefined;
+			void load(id, () => cancelled, nextTab);
+		});
 		return () => {
 			cancelled = true;
 		};

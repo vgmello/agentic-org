@@ -4,6 +4,7 @@
   task board and bug list that v1's project page served, as its Tasks and Bugs tabs, so the release keeps them.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import BugsPanel from '$lib/components/BugsPanel.svelte';
 	import TasksBoard from '$lib/components/TasksBoard.svelte';
 	import type { OrgSnapshot } from '$lib/proto';
@@ -16,7 +17,25 @@
 		{ id: 'tasks', name: 'Tasks' },
 		{ id: 'bugs', name: 'Bugs' }
 	] as const;
-	let view = $state<'tasks' | 'bugs'>('tasks');
+	type ProjectWorkView = (typeof views)[number]['id'];
+	let view = $state<ProjectWorkView>('tasks');
+
+	function handleTabKeydown(event: KeyboardEvent, current: ProjectWorkView) {
+		const idx = views.findIndex((v) => v.id === current);
+		if (idx < 0) return;
+		const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+		if (!step && event.key !== 'Home' && event.key !== 'End') return;
+		event.preventDefault();
+		const nextIdx =
+			event.key === 'Home'
+				? 0
+				: event.key === 'End'
+					? views.length - 1
+					: (idx + step + views.length) % views.length;
+		const nextView = views[nextIdx].id;
+		view = nextView;
+		void tick().then(() => document.getElementById(`project-work-tab-${nextView}`)?.focus());
+	}
 </script>
 
 <div class="flex min-w-0 flex-col gap-5 px-4 py-6 min-[640px]:px-6 min-[1024px]:px-8">
@@ -27,10 +46,13 @@
 	>
 		{#each views as v (v.id)}
 			<button
+				id="project-work-tab-{v.id}"
 				type="button"
 				role="tab"
 				aria-selected={view === v.id}
+				tabindex={view === v.id ? 0 : -1}
 				onclick={() => (view = v.id)}
+				onkeydown={(e) => handleTabKeydown(e, v.id)}
 				class={[
 					'proj-work-tab min-h-9 rounded-lg px-3.5 text-sm/6 font-medium transition-colors focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11',
 					view === v.id ? 'is-on font-semibold' : 'hover:text-fg'

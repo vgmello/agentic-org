@@ -79,20 +79,19 @@
 
 	async function load(reset: boolean) {
 		if (!taskId) return;
+		const forOrg = organizationId;
 		const forTask = taskId;
 		const seq = ++loadSeq;
 		try {
-			const got = await workApi.get(organizationId, taskId);
-			if (destroyed || forTask !== taskId || seq !== loadSeq) return;
+			const got = await workApi.get(forOrg, forTask);
+			if (destroyed || forOrg !== organizationId || forTask !== taskId || seq !== loadSeq) return;
 			item = got;
 			const fixedNow = (
 				await Promise.all(
 					got.links
 						.filter((l) => l.kind === 'fixes' && l.to.type === 'item')
 						.map((l) =>
-							workApi
-								.get(organizationId, (l.to as { item_id: string }).item_id)
-								.catch(() => undefined)
+							workApi.get(forOrg, (l.to as { item_id: string }).item_id).catch(() => undefined)
 						)
 				)
 			).flatMap((b) =>
@@ -101,12 +100,12 @@
 			const origin = got.links.find((l) => l.kind === 'from_request' && l.to.type === 'item');
 			const originNow = origin
 				? await workApi
-						.get(organizationId, (origin.to as { item_id: string }).item_id)
+						.get(forOrg, (origin.to as { item_id: string }).item_id)
 						.then((r) => ({ id: r.summary.id, ref: requestRef(r.summary), title: r.summary.title }))
 						.catch(() => undefined)
 				: undefined;
 			// Another task may have been opened while these were read: they are not its.
-			if (destroyed || forTask !== taskId || seq !== loadSeq) return;
+			if (destroyed || forOrg !== organizationId || forTask !== taskId || seq !== loadSeq) return;
 			fixed = fixedNow;
 			fromRequest = originNow;
 			if (reset) {
@@ -116,7 +115,8 @@
 			}
 		} catch (e) {
 			// An answer for a task that is no longer the one open says nothing about this one.
-			if (!destroyed && forTask === taskId && seq === loadSeq) error = toAppError(e).message;
+			if (!destroyed && forOrg === organizationId && forTask === taskId && seq === loadSeq)
+				error = toAppError(e).message;
 		}
 	}
 
@@ -287,6 +287,7 @@
 	}
 	const field =
 		'w-full rounded-md bg-surface-raised px-2.5 py-2 text-sm/6 text-fg outline-1 -outline-offset-1 outline-line focus-visible:outline-2 focus-visible:outline-focus';
+	const actionBtn = 'h-auto min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11';
 
 	function pillToneClass(tone: WorkTone): string {
 		if (tone === 'ok') return 't-green';
@@ -426,10 +427,13 @@
 						<div class="flex gap-x-2">
 							<Button
 								size="sm"
+								class={actionBtn}
 								disabled={busy || blockedReason.trim() === ''}
 								onclick={confirmBlocked}>Block task</Button
 							>
-							<Button size="sm" variant="outline" onclick={cancelPending}>Cancel</Button>
+							<Button size="sm" variant="outline" class={actionBtn} onclick={cancelPending}
+								>Cancel</Button
+							>
 						</div>
 					</div>
 				{/if}
@@ -442,10 +446,13 @@
 						<div class="flex gap-x-2">
 							<Button
 								size="sm"
+								class={actionBtn}
 								disabled={busy || anywayReason.trim() === ''}
 								onclick={confirmAnyway}>Mark done anyway</Button
 							>
-							<Button size="sm" variant="outline" onclick={cancelPending}>Cancel</Button>
+							<Button size="sm" variant="outline" class={actionBtn} onclick={cancelPending}
+								>Cancel</Button
+							>
 						</div>
 					</div>
 				{/if}
@@ -475,8 +482,11 @@
 						>
 							<p>{assignWarning(snapshot, assignPending)}</p>
 							<div class="flex gap-x-2">
-								<Button size="sm" disabled={busy} onclick={confirmAssign}>Assign anyway</Button
-								><Button size="sm" variant="outline" onclick={cancelAssign}>Cancel</Button>
+								<Button size="sm" class={actionBtn} disabled={busy} onclick={confirmAssign}
+									>Assign anyway</Button
+								><Button size="sm" variant="outline" class={actionBtn} onclick={cancelAssign}
+									>Cancel</Button
+								>
 							</div>
 						</div>
 					{/if}
@@ -564,8 +574,11 @@
 						<label class="flex shrink-0 items-center gap-x-1.5 text-sm/6 text-fg-secondary"
 							><Checkbox bind:checked={newRequired} aria-label="Required" /> Required</label
 						>
-						<Button type="submit" variant="outline" disabled={busy || newStep.trim() === ''}
-							>Add step</Button
+						<Button
+							type="submit"
+							variant="outline"
+							class={actionBtn}
+							disabled={busy || newStep.trim() === ''}>Add step</Button
 						>
 					</form>
 				</section>
@@ -584,16 +597,26 @@
 							Delete {taskRef(s)}? Its history stays and its number is never reused.
 						</p>
 						<div class="mt-2 flex gap-x-2">
-							<Button variant="destructive" size="sm" disabled={busy} onclick={remove}
-								>Delete task</Button
+							<Button
+								variant="destructive"
+								size="sm"
+								class={actionBtn}
+								disabled={busy}
+								onclick={remove}>Delete task</Button
 							>
-							<Button variant="outline" size="sm" onclick={() => (confirmDelete = false)}
-								>Keep</Button
+							<Button
+								variant="outline"
+								size="sm"
+								class={actionBtn}
+								onclick={() => (confirmDelete = false)}>Keep</Button
 							>
 						</div>
 					{:else}
-						<Button variant="outline" size="sm" onclick={() => (confirmDelete = true)}
-							>Delete…</Button
+						<Button
+							variant="outline"
+							size="sm"
+							class={actionBtn}
+							onclick={() => (confirmDelete = true)}>Delete…</Button
 						>
 					{/if}
 				</div>

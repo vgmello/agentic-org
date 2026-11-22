@@ -124,6 +124,7 @@
 							type="button"
 							variant="ghost"
 							size="xs"
+							class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 							disabled={!officeRunning}
 							aria-label="Remove {m.name} from the channel"
 							onclick={() => onremove(m.id)}>Remove</Button
@@ -138,6 +139,7 @@
 					type="button"
 					size="sm"
 					variant="outline"
+					class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					disabled={!officeRunning}
 					onclick={onaddpeople}>Add people…</Button
 				>
@@ -145,6 +147,7 @@
 					type="button"
 					size="sm"
 					variant="outline"
+					class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					disabled={!officeRunning}
 					onclick={onrename}>Rename…</Button
 				>
@@ -152,6 +155,7 @@
 					type="button"
 					size="sm"
 					variant="outline"
+					class="min-h-9 max-[639px]:min-h-11 [@media(pointer:coarse)]:min-h-11"
 					disabled={!officeRunning}
 					onclick={onarchive}>Archive</Button
 				>

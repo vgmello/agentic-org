@@ -12,7 +12,7 @@
   accepts it. Back with the sheet open closes it only (app-shell-ux §6).
 -->
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import {
 		errorClass,
 		helpClass,
@@ -109,6 +109,11 @@
 	});
 
 	let teamsSeq = 0;
+	let destroyed = false;
+
+	onDestroy(() => {
+		destroyed = true;
+	});
 
 	function loadTeams() {
 		const seq = ++teamsSeq;
@@ -117,14 +122,14 @@
 		teamsLoading = true;
 		projectsApi.teamChoices(org).then(
 			(rows) => {
-				if (seq !== teamsSeq || org !== organizationId) return;
+				if (destroyed || seq !== teamsSeq || org !== organizationId) return;
 				teams = rows;
 				teamsLoading = false;
 				// The default place for a new team is the organization's top-level team (§7.9).
 				if (!parentId) parentId = rows.find((t) => t.organizationTeam)?.id ?? NO_PARENT;
 			},
 			(e) => {
-				if (seq !== teamsSeq || org !== organizationId) return;
+				if (destroyed || seq !== teamsSeq || org !== organizationId) return;
 				teamsError = toAppError(e).message;
 				teamsLoading = false;
 			}
@@ -204,9 +209,11 @@
 						: { kind: 'existing', teamId },
 				developmentProcessId: processId || null
 			});
+			if (destroyed) return;
 			busy = undefined;
 			await finish(answer, created);
 		} catch (e) {
+			if (destroyed) return;
 			busy = undefined;
 			const failure = toAppError(e);
 			const field = (failure as { field?: ProjectField }).field;
@@ -214,7 +221,7 @@
 			else if (field) {
 				refusal = { field, message: failure.message };
 				await tick();
-				form.querySelector<HTMLElement>(fieldSelector(field))?.focus();
+				if (!destroyed) form.querySelector<HTMLElement>(fieldSelector(field))?.focus();
 			} else outcome = { kind: 'failed', message: failure.message };
 		}
 	}
@@ -225,12 +232,14 @@
 		const created = name.trim();
 		try {
 			const result = await projectsApi.createOperation(organizationId, operationId);
+			if (destroyed) return;
 			busy = undefined;
 			if (result.state === 'applied') await finish(result, created);
 			else if (result.state === 'not_applied')
 				outcome = { kind: 'not_applied', reason: result.reason };
 			else outcome = { kind: 'pending' };
 		} catch (e) {
+			if (destroyed) return;
 			busy = undefined;
 			outcome = { kind: 'unknown', checkError: toAppError(e).message };
 		}
@@ -392,7 +401,7 @@
 						<Button
 							type="button"
 							variant="outline"
-							class="mt-3 min-w-20 {mobileButton}"
+							class="mt-3 min-h-9 min-w-20 {mobileButton} [@media(pointer:coarse)]:min-h-11"
 							disabled={teamsLoading}
 							aria-busy={teamsLoading}
 							onclick={loadTeams}>{teamsLoading ? 'Retrying…' : 'Retry'}</Button
