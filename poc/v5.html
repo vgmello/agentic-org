@@ -3800,7 +3800,7 @@ html[data-theme="report-dark"] .split .list { background: #161B24; }
 /* ---------------------------------------------------------------- data */
 const M = {
   you:   { name: "You", kind: "person", role: "Owner", owner: true, teams: [], mgr: null, live: "available", task: "", proj: null },
-  tess: { name: "Tess", kind: "agent", tier: "builtin", builtin: true, role: "Chief of Staff · Tactical Execution & Squad Supervisor", teams: ["leadership"], mgr: "you", live: "available", task: "Synthesizing executive brief & unblocking queues", proj: null, setup: { runtime: "Built-in", model: "Org Chief of Staff", how: "Always on", office: "hq", home: "system/tess" } },
+  tess: { name: "Tess", kind: "agent", tier: "builtin", builtin: true, role: "Chief of Staff", teams: ["leadership"], mgr: "you", live: "available", task: "Synthesizing executive brief & unblocking queues", proj: null, goal: "Tactical Execution & Squad Supervisor — synthesizes live operations into the Executive Brief, surfaces risks early, and queues actionable proposals for the owner.", setup: { runtime: "Built-in", model: "Chief of Staff (Built-in AI)", how: "On demand & scheduled brief", office: "hq", home: "system/tess" } },
   maya:  { name: "Maya Chen", kind: "person", role: "Operations", teams: ["leadership"], mgr: "you", live: "offline", task: "", proj: null, last: "Signed out · last seen yesterday" },
   ada:   { name: "Ada", kind: "agent", tier: "lead", role: "Engineering Manager", teams: ["leadership"], mgr: "you", live: "working", task: "Re-sequence the nav slices for IA v2", proj: "agency-v1", goal: "Every BUG-70 slice re-planned against IA v2, with owners and order", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Always on", office: "hq", home: "projects/ac/agents/ac-staff-engineer-ada" } },
   rowan: { name: "Rowan", kind: "agent", tier: "lead", role: "Staff Engineer", teams: ["platform"], mgr: "ada", live: "working", task: "Custody lock fix ruling", proj: "office-federation", goal: "A written ruling on the custody lock with the tests that pin it", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-fullstack-engineer-rowan" } },
@@ -4853,13 +4853,13 @@ function pageHome() {
       <div class="hb-cos-memo">
         ${briefSections}
         <div class="hb-cos-sig">
-          <div class="hb-cos-sig-who">
+          <a class="hb-cos-sig-who" href="#/members/tess" title="Open Tess's profile">
             <span class="hb-cos-mark" aria-hidden="true">${ic("sparkle", "ic14")}</span>
             <div class="hb-cos-sig-txt">
               <span class="hb-cos-sig-name">Tess</span>
-              <span class="hb-cos-sig-role">Chief of Staff · Tactical Execution &amp; Squad Supervisor</span>
+              <span class="hb-cos-sig-role">Chief of Staff</span>
             </div>
-          </div>
+          </a>
           ${lens === "board"
             ? `<button type="button" class="hb-cos-copy" data-act="ai-copy-board">${ic("clipboard", "ic14")}<span>Copy memo</span></button>`
             : `<span class="hb-cos-sig-meta">Updated 2m ago</span>`}
