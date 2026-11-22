@@ -142,6 +142,9 @@ pub type GitFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send +
 /// Dispatches C5 organization processes, standards, and built-in skills RPCs (`TASK-44`).
 pub type ProcessesFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
 
+/// Dispatches L2/L3 usage, cost accounting, and budget RPCs (`TASK-53`).
+pub type CostsFn = Box<dyn Fn(Option<&str>, &Request) -> Option<Response> + Send + Sync>;
+
 /// What the connections ask of the office.
 pub struct OfficePorts {
     pub snapshot: SnapshotFn,
@@ -176,6 +179,8 @@ pub struct OfficePorts {
     pub git: Option<GitFn>,
     /// C5 organization processes, standards, and built-in skills dispatcher (`TASK-44`).
     pub processes: Option<ProcessesFn>,
+    /// L2/L3 usage, cost accounting, and budget controls dispatcher (`TASK-53`).
+    pub costs: Option<CostsFn>,
     /// Who a `msg.bind` names.
     pub directory: Arc<dyn MemberDirectory + Send + Sync>,
 }
@@ -1504,6 +1509,31 @@ fn project_or_hiring(request: &Request, shared: &Shared, binding: &Binding) -> O
         .or_else(|| tasks_rpc(request, shared, binding))
         .or_else(|| git_rpc(request, shared, binding))
         .or_else(|| processes_rpc(request, shared, binding))
+        .or_else(|| costs_rpc(request, shared, binding))
+}
+
+fn costs_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
+    if !crate::cost_calls::is_cost_or_budget_method(request) {
+        return None;
+    }
+    let Some(member) = binding.member() else {
+        return Some(Response::error(
+            request.id,
+            ApiError::new(ErrorCode::NotBound, "connection is not bound"),
+        ));
+    };
+    if let Some(costs) = &shared.ports.costs {
+        if let Some(response) = costs(Some(member), request) {
+            return Some(response);
+        }
+    }
+    Some(Response::error(
+        request.id,
+        ApiError::new(
+            ErrorCode::UnknownMethod,
+            format!("this office does not know `{}`", request.method),
+        ),
+    ))
 }
 
 fn processes_rpc(request: &Request, shared: &Shared, binding: &Binding) -> Option<Response> {
@@ -2907,6 +2937,7 @@ mod tests {
             tasks: None,
             git: None,
             processes: None,
+            costs: None,
             directory,
         }
     }
@@ -3374,6 +3405,7 @@ mod tests {
                 tasks: None,
                 git: None,
                 processes: None,
+                costs: None,
                 directory,
             },
             launch_key(),
@@ -3855,6 +3887,7 @@ mod tests {
                     tasks: None,
                     git: None,
                     processes: None,
+                    costs: None,
                     directory,
                 },
                 launch_key(),
@@ -4361,6 +4394,7 @@ mod tests {
                 tasks: None,
                 git: None,
                 processes: None,
+                costs: None,
                 directory,
             },
             launch_key(),

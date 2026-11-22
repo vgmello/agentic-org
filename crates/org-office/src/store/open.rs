@@ -55,8 +55,13 @@ pub use operations::{
     TopTeamId, UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
 };
 
-use super::sqlite::{private_notes::SqlitePrivateNotesStore, SqliteEngine};
+use super::sqlite::{
+    accounting::SqliteAccountingStore, budgets::SqliteBudgetStore,
+    private_notes::SqlitePrivateNotesStore, SqliteEngine,
+};
 use crate::{
+    accounting::AccountingStore,
+    budgets::BudgetStore,
     error::OfficeError,
     messaging::projector::MessagingFiles,
     office_local::{clean_stop, projector::OfficeLocalFiles, records::CleanStop},
@@ -86,6 +91,50 @@ pub(crate) fn open_private_notes(
         EngineChoice::Memory => Ok(Arc::new(
             crate::private_notes::memory::MemoryPrivateNotesStore::new(),
         )),
+    }
+}
+
+/// Opens the isolated `L2` usage & cost accounting store (`TASK-53`, `doc-87`, `ADR-0016`)
+/// backed by `<durable-root>/accounting/` and `<runtime-root>/<office-id>/protected/accounting.db`.
+pub(crate) fn open_accounting(
+    engine: EngineChoice,
+    durable_root: &Path,
+    runtime_root: &Path,
+    office_id: &str,
+    org_id: &str,
+) -> Result<Arc<dyn AccountingStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqliteAccountingStore::open(
+            durable_root,
+            runtime_root,
+            office_id,
+            org_id,
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(
+            crate::accounting::memory::MemoryAccountingStore::new(),
+        )),
+    }
+}
+
+/// Opens the isolated `L3` budgets & holds store (`TASK-53`, `doc-92`, `ADR-0016`)
+/// backed by `<durable-root>/budgets/` and `<runtime-root>/<office-id>/protected/budgets.db`.
+pub(crate) fn open_budgets(
+    engine: EngineChoice,
+    durable_root: &Path,
+    runtime_root: &Path,
+    office_id: &str,
+    org_id: &str,
+) -> Result<Arc<dyn BudgetStore>, OfficeError> {
+    match engine {
+        EngineChoice::Sqlite => Ok(Arc::new(SqliteBudgetStore::open(
+            durable_root,
+            runtime_root,
+            office_id,
+            org_id,
+        )?)),
+        #[cfg(any(test, feature = "testkit"))]
+        EngineChoice::Memory => Ok(Arc::new(crate::budgets::memory::MemoryBudgetStore::new())),
     }
 }
 

@@ -114,6 +114,8 @@ pub(crate) mod accounts {
         pub(in crate::hostdb) revoked_at_ms: Option<i64>,
         pub(in crate::hostdb) password_changed_at_ms: i64,
         pub(in crate::hostdb) links: Vec<Link>,
+        pub(in crate::hostdb) time_zone: Option<String>,
+        pub(in crate::hostdb) last_org_id: Option<String>,
     }
 
     /// An owned PHC for hashing outside the database lock; deliberately has no Debug.
@@ -149,6 +151,12 @@ pub(crate) mod accounts {
         }
         pub(crate) fn links(&self) -> &[Link] {
             &self.links
+        }
+        pub(crate) fn time_zone(&self) -> Option<&str> {
+            self.time_zone.as_deref()
+        }
+        pub(crate) fn last_org_id(&self) -> Option<&str> {
+            self.last_org_id.as_deref()
         }
     }
 

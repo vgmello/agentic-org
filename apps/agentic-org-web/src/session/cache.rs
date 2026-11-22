@@ -106,6 +106,13 @@ impl SessionCache {
         }
         true
     }
+    /// Drops one cached session entry by its cookie digest so the next read revalidates.
+    pub fn invalidate_cookie(&self, cookie: &Digest32) {
+        let mut state = self.state();
+        state.entries.remove(&cookie.0);
+        state.order.retain(|k| k != &cookie.0);
+    }
+
     /// What `account_id` can open changed on `generation`: drop its entries, so its next
     /// request validates again and reads the new links. Nothing is remembered: a later
     /// validation of the same session is current and may be cached.
@@ -168,6 +175,8 @@ mod tests {
             account: BrowserAccount {
                 id: "a".into(),
                 login: "alex".into(),
+                time_zone: None,
+                last_org_id: None,
             },
             admin: true,
             orgs: Vec::new(),

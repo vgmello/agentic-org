@@ -24,6 +24,8 @@ fn first() -> Account {
         revoked_at_ms: None,
         password_changed_at_ms: 123,
         links: vec![],
+        time_zone: None,
+        last_org_id: None,
     }
 }
 
@@ -105,6 +107,8 @@ fn reads_bind_keys_and_ids_and_keep_each_accounts_links_separate() {
             org_id: "ORG-C".into(),
             member_id: "MEMBER-C".into(),
         }],
+        time_zone: None,
+        last_org_id: None,
     };
     let credentials = db
         .account_credentials(&LoginKey::new(key).unwrap())
@@ -384,4 +388,40 @@ fn malformed_stored_identity_and_phc_refuse_without_repair_through_reopen() {
             bad
         );
     }
+}
+
+#[test]
+fn account_preferences_persist_and_filter_stale_last_org() {
+    let (_home, _secrets, db) = fixture();
+    let aid = first().account_id;
+    {
+        let c = db.connection.lock().unwrap();
+        c.execute(
+            "INSERT INTO account_links VALUES (?1, 'ORG-A', 'MEM-A')",
+            [aid.as_str()],
+        )
+        .unwrap();
+    }
+    let (tz, last_org) = db
+        .set_account_preferences(&aid, Some(Some("America/Sao_Paulo")), Some(Some("ORG-A")))
+        .unwrap();
+    assert_eq!(tz.as_deref(), Some("America/Sao_Paulo"));
+    assert_eq!(last_org.as_deref(), Some("ORG-A"));
+
+    // Removing the org link automatically filters out stale last_org_id on subsequent reads!
+    {
+        let c = db.connection.lock().unwrap();
+        c.execute(
+            "DELETE FROM account_links WHERE account_id=?1 AND org_id='ORG-A'",
+            [aid.as_str()],
+        )
+        .unwrap();
+    }
+    let reloaded = db.account_authority(&aid).unwrap().unwrap();
+    assert_eq!(reloaded.time_zone.as_deref(), Some("America/Sao_Paulo"));
+    assert_eq!(reloaded.last_org_id, None);
+
+    // Clearing time_zone persists cleanly.
+    let (tz_cleared, _) = db.set_account_preferences(&aid, Some(None), None).unwrap();
+    assert_eq!(tz_cleared, None);
 }

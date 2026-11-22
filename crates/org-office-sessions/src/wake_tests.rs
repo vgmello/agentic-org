@@ -1065,3 +1065,111 @@ fn pass2_grace_period_disarm_prevents_stale_deadline_on_subsequent_ask() {
     ));
     mgr.stop_all("done");
 }
+
+#[test]
+fn l3_office_agent_budget_hold_blocks_wake_until_extended_or_cleared() {
+    use org_proto::budgets::{
+        BudgetExtendOnceParams, BudgetPeriodKind, BudgetScopeKind, BudgetSetParams,
+        BudgetTimeZoneSource, BudgetUnit,
+    };
+    use org_proto::costs::{
+        AttributionBasis, CostUsageRecordParams, UsageActorKind, UsageScopeKind,
+    };
+
+    let fx = WakeFixture::new(SLOW_TURN_SCRIPT);
+    let mgr = fx.make_manager(12, Duration::from_secs(3600), Duration::from_secs(2));
+
+    // Set a 1,000-token daily budget for agent_a and record 1,000 tokens -> triggers L3 hold!
+    let budget = fx
+        .office
+        .budget_set(
+            &fx.owner_id,
+            BudgetSetParams {
+                operation_id: next_id(),
+                scope_kind: BudgetScopeKind::Agent,
+                task_id: None,
+                agent_id: Some(fx.agent_a.clone()),
+                release_id: None,
+                period_kind: BudgetPeriodKind::Day,
+                unit: BudgetUnit::Tokens,
+                limit_amount: 1_000,
+                time_zone: Some("UTC".into()),
+                time_zone_source: Some(BudgetTimeZoneSource::OwnerPerson),
+                reason: None,
+            },
+        )
+        .unwrap()
+        .unwrap()
+        .budget;
+    let occurred_at =
+        org_office::format_rfc3339_ms(org_office::organization_family::testkit::CREATION_AT.0);
+    fx.office
+        .record_office_usage(CostUsageRecordParams {
+            id: None,
+            producer_id: "test-session".into(),
+            source_event_id: "ev-budget-hit".into(),
+            run_id: None,
+            actor_kind: UsageActorKind::Agent,
+            employee_id: Some(fx.agent_a.clone()),
+            runtime: "fake".into(),
+            provider: None,
+            model: None,
+            occurred_at,
+            source_metadata_json: None,
+            input_tokens: Some(600),
+            output_tokens: Some(400),
+            cache_read_tokens: Some(0),
+            cache_write_tokens: Some(0),
+            reasoning_tokens: Some(0),
+            token_issue: None,
+            runtime_cost_micro_usd: None,
+            is_subscription: false,
+            scope_kind: UsageScopeKind::Organization,
+            task_id: None,
+            project_id: None,
+            team_id: None,
+            feature_id: None,
+            milestone_id: None,
+            release_id: None,
+            task_type_snapshot: None,
+            work_type: None,
+            attribution_basis: AttributionBasis::Unattributed,
+        })
+        .unwrap()
+        .unwrap();
+
+    // Wake for agent_a is held on BudgetHold, while agent_b is unaffected!
+    let held = mgr.on_task_assigned(
+        &fx.agent_a,
+        &fx.owner_id,
+        "Owner",
+        true,
+        "task-1",
+        "Check status",
+    );
+    assert_eq!(
+        held,
+        WakeOutcome::Queued {
+            reason: WakeHoldReason::BudgetHold
+        }
+    );
+
+    // One-time +20% extension (1_000 -> 1_200 > 1_000) releases hold and retry_budget_held wakes agent_a!
+    fx.office
+        .budget_extend_once(
+            &fx.owner_id,
+            BudgetExtendOnceParams {
+                operation_id: next_id(),
+                budget_id: budget.id,
+                reason: Some("finish turn".into()),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    mgr.retry_budget_held();
+    assert!(wait_until(
+        || !fx.recorded.turns.lock().unwrap().is_empty(),
+        Duration::from_secs(3)
+    ));
+    mgr.stop_all("done");
+}

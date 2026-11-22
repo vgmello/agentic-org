@@ -18,6 +18,7 @@
 
 mod bounded;
 mod chat_calls;
+mod cost_calls;
 mod directory;
 pub mod fdswap;
 mod follow;
@@ -1169,7 +1170,7 @@ fn build_office_ports(
                 },
             )
         },
-        live,
+        live: Arc::clone(&live),
         feed: Some(messaging.feed),
         mailbox: Some(messaging.mailbox),
         chat: Some(messaging.chat),
@@ -1183,6 +1184,20 @@ fn build_office_ports(
             let office = Arc::clone(&office);
             Some(Box::new(move |member, request| {
                 process_calls::dispatch_process_rpc(&office, member, request)
+            }))
+        },
+        costs: {
+            let office = Arc::clone(&office);
+            let sessions = Arc::clone(&session_manager);
+            let live = Arc::clone(&live);
+            Some(Box::new(move |member, request| {
+                cost_calls::dispatch_cost_budget_rpc(
+                    &office,
+                    Some(&sessions),
+                    &live,
+                    member,
+                    request,
+                )
             }))
         },
         directory: messaging.directory,

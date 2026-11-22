@@ -6,6 +6,8 @@
 #![deny(unsafe_code)]
 
 pub mod attach;
+pub mod budget_dispatch;
+pub mod budget_table;
 pub mod dispatch;
 pub mod git_dispatch;
 pub mod git_table;

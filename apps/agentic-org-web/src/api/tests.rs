@@ -2204,3 +2204,59 @@ fn open_existing_organization_routes_validate_auth_body_and_errors() {
     );
     assert_eq!(expired.status, StatusCode::UNAUTHORIZED, "{}", expired.body);
 }
+
+#[test]
+fn cost_budget_get_query_routes_and_account_preferences_method_not_allowed() {
+    let (gateway, calls) = gateway(organization_script(|method, _| {
+        (method == "organization.list").then(|| {
+            vec![json!({"result": {"organizations": [host_organization()], "creating": []}})]
+        })
+    }));
+    let pair = sign_in(&gateway).pair();
+
+    // `GET /api/v1/account/preferences` returns 400 InvalidRequest (known POST-only route, not 404).
+    let prefs_get = send(
+        &gateway,
+        Method::GET,
+        "/api/v1/account/preferences",
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(prefs_get.status, StatusCode::BAD_REQUEST);
+
+    // `GET /api/v1/organizations/{org}/costs/prices?...` and `/budgets?...` parse query params
+    // instead of returning 404 (unknown param returns 400; valid query dispatches to HQ office).
+    let bad_prices = send(
+        &gateway,
+        Method::GET,
+        &format!("/api/v1/organizations/{ORG}/costs/prices?unknown=1"),
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(bad_prices.status, StatusCode::BAD_REQUEST);
+
+    let ok_prices = send(
+        &gateway,
+        Method::GET,
+        &format!(
+            "/api/v1/organizations/{ORG}/costs/prices?provider=anthropic&model=claude-sonnet-4"
+        ),
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(ok_prices.status, StatusCode::SERVICE_UNAVAILABLE);
+
+    let ok_budgets = send(
+        &gateway,
+        Method::GET,
+        &format!("/api/v1/organizations/{ORG}/budgets?scope_kind=agent"),
+        "",
+        Some(&pair),
+        &[],
+    );
+    assert_eq!(ok_budgets.status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(calls.methods().contains(&"organization.list".to_owned()));
+}

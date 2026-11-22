@@ -54,6 +54,10 @@ fn op_methods() {
             "browser.change_password",
         ),
         (
+            crate::browser_accounts::BrowserAccountPreferencesSet::METHOD,
+            "browser.account.preferences.set",
+        ),
+        (
             crate::browser_accounts::BrowserOrgAccessList::METHOD,
             "browser.org_access_list",
         ),

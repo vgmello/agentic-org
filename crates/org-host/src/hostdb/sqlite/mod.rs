@@ -197,6 +197,7 @@ impl HostDb {
         tx.execute_batch(links::DDL)?;
         sessions::create_schema(&tx)?;
         web_tls::create_schema(&tx)?;
+        accounts::create_preferences_schema(&tx)?;
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         for (name, value) in [
             ("instance_id", init.instance_id.clone()),
@@ -265,6 +266,7 @@ impl HostDb {
         }
         sessions::ensure_schema(&mut db)?;
         web_tls::ensure_schema(&mut db)?;
+        accounts::ensure_preferences_schema(&mut db)?;
         enter_wal(&db)?;
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
         Ok(Self {

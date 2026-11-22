@@ -303,11 +303,7 @@ impl Office {
             spoil();
         }
         let bytes = office_file::encode(&info)?;
-        let private_notes = crate::store::open::open_private_notes(
-            options.engine,
-            &roots.runtime,
-            &info.office_id,
-        )?;
+        let companions = super::open_companion_stores(options.engine, &roots, &info)?;
         let clock_high_ms = std::sync::atomic::AtomicU64::new(options.clock.now().0);
         let office = Office {
             folder,
@@ -322,7 +318,9 @@ impl Office {
             clock: options.clock,
             clock_high_ms,
             runtime: crate::messaging::runtime::OfficeRuntime::new(),
-            private_notes,
+            private_notes: companions.private_notes,
+            accounting: companions.accounting,
+            budgets: companions.budgets,
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]

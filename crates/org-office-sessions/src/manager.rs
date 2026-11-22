@@ -1498,7 +1498,8 @@ impl SessionManager {
         if !objective.is_empty() {
             let _ = tx.send(PumpCommand::SendTurn(objective));
         }
-        let (has_open_required_asks, on_turn_ended, on_suspended) = self.build_pump_hooks();
+        let (has_open_required_asks, on_turn_ended, on_suspended, on_usage) =
+            self.build_pump_hooks();
         let pump_ctx = PumpContext {
             employee_id: emp_id.clone(),
             run_id,
@@ -1510,6 +1511,7 @@ impl SessionManager {
             has_open_required_asks: Some(has_open_required_asks),
             on_turn_ended: Some(on_turn_ended),
             on_suspended: Some(on_suspended),
+            on_usage: Some(on_usage),
         };
         let thread_name = format!("org-session-{}", &emp_id[..emp_id.len().min(8)]);
         let spawned_child = spawned;

@@ -17,10 +17,10 @@ use hyper::StatusCode;
 use org_host_control::{
     browser::{SessionValidate, SessionValidateParams},
     browser_accounts::{
-        BrowserAdminHandover, BrowserAdminHandoverParams, BrowserChangePassword,
-        BrowserChangePasswordParams, BrowserOrgAccessList, BrowserOrgAccessListParams,
-        BrowserOrgInvite, BrowserOrgInviteParams, BrowserOrgOwnerHandover,
-        BrowserOrgOwnerHandoverParams, BrowserOrgPasswordResetLink,
+        BrowserAccountPreferencesSet, BrowserAccountPreferencesSetParams, BrowserAdminHandover,
+        BrowserAdminHandoverParams, BrowserChangePassword, BrowserChangePasswordParams,
+        BrowserOrgAccessList, BrowserOrgAccessListParams, BrowserOrgInvite, BrowserOrgInviteParams,
+        BrowserOrgOwnerHandover, BrowserOrgOwnerHandoverParams, BrowserOrgPasswordResetLink,
         BrowserOrgPasswordResetLinkParams, BrowserOrgRemoveAccess, BrowserOrgRemoveAccessParams,
         InspectLinkKind, LinkInspect, LinkInspectParams, LinkRegisterAttach,
         LinkRegisterAttachParams, LinkSetPassword, LinkSetPasswordParams,
@@ -44,6 +44,7 @@ pub enum AccountRoute {
     LinkRegisterAttach(IpAddr),
     LinkSetPassword(IpAddr),
     ChangePassword(CallerAuth),
+    PreferencesSet(CallerAuth),
     AdminHandover(CallerAuth),
     OrgAccessList(CallerAuth, String),
     OrgInvite(CallerAuth, String),
@@ -57,6 +58,7 @@ pub enum AccountCall {
     LinkRegisterAttach(IpAddr, LinkToken, Credentials),
     LinkSetPassword(IpAddr, LinkToken, Password),
     ChangePassword(CallerAuth, Password, Password),
+    PreferencesSet(CallerAuth, PreferencesBody),
     AdminHandover(CallerAuth, String, Password),
     OrgAccessList(CallerAuth, String),
     OrgInvite(CallerAuth, String, String),
@@ -99,6 +101,19 @@ struct ChangePasswordBody {
     current_password: Password,
     #[serde(deserialize_with = "crate::secret_json::password")]
     new_password: Password,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreferencesBody {
+    #[serde(default)]
+    time_zone: Option<String>,
+    #[serde(default)]
+    clear_time_zone: bool,
+    #[serde(default)]
+    last_org_id: Option<String>,
+    #[serde(default)]
+    clear_last_org_id: bool,
 }
 
 #[derive(Deserialize)]
@@ -150,6 +165,20 @@ pub(super) fn prepare(route: AccountRoute, bytes: &[u8]) -> Result<PreparedCall<
                 new_password,
             } = serde_json::from_slice(bytes).map_err(|_| invalid())?;
             AccountCall::ChangePassword(caller, current_password, new_password)
+        }
+        AccountRoute::PreferencesSet(caller) => {
+            let body: PreferencesBody = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+            if body.time_zone.is_some() && body.clear_time_zone
+                || body.last_org_id.is_some() && body.clear_last_org_id
+            {
+                return Err(invalid());
+            }
+            if let Some(ref tz) = body.time_zone {
+                if !org_proto::tz::validate_iana_timezone(tz) {
+                    return Err(invalid());
+                }
+            }
+            AccountCall::PreferencesSet(caller, body)
         }
         AccountRoute::AdminHandover(caller) => {
             let AdminHandoverBody {
@@ -230,6 +259,7 @@ pub(super) fn execute(api: &SessionApi, call: AccountCall) -> ApiReply {
             },
             result,
         ),
+        AccountCall::PreferencesSet(caller, body) => exec_preferences_set(api, caller, body),
         AccountCall::AdminHandover(caller, to_account_id, password) => exec_validated(
             api,
             caller,
@@ -313,6 +343,33 @@ pub(super) fn execute(api: &SessionApi, call: AccountCall) -> ApiReply {
             result,
         ),
     }
+}
+
+fn exec_preferences_set(api: &SessionApi, caller: CallerAuth, body: PreferencesBody) -> ApiReply {
+    let cookie = match &caller {
+        CallerAuth::Pair(pair) => Some(pair.cookie_digest),
+        CallerAuth::LocalAuthless => None,
+    };
+    let reply = exec_validated(
+        api,
+        caller,
+        "Organization preference is not authorized for this account.",
+        |auth| {
+            api.host
+                .request::<BrowserAccountPreferencesSet>(&BrowserAccountPreferencesSetParams {
+                    auth,
+                    time_zone: body.time_zone,
+                    clear_time_zone: body.clear_time_zone,
+                    last_org_id: body.last_org_id,
+                    clear_last_org_id: body.clear_last_org_id,
+                })
+        },
+        result,
+    );
+    if let Some(digest) = cookie {
+        api.cache.invalidate_cookie(&digest);
+    }
+    reply
 }
 
 fn exec_link_attach(

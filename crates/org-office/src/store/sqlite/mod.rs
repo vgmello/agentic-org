@@ -14,6 +14,8 @@
 //! This module and its children are the only code of the new office store that names
 //! `rusqlite`.
 
+pub(crate) mod accounting;
+pub(crate) mod budgets;
 #[cfg(any(test, feature = "testkit"))]
 mod dump;
 mod messaging;

@@ -16,6 +16,10 @@
 //! An office made by the old databases (`org.db`, `office.db`) is refused, never migrated.
 //! Nothing here deletes anything under `durable/`.
 
+mod accounting;
+#[cfg(test)]
+mod accounting_budget_tests;
+mod budgets;
 mod creation;
 mod folder;
 mod git;
@@ -153,6 +157,10 @@ pub struct Office {
     runtime: crate::messaging::runtime::OfficeRuntime,
     /// Isolated per-author private task notes store (`runtime/<office-id>/private/task-notes.db`).
     private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
+    /// Isolated `L2` usage & cost accounting store (`protected/accounting.db`).
+    accounting: Arc<dyn crate::accounting::AccountingStore>,
+    /// Isolated `L3` budget policies, periods, notices, and holds (`protected/budgets.db`).
+    budgets: Arc<dyn crate::budgets::BudgetStore>,
     // The store closes before the lock is released: fields drop in order.
     store: OfficeStore,
     _lock: File,
@@ -179,6 +187,72 @@ pub(crate) fn recovery() -> OfficeError {
 /// A store failure, its path kept in the cause for the log and out of `Display`.
 pub(crate) fn storage(error: StoreError) -> OfficeError {
     OfficeError::storage(error)
+}
+
+fn validate_open_binding(
+    intent: &intent::Intent,
+    info: &OfficeInfo,
+    instance: &str,
+    roots: &DataRoots,
+    custody: &Custody,
+    active_owner: Option<&str>,
+) -> Result<(Id, Id, String), OfficeError> {
+    let here = &custody.identity;
+    let bound = intent.info() == *info
+        && intent.instance == instance
+        && intent.roots() == *roots
+        && here.instance_id.as_str() == instance
+        && here.organization_id.as_str() == info.org_id
+        && here.office_id.as_str() == info.office_id;
+    if !bound {
+        return Err(OfficeError::Invalid(
+            "the office was created with other roots or another identity",
+        ));
+    }
+    if !org_proto::is_uuid_v7(&intent.owner) || !org_proto::is_uuid_v7(&intent.operation) {
+        return Err(recovery());
+    }
+    let effective_owner = active_owner.unwrap_or(&intent.owner);
+    if !org_proto::is_valid_member_id(effective_owner) {
+        return Err(OfficeError::Invalid("active owner id is invalid"));
+    }
+    let owner = Id::parse(effective_owner).map_err(|_| recovery())?;
+    let creation = Id::parse(&intent.operation).map_err(|_| recovery())?;
+    Ok((owner, creation, intent.operation.clone()))
+}
+
+pub(crate) struct CompanionStores {
+    pub private_notes: Arc<dyn crate::private_notes::PrivateNotesStore>,
+    pub accounting: Arc<dyn crate::accounting::AccountingStore>,
+    pub budgets: Arc<dyn crate::budgets::BudgetStore>,
+}
+
+pub(crate) fn open_companion_stores(
+    engine: EngineChoice,
+    roots: &DataRoots,
+    info: &OfficeInfo,
+) -> Result<CompanionStores, OfficeError> {
+    Ok(CompanionStores {
+        private_notes: crate::store::open::open_private_notes(
+            engine,
+            &roots.runtime,
+            &info.office_id,
+        )?,
+        accounting: crate::store::open::open_accounting(
+            engine,
+            &roots.durable,
+            &roots.runtime,
+            &info.office_id,
+            &info.org_id,
+        )?,
+        budgets: crate::store::open::open_budgets(
+            engine,
+            &roots.durable,
+            &roots.runtime,
+            &info.office_id,
+            &info.org_id,
+        )?,
+    })
 }
 
 /// Roots that are absolute and plain: no `.` or `..`, and two different folders.
@@ -294,35 +368,11 @@ impl Office {
         let info = office_file::read(&folder)?.ok_or(OfficeError::NotFound)?;
         check_named_by(&folder, &info.office_id)?;
         let intent = intent::read(&folder)?.ok_or_else(intent::older_build)?;
-        let here = &custody.identity;
-        let bound = intent.info() == info
-            && intent.instance == instance
-            && intent.roots() == roots
-            && here.instance_id.as_str() == instance
-            && here.organization_id.as_str() == info.org_id
-            && here.office_id.as_str() == info.office_id;
-        if !bound {
-            return Err(OfficeError::Invalid(
-                "the office was created with other roots or another identity",
-            ));
-        }
-        if !org_proto::is_uuid_v7(&intent.owner) || !org_proto::is_uuid_v7(&intent.operation) {
-            return Err(recovery());
-        }
-        let effective_owner = active_owner.unwrap_or(&intent.owner);
-        if !org_proto::is_valid_member_id(effective_owner) {
-            return Err(OfficeError::Invalid("active owner id is invalid"));
-        }
-        let owner = Id::parse(effective_owner).map_err(|_| recovery())?;
-        let creation = Id::parse(&intent.operation).map_err(|_| recovery())?;
-        let creation_command = intent.operation.clone();
+        let (owner, creation, creation_command) =
+            validate_open_binding(&intent, &info, instance, &roots, &custody, active_owner)?;
 
         let store = open_store(&options.config(&roots, &custody)).map_err(storage)?;
-        let private_notes = crate::store::open::open_private_notes(
-            options.engine,
-            &roots.runtime,
-            &info.office_id,
-        )?;
+        let companions = open_companion_stores(options.engine, &roots, &info)?;
         let clock_high_ms = AtomicU64::new(options.clock.now().0);
         let office = Office {
             folder,
@@ -337,7 +387,9 @@ impl Office {
             clock: options.clock,
             clock_high_ms,
             runtime: crate::messaging::runtime::OfficeRuntime::new(),
-            private_notes,
+            private_notes: companions.private_notes,
+            accounting: companions.accounting,
+            budgets: companions.budgets,
             store,
             _lock: lock,
             #[cfg(any(test, feature = "testkit"))]

@@ -90,7 +90,9 @@ mod identity;
 pub mod selected_bootstrap;
 pub use identity::{is_uuid_v7, uuid_v7_time_ms};
 pub mod ask;
+pub mod budgets;
 pub mod chat;
+pub mod costs;
 pub mod directory;
 pub mod frame;
 pub mod git;
@@ -106,6 +108,7 @@ pub mod retired;
 pub mod rfc3339;
 pub mod sessions;
 pub mod tasks;
+pub mod tz;
 pub mod web;
 pub mod work;
 
