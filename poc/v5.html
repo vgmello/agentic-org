@@ -209,7 +209,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .topbar::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: linear-gradient(180deg, rgba(6, 13, 25, .74) 0%, rgba(6, 13, 25, .42) 72%, rgba(6, 13, 25, 0) 100%); backdrop-filter: blur(18px) saturate(145%); -webkit-backdrop-filter: blur(18px) saturate(145%); -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 76%, transparent 100%); mask-image: linear-gradient(180deg, #000 0%, #000 76%, transparent 100%); }
 .topbar .menu-btn { position: absolute; left: 12px; }
 
-/* Unified Floating Command & Ask Clara Bar */
+/* Unified Floating Command & Ask Tess Bar */
 .cmdk-shell {
   display: inline-flex; align-items: center;
   width: min(640px, 100%); height: 46px; padding: 5px 6px 5px 6px;
@@ -1896,7 +1896,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
 .hb-err-meta .ic { width: 13px; height: 13px; color: #7DD3FC; }
 .hb-cleared-acts { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
 
-/* Right: Autonomous Catch-up Digest + Interactive Ask Clara Panel */
+/* Right: Autonomous Catch-up Digest + Interactive Ask Tess Panel */
 .hb-catchup {
   display: flex; flex-direction: column; gap: 14px;
   padding: 20px 22px 18px; border-radius: 18px;
@@ -1956,7 +1956,7 @@ a.hb-sub-item:hover { background: rgba(186, 222, 255, .06); }
   text-transform: uppercase; color: var(--hb-dim);
 }
 
-/* Clara (Chief of Staff) Executive Brief + Scoped Ask About This */
+/* Tess (Chief of Staff) Executive Brief + Scoped Ask About This */
 .hb-brief-lenses {
   display: inline-flex; align-items: center; gap: 2px; padding: 2px;
   border-radius: 7px; background: rgba(186, 222, 255, .07);
@@ -3752,7 +3752,7 @@ html[data-theme="report-dark"] .split .list { background: #161B24; }
     <div class="cmdk-shell" id="cmdk-shell">
       <button class="cmdk-trigger" id="cmdk-trigger" type="button" data-act="cmdk-open" aria-haspopup="dialog" aria-expanded="false" aria-controls="cmdk-dialog">
         <svg class="ic ic16" aria-hidden="true"><use href="#i-search"/></svg>
-        <span class="cmdk-ph" id="cmdk-ph">Search, run a command, or ask Clara…</span>
+        <span class="cmdk-ph" id="cmdk-ph">Search, run a command, or ask Tess…</span>
         <kbd id="cmdk-kbd" aria-hidden="true">⌘K</kbd>
       </button>
       <span class="cmdk-sep" aria-hidden="true"></span>
@@ -3767,21 +3767,21 @@ html[data-theme="report-dark"] .split .list { background: #161B24; }
 
 <div id="overlay-root"></div>
 <div class="cmdk-backdrop" id="cmdk-root" hidden>
-  <div class="cmdk-dialog" id="cmdk-dialog" role="dialog" aria-modal="true" aria-label="Command palette and Ask Clara">
+  <div class="cmdk-dialog" id="cmdk-dialog" role="dialog" aria-modal="true" aria-label="Command palette and Ask Tess">
     <div class="cmdk-tabs">
       <div class="cmdk-tab-grp" role="tablist" aria-label="Palette mode">
         <button class="cmdk-tab" id="cmdk-tab-cmd" type="button" role="tab" aria-selected="true" aria-controls="cmdk-list" data-act="cmdk-mode" data-v="cmd">
           <svg class="ic ic14" aria-hidden="true"><use href="#i-search"/></svg><span>Search &amp; Commands</span>
         </button>
         <button class="cmdk-tab" id="cmdk-tab-ai" type="button" role="tab" aria-selected="false" aria-controls="cmdk-list" data-act="cmdk-mode" data-v="ai">
-          <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Ask Clara</span>
+          <svg class="ic ic14" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Ask Tess</span>
         </button>
       </div>
       <button type="button" class="cmdk-esc" data-act="cmdk-close" aria-label="Close command palette">ESC</button>
     </div>
     <div class="cmdk-in-row">
       <svg class="ic ic20" id="cmdk-in-ico" aria-hidden="true"><use href="#i-search"/></svg>
-      <input id="cmdk-input" type="search" placeholder="Type a command, search anything, or ask a question…" autocomplete="off" aria-label="Search, run a command, or ask Clara" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="cmdk-list">
+      <input id="cmdk-input" type="search" placeholder="Type a command, search anything, or ask a question…" autocomplete="off" aria-label="Search, run a command, or ask Tess" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="cmdk-list">
       <button class="cmdk-ask-go" id="cmdk-ask-go" type="button" data-act="cmdk-ai-submit" hidden>Ask</button>
     </div>
     <div class="cmdk-list" id="cmdk-list" role="listbox" aria-label="Commands and search results"></div>
@@ -3800,7 +3800,7 @@ html[data-theme="report-dark"] .split .list { background: #161B24; }
 /* ---------------------------------------------------------------- data */
 const M = {
   you:   { name: "You", kind: "person", role: "Owner", owner: true, teams: [], mgr: null, live: "available", task: "", proj: null },
-  clara: { name: "Clara", kind: "agent", tier: "builtin", builtin: true, role: "Chief of Staff (Built-in AI)", teams: ["leadership"], mgr: "you", live: "available", task: "Synthesizing executive brief & unblocking queues", proj: null, setup: { runtime: "Built-in", model: "Org Chief of Staff", how: "Always on", office: "hq", home: "system/clara" } },
+  tess: { name: "Tess", kind: "agent", tier: "builtin", builtin: true, role: "Chief of Staff · Tactical Execution & Squad Supervisor", teams: ["leadership"], mgr: "you", live: "available", task: "Synthesizing executive brief & unblocking queues", proj: null, setup: { runtime: "Built-in", model: "Org Chief of Staff", how: "Always on", office: "hq", home: "system/tess" } },
   maya:  { name: "Maya Chen", kind: "person", role: "Operations", teams: ["leadership"], mgr: "you", live: "offline", task: "", proj: null, last: "Signed out · last seen yesterday" },
   ada:   { name: "Ada", kind: "agent", tier: "lead", role: "Engineering Manager", teams: ["leadership"], mgr: "you", live: "working", task: "Re-sequence the nav slices for IA v2", proj: "agency-v1", goal: "Every BUG-70 slice re-planned against IA v2, with owners and order", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Always on", office: "hq", home: "projects/ac/agents/ac-staff-engineer-ada" } },
   rowan: { name: "Rowan", kind: "agent", tier: "lead", role: "Staff Engineer", teams: ["platform"], mgr: "ada", live: "working", task: "Custody lock fix ruling", proj: "office-federation", goal: "A written ruling on the custody lock with the tests that pin it", setup: { runtime: "Claude Code", model: "Claude Opus", how: "Wakes when called", office: "hq", home: "projects/ac/agents/ac-fullstack-engineer-rowan" } },
@@ -3862,8 +3862,8 @@ const KIND = {
 };
 const IN = [
   { id: "in1", kind: "approval", sub: "Release sign-off", from: "ada", time: "12m", group: "Today", what: "Approve publishing Kai's sync update to v1.0", why: "Kai's update makes office syncing cleaner and more reliable for v1.0. All 412 automated checks passed and Tomas approved review with zero open issues. High-impact release changes require your final sign-off before publishing.", rec: "Ada recommends: approve. Tomas completed review with no open issues.", impact: [["shield-check", "ok", "Low risk", "Easy to roll back"], ["bolt", "", "High impact", "Unblocks v1.0 launch"], ["check-circle", "ok", "Checks passed", "412 automated checks"]], proj: "agency-v1", task: "T-121", expires: "Expires in 4 hours (release window)" },
-  { id: "in18", kind: "suggestion", sub: "Clara suggestion", from: "clara", time: "4m", group: "Today", what: "Reroute Jules's 3 queued tasks to Maya & Rowan", why: "Jules reached its $210 monthly budget cap and 3 assigned tasks are sitting stalled in the queue. Maya and Rowan have available capacity in the same repositories with zero context-switch overhead and zero added spend.", rec: "Clara suggests: apply reroute. Recovers ~6h of queued wait time at $0 extra spend.", impact: [["shield-check", "ok", "Zero added spend", "Stays under $210 cap"], ["bolt", "", "Recovers ~6h wait", "Unblocks 3 queued tasks"], ["check-circle", "ok", "Capacity verified", "Maya & Rowan available"]], proj: "look-feel", task: "BUG-84", expires: "",
-    acts: [["Apply suggestion", "Rerouted 3 tasks to Maya & Rowan", "sparkle"], ["Dismiss", "Suggestion dismissed", "x"]], clears: "When you apply or dismiss Clara's suggestion" },
+  { id: "in18", kind: "suggestion", sub: "Tess suggestion", from: "tess", time: "4m", group: "Today", what: "Reroute Jules's 3 queued tasks to Maya & Rowan", why: "Jules reached its $210 monthly budget cap and 3 assigned tasks are sitting stalled in the queue. Maya and Rowan have available capacity in the same repositories with zero context-switch overhead and zero added spend.", rec: "Tess suggests: apply reroute. Recovers ~6h of queued wait time at $0 extra spend.", impact: [["shield-check", "ok", "Zero added spend", "Stays under $210 cap"], ["bolt", "", "Recovers ~6h wait", "Unblocks 3 queued tasks"], ["check-circle", "ok", "Capacity verified", "Maya & Rowan available"]], proj: "look-feel", task: "BUG-84", expires: "",
+    acts: [["Apply suggestion", "Rerouted 3 tasks to Maya & Rowan", "sparkle"], ["Dismiss", "Suggestion dismissed", "x"]], clears: "When you apply or dismiss Tess's suggestion" },
   { id: "in5", kind: "approval", sub: "Access request", from: "jules", time: "3h", group: "Today", what: "Allow local test access for Jules's security checks", why: "Jules needs temporary permission to run security checks against the local test server only. No live customer or company data is exposed, and only the owner can grant local access permissions.", rec: "Jules recommends: allow for testing only.", impact: [["shield-check", "ok", "Low risk", "Test sandbox only"], ["bolt", "", "High impact", "Unblocks v1.0 security"], ["lock", "", "Limited scope", "No live data access"]], proj: "agency-v1", task: "T-124", expires: "Expires tomorrow" },
   { id: "in2", kind: "decision", sub: "Direction needed", from: "sage", time: "25m", group: "Today", what: "Choose how offices coordinate shared files: timed access or fixed lock", why: "Work on second-office syncing is paused until you pick. Automatic timed access recovers cleanly if an office goes offline; a fixed per-office lock is a day faster to finish.", rec: "Sage recommends timed access. Rowan agrees.", impact: [["shield-alert", "warn", "Moderate risk", "Harder to change later"], ["bolt", "warn", "High impact", "Unblocks Office sync"], ["scale", "", "Safety vs. speed", "Auto-recovers · +1 day"]], proj: "office-federation", task: "T-118", opts: ["Use timed access", "Fixed office lock"], expires: "" },
   { id: "in16", kind: "approval", sub: "Company standard", from: "rowan", time: "45m", group: "Today", what: "Require automated checks before every release?", why: "Agentic Org v1.0 and Look & feel refresh both cut revision rates by running automated checks before handoff. Adopting this company-wide means every new project enforces the same quality bar automatically.", rec: "Rowan & Ada recommend: adopt standard. Keeps first-try approval rates above 80%.", impact: [["shield-check", "ok", "Low risk", "Proven across 2 projects"], ["sparkle", "", "Org-wide impact", "Applies to future projects"], ["adjustments", "muted", "Reversible", "Override per project"]], proj: "agency-v1", task: "T-121", expires: "",
@@ -4784,8 +4784,8 @@ function pageHome() {
         const nxt = queue[nextIdx];
         const expTag = nxt.expires && !nxt.handled
           ? `<span class="hb-spot-next-exp">${ic("clock", "ic14")}${esc(nxt.expires.replace(/\s*\(.*\)/, ""))}</span>`
-          : nxt.from === "clara"
-            ? `<span class="hb-spot-next-ai">${ic("sparkle", "ic14")}Clara</span>`
+          : nxt.from === "tess"
+            ? `<span class="hb-spot-next-ai">${ic("sparkle", "ic14")}Tess</span>`
             : "";
         return `<button type="button" class="hb-spot-next" data-act="spot-go" data-v="${nextIdx}">
           <span class="hb-spot-next-l"><span class="hb-spot-next-lbl">Up next</span><span class="hb-spot-next-txt">${esc(nxt.what)}</span></span>
@@ -4798,8 +4798,8 @@ function pageHome() {
   const renderCatchupPanel = () => {
     if (st === "error" || st === "empty") return "";
     const recentDone = IN.filter((i) => i.handled && i.handledNow);
-    const claraItem = IN.find((i) => i.id === "in18");
-    const claraApplied = !!(claraItem && claraItem.handled);
+    const tessItem = IN.find((i) => i.id === "in18");
+    const tessApplied = !!(tessItem && tessItem.handled);
     const lens = S.briefLens || "today";
     const briefSections = lens === "week"
       ? `<div class="hb-cos-sec">
@@ -4825,7 +4825,7 @@ function pageHome() {
           </div>
           <div class="hb-cos-sec">
             <span class="hb-cos-k is-warn">Operational Watchpoints</span>
-            <p class="hb-cos-p">The Build box satellite office is offline (+5d slip on Office federation v0.9), with a verified reconnect fix staged. ${claraApplied ? "Jules’s stalled queue has been rerouted to Maya &amp; Rowan at $0 extra spend." : "A zero-cost reassignment for Jules’s 3 stalled tasks is queued for owner approval."}</p>
+            <p class="hb-cos-p">The Build box satellite office is offline (+5d slip on Office federation v0.9), with a verified reconnect fix staged. ${tessApplied ? "Jules’s stalled queue has been rerouted to Maya &amp; Rowan at $0 extra spend." : "A zero-cost reassignment for Jules’s 3 stalled tasks is queued for owner approval."}</p>
           </div>`
         : `<div class="hb-cos-sec">
             <span class="hb-cos-k is-ok">Live Status &amp; Highlights</span>
@@ -4837,9 +4837,9 @@ function pageHome() {
           </div>
           <div class="hb-cos-sec">
             <span class="hb-cos-k">What I’ve Queued For You</span>
-            <p class="hb-cos-p">${recentDone.length ? `You’ve already cleared <strong>${recentDone.length} ${recentDone.length === 1 ? "item" : "items"}</strong> this session. ` : ""}I prioritized <strong>Kai’s v1.0 sync sign-off</strong> first on the left${claraApplied ? " and applied the reroute for Jules’s 3 tasks to Maya &amp; Rowan at $0 added spend." : " and added my suggested <strong>zero-cost reroute for Jules’s 3 stalled tasks</strong> right behind it — clearing both keeps v1.0 on schedule for Dec 5."}</p>
+            <p class="hb-cos-p">${recentDone.length ? `You’ve already cleared <strong>${recentDone.length} ${recentDone.length === 1 ? "item" : "items"}</strong> this session. ` : ""}I prioritized <strong>Kai’s v1.0 sync sign-off</strong> first on the left${tessApplied ? " and applied the reroute for Jules’s 3 tasks to Maya &amp; Rowan at $0 added spend." : " and added my suggested <strong>zero-cost reroute for Jules’s 3 stalled tasks</strong> right behind it — clearing both keeps v1.0 on schedule for Dec 5."}</p>
           </div>`;
-    return `<aside class="hb-catchup" aria-label="Executive brief from Clara, Chief of Staff">
+    return `<aside class="hb-catchup" aria-label="Executive brief from Tess, Chief of Staff">
       <div class="hb-cu-hd">
         <div class="hb-cu-title">${ic("sparkle", "ic16")}<span class="lbl-std">Executive Brief</span><span class="lbl-rep">Executive Brief</span></div>
         <div class="hb-brief-lenses" role="group" aria-label="Brief timeframe">
@@ -4849,15 +4849,15 @@ function pageHome() {
         </div>
       </div>
 
-      ${st === "loading" ? skel(4, "Clara is preparing your executive brief…") : `
+      ${st === "loading" ? skel(4, "Tess is preparing your executive brief…") : `
       <div class="hb-cos-memo">
         ${briefSections}
         <div class="hb-cos-sig">
           <div class="hb-cos-sig-who">
             <span class="hb-cos-mark" aria-hidden="true">${ic("sparkle", "ic14")}</span>
             <div class="hb-cos-sig-txt">
-              <span class="hb-cos-sig-name">Clara</span>
-              <span class="hb-cos-sig-role">Chief of Staff · Built-in AI</span>
+              <span class="hb-cos-sig-name">Tess</span>
+              <span class="hb-cos-sig-role">Chief of Staff · Tactical Execution &amp; Squad Supervisor</span>
             </div>
           </div>
           ${lens === "board"
@@ -6487,16 +6487,16 @@ function renderNav(route) {
   if (cmdkTr) {
     cmdkTr.classList.toggle("is-offline", homeError);
     cmdkTr.disabled = homeError;
-    cmdkTr.title = homeError ? "Search & commands unavailable while HQ office is offline" : "Search, run a command, or ask Clara";
+    cmdkTr.title = homeError ? "Search & commands unavailable while HQ office is offline" : "Search, run a command, or ask Tess";
   }
-  if (cmdkPh) cmdkPh.textContent = homeError ? "HQ office offline — search & AI unavailable" : "Search, run a command, or ask Clara…";
+  if (cmdkPh) cmdkPh.textContent = homeError ? "HQ office offline — search & AI unavailable" : "Search, run a command, or ask Tess…";
   if (aiBtn) {
     aiBtn.classList.toggle("is-offline", homeError);
     aiBtn.disabled = homeError;
     aiBtn.innerHTML = homeError
       ? `${ic("offline", "ic14")}<span>Offline</span>`
       : `${ic("sparkle", "ic14")}<span>Ask</span>`;
-    aiBtn.title = homeError ? "Clara unavailable while HQ office is offline" : "Ask Clara";
+    aiBtn.title = homeError ? "Tess unavailable while HQ office is offline" : "Ask Tess";
   }
   if (homeError && CMDK.open) closeCmdk(false);
   const item = (href, label, icon, cur, extra = "") => `<li><a class="nav-item" href="${href}" title="${esc(label)}" ${cur ? 'aria-current="page"' : ""}>${ic(icon)}<span class="lbl">${esc(label)}</span>${extra}</a></li>`;
@@ -6690,11 +6690,11 @@ function cmdkCommands() {
     { group: "Actions", label: "New message", sub: "Start a conversation in Chat", icon: "chat", tag: "Command", run: () => toast("New message (prototype action)") },
     { group: "Actions", label: "Add a person", sub: "Invite a teammate to this organization", icon: "user-plus", tag: "Command", run: () => toast("Add a person (prototype action)") },
     ...(isEmpty ? [
-      { group: "Ask Clara", label: "Ask: How do I launch my first project?", sub: "Walk through setting up projects and hiring agents", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("How do I launch my first project?") }
+      { group: "Ask Tess", label: "Ask: How do I launch my first project?", sub: "Walk through setting up projects and hiring agents", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("How do I launch my first project?") }
     ] : [
-      { group: "Ask Clara", label: "Ask: What's slowing v1.0?", sub: "Summarize active blockers and pending sign-offs", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("What's slowing v1.0?") },
-      { group: "Ask Clara", label: "Ask: Budget, capacity & idle agents", sub: "Check monthly spend, AI capacity & idle specialists", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Budget, capacity & idle agents") },
-      { group: "Ask Clara", label: "Ask: Next 14 days milestones", sub: "Review upcoming deliverables and schedule pace", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Next 14 days milestones") }
+      { group: "Ask Tess", label: "Ask: What's slowing v1.0?", sub: "Summarize active blockers and pending sign-offs", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("What's slowing v1.0?") },
+      { group: "Ask Tess", label: "Ask: Budget, capacity & idle agents", sub: "Check monthly spend, AI capacity & idle specialists", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Budget, capacity & idle agents") },
+      { group: "Ask Tess", label: "Ask: Next 14 days milestones", sub: "Review upcoming deliverables and schedule pace", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk("Next 14 days milestones") }
     ]),
     { group: "Navigate", label: "Go to Home", sub: "Executive briefing & decision spotlight", icon: "home", href: "#/home" },
     { group: "Navigate", label: "Go to Inbox", sub: `${isEmpty ? 0 : unhandled().length} waiting on you`, icon: "inbox", href: "#/inbox" },
@@ -6731,7 +6731,7 @@ function setCmdkMode(mode) {
 }
 function openCmdk(prefill = "", mode = "cmd") {
   if (route()[0] === "home" && S.homeState === "error") {
-    toast("HQ office is offline — reconnect to use search and Ask Clara.", "offline");
+    toast("HQ office is offline — reconnect to use search and Ask Tess.", "offline");
     return;
   }
   CMDK.returnTo = document.activeElement;
@@ -6782,7 +6782,7 @@ function renderCmdk() {
   if (footNav) footNav.style.display = isAi ? "none" : "";
   if (inp) {
     inp.placeholder = isAi
-      ? "Ask Clara — what's blocked, release pace, budget, or idle agents…"
+      ? "Ask Tess — what's blocked, release pace, budget, or idle agents…"
       : "Type a command, search anything, or ask a question…";
   }
 
@@ -6795,7 +6795,7 @@ function renderCmdk() {
     const prevTurns = CMDK.aiHistory.slice(1);
     const ansHtml = curTurn ? `<div class="cmdk-ai-card" role="status" aria-live="polite">
       <div class="cmdk-ai-card-hd">
-        <span>${ic("sparkle", "ic14")} Clara · “${esc(curTurn.q)}”</span>
+        <span>${ic("sparkle", "ic14")} Tess · “${esc(curTurn.q)}”</span>
         <button type="button" data-act="cmdk-ai-clear">${prevTurns.length ? "Clear history" : "Clear"}</button>
       </div>
       <div>${curTurn.html}</div>
@@ -6822,7 +6822,7 @@ function renderCmdk() {
   if (!q) {
     const byGrp = {};
     cmds.forEach((c) => { (byGrp[c.group] = byGrp[c.group] || []).push(c); });
-    ["Actions", "Ask Clara", "Navigate", "Workspace"].forEach((g) => { if (byGrp[g]) groups.push([g, byGrp[g]]); });
+    ["Actions", "Ask Tess", "Navigate", "Workspace"].forEach((g) => { if (byGrp[g]) groups.push([g, byGrp[g]]); });
   } else {
     const matchedCmds = cmds.filter((c) => c.label.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q));
     if (matchedCmds.length) groups.push(["Commands", matchedCmds]);
@@ -6833,8 +6833,8 @@ function renderCmdk() {
         if (inboxHits.length) groups.push(["Needs you", inboxHits]);
         searchResults(q, 4).forEach(([g, items]) => groups.push([g, items]));
       }
-      groups.push(["Ask Clara", [
-        { label: `Ask Clara: “${raw}”`, sub: "Get an instant answer right here from live org state", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk(raw) },
+      groups.push(["Ask Tess", [
+        { label: `Ask Tess: “${raw}”`, sub: "Get an instant answer right here from live org state", icon: "sparkle", tag: "AI", keepOpen: true, run: () => askInCmdk(raw) },
         ...(S.homeState === "empty" ? [] : [{ label: `See all search results for “${raw}”`, sub: "Open full search page", icon: "search", href: "#/search?q=" + encodeURIComponent(raw) }])
       ]]);
     }
@@ -7124,7 +7124,7 @@ document.addEventListener("click", (e) => {
     case "brief-ai-ask": openCmdk("", "ai"); askInCmdk(v); break;
     case "brief-lens": S.briefLens = v; render(false); break;
     case "ai-copy-board": {
-      const memo = "Executive Brief — Signed: Clara, Chief of Staff\n• Velocity: 19 tasks delivered (+4 WoW), 84% first-pass approval, 78% autonomous.\n• Launch: Agentic Org v1.0 green on 412 CI checks; Kai's sync sign-off is the primary remaining gate for Dec 5.\n• Watchpoints: Build box offline (+5d slip on v0.9, reconnect fix staged); Jules at $210 cap (zero-cost reroute queued).";
+      const memo = "Executive Brief — Signed: Tess, Chief of Staff\n• Velocity: 19 tasks delivered (+4 WoW), 84% first-pass approval, 78% autonomous.\n• Launch: Agentic Org v1.0 green on 412 CI checks; Kai's sync sign-off is the primary remaining gate for Dec 5.\n• Watchpoints: Build box offline (+5d slip on v0.9, reconnect fix staged); Jules at $210 cap (zero-cost reroute queued).";
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(memo).catch(() => {});
       toast("Board memo copied to clipboard.");
       break;

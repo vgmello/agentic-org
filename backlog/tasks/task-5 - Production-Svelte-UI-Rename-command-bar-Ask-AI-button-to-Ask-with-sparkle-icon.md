@@ -1,12 +1,12 @@
 ---
 id: TASK-5
 title: >-
-  Production Svelte UI: Rename command bar to 'Ask' + 'Ask Clara' (Chief of
+  Production Svelte UI: Rename command bar to 'Ask' + 'Ask Tess' (Chief of
   Staff)
 status: To Do
 assignee: []
 created_date: '2026-11-22T01:26:00Z'
-updated_date: '2026-11-22T02:23:00Z'
+updated_date: '2026-11-22T02:25:00Z'
 labels:
   - ui
   - shell
@@ -20,7 +20,7 @@ ordinal: 5000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Update ExecutiveCommandBar.svelte so the action button displays sparkle icon + 'Ask' and references the built-in AI Chief of Staff ('Ask Clara') across placeholder, modal tab, group headings, and aria labels.
+Update ExecutiveCommandBar.svelte so the action button displays sparkle icon + 'Ask' and references the built-in AI Chief of Staff Tess (Tactical Execution & Squad Supervisor) as 'Ask Tess' across placeholder, modal tab, group headings, and aria labels.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

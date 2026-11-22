@@ -1,12 +1,12 @@
 ---
 id: TASK-7
 title: >-
-  Production Svelte UI: Clara (Chief of Staff) Executive Brief + AI suggestions
+  Production Svelte UI: Tess (Chief of Staff) Executive Brief + AI suggestions
   in Decision Queue
 status: To Do
 assignee: []
 created_date: '2026-11-22T01:48:00Z'
-updated_date: '2026-11-22T02:23:00Z'
+updated_date: '2026-11-22T02:25:00Z'
 labels:
   - ui
   - ai
@@ -21,7 +21,7 @@ ordinal: 7000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Port the v5 Clara (built-in AI Chief of Staff) design from poc/v5.html into apps/agentic-org-ui: pure Executive Brief on the right (Today / 7-Day / Board lenses incorporating live status, highlights, and problems, signed by Clara — no Live & Highlights list or action chips on the right), Clara's AI-suggested solutions queued on the left inside Decision & Approval Queue, and a scoped 'Ask about this' trigger on each decision.
+Port the v5 Tess (Tactical Execution & Squad Supervisor — built-in AI Chief of Staff) design from poc/v5.html into apps/agentic-org-ui: pure Executive Brief on the right (Today / 7-Day / Board lenses incorporating live status, highlights, and problems, signed by Tess — no Live & Highlights list or action chips on the right), Tess's AI-suggested solutions queued on the left inside Decision & Approval Queue, and a scoped 'Ask about this' trigger on each decision.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
