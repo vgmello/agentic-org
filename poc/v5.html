@@ -1942,6 +1942,7 @@ a.hb-dig-item:hover { background: var(--hb-surface-hi); box-shadow: inset 0 1px 
 .hb-proj-head-l { display: flex; align-items: baseline; gap: 10px; }
 .hb-proj-head h2 { font-size: 0.96875rem; font-weight: 600; letter-spacing: -.01em; color: var(--hb-ink); }
 .hb-proj-head span { font-size: 0.8125rem; color: var(--hb-muted); }
+.hb-proj-head h2 span { font-size: inherit; color: inherit; }
 .hb-proj-head .link { color: #7DD3FC; }
 .hb-proj-head .link:hover { color: #BAE6FD; }
 .hb-bento { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
@@ -3173,8 +3174,8 @@ html[data-theme="report"] .hb-spot-nav { gap: 8px; flex: none; }
 html[data-theme="report"] .hb-dot-btn { width: 14px; }
 html[data-theme="report"] .hb-dot-btn.is-cur { width: 22px; }
 html[data-theme="report"] .hb-spot-title {
-  font-size: clamp(1.25rem, 1.8vw, 1.5rem);
-  font-weight: 700; letter-spacing: -.03em; color: #0B101B;
+  font-size: 1.125rem;
+  font-weight: 650; letter-spacing: -.02em; color: #0B101B;
 }
 html[data-theme="report"] .hb-step-ctr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; }
 html[data-theme="report"] .hb-dot-btn::after { border-radius: 1px; height: 3px; width: 9px; background: #DCE2EC; }
