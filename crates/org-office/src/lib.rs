@@ -64,6 +64,7 @@ pub use store::open::{
     StructureOp, UpdatePersonOp, UpdateTeamOp,
 };
 mod time;
+pub use time::format_rfc3339_ms;
 pub use time::parse_rfc3339_ms;
 
 pub use error::{NameError, OfficeError};

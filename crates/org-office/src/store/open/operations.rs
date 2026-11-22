@@ -535,6 +535,17 @@ impl ReadOp for ModelProfileById {
     }
 }
 
+/// Reads the organization's channel watching model profile setting (`ADR-0024` d13).
+pub struct WatchingModelRead;
+
+impl ReadOp for WatchingModelRead {
+    type Out = Option<records::WatchingModelSetting>;
+
+    fn read<S: MessagingRead>(self, read: &S) -> Result<Self::Out, StoreError> {
+        Ok(read.watching_model()?)
+    }
+}
+
 /// Checks whether `member` may send a message to the built-in HR lead (ADR-0029 decision 3 /
 /// HIRE-2) when addressing `target` (`"hr"` or the HR lead's employee ID).
 pub struct CheckHrMessageAccess {

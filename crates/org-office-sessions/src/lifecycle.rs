@@ -272,6 +272,14 @@ impl SessionManager {
         }
     }
 
+    /// Returns `true` when an office-wide budget hold is currently active (`ADR-0024` d13).
+    pub fn has_budget_hold(&self) -> bool {
+        self.budget_hold
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_some()
+    }
+
     /// Called when a paused agent is resumed (`ADR-0030` d3).
     pub fn on_agent_resumed(&self, employee_id: &str) {
         let _ = self.process_due_wakes_for(employee_id);

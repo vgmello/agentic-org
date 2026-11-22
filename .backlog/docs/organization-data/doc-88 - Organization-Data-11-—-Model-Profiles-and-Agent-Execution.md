@@ -3,7 +3,7 @@ id: doc-88
 title: Organization Data 11 — Model Profiles and Agent Execution
 type: specification
 created_date: '2026-11-21T01:30:00Z'
-updated_date: '2026-11-21T01:30:00Z'
+updated_date: '2026-11-22T01:01:00Z'
 tags:
   - organization-data
   - contract
@@ -133,6 +133,7 @@ The [standalone installation contract](../design/doc-70%20-%20Design-Standalone-
 | `provider_connections`, `model_profiles` | Same-named YAML fields and common attribution; profiles additionally contain `connection_ids[]`. |
 | `model_profile_connections` | Profile `connection_ids[]`; zero-based array position plus one becomes priority. |
 | `agent_execution_configs` | `execution.md` front matter: employee/profile/model IDs, revision/schema, enabled, tools_config, `permission_preset` (`safe_ask` default, `read_only`, `workspace_edits`, or `autonomous_sandboxed`; [ADR-0032](../../decisions/decision-32%20-%20ADR-0032-Browser-driven-CLI-sign-in-enrollment-credential-distribution-and-permission-presets.md)); body is system_prompt_markdown. Common attribution follows [record contracts](doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md). |
+| `watching_model_settings` | Organization-wide watching model profile selection (`ADR-0024` d13); null `model_profile_id` disables channel question watching and `channel summarize`. |
 | `office_connection_bindings` | Local binding YAML with same-named fields. Never shared Git content. |
 | `office_connection_state`, `office_connection_models` | Supervisor-owned discovery/auth observations, rebuilt from verified probes after cache loss. Their journal snapshots improve startup but are not fresh proof after restart. |
 | `agent_placements.placement_generation` | HQ's agent-execution record files, written through HQ's acceptance journal; current placement row remains the existing employee-to-office projection. |
@@ -718,6 +719,24 @@ model_profile_id TEXT NOT NULL,
   updated_by_id TEXT,
   PRIMARY KEY (organization_id,employee_id),
 FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,updated_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
+CREATE TABLE watching_model_settings (
+  organization_id TEXT NOT NULL PRIMARY KEY REFERENCES organizations(id),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  model_profile_id TEXT,
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','system','unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','system','unknown')),
+  updated_by_id TEXT,
   FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
   CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),

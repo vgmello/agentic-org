@@ -476,3 +476,36 @@ pub fn decode_model_profile(bytes: &[u8]) -> Result<ModelProfile, RecordError> {
         meta,
     })
 }
+
+/// Organization-wide channel watching model profile setting at
+/// `state/execution/watching-model.yaml` (`ADR-0024` d13, `WATCH-5`).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct WatchingModelSetting {
+    pub model_profile_id: Option<Id>,
+    pub meta: Meta,
+}
+
+pub fn watching_model_path() -> DurablePath {
+    path("state/execution/watching-model.yaml")
+}
+
+pub fn encode_watching_model(record: &WatchingModelSetting) -> Vec<u8> {
+    let mut fields = Fields::new();
+    record.meta.write(&mut fields);
+    fields.insert(
+        "model_profile_id".into(),
+        json!(record.model_profile_id.as_ref().map(Id::as_str)),
+    );
+    yaml::encode(&fields)
+}
+
+pub fn decode_watching_model(bytes: &[u8]) -> Result<WatchingModelSetting, RecordError> {
+    let mut reader = yaml::decode(bytes)?;
+    let meta = Meta::read(&mut reader)?;
+    let model_profile_id = optional_id(&mut reader, "model_profile_id")?;
+    reader.finish()?;
+    Ok(WatchingModelSetting {
+        model_profile_id,
+        meta,
+    })
+}

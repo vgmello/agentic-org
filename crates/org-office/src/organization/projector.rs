@@ -138,6 +138,11 @@ where
                 tx.put_model_profile(&record)?;
             }
             (Kind::ModelProfile(id), None) => tx.remove_model_profile(&id)?,
+            (Kind::WatchingModel, Some(bytes)) => {
+                let record = decoded(path, records::decode_watching_model(bytes))?;
+                tx.put_watching_model(&record)?;
+            }
+            (Kind::WatchingModel, None) => tx.remove_watching_model()?,
             (Kind::TeamCounter(scope), Some(bytes)) => {
                 ours(&scope)?;
                 let record = decoded(path, records::decode_team_counter(bytes))?;
@@ -419,7 +424,8 @@ fn hiring_records_empty(tx: &impl OrganizationWrite) -> Result<bool, ProjectionE
     Ok(tx.hire_requests()?.is_empty()
         && tx.agent_executions()?.is_empty()
         && tx.provider_connections()?.is_empty()
-        && tx.model_profiles()?.is_empty())
+        && tx.model_profiles()?.is_empty()
+        && tx.watching_model()?.is_none())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -436,7 +442,16 @@ fn validate_hiring_and_collect_paths(
     let agent_executions = tx.agent_executions()?;
     let provider_connections = tx.provider_connections()?;
     let model_profiles = tx.model_profiles()?;
+    let watching_model = tx.watching_model()?;
     validate_providers_and_profiles(&provider_connections, &model_profiles)?;
+    if let Some(setting) = &watching_model {
+        if let Some(pid) = &setting.model_profile_id {
+            if !model_profiles.iter().any(|mp| mp.id == *pid) {
+                let p = records::watching_model_path();
+                return Err(refuse(&p, "model_profile_id names no model profile"));
+            }
+        }
+    }
     validate_executions_and_hires(
         organization_path,
         roles,

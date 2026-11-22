@@ -29,9 +29,10 @@ use crate::{
             LocalTransitionInput, MailboxCommitInput, MailboxCommitOut, MailboxStored,
             NotifyCandidateOut, OwnerInboxEntry, PeekUnreadOut,
         },
-        ChannelCreateOp, ChannelMembershipOp, ChatAnswerOp, ChatInboxRead, ChatMarkReadOp,
-        ChatMessagesRead, ChatMuteOp, ChatReactOp, ChatSendOp, ClaimMailboxReadOp,
-        CommitMailboxMessageOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
+        ChannelCreateOp, ChannelMembershipOp, ChannelMessagesForCallerRead, ChannelMessagesRawRead,
+        ChatAnswerOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead, ChatMuteOp, ChatReactOp,
+        ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, ConversationByIdRead,
+        DeliverAnswerCandidatesOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
         InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead,
         ListConversationsRead, ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxUpdateStateOp,
         MsgAcceptOp, MsgAskOp, MsgWithdrawOp, OpenOwnerInboxRead, OrgChangesAfterRead,
@@ -444,6 +445,102 @@ impl Office {
             })
             .map_err(storage)?;
         Ok(rows)
+    }
+
+    /// Atomically delivers validated `answer_candidate` inbox entries (`WATCH-1`, `WATCH-3`, `WATCH-7`).
+    pub fn deliver_answer_candidates(
+        &self,
+        conversation_id: &str,
+        deliveries: Vec<crate::messaging::features::AnswerCandidateDelivery>,
+    ) -> Result<Result<Vec<(String, Id)>, ApiError>, OfficeError> {
+        let Ok(conv_id) = Id::parse(conversation_id) else {
+            return Ok(Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "invalid conversation id",
+            )));
+        };
+        let org_seq = self.org_snapshot()?.position.seq;
+        let now_utc = time::format_rfc3339_ms(self.monotonic_now_ms());
+        self.store
+            .run(DeliverAnswerCandidatesOp {
+                here: self.identity.clone(),
+                owner: self.owner.clone(),
+                conversation_id: conv_id,
+                deliveries,
+                org_seq,
+                now_utc,
+            })
+            .map_err(storage)
+    }
+
+    /// Returns caller-visible messages in a channel (same visibility as `msg list`, capped at 200)
+    /// for `channel.summarize` (`WATCH-10`).
+    pub fn channel_messages_for_caller(
+        &self,
+        caller: &str,
+        channel_ref: &str,
+        limit: usize,
+    ) -> Result<
+        Result<
+            (
+                crate::messaging::records::ConversationRecord,
+                Vec<crate::messaging::records::MessageRecord>,
+            ),
+            ApiError,
+        >,
+        OfficeError,
+    > {
+        let Ok(caller_id) = parse_member_id(caller) else {
+            return Ok(Err(ApiError::new(ErrorCode::NotBound, "invalid caller")));
+        };
+        let now_utc = time::format_rfc3339_ms(self.monotonic_now_ms());
+        let (res, _) = self
+            .store
+            .read(ChannelMessagesForCallerRead {
+                owner: self.owner.clone(),
+                caller: caller_id,
+                channel_ref: channel_ref.to_owned(),
+                limit,
+                now_utc,
+            })
+            .map_err(storage)?;
+        Ok(res)
+    }
+
+    /// Reads all messages in a conversation for the office-local channel watcher (`WATCH-3/7`).
+    pub fn messages_in_channel(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Vec<crate::messaging::records::MessageRecord>, OfficeError> {
+        let Ok(conv_id) = Id::parse(conversation_id) else {
+            return Ok(Vec::new());
+        };
+        let (msgs, _) = self
+            .store
+            .read(ChannelMessagesRawRead {
+                conversation_id: conv_id,
+            })
+            .map_err(storage)?;
+        Ok(msgs)
+    }
+
+    /// Reads one conversation (persisted or virtual auto-channel) by UUIDv7 ID.
+    pub fn conversation_by_id(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<crate::messaging::records::ConversationRecord>, OfficeError> {
+        let Ok(conv_id) = Id::parse(conversation_id) else {
+            return Ok(None);
+        };
+        let now_utc = time::format_rfc3339_ms(self.monotonic_now_ms());
+        let (conv, _) = self
+            .store
+            .read(ConversationByIdRead {
+                conversation_id: conv_id,
+                now_utc,
+            })
+            .map_err(storage)?;
+        Ok(conv)
     }
 
     // ---- Low-level org-mailbox storage bridge methods ----

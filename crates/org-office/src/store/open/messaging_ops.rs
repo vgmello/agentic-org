@@ -1699,3 +1699,92 @@ fn map_receipt_to_org_changes(
         _ => Vec::new(),
     }
 }
+
+/// Atomically delivers validated `answer_candidate` inbox entries (`ADR-0024` d11, `WATCH-3/7`).
+pub struct DeliverAnswerCandidatesOp {
+    pub here: OfficeIdentity,
+    pub owner: Id,
+    pub conversation_id: Id,
+    pub deliveries: Vec<features::AnswerCandidateDelivery>,
+    pub org_seq: u64,
+    pub now_utc: String,
+}
+
+impl StoreOp for DeliverAnswerCandidatesOp {
+    type Out = Result<Result<Vec<(String, Id)>, ApiError>, StoreError>;
+
+    fn run<E: OfficeEngine>(self, store: &Store<E>) -> Self::Out {
+        let out = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot = std::sync::Arc::clone(&out);
+        let reply = store.submit(None, false, move |uow| {
+            let (change, delivered) = features::deliver_answer_candidates(
+                uow,
+                &self.here,
+                &self.owner,
+                &self.conversation_id,
+                &self.deliveries,
+                self.org_seq,
+                &self.now_utc,
+            )?;
+            *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(delivered);
+            Ok(change)
+        });
+        unwrap_reply(reply, out)
+    }
+}
+
+/// Reads caller-visible messages in a channel (same visibility as `msg list`, capped at 200)
+/// for `channel.summarize` (`WATCH-10`).
+pub struct ChannelMessagesForCallerRead {
+    pub owner: Id,
+    pub caller: Id,
+    pub channel_ref: String,
+    pub limit: usize,
+    pub now_utc: String,
+}
+
+impl ReadOp for ChannelMessagesForCallerRead {
+    type Out = Result<(ConversationRecord, Vec<MessageRecord>), ApiError>;
+
+    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        Ok(features::channel_messages_for_caller(
+            snapshot,
+            &self.owner,
+            &self.caller,
+            &self.channel_ref,
+            self.limit,
+            &self.now_utc,
+        ))
+    }
+}
+
+/// Reads all messages in a conversation for the office-local channel watcher (`WATCH-3/7`).
+pub struct ChannelMessagesRawRead {
+    pub conversation_id: Id,
+}
+
+impl ReadOp for ChannelMessagesRawRead {
+    type Out = Vec<MessageRecord>;
+
+    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        Ok(snapshot.messages_in_conversation(&self.conversation_id)?)
+    }
+}
+
+/// Reads one conversation (persisted or virtual auto-channel) by ID (`WATCH-3/6`).
+pub struct ConversationByIdRead {
+    pub conversation_id: Id,
+    pub now_utc: String,
+}
+
+impl ReadOp for ConversationByIdRead {
+    type Out = Option<ConversationRecord>;
+
+    fn read<S: MessagingRead>(self, snapshot: &S) -> Result<Self::Out, StoreError> {
+        if let Some(conv) = snapshot.conversation(&self.conversation_id)? {
+            return Ok(Some(conv));
+        }
+        let autos = features::virtual_auto_channels(snapshot, &self.now_utc)?;
+        Ok(autos.into_iter().find(|c| c.id == self.conversation_id))
+    }
+}

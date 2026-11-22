@@ -3,7 +3,7 @@ id: doc-74
 title: Organization Data — Schema Coverage and Integrity Review
 type: specification
 created_date: '2026-11-21T01:30:00Z'
-updated_date: '2026-11-21T18:37:00Z'
+updated_date: '2026-11-22T01:01:00Z'
 tags:
   - organization-data
   - contract
@@ -15,7 +15,7 @@ tags:
 
 The primary design documents define four SQL artifacts so sensitive operational projections are isolated from shared plaintext `office.db` ([ADR-0016](../../decisions/decision-16%20-%20ADR-0016-No-application-level-encryption-of-organization-data.md), `TASK-10`):
 
-- Load [`schema.sql`](../../../docs/design/organization-data/schema.sql) once into the shared office projection (`runtime/<office-id>/office.db`): **76 tables and 12 views**.
+- Load [`schema.sql`](../../../docs/design/organization-data/schema.sql) once into the shared office projection (`runtime/<office-id>/office.db`): **77 tables and 12 views**.
 - Load [`private-notes-schema.sql`](../../../docs/design/organization-data/private-notes-schema.sql) into the separate durable private-notes database (`runtime/<office-id>/private/task-notes.db`): **4 tables**.
 - Load [`messaging-schema.sql`](../../../docs/design/organization-data/messaging-schema.sql) into the separate access-controlled messaging database (`runtime/<office-id>/protected/messaging.db`): **8 messaging tables + 5 identity mirror tables** (`messaging_organizations`, `messaging_teams`, `messaging_projects`, `messaging_employees`, `messaging_offices`).
 - Load [`budgets-schema.sql`](../../../docs/design/organization-data/budgets-schema.sql) into the separate access-controlled budgets database (`runtime/<office-id>/protected/budgets.db`): **6 budget tables + 4 identity mirror tables** (`budget_organizations`, `budget_tasks`, `budget_employees`, `budget_releases`).
@@ -36,7 +36,7 @@ These are draft definitions, not application migrations.
 | [08](doc-82%20-%20Organization-Data-08-—-Record-Contracts-and-Hash-Codec-Registry.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `links`, `entity_relationships` |
 | [09](doc-83%20-%20Organization-Data-09-—-Release-Content-and-Flags.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `release_features`, `release_tasks`, `feature_flags`, `release_flag_settings`, `deployment_flag_settings` |
 | [10](doc-87%20-%20Organization-Data-10-—-Usage-and-Cost-Accounting.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `model_prices`, `usage_records`, `usage_stream_checkpoints`, `usage_stream_coverage`, `effective_usage_records`, `usage_task_totals`, `usage_agent_totals`, `usage_project_totals` |
-| [11](doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `model_profile_model_union` |
+| [11](doc-88%20-%20Organization-Data-11-—-Model-Profiles-and-Agent-Execution.md) | [schema.sql](../../../docs/design/organization-data/schema.sql) | `provider_connections`, `model_profiles`, `model_profile_connections`, `agent_execution_configs`, `watching_model_settings`, `office_connection_bindings`, `office_connection_state`, `office_connection_models`, `connection_quota_state`, `connection_turn_permits`, `agent_execution_turns`, `agent_process_instances`, `agent_execution_attempts`, `model_profile_model_union` |
 | [12](doc-84%20-%20Organization-Data-12-—-Task-Assignment-and-History.md) | Task semantics | Uses `tasks` from 03 and `task_events` from 05; no additional tables |
 | [05: private operational data](doc-79%20-%20Organization-Data-05-—-Operational-Data-and-Private-Notes.md#private-notes-attached-to-tasks) | [private-notes-schema.sql](../../../docs/design/organization-data/private-notes-schema.sql) | `private_note_authors`, `private_note_tasks`, `private_task_notes`, `private_note_command_receipts` |
 | [15](doc-90%20-%20Organization-Data-15-—-Messaging-and-Chat.md) | [messaging-schema.sql](../../../docs/design/organization-data/messaging-schema.sql) | `messaging_organizations`, `messaging_teams`, `messaging_projects`, `messaging_employees`, `messaging_offices`, `conversations`, `conversation_memberships`, `messages`, `message_recipient_states`, `conversation_preferences`, `conversation_read_markers`, `message_attachments`, `message_reactions` |
@@ -53,7 +53,7 @@ Document 04 owns `agent_placements`, including `placement_generation`; document 
 
 This tracks the draft schema against the code, so that drift is visible. Update the row in the same change that implements or reshapes a table. States: **Implemented** (the code loads this table with these columns and actively reads/writes it through its domain port), **DDL loaded only** (created verbatim from `schema.sql` by `crates/org-office/src/store/sqlite/schema.rs`, with no domain projector or read/write port yet), **Different shape in code** (the code holds the same facts in a different table or columns), **Absent** (not loaded in the runtime schema and no code).
 
-As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all **76 shared tables and 12 views** plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **66 shared tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), while the isolated databases (`private-notes-schema.sql` 4 tables, `messaging-schema.sql` 8 domain + 5 mirror tables, `budgets-schema.sql` 6 domain + 4 mirror tables) remain **Absent** from runtime code until their increments (`B6`, `L3`, `L8`) open their dedicated protected databases.
+As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `org.db` v3 and `office.db` v8 were deleted), `crates/org-office/src/store/sqlite/schema.rs` embeds and executes `schema.sql` verbatim on every office database open, creating all **77 shared tables and 12 views** plus 4 SQLite adapter metadata tables (`store_schema`, `store_cursor`, `store_sources`, `store_receipts`). **10 organization-family tables are Implemented** and actively projected/queried in `crates/org-office/src/store/sqlite/organization.rs`; the remaining **66 shared tables and 12 views** are **DDL loaded only** (awaiting their family ports/projectors in `B3`–`B8`), while the isolated databases (`private-notes-schema.sql` 4 tables, `messaging-schema.sql` 8 domain + 5 mirror tables, `budgets-schema.sql` 6 domain + 4 mirror tables) remain **Absent** from runtime code until their increments (`B6`, `L3`, `L8`) open their dedicated protected databases.
 
 | Record | Kind | State | Note |
 | --- | --- | --- | --- |
@@ -147,6 +147,7 @@ As of 2026-11-21 (`B1b`, `B2.1`, and `TASK-10` schema isolation landed; legacy `
 | `usage_stream_checkpoints` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `waiting_spans` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
 | `watchers` | table | DDL loaded only | Created by verbatim `schema.sql`; no projector yet |
+| `watching_model_settings` | table | Implemented | Active in `crates/org-office/src/store/sqlite/organization.rs` (verbatim `schema.sql`, `ADR-0024` d13) |
 | `document_version_progress` | view | DDL loaded only | Created by verbatim `schema.sql` |
 | `effective_usage_records` | view | DDL loaded only | Created by verbatim `schema.sql` |
 | `entity_relationships` | view | DDL loaded only | Created by verbatim `schema.sql` |

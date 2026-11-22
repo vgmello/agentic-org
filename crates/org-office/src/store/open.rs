@@ -29,9 +29,10 @@ use org_store::{
 };
 
 pub use messaging_ops::{
-    ChannelCreateOp, ChannelMembershipOp, ChatAnswerOp, ChatInboxRead, ChatMarkReadOp,
-    ChatMessagesRead, ChatMuteOp, ChatReactOp, ChatSendOp, ClaimMailboxReadOp,
-    CommitMailboxMessageOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
+    ChannelCreateOp, ChannelMembershipOp, ChannelMessagesForCallerRead, ChannelMessagesRawRead,
+    ChatAnswerOp, ChatInboxRead, ChatMarkReadOp, ChatMessagesRead, ChatMuteOp, ChatReactOp,
+    ChatSendOp, ClaimMailboxReadOp, CommitMailboxMessageOp, ConversationByIdRead,
+    DeliverAnswerCandidatesOp, DmOpenOp, FindReplyForAskRead, GetMailboxMessageRead,
     InspectAskStatusRead, ListActiveSnoozeDeadlinesRead, ListChannelsRead, ListConversationsRead,
     ListMailboxHeadersRead, MailboxCheckNotifyOp, MailboxUpdateStateOp, MsgAcceptOp, MsgAskOp,
     MsgWithdrawOp, OpenOwnerInboxRead, OrgChangesAfterRead, PeekUnreadRead,
@@ -43,7 +44,7 @@ pub use operations::{
     ImportOrganizationOp, ModelProfileById, ModelProfilesList, MovePersonOp, MoveTeamOp,
     OfficeStanding, ProjectCheckOp, ProjectInspectByRef, ProjectsList, ProviderConnectionById,
     ReceiptById, RemoveProjectTeamOp, RoleById, RoleInspectByRef, RolesList, Standing, StructureOp,
-    TopTeamId, UpdatePersonOp, UpdateTeamOp,
+    TopTeamId, UpdatePersonOp, UpdateTeamOp, WatchingModelRead,
 };
 
 use super::sqlite::SqliteEngine;

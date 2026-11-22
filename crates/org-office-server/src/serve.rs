@@ -1521,6 +1521,20 @@ fn answer_message(request: &Request, shared: &Shared, binding: &Binding) -> Opti
             None => msg_calls::unsupported(request.id),
         });
     }
+    // High #1: when `ports.chat` is active, let `ChatService` close any asker-owned channel
+    // watch on `msg.done`; when `ports.chat` is `None`, preserve the `msg_calls::answer` fallback.
+    if request.is::<org_proto::msg::MsgDone>() {
+        if let Some(chat) = &shared.ports.chat {
+            if let Some(resp) = chat(
+                binding.member(),
+                binding.via_grant(),
+                &shared.stopping,
+                request,
+            ) {
+                return Some(resp);
+            }
+        }
+    }
     if request.is::<org_proto::msg::MsgSend>() {
         if let (Some(guard), Some(member)) = (&shared.ports.hr_message_guard, binding.member()) {
             if let Ok(params) = request.params::<org_proto::msg::MsgSend>() {

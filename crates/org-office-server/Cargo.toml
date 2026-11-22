@@ -16,6 +16,7 @@ zeroize = "=1.9.1"
 org-socket = { path = "../org-socket" }
 org-proto = { path = "../org-proto" }
 org-office = { path = "../org-office" }
+org-copilot = { path = "../org-copilot" }
 # The writer custody contract the office's store calls, implemented over the host channel.
 org-store = { path = "../org-store" }
 org-work = { path = "../org-work" }
@@ -32,6 +33,7 @@ sha2.workspace = true
 
 [dev-dependencies]
 org-agent-cli = { path = "../org-agent-cli" }
+org-agent-runtime = { path = "../org-agent-runtime" }
 org-sync = { path = "../org-sync" }
 org-office = { path = "../org-office", features = ["testkit"] }
 org-mailbox = { path = "../org-mailbox", features = ["testkit"] }

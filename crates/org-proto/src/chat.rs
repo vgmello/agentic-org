@@ -181,6 +181,10 @@ pub struct ChatInboxItem {
     pub delivered_because: DeliveredBecause,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub related_message_ids: Vec<String>,
+    /// Optional human-readable link context (e.g. matched question text for `answer_candidate`,
+    /// `ADR-0024` d11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub local_seq: u64,
 }
 
@@ -618,6 +622,95 @@ impl Call for ChatEventsPoll {
     type Result = ChatEventsPollResult;
 }
 
+/// `chat.watching_model_get`: read the organization's watching model profile setting
+/// (`ADR-0024` d13, `WATCH-5`).
+pub struct ChatWatchingModelGet;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatWatchingModelGetParams {}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatWatchingModelResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_profile_name: Option<String>,
+    pub enabled: bool,
+    pub revision: u64,
+}
+
+impl Call for ChatWatchingModelGet {
+    const METHOD: &'static str = "chat.watching_model_get";
+    type Params = ChatWatchingModelGetParams;
+    type Result = ChatWatchingModelResult;
+}
+
+/// `chat.watching_model_set`: owner-only toggle setting or clearing the organization's
+/// watching model profile (`ADR-0024` d8/d13, `WATCH-5`).
+pub struct ChatWatchingModelSet;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatWatchingModelSetParams {
+    pub command_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_profile_id: Option<String>,
+}
+
+impl Call for ChatWatchingModelSet {
+    const METHOD: &'static str = "chat.watching_model_set";
+    type Params = ChatWatchingModelSetParams;
+    type Result = ChatWatchingModelResult;
+}
+
+/// `chat.channel_summarize`: answer a question about a channel using a tool-less run over
+/// exactly the messages `msg list` would return to the caller (`ADR-0024` d18, `WATCH-10`).
+pub struct ChatChannelSummarize;
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatChannelSummarizeParams {
+    pub channel: String,
+    pub question: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+impl fmt::Debug for ChatChannelSummarizeParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChatChannelSummarizeParams")
+            .field("channel", &self.channel)
+            .field("question_len", &self.question.len())
+            .field("limit", &self.limit)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatChannelSummarizeResult {
+    pub conversation_id: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_ids: Vec<String>,
+    pub derived_notice: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_record_id: Option<String>,
+}
+
+impl fmt::Debug for ChatChannelSummarizeResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChatChannelSummarizeResult")
+            .field("conversation_id", &self.conversation_id)
+            .field("summary_len", &self.summary.len())
+            .field("message_ids_len", &self.message_ids.len())
+            .finish()
+    }
+}
+
+impl Call for ChatChannelSummarize {
+    const METHOD: &'static str = "chat.channel_summarize";
+    type Params = ChatChannelSummarizeParams;
+    type Result = ChatChannelSummarizeResult;
+}
+
 /// Helper to build a header-only `MessageReceivedData` with zero body exposure.
 pub fn header_only_received(header: MessageHeader) -> MessageReceivedData {
     MessageReceivedData { header }
@@ -667,6 +760,7 @@ mod tests {
             read_at: None,
             delivered_because: DeliveredBecause::Mention,
             related_message_ids: vec![],
+            reason: None,
             local_seq: 1,
         };
         let encoded = serde_json::to_value(&item).unwrap();

@@ -1646,6 +1646,24 @@ FOREIGN KEY (organization_id,employee_id) REFERENCES employees(organization_id,i
   FOREIGN KEY (organization_id,updated_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
 ) STRICT;
 
+CREATE TABLE watching_model_settings (
+  organization_id TEXT NOT NULL PRIMARY KEY REFERENCES organizations(id),
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  model_profile_id TEXT,
+  created_at TEXT,
+  created_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (created_by_kind IN ('employee','system','unknown')),
+  created_by_id TEXT,
+  updated_at TEXT,
+  updated_by_kind TEXT NOT NULL DEFAULT 'unknown' CHECK (updated_by_kind IN ('employee','system','unknown')),
+  updated_by_id TEXT,
+  FOREIGN KEY (organization_id,model_profile_id) REFERENCES model_profiles(organization_id,id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((created_by_kind = 'employee' AND created_by_id IS NOT NULL) OR (created_by_kind <> 'employee' AND created_by_id IS NULL)),
+  CHECK ((updated_by_kind = 'employee' AND updated_by_id IS NOT NULL) OR (updated_by_kind <> 'employee' AND updated_by_id IS NULL)),
+  FOREIGN KEY (organization_id,created_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (organization_id,updated_by_id) REFERENCES employees(organization_id,id) DEFERRABLE INITIALLY DEFERRED
+) STRICT;
+
 CREATE TABLE office_connection_bindings (
 organization_id TEXT NOT NULL,
   office_id TEXT NOT NULL,

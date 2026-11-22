@@ -111,6 +111,88 @@ impl Office {
         Ok(self.store.read(ModelProfileById(id)).map_err(storage)?.0)
     }
 
+    /// Reads the organization's channel watching model profile setting (`ADR-0024` d13, `WATCH-5`).
+    pub fn watching_model_setting(
+        &self,
+    ) -> Result<Option<records::WatchingModelSetting>, OfficeError> {
+        Ok(self
+            .store
+            .read(crate::store::open::WatchingModelRead)
+            .map_err(storage)?
+            .0)
+    }
+
+    /// Sets or clears the organization's channel watching model profile setting (owner-only,
+    /// idempotent on `command_id`; `ADR-0024` d8/d13, `WATCH-5`).
+    pub fn set_watching_model_setting(
+        &self,
+        actor: &str,
+        command_id: &str,
+        model_profile_id: Option<&str>,
+    ) -> Result<Result<org_proto::chat::ChatWatchingModelResult, ApiError>, OfficeError> {
+        let Ok(actor_id) = Id::parse(actor) else {
+            return Ok(Err(ApiError::new(
+                ErrorCode::NotAuthorized,
+                "invalid actor id",
+            )));
+        };
+        let Ok(cmd_id) = Id::parse(command_id) else {
+            return Ok(Err(ApiError::new(
+                ErrorCode::InvalidRequest,
+                "command_id must be a canonical UUIDv7",
+            )));
+        };
+        let profile_id = match model_profile_id {
+            Some(raw) => match Id::parse(raw) {
+                Ok(id) => Some(id),
+                Err(_) => {
+                    return Ok(Err(ApiError::new(
+                        ErrorCode::InvalidRequest,
+                        "model_profile_id must be a canonical UUIDv7",
+                    )));
+                }
+            },
+            None => None,
+        };
+        let op = crate::store::open::StructureOp {
+            command: crate::organization::features::SetWatchingModel {
+                model_profile_id: profile_id,
+            },
+            operation_id: cmd_id,
+            by: org_store::Actor::Employee(actor_id),
+            owner: self.owner.clone(),
+            here: self.identity.clone(),
+        };
+        match self.store.run(op) {
+            Ok(reply) => match decode_reply::<crate::organization::features::Changed>(reply) {
+                Ok(_) => self.watching_model_view().map(Ok),
+                Err(err) => Ok(Err(err)),
+            },
+            Err(e) => Ok(Err(map_store_error(e))),
+        }
+    }
+
+    /// Builds the wire view for `chat.watching_model_get` / `chat.watching_model_set`.
+    pub fn watching_model_view(
+        &self,
+    ) -> Result<org_proto::chat::ChatWatchingModelResult, OfficeError> {
+        let setting = self.watching_model_setting()?;
+        let revision = setting.as_ref().map_or(0, |s| s.meta.revision);
+        let model_profile_id = setting
+            .and_then(|s| s.model_profile_id)
+            .map(|id| id.as_str().to_owned());
+        let model_profile_name = match model_profile_id.as_deref() {
+            Some(pid) => self.load_model_profile(pid)?.map(|p| p.name),
+            None => None,
+        };
+        Ok(org_proto::chat::ChatWatchingModelResult {
+            enabled: model_profile_id.is_some(),
+            model_profile_id,
+            model_profile_name,
+            revision,
+        })
+    }
+
     fn ensure_agent_private_home(&self, employee_id: &str) -> Result<(), OfficeError> {
         let base = self
             .durable

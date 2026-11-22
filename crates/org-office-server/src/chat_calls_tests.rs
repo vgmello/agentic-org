@@ -78,7 +78,17 @@ impl LiveOfficeFixture {
         ));
         let hq = inbox::Hq::for_office(Arc::clone(&office)).unwrap();
         let sessions = start_session_manager(Arc::clone(&office), &socket);
-        let ports = build_office_ports(Arc::clone(&office), Arc::clone(&sessions), live, wake);
+        let channel_watcher = Arc::new(crate::watcher::ChannelWatcher::production(
+            Arc::clone(&office),
+            Some(Arc::clone(&sessions)),
+        ));
+        let ports = build_office_ports(
+            Arc::clone(&office),
+            Arc::clone(&sessions),
+            channel_watcher,
+            live,
+            &wake,
+        );
         let mut shared =
             serve::Shared::new(&info, &socket, ports, crate::test_support::grant_key());
         shared.register_inbox(hq, office.is_hq());

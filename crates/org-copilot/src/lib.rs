@@ -32,6 +32,7 @@ mod runtime;
 mod schema;
 mod secrets;
 mod service;
+pub mod watcher;
 
 pub use builtin::{builtin, SENTENCE_MAX_CHARS, TEXT_MAX_CHARS};
 pub use contract::{ContextItem, DraftRequest, DraftResponse, FeatureInfo};

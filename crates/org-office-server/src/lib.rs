@@ -37,6 +37,8 @@ mod startup;
 pub mod test_support;
 mod transfer;
 mod wake_bridge;
+mod watcher;
+mod watcher_store;
 mod zeroed;
 
 #[cfg(test)]
@@ -575,11 +577,13 @@ fn serve_office(
         }
     };
     let session_manager = start_session_manager(Arc::clone(&office), &socket);
+    let channel_watcher = start_channel_watcher(Arc::clone(&office), &session_manager);
     let ports = build_office_ports(
         Arc::clone(&office),
         Arc::clone(&session_manager),
+        Arc::clone(&channel_watcher),
         live,
-        wake,
+        &wake,
     );
     let mut shared = serve::Shared::new(&info, &socket, ports, auth);
     // The organization's directory generation: the member watcher looks again when it moves.
@@ -615,22 +619,7 @@ fn serve_office(
     announce_ready(&mut control, &socket, &mut shared);
     let shared = Arc::new(shared);
 
-    let revocations = Arc::new(std::sync::Mutex::new(revocations::Revocations::default()));
-    let transfers = match transfer
-        .map(|transport| {
-            let mut channels = transfer::Channels::new(
-                Arc::clone(&shared),
-                Arc::clone(&office),
-                instance,
-                control.writer().expect("launch rendezvous writer"),
-                Arc::clone(&revocations),
-            );
-            transfer::Service::start(transport, revocations, move |channel| {
-                channels.open(channel)
-            })
-        })
-        .transpose()
-    {
+    let transfers = match start_transfers(transfer, &shared, &office, instance, &mut control) {
         Ok(service) => service,
         Err(_) => {
             let _ = std::fs::remove_file(&socket);
@@ -650,14 +639,21 @@ fn serve_office(
         }
         host_gone.load(Ordering::SeqCst) || signals::stop_requested()
     };
-    run_serve_loop(&listener, &shared, &session_manager, &stop);
+    run_serve_loop(
+        &listener,
+        &shared,
+        &session_manager,
+        &channel_watcher,
+        &stop,
+    );
     drop(transfers);
 
     drop(listener);
     let _ = std::fs::remove_file(&socket);
     // Every connection thread is gone (joined by `serve::run`): the only owners of the office
-    // left are `shared`, `session_manager`, and this function.
+    // left are `shared`, `session_manager`, `channel_watcher`, and this function.
     drop(shared);
+    drop(channel_watcher);
     drop(session_manager);
     if stopped.load(Ordering::SeqCst) {
         return 1;
@@ -671,6 +667,7 @@ fn run_serve_loop(
     listener: &std::os::unix::net::UnixListener,
     shared: &Arc<serve::Shared>,
     session_manager: &Arc<org_office_sessions::SessionManager>,
+    channel_watcher: &Arc<watcher::ChannelWatcher>,
     stop: &dyn Fn() -> bool,
 ) {
     let wake_stop = Arc::new(AtomicBool::new(false));
@@ -679,12 +676,42 @@ fn run_serve_loop(
         Arc::clone(&wake_stop),
         std::time::Duration::from_secs(2),
     );
+    let watch_thread = watcher::spawn_watcher_loop(
+        Arc::clone(channel_watcher),
+        Arc::clone(&wake_stop),
+        std::time::Duration::from_secs(2),
+    );
     serve::run(listener, shared, stop);
     wake_stop.store(true, Ordering::SeqCst);
     if let Some(t) = wake_thread {
         let _ = t.join();
     }
+    let _ = watch_thread.join();
     session_manager.stop_all("office shutdown");
+}
+
+fn start_transfers(
+    transfer: Option<startup::Transfer>,
+    shared: &Arc<serve::Shared>,
+    office: &Arc<Office>,
+    instance: String,
+    control: &mut Control,
+) -> std::io::Result<Option<transfer::Service>> {
+    let revocations = Arc::new(std::sync::Mutex::new(revocations::Revocations::default()));
+    transfer
+        .map(|transport| {
+            let mut channels = transfer::Channels::new(
+                Arc::clone(shared),
+                Arc::clone(office),
+                instance,
+                control.writer().expect("launch rendezvous writer"),
+                Arc::clone(&revocations),
+            );
+            transfer::Service::start(transport, revocations, move |channel| {
+                channels.open(channel)
+            })
+        })
+        .transpose()
 }
 
 fn close(office: Arc<Office>) -> i32 {
@@ -785,6 +812,26 @@ fn runtime_dir_from(
 }
 
 /// Initializes the production C3 `SessionManager` and runs startup recovery scan.
+/// Wires the per-channel question watcher to `session_manager` using a weak notice callback so
+/// neither side creates a strong reference cycle at office shutdown.
+fn start_channel_watcher(
+    office: Arc<Office>,
+    session_manager: &Arc<org_office_sessions::SessionManager>,
+) -> Arc<watcher::ChannelWatcher> {
+    let channel_watcher = Arc::new(watcher::ChannelWatcher::production(
+        office,
+        Some(Arc::clone(session_manager)),
+    ));
+    let notices_watcher = Arc::downgrade(&channel_watcher);
+    session_manager.set_watch_notice_provider(Arc::new(move |emp_id| {
+        notices_watcher
+            .upgrade()
+            .map(|w| w.drain_watch_end_notices(emp_id))
+            .unwrap_or_default()
+    }));
+    channel_watcher
+}
+
 fn start_session_manager(
     office: Arc<Office>,
     socket: &Path,
@@ -820,6 +867,7 @@ fn build_messaging_ports(
     live: &Arc<live::LiveEvents>,
     wake: &Arc<org_feed::FeedWake>,
     session_manager: &Arc<org_office_sessions::SessionManager>,
+    channel_watcher: &Arc<watcher::ChannelWatcher>,
 ) -> MessagingPorts {
     let directory: Arc<dyn org_mailbox::MemberDirectory + Send + Sync> =
         Arc::new(directory::OfficeDirectory::of(Arc::clone(office)));
@@ -849,11 +897,12 @@ fn build_messaging_ports(
             ))
         }
     };
-    let chat_svc = Arc::new(chat_calls::ChatService::new(
+    let chat_svc = Arc::new(chat_calls::ChatService::with_watcher(
         Arc::clone(office),
         Arc::clone(live),
         Arc::clone(&mailbox),
         Some(Arc::clone(session_manager)),
+        Arc::clone(channel_watcher),
     ));
     let chat: serve::ChatFn = Box::new(move |member, via_grant, stopping, request| {
         chat_svc.dispatch(member, via_grant, stopping, request)
@@ -914,10 +963,12 @@ fn build_hiring_port(
     office: &Arc<Office>,
     wake: &Arc<org_feed::FeedWake>,
     session_manager: &Arc<org_office_sessions::SessionManager>,
+    channel_watcher: &Arc<watcher::ChannelWatcher>,
 ) -> serve::HiringFn {
     let office = Arc::clone(office);
     let wake = Arc::clone(wake);
     let sessions = Arc::clone(session_manager);
+    let watcher = Arc::clone(channel_watcher);
     Box::new(move |member, request| {
         let response = office.dispatch_hiring_rpc(member, request);
         if matches!(
@@ -925,7 +976,7 @@ fn build_hiring_port(
             Some(org_proto::Outcome::Result(_))
         ) {
             wake.notify();
-            notify_agent_lifecycle(&sessions, request);
+            notify_agent_lifecycle(&sessions, &watcher, request);
         }
         response
     })
@@ -933,6 +984,7 @@ fn build_hiring_port(
 
 fn notify_agent_lifecycle(
     sessions: &org_office_sessions::SessionManager,
+    watcher: &watcher::ChannelWatcher,
     request: &org_proto::Request,
 ) {
     if request.is::<org_proto::hiring::AgentSetStatus>() {
@@ -944,12 +996,18 @@ fn notify_agent_lifecycle(
     } else if request.is::<org_proto::hiring::AgentOffboard>() {
         if let Ok(params) = request.params::<org_proto::hiring::AgentOffboard>() {
             sessions.on_agent_offboarded(&params.member_id);
+            watcher.on_agent_offboarded(&params.member_id);
+        }
+    } else if request.is::<org_proto::hiring::AgentMove>() {
+        if let Ok(params) = request.params::<org_proto::hiring::AgentMove>() {
+            watcher.on_agent_team_moved(&params.member_id);
         }
     }
 }
 
 fn notify_org_command_lifecycle(
     sessions: &org_office_sessions::SessionManager,
+    watcher: &watcher::ChannelWatcher,
     command: &org_office::rules::OrgCommand,
 ) {
     match command {
@@ -960,6 +1018,7 @@ fn notify_org_command_lifecycle(
         }
         org_office::rules::OrgCommand::MemberOffboard(params) => {
             sessions.on_agent_offboarded(&params.member_id);
+            watcher.on_agent_offboarded(&params.member_id);
         }
         _ => {}
     }
@@ -969,12 +1028,13 @@ fn notify_org_command_lifecycle(
 fn build_office_ports(
     office: Arc<Office>,
     session_manager: Arc<org_office_sessions::SessionManager>,
+    channel_watcher: Arc<watcher::ChannelWatcher>,
     live: Arc<live::LiveEvents>,
-    wake: Arc<org_feed::FeedWake>,
+    wake: &Arc<org_feed::FeedWake>,
 ) -> serve::OfficePorts {
-    let messaging = build_messaging_ports(&office, &live, &wake, &session_manager);
+    let messaging = build_messaging_ports(&office, &live, wake, &session_manager, &channel_watcher);
     let session_hooks = build_session_hooks(&session_manager);
-    let hiring = build_hiring_port(&office, &wake, &session_manager);
+    let hiring = build_hiring_port(&office, wake, &session_manager, &channel_watcher);
     serve::OfficePorts {
         work: Box::new(|_, _| Ok(Err(unsupported("work", "B4")))),
         operation_get: {
@@ -1050,8 +1110,9 @@ fn build_office_ports(
         directory: messaging.directory,
         submit: {
             let office = Arc::clone(&office);
-            let wake = Arc::clone(&wake);
+            let wake = Arc::clone(wake);
             let sessions = Arc::clone(&session_manager);
+            let watcher = Arc::clone(&channel_watcher);
             Box::new(move |member, command, dry_run| {
                 let answer = if dry_run {
                     office.check_org(member, command)
@@ -1069,7 +1130,7 @@ fn build_office_ports(
                     if matches!(res, Ok(Ok(_))) {
                         wake.notify();
                         if let Some(cmd) = lifecycle_cmd.as_ref() {
-                            notify_org_command_lifecycle(&sessions, cmd);
+                            notify_org_command_lifecycle(&sessions, &watcher, cmd);
                         }
                     }
                     res
