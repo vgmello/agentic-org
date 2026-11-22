@@ -242,10 +242,12 @@
 		background: linear-gradient(90deg, #0284c7, #38bdf8);
 	}
 	.swatch-light {
-		background: linear-gradient(135deg, #f4f7fb 0%, #ffffff 100%);
+		background:
+			radial-gradient(rgba(15, 23, 42, 0.24) 1px, transparent 1px) 0 0 / 8px 8px,
+			linear-gradient(135deg, #d5dce7 0%, #eef2f7 100%);
 	}
 	.swatch-light .swatch-bar {
-		background: linear-gradient(90deg, #0284c7, #0ea5e9);
+		background: linear-gradient(90deg, #0f172a, #0f4c81);
 	}
 	.swatch-classic {
 		background: #1e2939;

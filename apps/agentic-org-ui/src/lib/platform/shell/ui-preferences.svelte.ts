@@ -14,9 +14,9 @@ export const UI_THEMES: readonly {
 	},
 	{
 		id: 'light',
-		label: 'Light (Daylight)',
+		label: 'Light (Frosted)',
 		shortLabel: 'Light',
-		description: 'Crisp daylight workspace with white elevated surfaces and high-contrast slate ink.'
+		description: 'Frosted platinum glass panels over a crisp dot canvas with obsidian and deep-navy accents.'
 	},
 	{
 		id: 'classic',
